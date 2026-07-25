@@ -149,6 +149,7 @@ Termux 首次准备环境：
 
 ```sh
 pkg update
+pkg upgrade
 pkg install nodejs openssh
 ```
 
