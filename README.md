@@ -4,6 +4,22 @@ TunnelDesk 是一个面向桌面端和自托管 Web 的 SSH 工作台，用于�
 
 [下载最新版本](https://github.com/zmide/tunneldesk/releases/latest) · [查看版本记录](https://github.com/zmide/tunneldesk/releases) · [GPL-3.0 许可](LICENSE)
 
+<p align="center">
+  <img src=".github/assets/screenshots/desktop-overview.png" alt="TunnelDesk 主页总览" width="100%">
+</p>
+
+## 界面预览
+
+<table>
+  <tr>
+    <td width="50%"><strong>终端</strong><br><img src=".github/assets/screenshots/desktop-terminal.png" alt="TunnelDesk 终端"></td>
+    <td width="50%"><strong>SFTP</strong><br><img src=".github/assets/screenshots/desktop-sftp.png" alt="TunnelDesk SFTP"></td>
+  </tr>
+  <tr>
+    <td colspan="2"><strong>端口转发</strong><br><img src=".github/assets/screenshots/desktop-forwarding.png" alt="TunnelDesk 端口转发"></td>
+  </tr>
+</table>
+
 ## 项目特点
 
 - 一套数据同时服务 Electron 桌面端、浏览器和移动端 Web，不需要维护两份连接配置。
