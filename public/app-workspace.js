@@ -306,7 +306,7 @@ function showTabContextMenu(event, key) {
 }
 
 function persistableTabs() {
-  return tabs.filter(tab => tab.kind && tab.kind !== "terminal").map(({key,title,subtitle,viewName,closable,kind,id,path}) => ({key,title,subtitle,viewName,closable,kind,id,path}));
+  return tabs.filter(tab => tab.kind).map(({key,title,subtitle,viewName,closable,kind,id,path}) => ({key,title,subtitle,viewName,closable,kind,id,path}));
 }
 
 function saveTabsState() {
@@ -317,8 +317,9 @@ function saveTabsState() {
 
 function restoreTabsState() {
   try {
+    if (runtimeSettings?.saved?.restore_workspace_tabs === false) return false;
     const saved = JSON.parse(localStorage.getItem("workspaceTabs") || "{}");
-    const restored = (saved.tabs || []).filter(tab => tab.kind && tab.kind !== "terminal");
+    const restored = (saved.tabs || []).filter(tab => tab.kind);
     if (!restored.length) return false;
     window.restoringTabs = true;
     tabs = restored;
@@ -338,10 +339,14 @@ function restoreTabsState() {
 function closeTerminalSession(key) {
   const session = terminalSessions.get(key);
   if (!session) return;
+  if (typeof cancelTerminalCursorCopy === "function") cancelTerminalCursorCopy(session, key);
   try { session.socket?.close(); } catch {}
   try { session.resizeDisposable?.dispose(); } catch {}
+  try { session.globalLinkDisposable?.dispose(); } catch {}
+  try { session.globalSelectionDisposable?.dispose(); } catch {}
   try { session.term?.dispose(); } catch {}
   clearTimeout(session.latencyPendingTimer);
+  clearTimeout(session.autoCopyTimer);
   terminalSessions.delete(key);
 }
 
@@ -500,6 +505,7 @@ function showMobileWorkspace() {
 function syncResponsivePane() {
   const mobile = isMobileLayout();
   syncOperationPaneState();
+  if (typeof syncTerminalResponsiveFontSizes === "function") syncTerminalResponsiveFontSizes();
   if (!mobile) {
     responsiveLayoutMobile = false;
     document.querySelector(".left-pane")?.classList.remove("mobile-hide");

@@ -342,7 +342,7 @@ function createWindow(options = {}) {
   }
   mainWindow.loadURL(webUrl);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    if (/^(https?|ftp|ssh|telnet):\/\//i.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
   mainWindow.once("ready-to-show", () => {
@@ -581,6 +581,34 @@ async function chooseDesktopDataDir() {
   return result.canceled ? "" : result.filePaths[0];
 }
 
+function defaultDownloadDirectory() {
+  return app.getPath("downloads");
+}
+
+function validateDownloadDirectory(value) {
+  const target = path.resolve(String(value || defaultDownloadDirectory()));
+  fs.mkdirSync(target, { recursive:true });
+  if (!fs.statSync(target).isDirectory()) throw new Error("SFTP 下载路径不是目录");
+  fs.accessSync(target, fs.constants.W_OK);
+  return target;
+}
+
+async function chooseDownloadDirectory() {
+  const result = await dialog.showOpenDialog(mainWindow || undefined, {
+    title:"选择 SFTP 自动保存目录",
+    defaultPath:defaultDownloadDirectory(),
+    properties:["openDirectory", "createDirectory"]
+  });
+  return result.canceled ? "" : result.filePaths[0];
+}
+
+async function openDownloadDirectory(value) {
+  const target = validateDownloadDirectory(value);
+  const error = await shell.openPath(target);
+  if (error) throw new Error(error);
+  return {ok:true, path:target};
+}
+
 function validatedUpdatePackagePath(file) {
   const target = path.resolve(String(file || ""));
   const updateRoot = path.resolve(path.join(DATA_DIR, "updates"));
@@ -643,6 +671,10 @@ app.whenReady().then(async () => {
         getSettings: desktopSettingsView,
         saveSettings: saveDesktopSettings,
         chooseDataDir: chooseDesktopDataDir,
+        getDownloadDirectory: defaultDownloadDirectory,
+        validateDownloadDirectory,
+        chooseDownloadDirectory,
+        openDownloadDirectory,
         openUpdatePackage,
         openUpdateDirectory
       }

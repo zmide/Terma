@@ -14,6 +14,7 @@ const fingerprint = crypto.createHash("sha256")
 const required = [
   path.join(nodeModules, "@xterm", "xterm", "lib", "xterm.js"),
   path.join(nodeModules, "@xterm", "addon-fit", "lib", "addon-fit.js"),
+  path.join(nodeModules, "ace-builds", "src-min-noconflict", "ace.js"),
   path.join(nodeModules, "iconv-lite", "lib", "index.js"),
   process.platform === "win32"
     ? path.join(nodeModules, ".bin", "tsc.cmd")

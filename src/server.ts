@@ -84,8 +84,8 @@ const { getPart } = require("./multipart");
 const { parseConfigText, batchTest, saveImported, exportConfig } = require("./importer");
 const { handleTerminalUpgrade, closeAllTerminals } = require("./terminal");
 const { deleteCommandTemplate, handleBatchCommandUpgrade, listCommandTemplates, saveCommandTemplate, updateCommandTemplate } = require("./commands");
-const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemotePath, deleteRemoteRecycleItem, encodeRemoteText, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, readRemoteDirectorySize, readRemoteTextFile, recycleRemotePath, renameRemotePath, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
-const { cancelSftpJob, clearFinishedSftpJobs, compressJob, copyJob, crossCopyJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, moveJob, pauseSftpJob, resumeSftpJob, startDownloadJob, startUploadJob } = require("./sftp-jobs");
+const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemotePath, deleteRemoteRecycleItem, encodeRemoteText, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, recycleRemotePath, renameRemotePath, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
+const { cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, pauseSftpJob, resumeSftpJob, sftpCacheInfo, startDownloadJob, startUploadJob } = require("./sftp-jobs");
 const {
   appendSystemLog,
   deleteLogs,
@@ -190,6 +190,7 @@ const VENDOR_FILES = new Map([
   ["/vendor/xterm/addon-fit.js", vendorFile("@xterm/addon-fit", "lib/addon-fit.js")],
   ["/vendor/xterm/addon-fit.mjs", vendorFile("@xterm/addon-fit", "lib/addon-fit.mjs")]
 ]);
+const ACE_VENDOR_DIR = vendorFile("ace-builds", "src-min-noconflict");
 
 function readBody(req, maxBytes = 100 * 1024 * 1024): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -247,10 +248,15 @@ function receiveUploadToTemp(req, filename): Promise<any> {
 }
 
 function send(res, status, data, headers = {}) {
-  const body = Buffer.from(typeof data === "string" ? data : JSON.stringify(data), "utf8");
+  const binary = Buffer.isBuffer(data) || data instanceof Uint8Array;
+  const body = Buffer.isBuffer(data)
+    ? data
+    : data instanceof Uint8Array
+      ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+      : Buffer.from(typeof data === "string" ? data : JSON.stringify(data), "utf8");
   res.writeHead(status, {
     "Content-Length": body.length,
-    "Content-Type": typeof data === "string" ? "text/plain; charset=utf-8" : "application/json; charset=utf-8",
+    "Content-Type": binary ? "application/octet-stream" : (typeof data === "string" ? "text/plain; charset=utf-8" : "application/json; charset=utf-8"),
     ...secureHeaders(headers)
   });
   res.end(body);
@@ -258,6 +264,17 @@ function send(res, status, data, headers = {}) {
 
 function sendJson(res, data, status = 200) {
   send(res, status, data, { "Content-Type": "application/json; charset=utf-8" });
+}
+
+function programCacheView() {
+  const sftp = sftpCacheInfo();
+  const updates = updateInstaller.cacheInfo();
+  return {
+    bytes:Number(sftp.bytes || 0) + Number(updates.bytes || 0),
+    files:Number(sftp.files || 0) + Number(updates.files || 0),
+    reclaimable_bytes:Number(sftp.reclaimable_bytes || 0) + (updates.busy ? 0 : Number(updates.bytes || 0)),
+    categories:{sftp_downloads:sftp.downloads, sftp_uploads:sftp.uploads, updates}
+  };
 }
 
 function forwardLogLabel(id) {
@@ -588,9 +605,14 @@ function serveStatic(req, res, pathname) {
     if (authRequired(req)) return send(res, 302, "", { Location: "/login" });
   }
   let file;
-  const isVendorFile = VENDOR_FILES.has(pathname);
+  let isVendorFile = VENDOR_FILES.has(pathname);
   if (isVendorFile) {
     file = VENDOR_FILES.get(pathname);
+  } else if (pathname.startsWith("/vendor/ace/")) {
+    const name = pathname.slice("/vendor/ace/".length);
+    if (!/^(?:ace|mode-[a-z0-9_-]+|theme-[a-z0-9_-]+|worker-[a-z0-9_-]+|ext-[a-z0-9_-]+)\.js$/i.test(name)) return sendJson(res, {error:"Not found"}, 404);
+    file = path.resolve(ACE_VENDOR_DIR, name);
+    isVendorFile = file.startsWith(path.resolve(ACE_VENDOR_DIR) + path.sep);
   } else {
     const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
     file = path.resolve(PUBLIC_DIR, rel);
@@ -659,14 +681,29 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, listLocalDirectories(url.searchParams.get("path") || ""));
   }
   if (req.method === "GET" && pathname === "/api/runtime-settings") return sendJson(res, runtimeSettingsView());
+  if (req.method === "GET" && pathname === "/api/cache") return sendJson(res, programCacheView());
+  if (req.method === "DELETE" && pathname === "/api/cache") {
+    if (updateInstaller.cacheInfo().busy) return sendJson(res, {error:"更新正在下载，暂时不能清理缓存"}, 409);
+    clearSftpCache();
+    updateInstaller.clearCache();
+    return sendJson(res, {ok:true, ...programCacheView()});
+  }
   if (req.method === "PUT" && pathname === "/api/runtime-settings") {
     const current = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
     const data = await readJson(req);
     const next = normalizeRuntimeSettings({
       listen_hosts: data.listen_hosts ?? current.listen_hosts,
       listen_port: data.listen_port ?? current.listen_port,
-      sftp_recycle_bin_enabled: data.sftp_recycle_bin_enabled ?? current.sftp_recycle_bin_enabled
+      sftp_recycle_bin_enabled: data.sftp_recycle_bin_enabled ?? current.sftp_recycle_bin_enabled,
+      sftp_max_open_file_size_mb: data.sftp_max_open_file_size_mb ?? current.sftp_max_open_file_size_mb,
+      sftp_download_directory: data.sftp_download_directory ?? current.sftp_download_directory,
+      restore_workspace_tabs: data.restore_workspace_tabs ?? current.restore_workspace_tabs,
+      terminal: data.terminal ?? current.terminal
     });
+    if (data.sftp_download_directory !== undefined && desktopIntegration) {
+      if (!isLocalRequest(req) || !desktopIntegration?.validateDownloadDirectory) return sendJson(res, { error:"下载目录只能在本机桌面端中修改" }, 403);
+      await Promise.resolve(desktopIntegration.validateDownloadDirectory(next.sftp_download_directory));
+    }
     if (data.listen_hosts !== undefined || data.listen_port !== undefined) {
       const availability = await checkRuntimeSettings(next);
       if (!availability.available) return sendJson(res, {
@@ -877,6 +914,29 @@ async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/command-templates") return sendJson(res, listCommandTemplates());
   if (req.method === "GET" && pathname === "/api/forward-templates") return sendJson(res, listForwardTemplates());
   if (req.method === "GET" && pathname === "/api/sftp/jobs") return sendJson(res, listSftpJobs());
+  if (req.method === "GET" && pathname === "/api/sftp/download-settings") {
+    const saved = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
+    const desktop = Boolean(isLocalRequest(req) && desktopIntegration?.getDownloadDirectory);
+    const defaultDirectory = desktop ? await Promise.resolve(desktopIntegration.getDownloadDirectory()) : "";
+    return sendJson(res, {
+      delivery_mode: desktop ? "desktop" : "browser",
+      configured_directory: desktop ? saved.sftp_download_directory : "",
+      default_directory: defaultDirectory,
+      effective_directory: desktop ? (saved.sftp_download_directory || defaultDirectory) : "",
+      can_choose_directory: Boolean(desktop && desktopIntegration?.chooseDownloadDirectory),
+      can_open_directory: Boolean(desktop && desktopIntegration?.openDownloadDirectory)
+    });
+  }
+  if (req.method === "POST" && pathname === "/api/sftp/download-settings/choose") {
+    if (!isLocalRequest(req) || !desktopIntegration?.chooseDownloadDirectory) return sendJson(res, { error:"目录选择仅能在本机桌面端中使用" }, 403);
+    return sendJson(res, { path:await Promise.resolve(desktopIntegration.chooseDownloadDirectory()) });
+  }
+  if (req.method === "POST" && pathname === "/api/sftp/download-settings/open") {
+    if (!isLocalRequest(req) || !desktopIntegration?.openDownloadDirectory) return sendJson(res, { error:"打开目录仅能在本机桌面端中使用" }, 403);
+    const saved = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
+    const directory = saved.sftp_download_directory || await Promise.resolve(desktopIntegration.getDownloadDirectory());
+    return sendJson(res, await Promise.resolve(desktopIntegration.openDownloadDirectory(directory)));
+  }
   if (req.method === "GET" && pathname === "/api/export/config") return sendJson(res, { config: exportConfig() });
 
   if (req.method === "POST" && pathname === "/api/identity-files") {
@@ -1046,7 +1106,15 @@ async function handleApi(req, res, pathname) {
         "Content-Disposition": `attachment; filename="${encodeURIComponent(item.name)}"`,
         "Cache-Control": "no-store"
       });
-      fs.createReadStream(item.path).pipe(res);
+      const stream = fs.createReadStream(item.path);
+      let responseFinished = false;
+      let streamClosed = false;
+      const markDelivered = () => {
+        if (responseFinished && streamClosed) markSftpJobDelivered(parts[3]);
+      };
+      res.on("finish", () => { responseFinished = true; markDelivered(); });
+      stream.on("close", () => { streamClosed = true; markDelivered(); });
+      stream.pipe(res);
       return;
     }
   }
@@ -1087,7 +1155,13 @@ async function handleApi(req, res, pathname) {
     }
     if (req.method === "POST" && parts[4] === "download") {
       const data = await readJson(req);
-      return sendJson(res, startDownloadJob(connectionId, data.path || ""), 202);
+      const saved = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
+      const desktop = Boolean(isLocalRequest(req) && desktopIntegration?.getDownloadDirectory);
+      const defaultDirectory = desktop ? await Promise.resolve(desktopIntegration.getDownloadDirectory()) : "";
+      return sendJson(res, startDownloadJob(connectionId, data.path || "", {
+        deliveryMode: desktop ? "desktop" : "browser",
+        autoSaveDirectory: desktop ? (saved.sftp_download_directory || defaultDirectory) : ""
+      }), 202);
     }
     if (req.method === "GET" && parts[4] === "download") {
       const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
@@ -1104,8 +1178,24 @@ async function handleApi(req, res, pathname) {
     if (req.method === "GET" && parts[4] === "read") {
       const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
       const remotePath = url.searchParams.get("path") || "";
-      const result = await readRemoteTextFile(connectionId, remotePath, url.searchParams.get("encoding") || "");
+      const maximumBytes = readRuntimeSettings(RUNTIME_SETTINGS_FILE).sftp_max_open_file_size_mb * 1024 * 1024;
+      const result = await readRemoteTextFile(connectionId, remotePath, url.searchParams.get("encoding") || "", maximumBytes);
       return send(res, 200, { path: remotePath, ...result }, { "Cache-Control": "no-store" });
+    }
+    if (req.method === "GET" && parts[4] === "preview-image") {
+      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const remotePath = url.searchParams.get("path") || "";
+      const extension = path.posix.extname(remotePath).toLowerCase();
+      const imageTypes = new Map([[".png","image/png"],[".jpg","image/jpeg"],[".jpeg","image/jpeg"],[".gif","image/gif"],[".webp","image/webp"],[".bmp","image/bmp"],[".ico","image/x-icon"],[".svg","image/svg+xml"]]);
+      const contentType = imageTypes.get(extension);
+      if (!contentType) return sendJson(res, {error:"该文件不是支持预览的图片格式"}, 415);
+      const maximumBytes = readRuntimeSettings(RUNTIME_SETTINGS_FILE).sftp_max_open_file_size_mb * 1024 * 1024;
+      const result = await readRemoteBinaryFile(connectionId, remotePath, maximumBytes);
+      return send(res, 200, result.content, {
+        "Content-Type":contentType,
+        "Content-Disposition":`inline; filename="${encodeURIComponent(path.posix.basename(remotePath) || "preview")}"`,
+        "Cache-Control":"no-store"
+      });
     }
     if (req.method === "POST" && parts[4] === "upload") {
       const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);

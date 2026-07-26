@@ -345,7 +345,6 @@ function showIdentityBindingModal(items, options={}) {
     };
     $("restoreKeyCancel").onclick = () => finish(null);
     $("restoreKeyClose").onclick = () => finish(null);
-    modal.onclick = event => { if (event.target === modal) finish(null); };
     loadIdentityBindingOptions().then(info => { identityInfo=info; refreshCandidates(); }).catch(error => setStatus(error.message || "私钥列表加载失败", "error"));
   });
 }
@@ -507,7 +506,6 @@ function showDatabaseCredentialModal(items, options={}) {
     };
     $("restoreKeyCancel").onclick = () => finish(null);
     $("restoreKeyClose").onclick = () => finish(null);
-    modal.onclick = event => { if (event.target === modal) finish(null); };
     loadIdentityBindingOptions().then(info => { identityInfo=info; refreshCandidates(); }).catch(error => setStatus(error.message || "私钥列表加载失败", "error"));
   });
 }

@@ -41,6 +41,7 @@ try {
     terminal_encoding: "gb18030",
     terminal_font_family: "Cascadia Mono, monospace",
     terminal_font_size: 16,
+    terminal_mobile_font_size: 18,
     terminal_line_height: 1.4,
     terminal_font_weight: "600"
   });
@@ -48,6 +49,7 @@ try {
     terminal_encoding: "gb18030",
     terminal_font_family: "Cascadia Mono, monospace",
     terminal_font_size: 16,
+    terminal_mobile_font_size: 18,
     terminal_line_height: 1.4,
     terminal_font_weight: "600"
   });
@@ -57,6 +59,7 @@ try {
   database.restoreConfigSnapshot(snapshot);
   assert.equal(database.getConnection(id).terminal_line_height, 1.4);
   assert.equal(database.getConnection(id).terminal_font_weight, "600");
+  assert.equal(database.getConnection(id).terminal_mobile_font_size, 18);
   database.updateConnection(2, {...database.getConnection(2), sort_order:2}, "");
   assert.deepEqual(database.listConnections().map(item => item.name), ["legacy-a", "reopen-check", "legacy-b"]);
   database.closeDatabase();

@@ -13,7 +13,7 @@ const {
   remotePathOperand,
   shellQuote
 } = require("./sftp-encoding");
-const MAX_TEXT_FILE_SIZE = 512 * 1024;
+const DEFAULT_MAX_OPEN_FILE_SIZE = 5 * 1024 * 1024;
 const DEFAULT_DIRECTORY_PAGE_SIZE = 50;
 const MAX_DIRECTORY_PAGE_SIZE = 200;
 const DIRECTORY_CACHE_TTL_MS = 15 * 1000;
@@ -536,15 +536,28 @@ async function extractRemoteArchive(connectionId, remotePath, targetDir) {
   return { ok: true };
 }
 
-async function readRemoteTextFile(connectionId, remotePath, requestedEncoding = "") {
+function normalizeOpenFileLimit(value) {
+  const limit = Number(value || DEFAULT_MAX_OPEN_FILE_SIZE);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100 * 1024 * 1024) throw new Error("SFTP 文件打开上限无效");
+  return limit;
+}
+
+async function readRemoteBinaryFile(connectionId, remotePath, maximumBytes = DEFAULT_MAX_OPEN_FILE_SIZE) {
   const connection = getConnection(connectionId);
   const quotedPath = remotePathOperand(connection, remotePath);
-  const body = await runRemote(connection, `if [ ! -f ${quotedPath} ]; then echo "目标不是普通文件" >&2; exit 1; fi; head -c ${MAX_TEXT_FILE_SIZE + 1} -- ${quotedPath}`, null, 60000);
-  if (body.length > MAX_TEXT_FILE_SIZE) throw new Error("文件超过 512 KB，暂不能在程序中以文本打开，请下载后处理");
+  const limit = normalizeOpenFileLimit(maximumBytes);
+  const body = await runRemote(connection, `if [ ! -f ${quotedPath} ]; then echo "目标不是普通文件" >&2; exit 1; fi; head -c ${limit + 1} -- ${quotedPath}`, null, 60000);
+  if (body.length > limit) throw new Error(`文件超过 ${Math.round(limit / 1024 / 1024)} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限`);
+  return {content:body, size:body.length, limit};
+}
+
+async function readRemoteTextFile(connectionId, remotePath, requestedEncoding = "", maximumBytes = DEFAULT_MAX_OPEN_FILE_SIZE) {
+  const connection = getConnection(connectionId);
+  const {content:body, size, limit} = await readRemoteBinaryFile(connectionId, remotePath, maximumBytes);
   if (body.includes(0)) throw new Error("该文件包含二进制内容，无法安全地以文本编辑");
   const preferred = normalizeTextEncoding(requestedEncoding || connection.sftp_text_encoding || "auto");
   const decoded = decodeRemoteText(body, preferred);
-  return { ...decoded, preferred_encoding: connection.sftp_text_encoding || "auto", size: body.length, limit: MAX_TEXT_FILE_SIZE };
+  return { ...decoded, preferred_encoding: connection.sftp_text_encoding || "auto", size, limit };
 }
 function streamRemoteFile(connectionId, remotePath, res, req) {
   const connection = getConnection(connectionId);
@@ -643,6 +656,7 @@ module.exports = {
   extractRemoteArchive,
   renameRemotePath,
   readRemoteTextFile,
+  readRemoteBinaryFile,
   decodeRemoteText,
   encodeRemoteText,
   normalizeTextEncoding,

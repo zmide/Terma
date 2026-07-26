@@ -278,6 +278,40 @@ export class UpdateInstaller {
     }
   }
 
+  cacheInfo() {
+    let bytes = 0;
+    let files = 0;
+    try {
+      for (const entry of fs.readdirSync(this.directory, {withFileTypes:true})) {
+        if (!entry.isFile() || entry.name === path.basename(this.stateFile)) continue;
+        bytes += fs.statSync(path.join(this.directory, entry.name)).size;
+        files += 1;
+      }
+    } catch {}
+    const state = this.status();
+    return {bytes, files, busy:Boolean(this.inFlight || state.state === "downloading"), state:state.state};
+  }
+
+  clearCache() {
+    const state = this.status();
+    if (this.inFlight || state.state === "downloading") throw new Error("更新正在下载，暂时不能清理更新缓存");
+    try {
+      for (const entry of fs.readdirSync(this.directory, {withFileTypes:true})) {
+        if (entry.name === path.basename(this.stateFile)) continue;
+        fs.rmSync(path.join(this.directory, entry.name), {recursive:true, force:true});
+      }
+    } catch {}
+    const idle = writeState(this.stateFile, {
+      schema_version:1,
+      state:"idle",
+      platform:this.platform,
+      arch:this.arch,
+      package_type:this.windowsPackageType
+    });
+    this.liveState = idle;
+    return this.cacheInfo();
+  }
+
   private async performDownload(release: UpdateRelease): Promise<UpdateDownloadState> {
     if (!release?.update_available || !release.latest_version) throw new Error("当前没有可下载的新版本");
     const asset = selectUpdateAsset(release.assets, this.platform, this.arch, this.windowsPackageType);

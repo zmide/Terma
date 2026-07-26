@@ -2,6 +2,8 @@ let aboutSettings = null;
 let updateSettings = null;
 let runtimeSettings = null;
 let desktopSettings = null;
+let sftpDownloadSettings = null;
+let programCacheSettings = null;
 let runtimeSettingsMessage = null;
 let runtimeSettingsCheck = null;
 let licenseModalKeyHandler = null;
@@ -294,11 +296,16 @@ function normalizeRuntimeSettingsResponse(value={}) {
   return {
     ...source,
     sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
+    sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 5,
+    restore_workspace_tabs: savedSource.restore_workspace_tabs !== false,
     saved: {
       ...savedSource,
       listen_hosts: savedHosts.length ? savedHosts : ["127.0.0.1"],
       listen_port: runtimePortValue(savedSource.listen_port ?? savedSource.port),
-      sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true
+      sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
+      sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 5,
+      sftp_download_directory: String(savedSource.sftp_download_directory || ""),
+      restore_workspace_tabs: savedSource.restore_workspace_tabs !== false
     },
     effective: {
       ...effectiveSource,
@@ -523,32 +530,158 @@ async function saveRuntimeSettings() {
   }
 }
 
-async function saveSftpRecycleBinSetting() {
-  const input = $("sftpRecycleBinEnabled");
-  const button = $("sftpRecycleBinSave");
+async function saveWorkspaceRestoreSetting() {
+  const input = $("restoreWorkspaceTabs");
+  const button = $("restoreWorkspaceTabsSave");
   if (!input || !button) return;
-  const enabled = input.checked;
   setButtonBusy(button, true, "保存中");
   try {
     const result = await api("/api/runtime-settings", {
       method:"PUT",
-      body:JSON.stringify({sftp_recycle_bin_enabled:enabled})
+      body:JSON.stringify({restore_workspace_tabs:input.checked})
     });
-    runtimeSettings = normalizeRuntimeSettingsResponse({
-      ...runtimeSettings,
-      ...result,
-      available_hosts:result.available_hosts || runtimeSettings?.available_hosts,
-      saved:result.saved || {...runtimeSettings?.saved, sftp_recycle_bin_enabled:enabled},
-      effective:result.effective || runtimeSettings?.effective
-    });
-    input.checked = runtimeSettings.saved.sftp_recycle_bin_enabled;
-    notify(enabled ? "SFTP 回收站已开启" : "SFTP 回收站已关闭", "success");
+    runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
+    input.checked = runtimeSettings.saved.restore_workspace_tabs;
+    notify(input.checked ? "下次启动会恢复未关闭的工作区标签" : "下次启动不会恢复工作区标签", "success");
   } catch (error) {
-    input.checked = runtimeSettings?.saved?.sftp_recycle_bin_enabled === true;
-    notify(error.message || "SFTP 回收站设置保存失败", "error");
+    input.checked = runtimeSettings?.saved?.restore_workspace_tabs !== false;
+    notify(error.message || "工作区标签恢复设置保存失败", "error");
   } finally {
     setButtonBusy(button, false);
   }
+}
+
+function cacheManagementPanelHtml() {
+  const data = programCacheSettings || {};
+  const categories = data.categories || {};
+  const downloads = categories.sftp_downloads || {};
+  const uploads = categories.sftp_uploads || {};
+  const updates = categories.updates || {};
+  return `<section id="cacheManagementPanel">
+    <h3>缓存管理</h3>
+    <div class="settings-kv"><span>当前缓存</span><strong>${esc(formatBytes(Number(data.bytes || 0)))}</strong></div>
+    <div class="muted">SFTP 下载 ${formatBytes(Number(downloads.bytes || 0))} · SFTP 上传 ${formatBytes(Number(uploads.bytes || 0))} · 更新文件 ${formatBytes(Number(updates.bytes || 0))}</div>
+    <div class="muted">可清理 ${formatBytes(Number(data.reclaimable_bytes || 0))}。正在传输、暂停或失败待续传的文件会保留。</div>
+    <div class="actions"><button type="button" onclick="refreshProgramCacheSettings()">${icon("refresh-cw")}<span>刷新占用</span></button><button id="clearProgramCacheButton" class="danger" type="button" onclick="clearProgramCache()" ${Number(data.reclaimable_bytes || 0) > 0 ? "" : "disabled"}>${icon("trash-2")}<span>清理缓存</span></button></div>
+  </section>`;
+}
+
+async function loadProgramCacheSettings() {
+  programCacheSettings = await api("/api/cache");
+  return programCacheSettings;
+}
+
+function renderCacheManagementPanel() {
+  const current = $("cacheManagementPanel");
+  if (!current) return;
+  const host = document.createElement("div");
+  host.innerHTML = cacheManagementPanelHtml();
+  current.replaceWith(host.firstElementChild);
+}
+
+async function refreshProgramCacheSettings() {
+  try { await loadProgramCacheSettings(); renderCacheManagementPanel(); }
+  catch (error) { notify(error.message || "缓存占用读取失败", "error"); }
+}
+
+async function clearProgramCache() {
+  if (!await confirmModal("清理可重新生成的程序缓存？正在传输、暂停或失败待续传的文件不会删除。", "清理程序缓存", "清理缓存", "取消", true)) return;
+  const button = $("clearProgramCacheButton");
+  try {
+    setButtonBusy(button, true, "清理中");
+    programCacheSettings = await api("/api/cache", {method:"DELETE"});
+    renderCacheManagementPanel();
+    notify("程序缓存已清理", "success");
+  } catch (error) {
+    setButtonBusy(button, false);
+    notify(error.message || "缓存清理失败", "error");
+  }
+}
+
+async function saveSftpGlobalSettings() {
+  const recycle = $("sftpRecycleBinEnabled");
+  const sizeInput = $("sftpMaxOpenFileSizeMb");
+  const button = $("sftpGlobalSettingsSave");
+  if (!recycle || !sizeInput || !button) return;
+  const maximumSize = Number(sizeInput.value);
+  if (!Number.isInteger(maximumSize) || maximumSize < 1 || maximumSize > 100) return notify("SFTP 文件打开上限必须是 1-100 MB 的整数", "error");
+  setButtonBusy(button, true, "保存中");
+  try {
+    const result = await api("/api/runtime-settings", {
+      method:"PUT",
+      body:JSON.stringify({
+        sftp_recycle_bin_enabled:recycle.checked,
+        sftp_max_open_file_size_mb:maximumSize,
+        ...(sftpDownloadSettings?.delivery_mode === "desktop" ? {sftp_download_directory:$('sftpDownloadDirectory')?.value.trim() || ""} : {})
+      })
+    });
+    runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
+    recycle.checked = runtimeSettings.saved.sftp_recycle_bin_enabled;
+    sizeInput.value = runtimeSettings.saved.sftp_max_open_file_size_mb;
+    if (sftpDownloadSettings?.delivery_mode === "desktop") {
+      sftpDownloadSettings = await api("/api/sftp/download-settings");
+      if ($('sftpDownloadDirectory')) $('sftpDownloadDirectory').value = sftpDownloadSettings.configured_directory || "";
+      if ($('sftpDownloadDirectoryEffective')) $('sftpDownloadDirectoryEffective').textContent = `当前保存到：${sftpDownloadSettings.effective_directory || "系统下载目录"}`;
+    }
+    notify("SFTP 全局设置已保存", "success");
+  } catch (error) {
+    recycle.checked = runtimeSettings?.saved?.sftp_recycle_bin_enabled === true;
+    sizeInput.value = runtimeSettings?.saved?.sftp_max_open_file_size_mb || 5;
+    notify(error.message || "SFTP 全局设置保存失败", "error");
+  } finally {
+    setButtonBusy(button, false);
+  }
+}
+
+async function showSftpGlobalSettings() {
+  if (!runtimeSettings) await loadRuntimeSettings();
+  sftpDownloadSettings = await api("/api/sftp/download-settings").catch(() => ({delivery_mode:"browser"}));
+  const saved = runtimeSettings?.saved || {};
+  const modal = $("modal");
+  modal.onclick = null;
+  modal.innerHTML = `<div class="modal-card sftp-global-settings-modal" role="dialog" aria-modal="true" aria-labelledby="sftpGlobalSettingsTitle">
+    <div class="sftp-modal-head"><div><h2 id="sftpGlobalSettingsTitle">SFTP 全局设置</h2><span>应用到所有 SFTP 标签和连接</span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" onclick="closeSftpGlobalSettings()">${icon("x")}</button></div>
+    <label class="check-row"><input id="sftpRecycleBinEnabled" type="checkbox" ${saved.sftp_recycle_bin_enabled ? "checked" : ""}> 删除远程文件时先移入回收站</label>
+    <div class="muted">默认关闭。开启后，每台远端服务器会在当前 SSH 用户主目录创建 TunnelDesk 专用隐藏目录；关闭只影响之后的删除，不会自动清空已有内容。</div>
+    <label>可在程序中打开的最大文件（MB）</label>
+    <input id="sftpMaxOpenFileSizeMb" type="number" min="1" max="100" step="1" value="${Number(saved.sftp_max_open_file_size_mb || 5)}">
+    <div class="muted">适用于在线文本编辑和图片预览，范围 1-100 MB。更大的文件仍可正常下载。</div>
+    ${sftpDownloadSettings.delivery_mode === "desktop" ? `<label>SFTP 自动保存目录</label>
+    <div class="upload-line"><input id="sftpDownloadDirectory" value="${escAttr(sftpDownloadSettings.configured_directory || "")}" placeholder="留空时使用系统下载目录"><button type="button" onclick="chooseSftpDownloadDirectory()">${icon("folder-open")}<span>选择目录</span></button></div>
+    <div id="sftpDownloadDirectoryEffective" class="muted">当前保存到：${esc(sftpDownloadSettings.effective_directory || sftpDownloadSettings.default_directory || "系统下载目录")}</div>
+    <div class="actions compact"><button type="button" onclick="useDefaultSftpDownloadDirectory()">恢复系统默认</button><button type="button" onclick="openSftpDownloadDirectory()">${icon("folder-open")}<span>打开目录</span></button></div>` : `<label>下载位置</label>
+    <div class="muted">通过局域网或浏览器访问时，文件会直接下载到当前设备的浏览器下载目录，不会保存到运行 TunnelDesk 的服务器目录。具体位置由当前设备的浏览器设置决定。</div>`}
+    <div class="warning">回收站仍占用远端磁盘空间。永久删除和清空回收站无法撤销。</div>
+    <div class="actions"><button type="button" onclick="closeSftpGlobalSettings()">取消</button><button id="sftpGlobalSettingsSave" class="primary" type="button" onclick="saveSftpGlobalSettings()">${icon("save")}<span>保存 SFTP 设置</span></button></div>
+  </div>`;
+  modal.hidden = false;
+  modal.onkeydown = event => {
+    if (event.key === "Escape") closeSftpGlobalSettings();
+  };
+  $("sftpRecycleBinEnabled")?.focus();
+}
+
+async function chooseSftpDownloadDirectory() {
+  try {
+    const result = await api("/api/sftp/download-settings/choose", {method:"POST", body:"{}"});
+    if (result.path && $('sftpDownloadDirectory')) $('sftpDownloadDirectory').value = result.path;
+  } catch (error) { notify(error.message || "目录选择失败", "error"); }
+}
+
+function useDefaultSftpDownloadDirectory() {
+  if ($('sftpDownloadDirectory')) $('sftpDownloadDirectory').value = "";
+  if ($('sftpDownloadDirectoryEffective')) $('sftpDownloadDirectoryEffective').textContent = `当前保存到：${sftpDownloadSettings?.default_directory || "系统下载目录"}`;
+}
+
+async function openSftpDownloadDirectory() {
+  try { await api("/api/sftp/download-settings/open", {method:"POST", body:"{}"}); }
+  catch (error) { notify(error.message || "打开下载目录失败", "error"); }
+}
+
+function closeSftpGlobalSettings() {
+  const modal = $("modal");
+  modal.onkeydown = null;
+  closeModal();
 }
 
 async function openSettings(updateTab=true) {
@@ -563,6 +696,7 @@ async function openSettings(updateTab=true) {
     }
     await loadRuntimeSettings();
     await loadDesktopSettings();
+    await loadProgramCacheSettings().catch(() => { programCacheSettings = {bytes:0,reclaimable_bytes:0,categories:{}}; });
     renderSettings();
     refreshUpdateStatus(false);
   } catch (error) {
@@ -578,21 +712,21 @@ function renderSettings() {
     <div class="workspace-head"><div><h2>设置</h2><div class="subtitle">访问保护、通知、运行信息与开源许可。</div></div></div>
     <div class="settings-layout"><div class="settings-groups">
       <div class="settings-group" id="settings-general">
-        <div class="settings-group-head"><h3>通用设置</h3><span>管理桌面端行为和 SFTP 文件操作偏好。</span></div>
+        <div class="settings-group-head"><h3>通用设置</h3><span>管理桌面端行为和工作区恢复。</span></div>
         <div class="settings-grid single">
           ${storageSettingsPanelHtml()}
           ${desktopBehaviorPanelHtml()}
+          ${cacheManagementPanelHtml()}
           <section>
             <h3>终端显示</h3>
             <label class="check-row"><input id="terminalLatencyVisible" type="checkbox" ${terminalLatencyVisible ? "checked" : ""} onchange="setTerminalLatencyVisible(this.checked)"> 显示终端交互响应延迟</label>
             <div class="muted">默认开启。延迟从实际按键发送开始，到远端终端首次返回数据为止；不会额外发送探测命令，也不会触发 Tab 补全。此选项保存在当前设备。</div>
           </section>
           <section>
-            <h3>SFTP 回收站</h3>
-            <label class="check-row"><input id="sftpRecycleBinEnabled" type="checkbox" ${runtimeSettings?.saved?.sftp_recycle_bin_enabled ? "checked" : ""}> 删除远程文件时先移入回收站</label>
-            <div class="muted">默认关闭。开启后，每台远端服务器会在当前 SSH 用户主目录创建 TunnelDesk 专用隐藏目录；关闭只影响之后的删除，不会自动清空已有内容。</div>
-            <div class="warning">回收站仍占用远端磁盘空间。永久删除和清空回收站无法撤销。</div>
-            <div class="actions"><button id="sftpRecycleBinSave" class="primary" type="button" onclick="saveSftpRecycleBinSetting()">${icon("save")}<span>保存回收站设置</span></button></div>
+            <h3>工作区</h3>
+            <label class="check-row"><input id="restoreWorkspaceTabs" type="checkbox" ${runtimeSettings?.saved?.restore_workspace_tabs !== false ? "checked" : ""}> 恢复上次未关闭的标签</label>
+            <div class="muted">默认开启。重新启动 TunnelDesk 后会恢复终端、SFTP、转发、设置、日志、导入导出等所有未关闭的工作区标签。</div>
+            <div class="actions"><button id="restoreWorkspaceTabsSave" class="primary" type="button" onclick="saveWorkspaceRestoreSetting()">${icon("save")}<span>保存工作区设置</span></button></div>
           </section>
         </div>
       </div>
@@ -1006,9 +1140,7 @@ async function showLicenseModal() {
     </div>`;
     $("licenseText").textContent = about.license_text || "未找到开源许可正文。";
     modal.hidden = false;
-    modal.onclick = event => {
-      if (event.target === modal) closeLicenseModal();
-    };
+    modal.onclick = null;
     $("licenseModalClose").onclick = closeLicenseModal;
     licenseModalKeyHandler = event => {
       if (event.key === "Escape") closeLicenseModal();

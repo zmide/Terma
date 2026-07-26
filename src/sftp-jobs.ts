@@ -14,9 +14,12 @@ const jobs = new Map();
 const JOBS_FILE = path.join(DATA_DIR, "sftp-jobs.json");
 const DOWNLOADS_DIR = path.join(DATA_DIR, "downloads");
 const MAX_HISTORY = 120;
+const DOWNLOAD_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const BROWSER_DELIVERY_GRACE_MS = 10 * 60 * 1000;
 const ACTIVE_STATUSES = new Set(["running", "pending", "paused"]);
 let historyCache: any[] | null = null;
 let persistTimer: any = null;
+let downloadCacheMaintained = false;
 
 function resetTransferSpeed(job) {
   job.speed_bps = 0;
@@ -47,6 +50,10 @@ function finishTransferMetrics(job) {
 function readHistory(): any[] {
   if (historyCache) return historyCache;
   historyCache = readSftpJobHistory(JOBS_FILE);
+  if (!downloadCacheMaintained) {
+    downloadCacheMaintained = true;
+    maintainDownloadCache();
+  }
   return historyCache;
 }
 
@@ -130,8 +137,55 @@ function clearFinishedSftpJobs() {
 }
 
 function writeJsonJobs(items) {
+  const previous = historyCache ? [...historyCache] : readSftpJobHistory(JOBS_FILE);
   historyCache = writeSftpJobHistoryAtomic(JOBS_FILE, items, MAX_HISTORY);
+  const retained = new Set(historyCache.map((item: any) => item.id));
+  for (const item of previous) {
+    if (!retained.has(item.id)) cleanupJobArtifacts(item);
+  }
 }
+
+function removeDownloadCacheFile(job) {
+  if (!job?.temp_path) return false;
+  try { fs.unlinkSync(job.temp_path); } catch (error) { if (error?.code !== "ENOENT") return false; }
+  job.temp_path = "";
+  return true;
+}
+
+function maintainDownloadCache(now = Date.now()) {
+  fs.mkdirSync(DOWNLOADS_DIR, { recursive:true });
+  const history = historyCache || [];
+  const referenced = new Set();
+  let changed = false;
+  for (const job of [...jobs.values(), ...history]) {
+    if (job?.type !== "download" || !job.temp_path) continue;
+    const delivered = ["saved", "delivered"].includes(job.delivery_status);
+    const deliveryGraceExpired = job.delivery_status !== "delivered"
+      || now - Number(job.delivered_at || 0) >= BROWSER_DELIVERY_GRACE_MS;
+    const expired = ["done", "cancelled"].includes(job.status)
+      && now - Number(job.finished_at || job.created_at || now) >= DOWNLOAD_CACHE_TTL_MS;
+    if ((delivered && deliveryGraceExpired) || job.status === "cancelled" || expired) {
+      if (removeDownloadCacheFile(job)) changed = true;
+      if (expired && !delivered) {
+        job.delivery_status = "expired";
+        job.cache_expired_at = now;
+      }
+      continue;
+    }
+    referenced.add(path.resolve(job.temp_path));
+  }
+  try {
+    for (const entry of fs.readdirSync(DOWNLOADS_DIR, {withFileTypes:true})) {
+      if (!entry.isFile()) continue;
+      const file = path.resolve(DOWNLOADS_DIR, entry.name);
+      if (!referenced.has(file)) try { fs.unlinkSync(file); } catch {}
+    }
+  } catch {}
+  if (changed && historyCache) historyCache = writeSftpJobHistoryAtomic(JOBS_FILE, historyCache, MAX_HISTORY);
+}
+
+const downloadCacheTimer = setInterval(() => maintainDownloadCache(), 60 * 60 * 1000);
+downloadCacheTimer.unref?.();
 
 process.once("beforeExit", () => {
   if (persistTimer) persistJobs(true);
@@ -263,12 +317,14 @@ function cancelSftpJob(id) {
   if (!ACTIVE_STATUSES.has(job.status)) return { ok: true, status: job.status };
   try { job.child?.kill("SIGTERM"); } catch {}
   try { job.stream?.destroy(); } catch {}
+  try { job.out?.destroy(); } catch {}
   try { job.responder?.kill?.("SIGTERM"); } catch {}
   try { job.responder?.destroy?.(); } catch {}
   job.status = "cancelled";
   job.finished_at = Date.now();
   job.error = "用户已取消";
   finishTransferMetrics(job);
+  if (job.type === "download") removeDownloadCacheFile(job);
   persistJobs(true);
   return { ok: true, status: job.status };
 }
@@ -317,7 +373,45 @@ function getRemoteSize(connection, remotePath) {
   });
 }
 
-function startDownloadJob(connectionId, remotePath) {
+function safeLocalFilename(value) {
+  const source = String(value || "download");
+  const normalized = process.platform === "win32"
+    ? source.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/g, "")
+    : source.replace(/[\x00/]/g, "_");
+  return normalized || "download";
+}
+
+function availableLocalPath(directory, filename) {
+  const parsed = path.parse(safeLocalFilename(filename));
+  let target = path.join(directory, `${parsed.name}${parsed.ext}`);
+  for (let index = 1; fs.existsSync(target); index += 1) target = path.join(directory, `${parsed.name} (${index})${parsed.ext}`);
+  return target;
+}
+
+function autoSaveDownloadedFile(job) {
+  const directory = String(job.auto_save_directory || "").trim();
+  if (!directory || !job.temp_path || !fs.existsSync(job.temp_path)) return;
+  try {
+    fs.mkdirSync(directory, { recursive:true });
+    const target = availableLocalPath(directory, path.posix.basename(job.remote_path || "download"));
+    try {
+      fs.renameSync(job.temp_path, target);
+    } catch (error) {
+      if (error?.code !== "EXDEV") throw error;
+      fs.copyFileSync(job.temp_path, target, fs.constants.COPYFILE_EXCL);
+      fs.unlinkSync(job.temp_path);
+    }
+    job.saved_path = target;
+    job.delivery_status = "saved";
+    job.delivered_at = Date.now();
+    job.temp_path = "";
+  } catch (error) {
+    job.delivery_status = "failed";
+    job.delivery_error = error.message || String(error);
+  }
+}
+
+function startDownloadJob(connectionId, remotePath, options: any = {}) {
   const connection = getConnection(connectionId);
   const id = crypto.randomUUID();
   const basename = path.posix.basename(String(remotePath || "").replace(/\\/g, "/")) || "download";
@@ -331,6 +425,9 @@ function startDownloadJob(connectionId, remotePath) {
     label: `下载 ${basename}`,
     remote_path: remotePath,
     temp_path: tempPath,
+    delivery_mode: options.deliveryMode === "desktop" ? "desktop" : "browser",
+    delivery_status: "pending",
+    auto_save_directory: options.deliveryMode === "desktop" ? String(options.autoSaveDirectory || "") : "",
     status: "pending",
     stdout: "",
     stderr: "",
@@ -346,7 +443,7 @@ function startDownloadJob(connectionId, remotePath) {
   jobs.set(id, job);
   persistJobs();
   runDownloadJob(id, true);
-  return { id, status: job.status };
+  return { id, status: job.status, delivery_mode:job.delivery_mode };
 }
 
 function runDownloadJob(id, fetchSize) {
@@ -391,13 +488,14 @@ function runDownloadJob(id, fetchSize) {
         if (error) job.error = error;
         if (status !== "paused") job.finished_at = Date.now();
         if (status !== "paused") finishTransferMetrics(job);
+        if (status === "done" && job.delivery_mode === "desktop") autoSaveDownloadedFile(job);
         persistJobs(status !== "paused");
         if (status === "done" || status === "failed") {
           notifyEvent({
             type: "sftp",
             level: status === "done" ? "success" : "error",
             title: status === "done" ? "SFTP 下载已完成" : "SFTP 下载失败",
-            message: `${job.connection_name} · ${job.label}${job.error ? `\n${job.error}` : ""}`,
+            message: `${job.connection_name} · ${job.label}${job.saved_path ? `\n已保存到 ${job.saved_path}` : ""}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}${job.error ? `\n${job.error}` : ""}`,
             action: { view: "sftp", connection_id: job.connection_id }
           }, { cooldown_ms: 0 });
         }
@@ -450,8 +548,9 @@ function finishDownloadJob(id, complete) {
     job.status = "done";
     job.finished_at = Date.now();
     finishTransferMetrics(job);
+    if (job.delivery_mode === "desktop") autoSaveDownloadedFile(job);
     persistJobs(true);
-    notifyEvent({ type: "sftp", level: "success", title: "SFTP 下载已完成", message: `${job.connection_name} · ${job.label}`, action: { view: "sftp", connection_id: job.connection_id } }, { cooldown_ms: 0 });
+    notifyEvent({ type: "sftp", level: "success", title: "SFTP 下载已完成", message: `${job.connection_name} · ${job.label}${job.saved_path ? `\n已保存到 ${job.saved_path}` : ""}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}`, action: { view: "sftp", connection_id: job.connection_id } }, { cooldown_ms: 0 });
   }
 }
 
@@ -555,6 +654,83 @@ function getSftpJobFile(id) {
   if (job.type !== "download") throw new Error("该任务没有可下载的文件");
   if (!fs.existsSync(job.temp_path)) throw new Error("临时文件不存在");
   return { path: job.temp_path, name: path.posix.basename(job.remote_path || "download") };
+}
+
+function markSftpJobDelivered(id) {
+  const job = jobs.get(id) || readHistory().find((item) => item.id === id);
+  if (!job || job.type !== "download") return {ok:false};
+  job.delivery_status = "delivered";
+  job.delivered_at = Date.now();
+  if (jobs.has(id)) persistJobs(true);
+  else writeJsonJobs(readHistory());
+  return {ok:true};
+}
+
+function directoryCacheStats(directory, protectedPaths = new Set()) {
+  let bytes = 0;
+  let files = 0;
+  let reclaimableBytes = 0;
+  let reclaimableFiles = 0;
+  try {
+    for (const entry of fs.readdirSync(directory, {withFileTypes:true})) {
+      if (!entry.isFile()) continue;
+      const file = path.resolve(directory, entry.name);
+      const size = fs.statSync(file).size;
+      bytes += size;
+      files += 1;
+      if (!protectedPaths.has(file)) {
+        reclaimableBytes += size;
+        reclaimableFiles += 1;
+      }
+    }
+  } catch {}
+  return {bytes, files, reclaimable_bytes:reclaimableBytes, reclaimable_files:reclaimableFiles};
+}
+
+function sftpCacheInfo() {
+  readHistory();
+  maintainDownloadCache();
+  const protectedDownloads = new Set();
+  const protectedUploads = new Set();
+  for (const job of jobs.values()) {
+    if (!["running", "pending", "paused", "failed"].includes(job.status)) continue;
+    if (job.type === "download" && job.temp_path) protectedDownloads.add(path.resolve(job.temp_path));
+    if (job.type === "upload" && job.local_path) protectedUploads.add(path.resolve(job.local_path));
+  }
+  const downloads = directoryCacheStats(DOWNLOADS_DIR, protectedDownloads);
+  const uploads = directoryCacheStats(path.join(DATA_DIR, "uploads"), protectedUploads);
+  return {
+    bytes:downloads.bytes + uploads.bytes,
+    files:downloads.files + uploads.files,
+    reclaimable_bytes:downloads.reclaimable_bytes + uploads.reclaimable_bytes,
+    reclaimable_files:downloads.reclaimable_files + uploads.reclaimable_files,
+    downloads,
+    uploads
+  };
+}
+
+function clearSftpCache() {
+  readHistory();
+  const protectedPaths = new Set();
+  for (const job of jobs.values()) {
+    if (!["running", "pending", "paused", "failed"].includes(job.status)) continue;
+    for (const key of ["temp_path", "local_path"]) if (job[key]) protectedPaths.add(path.resolve(job[key]));
+  }
+  for (const job of [...jobs.values(), ...readHistory()]) {
+    if (job.type !== "download" || !["done", "cancelled"].includes(job.status)) continue;
+    if (removeDownloadCacheFile(job) && !["saved", "delivered"].includes(job.delivery_status)) job.delivery_status = "cache_cleared";
+  }
+  for (const directory of [DOWNLOADS_DIR, path.join(DATA_DIR, "uploads")]) {
+    try {
+      for (const entry of fs.readdirSync(directory, {withFileTypes:true})) {
+        if (!entry.isFile()) continue;
+        const file = path.resolve(directory, entry.name);
+        if (!protectedPaths.has(file)) try { fs.unlinkSync(file); } catch {}
+      }
+    } catch {}
+  }
+  persistJobs(true);
+  return sftpCacheInfo();
 }
 
 function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir = ".") {
@@ -703,4 +879,4 @@ function compressJob(connectionId, paths, targetDir = ".", archiveName = "") {
   return { ...startSftpJob(connectionId, "compress", request.command, `压缩 ${request.paths.length} 项为 ${request.name}`), output:request.output };
 }
 
-module.exports = { cancelSftpJob, clearFinishedSftpJobs, compressJob, copyJob, crossCopyJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, moveJob, normalizeCompressionRequest, pauseSftpJob, resumeSftpJob, startDownloadJob, startUploadJob, __buildCompressCommand: normalizeCompressionRequest };
+module.exports = { cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, normalizeCompressionRequest, pauseSftpJob, resumeSftpJob, sftpCacheInfo, startDownloadJob, startUploadJob, __buildCompressCommand: normalizeCompressionRequest };

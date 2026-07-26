@@ -6,6 +6,26 @@ const path = require("node:path");
 const DEFAULT_LISTEN_HOSTS = ["127.0.0.1"];
 const DEFAULT_LISTEN_PORT = 8088;
 const MAX_PORT_FALLBACKS = 20;
+const DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB = 5;
+const DEFAULT_TERMINAL_SETTINGS = Object.freeze({
+  middle_mouse_action: "paste_clipboard",
+  right_mouse_action: "context_menu",
+  ctrl_left_click_moves_cursor: true,
+  url_links_enabled: true,
+  url_prefixes: ["http://", "https://", "ftp://", "ssh://", "telnet://"],
+  url_ctrl_click: true,
+  word_separators: " ()[]{}',\"`",
+  shift_double_click_uses_separators: false,
+  auto_copy_selection: false,
+  copy_tabs_to_spaces: false,
+  copy_include_trailing_newline: false,
+  copy_trim_trailing_spaces: false,
+  select_non_whitespace_block: false,
+  multiline_paste_mode: "prompt"
+});
+const TERMINAL_MOUSE_ACTIONS = new Set(["none", "context_menu", "paste_clipboard", "open_settings", "send_enter", "paste_selection"]);
+const TERMINAL_MULTILINE_PASTE_MODES = new Set(["prompt", "paste", "single_line"]);
+const TERMINAL_URL_SCHEMES = new Set(["http", "https", "ftp", "ssh", "telnet"]);
 
 function splitListenHosts(value) {
   const source = Array.isArray(value) ? value : [value];
@@ -34,18 +54,79 @@ function normalizeListenPort(value, fallback: any = DEFAULT_LISTEN_PORT) {
   return port;
 }
 
+function normalizeTerminalUrlPrefixes(value, fallback: any = DEFAULT_TERMINAL_SETTINGS.url_prefixes) {
+  const source = Array.isArray(value) ? value : String(value ?? "").split(/[|,\s]+/);
+  const prefixes = [...new Set(source.map(item => String(item || "").trim()).filter(Boolean))];
+  const normalized = prefixes.filter(prefix => {
+    const match = prefix.match(/^([a-z][a-z0-9+.-]*):\/\/$/i);
+    return Boolean(match && TERMINAL_URL_SCHEMES.has(match[1].toLowerCase()));
+  }).slice(0, 10);
+  if (normalized.length) return normalized;
+  return Array.isArray(fallback) ? [...fallback] : [...DEFAULT_TERMINAL_SETTINGS.url_prefixes];
+}
+
+function normalizeTerminalSettings(value: any = {}, fallback: any = DEFAULT_TERMINAL_SETTINGS) {
+  const source = value && typeof value === "object" ? value : {};
+  const base = fallback && typeof fallback === "object" ? fallback : DEFAULT_TERMINAL_SETTINGS;
+  const middleMouseAction = String(source.middle_mouse_action ?? base.middle_mouse_action ?? DEFAULT_TERMINAL_SETTINGS.middle_mouse_action);
+  const rightMouseAction = String(source.right_mouse_action ?? base.right_mouse_action ?? DEFAULT_TERMINAL_SETTINGS.right_mouse_action);
+  const multilinePasteMode = String(source.multiline_paste_mode ?? base.multiline_paste_mode ?? DEFAULT_TERMINAL_SETTINGS.multiline_paste_mode);
+  const wordSeparators = String(source.word_separators ?? base.word_separators ?? DEFAULT_TERMINAL_SETTINGS.word_separators).slice(0, 128);
+  return {
+    middle_mouse_action: TERMINAL_MOUSE_ACTIONS.has(middleMouseAction) ? middleMouseAction : DEFAULT_TERMINAL_SETTINGS.middle_mouse_action,
+    right_mouse_action: TERMINAL_MOUSE_ACTIONS.has(rightMouseAction) ? rightMouseAction : DEFAULT_TERMINAL_SETTINGS.right_mouse_action,
+    ctrl_left_click_moves_cursor: source.ctrl_left_click_moves_cursor === undefined ? base.ctrl_left_click_moves_cursor !== false : source.ctrl_left_click_moves_cursor === true,
+    url_links_enabled: source.url_links_enabled === undefined ? base.url_links_enabled === true : source.url_links_enabled === true,
+    url_prefixes: normalizeTerminalUrlPrefixes(source.url_prefixes, base.url_prefixes),
+    url_ctrl_click: source.url_ctrl_click === undefined ? base.url_ctrl_click !== false : source.url_ctrl_click === true,
+    word_separators: wordSeparators || DEFAULT_TERMINAL_SETTINGS.word_separators,
+    shift_double_click_uses_separators: source.shift_double_click_uses_separators === undefined ? base.shift_double_click_uses_separators === true : source.shift_double_click_uses_separators === true,
+    auto_copy_selection: source.auto_copy_selection === undefined ? base.auto_copy_selection !== false : source.auto_copy_selection === true,
+    copy_tabs_to_spaces: source.copy_tabs_to_spaces === undefined ? base.copy_tabs_to_spaces === true : source.copy_tabs_to_spaces === true,
+    copy_include_trailing_newline: source.copy_include_trailing_newline === undefined ? base.copy_include_trailing_newline !== false : source.copy_include_trailing_newline === true,
+    copy_trim_trailing_spaces: source.copy_trim_trailing_spaces === undefined ? base.copy_trim_trailing_spaces === true : source.copy_trim_trailing_spaces === true,
+    select_non_whitespace_block: source.select_non_whitespace_block === undefined ? base.select_non_whitespace_block === true : source.select_non_whitespace_block === true,
+    multiline_paste_mode: TERMINAL_MULTILINE_PASTE_MODES.has(multilinePasteMode) ? multilinePasteMode : DEFAULT_TERMINAL_SETTINGS.multiline_paste_mode
+  };
+}
+
 function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
   const hostsValue = value.listen_hosts !== undefined ? value.listen_hosts
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 2,
+    schema_version: 5,
     listen_hosts: normalizeListenHosts(hostsValue, hostsValue === undefined ? (fallback.listen_hosts ?? DEFAULT_LISTEN_HOSTS) : null),
     listen_port: normalizeListenPort(portValue, portValue === undefined ? (fallback.listen_port ?? DEFAULT_LISTEN_PORT) : null),
     sftp_recycle_bin_enabled: value.sftp_recycle_bin_enabled === undefined
       ? fallback.sftp_recycle_bin_enabled === true
-      : value.sftp_recycle_bin_enabled === true
+      : value.sftp_recycle_bin_enabled === true,
+    sftp_max_open_file_size_mb: normalizeSftpMaxOpenFileSize(
+      value.sftp_max_open_file_size_mb,
+      fallback.sftp_max_open_file_size_mb
+    ),
+    sftp_download_directory: normalizeSftpDownloadDirectory(
+      value.sftp_download_directory,
+      fallback.sftp_download_directory
+    ),
+    restore_workspace_tabs: value.restore_workspace_tabs === undefined
+      ? fallback.restore_workspace_tabs !== false
+      : value.restore_workspace_tabs !== false,
+    terminal: normalizeTerminalSettings(value.terminal, fallback.terminal)
   };
+}
+
+function normalizeSftpDownloadDirectory(value, fallback = "") {
+  const directory = String(value === undefined || value === null ? (fallback || "") : value).trim();
+  if (directory.includes("\0") || directory.length > 4096) throw new Error("SFTP 下载目录无效");
+  return directory;
+}
+
+function normalizeSftpMaxOpenFileSize(value, fallback = DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB) {
+  const candidate = value === undefined || value === null || String(value).trim() === "" ? fallback : value;
+  const size = Number(candidate);
+  if (!Number.isInteger(size) || size < 1 || size > 100) throw new Error("SFTP 文件打开上限必须是 1-100 MB 的整数");
+  return size;
 }
 
 function readRuntimeSettings(filePath) {
@@ -116,6 +197,8 @@ function availableListenHosts(interfaces: any = os.networkInterfaces()) {
 }
 
 module.exports = {
+  DEFAULT_TERMINAL_SETTINGS,
+  DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB,
   DEFAULT_LISTEN_HOSTS,
   DEFAULT_LISTEN_PORT,
   MAX_PORT_FALLBACKS,
@@ -124,6 +207,9 @@ module.exports = {
   normalizeListenHosts,
   normalizeListenPort,
   normalizeRuntimeSettings,
+  normalizeSftpDownloadDirectory,
+  normalizeSftpMaxOpenFileSize,
+  normalizeTerminalSettings,
   readRuntimeSettings,
   resolveRuntimeSettings,
   splitListenHosts,

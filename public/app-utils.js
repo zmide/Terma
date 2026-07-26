@@ -385,9 +385,41 @@ function stateView(kind, title, detail="", actionHtml="") {
   return `<div class="ui-state ${type}"><span class="ui-state-icon" aria-hidden="true"></span><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ""}${actionHtml ? `<div class="actions">${actionHtml}</div>` : ""}</div>`;
 }
 
+async function writeClipboardText(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {}
+  }
+  const field = document.createElement("textarea");
+  field.value = String(text || "");
+  field.setAttribute("readonly", "");
+  field.style.position = "fixed";
+  field.style.left = "-9999px";
+  document.body.appendChild(field);
+  let copied = false;
+  try {
+    field.select();
+    field.setSelectionRange(0, field.value.length);
+    copied = typeof document.execCommand === "function" && document.execCommand("copy");
+  } catch {
+    copied = false;
+  } finally {
+    field.remove();
+  }
+  if (!copied) throw new Error("当前浏览器不支持直接复制，请使用系统复制");
+}
+
 async function copyText(text) {
-  await navigator.clipboard.writeText(text);
-  notify("已复制", "success");
+  try {
+    await writeClipboardText(text);
+    notify("已复制", "success");
+    return true;
+  } catch (error) {
+    notify(error?.message || "复制失败，请使用系统复制", "error");
+    return false;
+  }
 }
 
 function toggleCheckGroup(box, cls){ document.querySelectorAll(`.${cls}-check`).forEach(x=>x.checked=box.checked); }

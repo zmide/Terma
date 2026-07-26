@@ -17,6 +17,8 @@ let FitAddonClass = null;
 let addingGroup = false;
 let pendingGroupSelectValue = "";
 let terminalFontSize = Number(localStorage.getItem("terminalFontSize") || 13);
+let terminalGlobalSettings = null;
+let terminalGlobalSettingsPromise = null;
 let refreshInFlight = false;
 let connectionSearch = localStorage.getItem("connectionSearch") || "";
 let connectionBulkMode = false;
@@ -133,7 +135,7 @@ refreshIcons();
 document.addEventListener("scroll", () => {
   if (!isMobileLayout()) hideActionMenu();
 }, true);
-loadAll().then(() => {
+Promise.all([loadAll(), loadRuntimeSettings()]).then(() => {
   if (!restoreTabsState()) renderWelcome();
   syncResponsivePane();
 }).catch(e=>notify(e.message,"error"));
