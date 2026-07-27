@@ -2,12 +2,10 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const iconv = require("iconv-lite");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
-const { DATA_DIR, SSH_BIN } = require("./config");
+const { DATA_DIR } = require("./config");
 const { getConnection } = require("./db");
-const { effectiveExtraArgs, securePrivateKeyPermissions } = require("./ssh");
 const { notifyEvent } = require("./notifications");
-const { isPasswordConnection, spawnPasswordCommand } = require("./ssh2-client");
+const { clearSftpDragCache, sftpDragCacheInfo, spawnSftpSessionCommand } = require("./sftp-session");
 const { readSftpJobHistory, writeSftpJobHistoryAtomic } = require("./sftp-job-store");
 
 const jobs = new Map();
@@ -93,22 +91,9 @@ function remotePathOperand(connection, value) {
   return `"$(printf '%b' ${shellQuote(octal)})"`;
 }
 
-function sshArgs(connection, command) {
-  const args = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", String(connection.ssh_port || 22)];
-  if (connection.identity_file) {
-    securePrivateKeyPermissions(connection.identity_file);
-    args.push("-i", connection.identity_file);
-  }
-  args.push(...effectiveExtraArgs(connection.extra_args));
-  args.push(`${connection.ssh_user}@${connection.ssh_host}`, command);
-  return args;
-}
-
 function spawnRemote(connection, command) {
   const portableCommand = `sh -c ${shellQuote(command)}`;
-  return isPasswordConnection(connection)
-    ? spawnPasswordCommand(connection, portableCommand)
-    : spawn(SSH_BIN, sshArgs(connection, portableCommand), { stdio: ["pipe", "pipe", "pipe"] });
+  return spawnSftpSessionCommand(connection, portableCommand);
 }
 
 function listSftpJobs() {
@@ -393,7 +378,7 @@ function autoSaveDownloadedFile(job) {
   if (!directory || !job.temp_path || !fs.existsSync(job.temp_path)) return;
   try {
     fs.mkdirSync(directory, { recursive:true });
-    const target = availableLocalPath(directory, path.posix.basename(job.remote_path || "download"));
+    const target = availableLocalPath(directory, job.download_name || path.posix.basename(job.remote_path || "download"));
     try {
       fs.renameSync(job.temp_path, target);
     } catch (error) {
@@ -433,6 +418,7 @@ function startDownloadJob(connectionId, remotePath, options: any = {}) {
     stderr: "",
     error: "",
     size: 0,
+    size_known: false,
     transferred: 0,
     progress: 0,
     created_at: Date.now(),
@@ -452,15 +438,20 @@ function runDownloadJob(id, fetchSize) {
   const connection = getConnection(job.connection_id);
   (async () => {
     try {
-      if (fetchSize || !job.size) {
+      if (fetchSize || !job.size_known) {
         job.size = await getRemoteSize(connection, job.remote_path);
+        job.size_known = true;
         persistJobs();
       }
       if (job.status === "cancelled") return;
-      const offset = fs.existsSync(job.temp_path) ? fs.statSync(job.temp_path).size : 0;
+      let offset = fs.existsSync(job.temp_path) ? fs.statSync(job.temp_path).size : 0;
+      if (job.size_known && offset > job.size) {
+        fs.truncateSync(job.temp_path, 0);
+        offset = 0;
+      }
       job.transferred = offset;
       job.progress = job.size ? Math.min(99, Math.floor(offset / job.size * 100)) : 0;
-      if (job.size && offset >= job.size && job.size > 0) {
+      if (job.size_known && offset === job.size) {
         finishDownloadJob(id, true);
         return;
       }
@@ -476,12 +467,17 @@ function runDownloadJob(id, fetchSize) {
       resetTransferSpeed(job);
       persistJobs();
       let paused = false;
+      let childClosed = false;
+      let stdoutEnded = false;
+      let outputEnding = false;
+      let closeCode: number | null = null;
+      let closeSignal: string | null = null;
       const finish = (status, error = "") => {
         if (job.finished_at && status !== "paused") return;
         try { out.destroy(); } catch {}
         if (status !== "paused") try { child.kill("SIGTERM"); } catch {}
         if (status === "done") {
-          job.transferred = job.size || fs.existsSync(job.temp_path) ? fs.statSync(job.temp_path).size : job.transferred;
+          job.transferred = (job.size || fs.existsSync(job.temp_path)) ? fs.statSync(job.temp_path).size : job.transferred;
           job.progress = 100;
         }
         job.status = status;
@@ -500,26 +496,45 @@ function runDownloadJob(id, fetchSize) {
           }, { cooldown_ms: 0 });
         }
       };
+      const completeAfterStreams = () => {
+        if (!childClosed || !stdoutEnded || outputEnding || paused || job.status === "cancelled") return;
+        outputEnding = true;
+        out.end(() => {
+          if (paused || job.status === "cancelled") return;
+          const realSize = fs.existsSync(job.temp_path) ? fs.statSync(job.temp_path).size : 0;
+          job.transferred = realSize;
+          const sizeMatches = !job.size_known || realSize === Number(job.size || 0);
+          if ((closeCode === 0 && sizeMatches) || (closeCode !== 0 && job.size > 0 && sizeMatches)) {
+            finish("done");
+            return;
+          }
+          if (!sizeMatches) {
+            finish("failed", `下载不完整：应为 ${Number(job.size || 0)} 字节，实际 ${realSize} 字节`);
+            return;
+          }
+          finish("failed", job.stderr || `退出码 ${closeCode ?? ""}${closeSignal ? `，信号 ${closeSignal}` : ""}`);
+        });
+      };
       child.stdout.on("data", (chunk) => {
         if (paused) return;
         if (!out.write(chunk)) { child.stdout.pause(); out.once("drain", () => child.stdout.resume()); }
         recordTransferred(job, chunk.length);
         persistJobs();
       });
+      child.stdout.on("end", () => {
+        stdoutEnded = true;
+        completeAfterStreams();
+      });
+      child.stdout.on("error", (error) => finish("failed", error.message));
+      out.on("error", (error) => finish("failed", error.message));
       child.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
       child.on("error", (error) => finish("failed", error.message));
       child.on("close", (code, signal) => {
         if (job.status === "paused" || job.status === "cancelled") return;
-        out.end(() => {
-          if (paused) return;
-          if (code === 0) {
-            finish("done");
-          } else {
-            const realSize = fs.existsSync(job.temp_path) ? fs.statSync(job.temp_path).size : job.transferred;
-            if (job.size && realSize >= job.size) finish("done");
-            else finish("failed", job.stderr || `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`);
-          }
-        });
+        childClosed = true;
+        closeCode = code;
+        closeSignal = signal;
+        completeAfterStreams();
       });
       job.pauseNow = () => {
         paused = true;
@@ -653,7 +668,88 @@ function getSftpJobFile(id) {
   if (!job) throw new Error("任务不存在");
   if (job.type !== "download") throw new Error("该任务没有可下载的文件");
   if (!fs.existsSync(job.temp_path)) throw new Error("临时文件不存在");
-  return { path: job.temp_path, name: path.posix.basename(job.remote_path || "download") };
+  return { path: job.temp_path, name: job.download_name || path.posix.basename(job.remote_path || "download") };
+}
+
+function startArchiveDownloadJob(connectionId, remotePaths, options: any = {}) {
+  const connection = getConnection(connectionId);
+  const paths = [...new Set((Array.isArray(remotePaths) ? remotePaths : []).map(item => String(item || "").replace(/\\/g, "/")).filter(Boolean))];
+  if (!paths.length || paths.length > 200) throw new Error("一次最多打包下载 200 个项目");
+  const parents = new Set(paths.map(item => path.posix.dirname(item.replace(/\/+$/, "")) || "."));
+  if (parents.size !== 1) throw new Error("打包下载的项目必须位于同一目录");
+  const parent = [...parents][0];
+  const names = paths.map(item => path.posix.basename(item.replace(/\/+$/, "")));
+  const id = crypto.randomUUID();
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const basename = `tunneldesk-${timestamp}.tar.gz`;
+  fs.mkdirSync(DOWNLOADS_DIR, {recursive:true});
+  const tempPath = path.join(DOWNLOADS_DIR, `${id}-${basename}`);
+  const job: any = {
+    id,
+    connection_id:Number(connectionId),
+    connection_name:connection.name,
+    type:"download",
+    label:`打包下载 ${paths.length} 项`,
+    remote_paths:paths,
+    remote_path:parent,
+    download_name:basename,
+    temp_path:tempPath,
+    delivery_mode:options.deliveryMode === "desktop" ? "desktop" : "browser",
+    delivery_status:"pending",
+    auto_save_directory:options.deliveryMode === "desktop" ? String(options.autoSaveDirectory || "") : "",
+    status:"running",
+    stdout:"",
+    stderr:"",
+    error:"",
+    size:0,
+    transferred:0,
+    progress:0,
+    created_at:Date.now(),
+    started_at:Date.now(),
+    finished_at:null
+  };
+  resetTransferSpeed(job);
+  jobs.set(id, job);
+  persistJobs();
+  const command = `tar -C ${remotePathOperand(connection, parent)} -czf - -- ${names.map(name => remotePathOperand(connection, name)).join(" ")}`;
+  const child = spawnRemote(connection, command);
+  const out = fs.createWriteStream(tempPath);
+  job.child = child;
+  job.out = out;
+  let finished = false;
+  const finish = (status, error="") => {
+    if (finished) return;
+    finished = true;
+    job.status = status;
+    job.error = error;
+    job.finished_at = Date.now();
+    if (status === "done") {
+      job.size = fs.existsSync(tempPath) ? fs.statSync(tempPath).size : job.transferred;
+      job.transferred = job.size;
+      job.progress = 100;
+      if (job.delivery_mode === "desktop") autoSaveDownloadedFile(job);
+    }
+    finishTransferMetrics(job);
+    persistJobs(true);
+    notifyEvent({
+      type:"sftp",
+      level:status === "done" ? "success" : "error",
+      title:status === "done" ? "SFTP 打包下载已完成" : "SFTP 打包下载失败",
+      message:`${job.connection_name} · ${job.label}${job.saved_path ? `\n已保存到 ${job.saved_path}` : ""}${error ? `\n${error}` : ""}`,
+      action:{view:"sftp", connection_id:job.connection_id}
+    }, {cooldown_ms:0});
+  };
+  child.stdout.on("data", chunk => {
+    if (!out.write(chunk)) { child.stdout.pause(); out.once("drain", () => child.stdout.resume()); }
+    recordTransferred(job, chunk.length);
+    persistJobs();
+  });
+  child.stderr.on("data", chunk => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
+  child.on("error", error => { try { out.destroy(); } catch {} finish("failed", error.message); });
+  child.on("close", code => {
+    out.end(() => finish(code === 0 ? "done" : "failed", code === 0 ? "" : (job.stderr || `退出码 ${code ?? ""}`)));
+  });
+  return {id, status:job.status, delivery_mode:job.delivery_mode};
 }
 
 function markSftpJobDelivered(id) {
@@ -699,13 +795,15 @@ function sftpCacheInfo() {
   }
   const downloads = directoryCacheStats(DOWNLOADS_DIR, protectedDownloads);
   const uploads = directoryCacheStats(path.join(DATA_DIR, "uploads"), protectedUploads);
+  const drag = sftpDragCacheInfo();
   return {
-    bytes:downloads.bytes + uploads.bytes,
-    files:downloads.files + uploads.files,
-    reclaimable_bytes:downloads.reclaimable_bytes + uploads.reclaimable_bytes,
-    reclaimable_files:downloads.reclaimable_files + uploads.reclaimable_files,
+    bytes:downloads.bytes + uploads.bytes + drag.bytes,
+    files:downloads.files + uploads.files + drag.files,
+    reclaimable_bytes:downloads.reclaimable_bytes + uploads.reclaimable_bytes + drag.reclaimable_bytes,
+    reclaimable_files:downloads.reclaimable_files + uploads.reclaimable_files + drag.reclaimable_files,
     downloads,
-    uploads
+    uploads,
+    drag
   };
 }
 
@@ -729,11 +827,46 @@ function clearSftpCache() {
       }
     } catch {}
   }
+  clearSftpDragCache();
   persistJobs(true);
   return sftpCacheInfo();
 }
 
-function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir = ".") {
+function buildCrossCopyOverwriteCommand(targetConnection, targetDir, names) {
+  const temporaryName = `.tunneldesk-cross-copy-${crypto.randomUUID()}`;
+  const temporaryRoot = `./${temporaryName}`;
+  const incomingRoot = `${temporaryRoot}/incoming`;
+  const backupRoot = `${temporaryRoot}/backup`;
+  const replacements = [];
+  const rollback = [];
+  names.forEach((name, index) => {
+    const target = remotePathOperand(targetConnection, `./${name}`);
+    const staged = remotePathOperand(targetConnection, `${incomingRoot}/${name}`);
+    const backup = shellQuote(`${backupRoot}/${index}`);
+    const marker = shellQuote(`${temporaryRoot}/placed-${index}`);
+    replacements.push(`(if [ -e ${target} ] || [ -L ${target} ]; then mv -- ${target} ${backup}; fi) && : > ${marker} && mv -- ${staged} ${target}`);
+    rollback.unshift(`if [ -e ${marker} ]; then rm -rf -- ${target}; fi; if [ -e ${backup} ] || [ -L ${backup} ]; then mv -- ${backup} ${target}; fi`);
+  });
+  const rollbackBody = rollback.join("; ");
+  return [
+    `cd ${remotePathOperand(targetConnection, targetDir)} || exit $?`,
+    `td_tmp=${shellQuote(temporaryName)}`,
+    `mkdir -- "$td_tmp" || exit $?`,
+    "td_committed=0",
+    `td_rollback() { td_status=$?; trap - 0 1 2 3 15; if [ "$td_committed" -ne 1 ]; then ${rollbackBody}; fi; rm -rf -- "$td_tmp"; exit "$td_status"; }`,
+    "trap td_rollback 0 1 2 3 15",
+    `(mkdir -- "$td_tmp/incoming" "$td_tmp/backup" && tar -xf - -C "$td_tmp/incoming" && ${replacements.join(" && ")})`,
+    "td_status=$?",
+    "if [ \"$td_status\" -ne 0 ]; then exit \"$td_status\"; fi",
+    "td_committed=1",
+    "rm -rf -- \"$td_tmp\"",
+    "td_status=$?",
+    "trap - 0 1 2 3 15",
+    "exit \"$td_status\""
+  ].join("; ");
+}
+
+function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir = ".", conflictMode = "error") {
   const sourceConnection = getConnection(sourceConnectionId);
   const targetConnection = getConnection(targetConnectionId);
   if (Number(sourceConnectionId) === Number(targetConnectionId)) throw new Error("跨主机复制必须选择不同的源连接和目标连接");
@@ -748,13 +881,32 @@ function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir =
   const parent = path.posix.dirname(normalized[0]) || ".";
   if (normalized.some((item) => (path.posix.dirname(item) || ".") !== parent)) throw new Error("跨主机复制的项目必须位于同一目录");
   const names = normalized.map((item) => path.posix.basename(item));
+  const conflict = ["error", "overwrite", "rename"].includes(String(conflictMode || "")) ? String(conflictMode) : "error";
   const sourceNames = names.map((name) => remotePathOperand(sourceConnection, `./${name}`)).join(" ");
   const collisionChecks = names.map((name) => {
     const operand = remotePathOperand(targetConnection, `./${name}`);
     return `if [ -e ${operand} ] || [ -L ${operand} ]; then echo "目标目录已存在同名项目" >&2; exit 1; fi`;
   }).join("; ");
   const sourceCommand = `tar -cf - -C ${remotePathOperand(sourceConnection, parent)} -- ${sourceNames}`;
-  const targetCommand = `cd ${remotePathOperand(targetConnection, targetDir)} && ${collisionChecks} && tar -xf -`;
+  let targetCommand = `cd ${remotePathOperand(targetConnection, targetDir)} && ${collisionChecks} && tar -xf -`;
+  if (conflict === "overwrite") {
+    targetCommand = buildCrossCopyOverwriteCommand(targetConnection, targetDir, names);
+  } else if (conflict === "rename") {
+    if (filenameEncoding(targetConnection) !== "utf8") throw new Error("非 UTF-8 文件名编码暂不支持跨主机自动改名，请选择覆盖或取消");
+    const temporaryName = `.tunneldesk-cross-copy-${crypto.randomUUID()}`;
+    const moves = names.map((name) => {
+      const extension = path.posix.extname(name);
+      const base = extension && extension !== name ? name.slice(0, -extension.length) : name;
+      return [
+        `td_source="$td_tmp/"${shellQuote(name)}`,
+        `td_target=${shellQuote(name)}`,
+        `td_index=1`,
+        `while [ -e "$td_target" ] || [ -L "$td_target" ]; do td_target=${shellQuote(base)}" ($td_index)"${shellQuote(extension)}; td_index=$((td_index + 1)); done`,
+        `mv -- "$td_source" "$td_target"`
+      ].join("; ");
+    }).join("; ");
+    targetCommand = `cd ${remotePathOperand(targetConnection, targetDir)} && td_tmp=${shellQuote(temporaryName)} && mkdir "$td_tmp" && trap 'rm -rf -- "$td_tmp"' 0 1 2 3 15 && tar -xf - -C "$td_tmp" && ${moves} && rmdir "$td_tmp" && trap - 0 1 2 3 15`;
+  }
   const source = spawnRemote(sourceConnection, sourceCommand);
   const target = spawnRemote(targetConnection, targetCommand);
   const id = crypto.randomUUID();
@@ -879,4 +1031,4 @@ function compressJob(connectionId, paths, targetDir = ".", archiveName = "") {
   return { ...startSftpJob(connectionId, "compress", request.command, `压缩 ${request.paths.length} 项为 ${request.name}`), output:request.output };
 }
 
-module.exports = { cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, normalizeCompressionRequest, pauseSftpJob, resumeSftpJob, sftpCacheInfo, startDownloadJob, startUploadJob, __buildCompressCommand: normalizeCompressionRequest };
+module.exports = { cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, normalizeCompressionRequest, pauseSftpJob, resumeSftpJob, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startUploadJob, __buildCompressCommand: normalizeCompressionRequest, __buildCrossCopyOverwriteCommand: buildCrossCopyOverwriteCommand };

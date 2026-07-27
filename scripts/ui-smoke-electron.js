@@ -17,8 +17,10 @@ app.whenReady().then(async () => {
   await session.defaultSession.clearCache();
   const window = new BrowserWindow({ show:false, width:1200, height:800, webPreferences:{ contextIsolation:true } });
   smokeWindow = window;
-  window.webContents.on("console-message", (_event, level, message) => {
-    if (level >= 2) errors.push(message);
+  window.webContents.on("console-message", details => {
+    if (["warning", "error"].includes(details.level)) {
+      errors.push(`${details.message}${details.sourceId ? ` (${details.sourceId}:${details.lineNumber || 0})` : ""}`);
+    }
   });
   window.webContents.on("did-fail-load", (_event, code, description) => errors.push(`${code}: ${description}`));
   await window.loadURL(url);
@@ -265,19 +267,25 @@ app.whenReady().then(async () => {
         && shortCloseRect.left - shortTitleRect.right >= 4
         && shortCloseRect.left - shortTitleRect.right <= 8;
       first.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:71,pointerType:'mouse',button:0,clientX:firstRect.left+8,clientY:firstRect.top+8}));
+      const activatedOnPress = activeTabKey === 'drag-a';
       window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:71,pointerType:'mouse',button:0,clientX:lastRect.right-2,clientY:firstRect.top+8}));
-      const beganImmediately = Boolean(workspaceTabDrag?.dragging && first.classList.contains('tab-dragging') && document.body.classList.contains('workspace-tab-drag-active'));
-      const touchReady = getComputedStyle(first).touchAction === 'pan-y';
-      const commonTitleFits = first.querySelector('.tab-title').scrollWidth <= first.querySelector('.tab-title').clientWidth;
+      const draggedTab = document.querySelector('.tab[data-tab-key="drag-a"]');
+      const dragGhost = document.querySelector('.workspace-tab-drag-ghost');
+      const beganImmediately = Boolean(workspaceTabDrag?.dragging && draggedTab?.classList.contains('tab-dragging') && document.body.classList.contains('workspace-tab-drag-active'));
+      const dragGhostVisible = Boolean(dragGhost && dragGhost.textContent.includes('bt01 · 终端') && getComputedStyle(dragGhost).display !== 'none');
+      const dropPositionVisible = getComputedStyle(draggedTab).boxShadow.includes('rgb');
+      const touchReady = getComputedStyle(draggedTab).touchAction === 'pan-y';
+      const commonTitleFits = draggedTab.querySelector('.tab-title').scrollWidth <= draggedTab.querySelector('.tab-title').clientWidth;
       const sessionTitle = document.querySelector('.tab[data-tab-key="drag-b"] .tab-title');
       const numberedSessionTitleFits = sessionTitle.scrollWidth <= sessionTitle.clientWidth;
-      const compactTabFont = Math.abs(parseFloat(getComputedStyle(first).fontSize) - 12) < 0.1;
-      const fullTitleTooltip = first.title === 'bt01 · 终端 - root@bt01.example:22';
+      const compactTabFont = Math.abs(parseFloat(getComputedStyle(draggedTab).fontSize) - 12) < 0.1;
+      const fullTitleTooltip = draggedTab.title === 'bt01 · 终端 - root@bt01.example:22';
       const liveOrder = [...document.querySelectorAll('#tabs .tab')].map(tab => tab.dataset.tabKey);
       window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:71,pointerType:'mouse',button:0,clientX:lastRect.right-2,clientY:firstRect.top+8}));
       const savedOrder = tabs.map(tab => tab.key);
       const persistedOrder = JSON.parse(localStorage.getItem('workspaceTabs') || '{}').tabs?.map(tab => tab.key) || [];
-      const activePreserved = activeTabKey === 'drag-b';
+      const activeFollowsDragged = activeTabKey === 'drag-a';
+      const dragGhostRemoved = !document.querySelector('.workspace-tab-drag-ghost');
       const clickSuppressed = workspaceTabSuppressClickUntil > Date.now();
 
       const beforeCancel = tabs.map(tab => tab.key);
@@ -318,6 +326,10 @@ app.whenReady().then(async () => {
         && getComputedStyle(rightScroll).display === 'none';
       return {
         beganImmediately,
+        activatedOnPress,
+        dragGhostVisible,
+        dropPositionVisible,
+        dragGhostRemoved,
         touchReady,
         commonTitleFits,
         numberedSessionTitleFits,
@@ -327,7 +339,7 @@ app.whenReady().then(async () => {
         liveOrder,
         savedOrder,
         persistedOrder,
-        activePreserved,
+        activeFollowsDragged,
         clickSuppressed,
         cancelStarted,
         cancelRestored,
@@ -901,15 +913,23 @@ app.whenReady().then(async () => {
     fakeSocket.dispatchEvent(new MessageEvent('message',{data:new Uint8Array([0xff,0xfe]).buffer}));
     const binaryType = fakeSocket.binaryType;
     window.WebSocket = OriginalWebSocket;
-    document.querySelector('#view-terminal').innerHTML='<div class="terminal-title-row"><span id="terminalStatus" class="terminal-status"></span><span id="terminalLatency" class="terminal-latency pending"></span></div><div id="terminalMount" class="terminal-box"></div>';
-    setWorkspace('终端测试','UI','terminal',key,false,true,{kind:'terminal',id:first.id});
+    const connectionAddress=first.ssh_user+'@'+first.ssh_host+':'+first.ssh_port;
+    document.querySelector('#view-terminal').innerHTML='<div id="terminalToolbarMount"><div class="terminal-toolbar"><div class="terminal-title-row"><span class="terminal-connection-dot"></span><span id="terminalStatus" class="terminal-status" data-connection-address="'+connectionAddress+'" data-connection-state="连接中"></span><span id="terminalLatency" class="terminal-latency pending"></span></div><div class="actions terminal-actions"><button class="terminal-action-reconnect"></button></div></div></div><div id="terminalMount" class="terminal-box"></div>';
+    setWorkspace('终端测试',connectionAddress,'terminal',key,false,true,{kind:'terminal',id:first.id});
     activeTabKey = key;
     updateTerminalConnectionStatus(first, key, '已连接');
     const statusIndicator = document.querySelector('#terminalStatus');
-    const statusHoverShowsFull = statusIndicator?.title === statusIndicator?.textContent
-      && statusIndicator?.title === first.ssh_user+'@'+first.ssh_host+':'+first.ssh_port+' · 已连接';
+    const statusHoverShowsFull = statusIndicator?.title === connectionAddress+' · 已连接';
+    const desktopStatusAvoidsDuplicate = statusIndicator?.textContent === ''
+      && document.querySelector('#workspaceSubtitle')?.textContent === connectionAddress;
+    const desktopToolbarInHeader = statusIndicator?.closest('#workspaceHeaderTools') !== null
+      && document.querySelector('#workspaceHeaderTools')?.hidden === false
+      && document.querySelector('#terminalToolbarMount')?.children.length === 0;
     const latencySession = terminalSessions.get(key);
     latencySession.connected = true;
+    updateTerminalConnectionToggle(key);
+    const connectionToggle = document.querySelector('.terminal-action-reconnect');
+    const connectionToggleUsesLinkAction = Boolean(connectionToggle?.querySelector('.lucide-link-2-off') && connectionToggle.title.includes('断开'));
     terminalLatencyVisible = true;
     latencySession.latencyPendingAt = performance.now() - 80;
     finishTerminalLatencySample(latencySession, key);
@@ -979,7 +999,7 @@ app.whenReady().then(async () => {
     const toolbarFixture=document.createElement('div');
     toolbarFixture.className='terminal-toolbar';
     toolbarFixture.style.width='100%';
-    toolbarFixture.innerHTML='<div class="terminal-title-row"><span class="terminal-connection-dot"></span><span class="terminal-status">tester@example.invalid:22 · 已连接</span><span class="terminal-latency good">延迟 5 ms</span></div><div class="actions terminal-actions"><button class="icon-button">'+icon('folder-open')+'</button><button class="icon-button">'+icon('minus')+'</button><button class="icon-button">'+icon('plus')+'</button><button class="terminal-dropdown-button">'+icon('languages')+'<span>UTF-8</span>'+icon('chevron-down')+'</button><button class="terminal-dropdown-button">'+icon('type')+'<span>字体</span>'+icon('chevron-down')+'</button><button class="icon-button terminal-global-settings-button">'+icon('settings')+'</button><button>'+icon('keyboard')+'<span>快捷键</span></button><button>'+icon('history')+'<span>最近命令</span></button><button>'+icon('refresh-cw')+'<span>重连</span></button><button>'+icon('play')+'<span>启用转发</span></button></div>';
+    toolbarFixture.innerHTML='<div class="terminal-title-row"><span class="terminal-connection-dot"></span><span class="terminal-status">tester@example.invalid:22 · 已连接</span><span class="terminal-latency good">延迟 5 ms</span></div><div class="actions terminal-actions"><button class="icon-button">'+icon('folder-open')+'</button><button class="icon-button">'+icon('minus')+'</button><button class="icon-button">'+icon('plus')+'</button><button class="terminal-dropdown-button">'+icon('languages')+'<span>UTF-8</span>'+icon('chevron-down')+'</button><button class="terminal-dropdown-button">'+icon('type')+'<span>字体</span>'+icon('chevron-down')+'</button><button class="icon-button terminal-global-settings-button">'+icon('settings')+'</button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button>'+icon('history')+'<span>最近命令</span></button><button>'+icon('link-2')+'<span>重连</span></button><button>'+icon('play')+'<span>启用转发</span></button></div>';
     const toolbarViewFixture=document.createElement('div');
     toolbarViewFixture.style.width='540px';
     toolbarViewFixture.style.containerType='inline-size';
@@ -989,12 +1009,14 @@ app.whenReady().then(async () => {
     const toolbar=toolbarFixture.querySelector('.terminal-actions');
     const toolbarRect=toolbar.getBoundingClientRect();
     const toolbarButtons=[...toolbar.querySelectorAll('button')];
+    const desktopKeysHidden=getComputedStyle(toolbarFixture.querySelector('.terminal-action-keys')).display==='none';
+    const visibleToolbarButtons=toolbarButtons.filter(button=>getComputedStyle(button).display!=='none');
     const compactLabelsHidden=toolbarButtons
       .filter(button=>!button.classList.contains('terminal-dropdown-button'))
       .flatMap(button=>[...button.querySelectorAll(':scope > span')])
       .every(span=>getComputedStyle(span).display==='none');
     const compactActionsLeftAligned=Math.abs(toolbarButtons[0].getBoundingClientRect().left-toolbarRect.left)<1;
-    const narrowToolbarFits=compactLabelsHidden&&toolbarButtons.every(button=>{
+    const narrowToolbarFits=compactLabelsHidden&&visibleToolbarButtons.every(button=>{
       const rect=button.getBoundingClientRect();
       return rect.left>=toolbarRect.left-0.5&&rect.right<=toolbarRect.right+0.5;
     });
@@ -1014,7 +1036,7 @@ app.whenReady().then(async () => {
     const responsiveTitleRect=responsiveToolbar.querySelector('.terminal-title-row').getBoundingClientRect();
     const responsiveActions=responsiveToolbar.querySelector('.terminal-actions');
     const responsiveActionsRect=responsiveActions.getBoundingClientRect();
-    const responsiveButtons=[...responsiveActions.querySelectorAll('button')];
+    const responsiveButtons=[...responsiveActions.querySelectorAll('button')].filter(button=>getComputedStyle(button).display!=='none');
     const responsiveToolbarFits=responsiveActionsRect.top>=responsiveTitleRect.bottom-0.5
       && responsiveButtons.every(button=>{
         const rect=button.getBoundingClientRect();
@@ -1027,9 +1049,18 @@ app.whenReady().then(async () => {
     backFixture.innerHTML='<button class="terminal-mobile-back">'+icon('arrow-left')+'<span>返回</span></button>';
     document.body.appendChild(backFixture);
     const desktopBackHidden=getComputedStyle(backFixture.querySelector('.terminal-mobile-back')).display==='none';
-    const metrics=toolbarButtons.map(button=>{const br=button.getBoundingClientRect(),svg=button.querySelector('svg').getBoundingClientRect();return {buttonHeight:br.height,iconWidth:svg.width,iconHeight:svg.height,centerDelta:Math.abs((svg.top+svg.height/2)-(br.top+br.height/2))}});
+    const metrics=visibleToolbarButtons.map(button=>{const br=button.getBoundingClientRect(),svg=button.querySelector('svg').getBoundingClientRect();return {buttonHeight:br.height,iconWidth:svg.width,iconHeight:svg.height,centerDelta:Math.abs((svg.top+svg.height/2)-(br.top+br.height/2))}});
     toolbarViewFixture.remove();
     backFixture.remove();
+    const replacementMount=document.querySelector('#terminalToolbarMount');
+    const replacementToolbar=document.createElement('div');
+    replacementToolbar.className='terminal-toolbar';
+    replacementToolbar.innerHTML='<div class="terminal-title-row"><span id="terminalStatus" class="terminal-status" data-connection-address="replacement:22" data-connection-state="已连接"></span></div><div class="actions terminal-actions"></div>';
+    replacementMount.appendChild(replacementToolbar);
+    syncTerminalToolbarPlacement();
+    const activeToolbarReplacesPrevious=document.querySelector('#workspaceHeaderTools')?.children.length===1
+      && document.querySelector('#workspaceHeaderTools')?.firstElementChild===replacementToolbar
+      && replacementMount.children.length===0;
     hideActionMenu();
     terminalSessions.delete(secondKey);
     terminalSessions.delete(key);
@@ -1038,7 +1069,7 @@ app.whenReady().then(async () => {
     terminalLatencyVisible = previousLatencyVisible;
     if (previousLatencyStored === null) localStorage.removeItem('terminalLatencyVisible');
     else localStorage.setItem('terminalLatencyVisible', previousLatencyStored);
-    return {found:true,labels,metrics,desktopBackHidden,binaryType,binaryWrite,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,latencyMeasured,latencyCanDisable,latencyCanEnable,terminalSettingsUi};
+    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,latencyMeasured,latencyCanDisable,latencyCanEnable,terminalSettingsUi};
   })()`);
   console.log("[ui-smoke] log settings");
   const logSettingsUi = await window.webContents.executeJavaScript(`(async () => {
@@ -1079,6 +1110,8 @@ app.whenReady().then(async () => {
     const previousDirectorySizes = [...sftpDirectorySizeCache.entries()];
     const connection = connections[0];
     let directoryActionsUi = {found:false};
+    let connectionSessionUi = {found:false};
+    let nativeDragUi = {found:false};
     let globalSettingsUi = {found:false};
     let directoryCacheBehavior = {sameResponseUntouched:false,changedResponseRendered:false,boundedAndExpired:false};
     let sftpPageLoads = 0;
@@ -1092,13 +1125,379 @@ app.whenReady().then(async () => {
       activeTabKey = 'sftp-' + connection.id;
       setWorkspace('切换测试', 'UI', 'welcome', 'sftp-switch-fixture', false, true);
       await openSftp(connection.id, '/Users/junruo/Public', false);
-      const stickyTop = view.querySelector('.sftp-top');
-      const primaryRow = view.querySelector('.sftp-primary-row');
-      const breadcrumb = view.querySelector('.sftp-breadcrumb');
-      const directoryBar = view.querySelector('.sftp-directory-bar');
-      const clipboardActions = view.querySelector('#sftpClipboardActions');
-      const actionLabels = [...view.querySelectorAll('.sftp-directory-actions > button > span, .sftp-directory-actions > label > span')].map(node => node.textContent.trim());
+      let stickyTop = view.querySelector('.sftp-top');
+      let toolbar = document.querySelector('#workspaceHeaderTools .sftp-toolbar') || view.querySelector('.sftp-toolbar');
+      let navigationRow = view.querySelector('.sftp-navigation-row');
+      let breadcrumb = view.querySelector('.sftp-breadcrumb');
+      let pathEditor = view.querySelector('#sftpPathEditor');
+      let floatingSearch = view.querySelector('#sftpFloatingSearch');
+      let dropOverlay = view.querySelector('#sftpDropOverlay');
+      let clipboardActions = toolbar?.querySelector('#sftpClipboardActions') || view.querySelector('#sftpClipboardActions') || document.querySelector('#sftpClipboardActions') || document.createElement('span');
+      const actionTitles = [...toolbar?.querySelectorAll('button, label') || []].map(node => node.title || node.getAttribute('aria-label') || '').filter(Boolean);
       const emptyClipboardHidden = Boolean(clipboardActions && !clipboardActions.querySelector('button') && !clipboardActions.textContent.trim());
+      const reusedWithSilentRefresh = sftpPageLoads === 2
+        && sftpPageLoadOptions[1]?.silent === true
+        && sftpPageLoadOptions[1]?.renderIfChangedOnly === true
+        && sftpPageLoadOptions[1]?.refresh === true;
+      showSftpPathEditor();
+      const visiblePathControls = [...(view.querySelector('.sftp-path-block')?.children || [])]
+        .filter(node => getComputedStyle(node).display !== 'none');
+      const pathEditorReplacesBreadcrumb = Boolean(
+        breadcrumb?.hidden
+        && getComputedStyle(breadcrumb).display === 'none'
+        && pathEditor
+        && !pathEditor.hidden
+        && getComputedStyle(pathEditor).display !== 'none'
+        && document.querySelector('#sftpPathEditButton')?.hidden
+        && visiblePathControls.length === 1
+        && visiblePathControls[0] === pathEditor
+      );
+      hideSftpPathEditor();
+      const preservedListHtml = view.querySelector('#sftpList')?.innerHTML;
+      updateSftpConnectionUi(connection.id, 'disconnected', '测试断线');
+      const disconnectedButton = (document.querySelector('#workspaceHeaderTools .sftp-toolbar') || view.querySelector('.sftp-toolbar'))?.querySelector('#sftpConnectionToggle');
+      const disconnectedBanner = view.querySelector('#sftpConnectionBanner');
+      const disconnectedAction = Boolean(disconnectedButton?.querySelector('.lucide-link-2') && !disconnectedButton?.querySelector('.lucide-link-2-off'));
+      const bannerVisible = Boolean(disconnectedBanner && !disconnectedBanner.hidden && disconnectedBanner.querySelector('.sftp-connection-detail')?.textContent === '测试断线');
+      const preservedWhileDisconnected = view.querySelector('#sftpList')?.innerHTML === preservedListHtml;
+      updateSftpConnectionUi(connection.id, 'connected');
+      sftpDisconnectedTabs.add('sftp-' + connection.id);
+      const disconnectedPageLoads = sftpPageLoads;
+      await openSftp(connection.id, '/Users/junruo/Public', false);
+      const disconnectedTabSwitchDoesNotReconnect = sftpPageLoads === disconnectedPageLoads;
+      await openSftp(connection.id, '/Users/junruo/Public', true);
+      const disconnectedFolderOperationReconnects = sftpPageLoads === disconnectedPageLoads + 1;
+      const savedConnectApi = api;
+      let automaticConnectCalls = 0;
+      updateSftpConnectionUi(connection.id, 'disconnected');
+      sftpDisconnectedTabs.add('sftp-' + connection.id);
+      sftpConnectionRequests.clear();
+      api = async (path, options={}) => {
+        if (String(path).includes('/sftp/session') && options.method === 'POST') {
+          automaticConnectCalls += 1;
+          await new Promise(resolve => setTimeout(resolve, 10));
+          return {connected:true,status:'connected'};
+        }
+        return {};
+      };
+      const automaticConnectResults = await Promise.all([
+        ensureSftpConnection(connection.id),
+        ensureSftpConnection(connection.id)
+      ]);
+      const automaticConnectStatus = document.querySelector('#sftpConnectionToggle')?.dataset.status || '';
+      const automaticConnectShared = automaticConnectCalls === 1
+        && automaticConnectResults.every(Boolean)
+        && automaticConnectStatus === 'connected'
+        && !sftpConnectionRequests.has(connection.id);
+      const reconnectSequence = [];
+      api = async (path, options={}) => {
+        if (String(path).includes('/sftp/session') && options.method === 'DELETE') {
+          reconnectSequence.push('disconnect-start');
+          await new Promise(resolve => setTimeout(resolve, 15));
+          reconnectSequence.push('disconnect-done');
+          return {connected:false,status:'disconnected'};
+        }
+        if (String(path).includes('/sftp/session') && options.method === 'POST') {
+          reconnectSequence.push('connect');
+          return {connected:true,status:'connected'};
+        }
+        return {};
+      };
+      const manualDisconnectRequest = disconnectSftpConnection(connection.id);
+      const operationReconnectRequest = ensureSftpConnection(connection.id);
+      await Promise.all([manualDisconnectRequest, operationReconnectRequest]);
+      const manualDisconnectAutoReconnect = reconnectSequence.join(',') === 'disconnect-start,disconnect-done,connect'
+        && document.querySelector('#sftpConnectionToggle')?.dataset.status === 'connected'
+        && !sftpDisconnectRequests.has(connection.id)
+        && !sftpConnectionRequests.has(connection.id);
+      api = savedConnectApi;
+
+      const nativeDragApi = api;
+      const nativeDragBridgeDescriptor = Object.getOwnPropertyDescriptor(window, 'tunnelDeskDesktop');
+      const nativeDragRow = document.createElement('div');
+      const nativeDragDropTarget = document.createElement('button');
+      const nativeDragEntries = [{path:'/source/native-drag.txt',name:'native-drag.txt',type:'file'}];
+      const nativeDragKey = sftpNativeDragKey(connection.id, nativeDragEntries);
+      const nativeDragBridgeCalls = [];
+      let nativeDragStageCalls = 0;
+      let nativeDragCallReturned = false;
+      let nativeDragPhase = '';
+      const nativeDragEvent = () => ({
+        preventDefault(){ this.defaultPrevented = true; },
+        defaultPrevented:false,
+        currentTarget:nativeDragRow,
+        dataTransfer:{effectAllowed:'',setData(){}},
+        clientX:window.innerWidth - 1,
+        clientY:window.innerHeight - 1
+      });
+      try {
+        nativeDragRow.className = 'sftp-row';
+        nativeDragDropTarget.className = 'tab';
+        document.body.append(nativeDragRow, nativeDragDropTarget);
+        sftpNativeDragCache.delete(nativeDragKey);
+        sftpNativeDragArmed.delete(nativeDragKey);
+        api = async (pathname, options={}) => {
+          if (pathname.endsWith('/sftp/stage-drag') && options.method === 'POST') {
+            nativeDragStageCalls += 1;
+            return {files:['C:\\TunnelDesk\\drag-cache\\native-drag.txt']};
+          }
+          return nativeDragApi(pathname, options);
+        };
+        Object.defineProperty(window, 'tunnelDeskDesktop', {
+          configurable:true,
+          writable:true,
+          value:{
+            ...(nativeDragBridgeDescriptor?.value || {}),
+            startSftpDrag(files, requestId) {
+              nativeDragBridgeCalls.push({
+                files:[...(files || [])],
+                requestId,
+                phase:nativeDragPhase,
+                synchronous:!nativeDragCallReturned
+              });
+            }
+          }
+        });
+
+        nativeDragPhase = 'stage';
+        nativeDragCallReturned = false;
+        const firstDragEvent = nativeDragEvent();
+        beginSftpItemDrag(firstDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
+        nativeDragCallReturned = true;
+        if (sftpInternalDrag) sftpInternalDrag.leftWindow = true;
+        await new Promise(resolve => setTimeout(resolve, 20));
+        const firstDragOnlyStages = nativeDragStageCalls === 1
+          && nativeDragBridgeCalls.length === 0
+          && sftpNativeDragArmed.has(nativeDragKey)
+          && sftpNativeDragCache.get(nativeDragKey)?.files?.length === 1;
+        finishSftpItemDrag({...firstDragEvent,currentTarget:nativeDragRow,clientX:window.innerWidth,clientY:window.innerHeight});
+        const firstDragReset = sftpInternalDrag === null
+          && !nativeDragRow.classList.contains('is-dragging')
+          && !document.body.classList.contains('sftp-item-drag-active');
+
+        nativeDragPhase = 'cached-internal';
+        sftpNativeDragArmed.delete(nativeDragKey);
+        nativeDragCallReturned = false;
+        const secondDragEvent = nativeDragEvent();
+        beginSftpItemDrag(secondDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
+        nativeDragCallReturned = true;
+        const cachedUnarmedStaysInternal = Boolean(
+          !secondDragEvent.defaultPrevented
+          && sftpInternalDrag?.connectionId === Number(connection.id)
+          && nativeDragBridgeCalls.length === 0
+          && !sftpNativeDragArmed.has(nativeDragKey)
+        );
+        handleSftpDocumentDragLeave({relatedTarget:null,clientX:0,clientY:0});
+        finishSftpItemDrag({...secondDragEvent,currentTarget:nativeDragRow,clientX:0,clientY:0});
+        await new Promise(resolve => setTimeout(resolve, 100));
+        const sameWindowDropDoesNotArm = sftpInternalDrag === null && !sftpNativeDragArmed.has(nativeDragKey);
+
+        nativeDragPhase = 'failure';
+        sftpNativeDragArmed.add(nativeDragKey);
+        nativeDragCallReturned = false;
+        const armedDragEvent = nativeDragEvent();
+        beginSftpItemDrag(armedDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
+        nativeDragCallReturned = true;
+        const failedCall = nativeDragBridgeCalls.at(-1);
+        const armedDragStartsSynchronously = Boolean(
+          armedDragEvent.defaultPrevented
+          && failedCall?.phase === 'failure'
+          && failedCall.synchronous
+          && failedCall.files?.[0] === 'C:\\TunnelDesk\\drag-cache\\native-drag.txt'
+          && nativeDragStageCalls === 1
+        );
+        nativeDragRow.classList.add('is-dragging', 'is-preparing-drag');
+        nativeDragDropTarget.classList.add('sftp-drop-target');
+        document.body.classList.add('sftp-item-drag-active');
+        handleSftpNativeDragResult({requestId:failedCall?.requestId,ok:false,message:'native drag rejected'});
+        const failureRearmed = Boolean(
+          failedCall?.requestId
+          && !sftpNativeDragRequests.has(failedCall.requestId)
+          && sftpNativeDragArmed.has(nativeDragKey)
+          && sftpNativeDragCache.get(nativeDragKey)?.files?.length === 1
+          && !nativeDragRow.classList.contains('is-dragging')
+          && !nativeDragRow.classList.contains('is-preparing-drag')
+          && !nativeDragDropTarget.classList.contains('sftp-drop-target')
+          && !document.body.classList.contains('sftp-item-drag-active')
+          && !document.querySelector('#sftpDragHint')
+        );
+
+        nativeDragPhase = 'retry';
+        nativeDragCallReturned = false;
+        const retryDragEvent = nativeDragEvent();
+        beginSftpItemDrag(retryDragEvent, connection.id, nativeDragEntries[0].path, nativeDragEntries[0].name, nativeDragEntries[0].type);
+        nativeDragCallReturned = true;
+        const successfulCall = nativeDragBridgeCalls.at(-1);
+        nativeDragRow.classList.add('is-dragging', 'is-preparing-drag');
+        nativeDragDropTarget.classList.add('sftp-drop-target');
+        document.body.classList.add('sftp-item-drag-active');
+        handleSftpNativeDragResult({requestId:successfulCall?.requestId,ok:true});
+        const successClearsState = Boolean(
+          retryDragEvent.defaultPrevented
+          && successfulCall?.phase === 'retry'
+          && successfulCall.synchronous
+          && nativeDragStageCalls === 1
+          && !sftpNativeDragRequests.has(successfulCall.requestId)
+          && !sftpNativeDragArmed.has(nativeDragKey)
+          && !sftpNativeDragCache.has(nativeDragKey)
+          && sftpInternalDrag === null
+          && sftpExternalDragPreparing === null
+          && !nativeDragRow.classList.contains('is-dragging')
+          && !nativeDragRow.classList.contains('is-preparing-drag')
+          && !nativeDragDropTarget.classList.contains('sftp-drop-target')
+          && !document.body.classList.contains('sftp-item-drag-active')
+          && !document.querySelector('#sftpDragHint')
+        );
+        nativeDragUi = {
+          found:true,
+          firstDragOnlyStages,
+          firstDragReset,
+          cacheReused:nativeDragStageCalls === 1 && nativeDragBridgeCalls.length === 2,
+          cachedUnarmedStaysInternal,
+          sameWindowDropDoesNotArm,
+          armedDragStartsSynchronously,
+          failureRearmed,
+          successClearsState,
+          stageCalls:nativeDragStageCalls,
+          bridgeCalls:nativeDragBridgeCalls.length
+        };
+      } finally {
+        resetSftpItemDrag(nativeDragRow);
+        sftpNativeDragCache.delete(nativeDragKey);
+        sftpNativeDragArmed.delete(nativeDragKey);
+        for (const [requestId, request] of sftpNativeDragRequests) {
+          if (request.key === nativeDragKey) sftpNativeDragRequests.delete(requestId);
+        }
+        nativeDragRow.remove();
+        nativeDragDropTarget.remove();
+        api = nativeDragApi;
+        if (nativeDragBridgeDescriptor) Object.defineProperty(window, 'tunnelDeskDesktop', nativeDragBridgeDescriptor);
+        else delete window.tunnelDeskDesktop;
+      }
+      const sourceSftpTabKey = activeTabKey;
+      const sourceSftpPath = sftpState.path;
+      const dragTargetConnection = {...connection,id:Number(connection.id) + 9000,name:'测试目标'};
+      connections.push(dragTargetConnection);
+      const dragTargetTab = {key:'sftp-' + dragTargetConnection.id,kind:'sftp',id:dragTargetConnection.id,title:'测试目标 · SFTP',path:'/target'};
+      tabs.push(dragTargetTab);
+      renderTabs();
+      const dragTargetButton = [...document.querySelectorAll('#tabs .tab')].find(tab => tab.dataset.tabKey === dragTargetTab.key);
+      sftpInternalDrag = {connectionId:Number(connection.id),entries:[{path:'/source.txt',name:'source.txt',type:'file'}],row:null};
+      const dragFeedbackEvent = {preventDefault(){},dataTransfer:{dropEffect:''},currentTarget:dragTargetButton};
+      handleSftpTabDragOver(dragFeedbackEvent, dragTargetTab.key);
+      await new Promise(resolve => setTimeout(resolve, 210));
+      const dragFeedbackVisible = dragTargetButton.classList.contains('sftp-drop-target')
+        && dragFeedbackEvent.dataTransfer.dropEffect === 'copy'
+        && document.querySelector('#sftpDragHint')?.textContent.includes('测试目标');
+      const dragTargetViewActivated = activeTabKey === dragTargetTab.key
+        && view.dataset.sftpTabKey === dragTargetTab.key;
+      const dragTargetActiveKey = activeTabKey;
+      const dragTargetViewKey = view.dataset.sftpTabKey;
+      const targetListDropEvent = {
+        defaultPrevented:false,
+        propagationStopped:false,
+        preventDefault(){ this.defaultPrevented = true; },
+        stopPropagation(){ this.propagationStopped = true; },
+        dataTransfer:{dropEffect:''}
+      };
+      handleSftpDragOver(targetListDropEvent);
+      const targetDropOverlay = document.querySelector('#sftpDropOverlay');
+      const targetDropRect = targetDropOverlay?.getBoundingClientRect();
+      const targetListDropPrompt = Boolean(
+        targetListDropEvent.defaultPrevented
+        && targetListDropEvent.dataTransfer.dropEffect === 'copy'
+        && targetDropOverlay
+        && !targetDropOverlay.hidden
+        && targetDropOverlay.textContent.includes('松开上传到当前目录')
+        && targetDropRect.width > 0
+        && targetDropRect.height > 0
+        && targetDropRect.top >= 0
+        && targetDropRect.bottom <= window.innerHeight
+      );
+      const dragDropApi = api;
+      const crossDropRequests = [];
+      api = async (pathname, options={}) => {
+        if (pathname.endsWith('/sftp/upload-plan') && options.method === 'POST') return {items:[]};
+        if (pathname.endsWith('/sftp/cross-copy') && options.method === 'POST') {
+          crossDropRequests.push({pathname,body:JSON.parse(options.body || '{}')});
+          return {id:'ui-cross-drop',type:'cross-copy',status:'completed',progress:100};
+        }
+        return dragDropApi(pathname, options);
+      };
+      await handleSftpDrop(targetListDropEvent);
+      const crossHostListDropCopies = crossDropRequests.length === 1
+        && crossDropRequests[0].body.target_connection_id === dragTargetConnection.id
+        && crossDropRequests[0].body.paths?.[0] === '/source.txt'
+        && sftpInternalDrag === null
+        && !document.body.classList.contains('sftp-item-drag-active');
+      sftpInternalDrag = {connectionId:Number(dragTargetConnection.id),entries:[{path:'/target/local.txt',name:'local.txt',type:'file'}],row:null};
+      const sameHostDropEvent = {
+        defaultPrevented:false,
+        propagationStopped:false,
+        preventDefault(){ this.defaultPrevented = true; },
+        stopPropagation(){ this.propagationStopped = true; },
+        dataTransfer:{dropEffect:'copy'}
+      };
+      await handleSftpDrop(sameHostDropEvent);
+      const sameHostListDropCancels = sameHostDropEvent.defaultPrevented
+        && sameHostDropEvent.dataTransfer.dropEffect === 'copy'
+        && crossDropRequests.length === 1
+        && sftpInternalDrag === null
+        && !document.querySelector('#sftpDragHint');
+      api = dragDropApi;
+      resetSftpItemDrag();
+      tabs.splice(tabs.findIndex(item => item.key === dragTargetTab.key), 1);
+      connections.splice(connections.findIndex(item => Number(item.id) === Number(dragTargetConnection.id)), 1);
+      activeTabKey = sourceSftpTabKey;
+      await openSftp(connection.id, sourceSftpPath, false);
+      stickyTop = view.querySelector('.sftp-top');
+      toolbar = document.querySelector('#workspaceHeaderTools .sftp-toolbar') || view.querySelector('.sftp-toolbar');
+      navigationRow = view.querySelector('.sftp-navigation-row');
+      breadcrumb = view.querySelector('.sftp-breadcrumb');
+      pathEditor = view.querySelector('#sftpPathEditor');
+      floatingSearch = view.querySelector('#sftpFloatingSearch');
+      dropOverlay = view.querySelector('#sftpDropOverlay');
+      clipboardActions = toolbar?.querySelector('#sftpClipboardActions') || view.querySelector('#sftpClipboardActions') || document.querySelector('#sftpClipboardActions') || document.createElement('span');
+      const externalFileDropDetected = sftpDataTransferHasFiles({types:{0:'Files',length:1},items:[],files:[]});
+      const ownDragRequestId = 'ui-own-drag-suppression';
+      sftpNativeDragRequests.set(ownDragRequestId, {key:'ui-own-drag',row:null});
+      const ownDragEvent = {
+        defaultPrevented:false,
+        propagationStopped:false,
+        preventDefault(){ this.defaultPrevented = true; },
+        stopPropagation(){ this.propagationStopped = true; },
+        dataTransfer:{types:{0:'Files',length:1},items:[],files:[],dropEffect:'copy'}
+      };
+      handleSftpDragEnter(ownDragEvent);
+      const ownDragUploadSuppressed = ownDragEvent.defaultPrevented
+        && ownDragEvent.propagationStopped
+        && ownDragEvent.dataTransfer.dropEffect === 'none'
+        && Boolean(document.querySelector('#sftpDropOverlay')?.hidden);
+      sftpNativeDragRequests.delete(ownDragRequestId);
+      connectionSessionUi = {
+        found:Boolean(disconnectedButton && disconnectedBanner),
+        addressIncludesPort:document.querySelector('#workspaceSubtitle')?.textContent === connection.ssh_user+'@'+connection.ssh_host+':'+connection.ssh_port,
+        disconnectedAction,
+        disconnectedBanner:bannerVisible,
+        connectedAction:Boolean(disconnectedButton?.querySelector('.lucide-link-2-off') && disconnectedButton.title.includes('断开')),
+        preservedWhileDisconnected,
+        automaticConnectShared,
+        automaticConnectCalls,
+        automaticConnectStatus,
+        manualDisconnectAutoReconnect,
+        disconnectedTabSwitchDoesNotReconnect,
+        disconnectedFolderOperationReconnects,
+        reconnectSequence,
+        dragFeedbackVisible,
+        dragTargetViewActivated,
+        dragTargetActiveKey,
+        dragTargetViewKey,
+        targetListDropPrompt,
+        crossHostListDropCopies,
+        sameHostListDropCancels,
+        ownDragUploadSuppressed,
+        externalFileDropDetected
+      };
 
       copySingleSftp('/Users/junruo/Public/copy.txt', 'copy');
       const copyPaste = [...clipboardActions.querySelectorAll('button')].find(button => button.textContent.includes('粘贴'));
@@ -1120,9 +1519,46 @@ app.whenReady().then(async () => {
       sftpClipboard = {mode:'move', paths:['/source/cross.txt'], connectionId:999999, connectionName:'另一台主机'};
       refreshSftpDirectoryActions();
       const crossHostMoveDisabled = Boolean([...clipboardActions.querySelectorAll('button')].find(button => button.disabled));
+      const crossPasteApi = api;
+      const crossPasteChoice = chooseModal;
+      const crossPasteActiveTabKey = activeTabKey;
+      const crossPasteState = sftpState;
+      const crossPasteTargetTab = {key:'sftp-cross-paste-target',kind:'sftp',id:Number(connection.id),title:'测试目标 · SFTP',path:'/target'};
+      tabs.push(crossPasteTargetTab);
+      let crossHostConflictPrompted = false;
+      let crossHostConflictBody = null;
+      try {
+        activeTabKey = crossPasteTargetTab.key;
+        sftpState = {...sftpState, connectionId:connection.id, path:'/target'};
+        sftpClipboard = {mode:'copy', paths:['/source/cross.txt'], connectionId:999999, connectionName:'另一台主机'};
+        api = async (pathname, options={}) => {
+          if (pathname.endsWith('/sftp/upload-plan')) return {items:[{name:'cross.txt',exists:true}]};
+          if (pathname.endsWith('/sftp/cross-copy')) {
+            crossHostConflictBody = JSON.parse(options.body || '{}');
+            return {id:'cross-copy-job',status:'pending'};
+          }
+          return {};
+        };
+        chooseModal = async (title, message, actions) => {
+          crossHostConflictPrompted = title.includes('同名') && message.includes('cross.txt') && actions.some(action=>action.value==='rename');
+          return 'rename';
+        };
+        await pasteSftpClipboard();
+      } finally {
+        api = crossPasteApi;
+        chooseModal = crossPasteChoice;
+        activeTabKey = crossPasteActiveTabKey;
+        sftpState = crossPasteState;
+        tabs.splice(tabs.indexOf(crossPasteTargetTab), 1);
+      }
+      const crossHostClipboardConflict = crossHostConflictPrompted
+        && crossHostConflictBody?.conflict === 'rename'
+        && crossHostConflictBody?.target_connection_id === Number(connection.id)
+        && crossHostConflictBody?.target === '/target'
+        && sftpClipboard === null;
       sftpClipboard = null;
       refreshSftpDirectoryActions();
-      const filenameEncodingButton = view.querySelector('#sftpFilenameEncodingButton');
+      const filenameEncodingButton = toolbar?.querySelector('#sftpFilenameEncodingButton') || document.querySelector('#sftpFilenameEncodingButton');
       filenameEncodingButton?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:160,clientY:100}));
       const filenameEncodingLabels = [...document.querySelectorAll('#actionMenu button span')].map(item=>item.textContent.trim());
       const filenameEncodingMenu = ['UTF-8','GB18030','GBK','Big5','Shift_JIS','EUC-KR','ISO-8859-1'].every(label=>filenameEncodingLabels.includes(label));
@@ -1134,22 +1570,22 @@ app.whenReady().then(async () => {
       const previousShellStyle = shell.style.cssText;
       const previousStickyTopStyle = stickyTop.style.cssText;
       const emptyFavoritesRect = favorites.getBoundingClientRect();
-      const emptyDirectoryRect = directoryBar.getBoundingClientRect();
+      const emptyNavigationRect = navigationRow.getBoundingClientRect();
       const jobsRect = view.querySelector('#sftpJobs').getBoundingClientRect();
       const emptyFavoritesMinHeight = parseFloat(getComputedStyle(favorites).minHeight);
       const emptyFavoritesCompact = emptyFavoritesRect.height < 50
         && (!Number.isFinite(emptyFavoritesMinHeight) || emptyFavoritesMinHeight < 60)
-        && emptyDirectoryRect.height < 60
-        && jobsRect.top - emptyDirectoryRect.bottom < 32;
+        && emptyNavigationRect.height < 60
+        && jobsRect.top - emptyNavigationRect.bottom < 32;
       favorites.classList.remove('is-empty');
       favorites.innerHTML = '<span class="sftp-favorites-label">常用目录</span><button type="button">根目录</button>';
-      const naturalDirectoryHeight = directoryBar.getBoundingClientRect().height;
+      const naturalNavigationHeight = navigationRow.getBoundingClientRect().height;
       const naturalTopHeight = stickyTop.getBoundingClientRect().height;
       shell.style.height = '900px';
-      const tallShellDirectoryHeight = directoryBar.getBoundingClientRect().height;
+      const tallShellNavigationHeight = navigationRow.getBoundingClientRect().height;
       const tallShellTopHeight = stickyTop.getBoundingClientRect().height;
-      const wideDirectoryBarCompact = naturalDirectoryHeight < 60
-        && tallShellDirectoryHeight < 60
+      const wideNavigationCompact = naturalNavigationHeight < 60
+        && tallShellNavigationHeight < 60
         && naturalTopHeight < 180
         && tallShellTopHeight < 180
         && Math.abs(tallShellTopHeight - naturalTopHeight) < 1
@@ -1169,25 +1605,25 @@ app.whenReady().then(async () => {
       const previousViewStyle = view.style.cssText;
       view.style.width = '650px';
       view.style.flex = '0 0 650px';
-      const narrowDirectoryRect = directoryBar.getBoundingClientRect();
-      const narrowDirectoryActionsRect = directoryBar.querySelector('.sftp-directory-actions').getBoundingClientRect();
+      const narrowNavigationRect = navigationRow.getBoundingClientRect();
       const narrowTopRect = stickyTop.getBoundingClientRect();
-      const narrowDirectoryBarCompact = getComputedStyle(directoryBar).flexDirection === 'column'
-        && narrowDirectoryRect.height < 100
+      const narrowNavigationCompact = narrowNavigationRect.height < 100
         && narrowTopRect.height < 200
-        && narrowDirectoryActionsRect.left >= narrowDirectoryRect.left - 0.5
-        && narrowDirectoryActionsRect.right <= narrowDirectoryRect.right + 0.5
         && getComputedStyle(favorites).display === 'none';
       view.style.cssText = previousViewStyle;
       favorites.classList.toggle('is-empty', previousFavoritesEmpty);
       narrowHint.remove();
 
       directoryActionsUi = {
-        found:Boolean(stickyTop && primaryRow && breadcrumb && directoryBar),
+        found:Boolean(stickyTop && toolbar && navigationRow && breadcrumb && pathEditor && floatingSearch && dropOverlay),
+        toolbarAnywhere:Boolean(document.querySelector('.sftp-toolbar')),
         stickyPosition:stickyTop ? getComputedStyle(stickyTop).position : '',
-        barInsideSticky:Boolean(stickyTop?.contains(directoryBar)),
-        barAfterBreadcrumb:Boolean(breadcrumb && directoryBar && (breadcrumb.compareDocumentPosition(directoryBar) & Node.DOCUMENT_POSITION_FOLLOWING)),
-        actionLabels,
+        toolbarInHeader:Boolean(document.querySelector('#workspaceHeaderTools')?.contains(toolbar)),
+        navigationBeforeFavorites:Boolean(breadcrumb && favorites && (breadcrumb.compareDocumentPosition(favorites) & Node.DOCUMENT_POSITION_FOLLOWING)),
+        actionTitles,
+        searchHidden:floatingSearch.hidden,
+        pathEditorHidden:pathEditor.hidden,
+        pathEditorReplacesBreadcrumb,
         emptyClipboardHidden,
         copyQueueVisible,
         copyCancelled,
@@ -1195,15 +1631,17 @@ app.whenReady().then(async () => {
         moveCancelled,
         crossHostCopyEnabled,
         crossHostMoveDisabled,
+        crossHostClipboardConflict,
+        crossHostConflictPrompted,
+        crossHostConflictBody,
+        crossHostClipboardCleared:sftpClipboard === null,
         filenameEncodingMenu,
         emptyFavoritesCompact,
-        wideDirectoryBarCompact,
-        narrowDirectoryBarCompact,
-        terminalJump:Boolean(view.querySelector('button[title="打开此连接的终端"]')),
-        reusedWithSilentRefresh:sftpPageLoads === 2
-          && sftpPageLoadOptions[1]?.silent === true
-          && sftpPageLoadOptions[1]?.renderIfChangedOnly === true
-          && sftpPageLoadOptions[1]?.refresh === true
+        emptyFavoritesMetrics:{height:emptyFavoritesRect.height,minHeight:emptyFavoritesMinHeight,jobsGap:jobsRect.top-emptyNavigationRect.bottom},
+        wideNavigationCompact,
+        narrowNavigationCompact,
+        terminalJump:Boolean(toolbar?.querySelector('button[title="打开此连接的终端"]')),
+        reusedWithSilentRefresh
       };
 
       await showSftpGlobalSettings();
@@ -1212,7 +1650,7 @@ app.whenReady().then(async () => {
       const globalSettingsRect = globalSettingsCard?.getBoundingClientRect();
       globalSettingsModal?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
       globalSettingsUi = {
-        found:Boolean(view.querySelector('#sftpGlobalSettingsButton') && globalSettingsCard && !globalSettingsModal?.hidden),
+        found:Boolean(document.querySelector('#sftpGlobalSettingsButton') && globalSettingsCard && !globalSettingsModal?.hidden),
         globalScope:Boolean(globalSettingsCard?.textContent.includes('应用到所有 SFTP 标签和连接')),
         controls:Boolean(document.querySelector('#sftpRecycleBinEnabled') && document.querySelector('#sftpMaxOpenFileSizeMb') && document.querySelector('#sftpGlobalSettingsSave')),
         downloadBehavior:Boolean(globalSettingsCard?.textContent.includes('SFTP 自动保存目录') || globalSettingsCard?.textContent.includes('当前设备的浏览器下载目录')),
@@ -1375,7 +1813,9 @@ app.whenReady().then(async () => {
     const moreMenuOpened = moreMenuLabels.includes('以文本打开') && moreMenuLabels.includes('压缩') && moreMenuLabels.includes('设置权限') && moreMenuLabels.includes('删除');
     hideActionMenu();
     rows[0]?.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true, cancelable:true, clientX:260, clientY:220}));
-    const contextMenuOpened = Boolean(document.querySelector('#actionMenu')) && document.querySelector('#actionMenu')?.textContent.includes('打开') && document.querySelector('#actionMenu')?.textContent.includes('压缩') && document.querySelector('#actionMenu')?.textContent.includes('设置权限');
+    const directoryMenuText = document.querySelector('#actionMenu')?.textContent || '';
+    const contextMenuOpened = Boolean(document.querySelector('#actionMenu')) && directoryMenuText.includes('打开') && directoryMenuText.includes('下载') && directoryMenuText.includes('压缩') && directoryMenuText.includes('设置权限');
+    const directoryDownloadMenu = directoryMenuText.includes('下载');
     hideActionMenu();
     const fileHasCompression = Boolean(rows[1]?.querySelector('.sftp-row-action[title="压缩"]'));
     const fileHasPermissions = Boolean(rows[1]?.querySelector('.sftp-row-action[title="设置权限"]'));
@@ -1477,31 +1917,54 @@ app.whenReady().then(async () => {
     }
     const previousDownloadApi=api;
     const previousDownloadConfirm=confirmModal;
+    const previousDownloadChoice=chooseModal;
     const previousDownloadRefresh=refreshSftpJobs;
     const previousDownloadTimer=startSftpJobsTimer;
+    const previousDownloadTabKey=activeTabKey;
     const desktopNotice=localStorage.getItem('sftpDesktopDownloadNoticeV1');
     const browserNotice=localStorage.getItem('sftpBrowserDownloadNoticeV1');
     let deliveryMode='desktop';
     let noticeCalls=0;
     const noticeMessages=[];
+    const downloadRequests=[];
+    let batchChoiceCalls=0;
+    const downloadFixtureTab={key:'sftp-download-fixture',kind:'sftp',id:1,title:'下载测试'};
     try {
+      tabs.push(downloadFixtureTab);
+      activeTabKey=downloadFixtureTab.key;
       localStorage.removeItem('sftpDesktopDownloadNoticeV1');
       localStorage.removeItem('sftpBrowserDownloadNoticeV1');
-      api=async pathname=>pathname==='/api/sftp/download-settings'
-        ? (deliveryMode==='desktop'?{delivery_mode:'desktop',effective_directory:'C:\\Users\\fixture\\Downloads'}:{delivery_mode:'browser'})
-        : pathname.includes('/sftp/download')?{id:'notice-'+deliveryMode,delivery_mode:deliveryMode}:[];
+      api=async (pathname,options={})=>{
+        if(pathname==='/api/sftp/download-settings')return deliveryMode==='desktop'?{delivery_mode:'desktop',effective_directory:'C:\\Users\\fixture\\Downloads'}:{delivery_mode:'browser'};
+        if(pathname.includes('/sftp/download')){
+          const body=JSON.parse(options.body||'{}');
+          const result={pathname,body,id:'notice-'+deliveryMode+'-'+downloadRequests.length,delivery_mode:deliveryMode};
+          downloadRequests.push(result);
+          return result;
+        }
+        return [];
+      };
       confirmModal=async message=>{noticeCalls+=1;noticeMessages.push(message);return true;};
+      chooseModal=async (title,message,actions)=>{batchChoiceCalls+=1;return actions.some(action=>action.value==='separate')?'separate':'';};
       refreshSftpJobs=async()=>[];
       startSftpJobsTimer=()=>{};
       await downloadSftp(1,'/tmp/first.txt');
       await downloadSftp(1,'/tmp/second.txt');
       deliveryMode='browser';
+      checks[0].checked=true;
+      checks[1].checked=true;
+      updateSftpSelection();
+      await downloadSftpSelection();
       await downloadSftp(1,'/tmp/mobile.txt');
     } finally {
       api=previousDownloadApi;
       confirmModal=previousDownloadConfirm;
+      chooseModal=previousDownloadChoice;
       refreshSftpJobs=previousDownloadRefresh;
       startSftpJobsTimer=previousDownloadTimer;
+      activeTabKey=previousDownloadTabKey;
+      const downloadFixtureIndex=tabs.findIndex(tab=>tab.key===downloadFixtureTab.key);
+      if(downloadFixtureIndex>=0)tabs.splice(downloadFixtureIndex,1);
       sftpPendingBrowserDownloads.clear();
       if(desktopNotice===null)localStorage.removeItem('sftpDesktopDownloadNoticeV1');else localStorage.setItem('sftpDesktopDownloadNoticeV1',desktopNotice);
       if(browserNotice===null)localStorage.removeItem('sftpBrowserDownloadNoticeV1');else localStorage.setItem('sftpBrowserDownloadNoticeV1',browserNotice);
@@ -1509,7 +1972,12 @@ app.whenReady().then(async () => {
     const downloadNoticeUi={
       oncePerMode:noticeCalls===2,
       desktopPath:noticeMessages.some(message=>message.includes('C:\\Users\\fixture\\Downloads')),
-      browserDevice:noticeMessages.some(message=>message.includes('当前设备')||message.includes('当前手机'))
+      browserDevice:noticeMessages.some(message=>message.includes('当前设备')||message.includes('当前手机')),
+      batchUsesSharedNotice:noticeCalls===2,
+      browserSeparateChoice:batchChoiceCalls===1,
+      browserSeparateQueued:downloadRequests.some(request=>request.pathname.endsWith('/sftp/download-batch')&&request.body.mode==='archive'&&request.body.paths?.[0]==='/fixture/folder')
+        && downloadRequests.some(request=>request.pathname.endsWith('/sftp/download')&&request.body.path==='/fixture/'+specialName),
+      noDuplicateBatchNotice:noticeCalls===2
     };
     const editorPromise = sftpTextModal('/tmp/gbk.txt', '中文内容', 8, 512*1024, 'gbk', 'auto');
     await new Promise(resolve=>setTimeout(resolve,20));
@@ -1552,6 +2020,8 @@ app.whenReady().then(async () => {
     const result = {
       folderOpened: actions[0]?.kind === 'dir' && actions[0]?.path === '/fixture/folder',
       fileOpened: actions[1]?.kind === 'file' && actions[1]?.path === '/fixture/' + specialName,
+      connectionSessionUi,
+      nativeDragUi,
       directoryActionsUi,
       globalSettingsUi,
       directoryCacheBehavior,
@@ -1585,6 +2055,7 @@ app.whenReady().then(async () => {
       compactRowHeight,
       moreMenuOpened,
       contextMenuOpened,
+      directoryDownloadMenu,
       narrowCoreHidden,
       narrowCoreDisplay,
       narrowListWidth,
@@ -1628,8 +2099,8 @@ app.whenReady().then(async () => {
       (async()=>{
         try {
           const expected = ${clipboardFixture};
-          await navigator.clipboard.writeText(expected);
-          return {ok:(await navigator.clipboard.readText())===expected};
+          await writeClipboardText(expected);
+          return {ok:true};
         } catch (error) {
           return {ok:false,error:error.message};
         }
@@ -1682,17 +2153,39 @@ app.whenReady().then(async () => {
     loadSftpPage = async () => true;
     refreshSftpJobs = async () => {};
     startSftpJobsTimer = () => {};
-    await openSftp(connections[0].id, '.', false);
+    localStorage.removeItem(SFTP_MOBILE_TOOLBAR_EXPANDED_KEY);
+    document.querySelector('#view-sftp').dataset.sftpTabKey='';
+    await openSftp(connections[0].id, '.', true);
     document.documentElement.dataset.uiSmokeStage='mobile-import';
-    const mobileSftpActions = document.querySelector('.sftp-top-actions');
+    const mobileSftpToolbarMount = document.querySelector('#view-sftp #sftpToolbarMount');
+    const mobileSftpToolbarToggle = document.querySelector('#view-sftp #sftpMobileToolbarToggle');
+    const mobileSftpBreadcrumb = document.querySelector('#view-sftp #sftpBreadcrumb');
+    const mobileSftpToolbarDefaultCollapsed = Boolean(mobileSftpToolbarMount?.hidden);
+    const mobileSftpToolbarToggleVisible = Boolean(mobileSftpToolbarToggle?.getBoundingClientRect().width);
+    const mobileSftpBreadcrumbAlwaysVisible = Boolean(mobileSftpBreadcrumb?.getBoundingClientRect().width);
+    mobileSftpToolbarToggle?.click();
+    const mobileSftpActions = document.querySelector('#view-sftp .sftp-toolbar');
+    const mobileSftpActionNodes = [...(mobileSftpActions?.querySelectorAll('.sftp-toolbar-actions > button, .sftp-toolbar-actions > label') || [])];
+    const mobileSftpActionRects = mobileSftpActionNodes.map(node => node.getBoundingClientRect());
+    const mobileSftpActionTitles = mobileSftpActionNodes.map(node => node.title || node.getAttribute('aria-label') || '');
+    const expectedMobileSftpActions = ['收藏当前目录','新建文件夹','新建文件','上传文件','SFTP 回收站','搜索当前目录','切换 SFTP 文件名编码','打开此连接的终端','刷新目录','SFTP 全局设置'];
     const mobileSftpLayout = {
       found:Boolean(mobileSftpActions),
       fits:Boolean(mobileSftpActions && mobileSftpActions.scrollWidth <= mobileSftpActions.clientWidth + 0.5),
       encodingVisible:Boolean(document.querySelector('#sftpFilenameEncodingButton')?.getBoundingClientRect().width),
-      terminalJumpVisible:Boolean(document.querySelector('.sftp-top-actions button[title="打开此连接的终端"]')?.getBoundingClientRect().width),
+      terminalJumpVisible:Boolean(mobileSftpActions?.querySelector('button[title="打开此连接的终端"]')?.getBoundingClientRect().width),
+      allActionsVisible:expectedMobileSftpActions.every(title => mobileSftpActionTitles.includes(title)) && mobileSftpActionRects.every(rect => rect.width > 0 && rect.height > 0),
+      uniformButtons:mobileSftpActionRects.every(rect => Math.abs(rect.width - 38) <= 0.5 && Math.abs(rect.height - 38) <= 0.5),
+      wrapsCompletely:mobileSftpActions?.querySelector('.sftp-toolbar-actions')?.scrollWidth <= mobileSftpActions?.querySelector('.sftp-toolbar-actions')?.clientWidth + 0.5,
+      defaultCollapsed:mobileSftpToolbarDefaultCollapsed,
+      toggleVisible:mobileSftpToolbarToggleVisible,
+      breadcrumbAlwaysVisible:mobileSftpBreadcrumbAlwaysVisible,
+      expandedPersisted:localStorage.getItem(SFTP_MOBILE_TOOLBAR_EXPANDED_KEY) === '1' && !mobileSftpToolbarMount?.hidden,
       searchFontSize:parseFloat(getComputedStyle(document.querySelector('#sftpSearch')).fontSize)
     };
+    toggleSftpSearch();
     const sftpWorkspaceAfterKeyboardResize=workspaceStateSurvivesResize(document.querySelector('#sftpSearch'),'mobile-resize-sftp');
+    closeSftpSearch();
     loadSftpPage = mobileSftpLoad;
     refreshSftpJobs = mobileSftpJobs;
     startSftpJobsTimer = mobileSftpTimer;
@@ -1998,7 +2491,7 @@ app.whenReady().then(async () => {
   const darkFailed = dark.theme !== "dark" || dark.buttonBackground === "rgb(255, 255, 255)";
   const menuFailed = !desktopMenu.opened || !desktopMenu.closedOnScroll || !mobile.menuOpened || !mobile.menuClosed;
   const refreshStateUiFailed = !refreshStateUi.found || !refreshStateUi.collapsedBeforeRefresh || !refreshStateUi.collapsedAfterRefresh || !refreshStateUi.collapsePersisted || !refreshStateUi.explicitSelectionReopens || !refreshStateUi.runningCountLive || !refreshStateUi.failureCountLive || !refreshStateUi.oldStartupLabelsRemoved;
-  const workspaceTabDragUiFailed = !workspaceTabDragUi.beganImmediately || !workspaceTabDragUi.touchReady || !workspaceTabDragUi.commonTitleFits || !workspaceTabDragUi.numberedSessionTitleFits || !workspaceTabDragUi.compactTabFont || !workspaceTabDragUi.shortTabUsesContentWidth || !workspaceTabDragUi.fullTitleTooltip || JSON.stringify(workspaceTabDragUi.liveOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || JSON.stringify(workspaceTabDragUi.savedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || JSON.stringify(workspaceTabDragUi.persistedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || !workspaceTabDragUi.activePreserved || !workspaceTabDragUi.clickSuppressed || !workspaceTabDragUi.cancelStarted || !workspaceTabDragUi.cancelRestored || !workspaceTabDragUi.closeDoesNotDrag || !workspaceTabDragUi.fallbackMove || !workspaceTabDragUi.scrollControlsVisible || !workspaceTabDragUi.scrollControlsHideWhenFit || !workspaceTabDragUi.nativeScrollbarHidden || !workspaceTabDragUi.wheelScrollsTabs;
+  const workspaceTabDragUiFailed = !workspaceTabDragUi.beganImmediately || !workspaceTabDragUi.activatedOnPress || !workspaceTabDragUi.dragGhostVisible || !workspaceTabDragUi.dropPositionVisible || !workspaceTabDragUi.dragGhostRemoved || !workspaceTabDragUi.touchReady || !workspaceTabDragUi.commonTitleFits || !workspaceTabDragUi.numberedSessionTitleFits || !workspaceTabDragUi.compactTabFont || !workspaceTabDragUi.shortTabUsesContentWidth || !workspaceTabDragUi.fullTitleTooltip || JSON.stringify(workspaceTabDragUi.liveOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || JSON.stringify(workspaceTabDragUi.savedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || JSON.stringify(workspaceTabDragUi.persistedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || !workspaceTabDragUi.activeFollowsDragged || !workspaceTabDragUi.clickSuppressed || !workspaceTabDragUi.cancelStarted || !workspaceTabDragUi.cancelRestored || !workspaceTabDragUi.closeDoesNotDrag || !workspaceTabDragUi.fallbackMove || !workspaceTabDragUi.scrollControlsVisible || !workspaceTabDragUi.scrollControlsHideWhenFit || !workspaceTabDragUi.nativeScrollbarHidden || !workspaceTabDragUi.wheelScrollsTabs;
   const runningActionsFailed = runningActions.found && (Math.abs(runningActions.open.width - runningActions.retry.width) > 1 || Math.abs(runningActions.open.height - runningActions.retry.height) > 1);
   const authUiFailed = !authUi.found || !Object.values(authUi.passwordMode).every(Boolean) || !Object.values(authUi.keyMode).every(Boolean);
   const saveAndClearUiFailed = !Object.values(saveAndClearUi).every(Boolean);
@@ -2017,15 +2510,17 @@ app.whenReady().then(async () => {
   const aboutUiFailed = Boolean(aboutUi.error) || !aboutUi.found || !aboutUi.aboutSelected || aboutUi.duplicateSettingsNav !== 0 || !aboutUi.versionMatches || !aboutUi.licenseMetadata || !aboutUi.sourceLink || !aboutUi.modalOpen || !aboutUi.accessible || !aboutUi.fullText || !aboutUi.textScrollable || !aboutUi.cardWithinViewport || !aboutUi.closeFocused || !aboutUi.backdropIgnored || !aboutUi.closedByEscape || !aboutUi.focusReturned || !aboutUi.followupBackdropClean || !aboutUi.followupResolved || !aboutUi.updateUi;
   const expectedSettingsActions = ['通用设置','安全设置','通知设置','启动与运行','关于'];
   const mobileResizeNavigationFailed = !mobile.workspaceResizeNavigation || !Object.values(mobile.workspaceResizeNavigation).every(Boolean);
-  const mobileNavigationFailed = mobileResizeNavigationFailed || !mobile.importExplorerFirst || !mobile.importWorkspaceEntered || !mobile.sftp?.found || !mobile.sftp?.fits || !mobile.sftp?.encodingVisible || !mobile.sftp?.terminalJumpVisible || !mobile.workspaceFormFonts?.preventsFocusZoom || !mobile.settingsNavigation?.explorerFirst || !mobile.settingsNavigation?.workspaceEntered || !mobile.settingsNavigation?.vertical || !mobile.settingsNavigation?.selectedOnly || !mobile.settingsNavigation?.noDuplicateMenu || JSON.stringify(mobile.settingsNavigation?.labels)!==JSON.stringify(expectedSettingsActions) || mobile.mobileTabs?.count !== 7 || !mobile.mobileTabs?.labelsHidden || !mobile.mobileTabs?.iconsCentered || !mobile.mobileTabs?.fits || !mobile.groupActionVisible || !mobile.groupActionMenuOpened || !mobile.groupControlsInline || !mobile.groupDragFirst || !mobile.groupCancelDoesNotSave || !mobile.groupDragSurvivesRefresh;
+  const mobileNavigationFailed = mobileResizeNavigationFailed || !mobile.importExplorerFirst || !mobile.importWorkspaceEntered || !mobile.sftp?.found || !mobile.sftp?.fits || !mobile.sftp?.encodingVisible || !mobile.sftp?.terminalJumpVisible || !mobile.sftp?.allActionsVisible || !mobile.sftp?.uniformButtons || !mobile.sftp?.wrapsCompletely || !mobile.sftp?.defaultCollapsed || !mobile.sftp?.toggleVisible || !mobile.sftp?.breadcrumbAlwaysVisible || !mobile.sftp?.expandedPersisted || !mobile.workspaceFormFonts?.preventsFocusZoom || !mobile.settingsNavigation?.explorerFirst || !mobile.settingsNavigation?.workspaceEntered || !mobile.settingsNavigation?.vertical || !mobile.settingsNavigation?.selectedOnly || !mobile.settingsNavigation?.noDuplicateMenu || JSON.stringify(mobile.settingsNavigation?.labels)!==JSON.stringify(expectedSettingsActions) || mobile.mobileTabs?.count !== 7 || !mobile.mobileTabs?.labelsHidden || !mobile.mobileTabs?.iconsCentered || !mobile.mobileTabs?.fits || !mobile.groupActionVisible || !mobile.groupActionMenuOpened || !mobile.groupControlsInline || !mobile.groupDragFirst || !mobile.groupCancelDoesNotSave || !mobile.groupDragSurvivesRefresh;
   const mobileAboutFailed = !mobile.about || !mobile.about.modalOpen || !mobile.about.cardWithinViewport || !mobile.about.textWithinCard || !mobile.about.textScrollable || !mobile.about.closeVisible || !mobile.about.closed;
-  const terminalLabels = ['复制选中','光标复制','会话复制','粘贴','清屏','滚动到底部','重新连接','全局终端设置'];
+  const terminalLabels = ['复制选中','光标复制','会话复制','粘贴','清屏','滚动到底部','断开连接','全局终端设置'];
   const terminalSettingsUi = terminalUi.terminalSettingsUi || {};
   const mobileTerminalSettingsUi = mobile.terminalGlobalSettings || {};
-  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.withinViewport || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
+  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.withinViewport || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
   const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || !logSettingsUi.days || !logSettingsUi.fileMb || !logSettingsUi.totalMb || !logSettingsUi.rotations || !logSettingsUi.cleanup || !logSettingsUi.save || !logSettingsUi.closed;
-  const expectedDirectoryActions = ['收藏','新建目录','新建文件','上传','回收站'];
+  const expectedSftpToolActions = ['收藏当前目录','新建文件夹','新建文件','上传文件','SFTP 回收站','搜索当前目录','打开此连接的终端','刷新目录','SFTP 全局设置'];
   const directoryActionsUi = sftpUi.directoryActionsUi || {};
+  const connectionSessionUi = sftpUi.connectionSessionUi || {};
+  const nativeDragUi = sftpUi.nativeDragUi || {};
   const directoryCacheBehavior = sftpUi.directoryCacheBehavior || {};
   const directorySizeUi = sftpUi.directorySizeUi || {};
   const jobUi = sftpUi.jobUi || {};
@@ -2034,7 +2529,8 @@ app.whenReady().then(async () => {
   const downloadNoticeUi = sftpUi.downloadNoticeUi || {};
   const jobUiFailed = !jobUi.found || !jobUi.mainHasRunning || !jobUi.mainHasFailed || !jobUi.mainHidesDone || !jobUi.historyEnabled || jobUi.historyCount !== '4' || !jobUi.historyHasDone || !jobUi.savedDownloadOnlyOpensDirectory || !jobUi.browserDownloadCanRepeat || !jobUi.historyHidesCurrent || !jobUi.backdropIgnored || !jobUi.noManualRefresh || !jobUi.compactRow;
   const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.jsonFormatting || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
-  const sftpUiFailed = Boolean(sftpUi.error) || jobUiFailed || textEncodingUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryCacheBehavior.boundedAndExpired || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.barInsideSticky || !directoryActionsUi.barAfterBreadcrumb || !directoryActionsUi.reusedWithSilentRefresh || JSON.stringify(directoryActionsUi.actionLabels) !== JSON.stringify(expectedDirectoryActions) || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.emptyFavoritesCompact || !directoryActionsUi.wideDirectoryBarCompact || !directoryActionsUi.narrowDirectoryBarCompact || !directoryActionsUi.terminalJump || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/junruo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.fileHasPermissions || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactNoOverflow || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.completedMutationDetected || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
+  const nativeDragUiFailed = !nativeDragUi.found || !nativeDragUi.firstDragOnlyStages || !nativeDragUi.firstDragReset || !nativeDragUi.cacheReused || !nativeDragUi.cachedUnarmedStaysInternal || !nativeDragUi.sameWindowDropDoesNotArm || !nativeDragUi.armedDragStartsSynchronously || !nativeDragUi.failureRearmed || !nativeDragUi.successClearsState;
+  const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedTabSwitchDoesNotReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.sameHostListDropCancels || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.externalFileDropDetected || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryCacheBehavior.boundedAndExpired || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithSilentRefresh || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.pathEditorReplacesBreadcrumb || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/junruo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.fileHasPermissions || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactNoOverflow || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.completedMutationDetected || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
   const code = errors.length || overflow || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || runningActionsFailed || authUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || navigationUiFailed || aboutUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || logSettingsUiFailed || sftpUiFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.compactDesktopHeader || !result.forwardToggleFits ? 1 : 0;
   clearTimeout(smokeWatchdog);
   window.destroy();

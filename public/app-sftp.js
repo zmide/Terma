@@ -8,6 +8,8 @@ const SFTP_DIRECTORY_VIEW_CACHE_MAX_DIRECTORIES = 60;
 const SFTP_DIRECTORY_VIEW_CACHE_MAX_ENTRIES = 5000;
 const SFTP_DIRECTORY_SIZE_CACHE_TTL_MS = 10 * 60 * 1000;
 const SFTP_DIRECTORY_SIZE_CACHE_MAX_ENTRIES = 200;
+const SFTP_NATIVE_DRAG_CACHE_TTL_MS = 9 * 60 * 1000;
+const SFTP_MOBILE_TOOLBAR_EXPANDED_KEY = "sftpMobileToolbarExpanded";
 const sftpFilenameEncodingOptions = [
   ["utf8", "UTF-8"],
   ["gb18030", "GB18030"],
@@ -20,7 +22,26 @@ const sftpFilenameEncodingOptions = [
 let sftpLatestJobs = [];
 let sftpRecycleBinConnectionId = 0;
 const sftpPendingBrowserDownloads = new Set();
+const sftpDownloadNoticeRequests = new Map();
 const sftpOpeningFiles = new Set();
+const sftpEditorDiffBaselines = new Map();
+const sftpNavigationHistories = new Map();
+const sftpConnectionRequests = new Map();
+const sftpConnectionVersions = new Map();
+const sftpDisconnectRequests = new Map();
+let sftpExternalDragPreparing = null;
+let sftpInternalDrag = null;
+let sftpDropDepth = 0;
+const sftpNativeDragCache = new Map();
+const sftpNativeDragArmed = new Set();
+const sftpNativeDragRequests = new Map();
+let sftpNativeDragPointer = null;
+let sftpTabDragPreviewKey = "";
+let sftpTabDragPreviewTimer = 0;
+
+if (typeof window !== "undefined") {
+  window.tunnelDeskDesktop?.onSftpDragResult?.(result => handleSftpNativeDragResult(result));
+}
 
 function sftpFileOpenKey(connectionId, remotePath) {
   return `${Number(connectionId)}\0${String(remotePath || "")}`;
@@ -379,7 +400,13 @@ function refreshSftpDirectoryActions() {
   const tab = tabs.find(item => item.key === activeTabKey) || {id:Number(sftpState.connectionId || 0)};
   if (!tab.id) return;
   const favoriteButton = $("sftpFavoriteToggle");
-  if (favoriteButton) favoriteButton.innerHTML = `${icon("star")}<span>${isCurrentSftpFavorite(tab.id, sftpState.path || ".") ? "取消收藏" : "收藏"}</span>`;
+  if (favoriteButton) {
+    const active = isCurrentSftpFavorite(tab.id, sftpState.path || ".");
+    favoriteButton.classList.toggle("is-active", active);
+    favoriteButton.innerHTML = icon(active ? "star-off" : "star");
+    favoriteButton.title = active ? "取消收藏当前目录" : "收藏当前目录";
+    favoriteButton.setAttribute("aria-label", favoriteButton.title);
+  }
   const favorites = $("sftpFavorites");
   if (favorites) {
     favorites.classList.toggle("is-empty", !sftpFavorites.some(item => item.connectionId === tab.id));
@@ -445,8 +472,299 @@ function restoreCachedSftpState(cached) {
   return true;
 }
 
+function sftpNavigationState(tabKey=activeTabKey) {
+  if (!sftpNavigationHistories.has(tabKey)) sftpNavigationHistories.set(tabKey, {paths:[], index:-1});
+  return sftpNavigationHistories.get(tabKey);
+}
+
+function rememberSftpNavigation(tabKey, remotePath) {
+  const navigation = sftpNavigationState(tabKey);
+  const normalized = normalizeSftpDirectoryCachePath(remotePath);
+  if (navigation.paths[navigation.index] === normalized) return;
+  navigation.paths = navigation.paths.slice(0, navigation.index + 1);
+  navigation.paths.push(normalized);
+  if (navigation.paths.length > 80) navigation.paths.shift();
+  navigation.index = navigation.paths.length - 1;
+  syncSftpNavigationButtons();
+}
+
+function syncSftpNavigationButtons() {
+  const navigation = sftpNavigationState();
+  const previous = $("sftpHistoryBack");
+  const next = $("sftpHistoryForward");
+  if (previous) previous.disabled = navigation.index <= 0;
+  if (next) next.disabled = navigation.index < 0 || navigation.index >= navigation.paths.length - 1;
+}
+
+async function navigateSftpHistory(direction) {
+  const tab = tabs.find(item => item.key === activeTabKey);
+  const navigation = sftpNavigationState();
+  const nextIndex = navigation.index + Number(direction || 0);
+  if (!tab || nextIndex < 0 || nextIndex >= navigation.paths.length) return;
+  navigation.index = nextIndex;
+  syncSftpNavigationButtons();
+  await loadSftpPage({connectionId:tab.id, path:navigation.paths[nextIndex], page:1, tabKey:tab.key, historyNavigation:true});
+}
+
+function showSftpPathEditor() {
+  const breadcrumb = $("sftpBreadcrumb");
+  const form = $("sftpPathEditor");
+  const input = $("sftpPathInput");
+  const editButton = $("sftpPathEditButton");
+  if (!breadcrumb || !form || !input) return;
+  breadcrumb.hidden = true;
+  form.hidden = false;
+  if (editButton) editButton.hidden = true;
+  input.value = sftpState.path || ".";
+  input.focus();
+  input.select();
+}
+
+function hideSftpPathEditor() {
+  const breadcrumb = $("sftpBreadcrumb");
+  const form = $("sftpPathEditor");
+  const editButton = $("sftpPathEditButton");
+  if (breadcrumb) breadcrumb.hidden = false;
+  if (form) form.hidden = true;
+  if (editButton) editButton.hidden = false;
+}
+
+function submitSftpPath(event) {
+  event?.preventDefault();
+  const tab = tabs.find(item => item.key === activeTabKey);
+  const value = $("sftpPathInput")?.value.trim();
+  hideSftpPathEditor();
+  if (tab && value) openSftp(tab.id, value);
+}
+
+function toggleSftpSearch() {
+  const panel = $("sftpFloatingSearch");
+  if (!panel) return;
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) {
+    const input = $("sftpSearch");
+    input?.focus();
+    input?.select();
+  }
+}
+
+function closeSftpSearch() {
+  const panel = $("sftpFloatingSearch");
+  if (panel) panel.hidden = true;
+}
+
+function clearSftpSearch() {
+  const input = $("sftpSearch");
+  if (input) input.value = "";
+  setSftpSearch("");
+  closeSftpSearch();
+}
+
+function sftpMobileToolbarExpanded() {
+  return localStorage.getItem(SFTP_MOBILE_TOOLBAR_EXPANDED_KEY) === "1";
+}
+
+function syncSftpMobileToolbarState() {
+  const mount = $("sftpToolbarMount");
+  const toggle = $("sftpMobileToolbarToggle");
+  const mobile = isMobileLayout();
+  const expanded = !mobile || sftpMobileToolbarExpanded();
+  if (mount) mount.hidden = mobile && !expanded;
+  if (!toggle) return;
+  toggle.setAttribute("aria-expanded", String(expanded));
+  toggle.title = expanded ? "收起操作按钮" : "展开操作按钮";
+  toggle.setAttribute("aria-label", toggle.title);
+  toggle.innerHTML = icon(expanded ? "chevron-up" : "chevron-down");
+}
+
+function toggleSftpMobileToolbar() {
+  if (!isMobileLayout()) return;
+  localStorage.setItem(SFTP_MOBILE_TOOLBAR_EXPANDED_KEY, sftpMobileToolbarExpanded() ? "0" : "1");
+  syncSftpMobileToolbarState();
+}
+
+function sftpConnectionAddress(connection) {
+  return `${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port || 22}`;
+}
+
+function syncSftpToolbarPlacement() {
+  const header = $("workspaceHeaderTools");
+  const mount = $("sftpToolbarMount");
+  const toolbar = mount?.querySelector(":scope > .sftp-toolbar")
+    || header?.querySelector(":scope > .sftp-toolbar");
+  if (!header) return;
+  if (activeView !== "sftp") {
+    if (toolbar && mount && toolbar.parentElement !== mount) mount.replaceChildren(toolbar);
+    toolbar?.classList.remove("sftp-toolbar-header");
+    if (header.querySelector(":scope > .sftp-toolbar")) {
+      header.replaceChildren();
+      header.hidden = true;
+    }
+    return;
+  }
+  if (!mount || !toolbar) {
+    header.hidden = true;
+    header.replaceChildren();
+    return;
+  }
+  if (isMobileLayout()) {
+    if (toolbar.parentElement !== mount || mount.children.length !== 1) mount.replaceChildren(toolbar);
+    toolbar.classList.remove("sftp-toolbar-header");
+    if (header.querySelector(":scope > .sftp-toolbar")) header.replaceChildren();
+    header.hidden = true;
+  } else {
+    if (toolbar.parentElement !== header || header.children.length !== 1) header.replaceChildren(toolbar);
+    toolbar.classList.add("sftp-toolbar-header");
+    header.hidden = false;
+  }
+  syncSftpMobileToolbarState();
+}
+
+function updateSftpConnectionUi(connectionId, status="disconnected", error="") {
+  const tabKey = `sftp-${connectionId}`;
+  const normalized = ["connected", "connecting", "disconnected"].includes(status) ? status : "disconnected";
+  setWorkspaceTabConnectionStatus(tabKey, normalized);
+  if (activeTabKey !== tabKey || activeView !== "sftp") return;
+  const button = $("sftpConnectionToggle");
+  const banner = $("sftpConnectionBanner");
+  const shell = $("view-sftp")?.querySelector(".sftp-shell");
+  const connected = normalized === "connected";
+  const connecting = normalized === "connecting";
+  shell?.classList.toggle("is-disconnected", !connected && !connecting);
+  if (button) {
+    button.dataset.status = normalized;
+    button.disabled = connecting;
+    button.title = connecting ? "正在连接 SFTP" : connected ? "断开 SFTP 连接" : "重新连接 SFTP";
+    button.setAttribute("aria-label", button.title);
+    button.innerHTML = connected
+      ? icon("link-2-off")
+      : icon(connecting ? "loader-circle" : "link-2");
+  }
+  if (banner) {
+    banner.hidden = connected || connecting;
+    const detail = banner.querySelector(".sftp-connection-detail");
+    if (detail) detail.textContent = error || "当前目录仍保留，可重新连接后继续操作。";
+  }
+}
+
+async function disconnectSftpConnection(connectionId) {
+  const id = Number(connectionId);
+  const tabKey = `sftp-${id}`;
+  rememberSftpViewState(tabKey);
+  sftpDisconnectedTabs.add(tabKey);
+  sftpConnectionVersions.set(id, Number(sftpConnectionVersions.get(id) || 0) + 1);
+  sftpConnectionRequests.get(id)?.controller?.abort();
+  sftpConnectionRequests.delete(id);
+  if (sftpRequestController) sftpRequestController.abort();
+  updateSftpConnectionUi(id, "disconnected");
+  const existing = sftpDisconnectRequests.get(id);
+  if (existing) return existing;
+  const request = api(`/api/connections/${id}/sftp/session?forget=1`, {method:"DELETE", skipSftpConnect:true})
+    .catch(error => {
+      notify(error.message || "断开 SFTP 连接失败", "error");
+      throw error;
+    })
+    .finally(() => {
+      if (sftpDisconnectRequests.get(id) === request) sftpDisconnectRequests.delete(id);
+    });
+  sftpDisconnectRequests.set(id, request);
+  try {
+    return await request;
+  } catch { return false; }
+}
+
+async function ensureSftpConnection(connectionId, options={}) {
+  const id = Number(connectionId);
+  const tabKey = `sftp-${id}`;
+  const disconnecting = sftpDisconnectRequests.get(id);
+  if (disconnecting) await disconnecting.catch(() => {});
+  const pending = sftpConnectionRequests.get(id);
+  if (pending) return pending.promise;
+  const tab = tabs.find(item => item.key === tabKey);
+  const activeStatus = activeTabKey === tabKey ? $("sftpConnectionToggle")?.dataset.status : "";
+  const status = activeStatus || tab?.connectionStatus || "disconnected";
+  if (!options.force && status === "connected" && !sftpDisconnectedTabs.has(tabKey)) return true;
+  const version = Number(sftpConnectionVersions.get(id) || 0) + 1;
+  sftpConnectionVersions.set(id, version);
+  updateSftpConnectionUi(id, "connecting");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  let request;
+  request = (async () => {
+    try {
+      await api(`/api/connections/${id}/sftp/session`, {method:"POST", body:"{}", signal:controller.signal, skipSftpConnect:true});
+      if (sftpConnectionVersions.get(id) !== version) return false;
+      sftpDisconnectedTabs.delete(tabKey);
+      updateSftpConnectionUi(id, "connected");
+      return true;
+    } catch (error) {
+      if (sftpConnectionVersions.get(id) === version) {
+        const message = error?.name === "AbortError" ? "SFTP 连接超时，请重试" : (error.message || "SFTP 自动重连失败");
+        updateSftpConnectionUi(id, "disconnected", message);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      if (sftpConnectionRequests.get(id)?.promise === request) sftpConnectionRequests.delete(id);
+    }
+  })();
+  sftpConnectionRequests.set(id, {version, promise:request, controller});
+  return request;
+}
+
+async function reconnectSftpConnection(connectionId, options={}) {
+  const id = Number(connectionId);
+  const tabKey = `sftp-${id}`;
+  sftpConnectionVersions.set(id, Number(sftpConnectionVersions.get(id) || 0) + 1);
+  sftpConnectionRequests.get(id)?.controller?.abort();
+  sftpConnectionRequests.delete(id);
+  try {
+    await ensureSftpConnection(id, {force:true});
+    if (options.refresh !== false && activeTabKey === tabKey && activeView === "sftp") {
+      await loadSftpPage({path:sftpState.path, page:sftpState.page || 1, tabKey, refresh:true, keepContents:true, preserveView:true});
+    }
+    return true;
+  } catch (error) {
+    updateSftpConnectionUi(id, "disconnected", error.message);
+    if (!options.silent) notify(error.message || "SFTP 重连失败", "error");
+    return false;
+  }
+}
+
+function toggleSftpConnection(connectionId) {
+  const status = $("sftpConnectionToggle")?.dataset.status;
+  if (status === "connected") return disconnectSftpConnection(connectionId);
+  if (status === "connecting") return sftpConnectionRequests.get(Number(connectionId))?.promise || Promise.resolve(false);
+  return reconnectSftpConnection(connectionId);
+}
+
+async function refreshActiveSftpSessionStatus() {
+  if (activeView !== "sftp" || !sftpState.connectionId) return;
+  const id = Number(sftpState.connectionId);
+  try {
+    const result = await api(`/api/connections/${id}/sftp/session`, {skipSftpConnect:true});
+    if (!result.connected && !sftpDisconnectedTabs.has(`sftp-${id}`)) {
+      await ensureSftpConnection(id, {force:true});
+      return;
+    }
+    updateSftpConnectionUi(id, result.connected ? "connected" : "disconnected", result.error || "");
+  } catch (error) {
+    updateSftpConnectionUi(id, "disconnected", error.message || "SFTP 状态检查失败");
+  }
+}
+
+function closeSftpSession(tabKey) {
+  const id = Number(String(tabKey || "").replace(/^sftp-/, ""));
+  if (!id) return;
+  sftpConnectionVersions.set(id, Number(sftpConnectionVersions.get(id) || 0) + 1);
+  sftpConnectionRequests.get(id)?.controller?.abort();
+  sftpConnectionRequests.delete(id);
+  void api(`/api/connections/${id}/sftp/session?forget=1`, {method:"DELETE", skipSftpConnect:true}).catch(() => {});
+}
+
 async function openSftp(id, remotePath=".", updateTab=true) {
   const tabKey = `sftp-${id}`;
+  const preserveManualDisconnect = !updateTab && sftpDisconnectedTabs.has(tabKey);
   const view = $("view-sftp");
   const currentlyMounted = view.dataset.sftpTabKey === activeTabKey && Boolean(view.querySelector(".sftp-shell"));
   const leavingCurrentDirectory = activeView === "sftp"
@@ -471,11 +789,15 @@ async function openSftp(id, remotePath=".", updateTab=true) {
       || normalizeSftpDirectoryCachePath(directoryCached?.state?.path) === normalizeSftpDirectoryCachePath(sftpState.path)
     );
   if (mounted) {
-    setWorkspace(`${c.name} · SFTP`, `${c.ssh_user}@${c.ssh_host}`, "sftp", tabKey, updateTab, true, {kind:"sftp", id:c.id, path:sftpState.path});
+    setWorkspace(`${c.name} · SFTP`, sftpConnectionAddress(c), "sftp", tabKey, updateTab, true, {kind:"sftp", id:c.id, path:sftpState.path, connectionStatus:sftpDisconnectedTabs.has(tabKey) ? "disconnected" : "connecting"});
     if (cached?.viewState) restoreSftpViewState(cached.viewState);
     refreshSftpDirectoryActions();
     refreshSftpJobs();
     startSftpJobsTimer();
+    if (preserveManualDisconnect) {
+      updateSftpConnectionUi(id, "disconnected");
+      return true;
+    }
     void loadSftpPage({
       path:sftpState.path,
       page:sftpState.page || 1,
@@ -495,38 +817,52 @@ async function openSftp(id, remotePath=".", updateTab=true) {
     sftpState = {...sftpState, connectionId:id, path:remotePath, entries:[], selected:null, page:1, total:0, totalPages:1, unfilteredTotal:0};
   }
   const displayPath = restored ? sftpState.path : remotePath;
-  view.innerHTML = `<div class="sftp-shell">
+  view.innerHTML = `<div class="sftp-shell" ondragenter="handleSftpDragEnter(event)" ondragover="handleSftpDragOver(event)" ondragleave="handleSftpDragLeave(event)" ondrop="handleSftpDrop(event)">
     <div class="sftp-top">
-      <div class="sftp-primary-row">
-        <div class="sftp-path-block">
-          <div class="sftp-title">${esc(c.name)}</div>
-          <nav class="sftp-breadcrumb" id="sftpBreadcrumb" aria-label="远程目录路径">${sftpBreadcrumbHtml(id, displayPath)}</nav>
-        </div>
-        <div class="sftp-top-actions">
-          <div class="sftp-search search-field">${icon("search")}<input id="sftpSearch" placeholder="搜索当前目录" value="${esc(sftpState.query)}" oninput="setSftpSearch(this.value)"></div>
+      <div id="sftpToolbarMount"><div class="sftp-toolbar">
+        <div class="sftp-toolbar-actions">
+          <button class="icon-button" title="收藏当前目录" aria-label="收藏当前目录" id="sftpFavoriteToggle" onclick="toggleSftpFavorite()">${icon("star")}</button>
+          <button class="icon-button" title="新建文件夹" aria-label="新建文件夹" onclick="mkdirSftp()">${icon("folder-plus")}</button>
+          <button class="icon-button" title="新建文件" aria-label="新建文件" onclick="createSftpFile()">${icon("file-plus-2")}</button>
+          <button type="button" class="icon-button" title="上传文件" aria-label="上传文件" onclick="$('sftpUpload').click()">${icon("upload")}</button>
+          <input id="sftpUpload" type="file" multiple onchange="uploadSftpFile()" hidden>
+          <button class="icon-button" title="SFTP 回收站" aria-label="SFTP 回收站" onclick="openSftpRecycleBin()">${icon("trash-2")}</button>
+          <span id="sftpClipboardActions" class="sftp-clipboard-actions">${renderSftpClipboardActions()}</span>
+          <span class="sftp-toolbar-separator" aria-hidden="true"></span>
+          <button class="icon-button" title="搜索当前目录" aria-label="搜索当前目录" onclick="toggleSftpSearch()">${icon("search")}</button>
           <button id="sftpFilenameEncodingButton" class="sftp-encoding-button" title="切换 SFTP 文件名编码" onclick="showSftpFilenameEncodingMenu(event,${id})">${icon("languages")}<span>${esc(sftpFilenameEncodingLabel(c))}</span>${icon("chevron-down")}</button>
           <button class="icon-button" title="打开此连接的终端" aria-label="打开此连接的终端" onclick="openTerminal(${id})">${icon("square-terminal")}</button>
-          <button class="icon-button" title="上级目录" aria-label="上级目录" onclick="openSftp(${id}, parentRemotePath(sftpState.path))">${icon("corner-left-up")}</button>
+          <button id="sftpConnectionToggle" class="icon-button sftp-connection-toggle" data-status="connecting" title="正在连接 SFTP" aria-label="正在连接 SFTP" onclick="toggleSftpConnection(${id})">${icon("loader-circle")}</button>
           <button class="icon-button" title="刷新目录" aria-label="刷新目录" onclick="refreshSftp()">${icon("refresh-cw")}</button>
           <button id="sftpGlobalSettingsButton" class="icon-button" title="SFTP 全局设置" aria-label="SFTP 全局设置" onclick="showSftpGlobalSettings()">${icon("settings")}</button>
         </div>
-      </div>
-      <div class="sftp-directory-bar">
-        <div class="sftp-directory-actions">
-          <button id="sftpFavoriteToggle" onclick="toggleSftpFavorite()">${icon("star")}<span>${isCurrentSftpFavorite(id, displayPath) ? "取消收藏" : "收藏"}</span></button>
-          <button onclick="mkdirSftp()">${icon("folder-plus")}<span>新建目录</span></button>
-          <button onclick="createSftpFile()">${icon("file-plus-2")}<span>新建文件</span></button>
-          <label class="upload-button">${icon("upload")}<span>上传</span><input id="sftpUpload" type="file" onchange="uploadSftpFile()" hidden></label>
-          <button onclick="openSftpRecycleBin()">${icon("trash-2")}<span>回收站</span></button>
-          <span id="sftpClipboardActions" class="sftp-clipboard-actions">${renderSftpClipboardActions()}</span>
+      </div></div>
+      <div class="sftp-navigation-row">
+        <div class="sftp-navigation-actions">
+          <button id="sftpHistoryBack" class="icon-button" title="上一步" aria-label="上一步" onclick="navigateSftpHistory(-1)">${icon("arrow-left")}</button>
+          <button id="sftpHistoryForward" class="icon-button" title="下一步" aria-label="下一步" onclick="navigateSftpHistory(1)">${icon("arrow-right")}</button>
+          <button class="icon-button" title="上一级" aria-label="上一级" onclick="openSftp(${id}, parentRemotePath(sftpState.path))">${icon("corner-left-up")}</button>
         </div>
-        <div id="sftpFavorites" class="sftp-favorites${sftpFavorites.some(item => item.connectionId === id) ? "" : " is-empty"}">${renderSftpFavorites(id)}</div>
+        <div class="sftp-path-block">
+          <nav class="sftp-breadcrumb" id="sftpBreadcrumb" aria-label="远程目录路径" ondblclick="showSftpPathEditor()">${sftpBreadcrumbHtml(id, displayPath)}</nav>
+          <form id="sftpPathEditor" class="sftp-path-editor" hidden onsubmit="submitSftpPath(event)"><input id="sftpPathInput" aria-label="远程目录路径" value="${esc(displayPath)}"><button type="submit" class="icon-button" title="转到路径" aria-label="转到路径">${icon("corner-down-left")}</button><button type="button" class="icon-button" title="取消" aria-label="取消" onclick="hideSftpPathEditor()">${icon("x")}</button></form>
+        </div>
+        <div class="sftp-navigation-end-actions">
+          <button id="sftpPathEditButton" class="icon-button sftp-path-edit-button" title="手动输入目录" aria-label="手动输入目录" onclick="showSftpPathEditor()">${icon("pencil")}</button>
+          <button id="sftpMobileToolbarToggle" class="icon-button sftp-mobile-toolbar-toggle" type="button" title="展开操作按钮" aria-label="展开操作按钮" aria-controls="sftpToolbarMount" aria-expanded="false" onclick="toggleSftpMobileToolbar()">${icon("chevron-down")}</button>
+        </div>
+      </div>
+      <div id="sftpFavorites" class="sftp-favorites${sftpFavorites.some(item => item.connectionId === id) ? "" : " is-empty"}">${renderSftpFavorites(id)}</div>
+      <div id="sftpConnectionBanner" class="sftp-connection-banner" hidden>
+        <div>${icon("link-2-off")}<span><strong>SFTP 连接已断开</strong><small class="sftp-connection-detail">当前目录仍保留，可重新连接后继续操作。</small></span></div>
+        <button onclick="reconnectSftpConnection(${id})">${icon("link-2")}<span>重新连接</span></button>
       </div>
       <div class="sftp-selection-bar" id="sftpSelectionBar" hidden>
         <div class="sftp-selected" id="sftpSelectedInfo">已选择 0 项</div>
         <div class="sftp-selection-actions">
           <button onclick="copySftpSelection('copy')">${icon("copy")}<span>复制</span></button>
           <button onclick="copySftpSelection('move')">${icon("folder-input")}<span>移动</span></button>
+          <button onclick="downloadSftpSelection()">${icon("download")}<span>下载</span></button>
           <button id="sftpSelectionCompress" onclick="compressSftpSelection()">${icon("archive")}<span>压缩</span></button>
           <button id="sftpSelectionPermissions" onclick="openSftpPermissionsForSelection()">${icon("key-round")}<span>权限</span></button>
           <button id="sftpSelectionExtract" onclick="extractSftpSelection()" hidden>${icon("archive-restore")}<span>解压</span></button>
@@ -536,12 +872,26 @@ async function openSftp(id, remotePath=".", updateTab=true) {
       </div>
     </div>
     <div id="sftpJobs" class="sftp-jobs"></div>
-    <div id="sftpList" class="sftp-list">${restored ? "" : stateView("loading", "正在读取目录", displayPath)}</div>
+    <div id="sftpList" class="sftp-list" oncontextmenu="showSftpDirectoryMenu(event)">${restored ? "" : stateView("loading", "正在读取目录", displayPath)}</div>
+    <div id="sftpDropOverlay" class="sftp-drop-overlay" hidden><div>${icon("upload-cloud")}<strong>松开以上传到当前目录</strong><span>${esc(displayPath)}</span></div></div>
+    <div id="sftpFloatingSearch" class="sftp-floating-search" hidden>${icon("search")}<input id="sftpSearch" placeholder="搜索当前目录" value="${esc(sftpState.query)}" oninput="setSftpSearch(this.value)"><button class="icon-button" title="清除搜索" aria-label="清除搜索" onclick="clearSftpSearch()">${icon("x")}</button></div>
   </div>`;
   view.dataset.sftpTabKey = tabKey;
-  setWorkspace(`${c.name} · SFTP`, `${c.ssh_user}@${c.ssh_host}`, "sftp", tabKey, updateTab, true, {kind:"sftp", id:c.id, path:displayPath});
+  setWorkspace(`${c.name} · SFTP`, sftpConnectionAddress(c), "sftp", tabKey, updateTab, true, {kind:"sftp", id:c.id, path:displayPath, connectionStatus:sftpDisconnectedTabs.has(tabKey) ? "disconnected" : "connecting"});
+  syncSftpToolbarPlacement();
+  rememberSftpNavigation(tabKey, displayPath);
+  syncSftpNavigationButtons();
   refreshSftpJobs();
   startSftpJobsTimer();
+  if (preserveManualDisconnect) {
+    updateSftpConnectionUi(id, "disconnected");
+    if (restored) {
+      refreshSftpDirectoryActions();
+      renderSftpEntries();
+      restoreSftpViewState(cached.viewState);
+    }
+    return true;
+  }
   if (restored) {
     refreshSftpDirectoryActions();
     renderSftpEntries();
@@ -622,8 +972,13 @@ async function loadSftpPage(options={}) {
     const contentChanged = !options.renderIfChangedOnly
       || sftpDirectoryContentSignature(sftpState) !== sftpDirectoryContentSignature(nextState);
     sftpState = nextState;
+    sftpDisconnectedTabs.delete(tabKey);
+    updateSftpConnectionUi(id, "connected");
+    if (!options.historyNavigation) rememberSftpNavigation(tabKey, data.path);
+    else syncSftpNavigationButtons();
     if (contentChanged) {
       if ($("sftpBreadcrumb")) $("sftpBreadcrumb").innerHTML = sftpBreadcrumbHtml(id, data.path);
+      if ($("sftpPathInput")) $("sftpPathInput").value = data.path;
       refreshSftpDirectoryActions();
       renderSftpEntries();
       if (viewState) restoreSftpViewState(viewState);
@@ -633,6 +988,7 @@ async function loadSftpPage(options={}) {
     return true;
   } catch (error) {
     if (error?.name === "AbortError" || requestSeq !== sftpState.requestSeq) return false;
+    updateSftpConnectionUi(id, "disconnected", error.message || "SFTP 连接已断开");
     if (activeTabKey === tabKey && activeView === "sftp" && $("sftpList")) {
       if (keepContents) {
         if (!silent) notify(error.message || "目录同步失败", "error");
@@ -720,10 +1076,11 @@ function sortMark(key) {
 function syncSftpListLayout(list=$("sftpList"), measuredWidth) {
   if (!list) return;
   const width = Number(measuredWidth) || list.getBoundingClientRect().width;
+  const mobile = isMobileLayout();
   list.classList.toggle("sftp-actions-medium", width > 0 && width <= 1200);
   list.classList.toggle("sftp-actions-compact", width > 0 && width <= 1000);
   list.classList.toggle("sftp-actions-minimal", width > 0 && width <= 620);
-  list.classList.toggle("sftp-actions-more-only", width > 0 && width <= 460);
+  list.classList.toggle("sftp-actions-more-only", width > 0 && (width <= 520 || mobile));
 }
 
 function watchSftpListLayout(list) {
@@ -752,7 +1109,7 @@ function renderSftpEntries() {
     const fullPath = joinRemotePath(sftpState.path, entry.name);
     const isDir = entry.type === "dir";
     const active = sftpState.selected?.path === fullPath;
-    return `<div class="sftp-row ${active ? "active" : ""}" onclick="selectSftpEntry(${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}')" ondblclick="activateSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}')" oncontextmenu="showSftpEntryMenu(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}')">
+    return `<div class="sftp-row ${active ? "active" : ""}" draggable="${isMobileLayout() ? "false" : "true"}" onclick="selectSftpEntry(${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}')" ondblclick="activateSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}')" oncontextmenu="showSftpEntryMenu(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}')" onpointerdown="primeSftpNativeDrag(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}')" ondragstart="beginSftpItemDrag(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}')" ondragend="finishSftpItemDrag(event)">
       <input class="sftp-check" type="checkbox" value="${esc(fullPath)}" data-name="${esc(entry.name)}" data-type="${esc(entry.type)}" data-mode="${esc(entry.mode || "")}" data-owner="${esc(entry.owner || "")}" data-group="${esc(entry.group || "")}" aria-label="选择 ${esc(entry.name)}" onclick="event.stopPropagation()" onchange="updateSftpSelection()">
       <button class="sftp-name" title="${esc(entry.name)}" onclick="event.stopPropagation(); selectSftpEntry(${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}')"><span class="sftp-icon ${entry.type} ${sftpFileKind(entry.name)}">${sftpIcon(entry.name, isDir)}</span><span class="sftp-name-copy"><span class="sftp-file-name">${esc(entry.name)}</span><span class="sftp-mobile-meta">${isDir ? "目录" : formatBytes(entry.size)} · ${entry.mtime ? formatSftpTime(entry.mtime) : "--"}</span></span></button>
       <span class="sftp-size">${isDir ? sftpDirectorySizeButtonHtml(id, fullPath) : formatBytes(entry.size)}</span>
@@ -878,7 +1235,7 @@ function isSftpImageName(name) {
   return ["png","jpg","jpeg","gif","webp","bmp","ico","svg"].includes(String(name || "").toLowerCase().split(".").pop());
 }
 
-function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8", preferredEncoding="auto") {
+function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8", preferredEncoding="auto", comparisonContent=content) {
   return new Promise((resolve) => {
     const modal = $("modal");
     const detectedLanguage = sftpEditorLanguageForFile(title);
@@ -938,7 +1295,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     $("sftpTextDiff").onclick = () => {
       const box = $("sftpDiffPreview");
       box.hidden = false;
-      box.innerHTML = sftpDiffHtml(content, getValue());
+      box.innerHTML = sftpDiffHtml(comparisonContent, getValue());
     };
     $("sftpTextEncoding").onchange = event => {
       const nextEncoding = event.target.value;
@@ -991,6 +1348,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
 async function previewSftpImage(id, path) {
   try {
     const blob = await withSftpFileOpenFeedback(id, path, async () => {
+      await ensureSftpConnection(id);
       const response = await fetch(`/api/connections/${id}/sftp/preview-image?path=${encodeURIComponent(path)}`);
       if (!response.ok) {
         let message = "图片预览失败";
@@ -1027,7 +1385,9 @@ async function previewSftpText(id, path) {
       const suffix = requestedEncoding ? `&encoding=${encodeURIComponent(requestedEncoding)}` : "";
       const data = await withSftpFileOpenFeedback(id, path, () => api(`/api/connections/${id}/sftp/read?path=${encodeURIComponent(path)}${suffix}`));
       if (!data) return;
-      const next = await sftpTextModal(path, data.content || "", data.size || 0, data.limit || 5*1024*1024, data.encoding || "utf8", data.preferred_encoding || "auto");
+      const baselineKey = sftpFileOpenKey(id, path);
+      const comparisonContent = sftpEditorDiffBaselines.has(baselineKey) ? sftpEditorDiffBaselines.get(baselineKey) : (data.content || "");
+      const next = await sftpTextModal(path, data.content || "", data.size || 0, data.limit || 5*1024*1024, data.encoding || "utf8", data.preferred_encoding || "auto", comparisonContent);
       if (next === null) return;
       if (next.action === "encoding") {
         requestedEncoding = next.encoding;
@@ -1035,6 +1395,7 @@ async function previewSftpText(id, path) {
       }
       if (next.content === (data.content || "") && !(next.persist_default && data.preferred_encoding !== next.encoding)) return notify("文件内容没有变化", "info");
       await api(`/api/connections/${id}/sftp/write`, {method:"POST", body:JSON.stringify({path, content:next.content, backup:next.backup, encoding:next.encoding, persist_default:next.persist_default})});
+      sftpEditorDiffBaselines.set(baselineKey, data.content || "");
       const connection = connections.find(item => item.id === id);
       if (connection && next.persist_default) connection.sftp_text_encoding = next.encoding;
       notify(`文件已按 ${sftpTextEncodingLabel(next.encoding)} 保存`, "success");
@@ -1089,6 +1450,363 @@ function selectedSftpEntries() {
     owner: input.dataset.owner || "",
     group: input.dataset.group || ""
   }));
+}
+
+function sftpDragEntriesForPath(path, name, type) {
+  const selected = selectedSftpEntries();
+  if (selected.some(item => item.path === path)) return selected;
+  return [{path, name, type}];
+}
+
+function sftpNativeDragKey(connectionId, entries) {
+  const paths = [...new Set(entries.map(item => String(item.path || "")).filter(Boolean))].sort((left, right) => left.localeCompare(right));
+  return `${Number(connectionId)}\0${paths.join("\0")}`;
+}
+
+function cleanupSftpNativeDragCache(now=Date.now()) {
+  for (const [key, cached] of sftpNativeDragCache) {
+    if (!cached.promise && now - Number(cached.createdAt || 0) > SFTP_NATIVE_DRAG_CACHE_TTL_MS) {
+      sftpNativeDragCache.delete(key);
+      sftpNativeDragArmed.delete(key);
+    }
+  }
+}
+
+function stageSftpNativeDrag(connectionId, entries) {
+  cleanupSftpNativeDragCache();
+  const key = sftpNativeDragKey(connectionId, entries);
+  const cached = sftpNativeDragCache.get(key);
+  if (cached?.files?.length && Date.now() - Number(cached.createdAt || 0) <= SFTP_NATIVE_DRAG_CACHE_TTL_MS) {
+    return Promise.resolve(cached);
+  }
+  if (cached?.promise) return cached.promise;
+  const request = api(`/api/connections/${connectionId}/sftp/stage-drag`, {
+    method:"POST",
+    body:JSON.stringify({paths:entries.map(item => item.path)})
+  }).then(staged => {
+    const result = {files:Array.isArray(staged.files) ? staged.files : [], createdAt:Date.now(), promise:null};
+    if (!result.files.length) throw new Error("没有可拖出的文件");
+    sftpNativeDragCache.set(key, result);
+    return result;
+  }).catch(error => {
+    sftpNativeDragCache.delete(key);
+    throw error;
+  });
+  sftpNativeDragCache.set(key, {files:[], createdAt:0, promise:request});
+  return request;
+}
+
+function cachedSftpNativeDrag(connectionId, entries) {
+  cleanupSftpNativeDragCache();
+  const key = sftpNativeDragKey(connectionId, entries);
+  const cached = sftpNativeDragCache.get(key);
+  return cached?.files?.length && Date.now() - Number(cached.createdAt || 0) <= SFTP_NATIVE_DRAG_CACHE_TTL_MS ? cached : null;
+}
+
+function activeSftpDragPayload() {
+  if (sftpInternalDrag) return sftpInternalDrag;
+  const requests = [...sftpNativeDragRequests.values()];
+  for (let index = requests.length - 1; index >= 0; index -= 1) {
+    const request = requests[index];
+    if (Number.isInteger(Number(request?.connectionId)) && Array.isArray(request?.entries) && request.entries.length) return request;
+  }
+  return null;
+}
+
+function activeSftpCrossDropTarget(drag=activeSftpDragPayload()) {
+  const target = tabs.find(tab => tab.key === activeTabKey);
+  if (!drag || target?.kind !== "sftp" || Number(target.id) === Number(drag.connectionId)) return null;
+  return target;
+}
+
+function clearSftpNativeDragPointer() {
+  if (!sftpNativeDragPointer) return;
+  clearTimeout(sftpNativeDragPointer.timer);
+  document.removeEventListener("pointerup", clearSftpNativeDragPointer, true);
+  document.removeEventListener("pointercancel", clearSftpNativeDragPointer, true);
+  sftpNativeDragPointer = null;
+}
+
+function primeSftpNativeDrag(event, connectionId, path, name, type) {
+  if (isMobileLayout() || !window.tunnelDeskDesktop?.startSftpDrag || event.button !== 0) return;
+  if (event.target?.closest(".sftp-check,.sftp-row-actions")) return;
+  clearSftpNativeDragPointer();
+  const entries = sftpDragEntriesForPath(path, name, type);
+  const row = event.currentTarget;
+  const pointer = {pointerId:event.pointerId, row, timer:null};
+  pointer.timer = setTimeout(() => {
+    if (sftpNativeDragPointer !== pointer) return;
+    row?.classList.add("is-preparing-drag");
+    void stageSftpNativeDrag(connectionId, entries)
+      .catch(error => notify(error.message || "准备拖出文件失败", "error"))
+      .finally(() => row?.classList.remove("is-preparing-drag"));
+  }, 180);
+  sftpNativeDragPointer = pointer;
+  document.addEventListener("pointerup", clearSftpNativeDragPointer, true);
+  document.addEventListener("pointercancel", clearSftpNativeDragPointer, true);
+}
+
+function showSftpDragHint(message, target=false) {
+  let hint = $("sftpDragHint");
+  if (!hint) {
+    hint = document.createElement("div");
+    hint.id = "sftpDragHint";
+    hint.className = "sftp-drag-hint";
+    hint.setAttribute("aria-live", "polite");
+    document.body.appendChild(hint);
+  }
+  hint.classList.toggle("is-target", Boolean(target));
+  hint.innerHTML = `${icon(target ? "copy" : "move")}<span>${esc(message)}</span>`;
+}
+
+function clearSftpDragVisuals(row) {
+  row?.classList.remove("is-dragging", "is-preparing-drag");
+  document.body.classList.remove("sftp-item-drag-active");
+  document.querySelectorAll(".tab.sftp-drop-target").forEach(tab => tab.classList.remove("sftp-drop-target"));
+  clearSftpTabDragPreview();
+  sftpDropDepth = 0;
+  setSftpExternalDropState(false);
+  $("sftpDragHint")?.remove();
+}
+
+function clearSftpTabDragPreview() {
+  if (sftpTabDragPreviewTimer) clearTimeout(sftpTabDragPreviewTimer);
+  sftpTabDragPreviewTimer = 0;
+  sftpTabDragPreviewKey = "";
+}
+
+function scheduleSftpTabDragPreview(tabKey) {
+  if (activeTabKey === tabKey || (sftpTabDragPreviewKey === tabKey && sftpTabDragPreviewTimer)) return;
+  clearSftpTabDragPreview();
+  sftpTabDragPreviewKey = tabKey;
+  sftpTabDragPreviewTimer = setTimeout(() => {
+    sftpTabDragPreviewTimer = 0;
+    const drag = activeSftpDragPayload();
+    const target = tabs.find(tab => tab.key === tabKey);
+    if (!drag || target?.kind !== "sftp" || Number(target.id) === Number(drag.connectionId)) return clearSftpTabDragPreview();
+    activateTab(tabKey);
+    requestAnimationFrame(() => {
+      const node = [...$("tabs").querySelectorAll(".tab")].find(tab => tab.dataset.tabKey === tabKey);
+      node?.classList.add("sftp-drop-target");
+      showSftpDragHint(`松开复制到 ${target.title}`, true);
+    });
+  }, 160);
+}
+
+function resetSftpItemDrag(row) {
+  document.removeEventListener("dragleave", handleSftpDocumentDragLeave, true);
+  document.removeEventListener("dragover", handleSftpDocumentDragOver, true);
+  if (sftpInternalDrag?.leaveWindowTimer) clearTimeout(sftpInternalDrag.leaveWindowTimer);
+  clearSftpDragVisuals(row || sftpInternalDrag?.row);
+  sftpExternalDragPreparing = null;
+  sftpInternalDrag = null;
+}
+
+function markSftpDragInsideWindow() {
+  const drag = sftpInternalDrag;
+  if (!drag) return;
+  if (drag.leaveWindowTimer) clearTimeout(drag.leaveWindowTimer);
+  drag.leaveWindowTimer = 0;
+  drag.leftWindow = false;
+}
+
+function handleSftpDocumentDragOver() {
+  markSftpDragInsideWindow();
+}
+
+function finishSftpDragPayload(drag) {
+  if (!drag) return;
+  if (sftpInternalDrag === drag) {
+    resetSftpItemDrag(drag.row);
+    return;
+  }
+  for (const [requestId, request] of sftpNativeDragRequests) {
+    if (request !== drag) continue;
+    sftpNativeDragRequests.delete(requestId);
+    clearSftpDragVisuals(request.row);
+    return;
+  }
+  clearSftpDragVisuals(drag.row);
+}
+
+function handleSftpDocumentDragLeave(event) {
+  if (!sftpInternalDrag || event.relatedTarget) return;
+  const outsideWindow = event.clientX <= 0 || event.clientY <= 0 || event.clientX >= window.innerWidth || event.clientY >= window.innerHeight;
+  if (!outsideWindow) return;
+  const drag = sftpInternalDrag;
+  if (drag.leaveWindowTimer) clearTimeout(drag.leaveWindowTimer);
+  drag.leaveWindowTimer = setTimeout(() => {
+    if (sftpInternalDrag !== drag) return;
+    drag.leaveWindowTimer = 0;
+    drag.leftWindow = true;
+    if (!drag.nativeStarted) showSftpDragHint("正在准备拖出内容；完成后再次拖动即可保存到外部");
+  }, 80);
+}
+
+function beginSftpItemDrag(event, connectionId, path, name, type) {
+  if (isMobileLayout()) return event.preventDefault();
+  clearSftpNativeDragPointer();
+  const entries = sftpDragEntriesForPath(path, name, type);
+  const cached = cachedSftpNativeDrag(connectionId, entries);
+  const nativeKey = sftpNativeDragKey(connectionId, entries);
+  if (cached && sftpNativeDragArmed.has(nativeKey)) {
+    event.preventDefault();
+    startSftpNativeDrag(event.currentTarget, connectionId, entries, cached);
+    return;
+  }
+  sftpInternalDrag = {connectionId:Number(connectionId), entries, sourceTabKey:activeTabKey, row:event.currentTarget, browserDragEnded:false, leftWindow:false, leaveWindowTimer:0, nativeFiles:cached?.files || null, nativeStarted:false};
+  document.addEventListener("dragleave", handleSftpDocumentDragLeave, true);
+  document.addEventListener("dragover", handleSftpDocumentDragOver, true);
+  event.dataTransfer.effectAllowed = "copy";
+  event.dataTransfer.setData("application/x-tunneldesk-sftp", JSON.stringify({connectionId:Number(connectionId), paths:entries.map(item => item.path)}));
+  event.dataTransfer.setData("text/plain", entries.map(item => item.path).join("\n"));
+  event.currentTarget?.classList.add("is-dragging");
+  document.body.classList.add("sftp-item-drag-active");
+  if (cached?.files?.length) {
+    showSftpDragHint("拖到其他 SFTP 标签可跨主机复制，拖出窗口可下载");
+  } else {
+    showSftpDragHint(entries.length > 1 ? `正在准备拖动 ${entries.length} 个项目` : `正在准备拖动 ${entries[0]?.name || "项目"}`);
+    void prepareSftpNativeDrag(connectionId, entries, event.currentTarget);
+  }
+}
+
+function startSftpNativeDrag(row, connectionId, entries, cached) {
+  const key = sftpNativeDragKey(connectionId, entries);
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  sftpNativeDragArmed.delete(key);
+  sftpNativeDragRequests.set(requestId, {key, row, connectionId:Number(connectionId), entries:[...entries], files:[...(cached.files || [])]});
+  document.body.classList.add("sftp-item-drag-active");
+  showSftpDragHint("松开后保存到目标目录");
+  try {
+    window.tunnelDeskDesktop.startSftpDrag(cached.files, requestId);
+  } catch (error) {
+    sftpNativeDragRequests.delete(requestId);
+    sftpNativeDragArmed.add(key);
+    clearSftpDragVisuals(row);
+    notify(error.message || "无法启动系统拖拽", "error");
+  }
+}
+
+function handleSftpNativeDragResult(result) {
+  const requestId = String(result?.requestId || "");
+  const request = sftpNativeDragRequests.get(requestId);
+  if (!request) return;
+  sftpNativeDragRequests.delete(requestId);
+  clearSftpDragVisuals(request.row);
+  if (result?.ok) {
+    sftpNativeDragArmed.delete(request.key);
+    sftpNativeDragCache.delete(request.key);
+    return;
+  }
+  sftpNativeDragArmed.add(request.key);
+  notify(result?.message || "无法启动系统拖拽，请再次拖动重试", "error");
+}
+
+async function prepareSftpNativeDrag(connectionId, entries, row) {
+  if (!window.tunnelDeskDesktop?.startSftpDrag || !entries.length) return;
+  const token = Symbol("sftp-external-drag");
+  sftpExternalDragPreparing = token;
+  row?.classList.add("is-preparing-drag");
+  try {
+    const staged = await stageSftpNativeDrag(connectionId, entries);
+    if (sftpExternalDragPreparing !== token || !sftpInternalDrag) return;
+    sftpInternalDrag.nativeFiles = staged.files || [];
+    if (sftpInternalDrag.leftWindow) {
+      sftpNativeDragArmed.add(sftpNativeDragKey(connectionId, entries));
+      if (sftpInternalDrag.browserDragEnded) notify("拖出内容已准备好，请再次拖动", "info");
+      else showSftpDragHint("已准备好；松开后再次拖动可保存到外部");
+    } else if (!sftpInternalDrag.browserDragEnded) {
+      showSftpDragHint("拖到其他 SFTP 标签可跨主机复制");
+    }
+  } catch (error) {
+    if (sftpExternalDragPreparing === token) notify(error.message || "准备拖出文件失败", "error");
+  } finally {
+    row?.classList.remove("is-preparing-drag");
+    if (sftpExternalDragPreparing === token) sftpExternalDragPreparing = null;
+    if (sftpInternalDrag?.browserDragEnded) resetSftpItemDrag(row);
+  }
+}
+
+function finishSftpItemDrag(event) {
+  const drag = sftpInternalDrag;
+  const outsideWindow = Boolean(drag?.leftWindow);
+  if (drag?.nativeFiles?.length && outsideWindow) {
+    sftpNativeDragArmed.add(sftpNativeDragKey(drag.connectionId, drag.entries));
+    notify("拖出内容已准备好，请再次拖动", "info");
+  }
+  if (drag && sftpExternalDragPreparing && outsideWindow) {
+    drag.browserDragEnded = true;
+    clearSftpDragVisuals(event?.currentTarget);
+    return;
+  }
+  resetSftpItemDrag(event?.currentTarget);
+}
+
+function handleSftpTabDragOver(event, tabKey) {
+  const target = tabs.find(tab => tab.key === tabKey);
+  const drag = activeSftpDragPayload();
+  if (!drag || target?.kind !== "sftp" || Number(target.id) === Number(drag.connectionId)) return;
+  markSftpDragInsideWindow();
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+  event.currentTarget?.classList.add("sftp-drop-target");
+  showSftpDragHint(`松开复制到 ${target.title}`, true);
+  scheduleSftpTabDragPreview(tabKey);
+}
+
+function handleSftpTabDragLeave(event) {
+  if (!event.currentTarget?.contains(event.relatedTarget)) {
+    event.currentTarget?.classList.remove("sftp-drop-target");
+    if (activeTabKey !== event.currentTarget?.dataset?.tabKey) clearSftpTabDragPreview();
+    if (activeSftpDragPayload()) showSftpDragHint("拖到其他 SFTP 标签可跨主机复制，拖出窗口可下载");
+  }
+}
+
+async function sftpConflictChoice(connectionId, directory, entries, labels={}) {
+  const plan = await api(`/api/connections/${connectionId}/sftp/upload-plan`, {
+    method:"POST",
+    body:JSON.stringify({path:directory, filenames:entries.map(item => item.name)})
+  });
+  const conflicts = (plan.items || []).filter(item => item.exists);
+  if (!conflicts.length) return "error";
+  const preview = conflicts.slice(0, 6).map(item => item.name).join("、");
+  return chooseModal(labels.title || "发现同名项目", `${preview}${conflicts.length > 6 ? ` 等 ${conflicts.length} 项` : ""}`, [
+    {label:labels.overwrite || "覆盖同名项目", value:"overwrite", className:"danger"},
+    {label:labels.rename || "自动改名", value:"rename", className:"primary"},
+    {label:"取消", value:"cancel"}
+  ]);
+}
+
+async function dropSftpItemsOnTab(event, tabKey) {
+  const drag = activeSftpDragPayload();
+  const target = tabs.find(tab => tab.key === tabKey);
+  event.currentTarget?.classList.remove("sftp-drop-target");
+  if (!drag || target?.kind !== "sftp" || Number(target.id) === Number(drag.connectionId)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  await copySftpDraggedItemsToTarget(drag, target);
+}
+
+async function copySftpDraggedItemsToTarget(drag, target) {
+  if (!drag || target?.kind !== "sftp" || Number(target.id) === Number(drag.connectionId)) return;
+  sftpExternalDragPreparing = null;
+  finishSftpDragPayload(drag);
+  const directory = activeTabKey === target.key && Number(sftpState.connectionId) === Number(target.id)
+    ? sftpState.path
+    : target.path || ".";
+  try {
+    const conflict = await sftpConflictChoice(target.id, directory, drag.entries, {title:"目标 SFTP 存在同名项目"});
+    if (conflict === "cancel") return;
+    const job = await api(`/api/connections/${drag.connectionId}/sftp/cross-copy`, {
+      method:"POST",
+      body:JSON.stringify({paths:drag.entries.map(item => item.path), target_connection_id:Number(target.id), target:directory, conflict})
+    });
+    trackSftpMutationJob(job);
+    notify(`已上传到 ${target.title}`, "success");
+    refreshSftpJobs();
+  } catch (error) {
+    notify(error.message || "跨 SFTP 标签复制失败", "error");
+  }
 }
 
 function isArchiveName(name) {
@@ -1263,12 +1981,19 @@ async function pasteSftpClipboard() {
   const endpoint = sftpClipboard.mode === "move" ? "move" : "copy";
   try {
     const sourceConnectionId = Number(sftpClipboard.connectionId);
+    const target = sftpState.path || ".";
+    let conflict = "error";
+    if (!sameConnection) {
+      const entries = sftpClipboard.paths.map(path => ({path, name:sftpPathName(path)}));
+      conflict = await sftpConflictChoice(Number(tab.id), target, entries, {title:"目标 SFTP 存在同名项目"});
+      if (conflict === "cancel") return;
+    }
     const requestUrl = sameConnection
       ? `/api/connections/${tab.id}/sftp/${endpoint}`
       : `/api/connections/${sourceConnectionId}/sftp/cross-copy`;
     const requestBody = sameConnection
-      ? {paths:sftpClipboard.paths, target:sftpState.path || ".", background:true}
-      : {paths:sftpClipboard.paths, target_connection_id:Number(tab.id), target:sftpState.path || "."};
+      ? {paths:sftpClipboard.paths, target, background:true}
+      : {paths:sftpClipboard.paths, target_connection_id:Number(tab.id), target, conflict};
     const job = await api(requestUrl, {method:"POST", body:JSON.stringify(requestBody)});
     trackSftpMutationJob(job);
     sftpClipboard = null;
@@ -1434,6 +2159,7 @@ function startSftpJobsTimer() {
   if (sftpJobsTimer) return;
   sftpJobsTimer = setInterval(() => {
     if ($("sftpJobs")) refreshSftpJobs();
+    void refreshActiveSftpSessionStatus();
   }, 3000);
 }
 
@@ -1471,10 +2197,12 @@ async function refreshSftpJobs() {
   const box = $("sftpJobs");
   if (!box) return;
   const jobs = await api("/api/sftp/jobs").catch(() => []);
-  for (const job of jobs) {
-    if (job.status !== "done" || job.type !== "download" || !sftpPendingBrowserDownloads.has(job.id)) continue;
-    sftpPendingBrowserDownloads.delete(job.id);
-    saveSftpJobFile(job.id);
+  const readyBrowserDownload = jobs.find(job => job.status === "done"
+    && job.type === "download"
+    && sftpPendingBrowserDownloads.has(job.id));
+  if (readyBrowserDownload) {
+    sftpPendingBrowserDownloads.delete(readyBrowserDownload.id);
+    saveSftpJobFile(readyBrowserDownload.id);
     notify("下载完成，已交给当前设备的浏览器保存", "success");
   }
   sftpLatestJobs = jobs;
@@ -1693,6 +2421,7 @@ function openSftpActionSheet() {
     { label: "移动选中", value: "move" },
     ...(sftpClipboardMatchesConnection() ? [{ label: "粘贴到当前目录", value: "paste" }] : []),
     ...(sftpClipboard?.paths?.length ? [{ label: "取消复制/移动队列", value: "cancelClipboard" }] : []),
+    { label: "下载选中", value: "download" },
     { label: "压缩选中", value: "compress" },
     { label: "设置权限", value: "permissions" },
     { label: "解压选中压缩包", value: "extract" },
@@ -1703,6 +2432,7 @@ function openSftpActionSheet() {
     if (value === "copy" || value === "move") copySftpSelection(value);
     if (value === "paste") pasteSftpClipboard();
     if (value === "cancelClipboard") cancelSftpClipboard();
+    if (value === "download") downloadSftpSelection();
     if (value === "compress") compressSftpSelection();
     if (value === "permissions") openSftpPermissionsForSelection();
     if (value === "extract") extractSftpSelection();
@@ -1717,26 +2447,61 @@ async function clearFinishedSftpJobs() {
   await refreshSftpJobs();
 }
 
-async function downloadSftp(id, path) {
+async function getSftpDownloadSettings() {
+  return api("/api/sftp/download-settings").catch(() => ({delivery_mode:"browser"}));
+}
+
+async function confirmSftpDownloadNotice(downloadSettings) {
+  const desktop = downloadSettings?.delivery_mode === "desktop";
+  const noticeKey = desktop ? "sftpDesktopDownloadNoticeV1" : "sftpBrowserDownloadNoticeV1";
+  if (localStorage.getItem(noticeKey) === "1") return true;
+  if (sftpDownloadNoticeRequests.has(noticeKey)) return sftpDownloadNoticeRequests.get(noticeKey);
+  const request = (async () => {
+    const message = desktop
+      ? `下载完成后会自动保存到：\n${downloadSettings.effective_directory || "系统下载目录"}\n\n之后可在 SFTP 全局设置中修改。`
+      : `下载完成后会由浏览器保存到当前${isMobileLayout() ? "手机" : "设备"}的下载目录。\n\n浏览器可能会询问保存位置或拦截多个文件下载。`;
+    const accepted = await confirmModal(message, "首次下载提示", "继续下载", "取消");
+    if (accepted) localStorage.setItem(noticeKey, "1");
+    return accepted;
+  })();
+  sftpDownloadNoticeRequests.set(noticeKey, request);
   try {
-    const downloadSettings = await api("/api/sftp/download-settings").catch(() => ({delivery_mode:"browser"}));
-    const noticeKey = downloadSettings.delivery_mode === "desktop" ? "sftpDesktopDownloadNoticeV1" : "sftpBrowserDownloadNoticeV1";
-    if (localStorage.getItem(noticeKey) !== "1") {
-      const desktop = downloadSettings.delivery_mode === "desktop";
-      const message = desktop
-        ? `下载完成后会自动保存到：\n${downloadSettings.effective_directory || "系统下载目录"}\n\n之后可在 SFTP 全局设置中修改。`
-        : `下载完成后会由浏览器保存到当前${isMobileLayout() ? "手机" : "设备"}的下载目录。\n\n浏览器可能会询问保存位置或拦截多个文件下载。`;
-      const accepted = await confirmModal(message, "首次下载提示", "继续下载", "取消");
-      if (!accepted) return;
-      localStorage.setItem(noticeKey, "1");
-    }
-    const result = await api(`/api/connections/${id}/sftp/download`, {method:"POST", body:JSON.stringify({path})});
-    if (result.delivery_mode === "browser" && result.id) sftpPendingBrowserDownloads.add(result.id);
-    notify("已加入 SFTP 下载任务", "success");
+    return await request;
+  } finally {
+    sftpDownloadNoticeRequests.delete(noticeKey);
+  }
+}
+
+function trackSftpBrowserDownload(result) {
+  if (result?.delivery_mode === "browser" && result.id) sftpPendingBrowserDownloads.add(result.id);
+  return result;
+}
+
+function queueSftpDownload(id, path, type="file") {
+  if (type === "dir") {
+    return api(`/api/connections/${id}/sftp/download-batch`, {
+      method:"POST",
+      body:JSON.stringify({paths:[path], mode:"archive"})
+    }).then(trackSftpBrowserDownload);
+  }
+  return api(`/api/connections/${id}/sftp/download`, {
+    method:"POST",
+    body:JSON.stringify({path})
+  }).then(trackSftpBrowserDownload);
+}
+
+async function downloadSftp(id, path, type="file") {
+  try {
+    const downloadSettings = await getSftpDownloadSettings();
+    if (!await confirmSftpDownloadNotice(downloadSettings)) return false;
+    await queueSftpDownload(id, path, type);
+    notify(type === "dir" ? "已加入 SFTP 目录下载任务" : "已加入 SFTP 下载任务", "success");
     await refreshSftpJobs();
     startSftpJobsTimer();
+    return true;
   } catch (error) {
     notify(error.message || "下载失败", "error");
+    return false;
   }
 }
 
@@ -1778,17 +2543,289 @@ function downloadWithProgress(url, onProgress, fallbackName="download") {
   });
 }
 
-async function uploadSftpFile() {
-  const tab = tabs.find(item => item.key === activeTabKey);
-  const file = $("sftpUpload")?.files?.[0];
-  if (!tab || !file) return;
-  const url = `/api/connections/${tab.id}/sftp/upload?path=${encodeURIComponent(sftpState.path || ".")}&filename=${encodeURIComponent(file.name)}`;
-  notify(`正在接收 ${file.name}：0%`, "info");
+function normalizeDroppedRelativePath(value, fallback="upload") {
+  const parts = String(value || fallback).replace(/\\/g, "/").split("/")
+    .map(part => part.trim()).filter(part => part && part !== "." && part !== "..");
+  return parts.join("/") || fallback;
+}
+
+async function downloadSftpSelection() {
+  const tab = tabs.find(item => item.key === activeTabKey && item.kind === "sftp");
+  const entries = selectedSftpEntries();
+  if (!tab || !entries.length) return notify("请选择要下载的文件或目录", "info");
   try {
-    const job = await uploadWithProgress(url, file, percent => notify(`正在接收 ${file.name}：${percent}%`, "info"), file.name);
+    const settings = await getSftpDownloadSettings();
+    const browser = settings.delivery_mode !== "desktop";
+    const mode = await chooseModal("批量下载", browser
+      ? `已选择 ${entries.length} 项。分别下载会逐项交给当前设备；其中目录会各自打包为 tar.gz。`
+      : `已选择 ${entries.length} 项。分别下载会保留文件夹结构，打包下载会生成 tar.gz 文件。`, [
+      {label:"分别下载", value:"separate", className:"primary"},
+      {label:"打包下载", value:"archive"},
+      {label:"取消", value:""}
+    ]);
+    if (!mode || !await confirmSftpDownloadNotice(settings)) return;
+    notify(mode === "separate" ? "正在下载选中项目…" : "正在创建下载压缩包…", "info");
+    if (mode === "separate" && browser) {
+      for (const entry of entries) await queueSftpDownload(tab.id, entry.path, entry.type);
+      notify(`已加入 ${entries.length} 个独立下载任务`, "success");
+    } else {
+      const result = await api(`/api/connections/${tab.id}/sftp/download-batch`, {
+        method:"POST",
+        body:JSON.stringify({paths:entries.map(item => item.path), mode})
+      });
+      trackSftpBrowserDownload(result);
+      if (mode === "separate") notify(`已保存 ${result.files?.length || entries.length} 项到下载目录`, "success");
+      else notify("已加入 SFTP 打包下载任务", "success");
+    }
+    clearSftpSelection();
+    await refreshSftpJobs();
+    startSftpJobsTimer();
+  } catch (error) {
+    notify(error.message || "批量下载失败", "error");
+  }
+}
+
+function readDroppedFileEntry(entry, prefix="") {
+  return new Promise((resolve, reject) => {
+    entry.file(file => resolve([{file, relativePath:normalizeDroppedRelativePath(`${prefix}${file.name}`, file.name)}]), reject);
+  });
+}
+
+async function readDroppedDirectoryEntry(entry, prefix="") {
+  const directoryPrefix = `${prefix}${entry.name}/`;
+  const reader = entry.createReader();
+  const entries = [];
+  while (true) {
+    const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+    if (!batch.length) break;
+    entries.push(...batch);
+  }
+  const nested = [];
+  for (const child of entries) nested.push(...await readDroppedEntry(child, directoryPrefix));
+  return nested;
+}
+
+function readDroppedEntry(entry, prefix="") {
+  if (entry?.isFile) return readDroppedFileEntry(entry, prefix);
+  if (entry?.isDirectory) return readDroppedDirectoryEntry(entry, prefix);
+  return Promise.resolve([]);
+}
+
+async function collectDroppedFiles(dataTransfer) {
+  const items = [...(dataTransfer?.items || [])];
+  const entries = items.map(item => item.webkitGetAsEntry?.()).filter(Boolean);
+  if (entries.length) {
+    const files = [];
+    for (const entry of entries) files.push(...await readDroppedEntry(entry));
+    return files;
+  }
+  return [...(dataTransfer?.files || [])].map(file => ({file, relativePath:normalizeDroppedRelativePath(file.webkitRelativePath || file.name, file.name)}));
+}
+
+function setSftpExternalDropState(active, options={}) {
+  const shell = document.querySelector(".sftp-shell");
+  const overlay = $("sftpDropOverlay");
+  shell?.classList.toggle("is-drag-over", Boolean(active));
+  if (!overlay) return;
+  overlay.hidden = !active;
+  if (!active) {
+    overlay.removeAttribute("style");
+    return;
+  }
+  const title = overlay.querySelector("strong");
+  const path = overlay.querySelector("span");
+  if (title) title.textContent = options.title || "松开以上传到当前目录";
+  if (path) path.textContent = options.path || sftpState.path || ".";
+  const visibleHost = $("sftpList") || shell;
+  const rect = visibleHost?.getBoundingClientRect?.();
+  if (!rect) return;
+  const left = Math.max(0, rect.left);
+  const top = Math.max(0, rect.top);
+  const right = Math.min(window.innerWidth, rect.right);
+  const bottom = Math.min(window.innerHeight, rect.bottom);
+  overlay.style.left = `${left}px`;
+  overlay.style.top = `${top}px`;
+  overlay.style.width = `${Math.max(0, right - left)}px`;
+  overlay.style.height = `${Math.max(0, bottom - top)}px`;
+}
+
+function sftpDataTransferHasFiles(dataTransfer) {
+  const types = Array.from(dataTransfer?.types || []);
+  if (types.includes("Files")) return true;
+  if (Number(dataTransfer?.files?.length || 0) > 0) return true;
+  return Array.from(dataTransfer?.items || []).some(item => item.kind === "file");
+}
+
+function sftpOwnDragActive() {
+  return Boolean(sftpInternalDrag || sftpNativeDragRequests.size);
+}
+
+function suppressSftpOwnDrop(event) {
+  if (!sftpOwnDragActive()) return false;
+  event.preventDefault();
+  event.stopPropagation?.();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "none";
+  sftpDropDepth = 0;
+  setSftpExternalDropState(false);
+  return true;
+}
+
+function handleSftpOwnDragOver(event, enter=false) {
+  const drag = activeSftpDragPayload();
+  if (!drag) return false;
+  markSftpDragInsideWindow();
+  event.preventDefault();
+  event.stopPropagation?.();
+  const target = activeSftpCrossDropTarget(drag);
+  if (event.dataTransfer) event.dataTransfer.dropEffect = target ? "copy" : "none";
+  if (target) {
+    if (enter) sftpDropDepth += 1;
+    const directory = Number(sftpState.connectionId) === Number(target.id) ? sftpState.path : target.path || ".";
+    setSftpExternalDropState(true, {title:"松开上传到当前目录", path:directory});
+    showSftpDragHint("松开上传到当前目录", true);
+  } else {
+    sftpDropDepth = 0;
+    setSftpExternalDropState(false);
+  }
+  return true;
+}
+
+function handleSftpDragEnter(event) {
+  if (handleSftpOwnDragOver(event, true)) return;
+  if (sftpNativeDragRequests.size) return suppressSftpOwnDrop(event);
+  if (!sftpDataTransferHasFiles(event.dataTransfer)) return;
+  event.preventDefault();
+  sftpDropDepth += 1;
+  setSftpExternalDropState(true);
+}
+
+function handleSftpDragOver(event) {
+  if (handleSftpOwnDragOver(event)) return;
+  if (sftpNativeDragRequests.size) return suppressSftpOwnDrop(event);
+  if (!sftpDataTransferHasFiles(event.dataTransfer)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+  setSftpExternalDropState(true);
+}
+
+function handleSftpDragLeave(event) {
+  if (activeSftpDragPayload()) {
+    sftpDropDepth = Math.max(0, sftpDropDepth - 1);
+    if (!sftpDropDepth) setSftpExternalDropState(false);
+    return;
+  }
+  if (sftpNativeDragRequests.size) return suppressSftpOwnDrop(event);
+  if (!sftpDataTransferHasFiles(event.dataTransfer)) return;
+  sftpDropDepth = Math.max(0, sftpDropDepth - 1);
+  if (!sftpDropDepth) setSftpExternalDropState(false);
+}
+
+async function handleSftpDrop(event) {
+  const drag = activeSftpDragPayload();
+  if (drag) {
+    event.preventDefault();
+    event.stopPropagation?.();
+    const target = activeSftpCrossDropTarget(drag);
+    sftpDropDepth = 0;
+    setSftpExternalDropState(false);
+    if (target) await copySftpDraggedItemsToTarget(drag, target);
+    else finishSftpDragPayload(drag);
+    return;
+  }
+  if (suppressSftpOwnDrop(event)) return;
+  if (!sftpDataTransferHasFiles(event.dataTransfer)) return;
+  event.preventDefault();
+  sftpDropDepth = 0;
+  setSftpExternalDropState(false);
+  try {
+    const files = await collectDroppedFiles(event.dataTransfer);
+    if (!files.length) throw new Error("没有找到可上传的文件");
+    await uploadSftpFiles(files);
+  } catch (error) {
+    notify(error.message || "读取拖入文件失败", "error");
+  }
+}
+
+async function createRemoteUploadDirectories(connectionId, root, files) {
+  const directories = new Set();
+  for (const item of files) {
+    const parts = normalizeDroppedRelativePath(item.relativePath, item.file.name).split("/");
+    parts.pop();
+    let current = String(root || ".");
+    for (const part of parts) {
+      current = joinRemotePath(current, part);
+      directories.add(current);
+    }
+  }
+  for (const directory of directories) {
+    await api(`/api/connections/${connectionId}/sftp/mkdir`, {method:"POST", body:JSON.stringify({path:directory})}).catch(error => {
+      if (!/exist|存在/i.test(String(error?.message || ""))) throw error;
+    });
+  }
+}
+
+async function chooseSftpUploadConflict(collisions) {
+  if (!collisions.length) return "error";
+  const preview = collisions.slice(0, 6).map(item => item.filename).join("\n");
+  const extra = collisions.length > 6 ? `\n等 ${collisions.length} 个同名项` : "";
+  return chooseModal("发现同名文件", `${preview}${extra}\n\n请选择本次上传的处理方式。`, [
+    {label:"覆盖同名文件", value:"overwrite", className:"danger"},
+    {label:"自动改名", value:"rename"},
+    {label:"取消上传", value:""}
+  ]);
+}
+
+async function uploadSftpFiles(inputFiles) {
+  const tab = tabs.find(item => item.key === activeTabKey && item.kind === "sftp");
+  if (!tab) return;
+  const files = inputFiles.map(item => item?.file ? item : ({file:item, relativePath:item?.webkitRelativePath || item?.name}))
+    .filter(item => item.file).map(item => ({...item, relativePath:normalizeDroppedRelativePath(item.relativePath, item.file.name)}));
+  if (!files.length) return;
+  const root = sftpState.path || ".";
+  await createRemoteUploadDirectories(tab.id, root, files);
+  const groups = new Map();
+  for (const item of files) {
+    const parts = item.relativePath.split("/");
+    const filename = parts.pop() || item.file.name;
+    const directory = parts.length ? joinRemotePath(root, parts.join("/")) : root;
+    if (!groups.has(directory)) groups.set(directory, []);
+    groups.get(directory).push({...item, filename, directory});
+  }
+  const collisions = [];
+  for (const [directory, items] of groups) {
+    for (let offset = 0; offset < items.length; offset += 200) {
+      const plan = await api(`/api/connections/${tab.id}/sftp/upload-plan`, {
+        method:"POST",
+        body:JSON.stringify({path:directory, filenames:items.slice(offset, offset + 200).map(item => item.filename)})
+      });
+      for (const item of plan.items || []) if (item.exists) collisions.push(item);
+    }
+  }
+  const conflict = await chooseSftpUploadConflict(collisions);
+  if (collisions.length && !conflict) return;
+  let completed = 0;
+  for (const item of files) {
+    const parts = item.relativePath.split("/");
+    const filename = parts.pop() || item.file.name;
+    const directory = parts.length ? joinRemotePath(root, parts.join("/")) : root;
+    const url = `/api/connections/${tab.id}/sftp/upload?path=${encodeURIComponent(directory)}&filename=${encodeURIComponent(filename)}&conflict=${encodeURIComponent(conflict || "error")}`;
+    notify(`正在接收 ${filename}：0%`, "info");
+    const job = await uploadWithProgress(url, item.file, percent => notify(`正在接收 ${filename}：${percent}%`, "info"), filename);
     trackSftpMutationJob(job);
-    notify("已加入 SFTP 上传后台任务", "success");
-    refreshSftpJobs();
+    completed += 1;
+  }
+  notify(`已加入 ${completed} 个 SFTP 上传任务`, "success");
+  const input = $("sftpUpload");
+  if (input) input.value = "";
+  refreshSftpJobs();
+}
+
+async function uploadSftpFile() {
+  const input = $("sftpUpload");
+  const files = [...(input?.files || [])].map(file => ({file, relativePath:file.webkitRelativePath || file.name}));
+  if (!files.length) return;
+  try {
+    await uploadSftpFiles(files);
   } catch (error) {
     notify(error.message || "上传失败", "error");
   }
@@ -1843,7 +2880,7 @@ function showSftpEntryMenu(event, id, path, name, type) {
       : isSftpImageName(name)
         ? {label:"预览图片", icon:"image", run:()=>previewSftpImage(id, path)}
         : {label:"以文本打开", icon:"file-text", run:()=>previewSftpText(id, path)},
-    ...(!isDir ? [{label:"下载", icon:"download", run:()=>downloadSftp(id, path)}] : []),
+    {label:"下载", icon:"download", run:()=>downloadSftp(id, path, isDir ? "dir" : "file")},
     ...(!isDir && isArchiveName(name) ? [{label:"解压", icon:"archive-restore", run:()=>extractSingleSftp(id, path)}] : []),
     {label:"压缩", icon:"archive", run:()=>compressSingleSftp(id, path)},
     {separator:true},
@@ -1853,6 +2890,23 @@ function showSftpEntryMenu(event, id, path, name, type) {
     {label:"重命名", icon:"pencil", run:()=>renameSftp(id, path, name)},
     {label:"设置权限", icon:"key-round", run:()=>openSftpPermissionsForSelection([path])},
     {separator:true},
+    {label:"新建文件", icon:"file-plus-2", run:()=>createSftpFile()},
+    {label:"新建文件夹", icon:"folder-plus", run:()=>mkdirSftp()},
+    {separator:true},
     {label:"删除", icon:"trash-2", danger:true, run:()=>deleteSftp(id, path)}
+  ]);
+}
+
+function showSftpDirectoryMenu(event) {
+  if (event.target?.closest?.(".sftp-row, .sftp-head, .pager, button, input, select")) return;
+  event.preventDefault();
+  event.stopPropagation();
+  showActionMenu(event, [
+    {label:"新建文件", icon:"file-plus-2", run:()=>createSftpFile()},
+    {label:"新建文件夹", icon:"folder-plus", run:()=>mkdirSftp()},
+    {label:"上传文件或文件夹", icon:"upload", run:()=>document.getElementById("sftpUpload")?.click()},
+    ...(sftpClipboard ? [{label:sftpClipboard.mode === "move" ? "移动到此处" : "粘贴到此处", icon:"clipboard-paste", run:()=>pasteSftpClipboard()}] : []),
+    {separator:true},
+    {label:"刷新", icon:"refresh-cw", run:()=>refreshSftp({refresh:true})}
   ]);
 }

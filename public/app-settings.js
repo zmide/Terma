@@ -556,12 +556,14 @@ function cacheManagementPanelHtml() {
   const categories = data.categories || {};
   const downloads = categories.sftp_downloads || {};
   const uploads = categories.sftp_uploads || {};
+  const drag = categories.sftp_drag || {};
   const updates = categories.updates || {};
+  const retainedBytes = Number(data.retained_bytes || 0);
   return `<section id="cacheManagementPanel">
     <h3>缓存管理</h3>
     <div class="settings-kv"><span>当前缓存</span><strong>${esc(formatBytes(Number(data.bytes || 0)))}</strong></div>
-    <div class="muted">SFTP 下载 ${formatBytes(Number(downloads.bytes || 0))} · SFTP 上传 ${formatBytes(Number(uploads.bytes || 0))} · 更新文件 ${formatBytes(Number(updates.bytes || 0))}</div>
-    <div class="muted">可清理 ${formatBytes(Number(data.reclaimable_bytes || 0))}。正在传输、暂停或失败待续传的文件会保留。</div>
+    <div class="muted">SFTP 下载 ${formatBytes(Number(downloads.bytes || 0))} · SFTP 上传 ${formatBytes(Number(uploads.bytes || 0))} · SFTP 拖出 ${formatBytes(Number(drag.bytes || 0))} · 更新文件 ${formatBytes(Number(updates.bytes || 0))}</div>
+    <div class="muted">可清理 ${formatBytes(Number(data.reclaimable_bytes || 0))}${retainedBytes > 0 ? ` · 暂时保留 ${formatBytes(retainedBytes)}` : ""}。正在生成、传输、暂停或失败待续传的文件会保留。</div>
     <div class="actions"><button type="button" onclick="refreshProgramCacheSettings()">${icon("refresh-cw")}<span>刷新占用</span></button><button id="clearProgramCacheButton" class="danger" type="button" onclick="clearProgramCache()" ${Number(data.reclaimable_bytes || 0) > 0 ? "" : "disabled"}>${icon("trash-2")}<span>清理缓存</span></button></div>
   </section>`;
 }
@@ -590,6 +592,9 @@ async function clearProgramCache() {
   try {
     setButtonBusy(button, true, "清理中");
     programCacheSettings = await api("/api/cache", {method:"DELETE"});
+    if (typeof sftpDirectoryViewCache !== "undefined") sftpDirectoryViewCache.clear();
+    if (typeof sftpDirectorySizeCache !== "undefined") sftpDirectorySizeCache.clear();
+    if (typeof sftpNativeDragCache !== "undefined") sftpNativeDragCache.clear();
     renderCacheManagementPanel();
     notify("程序缓存已清理", "success");
   } catch (error) {

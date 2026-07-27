@@ -45,6 +45,7 @@ let forwardTemplates = [];
 let runningGroupMode = localStorage.getItem("runningGroupMode") || "server";
 let sftpClipboard = null;
 let sftpState = { path: ".", entries: [], query: "", sort: "name", dir: "asc", connectionId: 0, selected: null, page: 1, pageSize: 50, total: 0, totalPages: 1, unfilteredTotal: 0, loading: false, requestSeq: 0 };
+const sftpDisconnectedTabs = new Set();
 const sftpViewStates = new Map();
 const sftpDirectoryViewCache = new Map();
 const sftpDirectoryViewAliases = new Map();
@@ -135,6 +136,7 @@ refreshIcons();
 document.addEventListener("scroll", () => {
   if (!isMobileLayout()) hideActionMenu();
 }, true);
+window.tunnelDeskDesktop?.onSftpDragError?.(message => notify(message, "error"));
 Promise.all([loadAll(), loadRuntimeSettings()]).then(() => {
   if (!restoreTabsState()) renderWelcome();
   syncResponsivePane();

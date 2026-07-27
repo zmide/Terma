@@ -61,7 +61,11 @@ async function main() {
   server.stderr.on("data", chunk => output.push(chunk.toString()));
   try {
     await waitForServer(url, server);
-    await runRegression({ ...process.env, TUNNELDESK_CHECK_URL:url });
+    await runRegression({
+      ...process.env,
+      TUNNELDESK_CHECK_URL:url,
+      TUNNELDESK_REGRESSION_ISOLATED:"1"
+    });
   } catch (error) {
     if (output.length) console.error(output.join("").slice(-12000));
     throw error;

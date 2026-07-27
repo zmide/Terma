@@ -1,10 +1,7 @@
-const { spawn } = require("node:child_process");
 const { randomBytes } = require("node:crypto");
 const path = require("node:path");
-const { SSH_BIN } = require("./config");
 const { getConnection } = require("./db");
-const { effectiveExtraArgs, securePrivateKeyPermissions } = require("./ssh");
-const { isPasswordConnection, spawnPasswordCommand } = require("./ssh2-client");
+const { spawnSftpSessionCommand } = require("./sftp-session");
 const {
   decodeRemoteFilenameOutput,
   decodeRemoteText,
@@ -29,22 +26,9 @@ function permissionPathOperand(value) {
   return `./${normalized}`;
 }
 
-function sshArgs(connection, command) {
-  const args = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", String(connection.ssh_port || 22)];
-  if (connection.identity_file) {
-    securePrivateKeyPermissions(connection.identity_file);
-    args.push("-i", connection.identity_file);
-  }
-  args.push(...effectiveExtraArgs(connection.extra_args));
-  args.push(`${connection.ssh_user}@${connection.ssh_host}`, command);
-  return args;
-}
-
 function spawnRemote(connection, command) {
   const portableCommand = `sh -c ${shellQuote(command)}`;
-  return isPasswordConnection(connection)
-    ? spawnPasswordCommand(connection, portableCommand)
-    : spawn(SSH_BIN, sshArgs(connection, portableCommand), { stdio: ["pipe", "pipe", "pipe"] });
+  return spawnSftpSessionCommand(connection, portableCommand);
 }
 
 function runRemote(connection, command, input = null, timeoutMs = 30000): Promise<Buffer> {
@@ -542,6 +526,74 @@ function normalizeOpenFileLimit(value) {
   return limit;
 }
 
+function normalizeRemoteUploadName(value) {
+  const name = String(value || "").trim();
+  if (!name || name === "." || name === ".." || /[\\/\\\\\0]/.test(name)) {
+    throw new Error("上传文件名无效");
+  }
+  if (Buffer.byteLength(name, "utf8") > 255) throw new Error("上传文件名过长");
+  return name;
+}
+
+function normalizeRemoteUploadDirectory(value) {
+  const raw = String(value || ".").replace(/\\\\/g, "/").trim();
+  if (!raw || raw.includes("\0") || raw.length > 4096) throw new Error("上传目录无效");
+  return raw;
+}
+
+function joinRemoteUploadPath(directory, name) {
+  const dir = directory === "/" ? "/" : directory.replace(/\/+$/, "") || ".";
+  return dir === "/" ? `/${name}` : dir === "." ? name : `${dir}/${name}`;
+}
+
+async function remotePathExists(connection, remotePath) {
+  const output = await runRemote(
+    connection,
+    `if [ -e ${remotePathOperand(connection, remotePath)} ] || [ -L ${remotePathOperand(connection, remotePath)} ]; then printf '1'; else printf '0'; fi`
+  );
+  return output.toString("utf8") === "1";
+}
+
+function suffixedRemoteUploadName(name, index) {
+  const extension = path.posix.extname(name);
+  const base = extension && extension !== name ? name.slice(0, -extension.length) : name;
+  return `${base} (${index})${extension}`;
+}
+
+async function resolveRemoteUploadTarget(connectionId, directory, filename, conflict = "error") {
+  const connection = getConnection(connectionId);
+  const dir = normalizeRemoteUploadDirectory(directory);
+  const name = normalizeRemoteUploadName(filename);
+  const requestedPath = joinRemoteUploadPath(dir, name);
+  const exists = await remotePathExists(connection, requestedPath);
+  if (!exists) return { path:requestedPath, name, exists:false, renamed:false };
+  if (conflict === "overwrite") return { path:requestedPath, name, exists:true, renamed:false };
+  if (conflict !== "rename") return { path:requestedPath, name, exists:true, renamed:false };
+  for (let index = 1; index <= 9999; index += 1) {
+    const candidateName = suffixedRemoteUploadName(name, index);
+    if (!await remotePathExists(connection, joinRemoteUploadPath(dir, candidateName))) {
+      return { path:joinRemoteUploadPath(dir, candidateName), name:candidateName, exists:true, renamed:true };
+    }
+  }
+  throw new Error("无法为上传文件生成可用名称");
+}
+
+async function planRemoteUploads(connectionId, directory, filenames) {
+  const source = Array.isArray(filenames) ? filenames : [];
+  if (!source.length || source.length > 200) throw new Error("一次最多检查 200 个上传文件");
+  const seen = new Set();
+  const items = [];
+  for (const rawName of source) {
+    const name = normalizeRemoteUploadName(rawName);
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const target = await resolveRemoteUploadTarget(connectionId, directory, name, "error");
+    const renamed = target.exists ? await resolveRemoteUploadTarget(connectionId, directory, name, "rename") : target;
+    items.push({ name, exists:target.exists, suggested_name:renamed.name, suggested_path:renamed.path });
+  }
+  return { directory:normalizeRemoteUploadDirectory(directory), items };
+}
+
 async function readRemoteBinaryFile(connectionId, remotePath, maximumBytes = DEFAULT_MAX_OPEN_FILE_SIZE) {
   const connection = getConnection(connectionId);
   const quotedPath = remotePathOperand(connection, remotePath);
@@ -660,7 +712,9 @@ module.exports = {
   decodeRemoteText,
   encodeRemoteText,
   normalizeTextEncoding,
+  planRemoteUploads,
   remotePathOperand,
+  resolveRemoteUploadTarget,
   decodeRemoteFilenameOutput,
   writeRemoteFile,
   streamRemoteFile

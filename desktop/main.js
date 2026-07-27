@@ -379,6 +379,37 @@ function handleDesktopTheme(event, theme) {
   applyDesktopTheme(theme);
 }
 
+function sendSftpDragResult(event, requestId, ok, message="") {
+  if (!event.sender.isDestroyed()) event.sender.send("tunneldesk:sftp-drag-result", {requestId, ok, message});
+}
+
+function handleSftpStartDrag(event, payload) {
+  if (!rendererBelongsToDesktop(event) || !mainWindow || event.sender !== mainWindow.webContents) return;
+  const requestId = String(payload?.requestId || "").slice(0, 128);
+  const root = path.resolve(DATA_DIR, "sftp-drag");
+  const validated = [...new Set((Array.isArray(payload?.files) ? payload.files : []).map(file => path.resolve(String(file || ""))).filter(file => {
+    const relative = path.relative(root, file);
+    return relative && !relative.startsWith("..") && !path.isAbsolute(relative) && fs.existsSync(file);
+  }))];
+  if (!validated.length) {
+    sendSftpDragResult(event, requestId, false, "拖出文件已失效，请重新准备后再试");
+    return;
+  }
+  try {
+    const dragIcon = nativeImage.createFromPath(iconPath("icon.png")).resize({width:16,height:16,quality:"best"});
+    event.sender.startDrag({
+      file:validated[0],
+      files:validated,
+      icon:dragIcon
+    });
+    sendSftpDragResult(event, requestId, true);
+  } catch (error) {
+    console.error("SFTP native drag failed:", error);
+    const message = error?.message || "无法启动系统拖拽";
+    sendSftpDragResult(event, requestId, false, message);
+  }
+}
+
 function showWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) createWindow();
   else {
@@ -692,6 +723,7 @@ app.whenReady().then(async () => {
   }
   buildAppMenu();
   ipcMain.on("tunneldesk:set-theme", handleDesktopTheme);
+  ipcMain.on("tunneldesk:sftp-start-drag", handleSftpStartDrag);
   createTray();
   createWindow({ openDesktopSettings:firstRun });
   if (pendingStorageMigrationNotice) setTimeout(() => notify(pendingStorageMigrationNotice), 1200);

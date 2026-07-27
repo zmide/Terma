@@ -103,12 +103,15 @@ async function main() {
       && releaseWorkflow.includes("TunnelDesk-linux-source-noarch")
   );
   const sftpBackend = read("src/sftp.ts");
+  const sftpSessionSource = read("src/sftp-session.ts");
+  const sftpSessionServerSource = read("src/server.ts");
   const sftpEncodingSource = read("src/sftp-encoding.ts");
   const sftpFrontend = read("public/app-sftp.js");
   const sftpCss = read("public/app.css");
   ok("SFTP 目录枚举不依赖 GNU find 参数", !sftpBackend.includes("-maxdepth") && !sftpBackend.includes("-mindepth") && !sftpBackend.includes("-printf"));
   ok("SFTP 目录枚举兼容 GNU 与 BSD stat", sftpBackend.includes('stat -c "%s %Y %a %U %G"') && sftpBackend.includes('stat -f "%z %m %Lp %Su %Sg"') && sftpBackend.includes("find . ! -name .") && sftpBackend.includes("-prune -exec"));
   ok("SFTP 命令不依赖远端登录 Shell", sftpBackend.includes("const portableCommand = `sh -c ${shellQuote(command)}`") && read("src/sftp-jobs.ts").includes("const portableCommand = `sh -c ${shellQuote(command)}`"));
+  ok("SFTP 复用持久 SSH2 会话并在连接丢失后自动恢复", sftpSessionSource.includes("const sessions = new Map()") && sftpSessionSource.includes("record.client.exec") && sftpSessionSource.includes("for (let attempt = 0; attempt < 2") && sftpSessionSource.includes("await connectSftpSession(connection.id, {force:attempt > 0})") && sftpSessionSource.includes("record.manualDisconnected = false") && sftpSessionServerSource.includes('parts[4] === "session"') && sftpSessionServerSource.includes("closeAllSftpSessions()") && sftpFrontend.includes("refreshActiveSftpSessionStatus") && sftpFrontend.includes("const sftpDisconnectRequests = new Map()") && sftpFrontend.includes("if (disconnecting) await disconnecting.catch"));
   ok("SFTP 普通目录列表隐藏专用回收站", sftpBackend.includes('! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} -prune'));
   ok("SFTP 单次 stat 读取大小、时间和权限元数据", sftpBackend.includes('meta=$(stat -c "%s %Y %a %U %G"') && sftpBackend.includes('meta=$(stat -f "%z %m %Lp %Su %Sg"') && !sftpBackend.includes('size=$(stat'));
   ok("SFTP 支持单项/多项压缩和权限设置", sftpBackend.includes("normalizeRemotePermissionRequest") && sftpBackend.includes("buildRemotePermissionCommand") && read("src/sftp-jobs.ts").includes("normalizeCompressionRequest") && sftpFrontend.includes("compressSftpSelection") && sftpFrontend.includes("openSftpPermissionsForSelection"));
@@ -116,7 +119,8 @@ async function main() {
   ok("SFTP 双击目录进入、文件打开编辑", sftpFrontend.includes("activateSftpEntry") && sftpFrontend.includes('ondblclick="activateSftpEntry'));
   ok("SFTP 任意扩展名显示文本打开", !sftpFrontend.includes("isTextPreviewName") && sftpFrontend.includes("以文本打开"));
   ok("SFTP 面包屑跟随滚动", sftpCss.includes(".sftp-top { position:sticky") && sftpCss.includes(".sftp-breadcrumb { display:flex") && sftpCss.includes("overflow-x:auto"));
-  ok("SFTP 固定目录操作栏支持新建文件、条件粘贴和宽窄屏紧凑布局", sftpFrontend.includes('class="sftp-directory-bar"') && sftpFrontend.includes("createSftpFile") && sftpFrontend.includes("renderSftpClipboardActions") && sftpFrontend.includes("cancelSftpClipboard") && sftpFrontend.includes('classList.toggle("is-empty"') && sftpCss.includes(".sftp-shell { display:grid; grid-auto-rows:max-content; align-content:start;") && sftpCss.includes(".sftp-top { position:sticky") && sftpCss.includes("display:flex; flex-direction:column") && sftpCss.includes("container-name:sftp-view") && sftpCss.includes("@container sftp-view (max-width:760px)") && sftpCss.includes(".sftp-favorites.is-empty { display:none; }") && !sftpFrontend.includes('classList.toggle("empty"'));
+  ok("SFTP 紧凑工具栏支持新建、条件粘贴、导航和悬浮搜索", sftpFrontend.includes('class="sftp-toolbar"') && sftpFrontend.includes("createSftpFile") && sftpFrontend.includes("renderSftpClipboardActions") && sftpFrontend.includes("cancelSftpClipboard") && sftpFrontend.includes("navigateSftpHistory") && sftpFrontend.includes("submitSftpPath") && sftpFrontend.includes('class="sftp-floating-search"') && sftpFrontend.includes('class="sftp-drop-overlay"') && sftpCss.includes(".sftp-shell { position:relative; display:grid;") && sftpCss.includes(".sftp-top { position:sticky") && sftpCss.includes("container-name:sftp-view") && sftpCss.includes("@container sftp-view (max-width:760px)") && sftpCss.includes(".sftp-favorites.is-empty { display:none; }") && !sftpFrontend.includes('classList.toggle("empty"'));
+  ok("SFTP 拖拽传输、冲突处理、批量下载和保存后差异预览可用", sftpSessionSource.includes("stageSftpPaths") && sftpSessionSource.includes("deliverSftpPaths") && read("desktop/main.js").includes("tunneldesk:sftp-start-drag") && sftpFrontend.includes("handleSftpDrop") && sftpFrontend.includes("dropSftpItemsOnTab") && sftpFrontend.includes("sftpEditorDiffBaselines") && sftpFrontend.includes("downloadSftpSelection") && sftpFrontend.includes("confirmSftpDownloadNotice") && sftpFrontend.includes("queueSftpDownload") && sftpFrontend.includes("conflict = await sftpConflictChoice") && !sftpFrontend.includes("sftpClipboard.action") && sftpSessionServerSource.includes('parts[4] === "download-batch"') && sftpSessionServerSource.includes('parts[4] === "upload-plan"'));
   ok("SFTP 列表展示权限/所有者并支持无感后台同步", sftpFrontend.includes("权限 / 所有者") && sftpFrontend.includes("captureSftpViewState") && sftpFrontend.includes("restoreSftpViewState") && sftpFrontend.includes("completedSftpMutationForCurrentView") && sftpFrontend.includes("sftpPendingDirectoryRefreshes") && sftpFrontend.includes('list.classList.toggle("is-refreshing", keepContents)'));
   ok("SFTP 任务仅展示进行中与失败并提供历史记录", sftpFrontend.includes('["running", "pending", "paused", "failed"].includes(job.status)') && sftpFrontend.includes('["done", "cancelled"].includes(job.status)') && sftpFrontend.includes("showSftpJobHistory") && !sftpFrontend.includes("刷新目录</button>"));
   ok("SFTP 回收站默认关闭且支持恢复和永久删除", sftpBackend.includes('SFTP_RECYCLE_DIRECTORY = ".tunneldesk-recycle-bin"') && sftpBackend.includes("buildRestoreRemoteRecycleCommand") && sftpBackend.includes("buildDeleteRemoteRecycleCommand") && sftpFrontend.includes("openSftpRecycleBin") && read("src/runtime-settings.ts").includes("sftp_recycle_bin_enabled"));
@@ -204,13 +208,13 @@ async function main() {
   ok("SFTP 使用 Ace 编辑器、语言模式、换行、图片预览和页面内全局设置", Boolean(packageJson.dependencies?.["ace-builds"]) && indexHtml.includes("/vendor/ace/ace.js") && serverSource.includes("ACE_VENDOR_DIR") && sftpFrontend.includes("sftpEditorLanguageForFile") && sftpFrontend.includes("ace.edit") && sftpFrontend.includes("setUseWrapMode") && sftpFrontend.includes("previewSftpImage") && serverSource.includes("preview-image") && sftpFrontend.includes('id="sftpGlobalSettingsButton"') && settingsFrontend.includes("showSftpGlobalSettings") && settingsFrontend.includes("sftpMaxOpenFileSizeMb"));
   ok("SFTP 图片按二进制响应且 JSON 可一键格式化", serverSource.includes("Buffer.isBuffer(data)") && serverSource.includes("data instanceof Uint8Array") && sftpFrontend.includes('id="sftpTextFormatJson"') && sftpFrontend.includes("JSON.stringify(parsed, null, 2)") && sftpFrontend.includes("JSON 格式错误"));
   ok("SFTP 下载按桌面与浏览器分流并管理临时缓存", runtimeSettingsSource.includes("sftp_download_directory") && serverSource.includes('deliveryMode: desktop ? "desktop" : "browser"') && read("src/sftp-jobs.ts").includes("autoSaveDownloadedFile") && read("src/sftp-jobs.ts").includes("DOWNLOAD_CACHE_TTL_MS") && read("src/sftp-jobs.ts").includes("BROWSER_DELIVERY_GRACE_MS") && read("src/sftp-jobs.ts").includes("markSftpJobDelivered") && sftpFrontend.includes("首次下载提示") && sftpFrontend.includes("sftpPendingBrowserDownloads") && sftpFrontend.includes("保存到本机") && sftpFrontend.includes("打开目录") && settingsFrontend.includes("SFTP 自动保存目录"));
-  ok("通用设置可查看并清理可释放缓存", serverSource.includes('pathname === "/api/cache"') && serverSource.includes("programCacheView") && read("src/update-installer.ts").includes("clearCache()") && settingsFrontend.includes("cacheManagementPanelHtml") && settingsFrontend.includes("清理程序缓存"));
+  ok("通用设置可查看并清理可释放缓存", serverSource.includes('pathname === "/api/cache"') && serverSource.includes("programCacheView") && serverSource.includes("retained_bytes") && read("src/update-installer.ts").includes("clearCache()") && settingsFrontend.includes("cacheManagementPanelHtml") && settingsFrontend.includes("SFTP 拖出") && settingsFrontend.includes("清理程序缓存"));
   ok("桌面端只向系统打开受信任的终端链接协议", desktopSource.includes('/^(https?|ftp|ssh|telnet):\\/\\//i.test(url)'));
   ok("终端支持 Ctrl 加滚轮调整字号", terminalFrontend.includes("enableTerminalFontWheel") && terminalFrontend.includes("event.ctrlKey") && terminalFrontend.includes("changeTerminalFont(key, event.deltaY < 0 ? 1 : -1)"));
   ok("非 UTF-8 终端使用流式双向转码", terminalSource.includes('require("iconv-lite")') && terminalSource.includes("iconv.getDecoder(encoding)") && terminalSource.includes("iconv.encode(text, session.terminalEncoding)") && terminalSource.includes('connection.terminal_encoding || "utf8"'));
   ok("终端显示与日志共享解码文本且交互连接禁用 Nagle", terminalSource.includes("emitTerminalOutput(session, decoded, 1)") && terminalSource.includes("appendTerminalLog(session.logFile, data)") && terminalSource.includes("socket.setNoDelay?.(true)") && read("src/ssh2-client.ts").includes("_sock?.setNoDelay?.(true)"));
   ok("终端默认显示真实交互响应延迟且可在通用设置关闭", frontend.includes('localStorage.getItem("terminalLatencyVisible") !== "0"') && terminalFrontend.includes("startTerminalLatencySample") && terminalFrontend.includes("finishTerminalLatencySample") && terminalFrontend.includes("从按键发送到远端终端首次返回数据") && settingsFrontend.includes('id="terminalLatencyVisible"') && settingsFrontend.includes("不会额外发送探测命令"));
-  ok("终端连接状态省略时悬停显示完整地址与状态", terminalFrontend.includes("updateTerminalConnectionStatus") && terminalFrontend.includes("status.title = text") && terminalFrontend.includes('title="${esc(connectionAddress)}"'));
+  ok("终端连接状态省略时悬停显示完整地址与状态", terminalFrontend.includes("updateTerminalConnectionStatus") && terminalFrontend.includes("updateTerminalStatusForLayout") && terminalFrontend.includes("status.title = `${address}${state ? ` · ${state}` : \"\"}`") && terminalFrontend.includes('title="${esc(connectionAddress)}"'));
   ok("窄屏终端工具栏分行、固定左对齐并保留全部按钮访问", appCss.includes("container-name:terminal-view") && appCss.includes("@container terminal-view (max-width:1080px)") && appCss.includes("@container terminal-toolbar (max-width:1080px)") && appCss.includes("@container terminal-toolbar (max-width:700px)") && appCss.includes(".terminal-actions { justify-content:flex-start; }") && appCss.includes(".terminal-actions > button:not(.terminal-dropdown-button) > span"));
   ok("移动端终端 SFTP 按钮保留完整文字宽度", appCss.includes("button.terminal-action-sftp { width:auto; min-width:84px; padding-inline:10px; }"));
   ok("SFTP 打开文件时显示状态并阻止重复请求", sftpFrontend.includes("withSftpFileOpenFeedback") && sftpFrontend.includes("文件正在打开，请稍候") && sftpFrontend.includes("<span>打开中</span>"));
@@ -259,42 +263,48 @@ async function main() {
   } catch (error) {
     ok("日志设置、分段读取和服务端搜索接口", false, error.message);
   }
-  const restoreFixturePath = path.join(root, "data", `.restore-regression-${process.pid}.db`);
-  let restoreFixtureDb = null;
-  try {
-    const { DatabaseSync } = require("node:sqlite");
-    const missingKeyName = `missing-regression-${process.pid}-${Date.now()}`;
-    restoreFixtureDb = new DatabaseSync(restoreFixturePath);
-    restoreFixtureDb.exec(`CREATE TABLE connections (
-      id INTEGER PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT '测试',
-      ssh_host TEXT NOT NULL, ssh_port INTEGER NOT NULL DEFAULT 22, ssh_user TEXT NOT NULL,
-      auth_type TEXT NOT NULL DEFAULT 'key', identity_file TEXT, ssh_password TEXT, tags TEXT, extra_args TEXT,
-      autostart_forwards INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
-    )`);
-    const insert = restoreFixtureDb.prepare("INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)");
-    for (let index = 1; index <= 12; index += 1) {
-      insert.run(index, `fixture-${index}`, "测试", `fixture-${index}.invalid`, 22, "root", "key", `C:\\old\\.ssh\\${missingKeyName}`, index, index);
+  const isolatedRegression = process.env.TUNNELDESK_REGRESSION_ISOLATED === "1";
+  if (!isolatedRegression) {
+    ok("数据库恢复检查返回分组、逐连接引用、原验证方式和默认排序", true, "非隔离环境已安全跳过");
+    ok("数据库恢复复用暂存文件、重开句柄并立即刷新", true, "非隔离环境已安全跳过");
+  } else {
+    const restoreFixturePath = path.join(root, "data", `.restore-regression-${process.pid}.db`);
+    let restoreFixtureDb = null;
+    try {
+      const { DatabaseSync } = require("node:sqlite");
+      const missingKeyName = `missing-regression-${process.pid}-${Date.now()}`;
+      restoreFixtureDb = new DatabaseSync(restoreFixturePath);
+      restoreFixtureDb.exec(`CREATE TABLE connections (
+        id INTEGER PRIMARY KEY, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT '测试',
+        ssh_host TEXT NOT NULL, ssh_port INTEGER NOT NULL DEFAULT 22, ssh_user TEXT NOT NULL,
+        auth_type TEXT NOT NULL DEFAULT 'key', identity_file TEXT, ssh_password TEXT, tags TEXT, extra_args TEXT,
+        autostart_forwards INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+      )`);
+      const insert = restoreFixtureDb.prepare("INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)");
+      for (let index = 1; index <= 12; index += 1) {
+        insert.run(index, `fixture-${index}`, "测试", `fixture-${index}.invalid`, 22, "root", "key", `C:\\old\\.ssh\\${missingKeyName}`, index, index);
+      }
+      restoreFixtureDb.close();
+      restoreFixtureDb = null;
+      const response = await fetch(`${base}/api/restore/database/check`, {method:"POST", body:fs.readFileSync(restoreFixturePath)});
+      const restoreCheck = await response.json().catch(() => null);
+      ok("数据库恢复检查返回分组、逐连接引用、原验证方式和默认排序", response.ok && restoreCheck?.missing_identities?.length === 1 && restoreCheck.missing_identities[0].key_name === missingKeyName && restoreCheck.missing_identities[0].connection_count === 12 && restoreCheck.missing_identities[0].connection_names?.length === 12 && restoreCheck.unresolved_identities?.length === 12 && restoreCheck.connections?.length === 12 && restoreCheck.connections.every(item => item.original_auth_type === "key" && item.sort_order === 1) && typeof restoreCheck.upload_directory === "string");
+      if (restoreCheck?.restore_token) {
+        const restoredResponse = await fetch(`${base}/api/restore/database`, {
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({restore_token:restoreCheck.restore_token, credential_bindings:[]})
+        });
+        const restored = await restoredResponse.json().catch(()=>null);
+        const refreshed = await fetch(`${base}/api/connections`).then(item=>item.json()).catch(()=>[]);
+        ok("数据库恢复复用暂存文件、重开句柄并立即刷新", restoredResponse.ok && restored?.database_reopened === true && refreshed.length === 12 && refreshed.every(item=>item.sort_order === 1));
+      }
+    } catch (error) {
+      ok("数据库恢复检查返回分组、逐连接引用、原验证方式和默认排序", false, error.message);
+    } finally {
+      try { restoreFixtureDb?.close(); } catch {}
+      try { fs.unlinkSync(restoreFixturePath); } catch {}
     }
-    restoreFixtureDb.close();
-    restoreFixtureDb = null;
-    const response = await fetch(`${base}/api/restore/database/check`, {method:"POST", body:fs.readFileSync(restoreFixturePath)});
-    const restoreCheck = await response.json().catch(() => null);
-    ok("数据库恢复检查返回分组、逐连接引用、原验证方式和默认排序", response.ok && restoreCheck?.missing_identities?.length === 1 && restoreCheck.missing_identities[0].key_name === missingKeyName && restoreCheck.missing_identities[0].connection_count === 12 && restoreCheck.missing_identities[0].connection_names?.length === 12 && restoreCheck.unresolved_identities?.length === 12 && restoreCheck.connections?.length === 12 && restoreCheck.connections.every(item => item.original_auth_type === "key" && item.sort_order === 1) && typeof restoreCheck.upload_directory === "string");
-    if (restoreCheck?.restore_token) {
-      const restoredResponse = await fetch(`${base}/api/restore/database`, {
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({restore_token:restoreCheck.restore_token, credential_bindings:[]})
-      });
-      const restored = await restoredResponse.json().catch(()=>null);
-      const refreshed = await fetch(`${base}/api/connections`).then(item=>item.json()).catch(()=>[]);
-      ok("数据库恢复复用暂存文件、重开句柄并立即刷新", restoredResponse.ok && restored?.database_reopened === true && refreshed.length === 12 && refreshed.every(item=>item.sort_order === 1));
-    }
-  } catch (error) {
-    ok("数据库恢复检查返回分组、逐连接引用、原验证方式和默认排序", false, error.message);
-  } finally {
-    try { restoreFixtureDb?.close(); } catch {}
-    try { fs.unlinkSync(restoreFixturePath); } catch {}
   }
   const about = await checkFetch(`${base}/api/about`, "Web API /api/about");
   ok(

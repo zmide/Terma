@@ -9,7 +9,9 @@ function renderTabs() {
   const previousScrollLeft = container.scrollLeft;
   container.innerHTML = tabs.map(tab => {
     const fullTitle = [tab.title, tab.subtitle].filter(Boolean).join(" - ");
-    return `<button class="tab ${tab.key === activeTabKey ? "active" : ""}" data-tab-key="${escAttr(tab.key)}" title="${esc(fullTitle)}" aria-label="${esc(tab.title)}" onpointerdown="beginWorkspaceTabDrag(event,'${escAttr(tab.key)}')" onclick="activateWorkspaceTabFromClick(event,'${escAttr(tab.key)}')" oncontextmenu="showTabContextMenu(event,'${escAttr(tab.key)}')"><span class="tab-title">${esc(tab.title)}</span>${tab.closable ? `<span class="tab-close" title="关闭标签" aria-label="关闭标签" onpointerdown="event.stopPropagation()" onclick="closeTab(event,'${escAttr(tab.key)}')">x</span>` : ""}</button>`;
+    const connectionStatus = ["terminal", "sftp"].includes(tab.kind) ? (tab.connectionStatus || "connecting") : "";
+    const connectionDot = connectionStatus ? `<span class="tab-connection-dot ${connectionStatus}" title="${connectionStatus === "connected" ? "已连接" : connectionStatus === "disconnected" ? "已断开" : "连接中"}" aria-hidden="true"></span>` : "";
+    return `<button class="tab ${tab.key === activeTabKey ? "active" : ""}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(tab.title)}" onpointerdown="beginWorkspaceTabDrag(event,'${escAttr(tab.key)}')" onclick="activateWorkspaceTabFromClick(event,'${escAttr(tab.key)}')" oncontextmenu="showTabContextMenu(event,'${escAttr(tab.key)}')" ondragover="handleSftpTabDragOver(event,'${escAttr(tab.key)}')" ondragleave="handleSftpTabDragLeave(event,'${escAttr(tab.key)}')" ondrop="dropSftpItemsOnTab(event,'${escAttr(tab.key)}')">${connectionDot}<span class="tab-title">${esc(tab.title)}</span>${tab.closable ? `<span class="tab-close" title="关闭标签" aria-label="关闭标签" onpointerdown="event.stopPropagation()" onclick="closeTab(event,'${escAttr(tab.key)}')">x</span>` : ""}</button>`;
   }).join("");
   container.scrollLeft = previousScrollLeft;
   requestAnimationFrame(updateWorkspaceTabScrollControls);
@@ -17,9 +19,9 @@ function renderTabs() {
 }
 
 function updateWorkspaceTabScrollControls() {
-  const container = $("tabs");
-  const left = $("tabsScrollLeft");
-  const right = $("tabsScrollRight");
+  const container = document.getElementById("tabs");
+  const left = document.getElementById("tabsScrollLeft");
+  const right = document.getElementById("tabsScrollRight");
   if (!container || !left || !right) return;
   const availableWidth = container.closest(".tabs-shell")?.clientWidth || container.clientWidth;
   const overflowing = container.scrollWidth > availableWidth + 1;
@@ -73,7 +75,9 @@ function activateWorkspaceTabFromClick(event, key) {
 function beginWorkspaceTabDrag(event, key) {
   if (event.button !== 0 || event.target.closest(".tab-close")) return;
   if (workspaceTabDrag) finishWorkspaceTabDrag(null, true);
-  const tab = event.currentTarget;
+  if (activeTabKey !== key) activateTab(key);
+  const tab = [...$("tabs").querySelectorAll(".tab")].find(item => item.dataset.tabKey === key);
+  if (!tab) return;
   workspaceTabDrag = {
     key,
     tab,
@@ -81,7 +85,9 @@ function beginWorkspaceTabDrag(event, key) {
     startX:event.clientX,
     startY:event.clientY,
     pointerX:event.clientX,
+    pointerY:event.clientY,
     dragging:false,
+    ghost:null,
     autoScrollFrame:0
   };
   try { tab.setPointerCapture?.(event.pointerId); } catch {}
@@ -95,6 +101,7 @@ function moveWorkspaceTabDrag(event) {
   const drag = workspaceTabDrag;
   if (!drag || event.pointerId !== drag.pointerId) return;
   drag.pointerX = event.clientX;
+  drag.pointerY = event.clientY;
   const deltaX = event.clientX - drag.startX;
   const deltaY = event.clientY - drag.startY;
   if (!drag.dragging) {
@@ -104,11 +111,35 @@ function moveWorkspaceTabDrag(event) {
     drag.tab.classList.add("tab-dragging");
     drag.tab.setAttribute("aria-grabbed", "true");
     document.body.classList.add("workspace-tab-drag-active");
+    createWorkspaceTabDragGhost(drag);
     hideTabContextMenu();
     scheduleWorkspaceTabAutoScroll();
   }
   event.preventDefault();
+  updateWorkspaceTabDragGhost(event.clientX, event.clientY);
   reorderWorkspaceTabElement(event.clientX);
+}
+
+function createWorkspaceTabDragGhost(drag) {
+  const tab = tabs.find(item => item.key === drag.key);
+  const ghost = document.createElement("div");
+  ghost.className = "workspace-tab-drag-ghost";
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.innerHTML = `${icon("grip-vertical")}<span>${esc(tab?.title || drag.tab.textContent.trim())}</span>`;
+  document.body.appendChild(ghost);
+  drag.ghost = ghost;
+  updateWorkspaceTabDragGhost(drag.pointerX, drag.pointerY);
+}
+
+function updateWorkspaceTabDragGhost(clientX, clientY) {
+  const ghost = workspaceTabDrag?.ghost;
+  if (!ghost) return;
+  const rect = ghost.getBoundingClientRect();
+  const gap = 12;
+  const left = Math.max(8, Math.min(clientX - rect.width / 2, window.innerWidth - rect.width - 8));
+  const preferredTop = clientY - rect.height - gap;
+  const top = preferredTop >= 8 ? preferredTop : Math.min(clientY + gap, window.innerHeight - rect.height - 8);
+  ghost.style.transform = `translate3d(${Math.round(left)}px,${Math.round(top)}px,0)`;
 }
 
 function reorderWorkspaceTabElement(clientX) {
@@ -172,6 +203,7 @@ function finishWorkspaceTabDrag(event, cancelled) {
     if (drag.tab.hasPointerCapture?.(drag.pointerId)) drag.tab.releasePointerCapture(drag.pointerId);
   } catch {}
   document.body.classList.remove("workspace-tab-drag-active");
+  drag.ghost?.remove();
   const dragged = drag.dragging;
   if (dragged && !cancelled) {
     const order = [...$("tabs").querySelectorAll(".tab")].map(tab => tab.dataset.tabKey);
@@ -179,8 +211,8 @@ function finishWorkspaceTabDrag(event, cancelled) {
     if (order.length === tabs.length && order.every(key => byKey.has(key))) tabs = order.map(key => byKey.get(key));
   }
   workspaceTabDrag = null;
-  if (!dragged) return;
   workspaceTabSuppressClickUntil = Date.now() + 350;
+  if (!dragged) return;
   renderTabs();
   [...$("tabs").querySelectorAll(".tab")].find(tab => tab.dataset.tabKey === drag.key)?.focus({preventScroll:true});
 }
@@ -205,6 +237,18 @@ function addTab(key, title, subtitle, viewName, closable=true, meta={}) {
   activeTabKey = key;
   renderTabs();
   revealWorkspaceTab(key);
+}
+
+function setWorkspaceTabConnectionStatus(key, status) {
+  const normalized = ["connected", "disconnected", "connecting"].includes(status) ? status : "disconnected";
+  const tab = tabs.find(item => item.key === key);
+  if (!tab) return;
+  tab.connectionStatus = normalized;
+  const node = [...$("tabs").querySelectorAll(".tab")].find(item => item.dataset.tabKey === key);
+  const dot = node?.querySelector(".tab-connection-dot");
+  if (!dot) return renderTabs();
+  dot.className = `tab-connection-dot ${normalized}`;
+  dot.title = normalized === "connected" ? "已连接" : normalized === "disconnected" ? "已断开" : "连接中";
 }
 
 function renderTabContent(tab) {
@@ -243,6 +287,8 @@ function closeTabsByKey(keys, anchorKey="") {
   const anchorIndex = Math.max(0, previousTabs.findIndex(tab => tab.key === anchorKey));
   for (const key of targets) {
     closeTerminalSession(key);
+    if (String(key).startsWith("sftp-") && typeof closeSftpSession === "function") closeSftpSession(key);
+    sftpDisconnectedTabs.delete(key);
     sftpViewStates.delete(key);
     if (typeof clearSftpDirectoryViewCache === "function") clearSftpDirectoryViewCache(key);
     if (key === "command") stopBatchCommand();
@@ -361,8 +407,11 @@ function setWorkspace(title, subtitle, viewName, key=viewName, updateTab=true, c
   $(`view-${viewName}`).hidden = false;
   document.querySelector(".workspace")?.classList.toggle("terminal-workspace", viewName === "terminal");
   $("content")?.classList.toggle("terminal-content", viewName === "terminal");
+  $("content")?.classList.toggle("sftp-content", viewName === "sftp");
   document.body.classList.toggle("mobile-terminal-active", isMobileLayout() && viewName === "terminal");
   activeView = viewName;
+  if (typeof syncTerminalToolbarPlacement === "function") syncTerminalToolbarPlacement();
+  if (typeof syncSftpToolbarPlacement === "function") syncSftpToolbarPlacement();
   if (isMobileLayout() && viewName !== "welcome") showMobileWorkspace();
 }
 
@@ -511,12 +560,16 @@ function syncResponsivePane() {
     document.querySelector(".left-pane")?.classList.remove("mobile-hide");
     $("content")?.classList.remove("mobile-show");
     document.body.classList.remove("mobile-terminal-active");
+    if (typeof syncTerminalToolbarPlacement === "function") syncTerminalToolbarPlacement();
+    if (typeof syncSftpToolbarPlacement === "function") syncSftpToolbarPlacement();
     return;
   }
   if (responsiveLayoutMobile === false) mobilePaneView = activeView === "welcome" ? "explorer" : "workspace";
   responsiveLayoutMobile = true;
   if (mobilePaneView === "workspace") showMobileWorkspace();
   else showMobileExplorer();
+  if (typeof syncTerminalToolbarPlacement === "function") syncTerminalToolbarPlacement();
+  if (typeof syncSftpToolbarPlacement === "function") syncSftpToolbarPlacement();
 }
 
 function renderWelcome() {
