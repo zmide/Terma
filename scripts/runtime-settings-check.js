@@ -37,6 +37,18 @@ async function freePort() {
   return port;
 }
 
+async function bindableLoopbackHosts() {
+  const hosts = ["127.0.0.1"];
+  try {
+    const { server } = await listen("127.0.0.2");
+    await closeServer(server);
+    hosts.push("127.0.0.2");
+  } catch (error) {
+    if (error?.code !== "EADDRNOTAVAIL") throw error;
+  }
+  return hosts;
+}
+
 async function waitForFile(file, timeoutMs = 10000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -104,6 +116,8 @@ async function main() {
   assert.throws(() => normalizeRuntimeSettings({sftp_download_directory:"bad\0path"}), /下载目录无效/);
   console.log("PASS runtime listener normalization");
 
+  const startupHosts = await bindableLoopbackHosts();
+
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-runtime-settings-check-"));
   temporaryRoots.push(temporaryRoot);
   const dataDir = path.join(temporaryRoot, "data");
@@ -119,7 +133,7 @@ async function main() {
     const occupied = await listen("127.0.0.1");
     startupBlocker = occupied.server;
     fs.writeFileSync(runtimeFile, JSON.stringify({
-      listen_hosts: ["127.0.0.1", "127.0.0.2"],
+      listen_hosts: startupHosts,
       listen_port: occupied.port,
       sftp_recycle_bin_enabled: true,
       terminal: {
@@ -147,7 +161,7 @@ async function main() {
     assert.equal(info.requested_port, occupied.port);
     assert.equal(info.actual_port, occupied.port + 1);
     assert.equal(info.fallback_count, 1);
-    assert.deepEqual(info.actual_hosts, ["127.0.0.1", "127.0.0.2"]);
+    assert.deepEqual(info.actual_hosts, startupHosts);
     assert.equal(info.urls.includes(info.local_url), true);
     const persistedAfterFallback = JSON.parse(fs.readFileSync(runtimeFile, "utf8"));
     assert.equal(persistedAfterFallback.listen_port, info.actual_port);
@@ -170,7 +184,7 @@ async function main() {
 
     const settings = await request(base, "/api/runtime-settings");
     assert.equal(settings.response.ok, true);
-    assert.deepEqual(settings.body.saved.listen_hosts, ["127.0.0.1", "127.0.0.2"]);
+    assert.deepEqual(settings.body.saved.listen_hosts, startupHosts);
     assert.equal(settings.body.saved.listen_port, info.actual_port);
     assert.equal(settings.body.saved.sftp_recycle_bin_enabled, true);
     assert.equal(settings.body.saved.sftp_max_open_file_size_mb, 5);
@@ -180,7 +194,7 @@ async function main() {
     assert.equal(settings.body.saved.terminal.url_links_enabled, true);
     assert.equal(settings.body.effective.listen_port, info.actual_port);
     assert.equal(settings.body.local_url, base);
-    assert.deepEqual(settings.body.actual_hosts, ["127.0.0.1", "127.0.0.2"]);
+    assert.deepEqual(settings.body.actual_hosts, startupHosts);
     console.log("PASS runtime settings API reports saved and actual listener state");
 
     const terminalSaved = await request(base, "/api/runtime-settings", {
@@ -199,7 +213,7 @@ async function main() {
     assert.equal(terminalSaved.body.saved.terminal.ctrl_left_click_moves_cursor, false);
     assert.deepEqual(terminalSaved.body.saved.terminal.url_prefixes, ["https://", "ssh://"]);
     assert.equal(terminalSaved.body.saved.terminal.multiline_paste_mode, "single_line");
-    assert.deepEqual(terminalSaved.body.saved.listen_hosts, ["127.0.0.1", "127.0.0.2"]);
+    assert.deepEqual(terminalSaved.body.saved.listen_hosts, startupHosts);
     console.log("PASS global terminal settings save independently and are normalized");
 
     const recycleDisabled = await request(base, "/api/runtime-settings", {
@@ -208,7 +222,7 @@ async function main() {
     });
     assert.equal(recycleDisabled.response.ok, true);
     assert.equal(recycleDisabled.body.saved.sftp_recycle_bin_enabled, false);
-    assert.deepEqual(recycleDisabled.body.saved.listen_hosts, ["127.0.0.1", "127.0.0.2"]);
+    assert.deepEqual(recycleDisabled.body.saved.listen_hosts, startupHosts);
     assert.equal(recycleDisabled.body.saved.listen_port, info.actual_port);
     assert.equal(recycleDisabled.body.saved.terminal.middle_mouse_action, "open_settings");
     console.log("PASS SFTP recycle setting saves independently without listener validation");

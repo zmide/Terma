@@ -2,11 +2,10 @@
 setlocal
 cd /d "%~dp0"
 
-set "URL_FILE=data\web.url"
-set "INFO_FILE=data\web.json"
-set "PID_FILE=data\web.pid"
-call :check_existing_instance
-if not errorlevel 1 goto already_running
+node scripts\source-runtime-path.js --stop
+if errorlevel 1 goto failed
+call :set_runtime_files desktop
+if errorlevel 1 goto failed
 if exist "%URL_FILE%" del "%URL_FILE%" >nul 2>nul
 if exist "%INFO_FILE%" del "%INFO_FILE%" >nul 2>nul
 set "SERVER_ARGS=%*"
@@ -51,6 +50,8 @@ if not "%TUNNELDESK_WEB_ONLY%"=="1" (
   if exist "node_modules\.bin\electron.cmd" (
     call :ensure_electron
     if errorlevel 1 goto start_web
+    call npm run native:build:if-needed
+    if errorlevel 1 goto failed
     call :start_desktop_detached
     if errorlevel 1 goto start_web
     echo TunnelDesk desktop is starting.
@@ -61,6 +62,8 @@ if not "%TUNNELDESK_WEB_ONLY%"=="1" (
 )
 
 :start_web
+call :set_runtime_files web
+if errorlevel 1 goto failed
 node scripts\start-detached.js web %SERVER_ARGS%
 if errorlevel 1 goto failed
 echo TunnelDesk is starting in the background.
@@ -128,30 +131,24 @@ if exist "%INFO_FILE%" (
   for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "try { $info=Get-Content '%INFO_FILE%' -Raw | ConvertFrom-Json; $urls=@($info.lan_urls); if($urls.Count){ 'LAN access:'; $urls | ForEach-Object { '  ' + $_ } } } catch {}"`) do echo %%i
   exit /b 0
 )
-for /f "tokens=1" %%i in ('powershell -NoProfile -Command "$port=[int]($env:TUNNEL_WEB_PORT -as [int]); if (-not $port -and (Test-Path 'data\runtime-settings.json')) { try { $port=[int]((Get-Content 'data\runtime-settings.json' -Raw | ConvertFrom-Json).listen_port) } catch {} }; if (-not $port) { $port=8088 }; Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -ne 'WellKnown' } | Sort-Object InterfaceAlias,IPAddress | ForEach-Object { 'http://' + $_.IPAddress + ':' + $port }" 2^>nul') do echo   %%i
+for /f "tokens=1" %%i in ('powershell -NoProfile -Command "$port=[int]($env:TUNNEL_WEB_PORT -as [int]); $settings=Join-Path $env:RUNTIME_DATA_DIR 'runtime-settings.json'; if (-not $port -and (Test-Path -LiteralPath $settings)) { try { $port=[int]((Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json).listen_port) } catch {} }; if (-not $port) { $port=8088 }; Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -ne 'WellKnown' } | Sort-Object InterfaceAlias,IPAddress | ForEach-Object { 'http://' + $_.IPAddress + ':' + $port }" 2^>nul') do echo   %%i
 exit /b 0
 
-:check_existing_instance
-if not exist "%PID_FILE%" exit /b 1
-set "WEB_PID="
-set /p WEB_PID=<"%PID_FILE%"
-if not defined WEB_PID exit /b 1
-powershell -NoProfile -Command "try { $p=Get-CimInstance Win32_Process -Filter 'ProcessId=%WEB_PID%' -ErrorAction Stop; $cmd=($p.CommandLine + ' ' + $p.Name).ToLower(); if($cmd.Contains('tunneldesk') -or $cmd.Contains('dist\\server.js')){ exit 0 }; exit 1 } catch { exit 1 }" >nul 2>nul
-exit /b %errorlevel%
-
-:already_running
-set "WEB_URL="
-if exist "%URL_FILE%" set /p WEB_URL=<"%URL_FILE%"
-echo TunnelDesk is already running, pid=%WEB_PID%.
-if defined WEB_URL echo Open %WEB_URL%
-call :print_lan_urls
-if not "%TUNNELDESK_WEB_ONLY%"=="1" if exist "node_modules\.bin\electron.cmd" (
-  node scripts\start-detached.js desktop >nul 2>nul
-  echo The existing desktop window has been brought to the foreground.
+:set_runtime_files
+set "RUNTIME_DATA_DIR="
+if /i "%~1"=="web" (
+  for /f "usebackq delims=" %%i in (`node scripts\source-runtime-path.js --web-data-dir`) do set "RUNTIME_DATA_DIR=%%i"
 ) else (
-  echo The existing headless service remains active; no second process was started.
+  for /f "usebackq delims=" %%i in (`node scripts\source-runtime-path.js --desktop-data-dir`) do set "RUNTIME_DATA_DIR=%%i"
 )
-goto done
+if not defined RUNTIME_DATA_DIR (
+  echo Unable to resolve the TunnelDesk runtime data directory.
+  exit /b 1
+)
+set "URL_FILE=%RUNTIME_DATA_DIR%\web.url"
+set "INFO_FILE=%RUNTIME_DATA_DIR%\web.json"
+set "PID_FILE=%RUNTIME_DATA_DIR%\web.pid"
+exit /b 0
 
 :parse_server_args
 if "%~1"=="" exit /b 0

@@ -11,6 +11,8 @@ const {
   buildRecycleRemotePathCommand,
   buildRestoreRemoteRecycleCommand,
   buildRemoteCreateFileCommand,
+  __buildRemoteDirectoryEntriesCommand,
+  __buildReadRemoteBinaryCommand,
   buildRemoteDirectorySizeCommand,
   buildRemotePermissionCommand,
   invalidateRemoteDirectoryCache,
@@ -152,6 +154,18 @@ assert.match(directorySizeCommand, /\.tunneldesk-size-0123456789abcdef/, "临时
 assert.doesNotMatch(directorySizeCommand, /\bdu\b/, "目录大小应汇总精确文件字节数，不能使用按块取整的 du");
 assert.throws(() => buildRemoteDirectorySizeCommand(""), /远程目录路径无效/);
 assert.throws(() => buildRemoteDirectorySizeCommand("bad\0path"), /远程目录路径无效/);
+
+const directoryEntriesCommand = __buildRemoteDirectoryEntriesCommand();
+assert.match(directoryEntriesCommand, /\[ -L "\$entry" \]/, "目录列表必须识别符号链接");
+assert.match(directoryEntriesCommand, /stat -L -c "%s %Y %a %U %G"/, "GNU stat 必须展示链接目标的真实元数据");
+assert.match(directoryEntriesCommand, /stat -L -f "%z %m %Lp %Su %Sg"/, "BSD stat 必须展示链接目标的真实元数据");
+assert.match(directoryEntriesCommand, /td_link_size/, "目录列表必须保留链接本身大小以解释显示差异");
+
+const readLinkedFileCommand = __buildReadRemoteBinaryCommand("/vmlinuz", 5 * 1024 * 1024);
+assert.match(readLinkedFileCommand, /stat -L -c "%s"/, "打开前必须读取 GNU 链接目标真实大小");
+assert.match(readLinkedFileCommand, /stat -L -f "%z"/, "打开前必须读取 BSD 链接目标真实大小");
+assert.match(readLinkedFileCommand, /符号链接本身为 %s B，目标文件实际为 %s B/, "超限提示必须解释链接大小与目标大小");
+assert.match(readLinkedFileCommand, /head -c 5242881 "\$TD_TARGET"/, "通过大小检查后仍要做有界读取");
 
 const recycleId = "m1abcd23-0123456789abcdef";
 const recycleDeletedAt = 1784567890123;

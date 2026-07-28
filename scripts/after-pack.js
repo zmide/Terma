@@ -2,6 +2,8 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const childProcess = require("node:child_process");
+const { assertNativeArchitecture } = require("./native-binary-check");
 
 function resourcesDir(context) {
   if (context.electronPlatformName === "darwin") {
@@ -39,9 +41,82 @@ function walk(directory, files = []) {
   return files;
 }
 
+function buildArchName(arch) {
+  const names = {
+    0: "ia32",
+    1: "x64",
+    2: "armv7l",
+    3: "arm64",
+    4: "universal"
+  };
+  return typeof arch === "string" ? arch : names[arch];
+}
+
+function verifyFile(file, label) {
+  if (!fs.existsSync(file) || fs.statSync(file).size === 0) {
+    throw new Error(`${label} is missing or empty: ${file}`);
+  }
+  console.log(`Verified ${label}: ${file}`);
+}
+
+function verifyNativeSftpDrag(context) {
+  const resources = resourcesDir(context);
+  const arch = buildArchName(context.arch);
+  if (!arch) throw new Error(`Unknown electron-builder architecture: ${context.arch}`);
+
+  if (context.electronPlatformName === "win32") {
+    const addon = path.join(
+        resources,
+        "app.asar.unpacked",
+        "native",
+        "win-sftp-drag",
+        "prebuilds",
+        `win32-${arch}`,
+        "win_sftp_drag.node"
+      );
+    verifyFile(addon, `Windows ${arch} SFTP native drag addon`);
+    assertNativeArchitecture(addon, arch, "Windows SFTP native drag addon");
+    return;
+  }
+
+  if (context.electronPlatformName === "darwin") {
+    const addon = path.join(
+        resources,
+        "app.asar.unpacked",
+        "native",
+        "macos-sftp-drag",
+        "prebuilds",
+        `darwin-${arch}`,
+        "tunneldesk_macos_sftp_drag.node"
+      );
+    verifyFile(addon, `macOS ${arch} SFTP native drag addon`);
+    assertNativeArchitecture(addon, arch, "macOS SFTP native drag addon");
+    return;
+  }
+
+  if (context.electronPlatformName === "linux") {
+    const helper = path.join(resources, "native", "tunneldesk-linux-sftp-dragfs");
+    verifyFile(helper, `Linux ${arch} SFTP native drag helper`);
+    assertNativeArchitecture(helper, arch, "Linux SFTP native drag helper");
+    fs.chmodSync(helper, 0o755);
+    const result = childProcess.spawnSync(helper, ["--version"], {
+      encoding: "utf8",
+      stdio: "pipe"
+    });
+    if (result.error || result.status !== 0) {
+      throw new Error(
+        `Packaged Linux SFTP native drag helper cannot run: ` +
+        `${result.error?.message || result.stderr || `exit ${result.status}`}`
+      );
+    }
+    console.log(`Verified executable Linux SFTP native drag helper: ${String(result.stdout).trim()}`);
+  }
+}
+
 exports.default = async function afterPack(context) {
-  if (!["darwin", "linux"].includes(context.electronPlatformName)) return;
   if (context.electronPlatformName === "darwin") verifyMacIcon(context);
+  verifyNativeSftpDrag(context);
+  if (!["darwin", "linux"].includes(context.electronPlatformName)) return;
 
   const nodePtyDir = path.join(resourcesDir(context), "app.asar.unpacked", "node_modules", "node-pty");
   const helpers = walk(nodePtyDir).filter(file => path.basename(file) === "spawn-helper");

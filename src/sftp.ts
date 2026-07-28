@@ -178,17 +178,21 @@ function invalidateRemoteDirectoryCache(connectionId) {
   }
 }
 
-async function enumerateRemoteDir(connectionId, remotePath = ".") {
-  const connection = getConnection(connectionId);
-  const dir = remotePath || ".";
-  const listEntries = [
+function buildRemoteDirectoryEntriesCommand() {
+  return [
     `if stat -c "%s" . >/dev/null 2>&1; then TD_STAT_STYLE=gnu`,
     `elif stat -f "%z" . >/dev/null 2>&1; then TD_STAT_STYLE=bsd`,
     `else echo "远程系统缺少兼容的 stat 命令" >&2; exit 1`,
     `fi`,
     `export TD_STAT_STYLE`,
-    `find . ! -name . ! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} -prune -exec sh -c 'for entry in "$@"; do if [ -d "$entry" ]; then type=d; else type=f; fi; if [ "$TD_STAT_STYLE" = gnu ]; then meta=$(stat -c "%s %Y %a %U %G" "$entry"); else meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry"); fi || exit 1; name=\${entry#./}; printf "%s\\t%s\\t%s\\n" "$name" "$type" "$meta"; done' sh {} +`
+    `find . ! -name . ! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(".tunneldesk-upload-*.part")} -prune -exec sh -c 'for entry in "$@"; do td_link=0; td_link_size=0; td_link_missing=0; if [ -L "$entry" ]; then td_link=1; fi; if [ -d "$entry" ]; then type=d; else type=f; fi; if [ "$TD_STAT_STYLE" = gnu ]; then if [ "$td_link" = 1 ]; then own_meta=$(stat -c "%s %Y %a %U %G" "$entry") || exit 1; td_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -c "%s %Y %a %U %G" "$entry") || exit 1; else meta=$own_meta; td_link_missing=1; fi; else meta=$(stat -c "%s %Y %a %U %G" "$entry") || exit 1; fi; else if [ "$td_link" = 1 ]; then own_meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; td_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; else meta=$own_meta; td_link_missing=1; fi; else meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; fi; fi; name=\${entry#./}; printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$name" "$type" "$meta" "$td_link" "$td_link_size" "$td_link_missing"; done' sh {} +`
   ].join("; ");
+}
+
+async function enumerateRemoteDir(connectionId, remotePath = ".") {
+  const connection = getConnection(connectionId);
+  const dir = remotePath || ".";
+  const listEntries = buildRemoteDirectoryEntriesCommand();
   const command = [
     `cd ${remotePathOperand(connection, dir)}`,
     `pwd`,
@@ -199,7 +203,7 @@ async function enumerateRemoteDir(connectionId, remotePath = ".") {
   return {
     path: cwdLine || dir,
     entries: rows.map((line) => {
-      const [name, type, meta = ""] = line.split("\t");
+      const [name, type, meta = "", link = "0", linkSize = "0", linkMissing = "0"] = line.split("\t");
       const [size, mtime, mode, owner, group] = meta.trim().split(/\s+/);
       return {
         name,
@@ -208,7 +212,10 @@ async function enumerateRemoteDir(connectionId, remotePath = ".") {
         mtime: Number(mtime || 0),
         mode: String(mode || ""),
         owner: String(owner || ""),
-        group: String(group || "")
+        group: String(group || ""),
+        is_symlink:link === "1",
+        link_size:link === "1" ? Number(linkSize || 0) : 0,
+        link_target_missing:link === "1" && linkMissing === "1"
       };
     })
   };
@@ -293,9 +300,28 @@ async function createRemoteFile(connectionId, remotePath) {
   return { ok: true, path: normalizedPath };
 }
 
+function normalizeRemoteDeletePath(remotePath) {
+  const raw = String(remotePath || "").replace(/\\/g, "/");
+  if (!raw || raw.includes("\0") || raw.length > 4096) throw new Error("远程路径无效或过长");
+  const normalized = path.posix.normalize(raw);
+  if (!normalized || ["/", ".", ".."].includes(normalized) || normalized.startsWith("../")) {
+    throw new Error("不能删除根目录或当前目录");
+  }
+  return normalized;
+}
+
+function buildDeleteRemotePathCommand(remotePath, connection = null) {
+  const normalizedPath = normalizeRemoteDeletePath(remotePath);
+  return {
+    path: normalizedPath,
+    command: `rm -rf -- ${remotePathOperand(connection, normalizedPath)}`
+  };
+}
+
 async function deleteRemotePath(connectionId, remotePath) {
   const connection = getConnection(connectionId);
-  await runRemote(connection, `rm -rf -- ${remotePathOperand(connection, remotePath)}`);
+  const request = buildDeleteRemotePathCommand(remotePath, connection);
+  await runRemote(connection, request.command);
   return { ok: true };
 }
 
@@ -594,11 +620,28 @@ async function planRemoteUploads(connectionId, directory, filenames) {
   return { directory:normalizeRemoteUploadDirectory(directory), items };
 }
 
+function buildReadRemoteBinaryCommand(remotePath, maximumBytes, connection = null) {
+  const limit = normalizeOpenFileLimit(maximumBytes);
+  const limitMb = Math.max(1, Math.round(limit / 1024 / 1024));
+  return [
+    `TD_TARGET=${remotePathOperand(connection, remotePath)}`,
+    `TD_LIMIT=${limit}`,
+    `if [ -L "$TD_TARGET" ]; then TD_IS_LINK=1; else TD_IS_LINK=0; fi`,
+    `if [ "$TD_IS_LINK" = 1 ] && [ ! -e "$TD_TARGET" ]; then printf "%s\\n" "符号链接指向的目标不存在" >&2; exit 1; fi`,
+    `if [ ! -f "$TD_TARGET" ]; then printf "%s\\n" "目标不是普通文件" >&2; exit 1; fi`,
+    `if stat -L -c "%s" "$TD_TARGET" >/dev/null 2>&1; then TD_STAT_STYLE=gnu; TD_SIZE=$(stat -L -c "%s" "$TD_TARGET"); if [ "$TD_IS_LINK" = 1 ]; then TD_LINK_SIZE=$(stat -c "%s" "$TD_TARGET"); fi`,
+    `elif stat -L -f "%z" "$TD_TARGET" >/dev/null 2>&1; then TD_STAT_STYLE=bsd; TD_SIZE=$(stat -L -f "%z" "$TD_TARGET"); if [ "$TD_IS_LINK" = 1 ]; then TD_LINK_SIZE=$(stat -f "%z" "$TD_TARGET"); fi`,
+    `else printf "%s\\n" "远程系统缺少兼容的 stat 命令" >&2; exit 1; fi`,
+    `case "$TD_SIZE" in ""|*[!0-9]*) printf "%s\\n" "远程文件大小返回格式无效" >&2; exit 1;; esac`,
+    `if [ "$TD_SIZE" -gt "$TD_LIMIT" ]; then if [ "$TD_IS_LINK" = 1 ]; then printf "符号链接本身为 %s B，目标文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "\${TD_LINK_SIZE:-0}" "$TD_SIZE" >&2; else printf "文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "$TD_SIZE" >&2; fi; exit 1; fi`,
+    `head -c ${limit + 1} "$TD_TARGET"`
+  ].join("; ");
+}
+
 async function readRemoteBinaryFile(connectionId, remotePath, maximumBytes = DEFAULT_MAX_OPEN_FILE_SIZE) {
   const connection = getConnection(connectionId);
-  const quotedPath = remotePathOperand(connection, remotePath);
   const limit = normalizeOpenFileLimit(maximumBytes);
-  const body = await runRemote(connection, `if [ ! -f ${quotedPath} ]; then echo "目标不是普通文件" >&2; exit 1; fi; head -c ${limit + 1} -- ${quotedPath}`, null, 60000);
+  const body = await runRemote(connection, buildReadRemoteBinaryCommand(remotePath, limit, connection), null, 60000);
   if (body.length > limit) throw new Error(`文件超过 ${Math.round(limit / 1024 / 1024)} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限`);
   return {content:body, size:body.length, limit};
 }
@@ -678,6 +721,7 @@ async function writeRemoteFile(connectionId, remotePath, data, options: { backup
 
 module.exports = {
   listRemoteDir,
+  __buildRemoteDirectoryEntriesCommand:buildRemoteDirectoryEntriesCommand,
   buildRemoteDirectorySizeCommand,
   readRemoteDirectorySize,
   normalizeRemoteDirectoryListOptions,
@@ -688,6 +732,7 @@ module.exports = {
   makeRemoteDir,
   buildRemoteCreateFileCommand,
   createRemoteFile,
+  buildDeleteRemotePathCommand,
   deleteRemotePath,
   recycleRemotePath,
   listRemoteRecycleItems,
@@ -709,6 +754,7 @@ module.exports = {
   renameRemotePath,
   readRemoteTextFile,
   readRemoteBinaryFile,
+  __buildReadRemoteBinaryCommand:buildReadRemoteBinaryCommand,
   decodeRemoteText,
   encodeRemoteText,
   normalizeTextEncoding,

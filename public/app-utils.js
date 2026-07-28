@@ -148,6 +148,14 @@ function saveLogState() {
   localStorage.setItem("openLogs", JSON.stringify([...logOpen]));
 }
 
+function dismissToast() {
+  clearTimeout(window.toastTimer);
+  const toast = $("toast");
+  if (!toast) return;
+  toast.className = "toast";
+  toast.innerHTML = "";
+}
+
 function notify(text, type="info") {
   const n = $("notice");
   if (n) {
@@ -156,10 +164,14 @@ function notify(text, type="info") {
   }
   if (text) {
     const t = $("toast");
-    t.textContent = text;
+    const lines = String(text).split("\n");
+    const title = lines.shift() || "TunnelDesk";
+    const detail = lines.join("\n").trim();
+    const iconName = type === "success" ? "circle-check" : type === "error" ? "circle-alert" : "info";
+    t.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(iconName)}</span><div class="toast-copy"><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ""}</div><button type="button" class="icon-button" onclick="dismissToast()" title="关闭提示" aria-label="关闭提示">${icon("x")}</button></div>`;
     t.className = `toast show ${type}`;
     clearTimeout(window.toastTimer);
-    window.toastTimer = setTimeout(()=>t.className="toast", type==="error"?8000:3500);
+    window.toastTimer = setTimeout(dismissToast, type==="error"?8000:3500);
   }
 }
 

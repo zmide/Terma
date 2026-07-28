@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, nativeTheme, shell } = require("electron");
+const { app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, nativeTheme, screen, shell } = require("electron");
+const { createNativeSftpDrag } = require("./native-sftp-drag");
 
 let startServer = null;
 let shutdown = null;
@@ -12,6 +13,14 @@ let PID_FILE = "";
 let WEB_URL_FILE = "";
 let DEFAULT_HOST = "127.0.0.1";
 let DEFAULT_PORT = 8088;
+let reserveNativeSftpDragTicket = null;
+let deliverNativeSftpDragTicketItem = null;
+let releaseNativeSftpDragTicket = null;
+let beginNativeSftpDragJob = null;
+let recordNativeSftpDragBytes = null;
+let finishNativeSftpDragJob = null;
+let discardNativeSftpDragJob = null;
+let setNativeSftpDragCancelHandler = null;
 let SETTINGS_FILE = "";
 let BOOT_SETTINGS_FILE = "";
 let dataPath = "";
@@ -24,6 +33,13 @@ let quitting = false;
 let trayStateTimer = null;
 let trayState = { runningConnections: 0, runningForwards: 0, failedForwards: 0, totalForwards: 0, online: false };
 let pendingStorageMigrationNotice = "";
+let nativeSftpDrag = null;
+const nativeSftpDragSessions = new Map();
+const NATIVE_SFTP_DRAG_SESSION_TIMEOUT_MS = 70 * 60 * 1000;
+const NATIVE_SFTP_DRAG_CANCEL_GRACE_MS = 90 * 1000;
+const NATIVE_SFTP_DRAG_MAC_COMPLETION_GRACE_MS = 3000;
+const NATIVE_SFTP_DRAG_WINDOWS_TARGET_ACK_TIMEOUT_MS = 2000;
+const NATIVE_SFTP_DRAG_DEBUG = process.env.TUNNELDESK_NATIVE_DRAG_DEBUG === "1";
 
 const APP_USER_MODEL_ID = "com.zmide.tunneldesk";
 const TOAST_ACTIVATOR_CLSID = "{4BCB7691-AE54-4E32-B6D3-B22E3F4E3444}";
@@ -81,6 +97,18 @@ function loadBackend() {
   process.env.TUNNELDESK_SSH_DIR = sshPath;
   ({ startServer, shutdown, parseArgs:parseServerArgs } = require("../dist/server"));
   ({ DATA_DIR, LOG_DIR, PROJECT_SSH_DIR, PID_FILE, WEB_URL_FILE, DEFAULT_HOST, DEFAULT_PORT } = require("../dist/config"));
+  ({
+    reserveNativeSftpDragTicket,
+    deliverNativeSftpDragTicketItem,
+    releaseNativeSftpDragTicket
+  } = require("../dist/sftp-session"));
+  ({
+    beginNativeSftpDragJob,
+    discardNativeSftpDragJob,
+    finishNativeSftpDragJob,
+    recordNativeSftpDragBytes,
+    setNativeSftpDragCancelHandler
+  } = require("../dist/sftp-jobs"));
 }
 
 function defaultDesktopSettings() {
@@ -345,6 +373,9 @@ function createWindow(options = {}) {
     if (/^(https?|ftp|ssh|telnet):\/\//i.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
+  const renderer = mainWindow.webContents;
+  renderer.on?.("render-process-gone", () => cancelNativeSftpDragSessionsForSender(renderer, "界面进程已结束，拖出任务已取消"));
+  renderer.once?.("destroyed", () => cancelNativeSftpDragSessionsForSender(renderer, "界面已关闭，拖出任务已取消"));
   mainWindow.once("ready-to-show", () => {
     const settings = readSettings();
     if (shouldStartInTray(settings)) mainWindow.hide();
@@ -379,13 +410,437 @@ function handleDesktopTheme(event, theme) {
   applyDesktopTheme(theme);
 }
 
+function handleDesktopCapabilities(event) {
+  const allowed = Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents && rendererBelongsToDesktop(event));
+  event.returnValue = allowed
+    ? nativeSftpDrag?.capabilities?.() || {platform:process.platform, sftpExternalDrag:"staged"}
+    : {platform:process.platform, sftpExternalDrag:false};
+}
+
 function sendSftpDragResult(event, requestId, ok, message="") {
   if (!event.sender.isDestroyed()) event.sender.send("tunneldesk:sftp-drag-result", {requestId, ok, message});
 }
 
-function handleSftpStartDrag(event, payload) {
+function sendSftpDragEvent(session, payload) {
+  if (!session?.sender || session.sender.isDestroyed()) return;
+  session.sender.send("tunneldesk:sftp-drag-event", {
+    ...payload,
+    requestId:session.requestId
+  });
+}
+
+function normalizedNativeSftpDragEntries(payload) {
+  const entries = Array.isArray(payload?.entries) ? payload.entries : [];
+  if (!entries.length || entries.length > 100) throw new Error("一次最多拖出 100 个文件或目录");
+  const unique = new Map();
+  for (const entry of entries) {
+    const remotePath = String(entry?.path || "").replace(/\\/g, "/");
+    if (!remotePath || remotePath.includes("\0") || remotePath.length > 4096) throw new Error("拖出的远端路径无效");
+    unique.set(remotePath, {
+      path:remotePath,
+      name:String(entry?.name || path.posix.basename(remotePath) || "download").slice(0, 512),
+      type:entry?.type === "dir" || entry?.type === "directory" ? "directory" : "file",
+      size:Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Number(entry?.size || 0))),
+      mtime:Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Number(entry?.mtime || 0))),
+      metadataKnown:Boolean(entry?.metadataKnown)
+    });
+  }
+  return [...unique.values()];
+}
+
+function nativeDragClientPoint(nativeEvent) {
+  if (Number.isFinite(nativeEvent?.clientX) && Number.isFinite(nativeEvent?.clientY)) {
+    return {clientX:Number(nativeEvent.clientX), clientY:Number(nativeEvent.clientY)};
+  }
+  if (!Number.isFinite(nativeEvent?.screenX) || !Number.isFinite(nativeEvent?.screenY) || !mainWindow) return {};
+  let point = {x:Number(nativeEvent.screenX), y:Number(nativeEvent.screenY)};
+  try {
+    if (process.platform === "win32" && typeof screen?.screenToDipPoint === "function") point = screen.screenToDipPoint(point);
+  } catch {}
+  try {
+    const bounds = mainWindow.getContentBounds();
+    const zoomFactor = Math.max(0.25, Number(mainWindow.webContents?.getZoomFactor?.() || 1));
+    return {clientX:(point.x - bounds.x) / zoomFactor, clientY:(point.y - bounds.y) / zoomFactor};
+  } catch {
+    return {};
+  }
+}
+
+function safeNativeSftpTarget(value, session) {
+  if (!value || typeof value !== "object") return null;
+  const id = Number(value.id);
+  const tabKey = String(value.tabKey || "").slice(0, 256);
+  const targetPath = String(value.path || ".").replace(/\\/g, "/").slice(0, 4096);
+  if (!Number.isInteger(id) || id <= 0 || id === session.connectionId || !tabKey) return null;
+  return {
+    id,
+    tabKey,
+    path:targetPath || ".",
+    title:String(value.title || "SFTP").slice(0, 256),
+    kind:"sftp"
+  };
+}
+
+function releaseNativeDragSession(session, options={}) {
+  if (!session || session.released) return;
+  if (session.pendingWrites > 0 && !session.abortController?.signal?.aborted) {
+    try { session.abortController?.abort(); } catch {}
+  }
+  session.released = true;
+  if (session.expiryTimer) clearTimeout(session.expiryTimer);
+  if (session.cancelTimer) clearTimeout(session.cancelTimer);
+  if (session.macCompletionTimer) clearTimeout(session.macCompletionTimer);
+  if (session.windowsTargetTimer) clearTimeout(session.windowsTargetTimer);
+  nativeSftpDragSessions.delete(session.requestId);
+  if (!session.nativeOwnsTicket || options.forceTicketRelease) {
+    try { releaseNativeSftpDragTicket?.(session.token); } catch {}
+  }
+}
+
+function maybeFinishNativeDragSession(session) {
+  if (!session?.terminalEvent || session.resultSent) return;
+  const terminal = session.terminalEvent;
+  // AppKit reports `ended` before Finder has finished consuming File Promise
+  // contents. Once cancellation is accepted, wait for the native `cancelled`
+  // event (or the long fallback timer) instead of turning the partial write
+  // into a successful drag result.
+  if (session.cancelling && terminal.type === "ended") return;
+  const internalTarget = session.internalTarget;
+  const isMacExternalDrop = process.platform === "darwin"
+    && !internalTarget
+    && terminal.type === "ended"
+    && !["none", "unknown"].includes(String(terminal.operation || ""));
+  if (session.pendingWrites > 0) return;
+  if (isMacExternalDrop && session.completedItemIds.size < session.expectedWrites) return;
+  if (isMacExternalDrop && !session.macCompletionGraceElapsed) {
+    if (!session.macCompletionTimer) {
+      session.macCompletionTimer = setTimeout(() => {
+        session.macCompletionTimer = null;
+        session.macCompletionGraceElapsed = true;
+        maybeFinishNativeDragSession(session);
+      }, NATIVE_SFTP_DRAG_MAC_COMPLETION_GRACE_MS);
+    }
+    return;
+  }
+  if (process.platform === "win32" && !session.windowsReleaseAcknowledged) {
+    if (!session.windowsTargetTimer) {
+      session.windowsTargetTimer = setTimeout(() => {
+        session.windowsTargetTimer = null;
+        session.windowsReleaseAcknowledged = true;
+        maybeFinishNativeDragSession(session);
+      }, NATIVE_SFTP_DRAG_WINDOWS_TARGET_ACK_TIMEOUT_MS);
+    }
+    return;
+  }
+
+  session.resultSent = true;
+  const ok = Boolean(internalTarget)
+    || terminal.type === "completed"
+    || (terminal.type === "ended" && !["none", "unknown"].includes(String(terminal.operation || "")));
+  const contentError = session.contentErrors.at(-1) || "";
+  let cancelled = terminal.type === "cancelled" || terminal.operation === "none";
+  let message = internalTarget
+    ? ""
+    : session.writeError
+      || contentError
+      || (cancelled ? "已取消拖出" : terminal.message)
+      || (ok ? "" : "无法完成系统拖放");
+  let succeeded = Boolean(internalTarget) || (ok && !session.writeError && !contentError);
+  if (internalTarget) {
+    try {
+      discardNativeSftpDragJob?.(session.token);
+    } catch (error) {
+      console.warn("Failed to discard internal SFTP drag task:", error);
+    }
+  } else {
+    try {
+      const outcome = finishNativeSftpDragJob?.(
+        session.token,
+        cancelled ? "cancelled" : succeeded ? "done" : "failed",
+        message
+      );
+      if (outcome?.status === "cancelled") {
+        cancelled = true;
+        succeeded = false;
+        message = terminal.type === "completed" ? "拖出未完成" : "已取消拖出";
+      } else if (outcome?.status === "failed") {
+        succeeded = false;
+        message ||= "拖出下载失败";
+      }
+    } catch (error) {
+      console.warn("Failed to finish SFTP native drag task:", error);
+    }
+  }
+  if (!session.sender.isDestroyed()) {
+    session.sender.send("tunneldesk:sftp-drag-result", {
+      requestId:session.requestId,
+      ok:succeeded,
+      message,
+      internalTarget,
+      renamedItems:[...session.renamedItems.values()]
+    });
+  }
+  releaseNativeDragSession(session, {forceTicketRelease:process.platform === "linux"});
+}
+
+async function handleNativeSftpWriteRequest(session, nativeEvent) {
+  if (!session || typeof deliverNativeSftpDragTicketItem !== "function") {
+    nativeSftpDrag?.completeWrite?.(nativeEvent.requestId, "桌面后端不支持按项目写入");
+    return;
+  }
+  session.pendingWrites += 1;
+  if (!session.nativeJobStarted) {
+    try {
+      const task = beginNativeSftpDragJob?.(session.token, session.ticket);
+      session.nativeJobStarted = Boolean(task?.id);
+      if (session.nativeJobStarted) sendSftpDragEvent(session, {type:"transferStarted"});
+    } catch (error) {
+      console.warn("Failed to start macOS SFTP native drag task:", error);
+    }
+  }
+  const itemId = String(nativeEvent.itemId || "");
+  const targetPath = String(nativeEvent.targetPath || "");
+  const deliveryKey = `${itemId}\0${targetPath}`;
+  if (session.macCompletionTimer) clearTimeout(session.macCompletionTimer);
+  session.macCompletionTimer = null;
+  session.macCompletionGraceElapsed = false;
+  try {
+    let delivery = session.inflightDeliveries.get(deliveryKey);
+    if (!session.completedDeliveries.has(deliveryKey) && !delivery) {
+      delivery = deliverNativeSftpDragTicketItem(
+        session.token,
+        itemId,
+        targetPath,
+        String(nativeEvent.targetDirectory || ""),
+        {
+          signal:session.abortController?.signal || null,
+          onProgress:bytes => recordNativeSftpDragBytes?.(session.token, bytes)
+        }
+      ).then((result) => {
+        if (result?.renamed) {
+          session.renamedItems.set(itemId, {
+            promisedName:String(result.promised_name || ""),
+            savedName:String(result.name || "")
+          });
+        }
+        session.completedDeliveries.add(deliveryKey);
+      }).finally(() => {
+        if (session.inflightDeliveries.get(deliveryKey) === delivery) {
+          session.inflightDeliveries.delete(deliveryKey);
+        }
+      });
+      session.inflightDeliveries.set(deliveryKey, delivery);
+    }
+    if (delivery) await delivery;
+    session.completedItemIds.add(itemId);
+    session.completedWrites = session.completedItemIds.size;
+    nativeSftpDrag?.completeWrite?.(nativeEvent.requestId, null);
+  } catch (error) {
+    const message = error?.message || String(error);
+    const cancelled = session.cancelling
+      && (error?.code === "SFTP_NATIVE_DRAG_CANCELLED" || error?.name === "AbortError" || error?.cancelled);
+    if (!cancelled) {
+      session.completedItemIds.add(itemId);
+      session.completedWrites = session.completedItemIds.size;
+      session.writeError ||= message;
+    }
+    nativeSftpDrag?.completeWrite?.(nativeEvent.requestId, cancelled ? null : message);
+  } finally {
+    session.pendingWrites = Math.max(0, session.pendingWrites - 1);
+    maybeFinishNativeDragSession(session);
+  }
+}
+
+function handleNativeSftpDragEvent(session, nativeEvent) {
+  if (!session || session.released || !nativeEvent || typeof nativeEvent !== "object") return;
+  if (NATIVE_SFTP_DRAG_DEBUG) {
+    console.log("[native-sftp-drag] event", JSON.stringify({
+      requestId:session.requestId,
+      type:nativeEvent.type,
+      message:nativeEvent.message || "",
+      hresult:nativeEvent.hresult
+    }));
+  }
+  if (nativeEvent.type === "consuming") {
+    session.consuming = true;
+    return;
+  }
+  if (nativeEvent.type === "contentComplete") {
+    session.contentComplete = true;
+    return;
+  }
+  if (nativeEvent.type === "motion" || nativeEvent.type === "started" || nativeEvent.type === "preparing" || nativeEvent.type === "ready" || nativeEvent.type === "released") {
+    if (nativeEvent.type === "started") {
+      session.nativeStarted = true;
+      // The Linux helper owns ticket cleanup only after its FUSE mount is
+      // ready. Startup failures before this event must still be released by
+      // the desktop process.
+      if (process.platform === "linux") session.nativeOwnsTicket = true;
+    }
+    if (nativeEvent.type === "released") session.uiReleased = true;
+    sendSftpDragEvent(session, {
+      type:nativeEvent.type,
+      screenX:nativeEvent.screenX,
+      screenY:nativeEvent.screenY,
+      ...nativeDragClientPoint(nativeEvent)
+    });
+    if (process.platform !== "linux" && nativeEvent.type === "ready" && session.activated && !session.nativeStarted) {
+      setImmediate(() => {
+        if (session.released || session.terminalEvent || session.nativeStarted) return;
+        try {
+          const started = nativeSftpDrag?.activate?.(session.nativeId || session.requestId);
+          if (NATIVE_SFTP_DRAG_DEBUG) {
+            console.log("[native-sftp-drag] ready activation", JSON.stringify({requestId:session.requestId, started:Boolean(started)}));
+          }
+        } catch (error) {
+          if (NATIVE_SFTP_DRAG_DEBUG) console.warn("[native-sftp-drag] ready activation failed", error);
+        }
+      });
+    }
+    return;
+  }
+  if (nativeEvent.type === "contentError") {
+    session.contentErrors.push(String(nativeEvent.message || "SFTP 拖出文件读取失败"));
+    console.warn("SFTP native drag content error:", nativeEvent.message || nativeEvent);
+    return;
+  }
+  if (nativeEvent.type === "writeRequested") {
+    void handleNativeSftpWriteRequest(session, nativeEvent);
+    return;
+  }
+  if (nativeEvent.type === "ended" && nativeEvent.internalTargetJson) {
+    try {
+      session.internalTarget = safeNativeSftpTarget(JSON.parse(nativeEvent.internalTargetJson), session);
+    } catch {}
+  }
+  if (nativeEvent.type === "ended" && !session.uiReleased) {
+    session.uiReleased = true;
+    sendSftpDragEvent(session, {
+      type:"released",
+      screenX:nativeEvent.screenX,
+      screenY:nativeEvent.screenY,
+      ...nativeDragClientPoint(nativeEvent)
+    });
+  }
+  if (["completed", "cancelled", "ended", "error", "terminalError"].includes(nativeEvent.type)) {
+    if (session.terminalEvent?.type === "cancelled" && nativeEvent.type === "ended") return;
+    session.terminalEvent = nativeEvent;
+    maybeFinishNativeDragSession(session);
+  }
+}
+
+function handleSftpDragActivate(event, payload) {
   if (!rendererBelongsToDesktop(event) || !mainWindow || event.sender !== mainWindow.webContents) return;
-  const requestId = String(payload?.requestId || "").slice(0, 128);
+  const session = nativeSftpDragSessions.get(String(payload?.requestId || ""));
+  if (!session || session.sender !== event.sender || session.terminalEvent) return;
+  session.activated = true;
+  if (session.nativeId) {
+    try {
+      const started = nativeSftpDrag?.activate?.(session.nativeId);
+      if (NATIVE_SFTP_DRAG_DEBUG) {
+        console.log("[native-sftp-drag] activate", JSON.stringify({requestId:session.requestId, started:Boolean(started)}));
+      }
+    } catch (error) {
+      if (NATIVE_SFTP_DRAG_DEBUG) console.warn("[native-sftp-drag] activate failed", error);
+    }
+  }
+}
+
+function handleSftpDragTarget(event, payload) {
+  if (!rendererBelongsToDesktop(event) || !mainWindow || event.sender !== mainWindow.webContents) return;
+  const session = nativeSftpDragSessions.get(String(payload?.requestId || ""));
+  if (!session || session.sender !== event.sender) return;
+  session.internalTarget = safeNativeSftpTarget(payload?.target, session);
+  try { nativeSftpDrag?.setInternalTarget?.(session.nativeId || session.requestId, session.internalTarget); } catch {}
+  if (payload?.final) {
+    session.windowsReleaseAcknowledged = true;
+    if (session.windowsTargetTimer) clearTimeout(session.windowsTargetTimer);
+    session.windowsTargetTimer = null;
+    maybeFinishNativeDragSession(session);
+  }
+}
+
+function handleSftpDragCancel(event, payload) {
+  if (!rendererBelongsToDesktop(event) || !mainWindow || event.sender !== mainWindow.webContents) return;
+  const session = nativeSftpDragSessions.get(String(payload?.requestId || ""));
+  if (!session || session.sender !== event.sender || !nativeSftpDragSessionCanCancel(session)) return;
+  session.cancelling = true;
+  let cancellationAccepted = false;
+  try {
+    cancellationAccepted = Boolean(nativeSftpDrag?.cancel?.(session.nativeId || session.requestId));
+  } catch (error) {
+    console.warn("SFTP native drag cancellation failed:", error);
+  }
+  if (!cancellationAccepted) {
+    // macOS cannot cancel an NSDraggingSession after AppKit has taken ownership.
+    // Keep the ticket and wait for the real terminal callback instead of
+    // fabricating a cancellation while Finder may still request file content.
+    session.cancelling = false;
+    return;
+  }
+  session.abortController?.abort();
+  scheduleNativeSftpDragCancelFallback(session, "已取消拖出");
+}
+
+function nativeSftpDragSessionCanCancel(session) {
+  if (!session || session.released || session.resultSent) return false;
+  if (!session.terminalEvent) return true;
+  return process.platform === "darwin" && session.terminalEvent.type === "ended";
+}
+
+function scheduleNativeSftpDragCancelFallback(session, message) {
+  if (!session || session.released || !nativeSftpDragSessionCanCancel(session)) return;
+  if (session.cancelTimer) clearTimeout(session.cancelTimer);
+  session.cancelTimer = setTimeout(() => {
+    if (session.released || session.resultSent) return;
+    if (session.terminalEvent && !(process.platform === "darwin" && session.terminalEvent.type === "ended")) return;
+    session.terminalEvent = {type:"cancelled", message:String(message || "已取消拖出")};
+    session.expectedWrites = session.completedItemIds.size;
+    maybeFinishNativeDragSession(session);
+  }, NATIVE_SFTP_DRAG_CANCEL_GRACE_MS);
+}
+
+function cancelNativeSftpDragSessionsForSender(sender, message) {
+  for (const session of [...nativeSftpDragSessions.values()]) {
+    if (session.sender !== sender || !nativeSftpDragSessionCanCancel(session)) continue;
+    session.cancelling = true;
+    let accepted = false;
+    try {
+      accepted = Boolean(nativeSftpDrag?.cancel?.(session.nativeId || session.requestId));
+    } catch (error) {
+      console.warn("SFTP native drag renderer cleanup failed:", error);
+    }
+    if (accepted) {
+      session.abortController?.abort();
+      scheduleNativeSftpDragCancelFallback(session, message);
+    }
+    else session.cancelling = false;
+  }
+}
+
+function cancelNativeSftpDragByToken(token) {
+  const key = String(token || "");
+  if (!key) return false;
+  for (const session of nativeSftpDragSessions.values()) {
+    if (session.token !== key || !nativeSftpDragSessionCanCancel(session)) continue;
+    session.cancelling = true;
+    try {
+      const accepted = Boolean(nativeSftpDrag?.cancel?.(session.nativeId || session.requestId));
+      if (accepted) {
+        session.abortController?.abort();
+        scheduleNativeSftpDragCancelFallback(session, "已取消拖出");
+      }
+      else session.cancelling = false;
+      return accepted;
+    } catch {
+      session.cancelling = false;
+      return false;
+    }
+  }
+  return false;
+}
+
+function handleStagedSftpStartDrag(event, payload, requestId) {
   const root = path.resolve(DATA_DIR, "sftp-drag");
   const validated = [...new Set((Array.isArray(payload?.files) ? payload.files : []).map(file => path.resolve(String(file || ""))).filter(file => {
     const relative = path.relative(root, file);
@@ -408,6 +863,105 @@ function handleSftpStartDrag(event, payload) {
     const message = error?.message || "无法启动系统拖拽";
     sendSftpDragResult(event, requestId, false, message);
   }
+}
+
+function handleStreamingSftpStartDrag(event, payload, requestId) {
+  if (nativeSftpDrag?.capabilities?.().sftpExternalDrag !== "streaming") {
+    sendSftpDragResult(event, requestId, false, nativeSftpDrag?.probe?.reason || "当前桌面环境不支持一次拖出");
+    return;
+  }
+  if (nativeSftpDragSessions.has(requestId)) return;
+  let token = "";
+  try {
+    const connectionId = Number(payload?.connectionId);
+    if (!Number.isInteger(connectionId) || connectionId <= 0) throw new Error("SFTP 连接无效");
+    const entries = normalizedNativeSftpDragEntries(payload);
+    const ticket = reserveNativeSftpDragTicket(connectionId, entries.map(item => item.path), {
+      platform:process.platform,
+      entries
+    });
+    token = ticket.token;
+    const baseUrl = webUrl.replace(/\/+$/, "");
+    const session = {
+      requestId,
+      sender:event.sender,
+      connectionId,
+      entries,
+      token,
+      ticket,
+      nativeId:"",
+      internalTarget:null,
+      pendingWrites:0,
+      completedWrites:0,
+      completedItemIds:new Set(),
+      completedDeliveries:new Set(),
+      inflightDeliveries:new Map(),
+      renamedItems:new Map(),
+      abortController:new AbortController(),
+      expectedWrites:Array.isArray(ticket.top_level) ? ticket.top_level.length : entries.length,
+      terminalEvent:null,
+      resultSent:false,
+      released:false,
+      nativeOwnsTicket:false,
+      nativeStarted:false,
+      nativeJobStarted:false,
+      uiReleased:false,
+      consuming:false,
+      contentComplete:false,
+      activated:false,
+      cancelling:false,
+      contentErrors:[],
+      writeError:"",
+      expiryTimer:null,
+      cancelTimer:null,
+      macCompletionTimer:null,
+      macCompletionGraceElapsed:false,
+      windowsTargetTimer:null,
+      windowsReleaseAcknowledged:false
+    };
+    nativeSftpDragSessions.set(requestId, session);
+    session.expiryTimer = setTimeout(() => {
+      if (session.released) return;
+      session.cancelling = true;
+      try { nativeSftpDrag?.cancel?.(session.nativeId || session.requestId); } catch {}
+      session.cancelTimer = setTimeout(() => {
+        if (session.released || session.terminalEvent) return;
+        session.terminalEvent = {type:"error", message:"拖出操作已超时"};
+        session.expectedWrites = session.completedItemIds.size;
+        maybeFinishNativeDragSession(session);
+      }, NATIVE_SFTP_DRAG_CANCEL_GRACE_MS);
+    }, NATIVE_SFTP_DRAG_SESSION_TIMEOUT_MS);
+    const started = nativeSftpDrag.start({
+      requestId,
+      token,
+      ticket,
+      manifestUrl:`${baseUrl}/api/sftp/native-drag/${encodeURIComponent(token)}`,
+      contentBaseUrl:`${baseUrl}/api/sftp/native-drag/${encodeURIComponent(token)}/content`,
+      browserWindow:mainWindow,
+      webContents:event.sender,
+      zoomFactor:event.sender.getZoomFactor?.() || 1
+    }, nativeEvent => handleNativeSftpDragEvent(session, nativeEvent));
+    session.nativeId = started?.nativeId || requestId;
+    if (session.activated) nativeSftpDrag?.activate?.(session.nativeId);
+  } catch (error) {
+    if (token) {
+      try { releaseNativeSftpDragTicket?.(token); } catch {}
+    }
+    nativeSftpDragSessions.delete(requestId);
+    console.error("SFTP streaming drag failed:", error);
+    sendSftpDragResult(event, requestId, false, error?.message || "无法启动系统拖放");
+  }
+}
+
+function handleSftpStartDrag(event, payload) {
+  if (!rendererBelongsToDesktop(event) || !mainWindow || event.sender !== mainWindow.webContents) return;
+  const requestId = String(payload?.requestId || "").slice(0, 128);
+  if (!requestId) return;
+  if (Array.isArray(payload?.files)) {
+    handleStagedSftpStartDrag(event, payload, requestId);
+    return;
+  }
+  handleStreamingSftpStartDrag(event, payload, requestId);
 }
 
 function showWindow() {
@@ -672,6 +1226,9 @@ async function openUpdateDirectory(file) {
 function quitApp() {
   quitting = true;
   if (trayStateTimer) clearInterval(trayStateTimer);
+  try { setNativeSftpDragCancelHandler?.(null); } catch {}
+  try { nativeSftpDrag?.dispose?.(); } catch {}
+  for (const session of nativeSftpDragSessions.values()) releaseNativeDragSession(session);
   try {
     shutdown();
   } catch (error) {
@@ -686,6 +1243,15 @@ app.whenReady().then(async () => {
   initializeDesktopSettingsFile();
   const firstRun = !settingsExists();
   loadBackend();
+  nativeSftpDrag = createNativeSftpDrag({
+    app,
+    nativeImage,
+    screen,
+    iconPath:iconPath("icon.png"),
+    platform:process.platform,
+    debug:NATIVE_SFTP_DRAG_DEBUG
+  });
+  setNativeSftpDragCancelHandler?.(cancelNativeSftpDragByToken);
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(PROJECT_SSH_DIR, { recursive: true });
   try {
@@ -722,8 +1288,12 @@ app.whenReady().then(async () => {
     return;
   }
   buildAppMenu();
+  ipcMain.on("tunneldesk:capabilities", handleDesktopCapabilities);
   ipcMain.on("tunneldesk:set-theme", handleDesktopTheme);
   ipcMain.on("tunneldesk:sftp-start-drag", handleSftpStartDrag);
+  ipcMain.on("tunneldesk:sftp-drag-activate", handleSftpDragActivate);
+  ipcMain.on("tunneldesk:sftp-drag-target", handleSftpDragTarget);
+  ipcMain.on("tunneldesk:sftp-drag-cancel", handleSftpDragCancel);
   createTray();
   createWindow({ openDesktopSettings:firstRun });
   if (pendingStorageMigrationNotice) setTimeout(() => notify(pendingStorageMigrationNotice), 1200);
@@ -748,4 +1318,6 @@ app.on("activate", showWindow);
 
 app.on("before-quit", () => {
   quitting = true;
+  try { nativeSftpDrag?.dispose?.(); } catch {}
+  for (const session of nativeSftpDragSessions.values()) releaseNativeDragSession(session);
 });

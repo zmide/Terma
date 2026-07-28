@@ -1,0 +1,18 @@
+{
+  "name": "@tunneldesk/win-sftp-drag",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows virtual-file drag provider for TunnelDesk SFTP",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "gypfile": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean",
+    "check:source": "node tests/source-contract-check.js",
+    "check:cancel": "electron tests/cancel-lifecycle-check.js"
+  }
+}

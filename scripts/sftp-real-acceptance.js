@@ -3,6 +3,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { PassThrough } = require("node:stream");
 const { DatabaseSync } = require("node:sqlite");
 
 const CONFIRMATION_FLAG = "--confirm-real-sftp";
@@ -88,6 +89,15 @@ function pause(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
+function readAll(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on("data", chunk => chunks.push(Buffer.from(chunk)));
+    stream.once("error", reject);
+    stream.once("end", () => resolve(Buffer.concat(chunks)));
+  });
+}
+
 function remoteJoin(...parts) {
   return path.posix.join(...parts);
 }
@@ -117,6 +127,30 @@ async function waitForJob(id, timeoutMs = JOB_TIMEOUT_MS) {
   }
   try { jobs.cancelSftpJob(id); } catch {}
   throw new Error("验收任务等待超时");
+}
+
+async function waitForUploadProgress(id, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const job = jobs.listSftpJobs().find(item => item.id === id);
+    if (!job) throw new Error("上传任务记录意外消失");
+    if (job.status === "done") throw new Error("上传完成过快，未能进入取消验收阶段");
+    if (job.status === "failed") throw new Error(job.error || job.stderr || "上传任务失败");
+    if (job.status === "running" && job.phase === "uploading" && Number(job.transferred || 0) > 0) return job;
+    await pause(5);
+  }
+  throw new Error("上传任务未进入可取消阶段");
+}
+
+async function waitForJobStatus(id, expectedStatus, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const job = jobs.listSftpJobs().find(item => item.id === id);
+    if (job?.status === expectedStatus) return job;
+    if (job?.status === "failed") throw new Error(job.error || job.stderr || "任务失败");
+    await pause(20);
+  }
+  throw new Error(`任务未进入 ${expectedStatus} 状态`);
 }
 
 async function runTrackedJob(start) {
@@ -186,6 +220,55 @@ async function verifyPerHost(connection) {
   assert.equal(digest(uploaded.content), digest(uploadBytes));
   record(name, "后台上传任务", "passed", `${uploadBytes.length} bytes`);
 
+  const receivedUploadBytes = crypto.randomBytes(384 * 1024);
+  const receivedUploadPath = remoteJoin(remoteRoot, "received-upload.bin");
+  const receiving = jobs.startUploadReceiveJob(connection.id, receivedUploadPath, "received-upload.bin", receivedUploadBytes.length);
+  trackedJobs.add(receiving.id);
+  const receiveRequest = new PassThrough();
+  receiveRequest.headers = {"content-length":String(receivedUploadBytes.length)};
+  const transitioned = jobs.receiveUploadJobContent(receiving.id, receiveRequest);
+  receiveRequest.end(receivedUploadBytes);
+  const uploading = await transitioned;
+  assert.equal(uploading.id, receiving.id);
+  assert.equal(uploading.phase, "uploading");
+  await waitForJob(receiving.id);
+  const receivedUpload = await sftp.readRemoteBinaryFile(connection.id, receivedUploadPath, 1024 * 1024);
+  assert.equal(digest(receivedUpload.content), digest(receivedUploadBytes));
+  record(name, "本机接收与远端上传使用同一后台任务", "passed", `${receivedUploadBytes.length} bytes`);
+
+  const cancellableBytes = Buffer.alloc(32 * 1024 * 1024, 0x46);
+  const cancellableLocal = path.join(localRoot, `${connection.id}-cancel-upload.bin`);
+  const cancellablePath = remoteJoin(remoteRoot, "cancel-upload.bin");
+  fs.writeFileSync(cancellableLocal, cancellableBytes);
+  const cancellable = jobs.startUploadJob(connection.id, cancellableLocal, cancellablePath, cancellableBytes.length);
+  trackedJobs.add(cancellable.id);
+  const cancellableProgress = await waitForUploadProgress(cancellable.id);
+  const uploadingList = await sftp.listRemoteDir(connection.id, remoteRoot, {refresh:true, page_size:1000});
+  assert.ok(!(uploadingList.entries || []).some(item => item.name.startsWith(".tunneldesk-upload-")), "目录列表不应显示上传暂存文件");
+  jobs.cancelSftpJob(cancellable.id);
+  await waitForJobStatus(cancellable.id, "cancelled");
+  await pause(700);
+  const cancelledPlan = await sftp.planRemoteUploads(connection.id, remoteRoot, ["cancel-upload.bin"]);
+  assert.equal(cancelledPlan.items[0].exists, false, "取消上传后不应留下最终文件");
+  const cancelledTemporaryPlan = await sftp.planRemoteUploads(connection.id, remoteRoot, [path.posix.basename(cancellableProgress.remote_temp_path)]);
+  assert.equal(cancelledTemporaryPlan.items[0].exists, false, "取消上传后不应留下远端暂存文件");
+  record(name, "上传中途取消不留下同名文件", "passed");
+
+  const overwritePath = remoteJoin(remoteRoot, "cancel-overwrite.txt");
+  const originalOverwriteContent = Buffer.from("original-content-must-survive-cancel", "utf8");
+  await sftp.writeRemoteFile(connection.id, overwritePath, originalOverwriteContent);
+  const overwriteLocal = path.join(localRoot, `${connection.id}-cancel-overwrite.bin`);
+  fs.writeFileSync(overwriteLocal, cancellableBytes);
+  const overwrite = jobs.startUploadJob(connection.id, overwriteLocal, overwritePath, cancellableBytes.length);
+  trackedJobs.add(overwrite.id);
+  await waitForUploadProgress(overwrite.id);
+  jobs.cancelSftpJob(overwrite.id);
+  await waitForJobStatus(overwrite.id, "cancelled");
+  await pause(700);
+  const preserved = await sftp.readRemoteBinaryFile(connection.id, overwritePath, 1024 * 1024);
+  assert.equal(digest(preserved.content), digest(originalOverwriteContent), "取消覆盖上传不得损坏原文件");
+  record(name, "取消覆盖上传保留原文件", "passed");
+
   const downloadedJob = await runTrackedJob(() => jobs.startDownloadJob(connection.id, uploadPath, { deliveryMode:"browser" }));
   const downloadedFile = jobs.getSftpJobFile(downloadedJob.id);
   assert.equal(digest(fs.readFileSync(downloadedFile.path)), digest(uploadBytes));
@@ -199,6 +282,46 @@ async function verifyPerHost(connection) {
   assert.equal(digest(fs.readFileSync(stagedImage)), digest(imageBytes));
   assert.equal(fs.readFileSync(path.join(stagedSource, "nested.txt"), "utf8"), "copy-and-move");
   record(name, "原生拖出前的文件与目录暂存", "passed");
+
+  const nativeTicket = await sessions.createNativeSftpDragTicket(connection.id, [imagePath, sourceDir], {
+    platform:process.platform,
+    entries:[
+      {path:imagePath, name:"pixel.png", type:"file"},
+      {path:sourceDir, name:"source", type:"directory"}
+    ]
+  });
+  const nativeImageEntry = nativeTicket.entries.find(entry => entry.relative_path === "pixel.png");
+  const nativeNestedEntry = nativeTicket.entries.find(entry => entry.relative_path === "source/nested.txt");
+  assert.ok(nativeImageEntry && nativeNestedEntry);
+  const nativeImageRead = await sessions.openNativeSftpDragTicketFile(nativeTicket.token, nativeImageEntry.index);
+  assert.equal(digest(await readAll(nativeImageRead.stream)), digest(imageBytes));
+  const nativeNestedRead = await sessions.openNativeSftpDragTicketFile(nativeTicket.token, nativeNestedEntry.index, {start:5, end:12});
+  assert.equal((await readAll(nativeNestedRead.stream)).toString("utf8"), "and-move");
+  const nativePromiseDirectory = path.join(localRoot, `${connection.id}-native-promise`);
+  fs.mkdirSync(nativePromiseDirectory);
+  const nativeImageItem = nativeTicket.top_level.find(item => item.name === "pixel.png");
+  const nativeSourceItem = nativeTicket.top_level.find(item => item.name === "source");
+  assert.ok(nativeImageItem && nativeSourceItem);
+  const nativeImageDelivery = await sessions.deliverNativeSftpDragTicketItem(
+    nativeTicket.token,
+    nativeImageItem.id,
+    path.join(nativePromiseDirectory, nativeImageItem.name),
+    nativePromiseDirectory
+  );
+  assert.equal(nativeImageDelivery.complete, false);
+  assert.equal(digest(fs.readFileSync(path.join(nativePromiseDirectory, "pixel.png"))), digest(imageBytes));
+  assert.equal((await sessions.getNativeSftpDragTicket(nativeTicket.token)).delivered_count, 1);
+  const nativeSourceDelivery = await sessions.deliverNativeSftpDragTicketItem(
+    nativeTicket.token,
+    nativeSourceItem.id,
+    path.join(nativePromiseDirectory, nativeSourceItem.name),
+    nativePromiseDirectory
+  );
+  assert.equal(nativeSourceDelivery.complete, true);
+  assert.equal(fs.readFileSync(path.join(nativePromiseDirectory, "source", "nested.txt"), "utf8"), "copy-and-move");
+  assert.equal((await sessions.getNativeSftpDragTicket(nativeTicket.token)).delivered_count, 2);
+  assert.equal(sessions.releaseNativeSftpDragTicket(nativeTicket.token), true);
+  record(name, "原生拖出清单、按需读取及随机区间", "passed");
 
   const deliveryDirectory = path.join(localRoot, `${connection.id}-delivered`);
   const delivered = await sessions.deliverSftpPaths(connection.id, [imagePath, sourceDir], deliveryDirectory);

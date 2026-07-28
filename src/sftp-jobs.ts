@@ -5,19 +5,44 @@ const path = require("node:path");
 const { DATA_DIR } = require("./config");
 const { getConnection } = require("./db");
 const { notifyEvent } = require("./notifications");
-const { clearSftpDragCache, sftpDragCacheInfo, spawnSftpSessionCommand } = require("./sftp-session");
+const { buildDeleteRemotePathCommand, buildRecycleRemotePathCommand, invalidateRemoteDirectoryCache, readRemoteDirectorySize } = require("./sftp");
+const { clearSftpDragCache, releaseNativeSftpDragTicket, sftpDragCacheInfo, spawnSftpSessionCommand } = require("./sftp-session");
 const { readSftpJobHistory, writeSftpJobHistoryAtomic } = require("./sftp-job-store");
 
 const jobs = new Map();
+const nativeDragJobIds = new Map();
+const closedNativeDragTokens = new Map();
 const JOBS_FILE = path.join(DATA_DIR, "sftp-jobs.json");
 const DOWNLOADS_DIR = path.join(DATA_DIR, "downloads");
 const MAX_HISTORY = 120;
 const DOWNLOAD_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const BROWSER_DELIVERY_GRACE_MS = 10 * 60 * 1000;
 const ACTIVE_STATUSES = new Set(["running", "pending", "paused"]);
+const NATIVE_DRAG_DISCARD_TTL_MS = 5 * 60 * 1000;
 let historyCache: any[] | null = null;
 let persistTimer: any = null;
 let downloadCacheMaintained = false;
+let nativeDragCancelHandler: any = null;
+
+function setNativeSftpDragCancelHandler(handler) {
+  nativeDragCancelHandler = typeof handler === "function" ? handler : null;
+}
+
+function serializableJob(source) {
+  const {
+    child,
+    stream,
+    streams,
+    out,
+    responder,
+    pauseNow,
+    receive_token,
+    native_drag_token,
+    native_drag_ranges,
+    ...job
+  } = source || {};
+  return job;
+}
 
 function resetTransferSpeed(job) {
   job.speed_bps = 0;
@@ -25,9 +50,34 @@ function resetTransferSpeed(job) {
   job.speed_sample_bytes = Number(job.transferred || 0);
 }
 
+function updateTransferProgress(job) {
+  const size = Math.max(0, Number(job.size || 0));
+  const sizeKnown = Boolean(job.size_known || job.progress_known || size > 0);
+  job.progress_known = sizeKnown;
+  if (!sizeKnown) {
+    job.progress = 0;
+    return;
+  }
+  if (job.type === "upload" && job.two_stage_upload) {
+    const received = Math.max(0, Math.min(size, Number(job.received_bytes || 0)));
+    const uploaded = Math.max(0, Math.min(size, Number(job.transferred || 0)));
+    if (job.phase === "receiving") {
+      job.progress = size ? Math.min(50, Math.floor(received / size * 50)) : 50;
+    } else if (job.phase === "committing") {
+      job.progress = 99;
+    } else {
+      job.progress = size ? Math.min(99, 50 + Math.floor(uploaded / size * 49)) : 99;
+    }
+    return;
+  }
+  job.progress = size
+    ? Math.min(99, Math.floor(Math.max(0, Number(job.transferred || 0)) / size * 100))
+    : 0;
+}
+
 function recordTransferred(job, bytes) {
   job.transferred = Number(job.transferred || 0) + Number(bytes || 0);
-  job.progress = job.size ? Math.min(99, Math.floor(job.transferred / job.size * 100)) : 0;
+  updateTransferProgress(job);
   const now = Date.now();
   const elapsed = now - Number(job.speed_sample_at || now);
   if (elapsed >= 500) {
@@ -45,9 +95,36 @@ function finishTransferMetrics(job) {
   job.speed_bps = 0;
 }
 
+function ignoreStoppedTransferFinish(job, status) {
+  return job.status === "cancelled" || (job.status === "paused" && status !== "paused");
+}
+
 function readHistory(): any[] {
   if (historyCache) return historyCache;
-  historyCache = readSftpJobHistory(JOBS_FILE);
+  const loaded = readSftpJobHistory(JOBS_FILE);
+  const interruptedAt = Date.now();
+  let changed = false;
+  historyCache = loaded.map((source: any) => {
+    const restored = serializableJob(source);
+    if (Object.keys(restored).length !== Object.keys(source || {}).length) changed = true;
+    if (!ACTIVE_STATUSES.has(restored?.status)) return restored;
+    changed = true;
+    const interrupted = {
+      ...restored,
+      status:"failed",
+      error:"TunnelDesk 已重启，任务已中断",
+      can_resume:false,
+      speed_bps:0,
+      average_bps:0,
+      finished_at:interruptedAt,
+      interrupted_at:interruptedAt
+    };
+    if (interrupted.type === "download") interrupted.delivery_status = "interrupted";
+    cleanupJobArtifacts(interrupted);
+    if (interrupted.type === "upload") cleanupRemoteUploadArtifact(interrupted);
+    return interrupted;
+  });
+  if (changed) historyCache = writeSftpJobHistoryAtomic(JOBS_FILE, historyCache, MAX_HISTORY);
   if (!downloadCacheMaintained) {
     downloadCacheMaintained = true;
     maintainDownloadCache();
@@ -63,7 +140,7 @@ function persistJobs(immediate = false) {
   }
   clearTimeout(persistTimer);
   persistTimer = null;
-  const active: any[] = [...jobs.values()].map(({ child, stream, out, responder, pauseNow, ...job }: any) => job);
+  const active: any[] = [...jobs.values()].map(serializableJob);
   const byId = new Map(readHistory().map((job: any) => [job.id, job]));
   for (const job of active) byId.set(job.id, job);
   const next = [...byId.values()].sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0)).slice(0, MAX_HISTORY);
@@ -97,10 +174,15 @@ function spawnRemote(connection, command) {
 }
 
 function listSftpJobs() {
-  const active: any[] = [...jobs.values()].map(({ child, stream, out, responder, pauseNow, ...job }: any) => ({
-    ...job,
-    can_resume: ["upload", "download"].includes(job.type) && ["paused", "failed"].includes(job.status)
-  }));
+  const active: any[] = [...jobs.values()].map((source: any) => {
+    const job = serializableJob(source);
+    return {
+      ...job,
+      can_resume: ["upload", "download"].includes(job.type)
+        && ["paused", "failed"].includes(job.status)
+        && (job.type !== "upload" || (job.staged_complete && job.phase !== "receiving" && fs.existsSync(job.local_path || "")))
+    };
+  });
   const activeIds = new Set(active.map((job) => job.id));
   return [...active, ...readHistory().filter((job) => !activeIds.has(job.id))]
     .sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0))
@@ -113,7 +195,7 @@ function clearFinishedSftpJobs() {
   for (const [id, job] of jobs) {
     if (!keepStatuses.has(job.status)) jobs.delete(id);
   }
-  const active = [...jobs.values()].map(({ child, stream, out, responder, pauseNow, ...job }: any) => job);
+  const active = [...jobs.values()].map(serializableJob);
   const activeIds = new Set(active.map((job: any) => job.id));
   const history = readHistory().filter((job: any) => keepStatuses.has(job.status) && !activeIds.has(job.id));
   writeJsonJobs([...active, ...history]);
@@ -176,9 +258,10 @@ process.once("beforeExit", () => {
   if (persistTimer) persistJobs(true);
 });
 
-function startSftpJob(connectionId, type, command, label) {
+function startSftpJob(connectionId, type, command, label, options: any = {}) {
   const connection = getConnection(connectionId);
   const id = crypto.randomUUID();
+  const itemCount = Math.max(0, Number(options.itemCount || 0));
   const job: any = {
     id,
     connection_id: Number(connectionId),
@@ -189,6 +272,14 @@ function startSftpJob(connectionId, type, command, label) {
     stdout: "",
     stderr: "",
     error: "",
+    size:itemCount,
+    size_known:itemCount > 0,
+    progress_known:itemCount > 0,
+    progress_unit:itemCount ? "items" : undefined,
+    transferred:0,
+    progress:0,
+    item_count:itemCount,
+    completed_items:0,
     created_at: Date.now(),
     started_at: Date.now(),
     finished_at: null
@@ -198,15 +289,37 @@ function startSftpJob(connectionId, type, command, label) {
   job.child = child;
   jobs.set(id, job);
   persistJobs();
-  child.stdout.on("data", (chunk) => { job.stdout = `${job.stdout}${chunk.toString()}`.slice(-12000); persistJobs(); });
+  const outputState = {remainder:""};
+  let stdoutEnded = false;
+  const flushOutput = () => {
+    if (stdoutEnded || !options.progressMarker) return;
+    stdoutEnded = true;
+    consumeDeleteJobOutput(job, options.progressMarker, outputState, "", true);
+  };
+  child.stdout.on("data", (chunk) => {
+    if (options.progressMarker) consumeDeleteJobOutput(job, options.progressMarker, outputState, chunk);
+    else job.stdout = `${job.stdout}${chunk.toString()}`.slice(-12000);
+    persistJobs();
+  });
+  child.stdout.on("end", flushOutput);
   child.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
   let finished = false;
   const finish = (status, error = "") => {
     if (finished || job.status === "cancelled") return;
     finished = true;
+    flushOutput();
     job.status = status;
     job.error = error;
     job.finished_at = Date.now();
+    job.speed_bps = 0;
+    job.average_bps = 0;
+    if (status === "done") {
+      if (itemCount) {
+        job.completed_items = itemCount;
+        job.transferred = itemCount;
+      }
+      job.progress = 100;
+    }
     persistJobs(true);
     notifyEvent({
       type: "sftp",
@@ -223,93 +336,782 @@ function startSftpJob(connectionId, type, command, label) {
   return { id, status: job.status };
 }
 
-function startUploadJob(connectionId, localPath, remotePath, size = 0) {
+function buildDeleteJobRequest(connection, paths, recycleEnabled = false) {
+  const source = Array.isArray(paths) ? paths : [paths];
+  if (!source.length) throw new Error("请选择要删除的文件或目录");
+  if (source.length > 200) throw new Error("一次最多删除 200 个文件或目录");
+  const prepared = [];
+  const seen = new Set();
+  let totalPathBytes = 0;
+  for (const remotePath of source) {
+    const request = buildDeleteRemotePathCommand(remotePath, connection);
+    if (seen.has(request.path)) continue;
+    seen.add(request.path);
+    totalPathBytes += Buffer.byteLength(request.path, "utf8");
+    if (totalPathBytes > 32768) throw new Error("所选远程路径总长度过长");
+    prepared.push(request);
+  }
+  if (!prepared.length) throw new Error("请选择要删除的文件或目录");
+  const createdAt = Date.now();
+  const markerPrefix = `__TUNNELDESK_DELETE_${crypto.randomBytes(12).toString("hex")}__:`;
+  const operations = prepared.map((request, index) => {
+    const operation = recycleEnabled
+      ? buildRecycleRemotePathCommand(
+        request.path,
+        `${(createdAt + index).toString(36)}-${crypto.randomBytes(8).toString("hex")}`,
+        createdAt + index,
+        connection
+      )
+      : request.command;
+    return `(${operation}) && printf '%s\\n' ${shellQuote(`${markerPrefix}${index + 1}`)}`;
+  });
+  return {
+    command: operations.join(" && "),
+    paths: prepared.map((item) => item.path),
+    recycled: Boolean(recycleEnabled),
+    item_count: prepared.length,
+    progress_marker: markerPrefix
+  };
+}
+
+function consumeDeleteJobOutput(job, markerPrefix, state, chunk = "", flush = false) {
+  state.remainder = `${state.remainder || ""}${Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk || "")}`;
+  const consumeLine = (rawLine, terminated) => {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (line.startsWith(markerPrefix)) {
+      const completed = Number(line.slice(markerPrefix.length));
+      if (Number.isInteger(completed) && completed >= 1 && completed <= job.item_count) {
+        job.completed_items = Math.max(Number(job.completed_items || 0), completed);
+        job.transferred = job.completed_items;
+        job.progress = Math.min(99, Math.floor(job.completed_items / job.item_count * 100));
+        return;
+      }
+    }
+    if (line || terminated) job.stdout = `${job.stdout}${line}${terminated ? "\n" : ""}`.slice(-12000);
+  };
+  let newlineAt = state.remainder.indexOf("\n");
+  while (newlineAt >= 0) {
+    consumeLine(state.remainder.slice(0, newlineAt), true);
+    state.remainder = state.remainder.slice(newlineAt + 1);
+    newlineAt = state.remainder.indexOf("\n");
+  }
+  if (flush && state.remainder) {
+    consumeLine(state.remainder, false);
+    state.remainder = "";
+  } else if (state.remainder.length > 16000) {
+    const retained = state.remainder.slice(-12000);
+    consumeLine(state.remainder.slice(0, -12000), false);
+    state.remainder = retained;
+  }
+}
+
+function deletePathsJob(connectionId, paths, recycleEnabled = false) {
   const connection = getConnection(connectionId);
+  const request = buildDeleteJobRequest(connection, paths, recycleEnabled);
   const id = crypto.randomUUID();
-  const label = `上传 ${path.basename(remotePath || localPath || "文件")}`;
+  const singleName = request.item_count === 1 ? path.posix.basename(request.paths[0]) : "";
+  const action = request.recycled ? "移入回收站" : "删除";
   const job: any = {
     id,
     connection_id: Number(connectionId),
     connection_name: connection.name,
-    type: "upload",
-    label,
+    type: "delete",
+    label: singleName ? `${action} ${singleName}` : `${action} ${request.item_count} 项`,
     status: "running",
     stdout: "",
     stderr: "",
     error: "",
-    size: Number(size || 0),
+    size: request.item_count,
+    size_known: true,
+    progress_known: true,
     transferred: 0,
     progress: 0,
-    remote_path: remotePath,
-    local_path: localPath,
+    progress_unit: "items",
+    completed_items: 0,
+    item_count: request.item_count,
+    recycled: request.recycled,
     created_at: Date.now(),
     started_at: Date.now(),
     finished_at: null
   };
   resetTransferSpeed(job);
-  const child = spawnRemote(connection, `cat > ${remotePathOperand(connection, remotePath)}`);
-  const stream = fs.createReadStream(localPath);
+  const child = spawnRemote(connection, request.command);
+  const outputState = { remainder: "" };
   job.child = child;
-  job.stream = stream;
   jobs.set(id, job);
   persistJobs();
-
-  const finish = (status, error = "") => {
-    if (job.finished_at && status !== "paused") return;
-    job.status = status;
-    job.error = error || "";
-    if (status !== "paused") job.finished_at = Date.now();
-    if (status === "done") {
-      job.transferred = job.size || job.transferred;
-      job.progress = 100;
-      try { fs.unlinkSync(localPath); } catch {}
-    }
-    if (status !== "paused") finishTransferMetrics(job);
-    persistJobs(status !== "paused");
-    if (status !== "paused") {
-      notifyEvent({
-        type: "sftp",
-        level: status === "done" ? "success" : "error",
-        title: status === "done" ? "SFTP 上传已完成" : "SFTP 上传失败",
-        message: `${job.connection_name} · ${job.label}${job.error ? `\n${job.error}` : ""}`,
-        action: { view: "sftp", connection_id: job.connection_id }
-      }, { cooldown_ms: 0 });
-    }
+  let finished = false;
+  let stdoutEnded = false;
+  const flushOutput = () => {
+    if (stdoutEnded) return;
+    stdoutEnded = true;
+    consumeDeleteJobOutput(job, request.progress_marker, outputState, "", true);
   };
+  const finish = (status, error = "") => {
+    if (finished || job.status === "cancelled") return;
+    finished = true;
+    flushOutput();
+    job.status = status;
+    job.error = error;
+    job.finished_at = Date.now();
+    job.speed_bps = 0;
+    job.average_bps = 0;
+    if (status === "done") {
+      job.completed_items = job.item_count;
+      job.transferred = job.item_count;
+      job.progress = 100;
+    }
+    invalidateRemoteDirectoryCache(connectionId);
+    persistJobs(true);
+    const partial = status === "failed" && job.completed_items
+      ? `\n已处理 ${job.completed_items}/${job.item_count} 项`
+      : "";
+    notifyEvent({
+      type: "sftp",
+      level: status === "done" ? "success" : "error",
+      title: status === "done" ? "SFTP 删除已完成" : "SFTP 删除失败",
+      message: `${job.connection_name} · ${job.label}${partial}${job.error ? `\n${job.error}` : ""}`,
+      action: { view: "sftp", connection_id: job.connection_id }
+    }, { cooldown_ms: 0 });
+  };
+  child.stdout.on("data", (chunk) => {
+    consumeDeleteJobOutput(job, request.progress_marker, outputState, chunk);
+    persistJobs();
+  });
+  child.stdout.on("end", flushOutput);
+  child.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
+  child.on("error", (error) => finish("failed", error.message));
+  child.on("close", (code, signal) => {
+    finish(code === 0 ? "done" : "failed", code === 0 ? "" : (job.stderr || `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`));
+  });
+  return {
+    id,
+    status: job.status,
+    type: job.type,
+    recycled: job.recycled,
+    item_count: job.item_count,
+    progress_unit: job.progress_unit
+  };
+}
+
+function addUniqueByteRange(ranges, start, end) {
+  const first = Math.max(0, Number(start || 0));
+  const last = Math.max(first - 1, Number(end ?? first - 1));
+  if (last < first) return 0;
+  const before = ranges.reduce((total, range) => total + range[1] - range[0] + 1, 0);
+  const merged = [];
+  let nextStart = first;
+  let nextEnd = last;
+  let inserted = false;
+  for (const range of ranges) {
+    if (range[1] + 1 < nextStart) {
+      merged.push(range);
+      continue;
+    }
+    if (nextEnd + 1 < range[0]) {
+      if (!inserted) merged.push([nextStart, nextEnd]);
+      inserted = true;
+      merged.push(range);
+      continue;
+    }
+    nextStart = Math.min(nextStart, range[0]);
+    nextEnd = Math.max(nextEnd, range[1]);
+  }
+  if (!inserted) merged.push([nextStart, nextEnd]);
+  ranges.splice(0, ranges.length, ...merged);
+  const after = ranges.reduce((total, range) => total + range[1] - range[0] + 1, 0);
+  return Math.max(0, after - before);
+}
+
+function markNativeSftpDragClosed(token) {
+  const key = String(token || "");
+  if (!key) return;
+  const previous = closedNativeDragTokens.get(key);
+  if (previous) clearTimeout(previous);
+  const timer = setTimeout(() => closedNativeDragTokens.delete(key), NATIVE_DRAG_DISCARD_TTL_MS);
+  timer.unref?.();
+  closedNativeDragTokens.set(key, timer);
+}
+
+function beginNativeSftpDragJob(token, ticket) {
+  const key = String(token || "");
+  if (closedNativeDragTokens.has(key)) return { id:"", status:"discarded" };
+  const existingId = nativeDragJobIds.get(key);
+  if (existingId && jobs.has(existingId)) return { id:existingId, status:jobs.get(existingId).status };
+  const connectionId = Number(ticket?.connection_id || 0);
+  const connection = getConnection(connectionId);
+  const topLevel = Array.isArray(ticket?.top_level) ? ticket.top_level : [];
+  const entries = Array.isArray(ticket?.entries) ? ticket.entries : [];
+  const names = topLevel.map(item => String(item?.name || "")).filter(Boolean);
+  const label = names.length === 1
+    ? `拖出 ${names[0]} 到本机`
+    : `拖出 ${Math.max(1, names.length)} 项到本机`;
+  const manifestReady = Boolean(ticket?.ready && Array.isArray(ticket?.entries));
+  const topLevelSizeKnown = topLevel.length > 0 && topLevel.every(entry => (
+    entry?.type === "file"
+    && entry?.metadata_known === true
+    && Number.isFinite(Number(entry?.size))
+  ));
+  const sizeKnown = manifestReady || topLevelSizeKnown;
+  const sizedEntries = manifestReady ? entries : topLevel;
+  const measuredSize = sizedEntries.reduce((total, entry) => (
+    entry?.type === "file" ? total + Math.max(0, Number(entry.size || 0)) : total
+  ), 0);
+  const size = sizeKnown ? measuredSize : 0;
+  const id = crypto.randomUUID();
+  const job: any = {
+    id,
+    connection_id:connectionId,
+    connection_name:connection.name,
+    type:"native-drag",
+    label,
+    status:"running",
+    phase:"system-saving",
+    can_cancel:true,
+    can_pause:false,
+    stdout:"",
+    stderr:"",
+    error:"",
+    size,
+    size_known:sizeKnown,
+    progress_known:sizeKnown,
+    progress_unit:"bytes",
+    transferred:0,
+    progress:0,
+    item_count:topLevel.length,
+    delivery_mode:"native-drag",
+    native_drag_token:key,
+    native_drag_ranges:new Map(),
+    streams:new Set(),
+    created_at:Date.now(),
+    started_at:Date.now(),
+    finished_at:null
+  };
+  resetTransferSpeed(job);
+  jobs.set(id, job);
+  nativeDragJobIds.set(key, id);
+  persistJobs();
+  return { id, status:job.status };
+}
+
+function recordNativeSftpDragBytes(token, bytes) {
+  const key = String(token || "");
+  const jobId = nativeDragJobIds.get(key);
+  const job = jobId ? jobs.get(jobId) : null;
+  if (!job || job.status !== "running") return {ok:false, status:job?.status || "missing"};
+  const requested = Math.max(0, Math.floor(Number(bytes || 0)));
+  const remaining = job.size_known
+    ? Math.max(0, Number(job.size || 0) - Number(job.transferred || 0))
+    : requested;
+  const added = Math.min(requested, remaining);
+  if (added > 0) {
+    recordTransferred(job, added);
+    persistJobs();
+  }
+  return {
+    ok:true,
+    status:job.status,
+    transferred:Number(job.transferred || 0),
+    progress:Number(job.progress || 0)
+  };
+}
+
+function trackNativeSftpDragStream(token, index, opened) {
+  const key = String(token || "");
+  const jobId = nativeDragJobIds.get(key);
+  const job = jobId ? jobs.get(jobId) : null;
+  if (!job || job.status !== "running") {
+    try { opened?.stream?.destroy(new Error("SFTP 拖出任务已取消")); } catch {}
+    throw new Error("SFTP 拖出任务已取消");
+  }
+  const stream = opened?.stream;
+  if (!stream?.on) throw new Error("SFTP 拖出读取流无效");
+  job.streams.add(stream);
+  const rangeKey = String(index);
+  const ranges = job.native_drag_ranges.get(rangeKey) || [];
+  job.native_drag_ranges.set(rangeKey, ranges);
+  let offset = Math.max(0, Number(opened.start || 0));
+  let closed = false;
+  const detach = () => {
+    if (closed) return;
+    closed = true;
+    job.streams.delete(stream);
+  };
+  stream.on("data", (chunk) => {
+    const length = Number(chunk?.length || 0);
+    if (length <= 0) return;
+    const end = offset + length - 1;
+    const added = addUniqueByteRange(ranges, offset, end);
+    offset = end + 1;
+    if (job.status !== "running" || added <= 0) return;
+    recordTransferred(job, added);
+    if (job.size) job.transferred = Math.min(job.size, job.transferred);
+    persistJobs();
+  });
+  stream.once("end", detach);
+  stream.once("close", detach);
+  stream.once("error", detach);
+  return { id:job.id, status:job.status };
+}
+
+function finishNativeSftpDragJob(token, status, error = "") {
+  const key = String(token || "");
+  markNativeSftpDragClosed(key);
+  const id = nativeDragJobIds.get(key);
+  const job = id ? jobs.get(id) : null;
+  if (!job) return { ok:false, status:"missing" };
+  if (job.status === "cancelled") {
+    nativeDragJobIds.delete(key);
+    return { ok:true, status:job.status };
+  }
+  const requestedStatus = ["done", "cancelled", "failed"].includes(status) ? status : "failed";
+  const incomplete = requestedStatus === "done"
+    && Number(job.size || 0) > 0
+    && Number(job.transferred || 0) < Number(job.size || 0);
+  const finalStatus = incomplete ? "cancelled" : requestedStatus;
+  if (finalStatus !== "done") {
+    for (const stream of job.streams) {
+      try { stream.destroy(); } catch {}
+    }
+  }
+  job.streams.clear();
+  job.status = finalStatus;
+  job.phase = "";
+  job.can_cancel = false;
+  job.can_pause = false;
+  job.error = finalStatus === "done"
+    ? ""
+    : String(error || (incomplete ? "目标端未读取完整内容" : finalStatus === "cancelled" ? "用户已取消" : "拖出下载失败"));
+  job.finished_at = Date.now();
+  if (finalStatus === "done") {
+    job.transferred = job.size || job.transferred;
+    job.progress = 100;
+  }
+  finishTransferMetrics(job);
+  nativeDragJobIds.delete(key);
+  persistJobs(true);
+  notifyEvent({
+    type:"sftp",
+    level:finalStatus === "done" ? "success" : finalStatus === "failed" ? "error" : "info",
+    title:finalStatus === "done" ? "SFTP 拖出已完成" : finalStatus === "failed" ? "SFTP 拖出失败" : "SFTP 拖出已取消",
+    message:`${job.connection_name} · ${job.label}${job.error ? `\n${job.error}` : ""}`,
+    action:{view:"sftp", connection_id:job.connection_id}
+  }, {cooldown_ms:0});
+  return { ok:true, status:job.status };
+}
+
+function discardNativeSftpDragJob(token) {
+  const key = String(token || "");
+  markNativeSftpDragClosed(key);
+  const id = nativeDragJobIds.get(key);
+  const job = id ? jobs.get(id) : null;
+  if (!job) return { ok:true, status:"discarded" };
+  for (const stream of job.streams || []) {
+    try { stream.destroy(); } catch {}
+  }
+  job.streams?.clear?.();
+  nativeDragJobIds.delete(key);
+  jobs.delete(id);
+  writeJsonJobs(readHistory().filter((item: any) => item.id !== id));
+  return { ok:true, status:"discarded" };
+}
+
+function uploadJobResult(job) {
+  return {
+    id:job.id,
+    status:job.status,
+    type:job.type,
+    phase:job.phase,
+    connection_id:job.connection_id,
+    connection_name:job.connection_name,
+    remote_path:job.remote_path
+  };
+}
+
+function createUploadJob(connectionId, localPath, remotePath, size = 0, phase = "uploading", options: any = {}) {
+  const connection = getConnection(connectionId);
+  const id = crypto.randomUUID();
+  const normalizedRemotePath = String(remotePath || "").replace(/\\/g, "/");
+  const remoteParent = path.posix.dirname(normalizedRemotePath);
+  const remoteTempName = `.tunneldesk-upload-${id}.part`;
+  const remoteTempPath = remoteParent === "/"
+    ? `/${remoteTempName}`
+    : remoteParent === "."
+      ? remoteTempName
+      : `${remoteParent.replace(/\/+$/, "")}/${remoteTempName}`;
+  const job: any = {
+    id,
+    connection_id:Number(connectionId),
+    connection_name:connection.name,
+    type:"upload",
+    phase,
+    can_pause:phase === "uploading",
+    label:`上传 ${path.basename(remotePath || localPath || "文件")}`,
+    status:"running",
+    stdout:"",
+    stderr:"",
+    error:"",
+    size:Math.max(0, Number(size || 0)),
+    size_known:options.sizeKnown !== false,
+    progress_known:options.sizeKnown !== false,
+    two_stage_upload:phase === "receiving",
+    transferred:0,
+    received_bytes:0,
+    progress:0,
+    remote_path:remotePath,
+    remote_temp_path:remoteTempPath,
+    upload_generation:0,
+    local_path:localPath,
+    staged_complete:phase === "uploading",
+    created_at:Date.now(),
+    started_at:Date.now(),
+    finished_at:null
+  };
+  resetTransferSpeed(job);
+  return job;
+}
+
+function uploadRemoteWriteCommand(connection, job, append = false) {
+  const operator = append ? ">>" : ">";
+  return `cat ${operator} ${remotePathOperand(connection, job.remote_temp_path)}`;
+}
+
+function uploadRemoteCommitCommand(connection, job) {
+  const temporary = remotePathOperand(connection, job.remote_temp_path);
+  const target = remotePathOperand(connection, job.remote_path);
+  const expectedSize = Math.max(0, Number(job.size || 0));
+  return [
+    `if [ ! -f ${temporary} ]; then echo "远端上传暂存文件不存在" >&2; exit 1; fi`,
+    expectedSize
+      ? `td_upload_size=$(wc -c < ${temporary} | tr -d '[:space:]'); if [ "$td_upload_size" != ${shellQuote(String(expectedSize))} ]; then echo "远端上传内容不完整" >&2; exit 1; fi`
+      : "",
+    `if [ -d ${target} ]; then echo "目标路径是目录，无法覆盖" >&2; exit 1; fi`,
+    job.conflict_mode === "overwrite"
+      ? ""
+      : `if [ -e ${target} ] || [ -L ${target} ]; then echo "目标目录已存在同名项目" >&2; exit 1; fi`,
+    `${job.conflict_mode === "overwrite" ? "mv -f" : "mv"} -- ${temporary} ${target}`
+  ].filter(Boolean).join(" && ");
+}
+
+function cleanupRemoteUploadArtifact(job) {
+  if (!job?.remote_temp_path || !job?.connection_id) return;
+  try {
+    const connection = getConnection(job.connection_id);
+    const child = spawnRemote(connection, `rm -f -- ${remotePathOperand(connection, job.remote_temp_path)}`);
+    child.on("error", () => {});
+    child.stdout.resume();
+    child.stderr.resume();
+    child.stdin.end();
+  } catch {}
+}
+
+function finishUploadTransfer(job, status, error = "") {
+  if (ignoreStoppedTransferFinish(job, status)) return;
+  if (job.finished_at && status !== "paused") return;
+  job.status = status;
+  job.error = error || "";
+  if (status !== "paused") {
+    job.finished_at = Date.now();
+    job.can_pause = false;
+  }
+  if (status === "done") {
+    job.transferred = job.size || job.transferred;
+    job.progress = 100;
+    try { fs.unlinkSync(job.local_path); } catch {}
+    invalidateRemoteDirectoryCache(job.connection_id);
+  }
+  if (status !== "paused") finishTransferMetrics(job);
+  persistJobs(status !== "paused");
+  if (status !== "paused") {
+    notifyEvent({
+      type:"sftp",
+      level:status === "done" ? "success" : "error",
+      title:status === "done" ? "SFTP 上传已完成" : "SFTP 上传失败",
+      message:`${job.connection_name} · ${job.label}${job.error ? `\n${job.error}` : ""}`,
+      action:{ view:"sftp", connection_id:job.connection_id }
+    }, { cooldown_ms:0 });
+  }
+}
+
+function commitUploadTransfer(job, generation) {
+  if (!job || job.status !== "running" || Number(job.upload_generation || 0) !== Number(generation)) return;
+  const connection = getConnection(job.connection_id);
+  const child = spawnRemote(connection, uploadRemoteCommitCommand(connection, job));
+  job.child = child;
+  job.stream = null;
+  job.phase = "committing";
+  job.can_pause = false;
+  updateTransferProgress(job);
+  persistJobs(true);
+  child.stdout.on("data", (chunk) => { job.stdout = `${job.stdout}${chunk.toString()}`.slice(-12000); persistJobs(); });
+  child.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
+  child.on("error", (error) => {
+    if (Number(job.upload_generation || 0) !== Number(generation)) return;
+    finishUploadTransfer(job, "failed", error.message);
+  });
+  child.on("close", (code, signal) => {
+    if (Number(job.upload_generation || 0) !== Number(generation)) return;
+    if (job.status === "cancelled" || job.status === "paused") return;
+    finishUploadTransfer(job, code === 0 ? "done" : "failed", code === 0 ? "" : (job.stderr || `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`));
+  });
+  child.stdin.end();
+}
+
+function finishUploadReceiveFailure(job, error) {
+  if (!job || job.status === "cancelled") return;
+  job.status = "failed";
+  job.can_pause = false;
+  job.error = error?.message || String(error || "文件接收失败");
+  job.finished_at = Date.now();
+  finishTransferMetrics(job);
+  cleanupJobArtifacts(job);
+  persistJobs(true);
+}
+
+function startUploadTransfer(job, offset = 0, generation = 0) {
+  const connection = getConnection(job.connection_id);
+  if (!job.size && job.local_path && fs.existsSync(job.local_path)) job.size = fs.statSync(job.local_path).size;
+  const transferred = Math.max(0, Number(offset || 0));
+  const runGeneration = generation || Math.max(0, Number(job.upload_generation || 0)) + 1;
+  job.upload_generation = runGeneration;
+  const child = spawnRemote(connection, uploadRemoteWriteCommand(connection, job, transferred > 0));
+  const stream = fs.createReadStream(job.local_path, transferred > 0 ? {start:transferred} : {});
+  job.child = child;
+  job.stream = stream;
+  job.status = "running";
+  job.phase = "uploading";
+  job.can_pause = true;
+  job.staged_complete = true;
+  job.transferred = transferred;
+  updateTransferProgress(job);
+  job.error = "";
+  job.finished_at = null;
+  resetTransferSpeed(job);
+  persistJobs(true);
 
   stream.on("data", (chunk) => {
+    if (Number(job.upload_generation || 0) !== runGeneration || job.status !== "running" || job.phase !== "uploading") return;
     recordTransferred(job, chunk.length);
     persistJobs();
   });
   stream.on("error", (error) => {
+    if (Number(job.upload_generation || 0) !== runGeneration) return;
     try { child.kill("SIGKILL"); } catch {}
-    finish("failed", error.message);
+    finishUploadTransfer(job, "failed", error.message);
   });
   child.stdout.on("data", (chunk) => { job.stdout = `${job.stdout}${chunk.toString()}`.slice(-12000); persistJobs(); });
   child.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
-  child.on("error", (error) => finish("failed", error.message));
+  child.on("error", (error) => {
+    if (Number(job.upload_generation || 0) !== runGeneration) return;
+    finishUploadTransfer(job, "failed", error.message);
+  });
   child.on("close", (code, signal) => {
-    if (job.status === "cancelled" || job.status === "paused") return;
-    finish(code === 0 ? "done" : "failed", code === 0 ? "" : (job.stderr || `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`));
+    if (Number(job.upload_generation || 0) !== runGeneration) return;
+    if (job.status === "cancelled") {
+      cleanupRemoteUploadArtifact(job);
+      return;
+    }
+    if (job.status === "paused") return;
+    if (code === 0) return commitUploadTransfer(job, runGeneration);
+    finishUploadTransfer(job, "failed", job.stderr || `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`);
   });
   stream.pipe(child.stdin);
-  return { id, status: job.status };
+  return uploadJobResult(job);
+}
+
+function startUploadJob(connectionId, localPath, remotePath, size = 0) {
+  const job = createUploadJob(connectionId, localPath, remotePath, size, "uploading", {sizeKnown:true});
+  job.conflict_mode = "overwrite";
+  jobs.set(job.id, job);
+  persistJobs(true);
+  return startUploadTransfer(job);
+}
+
+function startUploadReceiveJob(connectionId, remotePath, filename, size = 0, options: any = {}) {
+  const directory = path.join(DATA_DIR, "uploads");
+  fs.mkdirSync(directory, {recursive:true});
+  const safeName = path.basename(String(filename || "upload.bin")).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") || "upload.bin";
+  const localPath = path.join(directory, `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}`);
+  const job = createUploadJob(connectionId, localPath, remotePath, size, "receiving", {sizeKnown:options.sizeKnown !== false});
+  job.conflict_mode = options.conflict === "overwrite" ? "overwrite" : "error";
+  jobs.set(job.id, job);
+  persistJobs(true);
+  return uploadJobResult(job);
+}
+
+function uploadReceiveCancelledError() {
+  const error: any = new Error("上传已取消");
+  error.code = "SFTP_UPLOAD_CANCELLED";
+  return error;
+}
+
+function receiveUploadJobContent(id, request) {
+  const job = jobs.get(id);
+  if (!job || job.type !== "upload") throw new Error("上传任务不存在");
+  if (job.status === "cancelled") throw uploadReceiveCancelledError();
+  if (job.status !== "running" || job.phase !== "receiving" || job.receive_token) throw new Error("当前上传任务无法接收文件内容");
+  const declaredSize = Math.max(0, Number(request?.headers?.["content-length"] || 0));
+  const declaredSizeKnown = request?.headers?.["content-length"] !== undefined;
+  if (job.size > 0 && declaredSize > 0 && declaredSize !== job.size) {
+    const error = new Error(`文件大小不一致：应为 ${job.size} 字节，实际 ${declaredSize} 字节`);
+    finishUploadReceiveFailure(job, error);
+    throw error;
+  }
+  if (!job.size && declaredSize) job.size = declaredSize;
+  if (declaredSizeKnown) {
+    job.size_known = true;
+    job.progress_known = true;
+  }
+
+  const token = {};
+  const out = fs.createWriteStream(job.local_path, {flags:"wx"});
+  job.receive_token = token;
+  job.responder = request;
+  job.out = out;
+  persistJobs(true);
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let received = 0;
+    const clearHandles = () => {
+      if (job.receive_token !== token) return;
+      job.receive_token = null;
+      job.responder = null;
+      job.out = null;
+    };
+    const fail = (source) => {
+      if (settled) return;
+      settled = true;
+      try { request.unpipe(out); } catch {}
+      try { out.destroy(); } catch {}
+      clearHandles();
+      if (job.status === "cancelled") {
+        cleanupJobArtifacts(job);
+        persistJobs(true);
+        reject(uploadReceiveCancelledError());
+        return;
+      }
+      const error = source instanceof Error ? source : new Error(String(source || "文件接收失败"));
+      finishUploadReceiveFailure(job, error);
+      reject(error);
+    };
+    const complete = () => {
+      if (settled) return;
+      if (job.status === "cancelled") return fail(uploadReceiveCancelledError());
+      const expected = Math.max(0, Number(job.size || declaredSize || 0));
+      if (expected && received !== expected) return fail(new Error(`文件接收不完整：应为 ${expected} 字节，实际 ${received} 字节`));
+      settled = true;
+      clearHandles();
+      job.size = expected || received;
+      job.size_known = true;
+      job.progress_known = true;
+      job.received_bytes = received;
+      job.staged_complete = true;
+      try {
+        resolve(startUploadTransfer(job));
+      } catch (error) {
+        finishUploadReceiveFailure(job, error);
+        reject(error);
+      }
+    };
+    request.on("data", (chunk) => {
+      if (job.receive_token !== token || job.status !== "running") return;
+      received += Number(chunk?.length || 0);
+      job.received_bytes = received;
+      recordTransferred(job, Number(chunk?.length || 0));
+      persistJobs();
+    });
+    request.once("aborted", () => fail(new Error("文件接收连接已中断")));
+    request.once("error", fail);
+    out.once("error", fail);
+    out.once("finish", complete);
+    out.once("close", () => {
+      if (!settled && !out.writableFinished) fail(new Error("文件接收连接已关闭"));
+    });
+    if (request.aborted || request.destroyed) {
+      fail(new Error("文件接收连接已中断"));
+      return;
+    }
+    request.pipe(out);
+  });
 }
 
 function cancelSftpJob(id) {
   const job = jobs.get(id);
-  if (!job) throw new Error("任务不存在");
+  if (!job) {
+    const persisted = readHistory().find((item: any) => item.id === id);
+    if (persisted) return { ok:true, status:persisted.status };
+    throw new Error("任务不存在");
+  }
   if (!ACTIVE_STATUSES.has(job.status)) return { ok: true, status: job.status };
+  if (job.type === "upload" && job.phase === "committing") return { ok:true, status:job.status, phase:job.phase };
+  if (job.type === "native-drag" && job.native_drag_token) {
+    if (job.phase === "cancelling") {
+      return {ok:true, status:job.status, phase:job.phase, can_cancel:false};
+    }
+    let accepted = false;
+    try {
+      accepted = Boolean(nativeDragCancelHandler?.(String(job.native_drag_token)));
+    } catch {}
+    if (!accepted) {
+      return {
+        ok:false,
+        status:job.status,
+        phase:job.phase,
+        can_cancel:true,
+        code:"NATIVE_DRAG_CANCEL_REJECTED",
+        message:"系统暂未接受停止请求，传输仍在继续"
+      };
+    }
+    if (!ACTIVE_STATUSES.has(job.status)) {
+      return {ok:true, status:job.status, phase:job.phase || "", can_cancel:false};
+    }
+    // The target file manager still owns the IDataObject/FUSE/File Promise
+    // read. Keep the streams and ticket alive until its native terminal
+    // callback confirms cancellation; tearing them down here turns a user
+    // cancellation into a disk, HTTP, or FUSE read error.
+    job.phase = "cancelling";
+    job.can_cancel = false;
+    job.can_pause = false;
+    job.error = "";
+    job.speed_bps = 0;
+    persistJobs(true);
+    return {ok:true, status:job.status, phase:job.phase, can_cancel:false};
+  }
+  const uploadPhase = job.type === "upload" ? job.phase : "";
+  if (job.type === "upload") job.upload_generation = Math.max(0, Number(job.upload_generation || 0)) + 1;
+  job.status = "cancelled";
+  job.can_pause = false;
+  job.finished_at = Date.now();
+  job.error = "用户已取消";
   try { job.child?.kill("SIGTERM"); } catch {}
   try { job.stream?.destroy(); } catch {}
   try { job.out?.destroy(); } catch {}
   try { job.responder?.kill?.("SIGTERM"); } catch {}
   try { job.responder?.destroy?.(); } catch {}
-  job.status = "cancelled";
-  job.finished_at = Date.now();
-  job.error = "用户已取消";
-  finishTransferMetrics(job);
+  if (job.streams instanceof Set) {
+    for (const stream of job.streams) {
+      try { stream.destroy(); } catch {}
+    }
+    job.streams.clear();
+  }
+  if (job.type === "delete") {
+    job.speed_bps = 0;
+    job.average_bps = 0;
+    invalidateRemoteDirectoryCache(job.connection_id);
+  } else {
+    finishTransferMetrics(job);
+  }
   if (job.type === "download") removeDownloadCacheFile(job);
+  if (job.type === "upload") {
+    cleanupJobArtifacts(job);
+    if (uploadPhase !== "receiving") {
+      cleanupRemoteUploadArtifact(job);
+      setTimeout(() => cleanupRemoteUploadArtifact(job), 500);
+    }
+    invalidateRemoteDirectoryCache(job.connection_id);
+    setTimeout(() => cleanupJobArtifacts(job), 100);
+  }
   persistJobs(true);
   return { ok: true, status: job.status };
 }
@@ -333,7 +1135,8 @@ function deleteSftpJob(id) {
     }
     throw new Error("任务不存在");
   }
-  if (ACTIVE_STATUSES.has(job.status)) throw new Error("请先暂停或取消运行中的任务");
+  if (job.status === "running" || job.status === "pending") throw new Error("请先暂停或取消运行中的任务");
+  if (job.type === "upload") cleanupRemoteUploadArtifact(job);
   cleanupJobArtifacts(job);
   jobs.delete(id);
   writeJsonJobs(readHistory().filter((item) => item.id !== id));
@@ -419,6 +1222,7 @@ function startDownloadJob(connectionId, remotePath, options: any = {}) {
     error: "",
     size: 0,
     size_known: false,
+    progress_known: false,
     transferred: 0,
     progress: 0,
     created_at: Date.now(),
@@ -441,16 +1245,18 @@ function runDownloadJob(id, fetchSize) {
       if (fetchSize || !job.size_known) {
         job.size = await getRemoteSize(connection, job.remote_path);
         job.size_known = true;
+        job.progress_known = true;
+        updateTransferProgress(job);
         persistJobs();
       }
-      if (job.status === "cancelled") return;
+      if (!jobs.has(id) || job.status === "cancelled" || job.status === "paused") return;
       let offset = fs.existsSync(job.temp_path) ? fs.statSync(job.temp_path).size : 0;
       if (job.size_known && offset > job.size) {
         fs.truncateSync(job.temp_path, 0);
         offset = 0;
       }
       job.transferred = offset;
-      job.progress = job.size ? Math.min(99, Math.floor(offset / job.size * 100)) : 0;
+      updateTransferProgress(job);
       if (job.size_known && offset === job.size) {
         finishDownloadJob(id, true);
         return;
@@ -473,6 +1279,7 @@ function runDownloadJob(id, fetchSize) {
       let closeCode: number | null = null;
       let closeSignal: string | null = null;
       const finish = (status, error = "") => {
+        if (ignoreStoppedTransferFinish(job, status)) return;
         if (job.finished_at && status !== "paused") return;
         try { out.destroy(); } catch {}
         if (status !== "paused") try { child.kill("SIGTERM"); } catch {}
@@ -543,6 +1350,7 @@ function runDownloadJob(id, fetchSize) {
         finish("paused");
       };
     } catch (error) {
+      if (!jobs.has(id) || job.status === "paused" || job.status === "cancelled") return;
       job.status = "failed";
       job.error = error.message || "下载启动失败";
       job.finished_at = Date.now();
@@ -554,7 +1362,7 @@ function runDownloadJob(id, fetchSize) {
 
 function finishDownloadJob(id, complete) {
   const job = jobs.get(id);
-  if (!job) return;
+  if (!job || job.status === "paused" || job.status === "cancelled") return;
   try { job.out?.destroy(); } catch {}
   try { job.child?.kill("SIGTERM"); } catch {}
   if (complete) {
@@ -573,25 +1381,33 @@ function pauseSftpJob(id) {
   const job = jobs.get(id);
   if (!job) throw new Error("任务不存在");
   if (!ACTIVE_STATUSES.has(job.status)) return { ok: true, status: job.status };
+  if (job.type === "upload" && job.phase === "receiving") throw new Error("文件接收阶段只能取消任务");
+  if (job.type === "upload" && job.phase === "committing") return { ok:true, status:job.status };
   if (job.status !== "running") {
     job.status = "paused";
+    job.can_pause = false;
+    job.error = "";
+    job.finished_at = null;
     job.speed_bps = 0;
+    job.average_bps = 0;
     persistJobs(true);
     return { ok: true, status: job.status };
   }
+  job.status = "paused";
+  job.can_pause = false;
+  job.error = "";
+  job.finished_at = null;
+  job.speed_bps = 0;
+  job.average_bps = 0;
+  persistJobs(true);
   if (job.type === "download" && typeof job.pauseNow === "function") {
     job.pauseNow();
   } else if (job.type === "upload") {
+    job.upload_generation = Math.max(0, Number(job.upload_generation || 0)) + 1;
     try { job.child?.kill("SIGTERM"); } catch {}
     try { job.stream?.destroy(); } catch {}
-    job.status = "paused";
-    job.speed_bps = 0;
-    persistJobs(true);
   } else {
     try { job.child?.kill("SIGTERM"); } catch {}
-    job.status = "paused";
-    job.speed_bps = 0;
-    persistJobs(true);
   }
   return { ok: true, status: job.status };
 }
@@ -620,47 +1436,39 @@ function resumeUploadJob(id) {
   const job = jobs.get(id);
   if (!job) return;
   const connection = getConnection(job.connection_id);
-  const offset = fs.existsSync(job.local_path) ? fs.statSync(job.local_path).size : 0;
-  const transferred = Math.min(job.transferred || 0, offset);
-  const command = transferred > 0 ? `cat >> ${remotePathOperand(connection, job.remote_path)}` : `cat > ${remotePathOperand(connection, job.remote_path)}`;
-  const child = spawnRemote(connection, command);
-  const stream = fs.createReadStream(job.local_path, transferred > 0 ? { start: transferred } : {});
-  job.child = child;
-  job.stream = stream;
-  job.status = "running";
+  if (!job.staged_complete || !job.local_path || !fs.existsSync(job.local_path)) throw new Error("上传暂存文件不存在，无法继续");
+  job.status = "pending";
+  job.phase = "resuming";
+  job.can_pause = false;
   job.error = "";
-  job.transferred = transferred;
-  job.progress = job.size ? Math.min(99, Math.floor(transferred / job.size * 100)) : 0;
   job.started_at = Date.now();
   job.finished_at = null;
-  resetTransferSpeed(job);
-  persistJobs();
-  const finish = (status, error = "") => {
-    if (job.finished_at && status !== "paused") return;
-    if (status !== "paused") try { stream.destroy(); } catch {}
-    if (status !== "paused") try { child.kill("SIGTERM"); } catch {}
-    job.status = status;
-    if (error) job.error = error;
-    if (status !== "paused") {
-      job.finished_at = Date.now();
-      if (status === "done") { job.transferred = job.size || job.transferred; job.progress = 100; try { fs.unlinkSync(job.local_path); } catch {} }
-      finishTransferMetrics(job);
-    }
-    persistJobs(status !== "paused");
-    if (status === "done" || status === "failed") {
-      notifyEvent({ type: "sftp", level: status === "done" ? "success" : "error", title: status === "done" ? "SFTP 上传已完成" : "SFTP 上传失败", message: `${job.connection_name} · ${job.label}${job.error ? `\n${job.error}` : ""}`, action: { view: "sftp", connection_id: job.connection_id } }, { cooldown_ms: 0 });
-    }
-  };
-  stream.on("data", (chunk) => { recordTransferred(job, chunk.length); persistJobs(); });
-  stream.on("error", (error) => { try { child.kill("SIGKILL"); } catch {} finish("failed", error.message); });
-  child.stdout.on("data", (chunk) => { job.stdout = `${job.stdout}${chunk.toString()}`.slice(-12000); persistJobs(); });
-  child.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
-  child.on("error", (error) => finish("failed", error.message));
-  child.on("close", (code, signal) => {
-    if (job.status === "paused" || job.status === "cancelled") return;
-    finish(code === 0 ? "done" : "failed", code === 0 ? "" : (job.stderr || `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`));
+  const generation = Math.max(0, Number(job.upload_generation || 0)) + 1;
+  job.upload_generation = generation;
+  persistJobs(true);
+  const child = spawnRemote(connection, `if [ -f ${remotePathOperand(connection, job.remote_temp_path)} ]; then wc -c < ${remotePathOperand(connection, job.remote_temp_path)} | tr -d ' '; else printf '0'; fi`);
+  job.child = child;
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+  child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+  child.on("error", (error) => {
+    if (Number(job.upload_generation || 0) !== generation) return;
+    finishUploadTransfer(job, "failed", error.message);
   });
-  stream.pipe(child.stdin);
+  child.on("close", (code) => {
+    if (Number(job.upload_generation || 0) !== generation) return;
+    if (job.status === "cancelled" || job.status === "paused") return;
+    if (code !== 0) return finishUploadTransfer(job, "failed", stderr.trim() || "读取远端上传进度失败");
+    const offset = Number(stdout.trim() || 0);
+    const localSize = fs.statSync(job.local_path).size;
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > localSize) {
+      finishUploadTransfer(job, "failed", "远端暂存文件大小异常，无法继续上传");
+      return;
+    }
+    startUploadTransfer(job, offset, generation);
+  });
+  child.stdin.end();
 }
 
 function getSftpJobFile(id) {
@@ -702,6 +1510,8 @@ function startArchiveDownloadJob(connectionId, remotePaths, options: any = {}) {
     stderr:"",
     error:"",
     size:0,
+    size_known:false,
+    progress_known:false,
     transferred:0,
     progress:0,
     created_at:Date.now(),
@@ -718,13 +1528,15 @@ function startArchiveDownloadJob(connectionId, remotePaths, options: any = {}) {
   job.out = out;
   let finished = false;
   const finish = (status, error="") => {
-    if (finished) return;
+    if (finished || ignoreStoppedTransferFinish(job, status)) return;
     finished = true;
     job.status = status;
     job.error = error;
     job.finished_at = Date.now();
     if (status === "done") {
       job.size = fs.existsSync(tempPath) ? fs.statSync(tempPath).size : job.transferred;
+      job.size_known = true;
+      job.progress_known = true;
       job.transferred = job.size;
       job.progress = 100;
       if (job.delivery_mode === "desktop") autoSaveDownloadedFile(job);
@@ -866,7 +1678,48 @@ function buildCrossCopyOverwriteCommand(targetConnection, targetDir, names) {
   ].join("; ");
 }
 
-function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir = ".", conflictMode = "error") {
+function crossCopyProgressEntries(paths, entries) {
+  const allowed = new Set(paths);
+  const byPath = new Map();
+  for (const source of Array.isArray(entries) ? entries : []) {
+    const remotePath = path.posix.normalize(String(source?.path || "").replace(/\\/g, "/"));
+    if (!allowed.has(remotePath) || byPath.has(remotePath)) continue;
+    byPath.set(remotePath, {
+      path:remotePath,
+      type:["dir", "directory"].includes(String(source?.type || "")) ? "directory" : "file",
+      size:Math.max(0, Number(source?.size || 0)),
+      metadataKnown:Boolean(source?.metadataKnown)
+    });
+  }
+  return paths.map(remotePath => byPath.get(remotePath) || {path:remotePath, type:"file", size:0, metadataKnown:false});
+}
+
+async function resolveCrossCopyProgressSize(job, sourceConnection, entries) {
+  let total = 0;
+  for (const entry of entries) {
+    if (job.status !== "running") return;
+    if (entry.type === "directory") {
+      const result = await readRemoteDirectorySize(job.source_connection_id, entry.path);
+      const size = result?.size ?? Number(result?.size_bytes || 0);
+      if (!Number.isSafeInteger(size) || size < 0) throw new Error("跨主机复制内容过大，无法计算进度");
+      total += size;
+    } else if (entry.metadataKnown) {
+      total += entry.size;
+    } else {
+      total += Number(await getRemoteSize(sourceConnection, entry.path));
+    }
+    if (!Number.isSafeInteger(total)) throw new Error("跨主机复制内容过大，无法计算进度");
+  }
+  if (job.status !== "running") return;
+  job.size = total;
+  job.size_known = true;
+  job.progress_known = true;
+  job.progress_estimated = true;
+  updateTransferProgress(job);
+  persistJobs(true);
+}
+
+function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir = ".", conflictMode = "error", entries: any[] = []) {
   const sourceConnection = getConnection(sourceConnectionId);
   const targetConnection = getConnection(targetConnectionId);
   if (Number(sourceConnectionId) === Number(targetConnectionId)) throw new Error("跨主机复制必须选择不同的源连接和目标连接");
@@ -881,6 +1734,11 @@ function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir =
   const parent = path.posix.dirname(normalized[0]) || ".";
   if (normalized.some((item) => (path.posix.dirname(item) || ".") !== parent)) throw new Error("跨主机复制的项目必须位于同一目录");
   const names = normalized.map((item) => path.posix.basename(item));
+  const progressEntries = crossCopyProgressEntries(normalized, entries);
+  const initialSizeCandidate = progressEntries.reduce((total, entry) => total + entry.size, 0);
+  const initialSizeKnown = progressEntries.every(entry => entry.type === "file" && entry.metadataKnown)
+    && Number.isSafeInteger(initialSizeCandidate);
+  const initialSize = initialSizeKnown ? initialSizeCandidate : 0;
   const conflict = ["error", "overwrite", "rename"].includes(String(conflictMode || "")) ? String(conflictMode) : "error";
   const sourceNames = names.map((name) => remotePathOperand(sourceConnection, `./${name}`)).join(" ");
   const collisionChecks = names.map((name) => {
@@ -923,6 +1781,10 @@ function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir =
     stdout: "",
     stderr: "",
     error: "",
+    size: initialSize,
+    size_known: initialSizeKnown,
+    progress_known: initialSizeKnown,
+    progress_estimated: initialSizeKnown,
     transferred: 0,
     progress: 0,
     created_at: Date.now(),
@@ -934,6 +1796,9 @@ function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir =
   resetTransferSpeed(job);
   jobs.set(id, job);
   persistJobs();
+  if (!initialSizeKnown) {
+    void resolveCrossCopyProgressSize(job, sourceConnection, progressEntries).catch(() => {});
+  }
   let sourceCode = null;
   let targetCode = null;
   let finished = false;
@@ -947,7 +1812,12 @@ function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir =
     job.status = status;
     job.error = error;
     job.finished_at = Date.now();
-    if (status === "done") job.progress = 100;
+    if (status === "done") {
+      if (!job.size_known) job.size = job.transferred;
+      job.size_known = true;
+      job.progress_known = true;
+      job.progress = 100;
+    }
     finishTransferMetrics(job);
     persistJobs(true);
     notifyEvent({
@@ -976,18 +1846,35 @@ function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir =
   return { id, status: job.status, type: job.type, connection_id: Number(targetConnectionId) };
 }
 
+function buildItemProgressJobCommand(connection, action, paths, targetDir) {
+  const source = [...new Set((Array.isArray(paths) ? paths : []).map(item => String(item || "").replace(/\\/g, "/")).filter(Boolean))];
+  if (!source.length) throw new Error(`请选择要${action === "copy" ? "复制" : "移动"}的文件`);
+  if (source.length > 200 || source.some(item => item.includes("\0") || item.length > 4096)) throw new Error("远程路径无效或数量过多");
+  const marker = `__TUNNELDESK_JOB_${crypto.randomBytes(12).toString("hex")}__:`;
+  const commandName = action === "copy" ? "cp -a" : "mv";
+  const target = remotePathOperand(connection, targetDir);
+  const commands = source.map((item, index) => (
+    `(${commandName} -- ${remotePathOperand(connection, item)} ${target}) && printf '%s\\n' ${shellQuote(`${marker}${index + 1}`)}`
+  ));
+  return {command:commands.join(" && "), marker, itemCount:source.length};
+}
+
 function copyJob(connectionId, paths, targetDir) {
   const connection = getConnection(connectionId);
-  const quoted = (paths || []).map((item) => remotePathOperand(connection, item)).join(" ");
-  if (!quoted) throw new Error("请选择要复制的文件");
-  return startSftpJob(connectionId, "copy", `cp -a -- ${quoted} ${remotePathOperand(connection, targetDir)}`, `复制 ${paths.length} 项`);
+  const request = buildItemProgressJobCommand(connection, "copy", paths, targetDir);
+  return startSftpJob(connectionId, "copy", request.command, `复制 ${request.itemCount} 项`, {
+    itemCount:request.itemCount,
+    progressMarker:request.marker
+  });
 }
 
 function moveJob(connectionId, paths, targetDir) {
   const connection = getConnection(connectionId);
-  const quoted = (paths || []).map((item) => remotePathOperand(connection, item)).join(" ");
-  if (!quoted) throw new Error("请选择要移动的文件");
-  return startSftpJob(connectionId, "move", `mv -- ${quoted} ${remotePathOperand(connection, targetDir)}`, `移动 ${paths.length} 项`);
+  const request = buildItemProgressJobCommand(connection, "move", paths, targetDir);
+  return startSftpJob(connectionId, "move", request.command, `移动 ${request.itemCount} 项`, {
+    itemCount:request.itemCount,
+    progressMarker:request.marker
+  });
 }
 
 function extractJob(connectionId, remotePath, targetDir) {
@@ -1031,4 +1918,4 @@ function compressJob(connectionId, paths, targetDir = ".", archiveName = "") {
   return { ...startSftpJob(connectionId, "compress", request.command, `压缩 ${request.paths.length} 项为 ${request.name}`), output:request.output };
 }
 
-module.exports = { cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, normalizeCompressionRequest, pauseSftpJob, resumeSftpJob, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startUploadJob, __buildCompressCommand: normalizeCompressionRequest, __buildCrossCopyOverwriteCommand: buildCrossCopyOverwriteCommand };
+module.exports = { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, discardNativeSftpDragJob, extractJob, finishNativeSftpDragJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, normalizeCompressionRequest, pauseSftpJob, receiveUploadJobContent, recordNativeSftpDragBytes, resumeSftpJob, setNativeSftpDragCancelHandler, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream, __addUniqueByteRange: addUniqueByteRange, __buildCompressCommand: normalizeCompressionRequest, __buildCrossCopyOverwriteCommand: buildCrossCopyOverwriteCommand, __buildDeleteJobRequest: buildDeleteJobRequest, __consumeDeleteJobOutput: consumeDeleteJobOutput };

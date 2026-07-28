@@ -179,6 +179,7 @@ if [ "$TUNNELDESK_WEB_ONLY" != "1" ] && has_gui && [ -x node_modules/.bin/electr
     fi
   fi
   if node -e "try{const fs=require('fs'); const electron=require('electron'); process.exit(typeof electron==='string' && fs.existsSync(electron) ? 0 : 1)}catch{process.exit(1)}" >/dev/null 2>&1; then
+    npm run native:build:if-needed || echo "Native SFTP drag build failed; desktop mode will use the available fallback."
     npm run desktop:run -- "$@" >/dev/null 2>&1 &
     echo "TunnelDesk desktop is starting."
     echo "Mode: desktop. Web log: data/web.log"

@@ -29,6 +29,9 @@ jobs:
       - name: Build Windows packages
         run: npm run dist -- --win nsis portable --x64 --publish never
 
+      - name: Verify packaged Windows native drag addon
+        run: node scripts/native-sftp-drag-artifacts-check.js windows packaged release
+
       - name: Verify Windows artifact names
         run: node scripts/release-artifacts-check.js windows
 
@@ -70,13 +73,24 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y rpm
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            fuse3 \
+            libcurl4-openssl-dev \
+            libfuse3-dev \
+            nlohmann-json3-dev \
+            pkg-config \
+            rpm
 
       - name: Install dependencies
         run: npm ci
 
       - name: Build Linux packages
         run: npm run dist -- --linux AppImage deb rpm --x64 --publish never
+
+      - name: Verify packaged Linux native drag helper
+        run: node scripts/native-sftp-drag-artifacts-check.js linux packaged release
 
       - name: Verify Linux artifact names
         run: node scripts/release-artifacts-check.js linux
@@ -127,6 +141,9 @@ jobs:
         run: npm run dist -- --mac dmg zip --x64 --arm64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Verify packaged macOS native drag addons
+        run: node scripts/native-sftp-drag-artifacts-check.js macos packaged release
 
       - name: Verify macOS artifact names
         run: node scripts/release-artifacts-check.js macos

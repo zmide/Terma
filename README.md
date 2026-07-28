@@ -97,7 +97,7 @@ Electron 桌面端 ─┐
 | 平台 | 桌面端 | Web 模式 | 发布产物 |
 | --- | --- | --- | --- |
 | Windows 10/11 | 支持 | 支持 | 安装版、便携版 |
-| macOS | 支持 | 支持 | DMG、ZIP |
+| macOS | 支持 | 支持 | DMG 安装镜像、ZIP 免安装运行包 |
 | Linux | 支持 | 支持 | AppImage、DEB、RPM |
 | Termux / 无图形 Linux | 不建议 | 支持 | 源码运行 |
 
@@ -105,6 +105,7 @@ Electron 桌面端 ─┐
 
 - Node.js 22 或更高版本
 - npm
+- Git（从仓库获取源码时）
 - OpenSSH 客户端，命令行可执行 `ssh`
 
 从源码运行前获取项目：
@@ -116,7 +117,7 @@ cd tunneldesk
 
 启动脚本会检查 `package.json` 和 `package-lock.json`。依赖缺失或清单发生变化时会自动执行安装，然后编译并启动程序。
 
-## 启动与停止
+## 从源码运行
 
 ### Windows
 
@@ -141,17 +142,23 @@ http://127.0.0.1:8088
 
 ### Termux / 无图形服务器
 
-```sh
-TUNNELDESK_WEB_ONLY=1 ./start.sh
-```
-
 Termux 首次准备环境：
 
 ```sh
 pkg update
 pkg upgrade
-pkg install nodejs openssh
+pkg install git nodejs openssh
 ```
+
+启动 Web 模式：
+
+```sh
+chmod +x start.sh stop.sh
+TUNNELDESK_WEB_ONLY=1 ./start.sh
+./stop.sh
+```
+
+Termux 和无图形 Linux 不打包桌面程序；`start.sh` 会自动检查依赖、编译源码并启动 Web 服务。
 
 ### 局域网访问
 
@@ -177,7 +184,8 @@ TUNNELDESK_WEB_ONLY=1 ./start.sh --host 0.0.0.0 --port 8088
 ```sh
 npm install --include=dev
 npm run build
-npm run desktop
+npm run native:build:if-needed
+npm run desktop:run
 ```
 
 常用检查：
@@ -188,12 +196,18 @@ npm run regression
 npm run ui:smoke
 ```
 
-## 编译与打包
+## 桌面端编译与打包
 
-在当前平台生成安装包：
+桌面包包含各平台的 SFTP 原生拖放模块，因此必须在对应系统构建。先准备工具链：
+
+- Windows：Visual Studio 2022 C++ Build Tools（“使用 C++ 的桌面开发”）。
+- Linux（Debian / Ubuntu）：`build-essential cmake fuse3 libcurl4-openssl-dev libfuse3-dev nlohmann-json3-dev pkg-config rpm`。
+- macOS：Xcode Command Line Tools，可执行 `xcode-select --install` 安装。
+
+在当前平台安装依赖并生成安装包：
 
 ```sh
-npm install --include=dev
+npm ci
 npm run dist
 ```
 
@@ -210,7 +224,14 @@ npm run dist -- --linux AppImage deb rpm --x64 --publish never
 npm run dist -- --mac dmg zip --x64 --arm64 --publish never
 ```
 
-构建结果位于 `release/`。推送 `v*` 标签时，Release 工作流会在 Windows、Linux 和 macOS 上分别构建并验证产物。
+构建结果位于 `release/`。各平台运行方式：
+
+- Windows 安装版：运行 `*-installer.exe` 并按向导安装；便携版直接运行 `*-portable.exe`。
+- Linux：AppImage 执行 `chmod +x release/*.AppImage` 后即可运行；DEB、RPM 使用系统包管理器安装。
+- macOS DMG：打开与机器架构对应的 `.dmg`，将 TunnelDesk 拖入“应用程序”后启动。
+- macOS ZIP：解压后可直接运行 `TunnelDesk.app`，无需安装；它只表示应用免安装，运行数据仍保存在系统用户数据目录。Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
+
+推送 `v*` 标签时，Release 工作流会在 Windows、Linux 和 macOS 上分别构建并验证产物。
 
 ## 数据与安全
 

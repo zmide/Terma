@@ -1,0 +1,39 @@
+{
+  "token": "fixture-token",
+  "platform": "linux",
+  "created_at": 1785143000000,
+  "expires_at": 1785144000000,
+  "ready": true,
+  "entries": [
+    {
+      "index": 0,
+      "name": "example.txt",
+      "relative_path": "example.txt",
+      "type": "file",
+      "size": 12,
+      "modified_at": 1785143000000,
+      "mode": 33188,
+      "top_level": true
+    },
+    {
+      "index": 1,
+      "name": "folder",
+      "relative_path": "folder",
+      "type": "directory",
+      "size": 0,
+      "modified_at": 1785143000000,
+      "mode": 16877,
+      "top_level": true
+    },
+    {
+      "index": 2,
+      "name": "nested.yml",
+      "relative_path": "folder/nested.yml",
+      "type": "file",
+      "size": 24,
+      "modified_at": 1785143000000,
+      "mode": 33188,
+      "top_level": false
+    }
+  ]
+}

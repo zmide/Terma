@@ -83,10 +83,21 @@ const {
 const { getPart } = require("./multipart");
 const { parseConfigText, batchTest, saveImported, exportConfig } = require("./importer");
 const { handleTerminalUpgrade, closeAllTerminals } = require("./terminal");
-const { closeAllSftpSessions, connectSftpSession, deliverSftpPaths, disconnectSftpSession, sftpSessionStatus, stageSftpPaths } = require("./sftp-session");
+const {
+  closeAllSftpSessions,
+  connectSftpSession,
+  createNativeSftpDragTicket,
+  deliverSftpPaths,
+  disconnectSftpSession,
+  getNativeSftpDragTicket,
+  openNativeSftpDragTicketFile,
+  releaseNativeSftpDragTicket,
+  sftpSessionStatus,
+  stageSftpPaths
+} = require("./sftp-session");
 const { deleteCommandTemplate, handleBatchCommandUpgrade, listCommandTemplates, saveCommandTemplate, updateCommandTemplate } = require("./commands");
-const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemotePath, deleteRemoteRecycleItem, encodeRemoteText, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, recycleRemotePath, renameRemotePath, resolveRemoteUploadTarget, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
-const { cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, pauseSftpJob, resumeSftpJob, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startUploadJob } = require("./sftp-jobs");
+const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemoteRecycleItem, encodeRemoteText, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, renameRemotePath, resolveRemoteUploadTarget, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
+const { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, pauseSftpJob, receiveUploadJobContent, resumeSftpJob, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream } = require("./sftp-jobs");
 const {
   appendSystemLog,
   deleteLogs,
@@ -220,34 +231,6 @@ function safeUploadName(value) {
   return path.basename(String(value || "upload.bin")).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") || "upload.bin";
 }
 
-function receiveUploadToTemp(req, filename): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const dir = path.join(DATA_DIR, "uploads");
-    fs.mkdirSync(dir, { recursive: true });
-    const safe = safeUploadName(filename);
-    const temp = path.join(dir, `${Date.now()}-${Math.random().toString(16).slice(2)}-${safe}`);
-    const out = fs.createWriteStream(temp, { flags: "wx" });
-    let size = 0;
-    let settled = false;
-    const finish = (error = null) => {
-      if (settled) return;
-      settled = true;
-      if (error) {
-        try { out.destroy(); } catch {}
-        try { fs.unlinkSync(temp); } catch {}
-        reject(error);
-      } else {
-        resolve({ path: temp, filename: safe, size });
-      }
-    };
-    req.on("data", (chunk) => { size += chunk.length; });
-    req.on("error", finish);
-    out.on("error", finish);
-    out.on("finish", () => finish());
-    req.pipe(out);
-  });
-}
-
 function send(res, status, data, headers = {}) {
   const binary = Buffer.isBuffer(data) || data instanceof Uint8Array;
   const body = Buffer.isBuffer(data)
@@ -265,6 +248,58 @@ function send(res, status, data, headers = {}) {
 
 function sendJson(res, data, status = 200) {
   send(res, status, data, { "Content-Type": "application/json; charset=utf-8" });
+}
+
+function nativeDragByteRange(value, size) {
+  const header = String(value || "").trim();
+  if (!header) return {start:0, end:Math.max(-1, size - 1), partial:false};
+  const match = /^bytes=(\d+)-(\d*)$/i.exec(header);
+  if (!match) return null;
+  const start = Number(match[1]);
+  const requestedEnd = match[2] ? Number(match[2]) : size - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || start < 0 || requestedEnd < start || start >= size) return null;
+  return {start, end:Math.min(size - 1, requestedEnd), partial:true};
+}
+
+async function streamNativeSftpDragContent(req, res, token, index) {
+  const ticket = await getNativeSftpDragTicket(token);
+  const entry = ticket.entries[Number(index)];
+  if (!entry || entry.type !== "file") return sendJson(res, {error:"拖出文件不存在"}, 404);
+  const range = nativeDragByteRange(req.headers.range, Number(entry.size || 0));
+  if (!range) return send(res, 416, "", {
+    "Content-Range":`bytes */${Math.max(0, Number(entry.size || 0))}`,
+    "Accept-Ranges":"bytes",
+    "Cache-Control":"no-store"
+  });
+  const opened = await openNativeSftpDragTicketFile(token, index, range);
+  const task = beginNativeSftpDragJob(token, ticket);
+  if (task.status === "discarded") {
+    try { opened.stream.destroy(); } catch {}
+    return sendJson(res, {error:"拖出已转为跨主机复制"}, 410);
+  }
+  trackNativeSftpDragStream(token, index, opened);
+  const headers: any = {
+    "Content-Type":"application/octet-stream",
+    "Content-Length":opened.length,
+    "Content-Disposition":`attachment; filename="${encodeURIComponent(entry.name || "download")}"`,
+    "Accept-Ranges":"bytes",
+    "Cache-Control":"no-store"
+  };
+  if (range.partial) headers["Content-Range"] = `bytes ${opened.start}-${opened.end}/${opened.total}`;
+  res.writeHead(range.partial ? 206 : 200, secureHeaders(headers));
+  let completed = false;
+  const close = () => {
+    if (completed) return;
+    completed = true;
+    try { opened.stream.destroy(); } catch {}
+  };
+  req.once("aborted", close);
+  res.once("close", close);
+  opened.stream.once("error", (error) => {
+    if (!res.headersSent) return sendJson(res, {error:error?.message || "远端文件读取失败"}, 500);
+    try { res.destroy(error); } catch {}
+  });
+  opened.stream.pipe(res);
 }
 
 function prepareSftpWriteContent(content, encoding = "utf8") {
@@ -649,6 +684,40 @@ function serveStatic(req, res, pathname) {
 
 async function handleApi(req, res, pathname) {
   if (!sameOrigin(req)) return sendJson(res, { error: "Forbidden" }, 403);
+  const nativeDragParts = pathname.split("/").filter(Boolean);
+  if (
+    req.method === "GET"
+    && nativeDragParts.length === 6
+    && nativeDragParts[0] === "api"
+    && nativeDragParts[1] === "sftp"
+    && nativeDragParts[2] === "native-drag"
+    && nativeDragParts[4] === "content"
+  ) {
+    if (!isLocalRequest(req) || !desktopIntegration) return sendJson(res, {error:"原生拖出内容只能由本机桌面端读取"}, 403);
+    return streamNativeSftpDragContent(req, res, nativeDragParts[3], Number(nativeDragParts[5]));
+  }
+  if (
+    req.method === "GET"
+    && nativeDragParts.length === 4
+    && nativeDragParts[0] === "api"
+    && nativeDragParts[1] === "sftp"
+    && nativeDragParts[2] === "native-drag"
+  ) {
+    if (!isLocalRequest(req) || !desktopIntegration) return sendJson(res, {error:"原生拖出凭据只能由本机桌面端读取"}, 403);
+    return sendJson(res, await getNativeSftpDragTicket(nativeDragParts[3]));
+  }
+  if (
+    req.method === "DELETE"
+    && nativeDragParts.length === 4
+    && nativeDragParts[0] === "api"
+    && nativeDragParts[1] === "sftp"
+    && nativeDragParts[2] === "native-drag"
+  ) {
+    if (!isLocalRequest(req) || !desktopIntegration) {
+      return sendJson(res, {error:"原生拖出凭据只能由本机桌面端使用"}, 403);
+    }
+    return sendJson(res, {ok:releaseNativeSftpDragTicket(nativeDragParts[3])});
+  }
   const securityRouteDependencies = {
     AuthenticationError, createSession, decryptStoredConnectionSecrets, disableEncryption, enableEncryption,
     encryptStoredConnectionSecrets, login, logout, publicSecuritySettings, readJson, readSecuritySettings,
@@ -1105,6 +1174,17 @@ async function handleApi(req, res, pathname) {
   }
   if (parts.length >= 3 && parts[0] === "api" && parts[1] === "sftp" && parts[2] === "jobs") {
     if (req.method === "POST" && parts.length === 4 && parts[3] === "clear-finished") return sendJson(res, clearFinishedSftpJobs());
+    if (req.method === "PUT" && parts.length === 5 && parts[4] === "content") {
+      try {
+        return sendJson(res, await receiveUploadJobContent(parts[3], req), 202);
+      } catch (error) {
+        if (error?.code === "SFTP_UPLOAD_CANCELLED") {
+          if (!res.destroyed && !res.writableEnded) return sendJson(res, {ok:true, status:"cancelled"}, 409);
+          return;
+        }
+        throw error;
+      }
+    }
     if (req.method === "POST" && parts.length === 5 && parts[4] === "cancel") return sendJson(res, cancelSftpJob(parts[3]));
     if (req.method === "POST" && parts.length === 5 && parts[4] === "pause") return sendJson(res, pauseSftpJob(parts[3]));
     if (req.method === "POST" && parts.length === 5 && parts[4] === "resume") return sendJson(res, resumeSftpJob(parts[3]));
@@ -1237,10 +1317,30 @@ async function handleApi(req, res, pathname) {
       const data = await readJson(req);
       return sendJson(res, await planRemoteUploads(connectionId, data.path || ".", data.filenames || []));
     }
+    if (req.method === "POST" && parts[4] === "native-drag") {
+      if (!isLocalRequest(req) || !desktopIntegration) return sendJson(res, {error:"拖出到本机只能在桌面版中使用"}, 403);
+      const data = await readJson(req);
+      return sendJson(res, await createNativeSftpDragTicket(connectionId, data.paths || [], {
+        platform:String(data.platform || process.platform)
+      }));
+    }
     if (req.method === "POST" && parts[4] === "stage-drag") {
       if (!isLocalRequest(req) || !desktopIntegration) return sendJson(res, {error:"拖出到本机仅能在桌面版中使用"}, 403);
       const data = await readJson(req);
       return sendJson(res, await stageSftpPaths(connectionId, data.paths || []));
+    }
+    if (req.method === "POST" && parts[4] === "upload-job") {
+      const data = await readJson(req);
+      const dir = String(data.path || ".");
+      const filename = safeUploadName(data.filename || "upload.bin");
+      const conflict = ["overwrite", "rename"].includes(data.conflict) ? data.conflict : "error";
+      const target = await resolveRemoteUploadTarget(connectionId, dir, filename, conflict);
+      if (target.exists && conflict === "error") return sendJson(res, {error:"目标目录已存在同名项目", conflict:true, name:target.name}, 409);
+      const result = startUploadReceiveJob(connectionId, target.path, filename, Math.max(0, Number(data.size || 0)), {
+        conflict,
+        sizeKnown:Object.prototype.hasOwnProperty.call(data, "size")
+      });
+      return sendJson(res, {...result, remote_path:target.path, renamed:target.renamed}, 201);
     }
     if (req.method === "POST" && parts[4] === "upload") {
       const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
@@ -1249,10 +1349,21 @@ async function handleApi(req, res, pathname) {
       const conflict = ["overwrite", "rename"].includes(url.searchParams.get("conflict") || "") ? url.searchParams.get("conflict") : "error";
       const target = await resolveRemoteUploadTarget(connectionId, dir, filename, conflict);
       if (target.exists && conflict === "error") return sendJson(res, { error:"目标目录已存在同名项目", conflict:true, name:target.name }, 409);
-      const upload = await receiveUploadToTemp(req, filename);
-      const result = startUploadJob(connectionId, upload.path, target.path, upload.size);
-      invalidateRemoteDirectoryCache(connectionId);
-      return sendJson(res, { ...result, remote_path:target.path, renamed:target.renamed }, 202);
+      const started = startUploadReceiveJob(connectionId, target.path, filename, Math.max(0, Number(req.headers["content-length"] || 0)), {
+        conflict,
+        sizeKnown:req.headers["content-length"] !== undefined
+      });
+      try {
+        const result = await receiveUploadJobContent(started.id, req);
+        invalidateRemoteDirectoryCache(connectionId);
+        return sendJson(res, {...result, remote_path:target.path, renamed:target.renamed}, 202);
+      } catch (error) {
+        if (error?.code === "SFTP_UPLOAD_CANCELLED") {
+          if (!res.destroyed && !res.writableEnded) return sendJson(res, {ok:true, status:"cancelled", id:started.id}, 409);
+          return;
+        }
+        throw error;
+      }
     }
     const data = await readJson(req);
     if (req.method === "POST" && parts[4] === "directory-size") {
@@ -1281,11 +1392,10 @@ async function handleApi(req, res, pathname) {
     }
     if (req.method === "POST" && parts[4] === "delete") {
       const recycleEnabled = readRuntimeSettings(RUNTIME_SETTINGS_FILE).sftp_recycle_bin_enabled;
-      const result = recycleEnabled
-        ? await recycleRemotePath(connectionId, data.path)
-        : await deleteRemotePath(connectionId, data.path);
+      const requestedPaths = Array.isArray(data.paths) ? data.paths : [data.path];
+      const result = deletePathsJob(connectionId, requestedPaths, recycleEnabled);
       invalidateRemoteDirectoryCache(connectionId);
-      return sendJson(res, result);
+      return sendJson(res, result, 202);
     }
     if (req.method === "POST" && parts[4] === "rename") {
       const result = await renameRemotePath(connectionId, data.from, data.to);
@@ -1299,7 +1409,7 @@ async function handleApi(req, res, pathname) {
     }
     if (req.method === "POST" && parts[4] === "cross-copy") {
       const targetConnectionId = Number(data.target_connection_id);
-      const result = crossCopyJob(connectionId, targetConnectionId, data.paths || [], data.target || ".", data.conflict || "error");
+      const result = crossCopyJob(connectionId, targetConnectionId, data.paths || [], data.target || ".", data.conflict || "error", data.entries || []);
       invalidateRemoteDirectoryCache(targetConnectionId);
       return sendJson(res, result, 202);
     }
@@ -1776,6 +1886,11 @@ function completeStartup(binding) {
   const urls = urlsForHosts(actualHosts, actualPort);
   fs.writeFileSync(args.pidFile, String(process.pid));
   fs.writeFileSync(WEB_URL_FILE, urls.localUrl);
+  writeRuntimeSettings(RUNTIME_SETTINGS_FILE, {
+    ...readRuntimeSettings(RUNTIME_SETTINGS_FILE),
+    listen_hosts: args.requested_hosts,
+    listen_port: actualPort
+  });
   fs.writeFileSync(WEB_INFO_FILE, JSON.stringify({
     pid: process.pid,
     host: args.host,
@@ -1790,11 +1905,6 @@ function completeStartup(binding) {
     urls: urls.urls,
     started_at: new Date().toISOString()
   }, null, 2), "utf8");
-  writeRuntimeSettings(RUNTIME_SETTINGS_FILE, {
-    ...readRuntimeSettings(RUNTIME_SETTINGS_FILE),
-    listen_hosts: args.requested_hosts,
-    listen_port: actualPort
-  });
   writeStartupStatus({ state:"starting", local_url:urls.localUrl, lan_urls:urls.lanUrls, host:args.host, port:actualPort, requested_hosts:args.requested_hosts, requested_port:args.requested_port, actual_hosts:actualHosts, actual_port:actualPort });
   console.log(`TunnelDesk listening on http://${args.host}:${actualPort}`);
   if (urls.lanUrls.length) console.log(`TunnelDesk LAN URLs:\n${urls.lanUrls.map((url) => `  ${url}`).join("\n")}`);
@@ -1918,4 +2028,12 @@ if (require.main === module) {
   process.on("SIGHUP", () => { shutdown(); });
 }
 
-module.exports = { startServer, shutdown, parseArgs, runtimeSettingsView, checkRuntimeSettings, prepareSftpWriteContent };
+module.exports = {
+  __nativeDragByteRange:nativeDragByteRange,
+  startServer,
+  shutdown,
+  parseArgs,
+  runtimeSettingsView,
+  checkRuntimeSettings,
+  prepareSftpWriteContent
+};

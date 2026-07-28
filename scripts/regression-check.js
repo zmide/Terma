@@ -108,11 +108,12 @@ async function main() {
   const sftpEncodingSource = read("src/sftp-encoding.ts");
   const sftpFrontend = read("public/app-sftp.js");
   const sftpCss = read("public/app.css");
+  const nativeSftpDragDesktopSource = read("desktop/native-sftp-drag.js");
   ok("SFTP 目录枚举不依赖 GNU find 参数", !sftpBackend.includes("-maxdepth") && !sftpBackend.includes("-mindepth") && !sftpBackend.includes("-printf"));
-  ok("SFTP 目录枚举兼容 GNU 与 BSD stat", sftpBackend.includes('stat -c "%s %Y %a %U %G"') && sftpBackend.includes('stat -f "%z %m %Lp %Su %Sg"') && sftpBackend.includes("find . ! -name .") && sftpBackend.includes("-prune -exec"));
+  ok("SFTP 目录枚举兼容 GNU/BSD stat 并展示符号链接目标大小", sftpBackend.includes('stat -c "%s %Y %a %U %G"') && sftpBackend.includes('stat -f "%z %m %Lp %Su %Sg"') && sftpBackend.includes('stat -L -c "%s %Y %a %U %G"') && sftpBackend.includes('stat -L -f "%z %m %Lp %Su %Sg"') && sftpBackend.includes("find . ! -name .") && sftpBackend.includes("-prune -exec") && sftpFrontend.includes("entry.is_symlink"));
   ok("SFTP 命令不依赖远端登录 Shell", sftpBackend.includes("const portableCommand = `sh -c ${shellQuote(command)}`") && read("src/sftp-jobs.ts").includes("const portableCommand = `sh -c ${shellQuote(command)}`"));
   ok("SFTP 复用持久 SSH2 会话并在连接丢失后自动恢复", sftpSessionSource.includes("const sessions = new Map()") && sftpSessionSource.includes("record.client.exec") && sftpSessionSource.includes("for (let attempt = 0; attempt < 2") && sftpSessionSource.includes("await connectSftpSession(connection.id, {force:attempt > 0})") && sftpSessionSource.includes("record.manualDisconnected = false") && sftpSessionServerSource.includes('parts[4] === "session"') && sftpSessionServerSource.includes("closeAllSftpSessions()") && sftpFrontend.includes("refreshActiveSftpSessionStatus") && sftpFrontend.includes("const sftpDisconnectRequests = new Map()") && sftpFrontend.includes("if (disconnecting) await disconnecting.catch"));
-  ok("SFTP 普通目录列表隐藏专用回收站", sftpBackend.includes('! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} -prune'));
+  ok("SFTP 普通目录列表隐藏内部目录和上传暂存文件", sftpBackend.includes('! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)}') && sftpBackend.includes('! -name ${shellQuote(".tunneldesk-upload-*.part")}'));
   ok("SFTP 单次 stat 读取大小、时间和权限元数据", sftpBackend.includes('meta=$(stat -c "%s %Y %a %U %G"') && sftpBackend.includes('meta=$(stat -f "%z %m %Lp %Su %Sg"') && !sftpBackend.includes('size=$(stat'));
   ok("SFTP 支持单项/多项压缩和权限设置", sftpBackend.includes("normalizeRemotePermissionRequest") && sftpBackend.includes("buildRemotePermissionCommand") && read("src/sftp-jobs.ts").includes("normalizeCompressionRequest") && sftpFrontend.includes("compressSftpSelection") && sftpFrontend.includes("openSftpPermissionsForSelection"));
   ok("SFTP 大目录使用服务端分页与快照", sftpBackend.includes("paginateRemoteEntries") && sftpBackend.includes("DIRECTORY_CACHE_TTL_MS") && sftpFrontend.includes("loadSftpPage") && sftpFrontend.includes("sftp-pager"));
@@ -123,6 +124,34 @@ async function main() {
   ok("SFTP 拖拽传输、冲突处理、批量下载和保存后差异预览可用", sftpSessionSource.includes("stageSftpPaths") && sftpSessionSource.includes("deliverSftpPaths") && read("desktop/main.js").includes("tunneldesk:sftp-start-drag") && sftpFrontend.includes("handleSftpDrop") && sftpFrontend.includes("dropSftpItemsOnTab") && sftpFrontend.includes("sftpEditorDiffBaselines") && sftpFrontend.includes("downloadSftpSelection") && sftpFrontend.includes("confirmSftpDownloadNotice") && sftpFrontend.includes("queueSftpDownload") && sftpFrontend.includes("conflict = await sftpConflictChoice") && !sftpFrontend.includes("sftpClipboard.action") && sftpSessionServerSource.includes('parts[4] === "download-batch"') && sftpSessionServerSource.includes('parts[4] === "upload-plan"'));
   ok("SFTP 列表展示权限/所有者并支持无感后台同步", sftpFrontend.includes("权限 / 所有者") && sftpFrontend.includes("captureSftpViewState") && sftpFrontend.includes("restoreSftpViewState") && sftpFrontend.includes("completedSftpMutationForCurrentView") && sftpFrontend.includes("sftpPendingDirectoryRefreshes") && sftpFrontend.includes('list.classList.toggle("is-refreshing", keepContents)'));
   ok("SFTP 任务仅展示进行中与失败并提供历史记录", sftpFrontend.includes('["running", "pending", "paused", "failed"].includes(job.status)') && sftpFrontend.includes('["done", "cancelled"].includes(job.status)') && sftpFrontend.includes("showSftpJobHistory") && !sftpFrontend.includes("刷新目录</button>"));
+  ok("SFTP 上传任务使用悬浮进度且任务操作与状态一致", !sftpFrontend.includes("个 SFTP 上传任务") && sftpFrontend.includes('const deletable = ["paused", "failed", "done", "cancelled"].includes(job.status)'));
+  ok("SFTP 原生拖出取消等待系统终态后再清理", read("src/sftp-jobs.ts").includes('job.phase = "cancelling"') && read("src/sftp-jobs.ts").includes("accepted = Boolean(nativeDragCancelHandler") && sftpFrontend.includes("active[0].can_cancel !== false") && sftpFrontend.includes("job.can_cancel !== false"));
+  ok("SFTP 后台任务创建不重复弹出加入提示", !/已加入[\s\S]{0,120}任务/.test(sftpFrontend));
+  ok("SFTP 上传阶段使用用户视角文案", sftpFrontend.includes('phase === "receiving") return "正在准备上传"') && sftpFrontend.includes('phase === "uploading") return "正在上传到远端"') && !sftpFrontend.includes('return "正在接收"'));
+  ok(
+    "SFTP 悬浮任务进度保留稳定 spinner 节点",
+    sftpFrontend.includes('if (!box.querySelector(".sftp-task-float-head")) {')
+      && sftpFrontend.includes('if (statusIcon && box.dataset.statusIcon !== statusIconKind) {')
+      && sftpFrontend.includes("titleNode.textContent = title")
+      && sftpFrontend.includes("detailNode.textContent = detail")
+      && sftpFrontend.includes('progressBar.style.width = determinate ? `${percent}%` : ""')
+  );
+  ok("SFTP 本机接收与远端上传共享同一后台任务", sftpFrontend.includes('/sftp/upload-job') && sftpFrontend.includes('/api/sftp/jobs/${encodeURIComponent(started.id)}/content') && sftpFrontend.includes("sftpUploadRequests") && !sftpFrontend.includes("正在接收 ${filename}") && read("src/server.ts").includes("startUploadReceiveJob") && read("src/server.ts").includes("receiveUploadJobContent"));
+  ok("SFTP 上传通过远端暂存文件原子完成且取消会清理", read("src/sftp-jobs.ts").includes("remote_temp_path") && read("src/sftp-jobs.ts").includes("uploadRemoteCommitCommand") && read("src/sftp-jobs.ts").includes("cleanupRemoteUploadArtifact") && read("src/sftp-jobs.ts").includes("invalidateRemoteDirectoryCache(job.connection_id)"));
+  ok("通知与 SFTP 悬浮任务图标使用独立居中容器", read("public/app-utils.js").includes('class="toast-copy"') && sftpCss.includes(".toast-head > .toast-icon") && sftpCss.includes(".sftp-task-float-open > .sftp-task-float-icon") && sftpCss.includes(".sftp-task-spinner") && sftpCss.includes(".sftp-task-float-actions") && sftpCss.includes("place-items:center") && !sftpCss.includes(".toast-head strong, .toast-head span") && !sftpCss.includes(".sftp-task-float strong, .sftp-task-float span"));
+  ok(
+    "Linux 缺少 FUSE 时提示原因并保留兼容拖出",
+    sftpFrontend.includes("function sftpNativeDragFallbackInfo()")
+      && sftpFrontend.includes('capabilities?.platform !== "linux" || capabilities?.sftpExternalDrag !== "staged"')
+      && sftpFrontend.includes("/dev/fuse is unavailable")
+      && sftpFrontend.includes("cannot access /dev/fuse")
+      && sftpFrontend.includes("fusermount3 is unavailable")
+      && sftpFrontend.includes("Linux 一次拖出当前不可用")
+      && sftpFrontend.includes("当前仍可使用兼容拖出")
+      && (sftpFrontend.match(/showSftpNativeDragFallbackNotice\(\)/g) || []).length >= 2
+      && nativeSftpDragDesktopSource.includes('sftpExternalDrag: adapter.probe.available ? "streaming" : "staged"')
+      && nativeSftpDragDesktopSource.includes('sftpNativeDragReason: adapter.probe.available ? ""')
+  );
   ok("SFTP 回收站默认关闭且支持恢复和永久删除", sftpBackend.includes('SFTP_RECYCLE_DIRECTORY = ".tunneldesk-recycle-bin"') && sftpBackend.includes("buildRestoreRemoteRecycleCommand") && sftpBackend.includes("buildDeleteRemoteRecycleCommand") && sftpFrontend.includes("openSftpRecycleBin") && read("src/runtime-settings.ts").includes("sftp_recycle_bin_enabled"));
   ok("SFTP 权限命令兼容 Linux 与 macOS", sftpBackend.includes("permissionPathOperand") && sftpBackend.includes("chgrp") && !sftpBackend.includes("chown ${recursiveFlag}${shellQuote(`${normalized.owner}:${normalized.group}`)} --") && !sftpBackend.includes("chmod ${recursiveFlag}${normalized.mode} --"));
   ok("终端返回按钮仅在移动布局显示", sftpCss.includes(".terminal-title-row > .terminal-mobile-back { display:none") && sftpCss.includes(".terminal-title-row > .terminal-mobile-back { display:inline-flex"));
@@ -181,7 +210,7 @@ async function main() {
   ok("SSH 登录方式隔离认证字段", frontend.includes('identity_file:passwordAuth ? ""') && frontend.includes('ssh_password:passwordAuth ?') && frontend.includes('control.disabled = password') && frontend.includes('control.disabled = !password'));
   ok("通知首次加载只建立游标", frontend.includes("initializeNotificationCursor") && frontend.includes('api("/api/notifications?since=0")') && frontend.includes("notificationCursorInitialized = true"));
   ok("SFTP 读取响应不缓存敏感内容", read("src/server.ts").includes('"Cache-Control": "no-store"'));
-  ok("SFTP 删除由服务端设置决定是否进入回收站", serverSource.includes("const recycleEnabled = readRuntimeSettings(RUNTIME_SETTINGS_FILE).sftp_recycle_bin_enabled") && serverSource.includes("await recycleRemotePath(connectionId, data.path)") && serverSource.includes('parts[4] === "trash" && parts[5] === "restore"'));
+  ok("SFTP 删除由服务端设置决定是否进入回收站并使用后台任务", serverSource.includes("const recycleEnabled = readRuntimeSettings(RUNTIME_SETTINGS_FILE).sftp_recycle_bin_enabled") && serverSource.includes("deletePathsJob(connectionId, requestedPaths, recycleEnabled)") && serverSource.includes("Array.isArray(data.paths) ? data.paths : [data.path]") && serverSource.includes("return sendJson(res, result, 202)") && read("src/sftp-jobs.ts").includes('progress_unit: "items"') && serverSource.includes('parts[4] === "trash" && parts[5] === "restore"'));
   ok("关于页与开源许可弹窗已接入", settingsFrontend.includes('id="settings-about"') && settingsFrontend.includes("查看开源许可正文") && settingsFrontend.includes("showLicenseModal") && serverSource.includes('pathname === "/api/about"'));
   ok("设置页支持 GitHub Releases 更新检查", settingsFrontend.includes("refreshUpdateStatus") && settingsFrontend.includes("查看 Release") && updateRouteSource.includes('pathname === "/api/updates/check"'));
   ok("更新完成后按当前安装类型隔离状态并提供安全操作", settingsFrontend.includes("openDownloadedUpdateDirectory") && settingsFrontend.includes("打开下载目录") && settingsFrontend.includes("重新下载") && settingsFrontend.includes("安装完成并启动新版本后") && settingsFrontend.includes("download.asset_name === download.selected_asset_name") && settingsFrontend.includes('download.package_type === "portable"') && updateRouteSource.includes('pathname === "/api/updates/open-directory"') && updateRouteSource.includes('state.package_type === "portable"') && desktopSource.includes("shell.showItemInFolder(target)") && read("src/update-installer.ts").includes("matchesCurrentTarget") && read("src/update-installer.ts").includes("cleanupInstalledPackage") && serverSource.includes("scheduleInstalledUpdateCleanup"));

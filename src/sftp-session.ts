@@ -11,7 +11,13 @@ const sessions = new Map();
 const SFTP_DRAG_ROOT = path.join(DATA_DIR, "sftp-drag");
 const SFTP_DRAG_TTL_MS = 6 * 60 * 60 * 1000;
 const SFTP_DRAG_CLEAR_GRACE_MS = 10 * 60 * 1000;
+const SFTP_NATIVE_DRAG_TICKET_TTL_MS = 70 * 60 * 1000;
+const SFTP_NATIVE_DRAG_MAX_TOP_LEVEL = 100;
+const SFTP_NATIVE_DRAG_MAX_ENTRIES = 10000;
+const SFTP_NATIVE_DRAG_MAX_TICKETS = 64;
+const SFTP_NATIVE_DRAG_MAX_TICKETS_PER_CONNECTION = 8;
 const activeSftpDragStaging = new Map();
+const nativeSftpDragTickets = new Map();
 
 function connectionFingerprint(connection) {
   return JSON.stringify([
@@ -133,6 +139,7 @@ function sftpSessionStatus(connectionId) {
 function closeAllSftpSessions() {
   for (const record of sessions.values()) endSessionRecord(record);
   sessions.clear();
+  nativeSftpDragTickets.clear();
 }
 
 function safeLocalEntryName(value) {
@@ -148,6 +155,487 @@ function availableLocalEntry(parent, filename) {
   let target = path.join(parent, `${parsed.name}${parsed.ext}`);
   for (let index = 1; fs.existsSync(target); index += 1) target = path.join(parent, `${parsed.name} (${index})${parsed.ext}`);
   return target;
+}
+
+function portableDragEntryName(value, platform: string = process.platform) {
+  const source = String(value || "download").normalize("NFC");
+  let normalized = source.replace(/[\x00/\\]/g, "_");
+  if (platform === "win32") {
+    normalized = normalized.replace(/[<>:"|?*\x00-\x1f]/g, "_").replace(/[. ]+$/g, "");
+    if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(normalized)) normalized = `_${normalized}`;
+  }
+  return normalized && normalized !== "." && normalized !== ".." ? normalized : "download";
+}
+
+function availablePortableDragName(used, filename, platform: string = process.platform) {
+  const safeName = portableDragEntryName(filename, platform);
+  const parsed = path.posix.parse(safeName);
+  let candidate = safeName;
+  for (let index = 1; used.has(candidate.toLocaleLowerCase()); index += 1) {
+    candidate = `${parsed.name} (${index})${parsed.ext}`;
+  }
+  used.add(candidate.toLocaleLowerCase());
+  return candidate;
+}
+
+function normalizedNativeDragPaths(remotePaths) {
+  const source = [...new Set((Array.isArray(remotePaths) ? remotePaths : [])
+    .map(item => String(item || "").replace(/\\/g, "/"))
+    .filter(Boolean)
+    .map(item => path.posix.normalize(item)))];
+  if (!source.length || source.length > SFTP_NATIVE_DRAG_MAX_TOP_LEVEL) {
+    throw new Error(`一次最多拖出 ${SFTP_NATIVE_DRAG_MAX_TOP_LEVEL} 个文件或目录`);
+  }
+  if (source.some(item => item.includes("\0") || item.length > 4096)) throw new Error("远端路径无效或过长");
+  return source.filter((item, index) => !source.some((parent, parentIndex) => (
+    parentIndex !== index
+    && item !== parent
+    && item.startsWith(`${parent.replace(/\/+$/, "")}/`)
+  )));
+}
+
+function cleanupNativeSftpDragTickets(now = Date.now()) {
+  for (const [token, ticket] of nativeSftpDragTickets) {
+    if (Number(ticket.expiresAt || 0) <= now) nativeSftpDragTickets.delete(token);
+  }
+}
+
+function nativeSftpDragTicketComplete(ticket) {
+  return ticket?.deliveredItemIds instanceof Set
+    && ticket.deliveredItemIds.size >= (ticket.topLevel || []).length;
+}
+
+function evictOldestNativeSftpDragTicket(tickets) {
+  const oldest = tickets
+    .filter(ticket => !nativeSftpDragTicketComplete(ticket))
+    .sort((left, right) => Number(left.createdAt || 0) - Number(right.createdAt || 0))[0];
+  if (oldest) nativeSftpDragTickets.delete(oldest.token);
+  return Boolean(oldest);
+}
+
+function enforceNativeSftpDragTicketLimits(connectionId) {
+  const id = Number(connectionId);
+  const forConnection = () => [...nativeSftpDragTickets.values()]
+    .filter(ticket => Number(ticket.connectionId) === id && !nativeSftpDragTicketComplete(ticket));
+  while (forConnection().length >= SFTP_NATIVE_DRAG_MAX_TICKETS_PER_CONNECTION) {
+    if (!evictOldestNativeSftpDragTicket(forConnection())) break;
+  }
+  const unfinished = () => [...nativeSftpDragTickets.values()]
+    .filter(ticket => !nativeSftpDragTicketComplete(ticket));
+  while (unfinished().length >= SFTP_NATIVE_DRAG_MAX_TICKETS) {
+    if (!evictOldestNativeSftpDragTicket(unfinished())) break;
+  }
+}
+
+function nativeSftpDragTicket(token, options: any = {}) {
+  cleanupNativeSftpDragTickets();
+  const key = String(token || "");
+  const ticket = nativeSftpDragTickets.get(key);
+  if (!ticket) throw new Error("拖出凭据已失效，请重新拖动");
+  if (options.touch !== false) ticket.expiresAt = Date.now() + SFTP_NATIVE_DRAG_TICKET_TTL_MS;
+  return ticket;
+}
+
+function nativeSftpDragTicketView(ticket) {
+  const deliveredItemIds = ticket.deliveredItemIds instanceof Set
+    ? [...ticket.deliveredItemIds]
+    : [];
+  return {
+    token: ticket.token,
+    connection_id: ticket.connectionId,
+    platform: ticket.platform,
+    created_at: ticket.createdAt,
+    expires_at: ticket.expiresAt,
+    ready:Boolean(Array.isArray(ticket.entries)),
+    top_level:(ticket.topLevel || []).map((entry) => ({...entry})),
+    entries:(ticket.entries || []).map((entry, index) => ({
+      index,
+      name: entry.name,
+      relative_path: entry.relativePath,
+      type: entry.type,
+      size: entry.size,
+      modified_at: entry.modifiedAt,
+      mode: entry.mode,
+      is_symlink:Boolean(entry.isSymlink),
+      link_size:Math.max(0, Number(entry.linkSize || 0)),
+      top_level: entry.topLevel,
+      top_level_id: entry.topLevelId
+    })),
+    delivered_item_ids:deliveredItemIds,
+    delivered_count:deliveredItemIds.length,
+    delivery_complete:deliveredItemIds.length >= (ticket.topLevel || []).length
+  };
+}
+
+async function appendNativeSftpDragEntry(channel, remotePath, relativePath, ticket, entries, topLevel = false, topLevelId = "") {
+  if (entries.length >= SFTP_NATIVE_DRAG_MAX_ENTRIES) {
+    throw new Error(`一次拖出最多处理 ${SFTP_NATIVE_DRAG_MAX_ENTRIES} 个文件和目录`);
+  }
+  const linkStats: any = await sftpLstat(channel, remotePath);
+  const symbolicLink = Boolean(linkStats?.isSymbolicLink?.());
+  let stats: any = linkStats;
+  if (symbolicLink) {
+    try {
+      stats = await sftpStat(channel, remotePath);
+    } catch {
+      throw new Error(`符号链接目标不存在或无法读取：${remotePath}`);
+    }
+  }
+  const directory = Boolean(stats?.isDirectory?.());
+  const manifestEntry = {
+    name:path.posix.basename(relativePath),
+    relativePath,
+    remotePath,
+    type:directory ? "directory" : "file",
+    size:directory ? 0 : Math.max(0, Number(stats?.size || 0)),
+    modifiedAt:Math.max(0, Number(stats?.mtime || 0)) * 1000,
+    mode:Number(stats?.mode || 0),
+    isSymlink:symbolicLink,
+    linkSize:symbolicLink ? Math.max(0, Number(linkStats?.size || 0)) : 0,
+    topLevel:Boolean(topLevel),
+    topLevelId:String(topLevelId || "")
+  };
+  entries.push(manifestEntry);
+  if (topLevel) {
+    const source = (ticket.topLevel || []).find(item => String(item.id) === String(topLevelId));
+    if (source) {
+      source.type = manifestEntry.type;
+      source.size = manifestEntry.size;
+      source.modified_at = manifestEntry.modifiedAt;
+      source.metadata_known = true;
+      source.is_symlink = manifestEntry.isSymlink;
+      source.link_size = manifestEntry.linkSize;
+    }
+  }
+  if (!directory) return;
+  const children: any[] = await sftpReaddir(channel, remotePath) as any[];
+  const usedNames = new Set();
+  for (const child of children) {
+    const rawName = String(child?.filename || "");
+    if (!rawName || rawName === "." || rawName === "..") continue;
+    const localName = availablePortableDragName(usedNames, rawName, ticket.platform);
+    await appendNativeSftpDragEntry(
+      channel,
+      path.posix.join(remotePath, rawName),
+      path.posix.join(relativePath, localName),
+      ticket,
+      entries,
+      false,
+      topLevelId
+    );
+  }
+}
+
+function reserveNativeSftpDragTicket(connectionId, remotePaths, options: any = {}) {
+  const paths = normalizedNativeDragPaths(remotePaths);
+  const platform = ["win32", "darwin", "linux"].includes(String(options.platform || ""))
+    ? String(options.platform)
+    : process.platform;
+  cleanupNativeSftpDragTickets();
+  enforceNativeSftpDragTicketLimits(connectionId);
+  const token = crypto.randomBytes(32).toString("base64url");
+  const usedNames = new Set();
+  const sourceEntries = Array.isArray(options.entries) ? options.entries : [];
+  const byPath = new Map<string, any>(sourceEntries.map(item => [path.posix.normalize(String(item?.path || "").replace(/\\/g, "/")), item]));
+  const ticket: any = {
+    token,
+    connectionId:Number(connectionId),
+    platform,
+    remotePaths:paths,
+    entries:null,
+    manifestPromise:null,
+    topLevel:paths.map((remotePath, index) => {
+      const source = byPath.get(remotePath);
+      const rawName = String(source?.name || path.posix.basename(remotePath.replace(/\/+$/, "")) || "download");
+      return {
+        id:String(index),
+        name:availablePortableDragName(usedNames, rawName, platform),
+        remote_path:remotePath,
+        type:source?.type === "directory" ? "directory" : "file",
+        size:Math.max(0, Number(source?.size || 0)),
+        modified_at:Math.max(0, Number(source?.mtime || 0)),
+        metadata_known:Boolean(source?.metadataKnown)
+      };
+    }),
+    deliveredItemIds:new Set(),
+    createdAt:Date.now(),
+    expiresAt:Date.now() + SFTP_NATIVE_DRAG_TICKET_TTL_MS
+  };
+  nativeSftpDragTickets.set(token, ticket);
+  return nativeSftpDragTicketView(ticket);
+}
+
+async function ensureNativeSftpDragManifest(ticket) {
+  if (ticket.manifestPromise) return ticket.manifestPromise;
+  if (Array.isArray(ticket.entries)) return ticket;
+  const manifestPromise = (async () => {
+    let channel: any = null;
+    const entries = [];
+    try {
+      channel = await openSftpChannel(ticket.connectionId);
+      for (const topLevel of ticket.topLevel) {
+        await appendNativeSftpDragEntry(channel, topLevel.remote_path, topLevel.name, ticket, entries, true, topLevel.id);
+      }
+      ticket.entries = entries;
+      return ticket;
+    } catch (error) {
+      ticket.entries = null;
+      throw error;
+    } finally {
+      ticket.manifestPromise = null;
+      try { channel?.end(); } catch {}
+    }
+  })();
+  ticket.manifestPromise = manifestPromise;
+  return manifestPromise;
+}
+
+async function createNativeSftpDragTicket(connectionId, remotePaths, options: any = {}) {
+  const reserved = reserveNativeSftpDragTicket(connectionId, remotePaths, options);
+  return getNativeSftpDragTicket(reserved.token);
+}
+
+async function getNativeSftpDragTicket(token) {
+  const ticket = nativeSftpDragTicket(token);
+  await ensureNativeSftpDragManifest(ticket);
+  return nativeSftpDragTicketView(ticket);
+}
+
+async function openNativeSftpDragTicketFile(token, index, options: any = {}) {
+  const ticket = nativeSftpDragTicket(token);
+  await ensureNativeSftpDragManifest(ticket);
+  const entry = ticket.entries[Number(index)];
+  if (!entry || entry.type !== "file") throw new Error("拖出文件不存在");
+  const size = Math.max(0, Number(entry.size || 0));
+  const start = Math.max(0, Math.min(size, Number(options.start || 0)));
+  const requestedEnd = options.end === undefined || options.end === null ? size - 1 : Number(options.end);
+  const end = Math.max(start - 1, Math.min(size - 1, requestedEnd));
+  const channel: any = await openSftpChannel(ticket.connectionId);
+  let stream;
+  try {
+    if (size === 0 || end < start) {
+      stream = new PassThrough();
+      stream.end();
+    } else {
+      stream = channel.createReadStream(entry.remotePath, {start, end, autoClose:true});
+    }
+  } catch (error) {
+    try { channel?.end(); } catch {}
+    throw error;
+  }
+  const close = () => {
+    try { channel?.end(); } catch {}
+  };
+  stream.once("close", close);
+  stream.once("end", close);
+  stream.once("error", close);
+  return {
+    stream,
+    entry:nativeSftpDragTicketView(ticket).entries[Number(index)],
+    start,
+    end,
+    length:Math.max(0, end - start + 1),
+    total:size
+  };
+}
+
+function validateNativeSftpDragTarget(promisedName, targetPath, targetDirectory) {
+  const requestedDirectory = String(targetDirectory || "").trim();
+  const requestedTarget = String(targetPath || "").trim();
+  if (!requestedDirectory || !path.isAbsolute(requestedDirectory)) {
+    throw new Error("Finder 提供的目标目录无效");
+  }
+  if (!requestedTarget || !path.isAbsolute(requestedTarget)) {
+    throw new Error("Finder 提供的目标路径无效");
+  }
+  const directory = path.resolve(requestedDirectory);
+  const target = path.resolve(requestedTarget);
+  const promised = String(promisedName || "").normalize("NFC");
+  const actualName = path.basename(target);
+  if (!promised) throw new Error("拖出文件名称无效");
+  if (path.dirname(target) !== directory) {
+    throw new Error("Finder 提供的目标路径不在指定目录内");
+  }
+  const stats = fs.statSync(directory, {throwIfNoEntry:false});
+  if (!stats?.isDirectory()) throw new Error("Finder 提供的目标目录不存在");
+  if (fs.existsSync(target)) throw new Error("Finder 提供的目标路径已存在");
+  return {
+    directory,
+    target,
+    name:actualName,
+    promisedName:promised,
+    renamed:actualName.normalize("NFC") !== promised
+  };
+}
+
+function nativeSftpDragCancelledError() {
+  const error: any = new Error("SFTP 拖出已取消");
+  error.code = "SFTP_NATIVE_DRAG_CANCELLED";
+  error.cancelled = true;
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfNativeSftpDragCancelled(signal: any) {
+  if (signal?.aborted) throw nativeSftpDragCancelledError();
+}
+
+function sftpReadToExclusiveFile(channel, remotePath, localPath, signal: any = null, onProgress: any = null) {
+  return new Promise((resolve, reject) => {
+    let input;
+    let output;
+    let ownsTarget = false;
+    let settled = false;
+    const onAbort = () => finish(nativeSftpDragCancelledError());
+    const removePartialTarget = () => {
+      if (!ownsTarget) return;
+      try { fs.rmSync(localPath, {force:true}); } catch {}
+    };
+    const finish = (error = null) => {
+      if (settled) return;
+      settled = true;
+      try { signal?.removeEventListener?.("abort", onAbort); } catch {}
+      if (error) {
+        try { input?.destroy(); } catch {}
+        try { output?.destroy(); } catch {}
+        removePartialTarget();
+        reject(error);
+      } else {
+        resolve(undefined);
+      }
+    };
+    try {
+      throwIfNativeSftpDragCancelled(signal);
+      signal?.addEventListener?.("abort", onAbort, {once:true});
+      throwIfNativeSftpDragCancelled(signal);
+    } catch (error) {
+      finish(error);
+      return;
+    }
+    try {
+      fs.mkdirSync(path.dirname(localPath), {recursive:true});
+      output = fs.createWriteStream(localPath, {flags:"wx"});
+      output.once("error", finish);
+      output.once("finish", () => finish());
+      output.once("open", () => {
+        ownsTarget = true;
+        if (settled) {
+          try { output?.destroy(); } catch {}
+          removePartialTarget();
+          return;
+        }
+        try {
+          throwIfNativeSftpDragCancelled(signal);
+          input = channel.createReadStream(remotePath, {autoClose:true});
+          input.once("error", finish);
+          if (typeof onProgress === "function") {
+            input.on("data", (chunk) => {
+              const bytes = Math.max(0, Number(chunk?.length || 0));
+              if (!bytes) return;
+              try { onProgress(bytes); } catch {}
+            });
+          }
+          input.pipe(output);
+        } catch (error) {
+          finish(error);
+        }
+      });
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+async function downloadNativeSftpPromiseEntry(channel, remotePath, localPath, counter, signal: any = null, onProgress: any = null) {
+  throwIfNativeSftpDragCancelled(signal);
+  counter.value += 1;
+  if (counter.value > SFTP_NATIVE_DRAG_MAX_ENTRIES) {
+    throw new Error(`一次拖出最多处理 ${SFTP_NATIVE_DRAG_MAX_ENTRIES} 个文件和目录`);
+  }
+  const linkStats: any = await sftpLstat(channel, remotePath);
+  const stats: any = linkStats?.isSymbolicLink?.()
+    ? await sftpStat(channel, remotePath)
+    : linkStats;
+  throwIfNativeSftpDragCancelled(signal);
+  if (!stats?.isDirectory?.()) {
+    await sftpReadToExclusiveFile(channel, remotePath, localPath, signal, onProgress);
+    return "file";
+  }
+  fs.mkdirSync(localPath);
+  try {
+    const entries: any[] = await sftpReaddir(channel, remotePath) as any[];
+    const usedNames = new Set();
+    for (const entry of entries) {
+      const name = String(entry?.filename || "");
+      if (!name || name === "." || name === "..") continue;
+      const localName = availablePortableDragName(usedNames, name, "darwin");
+      await downloadNativeSftpPromiseEntry(
+        channel,
+        path.posix.join(remotePath, name),
+        path.join(localPath, localName),
+        counter,
+        signal,
+        onProgress
+      );
+      throwIfNativeSftpDragCancelled(signal);
+    }
+  } catch (error) {
+    try { fs.rmSync(localPath, {recursive:true, force:true}); } catch {}
+    throw error;
+  }
+  return "directory";
+}
+
+async function deliverNativeSftpDragTicketItem(token, itemId, targetPath, targetDirectory, options: any = {}) {
+  const ticket = nativeSftpDragTicket(token);
+  const id = String(itemId ?? "");
+  const item = ticket.topLevel.find(entry => String(entry.id) === id);
+  if (!item) throw new Error("拖出项目不存在或已失效");
+  const signal = options?.signal || null;
+  const onProgress = typeof options?.onProgress === "function" ? options.onProgress : null;
+  throwIfNativeSftpDragCancelled(signal);
+  const destination = validateNativeSftpDragTarget(item.name, targetPath, targetDirectory);
+  let channel: any = null;
+  try {
+    channel = await openSftpChannel(ticket.connectionId);
+    throwIfNativeSftpDragCancelled(signal);
+    if (fs.existsSync(destination.target)) throw new Error("Finder 提供的目标路径已存在");
+    const type = await downloadNativeSftpPromiseEntry(
+      channel,
+      item.remote_path,
+      destination.target,
+      {value:0},
+      signal,
+      onProgress
+    );
+    throwIfNativeSftpDragCancelled(signal);
+    ticket.deliveredItemIds.add(id);
+    ticket.expiresAt = Date.now() + SFTP_NATIVE_DRAG_TICKET_TTL_MS;
+    return {
+      ok:true,
+      token:ticket.token,
+      item_id:id,
+      name:destination.name,
+      promised_name:destination.promisedName,
+      renamed:destination.renamed,
+      type,
+      path:destination.target,
+      delivered_count:ticket.deliveredItemIds.size,
+      total_count:ticket.topLevel.length,
+      complete:ticket.deliveredItemIds.size >= ticket.topLevel.length
+    };
+  } finally {
+    try { channel?.end(); } catch {}
+  }
+}
+
+async function deliverNativeSftpDragTicket(token, targetDirectory) {
+  const ticket = nativeSftpDragTicket(token);
+  return deliverSftpPaths(ticket.connectionId, ticket.remotePaths, targetDirectory);
+}
+
+function releaseNativeSftpDragTicket(token) {
+  return nativeSftpDragTickets.delete(String(token || ""));
 }
 
 function resolvedSftpDragEntry(name) {
@@ -264,6 +752,10 @@ function sftpLstat(channel, remotePath) {
   return new Promise((resolve, reject) => channel.lstat(remotePath, (error, stats) => error ? reject(error) : resolve(stats)));
 }
 
+function sftpStat(channel, remotePath) {
+  return new Promise((resolve, reject) => channel.stat(remotePath, (error, stats) => error ? reject(error) : resolve(stats)));
+}
+
 function sftpReaddir(channel, remotePath) {
   return new Promise((resolve, reject) => channel.readdir(remotePath, (error, entries) => error ? reject(error) : resolve(entries || [])));
 }
@@ -275,7 +767,8 @@ function sftpFastGet(channel, remotePath, localPath) {
 async function downloadSftpEntry(channel, remotePath, localPath, counter) {
   counter.value += 1;
   if (counter.value > 10000) throw new Error("一次拖出最多处理 10000 个文件和目录");
-  const stats: any = await sftpLstat(channel, remotePath);
+  const linkStats: any = await sftpLstat(channel, remotePath);
+  const stats: any = linkStats?.isSymbolicLink?.() ? await sftpStat(channel, remotePath) : linkStats;
   if (!stats?.isDirectory?.()) {
     fs.mkdirSync(path.dirname(localPath), {recursive:true});
     await sftpFastGet(channel, remotePath, localPath);
@@ -419,12 +912,22 @@ function spawnSftpSessionCommand(connection, command) {
 }
 
 module.exports = {
+  __normalizedNativeDragPaths: normalizedNativeDragPaths,
+  __portableDragEntryName: portableDragEntryName,
+  __validateNativeSftpDragTarget: validateNativeSftpDragTarget,
   clearSftpDragCache,
   closeAllSftpSessions,
   connectSftpSession,
+  createNativeSftpDragTicket,
   disconnectSftpSession,
   cleanupSftpDragStaging,
+  deliverNativeSftpDragTicket,
+  deliverNativeSftpDragTicketItem,
   deliverSftpPaths,
+  getNativeSftpDragTicket,
+  openNativeSftpDragTicketFile,
+  releaseNativeSftpDragTicket,
+  reserveNativeSftpDragTicket,
   sftpSessionStatus,
   sftpDragCacheInfo,
   stageSftpPaths,

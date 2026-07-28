@@ -1,0 +1,12 @@
+{
+  "name": "@tunneldesk/macos-sftp-drag",
+  "private": true,
+  "version": "0.0.0",
+  "description": "TunnelDesk macOS SFTP file-promise drag provider",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "gypfile": true,
+  "scripts": {
+    "test": "node tests/cancel-semantics-check.js"
+  }
+}

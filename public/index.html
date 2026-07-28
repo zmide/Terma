@@ -8,7 +8,10 @@
   <link rel="stylesheet" href="/app.css?v=1.1.5">
 </head>
 <body>
-  <div id="toast" class="toast"></div>
+  <div class="notification-stack" aria-live="polite">
+    <div id="toast" class="toast"></div>
+    <aside id="sftpTaskFloat" class="sftp-task-float" aria-label="SFTP 任务进度" onclick="openSftpTaskList(event)" hidden></aside>
+  </div>
   <div id="modal" class="modal" hidden></div>
   <div class="app">
     <div class="left-pane">

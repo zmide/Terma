@@ -165,6 +165,13 @@ function createHarness({
       if (id === "electron") return electron;
       if (id === "node:fs") return fs;
       if (id === "node:path") return path;
+      if (id === "./native-sftp-drag") return {
+        createNativeSftpDrag: () => ({
+          probe: {available:false},
+          capabilities: () => ({platform, sftpExternalDrag:"staged"}),
+          dispose() {}
+        })
+      };
       throw new Error(`unexpected require in desktop startup check: ${id}`);
     }
   });

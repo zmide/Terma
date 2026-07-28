@@ -15,12 +15,16 @@
     "build": "tsc",
     "desktop": "npm run build && electron .",
     "desktop:run": "electron .",
-    "package": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder",
+    "native:diagnose": "node scripts/build-native-sftp-drag.js --diagnose",
+    "native:build": "node scripts/build-native-sftp-drag.js",
+    "native:build:if-needed": "node scripts/build-native-sftp-drag.js --if-needed --current-arch",
+    "native:build:required": "node scripts/build-native-sftp-drag.js --required",
+    "package": "npm run build && npm run native:build:required && electron-builder --dir",
+    "dist": "npm run build && npm run native:build:required && electron-builder",
     "start": "node dist/server.js",
     "check": "tsc --noEmit",
     "check:strict": "tsc -p tsconfig.strict.json",
-    "regression": "npm run build && npm run check:strict && node scripts/check-frontend.js && node scripts/terminal-pty-check.js && node scripts/websocket-frame-check.js && node scripts/socks-forward-check.js && node scripts/auth-protection-check.js && node scripts/web-auth-integration-check.js && node scripts/log-reader-check.js && node scripts/database-transfer-check.js && node scripts/sftp-encoding-check.js && node scripts/sftp-session-check.js && node scripts/sftp-download-integrity-check.js && node scripts/sftp-backend-check.js && node scripts/fault-injection-check.js && node scripts/dependency-state-check.js && node scripts/desktop-startup-check.js && node scripts/sftp-pagination-check.js && node scripts/update-checker-check.js && node scripts/update-installer-check.js && node scripts/runtime-settings-check.js && node scripts/database-reopen-check.js && node scripts/database-credential-backup-check.js && node scripts/ssh2-error-isolation-check.js && node scripts/web-regression-harness.js",
+    "regression": "npm run build && npm run check:strict && node scripts/check-frontend.js && node scripts/terminal-pty-check.js && node scripts/websocket-frame-check.js && node scripts/socks-forward-check.js && node scripts/auth-protection-check.js && node scripts/web-auth-integration-check.js && node scripts/log-reader-check.js && node scripts/database-transfer-check.js && node scripts/sftp-encoding-check.js && node scripts/sftp-session-check.js && node scripts/sftp-download-integrity-check.js && node scripts/sftp-job-lifecycle-check.js && node scripts/sftp-backend-check.js && node scripts/sftp-delete-job-check.js && node scripts/sftp-native-drag-check.js && node native/win-sftp-drag/tests/source-contract-check.js && node scripts/native-sftp-drag-desktop-check.js && node scripts/fault-injection-check.js && node scripts/dependency-state-check.js && node scripts/desktop-startup-check.js && node scripts/source-runtime-path-check.js && node scripts/sftp-pagination-check.js && node scripts/update-checker-check.js && node scripts/update-installer-check.js && node scripts/runtime-settings-check.js && node scripts/database-reopen-check.js && node scripts/database-credential-backup-check.js && node scripts/ssh2-error-isolation-check.js && node scripts/web-regression-harness.js",
     "ui:smoke": "npm run build && node scripts/ui-smoke-harness.js",
     "sftp:acceptance": "npm run build && node scripts/sftp-real-acceptance.js --confirm-real-sftp"
   },
@@ -31,6 +35,7 @@
     "@types/node": "^26.1.0",
     "electron": "^43.0.0",
     "electron-builder": "^26.15.3",
+    "node-gyp": "^12.4.0",
     "typescript": "^6.0.3"
   },
   "dependencies": {
@@ -57,13 +62,20 @@
       "desktop/**/*",
       "dist/**/*",
       "public/**/*",
+      "native/win-sftp-drag/index.js",
+      "native/win-sftp-drag/package.json",
+      "native/win-sftp-drag/prebuilds/**/*",
+      "native/macos-sftp-drag/index.js",
+      "native/macos-sftp-drag/package.json",
+      "native/macos-sftp-drag/prebuilds/**/*",
       "package.json"
     ],
     "extraResources": [
       "LICENSE"
     ],
     "asarUnpack": [
-      "node_modules/node-pty/**/*"
+      "node_modules/node-pty/**/*",
+      "native/**/prebuilds/**/*.node"
     ],
     "afterPack": "scripts/after-pack.js",
     "win": {
@@ -86,6 +98,12 @@
       "artifactName": "${productName}-${version}-linux-${arch}.${ext}",
       "icon": "desktop/assets/icon.png",
       "maintainer": "zmide <zmide@users.noreply.github.com>",
+      "extraResources": [
+        {
+          "from": "native/linux-sftp-drag/prebuilds/linux-${arch}/tunneldesk-linux-sftp-dragfs",
+          "to": "native/tunneldesk-linux-sftp-dragfs"
+        }
+      ],
       "target": [
         "AppImage",
         "deb",

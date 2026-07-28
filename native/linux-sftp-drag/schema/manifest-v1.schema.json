@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tunneldesk.local/schema/sftp-native-drag-manifest-v1.json",
+  "title": "TunnelDesk SFTP native drag manifest",
+  "type": "object",
+  "required": ["entries"],
+  "properties": {
+    "token": {
+      "type": "string"
+    },
+    "platform": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "expires_at": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "ready": {
+      "type": "boolean"
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 20000,
+      "items": {
+        "type": "object",
+        "required": [
+          "index",
+          "name",
+          "relative_path",
+          "type",
+          "size",
+          "modified_at",
+          "mode",
+          "top_level"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255
+          },
+          "relative_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "type": {
+            "enum": ["file", "directory"]
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "modified_at": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "mode": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "top_level": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": true
+}

@@ -143,3 +143,5 @@ Promise.all([loadAll(), loadRuntimeSettings()]).then(() => {
 }).catch(e=>notify(e.message,"error"));
 startAutoRefresh();
 pollNotifications();
+refreshSftpJobs();
+startSftpJobsTimer();
