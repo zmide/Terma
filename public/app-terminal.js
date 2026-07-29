@@ -72,7 +72,58 @@ const terminalFontOptions = [
   ["DejaVu Sans Mono, monospace", "DejaVu Sans Mono"],
   ["Noto Sans Mono, monospace", "Noto Sans Mono"]
 ];
+const terminalStartupOverrides = new Map();
+const terminalStartupKinds = new Set(["shell", "repl", "session", "tool", "custom"]);
+const terminalStartupPlatforms = new Set(["auto", "posix", "windows"]);
+let terminalStartupModalSerial = 0;
+
+function normalizeTerminalStartupConfig(value={}) {
+  const mode = value.terminal_startup_mode === "program" ? "program" : "default";
+  if (mode === "default") return {
+    terminal_startup_mode:"default",
+    terminal_profile_name:"",
+    terminal_profile_kind:"shell",
+    terminal_program_path:"",
+    terminal_program_args:"",
+    terminal_working_directory:"",
+    terminal_program_platform:"auto"
+  };
+  return {
+    terminal_startup_mode:"program",
+    terminal_profile_name:String(value.terminal_profile_name || "").trim().slice(0, 120),
+    terminal_profile_kind:terminalStartupKinds.has(value.terminal_profile_kind) ? value.terminal_profile_kind : "custom",
+    terminal_program_path:String(value.terminal_program_path || "").trim(),
+    terminal_program_args:String(value.terminal_program_args || "").trim(),
+    terminal_working_directory:String(value.terminal_working_directory || "").trim(),
+    terminal_program_platform:terminalStartupPlatforms.has(value.terminal_program_platform) ? value.terminal_program_platform : "auto"
+  };
+}
+
+function terminalStartupConfigForConnection(connection) {
+  return normalizeTerminalStartupConfig(connection || {});
+}
+
+function effectiveTerminalStartupConfig(connection, key) {
+  return terminalStartupOverrides.has(key)
+    ? normalizeTerminalStartupConfig(terminalStartupOverrides.get(key))
+    : terminalStartupConfigForConnection(connection);
+}
+
+function terminalStartupConfigLabel(config) {
+  const value = normalizeTerminalStartupConfig(config);
+  if (value.terminal_startup_mode === "default") return "服务器默认 Shell";
+  return value.terminal_profile_name || value.terminal_program_path.split(/[\\/]/).pop() || "自定义程序";
+}
+
+function terminalStartupProfileMatches(config, profile) {
+  return config.terminal_startup_mode === "program"
+    && String(config.terminal_program_path || "") === String(profile.path || "")
+    && String(config.terminal_program_args || "") === String(profile.args || "")
+    && String(config.terminal_working_directory || "") === String(profile.working_directory || "");
+}
 const defaultTerminalGlobalSettings = Object.freeze({
+  background_mode:"theme",
+  background_color:"#0f1720",
   middle_mouse_action:"paste_clipboard",
   right_mouse_action:"context_menu",
   ctrl_left_click_moves_cursor:true,
@@ -100,9 +151,13 @@ const terminalMouseActionOptions = [
 function normalizeTerminalGlobalSettings(value={}) {
   const source = value && typeof value === "object" ? value : {};
   const mouseActions = new Set(terminalMouseActionOptions.map(([item]) => item));
+  const backgroundModes = new Set(["theme", "black", "white", "custom"]);
+  const backgroundColorValue = String(source.background_color || defaultTerminalGlobalSettings.background_color).trim();
   const prefixes = (Array.isArray(source.url_prefixes) ? source.url_prefixes : String(source.url_prefixes || "").split(/[|,\s]+/))
     .map(item => String(item || "").trim()).filter(Boolean).slice(0, 10);
   return {
+    background_mode:backgroundModes.has(source.background_mode) ? source.background_mode : defaultTerminalGlobalSettings.background_mode,
+    background_color:/^#[0-9a-f]{6}$/i.test(backgroundColorValue) ? backgroundColorValue.toLowerCase() : defaultTerminalGlobalSettings.background_color,
     middle_mouse_action:mouseActions.has(source.middle_mouse_action) ? source.middle_mouse_action : defaultTerminalGlobalSettings.middle_mouse_action,
     right_mouse_action:mouseActions.has(source.right_mouse_action) ? source.right_mouse_action : defaultTerminalGlobalSettings.right_mouse_action,
     ctrl_left_click_moves_cursor:source.ctrl_left_click_moves_cursor !== false,
@@ -117,6 +172,81 @@ function normalizeTerminalGlobalSettings(value={}) {
     copy_trim_trailing_spaces:source.copy_trim_trailing_spaces === true,
     select_non_whitespace_block:source.select_non_whitespace_block === true,
     multiline_paste_mode:["prompt", "paste", "single_line"].includes(source.multiline_paste_mode) ? source.multiline_paste_mode : defaultTerminalGlobalSettings.multiline_paste_mode
+  };
+}
+
+function terminalResolvedBackground(settings=currentTerminalGlobalSettings()) {
+  const values = normalizeTerminalGlobalSettings(settings);
+  if (values.background_mode === "black") return "#000000";
+  if (values.background_mode === "white") return "#ffffff";
+  if (values.background_mode === "custom") return values.background_color;
+  return document.documentElement.dataset.theme === "dark" ? "#000000" : "#ffffff";
+}
+
+function terminalRelativeLuminance(hexColor) {
+  const color = String(hexColor || "#000000").replace("#", "");
+  const channels = [0, 2, 4].map(index => Number.parseInt(color.slice(index, index + 2), 16) / 255)
+    .map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+}
+
+function terminalContrastRatio(first, second) {
+  const firstLuminance = terminalRelativeLuminance(first);
+  const secondLuminance = terminalRelativeLuminance(second);
+  return (Math.max(firstLuminance, secondLuminance) + 0.05) / (Math.min(firstLuminance, secondLuminance) + 0.05);
+}
+
+function terminalMixColor(first, second, amount) {
+  const channels = color => [1, 3, 5].map(index => Number.parseInt(color.slice(index, index + 2), 16));
+  const start = channels(first);
+  const end = channels(second);
+  return `#${start.map((channel, index) => Math.round(channel + (end[index] - channel) * amount).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function terminalReadableColor(candidate, background, fallback, minimumRatio=4.5) {
+  if (terminalContrastRatio(candidate, background) >= minimumRatio) return candidate;
+  for (let step = 1; step <= 64; step += 1) {
+    const adjusted = terminalMixColor(candidate, fallback, step / 64);
+    if (terminalContrastRatio(adjusted, background) >= minimumRatio) return adjusted;
+  }
+  return fallback;
+}
+
+function terminalThemeForSettings(settings=currentTerminalGlobalSettings()) {
+  const background = terminalResolvedBackground(settings);
+  const backgroundLuminance = terminalRelativeLuminance(background);
+  const whiteContrast = 1.05 / (backgroundLuminance + 0.05);
+  const blackContrast = (backgroundLuminance + 0.05) / 0.05;
+  const dark = whiteContrast >= blackContrast;
+  const foreground = dark ? "#ffffff" : "#000000";
+  const palette = dark ? {
+    black:"#2e3436", red:"#ef4444", green:"#22c55e", yellow:"#eab308",
+    blue:"#60a5fa", magenta:"#c084fc", cyan:"#2dd4bf", white:"#e5e7eb",
+    brightBlack:"#6b7280", brightRed:"#f87171", brightGreen:"#86efac", brightYellow:"#fde047",
+    brightBlue:"#93c5fd", brightMagenta:"#d8b4fe", brightCyan:"#67e8f9", brightWhite:"#ffffff"
+  } : {
+    black:"#1f2937", red:"#b91c1c", green:"#15803d", yellow:"#854d0e",
+    blue:"#1d4ed8", magenta:"#7e22ce", cyan:"#0f766e", white:"#d1d5db",
+    brightBlack:"#4b5563", brightRed:"#dc2626", brightGreen:"#16a34a", brightYellow:"#a16207",
+    brightBlue:"#2563eb", brightMagenta:"#9333ea", brightCyan:"#0891b2", brightWhite:"#f8fafc"
+  };
+  const readablePalette = Object.fromEntries(Object.entries(palette).map(([name, color]) => [
+    name,
+    terminalReadableColor(color, background, foreground)
+  ]));
+  return {
+    background,
+    foreground,
+    cursor:foreground,
+    cursorAccent:background,
+    selectionBackground:dark ? "#2563eb99" : "#2563eb55",
+    selectionForeground:foreground,
+    selectionInactiveBackground:dark ? "#2563eb66" : "#2563eb33",
+    scrollbarSliderBackground:dark ? "#475569" : "#cbd5e1",
+    scrollbarSliderHoverBackground:dark ? "#64748b" : "#94a3b8",
+    scrollbarSliderActiveBackground:dark ? "#94a3b8" : "#64748b",
+    overviewRulerBorder:background,
+    ...readablePalette
   };
 }
 
@@ -145,6 +275,24 @@ function terminalWordSeparator(settings=currentTerminalGlobalSettings()) {
 function applyTerminalGlobalSettingsToSession(session) {
   if (!session?.term) return;
   session.term.options.wordSeparator = terminalWordSeparator();
+  session.term.options.minimumContrastRatio = 4.5;
+  const theme = terminalThemeForSettings();
+  if (session.cursorCopyState) {
+    session.cursorCopyState.originalTheme = theme;
+    session.term.options.theme = {
+      ...theme,
+      selectionBackground:"#2563eb",
+      selectionForeground:"#ffffff",
+      selectionInactiveBackground:"#2563eb"
+    };
+  } else {
+    session.term.options.theme = theme;
+  }
+  const mount = session.mount || session.term.element?.closest?.(".terminal-box");
+  if (mount) {
+    mount.style.setProperty("--terminal-background", theme.background);
+    mount.style.setProperty("--terminal-color-scheme", terminalRelativeLuminance(theme.background) < 0.18 ? "dark" : "light");
+  }
   try { session.term.refresh?.(0, Math.max(0, session.term.rows - 1)); } catch {}
 }
 
@@ -585,47 +733,130 @@ async function showTerminalGlobalSettings(key=activeTabKey) {
   modal.onclick = null;
   modal.innerHTML = `<div class="modal-card terminal-settings-modal" role="dialog" aria-modal="true" aria-labelledby="terminalSettingsTitle">
     <div class="terminal-settings-head"><div><h2 id="terminalSettingsTitle">全局终端设置</h2><span>应用到全部连接和终端会话</span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" onclick="closeTerminalGlobalSettings('${escAttr(key)}')">${icon("x")}</button></div>
-    <div class="terminal-settings-grid">
-      <section class="terminal-settings-section">
-        <h3>${icon("mouse-pointer-2")}鼠标</h3>
-        <label>中键操作</label><select id="terminalSettingMiddleMouse">${terminalMouseActionOptionsHtml(settings.middle_mouse_action)}</select>
-        <label>右键操作</label><select id="terminalSettingRightMouse">${terminalMouseActionOptionsHtml(settings.right_mouse_action)}</select>
-        <label class="check-row"><input id="terminalSettingCtrlClick" type="checkbox" ${settings.ctrl_left_click_moves_cursor ? "checked" : ""}> Ctrl + 左键移动终端光标</label>
+    <div class="terminal-settings-tabs" role="tablist" aria-label="终端设置分类">
+      <button id="terminalSettingsTabAppearance" class="active" type="button" role="tab" aria-selected="true" aria-controls="terminalSettingsPanelAppearance" onclick="selectTerminalSettingsTab('appearance')">${icon("palette")}<span>外观</span></button>
+      <button id="terminalSettingsTabInteraction" type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanelInteraction" onclick="selectTerminalSettingsTab('interaction')">${icon("mouse-pointer-2")}<span>鼠标与链接</span></button>
+      <button id="terminalSettingsTabClipboard" type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanelClipboard" onclick="selectTerminalSettingsTab('clipboard')">${icon("copy")}<span>选择与粘贴</span></button>
+    </div>
+    <div class="terminal-settings-panels">
+      <section id="terminalSettingsPanelAppearance" class="terminal-settings-panel" role="tabpanel" aria-labelledby="terminalSettingsTabAppearance">
+        <div class="terminal-settings-background-layout">
+          <div class="terminal-settings-section terminal-settings-background-section">
+            <h3>${icon("monitor-cog")}终端背景</h3>
+            <div class="terminal-background-choices" role="radiogroup" aria-label="终端背景颜色">
+              <label class="terminal-background-choice"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="theme" ${settings.background_mode === "theme" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><span class="terminal-background-swatch terminal-background-theme"></span><span>跟随主题</span></label>
+              <label class="terminal-background-choice"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="black" ${settings.background_mode === "black" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><span class="terminal-background-swatch terminal-background-black"></span><span>黑色</span></label>
+              <label class="terminal-background-choice"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="white" ${settings.background_mode === "white" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><span class="terminal-background-swatch terminal-background-white"></span><span>白色</span></label>
+              <label class="terminal-background-choice terminal-background-custom"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="custom" ${settings.background_mode === "custom" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><input id="terminalSettingBackgroundColor" class="terminal-color-picker" type="color" value="${escAttr(settings.background_color)}" title="选择自定义背景颜色" aria-label="选择自定义背景颜色" oninput="selectTerminalCustomBackground(this.value)"><span>自定义</span><output id="terminalSettingBackgroundColorValue">${esc(settings.background_color)}</output></label>
+            </div>
+          </div>
+          <div id="terminalBackgroundPreview" class="terminal-background-preview" aria-label="终端颜色预览">
+            <div><span class="terminal-preview-green">root@server</span>:<span class="terminal-preview-blue">~</span>$ ls</div>
+            <div><span class="terminal-preview-blue">docs</span>&nbsp;&nbsp;<span class="terminal-preview-cyan">config.yml</span>&nbsp;&nbsp;<span class="terminal-preview-red">error.log</span></div>
+            <div>$ <span class="terminal-preview-cursor">&nbsp;</span></div>
+          </div>
+        </div>
       </section>
-      <section class="terminal-settings-section">
-        <h3>${icon("link")}链接</h3>
-        <label class="check-row"><input id="terminalSettingUrlLinks" type="checkbox" ${settings.url_links_enabled ? "checked" : ""} onchange="syncTerminalSettingsForm()"> 识别 URL 超链接</label>
-        <label>URL 前缀</label><input id="terminalSettingUrlPrefixes" value="${esc(settings.url_prefixes.join(" | "))}" ${settings.url_links_enabled ? "" : "disabled"}>
-        <label class="check-row"><input id="terminalSettingUrlCtrlClick" type="checkbox" ${settings.url_ctrl_click ? "checked" : ""} ${settings.url_links_enabled ? "" : "disabled"}> Ctrl + 单击打开链接</label>
+      <section id="terminalSettingsPanelInteraction" class="terminal-settings-panel" role="tabpanel" aria-labelledby="terminalSettingsTabInteraction" hidden>
+        <div class="terminal-settings-grid">
+          <div class="terminal-settings-section">
+            <h3>${icon("mouse-pointer-2")}鼠标</h3>
+            <div class="terminal-settings-field-grid"><div><label>中键操作</label><select id="terminalSettingMiddleMouse">${terminalMouseActionOptionsHtml(settings.middle_mouse_action)}</select></div><div><label>右键操作</label><select id="terminalSettingRightMouse">${terminalMouseActionOptionsHtml(settings.right_mouse_action)}</select></div></div>
+            <label class="check-row"><input id="terminalSettingCtrlClick" type="checkbox" ${settings.ctrl_left_click_moves_cursor ? "checked" : ""}> Ctrl + 左键移动终端光标</label>
+          </div>
+          <div class="terminal-settings-section">
+            <h3>${icon("link")}链接</h3>
+            <label class="check-row"><input id="terminalSettingUrlLinks" type="checkbox" ${settings.url_links_enabled ? "checked" : ""} onchange="syncTerminalSettingsForm()"> 识别 URL 超链接</label>
+            <label>URL 前缀</label><input id="terminalSettingUrlPrefixes" value="${esc(settings.url_prefixes.join(" | "))}" ${settings.url_links_enabled ? "" : "disabled"}>
+            <label class="check-row"><input id="terminalSettingUrlCtrlClick" type="checkbox" ${settings.url_ctrl_click ? "checked" : ""} ${settings.url_links_enabled ? "" : "disabled"}> Ctrl + 单击打开链接</label>
+          </div>
+        </div>
       </section>
-      <section class="terminal-settings-section terminal-settings-selection">
-        <h3>${icon("text-select")}选择与复制</h3>
-        <label>双击选择分隔符</label>
-        <div class="terminal-settings-inline"><input id="terminalSettingWordSeparators" value="${esc(settings.word_separators)}"><button type="button" onclick="resetTerminalWordSeparators()">重置</button></div>
-        <label class="check-row"><input id="terminalSettingShiftDoubleClick" type="checkbox" ${settings.shift_double_click_uses_separators ? "checked" : ""}> Shift + 双击时使用分隔符</label>
-        <label class="check-row"><input id="terminalSettingNonWhitespaceBlock" type="checkbox" ${settings.select_non_whitespace_block ? "checked" : ""}> 双击时将连续非空白内容作为一个整体</label>
-        <label class="check-row"><input id="terminalSettingAutoCopy" type="checkbox" ${settings.auto_copy_selection ? "checked" : ""}> 选中文本后自动复制</label>
-        <label class="check-row"><input id="terminalSettingTabsToSpaces" type="checkbox" ${settings.copy_tabs_to_spaces ? "checked" : ""}> 复制时将制表符转换为 4 个空格</label>
-        <label class="check-row"><input id="terminalSettingTrailingNewline" type="checkbox" ${settings.copy_include_trailing_newline ? "checked" : ""}> 复制时包含末尾换行</label>
-        <label class="check-row"><input id="terminalSettingTrimSpaces" type="checkbox" ${settings.copy_trim_trailing_spaces ? "checked" : ""}> 复制时删除行尾空白</label>
-      </section>
-      <section class="terminal-settings-section">
-        <h3>${icon("clipboard-paste")}粘贴</h3>
-        <label>粘贴多行文本时</label>
-        <select id="terminalSettingMultilinePaste">
-          <option value="prompt" ${settings.multiline_paste_mode === "prompt" ? "selected" : ""}>打开可编辑命令窗口</option>
-          <option value="paste" ${settings.multiline_paste_mode === "paste" ? "selected" : ""}>直接粘贴</option>
-          <option value="single_line" ${settings.multiline_paste_mode === "single_line" ? "selected" : ""}>合并为一行</option>
-        </select>
+      <section id="terminalSettingsPanelClipboard" class="terminal-settings-panel" role="tabpanel" aria-labelledby="terminalSettingsTabClipboard" hidden>
+        <div class="terminal-settings-grid terminal-settings-clipboard-grid">
+          <div class="terminal-settings-section">
+            <h3>${icon("text-select")}选择</h3>
+            <label>双击选择分隔符</label>
+            <div class="terminal-settings-inline"><input id="terminalSettingWordSeparators" value="${esc(settings.word_separators)}"><button type="button" onclick="resetTerminalWordSeparators()">重置</button></div>
+            <label class="check-row"><input id="terminalSettingShiftDoubleClick" type="checkbox" ${settings.shift_double_click_uses_separators ? "checked" : ""}> Shift + 双击时使用分隔符</label>
+            <label class="check-row"><input id="terminalSettingNonWhitespaceBlock" type="checkbox" ${settings.select_non_whitespace_block ? "checked" : ""}> 连续非空白内容作为一个整体</label>
+          </div>
+          <div class="terminal-settings-section">
+            <h3>${icon("copy")}复制</h3>
+            <div class="terminal-settings-check-grid">
+              <label class="check-row"><input id="terminalSettingAutoCopy" type="checkbox" ${settings.auto_copy_selection ? "checked" : ""}> 选中后自动复制</label>
+              <label class="check-row"><input id="terminalSettingTabsToSpaces" type="checkbox" ${settings.copy_tabs_to_spaces ? "checked" : ""}> 制表符转为 4 个空格</label>
+              <label class="check-row"><input id="terminalSettingTrailingNewline" type="checkbox" ${settings.copy_include_trailing_newline ? "checked" : ""}> 包含末尾换行</label>
+              <label class="check-row"><input id="terminalSettingTrimSpaces" type="checkbox" ${settings.copy_trim_trailing_spaces ? "checked" : ""}> 删除行尾空白</label>
+            </div>
+          </div>
+          <div class="terminal-settings-section terminal-settings-paste-section">
+            <h3>${icon("clipboard-paste")}粘贴</h3>
+            <label>粘贴多行文本时</label>
+            <select id="terminalSettingMultilinePaste">
+              <option value="prompt" ${settings.multiline_paste_mode === "prompt" ? "selected" : ""}>打开可编辑命令窗口</option>
+              <option value="paste" ${settings.multiline_paste_mode === "paste" ? "selected" : ""}>直接粘贴</option>
+              <option value="single_line" ${settings.multiline_paste_mode === "single_line" ? "selected" : ""}>合并为一行</option>
+            </select>
+          </div>
+        </div>
       </section>
     </div>
     <div class="actions terminal-settings-actions"><button type="button" onclick="resetTerminalGlobalSettingsForm()">恢复默认</button><button type="button" onclick="closeTerminalGlobalSettings('${escAttr(key)}')">取消</button><button id="terminalSettingsSave" class="primary" type="button" onclick="saveTerminalGlobalSettings('${escAttr(key)}')">${icon("save")}<span>保存全局设置</span></button></div>
   </div>`;
   modal.hidden = false;
   modal.onkeydown = event => {
-    if (event.key === "Escape") closeTerminalGlobalSettings(key);
+      if (event.key === "Escape") closeTerminalGlobalSettings(key);
   };
-  $("terminalSettingMiddleMouse")?.focus();
+  syncTerminalBackgroundForm();
+  $("terminalSettingsTabAppearance")?.focus();
+}
+
+function selectTerminalSettingsTab(name) {
+  const selected = ["appearance", "interaction", "clipboard"].includes(name) ? name : "appearance";
+  const mapping = {
+    appearance:["terminalSettingsTabAppearance", "terminalSettingsPanelAppearance"],
+    interaction:["terminalSettingsTabInteraction", "terminalSettingsPanelInteraction"],
+    clipboard:["terminalSettingsTabClipboard", "terminalSettingsPanelClipboard"]
+  };
+  Object.entries(mapping).forEach(([key, [tabId, panelId]]) => {
+    const active = key === selected;
+    $(tabId)?.classList.toggle("active", active);
+    $(tabId)?.setAttribute("aria-selected", String(active));
+    if ($(panelId)) $(panelId).hidden = !active;
+  });
+}
+
+function selectedTerminalBackgroundMode() {
+  return document.querySelector('input[name="terminalSettingBackgroundMode"]:checked')?.value || "theme";
+}
+
+function selectTerminalCustomBackground(value) {
+  const custom = document.querySelector('input[name="terminalSettingBackgroundMode"][value="custom"]');
+  if (custom) custom.checked = true;
+  if ($("terminalSettingBackgroundColor")) $("terminalSettingBackgroundColor").value = value;
+  syncTerminalBackgroundForm();
+}
+
+function syncTerminalBackgroundForm() {
+  const preview = $("terminalBackgroundPreview");
+  const picker = $("terminalSettingBackgroundColor");
+  if (!preview || !picker) return;
+  const mode = selectedTerminalBackgroundMode();
+  document.querySelectorAll(".terminal-background-choice").forEach(choice => {
+    const active = choice.querySelector('input[type="radio"]')?.checked === true;
+    choice.classList.toggle("active", active);
+  });
+  const settings = normalizeTerminalGlobalSettings({background_mode:mode, background_color:picker.value});
+  const theme = terminalThemeForSettings(settings);
+  preview.style.background = theme.background;
+  preview.style.color = theme.foreground;
+  preview.querySelector(".terminal-preview-green")?.style.setProperty("color", theme.green);
+  preview.querySelector(".terminal-preview-blue")?.style.setProperty("color", theme.blue);
+  preview.querySelector(".terminal-preview-cyan")?.style.setProperty("color", theme.cyan);
+  preview.querySelector(".terminal-preview-red")?.style.setProperty("color", theme.red);
+  preview.querySelector(".terminal-preview-cursor")?.style.setProperty("background", theme.cursor);
+  if ($("terminalSettingBackgroundColorValue")) $("terminalSettingBackgroundColorValue").textContent = picker.value.toLowerCase();
 }
 
 function syncTerminalSettingsForm() {
@@ -640,6 +871,9 @@ function resetTerminalWordSeparators() {
 
 function fillTerminalGlobalSettingsForm(settings) {
   const values = normalizeTerminalGlobalSettings(settings);
+  const backgroundMode = document.querySelector(`input[name="terminalSettingBackgroundMode"][value="${values.background_mode}"]`);
+  if (backgroundMode) backgroundMode.checked = true;
+  $("terminalSettingBackgroundColor").value = values.background_color;
   $("terminalSettingMiddleMouse").value = values.middle_mouse_action;
   $("terminalSettingRightMouse").value = values.right_mouse_action;
   $("terminalSettingCtrlClick").checked = values.ctrl_left_click_moves_cursor;
@@ -655,6 +889,7 @@ function fillTerminalGlobalSettingsForm(settings) {
   $("terminalSettingTrimSpaces").checked = values.copy_trim_trailing_spaces;
   $("terminalSettingMultilinePaste").value = values.multiline_paste_mode;
   syncTerminalSettingsForm();
+  syncTerminalBackgroundForm();
 }
 
 function resetTerminalGlobalSettingsForm() {
@@ -663,6 +898,8 @@ function resetTerminalGlobalSettingsForm() {
 
 function terminalGlobalSettingsFormValue() {
   return {
+    background_mode:selectedTerminalBackgroundMode(),
+    background_color:$("terminalSettingBackgroundColor").value,
     middle_mouse_action:$("terminalSettingMiddleMouse").value,
     right_mouse_action:$("terminalSettingRightMouse").value,
     ctrl_left_click_moves_cursor:$("terminalSettingCtrlClick").checked,
@@ -702,6 +939,380 @@ function closeTerminalGlobalSettings(key=activeTabKey) {
   modal.onkeydown = null;
   closeModal();
   focusTerminalSession(key);
+}
+
+function syncTerminalStartupForm() {
+  const select = $("terminalStartupProfile");
+  const details = $("terminalStartupProgramFields");
+  if (!select || !details) return;
+  details.hidden = select.value === "default";
+}
+
+function fillTerminalStartupForm(config) {
+  const value = normalizeTerminalStartupConfig(config);
+  $("terminalStartupProfile").value = value.terminal_startup_mode === "default" ? "default" : "custom";
+  $("terminalStartupProfileName").value = value.terminal_profile_name;
+  $("terminalStartupKind").value = value.terminal_profile_kind;
+  $("terminalStartupPath").value = value.terminal_program_path;
+  $("terminalStartupArgs").value = value.terminal_program_args;
+  $("terminalStartupCwd").value = value.terminal_working_directory;
+  $("terminalStartupPlatform").value = value.terminal_program_platform;
+  syncTerminalStartupForm();
+}
+
+function terminalStartupFormValue() {
+  const mode = $("terminalStartupProfile").value === "default" ? "default" : "program";
+  const fields = [
+    ["terminalStartupProfileName", "配置名称", 120],
+    ["terminalStartupPath", "程序路径", 2048],
+    ["terminalStartupArgs", "启动参数", 4096],
+    ["terminalStartupCwd", "工作目录", 2048]
+  ];
+  const values = {};
+  for (const [id, label, maximum] of fields) {
+    const value = String($(id)?.value || "").trim();
+    if (/[\r\n\0]/.test(value)) throw new Error(`${label} 只能填写一行`);
+    if (value.length > maximum) throw new Error(`${label} 不能超过 ${maximum} 个字符`);
+    values[id] = value;
+  }
+  if (mode === "program" && !values.terminalStartupPath) throw new Error("请选择启动配置，或填写程序完整路径");
+  return normalizeTerminalStartupConfig({
+    terminal_startup_mode:mode,
+    terminal_profile_name:values.terminalStartupProfileName,
+    terminal_profile_kind:$("terminalStartupKind")?.value || "custom",
+    terminal_program_path:values.terminalStartupPath,
+    terminal_program_args:values.terminalStartupArgs,
+    terminal_working_directory:values.terminalStartupCwd,
+    terminal_program_platform:$("terminalStartupPlatform")?.value || "auto"
+  });
+}
+
+function terminalStartupFormDraft() {
+  return normalizeTerminalStartupConfig({
+    terminal_startup_mode:$("terminalStartupProfile")?.value === "default" ? "default" : "program",
+    terminal_profile_name:$("terminalStartupProfileName")?.value || "",
+    terminal_profile_kind:$("terminalStartupKind")?.value || "custom",
+    terminal_program_path:$("terminalStartupPath")?.value || "",
+    terminal_program_args:$("terminalStartupArgs")?.value || "",
+    terminal_working_directory:$("terminalStartupCwd")?.value || "",
+    terminal_program_platform:$("terminalStartupPlatform")?.value || "auto"
+  });
+}
+
+function chooseTerminalStartupProfile() {
+  const select = $("terminalStartupProfile");
+  const modal = $("modal");
+  if (!select || !modal) return;
+  const profiles = modal._terminalStartupProfiles || [];
+  if (select.value.startsWith("profile:")) {
+    const profile = profiles[Number(select.value.slice(8))];
+    if (profile) {
+      $("terminalStartupProfileName").value = profile.label || profile.name || "";
+      $("terminalStartupKind").value = terminalStartupKinds.has(profile.kind) ? profile.kind : "custom";
+      $("terminalStartupPath").value = profile.path || "";
+      $("terminalStartupArgs").value = profile.args || "";
+      $("terminalStartupCwd").value = profile.working_directory || "";
+      $("terminalStartupPlatform").value = terminalStartupPlatforms.has(profile.platform) ? profile.platform : "auto";
+    }
+  }
+  syncTerminalStartupForm();
+}
+
+function markTerminalStartupCustom() {
+  const select = $("terminalStartupProfile");
+  if (select && select.value !== "default") select.value = "custom";
+}
+
+function populateTerminalStartupCapabilities(capabilities, currentConfig) {
+  const select = $("terminalStartupProfile");
+  const modal = $("modal");
+  if (!select || !modal) return;
+  const profiles = Array.isArray(capabilities?.profiles) ? capabilities.profiles : [];
+  modal._terminalStartupProfiles = profiles;
+  const defaultShell = capabilities?.default_shell?.label || capabilities?.default_shell?.name || "";
+  const options = [
+    `<option value="default">自动（服务器默认${defaultShell ? `：${esc(defaultShell)}` : "登录 Shell"}）</option>`
+  ];
+  const groups = [
+    ["shell", "检测到的 Shell"],
+    ["repl", "交互式程序"],
+    ["session", "会话工具"],
+    ["tool", "其他可启动工具"]
+  ];
+  for (const [kind, label] of groups) {
+    const indexes = profiles.map((profile, index) => ({profile,index})).filter(item => item.profile.kind === kind);
+    if (!indexes.length) continue;
+    options.push(`<optgroup label="${escAttr(label)}">${indexes.map(({profile,index}) => `<option value="profile:${index}">${esc(profile.label || profile.name || profile.path)}${profile.is_default ? "（默认）" : ""}</option>`).join("")}</optgroup>`);
+  }
+  options.push(`<option value="custom">自定义程序、Shell 或命令行工具</option>`);
+  select.innerHTML = options.join("");
+  const matchingIndex = profiles.findIndex(profile => terminalStartupProfileMatches(currentConfig, profile));
+  select.value = currentConfig.terminal_startup_mode === "default"
+    ? "default"
+    : matchingIndex >= 0 ? `profile:${matchingIndex}` : "custom";
+  const tools = Array.isArray(capabilities?.tools) ? capabilities.tools : [];
+  const summary = $("terminalStartupCapabilitySummary");
+  if (summary) {
+    const platform = capabilities?.platform_label || capabilities?.platform || "远端系统";
+    const detected = tools.map(tool => `${tool.label || tool.name}${tool.version ? ` ${tool.version}` : ""}`);
+    const warnings = Array.isArray(capabilities?.warnings) ? capabilities.warnings.filter(Boolean) : [];
+    summary.className = `terminal-startup-capability ${warnings.length ? "warning" : "success"}`;
+    summary.innerHTML = `<strong>${esc(platform)}${defaultShell ? ` · 默认 ${defaultShell}` : ""}</strong>${detected.length ? `<span>已检测工具：${detected.map(esc).join("、")}</span>` : ""}${warnings.length ? `<span>${warnings.map(esc).join("；")}</span>` : ""}`;
+  }
+  syncTerminalStartupForm();
+}
+
+function terminalStartupModalRequestIsCurrent(modal, context, requestId) {
+  return $("modal") === modal
+    && !modal.hidden
+    && modal._terminalStartupContext === context
+    && modal._terminalStartupRequestId === requestId;
+}
+
+async function refreshTerminalStartupCapabilities(connectionId, key, button=null) {
+  const modal = $("modal");
+  const context = modal?._terminalStartupContext;
+  if (!context || modal._terminalStartupKey !== key || modal._terminalStartupConnectionId !== connectionId) return;
+  const requestId = Number(modal._terminalStartupRequestId || 0) + 1;
+  modal._terminalStartupRequestId = requestId;
+  const status = $("terminalStartupCapabilitySummary");
+  if (status) {
+    status.className = "terminal-startup-capability loading";
+    status.textContent = "正在只读检测远端 Shell、Python、Node 和会话工具…";
+  }
+  setButtonBusy(button, true, "检测中");
+  try {
+    const response = await api(`/api/connections/${connectionId}/terminal-capabilities`, {method:"POST", body:"{}"});
+    if (!terminalStartupModalRequestIsCurrent(modal, context, requestId)) return;
+    const connection = connections.find(item => item.id === connectionId);
+    const current = terminalStartupFormDraft();
+    populateTerminalStartupCapabilities(response.capabilities || response, current);
+    if (connection && response.capabilities) connection.terminal_capabilities = response.capabilities;
+  } catch (error) {
+    if (!terminalStartupModalRequestIsCurrent(modal, context, requestId)) return;
+    if (status) {
+      status.className = "terminal-startup-capability warning";
+      status.textContent = `暂时无法识别远端环境：${error.message}。仍可使用服务器默认 Shell 或手动填写。`;
+    }
+  } finally {
+    if (terminalStartupModalRequestIsCurrent(modal, context, requestId)) setButtonBusy(button, false);
+  }
+}
+
+function closeTerminalStartupSettings(key=activeTabKey, focus=true, force=false) {
+  const modal = $("modal");
+  if (modal._terminalStartupApplying && !force) return false;
+  modal._terminalStartupRequestId = Number(modal._terminalStartupRequestId || 0) + 1;
+  modal._terminalStartupContext = null;
+  modal._terminalStartupKey = "";
+  modal._terminalStartupConnectionId = 0;
+  modal._terminalStartupApplying = false;
+  modal.onkeydown = null;
+  closeModal();
+  if (focus) focusTerminalSession(key);
+  return true;
+}
+
+function updateTerminalStartupButton(key, connection) {
+  const button = terminalElementForKey(key, ".terminal-startup-button");
+  if (!button) return;
+  const temporary = terminalStartupOverrides.has(key);
+  const label = terminalStartupConfigLabel(effectiveTerminalStartupConfig(connection, key));
+  button.title = `终端启动配置：${label}${temporary ? "（仅当前标签）" : ""}`;
+  button.setAttribute("aria-label", button.title);
+  button.classList.toggle("has-temporary-startup", temporary);
+}
+
+function updateTerminalStartupButtonsForConnection(connectionId) {
+  const connection = connections.find(item => item.id === connectionId);
+  if (!connection) return;
+  for (const tab of tabs) {
+    if (tab.kind === "terminal" && Number(tab.id) === Number(connectionId)) {
+      updateTerminalStartupButton(tab.key, connection);
+    }
+  }
+}
+
+async function saveTerminalStartupDefault(connectionId, startup) {
+  const connection = connections.find(item => item.id === connectionId);
+  if (!connection) throw new Error("SSH 连接不存在");
+  const response = await api(`/api/connections/${connectionId}/terminal-startup`, {
+    method:"POST",
+    body:JSON.stringify(startup)
+  });
+  Object.assign(connection, normalizeTerminalStartupConfig(response.startup || response));
+  updateTerminalStartupButtonsForConnection(connectionId);
+  return connection;
+}
+
+function setTerminalStartupModalBusy(modal, busy) {
+  const card = modal?.querySelector(".terminal-startup-modal");
+  if (!card) return;
+  modal.setAttribute("aria-busy", busy ? "true" : "false");
+  for (const control of card.querySelectorAll("button,input,select")) {
+    if (busy) {
+      if (!control.hasAttribute("data-terminal-startup-disabled")) {
+        control.dataset.terminalStartupDisabled = control.disabled ? "1" : "0";
+      }
+      control.disabled = true;
+    } else {
+      control.disabled = control.dataset.terminalStartupDisabled === "1";
+      delete control.dataset.terminalStartupDisabled;
+    }
+  }
+  card.classList.toggle("is-busy", busy);
+}
+
+async function applyTerminalStartupSettings(key, connectionId, target, button=null, splitZone="") {
+  let connection = connections.find(item => item.id === connectionId);
+  if (!connection) return;
+  const modal = $("modal");
+  const modalContext = modal?._terminalStartupContext;
+  if (!modalContext || modal._terminalStartupApplying) return;
+  modal._terminalStartupApplying = true;
+  setTerminalStartupModalBusy(modal, true);
+  setButtonBusy(button, true, target === "current" ? "正在打开" : "正在创建");
+  let defaultSaved = false;
+  try {
+    const startup = terminalStartupFormValue();
+    const saveDefault = Boolean($("terminalStartupSaveDefault")?.checked);
+    if (saveDefault) {
+      connection = await saveTerminalStartupDefault(connectionId, startup);
+      defaultSaved = true;
+    }
+    if (target === "current") {
+      if (saveDefault) terminalStartupOverrides.delete(key);
+      else terminalStartupOverrides.set(key, startup);
+      if (modal._terminalStartupContext === modalContext) closeTerminalStartupSettings(key, true, true);
+      updateTerminalStartupButton(key, connection);
+      reconnectTerminal(connectionId, key);
+      notify(saveDefault
+        ? "启动配置已保存为连接默认值，正在重新连接本终端"
+        : "启动配置仅对本终端临时生效，正在重新连接", "success");
+      return;
+    }
+    const sourceTab = tabs.find(item => item.key === key && item.kind === "terminal");
+    if (!sourceTab || typeof duplicateWorkspaceTab !== "function") throw new Error("当前终端标签已关闭");
+    const requestedSplit = target === "split" && !isMobileLayout();
+    const duplicateResult = {};
+    const duplicateKey = duplicateWorkspaceTab(key, {
+      splitZone:requestedSplit ? splitZone : "",
+      result:duplicateResult,
+      beforeOpen:newKey => {
+        if (saveDefault) terminalStartupOverrides.delete(newKey);
+        else terminalStartupOverrides.set(newKey, startup);
+      }
+    });
+    if (!duplicateKey) throw new Error("新终端标签创建失败");
+    const openedInSplit = duplicateResult.split === true;
+    if (modal._terminalStartupContext === modalContext) closeTerminalStartupSettings(key, false, true);
+    notify(saveDefault
+      ? `启动配置已保存为连接默认值，并已在${openedInSplit ? "新分屏" : "新标签"}打开`
+      : `已使用临时启动配置在${openedInSplit ? "新分屏" : "新标签"}打开`, "success");
+  } catch (error) {
+    notify(defaultSaved
+      ? `默认启动配置已保存，但打开终端失败：${error.message || "未知错误"}`
+      : error.message || "终端启动配置应用失败", "error");
+  } finally {
+    setButtonBusy(button, false);
+    if (modal._terminalStartupContext === modalContext) {
+      modal._terminalStartupApplying = false;
+      setTerminalStartupModalBusy(modal, false);
+    }
+  }
+}
+
+function restoreSavedTerminalStartup(key, connectionId) {
+  if ($("modal")?._terminalStartupApplying) return;
+  const connection = connections.find(item => item.id === connectionId);
+  terminalStartupOverrides.delete(key);
+  closeTerminalStartupSettings(key);
+  updateTerminalStartupButton(key, connection);
+  reconnectTerminal(connectionId, key);
+  notify("当前标签已恢复使用 SSH 连接中保存的启动配置", "success");
+}
+
+function showTerminalStartupSettings(key, connectionId) {
+  const connection = connections.find(item => item.id === connectionId);
+  if (!connection) return;
+  const current = effectiveTerminalStartupConfig(connection, key);
+  const saved = terminalStartupConfigForConnection(connection);
+  const temporary = terminalStartupOverrides.has(key);
+  const modal = $("modal");
+  const modalContext = ++terminalStartupModalSerial;
+  modal.onclick = null;
+  modal._terminalStartupContext = modalContext;
+  modal._terminalStartupKey = key;
+  modal._terminalStartupConnectionId = connectionId;
+  modal._terminalStartupRequestId = 0;
+  modal._terminalStartupApplying = false;
+  modal.innerHTML = `<div class="modal-card wide terminal-startup-modal" role="dialog" aria-modal="true" aria-labelledby="terminalStartupTitle">
+    <div class="terminal-settings-head"><div><h2 id="terminalStartupTitle">终端启动配置</h2><span>${temporary ? "当前标签正在使用临时配置" : "当前使用 SSH 连接中保存的默认配置"}</span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" id="terminalStartupClose">${icon("x")}</button></div>
+    <div class="terminal-startup-scroll">
+    <div class="terminal-startup-saved-row">
+      <div class="terminal-startup-saved">SSH 连接保存值：<strong>${esc(terminalStartupConfigLabel(saved))}</strong>。已打开的终端不会自动变化。</div>
+      ${temporary ? `<button id="terminalStartupRestore" type="button">${icon("rotate-ccw")}<span>恢复连接保存值</span></button>` : ""}
+    </div>
+    <label>启动配置<select id="terminalStartupProfile"></select></label>
+    <div class="terminal-startup-capability-control">
+      <div id="terminalStartupCapabilitySummary" class="terminal-startup-capability loading">等待检测远端环境</div>
+      <button id="terminalStartupDetect" type="button">${icon("scan-search")}<span>重新检测</span></button>
+    </div>
+    <div id="terminalStartupProgramFields" class="terminal-startup-fields">
+      <input id="terminalStartupKind" type="hidden" value="custom">
+      <div class="grid">
+        <label>配置名称<input id="terminalStartupProfileName" maxlength="120" placeholder="例如：Bash（登录模式）"></label>
+        <label>远端类型<select id="terminalStartupPlatform"><option value="auto">自动识别</option><option value="posix">Linux / macOS / Unix</option><option value="windows">Windows OpenSSH</option></select></label>
+      </div>
+      <label>程序完整路径<input id="terminalStartupPath" maxlength="2048" spellcheck="false" placeholder="/bin/bash、/usr/bin/python3 或 C:\\Program Files\\PowerShell\\7\\pwsh.exe"></label>
+      <label>启动参数<input id="terminalStartupArgs" maxlength="4096" spellcheck="false" placeholder="-l、-i 等；路径和参数请分开填写"></label>
+      <label>启动工作目录（可选）<input id="terminalStartupCwd" maxlength="2048" spellcheck="false" placeholder="/srv/app 或 C:\\work"></label>
+      <div class="muted">参数支持引号分组。请勿在启动参数中填写密码、令牌或私钥。</div>
+    </div>
+    <label class="terminal-startup-save-default">
+      <input id="terminalStartupSaveDefault" type="checkbox">
+      <span><strong>同时保存为该 SSH 连接的默认配置</strong><small>默认不勾选；未勾选时只对这次打开的目标标签临时生效。</small></span>
+    </label>
+    </div>
+    <div class="actions terminal-startup-actions">
+      <button id="terminalStartupCancel" type="button">取消</button>
+      <button id="terminalStartupCurrent" class="primary" type="button">${icon("refresh-cw")}<span>本终端打开</span></button>
+      <button id="terminalStartupNewTab" type="button">${icon("copy-plus")}<span>新标签打开</span></button>
+      ${!isMobileLayout() ? `<div class="terminal-startup-split-picker">
+        <button id="terminalStartupSplit" type="button" aria-haspopup="menu" title="悬浮后选择上、下、左、右分屏">${icon("panels-top-left")}<span>新标签分屏打开</span>${icon("chevron-up")}</button>
+        <div class="terminal-startup-split-options" role="menu" aria-label="选择新标签分屏方向">
+          <span class="terminal-startup-split-center" aria-hidden="true">${icon("panels-top-left")}</span>
+          <button data-split-zone="top" type="button" role="menuitem" title="在上方分屏打开" aria-label="在上方分屏打开" onclick="applyTerminalStartupSettings('${escAttr(key)}',${connectionId},'split',this,'top')">${icon("arrow-up")}</button>
+          <button data-split-zone="bottom" type="button" role="menuitem" title="在下方分屏打开" aria-label="在下方分屏打开" onclick="applyTerminalStartupSettings('${escAttr(key)}',${connectionId},'split',this,'bottom')">${icon("arrow-down")}</button>
+          <button data-split-zone="left" type="button" role="menuitem" title="在左侧分屏打开" aria-label="在左侧分屏打开" onclick="applyTerminalStartupSettings('${escAttr(key)}',${connectionId},'split',this,'left')">${icon("arrow-left")}</button>
+          <button data-split-zone="right" type="button" role="menuitem" title="在右侧分屏打开" aria-label="在右侧分屏打开" onclick="applyTerminalStartupSettings('${escAttr(key)}',${connectionId},'split',this,'right')">${icon("arrow-right")}</button>
+        </div>
+      </div>` : ""}
+    </div>
+  </div>`;
+  modal.hidden = false;
+  modal._terminalStartupProfiles = [];
+  fillTerminalStartupForm(current);
+  $("terminalStartupProfile").innerHTML = `<option value="default">自动（使用服务器默认登录 Shell）</option><option value="custom">自定义程序、Shell 或命令行工具</option>`;
+  $("terminalStartupProfile").value = current.terminal_startup_mode === "default" ? "default" : "custom";
+  syncTerminalStartupForm();
+  $("terminalStartupProfile").onchange = chooseTerminalStartupProfile;
+  for (const id of ["terminalStartupProfileName", "terminalStartupPath", "terminalStartupArgs", "terminalStartupCwd", "terminalStartupPlatform"]) {
+    $(id).addEventListener("input", markTerminalStartupCustom);
+    $(id).addEventListener("change", markTerminalStartupCustom);
+  }
+  $("terminalStartupClose").onclick = () => closeTerminalStartupSettings(key);
+  $("terminalStartupCancel").onclick = () => closeTerminalStartupSettings(key);
+  $("terminalStartupDetect").onclick = event => refreshTerminalStartupCapabilities(connectionId, key, event.currentTarget);
+  $("terminalStartupCurrent").onclick = event => applyTerminalStartupSettings(key, connectionId, "current", event.currentTarget);
+  $("terminalStartupNewTab").onclick = event => applyTerminalStartupSettings(key, connectionId, "new", event.currentTarget);
+  if ($("terminalStartupRestore")) $("terminalStartupRestore").onclick = () => restoreSavedTerminalStartup(key, connectionId);
+  modal.onkeydown = event => {
+    if (event.key === "Escape") closeTerminalStartupSettings(key);
+  };
+  refreshIcons();
+  refreshTerminalStartupCapabilities(connectionId, key, $("terminalStartupDetect"));
+  requestAnimationFrame(() => $("terminalStartupProfile")?.focus({preventScroll:true}));
 }
 
 function terminalEncodingLabel(connection) {
@@ -869,15 +1480,17 @@ function openTerminal(id, updateTab=true, existingKey="", existingTitle="") {
     key = `terminal-${c.id}-${next}`;
     title = `${c.name} · 终端${next > 1 ? ` #${next}` : ""}`;
   } else {
-    const restoredIndex = Number(String(key).match(/-(\d+)$/)?.[1] || 1);
-    terminalCounts.set(c.id, Math.max(terminalCounts.get(c.id) || 0, restoredIndex));
+    const restoredIndex = Number(String(key).match(new RegExp(`^terminal-${c.id}-(\\d+)$`))?.[1] || 0);
+    if (restoredIndex > 0) {
+      terminalCounts.set(c.id, Math.max(terminalCounts.get(c.id) || 0, restoredIndex));
+    }
   }
   const connectionAddress = `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`;
   const forwardButton = connectionToggleButton(c)
     .replace("connection-forward-toggle", "connection-forward-toggle terminal-action-forward")
     .replace("<button ", "<button onpointerdown=\"keepTerminalKeyboardClosed(event)\" ");
   const terminalView = $("view-terminal");
-  terminalView.innerHTML = `<div class="terminal-toolbar"><div class="terminal-title-row"><button class="terminal-mobile-back" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="backToExplorer()">${icon("arrow-left")}<span>返回</span></button><span class="terminal-connection-dot"></span><div class="terminal-status" id="terminalStatus" title="${esc(connectionAddress)}">${esc(connectionAddress)}</div>${terminalLatencyHtml(key)}</div><div class="actions terminal-actions"><button class="icon-button terminal-action-sftp" title="打开此连接的 SFTP" aria-label="打开此连接的 SFTP" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="openSftp(${c.id})">${icon("folder-open")}<span>SFTP</span></button><button class="icon-button terminal-action-font" title="减小字体（Ctrl+滚轮）" aria-label="减小字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',-1)">${icon("minus")}</button><button class="icon-button terminal-action-font" title="增大字体（Ctrl+滚轮）" aria-label="增大字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',1)">${icon("plus")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端编码" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalEncodingMenu(event,'${key}',${c.id})">${icon("languages")}<span>${esc(terminalEncodingLabel(c))}</span>${icon("chevron-down")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalFontMenu(event,'${key}',${c.id})">${icon("type")}<span>字体</span>${icon("chevron-down")}</button><button class="icon-button terminal-global-settings-button" title="全局终端设置" aria-label="全局终端设置" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalGlobalSettings('${key}')">${icon("settings")}</button><button class="terminal-action-keys" title="${terminalKeysVisible ? "隐藏快捷键" : "显示快捷键"}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalKeys('${key}')">${icon("keyboard")}<span>${terminalKeysVisible ? "隐藏快捷键" : "快捷键"}</span></button><button class="terminal-action-recent" title="最近命令" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showRecentTerminalCommands('${key}')">${icon("history")}<span>最近命令</span></button><button class="terminal-action-reconnect" title="重新连接终端" aria-label="重新连接终端" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalConnection(${c.id}, '${key}')">${icon("link-2")}<span>重连</span></button>${forwardButton}</div></div>${renderTerminalKeys(key)}<div id="terminalMount" class="terminal-box"></div><div class="terminal-mobile-composer"><input id="terminalMobileInput" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入命令" onkeydown="handleMobileTerminalInput(event,'${key}')"><button class="primary icon-button" title="发送命令" onclick="sendMobileTerminalInput('${key}')">${icon("send")}</button></div>`;
+  terminalView.innerHTML = `<div class="terminal-toolbar"><div class="terminal-title-row"><button class="terminal-mobile-back" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="backToExplorer()">${icon("arrow-left")}<span>返回</span></button><span class="terminal-connection-dot"></span><div class="terminal-status" id="terminalStatus" title="${esc(connectionAddress)}">${esc(connectionAddress)}</div>${terminalLatencyHtml(key)}</div><div class="actions terminal-actions"><button class="icon-button terminal-action-sftp" title="打开此连接的 SFTP" aria-label="打开此连接的 SFTP" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="openSftp(${c.id})">${icon("folder-open")}<span>SFTP</span></button><button class="icon-button terminal-action-font" title="减小字体（Ctrl+滚轮）" aria-label="减小字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',-1)">${icon("minus")}</button><button class="icon-button terminal-action-font" title="增大字体（Ctrl+滚轮）" aria-label="增大字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',1)">${icon("plus")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端编码" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalEncodingMenu(event,'${key}',${c.id})">${icon("languages")}<span>${esc(terminalEncodingLabel(c))}</span>${icon("chevron-down")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalFontMenu(event,'${key}',${c.id})">${icon("type")}<span>字体</span>${icon("chevron-down")}</button><button class="icon-button terminal-startup-button" title="终端启动配置" aria-label="终端启动配置" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalStartupSettings('${key}',${c.id})">${icon("command")}<span>启动</span></button><button class="icon-button terminal-global-settings-button" title="全局终端设置" aria-label="全局终端设置" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalGlobalSettings('${key}')">${icon("settings")}</button><button class="terminal-action-keys" title="${terminalKeysVisible ? "隐藏快捷键" : "显示快捷键"}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalKeys('${key}')">${icon("keyboard")}<span>${terminalKeysVisible ? "隐藏快捷键" : "快捷键"}</span></button><button class="terminal-action-recent" title="最近命令" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showRecentTerminalCommands('${key}')">${icon("history")}<span>最近命令</span></button><button class="terminal-action-reconnect" title="重新连接终端" aria-label="重新连接终端" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalConnection(${c.id}, '${key}')">${icon("link-2")}<span>重连</span></button>${forwardButton}</div></div>${renderTerminalKeys(key)}<div id="terminalMount" class="terminal-box"></div><div class="terminal-mobile-composer"><input id="terminalMobileInput" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入命令" onkeydown="handleMobileTerminalInput(event,'${key}')"><button class="primary icon-button" title="发送命令" onclick="sendMobileTerminalInput('${key}')">${icon("send")}</button></div>`;
   terminalView.dataset.workspaceTabKey = key;
   terminalView.dataset.terminalTabKey = key;
   const toolbar = terminalView.querySelector(":scope > .terminal-toolbar");
@@ -891,10 +1504,12 @@ function openTerminal(id, updateTab=true, existingKey="", existingTitle="") {
   terminalStatus.dataset.connectionState = "连接中";
   setWorkspace(title, `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`, "terminal", key, updateTab, true, {kind:"terminal", id:c.id});
   syncTerminalToolbarPlacement(key);
+  updateTerminalStartupButton(key, c);
   attachTerminal(c, key).catch(error => {
     const mount = terminalElementForKey(key, "#terminalMount");
     if (mount) mount.innerHTML = stateView("error", "终端组件加载失败", error.message, `<button onclick="reconnectTerminal(${c.id},'${key}')">重新连接</button>`);
   });
+  return key;
 }
 
 async function attachTerminal(c, key) {
@@ -907,32 +1522,14 @@ async function attachTerminal(c, key) {
     const term = new TerminalClass({
       cursorBlink:true,
       convertEol:true,
+      minimumContrastRatio:4.5,
+      overviewRuler:{width:8},
       fontFamily:c.terminal_font_family || "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
       fontSize:terminalFontSizeForCurrentLayout(c),
       lineHeight:Number(c.terminal_line_height) || 1,
       fontWeight:c.terminal_font_weight || "normal",
       wordSeparator:terminalWordSeparator(),
-      theme:{
-        background:"#0f1720",
-        foreground:"#d1e7dd",
-        cursor:"#ffffff",
-        black:"#2e3436",
-        red:"#ef4444",
-        green:"#22c55e",
-        yellow:"#eab308",
-        blue:"#60a5fa",
-        magenta:"#c084fc",
-        cyan:"#2dd4bf",
-        white:"#e5e7eb",
-        brightBlack:"#6b7280",
-        brightRed:"#f87171",
-        brightGreen:"#86efac",
-        brightYellow:"#fde047",
-        brightBlue:"#93c5fd",
-        brightMagenta:"#d8b4fe",
-        brightCyan:"#67e8f9",
-        brightWhite:"#ffffff"
-      }
+      theme:terminalThemeForSettings()
     });
     const fit = new FitAddonClass();
     term.loadAddon(fit);
@@ -942,6 +1539,7 @@ async function attachTerminal(c, key) {
   session.fontLayoutMobile = isMobileLayout();
   session.mount = mount;
   session.term.options.fontSize = terminalFontSizeForCurrentLayout(c);
+  applyTerminalGlobalSettingsToSession(session);
   if (session.term.element) mount.appendChild(session.term.element);
   else session.term.open(mount);
   bindTerminalGlobalBehavior(session, key, c.id, mount);
@@ -1160,6 +1758,7 @@ function terminalFontSizeForCurrentLayout(connection) {
 function syncTerminalResponsiveFontSizes() {
   const mobile = isMobileLayout();
   for (const session of terminalSessions.values()) {
+    if (!session?.term?.options) continue;
     if (session.fontLayoutMobile === mobile) continue;
     const connection = connections.find(item => item.id === session.id);
     if (!connection) continue;
@@ -1388,14 +1987,17 @@ function showTerminalContextMenu(event, key, connectionId) {
     {label:"清屏", icon:"eraser", run:()=>{ session.term.clear(); session.term.focus(); }},
     {label:"滚动到底部", icon:"arrow-down-to-line", run:()=>session.term.scrollToBottom()},
     {separator:true},
+    {label:"终端启动配置", icon:"command", run:()=>showTerminalStartupSettings(key, connectionId)},
     {label:session.connected ? "断开连接" : "重新连接", icon:session.connected ? "link-2-off" : "link-2", run:()=>toggleTerminalConnection(connectionId, key)},
     ...(!mobile ? [{separator:true}, {label:"全局终端设置", icon:"settings", run:()=>showTerminalGlobalSettings(key)}] : [])
   ]);
 }
 
-function connectTerminal(c, key) {
+async function connectTerminal(c, key) {
   const session = terminalSessions.get(key);
   if (!session) return;
+  const attempt = Number(session.connectionAttempt || 0) + 1;
+  session.connectionAttempt = attempt;
   const previousSocket = session.socket;
   session.socket = null;
   try { previousSocket?.close(); } catch {}
@@ -1404,12 +2006,37 @@ function connectTerminal(c, key) {
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   const tab = tabs.find(item => item.key === key);
   const title = tab?.title || `${c.name} · 终端`;
-  const socket = new WebSocket(`${protocol}://${location.host}/ws/terminal?id=${encodeURIComponent(c.id)}&cols=${session.term.cols || 80}&rows=${session.term.rows || 24}&title=${encodeURIComponent(title)}`);
-  socket.binaryType = "arraybuffer";
-  session.socket = socket;
   session.connected = false;
   updateTerminalConnectionStatus(c, key, "连接中");
   session.term.writeln(`连接 ${c.ssh_user}@${c.ssh_host}:${c.ssh_port} ...`);
+  let startupToken = "";
+  try {
+    if (terminalStartupOverrides.has(key)) {
+      const ticket = await api("/api/terminal/startup-tickets", {
+        method:"POST",
+        body:JSON.stringify({
+          connection_id:c.id,
+          startup:terminalStartupOverrides.get(key)
+        })
+      });
+      startupToken = ticket.token || "";
+    }
+  } catch (error) {
+    if (session.connectionAttempt !== attempt || terminalSessions.get(key) !== session) return;
+    session.term.writeln(`\r\n[临时启动配置准备失败：${error.message}]`);
+    updateTerminalConnectionStatus(c, key, "已断开");
+    notify(error.message || "临时启动配置准备失败", "error");
+    return;
+  }
+  if (
+    session.connectionAttempt !== attempt
+    || terminalSessions.get(key) !== session
+    || !tabs.some(item => item.key === key)
+  ) return;
+  const startupQuery = startupToken ? `&startup_token=${encodeURIComponent(startupToken)}` : "";
+  const socket = new WebSocket(`${protocol}://${location.host}/ws/terminal?id=${encodeURIComponent(c.id)}&cols=${session.term.cols || 80}&rows=${session.term.rows || 24}&title=${encodeURIComponent(title)}${startupQuery}`);
+  socket.binaryType = "arraybuffer";
+  session.socket = socket;
   socket.addEventListener("open", () => {
     if (session.socket !== socket) return;
     session.connected = true;
@@ -1477,6 +2104,7 @@ function reconnectTerminal(id, key=`terminal-${id}-1`) {
 function disconnectTerminal(key) {
   const session = terminalSessions.get(key);
   if (!session) return;
+  session.connectionAttempt = Number(session.connectionAttempt || 0) + 1;
   const socket = session.socket;
   session.connected = false;
   session.latencyPendingAt = 0;

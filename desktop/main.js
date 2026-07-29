@@ -368,6 +368,11 @@ function createWindow(options = {}) {
       mainWindow.webContents.executeJavaScript('openSettingsSection("settings-runtime")').catch(() => {});
     });
   }
+  mainWindow.once("ready-to-show", () => {
+    const settings = readSettings();
+    if (shouldStartInTray(settings)) mainWindow.hide();
+    else bringMainWindowToFront();
+  });
   mainWindow.loadURL(webUrl);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^(https?|ftp|ssh|telnet):\/\//i.test(url)) shell.openExternal(url);
@@ -376,11 +381,6 @@ function createWindow(options = {}) {
   const renderer = mainWindow.webContents;
   renderer.on?.("render-process-gone", () => cancelNativeSftpDragSessionsForSender(renderer, "界面进程已结束，拖出任务已取消"));
   renderer.once?.("destroyed", () => cancelNativeSftpDragSessionsForSender(renderer, "界面已关闭，拖出任务已取消"));
-  mainWindow.once("ready-to-show", () => {
-    const settings = readSettings();
-    if (shouldStartInTray(settings)) mainWindow.hide();
-    else mainWindow.show();
-  });
   mainWindow.on("close", event => {
     if (quitting || !readSettings().minimizeToTray) return;
     event.preventDefault();
@@ -964,13 +964,21 @@ function handleSftpStartDrag(event, payload) {
   handleStreamingSftpStartDrag(event, payload, requestId);
 }
 
+function bringMainWindowToFront() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  if (process.platform === "win32") mainWindow.moveTop?.();
+  try {
+    if (process.platform === "darwin") app.focus?.({ steal:true });
+    else app.focus?.();
+  } catch {}
+  mainWindow.focus();
+  return true;
+}
+
 function showWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
-  else {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  }
+  if (!bringMainWindowToFront()) createWindow();
 }
 
 function trayIcon() {
@@ -1039,21 +1047,7 @@ function notify(body) {
 
 function buildAppMenu() {
   const settings = readSettings();
-  const template = [
-    {
-      label: "开始",
-      submenu: [
-        { label: "在浏览器打开", click: () => shell.openExternal(webUrl) },
-        { type: "separator" },
-        { label: "打开 .ssh 目录", click: () => shell.openPath(PROJECT_SSH_DIR) },
-        { label: "打开日志目录", click: () => shell.openPath(LOG_DIR) },
-        { label: "导出日志", click: exportLogs },
-        { type: "separator" },
-        { label: "退出 TunnelDesk", click: quitApp }
-      ]
-    }
-  ];
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  Menu.setApplicationMenu(null);
   applyLoginSetting(settings);
 }
 

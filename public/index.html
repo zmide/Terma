@@ -18,9 +18,14 @@
       <div class="brand">
         <h1 aria-label="TunnelDesk"><span class="brand-name-full" aria-hidden="true">TunnelDesk</span><span class="brand-name-short" aria-hidden="true">TD</span></h1>
         <div class="side-actions">
+          <button id="operationPanePin" class="operation-pane-pin icon-button is-pinned" type="button" data-icon="pin" onclick="toggleOperationPanePinned()" title="操作区已固定；点击改为自动收起" aria-label="操作区已固定；点击改为自动收起" aria-pressed="true"><i data-lucide="pin"></i></button>
           <button id="operationPaneCollapse" class="operation-pane-collapse icon-button" type="button" onclick="setOperationPaneCollapsed(true)" title="收起操作区" aria-label="收起操作区"><i data-lucide="panel-left-close"></i></button>
           <button class="mobile-brand-action theme-toggle icon-button" onclick="toggleTheme()" title="切换主题" aria-label="切换主题"><i data-lucide="moon"></i></button>
           <button class="mobile-brand-action icon-button" onclick="loadAll()" title="刷新数据" aria-label="刷新数据"><i data-lucide="refresh-cw"></i></button>
+        </div>
+        <div id="operationPanePinGuide" class="operation-pane-pin-guide" role="region" aria-label="操作区使用提示" aria-live="polite" hidden>
+          <div><strong>固定操作区</strong><span>取消固定后，点击工作区会自动收起；每个操作区都可以单独设置。</span></div>
+          <button class="icon-button" type="button" onclick="dismissOperationPanePinGuide()" title="知道了" aria-label="关闭提示"><i data-lucide="x"></i></button>
         </div>
       </div>
       <div class="left-body">
@@ -40,6 +45,7 @@
               <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.2.8-.6v-2c-3.3.7-4-1.4-4-1.4-.5-1.3-1.2-1.6-1.2-1.6-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 .1.6 2.1 3.4 1.5.1-.7.4-1.2.7-1.5-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>
             </a>
           </div>
+          <div id="activityBarResize" class="activity-bar-resizer" role="separator" aria-orientation="vertical" aria-label="调整活动栏宽度" tabindex="0" title="拖动调整活动栏宽度，双击恢复默认"></div>
         </nav>
         <aside id="sidebar" class="sidebar">
           <div class="side-nav">
@@ -66,6 +72,7 @@
         </div>
         <div id="workspaceGlobalHeaderTools" class="workspace-header-tools workspace-global-header-tools" data-workspace-role="global-header-tools" hidden></div>
         <div id="notice" class="notice"></div>
+        <div id="workspaceHeaderResize" class="workspace-header-resizer" role="separator" aria-orientation="horizontal" aria-label="调整工作区标题栏高度" tabindex="0" title="拖动调整标题栏高度，双击恢复默认"></div>
       </div>
       <div id="workspaceDock" class="workspace-dock"></div>
       <template id="workspaceViewsTpl">
@@ -130,6 +137,58 @@
         <label>SSH 密码</label><input id="conn_password" type="password" autocomplete="new-password" placeholder="输入 SSH 登录密码">
         <div class="muted">编辑已有密码连接时留空表示保持原密码。</div>
       </div>
+      <fieldset class="terminal-startup-card">
+        <legend>终端启动配置</legend>
+        <div class="terminal-startup-intro">默认使用服务器的登录 Shell。测试 SSH 后可快速选择检测到的 Bash、Zsh、PowerShell、Python、Node、tmux 等程序，也可以填写自定义命令。</div>
+        <div class="grid terminal-startup-selectors">
+          <div>
+            <label>启动方式</label>
+            <select id="conn_terminal_startup_mode" onchange="toggleConnectionTerminalStartup(this.form)">
+              <option value="default">自动（使用服务器默认登录 Shell）</option>
+              <option value="program">指定程序或交互环境</option>
+            </select>
+          </div>
+          <div>
+            <label>快速选择</label>
+            <select id="conn_terminal_profile_select" onchange="applyConnectionTerminalProfile(this.value,this)">
+              <option value="">测试 SSH 后显示可用选项</option>
+              <option value="__custom__">自定义程序...</option>
+            </select>
+          </div>
+        </div>
+        <div id="connTerminalDetectionStatus" class="terminal-startup-detection muted" aria-live="polite">尚未检测。填写连接信息后点击“测试 SSH”。</div>
+        <div id="connTerminalProgramFields" class="terminal-startup-program" hidden>
+          <div class="grid3 terminal-startup-meta">
+            <div><label>配置名称</label><input id="conn_terminal_profile_name" maxlength="80" placeholder="例如：Bash（登录模式）"></div>
+            <div>
+              <label>类型</label>
+              <select id="conn_terminal_profile_kind">
+                <option value="shell">Shell</option>
+                <option value="repl">交互式语言</option>
+                <option value="session">会话工具</option>
+                <option value="tool">交互工具</option>
+                <option value="custom">自定义</option>
+              </select>
+            </div>
+            <div>
+              <label>远端平台</label>
+              <select id="conn_terminal_program_platform">
+                <option value="auto">自动判断</option>
+                <option value="posix">Linux / macOS / Unix</option>
+                <option value="windows">Windows</option>
+              </select>
+            </div>
+          </div>
+          <label>程序完整路径</label>
+          <input id="conn_terminal_program_path" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="例如：/bin/bash、/usr/bin/python3、C:\Program Files\PowerShell\7\pwsh.exe">
+          <div class="grid terminal-startup-command-options">
+            <div><label>启动参数</label><input id="conn_terminal_program_args" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="例如：-l、-i 或 --noprofile"></div>
+            <div><label>启动目录（可选）</label><input id="conn_terminal_working_directory" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="例如：/srv/app 或 C:\work"></div>
+          </div>
+          <div class="terminal-startup-warning">参数会在远端启动程序时使用，请不要在这里填写密码或访问令牌。</div>
+        </div>
+        <div id="connTerminalCapabilities" class="terminal-startup-capabilities" hidden></div>
+      </fieldset>
       <label>额外 SSH 参数</label><textarea id="conn_extra">-o StrictHostKeyChecking=accept-new
 -o ServerAliveInterval=60
 -o ServerAliveCountMax=3

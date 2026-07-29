@@ -34,7 +34,7 @@ function inspectDatabase(directory) {
   try {
     database = new DatabaseSync(databaseFile, { readOnly:true });
     const connections = database.prepare(
-      "SELECT id,name,group_name,auth_type FROM connections WHERE group_name=? ORDER BY sort_order,created_at,id"
+      "SELECT id,name,group_name,auth_type FROM connections WHERE group_name=? ORDER BY sort_order,name COLLATE NOCASE,created_at,id"
     ).all(TEST_GROUP);
     const realNames = connections.filter(item => ["测试", "测试1", "测试2"].includes(String(item.name))).length;
     const fixtures = connections.filter(item => String(item.name).startsWith("fixture-")).length;

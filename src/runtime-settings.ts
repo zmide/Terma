@@ -12,6 +12,8 @@ const DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT = Object.freeze({
   split: Object.freeze({ terminal: "header", sftp: "header" })
 });
 const DEFAULT_TERMINAL_SETTINGS = Object.freeze({
+  background_mode: "theme",
+  background_color: "#0f1720",
   middle_mouse_action: "paste_clipboard",
   right_mouse_action: "context_menu",
   ctrl_left_click_moves_cursor: true,
@@ -30,6 +32,7 @@ const DEFAULT_TERMINAL_SETTINGS = Object.freeze({
 const TERMINAL_MOUSE_ACTIONS = new Set(["none", "context_menu", "paste_clipboard", "open_settings", "send_enter", "paste_selection"]);
 const TERMINAL_MULTILINE_PASTE_MODES = new Set(["prompt", "paste", "single_line"]);
 const TERMINAL_URL_SCHEMES = new Set(["http", "https", "ftp", "ssh", "telnet"]);
+const TERMINAL_BACKGROUND_MODES = new Set(["theme", "black", "white", "custom"]);
 const WORKSPACE_TOOLBAR_PLACEMENTS = new Set(["tab", "header"]);
 
 function splitListenHosts(value) {
@@ -76,8 +79,15 @@ function normalizeTerminalSettings(value: any = {}, fallback: any = DEFAULT_TERM
   const middleMouseAction = String(source.middle_mouse_action ?? base.middle_mouse_action ?? DEFAULT_TERMINAL_SETTINGS.middle_mouse_action);
   const rightMouseAction = String(source.right_mouse_action ?? base.right_mouse_action ?? DEFAULT_TERMINAL_SETTINGS.right_mouse_action);
   const multilinePasteMode = String(source.multiline_paste_mode ?? base.multiline_paste_mode ?? DEFAULT_TERMINAL_SETTINGS.multiline_paste_mode);
+  const backgroundMode = String(source.background_mode ?? base.background_mode ?? DEFAULT_TERMINAL_SETTINGS.background_mode);
+  const backgroundColorValue = String(source.background_color ?? base.background_color ?? DEFAULT_TERMINAL_SETTINGS.background_color).trim();
+  const backgroundColor = /^#[0-9a-f]{6}$/i.test(backgroundColorValue)
+    ? backgroundColorValue.toLowerCase()
+    : DEFAULT_TERMINAL_SETTINGS.background_color;
   const wordSeparators = String(source.word_separators ?? base.word_separators ?? DEFAULT_TERMINAL_SETTINGS.word_separators).slice(0, 128);
   return {
+    background_mode: TERMINAL_BACKGROUND_MODES.has(backgroundMode) ? backgroundMode : DEFAULT_TERMINAL_SETTINGS.background_mode,
+    background_color: backgroundColor,
     middle_mouse_action: TERMINAL_MOUSE_ACTIONS.has(middleMouseAction) ? middleMouseAction : DEFAULT_TERMINAL_SETTINGS.middle_mouse_action,
     right_mouse_action: TERMINAL_MOUSE_ACTIONS.has(rightMouseAction) ? rightMouseAction : DEFAULT_TERMINAL_SETTINGS.right_mouse_action,
     ctrl_left_click_moves_cursor: source.ctrl_left_click_moves_cursor === undefined ? base.ctrl_left_click_moves_cursor !== false : source.ctrl_left_click_moves_cursor === true,
@@ -119,7 +129,7 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 5,
+    schema_version: 6,
     listen_hosts: normalizeListenHosts(hostsValue, hostsValue === undefined ? (fallback.listen_hosts ?? DEFAULT_LISTEN_HOSTS) : null),
     listen_port: normalizeListenPort(portValue, portValue === undefined ? (fallback.listen_port ?? DEFAULT_LISTEN_PORT) : null),
     sftp_recycle_bin_enabled: value.sftp_recycle_bin_enabled === undefined

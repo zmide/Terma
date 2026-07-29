@@ -3,6 +3,12 @@ const WORKSPACE_MIN_SPLIT_RATIO = 0.15;
 const WORKSPACE_MAX_SPLIT_RATIO = 0.85;
 const WORKSPACE_MAX_RESTORE_DEPTH = 64;
 const WORKSPACE_MAX_RESTORE_NODES = 256;
+const WORKSPACE_HEADER_HEIGHT_DEFAULT = 42;
+const WORKSPACE_HEADER_HEIGHT_MIN = 34;
+const WORKSPACE_HEADER_HEIGHT_MAX = 64;
+const WORKSPACE_TAB_HEIGHT_DEFAULT = 32;
+const WORKSPACE_TAB_HEIGHT_MIN = 26;
+const WORKSPACE_TAB_HEIGHT_MAX = 48;
 const legacyWorkspaceApi = {
   renderTabs,
   updateWorkspaceTabScrollControls,
@@ -35,6 +41,12 @@ let focusedPaneId = "pane-1";
 let workspaceLayout = {type:"pane", id:"pane-1", tabs:[], activeTabKey:""};
 let workspaceTabDropTarget = null;
 let workspaceSplitterDrag = null;
+let workspaceChromeResize = null;
+let workspaceChromeFitFrame = 0;
+let workspaceChromeFitTimer = 0;
+let workspaceChromeLastFitAt = 0;
+let workspaceHeaderHeight = WORKSPACE_HEADER_HEIGHT_DEFAULT;
+let workspaceTabHeight = WORKSPACE_TAB_HEIGHT_DEFAULT;
 const workspacePaneNodes = new Map();
 
 function workspaceCssEscape(value) {
@@ -86,6 +98,241 @@ function currentWorkspaceDomScope() {
 
 function workspaceGlobalHeaderToolsElement() {
   return document.getElementById("workspaceGlobalHeaderTools");
+}
+
+function clampWorkspaceChromeHeight(value, min, max, fallback) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(numeric)));
+}
+
+function storedWorkspaceChromeHeight(key, min, max, fallback) {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored === null || stored === ""
+      ? fallback
+      : clampWorkspaceChromeHeight(stored, min, max, fallback);
+  } catch {
+    return fallback;
+  }
+}
+
+function scaledWorkspaceChromeValue(height, defaultHeight, base, slope, min, max) {
+  return Math.max(min, Math.min(max, base + (height - defaultHeight) * slope));
+}
+
+function scheduleWorkspaceChromeFit() {
+  if (workspaceChromeFitFrame || workspaceChromeFitTimer) return;
+  if (workspaceChromeResize) {
+    const now = globalThis.performance?.now?.() ?? Date.now();
+    const remaining = Math.max(0, 64 - (now - workspaceChromeLastFitAt));
+    if (remaining > 0) {
+      workspaceChromeFitTimer = setTimeout(() => {
+        workspaceChromeFitTimer = 0;
+        scheduleWorkspaceChromeFit();
+      }, remaining);
+      return;
+    }
+  }
+  workspaceChromeFitFrame = requestAnimationFrame(() => {
+    workspaceChromeFitFrame = 0;
+    workspaceChromeLastFitAt = globalThis.performance?.now?.() ?? Date.now();
+    if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
+    for (const pane of workspaceVisiblePanes()) updateWorkspaceTabScrollControls(pane.id);
+    if (typeof syncSftpListLayout === "function") {
+      for (const pane of workspaceVisiblePanes()) {
+        const list = workspacePaneElement(pane.id)?.querySelector("#sftpList");
+        if (list) syncSftpListLayout(list);
+      }
+    }
+  });
+}
+
+function syncWorkspaceChromeResizeAria() {
+  const headerHandle = document.getElementById("workspaceHeaderResize");
+  if (headerHandle) {
+    headerHandle.setAttribute("aria-valuemin", String(WORKSPACE_HEADER_HEIGHT_MIN));
+    headerHandle.setAttribute("aria-valuemax", String(WORKSPACE_HEADER_HEIGHT_MAX));
+    headerHandle.setAttribute("aria-valuenow", String(workspaceHeaderHeight));
+  }
+  document.querySelectorAll(".workspace-tab-resizer").forEach(handle => {
+    handle.setAttribute("aria-valuemin", String(WORKSPACE_TAB_HEIGHT_MIN));
+    handle.setAttribute("aria-valuemax", String(WORKSPACE_TAB_HEIGHT_MAX));
+    handle.setAttribute("aria-valuenow", String(workspaceTabHeight));
+  });
+}
+
+function applyWorkspaceHeaderHeight(value, options={}) {
+  workspaceHeaderHeight = clampWorkspaceChromeHeight(
+    value,
+    WORKSPACE_HEADER_HEIGHT_MIN,
+    WORKSPACE_HEADER_HEIGHT_MAX,
+    WORKSPACE_HEADER_HEIGHT_DEFAULT
+  );
+  const root = document.documentElement;
+  if (root?.style) {
+    root.style.setProperty("--workspace-header-height", `${workspaceHeaderHeight}px`);
+    root.style.setProperty("--workspace-header-title-size", `${scaledWorkspaceChromeValue(workspaceHeaderHeight, 42, 14, .2, 12, 18).toFixed(2)}px`);
+    root.style.setProperty("--workspace-header-subtitle-size", `${scaledWorkspaceChromeValue(workspaceHeaderHeight, 42, 10, .12, 9, 13).toFixed(2)}px`);
+    root.style.setProperty("--workspace-header-control-height", `${scaledWorkspaceChromeValue(workspaceHeaderHeight, 42, 30, .27, 27, 36).toFixed(2)}px`);
+    root.style.setProperty("--workspace-header-control-font-size", `${scaledWorkspaceChromeValue(workspaceHeaderHeight, 42, 12, .1, 11, 14).toFixed(2)}px`);
+    root.style.setProperty("--workspace-header-icon-size", `${scaledWorkspaceChromeValue(workspaceHeaderHeight, 42, 14, .13, 13, 17).toFixed(2)}px`);
+  }
+  if (options.persist) {
+    try { localStorage.setItem("workspaceHeaderHeight", String(workspaceHeaderHeight)); } catch {}
+  }
+  syncWorkspaceChromeResizeAria();
+  if (options.fit !== false) scheduleWorkspaceChromeFit();
+  return workspaceHeaderHeight;
+}
+
+function applyWorkspaceTabHeight(value, options={}) {
+  workspaceTabHeight = clampWorkspaceChromeHeight(
+    value,
+    WORKSPACE_TAB_HEIGHT_MIN,
+    WORKSPACE_TAB_HEIGHT_MAX,
+    WORKSPACE_TAB_HEIGHT_DEFAULT
+  );
+  const root = document.documentElement;
+  if (root?.style) {
+    root.style.setProperty("--workspace-tab-height", `${workspaceTabHeight}px`);
+    root.style.setProperty("--workspace-tab-font-size", `${scaledWorkspaceChromeValue(workspaceTabHeight, 32, 12, .18, 10.5, 15).toFixed(2)}px`);
+    root.style.setProperty("--workspace-tab-dot-size", `${scaledWorkspaceChromeValue(workspaceTabHeight, 32, 7, .1, 6, 9).toFixed(2)}px`);
+    root.style.setProperty("--workspace-tab-close-size", `${scaledWorkspaceChromeValue(workspaceTabHeight, 32, 18, .2, 16, 22).toFixed(2)}px`);
+    root.style.setProperty("--workspace-tab-horizontal-padding", `${scaledWorkspaceChromeValue(workspaceTabHeight, 32, 8, .2, 6, 11).toFixed(2)}px`);
+  }
+  if (options.persist) {
+    try { localStorage.setItem("workspaceTabHeight", String(workspaceTabHeight)); } catch {}
+  }
+  syncWorkspaceChromeResizeAria();
+  if (options.fit !== false) scheduleWorkspaceChromeFit();
+  return workspaceTabHeight;
+}
+
+function workspaceChromeResizeValue(kind) {
+  return kind === "header" ? workspaceHeaderHeight : workspaceTabHeight;
+}
+
+function applyWorkspaceChromeResizeValue(kind, value, options={}) {
+  return kind === "header"
+    ? applyWorkspaceHeaderHeight(value, options)
+    : applyWorkspaceTabHeight(value, options);
+}
+
+function workspaceChromeResizeDefault(kind) {
+  return kind === "header" ? WORKSPACE_HEADER_HEIGHT_DEFAULT : WORKSPACE_TAB_HEIGHT_DEFAULT;
+}
+
+function beginWorkspaceChromeResize(event, kind) {
+  if (event.button !== 0 || isMobileLayout()) return;
+  if (workspaceChromeResize) endWorkspaceChromeResize(null, true);
+  event.preventDefault();
+  event.stopPropagation();
+  workspaceChromeResize = {
+    kind,
+    pointerId:event.pointerId,
+    startY:event.clientY,
+    startValue:workspaceChromeResizeValue(kind),
+    handle:event.currentTarget
+  };
+  try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch {}
+  document.body.classList.add("workspace-chrome-resizing", kind === "header" ? "workspace-header-resizing" : "workspace-tab-resizing");
+  window.addEventListener("pointermove", moveWorkspaceChromeResize, {passive:false});
+  window.addEventListener("pointerup", endWorkspaceChromeResize);
+  window.addEventListener("pointercancel", cancelWorkspaceChromeResize);
+  window.addEventListener("blur", finishWorkspaceChromeResizeOnBlur);
+}
+
+function moveWorkspaceChromeResize(event) {
+  const drag = workspaceChromeResize;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  event.preventDefault();
+  applyWorkspaceChromeResizeValue(drag.kind, drag.startValue + event.clientY - drag.startY);
+}
+
+function cancelWorkspaceChromeResize(event) {
+  endWorkspaceChromeResize(event, true);
+}
+
+function finishWorkspaceChromeResizeOnBlur() {
+  endWorkspaceChromeResize(null);
+}
+
+function finishWorkspaceChromeResizeOnLostCapture(event) {
+  endWorkspaceChromeResize(event);
+}
+
+function endWorkspaceChromeResize(event, cancelled=false) {
+  const drag = workspaceChromeResize;
+  if (!drag || event?.pointerId !== undefined && event.pointerId !== drag.pointerId) return;
+  window.removeEventListener("pointermove", moveWorkspaceChromeResize);
+  window.removeEventListener("pointerup", endWorkspaceChromeResize);
+  window.removeEventListener("pointercancel", cancelWorkspaceChromeResize);
+  window.removeEventListener("blur", finishWorkspaceChromeResizeOnBlur);
+  workspaceChromeResize = null;
+  try {
+    if (drag.handle.hasPointerCapture?.(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
+  } catch {}
+  document.body.classList.remove("workspace-chrome-resizing", "workspace-header-resizing", "workspace-tab-resizing");
+  if (workspaceChromeFitTimer) {
+    clearTimeout(workspaceChromeFitTimer);
+    workspaceChromeFitTimer = 0;
+  }
+  applyWorkspaceChromeResizeValue(drag.kind, cancelled ? drag.startValue : workspaceChromeResizeValue(drag.kind), {
+    persist:!cancelled
+  });
+}
+
+function resetWorkspaceChromeSize(event, kind) {
+  if (isMobileLayout()) return;
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  applyWorkspaceChromeResizeValue(kind, workspaceChromeResizeDefault(kind), {persist:true});
+}
+
+function handleWorkspaceChromeResizeKey(event, kind) {
+  if (isMobileLayout()) return;
+  const direction = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
+  if (!direction && !["Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const rangeValue = event.key === "Home"
+    ? (kind === "header" ? WORKSPACE_HEADER_HEIGHT_MIN : WORKSPACE_TAB_HEIGHT_MIN)
+    : event.key === "End"
+      ? (kind === "header" ? WORKSPACE_HEADER_HEIGHT_MAX : WORKSPACE_TAB_HEIGHT_MAX)
+      : workspaceChromeResizeValue(kind) + direction * (event.shiftKey ? 4 : 1);
+  applyWorkspaceChromeResizeValue(kind, rangeValue, {persist:true});
+}
+
+function bindWorkspaceChromeResizeHandle(handle, kind) {
+  if (!handle || handle.dataset.workspaceResizeBound === "1") return;
+  handle.dataset.workspaceResizeBound = "1";
+  handle.setAttribute("aria-valuemin", String(kind === "header" ? WORKSPACE_HEADER_HEIGHT_MIN : WORKSPACE_TAB_HEIGHT_MIN));
+  handle.setAttribute("aria-valuemax", String(kind === "header" ? WORKSPACE_HEADER_HEIGHT_MAX : WORKSPACE_TAB_HEIGHT_MAX));
+  handle.setAttribute("aria-valuenow", String(workspaceChromeResizeValue(kind)));
+  handle.addEventListener("pointerdown", event => beginWorkspaceChromeResize(event, kind));
+  handle.addEventListener("lostpointercapture", finishWorkspaceChromeResizeOnLostCapture);
+  handle.addEventListener("dblclick", event => resetWorkspaceChromeSize(event, kind));
+  handle.addEventListener("keydown", event => handleWorkspaceChromeResizeKey(event, kind));
+}
+
+function initWorkspaceChromeSizing() {
+  workspaceHeaderHeight = storedWorkspaceChromeHeight(
+    "workspaceHeaderHeight",
+    WORKSPACE_HEADER_HEIGHT_MIN,
+    WORKSPACE_HEADER_HEIGHT_MAX,
+    WORKSPACE_HEADER_HEIGHT_DEFAULT
+  );
+  workspaceTabHeight = storedWorkspaceChromeHeight(
+    "workspaceTabHeight",
+    WORKSPACE_TAB_HEIGHT_MIN,
+    WORKSPACE_TAB_HEIGHT_MAX,
+    WORKSPACE_TAB_HEIGHT_DEFAULT
+  );
+  applyWorkspaceHeaderHeight(workspaceHeaderHeight, {fit:false});
+  applyWorkspaceTabHeight(workspaceTabHeight, {fit:false});
+  bindWorkspaceChromeResizeHandle(document.getElementById("workspaceHeaderResize"), "header");
+  document.querySelectorAll(".workspace-tab-resizer").forEach(handle => bindWorkspaceChromeResizeHandle(handle, "tabs"));
+  syncWorkspaceChromeResizeAria();
 }
 
 function workspacePaneHeaderToolsElement(paneId) {
@@ -357,6 +604,7 @@ function createWorkspacePaneElement(paneId) {
         <div class="tabs" role="tablist"></div>
         <button class="tabs-scroll-button tabs-scroll-right" type="button" title="向右滚动标签" aria-label="向右滚动标签" hidden>${icon("chevron-right")}</button>
         <div class="workspace-tab-insert-indicator" aria-hidden="true" hidden></div>
+        <div class="workspace-tab-resizer" role="separator" aria-orientation="horizontal" aria-label="调整标签栏高度" tabindex="0" title="拖动调整标签栏高度，双击恢复默认"></div>
       </div>
       <div class="workspace-header-tools" data-workspace-role="header-tools" hidden></div>
     </div>
@@ -370,6 +618,8 @@ function createWorkspacePaneElement(paneId) {
   tabsNode.addEventListener("wheel", event => handleWorkspaceTabsWheel(event, paneId), {passive:false});
   pane.querySelector(".tabs-scroll-left").addEventListener("click", () => scrollWorkspaceTabs(-1, paneId));
   pane.querySelector(".tabs-scroll-right").addEventListener("click", () => scrollWorkspaceTabs(1, paneId));
+  bindWorkspaceChromeResizeHandle(pane.querySelector(".workspace-tab-resizer"), "tabs");
+  syncWorkspaceChromeResizeAria();
   workspacePaneNodes.set(paneId, pane);
   return pane;
 }
@@ -892,22 +1142,7 @@ function workspaceTabCopyTitle(tab) {
   return `${base} · 副本${copyCount > 1 ? ` ${copyCount}` : ""}`;
 }
 
-function duplicateWorkspaceTab(key) {
-  const tab = tabs.find(item => item.key === key);
-  const pane = workspaceFindPaneForTab(key);
-  if (!tab || !pane) return;
-  hideTabContextMenu();
-  focusedPaneId = pane.id;
-  pane.activeTabKey = key;
-  activeTabKey = key;
-  activeView = tab.viewName || tab.kind || "welcome";
-  const duplicateKey = nextWorkspaceTabCopyKey(tab);
-  const duplicateTitle = workspaceTabCopyTitle(tab);
-  if (tab.kind === "terminal") return openTerminal(tab.id, true, duplicateKey, duplicateTitle);
-  if (tab.kind === "sftp") {
-    if (typeof duplicateSftpTab === "function") return duplicateSftpTab(key, duplicateKey);
-    return openSftp(tab.id, tab.path || ".", true, duplicateKey);
-  }
+function addWorkspaceTabCopy(tab, duplicateKey, duplicateTitle) {
   const {
     key:ignoredKey,
     title:ignoredTitle,
@@ -917,7 +1152,64 @@ function duplicateWorkspaceTab(key) {
     ...meta
   } = tab;
   addTab(duplicateKey, duplicateTitle, subtitle, viewName, closable !== false, meta);
-  return renderWorkspacePaneContent(pane.id);
+}
+
+function duplicateWorkspaceTab(key, options={}) {
+  const tab = tabs.find(item => item.key === key);
+  const pane = workspaceFindPaneForTab(key);
+  if (!tab || !pane) return "";
+  hideTabContextMenu();
+  focusedPaneId = pane.id;
+  pane.activeTabKey = key;
+  activeTabKey = key;
+  activeView = tab.viewName || tab.kind || "welcome";
+  const duplicateKey = nextWorkspaceTabCopyKey(tab);
+  const duplicateTitle = workspaceTabCopyTitle(tab);
+  if (typeof options.beforeOpen === "function") {
+    options.beforeOpen(duplicateKey, duplicateTitle, tab);
+  } else if (
+    tab.kind === "terminal"
+    && typeof terminalStartupOverrides !== "undefined"
+    && terminalStartupOverrides.has(key)
+  ) {
+    terminalStartupOverrides.set(duplicateKey, terminalStartupOverrides.get(key));
+  }
+  const splitZone = !isMobileLayout() && ["left", "right", "top", "bottom"].includes(options.splitZone)
+    ? options.splitZone
+    : "";
+  if (splitZone) {
+    addWorkspaceTabCopy(tab, duplicateKey, duplicateTitle);
+    const openedInSplit = applyWorkspaceTabDrop(
+      {key:duplicateKey},
+      {paneId:pane.id, zone:splitZone}
+    );
+    if (!openedInSplit) activateTab(duplicateKey);
+    if (options.result && typeof options.result === "object") {
+      Object.assign(options.result, {key:duplicateKey, opened:true, split:Boolean(openedInSplit)});
+    }
+    return duplicateKey;
+  }
+  if (tab.kind === "terminal") {
+    const openedKey = openTerminal(tab.id, true, duplicateKey, duplicateTitle);
+    if (!openedKey) {
+      if (typeof terminalStartupOverrides !== "undefined") terminalStartupOverrides.delete(duplicateKey);
+      if (options.result && typeof options.result === "object") {
+        Object.assign(options.result, {key:"", opened:false, split:false});
+      }
+      return "";
+    }
+    if (options.result && typeof options.result === "object") {
+      Object.assign(options.result, {key:duplicateKey, opened:true, split:false});
+    }
+    return duplicateKey;
+  }
+  if (tab.kind === "sftp") {
+    if (typeof duplicateSftpTab === "function") return duplicateSftpTab(key);
+    return openSftp(tab.id, tab.path || ".", true, duplicateKey);
+  }
+  addWorkspaceTabCopy(tab, duplicateKey, duplicateTitle);
+  renderWorkspacePaneContent(pane.id);
+  return duplicateKey;
 };
 
 function workspaceCanDuplicateTab(tab) {
@@ -1448,6 +1740,8 @@ function restoreLegacyWorkspaceApi() {
   restoreTabsState = legacyWorkspaceApi.restoreTabsState;
   syncResponsivePane = legacyWorkspaceApi.syncResponsivePane;
 }
+
+initWorkspaceChromeSizing();
 
 if (workspaceDockElement()) {
   ensureWorkspacePaneElement("pane-1");

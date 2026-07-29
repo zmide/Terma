@@ -28,6 +28,12 @@ app.whenReady().then(async () => {
   console.log("[ui-smoke] page loaded");
   await window.webContents.executeJavaScript(`(() => {
     window.__uiSmokeRealLoadAll = loadAll;
+    // Keep background polling from crossing the temporary API fixtures below.
+    // SFTP job refresh behavior is exercised explicitly in the dedicated checks.
+    if (sftpJobsTimer) {
+      clearInterval(sftpJobsTimer);
+      sftpJobsTimer = null;
+    }
     if (Array.isArray(connections) && connections.length) return;
     connections = [{
       id: 900001,
@@ -73,6 +79,42 @@ app.whenReady().then(async () => {
       };
     });
     const baseline = activityItems[0]?.itemCenter;
+    const activityHandle = document.querySelector('#activityBarResize');
+    const activityStoredBefore = localStorage.getItem('activityBarWidth');
+    const activityWidthBefore = activityBarWidth;
+    let activityResizable = false;
+    if (activityHandle) {
+      const handleRect = activityHandle.getBoundingClientRect();
+      const startX = handleRect.left + handleRect.width / 2;
+      activityHandle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:91,pointerType:'mouse',button:0,clientX:startX,clientY:handleRect.top+20}));
+      window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:91,pointerType:'mouse',button:0,clientX:startX+1000,clientY:handleRect.top+20}));
+      window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:91,pointerType:'mouse',button:0,clientX:startX+1000,clientY:handleRect.top+20}));
+      const pointerMax = activityBarWidth === ACTIVITY_BAR_WIDTH_MAX
+        && Number(localStorage.getItem('activityBarWidth')) === ACTIVITY_BAR_WIDTH_MAX
+        && activityBarResize === null
+        && !document.body.classList.contains('activity-bar-resizing');
+      activityHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Home'}));
+      const keyboardMin = activityBarWidth === ACTIVITY_BAR_WIDTH_MIN
+        && Math.abs(activity.getBoundingClientRect().width-ACTIVITY_BAR_WIDTH_MIN) <= 0.5;
+      activityHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowRight',shiftKey:true}));
+      const keyboardStep = activityBarWidth === ACTIVITY_BAR_WIDTH_MIN + 4;
+      activityHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
+      const keyboardMax = activityBarWidth === ACTIVITY_BAR_WIDTH_MAX;
+      activityHandle.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
+      const doubleClickReset = activityBarWidth === ACTIVITY_BAR_WIDTH_DEFAULT
+        && Number(localStorage.getItem('activityBarWidth')) === ACTIVITY_BAR_WIDTH_DEFAULT
+        && Math.abs(activity.getBoundingClientRect().width-ACTIVITY_BAR_WIDTH_DEFAULT) <= 0.5;
+      activityResizable = getComputedStyle(activityHandle).display !== 'none'
+        && handleRect.width >= 6
+        && activityHandle.getAttribute('aria-orientation') === 'vertical'
+        && Number(activityHandle.getAttribute('aria-valuemin')) === ACTIVITY_BAR_WIDTH_MIN
+        && Number(activityHandle.getAttribute('aria-valuemax')) === ACTIVITY_BAR_WIDTH_MAX
+        && Number(activityHandle.getAttribute('aria-valuenow')) === ACTIVITY_BAR_WIDTH_DEFAULT
+        && pointerMax && keyboardMin && keyboardStep && keyboardMax && doubleClickReset;
+    }
+    applyActivityBarWidth(activityWidthBefore,{fit:false});
+    if (activityStoredBefore === null) localStorage.removeItem('activityBarWidth');
+    else localStorage.setItem('activityBarWidth',activityStoredBefore);
     const brandHeight = document.querySelector('.brand')?.getBoundingClientRect().height || 0;
     const topbarHeight = document.querySelector('.topbar')?.getBoundingClientRect().height || 0;
     const tabsHeight = document.querySelector('.tabs')?.getBoundingClientRect().height || 0;
@@ -102,9 +144,40 @@ app.whenReady().then(async () => {
     const forwardToggleSpanRect = forwardToggle?.querySelector('span')?.getBoundingClientRect();
     const originalPaneCollapsed = operationPaneCollapsed;
     const originalPrimaryView = primaryView;
+    const originalPanePinnedByView = {...operationPanePinnedByView};
+    const originalPanePinnedStorage = localStorage.getItem(OPERATION_PANE_PINNED_STORAGE_KEY);
+    const originalPinGuideSeen = localStorage.getItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY);
+    const originalPinGuideShown = operationPanePinGuideShown;
+    const originalPinGuideHidden = document.querySelector('#operationPanePinGuide')?.hidden !== false;
     operationPaneCollapsed = false;
     primaryView = 'connections';
+    operationPanePinnedByView = Object.fromEntries(OPERATION_PANE_PRIMARY_VIEWS.map(name=>[name,true]));
+    saveOperationPanePinnedState();
+    localStorage.removeItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY);
+    operationPanePinGuideShown = false;
     showPrimary('connections');
+    const pinGuide = document.querySelector('#operationPanePinGuide');
+    const pinButton = document.querySelector('#operationPanePin');
+    const pinGuideRect = pinGuide?.getBoundingClientRect();
+    const pinButtonRect = pinButton?.getBoundingClientRect();
+    const pinGuideAnchor = parseFloat(pinGuide?.style.getPropertyValue('--operation-pane-pin-guide-anchor') || 'NaN');
+    const pinGuideExpectedAnchor = pinGuideRect&&pinButtonRect ? pinButtonRect.left+pinButtonRect.width/2-pinGuideRect.left : NaN;
+    const pinGuideArrowStyle = pinGuide ? getComputedStyle(pinGuide, '::before') : null;
+    const pinGuideArrowLeft = parseFloat(pinGuideArrowStyle?.left || 'NaN');
+    const pinGuideArrowWidth = parseFloat(pinGuideArrowStyle?.width || 'NaN');
+    const pinGuideArrowCenter = pinGuideRect&&Number.isFinite(pinGuideArrowLeft)&&Number.isFinite(pinGuideArrowWidth)
+      ? pinGuideRect.left+pinGuideArrowLeft+pinGuideArrowWidth/2
+      : NaN;
+    const pinButtonCenter = pinButtonRect ? pinButtonRect.left+pinButtonRect.width/2 : NaN;
+    const pinGuideShownOnce = Boolean(pinGuide&&!pinGuide.hidden&&localStorage.getItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY)==='1');
+    const pinGuideTargetsPin = Number.isFinite(pinGuideAnchor)&&Number.isFinite(pinGuideExpectedAnchor)
+      &&Math.abs(pinGuideAnchor-pinGuideExpectedAnchor)<=1
+      &&Number.isFinite(pinGuideArrowCenter)&&Number.isFinite(pinButtonCenter)
+      &&Math.abs(pinGuideArrowCenter-pinButtonCenter)<=1;
+    dismissOperationPanePinGuide();
+    operationPanePinGuideShown = false;
+    syncOperationPaneState();
+    const pinGuideDoesNotRepeat = pinGuide?.hidden === true;
     const expandedContentWidth = document.querySelector('#content')?.getBoundingClientRect().width || 0;
     const expandedBrand = getComputedStyle(document.querySelector('.brand-name-full')).display !== 'none'
       && getComputedStyle(document.querySelector('.brand-name-short')).display === 'none'
@@ -126,10 +199,38 @@ app.whenReady().then(async () => {
     document.querySelector('#navRunning')?.click();
     const activeActivityCollapses = getComputedStyle(document.querySelector('#sidebar')).display === 'none'
       && document.querySelector('#navRunning')?.getAttribute('aria-expanded') === 'false';
+    setOperationPaneCollapsed(false);
+    setOperationPanePinned(false, 'running');
+    const runningPinShowsAutoCollapse = document.querySelector('#operationPanePin')?.getAttribute('aria-pressed') === 'false'
+      && document.querySelector('#operationPanePin')?.dataset.icon === 'pin-off';
+    const captureFixture = document.createElement('button');
+    let captureFixtureClicked = false;
+    captureFixture.addEventListener('click', event=>{ captureFixtureClicked=true; event.stopPropagation(); });
+    document.querySelector('#content')?.appendChild(captureFixture);
+    captureFixture.click();
+    const unpinnedContentClickCollapses = captureFixtureClicked&&operationPaneCollapsed&&document.querySelector('.app')?.classList.contains('operation-pane-collapsed');
+    captureFixture.remove();
+    setOperationPaneCollapsed(false);
+    showPrimary('connections');
+    document.querySelector('#content')?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,button:0}));
+    const pinnedContentClickStaysOpen = !operationPaneCollapsed&&isOperationPanePinned('connections')&&!isOperationPanePinned('running');
+    const persistedPinState = JSON.parse(localStorage.getItem(OPERATION_PANE_PINNED_STORAGE_KEY) || '{}');
+    const independentPinPersistence = persistedPinState.connections===true&&persistedPinState.running===false
+      &&OPERATION_PANE_PRIMARY_VIEWS.filter(name=>!['connections','running'].includes(name)).every(name=>persistedPinState[name]===true);
     operationPaneCollapsed = originalPaneCollapsed;
     primaryView = originalPrimaryView;
+    operationPanePinnedByView = originalPanePinnedByView;
     localStorage.setItem('operationPaneCollapsed', originalPaneCollapsed ? '1' : '0');
+    if (originalPanePinnedStorage === null) localStorage.removeItem(OPERATION_PANE_PINNED_STORAGE_KEY);
+    else localStorage.setItem(OPERATION_PANE_PINNED_STORAGE_KEY, originalPanePinnedStorage);
+    if (originalPinGuideSeen === null) localStorage.removeItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY);
+    else localStorage.setItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY, originalPinGuideSeen);
+    operationPanePinGuideShown = originalPinGuideShown;
     showPrimary(originalPrimaryView);
+    if (pinGuide) {
+      pinGuide.hidden = originalPinGuideHidden;
+      positionOperationPanePinGuide();
+    }
     document.querySelector('.group-head')?.dispatchEvent(new MouseEvent('contextmenu', {bubbles:true, cancelable:true, clientX:180, clientY:180}));
     const groupMenuLabels = [...document.querySelectorAll('#actionMenu button span')].map(node => node.textContent.trim());
     hideActionMenu();
@@ -147,10 +248,18 @@ app.whenReady().then(async () => {
       stickyGroupHeaders,
       stickyGroupHeaderSealsTop,
       operationPaneCollapsible: expandedBrand && collapsedBrand && paneExpanded && paneCollapsed && differentActivityExpands && activeActivityCollapses && collapsedContentWidth >= expandedContentWidth + 250,
+      operationPanePinBehavior: pinGuideShownOnce&&pinGuideTargetsPin&&pinGuideDoesNotRepeat&&runningPinShowsAutoCollapse&&unpinnedContentClickCollapses&&pinnedContentClickStaysOpen&&independentPinPersistence,
       activityUtilities: document.querySelector('.activity-bottom')?.children[0]?.id === 'themeToggle'
         && document.querySelector('.activity-bottom')?.children[1]?.id === 'activityRefresh'
         && document.querySelector('.activity-bottom')?.children[2]?.classList.contains('github-link'),
-      compactDesktopHeader: brandHeight <= 42.5 && topbarHeight <= 42.5 && tabsHeight <= 32.5 && workspacePaddingTop <= 12.5,
+      compactDesktopHeader: brandHeight >= 33.5
+        && brandHeight <= 64.5
+        && topbarHeight >= 33.5
+        && topbarHeight <= 64.5
+        && Math.abs(brandHeight - topbarHeight) <= 0.5
+        && tabsHeight >= 25.5
+        && tabsHeight <= 48.5
+        && workspacePaddingTop <= 12.5,
       forwardToggleFits: Boolean(
         forwardToggle
         && forwardToggle.textContent.trim() === '停止转发'
@@ -163,6 +272,7 @@ app.whenReady().then(async () => {
         iconCentered: activityItems.every(item => item.iconDelta <= 0.5),
         centersAligned: activityItems.every(item => Math.abs(item.itemCenter - baseline) <= 0.5),
         insideColumn: activityItems.every(item => item.insideColumn),
+        resizable:activityResizable,
         items: activityItems
       }
     };
@@ -285,7 +395,8 @@ app.whenReady().then(async () => {
       const commonTitleFits = activeDraggedTab.querySelector('.tab-title').scrollWidth <= activeDraggedTab.querySelector('.tab-title').clientWidth;
       const sessionTitle = document.querySelector('.tab[data-tab-key="drag-b"] .tab-title');
       const numberedSessionTitleFits = sessionTitle.scrollWidth <= sessionTitle.clientWidth;
-      const compactTabFont = Math.abs(parseFloat(getComputedStyle(activeDraggedTab).fontSize) - 12) < 0.1;
+      const tabFontSize = parseFloat(getComputedStyle(activeDraggedTab).fontSize);
+      const tabFontWithinResizeRange = tabFontSize >= 10.4 && tabFontSize <= 15.1;
       const fullTitleTooltip = activeDraggedTab.title === 'bt01 · 终端 - root@bt01.example:22';
       const liveOrder = [...document.querySelectorAll('#tabs .tab')].map(tab => tab.dataset.tabKey);
       window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:71,pointerType:'mouse',button:0,clientX:lastRect.right-2,clientY:firstRect.top+8}));
@@ -342,7 +453,7 @@ app.whenReady().then(async () => {
         touchReady,
         commonTitleFits,
         numberedSessionTitleFits,
-        compactTabFont,
+        tabFontWithinResizeRange,
         shortTabUsesContentWidth,
         fullTitleTooltip,
         liveOrder,
@@ -371,13 +482,61 @@ app.whenReady().then(async () => {
     }
   })()`);
   console.log("[ui-smoke] recursive workspace docking");
-  const workspaceDockingUi = await window.webContents.executeJavaScript(`(() => {
+  const workspaceDockingUi = await window.webContents.executeJavaScript(`(async () => {
     const previousTabs = tabs.map(tab => ({...tab}));
     const previousLayout = JSON.parse(JSON.stringify(workspaceLayout));
     const previousFocusedPaneId = focusedPaneId;
     const previousActiveTabKey = activeTabKey;
     const previousActiveView = activeView;
     const previousStoredTabs = localStorage.getItem('workspaceTabs');
+    const previousStoredHeaderHeight = localStorage.getItem('workspaceHeaderHeight');
+    const previousStoredTabHeight = localStorage.getItem('workspaceTabHeight');
+    const previousHeaderHeight = workspaceHeaderHeight;
+    const previousTabHeight = workspaceTabHeight;
+    const nextFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+    const nearly = (value, expected, tolerance=0.6) => Math.abs(value - expected) <= tolerance;
+    const dragChromeHandle = async (handle, pointerId, deltaY, kind) => {
+      if (!handle) return {started:false,ended:false};
+      const rect = handle.getBoundingClientRect();
+      const startY = rect.top + rect.height / 2;
+      handle.dispatchEvent(new PointerEvent('pointerdown',{
+        bubbles:true,
+        cancelable:true,
+        pointerId,
+        pointerType:'mouse',
+        button:0,
+        clientX:rect.left + Math.max(1, rect.width / 2),
+        clientY:startY
+      }));
+      const started = workspaceChromeResize?.kind === kind
+        && workspaceChromeResize.pointerId === pointerId
+        && document.body.classList.contains('workspace-chrome-resizing');
+      window.dispatchEvent(new PointerEvent('pointermove',{
+        bubbles:true,
+        cancelable:true,
+        pointerId,
+        pointerType:'mouse',
+        button:0,
+        clientX:rect.left + Math.max(1, rect.width / 2),
+        clientY:startY + deltaY
+      }));
+      await nextFrame();
+      window.dispatchEvent(new PointerEvent('pointerup',{
+        bubbles:true,
+        cancelable:true,
+        pointerId,
+        pointerType:'mouse',
+        button:0,
+        clientX:rect.left + Math.max(1, rect.width / 2),
+        clientY:startY + deltaY
+      }));
+      await nextFrame();
+      return {
+        started,
+        ended:workspaceChromeResize === null
+          && !document.body.classList.contains('workspace-chrome-resizing')
+      };
+    };
     try {
       tabs = ['a','b','c','d'].map(key => ({key:'dock-'+key,title:'Dock '+key.toUpperCase(),subtitle:'',viewName:'welcome',closable:true,kind:'fixture'}));
       workspaceLayout = {type:'pane',id:'dock-pane-root',tabs:tabs.map(tab=>tab.key),activeTabKey:'dock-a'};
@@ -396,11 +555,166 @@ app.whenReady().then(async () => {
         && workspaceLayout.second.direction === 'column';
       const paneCount = document.querySelectorAll('#workspaceDock .workspace-pane').length;
       const eachPaneComplete = [...document.querySelectorAll('#workspaceDock .workspace-pane')].every(pane => pane.querySelector('.tabs-shell') && pane.querySelector('.workspace'));
+      const expectedActivityFitPaneIds=workspaceVisiblePanes().map(pane=>pane.id);
+      const activityFitPaneIds=[];
+      const originalUpdateTabScrollControls=updateWorkspaceTabScrollControls;
+      const activityWidthBeforeFit=activityBarWidth;
+      updateWorkspaceTabScrollControls=paneId=>{
+        activityFitPaneIds.push(paneId);
+        return originalUpdateTabScrollControls(paneId);
+      };
+      applyActivityBarWidth(activityWidthBeforeFit===ACTIVITY_BAR_WIDTH_MAX?ACTIVITY_BAR_WIDTH_MIN:activityWidthBeforeFit+1);
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+      applyActivityBarWidth(activityWidthBeforeFit,{fit:false});
+      updateWorkspaceTabScrollControls=originalUpdateTabScrollControls;
+      const activityResizeReflowsEveryPane=expectedActivityFitPaneIds.every(paneId=>activityFitPaneIds.includes(paneId));
       const splitters = [...document.querySelectorAll('#workspaceDock .workspace-splitter')];
+      const splitterMetrics = splitters.map(splitter => {
+        const splitElement = splitter.parentElement;
+        const vertical = splitElement?.classList.contains('workspace-split-row');
+        const rect = splitter.getBoundingClientRect();
+        const style = getComputedStyle(splitter);
+        const line = getComputedStyle(splitter, '::before');
+        const firstRect = splitElement?.querySelector(':scope > .workspace-split-first')?.getBoundingClientRect();
+        const secondRect = splitElement?.querySelector(':scope > .workspace-split-second')?.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        // Probe away from the midpoint, where a nested perpendicular splitter can overlap.
+        const hitX = vertical ? centerX : rect.left + rect.width / 4;
+        const hitY = vertical ? rect.top + rect.height / 4 : centerY;
+        const hitOffsets = [-3, 0, 3];
+        return {
+          vertical,
+          orientation:splitter.getAttribute('aria-orientation'),
+          trackSize:vertical ? rect.width : rect.height,
+          layoutGap:vertical
+            ? (secondRect?.left ?? 0) - (firstRect?.right ?? 0)
+            : (secondRect?.top ?? 0) - (firstRect?.bottom ?? 0),
+          hitAreaCoversTrack:hitOffsets.every(offset => document.elementFromPoint(
+            vertical ? hitX + offset : hitX,
+            vertical ? hitY : hitY + offset
+          ) === splitter),
+          lineSize:parseFloat(vertical ? line.width : line.height),
+          lineColor:line.backgroundColor,
+          trackColor:style.backgroundColor,
+          content:line.content,
+          spansAxis:vertical
+            ? nearly(parseFloat(line.top), 0) && nearly(parseFloat(line.bottom), 0)
+            : nearly(parseFloat(line.left), 0) && nearly(parseFloat(line.right), 0)
+        };
+      });
+      const splitterTracksUsable = splitterMetrics.every(metric => metric.trackSize >= 9.5
+        && metric.layoutGap >= 1.5
+        && metric.layoutGap <= 2.5
+        && metric.hitAreaCoversTrack);
+      const splitterLinesVisible = splitterMetrics.every(metric => metric.lineSize >= 0.75
+        && metric.lineSize <= 1.25
+        && metric.content !== 'none'
+        && metric.content !== 'normal'
+        && metric.lineColor !== 'transparent'
+        && metric.lineColor !== 'rgba(0, 0, 0, 0)'
+        && metric.lineColor !== metric.trackColor
+        && metric.spansAxis
+        && metric.orientation === (metric.vertical ? 'vertical' : 'horizontal'));
+      const paneElements = [...document.querySelectorAll('#workspaceDock .workspace-pane')];
+      paneElements.forEach(pane => pane.classList.add('terminal-pane'));
+      const terminalWorkspaceStyles = paneElements.map(pane => getComputedStyle(pane.querySelector(':scope > .workspace')));
+      const terminalInsetsCompact = terminalWorkspaceStyles.every(style => nearly(parseFloat(style.paddingTop), 4)
+        && nearly(parseFloat(style.paddingRight), 2)
+        && nearly(parseFloat(style.paddingBottom), 2)
+        && nearly(parseFloat(style.paddingLeft), 2));
+      const terminalScrollbarGutterReleased = terminalWorkspaceStyles.every(style => style.scrollbarGutter === 'auto');
+      paneElements.forEach(pane => pane.classList.remove('terminal-pane'));
       const rootSplitId = workspaceLayout.id;
       setWorkspaceSplitRatio(rootSplitId, 0.64);
       const ratioAdjusted = Math.abs(workspaceFindSplit(rootSplitId).ratio - 0.64) < 0.001
         && document.querySelector('[data-split-id="'+rootSplitId+'"]')?.style.getPropertyValue('--workspace-split-ratio') === '64%';
+      const persistedLayout = JSON.parse(localStorage.getItem('workspaceTabs') || '{}').layout;
+      const ratioPersisted = persistedLayout?.id === rootSplitId
+        && Math.abs(Number(persistedLayout.ratio) - 0.64) < 0.001;
+
+      for (const pane of paneElements) {
+        const tab = pane.querySelector('.tab');
+        if (!tab || tab.querySelector('.tab-connection-dot')) continue;
+        const dot = document.createElement('span');
+        dot.className = 'tab-connection-dot connected';
+        dot.setAttribute('aria-hidden', 'true');
+        tab.prepend(dot);
+      }
+      const tabResizeHandles = [...document.querySelectorAll('#workspaceDock .workspace-tab-resizer')];
+      const tabResizeAccessible = tabResizeHandles.length === paneCount
+        && tabResizeHandles.every(handle => handle.getAttribute('role') === 'separator'
+          && handle.getAttribute('aria-orientation') === 'horizontal'
+          && Number(handle.getAttribute('aria-valuemin')) === WORKSPACE_TAB_HEIGHT_MIN
+          && Number(handle.getAttribute('aria-valuemax')) === WORKSPACE_TAB_HEIGHT_MAX
+          && getComputedStyle(handle).display !== 'none'
+          && handle.getBoundingClientRect().height >= 6);
+      const tabSnapshot = () => {
+        const shells = [...document.querySelectorAll('#workspaceDock .tabs-shell')];
+        const tabNodes = shells.map(shell => shell.querySelector('.tab')).filter(Boolean);
+        const dots = shells.map(shell => shell.querySelector('.tab-connection-dot')).filter(Boolean);
+        const handles = [...document.querySelectorAll('#workspaceDock .workspace-tab-resizer')];
+        return {
+          heights:shells.map(shell => shell.getBoundingClientRect().height),
+          fonts:tabNodes.map(tab => parseFloat(getComputedStyle(tab).fontSize)),
+          dots:dots.map(dot => {
+            const rect = dot.getBoundingClientRect();
+            return {width:rect.width,height:rect.height};
+          }),
+          aria:handles.map(handle => Number(handle.getAttribute('aria-valuenow')))
+        };
+      };
+      const headerStorageBeforeTabResize = localStorage.getItem('workspaceHeaderHeight');
+      const tabMinDrag = await dragChromeHandle(tabResizeHandles[0], 181, -1000, 'tabs');
+      const tabMin = tabSnapshot();
+      const tabMaxDrag = await dragChromeHandle(tabResizeHandles[1] || tabResizeHandles[0], 182, 1000, 'tabs');
+      const tabMax = tabSnapshot();
+      const tabAllPanesClampMin = tabMin.heights.length === paneCount
+        && tabMin.heights.every(height => nearly(height, WORKSPACE_TAB_HEIGHT_MIN))
+        && tabMin.aria.every(value => value === WORKSPACE_TAB_HEIGHT_MIN);
+      const tabAllPanesClampMax = tabMax.heights.length === paneCount
+        && tabMax.heights.every(height => nearly(height, WORKSPACE_TAB_HEIGHT_MAX))
+        && tabMax.aria.every(value => value === WORKSPACE_TAB_HEIGHT_MAX);
+      const tabTextScales = tabMin.fonts.length === paneCount
+        && tabMax.fonts.length === paneCount
+        && Math.min(...tabMax.fonts) >= Math.max(...tabMin.fonts) + 1;
+      const statusDotScales = tabMin.dots.length === paneCount
+        && tabMax.dots.length === paneCount
+        && Math.min(...tabMax.dots.map(dot => Math.min(dot.width, dot.height)))
+          >= Math.max(...tabMin.dots.map(dot => Math.max(dot.width, dot.height))) + 1;
+      const tabPointerLifecycle = tabMinDrag.started && tabMinDrag.ended && tabMaxDrag.started && tabMaxDrag.ended;
+      const tabHeightPersisted = Number(localStorage.getItem('workspaceTabHeight')) === WORKSPACE_TAB_HEIGHT_MAX;
+      const tabKeyboardHandle = tabResizeHandles.at(-1);
+      tabKeyboardHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowUp'}));
+      await nextFrame();
+      const tabKeyboardUp = workspaceTabHeight === WORKSPACE_TAB_HEIGHT_MAX - 1
+        && Number(localStorage.getItem('workspaceTabHeight')) === WORKSPACE_TAB_HEIGHT_MAX - 1;
+      tabKeyboardHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowDown'}));
+      await nextFrame();
+      const tabKeyboardDown = workspaceTabHeight === WORKSPACE_TAB_HEIGHT_MAX;
+      tabKeyboardHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Home'}));
+      await nextFrame();
+      const tabKeyboardHome = workspaceTabHeight === WORKSPACE_TAB_HEIGHT_MIN;
+      tabKeyboardHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
+      await nextFrame();
+      const tabKeyboardEnd = workspaceTabHeight === WORKSPACE_TAB_HEIGHT_MAX
+        && tabSnapshot().heights.every(height => nearly(height, WORKSPACE_TAB_HEIGHT_MAX));
+      const tabKeyboardControls = tabKeyboardUp && tabKeyboardDown && tabKeyboardHome && tabKeyboardEnd;
+      tabKeyboardHandle?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
+      await nextFrame();
+      const tabDoubleClickResets = workspaceTabHeight === WORKSPACE_TAB_HEIGHT_DEFAULT
+        && Number(localStorage.getItem('workspaceTabHeight')) === WORKSPACE_TAB_HEIGHT_DEFAULT
+        && tabSnapshot().heights.every(height => nearly(height, WORKSPACE_TAB_HEIGHT_DEFAULT));
+      applyWorkspaceTabHeight(45, {persist:true,fit:false});
+      applyWorkspaceTabHeight(WORKSPACE_TAB_HEIGHT_MIN, {fit:false});
+      initWorkspaceChromeSizing();
+      await nextFrame();
+      const restoredTabSnapshot = tabSnapshot();
+      const tabHeightRestored = workspaceTabHeight === 45
+        && restoredTabSnapshot.heights.every(height => nearly(height, 45))
+        && restoredTabSnapshot.aria.every(value => value === 45);
+      const tabStorageIndependent = localStorage.getItem('workspaceHeaderHeight') === headerStorageBeforeTabResize;
+
       const cPane = workspaceFindPaneForTab('dock-c');
       const mergedNested = Boolean(cPane && sourcePane)
         && applyWorkspaceTabDrop({key:'dock-c',sourcePaneId:cPane.id}, {paneId:sourcePane.id,zone:'tabs',index:sourcePane.tabs.length});
@@ -409,8 +723,46 @@ app.whenReady().then(async () => {
         && applyWorkspaceTabDrop({key:'dock-b',sourcePaneId:bPane.id}, {paneId:sourcePane.id,zone:'tabs',index:sourcePane.tabs.length});
       const collapsedToSinglePane = workspaceLayout.type === 'pane' && workspaceLeaves().length === 1
         && document.querySelectorAll('#workspaceDock .workspace-pane').length === 1;
-      return {firstSplit,secondSplit,nestedTree,paneCount,eachPaneComplete,splitterCount:splitters.length,ratioAdjusted,mergedNested,mergedAll,collapsedToSinglePane};
+      return {
+        firstSplit,
+        secondSplit,
+        nestedTree,
+        paneCount,
+        eachPaneComplete,
+        activityResizeReflowsEveryPane,
+        splitterCount:splitters.length,
+        splitterMetrics,
+        splitterTracksUsable,
+        splitterLinesVisible,
+        terminalInsetsCompact,
+        terminalScrollbarGutterReleased,
+        ratioAdjusted,
+        ratioPersisted,
+        tabResizeAccessible,
+        tabAllPanesClampMin,
+        tabAllPanesClampMax,
+        tabTextScales,
+        statusDotScales,
+        tabPointerLifecycle,
+        tabHeightPersisted,
+        tabKeyboardControls,
+        tabDoubleClickResets,
+        tabHeightRestored,
+        tabStorageIndependent,
+        tabMin,
+        tabMax,
+        mergedNested,
+        mergedAll,
+        collapsedToSinglePane
+      };
     } finally {
+      if (workspaceChromeResize) endWorkspaceChromeResize(null, true);
+      if (previousStoredHeaderHeight === null) localStorage.removeItem('workspaceHeaderHeight');
+      else localStorage.setItem('workspaceHeaderHeight', previousStoredHeaderHeight);
+      if (previousStoredTabHeight === null) localStorage.removeItem('workspaceTabHeight');
+      else localStorage.setItem('workspaceTabHeight', previousStoredTabHeight);
+      applyWorkspaceHeaderHeight(previousHeaderHeight, {fit:false});
+      applyWorkspaceTabHeight(previousTabHeight, {fit:false});
       tabs = previousTabs;
       workspaceLayout = previousLayout;
       focusedPaneId = previousFocusedPaneId;
@@ -423,6 +775,173 @@ app.whenReady().then(async () => {
       window.restoringTabs = false;
       if (previousStoredTabs === null) localStorage.removeItem('workspaceTabs');
       else localStorage.setItem('workspaceTabs', previousStoredTabs);
+    }
+  })()`);
+  console.log("[ui-smoke] workspace header resize");
+  const workspaceHeaderResizeUi = await window.webContents.executeJavaScript(`(async () => {
+    const topbar = document.querySelector('.topbar');
+    const brand = document.querySelector('.brand');
+    const handle = document.querySelector('#workspaceHeaderResize');
+    const tools = document.querySelector('#workspaceGlobalHeaderTools');
+    if (!topbar || !brand || !handle || !tools) return {found:false};
+    const previousStoredHeaderHeight = localStorage.getItem('workspaceHeaderHeight');
+    const previousStoredTabHeight = localStorage.getItem('workspaceTabHeight');
+    const previousHeaderHeight = workspaceHeaderHeight;
+    const previousTabHeight = workspaceTabHeight;
+    const previousToolsHidden = tools.hidden;
+    const fixture = document.createElement('div');
+    fixture.className = 'terminal-toolbar terminal-toolbar-header workspace-header-resize-fixture';
+    fixture.innerHTML = '<div class="actions terminal-actions"><button class="terminal-dropdown-button workspace-header-resize-fixture-button">'
+      + icon('type') + '<span>Header size</span>' + icon('chevron-down') + '</button></div>';
+    tools.appendChild(fixture);
+    tools.hidden = false;
+    const nextFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+    const nearly = (value, expected, tolerance=0.6) => Math.abs(value - expected) <= tolerance;
+    const snapshot = () => {
+      const button = fixture.querySelector('button');
+      const label = button?.querySelector('span');
+      const svg = button?.querySelector('svg');
+      const topbarRect = topbar.getBoundingClientRect();
+      const brandRect = brand.getBoundingClientRect();
+      const buttonRect = button?.getBoundingClientRect();
+      const svgRect = svg?.getBoundingClientRect();
+      return {
+        height:topbarRect.height,
+        brandHeight:brandRect.height,
+        titleFont:parseFloat(getComputedStyle(document.querySelector('#workspaceTitle')).fontSize),
+        subtitleFont:parseFloat(getComputedStyle(document.querySelector('#workspaceSubtitle')).fontSize),
+        controlHeight:buttonRect?.height || 0,
+        controlFont:parseFloat(getComputedStyle(button).fontSize),
+        labelFont:parseFloat(getComputedStyle(label).fontSize),
+        iconSize:svgRect ? Math.max(svgRect.width, svgRect.height) : 0,
+        ariaNow:Number(handle.getAttribute('aria-valuenow'))
+      };
+    };
+    const dragHeader = async (pointerId, deltaY) => {
+      const rect = handle.getBoundingClientRect();
+      const startY = rect.top + rect.height / 2;
+      handle.dispatchEvent(new PointerEvent('pointerdown',{
+        bubbles:true,
+        cancelable:true,
+        pointerId,
+        pointerType:'mouse',
+        button:0,
+        clientX:rect.left + Math.max(1, rect.width / 2),
+        clientY:startY
+      }));
+      const started = workspaceChromeResize?.kind === 'header'
+        && workspaceChromeResize.pointerId === pointerId
+        && document.body.classList.contains('workspace-header-resizing');
+      window.dispatchEvent(new PointerEvent('pointermove',{
+        bubbles:true,
+        cancelable:true,
+        pointerId,
+        pointerType:'mouse',
+        button:0,
+        clientX:rect.left + Math.max(1, rect.width / 2),
+        clientY:startY + deltaY
+      }));
+      await nextFrame();
+      window.dispatchEvent(new PointerEvent('pointerup',{
+        bubbles:true,
+        cancelable:true,
+        pointerId,
+        pointerType:'mouse',
+        button:0,
+        clientX:rect.left + Math.max(1, rect.width / 2),
+        clientY:startY + deltaY
+      }));
+      await nextFrame();
+      return {
+        started,
+        ended:workspaceChromeResize === null
+          && !document.body.classList.contains('workspace-chrome-resizing')
+      };
+    };
+    try {
+      const accessible = handle.getAttribute('role') === 'separator'
+        && handle.getAttribute('aria-orientation') === 'horizontal'
+        && Number(handle.getAttribute('aria-valuemin')) === WORKSPACE_HEADER_HEIGHT_MIN
+        && Number(handle.getAttribute('aria-valuemax')) === WORKSPACE_HEADER_HEIGHT_MAX
+        && getComputedStyle(handle).display !== 'none'
+        && handle.getBoundingClientRect().height >= 6;
+      const tabStorageBeforeHeaderResize = localStorage.getItem('workspaceTabHeight');
+      const minDrag = await dragHeader(191, -1000);
+      const compact = snapshot();
+      const maxDrag = await dragHeader(192, 1000);
+      const expanded = snapshot();
+      const minClamped = nearly(compact.height, WORKSPACE_HEADER_HEIGHT_MIN)
+        && compact.ariaNow === WORKSPACE_HEADER_HEIGHT_MIN;
+      const maxClamped = nearly(expanded.height, WORKSPACE_HEADER_HEIGHT_MAX)
+        && expanded.ariaNow === WORKSPACE_HEADER_HEIGHT_MAX;
+      const brandAligned = nearly(compact.brandHeight, compact.height)
+        && nearly(expanded.brandHeight, expanded.height);
+      const textScales = expanded.titleFont >= compact.titleFont + 1
+        && expanded.subtitleFont >= compact.subtitleFont + 1;
+      const controlsScale = expanded.controlHeight >= compact.controlHeight + 4
+        && expanded.controlFont >= compact.controlFont + 1
+        && expanded.labelFont >= compact.labelFont + 1
+        && expanded.iconSize >= compact.iconSize + 1;
+      const pointerLifecycle = minDrag.started && minDrag.ended && maxDrag.started && maxDrag.ended;
+      const heightPersisted = Number(localStorage.getItem('workspaceHeaderHeight')) === WORKSPACE_HEADER_HEIGHT_MAX;
+      handle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowUp'}));
+      await nextFrame();
+      const keyboardUp = workspaceHeaderHeight === WORKSPACE_HEADER_HEIGHT_MAX - 1
+        && Number(localStorage.getItem('workspaceHeaderHeight')) === WORKSPACE_HEADER_HEIGHT_MAX - 1;
+      handle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowDown'}));
+      await nextFrame();
+      const keyboardDown = workspaceHeaderHeight === WORKSPACE_HEADER_HEIGHT_MAX;
+      handle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Home'}));
+      await nextFrame();
+      const keyboardHome = workspaceHeaderHeight === WORKSPACE_HEADER_HEIGHT_MIN;
+      handle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
+      await nextFrame();
+      const keyboardEnd = workspaceHeaderHeight === WORKSPACE_HEADER_HEIGHT_MAX
+        && nearly(snapshot().height, WORKSPACE_HEADER_HEIGHT_MAX);
+      const keyboardControls = keyboardUp && keyboardDown && keyboardHome && keyboardEnd;
+      handle.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
+      await nextFrame();
+      const doubleClickResets = workspaceHeaderHeight === WORKSPACE_HEADER_HEIGHT_DEFAULT
+        && Number(localStorage.getItem('workspaceHeaderHeight')) === WORKSPACE_HEADER_HEIGHT_DEFAULT
+        && nearly(snapshot().height, WORKSPACE_HEADER_HEIGHT_DEFAULT);
+      applyWorkspaceHeaderHeight(58, {persist:true,fit:false});
+      applyWorkspaceHeaderHeight(WORKSPACE_HEADER_HEIGHT_MIN, {fit:false});
+      initWorkspaceChromeSizing();
+      await nextFrame();
+      const restored = snapshot();
+      const heightRestored = workspaceHeaderHeight === 58
+        && nearly(restored.height, 58)
+        && nearly(restored.brandHeight, 58)
+        && restored.ariaNow === 58;
+      const tabStorageIndependent = localStorage.getItem('workspaceTabHeight') === tabStorageBeforeHeaderResize;
+      return {
+        found:true,
+        accessible,
+        minClamped,
+        maxClamped,
+        brandAligned,
+        textScales,
+        controlsScale,
+        pointerLifecycle,
+        heightPersisted,
+        keyboardControls,
+        doubleClickResets,
+        heightRestored,
+        tabStorageIndependent,
+        compact,
+        expanded,
+        restored
+      };
+    } finally {
+      if (workspaceChromeResize) endWorkspaceChromeResize(null, true);
+      if (previousStoredHeaderHeight === null) localStorage.removeItem('workspaceHeaderHeight');
+      else localStorage.setItem('workspaceHeaderHeight', previousStoredHeaderHeight);
+      if (previousStoredTabHeight === null) localStorage.removeItem('workspaceTabHeight');
+      else localStorage.setItem('workspaceTabHeight', previousStoredTabHeight);
+      applyWorkspaceHeaderHeight(previousHeaderHeight, {fit:false});
+      applyWorkspaceTabHeight(previousTabHeight, {fit:false});
+      fixture.remove();
+      tools.hidden = previousToolsHidden;
     }
   })()`);
   console.log("[ui-smoke] primary pages");
@@ -834,6 +1353,76 @@ app.whenReady().then(async () => {
     };
     return {found:true,passwordMode,keyMode};
   })()`);
+  const connectionStartupUi = await window.webContents.executeJavaScript(`(async () => {
+    const originalApi=api;
+    const originalNotify=notify;
+    let testedPayload=null;
+    const notices=[];
+    api=async (path,options={}) => {
+      if(path==='/api/test-ssh'){
+        testedPayload=JSON.parse(options.body||'{}');
+        return {
+          ok:true,
+          elapsed_ms:12,
+          capabilities:{
+            platform:'linux',
+            platform_label:'Linux',
+            default_shell:{name:'bash',label:'Bash',path:'/bin/bash'},
+            profiles:[
+              {id:'bash',kind:'shell',label:'Bash',path:'/bin/bash',args:'-l',platform:'posix',is_default:true},
+              {id:'python3',kind:'repl',label:'Python 3',path:'/usr/bin/python3',args:'-i',platform:'posix',is_default:false},
+              {id:'tmux',kind:'session',label:'tmux',path:'/usr/bin/tmux',args:'new-session -A -s tunneldesk',platform:'posix',is_default:false}
+            ],
+            tools:[{id:'git',label:'Git',path:'/usr/bin/git'}],
+            warnings:[]
+          }
+        };
+      }
+      return {};
+    };
+    notify=(...args)=>notices.push(args);
+    newConnection();
+    const form=document.querySelector('#connectionForm');
+    document.querySelector('#conn_name').value='startup-smoke';
+    document.querySelector('#conn_user').value='root';
+    document.querySelector('#conn_host').value='example.test';
+    document.querySelector('#conn_terminal_startup_mode').value='program';
+    document.querySelector('#conn_terminal_profile_name').value='My shell';
+    document.querySelector('#conn_terminal_profile_kind').value='custom';
+    document.querySelector('#conn_terminal_program_path').value='/custom/my-shell';
+    document.querySelector('#conn_terminal_program_args').value='--interactive';
+    toggleConnectionTerminalStartup(form);
+    await testConnectionForm(document.querySelector('#connTestBtn'));
+    const select=document.querySelector('#conn_terminal_profile_select');
+    const customPreserved=document.querySelector('#conn_terminal_program_path').value==='/custom/my-shell'
+      && select.value==='__current__';
+    const pythonOption=[...select.options].find(option=>option.textContent.includes('Python 3'));
+    if(pythonOption) applyConnectionTerminalProfile(pythonOption.value,select);
+    const detectedApplied=document.querySelector('#conn_terminal_program_path').value==='/usr/bin/python3'
+      && document.querySelector('#conn_terminal_program_args').value==='-i'
+      && document.querySelector('#conn_terminal_profile_kind').value==='repl'
+      && document.querySelector('#conn_terminal_program_platform').value==='posix';
+    document.querySelector('#conn_host').value='changed.example';
+    document.querySelector('#conn_host').dispatchEvent(new Event('input',{bubbles:true}));
+    const card=document.querySelector('.terminal-startup-card');
+    const formRect=form.getBoundingClientRect();
+    const cardRect=card?.getBoundingClientRect();
+    const result={
+      found:Boolean(form&&card&&select),
+      defaultMode:testedPayload?.terminal_startup_mode==='program',
+      requestedDiscovery:testedPayload?.discover_terminal===true,
+      customPreserved,
+      categories:[...select.querySelectorAll('optgroup')].map(group=>group.label),
+      toolShown:document.querySelector('#connTerminalCapabilities')?.textContent.includes('Git'),
+      detectedApplied,
+      stale:form._terminalProbeStale===true&&document.querySelector('#connTerminalDetectionStatus')?.textContent.includes('已变化'),
+      noOverflow:Boolean(cardRect&&cardRect.left>=formRect.left-0.5&&cardRect.right<=formRect.right+0.5),
+      pathRequired:document.querySelector('#conn_terminal_program_path').required===true
+    };
+    api=originalApi;
+    notify=originalNotify;
+    return result;
+  })()`);
   const saveAndClearUi = await window.webContents.executeJavaScript(`(async () => {
     const originalApi = api;
     const originalLoadAll = loadAll;
@@ -1017,6 +1606,7 @@ app.whenReady().then(async () => {
     const previousLatencyVisible = terminalLatencyVisible;
     const previousLatencyStored = localStorage.getItem('terminalLatencyVisible');
     const previousTerminalGlobalSettings = terminalGlobalSettings;
+    const previousTheme = document.documentElement.dataset.theme || 'light';
     const fixturePane = workspaceFindPane(focusedPaneId);
     const previousFixtureTabs = fixturePane ? [...fixturePane.tabs] : [];
     const previousFixtureActive = fixturePane?.activeTabKey || '';
@@ -1084,6 +1674,20 @@ app.whenReady().then(async () => {
     setTerminalLatencyVisible(true);
     const latencyCanEnable = latencyIndicator?.hidden === false && localStorage.getItem('terminalLatencyVisible') === '1';
     const mount=document.querySelector('#terminalMount');
+    const terminalBoxStyle=getComputedStyle(mount);
+    const terminalFrameColors=[terminalBoxStyle.borderTopColor,terminalBoxStyle.borderRightColor,terminalBoxStyle.borderBottomColor];
+    const terminalBackgroundColor=terminalBoxStyle.backgroundColor;
+    const colorChannels=value=>{
+      const channels=(value.match(/[\\d.]+/g)||[]).slice(0,3).map(Number);
+      return value.startsWith('color(srgb ') ? channels.map(channel=>channel*255) : channels;
+    };
+    const backgroundChannels=colorChannels(terminalBackgroundColor);
+    const terminalFrameLowContrast=backgroundChannels.length===3&&terminalFrameColors.every(color=>{
+      const channels=colorChannels(color);
+      return channels.length===3
+        && Math.max(...channels)<140
+        && Math.max(...channels.map((channel,index)=>Math.abs(channel-backgroundChannels[index])))<=48;
+    });
     terminalGlobalSettings=normalizeTerminalGlobalSettings(defaultTerminalGlobalSettings);
     showTerminalEncodingMenu(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:160,clientY:100}),key,first.id);
     const encodingLabels=[...document.querySelectorAll('#actionMenu button span')].map(item=>item.textContent.trim());
@@ -1100,20 +1704,81 @@ app.whenReady().then(async () => {
     await showTerminalGlobalSettings(key);
     const terminalSettingsCard=document.querySelector('#modal .terminal-settings-modal');
     const terminalSettingsRect=terminalSettingsCard?.getBoundingClientRect();
+    const terminalSettingsPanels=document.querySelector('.terminal-settings-panels');
+    selectTerminalSettingsTab('clipboard');
+    const terminalClipboardPanel=document.querySelector('#terminalSettingsPanelClipboard');
+    const terminalSettingsNoHorizontalOverflow=Boolean(
+      terminalSettingsPanels&&terminalClipboardPanel
+      &&terminalSettingsPanels.scrollWidth<=terminalSettingsPanels.clientWidth+1
+      &&terminalClipboardPanel.scrollWidth<=terminalClipboardPanel.clientWidth+1
+    );
+    selectTerminalSettingsTab('appearance');
     const terminalSettingsUi={
       open:Boolean(terminalSettingsCard&&!document.querySelector('#modal')?.hidden),
       globalScope:Boolean(terminalSettingsCard?.textContent.includes('应用到全部连接和终端会话')),
-      controls:['terminalSettingMiddleMouse','terminalSettingRightMouse','terminalSettingCtrlClick','terminalSettingUrlLinks','terminalSettingWordSeparators','terminalSettingAutoCopy','terminalSettingMultilinePaste'].every(id=>Boolean(document.querySelector('#'+id))),
+      controls:['terminalSettingBackgroundColor','terminalSettingMiddleMouse','terminalSettingRightMouse','terminalSettingCtrlClick','terminalSettingUrlLinks','terminalSettingWordSeparators','terminalSettingAutoCopy','terminalSettingMultilinePaste'].every(id=>Boolean(document.querySelector('#'+id))),
       withinViewport:Boolean(terminalSettingsRect&&terminalSettingsRect.left>=-0.5&&terminalSettingsRect.right<=innerWidth+0.5&&terminalSettingsRect.top>=-0.5&&terminalSettingsRect.bottom<=innerHeight+0.5),
-      requestedDefaults:defaultTerminalGlobalSettings.url_links_enabled===true&&defaultTerminalGlobalSettings.auto_copy_selection===false&&defaultTerminalGlobalSettings.copy_include_trailing_newline===false,
+      compact:Boolean(terminalSettingsRect&&terminalSettingsRect.height<480),
+      readableWidth:Boolean(terminalSettingsRect&&terminalSettingsRect.width>=Math.min(800,innerWidth-28)-1),
+      noHorizontalOverflow:terminalSettingsNoHorizontalOverflow,
+      tabs:[...document.querySelectorAll('.terminal-settings-tabs [role="tab"]')].map(tab=>tab.textContent.trim()),
+      backgroundModes:[...document.querySelectorAll('input[name="terminalSettingBackgroundMode"]')].map(input=>input.value),
+      requestedDefaults:defaultTerminalGlobalSettings.background_mode==='theme'&&defaultTerminalGlobalSettings.url_links_enabled===true&&defaultTerminalGlobalSettings.auto_copy_selection===false&&defaultTerminalGlobalSettings.copy_include_trailing_newline===false,
       editablePasteSetting:document.querySelector('#terminalSettingMultilinePaste')?.selectedOptions[0]?.textContent.includes('可编辑命令窗口')
     };
+    const whiteBackground=document.querySelector('input[name="terminalSettingBackgroundMode"][value="white"]');
+    whiteBackground.checked=true;
+    syncTerminalBackgroundForm();
+    const whitePreview=document.querySelector('#terminalBackgroundPreview');
+    const whitePreviewBackgroundText=whitePreview.style.background;
+    const whitePreviewForegroundText=whitePreview.style.color;
+    const whitePreviewBackground=colorChannels(whitePreviewBackgroundText);
+    const whitePreviewForeground=colorChannels(whitePreviewForegroundText);
+    const whitePreviewReadable=whitePreviewBackground.length===3&&whitePreviewBackground.every(channel=>channel>=254)
+      &&whitePreviewForeground.length===3&&whitePreviewForeground.every(channel=>channel<=1);
+    selectTerminalCustomBackground('#808080');
+    const customPreview=document.querySelector('#terminalBackgroundPreview');
+    const customPreviewBackground=colorChannels(customPreview.style.background);
+    const customPreviewForeground=colorChannels(customPreview.style.color);
+    terminalSettingsUi.backgroundPreview=whitePreviewReadable
+      &&customPreviewBackground.length===3&&customPreviewBackground.every(channel=>Math.abs(channel-128)<=1)
+      &&customPreviewForeground.length===3&&customPreviewForeground.every(channel=>channel<=1)
+      && selectedTerminalBackgroundMode()==='custom';
+    terminalSettingsUi.backgroundPreviewMetrics={
+      whiteBackground:whitePreviewBackgroundText,
+      whiteForeground:whitePreviewForegroundText,
+      whiteBackgroundChannels:whitePreviewBackground,
+      whiteForegroundChannels:whitePreviewForeground,
+      customBackground:customPreview.style.background,
+      customForeground:customPreview.style.color,
+      customBackgroundChannels:customPreviewBackground,
+      customForegroundChannels:customPreviewForeground,
+      selectedMode:selectedTerminalBackgroundMode(),
+      pickerValue:document.querySelector('#terminalSettingBackgroundColor')?.value,
+      directCustomBackground:terminalThemeForSettings({background_mode:'custom',background_color:document.querySelector('#terminalSettingBackgroundColor')?.value}).background
+    };
     closeTerminalGlobalSettings(key);
+    const secondMount=document.createElement('div');
+    secondMount.className='terminal-box';
+    document.body.appendChild(secondMount);
     const secondTerm={options:{},rows:24,refresh:()=>{}};
-    terminalSessions.set(secondKey,{term:secondTerm,id:first.id});
-    terminalGlobalSettings=normalizeTerminalGlobalSettings({...defaultTerminalGlobalSettings,word_separators:'-_'});
+    terminalSessions.get(key).mount=mount;
+    terminalSessions.set(secondKey,{term:secondTerm,id:first.id,mount:secondMount});
+    terminalGlobalSettings=normalizeTerminalGlobalSettings({...defaultTerminalGlobalSettings,background_mode:'custom',background_color:'#808080',word_separators:'-_'});
     applyTerminalGlobalSettingsToSessions();
-    terminalSettingsUi.appliesToAllOpenSessions=fakeTerm.options.wordSeparator==='-_'&&secondTerm.options.wordSeparator==='-_';
+    const readablePaletteKeys=['black','red','green','yellow','blue','magenta','cyan','white','brightBlack','brightRed','brightGreen','brightYellow','brightBlue','brightMagenta','brightCyan','brightWhite'];
+    terminalSettingsUi.appliesToAllOpenSessions=fakeTerm.options.wordSeparator==='-_'&&secondTerm.options.wordSeparator==='-_'
+      &&fakeTerm.options.theme?.background==='#808080'&&secondTerm.options.theme?.background==='#808080'
+      &&fakeTerm.options.theme?.foreground==='#000000'&&secondTerm.options.theme?.foreground==='#000000'
+      &&fakeTerm.options.minimumContrastRatio===4.5&&secondTerm.options.minimumContrastRatio===4.5
+      &&mount.style.getPropertyValue('--terminal-background')==='#808080'
+      &&secondMount.style.getPropertyValue('--terminal-background')==='#808080';
+    terminalSettingsUi.readableCustomPalette=readablePaletteKeys.every(name=>terminalContrastRatio(fakeTerm.options.theme[name],fakeTerm.options.theme.background)>=4.5);
+    terminalGlobalSettings=normalizeTerminalGlobalSettings({...defaultTerminalGlobalSettings,background_mode:'theme'});
+    applyTheme('dark');
+    const followsDark=fakeTerm.options.theme?.background==='#000000'&&fakeTerm.options.theme?.foreground==='#ffffff';
+    applyTheme('light');
+    terminalSettingsUi.followsTheme=followsDark&&fakeTerm.options.theme?.background==='#ffffff'&&fakeTerm.options.theme?.foreground==='#000000';
     terminalSettingsUi.copyFormatting=formatTerminalCopiedText('one\\t  \\r\\ntwo  ',{...defaultTerminalGlobalSettings,copy_tabs_to_spaces:true,copy_trim_trailing_spaces:true,copy_include_trailing_newline:false})==='one\\ntwo';
     terminalSettingsUi.singleLinePaste=terminalSingleLinePaste('one\\r\\n two \\n\\nthree')==='one two three';
     fakeTerm.buffer.active.getLine=()=>({translateToString:()=> 'open https://example.test/path.',length:32});
@@ -1140,7 +1805,7 @@ app.whenReady().then(async () => {
     const toolbarFixture=document.createElement('div');
     toolbarFixture.className='terminal-toolbar';
     toolbarFixture.style.width='100%';
-    toolbarFixture.innerHTML='<div class="terminal-title-row"><span class="terminal-connection-dot"></span><span class="terminal-status">tester@example.invalid:22 · 已连接</span><span class="terminal-latency good">延迟 5 ms</span></div><div class="actions terminal-actions"><button class="icon-button">'+icon('folder-open')+'</button><button class="icon-button">'+icon('minus')+'</button><button class="icon-button">'+icon('plus')+'</button><button class="terminal-dropdown-button">'+icon('languages')+'<span>UTF-8</span>'+icon('chevron-down')+'</button><button class="terminal-dropdown-button">'+icon('type')+'<span>字体</span>'+icon('chevron-down')+'</button><button class="icon-button terminal-global-settings-button">'+icon('settings')+'</button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button>'+icon('history')+'<span>最近命令</span></button><button>'+icon('link-2')+'<span>重连</span></button><button>'+icon('play')+'<span>启用转发</span></button></div>';
+    toolbarFixture.innerHTML='<div class="terminal-title-row"><span class="terminal-connection-dot"></span><span class="terminal-status">tester@example.invalid:22 · 已连接</span><span class="terminal-latency good">延迟 5 ms</span></div><div class="actions terminal-actions"><button class="icon-button">'+icon('folder-open')+'</button><button class="icon-button">'+icon('minus')+'</button><button class="icon-button">'+icon('plus')+'</button><button class="terminal-dropdown-button">'+icon('languages')+'<span>UTF-8</span>'+icon('chevron-down')+'</button><button class="terminal-dropdown-button">'+icon('type')+'<span>字体</span>'+icon('chevron-down')+'</button><button class="icon-button terminal-startup-button">'+icon('command')+'<span>启动</span></button><button class="icon-button terminal-global-settings-button">'+icon('settings')+'</button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button>'+icon('history')+'<span>最近命令</span></button><button>'+icon('link-2')+'<span>重连</span></button><button>'+icon('play')+'<span>启用转发</span></button></div>';
     const toolbarViewFixture=document.createElement('div');
     toolbarViewFixture.style.width='540px';
     toolbarViewFixture.style.containerType='inline-size';
@@ -1161,10 +1826,52 @@ app.whenReady().then(async () => {
       const rect=button.getBoundingClientRect();
       return rect.left>=toolbarRect.left-0.5&&rect.right<=toolbarRect.right+0.5;
     });
+    const compactStartupButton=toolbarFixture.querySelector('.terminal-startup-button');
+    const compactStartupRect=compactStartupButton.getBoundingClientRect();
+    const compactStartupLabel=compactStartupButton.querySelector('span');
+    const startupCompactIconOnly=getComputedStyle(compactStartupLabel).display==='none'
+      && Math.abs(compactStartupRect.width-30)<=0.5
+      && Math.abs(compactStartupRect.height-30)<=0.5;
     toolbarViewFixture.style.width='720px';
     const widerToolbar=toolbarFixture.querySelector('.terminal-actions');
     const widerToolbarRect=widerToolbar.getBoundingClientRect();
     const widerActionsLeftAligned=Math.abs(widerToolbar.querySelector('button').getBoundingClientRect().left-widerToolbarRect.left)<1;
+    const wideStartupRect=compactStartupButton.getBoundingClientRect();
+    const wideStartupLabelRect=compactStartupLabel.getBoundingClientRect();
+    const wideStartupLabelStyle=getComputedStyle(compactStartupLabel);
+    const wideStartupIconRect=compactStartupButton.querySelector('svg').getBoundingClientRect();
+    const standaloneStartupWideSingleLine=wideStartupLabelStyle.display!=='none'
+      && wideStartupLabelStyle.whiteSpace==='nowrap'
+      && wideStartupRect.width>30.5
+      && Math.abs(wideStartupRect.height-30)<=0.5
+      && wideStartupLabelRect.height<=parseFloat(wideStartupLabelStyle.lineHeight)+1
+      && wideStartupLabelRect.left>=wideStartupIconRect.right-0.5
+      && Math.abs((wideStartupLabelRect.top+wideStartupLabelRect.height/2)-(wideStartupIconRect.top+wideStartupIconRect.height/2))<=1;
+    const headerStartupFixture=document.createElement('div');
+    headerStartupFixture.className='topbar';
+    headerStartupFixture.style.cssText='position:fixed;left:-10000px;top:0;width:760px;';
+    headerStartupFixture.innerHTML='<div class="workspace-header-tools workspace-global-header-tools"><div class="terminal-toolbar terminal-toolbar-header"><div class="actions terminal-actions"><button class="icon-button terminal-startup-button">'+icon('command')+'<span>启动</span></button></div></div></div>';
+    document.body.appendChild(headerStartupFixture);
+    const headerStartupButton=headerStartupFixture.querySelector('.terminal-startup-button');
+    const headerStartupLabel=headerStartupButton.querySelector('span');
+    const headerHeightBefore=workspaceHeaderHeight;
+    const headerStartupFits=[WORKSPACE_HEADER_HEIGHT_MIN,WORKSPACE_HEADER_HEIGHT_DEFAULT,WORKSPACE_HEADER_HEIGHT_MAX].every(height=>{
+      applyWorkspaceHeaderHeight(height,{fit:false});
+      const buttonRect=headerStartupButton.getBoundingClientRect();
+      const labelRect=headerStartupLabel.getBoundingClientRect();
+      const labelStyle=getComputedStyle(headerStartupLabel);
+      return labelStyle.display!=='none'
+        && labelStyle.whiteSpace==='nowrap'
+        && buttonRect.width>parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--workspace-header-control-height'))+4
+        && headerStartupButton.scrollWidth<=headerStartupButton.clientWidth
+        && labelRect.left>=buttonRect.left-0.5
+        && labelRect.right<=buttonRect.right+0.5
+        && labelRect.top>=buttonRect.top-0.5
+        && labelRect.bottom<=buttonRect.bottom+0.5;
+    });
+    applyWorkspaceHeaderHeight(headerHeightBefore,{fit:false});
+    headerStartupFixture.remove();
+    const startupWideSingleLine=standaloneStartupWideSingleLine&&headerStartupFits;
     const narrowToolbarLeftAligned=compactActionsLeftAligned&&widerActionsLeftAligned;
     toolbarViewFixture.style.width='540px';
     const responsiveView=document.querySelector('#view-terminal');
@@ -1213,7 +1920,9 @@ app.whenReady().then(async () => {
     hideActionMenu();
     terminalSessions.delete(secondKey);
     terminalSessions.delete(key);
+    secondMount.remove();
     terminalGlobalSettings = previousTerminalGlobalSettings;
+    applyTheme(previousTheme);
     tabs = tabs.filter(tab=>tab.key!==key);
     if (fixturePane) {
       fixturePane.tabs = previousFixtureTabs;
@@ -1223,8 +1932,312 @@ app.whenReady().then(async () => {
     terminalLatencyVisible = previousLatencyVisible;
     if (previousLatencyStored === null) localStorage.removeItem('terminalLatencyVisible');
     else localStorage.setItem('terminalLatencyVisible', previousLatencyStored);
-    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,latencyMeasured,latencyCanDisable,latencyCanEnable,terminalSettingsUi};
+    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,startupCompactIconOnly,startupWideSingleLine,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,latencyMeasured,latencyCanDisable,latencyCanEnable,terminalSettingsUi};
   })()`);
+  const terminalStartupOriginalContentSize = window.getContentSize();
+  window.setContentSize(1000, 600);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  const terminalStartupUi = await window.webContents.executeJavaScript(`(async () => {
+    const connection=connections[0];
+    if(!connection) return {found:false};
+    const key='terminal-startup-smoke';
+    const otherKey='terminal-startup-smoke-other';
+    const newKey='terminal-startup-smoke-new';
+    const splitKey='terminal-startup-smoke-split';
+    const originalApi=api;
+    const originalNotify=notify;
+    const originalReconnect=reconnectTerminal;
+    const originalDuplicateWorkspaceTab=duplicateWorkspaceTab;
+    const originalStartup=terminalStartupConfigForConnection(connection);
+    const reconnects=[];
+    const notices=[];
+    const duplicateCalls=[];
+    let savedPayload=null;
+    api=async (path,options={}) => {
+      if(path.endsWith('/terminal-capabilities')) return {capabilities:{
+        platform:'linux',
+        platform_label:'Linux',
+        default_shell:{name:'bash',label:'Bash',path:'/bin/bash'},
+        profiles:[
+          {id:'bash',kind:'shell',label:'Bash',path:'/bin/bash',args:'-l',platform:'posix',is_default:true},
+          {id:'python3',kind:'repl',label:'Python 3',path:'/usr/bin/python3',args:'-i',platform:'posix',is_default:false}
+        ],
+        tools:[{id:'git',label:'Git',path:'/usr/bin/git'}],
+        warnings:[]
+      }};
+      if(path.endsWith('/terminal-startup')){
+        savedPayload=JSON.parse(options.body||'{}');
+        return {startup:savedPayload};
+      }
+      return {};
+    };
+    notify=(...args)=>notices.push(args);
+    reconnectTerminal=(id,tabKey)=>reconnects.push({id,tabKey});
+    duplicateWorkspaceTab=(sourceKey,options={}) => {
+      const duplicateKey=duplicateCalls.length===0?newKey:splitKey;
+      if(typeof options.beforeOpen==='function') options.beforeOpen(duplicateKey,'复制终端',tabs.find(tab=>tab.key===sourceKey));
+      duplicateCalls.push({sourceKey,splitZone:options.splitZone||'',duplicateKey});
+      return duplicateKey;
+    };
+    tabs.push({key,title:'启动配置测试',viewName:'terminal',kind:'terminal',id:connection.id,closable:true});
+    terminalSessions.set(key,{id:connection.id,term:{reset(){},focus(){}}});
+    terminalSessions.set(otherKey,{id:connection.id,term:{reset(){},focus(){}}});
+    showTerminalStartupSettings(key,connection.id);
+    await new Promise(resolve=>setTimeout(resolve,25));
+    const modal=document.querySelector('#modal');
+    const card=modal.querySelector('.terminal-startup-modal');
+    const profileSelect=document.querySelector('#terminalStartupProfile');
+    const pythonOption=[...profileSelect.options].find(option=>option.textContent.includes('Python 3'));
+    const controlsPresent=['terminalStartupProfile','terminalStartupPath','terminalStartupArgs','terminalStartupCwd','terminalStartupSaveDefault','terminalStartupCurrent','terminalStartupNewTab','terminalStartupSplit'].every(id=>Boolean(document.querySelector('#'+id)));
+    const saveDefaultUnchecked=document.querySelector('#terminalStartupSaveDefault')?.checked===false;
+    profileSelect.value=pythonOption?.value||'custom';
+    chooseTerminalStartupProfile();
+    await new Promise(resolve=>requestAnimationFrame(()=>resolve()));
+    const cardRect=card?.getBoundingClientRect();
+    const scrollRegion=card?.querySelector('.terminal-startup-scroll');
+    const header=card?.querySelector('.terminal-settings-head');
+    const actionBar=card?.querySelector('.terminal-startup-actions');
+    const scrollStyle=scrollRegion?getComputedStyle(scrollRegion):null;
+    const headerRect=header?.getBoundingClientRect();
+    const actionRect=actionBar?.getBoundingClientRect();
+    const modalFitsShortViewport=Boolean(cardRect
+      && cardRect.left>=-0.5
+      && cardRect.right<=innerWidth+0.5
+      && cardRect.top>=-0.5
+      && cardRect.bottom<=innerHeight+0.5);
+    const bodyScrollsInShortViewport=Boolean(scrollRegion
+      && scrollStyle?.overflowY==='auto'
+      && scrollRegion.scrollHeight>scrollRegion.clientHeight+1);
+    const fixedHeaderAndActions=Boolean(headerRect
+      && actionRect
+      && cardRect
+      && headerRect.top>=cardRect.top-0.5
+      && actionRect.bottom<=cardRect.bottom+0.5
+      && actionRect.top>headerRect.bottom);
+    if(scrollRegion) scrollRegion.scrollTop=scrollRegion.scrollHeight;
+    await new Promise(resolve=>requestAnimationFrame(()=>resolve()));
+    const actionAfterScroll=actionBar?.getBoundingClientRect();
+    const actionsStayVisibleWhileScrolling=Boolean(actionAfterScroll
+      && cardRect
+      && actionAfterScroll.top>=cardRect.top-0.5
+      && actionAfterScroll.bottom<=cardRect.bottom+0.5);
+    modal.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+    const backdropIgnored=!modal.hidden&&Boolean(modal.querySelector('.terminal-startup-modal'));
+    await applyTerminalStartupSettings(key,connection.id,'current');
+    const temporary=terminalStartupOverrides.get(key);
+    const currentTemporaryOnly=temporary?.terminal_program_path==='/usr/bin/python3'
+      && !terminalStartupOverrides.has(otherKey)
+      && savedPayload===null
+      && reconnects.length===1
+      && reconnects[0].tabKey===key;
+    terminalStartupOverrides.set(otherKey,normalizeTerminalStartupConfig({
+      terminal_startup_mode:'program',
+      terminal_profile_name:'Other tab',
+      terminal_profile_kind:'shell',
+      terminal_program_path:'/bin/zsh',
+      terminal_program_args:'-l',
+      terminal_program_platform:'posix'
+    }));
+    showTerminalStartupSettings(key,connection.id);
+    await new Promise(resolve=>setTimeout(resolve,25));
+    document.querySelector('#terminalStartupProfile').value='custom';
+    document.querySelector('#terminalStartupProfileName').value='Permanent Bash';
+    document.querySelector('#terminalStartupKind').value='shell';
+    document.querySelector('#terminalStartupPath').value='/bin/bash';
+    document.querySelector('#terminalStartupArgs').value='-l';
+    document.querySelector('#terminalStartupPlatform').value='posix';
+    document.querySelector('#terminalStartupSaveDefault').checked=true;
+    const checkDoesNotSave=savedPayload===null;
+    await applyTerminalStartupSettings(key,connection.id,'current');
+    const checkedCurrentSaves=savedPayload?.terminal_program_path==='/bin/bash'
+      && connection.terminal_program_path==='/bin/bash'
+      && !terminalStartupOverrides.has(key)
+      && terminalStartupOverrides.get(otherKey)?.terminal_program_path==='/bin/zsh'
+      && reconnects.length===2
+      && reconnects.every(item=>item.tabKey===key);
+    showTerminalStartupSettings(key,connection.id);
+    await new Promise(resolve=>setTimeout(resolve,25));
+    const newProfileSelect=document.querySelector('#terminalStartupProfile');
+    const newPythonOption=[...newProfileSelect.options].find(option=>option.textContent.includes('Python 3'));
+    newProfileSelect.value=newPythonOption?.value||'custom';
+    chooseTerminalStartupProfile();
+    const newTabDefaultsTemporary=document.querySelector('#terminalStartupSaveDefault')?.checked===false;
+    const reconnectsBeforeNew=reconnects.length;
+    await applyTerminalStartupSettings(key,connection.id,'new');
+    const newTabTemporary=duplicateCalls.length===1
+      && duplicateCalls[0].sourceKey===key
+      && duplicateCalls[0].splitZone===''
+      && terminalStartupOverrides.get(newKey)?.terminal_program_path==='/usr/bin/python3'
+      && !terminalStartupOverrides.has(key)
+      && reconnects.length===reconnectsBeforeNew;
+    showTerminalStartupSettings(key,connection.id);
+    await new Promise(resolve=>setTimeout(resolve,25));
+    const splitProfileSelect=document.querySelector('#terminalStartupProfile');
+    const splitPythonOption=[...splitProfileSelect.options].find(option=>option.textContent.includes('Python 3'));
+    splitProfileSelect.value=splitPythonOption?.value||'custom';
+    chooseTerminalStartupProfile();
+    const splitPicker=document.querySelector('.terminal-startup-split-picker');
+    const splitTrigger=document.querySelector('#terminalStartupSplit');
+    const splitOptions=document.querySelector('.terminal-startup-split-options');
+    const splitButtons=[...splitOptions.querySelectorAll('[role="menuitem"][data-split-zone]')];
+    const splitZones=splitButtons.map(button=>button.dataset.splitZone);
+    const splitCenter=splitOptions.querySelector('.terminal-startup-split-center');
+    const splitCenterPresent=Boolean(splitCenter);
+    const splitInteractionSelectors=[...document.styleSheets].flatMap(sheet=>{
+      try { return [...sheet.cssRules].map(rule=>rule.selectorText||''); }
+      catch { return []; }
+    });
+    const splitHoverRulePresent=splitInteractionSelectors.some(selector=>selector.includes('.terminal-startup-split-picker:hover')&&selector.includes('.terminal-startup-split-options'));
+    const splitFocusRulePresent=splitInteractionSelectors.some(selector=>selector.includes('.terminal-startup-split-picker:focus-within')&&selector.includes('.terminal-startup-split-options'));
+    const splitInitiallyCollapsed=getComputedStyle(splitOptions).visibility==='hidden'
+      && getComputedStyle(splitOptions).pointerEvents==='none';
+    splitOptions.style.transition='none';
+    if(splitCenter) splitCenter.style.transition='none';
+    splitButtons.forEach(button=>{ button.style.transition='none'; });
+    splitTrigger.focus();
+    await new Promise(resolve=>setTimeout(resolve,0));
+    const focusedSplitStyle=getComputedStyle(splitOptions);
+    const splitExpandsOnFocus=document.activeElement===splitTrigger
+      && focusedSplitStyle.visibility==='visible'
+      && focusedSplitStyle.pointerEvents==='auto'
+      && Number.parseFloat(focusedSplitStyle.opacity)>0.9
+      && splitButtons.every(button=>{
+        const style=getComputedStyle(button);
+        const rect=button.getBoundingClientRect();
+        return style.visibility!=='hidden'&&style.pointerEvents!=='none'&&Number.parseFloat(style.opacity)>0.9&&rect.width>0&&rect.height>0;
+      });
+    const reconnectsBeforeSplit=reconnects.length;
+    splitButtons.find(button=>button.dataset.splitZone==='right')?.click();
+    await new Promise(resolve=>setTimeout(resolve,25));
+    const splitOpenUsesDirection=duplicateCalls.length===2
+      && duplicateCalls[1].sourceKey===key
+      && duplicateCalls[1].splitZone==='right'
+      && terminalStartupOverrides.get(splitKey)?.terminal_program_path==='/usr/bin/python3'
+      && reconnects.length===reconnectsBeforeSplit;
+    const fourSplitDirections=splitCenterPresent
+      && splitButtons.length===4
+      && ['top','bottom','left','right'].every(zone=>splitZones.includes(zone))
+      && splitHoverRulePresent
+      && splitFocusRulePresent;
+    duplicateWorkspaceTab=originalDuplicateWorkspaceTab;
+    let resolveSlowCapabilities;
+    let capabilityRaceCall=0;
+    api=async path => {
+      if(!path.endsWith('/terminal-capabilities')) return {};
+      capabilityRaceCall+=1;
+      if(capabilityRaceCall===1) {
+        return new Promise(resolve=>{ resolveSlowCapabilities=resolve; });
+      }
+      return {capabilities:{
+        platform:'macos',
+        platform_label:'Race B',
+        default_shell:{name:'zsh',label:'Zsh',path:'/bin/zsh'},
+        profiles:[{id:'zsh',kind:'shell',label:'Zsh',path:'/bin/zsh',args:'-l',platform:'posix',is_default:true}],
+        tools:[],
+        warnings:[]
+      }};
+    };
+    showTerminalStartupSettings(key,connection.id);
+    await new Promise(resolve=>setTimeout(resolve,0));
+    closeTerminalStartupSettings(key);
+    showTerminalStartupSettings(otherKey,connection.id);
+    await new Promise(resolve=>setTimeout(resolve,25));
+    resolveSlowCapabilities?.({capabilities:{
+      platform:'linux',
+      platform_label:'Race A',
+      default_shell:{name:'bash',label:'Bash',path:'/bin/bash'},
+      profiles:[{id:'python3',kind:'repl',label:'Python 3',path:'/usr/bin/python3',args:'-i',platform:'posix',is_default:false}],
+      tools:[],
+      warnings:[]
+    }});
+    await new Promise(resolve=>setTimeout(resolve,25));
+    const raceOptions=[...document.querySelectorAll('#terminalStartupProfile option')].map(option=>option.textContent);
+    const requestRaceIsolated=document.querySelector('#terminalStartupCapabilitySummary')?.textContent.includes('Race B')
+      && raceOptions.some(label=>label.includes('Zsh'))
+      && !raceOptions.some(label=>label.includes('Python 3'));
+    closeTerminalStartupSettings(otherKey);
+    const closedKey='terminal-startup-smoke-closed';
+    const OriginalWebSocket=window.WebSocket;
+    let hiddenSocketCount=0;
+    let resolveStartupTicket;
+    class HiddenSessionWebSocket extends EventTarget {
+      static OPEN=1;
+      constructor(){ super(); hiddenSocketCount+=1; this.readyState=1; }
+      close(){}
+      send(){}
+    }
+    window.WebSocket=HiddenSessionWebSocket;
+    api=async path => {
+      if(path==='/api/terminal/startup-tickets') {
+        return new Promise(resolve=>{ resolveStartupTicket=resolve; });
+      }
+      return {};
+    };
+    tabs.push({key:closedKey,title:'等待关闭',viewName:'terminal',kind:'terminal',id:connection.id});
+    terminalSessions.set(closedKey,{
+      id:connection.id,
+      term:{cols:80,rows:24,writeln(){},dispose(){}},
+      connectionAttempt:0
+    });
+    terminalStartupOverrides.set(closedKey,normalizeTerminalStartupConfig({
+      terminal_startup_mode:'program',
+      terminal_profile_name:'Python 3',
+      terminal_profile_kind:'repl',
+      terminal_program_path:'/usr/bin/python3',
+      terminal_program_args:'-i',
+      terminal_program_platform:'posix'
+    }));
+    const pendingClosedConnect=connectTerminal(connection,closedKey);
+    await new Promise(resolve=>setTimeout(resolve,0));
+    closeTerminalSession(closedKey);
+    tabs=tabs.filter(tab=>tab.key!==closedKey);
+    resolveStartupTicket?.({token:'closed-tab-ticket'});
+    await pendingClosedConnect;
+    const closedTabDoesNotConnect=hiddenSocketCount===0
+      && !terminalSessions.has(closedKey)
+      && !terminalStartupOverrides.has(closedKey);
+    window.WebSocket=OriginalWebSocket;
+    const result={
+      found:Boolean(card&&profileSelect),
+      controls:controlsPresent,
+      capabilities:Boolean(pythonOption&&card?.textContent.includes('Git')),
+      withinViewport:Boolean(cardRect&&cardRect.left>=-0.5&&cardRect.right<=innerWidth+0.5&&cardRect.top>=-0.5&&cardRect.bottom<=innerHeight+0.5),
+      modalFitsShortViewport,
+      bodyScrollsInShortViewport,
+      fixedHeaderAndActions,
+      actionsStayVisibleWhileScrolling,
+      backdropIgnored,
+      saveDefaultUnchecked,
+      currentTemporaryOnly,
+      checkDoesNotSave,
+      checkedCurrentSaves,
+      newTabDefaultsTemporary,
+      newTabTemporary,
+      splitInitiallyCollapsed,
+      splitExpandsOnFocus,
+      fourSplitDirections,
+      splitOpenUsesDirection,
+      requestRaceIsolated,
+      closedTabDoesNotConnect,
+      reconnectNotice:notices.some(args=>String(args[0]).includes('本终端'))
+    };
+    Object.assign(connection,originalStartup);
+    terminalStartupOverrides.delete(key);
+    terminalStartupOverrides.delete(otherKey);
+    terminalStartupOverrides.delete(newKey);
+    terminalStartupOverrides.delete(splitKey);
+    terminalSessions.delete(key);
+    terminalSessions.delete(otherKey);
+    tabs=tabs.filter(tab=>![key,newKey,splitKey].includes(tab.key));
+    api=originalApi;
+    notify=originalNotify;
+    reconnectTerminal=originalReconnect;
+    duplicateWorkspaceTab=originalDuplicateWorkspaceTab;
+    closeModal();
+    return result;
+  })()`);
+  window.setContentSize(...terminalStartupOriginalContentSize);
+  await new Promise(resolve => setTimeout(resolve, 50));
   console.log("[ui-smoke] log settings");
   const logSettingsUi = await window.webContents.executeJavaScript(`(async () => {
     await showLogSettings();
@@ -3304,40 +4317,56 @@ app.whenReady().then(async () => {
     await new Promise(resolve=>setTimeout(resolve,20));
     const editorHost=document.querySelector('#sftpTextEditor');
     const languageSelect=document.querySelector('#sftpEditorLanguage');
-    if (languageSelect) {
-      languageSelect.value='markdown';
-      languageSelect.dispatchEvent(new Event('change',{bubbles:true}));
-      await new Promise(resolve=>setTimeout(resolve,20));
-    }
-    let jsonFormatting=false;
-    if (languageSelect && window.ace && editorHost) {
-      const editor=ace.edit(editorHost);
-      languageSelect.value='json';
-      languageSelect.dispatchEvent(new Event('change',{bubbles:true}));
-      editor.setValue('{"name":"TunnelDesk","items":[1,2]}',-1);
-      document.querySelector('#sftpTextFormatJson')?.click();
-      await new Promise(resolve=>setTimeout(resolve,20));
-      jsonFormatting=!document.querySelector('#sftpTextFormatJson')?.hidden
-        && editor.getValue().includes('\\n  "name": "TunnelDesk"')
-        && editor.getValue().includes('\\n  "items": [');
-      editor.setValue('中文内容',-1);
-      languageSelect.value='markdown';
-      languageSelect.dispatchEvent(new Event('change',{bubbles:true}));
-    }
     const textEncodingUi={
       opened:Boolean(document.querySelector('.sftp-editor-modal')),
       aceLoaded:Boolean(editorHost?.classList.contains('ace_editor')),
       selected:document.querySelector('#sftpTextEncoding')?.value||'',
       options:[...document.querySelectorAll('#sftpTextEncoding option')].map(option=>option.value),
       languageOptions:[...document.querySelectorAll('#sftpEditorLanguage option')].map(option=>option.value),
-      manualLanguage:Boolean(window.ace&&editorHost&&ace.edit(editorHost).session.$modeId==='ace/mode/markdown'),
-      jsonFormatting,
+      manualLanguage:false,
+      nonJsonFormattingHidden:false,
+      jsonFormatting:false,
+      jsonHiddenAfterLanguageChange:false,
+      json5FormattingHidden:!isSftpJsonFileName('/tmp/example.json5'),
       wordWrap:Boolean(document.querySelector('#sftpEditorWordWrap')?.checked),
       persistDefault:Boolean(document.querySelector('#sftpPersistEncoding')),
       backup:Boolean(document.querySelector('#sftpBackupBeforeSave')?.checked)
     };
+    if (languageSelect) {
+      languageSelect.value='markdown';
+      languageSelect.dispatchEvent(new Event('change',{bubbles:true}));
+      await new Promise(resolve=>setTimeout(resolve,20));
+      textEncodingUi.manualLanguage=Boolean(window.ace&&editorHost&&ace.edit(editorHost).session.$modeId==='ace/mode/markdown');
+      languageSelect.value='json';
+      languageSelect.dispatchEvent(new Event('change',{bubbles:true}));
+      await new Promise(resolve=>setTimeout(resolve,20));
+      const nonJsonFormatButton=document.querySelector('#sftpTextFormatJson');
+      textEncodingUi.nonJsonFormattingHidden=Boolean(nonJsonFormatButton?.hidden)
+        && getComputedStyle(nonJsonFormatButton).display==='none';
+    }
     document.querySelector('#sftpTextClose')?.click();
     await editorPromise;
+    const jsonEditorPromise=sftpTextModal('/tmp/config.json','{"name":"TunnelDesk","items":[1,2]}',36,512*1024,'utf8','auto');
+    await new Promise(resolve=>setTimeout(resolve,20));
+    const jsonEditorHost=document.querySelector('#sftpTextEditor');
+    const jsonLanguageSelect=document.querySelector('#sftpEditorLanguage');
+    if (jsonLanguageSelect && window.ace && jsonEditorHost) {
+      const jsonEditor=ace.edit(jsonEditorHost);
+      const formatButton=document.querySelector('#sftpTextFormatJson');
+      formatButton?.click();
+      await new Promise(resolve=>setTimeout(resolve,20));
+      textEncodingUi.jsonFormatting=!formatButton?.hidden
+        && getComputedStyle(formatButton).display!=='none'
+        && jsonEditor.getValue().includes('\\n  "name": "TunnelDesk"')
+        && jsonEditor.getValue().includes('\\n  "items": [');
+      jsonLanguageSelect.value='markdown';
+      jsonLanguageSelect.dispatchEvent(new Event('change',{bubbles:true}));
+      await new Promise(resolve=>setTimeout(resolve,20));
+      textEncodingUi.jsonHiddenAfterLanguageChange=Boolean(formatButton?.hidden)
+        && getComputedStyle(formatButton).display==='none';
+    }
+    document.querySelector('#sftpTextSave')?.click();
+    await jsonEditorPromise;
     const result = {
       folderOpened: actions[0]?.kind === 'dir' && actions[0]?.path === '/fixture/folder',
       fileOpened: actions[1]?.kind === 'file' && actions[1]?.path === '/fixture/' + specialName,
@@ -3556,6 +4585,105 @@ app.whenReady().then(async () => {
     await new Promise(resolve=>setTimeout(resolve,0));
     const mobileSftpTabKey=activeTabKey;
     const mobileSftpView=sftpRuntimeRoot(mobileSftpTabKey);
+    let mobileWorkspaceChromeResize={found:false};
+    {
+      const headerHandle=document.querySelector('#workspaceHeaderResize');
+      const activePane=workspacePaneElement(focusedPaneId);
+      const tabHandle=activePane?.querySelector('.workspace-tab-resizer');
+      const topbar=document.querySelector('.topbar');
+      const title=document.querySelector('#workspaceTitle');
+      const tabShell=activePane?.querySelector('.tabs-shell');
+      const tabNode=activePane?.querySelector('.tab');
+      const tabDot=activePane?.querySelector('.tab-connection-dot');
+      const activityHandle=document.querySelector('#activityBarResize');
+      const storedHeaderBefore=localStorage.getItem('workspaceHeaderHeight');
+      const storedTabBefore=localStorage.getItem('workspaceTabHeight');
+      const storedActivityBefore=localStorage.getItem('activityBarWidth');
+      const headerValueBefore=workspaceHeaderHeight;
+      const tabValueBefore=workspaceTabHeight;
+      const activityValueBefore=activityBarWidth;
+      const nextFrame=()=>new Promise(resolve=>setTimeout(resolve,0));
+      const snapshot=()=>({
+        headerHeight:topbar?.getBoundingClientRect().height||0,
+        headerFont:title?parseFloat(getComputedStyle(title).fontSize):0,
+        tabHeight:tabShell?.getBoundingClientRect().height||0,
+        tabFont:tabNode?parseFloat(getComputedStyle(tabNode).fontSize):0,
+        dotSize:tabDot?Math.max(tabDot.getBoundingClientRect().width,tabDot.getBoundingClientRect().height):0
+      });
+      const equalMetric=(left,right)=>Math.abs(left-right)<=0.5;
+      try{
+        const baseline=snapshot();
+        const handlesHidden=Boolean(headerHandle&&tabHandle&&activityHandle
+          && getComputedStyle(headerHandle).display==='none'
+          && getComputedStyle(tabHandle).display==='none'
+          && getComputedStyle(activityHandle).display==='none'
+          && headerHandle.getBoundingClientRect().height===0
+          && tabHandle.getBoundingClientRect().height===0
+          && activityHandle.getBoundingClientRect().width===0);
+        applyWorkspaceHeaderHeight(WORKSPACE_HEADER_HEIGHT_MAX,{fit:false});
+        applyWorkspaceTabHeight(WORKSPACE_TAB_HEIGHT_MAX,{fit:false});
+        applyActivityBarWidth(ACTIVITY_BAR_WIDTH_MAX,{fit:false});
+        await nextFrame();
+        const afterProgrammaticApply=snapshot();
+        const desktopSizingIgnored=equalMetric(afterProgrammaticApply.headerHeight,baseline.headerHeight)
+          && equalMetric(afterProgrammaticApply.headerFont,baseline.headerFont)
+          && equalMetric(afterProgrammaticApply.tabHeight,baseline.tabHeight)
+          && equalMetric(afterProgrammaticApply.tabFont,baseline.tabFont)
+          && equalMetric(afterProgrammaticApply.dotSize,baseline.dotSize);
+        applyWorkspaceHeaderHeight(headerValueBefore,{fit:false});
+        applyWorkspaceTabHeight(tabValueBefore,{fit:false});
+        applyActivityBarWidth(activityValueBefore,{fit:false});
+        const dispatchHiddenDrag=(handle,pointerId,horizontal=false)=>{
+          handle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId,pointerType:'touch',button:0,clientX:0,clientY:0}));
+          window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId,pointerType:'touch',button:0,clientX:horizontal?200:0,clientY:horizontal?0:200}));
+          window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId,pointerType:'touch',button:0,clientX:horizontal?200:0,clientY:horizontal?0:200}));
+        };
+        dispatchHiddenDrag(headerHandle,201);
+        dispatchHiddenDrag(tabHandle,202);
+        dispatchHiddenDrag(activityHandle,203,true);
+        headerHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
+        tabHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
+        activityHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
+        headerHandle?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
+        tabHandle?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
+        activityHandle?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
+        await nextFrame();
+        const afterInteractions=snapshot();
+        const interactionsIgnored=workspaceHeaderHeight===headerValueBefore
+          && workspaceTabHeight===tabValueBefore
+          && activityBarWidth===activityValueBefore
+          && workspaceChromeResize===null
+          && activityBarResize===null
+          && !document.body.classList.contains('workspace-chrome-resizing')
+          && !document.body.classList.contains('activity-bar-resizing')
+          && equalMetric(afterInteractions.headerHeight,baseline.headerHeight)
+          && equalMetric(afterInteractions.headerFont,baseline.headerFont)
+          && equalMetric(afterInteractions.tabHeight,baseline.tabHeight)
+          && equalMetric(afterInteractions.tabFont,baseline.tabFont)
+          && equalMetric(afterInteractions.dotSize,baseline.dotSize);
+        const storageUntouched=localStorage.getItem('workspaceHeaderHeight')===storedHeaderBefore
+          && localStorage.getItem('workspaceTabHeight')===storedTabBefore
+          && localStorage.getItem('activityBarWidth')===storedActivityBefore;
+        mobileWorkspaceChromeResize={
+          found:Boolean(headerHandle&&tabHandle&&activityHandle&&topbar&&title&&tabShell&&tabNode&&tabDot),
+          handlesHidden,
+          desktopSizingIgnored,
+          interactionsIgnored,
+          storageUntouched,
+          baseline,
+          afterProgrammaticApply,
+          afterInteractions
+        };
+      }finally{
+        if(workspaceChromeResize)endWorkspaceChromeResize(null,true);
+        if(storedHeaderBefore===null)localStorage.removeItem('workspaceHeaderHeight');else localStorage.setItem('workspaceHeaderHeight',storedHeaderBefore);
+        if(storedTabBefore===null)localStorage.removeItem('workspaceTabHeight');else localStorage.setItem('workspaceTabHeight',storedTabBefore);
+        if(storedActivityBefore===null)localStorage.removeItem('activityBarWidth');else localStorage.setItem('activityBarWidth',storedActivityBefore);
+        applyWorkspaceHeaderHeight(headerValueBefore,{fit:false});
+        applyWorkspaceTabHeight(tabValueBefore,{fit:false});
+        applyActivityBarWidth(activityValueBefore,{fit:false});
+      }
+    }
     document.documentElement.dataset.uiSmokeStage='mobile-import';
     const mobileSftpToolbarMount = mobileSftpView?.querySelector('#sftpToolbarMount');
     const mobileSftpToolbarToggle = mobileSftpView?.querySelector('#sftpMobileToolbarToggle');
@@ -3630,6 +4758,7 @@ app.whenReady().then(async () => {
       active:document.querySelector('.mobile-tabs .active')?.getAttribute('aria-label')||'',
       importExplorerFirst,
       importWorkspaceEntered:leftPane?.classList.contains('mobile-hide')&&content?.classList.contains('mobile-show'),
+      workspaceChromeResize:mobileWorkspaceChromeResize,
       sftp:mobileSftpLayout,
       workspaceFormFonts:{
         sftpSearch:mobileSftpLayout.searchFontSize,
@@ -3912,15 +5041,58 @@ app.whenReady().then(async () => {
     const image = await window.webContents.capturePage();
     require("node:fs").writeFileSync(path.join(process.cwd(), "data", "ui-smoke-mobile.png"), image.toPNG());
   }
-  console.log(JSON.stringify({ ...result, refreshStateUi, workspaceTabDragUi, workspaceDockingUi, pages, navigationUi, aboutUi, desktopMenu, runningActions, authUi, saveAndClearUi, notificationUi, restoreKeyUi, restoreCredentialUi, terminalUi, logSettingsUi, sftpUi, clipboardUi, dark, mobile, errors }, null, 2));
+  console.log(JSON.stringify({ ...result, refreshStateUi, workspaceTabDragUi, workspaceDockingUi, workspaceHeaderResizeUi, pages, navigationUi, aboutUi, desktopMenu, runningActions, authUi, connectionStartupUi, saveAndClearUi, notificationUi, restoreKeyUi, restoreCredentialUi, terminalUi, terminalStartupUi, logSettingsUi, sftpUi, clipboardUi, dark, mobile, errors }, null, 2));
   const overflow = pages.some(page => page.scrollWidth > page.width) || mobile.scrollWidth > mobile.width || mobile.bodyWidth > mobile.width;
   const darkFailed = dark.theme !== "dark" || dark.buttonBackground === "rgb(255, 255, 255)";
   const menuFailed = !desktopMenu.opened || !desktopMenu.closedOnScroll || !mobile.menuOpened || !mobile.menuClosed;
   const refreshStateUiFailed = !refreshStateUi.found || !refreshStateUi.collapsedBeforeRefresh || !refreshStateUi.collapsedAfterRefresh || !refreshStateUi.collapsePersisted || !refreshStateUi.explicitSelectionReopens || !refreshStateUi.runningCountLive || !refreshStateUi.failureCountLive || !refreshStateUi.oldStartupLabelsRemoved;
-  const workspaceTabDragUiFailed = !workspaceTabDragUi.beganImmediately || !workspaceTabDragUi.activatedOnPress || !workspaceTabDragUi.dragGhostVisible || !workspaceTabDragUi.dropPositionVisible || !workspaceTabDragUi.dropPositionRemoved || !workspaceTabDragUi.dragGhostRemoved || !workspaceTabDragUi.touchReady || !workspaceTabDragUi.commonTitleFits || !workspaceTabDragUi.numberedSessionTitleFits || !workspaceTabDragUi.compactTabFont || !workspaceTabDragUi.shortTabUsesContentWidth || !workspaceTabDragUi.fullTitleTooltip || JSON.stringify(workspaceTabDragUi.liveOrder) !== JSON.stringify(['drag-a','drag-b','drag-c']) || JSON.stringify(workspaceTabDragUi.savedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || JSON.stringify(workspaceTabDragUi.persistedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || !workspaceTabDragUi.activeFollowsDragged || !workspaceTabDragUi.clickSuppressed || !workspaceTabDragUi.cancelStarted || !workspaceTabDragUi.cancelRestored || !workspaceTabDragUi.closeDoesNotDrag || !workspaceTabDragUi.fallbackMove || !workspaceTabDragUi.scrollControlsVisible || !workspaceTabDragUi.scrollControlsHideWhenFit || !workspaceTabDragUi.nativeScrollbarHidden || !workspaceTabDragUi.wheelScrollsTabs;
-  const workspaceDockingUiFailed = !workspaceDockingUi.firstSplit || !workspaceDockingUi.secondSplit || !workspaceDockingUi.nestedTree || workspaceDockingUi.paneCount !== 3 || !workspaceDockingUi.eachPaneComplete || workspaceDockingUi.splitterCount !== 2 || !workspaceDockingUi.ratioAdjusted || !workspaceDockingUi.mergedNested || !workspaceDockingUi.mergedAll || !workspaceDockingUi.collapsedToSinglePane;
+  const workspaceTabDragUiFailed = !workspaceTabDragUi.beganImmediately || !workspaceTabDragUi.activatedOnPress || !workspaceTabDragUi.dragGhostVisible || !workspaceTabDragUi.dropPositionVisible || !workspaceTabDragUi.dropPositionRemoved || !workspaceTabDragUi.dragGhostRemoved || !workspaceTabDragUi.touchReady || !workspaceTabDragUi.commonTitleFits || !workspaceTabDragUi.numberedSessionTitleFits || !workspaceTabDragUi.tabFontWithinResizeRange || !workspaceTabDragUi.shortTabUsesContentWidth || !workspaceTabDragUi.fullTitleTooltip || JSON.stringify(workspaceTabDragUi.liveOrder) !== JSON.stringify(['drag-a','drag-b','drag-c']) || JSON.stringify(workspaceTabDragUi.savedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || JSON.stringify(workspaceTabDragUi.persistedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || !workspaceTabDragUi.activeFollowsDragged || !workspaceTabDragUi.clickSuppressed || !workspaceTabDragUi.cancelStarted || !workspaceTabDragUi.cancelRestored || !workspaceTabDragUi.closeDoesNotDrag || !workspaceTabDragUi.fallbackMove || !workspaceTabDragUi.scrollControlsVisible || !workspaceTabDragUi.scrollControlsHideWhenFit || !workspaceTabDragUi.nativeScrollbarHidden || !workspaceTabDragUi.wheelScrollsTabs;
+  const workspaceDockingUiFailed = !workspaceDockingUi.firstSplit
+    || !workspaceDockingUi.secondSplit
+    || !workspaceDockingUi.nestedTree
+    || workspaceDockingUi.paneCount !== 3
+    || !workspaceDockingUi.eachPaneComplete
+    || !workspaceDockingUi.activityResizeReflowsEveryPane
+    || workspaceDockingUi.splitterCount !== 2
+    || !workspaceDockingUi.splitterTracksUsable
+    || !workspaceDockingUi.splitterLinesVisible
+    || !workspaceDockingUi.terminalInsetsCompact
+    || !workspaceDockingUi.terminalScrollbarGutterReleased
+    || !workspaceDockingUi.ratioAdjusted
+    || !workspaceDockingUi.ratioPersisted
+    || !workspaceDockingUi.tabResizeAccessible
+    || !workspaceDockingUi.tabAllPanesClampMin
+    || !workspaceDockingUi.tabAllPanesClampMax
+    || !workspaceDockingUi.tabTextScales
+    || !workspaceDockingUi.statusDotScales
+    || !workspaceDockingUi.tabPointerLifecycle
+    || !workspaceDockingUi.tabHeightPersisted
+    || !workspaceDockingUi.tabKeyboardControls
+    || !workspaceDockingUi.tabDoubleClickResets
+    || !workspaceDockingUi.tabHeightRestored
+    || !workspaceDockingUi.tabStorageIndependent
+    || !workspaceDockingUi.mergedNested
+    || !workspaceDockingUi.mergedAll
+    || !workspaceDockingUi.collapsedToSinglePane;
+  const workspaceHeaderResizeUiFailed = !workspaceHeaderResizeUi.found
+    || !workspaceHeaderResizeUi.accessible
+    || !workspaceHeaderResizeUi.minClamped
+    || !workspaceHeaderResizeUi.maxClamped
+    || !workspaceHeaderResizeUi.brandAligned
+    || !workspaceHeaderResizeUi.textScales
+    || !workspaceHeaderResizeUi.controlsScale
+    || !workspaceHeaderResizeUi.pointerLifecycle
+    || !workspaceHeaderResizeUi.heightPersisted
+    || !workspaceHeaderResizeUi.keyboardControls
+    || !workspaceHeaderResizeUi.doubleClickResets
+    || !workspaceHeaderResizeUi.heightRestored
+    || !workspaceHeaderResizeUi.tabStorageIndependent;
   const runningActionsFailed = runningActions.found && (Math.abs(runningActions.open.width - runningActions.retry.width) > 1 || Math.abs(runningActions.open.height - runningActions.retry.height) > 1);
   const authUiFailed = !authUi.found || !Object.values(authUi.passwordMode).every(Boolean) || !Object.values(authUi.keyMode).every(Boolean);
+  const connectionStartupUiFailed = !Object.values(connectionStartupUi).every(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
+    || !connectionStartupUi.categories.includes('Shell')
+    || !connectionStartupUi.categories.includes('交互式语言')
+    || !connectionStartupUi.categories.includes('会话工具');
   const saveAndClearUiFailed = !Object.values(saveAndClearUi).every(Boolean);
   const notificationUiFailed = notificationUi.replayed !== 0 || !notificationUi.initialized || notificationUi.cursor !== notificationUi.stored;
   const restoreKeyUiFailed = !restoreKeyUi.opened || restoreKeyUi.rowCount !== 12 || JSON.stringify(restoreKeyUi.originalNames) !== JSON.stringify(['old-key-a','old-key-b']) || restoreKeyUi.candidates.length !== 3 || !restoreKeyUi.candidates.some(item=>item.includes('当前密钥目录')) || !restoreKeyUi.candidates.some(item=>item.includes('用户 ~/.ssh')) || !restoreKeyUi.candidateValuePreserved || !restoreKeyUi.stagesWindowsPath || !restoreKeyUi.backdropIgnored || !restoreKeyUi.continuedWithUnbound || !restoreKeyUi.continuedAllUnbound || !restoreKeyUi.configAllowsUnbound || !restoreKeyUi.configSortEditable || !restoreKeyUi.acceptsAll || !restoreKeyUi.uploadDirectory || !restoreKeyUi.actions || !restoreKeyUi.statusReady || !restoreKeyUi.cardWithinViewport || !restoreKeyUi.closed;
@@ -3932,17 +5104,23 @@ app.whenReady().then(async () => {
   const sessionUi = navigationUi.sessionUi || {};
   const runtimeUiFailed = !runtimeUi.found || runtimeUi.port !== '18100' || JSON.stringify(runtimeUi.selectedHosts) !== JSON.stringify(['0.0.0.0']) || !runtimeUi.sftpSettingsAbsent || !runtimeUi.terminalLatencySettingChecked || !runtimeUi.wildcardCollapsed || runtimeUi.urlLinks.length !== 2 || !runtimeUi.urlLinks.some(url=>url.includes('192.0.2.10:18100')) || !runtimeUi.restartNotice;
   const sessionUiFailed = sessionUi.ttl !== '720' || sessionUi.max !== '1000' || sessionUi.cleanup !== '10' || !sessionUi.active || !sessionUi.save;
-  const activityUiFailed = result.activity.count !== 9 || !result.activity.iconCentered || !result.activity.centersAligned || !result.activity.insideColumn || !result.activityUtilities;
+  const activityUiFailed = result.activity.count !== 9 || !result.activity.iconCentered || !result.activity.centersAligned || !result.activity.insideColumn || !result.activity.resizable || !result.activityUtilities;
   const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.newerVersionShowsAgain;
   const aboutUiFailed = Boolean(aboutUi.error) || !aboutUi.found || !aboutUi.aboutSelected || aboutUi.duplicateSettingsNav !== 0 || !aboutUi.versionMatches || !aboutUi.licenseMetadata || !aboutUi.sourceLink || !aboutUi.modalOpen || !aboutUi.accessible || !aboutUi.fullText || !aboutUi.textScrollable || !aboutUi.cardWithinViewport || !aboutUi.closeFocused || !aboutUi.backdropIgnored || !aboutUi.closedByEscape || !aboutUi.focusReturned || !aboutUi.followupBackdropClean || !aboutUi.followupResolved || !aboutUi.updateUi;
   const expectedSettingsActions = ['通用设置','安全设置','通知设置','启动与运行','关于'];
   const mobileResizeNavigationFailed = !mobile.workspaceResizeNavigation || !Object.values(mobile.workspaceResizeNavigation).every(Boolean);
-  const mobileNavigationFailed = mobileResizeNavigationFailed || !mobile.importExplorerFirst || !mobile.importWorkspaceEntered || !mobile.sftp?.found || !mobile.sftp?.fits || !mobile.sftp?.encodingVisible || !mobile.sftp?.terminalJumpVisible || !mobile.sftp?.allActionsVisible || !mobile.sftp?.uniformButtons || !mobile.sftp?.wrapsCompletely || !mobile.sftp?.defaultCollapsed || !mobile.sftp?.toggleVisible || !mobile.sftp?.breadcrumbAlwaysVisible || !mobile.sftp?.expandedPersisted || !mobile.workspaceFormFonts?.preventsFocusZoom || !mobile.settingsNavigation?.explorerFirst || !mobile.settingsNavigation?.workspaceEntered || !mobile.settingsNavigation?.vertical || !mobile.settingsNavigation?.selectedOnly || !mobile.settingsNavigation?.noDuplicateMenu || JSON.stringify(mobile.settingsNavigation?.labels)!==JSON.stringify(expectedSettingsActions) || mobile.mobileTabs?.count !== 7 || !mobile.mobileTabs?.labelsHidden || !mobile.mobileTabs?.iconsCentered || !mobile.mobileTabs?.fits || !mobile.groupActionVisible || !mobile.groupActionMenuOpened || !mobile.groupControlsInline || !mobile.groupDragFirst || !mobile.groupCancelDoesNotSave || !mobile.groupDragSurvivesRefresh;
+  const mobileWorkspaceChromeResizeFailed = !mobile.workspaceChromeResize?.found
+    || !mobile.workspaceChromeResize?.handlesHidden
+    || !mobile.workspaceChromeResize?.desktopSizingIgnored
+    || !mobile.workspaceChromeResize?.interactionsIgnored
+    || !mobile.workspaceChromeResize?.storageUntouched;
+  const mobileNavigationFailed = mobileResizeNavigationFailed || mobileWorkspaceChromeResizeFailed || !mobile.importExplorerFirst || !mobile.importWorkspaceEntered || !mobile.sftp?.found || !mobile.sftp?.fits || !mobile.sftp?.encodingVisible || !mobile.sftp?.terminalJumpVisible || !mobile.sftp?.allActionsVisible || !mobile.sftp?.uniformButtons || !mobile.sftp?.wrapsCompletely || !mobile.sftp?.defaultCollapsed || !mobile.sftp?.toggleVisible || !mobile.sftp?.breadcrumbAlwaysVisible || !mobile.sftp?.expandedPersisted || !mobile.workspaceFormFonts?.preventsFocusZoom || !mobile.settingsNavigation?.explorerFirst || !mobile.settingsNavigation?.workspaceEntered || !mobile.settingsNavigation?.vertical || !mobile.settingsNavigation?.selectedOnly || !mobile.settingsNavigation?.noDuplicateMenu || JSON.stringify(mobile.settingsNavigation?.labels)!==JSON.stringify(expectedSettingsActions) || mobile.mobileTabs?.count !== 7 || !mobile.mobileTabs?.labelsHidden || !mobile.mobileTabs?.iconsCentered || !mobile.mobileTabs?.fits || !mobile.groupActionVisible || !mobile.groupActionMenuOpened || !mobile.groupControlsInline || !mobile.groupDragFirst || !mobile.groupCancelDoesNotSave || !mobile.groupDragSurvivesRefresh;
   const mobileAboutFailed = !mobile.about || !mobile.about.modalOpen || !mobile.about.cardWithinViewport || !mobile.about.textWithinCard || !mobile.about.textScrollable || !mobile.about.closeVisible || !mobile.about.closed;
-  const terminalLabels = ['复制选中','光标复制','会话复制','粘贴','清屏','滚动到底部','断开连接','全局终端设置'];
+  const terminalLabels = ['复制选中','光标复制','会话复制','粘贴','清屏','滚动到底部','终端启动配置','断开连接','全局终端设置'];
   const terminalSettingsUi = terminalUi.terminalSettingsUi || {};
   const mobileTerminalSettingsUi = mobile.terminalGlobalSettings || {};
-  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.withinViewport || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
+  const terminalStartupUiFailed = !terminalStartupUi.found || !Object.values(terminalStartupUi).every(Boolean);
+  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.startupCompactIconOnly || !terminalUi.startupWideSingleLine || !terminalUi.terminalFrameLowContrast || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
   const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || !logSettingsUi.days || !logSettingsUi.fileMb || !logSettingsUi.totalMb || !logSettingsUi.rotations || !logSettingsUi.cleanup || !logSettingsUi.save || !logSettingsUi.closed;
   const expectedSftpToolActions = ['收藏当前目录','新建文件夹','新建文件','上传文件','SFTP 回收站','搜索当前目录','打开此连接的终端','刷新目录','SFTP 全局设置'];
   const directoryActionsUi = sftpUi.directoryActionsUi || {};
@@ -3955,7 +5133,7 @@ app.whenReady().then(async () => {
   const globalSettingsUi = sftpUi.globalSettingsUi || {};
   const downloadNoticeUi = sftpUi.downloadNoticeUi || {};
   const jobUiFailed = !jobUi.found || !jobUi.mainHasRunning || !jobUi.mainHasFailed || !jobUi.mainHidesDone || !jobUi.historyEnabled || jobUi.historyCount !== '4' || !jobUi.historyHasDone || !jobUi.savedDownloadOnlyOpensDirectory || !jobUi.browserDownloadCanRepeat || !jobUi.historyHidesCurrent || !jobUi.backdropIgnored || !jobUi.noManualRefresh || !jobUi.compactRow || !jobUi.floatingVisible || !jobUi.floatingProgress || !jobUi.floatingIconsAligned || !jobUi.floatingSpinnerStableAcrossUpdates || !jobUi.floatingUploadPhaseLabels || !jobUi.floatingProgressRefreshes || !jobUi.floatingCrossCopyProgress || !jobUi.floatingCrossCopyDetail || !jobUi.nativeDragFloatingStopHidden || !jobUi.nativeDragTaskStopHidden || !jobUi.floatingOpensTaskList || !jobUi.floatingTaskVisibleBelowToolbar || !jobUi.floatingCloses || !jobUi.floatingCloseDoesNotNavigate || !jobUi.floatingSameBatchStaysClosed || !jobUi.floatingNewTaskReopens || !jobUi.floatingStacksBelowToast || !jobUi.floatingMatchesToastStyle || !jobUi.toastIconsAligned || !jobUi.floatingItemProgress || !jobUi.staleJobResponseIgnored || !jobUi.floatingAutoHides;
-  const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.jsonFormatting || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
+  const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
   const nativeDragUiFailed = !nativeDragUi.found || !nativeDragUi.webExternalDragBlocked || !nativeDragUi.linuxFallbackNoticeOnce || !nativeDragUi.linuxFallbackUsesCompatibilityMode || !nativeDragUi.streamingPreparesOnPointerDown || !nativeDragUi.streamingThresholdActivatesOnce || !nativeDragUi.streamingCaptureCancelSurvives || !nativeDragUi.pointerUpCancelsPending || !nativeDragUi.streamingSkipsStage || !nativeDragUi.streamingNativeBlocksParallelBrowserDrag || !nativeDragUi.nativeIdleHintStable || !nativeDragUi.nativeOutsideHintStaysStable || !nativeDragUi.nativeMotionTargetsSftp || !nativeDragUi.nativeTransientMissKeepsTarget || !nativeDragUi.nativeFinalTransientMissKeepsTarget || !nativeDragUi.nativeReleasedClearsStaleTarget || !nativeDragUi.nativeResultCopiesOnce || !nativeDragUi.firstDragOnlyStages || !nativeDragUi.firstDragReset || !nativeDragUi.cacheReused || !nativeDragUi.cachedUnarmedStaysInternal || !nativeDragUi.sameWindowDropDoesNotArm || !nativeDragUi.armedDragStartsSynchronously || !nativeDragUi.failureRearmed || !nativeDragUi.successClearsState || !nativeDragUi.finderRenameNoticeShown;
   const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedTabSwitchDoesNotReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCancels || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithSilentRefresh || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.pathEditorReplacesBreadcrumb || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/junruo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactNoOverflow || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.completedMutationDetected || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
   const sftpToolbarRecoveryFailed = !directoryActionsUi.recoveredMissingToolbar || !directoryActionsUi.duplicateSftpToolbarsFollowActiveTab;
@@ -3965,7 +5143,7 @@ app.whenReady().then(async () => {
     || !directoryActionsUi.duplicateDirectoryStateIsolated
     || !directoryActionsUi.duplicateHistoryIsolated
     || !directoryActionsUi.duplicateShellMatchesTab;
-  const code = errors.length || overflow || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceDockingUiFailed || runningActionsFailed || authUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || navigationUiFailed || aboutUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || logSettingsUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.compactDesktopHeader || !result.forwardToggleFits ? 1 : 0;
+  const code = errors.length || overflow || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceDockingUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || navigationUiFailed || aboutUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.compactDesktopHeader || !result.forwardToggleFits ? 1 : 0;
   clearTimeout(smokeWatchdog);
   window.destroy();
   app.exit(code);

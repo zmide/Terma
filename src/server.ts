@@ -31,6 +31,7 @@ const {
   insertConnection,
   updateConnection,
   updateTerminalPreferences,
+  updateTerminalStartup,
   updateSftpTextEncoding,
   updateSftpFilenameEncoding,
   bulkUpdateConnections,
@@ -80,6 +81,8 @@ const {
   runSshCommandForConnection,
   clearConnectionHealthCache
 } = require("./ssh");
+const { discoverRemoteTerminalCapabilities } = require("./ssh-capabilities");
+const { createTerminalStartupTicket } = require("./terminal-startup");
 const { getPart } = require("./multipart");
 const { parseConfigText, batchTest, saveImported, exportConfig } = require("./importer");
 const { handleTerminalUpgrade, closeAllTerminals } = require("./terminal");
@@ -363,6 +366,13 @@ async function inspectServer(connectionId) {
     checked_at: Date.now(),
     output: output || (result.status === 0 ? "巡检完成，无输出" : `巡检失败，退出码 ${result.status}`)
   };
+}
+
+async function terminalCapabilitiesForConnection(connection) {
+  return discoverRemoteTerminalCapabilities(
+    async (command) => runSshCommandForConnection(connection, command, 10000),
+    { timeoutMs: 9000 }
+  );
 }
 
 function connectionRowsFromBackup(tempDb) {
@@ -1057,7 +1067,27 @@ async function handleApi(req, res, pathname) {
     if (data.id && data.auth_type === "password" && !data.ssh_password) {
       try { data.ssh_password = getConnection(Number(data.id)).ssh_password || ""; } catch {}
     }
-    return sendJson(res, await testSsh(data));
+    const result: any = await testSsh(data);
+    if (result.ok && data.discover_terminal === true) {
+      try {
+        result.capabilities = await terminalCapabilitiesForConnection(data);
+      } catch (error) {
+        result.capabilities = {
+          platform:"unknown",
+          platform_label:"未知",
+          default_shell:null,
+          profiles:[],
+          tools:[],
+          warnings:[`SSH 已连接，但远端终端环境识别失败：${error.message}`]
+        };
+      }
+    }
+    return sendJson(res, result);
+  }
+  if (req.method === "POST" && pathname === "/api/terminal/startup-tickets") {
+    const data = await readJson(req);
+    getConnection(Number(data.connection_id));
+    return sendJson(res, createTerminalStartupTicket(data.connection_id, data.startup || {}), 201);
   }
   if (req.method === "POST" && pathname === "/api/command-templates") {
     return sendJson(res, saveCommandTemplate(await readJson(req)), 201);
@@ -1165,6 +1195,14 @@ async function handleApi(req, res, pathname) {
     const id = Number(parts[2]);
     const result = updateTerminalPreferences(id, await readJson(req));
     return sendJson(res, result);
+  }
+  if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "terminal-startup") {
+    const id = Number(parts[2]);
+    return sendJson(res, { startup:updateTerminalStartup(id, await readJson(req)) });
+  }
+  if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "terminal-capabilities") {
+    const connection = getConnection(Number(parts[2]));
+    return sendJson(res, { capabilities:await terminalCapabilitiesForConnection(connection) });
   }
   if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "sftp-filename-encoding") {
     const id = Number(parts[2]);

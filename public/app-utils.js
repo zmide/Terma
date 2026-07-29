@@ -106,6 +106,8 @@ function applyTheme(theme) {
     btn.innerHTML = icon(theme === "dark" ? "sun" : "moon");
   });
   window.tunnelDeskDesktop?.setTheme?.(theme);
+  if (typeof applyTerminalGlobalSettingsToSessions === "function") applyTerminalGlobalSettingsToSessions();
+  if (typeof syncTerminalBackgroundForm === "function") syncTerminalBackgroundForm();
 }
 
 function toggleTheme() {
@@ -254,13 +256,23 @@ async function initializeNotificationCursor() {
 function setButtonBusy(button, busy, text) {
   if (!button) return;
   if (busy) {
-    button.dataset.originalText = button.textContent;
+    if (!Object.prototype.hasOwnProperty.call(button, "_busyOriginalHtml")) {
+      button._busyOriginalHtml = button.innerHTML;
+      button._busyOriginalDisabled = button.disabled;
+    }
     button.textContent = text;
     button.disabled = true;
+    button.setAttribute("aria-busy", "true");
   } else {
-    button.textContent = button.dataset.originalText || button.textContent;
-    button.disabled = false;
-    delete button.dataset.originalText;
+    if (Object.prototype.hasOwnProperty.call(button, "_busyOriginalHtml")) {
+      button.innerHTML = button._busyOriginalHtml;
+      button.disabled = Boolean(button._busyOriginalDisabled);
+      delete button._busyOriginalHtml;
+      delete button._busyOriginalDisabled;
+    } else {
+      button.disabled = false;
+    }
+    button.removeAttribute("aria-busy");
   }
 }
 

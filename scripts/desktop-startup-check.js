@@ -19,6 +19,8 @@ globalThis.__desktopStartupTestApi = {
   shouldStartInTray,
   relaunchInForeground,
   createWindow,
+  bringMainWindowToFront,
+  showWindow,
   buildAppMenu,
   initializeDesktopSettingsFile,
   isWindowsPortable,
@@ -59,6 +61,8 @@ function createHarness({
     loginSettings: [],
     relaunchOptions: [],
     windows: [],
+    appFocusCalls: [],
+    applicationMenus: [],
     temporaryRoot,
     userData,
     execPath: processArgv[0],
@@ -71,6 +75,10 @@ function createHarness({
       this.visible = false;
       this.showCount = 0;
       this.hideCount = 0;
+      this.restoreCount = 0;
+      this.focusCount = 0;
+      this.moveTopCount = 0;
+      this.minimized = false;
       this.onceHandlers = new Map();
       this.handlers = new Map();
       this.webContents = {
@@ -114,6 +122,23 @@ function createHarness({
       this.hideCount += 1;
     }
 
+    isMinimized() {
+      return this.minimized;
+    }
+
+    restore() {
+      this.minimized = false;
+      this.restoreCount += 1;
+    }
+
+    focus() {
+      this.focusCount += 1;
+    }
+
+    moveTop() {
+      this.moveTopCount += 1;
+    }
+
     isDestroyed() {
       return false;
     }
@@ -130,13 +155,17 @@ function createHarness({
     getPath: name => name === "userData" ? userData : path.join(temporaryRoot, name),
     getLoginItemSettings: () => ({ wasOpenedAtLogin }),
     setLoginItemSettings: value => state.loginSettings.push(value),
-    relaunch: value => state.relaunchOptions.push(value)
+    relaunch: value => state.relaunchOptions.push(value),
+    focus: value => state.appFocusCalls.push(value)
   };
 
   const electron = {
     app,
     BrowserWindow: FakeBrowserWindow,
-    Menu: { buildFromTemplate: template => template, setApplicationMenu() {} },
+    Menu: {
+      buildFromTemplate: template => template,
+      setApplicationMenu: menu => state.applicationMenus.push(menu)
+    },
     Notification: {},
     Tray: class {},
     dialog: {},
@@ -213,6 +242,12 @@ check("Existing Windows login settings are migrated during normal startup setup"
   assert.deepEqual(Array.from(state.loginSettings[0].args), [api.START_IN_TRAY_ARG]);
 });
 
+check("Desktop application menu is hidden without changing tray menu setup", () => {
+  const { api, state } = createHarness();
+  api.buildAppMenu();
+  assert.deepEqual(state.applicationMenus, [null]);
+});
+
 check("Manual Windows launch remains visible even when login startup is configured for the tray", () => {
   const { api, state } = createHarness({
     argv: ["TunnelDesk.exe"],
@@ -225,6 +260,10 @@ check("Manual Windows launch remains visible even when login startup is configur
   assert.equal(window.visible, true);
   assert.equal(window.showCount, 1);
   assert.equal(window.hideCount, 0);
+  assert.equal(window.restoreCount, 0);
+  assert.equal(window.moveTopCount, 1);
+  assert.equal(window.focusCount, 1);
+  assert.equal(state.appFocusCalls.length, 1);
 });
 
 check("Desktop window uses the isolated native-theme bridge", () => {
@@ -246,6 +285,22 @@ check("Explicit Windows login launch starts in the tray", () => {
   assert.equal(window.visible, false);
   assert.equal(window.showCount, 0);
   assert.equal(window.hideCount, 1);
+  assert.equal(window.moveTopCount, 0);
+  assert.equal(window.focusCount, 0);
+  assert.equal(state.appFocusCalls.length, 0);
+});
+
+check("Foreground activation restores a minimized desktop window before focusing it", () => {
+  const { api, state } = createHarness({ argv: ["TunnelDesk.exe"] });
+  api.createWindow();
+  const window = state.windows[0];
+  window.minimized = true;
+  assert.equal(api.bringMainWindowToFront(), true);
+  assert.equal(window.minimized, false);
+  assert.equal(window.restoreCount, 1);
+  assert.equal(window.showCount, 1);
+  assert.equal(window.moveTopCount, 1);
+  assert.equal(window.focusCount, 1);
 });
 
 check("macOS only starts in the tray for an actual login launch", () => {

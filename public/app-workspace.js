@@ -1,8 +1,136 @@
 let workspaceTabDrag = null;
 let workspaceTabSuppressClickUntil = 0;
 const WORKSPACE_TAB_DRAG_THRESHOLD = 5;
+const ACTIVITY_BAR_WIDTH_DEFAULT = 40;
+const ACTIVITY_BAR_WIDTH_MIN = 36;
+const ACTIVITY_BAR_WIDTH_MAX = 64;
+let activityBarWidth = ACTIVITY_BAR_WIDTH_DEFAULT;
+let activityBarResize = null;
+let activityBarFitFrame = 0;
+const OPERATION_PANE_PRIMARY_VIEWS = ["connections", "running", "command", "import", "logs", "settings"];
+const OPERATION_PANE_PINNED_STORAGE_KEY = "operationPanePinnedByViewV1";
+const OPERATION_PANE_PIN_GUIDE_STORAGE_KEY = "operationPanePinGuideSeenV3";
+let operationPanePinGuideShown = false;
 let mobilePaneView = "explorer";
 let responsiveLayoutMobile = isMobileLayout();
+
+function clampActivityBarWidth(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return ACTIVITY_BAR_WIDTH_DEFAULT;
+  return Math.max(ACTIVITY_BAR_WIDTH_MIN, Math.min(ACTIVITY_BAR_WIDTH_MAX, Math.round(numeric)));
+}
+
+function scheduleActivityBarFit() {
+  if (activityBarFitFrame) return;
+  activityBarFitFrame = requestAnimationFrame(() => {
+    activityBarFitFrame = 0;
+    if (typeof scheduleWorkspaceChromeFit === "function") {
+      scheduleWorkspaceChromeFit();
+      return;
+    }
+    if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
+    if (typeof updateWorkspaceTabScrollControls === "function") updateWorkspaceTabScrollControls();
+  });
+}
+
+function syncActivityBarResizeAria() {
+  const handle = document.getElementById("activityBarResize");
+  if (!handle) return;
+  handle.setAttribute("aria-valuemin", String(ACTIVITY_BAR_WIDTH_MIN));
+  handle.setAttribute("aria-valuemax", String(ACTIVITY_BAR_WIDTH_MAX));
+  handle.setAttribute("aria-valuenow", String(activityBarWidth));
+}
+
+function applyActivityBarWidth(value, options={}) {
+  activityBarWidth = clampActivityBarWidth(value);
+  document.documentElement.style.setProperty("--activity-bar-width", `${activityBarWidth}px`);
+  if (options.persist) {
+    try { localStorage.setItem("activityBarWidth", String(activityBarWidth)); } catch {}
+  }
+  syncActivityBarResizeAria();
+  if (options.fit !== false) scheduleActivityBarFit();
+  return activityBarWidth;
+}
+
+function finishActivityBarResize(event, cancelled=false) {
+  const drag = activityBarResize;
+  if (!drag || event?.pointerId !== undefined && event.pointerId !== drag.pointerId) return;
+  window.removeEventListener("pointermove", moveActivityBarResize);
+  window.removeEventListener("pointerup", finishActivityBarResize);
+  window.removeEventListener("pointercancel", cancelActivityBarResize);
+  window.removeEventListener("blur", finishActivityBarResizeOnBlur);
+  activityBarResize = null;
+  try {
+    if (drag.handle.hasPointerCapture?.(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
+  } catch {}
+  document.body.classList.remove("activity-bar-resizing");
+  applyActivityBarWidth(cancelled ? drag.startValue : activityBarWidth, {persist:!cancelled});
+}
+
+function moveActivityBarResize(event) {
+  const drag = activityBarResize;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  event.preventDefault();
+  applyActivityBarWidth(drag.startValue + event.clientX - drag.startX);
+}
+
+function cancelActivityBarResize(event) {
+  finishActivityBarResize(event, true);
+}
+
+function finishActivityBarResizeOnBlur() {
+  finishActivityBarResize(null);
+}
+
+function beginActivityBarResize(event) {
+  if (event.button !== 0 || isMobileLayout()) return;
+  if (activityBarResize) finishActivityBarResize(null, true);
+  event.preventDefault();
+  event.stopPropagation();
+  activityBarResize = {
+    pointerId:event.pointerId,
+    startX:event.clientX,
+    startValue:activityBarWidth,
+    handle:event.currentTarget
+  };
+  try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch {}
+  document.body.classList.add("activity-bar-resizing");
+  window.addEventListener("pointermove", moveActivityBarResize, {passive:false});
+  window.addEventListener("pointerup", finishActivityBarResize);
+  window.addEventListener("pointercancel", cancelActivityBarResize);
+  window.addEventListener("blur", finishActivityBarResizeOnBlur);
+}
+
+function handleActivityBarResizeKey(event) {
+  if (isMobileLayout()) return;
+  const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+  if (!direction && !["Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const value = event.key === "Home"
+    ? ACTIVITY_BAR_WIDTH_MIN
+    : event.key === "End"
+      ? ACTIVITY_BAR_WIDTH_MAX
+      : activityBarWidth + direction * (event.shiftKey ? 4 : 1);
+  applyActivityBarWidth(value, {persist:true});
+}
+
+function initActivityBarSizing() {
+  let stored = ACTIVITY_BAR_WIDTH_DEFAULT;
+  try { stored = localStorage.getItem("activityBarWidth") || ACTIVITY_BAR_WIDTH_DEFAULT; } catch {}
+  applyActivityBarWidth(stored, {fit:false});
+  const handle = document.getElementById("activityBarResize");
+  if (!handle) return;
+  handle.addEventListener("pointerdown", beginActivityBarResize);
+  handle.addEventListener("pointercancel", cancelActivityBarResize);
+  handle.addEventListener("lostpointercapture", finishActivityBarResize);
+  handle.addEventListener("dblclick", event => {
+    if (isMobileLayout()) return;
+    event.preventDefault();
+    applyActivityBarWidth(ACTIVITY_BAR_WIDTH_DEFAULT, {persist:true});
+  });
+  handle.addEventListener("keydown", handleActivityBarResizeKey);
+  syncActivityBarResizeAria();
+}
 
 function renderTabs() {
   if (typeof syncSftpTabTitles === "function") syncSftpTabTitles();
@@ -386,6 +514,7 @@ function restoreTabsState() {
 function closeTerminalSession(key) {
   const session = terminalSessions.get(key);
   if (!session) return;
+  session.connectionAttempt = Number(session.connectionAttempt || 0) + 1;
   if (typeof cancelTerminalCursorCopy === "function") cancelTerminalCursorCopy(session, key);
   try { session.socket?.close(); } catch {}
   try { session.resizeDisposable?.dispose(); } catch {}
@@ -396,6 +525,7 @@ function closeTerminalSession(key) {
   clearTimeout(session.latencyPendingTimer);
   clearTimeout(session.autoCopyTimer);
   terminalSessions.delete(key);
+  if (typeof terminalStartupOverrides !== "undefined") terminalStartupOverrides.delete(key);
 }
 
 function setWorkspace(title, subtitle, viewName, key=viewName, updateTab=true, closable=true, meta={}) {
@@ -470,13 +600,111 @@ function setExplorerSectionActive(sectionId) {
   });
 }
 
+function loadOperationPanePinnedState() {
+  let stored = {};
+  try {
+    const parsed = JSON.parse(localStorage.getItem(OPERATION_PANE_PINNED_STORAGE_KEY) || "{}");
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) stored = parsed;
+  } catch {}
+  return Object.fromEntries(OPERATION_PANE_PRIMARY_VIEWS.map(name => [name, stored[name] !== false]));
+}
+
+function saveOperationPanePinnedState() {
+  const stored = Object.fromEntries(OPERATION_PANE_PRIMARY_VIEWS.map(name => [name, operationPanePinnedByView?.[name] !== false]));
+  try { localStorage.setItem(OPERATION_PANE_PINNED_STORAGE_KEY, JSON.stringify(stored)); } catch {}
+}
+
+function isOperationPanePinned(name=primaryView) {
+  if (!OPERATION_PANE_PRIMARY_VIEWS.includes(name)) return true;
+  return operationPanePinnedByView?.[name] !== false;
+}
+
+function dismissOperationPanePinGuide() {
+  const guide = document.getElementById("operationPanePinGuide");
+  if (guide) guide.hidden = true;
+}
+
+function positionOperationPanePinGuide() {
+  const guide = document.getElementById("operationPanePinGuide");
+  const button = document.getElementById("operationPanePin");
+  if (!guide || !button || guide.hidden) return;
+  const guideRect = guide.getBoundingClientRect();
+  const buttonRect = button.getBoundingClientRect();
+  const anchor = buttonRect.left + buttonRect.width / 2 - guideRect.left;
+  const clamped = Math.max(18, Math.min(guideRect.width - 18, anchor));
+  guide.style.setProperty("--operation-pane-pin-guide-anchor", `${clamped}px`);
+}
+
+function maybeShowOperationPanePinGuide() {
+  if (operationPanePinGuideShown || isMobileLayout() || operationPaneCollapsed) return;
+  try {
+    if (localStorage.getItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY) === "1") return;
+  } catch {}
+  const guide = document.getElementById("operationPanePinGuide");
+  if (!guide) return;
+  operationPanePinGuideShown = true;
+  guide.hidden = false;
+  positionOperationPanePinGuide();
+  requestAnimationFrame(positionOperationPanePinGuide);
+  try { localStorage.setItem(OPERATION_PANE_PIN_GUIDE_STORAGE_KEY, "1"); } catch {}
+}
+
+function syncOperationPanePinButton() {
+  const button = document.getElementById("operationPanePin");
+  if (!button) return;
+  const pinned = isOperationPanePinned();
+  const iconName = pinned ? "pin" : "pin-off";
+  const label = pinned
+    ? "操作区已固定；点击改为自动收起"
+    : "点击工作区后自动收起；点击固定";
+  if (button.dataset.icon !== iconName) {
+    button.dataset.icon = iconName;
+    button.innerHTML = icon(iconName);
+  }
+  button.classList.toggle("is-pinned", pinned);
+  button.setAttribute("aria-pressed", pinned ? "true" : "false");
+  button.setAttribute("aria-label", label);
+  button.title = label;
+  positionOperationPanePinGuide();
+}
+
+function setOperationPanePinned(pinned, name=primaryView) {
+  if (!OPERATION_PANE_PRIMARY_VIEWS.includes(name)) return;
+  operationPanePinnedByView[name] = Boolean(pinned);
+  saveOperationPanePinnedState();
+  dismissOperationPanePinGuide();
+  syncOperationPanePinButton();
+}
+
+function toggleOperationPanePinned() {
+  setOperationPanePinned(!isOperationPanePinned());
+}
+
+function handleOperationPaneContentClick(event) {
+  if (isMobileLayout() || event.button !== 0) return;
+  dismissOperationPanePinGuide();
+  if (!operationPaneCollapsed && !isOperationPanePinned()) setOperationPaneCollapsed(true);
+}
+
+function initOperationPaneBehavior() {
+  const content = document.getElementById("content");
+  if (!content || content.dataset.operationPaneBehaviorBound === "1") return;
+  content.dataset.operationPaneBehaviorBound = "1";
+  content.addEventListener("click", handleOperationPaneContentClick, true);
+  window.addEventListener("resize", positionOperationPanePinGuide);
+}
+
 function syncOperationPaneState() {
-  const collapsed = operationPaneCollapsed && !isMobileLayout();
+  const mobile = isMobileLayout();
+  const collapsed = operationPaneCollapsed && !mobile;
   document.querySelector(".app")?.classList.toggle("operation-pane-collapsed", collapsed);
   document.querySelectorAll(".activity-top > button").forEach(button => {
     if (button.classList.contains("active")) button.setAttribute("aria-expanded", collapsed ? "false" : "true");
     else button.removeAttribute("aria-expanded");
   });
+  syncOperationPanePinButton();
+  if (mobile || collapsed) dismissOperationPanePinGuide();
+  else maybeShowOperationPanePinGuide();
 }
 
 function setOperationPaneCollapsed(collapsed) {
@@ -555,6 +783,7 @@ function showMobileWorkspace() {
 
 function syncResponsivePane() {
   const mobile = isMobileLayout();
+  if (mobile && activityBarResize) finishActivityBarResize(null, true);
   syncOperationPaneState();
   if (typeof syncTerminalResponsiveFontSizes === "function") syncTerminalResponsiveFontSizes();
   if (!mobile) {
@@ -603,3 +832,5 @@ async function loadStartupSummary(box=$("startupSummary")) {
     if (startupSummaryStatus.state === "starting") setTimeout(() => loadStartupSummary(box), 1200);
   } catch { box.innerHTML = ""; }
 }
+
+initActivityBarSizing();

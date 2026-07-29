@@ -8,6 +8,7 @@ const { notifyIssue, notifyRecovery } = require("./notifications");
 const { isPasswordConnection, runPasswordCommand, startPasswordForward } = require("./ssh2-client");
 const { effectiveExtraArgs, splitArgs } = require("./ssh-command");
 const { diagnoseSshError } = require("./ssh-diagnostics");
+const { buildRemoteStartupCommand } = require("./terminal-startup");
 
 const RESTORE_STATE_FILE = path.join(DATA_DIR, "forward-state.json");
 let healthMonitorTimer: any = null;
@@ -280,8 +281,11 @@ function buildTerminalCommand(connection) {
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
   }
+  const startupCommand = buildRemoteStartupCommand(connection);
+  if (startupCommand) args.push("-o", "RemoteCommand=none");
   args.push(...effectiveExtraArgs(connection.extra_args));
   args.push(`${connection.ssh_user}@${connection.ssh_host}`);
+  if (startupCommand) args.push(startupCommand);
   return args;
 }
 
@@ -887,12 +891,14 @@ async function testSsh(data) {
   const host = String(data.ssh_host || "").trim();
   const user = String(data.ssh_user || "").trim();
   if (!host || !user) throw new Error("缺少 SSH 主机或用户");
+  const marker = "__TUNNELDESK_SSH_OK__";
+  const probe = `echo ${marker}`;
   if (isPasswordConnection(data)) {
     const start = Date.now();
-    const result: any = await runPasswordCommand({ ...data, ssh_password: String(data.ssh_password || "") }, "true", null, 15000);
+    const result: any = await runPasswordCommand({ ...data, ssh_password: String(data.ssh_password || "") }, probe, null, 15000);
     const rawOutput = (result.stdout || result.stderr || (result.error ? result.error.message : "") || (result.status === 0 ? "SSH 连接成功（退出码 0）" : `SSH 退出码 ${result.status}`)).trim();
     const diagnosis = diagnoseSshError(rawOutput);
-    return { ok: result.status === 0, elapsed_ms: Date.now() - start, output: result.status === 0 ? rawOutput : diagnosis.display, raw_output: rawOutput, diagnosis };
+    return { ok: result.status === 0, elapsed_ms: Date.now() - start, output: result.status === 0 ? "SSH 连接成功" : diagnosis.display, raw_output: rawOutput, diagnosis };
   }
   const args = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", String(data.ssh_port || 22)];
   if (data.identity_file) {
@@ -900,7 +906,7 @@ async function testSsh(data) {
     args.push("-i", data.identity_file);
   }
   args.push(...effectiveExtraArgs(data.extra_args));
-  args.push(`${user}@${host}`, "true");
+  args.push(`${user}@${host}`, probe);
   const start = Date.now();
   const result: any = await runSshTest(args, 15000);
   const ok = result.status === 0;
@@ -909,7 +915,7 @@ async function testSsh(data) {
   return {
     ok,
     elapsed_ms: Date.now() - start,
-    output: ok ? rawOutput : diagnosis.display,
+    output: ok ? "SSH 连接成功" : diagnosis.display,
     raw_output: rawOutput,
     diagnosis
   };

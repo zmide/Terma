@@ -94,9 +94,11 @@ async function main() {
   assert.equal(DEFAULT_TERMINAL_SETTINGS.url_links_enabled, true);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.auto_copy_selection, false);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.copy_include_trailing_newline, false);
+  assert.equal(DEFAULT_TERMINAL_SETTINGS.background_mode, "theme");
+  assert.equal(DEFAULT_TERMINAL_SETTINGS.background_color, "#0f1720");
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 5,
+    schema_version: 6,
     listen_hosts: ["127.0.0.1", "127.0.0.2"],
     listen_port: 8123,
     sftp_recycle_bin_enabled: false,
@@ -122,17 +124,25 @@ async function main() {
     split:{terminal:"header", sftp:"tab"}
   });
   assert.deepEqual(normalizeTerminalSettings({
+    background_mode: "custom",
+    background_color: "#ABCDEF",
     middle_mouse_action: "send_enter",
     right_mouse_action: "invalid",
     url_prefixes: "https:// | ssh:// | javascript://",
     multiline_paste_mode: "single_line"
   }), {
     ...DEFAULT_TERMINAL_SETTINGS,
+    background_mode: "custom",
+    background_color: "#abcdef",
     middle_mouse_action: "send_enter",
     right_mouse_action: "context_menu",
     url_prefixes: ["https://", "ssh://"],
     multiline_paste_mode: "single_line"
   });
+  assert.deepEqual(normalizeTerminalSettings({background_mode:"invalid", background_color:"not-a-color"}), DEFAULT_TERMINAL_SETTINGS);
+  const invalidCustomBackground = normalizeTerminalSettings({background_mode:"custom", background_color:"not-a-color"});
+  assert.equal(invalidCustomBackground.background_mode, "custom");
+  assert.equal(invalidCustomBackground.background_color, DEFAULT_TERMINAL_SETTINGS.background_color);
   assert.throws(() => normalizeListenPort(0), /1-65535/);
   assert.throws(() => normalizeListenHosts(["not-an-ip"]), /IPv4/);
   assert.throws(() => normalizeRuntimeSettings({sftp_download_directory:"bad\0path"}), /下载目录无效/);
@@ -224,6 +234,8 @@ async function main() {
     const terminalSaved = await request(base, "/api/runtime-settings", {
       method: "PUT",
       body: JSON.stringify({ terminal: {
+        background_mode: "custom",
+        background_color: "#34ABCD",
         middle_mouse_action: "open_settings",
         right_mouse_action: "context_menu",
         ctrl_left_click_moves_cursor: false,
@@ -233,11 +245,16 @@ async function main() {
       } })
     });
     assert.equal(terminalSaved.response.ok, true);
+    assert.equal(terminalSaved.body.saved.terminal.background_mode, "custom");
+    assert.equal(terminalSaved.body.saved.terminal.background_color, "#34abcd");
     assert.equal(terminalSaved.body.saved.terminal.middle_mouse_action, "open_settings");
     assert.equal(terminalSaved.body.saved.terminal.ctrl_left_click_moves_cursor, false);
     assert.deepEqual(terminalSaved.body.saved.terminal.url_prefixes, ["https://", "ssh://"]);
     assert.equal(terminalSaved.body.saved.terminal.multiline_paste_mode, "single_line");
     assert.deepEqual(terminalSaved.body.saved.listen_hosts, startupHosts);
+    const persistedTerminalSettings = JSON.parse(fs.readFileSync(runtimeFile, "utf8")).terminal;
+    assert.equal(persistedTerminalSettings.background_mode, "custom");
+    assert.equal(persistedTerminalSettings.background_color, "#34abcd");
     console.log("PASS global terminal settings save independently and are normalized");
 
     const recycleDisabled = await request(base, "/api/runtime-settings", {
@@ -248,6 +265,8 @@ async function main() {
     assert.equal(recycleDisabled.body.saved.sftp_recycle_bin_enabled, false);
     assert.deepEqual(recycleDisabled.body.saved.listen_hosts, startupHosts);
     assert.equal(recycleDisabled.body.saved.listen_port, info.actual_port);
+    assert.equal(recycleDisabled.body.saved.terminal.background_mode, "custom");
+    assert.equal(recycleDisabled.body.saved.terminal.background_color, "#34abcd");
     assert.equal(recycleDisabled.body.saved.terminal.middle_mouse_action, "open_settings");
     console.log("PASS SFTP recycle setting saves independently without listener validation");
 
@@ -317,6 +336,8 @@ async function main() {
       split:{terminal:"header", sftp:"tab"}
     });
     assert.equal(saved.body.saved.terminal.middle_mouse_action, "open_settings");
+    assert.equal(saved.body.saved.terminal.background_mode, "custom");
+    assert.equal(saved.body.saved.terminal.background_color, "#34abcd");
     assert.equal(saved.body.restart_required, true);
     console.log("PASS valid listener configuration saves for the next restart");
 

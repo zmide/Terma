@@ -1651,6 +1651,10 @@ function sftpEditorLanguageLabel(value) {
   return sftpEditorLanguageOptions.find(([mode]) => mode === value)?.[1] || "纯文本";
 }
 
+function isSftpJsonFileName(name) {
+  return String(name || "").split(/[\\/]/).pop().toLowerCase().endsWith(".json");
+}
+
 function isSftpImageName(name) {
   return ["png","jpg","jpeg","gif","webp","bmp","ico","svg"].includes(String(name || "").toLowerCase().split(".").pop());
 }
@@ -1695,7 +1699,9 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     };
     const saveButton = $("sftpTextSave");
     const selectedLanguage = () => $("sftpEditorLanguage")?.value === "auto" ? detectedLanguage : $("sftpEditorLanguage")?.value;
-    const syncFormatButton = () => { $("sftpTextFormatJson").hidden = selectedLanguage() !== "json"; };
+    const syncFormatButton = () => {
+      $("sftpTextFormatJson").hidden = !isSftpJsonFileName(title) || selectedLanguage() !== "json";
+    };
     const updateStats = () => {
       const value = getValue();
       const bytes = new Blob([value]).size;

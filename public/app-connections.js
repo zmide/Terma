@@ -54,10 +54,8 @@ function orderedConnectionGroupNames() {
 async function saveConnectionGroupOrder(names) {
   await api("/api/connection-groups/reorder", {method:"POST", body:JSON.stringify({names})});
   const order = new Map(names.map((name,index) => [name,index]));
-  connections.sort((a,b) => (order.get(a.group_name) ?? names.length) - (order.get(b.group_name) ?? names.length)
-    || Number(a.sort_order || 1) - Number(b.sort_order || 1)
-    || Number(a.created_at || 0) - Number(b.created_at || 0)
-    || a.id - b.id);
+  // The API already defines each group's item order; stable sort only moves whole groups.
+  connections.sort((a,b) => (order.get(a.group_name) ?? names.length) - (order.get(b.group_name) ?? names.length));
   renderConnections();
 }
 
@@ -422,23 +420,368 @@ function newConnection(groupName="") {
   wireConnectionForm();
 }
 
-function connPayload() {
-  const groupValue = $("conn_group").value;
-  const passwordAuth = $("conn_auth_type").value === "password";
+const CONNECTION_TERMINAL_PROFILE_GROUPS = [
+  ["shell", "Shell"],
+  ["repl", "交互式语言"],
+  ["session", "会话工具"],
+  ["tool", "交互工具"],
+  ["custom", "其他"]
+];
+
+function connectionFormField(form, id) {
+  if (form?.querySelector) return form.querySelector(`#${CSS.escape(id)}`);
+  return $(id);
+}
+
+function normalizeConnectionTerminalKind(value) {
+  return ["shell", "repl", "session", "tool", "custom"].includes(String(value || "").toLowerCase())
+    ? String(value).toLowerCase()
+    : "custom";
+}
+
+function normalizeConnectionTerminalPlatform(value) {
+  const platform = String(value || "").toLowerCase();
+  if (["windows", "win32", "win"].includes(platform)) return "windows";
+  if (["posix", "linux", "darwin", "macos", "unix", "freebsd"].includes(platform)) return "posix";
+  return "auto";
+}
+
+function connectionTerminalArgs(value) {
+  if (Array.isArray(value)) return value.map(item => String(item ?? "")).filter(Boolean).join(" ");
+  return String(value ?? "");
+}
+
+function connectionTerminalProfilePath(profile) {
+  return String(profile?.path ?? profile?.program_path ?? profile?.executable ?? profile?.command ?? "");
+}
+
+function connectionTerminalFormConfig(form=$("connectionForm")) {
+  const field = id => connectionFormField(form, id);
+  const mode = field("conn_terminal_startup_mode")?.value === "program" ? "program" : "default";
   return {
-    id:$("conn_id").value,
-    name:$("conn_name").value.trim(),
+    terminal_startup_mode:mode,
+    terminal_profile_name:field("conn_terminal_profile_name")?.value.trim() || "",
+    terminal_profile_kind:normalizeConnectionTerminalKind(field("conn_terminal_profile_kind")?.value),
+    terminal_program_path:field("conn_terminal_program_path")?.value.trim() || "",
+    terminal_program_args:field("conn_terminal_program_args")?.value.trim() || "",
+    terminal_working_directory:field("conn_terminal_working_directory")?.value.trim() || "",
+    terminal_program_platform:normalizeConnectionTerminalPlatform(field("conn_terminal_program_platform")?.value)
+  };
+}
+
+function toggleConnectionTerminalStartup(form=$("connectionForm")) {
+  const field = id => connectionFormField(form, id);
+  const program = field("conn_terminal_startup_mode")?.value === "program";
+  const box = field("connTerminalProgramFields");
+  const path = field("conn_terminal_program_path");
+  const profileSelect = field("conn_terminal_profile_select");
+  if (box) {
+    box.hidden = !program;
+    box.setAttribute("aria-hidden", String(!program));
+  }
+  if (path) path.required = program;
+  if (profileSelect) {
+    if (program && (profileSelect.value === "" || profileSelect.value === "__default__")) {
+      if ([...profileSelect.options].some(option => option.value === "__custom__")) {
+        profileSelect.value = "__custom__";
+        if (!field("conn_terminal_profile_name")?.value.trim()) field("conn_terminal_profile_name").value = "自定义程序";
+        if (field("conn_terminal_profile_kind")) field("conn_terminal_profile_kind").value = "custom";
+      }
+    } else if (!program && [...profileSelect.options].some(option => option.value === "__default__")) {
+      profileSelect.value = "__default__";
+    }
+  }
+}
+
+function resetConnectionTerminalProfileSelect(form, saved=false) {
+  const select = connectionFormField(form, "conn_terminal_profile_select");
+  if (!select) return;
+  const config = connectionTerminalFormConfig(form);
+  select.replaceChildren();
+  if (saved && config.terminal_startup_mode === "program" && config.terminal_program_path) {
+    select.add(new Option(`当前已保存：${config.terminal_profile_name || config.terminal_program_path}`, "__current__", true, true));
+  } else {
+    select.add(new Option("测试 SSH 后显示可用选项", "", true, true));
+  }
+  select.add(new Option("自定义程序...", "__custom__"));
+}
+
+function resetConnectionTerminalStartup(form=$("connectionForm")) {
+  const field = id => connectionFormField(form, id);
+  if (!field("conn_terminal_startup_mode")) return;
+  field("conn_terminal_startup_mode").value = "default";
+  field("conn_terminal_profile_name").value = "";
+  field("conn_terminal_profile_kind").value = "shell";
+  field("conn_terminal_program_path").value = "";
+  field("conn_terminal_program_args").value = "";
+  field("conn_terminal_working_directory").value = "";
+  field("conn_terminal_program_platform").value = "auto";
+  resetConnectionTerminalProfileSelect(form);
+  const status = field("connTerminalDetectionStatus");
+  if (status) {
+    status.className = "terminal-startup-detection muted";
+    status.textContent = "尚未检测。填写连接信息后点击“测试 SSH”。";
+  }
+  const summary = field("connTerminalCapabilities");
+  if (summary) {
+    summary.hidden = true;
+    summary.className = "terminal-startup-capabilities";
+    summary.replaceChildren();
+  }
+  form._terminalCapabilities = null;
+  form._terminalCapabilitiesChecked = false;
+  form._terminalProbeStale = false;
+  form._terminalCredentialRevision = 0;
+  toggleConnectionTerminalStartup(form);
+}
+
+function fillConnectionTerminalStartup(form, connection={}) {
+  const field = id => connectionFormField(form, id);
+  if (!field("conn_terminal_startup_mode")) return;
+  const mode = connection.terminal_startup_mode === "program" || connection.terminal_program_path ? "program" : "default";
+  field("conn_terminal_startup_mode").value = mode;
+  field("conn_terminal_profile_name").value = connection.terminal_profile_name || "";
+  field("conn_terminal_profile_kind").value = normalizeConnectionTerminalKind(connection.terminal_profile_kind || (mode === "program" ? "custom" : "shell"));
+  field("conn_terminal_program_path").value = connection.terminal_program_path || "";
+  field("conn_terminal_program_args").value = connection.terminal_program_args || "";
+  field("conn_terminal_working_directory").value = connection.terminal_working_directory || "";
+  field("conn_terminal_program_platform").value = normalizeConnectionTerminalPlatform(connection.terminal_program_platform);
+  resetConnectionTerminalProfileSelect(form, true);
+  const status = field("connTerminalDetectionStatus");
+  if (status) {
+    status.className = "terminal-startup-detection muted";
+    status.textContent = mode === "program"
+      ? "已加载保存的启动配置。测试 SSH 可刷新这台机器的可用选项。"
+      : "当前使用服务器默认登录 Shell。测试 SSH 可检测更多可用选项。";
+  }
+  form._terminalCapabilities = null;
+  form._terminalCapabilitiesChecked = false;
+  form._terminalProbeStale = false;
+  form._terminalCredentialRevision = 0;
+  toggleConnectionTerminalStartup(form);
+}
+
+function connectionTerminalCapabilityProfiles(raw={}) {
+  const direct = Array.isArray(raw.profiles) ? raw.profiles : Array.isArray(raw.terminal_profiles) ? raw.terminal_profiles : [];
+  const combined = direct.length ? direct : [
+    ...(Array.isArray(raw.shells) ? raw.shells.map(item => typeof item === "object" ? {...item, kind:item.kind || "shell"} : {label:String(item), path:String(item), kind:"shell"}) : []),
+    ...(Array.isArray(raw.repls) ? raw.repls.map(item => typeof item === "object" ? {...item, kind:item.kind || "repl"} : {label:String(item), path:String(item), kind:"repl"}) : []),
+    ...(Array.isArray(raw.session_tools) ? raw.session_tools.map(item => typeof item === "object" ? {...item, kind:item.kind || "session"} : {label:String(item), path:String(item), kind:"session"}) : []),
+    ...(Array.isArray(raw.interactive_tools) ? raw.interactive_tools.map(item => typeof item === "object" ? {...item, kind:item.kind || "tool"} : {label:String(item), path:String(item), kind:"tool"}) : [])
+  ];
+  return combined
+    .map((profile, index) => {
+      const item = typeof profile === "object" && profile ? profile : {path:String(profile || "")};
+      const path = connectionTerminalProfilePath(item);
+      if (!path) return null;
+      return {
+        ...item,
+        _index:index,
+        label:String(item.label || item.name || path),
+        name:String(item.name || item.label || path),
+        path,
+        args:connectionTerminalArgs(item.args ?? item.program_args),
+        kind:normalizeConnectionTerminalKind(item.kind || item.type),
+        platform:normalizeConnectionTerminalPlatform(item.platform || raw.platform),
+        working_directory:String(item.working_directory ?? item.cwd ?? "")
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeConnectionTerminalCapabilities(raw={}) {
+  const defaultValue = raw.default_shell ?? raw.login_shell ?? null;
+  const defaultShell = typeof defaultValue === "string"
+    ? {name:defaultValue.split(/[\\/]/).pop() || defaultValue, label:defaultValue.split(/[\\/]/).pop() || defaultValue, path:defaultValue}
+    : defaultValue && typeof defaultValue === "object"
+      ? {
+          ...defaultValue,
+          name:String(defaultValue.name || defaultValue.label || connectionTerminalProfilePath(defaultValue)),
+          label:String(defaultValue.label || defaultValue.name || connectionTerminalProfilePath(defaultValue)),
+          path:connectionTerminalProfilePath(defaultValue)
+        }
+      : null;
+  const tools = (Array.isArray(raw.tools) ? raw.tools : [])
+    .map(item => typeof item === "object" && item
+      ? {label:String(item.label || item.name || item.id || item.path || ""), path:String(item.path || ""), version:String(item.version || "")}
+      : {label:String(item || ""), path:"", version:""})
+    .filter(item => item.label);
+  return {
+    platform:String(raw.platform || "unknown").toLowerCase(),
+    platform_label:String(raw.platform_label || raw.os_label || raw.platform || "未知平台"),
+    default_shell:defaultShell,
+    profiles:connectionTerminalCapabilityProfiles(raw),
+    tools,
+    warnings:(Array.isArray(raw.warnings) ? raw.warnings : raw.warning ? [raw.warning] : []).map(String).filter(Boolean)
+  };
+}
+
+function appendConnectionTerminalCapabilityChip(parent, text, title="") {
+  const chip = document.createElement("span");
+  chip.className = "terminal-startup-chip";
+  chip.textContent = text;
+  if (title) chip.title = title;
+  parent.appendChild(chip);
+}
+
+function renderConnectionTerminalCapabilitySummary(form, capabilities) {
+  const box = connectionFormField(form, "connTerminalCapabilities");
+  if (!box) return;
+  box.replaceChildren();
+  box.hidden = false;
+  box.className = "terminal-startup-capabilities";
+
+  const heading = document.createElement("div");
+  heading.className = "terminal-startup-capability-heading";
+  const defaultShell = capabilities.default_shell;
+  const shellText = defaultShell?.path || defaultShell?.label || "未识别";
+  heading.textContent = `${capabilities.platform_label} · 默认 Shell：${shellText}`;
+  box.appendChild(heading);
+
+  if (capabilities.profiles.length) {
+    const row = document.createElement("div");
+    row.className = "terminal-startup-capability-row";
+    const label = document.createElement("strong");
+    label.textContent = "可启动";
+    row.appendChild(label);
+    const chips = document.createElement("div");
+    chips.className = "terminal-startup-chips";
+    capabilities.profiles.forEach(profile => appendConnectionTerminalCapabilityChip(chips, profile.label, `${profile.path}${profile.args ? ` ${profile.args}` : ""}`));
+    row.appendChild(chips);
+    box.appendChild(row);
+  }
+
+  if (capabilities.tools.length) {
+    const row = document.createElement("div");
+    row.className = "terminal-startup-capability-row";
+    const label = document.createElement("strong");
+    label.textContent = "已安装工具";
+    row.appendChild(label);
+    const chips = document.createElement("div");
+    chips.className = "terminal-startup-chips";
+    capabilities.tools.forEach(tool => appendConnectionTerminalCapabilityChip(chips, `${tool.label}${tool.version ? ` ${tool.version}` : ""}`, tool.path));
+    row.appendChild(chips);
+    box.appendChild(row);
+  }
+
+  capabilities.warnings.forEach(text => {
+    const warning = document.createElement("div");
+    warning.className = "terminal-startup-capability-warning";
+    warning.textContent = text;
+    box.appendChild(warning);
+  });
+}
+
+function renderConnectionTerminalProfiles(form, rawCapabilities) {
+  const capabilities = normalizeConnectionTerminalCapabilities(rawCapabilities);
+  const select = connectionFormField(form, "conn_terminal_profile_select");
+  const config = connectionTerminalFormConfig(form);
+  form._terminalCapabilities = capabilities;
+  form._terminalCapabilitiesChecked = true;
+  form._terminalProbeStale = false;
+  if (!select) return capabilities;
+
+  select.replaceChildren();
+  const defaultShell = capabilities.default_shell;
+  const defaultLabel = defaultShell?.label || defaultShell?.name || defaultShell?.path;
+  select.add(new Option(defaultLabel ? `自动使用默认 Shell（${defaultLabel}）` : "自动使用服务器默认登录 Shell", "__default__"));
+
+  const profileIndex = new Map(capabilities.profiles.map((profile,index) => [profile, index]));
+  for (const [kind, label] of CONNECTION_TERMINAL_PROFILE_GROUPS) {
+    const profiles = capabilities.profiles.filter(profile => profile.kind === kind);
+    if (!profiles.length) continue;
+    const group = document.createElement("optgroup");
+    group.label = label;
+    profiles.forEach(profile => group.appendChild(new Option(
+      `${profile.label}${profile.args ? ` · ${profile.args}` : ""}`,
+      `profile:${profileIndex.get(profile)}`
+    )));
+    select.appendChild(group);
+  }
+  select.add(new Option("自定义程序...", "__custom__"));
+
+  if (config.terminal_startup_mode === "default") {
+    select.value = "__default__";
+  } else {
+    const matchIndex = capabilities.profiles.findIndex(profile =>
+      profile.path === config.terminal_program_path
+      && profile.args === config.terminal_program_args
+    );
+    if (matchIndex >= 0) {
+      select.value = `profile:${matchIndex}`;
+    } else {
+      const current = new Option(`当前配置：${config.terminal_profile_name || config.terminal_program_path}`, "__current__", true, true);
+      select.insertBefore(current, select.firstChild);
+    }
+  }
+  renderConnectionTerminalCapabilitySummary(form, capabilities);
+  return capabilities;
+}
+
+function applyConnectionTerminalProfile(value, select=null) {
+  const form = select?.closest?.("form") || $("connectionForm");
+  const field = id => connectionFormField(form, id);
+  if (!form || !field("conn_terminal_startup_mode") || value === "" || value === "__current__") return;
+  if (value === "__default__") {
+    field("conn_terminal_startup_mode").value = "default";
+    toggleConnectionTerminalStartup(form);
+    return;
+  }
+  if (value === "__custom__") {
+    field("conn_terminal_startup_mode").value = "program";
+    if (!field("conn_terminal_profile_name").value.trim()) field("conn_terminal_profile_name").value = "自定义程序";
+    field("conn_terminal_profile_kind").value = "custom";
+    toggleConnectionTerminalStartup(form);
+    setTimeout(() => field("conn_terminal_program_path")?.focus(), 0);
+    return;
+  }
+  const index = Number(String(value).replace(/^profile:/, ""));
+  const profile = form._terminalCapabilities?.profiles?.[index];
+  if (!profile) return;
+  field("conn_terminal_startup_mode").value = "program";
+  field("conn_terminal_profile_name").value = profile.name || profile.label || "";
+  field("conn_terminal_profile_kind").value = normalizeConnectionTerminalKind(profile.kind);
+  field("conn_terminal_program_path").value = profile.path;
+  field("conn_terminal_program_args").value = profile.args || "";
+  field("conn_terminal_working_directory").value = profile.working_directory || "";
+  field("conn_terminal_program_platform").value = normalizeConnectionTerminalPlatform(profile.platform);
+  toggleConnectionTerminalStartup(form);
+}
+
+function markConnectionTerminalDetectionStale(form=$("connectionForm")) {
+  if (!form?._terminalCapabilitiesChecked || form._terminalProbeStale) return;
+  form._terminalProbeStale = true;
+  const status = connectionFormField(form, "connTerminalDetectionStatus");
+  if (status) {
+    status.className = "terminal-startup-detection stale";
+    status.textContent = "连接信息已变化，下面的检测结果可能已过期。请重新测试 SSH。";
+  }
+  connectionFormField(form, "connTerminalCapabilities")?.classList.add("is-stale");
+}
+
+function connPayload(form=$("connectionForm"), validateStartup=false) {
+  const field = id => connectionFormField(form, id);
+  const groupValue = field("conn_group").value;
+  const passwordAuth = field("conn_auth_type").value === "password";
+  const startup = connectionTerminalFormConfig(form);
+  if (validateStartup && startup.terminal_startup_mode === "program" && !startup.terminal_program_path) {
+    throw new Error("请填写要在远端启动的程序完整路径");
+  }
+  return {
+    id:field("conn_id").value,
+    name:field("conn_name").value.trim(),
     group_name:(groupValue === "__new_group__" ? pendingGroup : groupValue).trim()||"默认分组",
-    ssh_user:$("conn_user").value.trim(),
-    ssh_host:$("conn_host").value.trim(),
-    ssh_port:Number($("conn_port").value||22),
-    sort_order:Number($("conn_sort_order").value||1),
+    ssh_user:field("conn_user").value.trim(),
+    ssh_host:field("conn_host").value.trim(),
+    ssh_port:Number(field("conn_port").value||22),
+    sort_order:Number(field("conn_sort_order").value||1),
     auth_type:passwordAuth ? "password" : "key",
-    identity_file:passwordAuth ? "" : $("conn_key").value,
-    ssh_password:passwordAuth ? $("conn_password").value : "",
-    tags:$("conn_tags").value.trim(),
-    autostart_forwards:Number($("conn_autostart").value),
-    extra_args:$("conn_extra").value.trim()
+    identity_file:passwordAuth ? "" : field("conn_key").value,
+    ssh_password:passwordAuth ? field("conn_password").value : "",
+    tags:field("conn_tags").value.trim(),
+    autostart_forwards:Number(field("conn_autostart").value),
+    extra_args:field("conn_extra").value.trim(),
+    ...startup
   };
 }
 
@@ -534,13 +877,26 @@ function resetConnectionForm(){
 -o ServerAliveInterval=60
 -o ServerAliveCountMax=3
 -o TCPKeepAlive=yes`;
+  resetConnectionTerminalStartup($("connectionForm"));
   toggleAuthFields();
 }
 
 function wireConnectionForm() {
-  $("connectionForm").addEventListener("submit", async e => {
+  const form = $("connectionForm");
+  form.addEventListener("submit", async e => {
     e.preventDefault();
     await saveConnectionForm(false, e.submitter);
+  });
+  form._terminalCredentialRevision = Number(form._terminalCredentialRevision || 0);
+  form.addEventListener("input", event => {
+    if (!event.target.matches("#conn_host,#conn_port,#conn_user,#conn_password,#conn_extra")) return;
+    form._terminalCredentialRevision += 1;
+    markConnectionTerminalDetectionStale(form);
+  });
+  form.addEventListener("change", event => {
+    if (!event.target.matches("#conn_host,#conn_port,#conn_user,#conn_auth_type,#conn_key,#conn_extra")) return;
+    form._terminalCredentialRevision += 1;
+    markConnectionTerminalDetectionStale(form);
   });
 }
 
@@ -551,7 +907,7 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null) {
   form.dataset.saving = "1";
   if (trigger) setButtonBusy(trigger, true, "保存中...");
   try {
-    const p=connPayload();
+    const p=connPayload(form, true);
     if(p.id) await api(`/api/connections/${p.id}`,{method:"PUT",body:JSON.stringify(p)});
     else await api("/api/connections",{method:"POST",body:JSON.stringify(p)});
     pendingGroup = "";
@@ -603,6 +959,11 @@ async function uploadKey(){
   if(!f) return notify("请选择密钥文件","error");
   const data=await uploadOneKey(f);
   await loadKeys(data.path, select);
+  const form = select?.closest?.("form");
+  if (form) {
+    form._terminalCredentialRevision = Number(form._terminalCredentialRevision || 0) + 1;
+    markConnectionTerminalDetectionStale(form);
+  }
   notify("密钥已上传","success");
 }
 
@@ -639,18 +1000,67 @@ async function repairSelectedKey() {
 
 async function testConnectionForm(button=null){
   button = button || $("connTestBtn");
-  const status = $("connTestStatus");
+  const form = button?.closest?.("form") || $("connectionForm");
+  const status = connectionFormField(form, "connTestStatus");
+  const detectionStatus = connectionFormField(form, "connTerminalDetectionStatus");
+  const startRevision = Number(form?._terminalCredentialRevision || 0);
   setButtonBusy(button, true, "测试中...");
   if (status) { status.hidden = false; status.className = "connection-test-status busy"; status.textContent = "正在测试 SSH 连接，请稍候..."; }
+  if (detectionStatus) {
+    detectionStatus.className = "terminal-startup-detection busy";
+    detectionStatus.textContent = "正在连接并检测远端平台、默认 Shell 和可用程序...";
+  }
   notify("正在测试 SSH 连接，请稍候...", "info");
   try {
-    const r=await api("/api/test-ssh",{method:"POST",body:JSON.stringify(connPayload())});
-    const message = r.ok ? `SSH 测试成功，用时 ${r.elapsed_ms}ms` : `SSH 测试失败：${r.output}`;
+    const payload = {...connPayload(form), discover_terminal:true};
+    const r=await api("/api/test-ssh",{method:"POST",body:JSON.stringify(payload)});
+    const message = r.ok
+      ? `SSH 测试成功，用时 ${r.elapsed_ms}ms`
+      : `SSH 测试失败：${r.output || r.error || "请检查连接信息"}`;
     if (status) { status.className = `connection-test-status ${r.ok ? "success" : "error"}`; status.textContent = message; }
+    if (r.ok && Number(form?._terminalCredentialRevision || 0) !== startRevision) {
+      form._terminalCapabilitiesChecked = true;
+      form._terminalProbeStale = true;
+      connectionFormField(form, "connTerminalCapabilities")?.classList.add("is-stale");
+      if (detectionStatus) {
+        detectionStatus.className = "terminal-startup-detection stale";
+        detectionStatus.textContent = "测试期间连接信息发生了变化，本次检测结果未应用。请重新测试 SSH。";
+      }
+    } else if (r.ok) {
+      const rawCapabilities = r.capabilities || r.terminal_capabilities || r.discovery;
+      form._terminalCapabilitiesChecked = true;
+      form._terminalProbeStale = false;
+      if (rawCapabilities && typeof rawCapabilities === "object") {
+        const capabilities = renderConnectionTerminalProfiles(form, rawCapabilities);
+        if (detectionStatus) {
+          const defaultShell = capabilities.default_shell?.label || capabilities.default_shell?.path || "未识别";
+          detectionStatus.className = "terminal-startup-detection success";
+          detectionStatus.textContent = `检测完成：${capabilities.platform_label}，默认 Shell 为 ${defaultShell}，可快速选择 ${capabilities.profiles.length} 个启动配置。`;
+        }
+      } else if (detectionStatus) {
+        form._terminalCapabilities = null;
+        resetConnectionTerminalProfileSelect(form, true);
+        const summary = connectionFormField(form, "connTerminalCapabilities");
+        if (summary) {
+          summary.hidden = true;
+          summary.className = "terminal-startup-capabilities";
+          summary.replaceChildren();
+        }
+        detectionStatus.className = "terminal-startup-detection warning";
+        detectionStatus.textContent = "SSH 连接正常，但未能读取远端启动环境。仍可使用默认 Shell 或手动填写程序路径。";
+      }
+    } else if (detectionStatus) {
+      detectionStatus.className = "terminal-startup-detection error";
+      detectionStatus.textContent = "SSH 测试失败，未更新终端启动选项。";
+    }
     notify(message, r.ok?"success":"error");
   } catch(e){
     const message = `SSH 测试无法完成：${e.message}`;
     if (status) { status.className = "connection-test-status error"; status.textContent = message; }
+    if (detectionStatus) {
+      detectionStatus.className = "terminal-startup-detection error";
+      detectionStatus.textContent = "无法检测远端启动环境，请检查连接信息后重试。";
+    }
     notify(message,"error");
   }
   finally { setButtonBusy(button, false); }
@@ -789,6 +1199,7 @@ function editConnection(id, updateTab=true){
   $("conn_tags").value=c.tags || "";
   $("conn_autostart").value=String(c.autostart_forwards||0);
   $("conn_extra").value=c.extra_args||"";
+  fillConnectionTerminalStartup($("connectionForm"), c);
   toggleAuthFields();
   loadKeys(c.identity_file);
   wireConnectionForm();

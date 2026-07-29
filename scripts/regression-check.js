@@ -186,6 +186,7 @@ async function main() {
   const settingsFrontend = read("public/app-settings.js");
   const importFrontend = read("public/app-import.js");
   const terminalFrontend = read("public/app-terminal.js");
+  const utilsFrontend = read("public/app-utils.js");
   const workspaceFrontend = read("public/app-workspace.js");
   const dockingFrontend = read("public/app-docking.js");
   const appEntry = read("public/app.js");
@@ -244,14 +245,40 @@ async function main() {
   ok("数据库恢复始终列出全部连接及原验证方式", importFrontend.includes("showDatabaseCredentialModal") && importFrontend.includes("原验证方式") && importFrontend.includes("设置所填密码") && serverSource.includes("connections: rows.map") && serverSource.includes("credential_bindings"));
   const importerSource = read("src/importer.ts");
   const dbSource = read("src/db.ts");
-  ok("SSH 连接支持持久排序并在两类导入中编辑", indexHtml.includes('id="conn_sort_order"') && frontend.includes("setImportSortOrder") && frontend.includes("data-restore-sort") && importerSource.includes("sort_order: 1") && dbSource.includes("sort_order INTEGER NOT NULL DEFAULT 1") && dbSource.includes("connections.sort_order, connections.created_at, connections.id"));
+  ok("SSH 连接支持持久排序、同值按名称升序并在两类导入中编辑", indexHtml.includes('id="conn_sort_order"') && frontend.includes("setImportSortOrder") && frontend.includes("data-restore-sort") && importerSource.includes("sort_order: 1") && dbSource.includes("sort_order INTEGER NOT NULL DEFAULT 1") && dbSource.includes("connections.sort_order, connections.name COLLATE NOCASE, connections.created_at, connections.id") && dbSource.includes('localeCompare(String(b.name || ""), "zh-Hans-CN"') && frontend.includes("connections.sort((a,b) => (order.get(a.group_name) ?? names.length) - (order.get(b.group_name) ?? names.length));"));
   ok("SSH 连接分组支持右键和更多菜单重命名", frontend.includes("showConnectionGroupMenu") && frontend.includes("connection-group-menu-button") && frontend.includes("重命名分组") && frontend.includes("/api/connection-groups/rename") && serverSource.includes("renameConnectionGroup") && dbSource.includes("UPDATE connections SET group_name=?, updated_at=? WHERE group_name=?"));
   ok("SSH 连接分组支持持久化拖动排序且不被轮询重绘打断", frontend.includes("beginConnectionGroupDrag") && frontend.includes("saveConnectionGroupOrder") && frontend.includes("connectionGroupDrag.renderPending = true") && frontend.includes("pointercancel\", cancel") && !frontend.includes("navigator.vibrate") && frontend.includes("/api/connection-groups/reorder") && serverSource.includes("reorderConnectionGroups") && dbSource.includes("CREATE TABLE IF NOT EXISTS connection_groups"));
   ok("SSH 连接分组手动收起后不被后台刷新重新展开", !appEntry.includes("if (selectedId === c.id) groupOpen.add(c.group_name)") && frontend.includes("function selectConnection(id)") && frontend.includes("groupOpen.add(c.group_name)") && frontend.includes("function toggleGroupOpen(group)"));
   ok("SSH 连接分组标题支持无漏光滚动冻结和阴影分层", appCss.includes(".tree { overflow:auto; padding:0 0 18px;") && appCss.includes(".group-head-row.connection-group-head-row") && appCss.includes("position:sticky") && appCss.includes("background:var(--sidebar)") && appCss.includes("box-shadow:0 1px 0 var(--line)"));
   ok("终端编码与字体使用独立下拉菜单并持久化", terminalFrontend.includes("showTerminalEncodingMenu") && terminalFrontend.includes("showTerminalFontMenu") && terminalFrontend.includes("applyTerminalPreferences") && terminalFrontend.includes("focusTerminalSession") && terminalFrontend.includes("terminal-preferences") && terminalFrontend.includes("terminalFontSizeField") && dbSource.includes("terminal_encoding TEXT NOT NULL DEFAULT 'utf8'") && dbSource.includes("terminal_font_size INTEGER NOT NULL DEFAULT 13") && dbSource.includes("terminal_mobile_font_size INTEGER NOT NULL DEFAULT 13"));
   const runtimeSettingsSource = read("src/runtime-settings.ts");
-  ok("全局终端设置独立持久化并应用到当前和未来会话", runtimeSettingsSource.includes("DEFAULT_TERMINAL_SETTINGS") && runtimeSettingsSource.includes("normalizeTerminalSettings") && runtimeSettingsSource.includes("schema_version: 5") && serverSource.includes("terminal: data.terminal ?? current.terminal") && terminalFrontend.includes("showTerminalGlobalSettings") && terminalFrontend.includes("applyTerminalGlobalSettingsToSessions") && terminalFrontend.includes("bindTerminalGlobalBehavior") && terminalFrontend.includes("registerLinkProvider") && terminalFrontend.includes("onSelectionChange") && terminalFrontend.includes('addEventListener("paste"') && terminalFrontend.includes("sendTerminalPasteText") && terminalFrontend.includes("editTerminalMultilinePaste") && terminalFrontend.includes("打开可编辑命令窗口") && terminalFrontend.includes("formatTerminalCopiedText") && terminalFrontend.includes("应用到全部连接和终端会话"));
+  ok("全局终端设置独立持久化并应用到当前和未来会话",
+    runtimeSettingsSource.includes("DEFAULT_TERMINAL_SETTINGS")
+      && runtimeSettingsSource.includes("normalizeTerminalSettings")
+      && runtimeSettingsSource.includes("schema_version: 6")
+      && runtimeSettingsSource.includes('background_mode: "theme"')
+      && runtimeSettingsSource.includes('background_color: "#0f1720"')
+      && runtimeSettingsSource.includes("TERMINAL_BACKGROUND_MODES")
+      && serverSource.includes("terminal: data.terminal ?? current.terminal")
+      && terminalFrontend.includes("showTerminalGlobalSettings")
+      && terminalFrontend.includes("terminalThemeForSettings")
+      && terminalFrontend.includes("theme:terminalThemeForSettings()")
+      && terminalFrontend.includes("session.term.options.theme = theme")
+      && terminalFrontend.includes("session.term.options.minimumContrastRatio = 4.5")
+      && terminalFrontend.includes("minimumContrastRatio:4.5")
+      && terminalFrontend.includes("for (const session of terminalSessions.values()) applyTerminalGlobalSettingsToSession(session)")
+      && terminalFrontend.includes("applyTerminalGlobalSettingsToSessions();")
+      && utilsFrontend.includes('if (typeof applyTerminalGlobalSettingsToSessions === "function") applyTerminalGlobalSettingsToSessions();')
+      && terminalFrontend.includes("bindTerminalGlobalBehavior")
+      && terminalFrontend.includes("registerLinkProvider")
+      && terminalFrontend.includes("onSelectionChange")
+      && terminalFrontend.includes('addEventListener("paste"')
+      && terminalFrontend.includes("sendTerminalPasteText")
+      && terminalFrontend.includes("editTerminalMultilinePaste")
+      && terminalFrontend.includes("打开可编辑命令窗口")
+      && terminalFrontend.includes("formatTerminalCopiedText")
+      && terminalFrontend.includes("应用到全部连接和终端会话")
+  );
   ok("移动端长按终端提供精简复制菜单和可滚动光标复制", terminalFrontend.includes("showTerminalContextMenu(event, key, connectionId)") && !terminalFrontend.includes("selectTerminalWordAtPointer") && terminalFrontend.includes("会话复制") && terminalFrontend.includes("showTerminalSessionText") && terminalFrontend.includes("光标复制") && terminalFrontend.includes("startTerminalCursorCopy") && terminalFrontend.includes('selectionBackground:"#2563eb"') && terminalFrontend.includes("scrollLines(direction)") && terminalFrontend.includes("touchOffset") && terminalFrontend.includes("navigator.clipboard?.readText") && read("public/app-utils.js").includes("writeClipboardText"));
   ok("工作区按设置恢复所有标签类型", dockingFrontend.includes("restore_workspace_tabs") && dockingFrontend.includes("tabs.filter(tab => tab.kind)") && !dockingFrontend.includes('tab.kind !== "terminal"') && settingsFrontend.includes('id="restoreWorkspaceTabs"'));
   ok("SFTP 使用 Ace 编辑器、语言模式、换行、图片预览和页面内全局设置", Boolean(packageJson.dependencies?.["ace-builds"]) && indexHtml.includes("/vendor/ace/ace.js") && serverSource.includes("ACE_VENDOR_DIR") && sftpFrontend.includes("sftpEditorLanguageForFile") && sftpFrontend.includes("ace.edit") && sftpFrontend.includes("setUseWrapMode") && sftpFrontend.includes("previewSftpImage") && serverSource.includes("preview-image") && sftpFrontend.includes('id="sftpGlobalSettingsButton"') && settingsFrontend.includes("showSftpGlobalSettings") && settingsFrontend.includes("sftpMaxOpenFileSizeMb"));
@@ -284,17 +311,33 @@ async function main() {
   ok("导入导出按 SSH config 与数据库拆分", workspaceFrontend.includes("SSH config 导入导出") && workspaceFrontend.includes("数据库导入导出") && indexHtml.indexOf("导出 SSH config") < indexHtml.indexOf("数据库导入导出"));
   ok("设置活动栏按通用与安全职责重组", workspaceFrontend.includes('"settings-general", "settings-2", "通用设置"') && workspaceFrontend.includes('"settings-basic", "shield-check", "安全设置"') && !workspaceFrontend.includes('"settings-advanced"') && settingsFrontend.indexOf("storageSettingsPanelHtml()") < settingsFrontend.indexOf('id="settings-basic"'));
   ok("桌面设置并入程序且菜单去重", settingsFrontend.includes("desktopBehaviorPanelHtml") && settingsFrontend.includes("storageSettingsPanelHtml") && serverSource.includes('pathname === "/api/desktop-settings"') && desktopSource.includes("desktopIntegration") && !appMenuSource.includes('{ label: "设置"') && !trayMenuSource.includes('{ label: "设置"') && !trayMenuSource.includes("备份配置数据库"));
+  ok("桌面窗口隐藏原生菜单栏且保留托盘右键菜单", appMenuSource.includes("Menu.setApplicationMenu(null)") && trayMenuSource.includes('label: "打开 TunnelDesk"') && trayMenuSource.includes('label: "在浏览器打开"') && trayMenuSource.includes('label: "退出 TunnelDesk"'));
   ok("桌面原生标题栏与应用明暗主题同步", desktopSource.includes('preload: path.join(__dirname, "preload.js")') && desktopSource.includes("nativeTheme.themeSource = theme") && desktopSource.includes('ipcMain.on("tunneldesk:set-theme"') && read("desktop/preload.js").includes('ipcRenderer.send("tunneldesk:set-theme"') && read("public/app-utils.js").includes("window.tunnelDeskDesktop?.setTheme?.(theme)"));
-  ok("桌面活动栏切换整个操作面板并释放工作区宽度", !indexHtml.includes('id="operationPaneToggle"') && !indexHtml.includes('id="operationPaneExpand"') && indexHtml.includes('id="operationPaneCollapse"') && indexHtml.includes('class="brand-name-short"') && indexHtml.includes("showPrimary('connections', true)") && indexHtml.includes("showPrimary('settings', true)") && workspaceFrontend.includes("name === primaryView ? !operationPaneCollapsed : false") && workspaceFrontend.includes('localStorage.setItem("operationPaneCollapsed"') && appCss.includes(".app.operation-pane-collapsed") && appCss.includes("grid-template-columns:46px minmax(0,1fr)") && appCss.includes(".app.operation-pane-collapsed .brand-name-short"));
+  ok("桌面活动栏切换整个操作面板并支持调节宽度", !indexHtml.includes('id="operationPaneToggle"') && !indexHtml.includes('id="operationPaneExpand"') && indexHtml.includes('id="operationPaneCollapse"') && indexHtml.includes('id="activityBarResize"') && indexHtml.includes('class="brand-name-short"') && indexHtml.includes("showPrimary('connections', true)") && indexHtml.includes("showPrimary('settings', true)") && workspaceFrontend.includes("name === primaryView ? !operationPaneCollapsed : false") && workspaceFrontend.includes('localStorage.setItem("operationPaneCollapsed"') && workspaceFrontend.includes('localStorage.setItem("activityBarWidth"') && appCss.includes("--activity-bar-width:40px") && appCss.includes("grid-template-columns:var(--activity-bar-width) minmax(0,1fr)") && appCss.includes(".app.operation-pane-collapsed .brand-name-short"));
+  ok("六个操作区分别固定或点击工作区自动收起并提供一次性引导", indexHtml.includes('id="operationPanePin"') && indexHtml.includes('id="operationPanePinGuide"') && appEntry.includes("operationPanePinnedByView = loadOperationPanePinnedState()") && workspaceFrontend.includes('OPERATION_PANE_PRIMARY_VIEWS = ["connections", "running", "command", "import", "logs", "settings"]') && workspaceFrontend.includes('OPERATION_PANE_PIN_GUIDE_STORAGE_KEY = "operationPanePinGuideSeenV3"') && workspaceFrontend.includes("content.addEventListener(\"click\", handleOperationPaneContentClick, true)") && workspaceFrontend.includes("if (isMobileLayout() || event.button !== 0) return") && workspaceFrontend.includes("positionOperationPanePinGuide") && appCss.includes("--operation-pane-pin-guide-anchor") && appCss.includes(".operation-pane-pin, .operation-pane-collapse, .operation-pane-pin-guide { display:none !important; }"));
   ok("主题和刷新入口位于活动栏底部且保留移动端入口", indexHtml.indexOf('id="themeToggle"') > indexHtml.indexOf('class="activity-bottom"') && indexHtml.indexOf('id="activityRefresh"') > indexHtml.indexOf('id="themeToggle"') && indexHtml.indexOf('class="github-link"') > indexHtml.indexOf('id="activityRefresh"') && indexHtml.includes("mobile-brand-action theme-toggle") && read("public/app-utils.js").includes('querySelectorAll(".theme-toggle")'));
   ok("终端工具栏使用紧凑单行控件", appCss.includes(".terminal-actions { flex:1 1 590px; flex-wrap:nowrap") && appCss.includes(".terminal-actions button { flex:0 0 auto; height:30px") && appCss.includes(".terminal-actions button > svg.lucide { width:14px"));
-  ok("桌面工作区标题、标签与内容留白使用紧凑高度", appCss.includes("grid-template-rows:42px minmax(0,1fr)") && appCss.includes(".topbar { height:42px") && appCss.includes(".tabs-shell { height:32px") && appCss.includes(".workspace { padding:12px") && appCss.includes(".workspace-pane.terminal-pane > .workspace { padding:6px 12px 12px"));
+  ok(
+    "桌面工作区标题、标签可调且终端内容使用窄边距",
+    appCss.includes("--workspace-header-height:42px")
+      && appCss.includes("--workspace-tab-height:32px")
+      && appCss.includes(".left-pane { grid-template-rows:var(--workspace-header-height)")
+      && appCss.includes(".brand, .topbar { height:var(--workspace-header-height)")
+      && appCss.includes(".tabs-shell { position:relative; height:var(--workspace-tab-height)")
+      && appCss.includes(".workspace-pane.terminal-pane > .workspace { padding:4px 2px 2px; scrollbar-gutter:auto; }")
+      && dockingFrontend.includes('localStorage.setItem("workspaceHeaderHeight"')
+      && dockingFrontend.includes('localStorage.setItem("workspaceTabHeight"')
+  );
+  ok("分屏间隔保持窄视觉和宽拖动热区", appCss.includes("2px minmax(0,calc(100% - var(--workspace-split-ratio) - 2px))") && appCss.includes("width:10px; justify-self:center; cursor:col-resize") && appCss.includes("height:10px; align-self:center; cursor:row-resize") && terminalFrontend.includes("overviewRuler:{width:8}"));
   ok("欢迎页转发计数随当前状态实时刷新", appEntry.includes('if (activeView === "welcome") renderStartupSummary()') && workspaceFrontend.includes('forward.status === "running"') && workspaceFrontend.includes('forward.status === "reconnecting"') && workspaceFrontend.includes('forward.status === "failed"') && workspaceFrontend.includes("运行中 ${running}") && workspaceFrontend.includes("异常 ${failed}") && !workspaceFrontend.includes("转发成功 ${success}"));
   ok("连接转发按钮保留完整文字宽度", appCss.includes("minmax(84px,1.35fr)") && frontend.includes("connection-forward-toggle"));
   ok("Web 数据路径支持跨根目录浏览、安全远程管理与自动重启", settingsFrontend.includes("openStorageDirectoryBrowser") && settingsFrontend.includes("data-storage-root") && serverSource.includes('pathname === "/api/storage/directories"') && serverSource.includes("storageManagementAvailable") && serverSource.includes("!authRequired(req)") && serverSource.includes("restart-web.js") && fs.existsSync(path.join(root, "scripts/restart-web.js")) && read("src/config.ts").includes(".tunneldesk-storage.json"));
   ok("活动栏按钮整栏居中且选中线独立", appCss.includes('.activity button, .activity a { position:relative; width:100%') && appCss.includes('.activity button.active::before') && !appCss.includes('width:46px; min-height:44px;'));
   ok("新版本提醒支持已读和按版本忽略", settingsFrontend.includes("tunneldeskUpdateReadVersion") && settingsFrontend.includes("sessionStorage") && settingsFrontend.includes("markUpdateNoticeRead") && settingsFrontend.includes("update_ignored") && settingsFrontend.includes("setUpdateVersionIgnored") && indexHtml.includes("navSettingsUpdateDot") && updateRouteSource.includes('pathname === "/api/updates/ignore"') && read("public/app-utils.js").includes('event.type === "update" && updateSettings?.update_ignored'));
   ok("更新页按从新到旧展示最近两个正式版本", read("src/update-checker.ts").includes("release_notes: releases.slice(0, 2)") && read("src/update-checker.ts").includes("releases?per_page=10") && settingsFrontend.includes("updateReleaseNotesHtml") && settingsFrontend.includes("update.release_notes.slice(0, 2)") && settingsFrontend.includes("最近版本更新内容"));
+
+  ok("活动栏宽度变化会重排全部分屏", workspaceFrontend.includes('typeof scheduleWorkspaceChromeFit === "function"') && workspaceFrontend.includes("scheduleWorkspaceChromeFit();"));
+  ok("终端滚动条和边框跟随终端背景保持低对比样式", terminalFrontend.includes('scrollbarSliderBackground:dark ? "#475569" : "#cbd5e1"') && terminalFrontend.includes("overviewRulerBorder:background") && appCss.includes(".terminal-box .xterm-scrollable-element > .scrollbar { background:transparent !important; }") && appCss.includes("var(--terminal-background,var(--code))"));
 
   const base = (await webUrl(packageJson, licenseText)).replace(/\/$/, "");
   try {

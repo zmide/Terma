@@ -56,6 +56,13 @@ CREATE TABLE IF NOT EXISTS connections (
   terminal_mobile_font_size INTEGER NOT NULL DEFAULT 13,
   terminal_line_height REAL NOT NULL DEFAULT 1,
   terminal_font_weight TEXT NOT NULL DEFAULT 'normal',
+  terminal_startup_mode TEXT NOT NULL DEFAULT 'default',
+  terminal_profile_name TEXT NOT NULL DEFAULT '',
+  terminal_profile_kind TEXT NOT NULL DEFAULT 'shell',
+  terminal_program_path TEXT NOT NULL DEFAULT '',
+  terminal_program_args TEXT NOT NULL DEFAULT '',
+  terminal_working_directory TEXT NOT NULL DEFAULT '',
+  terminal_program_platform TEXT NOT NULL DEFAULT 'auto',
   sftp_text_encoding TEXT NOT NULL DEFAULT 'auto',
   sftp_filename_encoding TEXT NOT NULL DEFAULT 'utf8',
   created_at INTEGER NOT NULL,
@@ -126,6 +133,13 @@ CREATE TABLE IF NOT EXISTS app_meta (
   if (!connectionColumns.has("terminal_mobile_font_size")) run("ALTER TABLE connections ADD COLUMN terminal_mobile_font_size INTEGER NOT NULL DEFAULT 13");
   if (!connectionColumns.has("terminal_line_height")) run("ALTER TABLE connections ADD COLUMN terminal_line_height REAL NOT NULL DEFAULT 1");
   if (!connectionColumns.has("terminal_font_weight")) run("ALTER TABLE connections ADD COLUMN terminal_font_weight TEXT NOT NULL DEFAULT 'normal'");
+  if (!connectionColumns.has("terminal_startup_mode")) run("ALTER TABLE connections ADD COLUMN terminal_startup_mode TEXT NOT NULL DEFAULT 'default'");
+  if (!connectionColumns.has("terminal_profile_name")) run("ALTER TABLE connections ADD COLUMN terminal_profile_name TEXT NOT NULL DEFAULT ''");
+  if (!connectionColumns.has("terminal_profile_kind")) run("ALTER TABLE connections ADD COLUMN terminal_profile_kind TEXT NOT NULL DEFAULT 'shell'");
+  if (!connectionColumns.has("terminal_program_path")) run("ALTER TABLE connections ADD COLUMN terminal_program_path TEXT NOT NULL DEFAULT ''");
+  if (!connectionColumns.has("terminal_program_args")) run("ALTER TABLE connections ADD COLUMN terminal_program_args TEXT NOT NULL DEFAULT ''");
+  if (!connectionColumns.has("terminal_working_directory")) run("ALTER TABLE connections ADD COLUMN terminal_working_directory TEXT NOT NULL DEFAULT ''");
+  if (!connectionColumns.has("terminal_program_platform")) run("ALTER TABLE connections ADD COLUMN terminal_program_platform TEXT NOT NULL DEFAULT 'auto'");
   if (!connectionColumns.has("sftp_text_encoding")) run("ALTER TABLE connections ADD COLUMN sftp_text_encoding TEXT NOT NULL DEFAULT 'auto'");
   if (!connectionColumns.has("sftp_filename_encoding")) run("ALTER TABLE connections ADD COLUMN sftp_filename_encoding TEXT NOT NULL DEFAULT 'utf8'");
   const existingGroups = all("SELECT DISTINCT group_name FROM connections ORDER BY group_name COLLATE NOCASE");
@@ -190,6 +204,9 @@ const TERMINAL_ENCODINGS = new Set(["utf8", "gb18030", "gbk", "big5", "shift_jis
 const SFTP_TEXT_ENCODINGS = new Set(["auto", "utf8", "utf8bom", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "latin1"]);
 const SFTP_FILENAME_ENCODINGS = new Set(["utf8", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "latin1"]);
 const TERMINAL_FONT_WEIGHTS = new Set(["normal", "500", "600", "bold"]);
+const TERMINAL_STARTUP_MODES = new Set(["default", "program"]);
+const TERMINAL_PROFILE_KINDS = new Set(["shell", "repl", "session", "tool", "custom"]);
+const TERMINAL_PROGRAM_PLATFORMS = new Set(["auto", "posix", "windows"]);
 const DEFAULT_TERMINAL_FONT = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
 function cleanTerminalPreferences(data, existing = null) {
@@ -212,6 +229,54 @@ function cleanTerminalPreferences(data, existing = null) {
     terminal_mobile_font_size: terminalMobileFontSize,
     terminal_line_height: Math.round(terminalLineHeight * 10) / 10,
     terminal_font_weight: terminalFontWeight
+  };
+}
+
+function cleanTerminalStartup(data: any = {}, existing: any = null) {
+  const mode = String(data.terminal_startup_mode ?? existing?.terminal_startup_mode ?? "default").trim().toLowerCase();
+  if (!TERMINAL_STARTUP_MODES.has(mode)) throw new Error("终端启动方式只能是 default 或 program");
+  if (mode === "default") {
+    return {
+      terminal_startup_mode: "default",
+      terminal_profile_name: "",
+      terminal_profile_kind: "shell",
+      terminal_program_path: "",
+      terminal_program_args: "",
+      terminal_working_directory: "",
+      terminal_program_platform: "auto"
+    };
+  }
+
+  const readValue = (key, fallback = "") => {
+    if (Object.prototype.hasOwnProperty.call(data, key)) return data[key];
+    const value = existing?.[key] ?? fallback;
+    return ["terminal_program_path", "terminal_program_args", "terminal_working_directory"].includes(key)
+      ? decryptText(value)
+      : value;
+  };
+  const singleLine = (key, label, maximum, fallback = "") => {
+    const value = String(readValue(key, fallback) ?? "").trim();
+    if (value.includes("\0") || /[\r\n]/.test(value)) throw new Error(`${label}不能包含换行或空字符`);
+    if (value.length > maximum) throw new Error(`${label}长度不能超过 ${maximum} 个字符`);
+    return value;
+  };
+  const profileName = singleLine("terminal_profile_name", "终端启动配置名称", 120);
+  const profileKind = String(readValue("terminal_profile_kind", "custom") || "custom").trim().toLowerCase();
+  if (!TERMINAL_PROFILE_KINDS.has(profileKind)) throw new Error("不支持的终端启动配置类型");
+  const programPath = singleLine("terminal_program_path", "终端启动程序路径", 2048);
+  if (!programPath) throw new Error("自定义终端启动方式需要填写程序路径");
+  const programArgs = singleLine("terminal_program_args", "终端启动参数", 4096);
+  const workingDirectory = singleLine("terminal_working_directory", "终端启动目录", 2048);
+  const platform = String(readValue("terminal_program_platform", "auto") || "auto").trim().toLowerCase();
+  if (!TERMINAL_PROGRAM_PLATFORMS.has(platform)) throw new Error("不支持的终端启动平台");
+  return {
+    terminal_startup_mode: mode,
+    terminal_profile_name: profileName,
+    terminal_profile_kind: profileKind,
+    terminal_program_path: programPath,
+    terminal_program_args: programArgs,
+    terminal_working_directory: workingDirectory,
+    terminal_program_platform: platform
   };
 }
 
@@ -252,6 +317,7 @@ function cleanConnection(data, defaultExtraArgs, existing = null) {
   if (authType === "key" && data.identity_file && !fs.existsSync(data.identity_file)) {
     throw new Error("私钥路径不存在");
   }
+  const terminalStartup = cleanTerminalStartup(data, existing);
   const submittedPassword = String(data.ssh_password || "");
   const password = authType === "password"
     ? (submittedPassword || (existing?.ssh_password ? decryptText(existing.ssh_password) : ""))
@@ -271,6 +337,10 @@ function cleanConnection(data, defaultExtraArgs, existing = null) {
     autostart_forwards: Number(data.autostart_forwards || 0) ? 1 : 0,
     sort_order: validateSortOrder(data.sort_order ?? existing?.sort_order ?? 1),
     ...cleanTerminalPreferences(data, existing),
+    ...terminalStartup,
+    terminal_program_path: encryptText(terminalStartup.terminal_program_path),
+    terminal_program_args: encryptText(terminalStartup.terminal_program_args),
+    terminal_working_directory: encryptText(terminalStartup.terminal_working_directory),
     sftp_text_encoding: cleanSftpTextEncoding(data.sftp_text_encoding, existing?.sftp_text_encoding),
     sftp_filename_encoding: cleanSftpFilenameEncoding(data.sftp_filename_encoding, existing?.sftp_filename_encoding)
   };
@@ -303,7 +373,12 @@ function cleanForward(data) {
 function listConnections() {
   const rows = all(`SELECT connections.*, connection_groups.sort_order AS group_sort_order
     FROM connections LEFT JOIN connection_groups ON connection_groups.name=connections.group_name
-    ORDER BY COALESCE(connection_groups.sort_order,2147483647), connections.sort_order, connections.created_at, connections.id`);
+    ORDER BY COALESCE(connection_groups.sort_order,2147483647), connections.sort_order, connections.name COLLATE NOCASE, connections.created_at, connections.id`)
+    .sort((a, b) => Number(a.group_sort_order ?? 2147483647) - Number(b.group_sort_order ?? 2147483647)
+      || Number(a.sort_order || 1) - Number(b.sort_order || 1)
+      || String(a.name || "").localeCompare(String(b.name || ""), "zh-Hans-CN", {numeric:true, sensitivity:"base"})
+      || Number(a.created_at || 0) - Number(b.created_at || 0)
+      || Number(a.id) - Number(b.id));
   const forwardsByConnection = new Map();
   for (const forward of all("SELECT * FROM connection_forwards ORDER BY connection_id,id")) {
     const item = {
@@ -320,6 +395,9 @@ function listConnections() {
     ssh_password: undefined,
     has_password: Boolean(conn.ssh_password),
     extra_args: decryptText(conn.extra_args),
+    terminal_program_path: decryptText(conn.terminal_program_path),
+    terminal_program_args: decryptText(conn.terminal_program_args),
+    terminal_working_directory: decryptText(conn.terminal_working_directory),
     forwards: forwardsByConnection.get(conn.id) || []
   }));
 }
@@ -327,7 +405,15 @@ function listConnections() {
 function getConnection(id) {
   const row = get("SELECT * FROM connections WHERE id = ?", [Number(id)]);
   if (!row) throw new Error("连接不存在");
-  return { ...row, identity_file: decryptText(row.identity_file), ssh_password: decryptText(row.ssh_password), extra_args: decryptText(row.extra_args) };
+  return {
+    ...row,
+    identity_file: decryptText(row.identity_file),
+    ssh_password: decryptText(row.ssh_password),
+    extra_args: decryptText(row.extra_args),
+    terminal_program_path: decryptText(row.terminal_program_path),
+    terminal_program_args: decryptText(row.terminal_program_args),
+    terminal_working_directory: decryptText(row.terminal_working_directory)
+  };
 }
 
 function getForward(id) {
@@ -342,9 +428,9 @@ function insertConnection(data, defaultExtraArgs) {
   const ts = now();
   const result = run(
     `INSERT INTO connections
-     (name, group_name, ssh_host, ssh_port, ssh_user, auth_type, identity_file, ssh_password, tags, extra_args, autostart_forwards, sort_order, terminal_encoding, terminal_font_family, terminal_font_size, terminal_mobile_font_size, terminal_line_height, terminal_font_weight, sftp_text_encoding, sftp_filename_encoding, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [item.name, item.group_name, item.ssh_host, item.ssh_port, item.ssh_user, item.auth_type, item.identity_file, item.ssh_password, item.tags, item.extra_args, item.autostart_forwards, item.sort_order, item.terminal_encoding, item.terminal_font_family, item.terminal_font_size, item.terminal_mobile_font_size, item.terminal_line_height, item.terminal_font_weight, item.sftp_text_encoding, item.sftp_filename_encoding, ts, ts]
+     (name, group_name, ssh_host, ssh_port, ssh_user, auth_type, identity_file, ssh_password, tags, extra_args, autostart_forwards, sort_order, terminal_encoding, terminal_font_family, terminal_font_size, terminal_mobile_font_size, terminal_line_height, terminal_font_weight, terminal_startup_mode, terminal_profile_name, terminal_profile_kind, terminal_program_path, terminal_program_args, terminal_working_directory, terminal_program_platform, sftp_text_encoding, sftp_filename_encoding, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [item.name, item.group_name, item.ssh_host, item.ssh_port, item.ssh_user, item.auth_type, item.identity_file, item.ssh_password, item.tags, item.extra_args, item.autostart_forwards, item.sort_order, item.terminal_encoding, item.terminal_font_family, item.terminal_font_size, item.terminal_mobile_font_size, item.terminal_line_height, item.terminal_font_weight, item.terminal_startup_mode, item.terminal_profile_name, item.terminal_profile_kind, item.terminal_program_path, item.terminal_program_args, item.terminal_working_directory, item.terminal_program_platform, item.sftp_text_encoding, item.sftp_filename_encoding, ts, ts]
   );
   return Number(result.lastInsertRowid);
 }
@@ -355,8 +441,8 @@ function updateConnection(id, data, defaultExtraArgs) {
   const item = cleanConnection(data, defaultExtraArgs, existing);
   ensureConnectionGroup(item.group_name);
   run(
-    `UPDATE connections SET name=?, group_name=?, ssh_host=?, ssh_port=?, ssh_user=?, auth_type=?, identity_file=?, ssh_password=?, tags=?, extra_args=?, autostart_forwards=?, sort_order=?, terminal_encoding=?, terminal_font_family=?, terminal_font_size=?, terminal_mobile_font_size=?, terminal_line_height=?, terminal_font_weight=?, sftp_text_encoding=?, sftp_filename_encoding=?, updated_at=? WHERE id=?`,
-    [item.name, item.group_name, item.ssh_host, item.ssh_port, item.ssh_user, item.auth_type, item.identity_file, item.ssh_password, item.tags, item.extra_args, item.autostart_forwards, item.sort_order, item.terminal_encoding, item.terminal_font_family, item.terminal_font_size, item.terminal_mobile_font_size, item.terminal_line_height, item.terminal_font_weight, item.sftp_text_encoding, item.sftp_filename_encoding, now(), Number(id)]
+    `UPDATE connections SET name=?, group_name=?, ssh_host=?, ssh_port=?, ssh_user=?, auth_type=?, identity_file=?, ssh_password=?, tags=?, extra_args=?, autostart_forwards=?, sort_order=?, terminal_encoding=?, terminal_font_family=?, terminal_font_size=?, terminal_mobile_font_size=?, terminal_line_height=?, terminal_font_weight=?, terminal_startup_mode=?, terminal_profile_name=?, terminal_profile_kind=?, terminal_program_path=?, terminal_program_args=?, terminal_working_directory=?, terminal_program_platform=?, sftp_text_encoding=?, sftp_filename_encoding=?, updated_at=? WHERE id=?`,
+    [item.name, item.group_name, item.ssh_host, item.ssh_port, item.ssh_user, item.auth_type, item.identity_file, item.ssh_password, item.tags, item.extra_args, item.autostart_forwards, item.sort_order, item.terminal_encoding, item.terminal_font_family, item.terminal_font_size, item.terminal_mobile_font_size, item.terminal_line_height, item.terminal_font_weight, item.terminal_startup_mode, item.terminal_profile_name, item.terminal_profile_kind, item.terminal_program_path, item.terminal_program_args, item.terminal_working_directory, item.terminal_program_platform, item.sftp_text_encoding, item.sftp_filename_encoding, now(), Number(id)]
   );
 }
 
@@ -366,6 +452,27 @@ function updateTerminalPreferences(id, data) {
   const item = cleanTerminalPreferences(data, existing);
   run("UPDATE connections SET terminal_encoding=?,terminal_font_family=?,terminal_font_size=?,terminal_mobile_font_size=?,terminal_line_height=?,terminal_font_weight=?,updated_at=? WHERE id=?",
     [item.terminal_encoding, item.terminal_font_family, item.terminal_font_size, item.terminal_mobile_font_size, item.terminal_line_height, item.terminal_font_weight, now(), Number(id)]);
+  return item;
+}
+
+function updateTerminalStartup(id, data) {
+  const existing = get("SELECT * FROM connections WHERE id=?", [Number(id)]);
+  if (!existing) throw new Error("连接不存在");
+  const item = cleanTerminalStartup(data, existing);
+  run(
+    "UPDATE connections SET terminal_startup_mode=?,terminal_profile_name=?,terminal_profile_kind=?,terminal_program_path=?,terminal_program_args=?,terminal_working_directory=?,terminal_program_platform=?,updated_at=? WHERE id=?",
+    [
+      item.terminal_startup_mode,
+      item.terminal_profile_name,
+      item.terminal_profile_kind,
+      encryptText(item.terminal_program_path),
+      encryptText(item.terminal_program_args),
+      encryptText(item.terminal_working_directory),
+      item.terminal_program_platform,
+      now(),
+      Number(id)
+    ]
+  );
   return item;
 }
 
@@ -476,15 +583,25 @@ function isEncryptedText(value) {
 }
 
 function rewriteConnectionSecrets(transform) {
-  const rows = all("SELECT id, identity_file, ssh_password, extra_args FROM connections");
-  const update = db.prepare("UPDATE connections SET identity_file=?, ssh_password=?, extra_args=?, updated_at=? WHERE id=?");
+  const rows = all("SELECT id, identity_file, ssh_password, extra_args, terminal_program_path, terminal_program_args, terminal_working_directory FROM connections");
+  const update = db.prepare("UPDATE connections SET identity_file=?, ssh_password=?, extra_args=?, terminal_program_path=?, terminal_program_args=?, terminal_working_directory=?, updated_at=? WHERE id=?");
   let changed = 0;
   for (const row of rows) {
     const identityFile = row.identity_file ? transform(row.identity_file) : row.identity_file;
     const sshPassword = row.ssh_password ? transform(row.ssh_password) : row.ssh_password;
     const extraArgs = row.extra_args ? transform(row.extra_args) : row.extra_args;
-    if (identityFile !== row.identity_file || sshPassword !== row.ssh_password || extraArgs !== row.extra_args) {
-      update.run(identityFile, sshPassword, extraArgs, now(), row.id);
+    const terminalProgramPath = row.terminal_program_path ? transform(row.terminal_program_path) : row.terminal_program_path;
+    const terminalProgramArgs = row.terminal_program_args ? transform(row.terminal_program_args) : row.terminal_program_args;
+    const terminalWorkingDirectory = row.terminal_working_directory ? transform(row.terminal_working_directory) : row.terminal_working_directory;
+    if (
+      identityFile !== row.identity_file
+      || sshPassword !== row.ssh_password
+      || extraArgs !== row.extra_args
+      || terminalProgramPath !== row.terminal_program_path
+      || terminalProgramArgs !== row.terminal_program_args
+      || terminalWorkingDirectory !== row.terminal_working_directory
+    ) {
+      update.run(identityFile, sshPassword, extraArgs, terminalProgramPath, terminalProgramArgs, terminalWorkingDirectory, now(), row.id);
       changed += 1;
     }
   }
@@ -625,7 +742,52 @@ function restoreConfigSnapshot(snapshot) {
     run("DELETE FROM forward_templates");
     const groups = Array.isArray(snapshot.connection_groups) ? snapshot.connection_groups : [...new Set(snapshot.connections.map((row) => row.group_name))].map((name,index) => ({name,sort_order:index+1,created_at:now(),updated_at:now()}));
     for (const row of groups) run("INSERT INTO connection_groups(name,sort_order,created_at,updated_at) VALUES(?,?,?,?)", [row.name,row.sort_order,row.created_at,row.updated_at]);
-    for (const row of snapshot.connections) run("INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,ssh_password,tags,extra_args,autostart_forwards,sort_order,terminal_encoding,terminal_font_family,terminal_font_size,terminal_mobile_font_size,terminal_line_height,terminal_font_weight,sftp_text_encoding,sftp_filename_encoding,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [row.id,row.name,row.group_name,row.ssh_host,row.ssh_port,row.ssh_user,row.auth_type || "key",row.identity_file,row.ssh_password || null,row.tags,row.extra_args,row.autostart_forwards,Number.isInteger(Number(row.sort_order)) && Number(row.sort_order) > 0 ? Number(row.sort_order) : 1,row.terminal_encoding || "utf8",row.terminal_font_family || DEFAULT_TERMINAL_FONT,Number(row.terminal_font_size) || 13,Number(row.terminal_mobile_font_size) || 13,Number(row.terminal_line_height) || 1,row.terminal_font_weight || "normal",row.sftp_text_encoding || "auto",row.sftp_filename_encoding || "utf8",row.created_at,row.updated_at]);
+    for (const row of snapshot.connections) {
+      const startupMode = TERMINAL_STARTUP_MODES.has(String(row.terminal_startup_mode || ""))
+        ? String(row.terminal_startup_mode)
+        : "default";
+      const profileKind = TERMINAL_PROFILE_KINDS.has(String(row.terminal_profile_kind || ""))
+        ? String(row.terminal_profile_kind)
+        : "shell";
+      const programPlatform = TERMINAL_PROGRAM_PLATFORMS.has(String(row.terminal_program_platform || ""))
+        ? String(row.terminal_program_platform)
+        : "auto";
+      run(
+        "INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,ssh_password,tags,extra_args,autostart_forwards,sort_order,terminal_encoding,terminal_font_family,terminal_font_size,terminal_mobile_font_size,terminal_line_height,terminal_font_weight,terminal_startup_mode,terminal_profile_name,terminal_profile_kind,terminal_program_path,terminal_program_args,terminal_working_directory,terminal_program_platform,sftp_text_encoding,sftp_filename_encoding,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+          row.id,
+          row.name,
+          row.group_name,
+          row.ssh_host,
+          row.ssh_port,
+          row.ssh_user,
+          row.auth_type || "key",
+          row.identity_file,
+          row.ssh_password || null,
+          row.tags,
+          row.extra_args,
+          row.autostart_forwards,
+          Number.isInteger(Number(row.sort_order)) && Number(row.sort_order) > 0 ? Number(row.sort_order) : 1,
+          row.terminal_encoding || "utf8",
+          row.terminal_font_family || DEFAULT_TERMINAL_FONT,
+          Number(row.terminal_font_size) || 13,
+          Number(row.terminal_mobile_font_size) || 13,
+          Number(row.terminal_line_height) || 1,
+          row.terminal_font_weight || "normal",
+          startupMode,
+          row.terminal_profile_name || "",
+          profileKind,
+          row.terminal_program_path || "",
+          row.terminal_program_args || "",
+          row.terminal_working_directory || "",
+          programPlatform,
+          row.sftp_text_encoding || "auto",
+          row.sftp_filename_encoding || "utf8",
+          row.created_at,
+          row.updated_at
+        ]
+      );
+    }
     for (const row of snapshot.forwards) run("INSERT INTO connection_forwards(id,connection_id,mode,service_name,service_type,service_note,url_scheme,bind_host,bind_port,target_host,target_port,pid,status,restore,reconnect_count,last_error,started_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [row.id,row.connection_id,row.mode,row.service_name,row.service_type,row.service_note,row.url_scheme,row.bind_host,row.bind_port,row.target_host,row.target_port,null,"stopped",0,0,row.last_error || null,null,row.created_at,row.updated_at]);
     for (const row of snapshot.forward_templates) run("INSERT INTO forward_templates(id,name,mode,service_name,service_type,service_note,url_scheme,bind_host,bind_port,target_host,target_port,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", [row.id,row.name,row.mode,row.service_name,row.service_type,row.service_note,row.url_scheme,row.bind_host,row.bind_port,row.target_host,row.target_port,row.created_at,row.updated_at]);
     db.exec("COMMIT");
@@ -699,6 +861,7 @@ module.exports = {
   validateSortOrder,
   pidRunning,
   cleanConnection,
+  cleanTerminalStartup,
   cleanForward,
   listConnections,
   getConnection,
@@ -706,6 +869,7 @@ module.exports = {
   insertConnection,
   updateConnection,
   updateTerminalPreferences,
+  updateTerminalStartup,
   updateSftpTextEncoding,
   updateSftpFilenameEncoding,
   bulkUpdateConnections,

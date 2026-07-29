@@ -9,6 +9,7 @@ const { appendSystemLog, appendTerminalLog, createTerminalLog } = require("./log
 const { isPasswordConnection, openSshShell } = require("./ssh2-client");
 const { loadNodePty } = require("./pty-runtime");
 const { WebSocketFrameParser, closeWebSocket, sendWebSocketFrame, validateWebSocketUpgrade, websocketAccept } = require("./websocket");
+const { consumeTerminalStartupTicket, mergeTerminalStartup } = require("./terminal-startup");
 
 let pty = null;
 let ptyLoadError = "";
@@ -59,7 +60,10 @@ function handleTerminalUpgrade(req, socket) {
     const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     const id = Number(url.searchParams.get("id"));
     if (!id) throw new Error("缺少连接 ID");
-    const connection = getConnection(id);
+    const storedConnection = getConnection(id);
+    const startupToken = url.searchParams.get("startup_token") || "";
+    const startupOverride = startupToken ? consumeTerminalStartupTicket(startupToken, id) : null;
+    const connection = mergeTerminalStartup(storedConnection, startupOverride);
     const accept = websocketAccept(key);
     socket.write([
       "HTTP/1.1 101 Switching Protocols",
@@ -77,7 +81,10 @@ function handleTerminalUpgrade(req, socket) {
     const title = url.searchParams.get("title") || "";
     const session: any = startTerminalProcess(connection, socket, cols, rows, title);
     sessions.add(session);
-    sendWebSocketFrame(socket, `连接到 ${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}${session.ptyProcess || session.remotePty ? "（PTY）" : ""}\r\n`);
+    const startupLabel = connection.terminal_startup_mode === "program"
+      ? `，启动 ${connection.terminal_profile_name || connection.terminal_program_path}`
+      : "";
+    sendWebSocketFrame(socket, `连接到 ${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}${session.ptyProcess || session.remotePty ? "（PTY）" : ""}${startupLabel}\r\n`);
 
     const parser = new WebSocketFrameParser({ maxFrameSize: 1024 * 1024, maxMessageSize: 2 * 1024 * 1024 });
     socket.on("data", (chunk) => {

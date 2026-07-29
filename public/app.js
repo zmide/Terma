@@ -60,6 +60,7 @@ let sftpSearchTimer = null;
 let sftpRequestController = null;
 let sftpFavorites = JSON.parse(localStorage.getItem("sftpFavorites") || "[]");
 let operationPaneCollapsed = localStorage.getItem("operationPaneCollapsed") === "1";
+let operationPanePinnedByView = loadOperationPanePinnedState();
 let runningFilter = localStorage.getItem("runningFilter") || "";
 let securitySettings = null;
 let startupSummaryStatus = null;
@@ -112,6 +113,7 @@ function startAutoRefresh() {
 }
 applyTheme(preferredTheme());
 renderExplorerTools();
+initOperationPaneBehavior();
 loadCachedUpdateStatus();
 syncViewportHeight();
 window.visualViewport?.addEventListener("resize", syncViewportHeight);

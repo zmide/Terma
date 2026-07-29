@@ -4,6 +4,7 @@ const net = require("node:net");
 const { PassThrough } = require("node:stream");
 const { Client } = require("ssh2");
 const socks = require("@pondwader/socks5-server");
+const { buildRemoteStartupCommand } = require("./terminal-startup");
 
 function isPasswordConnection(connection) {
   return String(connection?.auth_type || "key") === "password";
@@ -179,18 +180,22 @@ function runPasswordCommand(connection, command, input = null, timeoutMs = 60000
 async function openPasswordShell(connection, options: any = {}) {
   const client: any = await connectSsh(connection);
   return new Promise((resolve, reject) => {
-    client.shell({
+    const pty = {
       term: options.term || "xterm-256color",
       cols: Math.max(2, Number(options.cols || 80)),
       rows: Math.max(1, Number(options.rows || 24))
-    }, (error, stream) => {
+    };
+    const callback = (error, stream) => {
       if (error) {
         try { client.end(); } catch {}
         reject(error);
         return;
       }
       resolve({ client, stream });
-    });
+    };
+    const startupCommand = buildRemoteStartupCommand(connection);
+    if (startupCommand) client.exec(startupCommand, { pty }, callback);
+    else client.shell(pty, callback);
   });
 }
 
