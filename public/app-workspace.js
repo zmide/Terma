@@ -5,6 +5,7 @@ let mobilePaneView = "explorer";
 let responsiveLayoutMobile = isMobileLayout();
 
 function renderTabs() {
+  if (typeof syncSftpTabTitles === "function") syncSftpTabTitles();
   const container = $("tabs");
   const previousScrollLeft = container.scrollLeft;
   container.innerHTML = tabs.map(tab => {
@@ -258,7 +259,7 @@ function renderTabContent(tab) {
   if (tab.kind === "import") return showImport(false);
   if (tab.kind === "log") return openLog(tab.path, tab.title, false);
   if (tab.kind === "command") return openBatchCommand(false);
-  if (tab.kind === "sftp") return openSftp(tab.id, tab.path || ".", false);
+  if (tab.kind === "sftp") return openSftp(tab.id, tab.path || ".", false, tab.key);
   if (tab.kind === "dashboard") return openServerDashboard(tab.id, false);
   if (tab.kind === "settings") return openSettings(false);
   return setWorkspace(tab.title, tab.subtitle, tab.viewName, tab.key, false, tab.closable);
@@ -388,6 +389,7 @@ function closeTerminalSession(key) {
   if (typeof cancelTerminalCursorCopy === "function") cancelTerminalCursorCopy(session, key);
   try { session.socket?.close(); } catch {}
   try { session.resizeDisposable?.dispose(); } catch {}
+  try { session.resizeObserver?.disconnect(); } catch {}
   try { session.globalLinkDisposable?.dispose(); } catch {}
   try { session.globalSelectionDisposable?.dispose(); } catch {}
   try { session.term?.dispose(); } catch {}
@@ -578,8 +580,7 @@ function renderWelcome() {
   loadStartupSummary();
 }
 
-function renderStartupSummary() {
-  const box = $("startupSummary");
+function renderStartupSummary(box=$("startupSummary")) {
   const s = startupSummaryStatus;
   if (!box || !s) return;
   const forwards = connections.flatMap(connection => connection.forwards || []);
@@ -593,12 +594,12 @@ function renderStartupSummary() {
   box.innerHTML = `<div class="startup-summary ${warning ? "warning" : "ready"}"><div><strong>${title}</strong><span>${urls.map(esc).join(" · ")}</span></div><div class="startup-counts"><span>运行中 ${running}</span>${reconnecting ? `<span>重连中 ${reconnecting}</span>` : ""}<span class="${failed ? "bad" : ""}">异常 ${failed}</span><button onclick="openTodaySystemLog()">系统日志</button></div></div>`;
 }
 
-async function loadStartupSummary() {
-  const box = $("startupSummary");
-  if (!box) return;
+async function loadStartupSummary(box=$("startupSummary")) {
+  if (!box?.isConnected) return;
   try {
     startupSummaryStatus = await api("/api/startup-status");
-    renderStartupSummary();
-    if (startupSummaryStatus.state === "starting") setTimeout(loadStartupSummary, 1200);
+    if (!box.isConnected) return;
+    renderStartupSummary(box);
+    if (startupSummaryStatus.state === "starting") setTimeout(() => loadStartupSummary(box), 1200);
   } catch { box.innerHTML = ""; }
 }

@@ -1159,6 +1159,11 @@ struct DragSession : std::enable_shared_from_this<DragSession> {
     return true;
   }
 
+  bool IsManifestPending() {
+    std::lock_guard<std::mutex> lock(manifest_mutex);
+    return manifest_state == ManifestState::kPending;
+  }
+
   bool RegisterHttpRequest(HINTERNET request) {
     if (request == nullptr) {
       return false;
@@ -2109,7 +2114,7 @@ class VirtualFileDataObject final : public IDataObject,
     }
     if (format->cfFormat == contents_format_ &&
         (format->tymed & TYMED_ISTREAM) != 0) {
-      HRESULT manifest_result = session_->WaitForManifest();
+      HRESULT manifest_result = ResolveManifestForDataRequest();
       if (FAILED(manifest_result)) {
         return manifest_result;
       }
@@ -2174,6 +2179,11 @@ class VirtualFileDataObject final : public IDataObject,
       // requested FILEGROUPDESCRIPTOR. The concrete index is validated after
       // the lazily loaded manifest becomes available.
       if (format->lindex == -1) {
+        return S_OK;
+      }
+      // QueryGetData is an availability probe and must never hold the OLE
+      // pointer loop while a remote directory is still being enumerated.
+      if (session_->IsManifestPending()) {
         return S_OK;
       }
       HRESULT manifest_result = session_->WaitForManifest();
@@ -2301,8 +2311,40 @@ class VirtualFileDataObject final : public IDataObject,
  private:
   ~VirtualFileDataObject() = default;
 
+  bool IsCursorOverSourceWindow() const {
+    HWND source_window = session_->spec.source_window;
+    if (source_window == nullptr || !IsWindow(source_window)) {
+      return false;
+    }
+    POINT cursor{};
+    if (!GetCursorPos(&cursor)) {
+      return false;
+    }
+    HWND target_window = WindowFromPoint(cursor);
+    if (target_window == nullptr) {
+      return false;
+    }
+    HWND source_root = GetAncestor(source_window, GA_ROOT);
+    HWND target_root = GetAncestor(target_window, GA_ROOT);
+    return source_root != nullptr && source_root == target_root;
+  }
+
+  HRESULT ResolveManifestForDataRequest() {
+    if (session_->IsManifestPending()) {
+      // Chromium probes the OLE data object while the pointer is still over
+      // TunnelDesk. Waiting here keeps the hidden drag window's mouse capture
+      // alive and makes the application appear frozen for large directories.
+      // Explorer's asynchronous extraction retries after StartOperation.
+      if ((!session_->released.load() && IsCursorOverSourceWindow()) ||
+          !session_->async_in_operation.load()) {
+        return E_PENDING;
+      }
+    }
+    return session_->WaitForManifest();
+  }
+
   HRESULT GetDescriptors(STGMEDIUM* medium) {
-    HRESULT manifest_result = session_->WaitForManifest();
+    HRESULT manifest_result = ResolveManifestForDataRequest();
     if (FAILED(manifest_result)) {
       return manifest_result;
     }

@@ -2,6 +2,15 @@ function textSelectionFromTextarea(el) {
   return el.value.slice(el.selectionStart || 0, el.selectionEnd || 0);
 }
 
+function currentBatchRoot() {
+  const scope = typeof currentWorkspaceDomScope === "function" ? currentWorkspaceDomScope() : document;
+  return scope.querySelector("#view-command");
+}
+
+function batchElement(id, root=currentBatchRoot()) {
+  return root?.querySelector(`#${CSS.escape(id)}`) || null;
+}
+
 async function copyCommandContext(target, all=false) {
   const text = target.matches("textarea")
     ? (all ? target.value : textSelectionFromTextarea(target) || target.value)
@@ -140,8 +149,8 @@ function applyTemplateToCommand(id) {
 }
 
 function openBatchCommand(updateTab=true) {
+  const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   const selected = new Set([selectedId].filter(Boolean).map(String));
-  if (!commandTemplates.length) loadCommandTemplates().then(renderCommandTemplateOptions).catch(()=>{});
   $("view-command").innerHTML = `<div class="panel command-panel">
     <div class="workspace-head">
       <div>
@@ -177,6 +186,12 @@ function openBatchCommand(updateTab=true) {
     <div id="batchCommandResults" class="command-results"></div>
   </div>`;
   setWorkspace("批量执行", "选择多个 SSH 执行命令", "command", "command", updateTab, true, {kind:"command"});
+  const root = $("view-command");
+  if (!commandTemplates.length) {
+    loadCommandTemplates().then(() => inPane(() => {
+      if (root?.isConnected) renderCommandTemplateOptions(root);
+    })).catch(()=>{});
+  }
 }
 
 async function loadCommandTemplates() {
@@ -188,8 +203,8 @@ function renderCommandTemplateOptionsHtml() {
   return `<option value="">手动输入命令</option>` + commandTemplates.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
 }
 
-function renderCommandTemplateOptions() {
-  const select = $("batchCommandTemplate");
+function renderCommandTemplateOptions(root=currentBatchRoot()) {
+  const select = batchElement("batchCommandTemplate", root);
   if (select) select.innerHTML = renderCommandTemplateOptionsHtml();
 }
 
@@ -212,12 +227,12 @@ function renderBatchCommandTargets(selected=new Set()) {
 }
 
 function setBatchCommandChecks(checked) {
-  document.querySelectorAll(".batch-command-check").forEach(input => input.checked = checked);
+  currentBatchRoot()?.querySelectorAll(".batch-command-check").forEach(input => input.checked = checked);
   updateBatchTargetCount();
 }
 
 function updateBatchTargetCount() {
-  const count = document.querySelectorAll(".batch-command-check:checked").length;
+  const count = currentBatchRoot()?.querySelectorAll(".batch-command-check:checked").length || 0;
   if ($("batchTargetCount")) $("batchTargetCount").textContent = `已选择 ${count} 台`;
 }
 
@@ -226,10 +241,15 @@ function commandLooksDangerous(command) {
 }
 
 async function runBatchCommand() {
-  const button = $("batchCommandRunBtn");
-  const ids = [...document.querySelectorAll(".batch-command-check:checked")].map(input => Number(input.value));
-  let command = normalizeBatchCommandInput($("batchCommandText")?.value || "");
-  const timeout = Math.max(5, Math.min(600, Number($("batchCommandTimeout")?.value || 60)));
+  const root = currentBatchRoot();
+  if (!root) return;
+  const tabKey = activeTabKey;
+  const inTab = typeof captureWorkspaceTab === "function" ? captureWorkspaceTab(tabKey) : action => action();
+  const button = batchElement("batchCommandRunBtn", root);
+  const commandInput = batchElement("batchCommandText", root);
+  const ids = [...root.querySelectorAll(".batch-command-check:checked")].map(input => Number(input.value));
+  let command = normalizeBatchCommandInput(commandInput?.value || "");
+  const timeout = Math.max(5, Math.min(600, Number(batchElement("batchCommandTimeout", root)?.value || 60)));
   if (!ids.length) return notify("请选择要执行命令的 SSH", "error");
   if (!command) return notify("请输入要执行的命令", "error");
   const nonEmptyLines = command.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
@@ -241,15 +261,22 @@ async function runBatchCommand() {
   } else if (nonEmptyLines.length > 1 && !await confirmModal(`当前是 ${nonEmptyLines.length} 行命令，将通过一次 SSH 连接按脚本逐行执行。继续吗？`, "批量执行确认", "继续", "取消")) {
     return;
   }
-  if ($("batchCommandText").value !== command) $("batchCommandText").value = command;
+  const tabIsActive = () => {
+    let active = false;
+    inTab(() => { active = root.isConnected; });
+    return active;
+  };
+  if (!tabIsActive()) return;
+  if (commandInput.value !== command) commandInput.value = command;
   if (commandLooksDangerous(command) && !await confirmModal("这条命令看起来有破坏风险，确定要批量执行吗？", "危险命令确认", "继续执行", "取消", true)) return;
+  if (!tabIsActive()) return;
   batchCommandExport = {command, started_at:new Date().toISOString(), finished_at:null, results:Object.fromEntries(ids.map(id => { const c=currentConnection(id); return [id,{id,name:c?.name || String(id),host:c ? `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}` : "",output:"",ok:null,exit_code:null,error:"",elapsed_ms:null}]; }))};
-  $("batchExportTxtBtn").hidden = true;
-  $("batchExportJsonBtn").hidden = true;
+  batchElement("batchExportTxtBtn", root).hidden = true;
+  batchElement("batchExportJsonBtn", root).hidden = true;
   setButtonBusy(button, true, "执行中...");
-  $("batchCommandStopBtn").disabled = false;
-  $("batchCommandStatus").textContent = "正在连接执行通道...";
-  $("batchCommandResults").innerHTML = ids.map(id => {
+  batchElement("batchCommandStopBtn", root).disabled = false;
+  batchElement("batchCommandStatus", root).textContent = "正在连接执行通道...";
+  batchElement("batchCommandResults", root).innerHTML = ids.map(id => {
     const c = currentConnection(id) || connections.find(item => item.id === id);
     return `<div class="command-result" id="batchResult-${id}">
       <div class="command-result-head"><strong>${esc(c?.name || id)}</strong><span>等待执行</span></div>
@@ -257,17 +284,20 @@ async function runBatchCommand() {
     </div>`;
   }).join("");
   const protocol = location.protocol === "https:" ? "wss" : "ws";
-  batchCommandSocket = new WebSocket(`${protocol}://${location.host}/ws/batch-command`);
-  batchCommandSocket.addEventListener("open", () => {
-    batchCommandSocket.send(JSON.stringify({ids, command, timeout_ms: timeout * 1000}));
-    $("batchCommandStatus").textContent = "正在执行...";
+  const socket = new WebSocket(`${protocol}://${location.host}/ws/batch-command`);
+  batchCommandSocket = socket;
+  socket.addEventListener("open", () => {
+    socket.send(JSON.stringify({ids, command, timeout_ms: timeout * 1000}));
+    inTab(() => { batchElement("batchCommandStatus", root).textContent = "正在执行..."; });
   });
-  batchCommandSocket.addEventListener("message", event => handleBatchCommandEvent(JSON.parse(event.data)));
-  batchCommandSocket.addEventListener("error", () => notify("批量命令连接失败", "error"));
-  batchCommandSocket.addEventListener("close", () => {
-    setButtonBusy(button, false);
-    $("batchCommandStopBtn").disabled = true;
-    batchCommandSocket = null;
+  socket.addEventListener("message", event => inTab(() => handleBatchCommandEvent(JSON.parse(event.data), root)));
+  socket.addEventListener("error", () => notify("批量命令连接失败", "error"));
+  socket.addEventListener("close", () => {
+    inTab(() => {
+      setButtonBusy(button, false);
+      batchElement("batchCommandStopBtn", root).disabled = true;
+    });
+    if (batchCommandSocket === socket) batchCommandSocket = null;
   });
 }
 
@@ -275,18 +305,18 @@ function stopBatchCommand() {
   try { batchCommandSocket?.close(); } catch {}
 }
 
-function handleBatchCommandEvent(message) {
+function handleBatchCommandEvent(message, root=currentBatchRoot()) {
   if (message.type === "ready") return;
   if (message.type === "meta") {
-    $("batchCommandStatus").innerHTML = `日志：<button class="ghost" onclick="openLog('${escAttr(message.log_path)}','${escAttr(message.log_label)}')">${esc(message.log_label)}</button>`;
+    batchElement("batchCommandStatus", root).innerHTML = `日志：<button class="ghost" onclick="openLog('${escAttr(message.log_path)}','${escAttr(message.log_label)}')">${esc(message.log_label)}</button>`;
     return;
   }
   if (message.type === "start") {
-    updateBatchResultHead(message.id, "执行中");
+    updateBatchResultHead(message.id, "执行中", root);
     return;
   }
   if (message.type === "data") {
-    const output = $(`batchOutput-${message.id}`);
+    const output = batchElement(`batchOutput-${message.id}`, root);
     if (output) {
       output.textContent += message.data || "";
       output.scrollTop = output.scrollHeight;
@@ -295,18 +325,18 @@ function handleBatchCommandEvent(message) {
     return;
   }
   if (message.type === "exit") {
-    const row = $(`batchResult-${message.id}`);
+    const row = batchElement(`batchResult-${message.id}`, root);
     if (row) row.classList.add(message.ok ? "ok" : "bad");
-    updateBatchResultHead(message.id, `${message.ok ? "成功" : "失败"} · exit ${message.exit_code ?? ""}${message.error ? ` · ${message.error}` : ""}`);
+    updateBatchResultHead(message.id, `${message.ok ? "成功" : "失败"} · exit ${message.exit_code ?? ""}${message.error ? ` · ${message.error}` : ""}`, root);
     if (batchCommandExport?.results?.[message.id]) Object.assign(batchCommandExport.results[message.id], {ok:message.ok,exit_code:message.exit_code,error:message.error || "",elapsed_ms:message.elapsed_ms});
     return;
   }
   if (message.type === "done") {
-    $("batchCommandStatus").textContent = `完成：成功 ${message.ok} 个，失败 ${message.failed} 个`;
+    batchElement("batchCommandStatus", root).textContent = `完成：成功 ${message.ok} 个，失败 ${message.failed} 个`;
     notify(`批量命令完成：成功 ${message.ok} 个，失败 ${message.failed} 个`, message.failed ? "error" : "success");
     if (batchCommandExport) batchCommandExport.finished_at = new Date().toISOString();
-    $("batchExportTxtBtn").hidden = false;
-    $("batchExportJsonBtn").hidden = false;
+    batchElement("batchExportTxtBtn", root).hidden = false;
+    batchElement("batchExportJsonBtn", root).hidden = false;
     return;
   }
   if (message.type === "error") notify(message.error || "批量命令失败", "error");
@@ -325,8 +355,8 @@ function exportBatchCommand(format) {
   URL.revokeObjectURL(url);
 }
 
-function updateBatchResultHead(id, text) {
-  const row = $(`batchResult-${id}`);
+function updateBatchResultHead(id, text, root=currentBatchRoot()) {
+  const row = batchElement(`batchResult-${id}`, root);
   const status = row?.querySelector(".command-result-head span");
   if (status) status.textContent = text;
 }

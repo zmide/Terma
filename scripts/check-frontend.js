@@ -5,6 +5,7 @@ const files = [
   "public/app-api.js",
   "public/app-utils.js",
   "public/app-workspace.js",
+  "public/app-docking.js",
   "public/app-settings.js",
   "public/app-running.js",
   "public/app-batch.js",

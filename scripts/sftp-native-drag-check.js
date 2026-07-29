@@ -55,6 +55,7 @@ try {
   let markDelayedLstatStarted = null;
   let slowReadStream = null;
   let markSlowReadStarted = null;
+  let endedSftpChannels = 0;
   const lstatCounts = new Map();
   database.getConnection = () => ({
     id:123,
@@ -124,7 +125,7 @@ try {
         }
         return Readable.from(entry.content);
       },
-      end() {}
+      end() { endedSftpChannels += 1; }
     });
     return client;
   };
@@ -309,6 +310,44 @@ try {
   releaseDelayedLstat = null;
   markDelayedLstatStarted = null;
   assert.equal(session.releaseNativeSftpDragTicket(concurrentTicket.token), true);
+
+  let resolveCancelledLstat;
+  releaseDelayedLstat = new Promise(resolve => { resolveCancelledLstat = resolve; });
+  const cancelledLstatStarted = new Promise(resolve => { markDelayedLstatStarted = resolve; });
+  delayedLstatPath = "/root/folder";
+  lstatCounts.clear();
+  const cancelledManifestTicket = session.reserveNativeSftpDragTicket(123, ["/root/folder"], {
+    platform:"win32",
+    entries:[{path:"/root/folder", name:"folder", type:"directory"}]
+  });
+  const cancelledDirectoryManifestPromise = session.getNativeSftpDragTicket(cancelledManifestTicket.token);
+  await cancelledLstatStarted;
+  const endedBeforeManifestCancel = endedSftpChannels;
+  assert.equal(session.releaseNativeSftpDragTicket(cancelledManifestTicket.token), true);
+  assert.equal(
+    endedSftpChannels,
+    endedBeforeManifestCancel + 1,
+    "cancelling a pending directory drag must close its dedicated manifest channel immediately"
+  );
+  resolveCancelledLstat();
+  await assert.rejects(
+    cancelledDirectoryManifestPromise,
+    error => error?.code === "SFTP_NATIVE_DRAG_CANCELLED",
+    "a cancelled directory manifest must terminate as cancellation"
+  );
+  assert.equal(
+    endedSftpChannels,
+    endedBeforeManifestCancel + 1,
+    "the cancelled manifest channel must be closed exactly once"
+  );
+  assert.equal(
+    lstatCounts.has("/root/folder/nested.txt"),
+    false,
+    "cancelled directory enumeration must not continue into descendants"
+  );
+  delayedLstatPath = "";
+  releaseDelayedLstat = null;
+  markDelayedLstatStarted = null;
 
   const symlinkTicket = session.reserveNativeSftpDragTicket(123, ["/root/kernel-link"], {
     platform:"win32",

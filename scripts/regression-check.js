@@ -1,11 +1,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { expectedArtifacts, relevantArtifacts, verifyReleaseVersion } = require("./release-artifacts-check");
+const runWorkspaceDockingChecks = require("./workspace-docking-check");
 
 const root = path.resolve(__dirname, "..");
 const checks = [];
 const frontendFiles = [
-  "public/app-api.js", "public/app-utils.js", "public/app-workspace.js", "public/app-settings.js",
+  "public/app-api.js", "public/app-utils.js", "public/app-workspace.js", "public/app-docking.js", "public/app-settings.js",
   "public/app-running.js", "public/app-batch.js", "public/app-logs.js", "public/app-connections.js",
   "public/app-terminal.js", "public/app-forwards.js", "public/app-import.js", "public/app-sftp.js", "public/app.js"
 ];
@@ -186,6 +187,7 @@ async function main() {
   const importFrontend = read("public/app-import.js");
   const terminalFrontend = read("public/app-terminal.js");
   const workspaceFrontend = read("public/app-workspace.js");
+  const dockingFrontend = read("public/app-docking.js");
   const appEntry = read("public/app.js");
   const appCss = read("public/app.css");
   const serverSource = read("src/server.ts");
@@ -200,7 +202,25 @@ async function main() {
   ok("动态图标直接输出 SVG", frontend.includes('return `<svg class="lucide'));
   ok("转发入口包含局域网监听提示", frontend.includes("0.0.0.0") && frontend.includes("仅本机可访问"));
   ok("工作区标签菜单包含四种关闭方式", ["关闭当前标签", "关闭其他标签", "关闭右侧标签", "关闭所有标签"].every(text => frontend.includes(text)));
-  ok("工作区标签支持即时拖动排序、内容自适应标题和持久化", frontend.includes("beginWorkspaceTabDrag") && frontend.includes("WORKSPACE_TAB_DRAG_THRESHOLD = 5") && frontend.includes("reorderWorkspaceTabElement") && frontend.includes("updateWorkspaceTabAutoScroll") && frontend.includes("saveTabsState") && frontend.includes("向左移动") && frontend.includes("向右移动") && frontend.includes("handleWorkspaceTabsWheel") && frontend.includes("updateWorkspaceTabScrollControls") && frontend.includes('const fullTitle = [tab.title, tab.subtitle]') && frontend.includes('closest(".tabs-shell")?.clientWidth') && indexHtml.includes('id="tabsScrollLeft"') && indexHtml.includes('id="tabsScrollRight"') && appCss.includes("touch-action:pan-y") && appCss.includes(".tab.tab-dragging") && appCss.includes("min-width:64px") && appCss.includes("margin-left:0") && appCss.includes("font-size:12px") && appCss.includes(".tabs::-webkit-scrollbar { display:none; }") && appCss.includes(".tabs-scroll-button[hidden] { display:none; }"));
+  const dockingContract = dockingFrontend.includes("function workspaceLeaves")
+    && dockingFrontend.includes("function workspaceFindPane")
+    && dockingFrontend.includes("function workspaceReplacePaneWithSplit")
+    && dockingFrontend.includes("function pruneWorkspaceLayout")
+    && dockingFrontend.includes("function serializeWorkspaceLayout")
+    && dockingFrontend.includes("function restoreWorkspaceLayoutNode")
+    && dockingFrontend.includes("function workspaceDropZoneAtPoint")
+    && ["left", "right", "top", "bottom"].every(zone => dockingFrontend.includes(`[\"${zone}\"`))
+    && dockingFrontend.includes("duplicateWorkspaceTab")
+    && dockingFrontend.includes("focusedPaneId")
+    && indexHtml.includes('id="workspaceDock"')
+    && indexHtml.includes('id="workspaceViewsTpl"')
+    && appCss.includes(".workspace-split-row")
+    && appCss.includes(".workspace-split-column")
+    && appCss.includes(".workspace-splitter")
+    && appCss.includes("@container workspace-pane")
+    && appCss.includes(".workspace-pane-drop-indicator");
+  const dockingResult = runWorkspaceDockingChecks({silent:true});
+  ok("工作区支持递归分屏、四向落点、比例持久化与移动端单区块", dockingContract && dockingResult.passed, dockingResult.failures.join("; "));
   ok("窄屏终端工具栏分行、左对齐并保留全部操作", appCss.includes("container-name:terminal-view") && appCss.includes("container-name:terminal-toolbar") && appCss.includes("@container terminal-view (max-width:1080px)") && appCss.includes("@container terminal-toolbar (max-width:1080px)") && appCss.includes("@container terminal-toolbar (max-width:700px)") && appCss.includes(".terminal-title-row { flex:1 1 100%; width:100%; }") && appCss.includes(".terminal-actions { justify-content:flex-start; }") && appCss.includes(".terminal-actions > button:not(.terminal-dropdown-button) > span { display:none; }"));
   ok("移动端终端标题行按内容收缩不留大块空白", appCss.includes(".terminal-title-row { flex:0 0 auto; width:100%; }") && appCss.includes(".terminal-toolbar { align-items:flex-start; flex-direction:column"));
   ok("移动端终端字体菜单限制高度并保持关闭入口可见", appCss.includes(".mobile-action-menu { position:fixed") && appCss.includes("max-height:min(68dvh") && appCss.includes("overflow-y:auto") && appCss.includes(".mobile-action-menu .action-menu-close { position:sticky"));
@@ -233,7 +253,7 @@ async function main() {
   const runtimeSettingsSource = read("src/runtime-settings.ts");
   ok("全局终端设置独立持久化并应用到当前和未来会话", runtimeSettingsSource.includes("DEFAULT_TERMINAL_SETTINGS") && runtimeSettingsSource.includes("normalizeTerminalSettings") && runtimeSettingsSource.includes("schema_version: 5") && serverSource.includes("terminal: data.terminal ?? current.terminal") && terminalFrontend.includes("showTerminalGlobalSettings") && terminalFrontend.includes("applyTerminalGlobalSettingsToSessions") && terminalFrontend.includes("bindTerminalGlobalBehavior") && terminalFrontend.includes("registerLinkProvider") && terminalFrontend.includes("onSelectionChange") && terminalFrontend.includes('addEventListener("paste"') && terminalFrontend.includes("sendTerminalPasteText") && terminalFrontend.includes("editTerminalMultilinePaste") && terminalFrontend.includes("打开可编辑命令窗口") && terminalFrontend.includes("formatTerminalCopiedText") && terminalFrontend.includes("应用到全部连接和终端会话"));
   ok("移动端长按终端提供精简复制菜单和可滚动光标复制", terminalFrontend.includes("showTerminalContextMenu(event, key, connectionId)") && !terminalFrontend.includes("selectTerminalWordAtPointer") && terminalFrontend.includes("会话复制") && terminalFrontend.includes("showTerminalSessionText") && terminalFrontend.includes("光标复制") && terminalFrontend.includes("startTerminalCursorCopy") && terminalFrontend.includes('selectionBackground:"#2563eb"') && terminalFrontend.includes("scrollLines(direction)") && terminalFrontend.includes("touchOffset") && terminalFrontend.includes("navigator.clipboard?.readText") && read("public/app-utils.js").includes("writeClipboardText"));
-  ok("工作区按设置恢复所有标签类型", workspaceFrontend.includes("restore_workspace_tabs") && workspaceFrontend.includes("tabs.filter(tab => tab.kind)") && !workspaceFrontend.includes('tab.kind !== "terminal"') && settingsFrontend.includes('id="restoreWorkspaceTabs"'));
+  ok("工作区按设置恢复所有标签类型", dockingFrontend.includes("restore_workspace_tabs") && dockingFrontend.includes("tabs.filter(tab => tab.kind)") && !dockingFrontend.includes('tab.kind !== "terminal"') && settingsFrontend.includes('id="restoreWorkspaceTabs"'));
   ok("SFTP 使用 Ace 编辑器、语言模式、换行、图片预览和页面内全局设置", Boolean(packageJson.dependencies?.["ace-builds"]) && indexHtml.includes("/vendor/ace/ace.js") && serverSource.includes("ACE_VENDOR_DIR") && sftpFrontend.includes("sftpEditorLanguageForFile") && sftpFrontend.includes("ace.edit") && sftpFrontend.includes("setUseWrapMode") && sftpFrontend.includes("previewSftpImage") && serverSource.includes("preview-image") && sftpFrontend.includes('id="sftpGlobalSettingsButton"') && settingsFrontend.includes("showSftpGlobalSettings") && settingsFrontend.includes("sftpMaxOpenFileSizeMb"));
   ok("SFTP 图片按二进制响应且 JSON 可一键格式化", serverSource.includes("Buffer.isBuffer(data)") && serverSource.includes("data instanceof Uint8Array") && sftpFrontend.includes('id="sftpTextFormatJson"') && sftpFrontend.includes("JSON.stringify(parsed, null, 2)") && sftpFrontend.includes("JSON 格式错误"));
   ok("SFTP 下载按桌面与浏览器分流并管理临时缓存", runtimeSettingsSource.includes("sftp_download_directory") && serverSource.includes('deliveryMode: desktop ? "desktop" : "browser"') && read("src/sftp-jobs.ts").includes("autoSaveDownloadedFile") && read("src/sftp-jobs.ts").includes("DOWNLOAD_CACHE_TTL_MS") && read("src/sftp-jobs.ts").includes("BROWSER_DELIVERY_GRACE_MS") && read("src/sftp-jobs.ts").includes("markSftpJobDelivered") && sftpFrontend.includes("首次下载提示") && sftpFrontend.includes("sftpPendingBrowserDownloads") && sftpFrontend.includes("保存到本机") && sftpFrontend.includes("打开目录") && settingsFrontend.includes("SFTP 自动保存目录"));
@@ -268,7 +288,7 @@ async function main() {
   ok("桌面活动栏切换整个操作面板并释放工作区宽度", !indexHtml.includes('id="operationPaneToggle"') && !indexHtml.includes('id="operationPaneExpand"') && indexHtml.includes('id="operationPaneCollapse"') && indexHtml.includes('class="brand-name-short"') && indexHtml.includes("showPrimary('connections', true)") && indexHtml.includes("showPrimary('settings', true)") && workspaceFrontend.includes("name === primaryView ? !operationPaneCollapsed : false") && workspaceFrontend.includes('localStorage.setItem("operationPaneCollapsed"') && appCss.includes(".app.operation-pane-collapsed") && appCss.includes("grid-template-columns:46px minmax(0,1fr)") && appCss.includes(".app.operation-pane-collapsed .brand-name-short"));
   ok("主题和刷新入口位于活动栏底部且保留移动端入口", indexHtml.indexOf('id="themeToggle"') > indexHtml.indexOf('class="activity-bottom"') && indexHtml.indexOf('id="activityRefresh"') > indexHtml.indexOf('id="themeToggle"') && indexHtml.indexOf('class="github-link"') > indexHtml.indexOf('id="activityRefresh"') && indexHtml.includes("mobile-brand-action theme-toggle") && read("public/app-utils.js").includes('querySelectorAll(".theme-toggle")'));
   ok("终端工具栏使用紧凑单行控件", appCss.includes(".terminal-actions { flex:1 1 590px; flex-wrap:nowrap") && appCss.includes(".terminal-actions button { flex:0 0 auto; height:30px") && appCss.includes(".terminal-actions button > svg.lucide { width:14px"));
-  ok("桌面工作区标题、标签与内容留白使用紧凑高度", appCss.includes("grid-template-rows:42px minmax(0,1fr)") && appCss.includes(".topbar { height:42px") && appCss.includes(".tabs-shell { height:32px") && appCss.includes(".workspace { padding:12px") && appCss.includes(".content.terminal-content .workspace { padding:6px 12px 12px"));
+  ok("桌面工作区标题、标签与内容留白使用紧凑高度", appCss.includes("grid-template-rows:42px minmax(0,1fr)") && appCss.includes(".topbar { height:42px") && appCss.includes(".tabs-shell { height:32px") && appCss.includes(".workspace { padding:12px") && appCss.includes(".workspace-pane.terminal-pane > .workspace { padding:6px 12px 12px"));
   ok("欢迎页转发计数随当前状态实时刷新", appEntry.includes('if (activeView === "welcome") renderStartupSummary()') && workspaceFrontend.includes('forward.status === "running"') && workspaceFrontend.includes('forward.status === "reconnecting"') && workspaceFrontend.includes('forward.status === "failed"') && workspaceFrontend.includes("运行中 ${running}") && workspaceFrontend.includes("异常 ${failed}") && !workspaceFrontend.includes("转发成功 ${success}"));
   ok("连接转发按钮保留完整文字宽度", appCss.includes("minmax(84px,1.35fr)") && frontend.includes("connection-forward-toggle"));
   ok("Web 数据路径支持跨根目录浏览、安全远程管理与自动重启", settingsFrontend.includes("openStorageDirectoryBrowser") && settingsFrontend.includes("data-storage-root") && serverSource.includes('pathname === "/api/storage/directories"') && serverSource.includes("storageManagementAvailable") && serverSource.includes("!authRequired(req)") && serverSource.includes("restart-web.js") && fs.existsSync(path.join(root, "scripts/restart-web.js")) && read("src/config.ts").includes(".tunneldesk-storage.json"));

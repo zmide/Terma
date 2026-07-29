@@ -20,6 +20,15 @@ const UPDATE_NOTICE_SESSION_KEY = "tunneldeskUpdateReadVersion";
 let updateNoticeReadVersion = "";
 try { updateNoticeReadVersion = sessionStorage.getItem(UPDATE_NOTICE_SESSION_KEY) || ""; } catch {}
 
+function captureSettingsPane() {
+  return typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
+}
+
+function settingsQueryAll(selector) {
+  const scope = typeof currentWorkspaceDomScope === "function" ? currentWorkspaceDomScope() : null;
+  return (scope || document).querySelectorAll(selector);
+}
+
 function normalizeSettingsSection(id) {
   if (id === "settings-advanced") return "settings-basic";
   return Object.prototype.hasOwnProperty.call(SETTINGS_SECTION_META, id) ? id : "settings-general";
@@ -59,6 +68,7 @@ function syncUpdateNoticeForCurrentSection() {
 }
 
 async function loadCachedUpdateStatus() {
+  const inPane = captureSettingsPane();
   try {
     const [status, download] = await Promise.all([
       api("/api/updates/status"),
@@ -66,10 +76,12 @@ async function loadCachedUpdateStatus() {
     ]);
     if (status && typeof status === "object") updateSettings = status;
     if (updateSettings && download) updateSettings.download_status = download;
-    const area = $("updateCheckArea");
-    if (area) area.innerHTML = updateStatusHtml();
-    if (download?.state === "downloading") startUpdateDownloadPolling();
-    syncUpdateNoticeForCurrentSection();
+    inPane(() => {
+      const area = $("updateCheckArea");
+      if (area) area.innerHTML = updateStatusHtml();
+      syncUpdateNoticeForCurrentSection();
+    });
+    if (download?.state === "downloading") startUpdateDownloadPolling(inPane);
   } catch {}
 }
 
@@ -161,11 +173,12 @@ async function openStorageDirectoryBrowser(startPath="") {
 
 async function saveWebStorageSettings(button) {
   const root = $("webStorageRoot")?.value.trim() || "";
+  const migrate = Boolean($("webStorageMigrate")?.checked);
   if (!root) return notify("请选择运行根目录", "error");
   if (!await confirmModal("保存后会停止当前转发、迁移数据并重启 TunnelDesk。继续？", "更改数据路径", "保存并重启", "取消", true)) return;
   try {
     setButtonBusy(button, true, "正在保存");
-    const result = await api("/api/desktop-settings", {method:"PUT", body:JSON.stringify({root, migrate:Boolean($("webStorageMigrate")?.checked)})});
+    const result = await api("/api/desktop-settings", {method:"PUT", body:JSON.stringify({root, migrate})});
     notify("数据路径已保存，正在重启 TunnelDesk", "success");
     await waitForStorageRestart(result.data_dir);
   } catch (error) {
@@ -217,9 +230,13 @@ function syncDesktopCustomDataMode() {
 }
 
 async function chooseDesktopDataDirectory() {
+  const inPane = captureSettingsPane();
   try {
     const result = await api("/api/desktop-settings/choose-data-dir", {method:"POST", body:"{}"});
-    if (result.path && $("desktopCustomDataDir")) $("desktopCustomDataDir").value = result.path;
+    inPane(() => {
+      const input = $("desktopCustomDataDir");
+      if (result.path && input) input.value = result.path;
+    });
   } catch (error) { notify(error.message || "目录选择失败", "error"); }
 }
 
@@ -249,6 +266,21 @@ function runtimeHostValues(value) {
 function runtimePortValue(value, fallback=8088) {
   const port = Number(value);
   return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : fallback;
+}
+
+function normalizeWorkspaceToolbarPlacement(value={}) {
+  const source = value && typeof value === "object" ? value : {};
+  const placement = candidate => ["tab", "header"].includes(candidate) ? candidate : "header";
+  return {
+    unsplit: {
+      terminal:placement(source.unsplit?.terminal),
+      sftp:placement(source.unsplit?.sftp)
+    },
+    split: {
+      terminal:placement(source.split?.terminal),
+      sftp:placement(source.split?.sftp)
+    }
+  };
 }
 
 function normalizeRuntimeSettingsResponse(value={}) {
@@ -298,6 +330,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
     sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
     sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 5,
     restore_workspace_tabs: savedSource.restore_workspace_tabs !== false,
+    workspace_toolbar_placement: normalizeWorkspaceToolbarPlacement(savedSource.workspace_toolbar_placement),
     saved: {
       ...savedSource,
       listen_hosts: savedHosts.length ? savedHosts : ["127.0.0.1"],
@@ -305,7 +338,8 @@ function normalizeRuntimeSettingsResponse(value={}) {
       sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
       sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 5,
       sftp_download_directory: String(savedSource.sftp_download_directory || ""),
-      restore_workspace_tabs: savedSource.restore_workspace_tabs !== false
+      restore_workspace_tabs: savedSource.restore_workspace_tabs !== false,
+      workspace_toolbar_placement: normalizeWorkspaceToolbarPlacement(savedSource.workspace_toolbar_placement)
     },
     effective: {
       ...effectiveSource,
@@ -321,6 +355,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
 }
 
 async function loadRuntimeSettings(refreshUi=false) {
+  const inPane = captureSettingsPane();
   runtimeSettingsMessage = null;
   runtimeSettingsCheck = null;
   try {
@@ -328,7 +363,7 @@ async function loadRuntimeSettings(refreshUi=false) {
   } catch (error) {
     runtimeSettings = normalizeRuntimeSettingsResponse({error:error.message || "监听配置加载失败"});
   }
-  if (refreshUi) renderRuntimeSettingsPanel();
+  if (refreshUi) inPane(renderRuntimeSettingsPanel);
   return runtimeSettings;
 }
 
@@ -442,7 +477,7 @@ function clearRuntimeSettingsFeedback() {
 }
 
 function syncRuntimeHostOptions(source=null) {
-  const options = [...document.querySelectorAll('[name="runtimeListenHost"]')];
+  const options = [...settingsQueryAll('[name="runtimeListenHost"]')];
   if (!options.length) return;
   const wildcard = options.find(input => input.value === "0.0.0.0");
   if (source?.value === "0.0.0.0" && source.checked) {
@@ -461,7 +496,7 @@ function syncRuntimeHostOptions(source=null) {
 }
 
 function runtimeSettingsFormValue() {
-  const listen_hosts = [...document.querySelectorAll('[name="runtimeListenHost"]:checked')].map(input => input.value);
+  const listen_hosts = [...settingsQueryAll('[name="runtimeListenHost"]:checked')].map(input => input.value);
   const listen_port = Number($("runtimeListenPort")?.value);
   if (!listen_hosts.length) throw new Error("请至少选择一个监听地址");
   if (!Number.isInteger(listen_port) || listen_port < 1 || listen_port > 65535) throw new Error("监听端口必须是 1-65535 的整数");
@@ -469,6 +504,7 @@ function runtimeSettingsFormValue() {
 }
 
 async function checkRuntimeSettings() {
+  const inPane = captureSettingsPane();
   let payload;
   try {
     payload = runtimeSettingsFormValue();
@@ -485,8 +521,10 @@ async function checkRuntimeSettings() {
   } catch (error) {
     runtimeSettingsCheck = {error:error.message || "端口占用检查失败"};
   } finally {
-    setButtonBusy($("runtimeCheckBtn"), false);
-    renderRuntimeSettingsFeedback();
+    inPane(() => {
+      setButtonBusy(button, false);
+      renderRuntimeSettingsFeedback();
+    });
   }
 }
 
@@ -498,6 +536,7 @@ function useRuntimeSuggestedPort(port) {
 }
 
 async function saveRuntimeSettings() {
+  const inPane = captureSettingsPane();
   let payload;
   try {
     payload = runtimeSettingsFormValue();
@@ -520,35 +559,78 @@ async function saveRuntimeSettings() {
     });
     runtimeSettingsCheck = null;
     runtimeSettingsMessage = {type:"success", text:"监听配置已保存。当前服务不会立即断开，请重启 TunnelDesk 后应用新的地址和端口。"};
-    renderRuntimeSettingsPanel();
+    inPane(renderRuntimeSettingsPanel);
     notify("监听配置已保存，重启 TunnelDesk 后生效", "success");
   } catch (error) {
     runtimeSettingsMessage = {type:"error", text:error.message || "监听配置保存失败"};
-    renderRuntimeSettingsFeedback();
+    inPane(renderRuntimeSettingsFeedback);
   } finally {
-    setButtonBusy($("runtimeSaveBtn"), false);
+    inPane(() => setButtonBusy(button, false));
   }
 }
 
-async function saveWorkspaceRestoreSetting() {
+function workspaceToolbarPlacementFormValue() {
+  return {
+    unsplit: {
+      terminal:$('toolbarPlacementUnsplitTerminal')?.value || "header",
+      sftp:$('toolbarPlacementUnsplitSftp')?.value || "header"
+    },
+    split: {
+      terminal:$('toolbarPlacementSplitTerminal')?.value || "header",
+      sftp:$('toolbarPlacementSplitSftp')?.value || "header"
+    }
+  };
+}
+
+function syncWorkspaceToolbarPlacementInputs(value) {
+  const normalized = normalizeWorkspaceToolbarPlacement(value);
+  const fields = {
+    toolbarPlacementUnsplitTerminal:normalized.unsplit.terminal,
+    toolbarPlacementUnsplitSftp:normalized.unsplit.sftp,
+    toolbarPlacementSplitTerminal:normalized.split.terminal,
+    toolbarPlacementSplitSftp:normalized.split.sftp
+  };
+  for (const [id, placement] of Object.entries(fields)) {
+    const input = $(id);
+    if (input) input.value = placement;
+  }
+}
+
+async function saveWorkspaceSettings() {
+  const inPane = captureSettingsPane();
   const input = $("restoreWorkspaceTabs");
   const button = $("restoreWorkspaceTabsSave");
   if (!input || !button) return;
   setButtonBusy(button, true, "保存中");
   try {
+    const workspace_toolbar_placement = workspaceToolbarPlacementFormValue();
     const result = await api("/api/runtime-settings", {
       method:"PUT",
-      body:JSON.stringify({restore_workspace_tabs:input.checked})
+      body:JSON.stringify({
+        restore_workspace_tabs:input.checked,
+        workspace_toolbar_placement
+      })
     });
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
-    input.checked = runtimeSettings.saved.restore_workspace_tabs;
-    notify(input.checked ? "下次启动会恢复未关闭的工作区标签" : "下次启动不会恢复工作区标签", "success");
+    inPane(() => {
+      input.checked = runtimeSettings.saved.restore_workspace_tabs;
+      syncWorkspaceToolbarPlacementInputs(runtimeSettings.saved.workspace_toolbar_placement);
+      if (typeof syncWorkspaceToolbarPlacements === "function") syncWorkspaceToolbarPlacements();
+    });
+    notify("工作区设置已保存", "success");
   } catch (error) {
-    input.checked = runtimeSettings?.saved?.restore_workspace_tabs !== false;
-    notify(error.message || "工作区标签恢复设置保存失败", "error");
+    inPane(() => {
+      input.checked = runtimeSettings?.saved?.restore_workspace_tabs !== false;
+      syncWorkspaceToolbarPlacementInputs(runtimeSettings?.saved?.workspace_toolbar_placement);
+    });
+    notify(error.message || "工作区设置保存失败", "error");
   } finally {
-    setButtonBusy(button, false);
+    inPane(() => setButtonBusy(button, false));
   }
+}
+
+async function saveWorkspaceRestoreSetting() {
+  return saveWorkspaceSettings();
 }
 
 function cacheManagementPanelHtml() {
@@ -582,11 +664,13 @@ function renderCacheManagementPanel() {
 }
 
 async function refreshProgramCacheSettings() {
-  try { await loadProgramCacheSettings(); renderCacheManagementPanel(); }
+  const inPane = captureSettingsPane();
+  try { await loadProgramCacheSettings(); inPane(renderCacheManagementPanel); }
   catch (error) { notify(error.message || "缓存占用读取失败", "error"); }
 }
 
 async function clearProgramCache() {
+  const inPane = captureSettingsPane();
   if (!await confirmModal("清理可重新生成的程序缓存？正在传输、暂停或失败待续传的文件不会删除。", "清理程序缓存", "清理缓存", "取消", true)) return;
   const button = $("clearProgramCacheButton");
   try {
@@ -595,7 +679,7 @@ async function clearProgramCache() {
     if (typeof sftpDirectoryViewCache !== "undefined") sftpDirectoryViewCache.clear();
     if (typeof sftpDirectorySizeCache !== "undefined") sftpDirectorySizeCache.clear();
     if (typeof sftpNativeDragCache !== "undefined") sftpNativeDragCache.clear();
-    renderCacheManagementPanel();
+    inPane(renderCacheManagementPanel);
     notify("程序缓存已清理", "success");
   } catch (error) {
     setButtonBusy(button, false);
@@ -690,8 +774,15 @@ function closeSftpGlobalSettings() {
 }
 
 async function openSettings(updateTab=true) {
-  setWorkspace("设置", "访问保护、通知、运行信息与开源许可", "settings", "settings", updateTab, true, {kind:"settings"});
-  $("view-settings").innerHTML = stateView("loading", "正在加载设置", "正在读取访问保护、运行状态和程序信息。");
+  const paneId = typeof currentWorkspacePaneId === "function" ? currentWorkspacePaneId() : "";
+  const inPane = action => typeof runInWorkspacePane === "function" ? runInWorkspacePane(paneId, action) : action();
+  const currentTab = tabs.find(tab => tab.key === activeTabKey);
+  const tabKey = !updateTab && currentTab?.kind === "settings" ? currentTab.key : "settings";
+  inPane(() => {
+    setWorkspace("设置", "访问保护、通知、运行信息与开源许可", "settings", tabKey, updateTab, true, {kind:"settings"});
+    $("view-settings").innerHTML = stateView("loading", "正在加载设置", "正在读取访问保护、运行状态和程序信息。");
+  });
+  const inTab = typeof captureWorkspaceTab === "function" ? captureWorkspaceTab(tabKey) : inPane;
   try {
     await loadSecuritySettings();
     try {
@@ -702,16 +793,21 @@ async function openSettings(updateTab=true) {
     await loadRuntimeSettings();
     await loadDesktopSettings();
     await loadProgramCacheSettings().catch(() => { programCacheSettings = {bytes:0,reclaimable_bytes:0,categories:{}}; });
-    renderSettings();
-    refreshUpdateStatus(false);
+    inTab(() => {
+      renderSettings();
+      refreshUpdateStatus(false);
+    });
   } catch (error) {
-    $("view-settings").innerHTML = stateView("error", "设置加载失败", error.message, `<button onclick="openSettings(false)">重试</button>`);
+    inTab(() => {
+      $("view-settings").innerHTML = stateView("error", "设置加载失败", error.message, `<button onclick="openSettings(false)">重试</button>`);
+    });
   }
 }
 
 function renderSettings() {
   const s = securitySettings || {};
   const about = aboutSettings || {};
+  const toolbarPlacement = normalizeWorkspaceToolbarPlacement(runtimeSettings?.saved?.workspace_toolbar_placement);
   const uiState = captureUiState($("view-settings") || document);
   $("view-settings").innerHTML = `<div class="panel settings-panel">
     <div class="workspace-head"><div><h2>设置</h2><div class="subtitle">访问保护、通知、运行信息与开源许可。</div></div></div>
@@ -731,7 +827,29 @@ function renderSettings() {
             <h3>工作区</h3>
             <label class="check-row"><input id="restoreWorkspaceTabs" type="checkbox" ${runtimeSettings?.saved?.restore_workspace_tabs !== false ? "checked" : ""}> 恢复上次未关闭的标签</label>
             <div class="muted">默认开启。重新启动 TunnelDesk 后会恢复终端、SFTP、转发、设置、日志、导入导出等所有未关闭的工作区标签。</div>
-            <div class="actions"><button id="restoreWorkspaceTabsSave" class="primary" type="button" onclick="saveWorkspaceRestoreSetting()">${icon("save")}<span>保存工作区设置</span></button></div>
+            <h3>操作按钮位置</h3>
+            <div class="muted">桌面端可以分别设置终端和 SFTP 的操作按钮。选择“工作区标题栏”时，只显示当前焦点标签的按钮；移动端仍使用紧凑布局。</div>
+            <label for="toolbarPlacementUnsplitTerminal">未分屏 · 终端</label>
+            <select id="toolbarPlacementUnsplitTerminal">
+              <option value="tab" ${toolbarPlacement.unsplit.terminal === "tab" ? "selected" : ""}>各自标签内</option>
+              <option value="header" ${toolbarPlacement.unsplit.terminal === "header" ? "selected" : ""}>工作区标题栏</option>
+            </select>
+            <label for="toolbarPlacementUnsplitSftp">未分屏 · SFTP</label>
+            <select id="toolbarPlacementUnsplitSftp">
+              <option value="tab" ${toolbarPlacement.unsplit.sftp === "tab" ? "selected" : ""}>各自标签内</option>
+              <option value="header" ${toolbarPlacement.unsplit.sftp === "header" ? "selected" : ""}>工作区标题栏</option>
+            </select>
+            <label for="toolbarPlacementSplitTerminal">分屏 · 终端</label>
+            <select id="toolbarPlacementSplitTerminal">
+              <option value="tab" ${toolbarPlacement.split.terminal === "tab" ? "selected" : ""}>各自标签内</option>
+              <option value="header" ${toolbarPlacement.split.terminal === "header" ? "selected" : ""}>工作区标题栏</option>
+            </select>
+            <label for="toolbarPlacementSplitSftp">分屏 · SFTP</label>
+            <select id="toolbarPlacementSplitSftp">
+              <option value="tab" ${toolbarPlacement.split.sftp === "tab" ? "selected" : ""}>各自标签内</option>
+              <option value="header" ${toolbarPlacement.split.sftp === "header" ? "selected" : ""}>工作区标题栏</option>
+            </select>
+            <div class="actions"><button id="restoreWorkspaceTabsSave" class="primary" type="button" onclick="saveWorkspaceSettings()">${icon("save")}<span>保存工作区设置</span></button></div>
           </section>
         </div>
       </div>
@@ -875,24 +993,43 @@ function updateStatusHtml() {
   const latestVersion = update.latest_version ? `v${String(update.latest_version).replace(/^v/i, "")}` : "尚无正式版本";
   const checkedAt = update.checked_at ? new Date(update.checked_at).toLocaleString("zh-CN", {hour12:false}) : "尚未检查";
   const publishedAt = update.published_at ? new Date(update.published_at).toLocaleDateString("zh-CN") : "";
-  const download = update.download_status || {};
+  // A completed manual update makes any persisted download result irrelevant.
+  const download = update.update_available ? (update.download_status || {}) : {};
   const progress = Math.max(0, Math.min(100, Number(download.progress_percent || 0)));
   const statusLabel = download.state === "downloading"
-    ? "下载中"
+    ? download.phase === "probing"
+      ? "正在测速"
+      : download.phase === "verifying"
+        ? "正在校验"
+        : "下载中"
     : download.state === "downloaded"
       ? "已下载并校验"
       : download.state === "failed"
         ? "下载失败"
         : update.update_available ? "可更新" : "已是最新版";
-  const resourceName = download.selected_asset_name || download.asset_name || "未找到当前平台资源";
+  const resourceName = update.update_available
+    ? download.selected_asset_name || download.asset_name || "未找到当前平台资源"
+    : "当前无需下载";
   const platformLabels = {win32:"Windows", darwin:"macOS", linux:"Linux"};
   const packageLabels = {portable:"便携版", installer:"安装版", dmg:"DMG", zip:"ZIP", appimage:"AppImage", deb:"DEB", rpm:"RPM"};
   const target = [platformLabels[download.platform] || download.platform, download.arch, packageLabels[download.package_type] || download.package_type].filter(Boolean).join(" · ");
   const progressText = download.state === "downloading"
-    ? `${Math.round(progress)}% · ${formatUpdateBytes(download.bytes_downloaded)} / ${formatUpdateBytes(download.size || download.selected_asset_size)}`
+    ? download.phase === "probing"
+      ? "正在测试直连和加速线路"
+      : download.phase === "verifying"
+        ? `100% · 正在校验 SHA-256`
+        : `${Math.round(progress)}% · ${formatUpdateBytes(download.bytes_downloaded)} / ${formatUpdateBytes(download.size || download.selected_asset_size)}`
     : download.state === "downloaded"
       ? `100% · ${formatUpdateBytes(download.size)}`
       : `${Math.round(progress)}%`;
+  const sourceSpeed = formatUpdateSpeed(download.source_speed_bytes_per_second);
+  const sourceText = download.phase === "probing"
+    ? "正在并行测速"
+    : download.source_label
+      ? `${download.source_label}${sourceSpeed ? ` · 测速 ${sourceSpeed}` : ""}`
+      : update.update_available
+        ? "下载前自动选择最快线路"
+        : "";
   const notes = updateReleaseNotesHtml(update);
   const releaseUrl = safeGitHubReleaseUrl(update.release_url);
   const releaseLink = releaseUrl ? `<a class="button-link" href="${escAttr(releaseUrl)}" target="_blank" rel="noopener">${icon("external-link")}<span>查看 Release</span></a>` : "";
@@ -912,7 +1049,7 @@ function updateStatusHtml() {
         ? `${openDirectoryAction || `<span class="muted">便携版已下载并通过校验；请在运行设备的 updates 目录中找到文件，关闭旧版本后手动替换。</span>`}${redownloadAction}`
         : `${download.can_open ? `<button class="primary" onclick="openDownloadedUpdate()">${icon("package-open")}<span>打开已校验安装包</span></button>` : ""}${openDirectoryAction || (!download.can_open ? `<span class="muted">安装包已下载并通过校验；请在运行设备的 updates 目录中手动安装。</span>` : "")}${redownloadAction}`
       : download.state === "downloading"
-        ? `<button id="downloadUpdateBtn" disabled>${icon("download")}<span>正在下载</span></button>`
+        ? `<button id="downloadUpdateBtn" disabled>${icon("download")}<span>${download.phase === "probing" ? "正在测速" : download.phase === "verifying" ? "正在校验" : "正在下载"}</span></button>`
         : `<button id="downloadUpdateBtn" class="primary" onclick="downloadUpdatePackage()">${icon("download")}<span>${download.state === "failed" ? "重新下载并校验" : "下载并校验"}</span></button>`
     : "";
   const downloadError = download.state === "failed" && download.error ? `<div class="warning">更新下载失败：${esc(download.error)}</div>` : "";
@@ -925,12 +1062,13 @@ function updateStatusHtml() {
       <div><dt>状态</dt><dd><span class="status-pill ${download.state === "failed" ? "failed" : update.update_available ? "reconnecting" : "running"}">${esc(statusLabel)}</span><small>最近检查 ${esc(checkedAt)}</small></dd></div>
       <div><dt>最新版本</dt><dd><strong>${esc(latestVersion)}</strong>${publishedAt ? `<small>发布于 ${esc(publishedAt)}</small>` : ""}</dd></div>
       <div><dt>资源</dt><dd><strong title="${escAttr(resourceName)}">${esc(resourceName)}</strong>${target ? `<small>${esc(target)}</small>` : ""}</dd></div>
+      ${sourceText ? `<div><dt>线路</dt><dd><strong>${esc(sourceText)}</strong><small>线路不可用时会自动切换</small></dd></div>` : ""}
       <div><dt>进度</dt><dd><strong>${esc(progressText)}</strong><div class="update-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}"><i style="width:${progress}%"></i></div></dd></div>
     </dl>
     ${notes}${downloadError}
     <div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>检查更新</span></button>${downloadAction}${releaseLink}</div>
     ${ignoreControl}
-    <div class="muted">自动匹配运行 TunnelDesk 主机的平台、架构和 Windows 安装类型；只接受 GitHub HTTPS 资源及匹配的 SHA-256，不会静默安装或自动回滚。</div>
+    <div class="muted">自动匹配运行 TunnelDesk 主机的平台、架构和 Windows 安装类型；下载前会测试直连与加速线路并自动选择最快线路，文件仍按 GitHub 提供的 SHA-256 校验，不会静默安装或自动回滚。</div>
   </div>`;
 }
 
@@ -966,6 +1104,7 @@ function safeGitHubReleaseUrl(value) {
 }
 
 async function refreshUpdateStatus(force=false) {
+  const inPane = captureSettingsPane();
   const button = $("checkUpdateBtn");
   setButtonBusy(button, true, "检查中");
   try {
@@ -973,22 +1112,27 @@ async function refreshUpdateStatus(force=false) {
     const download = await api("/api/updates/download/status").catch(()=>null);
     updateSettings = status;
     if (download) updateSettings.download_status = download;
-    const area = $("updateCheckArea");
-    if (area) area.innerHTML = updateStatusHtml();
-    syncUpdateNoticeForCurrentSection();
+    inPane(() => {
+      const area = $("updateCheckArea");
+      if (area) area.innerHTML = updateStatusHtml();
+      syncUpdateNoticeForCurrentSection();
+    });
     if (force && !updateSettings.update_ignored) notify(updateSettings.update_available ? `发现新版本 v${String(updateSettings.latest_version || "").replace(/^v/i, "")}` : "当前已经是最新版本", updateSettings.update_available ? "info" : "success");
   } catch (error) {
     updateSettings = { error:error.message || "连接 GitHub 失败" };
-    const area = $("updateCheckArea");
-    if (area) area.innerHTML = updateStatusHtml();
-    syncUpdateNoticeForCurrentSection();
+    inPane(() => {
+      const area = $("updateCheckArea");
+      if (area) area.innerHTML = updateStatusHtml();
+      syncUpdateNoticeForCurrentSection();
+    });
     if (force) notify(updateSettings.error, "error");
   } finally {
-    setButtonBusy($("checkUpdateBtn"), false);
+    inPane(() => setButtonBusy(button, false));
   }
 }
 
 async function setUpdateVersionIgnored(input) {
+  const inPane = captureSettingsPane();
   const enabled = Boolean(input?.checked);
   if (input) input.disabled = true;
   try {
@@ -1000,19 +1144,23 @@ async function setUpdateVersionIgnored(input) {
       updateNoticeReadVersion = "";
       try { sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY); } catch {}
     }
-    const area = $("updateCheckArea");
-    if (area) {
-      area.innerHTML = updateStatusHtml();
-      refreshIcons();
-    }
+    inPane(() => {
+      const area = $("updateCheckArea");
+      if (area) {
+        area.innerHTML = updateStatusHtml();
+        refreshIcons();
+      }
+    });
     syncUpdateNoticeDots();
     notify(enabled ? `已忽略 v${currentUpdateNoticeVersion()} 的更新提示` : `已恢复 v${currentUpdateNoticeVersion()} 的更新提示`, "success");
   } catch (error) {
     if (input) input.checked = !enabled;
     notify(error.message || "更新提醒设置保存失败", "error");
   } finally {
-    const current = $("updateIgnoreCurrentVersion");
-    if (current) current.disabled = false;
+    inPane(() => {
+      const current = $("updateIgnoreCurrentVersion");
+      if (current) current.disabled = false;
+    });
   }
 }
 
@@ -1021,50 +1169,69 @@ function stopUpdateDownloadPolling() {
   updateDownloadPollingTimer = null;
 }
 
-async function refreshUpdateDownloadProgress() {
+async function refreshUpdateDownloadProgress(inPane=captureSettingsPane()) {
   try {
     const download = await api("/api/updates/download/status");
     if (!updateSettings) return;
     updateSettings.download_status = download;
-    const area = $("updateCheckArea");
-    if (area) {
-      area.innerHTML = updateStatusHtml();
-      refreshIcons();
-    }
+    inPane(() => {
+      const area = $("updateCheckArea");
+      if (area) {
+        area.innerHTML = updateStatusHtml();
+        refreshIcons();
+      }
+    });
     if (download.state !== "downloading") stopUpdateDownloadPolling();
   } catch {}
 }
 
-function startUpdateDownloadPolling() {
+function startUpdateDownloadPolling(inPane=captureSettingsPane()) {
   if (updateDownloadPollingTimer) return;
-  updateDownloadPollingTimer = setInterval(refreshUpdateDownloadProgress, 500);
+  updateDownloadPollingTimer = setInterval(() => refreshUpdateDownloadProgress(inPane), 500);
+}
+
+function formatUpdateSpeed(value) {
+  const bytesPerSecond = Number(value || 0);
+  return Number.isFinite(bytesPerSecond) && bytesPerSecond > 0 ? `${formatUpdateBytes(bytesPerSecond)}/s` : "";
 }
 
 async function downloadUpdatePackage(redownload=false) {
+  const inPane = captureSettingsPane();
   if (!await confirmModal(
-    `${redownload ? "将重新下载并覆盖当前已下载的更新文件。" : "将从 GitHub Release 下载当前系统的安装产物。"}下载完成后会严格校验 GitHub 提供的 SHA-256 摘要，不会自动安装，也不会关闭当前程序。继续？`,
+    `${redownload ? "将重新下载并覆盖当前已下载的更新文件。" : "将从 GitHub Release 下载当前系统的安装产物。"}下载前会同时测试直连和加速线路，自动选择当前最快线路；某条线路失败时会继续尝试其他线路。下载完成后会严格校验 GitHub 提供的 SHA-256 摘要，不会自动安装，也不会关闭当前程序。继续？`,
     redownload ? "重新下载更新" : "下载并校验更新",
     redownload ? "重新下载" : "开始下载",
     "取消"
   )) return;
   const button = $("downloadUpdateBtn");
-  setButtonBusy(button, true, "下载中");
+  setButtonBusy(button, true, "测速中");
   try {
     const request = api("/api/updates/download", {method:"POST", body:"{}"});
-    startUpdateDownloadPolling();
+    startUpdateDownloadPolling(inPane);
     const result = await request;
     updateSettings.download_status = result;
-    $("updateCheckArea").innerHTML = updateStatusHtml();
-    refreshIcons();
+    inPane(() => {
+      const area = $("updateCheckArea");
+      if (area) area.innerHTML = updateStatusHtml();
+      refreshIcons();
+    });
     notify("更新安装包已下载并通过 SHA-256 校验", "success");
   } catch (error) {
-    updateSettings.download_status = {state:"failed", error:error.message};
-    $("updateCheckArea").innerHTML = updateStatusHtml();
-    refreshIcons();
+    const failedStatus = await api("/api/updates/download/status").catch(() => null);
+    updateSettings.download_status = failedStatus || {
+      ...(updateSettings.download_status || {}),
+      state:"failed",
+      error:error.message
+    };
+    inPane(() => {
+      const area = $("updateCheckArea");
+      if (area) area.innerHTML = updateStatusHtml();
+      refreshIcons();
+    });
     notify(error.message, "error");
   } finally {
     stopUpdateDownloadPolling();
-    setButtonBusy($("downloadUpdateBtn"), false);
+    inPane(() => setButtonBusy(button, false));
   }
 }
 
@@ -1098,9 +1265,10 @@ async function openDownloadedUpdateDirectory() {
 }
 
 async function openSettingsSection(id) {
+  const inPane = captureSettingsPane();
   activeSettingsSection = normalizeSettingsSection(id);
   if (activeView !== "settings") await openSettings();
-  showSettingsSection(activeSettingsSection);
+  inPane(() => showSettingsSection(activeSettingsSection));
 }
 
 function showSettingsSection(id, options={}) {
@@ -1113,7 +1281,8 @@ function showSettingsSection(id, options={}) {
   if (activeView === "settings" && $("workspaceSubtitle")) $("workspaceSubtitle").textContent = SETTINGS_SECTION_META[next];
   if (next === "settings-about") markUpdateNoticeRead();
   if (options.moveToWorkspace !== false) {
-    document.querySelector(".workspace")?.scrollTo?.({top:0, behavior:"auto"});
+    const scope = typeof currentWorkspaceDomScope === "function" ? currentWorkspaceDomScope() : document;
+    scope.querySelector(".workspace")?.scrollTo?.({top:0, behavior:"auto"});
     if (isMobileLayout()) showMobileWorkspace();
   }
 }
@@ -1160,6 +1329,7 @@ async function showLicenseModal() {
 
 async function loadRuntimeDiagnostics() {
   const box = $("runtimeDiagnostics");
+  const view = box?.closest("#view-settings");
   if (!box) return;
   box.textContent = "正在加载...";
   try {
@@ -1176,7 +1346,7 @@ async function loadRuntimeDiagnostics() {
     const localUrl = safeRuntimeUrl(data.web_url || webInfo?.local_url || runtimeSettings?.local_url);
     const lanUrls = [...new Set((data.lan_urls || webInfo?.lan_urls || runtimeSettings?.lan_urls || []).map(safeRuntimeUrl).filter(Boolean))];
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, local_url:localUrl, lan_urls:lanUrls});
-    const urls = $("runtimeCurrentUrls");
+    const urls = view?.querySelector("#runtimeCurrentUrls");
     if (urls) urls.innerHTML = runtimeUrlListHtml();
     const actualHosts = runtimeHostValues(webInfo?.hosts || webInfo?.host || runtimeSettings?.effective?.listen_hosts);
     const actualPort = runtimePortValue(webInfo?.port ?? runtimeSettings?.effective?.listen_port);
@@ -1232,6 +1402,7 @@ async function saveSecurityOptions() {
 }
 
 async function saveSessionManagement() {
+  const inPane = captureSettingsPane();
   const session_ttl_minutes = Number($("securitySessionTtlMinutes").value);
   const session_max_sessions = Number($("securitySessionMaxSessions").value);
   const session_cleanup_minutes = Number($("securitySessionCleanupMinutes").value);
@@ -1239,8 +1410,10 @@ async function saveSessionManagement() {
     method:"PUT",
     body:JSON.stringify({session_ttl_minutes, session_max_sessions, session_cleanup_minutes})
   });
-  renderSettings();
-  refreshIcons();
+  inPane(() => {
+    renderSettings();
+    refreshIcons();
+  });
   notify("会话设置已保存", "success");
 }
 
@@ -1251,27 +1424,33 @@ async function saveNotificationOptions() {
 }
 
 async function saveWebPassword() {
+  const inPane = captureSettingsPane();
   const password = $("securityPassword").value;
   securitySettings = await api("/api/security/password", {method:"POST", body:JSON.stringify({password})});
-  $("securityPassword").value = "";
-  updateSecurityBadges();
+  inPane(() => {
+    const input = $("securityPassword");
+    if (input) input.value = "";
+    updateSecurityBadges();
+  });
   notify("Web 密码已保存", "success");
 }
 
 async function generateAccessToken() {
+  const inPane = captureSettingsPane();
   if (securitySettings?.token_set && !await confirmModal("重新生成 Token 后，旧 Token 会立即失效。继续？", "重新生成 Token", "继续", "取消", true)) return;
   const result = await api("/api/security/token", {method:"POST", body:JSON.stringify({})});
   securitySettings = result;
-  updateSecurityBadges();
+  inPane(updateSecurityBadges);
   await inputModal("访问 Token 只显示一次", "请保存这个 Token", result.token || "");
   notify("访问 Token 已生成", "success");
 }
 
 async function enableConfigEncryption() {
+  const inPane = captureSettingsPane();
   const password = $("securityMasterPassword").value;
   const result = await api("/api/security/encryption/enable", {method:"POST", body:JSON.stringify({password})});
   await loadSecuritySettings();
-  renderSettings();
+  inPane(renderSettings);
   notify(`配置加密已启用，已处理 ${result.encrypted_rows || 0} 个连接`, "success");
 }
 
@@ -1282,12 +1461,13 @@ async function unlockConfigEncryption() {
 }
 
 async function disableConfigEncryption() {
+  const inPane = captureSettingsPane();
   const password = $("securityMasterPassword").value;
   if (securitySettings?.encryption_enabled && !password) return notify("请输入主密码后再关闭配置加密", "error");
   if (!await confirmModal("关闭配置加密会先用主密码解密已加密字段，再关闭加密。关闭后可以使用普通数据库备份迁移。确认关闭？", "关闭配置加密", "解密并关闭", "取消", true)) return;
   const result = await api("/api/security/encryption/disable", {method:"POST", body:JSON.stringify({password})});
   await loadSecuritySettings();
-  renderSettings();
+  inPane(renderSettings);
   notify(`配置加密已关闭，已解密 ${result.decrypted_rows || 0} 个连接`, "success");
 }
 

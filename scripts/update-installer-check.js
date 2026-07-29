@@ -4,14 +4,62 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { Readable } = require("node:stream");
-const { selectUpdateAsset, UpdateInstaller } = require("../dist/update-installer");
+const { UPDATE_DOWNLOAD_ROUTES, selectUpdateAsset, UpdateInstaller } = require("../dist/update-installer");
 
 function digest(body) {
   return `sha256:${crypto.createHash("sha256").update(body).digest("hex")}`;
 }
 
 function release(asset) {
-  return { latest_version: "1.2.0", update_available: true, assets: [asset] };
+  return { current_version: "1.1.5", latest_version: "1.2.0", update_available: true, assets: [asset] };
+}
+
+function sleep(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+function response(body, options = {}) {
+  const contentType = options.contentType || "application/octet-stream";
+  return {
+    ok: options.ok !== false,
+    status: options.status || (options.ok === false ? 500 : 200),
+    body: body === null ? null : Readable.from([Buffer.from(body || "")]),
+    headers: {
+      get(name) {
+        return String(name || "").toLowerCase() === "content-type" ? contentType : null;
+      }
+    }
+  };
+}
+
+function hangingResponse(onCancel) {
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => new Promise(() => {}),
+          return: async () => {
+            onCancel();
+            return { done:true, value:undefined };
+          }
+        };
+      }
+    },
+    headers: { get: () => "application/octet-stream" }
+  };
+}
+
+function requestHeader(options, name) {
+  const headers = options?.headers;
+  if (typeof headers?.get === "function") return headers.get(name);
+  const key = Object.keys(headers || {}).find(item => item.toLowerCase() === name.toLowerCase());
+  return key ? headers[key] : undefined;
+}
+
+function routeForUrl(url, sourceUrl) {
+  return UPDATE_DOWNLOAD_ROUTES.find(route => (route.prefix ? `${route.prefix}${sourceUrl}` : sourceUrl) === url);
 }
 
 async function main() {
@@ -30,6 +78,17 @@ async function main() {
     assert.equal(selectUpdateAsset([{ name:"TunnelDesk-1.2.0-windows-x64-setup.exe" }], "win32", "x64").name.endsWith("-setup.exe"), true);
     assert.equal(selectUpdateAsset([{ name:"TunnelDesk-1.2.0-macos-arm64.dmg" }], "darwin", "arm64").name.endsWith(".dmg"), true);
     assert.equal(selectUpdateAsset([{ name:"TunnelDesk-1.2.0-linux-x86_64.AppImage" }], "linux", "x64").name.endsWith(".AppImage"), true);
+    assert.deepEqual(
+      UPDATE_DOWNLOAD_ROUTES.map(route => route.prefix),
+      [
+        "",
+        "https://ghfast.top/",
+        "https://v6.gh-proxy.org/",
+        "https://hk.gh-proxy.org/",
+        "https://cdn.gh-proxy.org/",
+        "https://edgeone.gh-proxy.org/"
+      ]
+    );
 
     const portablePreview = new UpdateInstaller(path.join(root, "portable-preview"), {
       platform:"win32",
@@ -61,7 +120,7 @@ async function main() {
     const installer = new UpdateInstaller(root, {
       platform: "win32",
       arch: "x64",
-      fetch: async () => ({ ok:true, status:200, body:Readable.from(body) })
+      fetch: async () => response(body)
     });
     const downloaded = await installer.download(release(asset));
     assert.equal(downloaded.state, "downloaded");
@@ -96,7 +155,7 @@ async function main() {
       platform: "win32",
       arch: "x64",
       windowsPackageType: "installer",
-      fetch: async () => ({ ok:true, status:200, body:Readable.from(body) })
+      fetch: async () => response(body)
     });
     const cleanupDownload = await cleanupInstaller.download(release(asset));
     assert.deepEqual(
@@ -116,7 +175,7 @@ async function main() {
       platform: "win32",
       arch: "x64",
       windowsPackageType: "portable",
-      fetch: async () => ({ ok:true, status:200, body:Readable.from(body) })
+      fetch: async () => response(body)
     });
     const portableCleanupDownload = await portableCleanup.download(release(portableAsset));
     assert.deepEqual(
@@ -131,20 +190,158 @@ async function main() {
     const missingDigest = new UpdateInstaller(path.join(root, "missing"), {
       platform: "win32",
       arch: "x64",
-      fetch: async () => ({ ok:true, status:200, body:Readable.from(body) })
+      fetch: async () => response(body)
     });
     await assert.rejects(() => missingDigest.download(release({...asset, digest:""})), /未提供.*SHA-256/);
+
+    const incomplete = new UpdateInstaller(path.join(root, "incomplete"), {
+      platform: "win32",
+      arch: "x64",
+      fetch: async () => response("wrong")
+    });
+    await assert.rejects(() => incomplete.download(release(asset)), /不完整/);
 
     const mismatch = new UpdateInstaller(path.join(root, "mismatch"), {
       platform: "win32",
       arch: "x64",
-      fetch: async () => ({ ok:true, status:200, body:Readable.from(Buffer.from("wrong")) })
+      fetch: async () => response(Buffer.alloc(body.length, 0x78))
     });
-    await assert.rejects(() => mismatch.download(release(asset)), /不完整|校验失败/);
+    await assert.rejects(() => mismatch.download(release(asset)), /SHA-256 校验失败/);
 
     const untrusted = new UpdateInstaller(path.join(root, "untrusted"), { platform:"win32", arch:"x64" });
     await assert.rejects(() => untrusted.download(release({...asset, url:"https://example.invalid/update.exe"})), /不是受信任/);
-    console.log("更新安装包检查通过：平台/架构/便携类型选包、跨运行形态状态隔离、安装版升级后清理、便携版保留、进度状态、GitHub HTTPS、大小与 SHA-256 校验、篡改拒绝");
+    await assert.rejects(() => untrusted.download(release({...asset, url:"https://token:secret@github.com/zmide/tunneldesk/releases/download/v1.2.0/TunnelDesk.exe"})), /不是受信任/);
+    await assert.rejects(() => untrusted.download(release({...asset, url:"https://github.com/zmide/tunneldesk/archive/refs/tags/v1.2.0.zip"})), /不是有效的 GitHub Release/);
+    await assert.rejects(() => untrusted.download(release({...asset, url:"https://github.com/zmide/tunneldesk/releases/download/v1.2.0/TunnelDesk.exe?token=private"})), /不是受信任/);
+
+    const staleRoot = path.join(root, "stale-failure");
+    fs.mkdirSync(path.join(staleRoot, "updates"), { recursive: true });
+    fs.writeFileSync(path.join(staleRoot, "updates", "state.json"), JSON.stringify({
+      schema_version: 1,
+      state: "failed",
+      version: "1.2.0",
+      asset_name: asset.name,
+      selected_asset_name: asset.name,
+      platform: "win32",
+      arch: "x64",
+      package_type: "installer",
+      error: "fetch failed"
+    }));
+    const staleInstaller = new UpdateInstaller(staleRoot, { platform:"win32", arch:"x64" });
+    const upToDate = staleInstaller.status({
+      current_version: "1.2.0",
+      latest_version: "v1.2.0",
+      update_available: false,
+      assets: []
+    });
+    assert.equal(upToDate.state, "idle");
+    assert.equal(upToDate.error, undefined);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(staleRoot, "updates", "state.json"), "utf8")).state, "idle");
+
+    const staleDownloadedRoot = path.join(root, "stale-downloaded");
+    const staleDownloadedDirectory = path.join(staleDownloadedRoot, "updates");
+    const staleDownloadedFile = path.join(staleDownloadedDirectory, asset.name);
+    fs.mkdirSync(staleDownloadedDirectory, { recursive: true });
+    fs.writeFileSync(staleDownloadedFile, body);
+    fs.writeFileSync(path.join(staleDownloadedDirectory, "state.json"), JSON.stringify({
+      schema_version: 1,
+      state: "downloaded",
+      version: "1.2.0",
+      asset_name: asset.name,
+      selected_asset_name: asset.name,
+      file: staleDownloadedFile,
+      digest: asset.digest,
+      platform: "win32",
+      arch: "x64",
+      package_type: "installer"
+    }));
+    const staleDownloadedInstaller = new UpdateInstaller(staleDownloadedRoot, { platform:"win32", arch:"x64" });
+    assert.equal(staleDownloadedInstaller.status({
+      current_version: "1.2.0",
+      latest_version: "1.2.0",
+      update_available: false,
+      assets: []
+    }).state, "idle");
+
+    const routedBody = Buffer.alloc(96 * 1024, 0x5a);
+    const routedAsset = {
+      ...asset,
+      size: routedBody.length,
+      digest: digest(routedBody)
+    };
+    const probeDelays = new Map([
+      ["ghfast", 5],
+      ["gh-proxy-edgeone", 30],
+      ["direct", 60],
+      ["gh-proxy-v6", 90],
+      ["gh-proxy-hk", 120],
+      ["gh-proxy-cdn", 150]
+    ]);
+    const probeIds = [];
+    const downloadIds = [];
+    let activeProbes = 0;
+    let maxActiveProbes = 0;
+    let hungRouteCancelled = false;
+    const routedInstaller = new UpdateInstaller(path.join(root, "routed"), {
+      platform: "win32",
+      arch: "x64",
+      probeTimeoutMs: 250,
+      downloadIdleTimeoutMs: 250,
+      fetch: async (url, options) => {
+        const route = routeForUrl(String(url), routedAsset.url);
+        assert.ok(route, `未知下载线路：${url}`);
+        if (requestHeader(options, "range")) {
+          probeIds.push(route.id);
+          activeProbes += 1;
+          maxActiveProbes = Math.max(maxActiveProbes, activeProbes);
+          try {
+            if (route.id === "gh-proxy-cdn") {
+              await new Promise((_, reject) => options.signal.addEventListener("abort", () => {
+                const error = new Error("aborted");
+                error.name = "AbortError";
+                reject(error);
+              }, { once:true }));
+            }
+            await sleep(probeDelays.get(route.id));
+            return response(routedBody);
+          } finally {
+            activeProbes -= 1;
+          }
+        }
+        downloadIds.push(route.id);
+        if (route.id === "ghfast") return hangingResponse(() => { hungRouteCancelled = true; });
+        return response(routedBody);
+      }
+    });
+    const routedDownloadPromise = routedInstaller.download(release(routedAsset));
+    assert.equal(routedInstaller.status(release(routedAsset)).phase, "probing");
+    const routedDownload = await routedDownloadPromise;
+    assert.deepEqual([...new Set(probeIds)].sort(), UPDATE_DOWNLOAD_ROUTES.map(route => route.id).sort());
+    assert.equal(maxActiveProbes, UPDATE_DOWNLOAD_ROUTES.length);
+    assert.deepEqual(downloadIds.slice(0, 2), ["ghfast", "gh-proxy-edgeone"]);
+    assert.equal(routedDownload.source_id, "gh-proxy-edgeone");
+    assert.equal(routedDownload.source_label, "edgeone.gh-proxy.org");
+    assert.equal(hungRouteCancelled, true);
+    assert.equal(routedDownload.probe_results.length, UPDATE_DOWNLOAD_ROUTES.length);
+    assert.equal(routedDownload.probe_results.find(item => item.id === "ghfast").available, true);
+    assert.deepEqual(
+      {
+        available: routedDownload.probe_results.find(item => item.id === "gh-proxy-cdn").available,
+        error: routedDownload.probe_results.find(item => item.id === "gh-proxy-cdn").error
+      },
+      { available:false, error:"测速超时" }
+    );
+    assert.equal(fs.readFileSync(routedDownload.file).equals(routedBody), true);
+    assert.equal(fs.readdirSync(path.dirname(routedDownload.file)).some(name => name.includes(".part-")), false);
+
+    const htmlInstaller = new UpdateInstaller(path.join(root, "html-response"), {
+      platform: "win32",
+      arch: "x64",
+      fetch: async () => response("<!doctype html><title>proxy error</title>", { contentType:"application/octet-stream" })
+    });
+    await assert.rejects(() => htmlInstaller.download(release(asset)), /返回了网页而不是安装包/);
+
+    console.log("更新安装包检查通过：平台/架构/便携类型选包、升级后旧错误清理、六线路并行测速与失败换线、进度状态、GitHub HTTPS、HTML 拒绝、大小与 SHA-256 校验、篡改拒绝");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

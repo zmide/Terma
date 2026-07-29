@@ -118,6 +118,76 @@ function checkWindowsActivationAndMetadataFastPath() {
   }
 }
 
+function checkWindowsDelayedDirectoryInternalCancelPath() {
+  const receivedSpecs = [];
+  const internalTargets = [];
+  const cancelled = [];
+  const originalLoad = Module._load;
+  delete require.cache[require.resolve(adapterPath)];
+  Module._load = function(request, parent, isMain) {
+    if (String(request).replaceAll("\\", "/").endsWith("/native/win-sftp-drag")) {
+      return {
+        probe() {
+          return {available:true,supported:true,protocol:"CFSTR_FILEDESCRIPTORW/CFSTR_FILECONTENTS"};
+        },
+        startDrag(spec) {
+          receivedSpecs.push(spec);
+          return {requestId:"win-large-directory"};
+        },
+        activateDrag() { return true; },
+        setInternalTarget(requestId, active) {
+          internalTargets.push({requestId, active});
+          return true;
+        },
+        cancelDrag(requestId) {
+          cancelled.push(requestId);
+          return true;
+        }
+      };
+    }
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  try {
+    const {createNativeSftpDrag} = require(adapterPath);
+    const adapter = createNativeSftpDrag({
+      platform:"win32",
+      app:{},
+      nativeImage:{},
+      iconPath:path.join(root, "desktop", "assets", "icon.png")
+    });
+    const started = adapter.start({
+      requestId:"renderer-large-directory",
+      token:"fixture-large-directory-token",
+      manifestUrl:"http://127.0.0.1:8088/api/sftp/native-drag/fixture-large-directory-token",
+      contentBaseUrl:"http://127.0.0.1:8088/api/sftp/native-drag/fixture-large-directory-token/content",
+      ticket:{
+        top_level:[{
+          id:"0",
+          name:".cache",
+          type:"directory",
+          size:0,
+          modified_at:0,
+          metadata_known:false
+        }]
+      }
+    }, () => {});
+
+    assert.equal(started.nativeId, "win-large-directory");
+    assert.equal(
+      Object.hasOwn(receivedSpecs[0], "items"),
+      false,
+      "a remote directory must stay manifest-backed instead of being flattened synchronously in Electron"
+    );
+    assert.equal(adapter.setInternalTarget(started.nativeId, {id:1}), true);
+    assert.deepEqual(internalTargets, [{requestId:"win-large-directory",active:true}]);
+    assert.equal(adapter.cancel(started.nativeId), true);
+    assert.deepEqual(cancelled, ["win-large-directory"]);
+  } finally {
+    Module._load = originalLoad;
+    delete require.cache[require.resolve(adapterPath)];
+  }
+}
+
 function checkMacPromiseUsesTicketItemId() {
   let receivedSpec = null;
   const originalLoad = Module._load;
@@ -545,9 +615,10 @@ function checkNativeSessionRaceGuards() {
   assert.match(adapterSource, /waitForActivation:true/);
   assert.match(adapterSource, /metadata_known === true/);
   assert.match(adapterSource, /module\.setInternalTarget\?\.\(nativeId, Boolean\(target\)\)/);
-  assert.match(rendererSource, /\{armed:true\}/);
+  assert.match(rendererSource, /\{armed:true,\s*sourceTabKey:tabKey\}/);
   assert.match(rendererSource, /activateSftpDrag\?\.\(pointer\.nativeRequestId\)/);
-  assert.match(rendererSource, /pointer\.activated && \(pointer\.nativeReady \|\| pointer\.nativeStarted\)/);
+  assert.match(rendererSource, /pointer\.activated && pointer\.nativeStarted/);
+  assert.doesNotMatch(rendererSource, /pointer\.activated && \(pointer\.nativeReady \|\| pointer\.nativeStarted\)/);
   assert.match(rendererSource, /event\.type === "ready"[\s\S]*sftpNativeDragPointer\.nativeReady = true/);
   assert.match(rendererSource, /event\.type === "ready"[\s\S]*request\.activated\) window\.tunnelDeskDesktop\?\.activateSftpDrag/);
   assert.match(rendererSource, /event\.type === "transferStarted"[\s\S]*refreshSftpJobs\(\)/);
@@ -562,6 +633,7 @@ function checkNativeSessionRaceGuards() {
 async function main() {
   checkUnavailableNativeFallback();
   checkWindowsActivationAndMetadataFastPath();
+  checkWindowsDelayedDirectoryInternalCancelPath();
   checkMacPromiseUsesTicketItemId();
   checkLinuxHelperUtilities();
   await checkLinuxAdapterStateMachine();

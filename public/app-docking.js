@@ -1,0 +1,1457 @@
+const WORKSPACE_LAYOUT_VERSION = 1;
+const WORKSPACE_MIN_SPLIT_RATIO = 0.15;
+const WORKSPACE_MAX_SPLIT_RATIO = 0.85;
+const WORKSPACE_MAX_RESTORE_DEPTH = 64;
+const WORKSPACE_MAX_RESTORE_NODES = 256;
+const legacyWorkspaceApi = {
+  renderTabs,
+  updateWorkspaceTabScrollControls,
+  scrollWorkspaceTabs,
+  handleWorkspaceTabsWheel,
+  revealWorkspaceTab,
+  addTab,
+  setWorkspaceTabConnectionStatus,
+  renderTabContent,
+  activateTab,
+  setWorkspace,
+  closeTab,
+  closeTabsByKey,
+  closeTabsByMode,
+  moveWorkspaceTab,
+  showTabContextMenu,
+  beginWorkspaceTabDrag,
+  moveWorkspaceTabDrag,
+  finishWorkspaceTabDrag,
+  persistableTabs,
+  saveTabsState,
+  restoreTabsState,
+  syncResponsivePane
+};
+let workspacePaneSerial = 1;
+let workspaceSplitSerial = 0;
+let workspaceTabCopySerial = 0;
+let workspaceExecutionPaneId = "";
+let focusedPaneId = "pane-1";
+let workspaceLayout = {type:"pane", id:"pane-1", tabs:[], activeTabKey:""};
+let workspaceTabDropTarget = null;
+let workspaceSplitterDrag = null;
+const workspacePaneNodes = new Map();
+
+function workspaceCssEscape(value) {
+  if (typeof cssEscape === "function") return cssEscape(value);
+  if (globalThis.CSS?.escape) return CSS.escape(String(value || ""));
+  return String(value || "").replace(/["\\]/g, "\\$&");
+}
+
+function workspaceDockElement() {
+  return document.getElementById("workspaceDock");
+}
+
+function workspaceLeaves(node=workspaceLayout, result=[]) {
+  if (!node) return result;
+  if (node.type === "pane") result.push(node);
+  else {
+    workspaceLeaves(node.first, result);
+    workspaceLeaves(node.second, result);
+  }
+  return result;
+}
+
+function workspaceFindPane(paneId, node=workspaceLayout) {
+  if (!node) return null;
+  if (node.type === "pane") return node.id === paneId ? node : null;
+  return workspaceFindPane(paneId, node.first) || workspaceFindPane(paneId, node.second);
+}
+
+function workspaceFindPaneForTab(key) {
+  return workspaceLeaves().find(pane => pane.tabs.includes(key)) || null;
+}
+
+function workspaceFindSplit(splitId, node=workspaceLayout) {
+  if (!node || node.type === "pane") return null;
+  if (node.id === splitId) return node;
+  return workspaceFindSplit(splitId, node.first) || workspaceFindSplit(splitId, node.second);
+}
+
+function currentWorkspacePaneId() {
+  return workspaceExecutionPaneId || focusedPaneId || workspaceLeaves()[0]?.id || "pane-1";
+}
+
+function currentWorkspaceDomScope() {
+  const paneId = currentWorkspacePaneId();
+  return workspacePaneNodes.get(paneId)
+    || document.querySelector(`.workspace-pane[data-pane-id="${workspaceCssEscape(paneId)}"]`)
+    || null;
+}
+
+function workspaceGlobalHeaderToolsElement() {
+  return document.getElementById("workspaceGlobalHeaderTools");
+}
+
+function workspacePaneHeaderToolsElement(paneId) {
+  return workspacePaneElement(paneId)?.querySelector('[data-workspace-role="header-tools"]') || null;
+}
+
+function workspaceToolbarSettingsValue() {
+  try {
+    const value = runtimeSettings?.saved?.workspace_toolbar_placement
+      || runtimeSettings?.workspace_toolbar_placement;
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function workspaceToolbarPlacementForTab(tabKey, kind="") {
+  if (isMobileLayout()) return "tab";
+  const tab = tabs.find(item => item.key === tabKey);
+  const toolbarKind = kind || tab?.kind || "";
+  const mode = workspaceLeaves().length > 1 ? "split" : "unsplit";
+  const placement = workspaceToolbarSettingsValue()?.[mode]?.[toolbarKind];
+  return placement === "tab" ? "tab" : "header";
+}
+
+function workspaceToolbarMountElement(kind, tabKey) {
+  const escapedKind = workspaceCssEscape(kind);
+  const escapedKey = workspaceCssEscape(tabKey);
+  const registered = document.querySelector(`[data-workspace-toolbar-mount="${escapedKind}"][data-workspace-tab-key="${escapedKey}"]`);
+  if (registered) return registered;
+  const pane = workspaceFindPaneForTab(tabKey);
+  const view = workspacePaneElement(pane?.id)?.querySelector(`#view-${escapedKind}`);
+  const viewKey = view?.dataset?.workspaceTabKey
+    || view?.dataset?.terminalTabKey
+    || view?.dataset?.sftpTabKey
+    || "";
+  if (!view || (viewKey && viewKey !== tabKey)) return null;
+  const mountId = kind === "terminal" ? "terminalToolbarMount" : kind === "sftp" ? "sftpToolbarMount" : "";
+  return mountId ? view.querySelector(`#${mountId}`) : null;
+}
+
+function registerWorkspaceToolbar(kind, tabKey, toolbar, mount) {
+  if (!toolbar || !tabKey || !["terminal", "sftp"].includes(kind)) return null;
+  toolbar.dataset.workspaceToolbarKind = kind;
+  toolbar.dataset.workspaceTabKey = tabKey;
+  if (mount) {
+    mount.dataset.workspaceToolbarMount = kind;
+    mount.dataset.workspaceTabKey = tabKey;
+  }
+  return toolbar;
+}
+
+function workspaceToolbarRecord(toolbar) {
+  if (!toolbar) return null;
+  const kind = toolbar.dataset.workspaceToolbarKind
+    || (toolbar.classList.contains("terminal-toolbar") ? "terminal" : toolbar.classList.contains("sftp-toolbar") ? "sftp" : "");
+  if (!kind) return null;
+  const pane = toolbar.closest(".workspace-pane");
+  const view = toolbar.closest(`#view-${kind}`);
+  const mount = toolbar.closest("[data-workspace-toolbar-mount]")
+    || toolbar.closest(kind === "terminal" ? "#terminalToolbarMount" : "#sftpToolbarMount");
+  const tabKey = toolbar.dataset.workspaceTabKey
+    || mount?.dataset?.workspaceTabKey
+    || view?.dataset?.workspaceTabKey
+    || view?.dataset?.terminalTabKey
+    || view?.dataset?.sftpTabKey
+    || workspaceFindPane(pane?.dataset?.paneId)?.activeTabKey
+    || "";
+  if (!tabKey) return null;
+  const ownerMount = workspaceToolbarMountElement(kind, tabKey) || mount;
+  registerWorkspaceToolbar(kind, tabKey, toolbar, ownerMount);
+  return {kind, tabKey, toolbar, mount:ownerMount};
+}
+
+function workspaceToolbarDestination(kind, tabKey, mount=null) {
+  const pane = workspaceFindPaneForTab(tabKey);
+  const tab = tabs.find(item => item.key === tabKey);
+  const ownerMount = mount || workspaceToolbarMountElement(kind, tabKey);
+  if (!pane || !tab || tab.kind !== kind || pane.activeTabKey !== tabKey) {
+    return {host:ownerMount, visible:false, header:false};
+  }
+  if (isMobileLayout()) {
+    return {host:ownerMount, visible:pane.id === focusedPaneId, header:false};
+  }
+  if (workspaceToolbarPlacementForTab(tabKey, kind) === "tab") {
+    return {host:workspacePaneHeaderToolsElement(pane.id), visible:true, header:true};
+  }
+  if (pane.id === focusedPaneId) {
+    return {host:workspaceGlobalHeaderToolsElement(), visible:true, header:true};
+  }
+  return {host:ownerMount, visible:false, header:false};
+}
+
+function returnWorkspaceToolbarToMount(toolbar, hidden=true) {
+  const record = workspaceToolbarRecord(toolbar);
+  if (!record) {
+    toolbar?.remove();
+    return;
+  }
+  if (!record.mount?.isConnected) {
+    toolbar.remove();
+    return;
+  }
+  if (record.mount && toolbar.parentElement !== record.mount) record.mount.appendChild(toolbar);
+  toolbar.classList.remove("terminal-toolbar-header", "sftp-toolbar-header");
+  toolbar.hidden = hidden;
+}
+
+function placeWorkspaceToolbar(kind, tabKey, toolbar, mount=null) {
+  registerWorkspaceToolbar(kind, tabKey, toolbar, mount);
+  const ownerMount = mount || workspaceToolbarMountElement(kind, tabKey);
+  if (ownerMount) registerWorkspaceToolbar(kind, tabKey, toolbar, ownerMount);
+  const destination = workspaceToolbarDestination(kind, tabKey, ownerMount);
+  const host = destination.host || ownerMount;
+  if (!host) {
+    toolbar.remove();
+    return false;
+  }
+  for (const existing of [...host.querySelectorAll(":scope > .terminal-toolbar, :scope > .sftp-toolbar")]) {
+    if (existing === toolbar) continue;
+    const existingRecord = workspaceToolbarRecord(existing);
+    if (existingRecord?.kind === kind && existingRecord.tabKey === tabKey) existing.remove();
+    else returnWorkspaceToolbarToMount(existing, true);
+  }
+  if (toolbar.parentElement !== host) host.appendChild(toolbar);
+  toolbar.hidden = !destination.visible;
+  toolbar.classList.toggle("terminal-toolbar-header", destination.header && kind === "terminal");
+  toolbar.classList.toggle("sftp-toolbar-header", destination.header && kind === "sftp");
+  return destination.visible;
+}
+
+function syncWorkspaceToolbarHostVisibility() {
+  const hosts = [
+    workspaceGlobalHeaderToolsElement(),
+    ...[...workspacePaneNodes.values()].map(pane => pane.querySelector('[data-workspace-role="header-tools"]'))
+  ].filter(Boolean);
+  for (const host of hosts) {
+    host.hidden = ![...host.children].some(child => child.matches?.(".terminal-toolbar:not([hidden]), .sftp-toolbar:not([hidden])"));
+  }
+}
+
+function syncWorkspaceToolbarPlacements() {
+  if (!workspaceDockElement()) {
+    if (typeof syncTerminalToolbarPlacement === "function") syncTerminalToolbarPlacement(activeTabKey);
+    if (typeof syncSftpToolbarPlacement === "function") syncSftpToolbarPlacement(activeTabKey);
+    return;
+  }
+  const discovered = [...document.querySelectorAll(".terminal-toolbar, .sftp-toolbar")]
+    .map(workspaceToolbarRecord)
+    .filter(Boolean);
+  const owners = new Map();
+  for (const record of discovered) {
+    const owner = `${record.kind}\0${record.tabKey}`;
+    const previous = owners.get(owner);
+    if (!previous) {
+      owners.set(owner, record);
+      continue;
+    }
+    const previousAtMount = previous.toolbar.parentElement === previous.mount;
+    const currentAtMount = record.toolbar.parentElement === record.mount;
+    if (currentAtMount && !previousAtMount) {
+      previous.toolbar.remove();
+      owners.set(owner, record);
+    } else {
+      record.toolbar.remove();
+    }
+  }
+  const records = [...owners.values()];
+  const ranked = records.map(record => ({
+    ...record,
+    destination:workspaceToolbarDestination(record.kind, record.tabKey, record.mount)
+  })).sort((left, right) => Number(left.destination.visible) - Number(right.destination.visible));
+  for (const record of ranked) placeWorkspaceToolbar(record.kind, record.tabKey, record.toolbar, record.mount);
+  syncWorkspaceToolbarHostVisibility();
+  for (const pane of workspaceVisiblePanes()) {
+    const tab = tabs.find(item => item.key === pane.activeTabKey);
+    if (tab?.kind === "terminal" && typeof updateTerminalStatusForLayout === "function") updateTerminalStatusForLayout(tab.key);
+    if (tab?.kind === "sftp" && typeof syncSftpMobileToolbarState === "function") syncSftpMobileToolbarState(tab.key);
+  }
+  if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
+}
+
+function runInWorkspacePane(paneId, action) {
+  const previousPaneId = workspaceExecutionPaneId;
+  workspaceExecutionPaneId = paneId || previousPaneId || focusedPaneId;
+  try {
+    return action();
+  } finally {
+    workspaceExecutionPaneId = previousPaneId;
+  }
+}
+
+function captureWorkspacePane() {
+  const paneId = currentWorkspacePaneId();
+  return action => {
+    if (workspaceDockElement() && !workspaceFindPane(paneId)) return undefined;
+    return runInWorkspacePane(paneId, action);
+  };
+}
+
+function captureWorkspaceTab(tabKey=activeTabKey) {
+  const fallbackPaneId = currentWorkspacePaneId();
+  return action => {
+    if (!workspaceDockElement()) return runInWorkspacePane(fallbackPaneId, action);
+    const pane = workspaceFindPaneForTab(tabKey);
+    if (!pane || pane.activeTabKey !== tabKey) return undefined;
+    return runInWorkspacePane(pane.id, action);
+  };
+}
+
+function workspacePaneElement(paneId) {
+  return workspacePaneNodes.get(paneId)
+    || document.querySelector(`.workspace-pane[data-pane-id="${workspaceCssEscape(paneId)}"]`)
+    || null;
+}
+
+function workspaceElementForTab(key, selector) {
+  const pane = workspaceFindPaneForTab(key);
+  // A pane reuses one DOM section per view, so inactive tabs must not resolve another tab's mounted controls.
+  if (!pane || pane.activeTabKey !== key) return null;
+  return workspacePaneElement(pane.id)?.querySelector(selector) || null;
+}
+
+function workspaceNextPaneId() {
+  let id = "";
+  do {
+    workspacePaneSerial += 1;
+    id = `pane-${workspacePaneSerial}`;
+  } while (workspaceFindPane(id) || workspacePaneNodes.has(id));
+  return id;
+}
+
+function workspaceNextSplitId() {
+  let id = "";
+  do {
+    workspaceSplitSerial += 1;
+    id = `split-${workspaceSplitSerial}`;
+  } while (workspaceFindSplit(id));
+  return id;
+}
+
+function workspaceViewsFragment(paneId) {
+  const template = document.getElementById("workspaceViewsTpl");
+  if (template?.content) {
+    const fragment = template.content.cloneNode(true);
+    fragment.querySelectorAll?.(".view").forEach(view => { view.dataset.workspacePaneId = paneId; });
+    return fragment;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const name of ["welcome", "terminal", "forwards", "edit", "import", "log", "command", "sftp", "settings", "dashboard"]) {
+    const section = document.createElement("section");
+    section.id = `view-${name}`;
+    section.className = "view";
+    section.dataset.workspacePaneId = paneId;
+    section.hidden = name !== "welcome";
+    fragment.appendChild(section);
+  }
+  return fragment;
+}
+
+function createWorkspacePaneElement(paneId) {
+  const pane = document.createElement("section");
+  pane.className = "workspace-pane";
+  pane.dataset.paneId = paneId;
+  pane.innerHTML = `
+    <div class="workspace-pane-chrome">
+      <div class="tabs-shell">
+        <button class="tabs-scroll-button tabs-scroll-left" type="button" title="向左滚动标签" aria-label="向左滚动标签" hidden>${icon("chevron-left")}</button>
+        <div class="tabs" role="tablist"></div>
+        <button class="tabs-scroll-button tabs-scroll-right" type="button" title="向右滚动标签" aria-label="向右滚动标签" hidden>${icon("chevron-right")}</button>
+        <div class="workspace-tab-insert-indicator" aria-hidden="true" hidden></div>
+      </div>
+      <div class="workspace-header-tools" data-workspace-role="header-tools" hidden></div>
+    </div>
+    <div class="workspace"></div>
+    <div class="workspace-pane-drop-indicator" aria-hidden="true" hidden><span></span></div>`;
+  pane.querySelector(".workspace").appendChild(workspaceViewsFragment(paneId));
+  pane.addEventListener("pointerdown", () => focusWorkspacePane(paneId), true);
+  pane.addEventListener("focusin", () => focusWorkspacePane(paneId), true);
+  const tabsNode = pane.querySelector(".tabs");
+  tabsNode.addEventListener("scroll", () => updateWorkspaceTabScrollControls(paneId), {passive:true});
+  tabsNode.addEventListener("wheel", event => handleWorkspaceTabsWheel(event, paneId), {passive:false});
+  pane.querySelector(".tabs-scroll-left").addEventListener("click", () => scrollWorkspaceTabs(-1, paneId));
+  pane.querySelector(".tabs-scroll-right").addEventListener("click", () => scrollWorkspaceTabs(1, paneId));
+  workspacePaneNodes.set(paneId, pane);
+  return pane;
+}
+
+function ensureWorkspacePaneElement(paneId) {
+  return workspacePaneElement(paneId) || createWorkspacePaneElement(paneId);
+}
+
+function applyWorkspaceSplitGeometry(element, node) {
+  const ratio = Math.max(WORKSPACE_MIN_SPLIT_RATIO, Math.min(WORKSPACE_MAX_SPLIT_RATIO, Number(node.ratio) || 0.5));
+  node.ratio = ratio;
+  element.style.setProperty("--workspace-split-ratio", `${ratio * 100}%`);
+  const separator = element.querySelector(":scope > .workspace-splitter");
+  if (separator) {
+    separator.setAttribute("aria-valuemin", String(Math.round(WORKSPACE_MIN_SPLIT_RATIO * 100)));
+    separator.setAttribute("aria-valuemax", String(Math.round(WORKSPACE_MAX_SPLIT_RATIO * 100)));
+    separator.setAttribute("aria-valuenow", String(Math.round(ratio * 100)));
+  }
+}
+
+function buildWorkspaceLayoutNode(node) {
+  if (!node || !["pane", "split"].includes(node.type)) return null;
+  if (node.type === "pane") return ensureWorkspacePaneElement(node.id);
+  const split = document.createElement("div");
+  split.className = `workspace-split workspace-split-${node.direction}`;
+  split.dataset.splitId = node.id;
+  applyWorkspaceSplitGeometry(split, node);
+  const first = document.createElement("div");
+  first.className = "workspace-split-child workspace-split-first";
+  const firstNode = buildWorkspaceLayoutNode(node.first);
+  const secondNode = buildWorkspaceLayoutNode(node.second);
+  if (!firstNode) return secondNode;
+  if (!secondNode) return firstNode;
+  first.appendChild(firstNode);
+  const separator = document.createElement("div");
+  separator.className = "workspace-splitter";
+  separator.tabIndex = 0;
+  separator.setAttribute("role", "separator");
+  separator.setAttribute("aria-orientation", node.direction === "row" ? "vertical" : "horizontal");
+  separator.setAttribute("aria-label", "调整分屏比例");
+  separator.addEventListener("pointerdown", event => beginWorkspaceSplitterDrag(event, node.id));
+  separator.addEventListener("dblclick", () => setWorkspaceSplitRatio(node.id, 0.5));
+  separator.addEventListener("keydown", event => handleWorkspaceSplitterKey(event, node.id));
+  const second = document.createElement("div");
+  second.className = "workspace-split-child workspace-split-second";
+  second.appendChild(secondNode);
+  split.append(first, separator, second);
+  applyWorkspaceSplitGeometry(split, node);
+  return split;
+}
+
+function renderWorkspaceLayout() {
+  const dock = workspaceDockElement();
+  if (!dock) return;
+  let visibleLayout = workspaceLayout;
+  if (isMobileLayout()) {
+    visibleLayout = workspaceFindPane(focusedPaneId) || workspaceLeaves()[0] || workspaceLayout;
+  }
+  const root = buildWorkspaceLayoutNode(visibleLayout);
+  if (!root) return;
+  dock.replaceChildren(root);
+  const livePaneIds = new Set(workspaceLeaves().map(pane => pane.id));
+  for (const [paneId, pane] of workspacePaneNodes) {
+    if (livePaneIds.has(paneId)) continue;
+    pane.remove();
+    workspacePaneNodes.delete(paneId);
+  }
+  document.body.classList.toggle("workspace-is-split", workspaceLeaves().length > 1 && !isMobileLayout());
+  requestAnimationFrame(() => {
+    for (const pane of workspaceVisiblePanes()) updateWorkspaceTabScrollControls(pane.id);
+    if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
+    if (typeof syncSftpListLayout === "function") {
+      for (const pane of workspaceVisiblePanes()) {
+        const list = workspacePaneElement(pane.id)?.querySelector("#sftpList");
+        if (list) syncSftpListLayout(list);
+      }
+    }
+  });
+}
+
+function workspaceVisiblePanes() {
+  if (!isMobileLayout()) return workspaceLeaves();
+  const focused = workspaceFindPane(focusedPaneId) || workspaceLeaves()[0];
+  return focused ? [focused] : [];
+}
+
+function workspaceTabsForPane(pane) {
+  if (isMobileLayout()) return tabs;
+  const byKey = new Map(tabs.map(tab => [tab.key, tab]));
+  return pane.tabs.map(key => byKey.get(key)).filter(Boolean);
+}
+
+function reconcileWorkspaceLayoutTabs() {
+  const validKeys = new Set(tabs.map(tab => tab.key));
+  const claimedKeys = new Set();
+  for (const pane of workspaceLeaves()) {
+    pane.tabs = pane.tabs.filter(key => {
+      if (!validKeys.has(key) || claimedKeys.has(key)) return false;
+      claimedKeys.add(key);
+      return true;
+    });
+    if (!pane.tabs.includes(pane.activeTabKey)) pane.activeTabKey = pane.tabs[0] || "";
+  }
+  let targetPane = workspaceFindPane(focusedPaneId) || workspaceLeaves()[0];
+  if (!targetPane) {
+    targetPane = {type:"pane", id:workspaceNextPaneId(), tabs:[], activeTabKey:""};
+    workspaceLayout = targetPane;
+  }
+  for (const tab of tabs) {
+    if (claimedKeys.has(tab.key)) continue;
+    targetPane.tabs.push(tab.key);
+    claimedKeys.add(tab.key);
+  }
+  if (activeTabKey && targetPane.tabs.includes(activeTabKey)) targetPane.activeTabKey = activeTabKey;
+  if (!targetPane.activeTabKey) targetPane.activeTabKey = targetPane.tabs[0] || "";
+  normalizeWorkspaceLayoutAfterMutation(targetPane.id);
+}
+
+function syncWorkspaceLegacyTabIds() {
+  for (const [paneId, pane] of workspacePaneNodes) {
+    const focused = paneId === focusedPaneId;
+    const entries = [
+      [pane.querySelector(".tabs"), "tabs"],
+      [pane.querySelector(".tabs-scroll-left"), "tabsScrollLeft"],
+      [pane.querySelector(".tabs-scroll-right"), "tabsScrollRight"]
+    ];
+    for (const [element, id] of entries) {
+      if (!element) continue;
+      if (focused) element.id = id;
+      else element.removeAttribute("id");
+    }
+  }
+}
+
+function workspaceTabHtml(tab, pane) {
+  const fullTitle = [tab.title, tab.subtitle].filter(Boolean).join(" - ");
+  const connectionStatus = ["terminal", "sftp"].includes(tab.kind) ? (tab.connectionStatus || "connecting") : "";
+  const connectionDot = connectionStatus
+    ? `<span class="tab-connection-dot ${connectionStatus}" title="${connectionStatus === "connected" ? "已连接" : connectionStatus === "disconnected" ? "已断开" : "连接中"}" aria-hidden="true"></span>`
+    : "";
+  return `<button class="tab ${tab.key === pane.activeTabKey ? "active" : ""}" role="tab" aria-selected="${tab.key === pane.activeTabKey}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(tab.title)}" onpointerdown="beginWorkspaceTabDrag(event,'${escAttr(tab.key)}')" onclick="activateWorkspaceTabFromClick(event,'${escAttr(tab.key)}')" oncontextmenu="showTabContextMenu(event,'${escAttr(tab.key)}')" ondragover="handleSftpTabDragOver(event,'${escAttr(tab.key)}')" ondragleave="handleSftpTabDragLeave(event,'${escAttr(tab.key)}')" ondrop="dropSftpItemsOnTab(event,'${escAttr(tab.key)}')">${connectionDot}<span class="tab-title">${esc(tab.title)}</span>${tab.closable ? `<span class="tab-close" title="关闭标签" aria-label="关闭标签" onpointerdown="event.stopPropagation()" onclick="closeTab(event,'${escAttr(tab.key)}')">x</span>` : ""}</button>`;
+}
+
+renderTabs = function() {
+  if (!workspaceDockElement()) return legacyWorkspaceApi.renderTabs();
+  if (typeof syncSftpTabTitles === "function") syncSftpTabTitles();
+  reconcileWorkspaceLayoutTabs();
+  renderWorkspaceLayout();
+  for (const pane of workspaceVisiblePanes()) {
+    const paneElement = workspacePaneElement(pane.id);
+    if (!paneElement) continue;
+    paneElement.classList.toggle("focused", pane.id === focusedPaneId);
+    const container = paneElement.querySelector(".tabs");
+    const previousScrollLeft = container.scrollLeft;
+    const paneTabs = workspaceTabsForPane(pane);
+    const displayPane = isMobileLayout() ? (workspaceFindPane(focusedPaneId) || pane) : pane;
+    container.innerHTML = paneTabs.map(tab => workspaceTabHtml(tab, displayPane)).join("");
+    container.scrollLeft = previousScrollLeft;
+    updateWorkspaceTabScrollControls(pane.id);
+  }
+  syncWorkspaceLegacyTabIds();
+  syncWorkspaceToolbarPlacements();
+  if (!window.restoringTabs) saveTabsState();
+};
+
+updateWorkspaceTabScrollControls = function(paneId=currentWorkspacePaneId()) {
+  const pane = workspacePaneElement(paneId);
+  const container = pane?.querySelector(".tabs");
+  const left = pane?.querySelector(".tabs-scroll-left");
+  const right = pane?.querySelector(".tabs-scroll-right");
+  if (!container || !left || !right) return;
+  const overflowing = container.scrollWidth > container.clientWidth + 1;
+  left.hidden = !overflowing;
+  right.hidden = !overflowing;
+  left.disabled = !overflowing || container.scrollLeft <= 1;
+  right.disabled = !overflowing || container.scrollLeft + container.clientWidth >= container.scrollWidth - 1;
+  pane.querySelector(".tabs-shell")?.classList.toggle("overflowing", overflowing);
+};
+
+scrollWorkspaceTabs = function(direction, paneId=currentWorkspacePaneId()) {
+  const container = workspacePaneElement(paneId)?.querySelector(".tabs");
+  if (!container) return;
+  container.scrollBy({left:direction * Math.max(160, container.clientWidth * 0.7), behavior:"smooth"});
+};
+
+handleWorkspaceTabsWheel = function(event, paneId=currentWorkspacePaneId()) {
+  const container = workspacePaneElement(paneId)?.querySelector(".tabs");
+  if (!container || container.scrollWidth <= container.clientWidth + 1) return;
+  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+  const canScroll = delta < 0 ? container.scrollLeft > 0 : container.scrollLeft + container.clientWidth < container.scrollWidth - 1;
+  if (!delta || !canScroll) return;
+  event.preventDefault();
+  container.scrollLeft += delta;
+};
+
+revealWorkspaceTab = function(key) {
+  requestAnimationFrame(() => {
+    const pane = workspaceFindPaneForTab(key) || workspaceFindPane(focusedPaneId);
+    const container = workspacePaneElement(pane?.id)?.querySelector(".tabs");
+    const tabNode = container ? [...container.querySelectorAll(".tab")].find(item => item.dataset.tabKey === key) : null;
+    if (!container || !tabNode) return;
+    const containerRect = container.getBoundingClientRect();
+    const tabRect = tabNode.getBoundingClientRect();
+    if (tabRect.left < containerRect.left) container.scrollLeft -= containerRect.left - tabRect.left;
+    else if (tabRect.right > containerRect.right) container.scrollLeft += tabRect.right - containerRect.right;
+    updateWorkspaceTabScrollControls(pane.id);
+  });
+};
+
+function saveFocusedSftpPaneState() {
+  const pane = workspaceFindPane(focusedPaneId);
+  const tab = tabs.find(item => item.key === pane?.activeTabKey);
+  if (tab?.kind === "sftp" && typeof rememberSftpViewState === "function") {
+    try { rememberSftpViewState(tab.key); } catch {}
+  }
+}
+
+function focusWorkspacePane(paneId) {
+  const pane = workspaceFindPane(paneId);
+  if (!pane) return;
+  const wasFocused = focusedPaneId === paneId;
+  if (!wasFocused) saveFocusedSftpPaneState();
+  focusedPaneId = paneId;
+  const tab = tabs.find(item => item.key === pane.activeTabKey);
+  if (tab) {
+    activeTabKey = tab.key;
+    activeView = tab.viewName || tab.kind || "welcome";
+    const connectionId = Number(tab.id);
+    if (Number.isInteger(connectionId) && connectionId > 0 && typeof selectedId !== "undefined" && selectedId !== connectionId) {
+      if (typeof selectConnection === "function") selectConnection(connectionId);
+      else selectedId = connectionId;
+    }
+    if (typeof restoreSftpRuntimeForTab === "function" && tab.kind === "sftp") restoreSftpRuntimeForTab(tab.key);
+    const subtitle = document.getElementById("workspaceSubtitle");
+    if (subtitle) subtitle.textContent = tab.subtitle || "";
+  }
+  if (wasFocused) return;
+  syncFocusedWorkspaceClasses();
+  for (const node of workspacePaneNodes.values()) node.classList.toggle("focused", node.dataset.paneId === focusedPaneId);
+  syncWorkspaceLegacyTabIds();
+  syncWorkspaceToolbarPlacements();
+  saveTabsState();
+}
+
+function syncFocusedWorkspaceClasses() {
+  const tab = tabs.find(item => item.key === activeTabKey);
+  const viewName = tab?.viewName || tab?.kind || activeView || "welcome";
+  const content = document.getElementById("content");
+  content?.classList.toggle("terminal-content", viewName === "terminal");
+  content?.classList.toggle("sftp-content", viewName === "sftp");
+  document.body.classList.toggle("mobile-terminal-active", isMobileLayout() && viewName === "terminal");
+}
+
+function workspaceReplacePaneWithSplit(targetPaneId, splitNode, node=workspaceLayout) {
+  if (node.type === "pane") return node.id === targetPaneId ? splitNode : node;
+  node.first = workspaceReplacePaneWithSplit(targetPaneId, splitNode, node.first);
+  node.second = workspaceReplacePaneWithSplit(targetPaneId, splitNode, node.second);
+  return node;
+}
+
+function pruneWorkspaceLayout(node=workspaceLayout) {
+  if (!node) return null;
+  if (node.type === "pane") return node.tabs.length ? node : null;
+  node.first = pruneWorkspaceLayout(node.first);
+  node.second = pruneWorkspaceLayout(node.second);
+  if (!node.first) return node.second;
+  if (!node.second) return node.first;
+  return node;
+}
+
+function normalizeWorkspaceLayoutAfterMutation(preferredPaneId="") {
+  workspaceLayout = pruneWorkspaceLayout(workspaceLayout);
+  if (!workspaceLayout) {
+    const paneId = preferredPaneId || workspaceNextPaneId();
+    workspaceLayout = {type:"pane", id:paneId, tabs:[], activeTabKey:""};
+  }
+  const leaves = workspaceLeaves();
+  const byKey = new Map(tabs.map(tab => [tab.key, tab]));
+  const assigned = new Set();
+  for (const pane of leaves) {
+    pane.tabs = pane.tabs.filter(key => {
+      if (!byKey.has(key) || assigned.has(key)) return false;
+      assigned.add(key);
+      return true;
+    });
+    if (!pane.tabs.includes(pane.activeTabKey)) pane.activeTabKey = pane.tabs[0] || "";
+  }
+  const preferred = workspaceFindPane(preferredPaneId)
+    || workspaceFindPane(focusedPaneId)
+    || leaves[0];
+  for (const tab of tabs) {
+    if (assigned.has(tab.key)) continue;
+    preferred.tabs.push(tab.key);
+    assigned.add(tab.key);
+  }
+  if (!preferred.activeTabKey && preferred.tabs.length) preferred.activeTabKey = preferred.tabs[0];
+  if (!workspaceFindPane(focusedPaneId)) focusedPaneId = preferred.id;
+  const order = workspaceLeaves().flatMap(pane => pane.tabs);
+  tabs = order.map(key => byKey.get(key)).filter(Boolean);
+  const focused = workspaceFindPane(focusedPaneId) || workspaceLeaves()[0];
+  if (focused?.activeTabKey) activeTabKey = focused.activeTabKey;
+}
+
+function setPaneActiveKey(pane, key) {
+  if (!pane || !pane.tabs.includes(key)) return;
+  pane.activeTabKey = key;
+  if (pane.id === focusedPaneId) activeTabKey = key;
+}
+
+addTab = function(key, title, subtitle, viewName, closable=true, meta={}) {
+  if (key !== "welcome") {
+    tabs = tabs.filter(tab => tab.key !== "welcome");
+    for (const pane of workspaceLeaves()) {
+      pane.tabs = pane.tabs.filter(tabKey => tabKey !== "welcome");
+      if (pane.activeTabKey === "welcome") pane.activeTabKey = pane.tabs[0] || "";
+    }
+    normalizeWorkspaceLayoutAfterMutation(focusedPaneId);
+  }
+  if (key === "welcome" && tabs.some(tab => tab.key !== "welcome")) return;
+  let found = tabs.find(tab => tab.key === key);
+  if (found) Object.assign(found, {title, subtitle, viewName, closable, ...meta});
+  else {
+    found = {key, title, subtitle, viewName, closable, ...meta};
+    tabs.push(found);
+  }
+  let pane = workspaceFindPaneForTab(key) || workspaceFindPane(focusedPaneId) || workspaceLeaves()[0];
+  if (!pane.tabs.includes(key)) pane.tabs.push(key);
+  pane.activeTabKey = key;
+  focusedPaneId = pane.id;
+  activeTabKey = key;
+  activeView = viewName;
+  renderTabs();
+  revealWorkspaceTab(key);
+};
+
+setWorkspaceTabConnectionStatus = function(key, status) {
+  const normalized = ["connected", "disconnected", "connecting"].includes(status) ? status : "disconnected";
+  const tab = tabs.find(item => item.key === key);
+  if (!tab) return;
+  tab.connectionStatus = normalized;
+  document.querySelectorAll(`.workspace-pane .tab[data-tab-key="${workspaceCssEscape(key)}"] .tab-connection-dot`).forEach(dot => {
+    dot.className = `tab-connection-dot ${normalized}`;
+    dot.title = normalized === "connected" ? "已连接" : normalized === "disconnected" ? "已断开" : "连接中";
+  });
+};
+
+renderTabContent = function(tab) {
+  if (tab.kind === "terminal") return openTerminal(tab.id, false, tab.key, tab.title);
+  if (tab.kind === "forwards") return openForwards(tab.id, false);
+  if (tab.kind === "edit") return editConnection(tab.id, false);
+  if (tab.kind === "import") return showImport(false);
+  if (tab.kind === "log") return openLog(tab.path, tab.title, false);
+  if (tab.kind === "command") return openBatchCommand(false);
+  if (tab.kind === "sftp") return openSftp(tab.id, tab.path || ".", false, tab.key);
+  if (tab.kind === "dashboard") return openServerDashboard(tab.id, false);
+  if (tab.kind === "settings") return openSettings(false);
+  return setWorkspace(tab.title, tab.subtitle, tab.viewName, tab.key, false, tab.closable);
+};
+
+function renderWorkspacePaneContent(paneId) {
+  if (!workspaceDockElement()) return null;
+  if (isMobileLayout() && paneId !== focusedPaneId) return null;
+  const pane = workspaceFindPane(paneId);
+  const tab = tabs.find(item => item.key === pane?.activeTabKey);
+  if (!pane || !tab) return null;
+  const previousExecutionPane = workspaceExecutionPaneId;
+  const previousActiveKey = activeTabKey;
+  const previousActiveView = activeView;
+  workspaceExecutionPaneId = paneId;
+  activeTabKey = tab.key;
+  activeView = tab.viewName || tab.kind || "welcome";
+  try {
+    const result = renderTabContent(tab);
+    if (result?.catch) {
+      result.catch(error => {
+        const previousPane = workspaceExecutionPaneId;
+        workspaceExecutionPaneId = paneId;
+        try { notify(error.message || String(error), "error"); }
+        finally { workspaceExecutionPaneId = previousPane; }
+      });
+    }
+    return result;
+  } finally {
+    workspaceExecutionPaneId = previousExecutionPane;
+    if (paneId !== focusedPaneId) {
+      activeTabKey = previousActiveKey;
+      activeView = previousActiveView;
+    }
+  }
+}
+
+activateTab = function(key) {
+  const tab = tabs.find(item => item.key === key);
+  const pane = workspaceFindPaneForTab(key);
+  if (!tab || !pane) return;
+  saveFocusedSftpPaneState();
+  focusedPaneId = pane.id;
+  pane.activeTabKey = key;
+  activeTabKey = key;
+  activeView = tab.viewName || tab.kind || "welcome";
+  if (typeof restoreSftpRuntimeForTab === "function" && tab.kind === "sftp") restoreSftpRuntimeForTab(tab.key);
+  renderTabs();
+  revealWorkspaceTab(key);
+  renderWorkspacePaneContent(pane.id);
+  syncFocusedWorkspaceClasses();
+  syncWorkspaceToolbarPlacements();
+};
+
+setWorkspace = function(title, subtitle, viewName, key=viewName, updateTab=true, closable=true, meta={}) {
+  if (!workspaceDockElement()) return legacyWorkspaceApi.setWorkspace(title, subtitle, viewName, key, updateTab, closable, meta);
+  const existingPane = workspaceFindPaneForTab(activeTabKey) || workspaceFindPaneForTab(key);
+  const paneId = workspaceExecutionPaneId || existingPane?.id || focusedPaneId;
+  if (updateTab) addTab(key, title, subtitle, viewName, closable, meta);
+  const resolvedPaneId = workspaceExecutionPaneId || workspaceFindPaneForTab(activeTabKey)?.id || paneId;
+  const pane = ensureWorkspacePaneElement(resolvedPaneId);
+  const workspace = pane.querySelector(".workspace");
+  const view = workspace.querySelector(`#view-${workspaceCssEscape(viewName)}`);
+  workspace.querySelectorAll(":scope > .view").forEach(item => { item.hidden = true; });
+  if (view) view.hidden = false;
+  pane.dataset.activeView = viewName;
+  workspace.classList.toggle("terminal-workspace", viewName === "terminal");
+  pane.classList.toggle("terminal-pane", viewName === "terminal");
+  pane.classList.toggle("sftp-pane", viewName === "sftp");
+  if (resolvedPaneId === focusedPaneId) {
+    const heading = document.getElementById("workspaceTitle");
+    const description = document.getElementById("workspaceSubtitle");
+    if (heading) heading.textContent = "工作区";
+    if (description) description.textContent = subtitle || "";
+    activeView = viewName;
+    syncFocusedWorkspaceClasses();
+  }
+  const previousExecutionPane = workspaceExecutionPaneId;
+  workspaceExecutionPaneId = resolvedPaneId;
+  try {
+    syncWorkspaceToolbarPlacements();
+  } finally {
+    workspaceExecutionPaneId = previousExecutionPane;
+  }
+  if (isMobileLayout() && viewName !== "welcome" && resolvedPaneId === focusedPaneId) showMobileWorkspace();
+};
+
+closeTab = function(event, key) {
+  event.stopPropagation();
+  closeTabsByKey([key], key);
+};
+
+closeTabsByKey = function(keys, anchorKey="") {
+  const targets = new Set(keys);
+  const anchorPane = workspaceFindPaneForTab(anchorKey) || workspaceFindPane(focusedPaneId);
+  for (const key of targets) {
+    const tab = tabs.find(item => item.key === key);
+    closeTerminalSession(key);
+    if (tab?.kind === "sftp" && typeof closeSftpSession === "function") closeSftpSession(key);
+    if (tab?.kind === "log" && typeof disposeLogViewerState === "function") disposeLogViewerState(key);
+    sftpDisconnectedTabs.delete(key);
+    sftpViewStates.delete(key);
+    if (typeof clearSftpDirectoryViewCache === "function") clearSftpDirectoryViewCache(key);
+    if (tab?.kind === "command") stopBatchCommand();
+  }
+  tabs = tabs.filter(tab => !targets.has(tab.key));
+  for (const pane of workspaceLeaves()) {
+    const previousIndex = Math.max(0, pane.tabs.findIndex(key => targets.has(key)));
+    pane.tabs = pane.tabs.filter(key => !targets.has(key));
+    if (!pane.tabs.includes(pane.activeTabKey)) pane.activeTabKey = pane.tabs[Math.min(previousIndex, pane.tabs.length - 1)] || pane.tabs.at(-1) || "";
+  }
+  normalizeWorkspaceLayoutAfterMutation(anchorPane?.id || focusedPaneId);
+  const focusedPane = workspaceFindPane(focusedPaneId) || workspaceLeaves()[0];
+  focusedPaneId = focusedPane.id;
+  activeTabKey = focusedPane.activeTabKey || "";
+  renderTabs();
+  if (activeTabKey) {
+    const tab = tabs.find(item => item.key === activeTabKey);
+    activeView = tab?.viewName || tab?.kind || "welcome";
+    renderWorkspacePaneContent(focusedPane.id);
+  } else renderWelcome();
+};
+
+closeTabsByMode = function(mode, key) {
+  const pane = workspaceFindPaneForTab(key);
+  if (!pane) return;
+  const paneTabs = pane.tabs.map(tabKey => tabs.find(tab => tab.key === tabKey)).filter(Boolean);
+  const index = paneTabs.findIndex(tab => tab.key === key);
+  const closable = paneTabs.filter(tab => tab.closable);
+  let targets = [];
+  if (mode === "current") targets = closable.filter(tab => tab.key === key);
+  if (mode === "others") targets = closable.filter(tab => tab.key !== key);
+  if (mode === "right") targets = paneTabs.slice(index + 1).filter(tab => tab.closable);
+  if (mode === "all") targets = closable;
+  hideTabContextMenu();
+  if (targets.length) closeTabsByKey(targets.map(tab => tab.key), key);
+};
+
+moveWorkspaceTab = function(key, offset) {
+  const pane = workspaceFindPaneForTab(key);
+  if (!pane) return hideTabContextMenu();
+  const index = pane.tabs.indexOf(key);
+  const target = Math.max(0, Math.min(pane.tabs.length - 1, index + offset));
+  if (index < 0 || target === index) return hideTabContextMenu();
+  pane.tabs.splice(index, 1);
+  pane.tabs.splice(target, 0, key);
+  normalizeWorkspaceLayoutAfterMutation(pane.id);
+  hideTabContextMenu();
+  renderTabs();
+  revealWorkspaceTab(key);
+};
+
+function nextWorkspaceTabCopyKey(tab) {
+  const base = String(tab?.key || tab?.kind || "tab").replace(/-copy-\d+$/, "");
+  let key = "";
+  do {
+    workspaceTabCopySerial += 1;
+    key = `${base}-copy-${workspaceTabCopySerial}`;
+  } while (tabs.some(item => item.key === key));
+  return key;
+}
+
+function workspaceTabCopyTitle(tab) {
+  const base = String(tab?.title || "标签").replace(/ · 副本(?: \d+)?$/, "");
+  const copyCount = tabs.filter(item => String(item.title || "").startsWith(`${base} · 副本`)).length + 1;
+  return `${base} · 副本${copyCount > 1 ? ` ${copyCount}` : ""}`;
+}
+
+function duplicateWorkspaceTab(key) {
+  const tab = tabs.find(item => item.key === key);
+  const pane = workspaceFindPaneForTab(key);
+  if (!tab || !pane) return;
+  hideTabContextMenu();
+  focusedPaneId = pane.id;
+  pane.activeTabKey = key;
+  activeTabKey = key;
+  activeView = tab.viewName || tab.kind || "welcome";
+  const duplicateKey = nextWorkspaceTabCopyKey(tab);
+  const duplicateTitle = workspaceTabCopyTitle(tab);
+  if (tab.kind === "terminal") return openTerminal(tab.id, true, duplicateKey, duplicateTitle);
+  if (tab.kind === "sftp") {
+    if (typeof duplicateSftpTab === "function") return duplicateSftpTab(key, duplicateKey);
+    return openSftp(tab.id, tab.path || ".", true, duplicateKey);
+  }
+  const {
+    key:ignoredKey,
+    title:ignoredTitle,
+    subtitle,
+    viewName,
+    closable,
+    ...meta
+  } = tab;
+  addTab(duplicateKey, duplicateTitle, subtitle, viewName, closable !== false, meta);
+  return renderWorkspacePaneContent(pane.id);
+};
+
+function workspaceCanDuplicateTab(tab) {
+  return Boolean(tab?.kind);
+}
+
+showTabContextMenu = function(event, key) {
+  event.preventDefault();
+  event.stopPropagation();
+  hideTabContextMenu();
+  const tab = tabs.find(item => item.key === key);
+  const pane = workspaceFindPaneForTab(key);
+  const paneTabs = pane?.tabs || [];
+  const index = paneTabs.indexOf(key);
+  if (!tab || !pane || index < 0) return;
+  focusWorkspacePane(pane.id);
+  const options = [
+    ["复制标签", () => duplicateWorkspaceTab(key), workspaceCanDuplicateTab(tab)],
+    ["向左移动", () => moveWorkspaceTab(key, -1), index > 0],
+    ["向右移动", () => moveWorkspaceTab(key, 1), index < paneTabs.length - 1],
+    ["关闭当前标签", () => closeTabsByMode("current", key), Boolean(tab.closable)],
+    ["关闭其他标签", () => closeTabsByMode("others", key), paneTabs.some(tabKey => tabs.find(item => item.key === tabKey)?.closable && tabKey !== key)],
+    ["关闭右侧标签", () => closeTabsByMode("right", key), paneTabs.slice(index + 1).some(tabKey => tabs.find(item => item.key === tabKey)?.closable)],
+    ["关闭此窗格标签", () => closeTabsByMode("all", key), paneTabs.some(tabKey => tabs.find(item => item.key === tabKey)?.closable)]
+  ];
+  const menu = document.createElement("div");
+  menu.id = "tabContextMenu";
+  menu.className = "context-menu tab-context-menu";
+  for (const [label, action, enabled] of options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.disabled = !enabled;
+    button.onclick = action;
+    menu.appendChild(button);
+  }
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, window.innerWidth - rect.width - 8)}px`;
+  menu.style.top = `${Math.min(event.clientY, window.innerHeight - rect.height - 8)}px`;
+};
+
+function workspaceClearDropIndicators() {
+  for (const pane of workspacePaneNodes.values()) {
+    const indicator = pane.querySelector(".workspace-pane-drop-indicator");
+    if (indicator) {
+      indicator.hidden = true;
+      indicator.dataset.zone = "";
+    }
+    const insertion = pane.querySelector(".workspace-tab-insert-indicator");
+    if (insertion) insertion.hidden = true;
+  }
+  workspaceTabDropTarget = null;
+}
+
+function workspaceDropZoneAtPoint(pane, clientX, clientY) {
+  const tabsShell = pane.querySelector(".tabs-shell");
+  const tabsRect = tabsShell?.getBoundingClientRect();
+  if (tabsRect && clientY >= tabsRect.top && clientY <= tabsRect.bottom) {
+    const candidates = [...tabsShell.querySelectorAll(".tab:not(.tab-dragging)")];
+    const index = candidates.findIndex(tab => clientX < tab.getBoundingClientRect().left + tab.getBoundingClientRect().width / 2);
+    return {zone:"tabs", index:index < 0 ? candidates.length : index};
+  }
+  const workspace = pane.querySelector(".workspace");
+  const rect = workspace?.getBoundingClientRect();
+  if (!rect || clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
+  if (isMobileLayout()) return {zone:"center", index:null};
+  const distances = [
+    ["left", (clientX - rect.left) / Math.max(1, rect.width)],
+    ["right", (rect.right - clientX) / Math.max(1, rect.width)],
+    ["top", (clientY - rect.top) / Math.max(1, rect.height)],
+    ["bottom", (rect.bottom - clientY) / Math.max(1, rect.height)]
+  ].sort((left, right) => left[1] - right[1]);
+  return {zone:distances[0][1] <= 0.36 ? distances[0][0] : "center", index:null};
+}
+
+function showWorkspaceTabInsertionIndicator(paneElement, index) {
+  const shell = paneElement.querySelector(".tabs-shell");
+  const tabsNode = paneElement.querySelector(".tabs");
+  const insertion = paneElement.querySelector(".workspace-tab-insert-indicator");
+  if (!shell || !tabsNode || !insertion) return;
+  const candidates = [...tabsNode.querySelectorAll(".tab:not(.tab-dragging)")];
+  const boundedIndex = Math.max(0, Math.min(candidates.length, Number(index) || 0));
+  const shellRect = shell.getBoundingClientRect();
+  const tabsRect = tabsNode.getBoundingClientRect();
+  const anchorRect = boundedIndex < candidates.length
+    ? candidates[boundedIndex].getBoundingClientRect()
+    : candidates.at(-1)?.getBoundingClientRect();
+  const clientX = boundedIndex < candidates.length
+    ? anchorRect?.left ?? tabsRect.left
+    : anchorRect?.right ?? tabsRect.left;
+  const clampedX = Math.max(tabsRect.left, Math.min(tabsRect.right, clientX));
+  insertion.style.left = `${clampedX - shellRect.left}px`;
+  insertion.hidden = false;
+}
+
+function updateWorkspaceTabDropTarget(clientX, clientY) {
+  const element = document.elementFromPoint(clientX, clientY);
+  const paneElement = element?.closest?.(".workspace-pane");
+  if (!paneElement) return workspaceClearDropIndicators();
+  const paneId = paneElement.dataset.paneId;
+  const target = workspaceDropZoneAtPoint(paneElement, clientX, clientY);
+  if (!target) return workspaceClearDropIndicators();
+  for (const [otherPaneId, otherPane] of workspacePaneNodes) {
+    if (otherPaneId === paneId) continue;
+    const otherIndicator = otherPane.querySelector(".workspace-pane-drop-indicator");
+    if (!otherIndicator) continue;
+    otherIndicator.hidden = true;
+    otherIndicator.dataset.zone = "";
+    const otherInsertion = otherPane.querySelector(".workspace-tab-insert-indicator");
+    if (otherInsertion) otherInsertion.hidden = true;
+  }
+  workspaceTabDropTarget = {paneId, ...target};
+  const indicator = paneElement.querySelector(".workspace-pane-drop-indicator");
+  if (!indicator) return;
+  const insertion = paneElement.querySelector(".workspace-tab-insert-indicator");
+  if (target.zone === "tabs") {
+    indicator.hidden = true;
+    indicator.dataset.zone = "";
+    showWorkspaceTabInsertionIndicator(paneElement, target.index);
+    return;
+  }
+  if (insertion) insertion.hidden = true;
+  indicator.hidden = false;
+  indicator.dataset.zone = target.zone;
+  const labels = {left:"在左侧分屏", right:"在右侧分屏", top:"在上方分屏", bottom:"在下方分屏", center:"移到此窗格"};
+  indicator.querySelector("span").textContent = labels[target.zone] || "";
+}
+
+function scheduleWorkspaceTabDockAutoScroll() {
+  const drag = workspaceTabDrag;
+  if (!drag?.dragging || drag.autoScrollFrame) return;
+  drag.autoScrollFrame = requestAnimationFrame(updateWorkspaceTabDockAutoScroll);
+}
+
+function updateWorkspaceTabDockAutoScroll() {
+  const drag = workspaceTabDrag;
+  if (!drag?.dragging) return;
+  drag.autoScrollFrame = 0;
+  const target = workspaceTabDropTarget;
+  const pane = workspacePaneElement(target?.paneId || drag.sourcePaneId);
+  const container = pane?.querySelector(".tabs");
+  const shell = pane?.querySelector(".tabs-shell");
+  const rect = container?.getBoundingClientRect();
+  const shellRect = shell?.getBoundingClientRect();
+  if (container && rect && shellRect && drag.pointerY >= shellRect.top && drag.pointerY <= shellRect.bottom) {
+    const edge = Math.min(42, Math.max(20, rect.width / 5));
+    let amount = 0;
+    if (drag.pointerX < rect.left + edge) amount = -10;
+    else if (drag.pointerX > rect.right - edge) amount = 10;
+    if (amount) {
+      const previous = container.scrollLeft;
+      container.scrollLeft += amount;
+      if (container.scrollLeft !== previous) updateWorkspaceTabDropTarget(drag.pointerX, drag.pointerY);
+    }
+  }
+  scheduleWorkspaceTabDockAutoScroll();
+}
+
+beginWorkspaceTabDrag = function(event, key) {
+  if (event.button !== 0 || event.target.closest(".tab-close")) return;
+  if (workspaceTabDrag) finishWorkspaceTabDrag(null, true);
+  const pane = workspaceFindPaneForTab(key);
+  if (!pane) return;
+  if (pane.activeTabKey !== key || focusedPaneId !== pane.id) activateTab(key);
+  const tabNode = event.currentTarget?.closest?.(".tab")
+    || workspacePaneElement(pane.id)?.querySelector(`.tab[data-tab-key="${workspaceCssEscape(key)}"]`);
+  if (!tabNode) return;
+  workspaceTabDrag = {
+    key,
+    sourcePaneId:pane.id,
+    tab:tabNode,
+    pointerId:event.pointerId,
+    startX:event.clientX,
+    startY:event.clientY,
+    pointerX:event.clientX,
+    pointerY:event.clientY,
+    pointerType:event.pointerType || "",
+    dragging:false,
+    ghost:null,
+    autoScrollFrame:0
+  };
+  try { tabNode.setPointerCapture?.(event.pointerId); } catch {}
+  window.addEventListener("pointermove", moveWorkspaceTabDrag, {passive:false});
+  window.addEventListener("pointerup", endWorkspaceTabDrag);
+  window.addEventListener("pointercancel", cancelWorkspaceTabDrag);
+  window.addEventListener("keydown", handleWorkspaceTabDragKeydown);
+};
+
+function refreshWorkspaceDraggedTab(drag) {
+  const pane = workspaceFindPaneForTab(drag?.key);
+  const liveTab = pane
+    ? workspacePaneElement(pane.id)?.querySelector(`.tab[data-tab-key="${workspaceCssEscape(drag.key)}"]`)
+    : null;
+  if (!liveTab || liveTab === drag.tab) return;
+  drag.tab.classList.remove("tab-dragging");
+  drag.tab.removeAttribute("aria-grabbed");
+  drag.tab = liveTab;
+  if (drag.dragging) {
+    liveTab.classList.add("tab-dragging");
+    liveTab.setAttribute("aria-grabbed", "true");
+  }
+}
+
+moveWorkspaceTabDrag = function(event) {
+  const drag = workspaceTabDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  refreshWorkspaceDraggedTab(drag);
+  drag.pointerX = event.clientX;
+  drag.pointerY = event.clientY;
+  const deltaX = event.clientX - drag.startX;
+  const deltaY = event.clientY - drag.startY;
+  if (!drag.dragging) {
+    if (Math.hypot(deltaX, deltaY) < WORKSPACE_TAB_DRAG_THRESHOLD) return;
+    if (isMobileLayout() && drag.pointerType === "touch" && Math.abs(deltaY) > Math.abs(deltaX)) {
+      return finishWorkspaceTabDrag(event, true);
+    }
+    drag.dragging = true;
+    drag.tab.classList.add("tab-dragging");
+    drag.tab.setAttribute("aria-grabbed", "true");
+    document.body.classList.add("workspace-tab-drag-active");
+    createWorkspaceTabDragGhost(drag);
+    hideTabContextMenu();
+    scheduleWorkspaceTabDockAutoScroll();
+  }
+  event.preventDefault();
+  updateWorkspaceTabDragGhost(event.clientX, event.clientY);
+  updateWorkspaceTabDropTarget(event.clientX, event.clientY);
+};
+
+function applyWorkspaceTabDrop(drag, target) {
+  const sourcePane = workspaceFindPaneForTab(drag.key);
+  const targetPane = workspaceFindPane(target?.paneId);
+  if (!sourcePane || !targetPane || !target) return false;
+  const edgeDrop = ["left", "right", "top", "bottom"].includes(target.zone);
+  if (edgeDrop && sourcePane.id === targetPane.id && sourcePane.tabs.length <= 1) return false;
+  const sourceIndex = sourcePane.tabs.indexOf(drag.key);
+  if (sourceIndex < 0) return false;
+  sourcePane.tabs.splice(sourceIndex, 1);
+  if (!sourcePane.tabs.includes(sourcePane.activeTabKey)) sourcePane.activeTabKey = sourcePane.tabs[Math.min(sourceIndex, sourcePane.tabs.length - 1)] || sourcePane.tabs.at(-1) || "";
+
+  let destinationPane = targetPane;
+  if (edgeDrop) {
+    const newPane = {type:"pane", id:workspaceNextPaneId(), tabs:[drag.key], activeTabKey:drag.key};
+    const newFirst = ["left", "top"].includes(target.zone);
+    const split = {
+      type:"split",
+      id:workspaceNextSplitId(),
+      direction:["left", "right"].includes(target.zone) ? "row" : "column",
+      ratio:0.5,
+      first:newFirst ? newPane : targetPane,
+      second:newFirst ? targetPane : newPane
+    };
+    workspaceLayout = workspaceReplacePaneWithSplit(targetPane.id, split);
+    destinationPane = newPane;
+  } else {
+    let insertion = Number.isInteger(target.index) ? target.index : targetPane.tabs.length;
+    insertion = Math.max(0, Math.min(targetPane.tabs.length, insertion));
+    targetPane.tabs.splice(insertion, 0, drag.key);
+    targetPane.activeTabKey = drag.key;
+  }
+  normalizeWorkspaceLayoutAfterMutation(destinationPane.id);
+  focusedPaneId = destinationPane.id;
+  activeTabKey = drag.key;
+  const tab = tabs.find(item => item.key === drag.key);
+  activeView = tab?.viewName || tab?.kind || "welcome";
+  renderTabs();
+  const sourceAfter = workspaceFindPane(sourcePane.id);
+  if (sourceAfter?.activeTabKey && sourceAfter.id !== destinationPane.id) renderWorkspacePaneContent(sourceAfter.id);
+  renderWorkspacePaneContent(destinationPane.id);
+  revealWorkspaceTab(drag.key);
+  syncFocusedWorkspaceClasses();
+  return true;
+}
+
+finishWorkspaceTabDrag = function(event, cancelled) {
+  const drag = workspaceTabDrag;
+  if (!drag || (event?.pointerId !== undefined && event.pointerId !== drag.pointerId)) return;
+  window.removeEventListener("pointermove", moveWorkspaceTabDrag);
+  window.removeEventListener("pointerup", endWorkspaceTabDrag);
+  window.removeEventListener("pointercancel", cancelWorkspaceTabDrag);
+  window.removeEventListener("keydown", handleWorkspaceTabDragKeydown);
+  if (drag.autoScrollFrame) cancelAnimationFrame(drag.autoScrollFrame);
+  try {
+    if (drag.tab.hasPointerCapture?.(drag.pointerId)) drag.tab.releasePointerCapture(drag.pointerId);
+  } catch {}
+  const target = workspaceTabDropTarget;
+  document.body.classList.remove("workspace-tab-drag-active");
+  drag.tab.classList.remove("tab-dragging");
+  drag.tab.removeAttribute("aria-grabbed");
+  drag.ghost?.remove();
+  workspaceClearDropIndicators();
+  const dragged = drag.dragging;
+  workspaceTabDrag = null;
+  workspaceTabSuppressClickUntil = Date.now() + 350;
+  if (!dragged) return;
+  const applied = !cancelled && applyWorkspaceTabDrop(drag, target);
+  if (!applied) renderTabs();
+};
+
+function beginWorkspaceSplitterDrag(event, splitId) {
+  if (event.button !== 0 || isMobileLayout()) return;
+  const split = workspaceFindSplit(splitId);
+  const element = event.currentTarget.closest(".workspace-split");
+  if (!split || !element) return;
+  event.preventDefault();
+  workspaceSplitterDrag = {splitId, pointerId:event.pointerId, element, separator:event.currentTarget};
+  try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch {}
+  document.body.classList.add("workspace-split-resizing", split.direction === "row" ? "workspace-split-resizing-row" : "workspace-split-resizing-column");
+  window.addEventListener("pointermove", moveWorkspaceSplitterDrag, {passive:false});
+  window.addEventListener("pointerup", endWorkspaceSplitterDrag);
+  window.addEventListener("pointercancel", endWorkspaceSplitterDrag);
+}
+
+function moveWorkspaceSplitterDrag(event) {
+  const drag = workspaceSplitterDrag;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  const split = workspaceFindSplit(drag.splitId);
+  if (!split) return;
+  const rect = drag.element.getBoundingClientRect();
+  const raw = split.direction === "row"
+    ? (event.clientX - rect.left) / Math.max(1, rect.width)
+    : (event.clientY - rect.top) / Math.max(1, rect.height);
+  split.ratio = Math.max(WORKSPACE_MIN_SPLIT_RATIO, Math.min(WORKSPACE_MAX_SPLIT_RATIO, raw));
+  applyWorkspaceSplitGeometry(drag.element, split);
+  event.preventDefault();
+  if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
+}
+
+function endWorkspaceSplitterDrag(event) {
+  const drag = workspaceSplitterDrag;
+  if (!drag || event?.pointerId !== undefined && event.pointerId !== drag.pointerId) return;
+  window.removeEventListener("pointermove", moveWorkspaceSplitterDrag);
+  window.removeEventListener("pointerup", endWorkspaceSplitterDrag);
+  window.removeEventListener("pointercancel", endWorkspaceSplitterDrag);
+  try {
+    if (drag.separator.hasPointerCapture?.(drag.pointerId)) drag.separator.releasePointerCapture(drag.pointerId);
+  } catch {}
+  workspaceSplitterDrag = null;
+  document.body.classList.remove("workspace-split-resizing", "workspace-split-resizing-row", "workspace-split-resizing-column");
+  saveTabsState();
+  if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
+}
+
+function setWorkspaceSplitRatio(splitId, ratio) {
+  const split = workspaceFindSplit(splitId);
+  if (!split) return;
+  split.ratio = Math.max(WORKSPACE_MIN_SPLIT_RATIO, Math.min(WORKSPACE_MAX_SPLIT_RATIO, ratio));
+  const element = document.querySelector(`.workspace-split[data-split-id="${workspaceCssEscape(splitId)}"]`);
+  if (element) applyWorkspaceSplitGeometry(element, split);
+  saveTabsState();
+  if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
+}
+
+function handleWorkspaceSplitterKey(event, splitId) {
+  const split = workspaceFindSplit(splitId);
+  if (!split) return;
+  const relevant = split.direction === "row" ? ["ArrowLeft", "ArrowRight"] : ["ArrowUp", "ArrowDown"];
+  if (!relevant.includes(event.key)) return;
+  event.preventDefault();
+  const decrease = ["ArrowLeft", "ArrowUp"].includes(event.key);
+  setWorkspaceSplitRatio(splitId, split.ratio + (decrease ? -0.025 : 0.025));
+}
+
+function serializeWorkspaceLayout(node=workspaceLayout) {
+  if (!node) return null;
+  if (node.type === "pane") return {type:"pane", id:node.id, tabs:[...node.tabs], activeTabKey:node.activeTabKey};
+  return {
+    type:"split",
+    id:node.id,
+    direction:node.direction,
+    ratio:node.ratio,
+    first:serializeWorkspaceLayout(node.first),
+    second:serializeWorkspaceLayout(node.second)
+  };
+}
+
+persistableTabs = function() {
+  return tabs.filter(tab => tab.kind).map(({key,title,subtitle,viewName,closable,kind,id,path}) => ({key,title,subtitle,viewName,closable,kind,id,path}));
+};
+
+saveTabsState = function() {
+  try {
+    localStorage.setItem("workspaceTabs", JSON.stringify({
+      version:WORKSPACE_LAYOUT_VERSION,
+      activeTabKey,
+      focusedPaneId,
+      tabs:persistableTabs(),
+      layout:serializeWorkspaceLayout()
+    }));
+  } catch {}
+};
+
+function restoreWorkspaceLayoutNode(saved, validKeys, usedKeys, usedPaneIds, usedSplitIds, depth=0, budget={count:0}) {
+  if (!saved || typeof saved !== "object") return null;
+  budget.count += 1;
+  if (depth > WORKSPACE_MAX_RESTORE_DEPTH || budget.count > WORKSPACE_MAX_RESTORE_NODES) return null;
+  if (saved.type === "pane") {
+    let paneId = typeof saved.id === "string" && saved.id ? saved.id : workspaceNextPaneId();
+    if (usedPaneIds.has(paneId)) paneId = workspaceNextPaneId();
+    usedPaneIds.add(paneId);
+    const serial = Number(paneId.match(/(\d+)$/)?.[1] || 0);
+    workspacePaneSerial = Math.max(workspacePaneSerial, serial);
+    const paneTabs = (Array.isArray(saved.tabs) ? saved.tabs : []).filter(key => {
+      if (!validKeys.has(key) || usedKeys.has(key)) return false;
+      usedKeys.add(key);
+      return true;
+    });
+    if (!paneTabs.length) return null;
+    const activeKey = paneTabs.includes(saved.activeTabKey) ? saved.activeTabKey : paneTabs[0];
+    return {type:"pane", id:paneId, tabs:paneTabs, activeTabKey:activeKey};
+  }
+  if (saved.type !== "split") return null;
+  let splitId = typeof saved.id === "string" && saved.id ? saved.id : workspaceNextSplitId();
+  if (usedSplitIds.has(splitId)) splitId = workspaceNextSplitId();
+  usedSplitIds.add(splitId);
+  const serial = Number(splitId.match(/(\d+)$/)?.[1] || 0);
+  workspaceSplitSerial = Math.max(workspaceSplitSerial, serial);
+  const first = restoreWorkspaceLayoutNode(saved.first, validKeys, usedKeys, usedPaneIds, usedSplitIds, depth + 1, budget);
+  const second = restoreWorkspaceLayoutNode(saved.second, validKeys, usedKeys, usedPaneIds, usedSplitIds, depth + 1, budget);
+  if (!first) return second;
+  if (!second) return first;
+  return {
+    type:"split",
+    id:splitId,
+    direction:saved.direction === "column" ? "column" : "row",
+    ratio:Math.max(WORKSPACE_MIN_SPLIT_RATIO, Math.min(WORKSPACE_MAX_SPLIT_RATIO, Number(saved.ratio) || 0.5)),
+    first,
+    second
+  };
+}
+
+restoreTabsState = function() {
+  const previousState = {
+    tabs,
+    workspaceLayout,
+    focusedPaneId,
+    activeTabKey,
+    activeView
+  };
+  try {
+    if (runtimeSettings?.saved?.restore_workspace_tabs === false) return false;
+    const saved = JSON.parse(localStorage.getItem("workspaceTabs") || "{}");
+    const restored = [];
+    const restoredKeys = new Set();
+    for (const tab of Array.isArray(saved.tabs) ? saved.tabs : []) {
+      if (!tab || typeof tab !== "object" || typeof tab.key !== "string" || !tab.key || !tab.kind || restoredKeys.has(tab.key)) continue;
+      restored.push({...tab});
+      restoredKeys.add(tab.key);
+    }
+    if (!restored.length) return false;
+    window.restoringTabs = true;
+    tabs = restored;
+    const validKeys = new Set(restored.map(tab => tab.key));
+    const usedKeys = new Set();
+    const restoredLayout = restoreWorkspaceLayoutNode(saved.layout, validKeys, usedKeys, new Set(), new Set());
+    workspaceLayout = restoredLayout || {type:"pane", id:"pane-1", tabs:[], activeTabKey:""};
+    const firstPane = workspaceLeaves()[0];
+    for (const tab of restored) {
+      if (usedKeys.has(tab.key)) continue;
+      firstPane.tabs.push(tab.key);
+      usedKeys.add(tab.key);
+    }
+    if (!firstPane.activeTabKey || !firstPane.tabs.includes(firstPane.activeTabKey)) firstPane.activeTabKey = firstPane.tabs[0];
+    focusedPaneId = workspaceFindPane(saved.focusedPaneId)?.id
+      || workspaceFindPaneForTab(saved.activeTabKey)?.id
+      || firstPane.id;
+    const focusedPane = workspaceFindPane(focusedPaneId);
+    if (focusedPane.tabs.includes(saved.activeTabKey)) focusedPane.activeTabKey = saved.activeTabKey;
+    activeTabKey = focusedPane.activeTabKey;
+    const activeTab = tabs.find(tab => tab.key === activeTabKey);
+    activeView = activeTab?.viewName || activeTab?.kind || "welcome";
+    renderTabs();
+    const leaves = workspaceVisiblePanes();
+    for (const pane of leaves.filter(pane => pane.id !== focusedPaneId)) renderWorkspacePaneContent(pane.id);
+    renderWorkspacePaneContent(focusedPaneId);
+    window.restoringTabs = false;
+    saveTabsState();
+    syncFocusedWorkspaceClasses();
+    syncWorkspaceToolbarPlacements();
+    return true;
+  } catch (error) {
+    console.error("restore workspace layout failed", error);
+    tabs = previousState.tabs;
+    workspaceLayout = previousState.workspaceLayout;
+    focusedPaneId = previousState.focusedPaneId;
+    activeTabKey = previousState.activeTabKey;
+    activeView = previousState.activeView;
+    window.restoringTabs = false;
+    return false;
+  }
+};
+
+syncResponsivePane = function() {
+  const wasMobile = responsiveLayoutMobile;
+  legacyWorkspaceApi.syncResponsivePane();
+  if (wasMobile !== isMobileLayout()) {
+    renderTabs();
+    const focusedPane = workspaceFindPane(focusedPaneId);
+    for (const pane of workspaceVisiblePanes()) {
+      if (pane.id !== focusedPane?.id && pane.activeTabKey) renderWorkspacePaneContent(pane.id);
+    }
+    if (focusedPane?.activeTabKey) renderWorkspacePaneContent(focusedPane.id);
+  }
+};
+
+function restoreLegacyWorkspaceApi() {
+  renderTabs = legacyWorkspaceApi.renderTabs;
+  updateWorkspaceTabScrollControls = legacyWorkspaceApi.updateWorkspaceTabScrollControls;
+  scrollWorkspaceTabs = legacyWorkspaceApi.scrollWorkspaceTabs;
+  handleWorkspaceTabsWheel = legacyWorkspaceApi.handleWorkspaceTabsWheel;
+  revealWorkspaceTab = legacyWorkspaceApi.revealWorkspaceTab;
+  addTab = legacyWorkspaceApi.addTab;
+  setWorkspaceTabConnectionStatus = legacyWorkspaceApi.setWorkspaceTabConnectionStatus;
+  renderTabContent = legacyWorkspaceApi.renderTabContent;
+  activateTab = legacyWorkspaceApi.activateTab;
+  setWorkspace = legacyWorkspaceApi.setWorkspace;
+  closeTab = legacyWorkspaceApi.closeTab;
+  closeTabsByKey = legacyWorkspaceApi.closeTabsByKey;
+  closeTabsByMode = legacyWorkspaceApi.closeTabsByMode;
+  moveWorkspaceTab = legacyWorkspaceApi.moveWorkspaceTab;
+  showTabContextMenu = legacyWorkspaceApi.showTabContextMenu;
+  beginWorkspaceTabDrag = legacyWorkspaceApi.beginWorkspaceTabDrag;
+  moveWorkspaceTabDrag = legacyWorkspaceApi.moveWorkspaceTabDrag;
+  finishWorkspaceTabDrag = legacyWorkspaceApi.finishWorkspaceTabDrag;
+  persistableTabs = legacyWorkspaceApi.persistableTabs;
+  saveTabsState = legacyWorkspaceApi.saveTabsState;
+  restoreTabsState = legacyWorkspaceApi.restoreTabsState;
+  syncResponsivePane = legacyWorkspaceApi.syncResponsivePane;
+}
+
+if (workspaceDockElement()) {
+  ensureWorkspacePaneElement("pane-1");
+  renderWorkspaceLayout();
+} else {
+  restoreLegacyWorkspaceApi();
+}

@@ -1,3 +1,18 @@
+function captureForwardWorkspace(connectionId=selectedId) {
+  const tab = tabs.find(item => item.key === activeTabKey);
+  const inTab = typeof captureWorkspaceTab === "function" ? captureWorkspaceTab(tab?.key || "") : action => action();
+  return {
+    tab,
+    run:inTab,
+    refresh() {
+      inTab(() => {
+        if (tab?.kind === "forwards" && Number(tab.id) === Number(connectionId)) openForwards(connectionId, false);
+        else if (tab?.kind === "terminal" && Number(tab.id) === Number(connectionId)) openTerminal(connectionId, false, tab.key, tab.title || "");
+      });
+    }
+  };
+}
+
 function openForwards(id, updateTab=true) {
   const c = selectConnection(id);
   if (!c) return;
@@ -10,6 +25,7 @@ function openForwards(id, updateTab=true) {
 }
 
 async function connectionForwardAction(id, action, button=null){
+  const workspace = captureForwardWorkspace(id);
   const c = currentConnection(id);
   if (action === "start" && !(c?.forwards || []).length) return notify("该连接还没有添加转发规则", "info");
   setButtonBusy(button, true, action === "start" ? "启用中..." : "停止中...");
@@ -20,11 +36,7 @@ async function connectionForwardAction(id, action, button=null){
     }
     await api(`/api/connections/${id}/${action}-forwards`,{method:"POST"});
     await loadAll();
-    if (activeView === "forwards" && selectedId === id) openForwards(id);
-    else if (activeView === "terminal" && selectedId === id) {
-      const tab = tabs.find(item => item.key === activeTabKey);
-      openTerminal(id, false, activeTabKey, tab?.title || "");
-    }
+    workspace.refresh();
     notify(action==="start"?"已启动该连接全部转发":"已停止该连接全部转发","success");
   } catch (error) {
     await loadAll().catch(()=>{});
@@ -111,6 +123,7 @@ function wireForwardForm() {
   renderForwardTemplateOptions();
   $("forwardForm").addEventListener("submit", async e => {
     e.preventDefault();
+    const workspace = captureForwardWorkspace(Number($("forward_conn_id")?.value || 0));
     try {
       const id=Number($("forward_conn_id").value);
       if(!id) throw new Error("请先选择连接");
@@ -131,7 +144,7 @@ function wireForwardForm() {
         notify("转发已添加","success");
       }
       await loadAll();
-      openForwards(id);
+      workspace.refresh();
     } catch(err){notify(err.message,"error");}
   });
 }
@@ -220,6 +233,7 @@ function cancelForwardEdit() {
 }
 
 async function saveForwardTemplate() {
+  const workspace = captureForwardWorkspace();
   const payload = forwardPayload();
   const fallbackName = payload.service_name || serviceTypeText(payload.service_type) || forwardModeText(payload.mode) || "转发模板";
   const current = forwardTemplates.find(item => String(item.id) === String(editingForwardTemplateId));
@@ -232,10 +246,12 @@ async function saveForwardTemplate() {
   }
   editingForwardTemplateId = "";
   await loadForwardTemplates();
-  renderForwardTemplateOptions();
-  const box = $("forwardTemplateManager");
-  if (box) box.hidden = false;
-  renderForwardTemplateManager();
+  workspace.run(() => {
+    renderForwardTemplateOptions();
+    const box = $("forwardTemplateManager");
+    if (box) box.hidden = false;
+    renderForwardTemplateManager();
+  });
   notify(`转发模板已保存：${name}`, "success");
 }
 
@@ -288,14 +304,18 @@ function editForwardTemplate(id) {
 }
 
 async function deleteForwardTemplate(id) {
+  const workspace = captureForwardWorkspace();
   if (!await confirmModal("删除该转发模板？", "删除转发模板", "删除", "取消", true)) return;
   await api(`/api/forward-templates/${id}`, {method:"DELETE"});
   await loadForwardTemplates();
-  renderForwardTemplateOptions();
-  renderForwardTemplateManager();
+  workspace.run(() => {
+    renderForwardTemplateOptions();
+    renderForwardTemplateManager();
+  });
 }
 
 async function applyForwardTemplateBatch(id) {
+  const workspace = captureForwardWorkspace();
   const current = currentConnection();
   const choices = [
     {label:"当前连接", value:"current", className:"primary"},
@@ -312,15 +332,16 @@ async function applyForwardTemplateBatch(id) {
   if (!ids.length) return notify("没有可应用的连接", "info");
   const result = await api(`/api/forward-templates/${id}/apply`, {method:"POST", body:JSON.stringify({connection_ids:ids})});
   await loadAll();
-  if (selectedId) openForwards(selectedId);
+  workspace.refresh();
   notify(`已应用模板，新增 ${result.created?.length || 0} 条转发`, "success");
 }
 
 async function recommendForwardPort() {
+  const portInput = $("forward_bind_port");
   const host = $("forward_bind_host").value.trim() || "127.0.0.1";
-  const port = $("forward_bind_port").value ? Number($("forward_bind_port").value) : 6000;
+  const port = portInput.value ? Number(portInput.value) : 6000;
   const result = await api("/api/ports/recommend", {method:"POST", body:JSON.stringify({host, port, exclude_id:editingForwardId})});
-  $("forward_bind_port").value = result.recommended_port;
+  if (portInput.isConnected) portInput.value = result.recommended_port;
   notify(`推荐可用端口：${result.recommended_port}`, "success");
 }
 
@@ -336,13 +357,14 @@ function renderForwards(){
       <span>规则</span><span>状态</span><span>服务入口</span><span>操作</span>
     </div>
     ${c.forwards.map(f=>renderForwardCard(f)).join("")}
-  </div>` : stateView("empty", "暂无转发规则", "使用上方表单添加第一条本地、远程或 SOCKS5 转发。", `<button class="primary" onclick="document.getElementById('forwardMode')?.focus()">添加转发</button>`);
+  </div>` : stateView("empty", "暂无转发规则", "使用上方表单添加第一条本地、远程或 SOCKS5 转发。", `<button class="primary" onclick="$('forwardMode')?.focus()">添加转发</button>`);
   updateForwardBulkActions();
 }
 
 function updateForwardBulkActions() {
   const btn = $("bulkDeleteForwardsBtn");
-  const checks = [...document.querySelectorAll(".forward-check")];
+  const root = $("view-forwards") || document;
+  const checks = [...root.querySelectorAll(".forward-check")];
   const selected = checks.filter(item => item.checked).length;
   const selectAll = $("forwardSelectAll");
   if (selectAll) {
@@ -434,7 +456,7 @@ function formatDuration(seconds) {
   return `${s}秒`;
 }
 
-async function deleteForward(id){ await api(`/api/forwards/${id}`,{method:"DELETE"}); await loadAll(); if(selectedId) openForwards(selectedId); notify("已删除转发","success"); }
+async function deleteForward(id){ const workspace=captureForwardWorkspace(); await api(`/api/forwards/${id}`,{method:"DELETE"}); await loadAll(); workspace.refresh(); notify("已删除转发","success"); }
 
 function currentForward(id) {
   for (const c of connections) {
@@ -509,6 +531,7 @@ async function offerResolvePortConflict(forward, diagnosis) {
 }
 
 async function startSingleForward(id, button=null) {
+  const workspace = captureForwardWorkspace();
   setButtonBusy(button, true, "启用中...");
   try {
     const diagnosis = await diagnoseForwardPort(id, {silent:true});
@@ -522,7 +545,7 @@ async function startSingleForward(id, button=null) {
     }
     await api(`/api/forwards/${id}/start`, {method:"POST"});
     await loadAll();
-    if (selectedId) openForwards(selectedId);
+    workspace.refresh();
     notify("已启动转发", "success");
   } catch (error) {
     await loadAll({silent:true}).catch(()=>{});
@@ -533,11 +556,12 @@ async function startSingleForward(id, button=null) {
 }
 
 async function stopSingleForward(id, button=null) {
+  const workspace = captureForwardWorkspace();
   setButtonBusy(button, true, "停止中...");
   try {
     await api(`/api/forwards/${id}/stop`, {method:"POST"});
     await loadAll();
-    if (selectedId) openForwards(selectedId);
+    workspace.refresh();
     notify("已停止转发", "success");
   } catch (error) {
     notify(error.message || "停止转发失败", "error");
@@ -582,10 +606,12 @@ async function retryForwardFromRunning(id, button=null) {
 }
 
 async function bulkDeleteForwards(){
-  const ids=[...document.querySelectorAll(".forward-check:checked")].map(x=>Number(x.value));
+  const workspace = captureForwardWorkspace();
+  const scope = typeof currentWorkspaceDomScope === "function" ? currentWorkspaceDomScope() : document;
+  const ids=[...scope.querySelectorAll(".forward-check:checked")].map(x=>Number(x.value));
   if(!ids.length) return notify("请选择转发","error");
   await api("/api/forwards/bulk-delete",{method:"POST",body:JSON.stringify({ids})});
   await loadAll();
-  if(selectedId) openForwards(selectedId);
+  workspace.refresh();
   notify("批量删除转发完成","success");
 }

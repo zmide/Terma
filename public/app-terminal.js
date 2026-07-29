@@ -401,7 +401,7 @@ function cancelTerminalCursorCopy(session, key, clearSelection=true) {
 
 function startTerminalCursorCopy(key) {
   const session = terminalSessions.get(key);
-  const mount = session?.term?.element?.closest?.(".terminal-box") || (key === activeTabKey ? $("terminalMount") : null);
+  const mount = session?.term?.element?.closest?.(".terminal-box") || terminalElementForKey(key, "#terminalMount");
   if (!session?.term || !mount || typeof session.term.select !== "function") return notify("当前终端不支持光标复制", "error");
   cancelTerminalCursorCopy(session, key);
   const originalTheme = {...(session.term.options.theme || {})};
@@ -411,7 +411,7 @@ function startTerminalCursorCopy(key) {
     selectionForeground:"#ffffff",
     selectionInactiveBackground:"#2563eb"
   };
-  const status = key === activeTabKey ? $("terminalStatus") : null;
+  const status = terminalElementForKey(key, "#terminalStatus");
   const cancelButton = document.createElement("button");
   cancelButton.className = "icon-button terminal-cursor-copy-cancel";
   cancelButton.type = "button";
@@ -708,8 +708,21 @@ function terminalEncodingLabel(connection) {
   return terminalEncodingOptions.find(([value]) => value === (connection.terminal_encoding || "utf8"))?.[1] || "UTF-8";
 }
 
-function updateTerminalStatusForLayout() {
-  const status = $("terminalStatus");
+function terminalElementForKey(key, selector) {
+  if (typeof workspaceElementForTab === "function") {
+    const element = workspaceElementForTab(key, selector);
+    if (element) return element;
+  }
+  const escapedKey = typeof workspaceCssEscape === "function" ? workspaceCssEscape(key) : CSS.escape(String(key || ""));
+  const toolbarElement = document.querySelector(`.terminal-toolbar[data-workspace-tab-key="${escapedKey}"]`)?.querySelector(selector);
+  if (toolbarElement) return toolbarElement;
+  const session = terminalSessions.get(key);
+  const pane = session?.term?.element?.closest?.(".workspace-pane");
+  return pane?.querySelector(selector) || null;
+}
+
+function updateTerminalStatusForLayout(key=activeTabKey) {
+  const status = terminalElementForKey(key, "#terminalStatus");
   if (!status) return;
   const address = status.dataset.connectionAddress || "";
   const state = status.dataset.connectionState || "连接中";
@@ -717,60 +730,50 @@ function updateTerminalStatusForLayout() {
   status.title = `${address}${state ? ` · ${state}` : ""}`;
 }
 
-function syncTerminalToolbarPlacement() {
-  const header = $("workspaceHeaderTools");
-  const mount = $("terminalToolbarMount");
+function syncTerminalToolbarPlacement(tabKey=activeTabKey) {
+  const key = String(tabKey || "");
+  const tab = tabs.find(item => item.key === key);
+  if (tab?.kind !== "terminal") return;
+  const pane = typeof workspaceFindPaneForTab === "function" ? workspaceFindPaneForTab(key) : null;
+  const view = pane && typeof workspacePaneElement === "function"
+    ? workspacePaneElement(pane.id)?.querySelector("#view-terminal")
+    : $("view-terminal");
+  if (!view) return;
+  const mount = view.querySelector("#terminalToolbarMount");
+  const escapedKey = typeof workspaceCssEscape === "function" ? workspaceCssEscape(key) : CSS.escape(key);
   const toolbar = mount?.querySelector(":scope > .terminal-toolbar")
-    || header?.querySelector(":scope > .terminal-toolbar");
-  if (!header) return;
-  if (activeView !== "terminal") {
-    if (toolbar && mount && toolbar.parentElement !== mount) mount.replaceChildren(toolbar);
-    toolbar?.classList.remove("terminal-toolbar-header");
-    if (header.querySelector(":scope > .terminal-toolbar")) {
-      header.replaceChildren();
-      header.hidden = true;
-    }
-    return;
-  }
-  if (!mount || !toolbar) {
-    if (header.querySelector(":scope > .terminal-toolbar")) {
-      header.replaceChildren();
-      header.hidden = true;
-    }
-    return;
-  }
-  if (isMobileLayout()) {
-    if (toolbar.parentElement !== mount || mount.children.length !== 1) mount.replaceChildren(toolbar);
+    || document.querySelector(`.terminal-toolbar[data-workspace-tab-key="${escapedKey}"]`);
+  if (!mount || !toolbar) return;
+  view.dataset.workspaceTabKey = key;
+  view.dataset.terminalTabKey = key;
+  if (typeof registerWorkspaceToolbar === "function") registerWorkspaceToolbar("terminal", key, toolbar, mount);
+  if (typeof placeWorkspaceToolbar === "function") placeWorkspaceToolbar("terminal", key, toolbar, mount);
+  else {
+    mount.replaceChildren(toolbar);
+    toolbar.hidden = false;
     toolbar.classList.remove("terminal-toolbar-header");
-    header.replaceChildren();
-    header.hidden = true;
-  } else {
-    if (toolbar.parentElement !== header || header.children.length !== 1) header.replaceChildren(toolbar);
-    toolbar.classList.add("terminal-toolbar-header");
-    header.hidden = false;
   }
-  updateTerminalStatusForLayout();
+  if (typeof syncWorkspaceToolbarHostVisibility === "function") syncWorkspaceToolbarHostVisibility();
+  updateTerminalStatusForLayout(key);
   scheduleTerminalFit();
 }
 
 function updateTerminalConnectionStatus(connection, key, state="") {
   const connectionStatus = state === "已连接" ? "connected" : state === "已断开" ? "disconnected" : "connecting";
   setWorkspaceTabConnectionStatus(key, connectionStatus);
-  if (activeTabKey !== key) return;
-  const status = $("terminalStatus");
+  const status = terminalElementForKey(key, "#terminalStatus");
   if (!status) return;
   status.dataset.connectionAddress = `${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}`;
   status.dataset.connectionState = state;
   const dot = status.closest(".terminal-title-row")?.querySelector(".terminal-connection-dot");
   if (dot) dot.className = `terminal-connection-dot ${connectionStatus}`;
-  updateTerminalStatusForLayout();
+  updateTerminalStatusForLayout(key);
   updateTerminalConnectionToggle(key);
 }
 
 function updateTerminalConnectionToggle(key) {
-  if (activeTabKey !== key) return;
   const session = terminalSessions.get(key);
-  const button = document.querySelector(".terminal-action-reconnect");
+  const button = terminalElementForKey(key, ".terminal-action-reconnect");
   if (!button) return;
   const connecting = Boolean(session?.socket && session.socket.readyState === WebSocket.CONNECTING);
   const connected = Boolean(session?.connected && session.socket?.readyState === WebSocket.OPEN);
@@ -801,8 +804,7 @@ function terminalLatencyHtml(key) {
 }
 
 function updateTerminalLatencyDisplay(key) {
-  if (activeTabKey !== key) return;
-  const indicator = $("terminalLatency");
+  const indicator = terminalElementForKey(key, "#terminalLatency");
   if (!indicator) return;
   const session = terminalSessions.get(key);
   const latency = Number(session?.latencyMs);
@@ -826,7 +828,7 @@ function setTerminalLatencyVisible(visible) {
       session.latencyPendingTimer = null;
     }
   }
-  updateTerminalLatencyDisplay(activeTabKey);
+  for (const key of terminalSessions.keys()) updateTerminalLatencyDisplay(key);
 }
 
 function startTerminalLatencySample(session) {
@@ -874,25 +876,30 @@ function openTerminal(id, updateTab=true, existingKey="", existingTitle="") {
   const forwardButton = connectionToggleButton(c)
     .replace("connection-forward-toggle", "connection-forward-toggle terminal-action-forward")
     .replace("<button ", "<button onpointerdown=\"keepTerminalKeyboardClosed(event)\" ");
-  $("view-terminal").innerHTML = `<div class="terminal-toolbar"><div class="terminal-title-row"><button class="terminal-mobile-back" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="backToExplorer()">${icon("arrow-left")}<span>返回</span></button><span class="terminal-connection-dot"></span><div class="terminal-status" id="terminalStatus" title="${esc(connectionAddress)}">${esc(connectionAddress)}</div>${terminalLatencyHtml(key)}</div><div class="actions terminal-actions"><button class="icon-button terminal-action-sftp" title="打开此连接的 SFTP" aria-label="打开此连接的 SFTP" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="openSftp(${c.id})">${icon("folder-open")}<span>SFTP</span></button><button class="icon-button terminal-action-font" title="减小字体（Ctrl+滚轮）" aria-label="减小字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',-1)">${icon("minus")}</button><button class="icon-button terminal-action-font" title="增大字体（Ctrl+滚轮）" aria-label="增大字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',1)">${icon("plus")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端编码" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalEncodingMenu(event,'${key}',${c.id})">${icon("languages")}<span>${esc(terminalEncodingLabel(c))}</span>${icon("chevron-down")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalFontMenu(event,'${key}',${c.id})">${icon("type")}<span>字体</span>${icon("chevron-down")}</button><button class="icon-button terminal-global-settings-button" title="全局终端设置" aria-label="全局终端设置" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalGlobalSettings('${key}')">${icon("settings")}</button><button class="terminal-action-keys" title="${terminalKeysVisible ? "隐藏快捷键" : "显示快捷键"}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalKeys('${key}')">${icon("keyboard")}<span>${terminalKeysVisible ? "隐藏快捷键" : "快捷键"}</span></button><button class="terminal-action-recent" title="最近命令" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showRecentTerminalCommands('${key}')">${icon("history")}<span>最近命令</span></button><button class="terminal-action-reconnect" title="重新连接终端" aria-label="重新连接终端" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalConnection(${c.id}, '${key}')">${icon("link-2")}<span>重连</span></button>${forwardButton}</div></div>${renderTerminalKeys(key)}<div id="terminalMount" class="terminal-box"></div><div class="terminal-mobile-composer"><input id="terminalMobileInput" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入命令" onkeydown="handleMobileTerminalInput(event,'${key}')"><button class="primary icon-button" title="发送命令" onclick="sendMobileTerminalInput('${key}')">${icon("send")}</button></div>`;
-  const toolbar = $("view-terminal").querySelector(":scope > .terminal-toolbar");
+  const terminalView = $("view-terminal");
+  terminalView.innerHTML = `<div class="terminal-toolbar"><div class="terminal-title-row"><button class="terminal-mobile-back" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="backToExplorer()">${icon("arrow-left")}<span>返回</span></button><span class="terminal-connection-dot"></span><div class="terminal-status" id="terminalStatus" title="${esc(connectionAddress)}">${esc(connectionAddress)}</div>${terminalLatencyHtml(key)}</div><div class="actions terminal-actions"><button class="icon-button terminal-action-sftp" title="打开此连接的 SFTP" aria-label="打开此连接的 SFTP" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="openSftp(${c.id})">${icon("folder-open")}<span>SFTP</span></button><button class="icon-button terminal-action-font" title="减小字体（Ctrl+滚轮）" aria-label="减小字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',-1)">${icon("minus")}</button><button class="icon-button terminal-action-font" title="增大字体（Ctrl+滚轮）" aria-label="增大字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',1)">${icon("plus")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端编码" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalEncodingMenu(event,'${key}',${c.id})">${icon("languages")}<span>${esc(terminalEncodingLabel(c))}</span>${icon("chevron-down")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalFontMenu(event,'${key}',${c.id})">${icon("type")}<span>字体</span>${icon("chevron-down")}</button><button class="icon-button terminal-global-settings-button" title="全局终端设置" aria-label="全局终端设置" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalGlobalSettings('${key}')">${icon("settings")}</button><button class="terminal-action-keys" title="${terminalKeysVisible ? "隐藏快捷键" : "显示快捷键"}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalKeys('${key}')">${icon("keyboard")}<span>${terminalKeysVisible ? "隐藏快捷键" : "快捷键"}</span></button><button class="terminal-action-recent" title="最近命令" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showRecentTerminalCommands('${key}')">${icon("history")}<span>最近命令</span></button><button class="terminal-action-reconnect" title="重新连接终端" aria-label="重新连接终端" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalConnection(${c.id}, '${key}')">${icon("link-2")}<span>重连</span></button>${forwardButton}</div></div>${renderTerminalKeys(key)}<div id="terminalMount" class="terminal-box"></div><div class="terminal-mobile-composer"><input id="terminalMobileInput" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入命令" onkeydown="handleMobileTerminalInput(event,'${key}')"><button class="primary icon-button" title="发送命令" onclick="sendMobileTerminalInput('${key}')">${icon("send")}</button></div>`;
+  terminalView.dataset.workspaceTabKey = key;
+  terminalView.dataset.terminalTabKey = key;
+  const toolbar = terminalView.querySelector(":scope > .terminal-toolbar");
   const toolbarMount = document.createElement("div");
   toolbarMount.id = "terminalToolbarMount";
   toolbar.before(toolbarMount);
   toolbarMount.appendChild(toolbar);
+  if (typeof registerWorkspaceToolbar === "function") registerWorkspaceToolbar("terminal", key, toolbar, toolbarMount);
   const terminalStatus = $("terminalStatus");
   terminalStatus.dataset.connectionAddress = connectionAddress;
   terminalStatus.dataset.connectionState = "连接中";
   setWorkspace(title, `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`, "terminal", key, updateTab, true, {kind:"terminal", id:c.id});
-  syncTerminalToolbarPlacement();
+  syncTerminalToolbarPlacement(key);
   attachTerminal(c, key).catch(error => {
-    const mount = $("terminalMount");
+    const mount = terminalElementForKey(key, "#terminalMount");
     if (mount) mount.innerHTML = stateView("error", "终端组件加载失败", error.message, `<button onclick="reconnectTerminal(${c.id},'${key}')">重新连接</button>`);
   });
 }
 
 async function attachTerminal(c, key) {
   const mount = $("terminalMount");
+  if (!mount) return;
   await ensureTerminalGlobalSettings();
   await ensureTerminalLibs();
   let session = terminalSessions.get(key);
@@ -933,6 +940,7 @@ async function attachTerminal(c, key) {
     terminalSessions.set(key, session);
   }
   session.fontLayoutMobile = isMobileLayout();
+  session.mount = mount;
   session.term.options.fontSize = terminalFontSizeForCurrentLayout(c);
   if (session.term.element) mount.appendChild(session.term.element);
   else session.term.open(mount);
@@ -954,8 +962,8 @@ async function attachTerminal(c, key) {
 
 function enableTerminalFontWheel(session, key) {
   const box = session.term?.element?.closest?.(".terminal-box");
-  if (!box || session.fontWheelEnabled) return;
-  session.fontWheelEnabled = true;
+  if (!box || session.fontWheelBox === box) return;
+  session.fontWheelBox = box;
   box.addEventListener("wheel", event => {
     if (!event.ctrlKey) return;
     event.preventDefault();
@@ -964,17 +972,19 @@ function enableTerminalFontWheel(session, key) {
 }
 
 function observeTerminalBox(session) {
-  if (session.resizeObserver) return;
   const box = session.term?.element?.closest?.(".terminal-box");
   if (!box || typeof ResizeObserver === "undefined") return;
+  if (session.observedBox === box && session.resizeObserver) return;
+  session.resizeObserver?.disconnect?.();
   session.resizeObserver = new ResizeObserver(() => scheduleTerminalFit());
   session.resizeObserver.observe(box);
+  session.observedBox = box;
 }
 
 function enableTerminalTouchScroll(session) {
   const box = session.term?.element?.closest?.(".terminal-box");
-  if (!box || session.touchScrollEnabled) return;
-  session.touchScrollEnabled = true;
+  if (!box || session.touchScrollBox === box) return;
+  session.touchScrollBox = box;
   let lastY = 0;
   let carry = 0;
   box.addEventListener("touchstart", event => {

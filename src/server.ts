@@ -779,6 +779,7 @@ async function handleApi(req, res, pathname) {
       sftp_max_open_file_size_mb: data.sftp_max_open_file_size_mb ?? current.sftp_max_open_file_size_mb,
       sftp_download_directory: data.sftp_download_directory ?? current.sftp_download_directory,
       restore_workspace_tabs: data.restore_workspace_tabs ?? current.restore_workspace_tabs,
+      workspace_toolbar_placement: data.workspace_toolbar_placement ?? current.workspace_toolbar_placement,
       terminal: data.terminal ?? current.terminal
     });
     if (data.sftp_download_directory !== undefined && desktopIntegration) {

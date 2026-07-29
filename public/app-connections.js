@@ -159,6 +159,7 @@ function beginConnectionGroupDrag(event, groupName) {
 }
 
 async function renameConnectionGroup(currentName) {
+  const groupSelect = $("conn_group");
   const nextName = await inputModal("重命名分组", "分组名称", currentName);
   if (!nextName || nextName === currentName) return;
   const result = await api("/api/connection-groups/rename", {
@@ -169,8 +170,10 @@ async function renameConnectionGroup(currentName) {
   groupOpen.add(result.group_name);
   saveGroupState();
   await loadAll();
-  if (activeView === "edit" && $("conn_group")) {
-    renderGroupOptions($("conn_group").value === currentName ? result.group_name : $("conn_group").value);
+  if (groupSelect?.isConnected) {
+    const nextValue = groupSelect.value === currentName ? result.group_name : groupSelect.value;
+    groupSelect.innerHTML = groupNames(nextValue).map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join("") + `<option value="__new_group__">新增分组...</option>`;
+    groupSelect.value = nextValue;
   }
   notify(`分组已重命名，更新 ${result.updated} 个连接`, "success");
 }
@@ -542,6 +545,7 @@ function wireConnectionForm() {
 }
 
 async function saveConnectionForm(clearAfterSave=false, trigger=null) {
+  const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   const form = $("connectionForm");
   if (!form || form.dataset.saving === "1") return;
   form.dataset.saving = "1";
@@ -555,9 +559,13 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null) {
     saveGroupState();
     await loadAll();
     if (clearAfterSave && !p.id) {
-      resetConnectionForm();
-      await loadKeys().catch(()=>{});
-      $("conn_name")?.focus();
+      let keyLoad = Promise.resolve();
+      inPane(() => {
+        resetConnectionForm();
+        keyLoad = loadKeys().catch(()=>{});
+        $("conn_name")?.focus();
+      });
+      await keyLoad;
       notify("连接已保存，表单已清空","success");
     } else {
       notify("连接已保存","success");
@@ -569,13 +577,15 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null) {
   }
 }
 
-async function loadKeys(selected) {
-  if (!$("conn_key")) return;
+async function loadKeys(selected, select=$("conn_key")) {
+  if (!select) return;
+  const root = select.closest("#view-edit") || select.form || document;
   const keys = await api("/api/identity-files");
-  const current = selected ?? $("conn_key").value;
-  $("conn_key").innerHTML = `<option value="">不使用私钥</option>` + keys.map(k=>`<option value="${esc(k.path)}">${esc(k.label)}${k.permission_ok ? "" : "（需检查权限）"}</option>`).join("");
-  if (current) $("conn_key").value = current;
-  renderKeyStatus();
+  if (!select.isConnected) return;
+  const current = selected ?? select.value;
+  select.innerHTML = `<option value="">不使用私钥</option>` + keys.map(k=>`<option value="${esc(k.path)}">${esc(k.label)}${k.permission_ok ? "" : "（需检查权限）"}</option>`).join("");
+  if (current) select.value = current;
+  renderKeyStatus(select, root.querySelector?.("#keyStatus"));
 }
 
 async function uploadOneKey(file){
@@ -589,16 +599,16 @@ async function uploadOneKey(file){
 
 async function uploadKey(){
   const f=$("key_upload").files[0];
+  const select = $("conn_key");
   if(!f) return notify("请选择密钥文件","error");
   const data=await uploadOneKey(f);
-  await loadKeys(data.path);
+  await loadKeys(data.path, select);
   notify("密钥已上传","success");
 }
 
-async function renderKeyStatus() {
-  const box = $("keyStatus");
+async function renderKeyStatus(select=$("conn_key"), box=$("keyStatus")) {
   if (!box) return;
-  const key = $("conn_key")?.value || "";
+  const key = select?.value || "";
   if (!key) {
     box.textContent = "未选择私钥";
     box.className = "key-status muted";
@@ -615,11 +625,12 @@ async function renderKeyStatus() {
 }
 
 async function repairSelectedKey() {
-  const key = $("conn_key")?.value || "";
+  const select = $("conn_key");
+  const key = select?.value || "";
   if (!key) return notify("请先选择私钥", "info");
   try {
     const status = await api("/api/identity-files/repair", {method:"POST", body:JSON.stringify({path:key})});
-    await loadKeys(key);
+    await loadKeys(key, select);
     notify(status.ok ? "私钥权限已修复" : `已尝试修复：${status.details}`, status.ok ? "success" : "error");
   } catch (error) {
     notify(error.message, "error");
@@ -690,9 +701,13 @@ async function checkAllHealth(button=null) {
 }
 
 async function openServerDashboard(id, updateTab=true) {
+  const paneId = typeof currentWorkspacePaneId === "function" ? currentWorkspacePaneId() : "";
+  const inPane = action => typeof runInWorkspacePane === "function" ? runInWorkspacePane(paneId, action) : action();
   const c = selectConnection(id);
   if (!c) return;
-  $("view-dashboard").innerHTML = `<div class="panel">
+  let body = null;
+  inPane(() => {
+    $("view-dashboard").innerHTML = `<div class="panel">
     <div class="workspace-head">
       <div>
         <h2>${esc(c.name)} · 仪表盘</h2>
@@ -704,12 +719,14 @@ async function openServerDashboard(id, updateTab=true) {
       <div class="dashboard-card"><strong>巡检中</strong><span>正在通过 SSH 获取系统信息...</span></div>
     </div>
   </div>`;
-  setWorkspace(`${c.name} · 仪表盘`, "服务器基础巡检", "dashboard", `dashboard-${c.id}`, updateTab, true, {kind:"dashboard", id:c.id});
+    setWorkspace(`${c.name} · 仪表盘`, "服务器基础巡检", "dashboard", `dashboard-${c.id}`, updateTab, true, {kind:"dashboard", id:c.id});
+    body = $("serverDashboardBody");
+  });
   try {
     const result = await api(`/api/connections/${c.id}/inspect`, {method:"POST"});
-    $("serverDashboardBody").innerHTML = renderServerInspection(result);
+    if (body?.isConnected) body.innerHTML = renderServerInspection(result);
   } catch (error) {
-    $("serverDashboardBody").innerHTML = `<div class="dashboard-card bad"><strong>巡检失败</strong><span>${esc(error.message)}</span></div>`;
+    if (body?.isConnected) body.innerHTML = `<div class="dashboard-card bad"><strong>巡检失败</strong><span>${esc(error.message)}</span></div>`;
   }
 }
 
@@ -779,11 +796,12 @@ function editConnection(id, updateTab=true){
 }
 
 async function deleteConnection(id){
+  const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   const c = currentConnection(id);
   if(!await confirmModal(`删除连接 ${c?.name || id} 及其所有转发？`, "删除 SSH 连接", "删除", "取消", true)) return;
   await api(`/api/connections/${id}`,{method:"DELETE"});
   if(selectedId===id) selectedId=null;
   await loadAll();
-  renderWelcome();
+  inPane(renderWelcome);
   notify("已删除连接","success");
 }

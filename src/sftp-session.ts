@@ -139,6 +139,7 @@ function sftpSessionStatus(connectionId) {
 function closeAllSftpSessions() {
   for (const record of sessions.values()) endSessionRecord(record);
   sessions.clear();
+  for (const ticket of nativeSftpDragTickets.values()) cancelNativeSftpDragTicket(ticket);
   nativeSftpDragTickets.clear();
 }
 
@@ -196,8 +197,23 @@ function normalizedNativeDragPaths(remotePaths) {
 
 function cleanupNativeSftpDragTickets(now = Date.now()) {
   for (const [token, ticket] of nativeSftpDragTickets) {
-    if (Number(ticket.expiresAt || 0) <= now) nativeSftpDragTickets.delete(token);
+    if (Number(ticket.expiresAt || 0) <= now) {
+      cancelNativeSftpDragTicket(ticket);
+      nativeSftpDragTickets.delete(token);
+    }
   }
+}
+
+function assertNativeSftpDragTicketActive(ticket) {
+  if (ticket?.cancelled) throw nativeSftpDragCancelledError();
+}
+
+function cancelNativeSftpDragTicket(ticket) {
+  if (!ticket || ticket.cancelled) return;
+  ticket.cancelled = true;
+  const channel = ticket.manifestChannel;
+  ticket.manifestChannel = null;
+  try { channel?.end(); } catch {}
 }
 
 function nativeSftpDragTicketComplete(ticket) {
@@ -209,7 +225,10 @@ function evictOldestNativeSftpDragTicket(tickets) {
   const oldest = tickets
     .filter(ticket => !nativeSftpDragTicketComplete(ticket))
     .sort((left, right) => Number(left.createdAt || 0) - Number(right.createdAt || 0))[0];
-  if (oldest) nativeSftpDragTickets.delete(oldest.token);
+  if (oldest) {
+    cancelNativeSftpDragTicket(oldest);
+    nativeSftpDragTickets.delete(oldest.token);
+  }
   return Boolean(oldest);
 }
 
@@ -268,10 +287,12 @@ function nativeSftpDragTicketView(ticket) {
 }
 
 async function appendNativeSftpDragEntry(channel, remotePath, relativePath, ticket, entries, topLevel = false, topLevelId = "") {
+  assertNativeSftpDragTicketActive(ticket);
   if (entries.length >= SFTP_NATIVE_DRAG_MAX_ENTRIES) {
     throw new Error(`一次拖出最多处理 ${SFTP_NATIVE_DRAG_MAX_ENTRIES} 个文件和目录`);
   }
   const linkStats: any = await sftpLstat(channel, remotePath);
+  assertNativeSftpDragTicketActive(ticket);
   const symbolicLink = Boolean(linkStats?.isSymbolicLink?.());
   let stats: any = linkStats;
   if (symbolicLink) {
@@ -280,6 +301,7 @@ async function appendNativeSftpDragEntry(channel, remotePath, relativePath, tick
     } catch {
       throw new Error(`符号链接目标不存在或无法读取：${remotePath}`);
     }
+    assertNativeSftpDragTicketActive(ticket);
   }
   const directory = Boolean(stats?.isDirectory?.());
   const manifestEntry = {
@@ -309,10 +331,12 @@ async function appendNativeSftpDragEntry(channel, remotePath, relativePath, tick
   }
   if (!directory) return;
   const children: any[] = await sftpReaddir(channel, remotePath) as any[];
+  assertNativeSftpDragTicketActive(ticket);
   const usedNames = new Set();
   for (const child of children) {
     const rawName = String(child?.filename || "");
     if (!rawName || rawName === "." || rawName === "..") continue;
+    assertNativeSftpDragTicketActive(ticket);
     const localName = availablePortableDragName(usedNames, rawName, ticket.platform);
     await appendNativeSftpDragEntry(
       channel,
@@ -344,6 +368,8 @@ function reserveNativeSftpDragTicket(connectionId, remotePaths, options: any = {
     remotePaths:paths,
     entries:null,
     manifestPromise:null,
+    manifestChannel:null,
+    cancelled:false,
     topLevel:paths.map((remotePath, index) => {
       const source = byPath.get(remotePath);
       const rawName = String(source?.name || path.posix.basename(remotePath.replace(/\/+$/, "")) || "download");
@@ -370,20 +396,32 @@ async function ensureNativeSftpDragManifest(ticket) {
   if (Array.isArray(ticket.entries)) return ticket;
   const manifestPromise = (async () => {
     let channel: any = null;
+    let channelRegistered = false;
     const entries = [];
     try {
+      assertNativeSftpDragTicketActive(ticket);
       channel = await openSftpChannel(ticket.connectionId);
+      assertNativeSftpDragTicketActive(ticket);
+      ticket.manifestChannel = channel;
+      channelRegistered = true;
       for (const topLevel of ticket.topLevel) {
+        assertNativeSftpDragTicketActive(ticket);
         await appendNativeSftpDragEntry(channel, topLevel.remote_path, topLevel.name, ticket, entries, true, topLevel.id);
       }
+      assertNativeSftpDragTicketActive(ticket);
       ticket.entries = entries;
       return ticket;
     } catch (error) {
       ticket.entries = null;
+      if (ticket.cancelled) throw nativeSftpDragCancelledError();
       throw error;
     } finally {
       ticket.manifestPromise = null;
-      try { channel?.end(); } catch {}
+      const closeChannel = !channelRegistered || ticket.manifestChannel === channel;
+      if (ticket.manifestChannel === channel) ticket.manifestChannel = null;
+      if (closeChannel) {
+        try { channel?.end(); } catch {}
+      }
     }
   })();
   ticket.manifestPromise = manifestPromise;
@@ -398,6 +436,7 @@ async function createNativeSftpDragTicket(connectionId, remotePaths, options: an
 async function getNativeSftpDragTicket(token) {
   const ticket = nativeSftpDragTicket(token);
   await ensureNativeSftpDragManifest(ticket);
+  assertNativeSftpDragTicketActive(ticket);
   return nativeSftpDragTicketView(ticket);
 }
 
@@ -635,7 +674,11 @@ async function deliverNativeSftpDragTicket(token, targetDirectory) {
 }
 
 function releaseNativeSftpDragTicket(token) {
-  return nativeSftpDragTickets.delete(String(token || ""));
+  const key = String(token || "");
+  const ticket = nativeSftpDragTickets.get(key);
+  if (!ticket) return false;
+  cancelNativeSftpDragTicket(ticket);
+  return nativeSftpDragTickets.delete(key);
 }
 
 function resolvedSftpDragEntry(name) {

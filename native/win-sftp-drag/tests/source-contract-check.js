@@ -145,8 +145,18 @@ assert.match(
 );
 assert.match(
   source,
-  /HRESULT GetDescriptors\(STGMEDIUM\* medium\) \{[\s\S]*WaitForManifest\(\)/,
-  "Explorer must be able to enter the drag loop before the recursive manifest is ready"
+  /HRESULT ResolveManifestForDataRequest\(\)[\s\S]*IsManifestPending\(\)[\s\S]*IsCursorOverSourceWindow\(\)[\s\S]*!session_->async_in_operation\.load\(\)[\s\S]*return E_PENDING;/,
+  "OLE data probes must stay non-blocking until an asynchronous drop operation owns the directory manifest"
+);
+assert.match(
+  source,
+  /QueryGetData\(FORMATETC\* format\)[\s\S]*session_->IsManifestPending\(\)[\s\S]*return S_OK;[\s\S]*session_->WaitForManifest\(\)/,
+  "QueryGetData must advertise delayed directory data without synchronously waiting for recursive enumeration"
+);
+assert.match(
+  source,
+  /HRESULT GetDescriptors\(STGMEDIUM\* medium\) \{\s*HRESULT manifest_result = ResolveManifestForDataRequest\(\);/,
+  "FILEGROUPDESCRIPTOR requests must use the non-blocking manifest gate"
 );
 const cancelBody = /void Cancel\(\) \{([\s\S]*?)\n  \}/.exec(source)?.[1] || "";
 assert.match(cancelBody, /cancelled\.store\(true\)/, "Cancellation must publish the session cancellation flag");

@@ -6,11 +6,12 @@ const IMPORT_SECTION_META = {
 let activeImportSection = "import-source";
 
 function showImport(updateTab=true) {
+  const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   $("view-import").innerHTML = $("importTpl").innerHTML;
   refreshIcons();
   setWorkspace("导入导出", "SSH config 与数据库迁移", "import", "import", updateTab, true, {kind:"import"});
   renderBackupControls();
-  loadSecuritySettings().then(renderBackupControls).catch(() => {});
+  loadSecuritySettings().then(() => inPane(renderBackupControls)).catch(() => {});
   renderImport();
   renderConfigSnapshots();
   showImportSection(activeImportSection, {moveToWorkspace:false});
@@ -38,7 +39,8 @@ function showImportSection(id, options={}) {
   setExplorerSectionActive(next);
   if (activeView === "import" && $("workspaceSubtitle")) $("workspaceSubtitle").textContent = IMPORT_SECTION_META[next];
   if (options.moveToWorkspace !== false) {
-    document.querySelector(".workspace")?.scrollTo?.({top:0, behavior:"auto"});
+    const scope = typeof currentWorkspaceDomScope === "function" ? currentWorkspaceDomScope() : document;
+    scope.querySelector(".workspace")?.scrollTo?.({top:0, behavior:"auto"});
     if (isMobileLayout()) showMobileWorkspace();
   }
 }
@@ -48,6 +50,7 @@ function scrollToImportSection(id) {
 }
 
 async function renderConfigSnapshots() {
+  const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   const root = $("view-import");
   if (!root) return;
   let box = $("configSnapshots");
@@ -62,27 +65,30 @@ async function renderConfigSnapshots() {
     const items = await api("/api/config-snapshots");
     box.innerHTML = `<div class="workspace-head"><div><h3>配置版本快照</h3><div class="subtitle">导入、恢复和批量应用模板前会自动创建，最多保留 20 个。</div></div><button onclick="createConfigSnapshotUi()">立即创建</button></div>${items.length ? `<div class="snapshot-list">${items.map(item => `<div class="snapshot-row"><div><strong>${esc(item.reason)}</strong><span>${new Date(item.created_at).toLocaleString("zh-CN",{hour12:false})} · 连接 ${item.counts?.connections || 0} · 转发 ${item.counts?.forwards || 0} · 模板 ${item.counts?.templates || 0}</span></div><div class="actions tight"><button onclick="restoreConfigSnapshotUi('${escAttr(item.id)}')">回滚</button><button class="danger" onclick="deleteConfigSnapshotUi('${escAttr(item.id)}')">删除</button></div></div>`).join("")}</div>` : stateView("empty", "暂无配置快照", "可手动创建，后续高风险操作也会自动保存。")}`;
   } catch (error) { box.innerHTML = stateView("error", "快照加载失败", error.message); }
-  showImportSection(activeImportSection, {moveToWorkspace:false});
+  inPane(() => showImportSection(activeImportSection, {moveToWorkspace:false}));
 }
 
 async function createConfigSnapshotUi() {
+  const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   await api("/api/config-snapshots", {method:"POST",body:JSON.stringify({reason:"手动快照"})});
   notify("配置快照已创建", "success");
-  renderConfigSnapshots();
+  inPane(renderConfigSnapshots);
 }
 
 async function restoreConfigSnapshotUi(id) {
+  const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   if (!await confirmModal("回滚会停止当前转发并覆盖连接、转发和模板配置。继续？", "回滚配置快照", "确认回滚", "取消", true)) return;
   await api(`/api/config-snapshots/${id}/restore`, {method:"POST"});
   await loadAll();
   notify("配置快照已回滚", "success");
-  renderConfigSnapshots();
+  inPane(renderConfigSnapshots);
 }
 
 async function deleteConfigSnapshotUi(id) {
+  const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   if (!await confirmModal("删除该配置快照？", "删除快照", "删除", "取消", true)) return;
   await api(`/api/config-snapshots/${id}`, {method:"DELETE"});
-  renderConfigSnapshots();
+  inPane(renderConfigSnapshots);
 }
 
 function renderBackupControls() {

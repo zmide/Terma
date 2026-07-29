@@ -276,7 +276,9 @@ function captureUiState(root=document) {
     selectionStart: editable && typeof active.selectionStart === "number" ? active.selectionStart : null,
     selectionEnd: editable && typeof active.selectionEnd === "number" ? active.selectionEnd : null,
     treeScrollTop: $("connectionGroups")?.scrollTop || 0,
-    workspaceScrollTop: document.querySelector(".workspace")?.scrollTop || 0,
+    workspaceScrollTop: (typeof currentWorkspaceDomScope === "function"
+      ? currentWorkspaceDomScope()?.querySelector(".workspace")
+      : document.querySelector(".workspace"))?.scrollTop || 0,
     openDetails: [...root.querySelectorAll?.("details[id]") || []].filter(item => item.open).map(item => item.id)
   };
 }
@@ -284,7 +286,9 @@ function captureUiState(root=document) {
 function restoreUiState(state) {
   if (!state) return;
   if ($("connectionGroups")) $("connectionGroups").scrollTop = state.treeScrollTop || 0;
-  const workspace = document.querySelector(".workspace");
+  const workspace = typeof currentWorkspaceDomScope === "function"
+    ? currentWorkspaceDomScope()?.querySelector(".workspace")
+    : document.querySelector(".workspace");
   if (workspace) workspace.scrollTop = state.workspaceScrollTop || 0;
   for (const id of state.openDetails || []) {
     const detail = $(id);
@@ -324,6 +328,7 @@ function scheduleTerminalFit() {
 }
 
 function fitVisibleTerminals() {
+  if (typeof terminalSessions === "undefined") return;
   for (const session of terminalSessions.values()) {
     const box = session.term?.element?.closest?.(".terminal-box");
     let grew = false;
@@ -434,7 +439,7 @@ async function copyText(text) {
   }
 }
 
-function toggleCheckGroup(box, cls){ document.querySelectorAll(`.${cls}-check`).forEach(x=>x.checked=box.checked); }
+function toggleCheckGroup(box, cls){ (box?.closest?.(".workspace-pane") || document).querySelectorAll(`.${cls}-check`).forEach(x=>x.checked=box.checked); }
 
 function esc(s){ return String(s ?? "").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 

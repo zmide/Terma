@@ -7,6 +7,10 @@ const DEFAULT_LISTEN_HOSTS = ["127.0.0.1"];
 const DEFAULT_LISTEN_PORT = 8088;
 const MAX_PORT_FALLBACKS = 20;
 const DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB = 5;
+const DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT = Object.freeze({
+  unsplit: Object.freeze({ terminal: "header", sftp: "header" }),
+  split: Object.freeze({ terminal: "header", sftp: "header" })
+});
 const DEFAULT_TERMINAL_SETTINGS = Object.freeze({
   middle_mouse_action: "paste_clipboard",
   right_mouse_action: "context_menu",
@@ -26,6 +30,7 @@ const DEFAULT_TERMINAL_SETTINGS = Object.freeze({
 const TERMINAL_MOUSE_ACTIONS = new Set(["none", "context_menu", "paste_clipboard", "open_settings", "send_enter", "paste_selection"]);
 const TERMINAL_MULTILINE_PASTE_MODES = new Set(["prompt", "paste", "single_line"]);
 const TERMINAL_URL_SCHEMES = new Set(["http", "https", "ftp", "ssh", "telnet"]);
+const WORKSPACE_TOOLBAR_PLACEMENTS = new Set(["tab", "header"]);
 
 function splitListenHosts(value) {
   const source = Array.isArray(value) ? value : [value];
@@ -90,6 +95,25 @@ function normalizeTerminalSettings(value: any = {}, fallback: any = DEFAULT_TERM
   };
 }
 
+function normalizeWorkspaceToolbarPlacement(value: any = {}, fallback: any = DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT) {
+  const source = value && typeof value === "object" ? value : {};
+  const base = fallback && typeof fallback === "object" ? fallback : DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT;
+  const normalizePlacement = (candidate, defaultValue) => {
+    const placement = String(candidate ?? defaultValue ?? "header");
+    return WORKSPACE_TOOLBAR_PLACEMENTS.has(placement) ? placement : "header";
+  };
+  return {
+    unsplit: {
+      terminal: normalizePlacement(source.unsplit?.terminal, base.unsplit?.terminal),
+      sftp: normalizePlacement(source.unsplit?.sftp, base.unsplit?.sftp)
+    },
+    split: {
+      terminal: normalizePlacement(source.split?.terminal, base.split?.terminal),
+      sftp: normalizePlacement(source.split?.sftp, base.split?.sftp)
+    }
+  };
+}
+
 function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
   const hostsValue = value.listen_hosts !== undefined ? value.listen_hosts
     : (value.hosts !== undefined ? value.hosts : value.host);
@@ -112,6 +136,10 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     restore_workspace_tabs: value.restore_workspace_tabs === undefined
       ? fallback.restore_workspace_tabs !== false
       : value.restore_workspace_tabs !== false,
+    workspace_toolbar_placement: normalizeWorkspaceToolbarPlacement(
+      value.workspace_toolbar_placement,
+      fallback.workspace_toolbar_placement
+    ),
     terminal: normalizeTerminalSettings(value.terminal, fallback.terminal)
   };
 }
@@ -198,6 +226,7 @@ function availableListenHosts(interfaces: any = os.networkInterfaces()) {
 
 module.exports = {
   DEFAULT_TERMINAL_SETTINGS,
+  DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,
   DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB,
   DEFAULT_LISTEN_HOSTS,
   DEFAULT_LISTEN_PORT,
@@ -210,6 +239,7 @@ module.exports = {
   normalizeSftpDownloadDirectory,
   normalizeSftpMaxOpenFileSize,
   normalizeTerminalSettings,
+  normalizeWorkspaceToolbarPlacement,
   readRuntimeSettings,
   resolveRuntimeSettings,
   splitListenHosts,

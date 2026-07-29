@@ -6,10 +6,12 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const {
   DEFAULT_TERMINAL_SETTINGS,
+  DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,
   normalizeListenHosts,
   normalizeListenPort,
   normalizeRuntimeSettings,
-  normalizeTerminalSettings
+  normalizeTerminalSettings,
+  normalizeWorkspaceToolbarPlacement
 } = require("../dist/runtime-settings");
 
 const root = path.resolve(__dirname, "..");
@@ -81,6 +83,14 @@ async function request(base, pathname, options = {}) {
 }
 
 async function main() {
+  const settingsFrontend = fs.readFileSync(path.join(root, "public", "app-settings.js"), "utf8");
+  for (const controlId of [
+    "toolbarPlacementUnsplitTerminal",
+    "toolbarPlacementUnsplitSftp",
+    "toolbarPlacementSplitTerminal",
+    "toolbarPlacementSplitSftp"
+  ]) assert.equal(settingsFrontend.includes(`id=\"${controlId}\"`), true, `${controlId} setting is missing`);
+  assert.equal(settingsFrontend.includes("syncWorkspaceToolbarPlacements()"), true);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.url_links_enabled, true);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.auto_copy_selection, false);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.copy_include_trailing_newline, false);
@@ -93,12 +103,24 @@ async function main() {
     sftp_max_open_file_size_mb: 5,
     sftp_download_directory: "",
     restore_workspace_tabs: true,
+    workspace_toolbar_placement: {
+      unsplit: {terminal:"header", sftp:"header"},
+      split: {terminal:"header", sftp:"header"}
+    },
     terminal: {...DEFAULT_TERMINAL_SETTINGS, url_prefixes:[...DEFAULT_TERMINAL_SETTINGS.url_prefixes]}
   });
   assert.equal(normalizeRuntimeSettings({ sftp_recycle_bin_enabled: true }).sftp_recycle_bin_enabled, true);
   assert.equal(normalizeRuntimeSettings({}, { sftp_recycle_bin_enabled: true }).sftp_recycle_bin_enabled, true);
   assert.equal(normalizeRuntimeSettings({ sftp_max_open_file_size_mb: 12 }).sftp_max_open_file_size_mb, 12);
   assert.equal(normalizeRuntimeSettings({ restore_workspace_tabs: false }).restore_workspace_tabs, false);
+  assert.deepEqual(normalizeRuntimeSettings({}).workspace_toolbar_placement, DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT);
+  assert.deepEqual(normalizeWorkspaceToolbarPlacement({
+    unsplit:{terminal:"tab", sftp:"invalid"},
+    split:{sftp:"tab"}
+  }), {
+    unsplit:{terminal:"tab", sftp:"header"},
+    split:{terminal:"header", sftp:"tab"}
+  });
   assert.deepEqual(normalizeTerminalSettings({
     middle_mouse_action: "send_enter",
     right_mouse_action: "invalid",
@@ -169,6 +191,7 @@ async function main() {
     assert.equal(persistedAfterFallback.sftp_max_open_file_size_mb, 5);
     assert.equal(persistedAfterFallback.sftp_download_directory, "");
     assert.equal(persistedAfterFallback.restore_workspace_tabs, true);
+    assert.deepEqual(persistedAfterFallback.workspace_toolbar_placement, DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT);
     assert.equal(persistedAfterFallback.terminal.right_mouse_action, "paste_clipboard");
     console.log("PASS multi-address startup uses one fallback port and persists it");
 
@@ -190,6 +213,7 @@ async function main() {
     assert.equal(settings.body.saved.sftp_max_open_file_size_mb, 5);
     assert.equal(settings.body.saved.sftp_download_directory, "");
     assert.equal(settings.body.saved.restore_workspace_tabs, true);
+    assert.deepEqual(settings.body.saved.workspace_toolbar_placement, DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT);
     assert.equal(settings.body.saved.terminal.right_mouse_action, "paste_clipboard");
     assert.equal(settings.body.saved.terminal.url_links_enabled, true);
     assert.equal(settings.body.effective.listen_port, info.actual_port);
@@ -238,6 +262,24 @@ async function main() {
     assert.equal(generalSaved.body.saved.sftp_recycle_bin_enabled, false);
     console.log("PASS workspace restore and SFTP open limit save independently");
 
+    const workspaceSaved = await request(base, "/api/runtime-settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        workspace_toolbar_placement: {
+          unsplit:{terminal:"tab", sftp:"header"},
+          split:{terminal:"header", sftp:"tab"}
+        }
+      })
+    });
+    assert.equal(workspaceSaved.response.ok, true);
+    assert.deepEqual(workspaceSaved.body.saved.workspace_toolbar_placement, {
+      unsplit:{terminal:"tab", sftp:"header"},
+      split:{terminal:"header", sftp:"tab"}
+    });
+    assert.equal(workspaceSaved.body.saved.restore_workspace_tabs, false);
+    assert.equal(workspaceSaved.body.saved.sftp_max_open_file_size_mb, 12);
+    console.log("PASS four workspace toolbar placements persist independently");
+
     const blocked = await listen("127.0.0.1");
     checkBlocker = blocked.server;
     const unavailable = await request(base, "/api/runtime-settings/check", {
@@ -270,6 +312,10 @@ async function main() {
     assert.equal(saved.body.saved.sftp_max_open_file_size_mb, 12);
     assert.equal(saved.body.saved.sftp_download_directory, path.join(temporaryRoot, "downloads"));
     assert.equal(saved.body.saved.restore_workspace_tabs, false);
+    assert.deepEqual(saved.body.saved.workspace_toolbar_placement, {
+      unsplit:{terminal:"tab", sftp:"header"},
+      split:{terminal:"header", sftp:"tab"}
+    });
     assert.equal(saved.body.saved.terminal.middle_mouse_action, "open_settings");
     assert.equal(saved.body.restart_required, true);
     console.log("PASS valid listener configuration saves for the next restart");

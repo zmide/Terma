@@ -1,4 +1,10 @@
-const $ = id => document.getElementById(id);
+const $ = id => {
+  const scope = typeof currentWorkspaceDomScope === "function"
+    ? currentWorkspaceDomScope()
+    : null;
+  return scope?.querySelector(`#${CSS.escape(id)}`)
+    || document.getElementById(id);
+};
 let connections = [], selectedId = null, activeView = "welcome", primaryView = "connections";
 let importState = {tunnels: [], missing_keys: []};
 const groupOpen = loadGroupState();

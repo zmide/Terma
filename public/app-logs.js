@@ -1,9 +1,22 @@
+const logViewerStates = new Map();
+
+function currentLogViewerState(tabKey=activeTabKey) {
+  return logViewerStates.get(String(tabKey || "")) || logViewerState;
+}
+
+function disposeLogViewerState(tabKey) {
+  logViewerStates.delete(String(tabKey || ""));
+}
+
 function setLogSearch(value) {
   logSearch = value || "";
   renderLogs().catch(e=>notify(e.message,"error"));
   clearTimeout(logSearchTimer);
-  if (logViewerState?.path && activeView === "log") {
-    logSearchTimer = setTimeout(() => openLog(logViewerState.path, logViewerState.title, false).catch(e=>notify(e.message,"error")), 250);
+  const tabKey = activeTabKey;
+  const state = currentLogViewerState();
+  const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
+  if (state?.path && activeView === "log") {
+    logSearchTimer = setTimeout(() => inPane(() => openLog(state.path, state.title, false, tabKey).catch(e=>notify(e.message,"error"))), 250);
   }
 }
 
@@ -84,11 +97,24 @@ function changeLogPage(key, delta) {
   renderLogs().catch(e=>notify(e.message,"error"));
 }
 
-async function openLog(path, title, updateTab=true) {
+async function openLog(path, title, updateTab=true, existingKey="") {
+  const paneId = typeof currentWorkspacePaneId === "function" ? currentWorkspacePaneId() : "";
+  const inPane = action => typeof runInWorkspacePane === "function" ? runInWorkspacePane(paneId, action) : action();
+  const currentTab = tabs.find(tab => tab.key === activeTabKey);
+  const tabKey = existingKey || (!updateTab && currentTab?.kind === "log" ? currentTab.key : `log-${path}`);
+  inPane(() => {
+    setWorkspace(title, "日志查看", "log", tabKey, updateTab, true, {kind:"log", path});
+    $("view-log").innerHTML = stateView("loading", "正在读取日志", title);
+  });
+  const inTab = typeof captureWorkspaceTab === "function" ? captureWorkspaceTab(tabKey) : inPane;
   const result = await loadLogWindow(path);
-  logViewerState = {path, title, offset:result.offset, text:result.text || "", matches:result.matches || [], matches_truncated:Boolean(result.matches_truncated), has_older:Boolean(result.has_older)};
-  renderLogViewer();
-  setWorkspace(title, "日志查看", "log", `log-${path}`, updateTab, true, {kind:"log", path});
+  const render = () => {
+    const state = {path, title, offset:result.offset, text:result.text || "", matches:result.matches || [], matches_truncated:Boolean(result.matches_truncated), has_older:Boolean(result.has_older)};
+    logViewerStates.set(tabKey, state);
+    logViewerState = state;
+    renderLogViewer(state, tabKey);
+  };
+  inTab(render);
 }
 
 async function loadLogWindow(path, before) {
@@ -98,31 +124,36 @@ async function loadLogWindow(path, before) {
   return api(`/api/logs/read?${params.toString()}`);
 }
 
-function renderLogViewer() {
-  if (!logViewerState) return;
-  const matches = logViewerState.matches || [];
+function renderLogViewer(state=currentLogViewerState(), tabKey=activeTabKey) {
+  if (!state) return;
+  const matches = state.matches || [];
   let contexts = "";
   if (logSearch.trim()) {
     const blocks = matches.slice(0, 50).map(match => `<pre>${highlightLogText(match.text)}</pre>`).join("");
     const summary = matches.length
-      ? `共显示 ${matches.length} 处命中${logViewerState.matches_truncated ? "，更多结果已省略" : ""}`
+      ? `共显示 ${matches.length} 处命中${state.matches_truncated ? "，更多结果已省略" : ""}`
       : "正文中没有对应内容";
     contexts = `<div class="panel compact-log-context"><strong>搜索上下文</strong><span>${summary}</span>${blocks}</div>`;
   }
-  const older = logViewerState.has_older
-    ? `<div class="actions log-load-actions"><button onclick="loadOlderLog()">${icon("chevrons-up")}加载更早内容</button><span class="muted">按 256 KB 分段读取，不会一次载入整个大日志。</span></div>`
+  const older = state.has_older
+    ? `<div class="actions log-load-actions"><button onclick="loadOlderLog('${escAttr(tabKey)}')">${icon("chevrons-up")}加载更早内容</button><span class="muted">按 256 KB 分段读取，不会一次载入整个大日志。</span></div>`
     : "";
-  $("view-log").innerHTML = `${older}${contexts}<pre class="log-view">${highlightLogText(logViewerState.text || "日志为空")}</pre>`;
+  $("view-log").innerHTML = `${older}${contexts}<pre class="log-view">${highlightLogText(state.text || "日志为空")}</pre>`;
   refreshIcons();
 }
 
-async function loadOlderLog() {
-  if (!logViewerState?.has_older) return;
-  const result = await loadLogWindow(logViewerState.path, logViewerState.offset);
-  logViewerState.offset = result.offset;
-  logViewerState.text = `${result.text || ""}${logViewerState.text || ""}`;
-  logViewerState.has_older = Boolean(result.has_older);
-  renderLogViewer();
+async function loadOlderLog(tabKey=activeTabKey) {
+  const state = currentLogViewerState(tabKey);
+  if (!state?.has_older) return;
+  const inTab = typeof captureWorkspaceTab === "function" ? captureWorkspaceTab(tabKey) : action => action();
+  const result = await loadLogWindow(state.path, state.offset);
+  state.offset = result.offset;
+  state.text = `${result.text || ""}${state.text || ""}`;
+  state.has_older = Boolean(result.has_older);
+  inTab(() => {
+    logViewerState = state;
+    renderLogViewer(state, tabKey);
+  });
 }
 
 async function showLogSettings() {
@@ -174,6 +205,7 @@ function escapeRegExp(text) {
 }
 
 async function openTodaySystemLog() {
+  const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   if (!logsData.system?.length) logsData = await api("/api/logs");
   const now = new Date();
   const yyyy = now.getFullYear();
@@ -182,7 +214,7 @@ async function openTodaySystemLog() {
   const today = `${yyyy}-${mm}-${dd}`;
   const log = (logsData.system || []).find(item => String(item.path || item.label || "").includes(today));
   if (!log) return notify("今天暂无系统日志", "info");
-  openLog(log.path, log.label || `system-${today}`);
+  inPane(() => openLog(log.path, log.label || `system-${today}`));
 }
 
 function logPathsForKey(key) {
