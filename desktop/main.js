@@ -471,13 +471,14 @@ function safeNativeSftpTarget(value, session) {
   const id = Number(value.id);
   const tabKey = String(value.tabKey || "").slice(0, 256);
   const targetPath = String(value.path || ".").replace(/\\/g, "/").slice(0, 4096);
-  if (!Number.isInteger(id) || id <= 0 || id === session.connectionId || !tabKey) return null;
+  const kind = value.kind === "terminal" ? "terminal" : "sftp";
+  if (!Number.isInteger(id) || id <= 0 || !tabKey || tabKey === session.sourceTabKey) return null;
   return {
     id,
     tabKey,
     path:targetPath || ".",
-    title:String(value.title || "SFTP").slice(0, 256),
-    kind:"sftp"
+    title:String(value.title || (kind === "terminal" ? "终端" : "SFTP")).slice(0, 256),
+    kind
   };
 }
 
@@ -886,6 +887,7 @@ function handleStreamingSftpStartDrag(event, payload, requestId) {
       requestId,
       sender:event.sender,
       connectionId,
+      sourceTabKey:String(payload?.sourceTabKey || "").slice(0, 256),
       entries,
       token,
       ticket,

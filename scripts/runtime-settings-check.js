@@ -98,10 +98,11 @@ async function main() {
   assert.equal(DEFAULT_TERMINAL_SETTINGS.background_color, "#0f1720");
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 6,
+    schema_version: 7,
     listen_hosts: ["127.0.0.1", "127.0.0.2"],
     listen_port: 8123,
     sftp_recycle_bin_enabled: false,
+    sftp_floating_progress_enabled: true,
     sftp_max_open_file_size_mb: 5,
     sftp_download_directory: "",
     restore_workspace_tabs: true,
@@ -113,6 +114,8 @@ async function main() {
   });
   assert.equal(normalizeRuntimeSettings({ sftp_recycle_bin_enabled: true }).sftp_recycle_bin_enabled, true);
   assert.equal(normalizeRuntimeSettings({}, { sftp_recycle_bin_enabled: true }).sftp_recycle_bin_enabled, true);
+  assert.equal(normalizeRuntimeSettings({ sftp_floating_progress_enabled: false }).sftp_floating_progress_enabled, false);
+  assert.equal(normalizeRuntimeSettings({}, { sftp_floating_progress_enabled: false }).sftp_floating_progress_enabled, false);
   assert.equal(normalizeRuntimeSettings({ sftp_max_open_file_size_mb: 12 }).sftp_max_open_file_size_mb, 12);
   assert.equal(normalizeRuntimeSettings({ restore_workspace_tabs: false }).restore_workspace_tabs, false);
   assert.deepEqual(normalizeRuntimeSettings({}).workspace_toolbar_placement, DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT);
@@ -198,6 +201,7 @@ async function main() {
     const persistedAfterFallback = JSON.parse(fs.readFileSync(runtimeFile, "utf8"));
     assert.equal(persistedAfterFallback.listen_port, info.actual_port);
     assert.equal(persistedAfterFallback.sftp_recycle_bin_enabled, true);
+    assert.equal(persistedAfterFallback.sftp_floating_progress_enabled, true);
     assert.equal(persistedAfterFallback.sftp_max_open_file_size_mb, 5);
     assert.equal(persistedAfterFallback.sftp_download_directory, "");
     assert.equal(persistedAfterFallback.restore_workspace_tabs, true);
@@ -220,6 +224,7 @@ async function main() {
     assert.deepEqual(settings.body.saved.listen_hosts, startupHosts);
     assert.equal(settings.body.saved.listen_port, info.actual_port);
     assert.equal(settings.body.saved.sftp_recycle_bin_enabled, true);
+    assert.equal(settings.body.saved.sftp_floating_progress_enabled, true);
     assert.equal(settings.body.saved.sftp_max_open_file_size_mb, 5);
     assert.equal(settings.body.saved.sftp_download_directory, "");
     assert.equal(settings.body.saved.restore_workspace_tabs, true);
@@ -270,6 +275,16 @@ async function main() {
     assert.equal(recycleDisabled.body.saved.terminal.middle_mouse_action, "open_settings");
     console.log("PASS SFTP recycle setting saves independently without listener validation");
 
+    const floatingProgressDisabled = await request(base, "/api/runtime-settings", {
+      method: "PUT",
+      body: JSON.stringify({ sftp_floating_progress_enabled: false })
+    });
+    assert.equal(floatingProgressDisabled.response.ok, true);
+    assert.equal(floatingProgressDisabled.body.saved.sftp_floating_progress_enabled, false);
+    assert.equal(floatingProgressDisabled.body.saved.sftp_recycle_bin_enabled, false);
+    assert.equal(floatingProgressDisabled.body.saved.terminal.background_mode, "custom");
+    console.log("PASS SFTP floating progress preference saves independently and defaults on");
+
     const generalSaved = await request(base, "/api/runtime-settings", {
       method: "PUT",
       body: JSON.stringify({ sftp_max_open_file_size_mb: 12, sftp_download_directory:path.join(temporaryRoot, "downloads"), restore_workspace_tabs: false })
@@ -279,6 +294,7 @@ async function main() {
     assert.equal(generalSaved.body.saved.sftp_download_directory, path.join(temporaryRoot, "downloads"));
     assert.equal(generalSaved.body.saved.restore_workspace_tabs, false);
     assert.equal(generalSaved.body.saved.sftp_recycle_bin_enabled, false);
+    assert.equal(generalSaved.body.saved.sftp_floating_progress_enabled, false);
     console.log("PASS workspace restore and SFTP open limit save independently");
 
     const workspaceSaved = await request(base, "/api/runtime-settings", {
@@ -297,6 +313,7 @@ async function main() {
     });
     assert.equal(workspaceSaved.body.saved.restore_workspace_tabs, false);
     assert.equal(workspaceSaved.body.saved.sftp_max_open_file_size_mb, 12);
+    assert.equal(workspaceSaved.body.saved.sftp_floating_progress_enabled, false);
     console.log("PASS four workspace toolbar placements persist independently");
 
     const blocked = await listen("127.0.0.1");
@@ -328,6 +345,7 @@ async function main() {
     assert.deepEqual(saved.body.saved.listen_hosts, ["127.0.0.1"]);
     assert.equal(saved.body.saved.listen_port, nextPort);
     assert.equal(saved.body.saved.sftp_recycle_bin_enabled, false);
+    assert.equal(saved.body.saved.sftp_floating_progress_enabled, false);
     assert.equal(saved.body.saved.sftp_max_open_file_size_mb, 12);
     assert.equal(saved.body.saved.sftp_download_directory, path.join(temporaryRoot, "downloads"));
     assert.equal(saved.body.saved.restore_workspace_tabs, false);

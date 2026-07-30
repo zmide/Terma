@@ -577,6 +577,8 @@ function checkNativeSessionRaceGuards() {
   assert.match(mainSource, /completedDeliveries:new Set\(\)/);
   assert.match(mainSource, /inflightDeliveries:new Map\(\)/);
   assert.match(mainSource, /renamedItems:new Map\(\)/);
+  assert.match(mainSource, /sourceTabKey:String\(payload\?\.sourceTabKey/);
+  assert.match(mainSource, /const kind = value\.kind === "terminal"/);
   assert.match(mainSource, /const deliveryKey = `\$\{itemId\}\\0\$\{targetPath\}`/);
   assert.match(mainSource, /if \(result\?\.renamed\)[\s\S]*session\.renamedItems\.set/);
   assert.match(mainSource, /renamedItems:\[\.\.\.session\.renamedItems\.values\(\)\]/);
@@ -625,6 +627,8 @@ function checkNativeSessionRaceGuards() {
   assert.doesNotMatch(rendererSource, /dataTransfer\.setData\("text\/plain"/);
   assert.doesNotMatch(rendererSource, /activateSftpNativeDragPointer\(pointer\);\s*if \(pointer\.row\)/);
   assert.match(rendererSource, /setSftpDragTarget\?\.\(requestId, normalized, \{final:Boolean\(options\.final\)\}\)/);
+  assert.match(rendererSource, /sourceTabKey:request\.sourceTabKey/);
+  assert.match(rendererSource, /target\.kind === "terminal"/);
   assert.match(jobsSource, /const topLevelSizeKnown = topLevel\.length > 0[\s\S]*entry\?\.metadata_known === true/);
   assert.match(jobsSource, /function recordNativeSftpDragBytes\([\s\S]*recordTransferred\(job, added\)/);
   assert.match(sessionSource, /input\.on\("data", \(chunk\) => \{[\s\S]*onProgress\(bytes\)/);

@@ -786,6 +786,7 @@ async function handleApi(req, res, pathname) {
       listen_hosts: data.listen_hosts ?? current.listen_hosts,
       listen_port: data.listen_port ?? current.listen_port,
       sftp_recycle_bin_enabled: data.sftp_recycle_bin_enabled ?? current.sftp_recycle_bin_enabled,
+      sftp_floating_progress_enabled: data.sftp_floating_progress_enabled ?? current.sftp_floating_progress_enabled,
       sftp_max_open_file_size_mb: data.sftp_max_open_file_size_mb ?? current.sftp_max_open_file_size_mb,
       sftp_download_directory: data.sftp_download_directory ?? current.sftp_download_directory,
       restore_workspace_tabs: data.restore_workspace_tabs ?? current.restore_workspace_tabs,

@@ -16,7 +16,8 @@ contextBridge.exposeInMainWorld("tunnelDeskDesktop", {
         ? {files:payload}
         : {
             connectionId:Number(payload?.connectionId || 0),
-            entries:Array.isArray(payload?.entries) ? payload.entries : []
+            entries:Array.isArray(payload?.entries) ? payload.entries : [],
+            sourceTabKey:String(payload?.sourceTabKey || "")
           }),
       requestId:String(requestId || "")
     });

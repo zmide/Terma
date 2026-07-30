@@ -272,6 +272,39 @@ async function main() {
     assert.equal(completedCrossCopy.progress, 100);
     jobs.deleteSftpJob(crossCopy.id);
 
+    const sameHostCopy = jobs.crossCopyJob(
+      connection.id,
+      connection.id,
+      ["/tmp/same-host.bin"],
+      "/tmp/other-target",
+      "rename",
+      [{path:"/tmp/same-host.bin", type:"file", size:256, metadataKnown:true}]
+    );
+    jobIds.push(sameHostCopy.id);
+    const sameHostSource = children.at(-2);
+    const sameHostTarget = children.at(-1);
+    assert.match(sameHostTarget.command, /while \[ -e "\$td_target" \]/, "same-host copies must preserve automatic rename behavior");
+    sameHostTarget.stdin.resume();
+    sameHostSource.stdout.end(Buffer.alloc(256, 0x48));
+    sameHostSource.stderr.end();
+    sameHostTarget.stdout.end();
+    sameHostTarget.stderr.end();
+    sameHostSource.emit("close", 0, null);
+    sameHostTarget.emit("close", 0, null);
+    const completedSameHostCopy = await waitForJob(jobs, sameHostCopy.id, "done");
+    assert.equal(completedSameHostCopy.connection_id, connection.id);
+    assert.equal(completedSameHostCopy.progress, 100);
+    jobs.deleteSftpJob(sameHostCopy.id);
+
+    assert.throws(() => jobs.crossCopyJob(
+      connection.id,
+      connection.id,
+      ["/tmp/source-dir"],
+      "/tmp/source-dir/nested",
+      "error",
+      [{path:"/tmp/source-dir", type:"directory", size:0, metadataKnown:false}]
+    ), /自身或其子目录/);
+
     const failures = notifications.listNotifications(0).filter(item => /SFTP (上传|下载)失败/.test(String(item.title || "")));
     assert.deepEqual(failures, [], "pause and cancel must not emit transfer-failure notifications");
     console.log("SFTP job lifecycle check passed.");

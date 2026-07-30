@@ -109,6 +109,243 @@ function effectiveTerminalStartupConfig(connection, key) {
     : terminalStartupConfigForConnection(connection);
 }
 
+function normalizeTerminalDirectoryPath(value) {
+  const raw = String(value || ".").replace(/\\/g, "/").trim() || ".";
+  const drive = raw.match(/^[A-Za-z]:\//)?.[0] || "";
+  const absolute = raw.startsWith("/") || Boolean(drive);
+  const source = drive ? raw.slice(drive.length) : (absolute ? raw.slice(1) : raw);
+  const parts = [];
+  for (const part of source.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (parts.length && parts.at(-1) !== "..") parts.pop();
+      else if (!absolute) parts.push(part);
+      continue;
+    }
+    parts.push(part);
+  }
+  if (drive) return `${drive}${parts.join("/")}` || drive;
+  if (absolute) return `/${parts.join("/")}` || "/";
+  return parts.join("/") || ".";
+}
+
+function joinTerminalDirectoryPath(base, child) {
+  const value = String(child || ".").replace(/\\/g, "/");
+  if (value === "~" || value.startsWith("~/")) return value;
+  if (/^(?:[A-Za-z]:\/|\/)/.test(value)) return normalizeTerminalDirectoryPath(value);
+  const parent = String(base || ".").replace(/\\/g, "/").replace(/\/+$/, "") || ".";
+  return normalizeTerminalDirectoryPath(parent === "." ? value : `${parent}/${value}`);
+}
+
+function terminalDirectoryFromOsc7(value) {
+  let text = String(value || "").trim();
+  if (!text) return "";
+  try {
+    if (/^file:\/\//i.test(text)) {
+      const url = new URL(text);
+      text = decodeURIComponent(url.pathname || "");
+      if (/^\/[A-Za-z]:\//.test(text)) text = text.slice(1);
+    } else {
+      text = decodeURIComponent(text);
+    }
+  } catch {
+    return "";
+  }
+  return text ? normalizeTerminalDirectoryPath(text) : "";
+}
+
+function terminalDirectoryDropLabel(session) {
+  return session?.currentDirectoryKnown ? String(session.currentDirectory || ".") : "当前目录";
+}
+
+function updateTerminalDropOverlay(session) {
+  const overlay = session?.mount?.querySelector?.(".terminal-drop-overlay");
+  if (!overlay || overlay.hidden) return;
+  const label = overlay.querySelector(".terminal-drop-label");
+  const action = overlay.dataset.mode === "copy" ? "复制" : "上传";
+  if (label) label.textContent = `松开${action}到终端当前目录：${terminalDirectoryDropLabel(session)}`;
+}
+
+function setTerminalDropState(session, active, mode="upload") {
+  const overlay = session?.mount?.querySelector?.(".terminal-drop-overlay");
+  if (!overlay) return;
+  if (active) {
+    if (typeof noteSftpDragFeedbackActivity === "function") noteSftpDragFeedbackActivity();
+    if (typeof focusSftpDragFeedbackTarget === "function") focusSftpDragFeedbackTarget("terminal", session?.key, session);
+  }
+  overlay.hidden = !active;
+  overlay.dataset.mode = mode === "copy" ? "copy" : "upload";
+  if (active) updateTerminalDropOverlay(session);
+  else if (typeof releaseSftpDragFeedbackTarget === "function") releaseSftpDragFeedbackTarget("terminal", session?.key, session);
+}
+
+function terminalDataTransferHasFiles(dataTransfer) {
+  if (typeof sftpDataTransferHasFiles === "function") return sftpDataTransferHasFiles(dataTransfer);
+  return Boolean(dataTransfer?.files?.length || [...(dataTransfer?.items || [])].some(item => item.kind === "file"));
+}
+
+function terminalSftpDragPayload(dataTransfer) {
+  return typeof activeSftpDragPayload === "function" ? activeSftpDragPayload(dataTransfer) : null;
+}
+
+function parseTerminalDirectoryCommand(command) {
+  const text = cleanTerminalCommandText(command);
+  if (!text || /[;&|<>]/.test(text)) return null;
+  const match = text.match(/^(?:cd|chdir)(?:\s+--)?(?:\s+(.*))?$/i);
+  if (!match) return null;
+  let value = String(match[1] || "~").trim();
+  if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
+    value = value.slice(1, -1).replace(/\\([\\'" ])/g, "$1");
+  }
+  if (!value || /[$`*?{}]/.test(value)) return null;
+  return value;
+}
+
+function setTerminalCurrentDirectory(session, directory, source="tracked") {
+  const normalized = normalizeTerminalDirectoryPath(directory);
+  if (!normalized) return false;
+  if (session.currentDirectory && session.currentDirectory !== normalized) session.previousDirectory = session.currentDirectory;
+  session.currentDirectory = normalized;
+  session.currentDirectoryKnown = true;
+  session.currentDirectorySource = source;
+  updateTerminalDropOverlay(session);
+  return true;
+}
+
+async function probeTerminalDirectory(session, connection, directory, source="probe", options={}) {
+  if (!session || !connection?.id) return "";
+  const path = normalizeTerminalDirectoryPath(directory || session.currentDirectory || ".");
+  const requestId = Number(session.directoryProbeId || 0) + 1;
+  session.directoryProbeId = requestId;
+  try {
+    const query = new URLSearchParams({path, page:"1", page_size:"1", query:"", sort:"name", dir:"asc", refresh:"1"});
+    const result = await api(`/api/connections/${connection.id}/sftp?${query.toString()}`);
+    if (session.directoryProbeId !== requestId) return "";
+    const resolved = String(result?.path || path);
+    if (!options.preserveCurrent) setTerminalCurrentDirectory(session, resolved, source);
+    if (!session.homeDirectory && !options.preserveCurrent) session.homeDirectory = resolved;
+    return resolved;
+  } catch {
+    return "";
+  }
+}
+
+async function initializeTerminalDirectory(session, connection, key) {
+  const startup = effectiveTerminalStartupConfig(connection, key);
+  const initial = startup.terminal_working_directory || session.currentDirectory || ".";
+  const resolved = await probeTerminalDirectory(session, connection, initial, "initial");
+  if (resolved && !session.homeDirectory && initial !== ".") {
+    session.homeDirectory = await probeTerminalDirectory(session, connection, ".", "home", {preserveCurrent:true});
+  }
+  return resolved;
+}
+
+async function trackTerminalDirectoryCommand(session, connection, key, command) {
+  const value = parseTerminalDirectoryCommand(command);
+  if (!value) return;
+  const base = session.currentDirectory || session.homeDirectory || ".";
+  const target = value === "-"
+    ? (session.previousDirectory || base)
+    : value === "~" || value.startsWith("~/")
+      ? joinTerminalDirectoryPath(session.homeDirectory || ".", value === "~" ? "." : value.slice(2))
+      : joinTerminalDirectoryPath(base, value);
+  await probeTerminalDirectory(session, connection, target, "cd");
+}
+
+function registerTerminalDirectoryTracking(session) {
+  session.directoryOscDisposable?.dispose?.();
+  session.directoryOscDisposable = null;
+  try {
+    session.directoryOscDisposable = session.term.parser.registerOscHandler(7, value => {
+      const directory = terminalDirectoryFromOsc7(value);
+      if (directory) setTerminalCurrentDirectory(session, directory, "osc7");
+      return true;
+    });
+  } catch {
+    session.directoryOscDisposable = null;
+  }
+}
+
+function bindTerminalDropUpload(session, connection, key, mount) {
+  if (!mount || session.dropUploadMount === mount) return;
+  if (!mount.querySelector(".terminal-drop-overlay")) {
+    const overlay = document.createElement("div");
+    overlay.className = "terminal-drop-overlay";
+    overlay.hidden = true;
+    overlay.innerHTML = `<div class="terminal-drop-hint">${icon("upload-cloud")}<span class="terminal-drop-label">松开上传到终端当前目录</span></div>`;
+    mount.appendChild(overlay);
+  }
+  session.dropUploadMount = mount;
+  const clear = () => {
+    session.terminalDropDepth = 0;
+    setTerminalDropState(session, false);
+  };
+  mount.addEventListener("dragenter", event => {
+    const drag = terminalSftpDragPayload(event.dataTransfer);
+    if (!drag && !terminalDataTransferHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    if (drag) {
+      event.stopPropagation();
+      if (typeof markSftpDragInsideWindow === "function") markSftpDragInsideWindow();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    }
+    session.terminalDropDepth = 1;
+    setTerminalDropState(session, true, drag ? "copy" : "upload");
+  });
+  mount.addEventListener("dragover", event => {
+    const drag = terminalSftpDragPayload(event.dataTransfer);
+    if (!drag && !terminalDataTransferHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    if (drag) {
+      event.stopPropagation();
+      if (typeof markSftpDragInsideWindow === "function") markSftpDragInsideWindow();
+    }
+    event.dataTransfer.dropEffect = "copy";
+    setTerminalDropState(session, true, drag ? "copy" : "upload");
+  });
+  mount.addEventListener("dragleave", event => {
+    if (mount.contains(event.relatedTarget)) return;
+    const overlay = mount.querySelector(".terminal-drop-overlay");
+    if (!terminalSftpDragPayload(event.dataTransfer) && !terminalDataTransferHasFiles(event.dataTransfer) && overlay?.hidden !== false) return;
+    clear();
+  });
+  mount.addEventListener("drop", async event => {
+    const drag = terminalSftpDragPayload(event.dataTransfer);
+    if (!drag && !terminalDataTransferHasFiles(event.dataTransfer)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    clear();
+    if (!session.connected) {
+      if (drag && typeof finishSftpDragPayload === "function") finishSftpDragPayload(drag);
+      return notify("终端尚未连接，无法接收文件", "error");
+    }
+    let directory = session.currentDirectoryKnown
+      ? session.currentDirectory
+      : await initializeTerminalDirectory(session, connection, key);
+    if (!directory) {
+      if (drag && typeof finishSftpDragPayload === "function") finishSftpDragPayload(drag);
+      return notify("无法确认终端当前目录，请先重连终端", "error");
+    }
+    if (drag) {
+      if (typeof copySftpDraggedItemsToDirectory !== "function") {
+        if (typeof finishSftpDragPayload === "function") finishSftpDragPayload(drag);
+        return notify("当前版本不支持 SFTP 项目拖入终端", "error");
+      }
+      return copySftpDraggedItemsToDirectory(drag, connection.id, directory, {title:`终端：${directory}`});
+    }
+    if (typeof collectDroppedFiles !== "function" || typeof uploadSftpFilesToDirectory !== "function") {
+      return notify("当前版本不支持终端文件上传", "error");
+    }
+    try {
+      const files = await collectDroppedFiles(event.dataTransfer);
+      if (!files.length) throw new Error("没有找到可上传的文件");
+      await uploadSftpFilesToDirectory(files, connection.id, directory);
+    } catch (error) {
+      notify(error.message || "终端文件上传失败", "error");
+    }
+  });
+}
+
 function terminalStartupConfigLabel(config) {
   const value = normalizeTerminalStartupConfig(config);
   if (value.terminal_startup_mode === "default") return "服务器默认 Shell";
@@ -1520,6 +1757,7 @@ async function attachTerminal(c, key) {
   let session = terminalSessions.get(key);
   if (!session) {
     const term = new TerminalClass({
+      allowProposedApi:true,
       cursorBlink:true,
       convertEol:true,
       minimumContrastRatio:4.5,
@@ -1533,15 +1771,19 @@ async function attachTerminal(c, key) {
     });
     const fit = new FitAddonClass();
     term.loadAddon(fit);
-    session = {term, fit, socket:null, connected:false, id:c.id, fontLayoutMobile:isMobileLayout()};
+    session = {term, fit, socket:null, connected:false, id:c.id, fontLayoutMobile:isMobileLayout(), currentDirectory:"", currentDirectoryKnown:false};
     terminalSessions.set(key, session);
+    registerTerminalDirectoryTracking(session);
   }
+  session.connection = c;
+  session.key = key;
   session.fontLayoutMobile = isMobileLayout();
   session.mount = mount;
   session.term.options.fontSize = terminalFontSizeForCurrentLayout(c);
   applyTerminalGlobalSettingsToSession(session);
   if (session.term.element) mount.appendChild(session.term.element);
   else session.term.open(mount);
+  bindTerminalDropUpload(session, c, key, mount);
   bindTerminalGlobalBehavior(session, key, c.id, mount);
   observeTerminalBox(session);
   enableTerminalTouchScroll(session);
@@ -1620,6 +1862,9 @@ function sendMobileTerminalInput(key) {
   const input = $("terminalMobileInput");
   const command = String(input?.value || "");
   if (!command.trim()) return;
+  const session = terminalSessions.get(key);
+  const connection = session ? currentConnection(session.id) : null;
+  if (session && connection) void trackTerminalDirectoryCommand(session, connection, key, command);
   sendTerminalData(key, `${command}\r`);
   saveRecentTerminalCommand(command);
   input.value = "";
@@ -2007,6 +2252,10 @@ async function connectTerminal(c, key) {
   const tab = tabs.find(item => item.key === key);
   const title = tab?.title || `${c.name} · 终端`;
   session.connected = false;
+  session.currentDirectory = "";
+  session.currentDirectoryKnown = false;
+  session.previousDirectory = "";
+  session.homeDirectory = "";
   updateTerminalConnectionStatus(c, key, "连接中");
   session.term.writeln(`连接 ${c.ssh_user}@${c.ssh_host}:${c.ssh_port} ...`);
   let startupToken = "";
@@ -2041,6 +2290,7 @@ async function connectTerminal(c, key) {
     if (session.socket !== socket) return;
     session.connected = true;
     updateTerminalConnectionStatus(c, key, "已连接");
+    void initializeTerminalDirectory(session, c, key);
   });
   socket.addEventListener("message", event => {
     if (session.socket !== socket) return;
@@ -2079,7 +2329,10 @@ function trackTerminalCommand(session, data) {
   if (raw.includes("\x1b")) return;
   for (const ch of String(data || "")) {
     if (ch === "\r" || ch === "\n") {
-      saveRecentTerminalCommand(currentTerminalPromptCommand(session) || session.commandBuffer);
+      const command = currentTerminalPromptCommand(session) || session.commandBuffer;
+      saveRecentTerminalCommand(command);
+      const connection = currentConnection(session.id);
+      if (connection) void trackTerminalDirectoryCommand(session, connection, session.key || activeTabKey, command);
       session.commandBuffer = "";
     } else if (ch === "\x7f" || ch === "\b") {
       session.commandBuffer = session.commandBuffer.slice(0, -1);

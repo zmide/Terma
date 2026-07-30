@@ -1722,17 +1722,17 @@ async function resolveCrossCopyProgressSize(job, sourceConnection, entries) {
 function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir = ".", conflictMode = "error", entries: any[] = []) {
   const sourceConnection = getConnection(sourceConnectionId);
   const targetConnection = getConnection(targetConnectionId);
-  if (Number(sourceConnectionId) === Number(targetConnectionId)) throw new Error("跨主机复制必须选择不同的源连接和目标连接");
+  const sameConnection = Number(sourceConnectionId) === Number(targetConnectionId);
   if (filenameEncoding(sourceConnection) !== filenameEncoding(targetConnection)) {
     throw new Error("源主机和目标主机的 SFTP 文件名编码必须一致，避免复制后文件名乱码");
   }
   const normalized: string[] = [...new Set<string>((paths || []).map((item) => path.posix.normalize(String(item || "").replace(/\\/g, "/"))).filter(Boolean))];
-  if (!normalized.length) throw new Error("请选择要跨主机复制的文件或目录");
+  if (!normalized.length) throw new Error("请选择要复制的文件或目录");
   if (normalized.length > 200 || normalized.some((item) => item.includes("\0") || item === "." || item === ".." || item.startsWith("../") || item.length > 4096)) {
-    throw new Error("跨主机复制路径无效或数量过多");
+    throw new Error("复制路径无效或数量过多");
   }
   const parent = path.posix.dirname(normalized[0]) || ".";
-  if (normalized.some((item) => (path.posix.dirname(item) || ".") !== parent)) throw new Error("跨主机复制的项目必须位于同一目录");
+  if (normalized.some((item) => (path.posix.dirname(item) || ".") !== parent)) throw new Error("复制的项目必须位于同一目录");
   const names = normalized.map((item) => path.posix.basename(item));
   const progressEntries = crossCopyProgressEntries(normalized, entries);
   const initialSizeCandidate = progressEntries.reduce((total, entry) => total + entry.size, 0);
@@ -1740,6 +1740,13 @@ function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir =
     && Number.isSafeInteger(initialSizeCandidate);
   const initialSize = initialSizeKnown ? initialSizeCandidate : 0;
   const conflict = ["error", "overwrite", "rename"].includes(String(conflictMode || "")) ? String(conflictMode) : "error";
+  const normalizedTargetDir = path.posix.normalize(String(targetDir || ".").replace(/\\/g, "/")) || ".";
+  if (sameConnection) {
+    const targetInsideSource = normalized.some((sourcePath) => normalizedTargetDir === sourcePath || normalizedTargetDir.startsWith(`${sourcePath}/`));
+    if (targetInsideSource) throw new Error("不能把远端项目复制到自身或其子目录");
+    const copiesOntoSource = normalized.some((sourcePath) => path.posix.join(normalizedTargetDir, path.posix.basename(sourcePath)) === sourcePath);
+    if (copiesOntoSource && conflict !== "rename") throw new Error("源和目标是同一项目，请选择自动改名或取消");
+  }
   const sourceNames = names.map((name) => remotePathOperand(sourceConnection, `./${name}`)).join(" ");
   const collisionChecks = names.map((name) => {
     const operand = remotePathOperand(targetConnection, `./${name}`);
@@ -1750,7 +1757,7 @@ function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir =
   if (conflict === "overwrite") {
     targetCommand = buildCrossCopyOverwriteCommand(targetConnection, targetDir, names);
   } else if (conflict === "rename") {
-    if (filenameEncoding(targetConnection) !== "utf8") throw new Error("非 UTF-8 文件名编码暂不支持跨主机自动改名，请选择覆盖或取消");
+    if (filenameEncoding(targetConnection) !== "utf8") throw new Error("非 UTF-8 文件名编码暂不支持自动改名，请选择覆盖或取消");
     const temporaryName = `.tunneldesk-cross-copy-${crypto.randomUUID()}`;
     const moves = names.map((name) => {
       const extension = path.posix.extname(name);
@@ -1776,7 +1783,7 @@ function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir =
     source_connection_name: sourceConnection.name,
     target_connection_id: Number(targetConnectionId),
     type: "cross-copy",
-    label: `从 ${sourceConnection.name} 复制 ${normalized.length} 项`,
+    label: sameConnection ? `复制 ${normalized.length} 项` : `从 ${sourceConnection.name} 复制 ${normalized.length} 项`,
     status: "running",
     stdout: "",
     stderr: "",
@@ -1823,8 +1830,8 @@ function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir =
     notifyEvent({
       type: "sftp",
       level: status === "done" ? "success" : "error",
-      title: status === "done" ? "跨主机复制已完成" : "跨主机复制失败",
-      message: `${sourceConnection.name} → ${targetConnection.name} · ${normalized.length} 项${error ? `\n${error}` : ""}`,
+      title: status === "done" ? (sameConnection ? "SFTP 复制已完成" : "跨主机复制已完成") : (sameConnection ? "SFTP 复制失败" : "跨主机复制失败"),
+      message: `${sameConnection ? targetConnection.name : `${sourceConnection.name} → ${targetConnection.name}`} · ${normalized.length} 项${error ? `\n${error}` : ""}`,
       action: { view: "sftp", connection_id: Number(targetConnectionId) }
     }, { cooldown_ms: 0 });
   };

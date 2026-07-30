@@ -4,13 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TunnelDesk</title>
-  <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=1.1.6">
-  <link rel="stylesheet" href="/app.css?v=1.1.6">
+  <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=1.1.7">
+  <link rel="stylesheet" href="/app.css?v=1.1.7">
 </head>
 <body>
   <div class="notification-stack" aria-live="polite">
     <div id="toast" class="toast"></div>
-    <aside id="sftpTaskFloat" class="sftp-task-float" aria-label="SFTP 任务进度" onclick="openSftpTaskList(event)" hidden></aside>
   </div>
   <div id="modal" class="modal" hidden></div>
   <div class="app">
@@ -71,6 +70,28 @@
           <div id="workspaceSubtitle" class="cmd">选择左侧 SSH 后开始操作</div>
         </div>
         <div id="workspaceGlobalHeaderTools" class="workspace-header-tools workspace-global-header-tools" data-workspace-role="global-header-tools" hidden></div>
+        <div id="sftpTaskCenter" class="sftp-task-center">
+          <button id="sftpTaskCenterButton" class="icon-button sftp-task-center-button" type="button" onclick="toggleSftpTaskCenter(event)" title="传输任务" aria-label="传输任务" aria-expanded="false" aria-controls="sftpTaskCenterDrawer">
+            <span id="sftpTaskCenterIcon" class="sftp-task-center-icon"><i data-lucide="list-checks"></i></span>
+            <span id="sftpTaskCenterBadge" class="sftp-task-center-badge" hidden></span>
+          </button>
+          <span id="sftpTaskCenterProgress" class="sftp-task-center-progress" role="progressbar" aria-label="传输总进度" aria-valuemin="0" aria-valuemax="100" hidden><i></i></span>
+          <aside id="sftpTaskCenterDrawer" class="sftp-task-center-drawer" aria-label="传输任务" hidden>
+            <header class="sftp-task-center-head">
+              <div><strong>传输任务</strong><span id="sftpTaskCenterSummary">暂无进行中的任务</span></div>
+              <button class="icon-button" type="button" onclick="closeSftpTaskCenter()" title="关闭任务中心" aria-label="关闭任务中心"><i data-lucide="x"></i></button>
+            </header>
+            <div class="sftp-task-center-tabs" role="tablist" aria-label="任务视图">
+              <button id="sftpTaskCenterCurrentTab" type="button" role="tab" aria-selected="true" onclick="setSftpTaskCenterView('current')"><span>进行中</span><small id="sftpTaskCenterCurrentCount">0</small></button>
+              <button id="sftpTaskCenterHistoryTab" type="button" role="tab" aria-selected="false" onclick="setSftpTaskCenterView('history')"><span>历史记录</span><small id="sftpTaskCenterHistoryCount">0</small></button>
+            </div>
+            <div id="sftpTaskCenterList" class="sftp-task-center-list" role="tabpanel"></div>
+            <footer id="sftpTaskCenterFooter" class="sftp-task-center-footer" hidden>
+              <button class="danger" type="button" onclick="clearFinishedSftpJobs()"><i data-lucide="trash-2"></i><span>清空历史</span></button>
+            </footer>
+          </aside>
+        </div>
+        <aside id="sftpTaskFloat" class="sftp-task-float" aria-label="传输任务悬浮进度" onclick="openSftpTaskList(event)" hidden></aside>
         <div id="notice" class="notice"></div>
         <div id="workspaceHeaderResize" class="workspace-header-resizer" role="separator" aria-orientation="horizontal" aria-label="调整工作区标题栏高度" tabindex="0" title="拖动调整标题栏高度，双击恢复默认"></div>
       </div>
@@ -272,21 +293,21 @@
   </div>
 </template>
 
-<script src="/vendor/lucide/lucide.min.js?v=1.1.6"></script>
-<script src="/vendor/ace/ace.js?v=1.1.6"></script>
-<script src="/app-api.js?v=1.1.6"></script>
-<script src="/app-utils.js?v=1.1.6"></script>
-<script src="/app-workspace.js?v=1.1.6"></script>
-<script src="/app-docking.js?v=1.1.6"></script>
-<script src="/app-settings.js?v=1.1.6"></script>
-<script src="/app-running.js?v=1.1.6"></script>
-<script src="/app-batch.js?v=1.1.6"></script>
-<script src="/app-logs.js?v=1.1.6"></script>
-<script src="/app-connections.js?v=1.1.6"></script>
-<script src="/app-terminal.js?v=1.1.6"></script>
-<script src="/app-forwards.js?v=1.1.6"></script>
-<script src="/app-import.js?v=1.1.6"></script>
-<script src="/app-sftp.js?v=1.1.6"></script>
-<script src="/app.js?v=1.1.6"></script>
+<script src="/vendor/lucide/lucide.min.js?v=1.1.7"></script>
+<script src="/vendor/ace/ace.js?v=1.1.7"></script>
+<script src="/app-api.js?v=1.1.7"></script>
+<script src="/app-utils.js?v=1.1.7"></script>
+<script src="/app-workspace.js?v=1.1.7"></script>
+<script src="/app-docking.js?v=1.1.7"></script>
+<script src="/app-settings.js?v=1.1.7"></script>
+<script src="/app-running.js?v=1.1.7"></script>
+<script src="/app-batch.js?v=1.1.7"></script>
+<script src="/app-logs.js?v=1.1.7"></script>
+<script src="/app-connections.js?v=1.1.7"></script>
+<script src="/app-terminal.js?v=1.1.7"></script>
+<script src="/app-forwards.js?v=1.1.7"></script>
+<script src="/app-import.js?v=1.1.7"></script>
+<script src="/app-sftp.js?v=1.1.7"></script>
+<script src="/app.js?v=1.1.7"></script>
 </body>
 </html>

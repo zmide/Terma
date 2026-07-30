@@ -328,6 +328,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
   return {
     ...source,
     sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
+    sftp_floating_progress_enabled: savedSource.sftp_floating_progress_enabled !== false,
     sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 5,
     restore_workspace_tabs: savedSource.restore_workspace_tabs !== false,
     workspace_toolbar_placement: normalizeWorkspaceToolbarPlacement(savedSource.workspace_toolbar_placement),
@@ -336,6 +337,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
       listen_hosts: savedHosts.length ? savedHosts : ["127.0.0.1"],
       listen_port: runtimePortValue(savedSource.listen_port ?? savedSource.port),
       sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
+      sftp_floating_progress_enabled: savedSource.sftp_floating_progress_enabled !== false,
       sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 5,
       sftp_download_directory: String(savedSource.sftp_download_directory || ""),
       restore_workspace_tabs: savedSource.restore_workspace_tabs !== false,
@@ -363,6 +365,7 @@ async function loadRuntimeSettings(refreshUi=false) {
   } catch (error) {
     runtimeSettings = normalizeRuntimeSettingsResponse({error:error.message || "监听配置加载失败"});
   }
+  if (typeof updateSftpTaskFloat === "function") updateSftpTaskFloat(typeof sftpLatestJobs === "undefined" ? [] : sftpLatestJobs);
   if (refreshUi) inPane(renderRuntimeSettingsPanel);
   return runtimeSettings;
 }
@@ -689,9 +692,10 @@ async function clearProgramCache() {
 
 async function saveSftpGlobalSettings() {
   const recycle = $("sftpRecycleBinEnabled");
+  const floatingProgress = $("sftpFloatingProgressEnabled");
   const sizeInput = $("sftpMaxOpenFileSizeMb");
   const button = $("sftpGlobalSettingsSave");
-  if (!recycle || !sizeInput || !button) return;
+  if (!recycle || !floatingProgress || !sizeInput || !button) return;
   const maximumSize = Number(sizeInput.value);
   if (!Number.isInteger(maximumSize) || maximumSize < 1 || maximumSize > 100) return notify("SFTP 文件打开上限必须是 1-100 MB 的整数", "error");
   setButtonBusy(button, true, "保存中");
@@ -700,13 +704,16 @@ async function saveSftpGlobalSettings() {
       method:"PUT",
       body:JSON.stringify({
         sftp_recycle_bin_enabled:recycle.checked,
+        sftp_floating_progress_enabled:floatingProgress.checked,
         sftp_max_open_file_size_mb:maximumSize,
         ...(sftpDownloadSettings?.delivery_mode === "desktop" ? {sftp_download_directory:$('sftpDownloadDirectory')?.value.trim() || ""} : {})
       })
     });
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
     recycle.checked = runtimeSettings.saved.sftp_recycle_bin_enabled;
+    floatingProgress.checked = runtimeSettings.saved.sftp_floating_progress_enabled;
     sizeInput.value = runtimeSettings.saved.sftp_max_open_file_size_mb;
+    if (typeof updateSftpTaskFloat === "function") updateSftpTaskFloat(typeof sftpLatestJobs === "undefined" ? [] : sftpLatestJobs);
     if (sftpDownloadSettings?.delivery_mode === "desktop") {
       sftpDownloadSettings = await api("/api/sftp/download-settings");
       if ($('sftpDownloadDirectory')) $('sftpDownloadDirectory').value = sftpDownloadSettings.configured_directory || "";
@@ -715,6 +722,7 @@ async function saveSftpGlobalSettings() {
     notify("SFTP 全局设置已保存", "success");
   } catch (error) {
     recycle.checked = runtimeSettings?.saved?.sftp_recycle_bin_enabled === true;
+    floatingProgress.checked = runtimeSettings?.saved?.sftp_floating_progress_enabled !== false;
     sizeInput.value = runtimeSettings?.saved?.sftp_max_open_file_size_mb || 5;
     notify(error.message || "SFTP 全局设置保存失败", "error");
   } finally {
@@ -732,6 +740,8 @@ async function showSftpGlobalSettings() {
     <div class="sftp-modal-head"><div><h2 id="sftpGlobalSettingsTitle">SFTP 全局设置</h2><span>应用到所有 SFTP 标签和连接</span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" onclick="closeSftpGlobalSettings()">${icon("x")}</button></div>
     <label class="check-row"><input id="sftpRecycleBinEnabled" type="checkbox" ${saved.sftp_recycle_bin_enabled ? "checked" : ""}> 删除远程文件时先移入回收站</label>
     <div class="muted">默认关闭。开启后，每台远端服务器会在当前 SSH 用户主目录创建 TunnelDesk 专用隐藏目录；关闭只影响之后的删除，不会自动清空已有内容。</div>
+    <label class="check-row"><input id="sftpFloatingProgressEnabled" type="checkbox" ${saved.sftp_floating_progress_enabled !== false ? "checked" : ""}> 显示右上角悬浮传输进度卡</label>
+    <div class="muted">默认开启。悬浮卡中的“关闭”只隐藏当前任务；选择“静默”后会永久关闭，可在这里重新开启。</div>
     <label>可在程序中打开的最大文件（MB）</label>
     <input id="sftpMaxOpenFileSizeMb" type="number" min="1" max="100" step="1" value="${Number(saved.sftp_max_open_file_size_mb || 5)}">
     <div class="muted">适用于在线文本编辑和图片预览，范围 1-100 MB。更大的文件仍可正常下载。</div>

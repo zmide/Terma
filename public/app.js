@@ -126,11 +126,12 @@ renderWelcome();
 window.restoringTabs = false;
 $("connectionGroups")?.addEventListener("scroll", onConnectionScroll, {passive:true});
 document.addEventListener("contextmenu", showCommandContextMenu);
-document.addEventListener("click", () => {
+document.addEventListener("click", event => {
   hideActionMenu();
   hideCommandContextMenu();
   hideSftpContextMenu();
   hideTabContextMenu();
+  if (!event.target?.closest?.("#sftpTaskCenter")) closeSftpTaskCenter();
 });
 document.addEventListener("keydown", event => {
   if (event.key === "Escape") {
@@ -138,6 +139,7 @@ document.addEventListener("keydown", event => {
     hideCommandContextMenu();
     hideSftpContextMenu();
     hideTabContextMenu();
+    closeSftpTaskCenter();
   }
 });
 refreshIcons();

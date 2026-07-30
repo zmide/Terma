@@ -12,7 +12,7 @@ TunnelDesk 是一个面向桌面端和自托管 Web 的 SSH 工作台，用于�
 
 <table>
   <tr>
-    <td width="50%"><strong>终端</strong><br><img src=".github/assets/screenshots/desktop-terminal.png" alt="TunnelDesk 终端"></td>
+    <td width="50%"><strong>终端与递归分屏</strong><br><img src=".github/assets/screenshots/desktop-terminal.png" alt="TunnelDesk 终端与递归分屏"></td>
     <td width="50%"><strong>SFTP</strong><br><img src=".github/assets/screenshots/desktop-sftp.png" alt="TunnelDesk SFTP"></td>
   </tr>
   <tr>
@@ -41,6 +41,7 @@ TunnelDesk 是一个面向桌面端和自托管 Web 的 SSH 工作台，用于�
 
 - 多会话 Web 终端，优先使用本地 PTY，不可用时自动回退到 SSH 远程 PTY。
 - 测试 SSH 时可识别远端默认 Shell、常用 Shell、Python/Node 和会话工具；启动配置既可保存到连接，也可只对当前标签临时生效。
+- 可将本机文件或文件夹直接拖入终端当前目录，也可把 SFTP 远端项目拖到终端或另一个 SFTP 标签；遇到同名项目可选择覆盖、按 `(1)`、`(2)` 自动改名或取消。
 - UTF-8、GB18030/GBK、Big5、Shift_JIS、EUC-KR、ISO-8859-1 编码切换。
 - 字体、字号、行距和字重可按连接保存，支持 `Ctrl + 鼠标滚轮` 调整字号。
 - 最近命令、快捷键栏、右键操作、终端日志和交互延迟显示。
@@ -50,7 +51,7 @@ TunnelDesk 是一个面向桌面端和自托管 Web 的 SSH 工作台，用于�
 
 - 文件和目录浏览、搜索、排序、分页、收藏、上传、下载和在线文本编辑。
 - 新建、重命名、删除、回收站、权限与所有者修改、压缩和解压。
-- 后台传输任务支持进度、速度、暂停、继续、重试和历史记录。
+- 工作区标题栏提供全局传输任务中心，按钮底部可直接查看总进度；默认同时显示不遮挡标题栏的悬浮进度卡，可临时关闭或永久静默，并在 SFTP 全局设置中重新开启。
 - 文件名编码和文本内容编码独立设置，兼容常见中日韩传统编码。
 - 支持同主机复制移动，以及在两台 SSH 主机之间直接流式复制。
 - 终端与 SFTP 可按当前连接互相跳转。

@@ -129,12 +129,15 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 6,
+    schema_version: 7,
     listen_hosts: normalizeListenHosts(hostsValue, hostsValue === undefined ? (fallback.listen_hosts ?? DEFAULT_LISTEN_HOSTS) : null),
     listen_port: normalizeListenPort(portValue, portValue === undefined ? (fallback.listen_port ?? DEFAULT_LISTEN_PORT) : null),
     sftp_recycle_bin_enabled: value.sftp_recycle_bin_enabled === undefined
       ? fallback.sftp_recycle_bin_enabled === true
       : value.sftp_recycle_bin_enabled === true,
+    sftp_floating_progress_enabled: value.sftp_floating_progress_enabled === undefined
+      ? fallback.sftp_floating_progress_enabled !== false
+      : value.sftp_floating_progress_enabled !== false,
     sftp_max_open_file_size_mb: normalizeSftpMaxOpenFileSize(
       value.sftp_max_open_file_size_mb,
       fallback.sftp_max_open_file_size_mb

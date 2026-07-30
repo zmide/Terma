@@ -14,6 +14,7 @@ const SFTP_NATIVE_DRAG_CACHE_TTL_MS = 9 * 60 * 1000;
 const SFTP_DROP_LEAVE_GRACE_MS = 90;
 const SFTP_NATIVE_TARGET_MISS_GRACE_MS = 180;
 const SFTP_NATIVE_DRAG_ACTIVE_TTL_MS = 2 * 60 * 1000;
+const SFTP_DRAG_FEEDBACK_STALE_MS = 900;
 const SFTP_INTERNAL_DRAG_MIME = "application/x-tunneldesk-sftp";
 const SFTP_INTERNAL_DRAG_HANDOFF_TTL_MS = 15 * 1000;
 const SFTP_MOBILE_TOOLBAR_EXPANDED_KEY = "sftpMobileToolbarExpanded";
@@ -28,7 +29,7 @@ const sftpFilenameEncodingOptions = [
 ];
 let sftpLatestJobs = [];
 let sftpJobsRequestSeq = 0;
-let sftpTaskNavigationSeq = 0;
+let sftpTaskCenterView = "current";
 let sftpRecycleBinConnectionId = 0;
 const sftpPendingBrowserDownloads = new Set();
 const sftpDownloadNoticeRequests = new Map();
@@ -45,6 +46,11 @@ let sftpInternalDrag = null;
 let sftpInternalDragHandoff = null;
 let sftpDropDepth = 0;
 let sftpDropLeaveTimer = 0;
+let sftpDragFeedbackWatchdog = 0;
+let sftpDragFeedbackLastActivityAt = 0;
+let sftpDragFeedbackTargetKind = "";
+let sftpDragFeedbackTargetKey = "";
+let sftpDragFeedbackTargetSession = null;
 const sftpNativeDragCache = new Map();
 const sftpNativeDragArmed = new Set();
 const sftpNativeDragRequests = new Map();
@@ -1234,7 +1240,6 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
         </div>
       </div>
     </div>
-    <div id="sftpJobs" class="sftp-jobs"></div>
     <div id="sftpList" class="sftp-list" oncontextmenu="showSftpDirectoryMenu(event,'${escAttr(tabKey)}')">${restored ? "" : stateView("loading", "正在读取目录", displayPath)}</div>
     <div id="sftpDropOverlay" class="sftp-drop-overlay" data-mode="upload" aria-hidden="true" hidden></div>
     <div id="sftpFloatingSearch" class="sftp-floating-search" hidden>${icon("search")}<input id="sftpSearch" placeholder="搜索当前目录" value="${esc(runtime.state.query)}" oninput="setSftpSearch(this.value,'${escAttr(tabKey)}')"><button class="icon-button" title="清除搜索" aria-label="清除搜索" onclick="clearSftpSearch('${escAttr(tabKey)}')">${icon("x")}</button></div>
@@ -2117,7 +2122,7 @@ function activeSftpDragPayload(dataTransfer=null) {
 
 function activeSftpCrossDropTarget(drag=activeSftpDragPayload(), tabKey=activeTabKey) {
   const target = tabs.find(tab => tab.key === tabKey);
-  if (!drag || target?.kind !== "sftp" || Number(target.id) === Number(drag.connectionId)) return null;
+  if (!drag || target?.kind !== "sftp" || String(target.key || "") === String(drag.sourceTabKey || "")) return null;
   return target;
 }
 
@@ -2329,7 +2334,73 @@ function clearSftpDragVisuals(row) {
   sftpDropDepth = 0;
   setSftpExternalDropState(false);
   $("sftpDragPreview")?.remove();
+  if (typeof terminalSessions !== "undefined" && typeof setTerminalDropState === "function") {
+    for (const session of terminalSessions.values()) {
+      session.terminalDropDepth = 0;
+      setTerminalDropState(session, false);
+    }
+  }
 }
+
+function noteSftpDragFeedbackActivity() {
+  sftpDragFeedbackLastActivityAt = Date.now();
+  if (sftpDragFeedbackWatchdog) return;
+  sftpDragFeedbackWatchdog = setTimeout(checkSftpDragFeedbackWatchdog, SFTP_DRAG_FEEDBACK_STALE_MS + 80);
+}
+
+function hasSftpDragFeedback() {
+  return Boolean(
+    document.body?.classList.contains("sftp-item-drag-active")
+    || document.querySelector(".sftp-drop-overlay:not([hidden]), .terminal-drop-overlay:not([hidden]), #sftpDragHint, #sftpDragPreview")
+    || document.querySelector(".tab.sftp-drop-target")
+  );
+}
+
+function clearSftpDragFeedback() {
+  if (sftpDragFeedbackWatchdog) clearTimeout(sftpDragFeedbackWatchdog);
+  sftpDragFeedbackWatchdog = 0;
+  sftpDragFeedbackLastActivityAt = 0;
+  clearSftpDragVisuals();
+}
+
+function checkSftpDragFeedbackWatchdog() {
+  sftpDragFeedbackWatchdog = 0;
+  if (!hasSftpDragFeedback()) return;
+  const age = Date.now() - Number(sftpDragFeedbackLastActivityAt || 0);
+  if (age < SFTP_DRAG_FEEDBACK_STALE_MS) {
+    sftpDragFeedbackWatchdog = setTimeout(checkSftpDragFeedbackWatchdog, SFTP_DRAG_FEEDBACK_STALE_MS - age + 80);
+    return;
+  }
+  // Browsers do not always dispatch dragleave/dragend when the pointer is
+  // released outside the window. Clear only renderer feedback here; any
+  // native request or upload job remains owned by its normal completion path.
+  clearSftpDragFeedback();
+}
+
+function bindSftpDragFeedbackLifecycle() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  if (window.__tunneldeskSftpDragFeedbackLifecycleBound) return;
+  window.__tunneldeskSftpDragFeedbackLifecycleBound = true;
+  const clearAfterEvent = () => setTimeout(() => clearSftpDragFeedback(), 0);
+  document.addEventListener("dragend", clearAfterEvent, true);
+  document.addEventListener("drop", clearAfterEvent, true);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) clearSftpDragFeedback();
+  });
+  window.addEventListener("blur", () => {
+    // A native SFTP drag can briefly change focus while the OS owns it. Keep
+    // its live feedback until motion stops; ordinary browser drags can clear.
+    const nativeActive = [...sftpNativeDragRequests.values()].some(request => sftpNativeDragRequestIsActive(request));
+    if (nativeActive) noteSftpDragFeedbackActivity();
+    else clearSftpDragFeedback();
+  });
+  window.addEventListener("resize", () => {
+    // Fixed SFTP overlays otherwise retain their old screen coordinates.
+    if (hasSftpDragFeedback()) requestAnimationFrame(() => clearSftpDragFeedback());
+  });
+}
+
+bindSftpDragFeedbackLifecycle();
 
 function clearSftpTabDragPreview() {
   if (sftpTabDragPreviewTimer) clearTimeout(sftpTabDragPreviewTimer);
@@ -2345,12 +2416,12 @@ function scheduleSftpTabDragPreview(tabKey) {
     sftpTabDragPreviewTimer = 0;
     const drag = activeSftpDragPayload();
     const target = tabs.find(tab => tab.key === tabKey);
-    if (!drag || target?.kind !== "sftp" || Number(target.id) === Number(drag.connectionId)) return clearSftpTabDragPreview();
+    if (!drag || target?.kind !== "sftp" || String(target.key || "") === String(drag.sourceTabKey || "")) return clearSftpTabDragPreview();
     activateTab(tabKey);
     requestAnimationFrame(() => {
       const activeDrag = activeSftpDragPayload();
       const currentTarget = tabs.find(tab => tab.key === tabKey);
-      if (!activeDrag || activeTabKey !== tabKey || currentTarget?.kind !== "sftp" || Number(currentTarget.id) === Number(activeDrag.connectionId)) {
+      if (!activeDrag || activeTabKey !== tabKey || currentTarget?.kind !== "sftp" || String(currentTarget.key || "") === String(activeDrag.sourceTabKey || "")) {
         clearSftpTabDragPreview();
         return;
       }
@@ -2498,7 +2569,7 @@ function startSftpNativeDrag(row, connectionId, entries, cached, mode=sftpExtern
   }
   try {
     const payload = mode === "streaming"
-      ? {connectionId:Number(connectionId), entries:request.entries}
+      ? {connectionId:Number(connectionId), entries:request.entries, sourceTabKey:request.sourceTabKey}
       : request.files;
     window.tunnelDeskDesktop.startSftpDrag(payload, requestId);
     return requestId;
@@ -2517,9 +2588,10 @@ function updateSftpNativeDragTarget(requestId, request, target, options={}) {
     id:Number(target.id),
     tabKey:String(target.key || target.tabKey || ""),
     path:String(target.path || "."),
-    title:String(target.title || "SFTP")
+    title:String(target.title || "SFTP"),
+    kind:target.kind === "terminal" ? "terminal" : "sftp"
   } : null;
-  const key = normalized ? `${normalized.id}\0${normalized.tabKey}\0${normalized.path}` : "";
+  const key = normalized ? `${normalized.kind}\0${normalized.id}\0${normalized.tabKey}\0${normalized.path}` : "";
   if (normalized) request.nativeTargetMissedAt = 0;
   if (request.nativeTargetKey === key && !options.final) return;
   request.nativeTargetKey = key;
@@ -2529,6 +2601,14 @@ function updateSftpNativeDragTarget(requestId, request, target, options={}) {
 
 function showSftpNativeDragTargetFeedback(target) {
   if (!target) return;
+  if (target.kind === "terminal") {
+    for (const candidate of terminalSessions.values()) {
+      if (candidate?.key !== target.tabKey && typeof setTerminalDropState === "function") setTerminalDropState(candidate, false);
+    }
+    const session = terminalSessions.get(String(target.tabKey || ""));
+    if (session && typeof setTerminalDropState === "function") setTerminalDropState(session, true, "copy");
+    return;
+  }
   const state = sftpTabRuntimes.get(String(target.tabKey || ""))?.state;
   if (state && Number(state.connectionId) === Number(target.id)) {
     setSftpExternalDropState(true, {title:`松开复制到 ${target.title}`, path:target.path || state.path || ".", tabKey:target.tabKey});
@@ -2553,12 +2633,26 @@ function syncSftpNativeDragTargetAt(requestId, request, clientX, clientY, option
     const shellTab = tabs.find(tab => tab.key === shellTabKey);
     if (shellTab?.kind === "sftp") target = shellTab;
   }
-  if (target?.kind === "sftp" && Number(target.id) !== Number(request.connectionId)) {
+  if (!target && node) {
+    const terminalSession = [...terminalSessions.values()].find(session => session?.mount?.contains?.(node));
+    if (terminalSession?.connected && terminalSession.currentDirectoryKnown) {
+      target = {
+        kind:"terminal",
+        id:Number(terminalSession.id),
+        key:String(terminalSession.key || ""),
+        path:String(terminalSession.currentDirectory || "."),
+        title:`终端：${terminalDirectoryDropLabel(terminalSession)}`
+      };
+    }
+  }
+  if (target && String(target.key || "") !== String(request.sourceTabKey || "")) {
     document.querySelectorAll(".tab.sftp-drop-target").forEach(tab => tab.classList.remove("sftp-drop-target"));
-    tabNode?.classList.add("sftp-drop-target");
-    if (!options.final && tabNode && target.key !== activeTabKey) scheduleSftpTabDragPreview(target.key);
-    const targetState = sftpTabRuntimes.get(target.key)?.state;
-    const directory = Number(targetState?.connectionId) === Number(target.id)
+    if (target.kind === "sftp") {
+      tabNode?.classList.add("sftp-drop-target");
+      if (!options.final && tabNode && target.key !== activeTabKey) scheduleSftpTabDragPreview(target.key);
+    }
+    const targetState = target.kind === "sftp" ? sftpTabRuntimes.get(target.key)?.state : null;
+    const directory = target.kind === "sftp" && Number(targetState?.connectionId) === Number(target.id)
       ? targetState.path
       : target.path || ".";
     const resolvedTarget = {...target, path:directory};
@@ -2590,6 +2684,9 @@ function syncSftpNativeDragTargetAt(requestId, request, clientX, clientY, option
   request.nativeTargetMissedAt = 0;
   document.querySelectorAll(".tab.sftp-drop-target").forEach(tab => tab.classList.remove("sftp-drop-target"));
   clearSftpTabDragPreview();
+  if (typeof setTerminalDropState === "function") {
+    for (const session of terminalSessions.values()) setTerminalDropState(session, false);
+  }
   setSftpExternalDropState(false, {keepHint:true});
   updateSftpNativeDragTarget(requestId, request, null, options);
   if (!options.final) {
@@ -2606,6 +2703,7 @@ function handleSftpNativeDragEvent(event) {
   const request = sftpNativeDragRequests.get(requestId);
   if (!request) return;
   request.lastActivityAt = Date.now();
+  if (["started", "motion", "released"].includes(event.type)) noteSftpDragFeedbackActivity();
   if (event.type === "transferStarted") {
     refreshSftpJobs();
     return;
@@ -2653,11 +2751,19 @@ async function handleSftpNativeDragResult(result) {
   if (!request) return;
   if (sftpNativeDragPointer?.nativeRequestId === requestId) clearSftpNativeDragPointer({cancel:false});
   const internalTarget = result?.internalTarget;
-  const target = internalTarget
+  const target = internalTarget?.kind !== "terminal" && internalTarget
     ? tabs.find(tab => tab.kind === "sftp" && tab.key === internalTarget.tabKey)
       || tabs.find(tab => tab.kind === "sftp" && Number(tab.id) === Number(internalTarget.id))
     : null;
-  if (result?.ok && target && Number(target.id) !== Number(request.connectionId)) {
+  if (result?.ok && internalTarget?.kind === "terminal") {
+    const session = terminalSessions.get(String(internalTarget.tabKey || ""));
+    if (session && typeof setTerminalDropState === "function") setTerminalDropState(session, false);
+    await copySftpDraggedItemsToDirectory(request, Number(internalTarget.id), String(internalTarget.path || "."), {
+      title:`终端：${internalTarget.path || "当前目录"}`
+    });
+    return;
+  }
+  if (result?.ok && target && String(target.key || "") !== String(request.sourceTabKey || "")) {
     target.path = String(internalTarget.path || target.path || ".");
     await copySftpDraggedItemsToTarget(request, target);
     return;
@@ -2765,7 +2871,7 @@ function finishSftpItemDrag(event) {
 function handleSftpTabDragOver(event, tabKey) {
   const target = tabs.find(tab => tab.key === tabKey);
   const drag = activeSftpDragPayload(event?.dataTransfer);
-  if (!drag || target?.kind !== "sftp" || Number(target.id) === Number(drag.connectionId)) return;
+  if (!drag || target?.kind !== "sftp" || String(target.key || "") === String(drag.sourceTabKey || "")) return;
   markSftpDragInsideWindow();
   event.preventDefault();
   event.dataTransfer.dropEffect = "copy";
@@ -2800,14 +2906,14 @@ async function dropSftpItemsOnTab(event, tabKey) {
   const drag = activeSftpDragPayload(event?.dataTransfer);
   const target = tabs.find(tab => tab.key === tabKey);
   event.currentTarget?.classList.remove("sftp-drop-target");
-  if (!drag || target?.kind !== "sftp" || Number(target.id) === Number(drag.connectionId)) return;
+  if (!drag || target?.kind !== "sftp" || String(target.key || "") === String(drag.sourceTabKey || "")) return;
   event.preventDefault();
   event.stopPropagation();
   await copySftpDraggedItemsToTarget(drag, target);
 }
 
 async function copySftpDraggedItemsToTarget(drag, target) {
-  if (!drag || target?.kind !== "sftp" || Number(target.id) === Number(drag.connectionId)) return;
+  if (!drag || target?.kind !== "sftp" || String(target.key || "") === String(drag.sourceTabKey || "")) return;
   sftpExternalDragPreparing = null;
   const targetState = sftpTabRuntimes.get(target.key)?.state;
   const directory = Number(targetState?.connectionId) === Number(target.id)
@@ -2821,20 +2927,28 @@ async function copySftpDraggedItemsToTarget(drag, target) {
     updateSftpNativeDragTarget(requestId, request, {...target, path:directory}, {final:true});
     break;
   }
+  return copySftpDraggedItemsToDirectory(drag, Number(target.id), directory, {title:target.title, tabKey:target.key});
+}
+
+async function copySftpDraggedItemsToDirectory(drag, targetConnectionId, directory, options={}) {
+  if (!drag?.entries?.length || !Number.isInteger(Number(targetConnectionId)) || Number(targetConnectionId) <= 0) return;
+  sftpExternalDragPreparing = null;
   finishSftpDragPayload(drag);
-  showSftpDragHint(`正在检查 ${target.title} 并准备复制`, true, "copy", target.key);
+  const title = String(options.title || "目标目录");
+  const tabKey = String(options.tabKey || "");
+  showSftpDragHint(`正在检查 ${title} 并准备复制`, true, "copy", tabKey);
   const pendingHint = $("sftpDragHint");
   try {
-    const conflict = await sftpConflictChoice(target.id, directory, drag.entries, {title:"目标 SFTP 存在同名项目"});
+    const conflict = await sftpConflictChoice(Number(targetConnectionId), directory, drag.entries, {title:`${title}存在同名项目`});
     if (conflict === "cancel") return;
     const job = await api(`/api/connections/${drag.connectionId}/sftp/cross-copy`, {
       method:"POST",
-      body:JSON.stringify({paths:drag.entries.map(item => item.path), entries:drag.entries, target_connection_id:Number(target.id), target:directory, conflict})
+      body:JSON.stringify({paths:drag.entries.map(item => item.path), entries:drag.entries, target_connection_id:Number(targetConnectionId), target:directory, conflict})
     });
     trackSftpMutationJob(job);
     refreshSftpJobs();
   } catch (error) {
-    notify(error.message || "跨 SFTP 标签复制失败", "error");
+    notify(error.message || "SFTP 项目复制失败", "error");
   } finally {
     if ($("sftpDragHint") === pendingHint) pendingHint?.remove();
   }
@@ -3234,6 +3348,39 @@ function sftpJobProgressLabel(job, progress) {
   return `${job?.progress_estimated ? "约 " : ""}${Math.round(progress.percent)}%`;
 }
 
+function sftpTaskCollections(jobs=sftpLatestJobs) {
+  const current = jobs.filter(job => ["running", "pending", "paused", "failed"].includes(job.status)
+    || (job.status === "done" && job.type === "download" && job.delivery_status === "failed"));
+  const history = jobs.filter(job => ["done", "cancelled"].includes(job.status)
+    && !(job.type === "download" && job.delivery_status === "failed"));
+  const activeCount = current.filter(job => SFTP_ACTIVE_JOB_STATUSES.has(job.status)).length;
+  const failedCount = current.length - activeCount;
+  return {current, history, activeCount, failedCount};
+}
+
+function sftpTaskCenterProgress(jobs=sftpLatestJobs) {
+  const active = jobs.filter(job => SFTP_ACTIVE_JOB_STATUSES.has(job.status));
+  if (!active.length) return null;
+  const entries = active.map(job => ({job, progress:sftpJobProgress(job)}));
+  const known = entries.filter(entry => entry.progress);
+  if (!known.length) return {activeCount:active.length, percent:0, determinate:false};
+  const progressUnits = new Set(known.map(entry => entry.job.progress_unit || "bytes"));
+  const canWeightBySize = progressUnits.size === 1 && known.every(entry => entry.progress.weightable);
+  const totalWeight = canWeightBySize ? known.reduce((sum, entry) => sum + entry.progress.size, 0) : known.length;
+  const percent = canWeightBySize && totalWeight
+    ? known.reduce((sum, entry) => sum + entry.progress.percent * entry.progress.size, 0) / totalWeight
+    : known.reduce((sum, entry) => sum + entry.progress.percent, 0) / totalWeight;
+  return {
+    activeCount:active.length,
+    percent:Math.max(0, Math.min(99, percent)),
+    determinate:known.length === entries.length
+  };
+}
+
+function sftpFloatingProgressEnabled() {
+  return runtimeSettings !== null && runtimeSettings?.saved?.sftp_floating_progress_enabled !== false;
+}
+
 function sftpFloatingJobDetail(job) {
   const progress = sftpJobProgress(job);
   const speed = job.status === "running" ? Number(job.speed_bps || 0) : 0;
@@ -3253,55 +3400,55 @@ function dismissSftpTaskFloat() {
   for (const job of sftpLatestJobs.filter(item => SFTP_ACTIVE_JOB_STATUSES.has(item.status))) {
     if (job.id) sftpDismissedFloatingJobIds.add(String(job.id));
   }
-  const box = $("sftpTaskFloat");
+  const box = document.getElementById("sftpTaskFloat");
   if (box) box.hidden = true;
+}
+
+async function muteSftpTaskFloat() {
+  const accepted = await confirmModal(
+    "静默后将永久关闭此类悬浮进度卡。传输任务仍会继续，也可以通过标题栏任务按钮查看；需要恢复时，请前往 SFTP 全局设置重新开启。",
+    "静默悬浮进度卡",
+    "永久静默",
+    "取消"
+  );
+  if (!accepted) return;
+  try {
+    const result = await api("/api/runtime-settings", {
+      method:"PUT",
+      body:JSON.stringify({sftp_floating_progress_enabled:false})
+    });
+    runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
+    updateSftpTaskFloat(sftpLatestJobs);
+    notify("悬浮进度卡已静默，可在 SFTP 全局设置中重新开启", "success");
+  } catch (error) {
+    notify(error.message || "静默悬浮进度卡失败", "error");
+  }
 }
 
 async function openSftpTaskList(event) {
   if (event?.target?.closest?.(".sftp-task-float-actions")) return;
   event?.preventDefault?.();
-  const job = sftpLatestJobs.find(item => SFTP_ACTIVE_JOB_STATUSES.has(item.status));
-  const focusedRuntime = sftpTabRuntimes.get(String(activeTabKey || ""));
-  const connectionId = Number(job?.connection_id || focusedRuntime?.state.connectionId || 0);
-  if (!connectionId || !connections.some(item => Number(item.id) === connectionId)) {
-    return notify("任务对应的 SSH 连接已不存在", "error");
-  }
-  let tab = tabs.find(item => item.kind === "sftp" && Number(item.id) === connectionId);
-  let tabKey = String(tab?.key || "");
-  const navigationSeq = ++sftpTaskNavigationSeq;
-  if (tabKey) {
-    activateTab(tabKey);
-    await Promise.resolve(openSftp(connectionId, tab?.path || ".", false, tabKey)).catch(() => false);
-  } else {
-    await Promise.resolve(openSftp(connectionId, ".")).catch(() => false);
-    tab = tabs.find(item => item.kind === "sftp" && Number(item.id) === connectionId && item.key === activeTabKey)
-      || tabs.find(item => item.kind === "sftp" && Number(item.id) === connectionId);
-    tabKey = String(tab?.key || "");
-  }
-  if (navigationSeq !== sftpTaskNavigationSeq || !tabKey) return;
-  await refreshSftpJobs();
-  if (navigationSeq !== sftpTaskNavigationSeq) return;
-  const box = sftpElement("sftpJobs", tabKey);
-  if (!box) return;
-  const drawer = box?.querySelector("details");
-  if (drawer) drawer.open = true;
-  const workspace = box.closest(".workspace");
-  if (workspace) workspace.scrollTo({top:0, behavior:"auto"});
-  else box.scrollIntoView({block:"nearest", behavior:"auto"});
+  event?.stopPropagation?.();
+  setSftpTaskCenterView("current");
+  const drawer = document.getElementById("sftpTaskCenterDrawer");
+  if (drawer?.hidden) await toggleSftpTaskCenter();
+  else await refreshSftpJobs();
 }
 
-function updateSftpTaskFloat(jobs) {
-  const box = $("sftpTaskFloat");
+function updateSftpTaskFloat(jobs=sftpLatestJobs) {
+  const box = document.getElementById("sftpTaskFloat");
   if (!box) return;
   const active = jobs.filter(job => SFTP_ACTIVE_JOB_STATUSES.has(job.status));
   const activeIds = new Set(active.map(job => String(job.id || "")).filter(Boolean));
   for (const id of [...sftpDismissedFloatingJobIds]) {
     if (!activeIds.has(id)) sftpDismissedFloatingJobIds.delete(id);
   }
-  if (!active.length) {
+  if (!sftpFloatingProgressEnabled() || !active.length) {
     box.hidden = true;
-    box.innerHTML = "";
-    delete box.dataset.statusIcon;
+    if (!active.length) {
+      box.innerHTML = "";
+      delete box.dataset.statusIcon;
+    }
     return;
   }
   if (!active.some(job => !sftpDismissedFloatingJobIds.has(String(job.id || "")))) {
@@ -3309,40 +3456,31 @@ function updateSftpTaskFloat(jobs) {
     return;
   }
 
-  const progressRows = active.map(sftpJobProgress);
-  const determinate = progressRows.every(Boolean);
-  const progressUnits = new Set(active.map(job => job.progress_unit || "bytes"));
-  const totalSize = determinate ? progressRows.reduce((total, item) => total + item.size, 0) : 0;
-  const weighted = determinate && progressUnits.size === 1 && totalSize > 0 && progressRows.every(item => item.weightable);
-  const percent = !determinate
-    ? 0
-    : weighted
-      ? progressRows.reduce((total, item) => total + item.percent * item.size, 0) / totalSize
-      : progressRows.reduce((total, item) => total + item.percent, 0) / progressRows.length;
+  const aggregate = sftpTaskCenterProgress(active);
+  const determinate = Boolean(aggregate?.determinate);
+  const percent = Number(aggregate?.percent || 0);
   const totalSpeed = active.reduce((total, job) => total + (job.status === "running" ? Math.max(0, Number(job.speed_bps || 0)) : 0), 0);
-  const title = active.length === 1 ? (active[0].label || "SFTP 任务") : `${active.length} 个 SFTP 任务`;
+  const title = active.length === 1 ? (active[0].label || "传输任务") : `${active.length} 个传输任务`;
   const detail = active.length === 1
     ? sftpFloatingJobDetail(active[0])
     : [
-        `${active.filter(job => job.status === "running").length} 项执行中`,
+        active.some(job => job.status === "running") ? `${active.filter(job => job.status === "running").length} 项执行中` : "",
         active.some(job => job.status === "pending") ? `${active.filter(job => job.status === "pending").length} 项准备中` : "",
         active.some(job => job.status === "paused") ? `${active.filter(job => job.status === "paused").length} 项已暂停` : "",
         totalSpeed ? `${formatBytes(totalSpeed)}/s` : "",
         determinate ? `${active.some(job => job.progress_estimated) ? "约 " : ""}${Math.round(percent)}%` : ""
       ].filter(Boolean).join(" · ");
-  const singleCancelable = active.length === 1 && SFTP_ACTIVE_JOB_STATUSES.has(active[0].status)
+  const singleCancelable = active.length === 1
     && active[0].can_cancel !== false
     && !(active[0].type === "upload" && active[0].phase === "committing");
   if (!box.querySelector(".sftp-task-float-head")) {
-    box.innerHTML = `<div class="sftp-task-float-head"><button type="button" class="sftp-task-float-open" title="查看 SFTP 任务列表"><span class="sftp-task-float-icon"></span><span class="sftp-task-float-copy"><strong class="sftp-task-float-title"></strong><span class="sftp-task-float-detail"></span></span></button><span class="sftp-task-float-actions"><button type="button" class="icon-button sftp-task-float-cancel" onclick="event.stopPropagation();cancelSftpJob(this.dataset.jobId)" title="取消任务" aria-label="取消任务" hidden>${icon("square")}</button><button type="button" class="icon-button sftp-task-float-close" onclick="event.stopPropagation();dismissSftpTaskFloat()" title="关闭任务进度" aria-label="关闭任务进度">${icon("x")}</button></span></div><div class="progress" role="progressbar" aria-label="SFTP 任务进度"><i></i></div>`;
+    box.innerHTML = `<div class="sftp-task-float-head"><button type="button" class="sftp-task-float-open" title="打开传输任务中心"><span class="sftp-task-float-icon"></span><span class="sftp-task-float-copy"><strong class="sftp-task-float-title"></strong><span class="sftp-task-float-detail"></span></span></button><span class="sftp-task-float-actions"><button type="button" class="icon-button sftp-task-float-cancel" onclick="event.stopPropagation();cancelSftpJob(this.dataset.jobId)" title="停止任务" aria-label="停止任务" hidden>${icon("square")}</button><button type="button" class="icon-button sftp-task-float-close" onclick="event.stopPropagation();dismissSftpTaskFloat()" title="关闭当前悬浮进度" aria-label="关闭当前悬浮进度">${icon("x")}</button><button type="button" class="icon-button sftp-task-float-mute" onclick="event.stopPropagation();muteSftpTaskFloat()" title="静默悬浮进度卡" aria-label="静默悬浮进度卡">${icon("bell-off")}</button></span></div><div class="progress" role="progressbar" aria-label="传输任务进度"><i></i></div>`;
   }
   const hasRunning = active.some(job => job.status === "running");
   const statusIcon = box.querySelector(".sftp-task-float-icon");
   const statusIconKind = hasRunning ? "running" : "paused";
   if (statusIcon && box.dataset.statusIcon !== statusIconKind) {
-    statusIcon.innerHTML = hasRunning
-      ? `<span class="sftp-task-spinner" aria-hidden="true"></span>`
-      : icon("pause");
+    statusIcon.innerHTML = hasRunning ? `<span class="sftp-task-spinner" aria-hidden="true"></span>` : icon("pause");
     box.dataset.statusIcon = statusIconKind;
   }
   const titleNode = box.querySelector(".sftp-task-float-title");
@@ -3370,6 +3508,101 @@ function updateSftpTaskFloat(jobs) {
   }
   if (progressBar) progressBar.style.width = determinate ? `${percent}%` : "";
   box.hidden = false;
+}
+
+function renderSftpTaskCenterDrawer(jobs=sftpLatestJobs) {
+  const drawer = document.getElementById("sftpTaskCenterDrawer");
+  const list = document.getElementById("sftpTaskCenterList");
+  if (!drawer || !list) return;
+  const {current, history, activeCount, failedCount} = sftpTaskCollections(jobs);
+  const showingHistory = sftpTaskCenterView === "history";
+  const visible = showingHistory ? history : current;
+  const currentTab = document.getElementById("sftpTaskCenterCurrentTab");
+  const historyTab = document.getElementById("sftpTaskCenterHistoryTab");
+  currentTab?.setAttribute("aria-selected", String(!showingHistory));
+  historyTab?.setAttribute("aria-selected", String(showingHistory));
+  currentTab?.classList.toggle("active", !showingHistory);
+  historyTab?.classList.toggle("active", showingHistory);
+  const currentCount = document.getElementById("sftpTaskCenterCurrentCount");
+  const historyCount = document.getElementById("sftpTaskCenterHistoryCount");
+  if (currentCount) currentCount.textContent = String(current.length);
+  if (historyCount) historyCount.textContent = String(history.length);
+  list.innerHTML = visible.length
+    ? visible.map(renderSftpJob).join("")
+    : `<div class="sftp-task-empty">${showingHistory ? "暂无已完成或已取消的任务" : "暂无进行中或失败的任务"}</div>`;
+  list.setAttribute("aria-labelledby", showingHistory ? "sftpTaskCenterHistoryTab" : "sftpTaskCenterCurrentTab");
+  const summary = document.getElementById("sftpTaskCenterSummary");
+  if (summary) summary.textContent = [
+    activeCount ? `${activeCount} 项进行中` : "",
+    failedCount ? `${failedCount} 项失败` : "",
+    !activeCount && !failedCount ? "暂无进行中的任务" : ""
+  ].filter(Boolean).join(" · ");
+  const footer = document.getElementById("sftpTaskCenterFooter");
+  if (footer) footer.hidden = !showingHistory || !history.length;
+}
+
+function updateSftpTaskCenter(jobs=sftpLatestJobs) {
+  const button = document.getElementById("sftpTaskCenterButton");
+  const iconBox = document.getElementById("sftpTaskCenterIcon");
+  const badge = document.getElementById("sftpTaskCenterBadge");
+  const progressBar = document.getElementById("sftpTaskCenterProgress");
+  if (!button || !iconBox || !badge) return;
+  const {current, activeCount, failedCount} = sftpTaskCollections(jobs);
+  const status = failedCount ? "failed" : activeCount ? "running" : "idle";
+  if (button.dataset.status !== status) {
+    iconBox.innerHTML = icon(status === "failed" ? "circle-alert" : status === "running" ? "loader-circle" : "list-checks");
+    button.dataset.status = status;
+  }
+  button.classList.toggle("is-running", activeCount > 0);
+  button.classList.toggle("is-failed", failedCount > 0);
+  badge.hidden = !current.length;
+  badge.textContent = current.length > 99 ? "99+" : String(current.length);
+  const description = [activeCount ? `${activeCount} 项进行中` : "", failedCount ? `${failedCount} 项失败` : ""].filter(Boolean).join("，");
+  button.title = description ? `传输任务：${description}` : "传输任务";
+  button.setAttribute("aria-label", button.title);
+  if (progressBar) {
+    const progress = sftpTaskCenterProgress(jobs);
+    const determinate = Boolean(progress?.determinate);
+    progressBar.hidden = !progress;
+    progressBar.classList.toggle("is-indeterminate", Boolean(progress) && !determinate);
+    const fill = progressBar.querySelector("i");
+    if (fill) fill.style.width = `${Math.round(progress?.percent || 0)}%`;
+    if (progress) {
+      progressBar.setAttribute("aria-valuetext", determinate ? `${Math.round(progress.percent)}%` : "正在计算传输进度");
+      if (determinate) progressBar.setAttribute("aria-valuenow", String(Math.round(progress.percent)));
+      else progressBar.removeAttribute("aria-valuenow");
+    } else {
+      progressBar.removeAttribute("aria-valuenow");
+      progressBar.removeAttribute("aria-valuetext");
+    }
+  }
+  renderSftpTaskCenterDrawer(jobs);
+  updateSftpTaskFloat(jobs);
+}
+
+function setSftpTaskCenterView(view) {
+  sftpTaskCenterView = view === "history" ? "history" : "current";
+  renderSftpTaskCenterDrawer();
+}
+
+function closeSftpTaskCenter() {
+  const drawer = document.getElementById("sftpTaskCenterDrawer");
+  const button = document.getElementById("sftpTaskCenterButton");
+  if (drawer) drawer.hidden = true;
+  button?.setAttribute("aria-expanded", "false");
+}
+
+async function toggleSftpTaskCenter(event) {
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  const drawer = document.getElementById("sftpTaskCenterDrawer");
+  const button = document.getElementById("sftpTaskCenterButton");
+  if (!drawer || !button) return;
+  if (!drawer.hidden) return closeSftpTaskCenter();
+  drawer.hidden = false;
+  button.setAttribute("aria-expanded", "true");
+  renderSftpTaskCenterDrawer();
+  await refreshSftpJobs();
 }
 
 function trackSftpMutationJob(job) {
@@ -3418,20 +3651,6 @@ function flushPendingSftpDirectoryRefresh(tabKey="") {
   }
 }
 
-function renderSftpJobsIntoBox(box, jobs) {
-  if (!box) return;
-  const current = jobs.filter(job => ["running", "pending", "paused", "failed"].includes(job.status)
-    || (job.status === "done" && job.type === "download" && job.delivery_status === "failed")).slice(0, 8);
-  const history = jobs.filter(job => ["done", "cancelled"].includes(job.status));
-  const wasOpen = box.querySelector("details")?.open;
-  const hasActive = jobs.some(job => ["running", "pending", "paused"].includes(job.status));
-  const failedCount = current.filter(job => job.status === "failed").length;
-  const activeCount = current.length - failedCount;
-  const summary = [activeCount ? `${activeCount} 项进行中` : "", failedCount ? `${failedCount} 项失败` : ""].filter(Boolean).join(" · ") || "没有进行中或失败的任务";
-  box.classList.toggle("is-empty", !current.length);
-  box.innerHTML = `<details class="sftp-task-drawer" ${(wasOpen || hasActive || failedCount) ? "open" : ""}><summary><span>${icon(hasActive ? "loader-circle" : failedCount ? "circle-alert" : "list-checks")}<strong>SFTP 任务</strong><small>${summary}</small></span><span class="sftp-task-summary-actions"><button type="button" onclick="event.preventDefault();event.stopPropagation();showSftpJobHistory()" ${history.length ? "" : "disabled"}>${icon("history")}<span>历史记录</span>${history.length ? `<small>${history.length}</small>` : ""}</button><span class="task-drawer-chevron">${icon("chevron-down")}</span></span></summary><div class="sftp-task-body">${current.length ? current.map(renderSftpJob).join("") : `<div class="sftp-task-empty">没有进行中或失败的任务</div>`}</div></details>`;
-}
-
 async function refreshSftpJobs() {
   const requestSeq = ++sftpJobsRequestSeq;
   const jobs = await api("/api/sftp/jobs").catch(() => []);
@@ -3445,12 +3664,10 @@ async function refreshSftpJobs() {
     notify("下载完成，已交给当前设备的浏览器保存", "success");
   }
   sftpLatestJobs = jobs;
-  updateSftpTaskFloat(jobs);
+  updateSftpTaskCenter(jobs);
   for (const connectionId of completedSftpMutationForCurrentView(jobs)) queueSftpDirectoryRefresh(connectionId);
   flushPendingSftpDirectoryRefresh();
-  for (const runtime of sftpTabRuntimes.values()) renderSftpJobsIntoBox(sftpElement("sftpJobs", runtime.tabKey), jobs);
   if (jobs.some(job => job.status === "running")) startSftpJobsTimer();
-  if ($("sftpJobHistoryList")) renderSftpJobHistoryModal();
   return jobs;
 }
 
@@ -3490,34 +3707,6 @@ function renderSftpJob(job) {
   const deliveryText = job.saved_path ? `<span class="sftp-job-delivery">已保存到 ${esc(job.saved_path)}</span>` : "";
   const deliveryError = job.delivery_error ? `<div class="sftp-job-error"><strong>自动保存失败</strong><span>${esc(job.delivery_error).slice(0,500)}</span></div>` : "";
   return `<div class="sftp-job ${escAttr(job.status)}"><div><strong>${esc(job.label || job.type)}</strong><span>${esc(job.connection_name || "")} · ${esc(detail)}${finishedAt ? ` · ${finishedAt}` : ""}</span>${deliveryText}${progressBar}${deliveryError}${job.error ? `<div class="sftp-job-error"><strong>失败原因</strong><span>${esc(job.error).slice(0,500)}</span></div>` : ""}</div><div class="actions tight">${downloadAction}${resumeBtn}${pauseBtn}${cancelBtn}${deleteBtn}</div></div>`;
-}
-
-function closeSftpJobHistory() {
-  const modal = $("modal");
-  modal.hidden = true;
-  modal.onclick = null;
-  modal.innerHTML = "";
-}
-
-function renderSftpJobHistoryModal() {
-  const modal = $("modal");
-  if (!modal || !$("sftpJobHistoryList")) return;
-  const history = sftpLatestJobs.filter(job => ["done", "cancelled"].includes(job.status));
-  const list = $("sftpJobHistoryList");
-  list.innerHTML = history.length ? history.map(renderSftpJob).join("") : `<div class="sftp-task-empty">暂无已完成或已取消的任务</div>`;
-  const count = $("sftpJobHistoryCount");
-  if (count) count.textContent = `${history.length} 条记录`;
-  const clear = $("sftpJobHistoryClear");
-  if (clear) clear.hidden = !history.length;
-}
-
-async function showSftpJobHistory() {
-  if (!sftpLatestJobs.length) sftpLatestJobs = await api("/api/sftp/jobs").catch(() => []);
-  const modal = $("modal");
-  modal.onclick = null;
-  modal.innerHTML = `<div class="modal-card wide sftp-history-modal" role="dialog" aria-modal="true" aria-labelledby="sftpJobHistoryTitle"><div class="sftp-modal-head"><div><h2 id="sftpJobHistoryTitle">SFTP 任务历史</h2><span id="sftpJobHistoryCount"></span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" onclick="closeSftpJobHistory()">${icon("x")}</button></div><div id="sftpJobHistoryList" class="sftp-history-list"></div><div class="actions"><button id="sftpJobHistoryClear" class="danger" type="button" onclick="clearFinishedSftpJobs()">${icon("trash-2")}<span>清空历史</span></button><button type="button" onclick="closeSftpJobHistory()">关闭</button></div></div>`;
-  modal.hidden = false;
-  renderSftpJobHistoryModal();
 }
 
 function closeSftpRecycleBin() {
@@ -3870,9 +4059,67 @@ async function collectDroppedFiles(dataTransfer) {
   return [...(dataTransfer?.files || [])].map(file => ({file, relativePath:normalizeDroppedRelativePath(file.webkitRelativePath || file.name, file.name)}));
 }
 
+function focusSftpDragFeedbackTarget(kind, key="", targetSession=null) {
+  const targetKind = kind === "terminal" ? "terminal" : "sftp";
+  const targetKey = String(key || "");
+  cancelSftpDropLeaveClear();
+  if (targetKind === "terminal") sftpDropDepth = 0;
+  for (const tabKey of sftpTabRuntimes.keys()) {
+    if (targetKind === "sftp" && tabKey === targetKey) continue;
+    const shell = sftpRuntimeRoot(tabKey)?.querySelector(".sftp-shell");
+    const overlay = sftpElement("sftpDropOverlay", tabKey);
+    shell?.classList.remove("is-drag-over");
+    if (overlay) {
+      overlay.hidden = true;
+      overlay.removeAttribute("style");
+      overlay.dataset.mode = "upload";
+    }
+  }
+  if (typeof terminalSessions !== "undefined") {
+    for (const session of terminalSessions.values()) {
+      if (targetKind === "terminal" && (session === targetSession || (targetKey && String(session?.key || "") === targetKey))) continue;
+      session.terminalDropDepth = 0;
+      const overlay = session?.mount?.querySelector?.(".terminal-drop-overlay");
+      if (overlay) overlay.hidden = true;
+    }
+  }
+  if (targetKind === "terminal") $("sftpDragHint")?.remove();
+  sftpDragFeedbackTargetKind = targetKind;
+  sftpDragFeedbackTargetKey = targetKey;
+  sftpDragFeedbackTargetSession = targetSession;
+}
+
+function releaseSftpDragFeedbackTarget(kind, key="", targetSession=null) {
+  const targetKind = kind === "terminal" ? "terminal" : "sftp";
+  const targetKey = String(key || "");
+  const matches = sftpDragFeedbackTargetKind === targetKind && (
+    targetKind === "terminal"
+      ? sftpDragFeedbackTargetSession === targetSession || (targetKey && sftpDragFeedbackTargetKey === targetKey)
+      : sftpDragFeedbackTargetKey === targetKey
+  );
+  if (!matches) return false;
+  sftpDragFeedbackTargetKind = "";
+  sftpDragFeedbackTargetKey = "";
+  sftpDragFeedbackTargetSession = null;
+  return true;
+}
+
 function setSftpExternalDropState(active, options={}) {
-  if (active) cancelSftpDropLeaveClear();
+  const tabKey = String(options.tabKey || activeTabKey || "");
+  if (active) {
+    cancelSftpDropLeaveClear();
+    noteSftpDragFeedbackActivity();
+    focusSftpDragFeedbackTarget("sftp", tabKey);
+  }
   if (!active) {
+    const clearsCurrentTarget = options.tabKey
+      ? releaseSftpDragFeedbackTarget("sftp", String(options.tabKey))
+      : true;
+    if (!options.tabKey) {
+      sftpDragFeedbackTargetKind = "";
+      sftpDragFeedbackTargetKey = "";
+      sftpDragFeedbackTargetSession = null;
+    }
     const keys = options.tabKey ? [String(options.tabKey)] : [...sftpTabRuntimes.keys()];
     for (const key of keys) {
       const shell = sftpRuntimeRoot(key)?.querySelector(".sftp-shell");
@@ -3883,10 +4130,9 @@ function setSftpExternalDropState(active, options={}) {
       overlay.removeAttribute("style");
       overlay.dataset.mode = "upload";
     }
-    if (!options.keepHint) $("sftpDragHint")?.remove();
+    if (!options.keepHint && clearsCurrentTarget) $("sftpDragHint")?.remove();
     return;
   }
-  const tabKey = String(options.tabKey || activeTabKey || "");
   const runtime = sftpTabRuntimes.get(tabKey);
   const shell = sftpRuntimeRoot(tabKey)?.querySelector(".sftp-shell");
   const overlay = sftpElement("sftpDropOverlay", tabKey);
@@ -4004,7 +4250,7 @@ function handleSftpOwnDragOver(event, enter=false, tabKey=sftpTabKeyFromNode(eve
   const target = activeSftpCrossDropTarget(drag, tabKey);
   if (event.dataTransfer) event.dataTransfer.dropEffect = target ? "copy" : "none";
   if (target) {
-    if (enter) sftpDropDepth += 1;
+    if (enter) sftpDropDepth = 1;
     const state = sftpTabRuntimes.get(tabKey)?.state;
     const directory = Number(state?.connectionId) === Number(target.id) ? state.path : target.path || ".";
     setSftpExternalDropState(true, {title:`松开复制到 ${target.title}`, path:directory, tabKey});
@@ -4017,17 +4263,19 @@ function handleSftpOwnDragOver(event, enter=false, tabKey=sftpTabKeyFromNode(eve
 }
 
 function handleSftpDragEnter(event, tabKey=sftpTabKeyFromNode(event?.currentTarget)) {
+  noteSftpDragFeedbackActivity();
   clearStaleSftpInternalDragForExternalDrop(event.dataTransfer);
   const insideTransition = sftpDragTransitionStaysInside(event);
   if (handleSftpOwnDragOver(event, !insideTransition, tabKey)) return;
   if (sftpOwnDragActive(event.dataTransfer)) return suppressSftpOwnDrop(event, tabKey);
   if (!sftpDataTransferHasFiles(event.dataTransfer)) return;
   event.preventDefault();
-  if (!insideTransition) sftpDropDepth += 1;
+  if (!insideTransition) sftpDropDepth = 1;
   setSftpExternalDropState(true, {tabKey});
 }
 
 function handleSftpDragOver(event, tabKey=sftpTabKeyFromNode(event?.currentTarget)) {
+  noteSftpDragFeedbackActivity();
   clearStaleSftpInternalDragForExternalDrop(event.dataTransfer);
   if (handleSftpOwnDragOver(event, false, tabKey)) return;
   if (sftpOwnDragActive(event.dataTransfer)) return suppressSftpOwnDrop(event, tabKey);
@@ -4040,14 +4288,16 @@ function handleSftpDragOver(event, tabKey=sftpTabKeyFromNode(event?.currentTarge
 function handleSftpDragLeave(event, tabKey=sftpTabKeyFromNode(event?.currentTarget)) {
   if (sftpDragTransitionStaysInside(event)) return;
   if (activeSftpDragPayload(event.dataTransfer)) {
-    sftpDropDepth = Math.max(0, sftpDropDepth - 1);
-    if (!sftpDropDepth) scheduleSftpDropLeaveClear({keepHint:true, tabKey});
+    sftpDropDepth = 0;
+    scheduleSftpDropLeaveClear({keepHint:true, tabKey});
     return;
   }
   if (sftpOwnDragActive(event.dataTransfer)) return suppressSftpOwnDrop(event, tabKey);
-  if (!sftpDataTransferHasFiles(event.dataTransfer)) return;
-  sftpDropDepth = Math.max(0, sftpDropDepth - 1);
-  if (!sftpDropDepth) scheduleSftpDropLeaveClear({tabKey});
+  const shell = event.currentTarget;
+  const overlay = sftpElement("sftpDropOverlay", tabKey);
+  if (!sftpDataTransferHasFiles(event.dataTransfer) && !shell?.classList?.contains("is-drag-over") && overlay?.hidden !== false) return;
+  sftpDropDepth = 0;
+  scheduleSftpDropLeaveClear({tabKey});
 }
 
 async function handleSftpDrop(event, tabKey=sftpTabKeyFromNode(event?.currentTarget)) {
@@ -4099,7 +4349,7 @@ async function createRemoteUploadDirectories(connectionId, root, files) {
 
 async function chooseSftpUploadConflict(collisions) {
   if (!collisions.length) return "error";
-  const preview = collisions.slice(0, 6).map(item => item.filename).join("\n");
+  const preview = collisions.slice(0, 6).map(item => item.name || item.filename || "未命名项目").join("\n");
   const extra = collisions.length > 6 ? `\n等 ${collisions.length} 个同名项` : "";
   return chooseModal("发现同名文件", `${preview}${extra}\n\n请选择本次上传的处理方式。`, [
     {label:"覆盖同名文件", value:"overwrite", className:"danger"},
@@ -4108,43 +4358,41 @@ async function chooseSftpUploadConflict(collisions) {
   ]);
 }
 
-async function uploadSftpFiles(inputFiles, tabKey=activeTabKey) {
-  const runtime = sftpTabRuntimes.get(String(tabKey || ""));
-  const tab = tabs.find(item => item.key === tabKey && item.kind === "sftp");
-  if (!tab) return;
+async function uploadSftpFilesToDirectory(inputFiles, connectionId, root=".", options={}) {
+  const tabKey = String(options.tabKey || "");
   const files = inputFiles.map(item => item?.file ? item : ({file:item, relativePath:item?.webkitRelativePath || item?.name}))
     .filter(item => item.file).map(item => ({...item, relativePath:normalizeDroppedRelativePath(item.relativePath, item.file.name)}));
   if (!files.length) return;
-  const root = runtime?.state.path || tab.path || ".";
-  await createRemoteUploadDirectories(tab.id, root, files);
+  const directory = String(root || ".");
+  await createRemoteUploadDirectories(Number(connectionId), directory, files);
   const groups = new Map();
   for (const item of files) {
     const parts = item.relativePath.split("/");
     const filename = parts.pop() || item.file.name;
-    const directory = parts.length ? joinRemotePath(root, parts.join("/")) : root;
-    if (!groups.has(directory)) groups.set(directory, []);
-    groups.get(directory).push({...item, filename, directory});
+    const targetDirectory = parts.length ? joinRemotePath(directory, parts.join("/")) : directory;
+    if (!groups.has(targetDirectory)) groups.set(targetDirectory, []);
+    groups.get(targetDirectory).push({...item, filename, directory:targetDirectory});
   }
   const collisions = [];
-  for (const [directory, items] of groups) {
+  for (const [targetDirectory, items] of groups) {
     for (let offset = 0; offset < items.length; offset += 200) {
-      const plan = await api(`/api/connections/${tab.id}/sftp/upload-plan`, {
+      const plan = await api(`/api/connections/${Number(connectionId)}/sftp/upload-plan`, {
         method:"POST",
-        body:JSON.stringify({path:directory, filenames:items.slice(offset, offset + 200).map(item => item.filename)})
+        body:JSON.stringify({path:targetDirectory, filenames:items.slice(offset, offset + 200).map(item => item.filename)})
       });
       for (const item of plan.items || []) if (item.exists) collisions.push(item);
     }
   }
-  const conflict = await chooseSftpUploadConflict(collisions);
+  const conflict = options.conflict || await chooseSftpUploadConflict(collisions);
   if (collisions.length && !conflict) return;
   try {
     for (const item of files) {
       const parts = item.relativePath.split("/");
       const filename = parts.pop() || item.file.name;
-      const directory = parts.length ? joinRemotePath(root, parts.join("/")) : root;
-      const started = await api(`/api/connections/${tab.id}/sftp/upload-job`, {
+      const targetDirectory = parts.length ? joinRemotePath(directory, parts.join("/")) : directory;
+      const started = await api(`/api/connections/${Number(connectionId)}/sftp/upload-job`, {
         method:"POST",
-        body:JSON.stringify({path:directory, filename, conflict:conflict || "error", size:Number(item.file.size || 0)})
+        body:JSON.stringify({path:targetDirectory, filename, conflict:conflict || "error", size:Number(item.file.size || 0)})
       });
       trackSftpMutationJob(started);
       await refreshSftpJobs();
@@ -4164,6 +4412,14 @@ async function uploadSftpFiles(inputFiles, tabKey=activeTabKey) {
     if (input) input.value = "";
     refreshSftpJobs();
   }
+}
+
+async function uploadSftpFiles(inputFiles, tabKey=activeTabKey) {
+  const runtime = sftpTabRuntimes.get(String(tabKey || ""));
+  const tab = tabs.find(item => item.key === tabKey && item.kind === "sftp");
+  if (!tab) return;
+  const root = runtime?.state.path || tab.path || ".";
+  return uploadSftpFilesToDirectory(inputFiles, tab.id, root, {tabKey});
 }
 
 async function uploadSftpFile(tabKey=activeTabKey) {
@@ -4195,7 +4451,7 @@ function updateUploadReceiveProgress(job, loaded, total) {
   existing.progress_known = true;
   existing.two_stage_upload = true;
   existing.progress = existing.size ? Math.min(50, Math.round(existing.transferred / existing.size * 50)) : 50;
-  updateSftpTaskFloat(sftpLatestJobs);
+  updateSftpTaskCenter(sftpLatestJobs);
 }
 
 function uploadWithProgress(url, body, job) {

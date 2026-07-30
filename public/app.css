@@ -203,6 +203,59 @@ th { color:var(--muted); font-size:12px; font-weight:600; }
 .workspace-header-tools { flex:1 1 auto; min-width:0; align-self:stretch; display:flex; align-items:center; justify-content:flex-end; }
 .workspace-header-tools[hidden] { display:none; }
 .topbar > .workspace-global-header-tools { height:100%; justify-content:flex-start; overflow:hidden; }
+.sftp-task-center { position:relative; flex:0 0 auto; align-self:stretch; display:flex; align-items:center; margin-left:auto; }
+.sftp-task-center-button { position:relative; width:var(--workspace-header-control-height); min-width:var(--workspace-header-control-height); height:var(--workspace-header-control-height); min-height:var(--workspace-header-control-height); padding:6px; }
+.sftp-task-center-button[aria-expanded="true"] { color:var(--accent2); border-color:color-mix(in srgb,var(--accent2) 45%,var(--line)); background:color-mix(in srgb,var(--accent2) 10%,var(--panel)); }
+.sftp-task-center-icon { display:grid; width:100%; height:100%; place-items:center; }
+.sftp-task-center-icon svg { width:var(--workspace-header-icon-size); height:var(--workspace-header-icon-size); display:block; }
+.sftp-task-center-button.is-running { color:var(--accent2); }
+.sftp-task-center-button.is-running:not(.is-failed) .sftp-task-center-icon svg { animation:state-spin .9s linear infinite; }
+.sftp-task-center-button.is-failed { color:var(--danger); border-color:color-mix(in srgb,var(--danger) 32%,var(--line)); }
+.sftp-task-center-badge { position:absolute; top:-4px; right:-5px; min-width:16px; height:16px; display:grid; place-items:center; padding:0 4px; border:2px solid var(--panel); border-radius:999px; color:#fff; background:var(--accent2); font-size:9px; font-weight:700; line-height:1; }
+.sftp-task-center-button.is-failed .sftp-task-center-badge { background:var(--danger); }
+.sftp-task-center-badge[hidden] { display:none; }
+.sftp-task-center-progress { position:absolute; left:0; right:0; bottom:0; z-index:1; height:2px; overflow:hidden; pointer-events:none; background:color-mix(in srgb,var(--line) 70%,transparent); }
+.sftp-task-center-progress[hidden] { display:none; }
+.sftp-task-center-progress i { display:block; width:0; height:100%; background:var(--accent2); transition:width .2s ease; }
+.sftp-task-center-progress.is-indeterminate i { width:34% !important; background:linear-gradient(90deg,transparent,var(--accent2),transparent); animation:sftp-task-progress-indeterminate 1.1s ease-in-out infinite; }
+@keyframes sftp-task-progress-indeterminate { 0% { transform:translateX(-120%); } 100% { transform:translateX(320%); } }
+.sftp-task-float { position:absolute; z-index:70; top:calc(100% + 8px); right:12px; width:min(420px,calc(100% - 24px)); padding:10px 11px; border:1px solid color-mix(in srgb,var(--accent2) 36%,var(--line)); border-left:3px solid var(--accent2); border-radius:6px; color:var(--text); background:var(--panel); box-shadow:0 12px 32px rgba(0,0,0,.2); pointer-events:auto; cursor:pointer; }
+.sftp-task-float[hidden] { display:none; }
+.sftp-task-float-head { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px; min-width:0; }
+.sftp-task-float-open { min-width:0; display:grid; grid-template-columns:28px minmax(0,1fr); align-items:center; gap:8px; padding:0; border:0; color:inherit; text-align:left; background:transparent; box-shadow:none; cursor:pointer; }
+.sftp-task-float-open:hover { border:0; background:transparent; box-shadow:none; }
+.sftp-task-float-open:focus-visible { outline:2px solid var(--accent2); outline-offset:3px; }
+.sftp-task-float-icon { width:28px; height:28px; display:grid; place-items:center; align-self:center; border-radius:5px; color:var(--accent2); background:color-mix(in srgb,var(--accent2) 10%,var(--panel)); }
+.sftp-task-float-icon svg { width:16px; height:16px; display:block; }
+.sftp-task-spinner { width:16px; height:16px; box-sizing:border-box; display:block; border:2px solid color-mix(in srgb,currentColor 24%,transparent); border-top-color:currentColor; border-radius:50%; animation:state-spin .9s linear infinite; }
+.sftp-task-float-copy { min-width:0; }
+.sftp-task-float-copy > strong, .sftp-task-float-copy > span { display:block; }
+.sftp-task-float-copy > strong { overflow:hidden; font-size:13px; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
+.sftp-task-float-copy > span { margin-top:2px; overflow:hidden; color:var(--muted); font-size:11px; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
+.sftp-task-float-actions { display:flex; align-items:center; gap:4px; }
+.sftp-task-float .icon-button { width:28px; min-width:28px; height:28px; min-height:28px; padding:5px; align-self:center; }
+.sftp-task-float-cancel[hidden] { display:none; }
+.sftp-task-float .icon-button svg { width:15px; height:15px; display:block; }
+.sftp-task-float .progress { height:5px; margin-top:8px; }
+.sftp-task-float .progress.indeterminate i { width:34%; animation:sftp-task-progress-indeterminate 1.1s ease-in-out infinite; }
+.sftp-task-center-drawer { position:absolute; z-index:72; top:calc(100% + 8px); right:0; width:min(560px,calc(100vw - 24px)); max-height:min(680px,calc(100dvh - var(--workspace-header-height) - 24px)); display:grid; grid-template-rows:auto auto minmax(80px,1fr) auto; overflow:hidden; border:1px solid var(--line); border-radius:7px; color:var(--text); background:var(--panel); box-shadow:0 18px 48px rgba(0,0,0,.24); }
+.sftp-task-center-drawer[hidden] { display:none; }
+.sftp-task-center-head { min-width:0; display:flex; align-items:center; justify-content:space-between; gap:12px; padding:11px 12px 9px; }
+.sftp-task-center-head > div { min-width:0; }
+.sftp-task-center-head strong, .sftp-task-center-head span { display:block; }
+.sftp-task-center-head strong { font-size:14px; line-height:1.35; }
+.sftp-task-center-head span { margin-top:2px; overflow:hidden; color:var(--muted); font-size:10px; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
+.sftp-task-center-head .icon-button { width:28px; min-width:28px; height:28px; min-height:28px; padding:5px; }
+.sftp-task-center-tabs { display:grid; grid-template-columns:1fr 1fr; padding:0 12px; border-bottom:1px solid var(--line); }
+.sftp-task-center-tabs button { min-height:34px; display:flex; align-items:center; justify-content:center; gap:6px; padding:5px 10px; border:0; border-bottom:2px solid transparent; border-radius:0; color:var(--muted); background:transparent; box-shadow:none; }
+.sftp-task-center-tabs button:hover { border-color:transparent; color:var(--text); background:var(--hover); box-shadow:none; }
+.sftp-task-center-tabs button.active { border-bottom-color:var(--accent2); color:var(--text); }
+.sftp-task-center-tabs small { min-width:18px; padding:1px 5px; border-radius:999px; color:var(--muted); background:var(--field); font-size:9px; }
+.sftp-task-center-list { min-height:100px; display:grid; align-content:start; gap:6px; padding:8px; overflow:auto; background:var(--bg); }
+.sftp-task-center-footer { display:flex; justify-content:flex-end; padding:8px 10px; border-top:1px solid var(--line); }
+.sftp-task-center-footer[hidden] { display:none; }
+.sftp-task-center-footer button { min-height:28px; display:inline-flex; align-items:center; gap:5px; padding:4px 8px; font-size:11px; }
+.sftp-task-center-footer svg { width:13px; height:13px; }
 .workspace-header-tools .terminal-toolbar { width:100%; min-width:0; margin:0; }
 .workspace-header-tools .sftp-toolbar { width:100%; min-width:0; margin:0; }
 .terminal-toolbar[hidden], .sftp-toolbar[hidden] { display:none !important; }
@@ -422,27 +475,6 @@ th { color:var(--muted); font-size:12px; font-weight:600; }
 .toast-copy > span { margin-top:2px; color:var(--muted); font-size:11px; line-height:1.4; white-space:pre-wrap; overflow-wrap:anywhere; }
 .toast .icon-button { width:28px; height:28px; min-height:28px; padding:5px; align-self:center; }
 .toast .icon-button svg { width:15px; height:15px; }
-.sftp-task-float { width:100%; padding:10px 11px; border:1px solid color-mix(in srgb,var(--accent2) 36%,var(--line)); border-left:3px solid var(--accent2); border-radius:6px; background:var(--panel); box-shadow:0 12px 32px rgba(0,0,0,.2); pointer-events:auto; cursor:pointer; }
-.sftp-task-float[hidden] { display:none; }
-.sftp-task-float-head { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:8px; min-width:0; }
-.sftp-task-float-open { min-width:0; display:grid; grid-template-columns:28px minmax(0,1fr); align-items:center; gap:8px; padding:0; border:0; color:inherit; text-align:left; background:transparent; box-shadow:none; cursor:pointer; }
-.sftp-task-float-open:hover { border:0; background:transparent; box-shadow:none; }
-.sftp-task-float-open:focus-visible { outline:2px solid var(--accent2); outline-offset:3px; }
-.sftp-task-float-open > .sftp-task-float-icon { width:28px; height:28px; display:grid; place-items:center; align-self:center; border-radius:5px; color:var(--accent2); background:color-mix(in srgb,var(--accent2) 10%,var(--panel)); }
-.sftp-task-float-icon svg { width:16px; height:16px; display:block; }
-.sftp-task-spinner { width:16px; height:16px; box-sizing:border-box; display:block; border:2px solid color-mix(in srgb,currentColor 24%,transparent); border-top-color:currentColor; border-radius:50%; animation:state-spin .9s linear infinite; }
-.sftp-task-drawer summary svg.lucide-loader-circle { animation:state-spin .9s linear infinite; }
-.sftp-task-float-copy { min-width:0; }
-.sftp-task-float-copy > strong, .sftp-task-float-copy > span { display:block; }
-.sftp-task-float-copy > strong { overflow:hidden; font-size:13px; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
-.sftp-task-float-copy > span { margin-top:2px; overflow:hidden; color:var(--muted); font-size:11px; line-height:1.35; text-overflow:ellipsis; white-space:nowrap; }
-.sftp-task-float-actions { display:flex; align-items:center; gap:4px; }
-.sftp-task-float .icon-button { width:28px; height:28px; min-height:28px; padding:5px; align-self:center; }
-.sftp-task-float-cancel[hidden] { display:none; }
-.sftp-task-float .icon-button svg { width:15px; height:15px; display:block; }
-.sftp-task-float .progress { height:5px; margin-top:8px; }
-.sftp-task-float .progress.indeterminate i { width:34%; animation:sftp-progress-indeterminate 1.15s ease-in-out infinite; }
-@keyframes sftp-progress-indeterminate { from { transform:translateX(-110%); } to { transform:translateX(310%); } }
 .modal-card.wide { width:min(860px,calc(100vw - 28px)); }
 .text-editor { min-height:420px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; resize:vertical; white-space:pre; }
 .empty { min-height:280px; display:grid; place-items:center; text-align:center; color:var(--muted); }
@@ -459,9 +491,14 @@ th { color:var(--muted); font-size:12px; font-weight:600; }
 .ui-state.success .ui-state-icon { color:var(--accent); border-color:var(--accent); }
 .ui-state.success .ui-state-icon::before { content:"✓"; width:auto; height:auto; background:transparent; font-weight:800; }
 @keyframes state-spin { to { transform:rotate(360deg); } }
-.terminal-box { background:var(--terminal-background,var(--code)); border-radius:4px; min-height:420px; height:calc(100vh - 174px); overflow:hidden; color-scheme:var(--terminal-color-scheme,dark); }
+.terminal-box { position:relative; background:var(--terminal-background,var(--code)); border-radius:4px; min-height:420px; height:calc(100vh - 174px); overflow:hidden; color-scheme:var(--terminal-color-scheme,dark); }
 .terminal-box .xterm, .terminal-box .xterm-scrollable-element, .terminal-box .xterm-viewport { background:var(--terminal-background,var(--code)); }
 .terminal-box .xterm-scrollable-element > .scrollbar { background:transparent !important; }
+.terminal-drop-overlay { position:absolute; z-index:8; inset:6px; display:block; pointer-events:none; border:1px dashed color-mix(in srgb,var(--accent2) 78%,var(--line)); border-radius:4px; color:var(--text); background:color-mix(in srgb,var(--accent2) 4%,transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent2) 8%,transparent); }
+.terminal-drop-overlay[hidden] { display:none; }
+.terminal-drop-hint { position:absolute; left:50%; bottom:18px; max-width:calc(100% - 28px); min-height:36px; display:flex; align-items:center; gap:8px; overflow:hidden; padding:7px 12px; border:1px solid color-mix(in srgb,var(--accent2) 55%,var(--line)); border-radius:6px; color:var(--accent2); background:color-mix(in srgb,var(--accent2) 8%,var(--panel)); box-shadow:0 10px 28px rgba(15,23,32,.22); transform:translateX(-50%); }
+.terminal-drop-hint svg { flex:0 0 16px; width:16px; height:16px; }
+.terminal-drop-label { min-width:0; overflow:hidden; font-size:12px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
 .terminal-workspace .terminal-box { flex:1; min-height:0; height:auto; }
 #terminalToolbarMount:empty { display:none; }
 .terminal-toolbar { container-type:inline-size; container-name:terminal-toolbar; display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px; }
@@ -795,14 +832,7 @@ th { color:var(--muted); font-size:12px; font-weight:600; }
 .runtime-diagnostic-grid dd { min-width:0; margin:0; color:var(--text); overflow-wrap:anywhere; }
 .advanced-settings summary { cursor:pointer; font-weight:700; padding:4px 0 10px; }
 .advanced-settings[open] summary { border-bottom:1px solid var(--line); margin-bottom:10px; }
-.sftp-jobs { display:grid; gap:5px; margin:8px 0; }
-.sftp-jobs.is-empty { display:block; margin:6px 0; }
-.sftp-jobs-head, .sftp-job { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:7px; align-items:center; border:1px solid var(--line); border-radius:4px; padding:6px 7px; background:var(--panel); }
-.sftp-jobs.is-empty .sftp-jobs-head { min-height:38px; padding:5px 8px; }
-.sftp-jobs-head > div:first-child { min-width:0; display:flex; align-items:baseline; gap:8px; }
-.sftp-jobs-head > div:first-child span { color:var(--muted); font-size:12px; }
-.sftp-jobs-head .actions.tight { margin-top:0; justify-content:end; }
-.sftp-jobs-head .actions.tight > * { flex:0 0 auto; }
+.sftp-job { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:7px; align-items:center; border:1px solid var(--line); border-radius:4px; padding:6px 7px; background:var(--panel); }
 .sftp-job > div:first-child { min-width:0; }
 .sftp-job > div:first-child > strong { display:block; font-size:12px; line-height:1.35; overflow-wrap:anywhere; }
 .sftp-job span { display:block; color:var(--muted); font-size:10px; line-height:1.4; margin-top:1px; }
@@ -1569,30 +1599,16 @@ details.advanced-settings > :not(summary) { margin-left:12px; margin-right:12px;
 .terminal-keys { border-radius:6px; box-shadow:var(--shadow-soft); }
 .terminal-box { border:1px solid color-mix(in srgb,#64748b 38%,var(--terminal-background,var(--code))); border-radius:6px; box-shadow:inset 0 1px 8px rgba(0,0,0,.18); }
 .log-view, .compact-log-context pre { border:1px solid color-mix(in srgb,var(--line) 55%,transparent); border-radius:6px; box-shadow:inset 0 1px 8px rgba(0,0,0,.18); }
-.sftp-directory-bar, .sftp-jobs-head, .sftp-job { border-radius:6px; box-shadow:var(--shadow-soft); }
+.sftp-directory-bar, .sftp-job { border-radius:6px; box-shadow:var(--shadow-soft); }
 .sftp-icon { border-radius:4px; font-weight:700; }
 .tool-group button, .tool-group .upload-button { display:inline-flex; align-items:center; justify-content:center; gap:5px; }
 .tool-group svg { width:14px; height:14px; }
-.sftp-task-drawer { border:1px solid var(--line); border-radius:6px; overflow:hidden; background:var(--panel); box-shadow:var(--shadow-soft); }
-.sftp-task-drawer > summary { min-height:34px; padding:5px 8px; display:flex; align-items:center; justify-content:space-between; gap:8px; list-style:none; cursor:pointer; }
-.sftp-task-drawer > summary::-webkit-details-marker { display:none; }
-.sftp-task-drawer > summary > span { display:flex; align-items:center; gap:6px; min-width:0; }
-.sftp-task-drawer summary svg { width:14px; height:14px; }
-.sftp-task-drawer summary strong { font-size:13px; }
-.sftp-task-drawer summary small { color:var(--muted); font-size:10px; font-weight:400; }
-.sftp-task-summary-actions { flex:0 0 auto; }
-.sftp-task-summary-actions > button { min-height:26px; display:inline-flex; align-items:center; gap:4px; padding:3px 7px; font-size:11px; }
-.sftp-task-summary-actions > button small { min-width:16px; padding:1px 4px; border-radius:999px; text-align:center; background:var(--field); }
-.sftp-task-summary-actions > button:disabled small { display:none; }
-.task-drawer-chevron { transition:transform .15s ease; }
-.sftp-task-drawer[open] .task-drawer-chevron { transform:rotate(180deg); }
-.sftp-task-body { display:grid; gap:5px; padding:6px; border-top:1px solid var(--line); background:var(--bg); }
 .sftp-task-empty { padding:8px; color:var(--muted); font-size:11px; text-align:center; }
 .sftp-modal-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
 .sftp-modal-head h2 { margin:0; }
 .sftp-modal-head > div > span { display:block; margin-top:3px; color:var(--muted); font-size:11px; }
-.sftp-history-modal, .sftp-recycle-modal { width:min(780px,calc(100vw - 32px)); max-height:min(720px,86dvh); overflow:hidden; }
-.sftp-history-list, .sftp-recycle-list { min-height:100px; max-height:58dvh; display:grid; align-content:start; gap:5px; margin-top:10px; overflow:auto; }
+.sftp-recycle-modal { width:min(780px,calc(100vw - 32px)); max-height:min(720px,86dvh); overflow:hidden; }
+.sftp-recycle-list { min-height:100px; max-height:58dvh; display:grid; align-content:start; gap:5px; margin-top:10px; overflow:auto; }
 .sftp-recycle-item { min-width:0; display:grid; grid-template-columns:32px minmax(0,1fr) auto; gap:8px; align-items:center; padding:7px; border:1px solid var(--line); border-radius:5px; background:var(--panel); }
 .sftp-recycle-icon { width:32px; height:32px; display:grid; place-items:center; color:var(--accent2); background:var(--field); border-radius:4px; }
 .sftp-recycle-icon svg { width:16px; height:16px; }
@@ -1662,9 +1678,9 @@ details.advanced-settings > :not(summary) { margin-left:12px; margin-right:12px;
   .runtime-feedback { align-items:flex-start; flex-wrap:wrap; }
   .runtime-feedback > button { width:100%; }
   .runtime-diagnostic-grid > div { grid-template-columns:1fr; gap:2px; }
-  .sftp-task-drawer > summary { align-items:flex-start; }
-  .sftp-task-drawer > summary > span:first-child { flex-wrap:wrap; }
-  .sftp-task-summary-actions > button span { display:none; }
+  .sftp-task-center-drawer { width:min(520px,calc(100vw - 20px)); }
+  .sftp-task-center-list .sftp-job { grid-template-columns:minmax(0,1fr); }
+  .sftp-task-center-list .sftp-job .actions.tight { justify-content:flex-start; }
   .sftp-recycle-item { grid-template-columns:30px minmax(0,1fr); align-items:start; }
   .sftp-recycle-item .actions { grid-column:1 / -1; width:100%; display:grid; grid-template-columns:1fr 1fr; }
   .sftp-recycle-item .actions button { justify-content:center; }
