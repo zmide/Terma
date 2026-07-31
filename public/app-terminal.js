@@ -1706,6 +1706,11 @@ function finishTerminalLatencySample(session, key) {
   updateTerminalLatencyDisplay(key);
 }
 
+function createTerminalLogId() {
+  const random = globalThis.crypto?.randomUUID?.() || `${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+  return `${Date.now()}-${String(random).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64)}`;
+}
+
 function openTerminal(id, updateTab=true, existingKey="", existingTitle="") {
   const c = selectConnection(id);
   if (!c) return;
@@ -1771,7 +1776,7 @@ async function attachTerminal(c, key) {
     });
     const fit = new FitAddonClass();
     term.loadAddon(fit);
-    session = {term, fit, socket:null, connected:false, id:c.id, fontLayoutMobile:isMobileLayout(), currentDirectory:"", currentDirectoryKnown:false};
+    session = {term, fit, socket:null, connected:false, id:c.id, logId:createTerminalLogId(), fontLayoutMobile:isMobileLayout(), currentDirectory:"", currentDirectoryKnown:false};
     terminalSessions.set(key, session);
     registerTerminalDirectoryTracking(session);
   }
@@ -1911,13 +1916,26 @@ function terminalSequence(label) {
   return {Esc:"\x1b", Tab:"\t", "↑":"\x1b[A", "↓":"\x1b[B", "→":"\x1b[C", "←":"\x1b[D"}[label] || label;
 }
 
+function terminalReconnectInput(data) {
+  return ["\r", "\n", "\r\n"].includes(String(data || ""));
+}
+
 function sendTerminalData(key, data, options={}) {
   const session = terminalSessions.get(key);
-  if (!session?.socket || session.socket.readyState !== WebSocket.OPEN) return notify("终端尚未连接", "error");
+  if (!session) return false;
+  if (!session.socket || session.socket.readyState !== WebSocket.OPEN) {
+    if (terminalReconnectInput(data)) {
+      if (session.socket?.readyState !== WebSocket.CONNECTING) reconnectTerminal(session.id, key);
+      return true;
+    }
+    notify("终端尚未连接", "error");
+    return false;
+  }
   startTerminalLatencySample(session);
   session.socket.send(data);
   const shouldFocus = options.focus ?? !isMobileLayout();
   if (shouldFocus) try { session.term.focus(); } catch {}
+  return true;
 }
 
 function transformTerminalInputForCtrl(key, data) {
@@ -1966,8 +1984,12 @@ function showRecentTerminalCommands(key) {
     localStorage.removeItem("recentTerminalCommands");
     modal.hidden = true;
     notify("最近命令已清空", "success");
+    focusTerminalSession(key);
   };
-  $("recentCommandClose").onclick = () => { modal.hidden = true; };
+  $("recentCommandClose").onclick = () => {
+    modal.hidden = true;
+    focusTerminalSession(key);
+  };
 }
 
 function cleanTerminalCommandText(text) {
@@ -2024,6 +2046,7 @@ function changeTerminalFont(key, delta) {
     scheduleTerminalPreferencesSave(connection);
   }
   setTimeout(() => { try { session.fit.fit(); } catch {} }, 0);
+  focusTerminalSession(key);
 }
 
 const terminalPreferencesSaveTimers = new Map();
@@ -2283,7 +2306,8 @@ async function connectTerminal(c, key) {
     || !tabs.some(item => item.key === key)
   ) return;
   const startupQuery = startupToken ? `&startup_token=${encodeURIComponent(startupToken)}` : "";
-  const socket = new WebSocket(`${protocol}://${location.host}/ws/terminal?id=${encodeURIComponent(c.id)}&cols=${session.term.cols || 80}&rows=${session.term.rows || 24}&title=${encodeURIComponent(title)}${startupQuery}`);
+  const logQuery = session.logId ? `&log_id=${encodeURIComponent(session.logId)}` : "";
+  const socket = new WebSocket(`${protocol}://${location.host}/ws/terminal?id=${encodeURIComponent(c.id)}&cols=${session.term.cols || 80}&rows=${session.term.rows || 24}&title=${encodeURIComponent(title)}${logQuery}${startupQuery}`);
   socket.binaryType = "arraybuffer";
   session.socket = socket;
   socket.addEventListener("open", () => {
@@ -2303,7 +2327,7 @@ async function connectTerminal(c, key) {
     session.connected = false;
     session.latencyPendingAt = 0;
     clearTimeout(session.latencyPendingTimer);
-    session.term.writeln("\r\n[连接已关闭]");
+    session.term.writeln("\r\n[连接已关闭，按 Enter 重新连接]");
     updateTerminalConnectionStatus(c, key, "已断开");
   });
   socket.addEventListener("error", () => {
@@ -2316,6 +2340,8 @@ async function connectTerminal(c, key) {
     if (socket.readyState === WebSocket.OPEN) {
       startTerminalLatencySample(session);
       socket.send(outgoing);
+    } else if (terminalReconnectInput(data) && session.socket === socket) {
+      reconnectTerminal(c.id, key);
     }
   });
   session.resizeDisposable = session.term.onResize(size => {
@@ -2352,6 +2378,7 @@ function reconnectTerminal(id, key=`terminal-${id}-1`) {
   const session = terminalSessions.get(key);
   if (session) session.term.reset();
   connectTerminal(c, key);
+  focusTerminalSession(key);
 }
 
 function disconnectTerminal(key) {
@@ -2364,6 +2391,7 @@ function disconnectTerminal(key) {
   clearTimeout(session.latencyPendingTimer);
   try { socket?.close(1000, "user disconnect"); } catch {}
   updateTerminalConnectionStatus(currentConnection(session.id), key, "已断开");
+  focusTerminalSession(key);
 }
 
 function toggleTerminalConnection(id, key=`terminal-${id}-1`) {

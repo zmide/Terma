@@ -320,7 +320,7 @@ function restoreUiState(state) {
 }
 
 function keepTerminalKeyboardClosed(event) {
-  if (isMobileLayout()) event?.preventDefault?.();
+  event?.preventDefault?.();
 }
 
 function syncViewportHeight() {

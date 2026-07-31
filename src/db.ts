@@ -435,6 +435,31 @@ function insertConnection(data, defaultExtraArgs) {
   return Number(result.lastInsertRowid);
 }
 
+function nextConnectionCopyName(name) {
+  const source = String(name || "").trim();
+  const base = source.replace(/\s*(?:（copy\d+）|\(copy\d+\))$/i, "").trim() || source || "SSH";
+  const existing = new Set(all("SELECT name FROM connections").map((item) => String(item.name || "").toLocaleLowerCase()));
+  let index = 1;
+  while (existing.has(`${base}（copy${index}）`.toLocaleLowerCase())) index += 1;
+  return `${base}（copy${index}）`;
+}
+
+function duplicateConnection(id, defaultExtraArgs) {
+  const source = getConnection(id);
+  const name = nextConnectionCopyName(source.name);
+  const forwards = all("SELECT * FROM connection_forwards WHERE connection_id=? ORDER BY id", [Number(id)]);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const connectionId = insertConnection({ ...source, name }, defaultExtraArgs);
+    for (const forward of forwards) insertForward(connectionId, forward);
+    db.exec("COMMIT");
+    return { id: connectionId, name, forwards: forwards.length };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function updateConnection(id, data, defaultExtraArgs) {
   const existing = get("SELECT * FROM connections WHERE id=?", [Number(id)]);
   if (!existing) throw new Error("连接不存在");
@@ -867,6 +892,7 @@ module.exports = {
   getConnection,
   getForward,
   insertConnection,
+  duplicateConnection,
   updateConnection,
   updateTerminalPreferences,
   updateTerminalStartup,

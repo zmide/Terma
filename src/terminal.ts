@@ -79,7 +79,8 @@ function handleTerminalUpgrade(req, socket) {
     const cols = Number(url.searchParams.get("cols") || 80);
     const rows = Number(url.searchParams.get("rows") || 24);
     const title = url.searchParams.get("title") || "";
-    const session: any = startTerminalProcess(connection, socket, cols, rows, title);
+    const logId = url.searchParams.get("log_id") || "";
+    const session: any = startTerminalProcess(connection, socket, cols, rows, title, logId);
     sessions.add(session);
     const startupLabel = connection.terminal_startup_mode === "program"
       ? `，启动 ${connection.terminal_profile_name || connection.terminal_program_path}`
@@ -215,8 +216,8 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
   return session;
 }
 
-function startTerminalProcess(connection, socket, cols, rows, title = "") {
-  const log = createTerminalLog(connection, title);
+function startTerminalProcess(connection, socket, cols, rows, title = "", logId = "") {
+  const log = createTerminalLog(connection, title, logId);
   if (isPasswordConnection(connection)) {
     return startRemotePty(connection, socket, cols, rows, log);
   }

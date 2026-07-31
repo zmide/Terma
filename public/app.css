@@ -536,7 +536,9 @@ th { color:var(--muted); font-size:12px; font-weight:600; }
 .log-group-delete { margin-right:6px; padding:3px 6px; font-size:12px; border-color:transparent; background:transparent; }
 .log-row { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:4px; padding:0 6px 0 22px; border-bottom:1px solid rgba(127,127,127,.16); }
 .log-row:hover { background:var(--hover); }
-.log-item { display:block; width:100%; border:0; border-radius:0; text-align:left; padding:7px 6px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; background:transparent; }
+.log-item { display:grid; gap:2px; width:100%; min-width:0; border:0; border-radius:0; text-align:left; padding:7px 6px; color:var(--text); overflow:hidden; background:transparent; }
+.log-item-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.log-item-time { color:var(--muted); font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:nowrap; }
 .log-delete { padding:3px 6px; font-size:12px; border-color:transparent; }
 .log-view { margin:0; min-height:calc(100vh - 168px); white-space:pre-wrap; overflow:auto; background:var(--code); color:#d1e7dd; border-radius:4px; padding:14px; }
 .log-view mark { background:#f5d76e; color:#111827; border-radius:2px; padding:0 1px; }

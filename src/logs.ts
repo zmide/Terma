@@ -100,6 +100,14 @@ function safeName(value) {
   return String(value || "log").replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/\s+/g, "_").slice(0, 80) || "log";
 }
 
+function terminalLogIdentity(value) {
+  const match = String(value || "").match(/^(\d{13})-([A-Za-z0-9_-]{8,64})$/);
+  if (!match) return null;
+  const timestamp = Number(match[1]);
+  if (!Number.isSafeInteger(timestamp) || timestamp < 946684800000 || timestamp > Date.now() + 24 * 60 * 60 * 1000) return null;
+  return { startedAt: new Date(timestamp), suffix: match[2] };
+}
+
 function ensureLogDirs() {
   fs.mkdirSync(LOG_DIR, { recursive: true });
   fs.mkdirSync(TERMINAL_DIR, { recursive: true });
@@ -112,13 +120,19 @@ function appendSystemLog(message) {
   queueLogWrite(path.join(LOG_DIR, `system-${dayName()}.log`), line);
 }
 
-function createTerminalLog(connection, title) {
+function createTerminalLog(connection, title, logId = "") {
   ensureLogDirs();
-  const startedAt = new Date();
+  const identity = terminalLogIdentity(logId);
+  const startedAt = identity?.startedAt || new Date();
   const label = title || `${connection.name} · 终端`;
-  const filename = `${safeName(label)}-${dayName(startedAt)}-${pad(startedAt.getHours())}${pad(startedAt.getMinutes())}${pad(startedAt.getSeconds())}.log`;
+  const suffix = identity ? `-${identity.suffix}` : "";
+  const filename = `${safeName(label)}-${dayName(startedAt)}-${pad(startedAt.getHours())}${pad(startedAt.getMinutes())}${pad(startedAt.getSeconds())}${suffix}.log`;
   const fullPath = path.join(TERMINAL_DIR, filename);
-  fs.appendFileSync(fullPath, `# ${label}\n# ${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}\n# 开始时间：${zhDateTime(startedAt)}\n\n`, "utf8");
+  if (fs.existsSync(fullPath)) {
+    fs.appendFileSync(fullPath, `\n# 重新连接时间：${zhDateTime()}\n\n`, "utf8");
+  } else {
+    fs.appendFileSync(fullPath, `# ${label}\n# ${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}\n# 开始时间：${zhDateTime(startedAt)}\n\n`, "utf8");
+  }
   return { fullPath, label, startedAt };
 }
 
@@ -151,7 +165,7 @@ function relativeLogPath(fullPath) {
 function parseTerminalFilename(name) {
   const rotation = Number(name.match(/\.log\.(\d+)$/i)?.[1] || 0);
   const stem = name.replace(/\.log(?:\.\d+)?$/i, "");
-  const match = stem.match(/^(.*)-(\d{4})-(\d{2})-(\d{2})-(\d{6})$/);
+  const match = stem.match(/^(.*)-(\d{4})-(\d{2})-(\d{2})-(\d{6})(?:-[A-Za-z0-9_-]{8,64})?$/);
   if (!match) return { label: stem, time: 0 };
   const title = match[1].replace(/_/g, " ");
   const time = new Date(`${match[2]}-${match[3]}-${match[4]}T${match[5].slice(0, 2)}:${match[5].slice(2, 4)}:${match[5].slice(4, 6)}`).getTime();

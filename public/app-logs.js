@@ -68,12 +68,25 @@ function renderLogItems(key, logs) {
   const page = logPage.get(key) || 0;
   const start = page * 10;
   const visible = logs.slice(start, start + 10);
-  return visible.map(log => renderLogButton(log)).join("") + renderPager(key, logs.length, page);
+  return visible.map(log => renderLogButton(log, key)).join("") + renderPager(key, logs.length, page);
 }
 
-function renderLogButton(log) {
+function terminalLogPresentation(log) {
+  const label = String(log?.label || "日志");
+  const match = label.match(/^(.*)-(\d{4})年(\d+)月(\d+)日 (\d{2}):(\d{2}):(\d{2})(.*)$/);
+  if (!match) return {title:label, time:""};
+  const pad = value => String(value).padStart(2, "0");
+  return {
+    title:match[1],
+    time:`${match[2]}-${pad(match[3])}-${pad(match[4])} ${match[5]}:${match[6]}:${match[7]}${match[8] || ""}`
+  };
+}
+
+function renderLogButton(log, key="") {
+  const terminal = String(key).startsWith("server:");
+  const presentation = terminal ? terminalLogPresentation(log) : {title:String(log.label || "日志"), time:""};
   return `<div class="log-row">
-    <button class="log-item" onclick="openLog('${escAttr(log.path)}','${escAttr(log.label)}')">${esc(log.label)}</button>
+    <button class="log-item" title="${escAttr(log.label)}" onclick="openLog('${escAttr(log.path)}','${escAttr(log.label)}')"><span class="log-item-title">${esc(presentation.title)}</span>${presentation.time ? `<span class="log-item-time">${esc(presentation.time)}</span>` : ""}</button>
     <button class="log-delete danger icon-button" title="删除日志" onclick="deleteLog('${escAttr(log.path)}')">${icon("trash-2")}</button>
   </div>`;
 }

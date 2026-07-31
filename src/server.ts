@@ -29,6 +29,7 @@ const {
   getConnection,
   getForward,
   insertConnection,
+  duplicateConnection,
   updateConnection,
   updateTerminalPreferences,
   updateTerminalStartup,
@@ -1192,6 +1193,12 @@ async function handleApi(req, res, pathname) {
   }
 
   const parts = pathname.split("/").filter(Boolean);
+  if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "duplicate") {
+    const source = getConnection(Number(parts[2]));
+    const result = duplicateConnection(source.id, DEFAULT_EXTRA_ARGS);
+    appendSystemLog(`已复制 SSH 连接：${source.name} -> ${result.name}`);
+    return sendJson(res, result, 201);
+  }
   if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "terminal-preferences") {
     const id = Number(parts[2]);
     const result = updateTerminalPreferences(id, await readJson(req));

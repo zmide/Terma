@@ -27,7 +27,11 @@ function openForwards(id, updateTab=true) {
 async function connectionForwardAction(id, action, button=null){
   const workspace = captureForwardWorkspace(id);
   const c = currentConnection(id);
-  if (action === "start" && !(c?.forwards || []).length) return notify("该连接还没有添加转发规则", "info");
+  if (action === "start" && !(c?.forwards || []).length) {
+    notify("该连接还没有添加转发规则", "info");
+    if (workspace.tab?.kind === "terminal") focusTerminalSession(workspace.tab.key);
+    return;
+  }
   setButtonBusy(button, true, action === "start" ? "启用中..." : "停止中...");
   try {
     if (action === "start") {
@@ -43,6 +47,7 @@ async function connectionForwardAction(id, action, button=null){
     notify(error.message || "转发操作失败", "error");
   } finally {
     setButtonBusy(button, false);
+    if (workspace.tab?.kind === "terminal") focusTerminalSession(workspace.tab.key);
   }
 }
 

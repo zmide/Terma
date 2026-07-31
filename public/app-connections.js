@@ -31,6 +31,7 @@ function showConnectionMenu(event, id) {
     {label:"服务器仪表盘", icon:"gauge", run:()=>openServerDashboard(id)},
     {label:"健康检查", icon:"activity", run:()=>checkConnectionHealth(id)},
     {separator:true},
+    {label:"复制", icon:"copy", run:()=>duplicateConnection(id)},
     {label:"编辑连接", icon:"pencil", run:()=>editConnection(id)},
     {label:"删除连接", icon:"trash-2", danger:true, run:()=>deleteConnection(id)}
   ]);
@@ -1215,4 +1216,13 @@ async function deleteConnection(id){
   await loadAll();
   inPane(renderWelcome);
   notify("已删除连接","success");
+}
+
+async function duplicateConnection(id) {
+  const source = currentConnection(id);
+  const result = await api(`/api/connections/${id}/duplicate`, {method:"POST"});
+  groupOpen.add(source?.group_name || "默认分组");
+  saveGroupState();
+  await loadAll();
+  notify(`已复制为 ${result.name}`, "success");
 }
