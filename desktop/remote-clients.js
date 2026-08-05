@@ -7,6 +7,20 @@ const { Readable } = require("node:stream");
 const MAC_WINDOWS_APP_URL = "macappstore://itunes.apple.com/app/id1295203466";
 const MAC_WINDOWS_APP_PACKAGE_URL = "https://go.microsoft.com/fwlink/?linkid=868963";
 
+function rdpDisplayMode(options = {}) {
+  const mode = String(options.display_mode || "");
+  if (["dynamic", "fullscreen", "fixed"].includes(mode)) return mode;
+  if (Object.prototype.hasOwnProperty.call(options, "fullscreen")) return options.fullscreen === false ? "fixed" : "fullscreen";
+  return "dynamic";
+}
+
+function remoteDesktopSize(options = {}) {
+  return {
+    width:Math.max(640, Math.min(8192, Math.round(Number(options.width || 1440)))),
+    height:Math.max(480, Math.min(8192, Math.round(Number(options.height || 900))))
+  };
+}
+
 function createRemoteClientAdapter(options = {}) {
   const platform = options.platform || process.platform;
   const environment = options.environment || process.env;
@@ -266,16 +280,20 @@ function createRemoteClientAdapter(options = {}) {
     });
   }
 
-  function writeRdpFile(profile) {
+  function writeRdpFile(profile, fileOptions = {}) {
     const value = profile.options || {};
+    const displayMode = rdpDisplayMode(value);
+    const {width, height} = remoteDesktopSize(value);
     const audioMode = value.audio === "remote" ? 1 : value.audio === "off" ? 2 : 0;
     const lines = [
       `full address:s:${profile.host}:${Number(profile.port || 3389)}`,
-      `username:s:${String(profile.username || "")}`,
+      ...(fileOptions.omitUsername ? [] : [`username:s:${String(profile.username || "")}`]),
       `domain:s:${String(value.domain || "")}`,
-      `screen mode id:i:${value.fullscreen === false ? 1 : 2}`,
-      `desktopwidth:i:${Number(value.width || 1440)}`,
-      `desktopheight:i:${Number(value.height || 900)}`,
+      `screen mode id:i:${displayMode === "fullscreen" ? 2 : 1}`,
+      `desktopwidth:i:${width}`,
+      `desktopheight:i:${height}`,
+      `dynamic resolution:i:${displayMode === "dynamic" ? 1 : 0}`,
+      `smart sizing:i:${displayMode === "dynamic" ? 1 : 0}`,
       `administrative session:i:${value.admin_session ? 1 : 0}`,
       `redirectclipboard:i:${value.clipboard === false ? 0 : 1}`,
       `audiomode:i:${audioMode}`,
@@ -291,10 +309,13 @@ function createRemoteClientAdapter(options = {}) {
   async function openRdp(profile, item) {
     if (!item.available) throw new Error(item.reason || (platform === "darwin" ? "未找到 Windows App 或 Microsoft Remote Desktop" : "未找到可用的 RDP 客户端"));
     const value = profile.options || {};
+    const displayMode = rdpDisplayMode(value);
+    const {width, height} = remoteDesktopSize(value);
     if (platform === "win32" && Number(value.source_ssh_connection_id || 0) > 0) {
       // SSH-derived RDP entries should behave like typing the host into mstsc.
-      // Reusing an SSH username here can select the wrong desktop account.
-      await spawnDetached(item.executable, [`/v:${profile.host}:${Number(profile.port || 3389)}`]);
+      // Reusing an SSH username here can select the wrong desktop account, but
+      // the generated RDP file is still required for the selected display mode.
+      await spawnDetached(item.executable, [writeRdpFile(profile, {omitUsername:true})]);
     } else if (platform === "win32") await spawnDetached(item.executable, [writeRdpFile(profile)]);
     else if (platform === "darwin" && item.mode === "rdp-file") await spawnDetached("/usr/bin/open", ["-a", item.application, writeRdpFile(profile)]);
     else if (item.mode === "remmina") {
@@ -304,7 +325,11 @@ function createRemoteClientAdapter(options = {}) {
       const args = [`/v:${profile.host}:${Number(profile.port || 3389)}`];
       if (profile.username) args.push(`/u:${profile.username}`);
       if (value.domain) args.push(`/d:${value.domain}`);
-      args.push(value.fullscreen === false ? `/size:${Number(value.width || 1440)}x${Number(value.height || 900)}` : "/f");
+      if (displayMode === "fullscreen") args.push("/f");
+      else {
+        args.push(`/size:${width}x${height}`);
+        if (displayMode === "dynamic") args.push("/dynamic-resolution");
+      }
       if (value.clipboard !== false) args.push("+clipboard");
       if (value.admin_session) args.push("/admin");
       args.push(`/audio-mode:${value.audio === "remote" ? 1 : value.audio === "off" ? 2 : 0}`);

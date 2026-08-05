@@ -1332,9 +1332,14 @@ async function startAllForwards() {
   notify("已启动全部连接转发");
 }
 
+function forwardNeedsStop(forward) {
+  const status = String(forward?.status || "stopped");
+  return status !== "stopped" || Boolean(Number(forward?.pid || 0)) || Boolean(Number(forward?.restore || 0));
+}
+
 async function stopAllConnectionForwards() {
   const connections = await fetchJson("/api/connections");
-  for (const connection of connections.filter(item => (item.forwards || []).some(forward => forward.status === "running"))) {
+  for (const connection of connections.filter(item => (item.forwards || []).some(forwardNeedsStop))) {
     await fetchJson(`/api/connections/${connection.id}/stop-forwards`, { method: "POST" });
   }
   await updateTrayState().catch(() => {});

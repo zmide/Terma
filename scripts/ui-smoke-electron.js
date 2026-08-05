@@ -394,9 +394,9 @@ app.whenReady().then(async () => {
         collapsedAfterRefresh,
         collapsePersisted,
         explicitSelectionReopens,
-        runningCountLive:runningText.includes('运行中 1') && runningText.includes('异常 0'),
-        failureCountLive:failedText.includes('运行中 0') && failedText.includes('异常 1') && failedText.includes('部分转发异常'),
-        oldStartupLabelsRemoved:!failedText.includes('转发成功') && !failedText.includes('失败 1')
+        runningCountLive:runningText.includes('运行中 1') && runningText.includes('启动失败 0'),
+        failureCountLive:failedText.includes('运行中 0') && failedText.includes('启动失败 1') && failedText.includes('存在启动失败的转发'),
+        oldStartupLabelsRemoved:!failedText.includes('转发成功') && !failedText.includes('部分转发异常') && !failedText.includes('异常 1')
       };
     } finally {
       api = previousApi;
@@ -5667,8 +5667,20 @@ app.whenReady().then(async () => {
       renderExplorerTools();
       renderConnections();
       const sshActivitySeparated=document.getElementById('connectionGroups')?.textContent.includes(connections[0].name)&&!document.getElementById('connectionGroups')?.textContent.includes('VNC fixture')&&document.querySelector('#explorerTools .explorer-main-action')?.textContent.includes('添加 SSH');
+      renderRemoteProfileForm(derived);
+      const rdpDisplayForm=Boolean(
+        document.getElementById('remote_rdp_display_mode')?.value==='dynamic'
+        && document.getElementById('remote_rdp_resolution_preset')?.value==='1440x900'
+        && document.getElementById('remote_rdp_resolution_options')?.hidden
+        && document.getElementById('remoteProtocolOptions')?.textContent.includes('自动跟随窗口')
+      );
       renderRemoteProfileForm(vnc);
-      const vncModePersisted=document.getElementById('remote_vnc_client_mode')?.value==='system';
+      const vncModePersisted=Boolean(
+        document.getElementById('remote_vnc_client_mode')?.value==='system'
+        && document.getElementById('remote_vnc_display_mode')?.value==='scale'
+        && document.getElementById('remote_quality')?.type==='range'
+        && document.getElementById('remote_quality_value')?.textContent==='7'
+      );
       renderRemoteProfileForm({...vnc,id:0,name:'',has_password:false});
       const vncPasswordForm=Boolean(
         !document.getElementById('remotePasswordField')?.hidden
@@ -5690,7 +5702,8 @@ app.whenReady().then(async () => {
       const xdmcpForm=Boolean(
         document.getElementById('remote_protocol')?.value==='xdmcp'
         && document.getElementById('remote_xdmcp_mode')?.value==='indirect'
-        && document.getElementById('remote_xdmcp_window_mode')?.value==='windowed'
+        && document.getElementById('remote_xdmcp_window_mode')?.value==='fixed'
+        && document.getElementById('remote_xdmcp_resolution_preset')?.value==='1600x900'
         && document.getElementById('remote_xdmcp_width')?.value==='1600'
         && document.getElementById('remote_xdmcp_local_address')?.value==='192.168.31.111'
         && document.getElementById('remote_xdmcp_ssh_connection')?.value===String(connections[0].id)
@@ -5818,7 +5831,7 @@ app.whenReady().then(async () => {
       const brandRect=brand?.getBoundingClientRect();
       const brandButtons=[...document.querySelectorAll('.brand .side-actions button')].map(button=>button.getBoundingClientRect());
       const narrowBrandActionsFit=Boolean(brandRect&&brandButtons.length&&brandButtons.every(rect=>rect.left>=brandRect.left-.5&&rect.right<=brandRect.right+.5&&rect.top>=brandRect.top-.5&&rect.bottom<=brandRect.bottom+.5));
-      return {vncModePersisted,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncServiceDiagnosisUi,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,macVncBypassesLinuxDesktop,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,sshActivitySeparated,x11AppLauncher,xServerManager,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,healthIconOnly,narrowBrandActionsFit};
+      return {rdpDisplayForm,vncModePersisted,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncServiceDiagnosisUi,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,macVncBypassesLinuxDesktop,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,sshActivitySeparated,x11AppLauncher,xServerManager,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,healthIconOnly,narrowBrandActionsFit};
     } finally {
       applyOperationPaneWidth(previousOperationWidth,{fit:false});
       api=previousApi;
@@ -6021,7 +6034,7 @@ app.whenReady().then(async () => {
     || !linuxDesktopToolbarUi.narrow?.stacked
     || !linuxDesktopToolbarUi.narrow?.fullWidth
     || !linuxDesktopToolbarUi.narrow?.noOverflow;
-  const remoteAccessUiFailed = !remoteAccessUi.vncModePersisted || !remoteAccessUi.vncPasswordForm || !remoteAccessUi.vncRetryPrompt || !remoteAccessUi.vncRetryValue || !remoteAccessUi.vncServiceDiagnosisUi || !remoteAccessUi.xdmcpForm || !remoteAccessUi.xdmcpMenuAvailable || !remoteAccessUi.xdmcpSessionSemantics || !remoteAccessUi.macVncBypassesLinuxDesktop || !remoteAccessUi.macVncSetupGuidance || !remoteAccessUi.remoteActivitySeparated || !remoteAccessUi.remoteHostStickyStyle || !remoteAccessUi.remoteHostStickyFollowsOuter || !remoteAccessUi.derivedSourcePresentation || !remoteAccessUi.sshActivitySeparated || !remoteAccessUi.x11AppLauncher || !remoteAccessUi.xServerManager || !remoteAccessUi.adaptiveModal || !remoteAccessUi.modalHeaderControlsAligned || !remoteAccessUi.modalBackdropLocked || !remoteAccessUi.healthIconOnly || !remoteAccessUi.narrowBrandActionsFit;
+  const remoteAccessUiFailed = !remoteAccessUi.rdpDisplayForm || !remoteAccessUi.vncModePersisted || !remoteAccessUi.vncPasswordForm || !remoteAccessUi.vncRetryPrompt || !remoteAccessUi.vncRetryValue || !remoteAccessUi.vncServiceDiagnosisUi || !remoteAccessUi.xdmcpForm || !remoteAccessUi.xdmcpMenuAvailable || !remoteAccessUi.xdmcpSessionSemantics || !remoteAccessUi.macVncBypassesLinuxDesktop || !remoteAccessUi.macVncSetupGuidance || !remoteAccessUi.remoteActivitySeparated || !remoteAccessUi.remoteHostStickyStyle || !remoteAccessUi.remoteHostStickyFollowsOuter || !remoteAccessUi.derivedSourcePresentation || !remoteAccessUi.sshActivitySeparated || !remoteAccessUi.x11AppLauncher || !remoteAccessUi.xServerManager || !remoteAccessUi.adaptiveModal || !remoteAccessUi.modalHeaderControlsAligned || !remoteAccessUi.modalBackdropLocked || !remoteAccessUi.healthIconOnly || !remoteAccessUi.narrowBrandActionsFit;
   const expectedSftpToolActions = ['收藏当前目录','新建文件夹','新建文件','上传文件','SFTP 回收站','搜索当前目录','打开此连接的终端','刷新目录','SFTP 全局设置'];
   const directoryActionsUi = sftpUi.directoryActionsUi || {};
   const connectionSessionUi = sftpUi.connectionSessionUi || {};

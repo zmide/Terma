@@ -1,6 +1,6 @@
 {
   "name": "tunneldesk",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "license": "GPL-3.0-only",
   "description": "Cross-platform remote connection workspace for SSH, SFTP, RDP, VNC, X11/XDMCP, file transfer and tunnels",

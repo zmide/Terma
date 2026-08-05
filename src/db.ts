@@ -511,7 +511,13 @@ function listConnections() {
   for (const forward of all("SELECT * FROM connection_forwards ORDER BY connection_id,id")) {
     const item = {
       ...forward,
-      status: forward.pid && pidRunning(forward.pid) ? "running" : forward.status === "running" && !forward.pid ? "running" : forward.status === "failed" ? "failed" : "stopped",
+      status: forward.pid && pidRunning(forward.pid)
+        ? "running"
+        : forward.status === "running" && !forward.pid
+          ? "running"
+          : ["failed", "reconnecting"].includes(forward.status)
+            ? forward.status
+            : "stopped",
       pid: forward.pid && pidRunning(forward.pid) ? forward.pid : null
     };
     if (!forwardsByConnection.has(forward.connection_id)) forwardsByConnection.set(forward.connection_id, []);
@@ -558,29 +564,52 @@ function cleanRemoteOptions(protocol, source = {}) {
   const integer = (key, fallback, minimum, maximum) => boundedInteger(value[key], fallback, minimum, maximum, key);
   const sourceSshId = integer("source_ssh_connection_id", 0, 0, 2147483647);
   const withSource = (options) => sourceSshId ? {...options, source_ssh_connection_id:sourceSshId} : options;
-  if (protocol === "rdp") return withSource({
-    domain:text("domain", "", 255),
-    fullscreen:bool("fullscreen", true),
-    width:integer("width", 1440, 640, 7680),
-    height:integer("height", 900, 480, 4320),
-    admin_session:bool("admin_session"),
-    clipboard:bool("clipboard", true),
-    audio:new Set(["local", "remote", "off"]).has(String(value.audio)) ? String(value.audio) : "local"
-  });
+  if (protocol === "rdp") {
+    const legacyFullscreen = Object.prototype.hasOwnProperty.call(value, "fullscreen") ? bool("fullscreen") : null;
+    const displayMode = new Set(["dynamic", "fullscreen", "fixed"]).has(String(value.display_mode))
+      ? String(value.display_mode)
+      : legacyFullscreen === true
+        ? "fullscreen"
+        : legacyFullscreen === false
+          ? "fixed"
+          : "dynamic";
+    return withSource({
+      domain:text("domain", "", 255),
+      display_mode:displayMode,
+      // Keep the legacy field synchronized for older desktop builds that may
+      // read a profile created by a newer backend.
+      fullscreen:displayMode === "fullscreen",
+      width:integer("width", 1440, 640, 8192),
+      height:integer("height", 900, 480, 8192),
+      admin_session:bool("admin_session"),
+      clipboard:bool("clipboard", true),
+      audio:new Set(["local", "remote", "off"]).has(String(value.audio)) ? String(value.audio) : "local"
+    });
+  }
   if (protocol === "vnc") return withSource({
     client_mode:new Set(["auto", "embedded", "system"]).has(String(value.client_mode)) ? String(value.client_mode) : "auto",
+    cursor_mode:new Set(["auto", "show", "hide"]).has(String(value.cursor_mode)) ? String(value.cursor_mode) : "auto",
+    display_mode:new Set(["scale", "original", "resize"]).has(String(value.display_mode)) ? String(value.display_mode) : "scale",
     view_only:bool("view_only"),
     shared:bool("shared", true),
     quality:integer("quality", 8, 0, 9)
   });
-  if (protocol === "xdmcp") return withSource({
-    mode:new Set(["query", "indirect", "broadcast"]).has(String(value.mode)) ? String(value.mode) : "query",
-    window_mode:new Set(["windowed", "fullscreen"]).has(String(value.window_mode)) ? String(value.window_mode) : "windowed",
-    width:integer("width", 1440, 640, 7680),
-    height:integer("height", 900, 480, 4320),
-    local_address:text("local_address", "", 255),
-    ssh_connection_id:integer("ssh_connection_id", 0, 0, 2147483647)
-  });
+  if (protocol === "xdmcp") {
+    const rawWindowMode = String(value.window_mode || "");
+    const windowMode = new Set(["resizable", "fullscreen", "fixed"]).has(rawWindowMode)
+      ? rawWindowMode
+      : rawWindowMode === "windowed"
+        ? "fixed"
+        : "resizable";
+    return withSource({
+      mode:new Set(["query", "indirect", "broadcast"]).has(String(value.mode)) ? String(value.mode) : "query",
+      window_mode:windowMode,
+      width:integer("width", 1440, 640, 8192),
+      height:integer("height", 900, 480, 8192),
+      local_address:text("local_address", "", 255),
+      ssh_connection_id:integer("ssh_connection_id", 0, 0, 2147483647)
+    });
+  }
   if (protocol === "ftp") return withSource({
     secure:new Set(["none", "explicit", "implicit"]).has(String(value.secure)) ? String(value.secure) : "none",
     passive:bool("passive", true),

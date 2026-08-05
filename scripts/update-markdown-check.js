@@ -7,6 +7,7 @@ const vm = require("node:vm");
 
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "public", "app-settings.js"), "utf8");
+const styles = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 const start = source.indexOf("function safeUpdateMarkdownUrl");
 const end = source.indexOf("function formatUpdateBytes", start);
 assert.ok(start >= 0 && end > start, "更新说明 Markdown 渲染器应存在");
@@ -52,4 +53,13 @@ const unsafeLink = context.updateMarkdownHtml("[危险](javascript:alert(1))");
 assert.doesNotMatch(unsafeLink, /<a\b/);
 assert.match(unsafeLink, /javascript:alert\(1\)/);
 
-console.log("更新说明 Markdown 渲染检查通过：标题、列表、链接、代码和 HTML 转义正常");
+const versionDeduplicated = context.updateMarkdownHtml("## v1.2.0\n\n### 重要修复\n\n正文", "1.2.0");
+assert.doesNotMatch(versionDeduplicated, />v1\.2\.0</);
+assert.match(versionDeduplicated, /<h6>重要修复<\/h6>/);
+
+assert.match(styles, /\.update-release-markdown :not\(pre\) > code \{[^}]*background:color-mix\(/);
+assert.doesNotMatch(styles, /\.update-release-markdown code \{[^}]*background:var\(--code\)/);
+assert.match(styles, /\.update-notes \{[^}]*background:var\(--panel2,var\(--panel\)\)/);
+assert.match(styles, /\.update-release-markdown a \{[^}]*color:color-mix\(/);
+
+console.log("更新说明 Markdown 渲染检查通过：版本标题去重、主题代码样式、链接、代码和 HTML 转义正常");

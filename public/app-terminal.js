@@ -2091,7 +2091,7 @@ function currentTerminalPromptCommand(session) {
     const row = buffer?.baseY + buffer?.cursorY;
     const line = buffer?.getLine(row)?.translateToString(true) || "";
     const text = cleanTerminalCommandText(line);
-    const markers = ["# ", "$ ", "> "];
+    const markers = ["# ", "$ ", "% ", "> "];
     let index = -1;
     for (const marker of markers) index = Math.max(index, text.lastIndexOf(marker));
     return index >= 0 ? text.slice(index + 2).trim() : "";

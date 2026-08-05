@@ -1173,8 +1173,15 @@ function updateMarkdownInlineHtml(value) {
   return html.replace(/\uE000(\d+)\uE001/g, (_, index) => tokens[Number(index)] || "");
 }
 
-function updateMarkdownHtml(value) {
+function updateMarkdownHtml(value, displayedVersion = "") {
   const lines = String(value || "暂无更新说明").slice(0, 12000).replace(/\r\n?/g, "\n").split("\n");
+  const normalizedVersion = String(displayedVersion || "").trim().replace(/^v/i, "").toLowerCase();
+  if (normalizedVersion) {
+    const firstContentIndex = lines.findIndex(line => line.trim());
+    const firstHeading = firstContentIndex >= 0 ? /^#{1,6}\s+(.+?)\s*$/.exec(lines[firstContentIndex].trim()) : null;
+    const headingVersion = String(firstHeading?.[1] || "").trim().replace(/^\[|\]$/g, "").replace(/^v/i, "").toLowerCase();
+    if (firstHeading && headingVersion === normalizedVersion) lines.splice(firstContentIndex, 1);
+  }
   const result = [];
   let paragraph = [];
   let list = "";
@@ -1254,7 +1261,7 @@ function updateReleaseNotesHtml(update) {
   return `<div class="update-notes"><strong>最近版本更新内容</strong><div class="update-release-list">${history.map((item, index) => {
     const version = String(item?.version || "").replace(/^v/i, "");
     const published = item?.published_at ? new Date(item.published_at).toLocaleDateString("zh-CN") : "";
-    return `<section class="update-release-entry"><div class="update-release-head"><b>${version ? `v${esc(version)}` : index === 0 ? "最新版本" : "上一版本"}</b>${index === 0 ? `<span class="status-pill running">最新</span>` : ""}${published ? `<small>${esc(published)}</small>` : ""}</div><div class="update-release-markdown">${updateMarkdownHtml(item?.notes)}</div></section>`;
+    return `<section class="update-release-entry"><div class="update-release-head"><b>${version ? `v${esc(version)}` : index === 0 ? "最新版本" : "上一版本"}</b>${index === 0 ? `<span class="status-pill running">最新</span>` : ""}${published ? `<small>${esc(published)}</small>` : ""}</div><div class="update-release-markdown">${updateMarkdownHtml(item?.notes, version)}</div></section>`;
   }).join("")}</div></div>`;
 }
 

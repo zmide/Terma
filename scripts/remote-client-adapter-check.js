@@ -48,6 +48,10 @@ async function main() {
   assert.equal(rdpBytes[1], 0xfe);
   const rdpText = rdpBytes.toString("utf16le");
   assert.match(rdpText, /full address:s:rdp\.example:3389/);
+  assert.match(rdpText, /screen mode id:i:1/);
+  assert.match(rdpText, /desktopwidth:i:1280/);
+  assert.match(rdpText, /desktopheight:i:720/);
+  assert.match(rdpText, /dynamic resolution:i:0/);
   assert.match(rdpText, /prompt for credentials:i:1/);
   assert.doesNotMatch(rdpText, /must-not-leak/);
 
@@ -55,7 +59,13 @@ async function main() {
   const generatedRdpLaunch = launches.at(-1);
   assert.match(generatedRdpLaunch.executable, /mstsc\.exe$/i);
   assert.notEqual(generatedRdpLaunch.options?.windowsHide, true, "mstsc 窗口不能被隐藏启动");
-  assert.deepEqual(generatedRdpLaunch.args, ["/v:generated.example:3389"]);
+  assert.equal(generatedRdpLaunch.args.length, 1);
+  const generatedRdpText = fs.readFileSync(generatedRdpLaunch.args[0]).toString("utf16le");
+  assert.match(generatedRdpText, /full address:s:generated\.example:3389/);
+  assert.doesNotMatch(generatedRdpText, /username:s:/);
+  assert.doesNotMatch(generatedRdpText, /ssh-user/);
+  assert.match(generatedRdpText, /dynamic resolution:i:1/);
+  assert.match(generatedRdpText, /smart sizing:i:1/);
 
   await windows.open({id:2,protocol:"vnc",host:"vnc.example",port:5901,password:"must-not-leak",options:{quality:7,shared:true,view_only:true}});
   const vncLaunch = launches.at(-1);
@@ -66,6 +76,7 @@ async function main() {
   const mac = createRemoteClientAdapter({
     platform:"darwin",
     environment:{HOME:"/Users/tester"},
+    dataDir:temporary,
     existsSync:file => ["/Applications/Windows App.app","/System/Applications/Utilities/Screen Sharing.app"].includes(String(file).replace(/\\/g,"/")),
     spawn:fakeSpawn,
     spawnSync:unavailableCommand,
@@ -73,6 +84,12 @@ async function main() {
   });
   assert.equal(mac.diagnostics().rdp.client, "Windows App");
   assert.equal(mac.diagnostics().vnc.client, "屏幕共享");
+  await mac.open({id:31,protocol:"rdp",host:"mac-rdp.example",port:3389,username:"desktop-user",options:{display_mode:"dynamic",width:1920,height:1080}});
+  const macRdpLaunch = launches.at(-1);
+  assert.deepEqual(macRdpLaunch.args.slice(0, 2), ["-a", "/Applications/Windows App.app"]);
+  const macRdpText = fs.readFileSync(macRdpLaunch.args[2]).toString("utf16le");
+  assert.match(macRdpText, /dynamic resolution:i:1/);
+  assert.match(macRdpText, /desktopwidth:i:1920/);
   await mac.open({id:3,protocol:"vnc",host:"mac.example",port:5900,options:{}});
   assert.equal(shellLaunches.at(-1), "vnc://mac.example:5900");
 
@@ -191,6 +208,10 @@ async function main() {
   assert.ok(linuxLaunch.args.includes("/audio-mode:2"));
   assert.ok(linuxLaunch.args.includes("/cert:tofu"));
   assert.doesNotMatch(JSON.stringify(linuxLaunch), /must-not-leak/);
+  await linux.open({id:41,protocol:"rdp",host:"dynamic.example",port:3389,username:"root",options:{display_mode:"dynamic",width:2560,height:1440}});
+  const dynamicLinuxLaunch = launches.at(-1);
+  assert.ok(dynamicLinuxLaunch.args.includes("/size:2560x1440"));
+  assert.ok(dynamicLinuxLaunch.args.includes("/dynamic-resolution"));
 
   const headlessLinux = createRemoteClientAdapter({
     platform:"linux",

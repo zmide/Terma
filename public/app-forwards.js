@@ -104,11 +104,17 @@ async function restoreForwards() {
   }
 }
 
+function forwardNeedsStop(forward) {
+  const status = String(forward?.status || "stopped");
+  return status !== "stopped" || Boolean(Number(forward?.pid || 0)) || Boolean(Number(forward?.restore || 0));
+}
+
 async function stopAllForwardsUi(button=null){
   setButtonBusy(button, true, "停止中...");
   try {
-    const targets = connections.filter(c => (c.forwards || []).some(f => f.status === "running"));
-    if (!targets.length) return notify("暂无运行中的转发", "info");
+    await loadAll();
+    const targets = connections.filter(c => (c.forwards || []).some(forwardNeedsStop));
+    if (!targets.length) return notify("暂无需要停止或清理的转发", "info");
     let ok = 0, failed = 0;
     for (const c of targets) {
       try {
@@ -119,7 +125,7 @@ async function stopAllForwardsUi(button=null){
       }
     }
     await loadAll();
-    notify(`停止全部转发完成：成功 ${ok} 个，失败 ${failed} 个`, failed ? "error" : "success");
+    notify(`停止并清理全部转发完成：成功 ${ok} 个，失败 ${failed} 个`, failed ? "error" : "success");
   } finally {
     setButtonBusy(button, false);
   }
@@ -384,10 +390,12 @@ function updateForwardBulkActions() {
 
 function renderForwardCard(f) {
   const access = forwardAccessInfo(f);
+  const runtimeDetail = forwardQualityText(f);
+  const failureTime = f.status === "failed" ? forwardEventTimeText(f.updated_at) : "";
   return `<div class="forward-card">
     <label class="checkline"><input class="forward-check" type="checkbox" value="${f.id}" onchange="updateForwardBulkActions()"><span>${esc(forwardDisplayName(f))}</span></label>
     <div class="forward-rule"><div class="field-label">规则</div><div>${forwardText(f)}</div></div>
-    <div class="forward-status"><div class="field-label">状态</div><span class="status-pill ${escAttr(f.status || "stopped")}">${forwardStatusText(f.status)}</span><div class="conn-meta">${forwardQualityText(f)}</div>${f.last_error ? `<div class="conn-meta error">${esc(f.last_error).slice(0,160)}</div>` : ""}</div>
+    <div class="forward-status"><div class="field-label">状态</div><span class="status-pill ${escAttr(f.status || "stopped")}">${forwardStatusText(f.status)}</span>${runtimeDetail ? `<div class="conn-meta">${runtimeDetail}</div>` : ""}${failureTime ? `<div class="conn-meta">失败于 ${esc(failureTime)}</div>` : ""}${f.last_error ? `<div class="conn-meta error forward-error-detail">${esc(f.last_error).slice(0,500)}</div>` : ""}</div>
     <div class="forward-service"><div class="field-label">服务入口</div><div class="forward-tags"><span>${forwardModeText(f.mode)}</span>${f.service_type ? `<span>${serviceTypeText(f.service_type)}</span>` : ""}</div>${f.service_note ? `<div class="conn-meta">${esc(f.service_note)}</div>` : ""}${forwardAccessHtml(access)}${access.url ? `<div class="actions tight"><a class="open-forward-link" href="${esc(access.url)}" target="_blank" rel="noopener">打开</a><button onclick="copyText('${escAttr(access.url)}')">复制</button></div>` : `<span class="muted">无可打开地址</span>`}</div>
     <div class="forward-actions">${f.status === "running" ? `<button onclick="stopSingleForward(${f.id},this)">${icon("square")}<span>停止</span></button>` : `<button class="primary" onclick="startSingleForward(${f.id},this)">${icon("play")}<span>启动</span></button>`}<button class="icon-button" title="更多操作" aria-label="更多操作" onclick="showForwardMenu(event,${f.id})">${icon("ellipsis")}</button></div>
   </div>`;
@@ -455,7 +463,14 @@ function forwardQualityText(f) {
   if (f.pid) parts.push(`PID ${f.pid}`);
   if (f.started_at) parts.push(`运行 ${formatDuration(Date.now()/1000 - Number(f.started_at))}`);
   if (Number(f.reconnect_count || 0)) parts.push(`重连 ${f.reconnect_count} 次`);
-  return parts.join(" · ") || "未运行";
+  return parts.join(" · ");
+}
+
+function forwardEventTimeText(value) {
+  const timestamp = Number(value || 0);
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
+  const date = new Date(timestamp > 1e12 ? timestamp : timestamp * 1000);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("zh-CN", {hour12:false});
 }
 
 function formatDuration(seconds) {

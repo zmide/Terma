@@ -12,9 +12,92 @@ const desktop = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
 const preload = fs.readFileSync(path.join(root, "desktop", "preload.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 
+function frontendFunction(name) {
+  let start = terminal.indexOf(`function ${name}(`);
+  assert.notEqual(start, -1, `未找到前端函数 ${name}`);
+  if (terminal.slice(Math.max(0, start - 6), start) === "async ") start -= 6;
+  const next = [
+    terminal.indexOf("\nfunction ", start + 1),
+    terminal.indexOf("\nasync function ", start + 1)
+  ].filter(index => index >= 0).sort((left, right) => left - right)[0] ?? -1;
+  return terminal.slice(start, next < 0 ? terminal.length : next).trim();
+}
+
+const trackedDirectoryCommands = [];
+const terminalCommandHarness = new Function(
+  "saveRecentTerminalCommand",
+  "currentConnection",
+  "trackTerminalDirectoryCommand",
+  "activeTabKey",
+  `"use strict";
+${frontendFunction("cleanTerminalCommandText")}
+${frontendFunction("currentTerminalPromptCommand")}
+${frontendFunction("trackTerminalCommand")}
+return {currentTerminalPromptCommand, trackTerminalCommand};`
+)(
+  () => {},
+  id => ({id}),
+  (_session, _connection, _key, command) => trackedDirectoryCommands.push(command),
+  "terminal-active"
+);
+
+function promptSession(line) {
+  return {
+    id:1,
+    key:"terminal-1",
+    term:{
+      buffer:{
+        active:{
+          baseY:0,
+          cursorY:0,
+          getLine:() => ({translateToString:() => line})
+        }
+      }
+    }
+  };
+}
+
+for (const line of [
+  "root@linux:/tmp# cd Downloads",
+  "user@linux:~$ cd Downloads",
+  "tester@fixture-mac ~ % cd Downloads",
+  "PS C:\\\\Users\\\\tester> cd Downloads"
+]) {
+  assert.equal(terminalCommandHarness.currentTerminalPromptCommand(promptSession(line)), "cd Downloads");
+}
+
+const zshTabCompletionSession = promptSession("tester@fixture-mac ~ % cd Downloads");
+terminalCommandHarness.trackTerminalCommand(zshTabCompletionSession, "cd Down");
+terminalCommandHarness.trackTerminalCommand(zshTabCompletionSession, "\t");
+assert.equal(zshTabCompletionSession.commandBuffer, "", "Tab 补全后命令缓冲应清空并改从当前终端行读取");
+terminalCommandHarness.trackTerminalCommand(zshTabCompletionSession, "\r");
+assert.deepEqual(trackedDirectoryCommands, ["cd Downloads"]);
+
+const probedDirectories = [];
+const directoryTrackingHarness = new Function(
+  "probeTerminalDirectory",
+  `"use strict";
+${frontendFunction("normalizeTerminalDirectoryPath")}
+${frontendFunction("joinTerminalDirectoryPath")}
+${frontendFunction("cleanTerminalCommandText")}
+${frontendFunction("parseTerminalDirectoryCommand")}
+${frontendFunction("trackTerminalDirectoryCommand")}
+return {trackTerminalDirectoryCommand};`
+)(
+  (_session, _connection, directory) => probedDirectories.push(directory)
+);
+directoryTrackingHarness.trackTerminalDirectoryCommand(
+  {currentDirectory:"/Users/tester", homeDirectory:"/Users/tester"},
+  {id:1},
+  "terminal-1",
+  trackedDirectoryCommands[0]
+);
+assert.deepEqual(probedDirectories, ["/Users/tester/Downloads"]);
+
 assert.match(terminal, /registerOscHandler\(7/);
 assert.match(terminal, /initializeTerminalDirectory/);
 assert.match(terminal, /trackTerminalDirectoryCommand/);
+assert.match(terminal, /const markers = \[[^\]]*"% "/);
 assert.match(terminal, /bindTerminalDropUpload/);
 assert.match(terminal, /collectDroppedFiles/);
 assert.match(terminal, /uploadSftpFilesToDirectory\(files, connection\.id, directory\)/);

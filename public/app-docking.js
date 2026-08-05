@@ -64,6 +64,7 @@ const workspaceSelectedTabKeys = new Set();
 let workspaceGroupSwitching = false;
 let workspaceGroupSelectionMode = false;
 let workspaceGroupDragId = "";
+const workspacePaneTabHistory = new Map();
 
 function workspaceCssEscape(value) {
   if (typeof cssEscape === "function") return cssEscape(value);
@@ -101,6 +102,44 @@ function workspaceTabByKey(key) {
 
 function workspaceHasTabKey(key) {
   return Boolean(workspaceTabByKey(key));
+}
+
+function workspacePaneHistoryKey(paneId, groupId=activeWorkspaceGroupId) {
+  return `${groupId}\u0000${paneId}`;
+}
+
+function rememberWorkspacePaneTab(pane, key, previousKey=pane?.activeTabKey) {
+  if (!pane || !key || !pane.tabs.includes(key)) return;
+  const available = new Set(pane.tabs);
+  const historyKey = workspacePaneHistoryKey(pane.id);
+  const history = (workspacePaneTabHistory.get(historyKey) || [])
+    .filter(tabKey => available.has(tabKey) && tabKey !== previousKey && tabKey !== key);
+  if (previousKey && previousKey !== key && available.has(previousKey)) history.push(previousKey);
+  history.push(key);
+  workspacePaneTabHistory.set(historyKey, history);
+}
+
+function recentWorkspacePaneTab(pane, excludedKeys) {
+  if (!pane) return "";
+  const available = new Set(pane.tabs);
+  const historyKey = workspacePaneHistoryKey(pane.id);
+  const history = (workspacePaneTabHistory.get(historyKey) || []).filter(key => available.has(key));
+  if (history.length) workspacePaneTabHistory.set(historyKey, history);
+  else workspacePaneTabHistory.delete(historyKey);
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const key = history[index];
+    if (!excludedKeys.has(key)) return key;
+  }
+  return "";
+}
+
+function trimWorkspacePaneTabHistory(pane) {
+  if (!pane) return;
+  const historyKey = workspacePaneHistoryKey(pane.id);
+  const available = new Set(pane.tabs);
+  const history = (workspacePaneTabHistory.get(historyKey) || []).filter(key => available.has(key));
+  if (history.length) workspacePaneTabHistory.set(historyKey, history);
+  else workspacePaneTabHistory.delete(historyKey);
 }
 
 function workspaceGroupName() {
@@ -1273,6 +1312,7 @@ function focusWorkspacePane(paneId) {
   focusedPaneId = paneId;
   const tab = tabs.find(item => item.key === pane.activeTabKey);
   if (tab) {
+    rememberWorkspacePaneTab(pane, tab.key, tab.key);
     activeTabKey = tab.key;
     activeView = tab.viewName || tab.kind || "welcome";
     const connectionId = Number(tab.id);
@@ -1355,6 +1395,7 @@ function normalizeWorkspaceLayoutAfterMutation(preferredPaneId="") {
 
 function setPaneActiveKey(pane, key) {
   if (!pane || !pane.tabs.includes(key)) return;
+  rememberWorkspacePaneTab(pane, key, pane.activeTabKey);
   pane.activeTabKey = key;
   if (pane.id === focusedPaneId) activeTabKey = key;
 }
@@ -1377,6 +1418,7 @@ addTab = function(key, title, subtitle, viewName, closable=true, meta={}) {
   }
   let pane = workspaceFindPaneForTab(key) || workspaceFindPane(focusedPaneId) || workspaceLeaves()[0];
   if (!pane.tabs.includes(key)) pane.tabs.push(key);
+  rememberWorkspacePaneTab(pane, key, pane.activeTabKey);
   pane.activeTabKey = key;
   focusedPaneId = pane.id;
   activeTabKey = key;
@@ -1455,6 +1497,7 @@ activateTab = function(key) {
   if (!tab || !pane) return;
   saveFocusedSftpPaneState();
   focusedPaneId = pane.id;
+  rememberWorkspacePaneTab(pane, key, pane.activeTabKey);
   pane.activeTabKey = key;
   activeTabKey = key;
   activeView = tab.viewName || tab.kind || "welcome";
@@ -1528,8 +1571,13 @@ closeTabsByKey = function(keys, anchorKey="") {
   tabs = tabs.filter(tab => !targets.has(tab.key));
   for (const pane of workspaceLeaves()) {
     const previousIndex = Math.max(0, pane.tabs.findIndex(key => targets.has(key)));
+    const recentKey = targets.has(pane.activeTabKey) ? recentWorkspacePaneTab(pane, targets) : "";
     pane.tabs = pane.tabs.filter(key => !targets.has(key));
-    if (!pane.tabs.includes(pane.activeTabKey)) pane.activeTabKey = pane.tabs[Math.min(previousIndex, pane.tabs.length - 1)] || pane.tabs.at(-1) || "";
+    if (!pane.tabs.includes(pane.activeTabKey)) {
+      pane.activeTabKey = recentKey || pane.tabs[Math.min(previousIndex, pane.tabs.length - 1)] || pane.tabs.at(-1) || "";
+    }
+    trimWorkspacePaneTabHistory(pane);
+    if (pane.activeTabKey) rememberWorkspacePaneTab(pane, pane.activeTabKey, pane.activeTabKey);
   }
   normalizeWorkspaceLayoutAfterMutation(anchorPane?.id || focusedPaneId);
   const focusedPane = workspaceFindPane(focusedPaneId) || workspaceLeaves()[0];
@@ -1607,8 +1655,7 @@ function duplicateWorkspaceTab(key, options={}) {
   if (!tab || !pane) return "";
   hideTabContextMenu();
   focusedPaneId = pane.id;
-  pane.activeTabKey = key;
-  activeTabKey = key;
+  setPaneActiveKey(pane, key);
   activeView = tab.viewName || tab.kind || "welcome";
   const duplicateKey = nextWorkspaceTabCopyKey(tab);
   const duplicateTitle = workspaceTabCopyTitle(tab);
@@ -2099,6 +2146,7 @@ function serializeWorkspaceGroupsForPreset() {
 }
 
 function applyWorkspaceGroupPreset(saved={}) {
+  workspacePaneTabHistory.clear();
   const hasGroups = Array.isArray(saved.workspaceGroups) && saved.workspaceGroups.length > 0;
   restoreWorkspaceGroups(hasGroups ? saved : {
     ...saved,
@@ -2251,6 +2299,7 @@ restoreTabsState = function() {
   };
   try {
     if (runtimeSettings?.saved?.restore_workspace_tabs === false) return false;
+    workspacePaneTabHistory.clear();
     const saved = JSON.parse(localStorage.getItem("workspaceTabs") || "{}");
     const activeGroup = restoreWorkspaceGroups(saved);
     const restored = activeGroup?.tabs || [];

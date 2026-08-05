@@ -1049,10 +1049,109 @@ async function testRemoteProfile(id, button=null) {
   }
 }
 
+const REMOTE_RESOLUTION_PRESETS = Object.freeze([
+  [1024,768,"XGA · 4:3"],
+  [1280,720,"HD · 720p"],
+  [1280,800,"WXGA · 16:10"],
+  [1366,768,"HD"],
+  [1440,900,"WXGA+ · 16:10"],
+  [1600,900,"HD+"],
+  [1680,1050,"WSXGA+ · 16:10"],
+  [1920,1080,"Full HD · 1080p"],
+  [1920,1200,"WUXGA · 16:10"],
+  [2048,1080,"DCI 2K"],
+  [2560,1080,"超宽屏"],
+  [2560,1440,"QHD · 1440p"],
+  [2560,1600,"WQXGA · 16:10"],
+  [3440,1440,"超宽屏"],
+  [3840,1080,"双 Full HD"],
+  [3840,1600,"超宽屏"],
+  [3840,2160,"4K UHD"],
+  [4096,2160,"DCI 4K"],
+  [5120,1440,"双 QHD"],
+  [5120,2880,"5K"],
+  [7680,4320,"8K UHD"]
+]);
+
+function normalizedRdpDisplayMode(options={}) {
+  const mode = String(options.display_mode || "");
+  if (["dynamic","fullscreen","fixed"].includes(mode)) return mode;
+  if (Object.prototype.hasOwnProperty.call(options, "fullscreen")) return options.fullscreen === false ? "fixed" : "fullscreen";
+  return "dynamic";
+}
+
+function normalizedXdmcpWindowMode(options={}) {
+  const mode = String(options.window_mode || "");
+  if (["resizable","fullscreen","fixed"].includes(mode)) return mode;
+  return mode === "windowed" ? "fixed" : "resizable";
+}
+
+function remoteResolutionPreset(options={}) {
+  const width = Math.round(Number(options.width || 1440));
+  const height = Math.round(Number(options.height || 900));
+  return REMOTE_RESOLUTION_PRESETS.some(([presetWidth,presetHeight]) => presetWidth === width && presetHeight === height)
+    ? `${width}x${height}`
+    : "custom";
+}
+
+function remoteResolutionOptionsMarkup(options={}) {
+  const selected = remoteResolutionPreset(options);
+  return `${REMOTE_RESOLUTION_PRESETS.map(([width,height,label]) => {
+    const value = `${width}x${height}`;
+    return `<option value="${value}" ${selected === value ? "selected" : ""}>${width} × ${height} · ${label}</option>`;
+  }).join("")}<option value="custom" ${selected === "custom" ? "selected" : ""}>自定义宽高</option>`;
+}
+
+function remoteResolutionFieldsMarkup(prefix, options={}, visible=false) {
+  const custom = remoteResolutionPreset(options) === "custom";
+  return `<div id="${prefix}_resolution_options" class="remote-resolution-options" ${visible ? "" : "hidden"}>
+    <label>固定分辨率</label>
+    <select id="${prefix}_resolution_preset" onchange="applyRemoteResolutionPreset('${prefix}')">${remoteResolutionOptionsMarkup(options)}</select>
+    <div id="${prefix}_custom_resolution" class="grid remote-resolution-custom" ${custom ? "" : "hidden"}>
+      <div><label>宽度</label><input id="${prefix}_width" type="number" min="640" max="8192" value="${Number(options.width || 1440)}"></div>
+      <div><label>高度</label><input id="${prefix}_height" type="number" min="480" max="8192" value="${Number(options.height || 900)}"></div>
+    </div>
+  </div>`;
+}
+
+function syncRemoteResolutionFields(prefix, modeId) {
+  const visible = $(modeId)?.value === "fixed";
+  const options = $(`${prefix}_resolution_options`);
+  if (options) options.hidden = !visible;
+  const custom = $(`${prefix}_custom_resolution`);
+  if (custom) custom.hidden = !visible || $(`${prefix}_resolution_preset`)?.value !== "custom";
+}
+
+function applyRemoteResolutionPreset(prefix) {
+  const preset = $(`${prefix}_resolution_preset`)?.value || "custom";
+  if (preset !== "custom") {
+    const [width,height] = preset.split("x").map(Number);
+    if ($(`${prefix}_width`)) $(`${prefix}_width`).value = String(width);
+    if ($(`${prefix}_height`)) $(`${prefix}_height`).value = String(height);
+  }
+  const custom = $(`${prefix}_custom_resolution`);
+  if (custom) custom.hidden = preset !== "custom";
+}
+
+function syncRemoteQualityValue(input) {
+  const output = $("remote_quality_value");
+  if (output) output.textContent = String(Math.max(0, Math.min(9, Number(input?.value ?? 8))));
+}
+
 function remoteProtocolOptionsMarkup(protocol, options={}) {
-  if (protocol === "rdp") return `<div class="grid3"><div><label>显示方式</label><select id="remote_fullscreen"><option value="1" ${options.fullscreen !== false ? "selected" : ""}>全屏</option><option value="0" ${options.fullscreen === false ? "selected" : ""}>指定分辨率</option></select></div><div><label>宽度</label><input id="remote_width" type="number" min="640" max="7680" value="${Number(options.width || 1440)}"></div><div><label>高度</label><input id="remote_height" type="number" min="480" max="4320" value="${Number(options.height || 900)}"></div></div><div class="grid"><div><label>域</label><input id="remote_domain" value="${escAttr(options.domain || "")}" placeholder="可选"></div><div><label>声音</label><select id="remote_audio"><option value="local" ${options.audio !== "remote" && options.audio !== "off" ? "selected" : ""}>在本机播放</option><option value="remote" ${options.audio === "remote" ? "selected" : ""}>在远端播放</option><option value="off" ${options.audio === "off" ? "selected" : ""}>关闭</option></select></div></div><div class="check-grid"><label class="checkline"><input id="remote_clipboard" type="checkbox" ${options.clipboard !== false ? "checked" : ""}>共享剪贴板</label><label class="checkline"><input id="remote_admin_session" type="checkbox" ${options.admin_session ? "checked" : ""}>管理会话</label></div>`;
-  if (protocol === "vnc") return `<div class="grid3"><div><label>打开方式</label><select id="remote_vnc_client_mode"><option value="auto" ${!["embedded","system"].includes(options.client_mode) ? "selected" : ""}>自动（优先内置）</option><option value="embedded" ${options.client_mode === "embedded" ? "selected" : ""}>TunnelDesk 内置</option><option value="system" ${options.client_mode === "system" ? "selected" : ""}>系统客户端</option></select></div><div><label>画质</label><input id="remote_quality" type="number" min="0" max="9" value="${Number(options.quality ?? 8)}"></div><div class="vnc-option-checks"><label class="checkline"><input id="remote_shared" type="checkbox" ${options.shared !== false ? "checked" : ""}>共享会话</label><label class="checkline"><input id="remote_view_only" type="checkbox" ${options.view_only ? "checked" : ""}>仅查看</label></div></div><div class="grid"><div><label>SSH 剪贴板辅助</label><select id="remote_vnc_ssh_connection"><option value="0">自动匹配同主机</option>${xdmcpManagementConnectionOptions(options.source_ssh_connection_id)}</select></div><div class="connection-test-status">用于可靠传输中文剪贴板；Linux 还需 xclip/xsel 或 wl-clipboard。</div></div>`;
-  if (protocol === "xdmcp") return `<div class="grid3"><div><label>连接方式</label><select id="remote_xdmcp_mode"><option value="query" ${options.mode !== "indirect" && options.mode !== "broadcast" ? "selected" : ""}>直接查询</option><option value="indirect" ${options.mode === "indirect" ? "selected" : ""}>间接查询</option><option value="broadcast" ${options.mode === "broadcast" ? "selected" : ""}>局域网广播</option></select></div><div><label>显示方式</label><select id="remote_xdmcp_window_mode"><option value="windowed" ${options.window_mode !== "fullscreen" ? "selected" : ""}>窗口</option><option value="fullscreen" ${options.window_mode === "fullscreen" ? "selected" : ""}>全屏</option></select></div><div><label>SSH 管理连接</label><select id="remote_xdmcp_ssh_connection"><option value="0">自动匹配同主机</option>${xdmcpManagementConnectionOptions(options.ssh_connection_id)}</select></div></div><div class="grid3"><div><label>窗口宽度</label><input id="remote_xdmcp_width" type="number" min="640" max="7680" value="${Number(options.width || 1440)}"></div><div><label>窗口高度</label><input id="remote_xdmcp_height" type="number" min="480" max="4320" value="${Number(options.height || 900)}"></div><div><label>本地地址</label><input id="remote_xdmcp_local_address" value="${escAttr(options.local_address || "")}" placeholder="自动选择"></div></div><div class="xdmcp-session-auto">${icon("sparkles")}<span>桌面会话由远端登录界面自动提供</span></div><div class="connection-test-status">XDMCP 不依赖 SSH X11 转发：图形登录通过 UDP 177 直接连接远端显示管理器，SSH 连接只用于探测和配置。</div><div class="connection-test-status">SSH 管理连接可使用私钥、SSH Agent 或密码完成探测和配置；XDMCP 图形登录由远端显示管理器验证，通常仍需输入桌面账号和密码。</div><div class="connection-test-status warning">XDMCP 不加密，只应在可信局域网使用；跨公网请使用 SSH X11、RDP 或 VNC。</div>`;
+  if (protocol === "rdp") {
+    const displayMode = normalizedRdpDisplayMode(options);
+    return `<div class="grid"><div><label>显示方式</label><select id="remote_rdp_display_mode" onchange="syncRemoteResolutionFields('remote_rdp','remote_rdp_display_mode')"><option value="dynamic" ${displayMode === "dynamic" ? "selected" : ""}>自动跟随窗口（推荐）</option><option value="fullscreen" ${displayMode === "fullscreen" ? "selected" : ""}>全屏</option><option value="fixed" ${displayMode === "fixed" ? "selected" : ""}>固定分辨率</option></select></div><div><label>声音</label><select id="remote_audio"><option value="local" ${options.audio !== "remote" && options.audio !== "off" ? "selected" : ""}>在本机播放</option><option value="remote" ${options.audio === "remote" ? "selected" : ""}>在远端播放</option><option value="off" ${options.audio === "off" ? "selected" : ""}>关闭</option></select></div></div>${remoteResolutionFieldsMarkup("remote_rdp", options, displayMode === "fixed")}<div class="remote-display-help">自动模式会让 RDP 桌面随客户端窗口变化；固定模式可选常用、超宽、2K、4K、5K、8K 或自定义尺寸。</div><div class="grid"><div><label>域</label><input id="remote_domain" value="${escAttr(options.domain || "")}" placeholder="可选"></div><div class="check-grid"><label class="checkline"><input id="remote_clipboard" type="checkbox" ${options.clipboard !== false ? "checked" : ""}>共享剪贴板</label><label class="checkline"><input id="remote_admin_session" type="checkbox" ${options.admin_session ? "checked" : ""}>管理会话</label></div></div>`;
+  }
+  if (protocol === "vnc") {
+    const displayMode = ["scale","original","resize"].includes(String(options.display_mode)) ? String(options.display_mode) : "scale";
+    const quality = Math.max(0, Math.min(9, Number(options.quality ?? 8)));
+    return `<div class="grid3 remote-display-grid"><div><label>打开方式</label><select id="remote_vnc_client_mode"><option value="auto" ${!["embedded","system"].includes(options.client_mode) ? "selected" : ""}>自动（优先内置）</option><option value="embedded" ${options.client_mode === "embedded" ? "selected" : ""}>TunnelDesk 内置</option><option value="system" ${options.client_mode === "system" ? "selected" : ""}>系统客户端</option></select></div><div><label>显示方式</label><select id="remote_vnc_display_mode"><option value="scale" ${displayMode === "scale" ? "selected" : ""}>适应窗口（推荐）</option><option value="original" ${displayMode === "original" ? "selected" : ""}>原始像素</option><option value="resize" ${displayMode === "resize" ? "selected" : ""}>跟随窗口（服务器支持时）</option></select></div><div><label>鼠标模式</label><select id="remote_vnc_cursor_mode"><option value="auto" ${!["show","hide"].includes(options.cursor_mode) ? "selected" : ""}>自动（按远端平台）</option><option value="show" ${options.cursor_mode === "show" ? "selected" : ""}>手动显示本地光标</option><option value="hide" ${options.cursor_mode === "hide" ? "selected" : ""}>手动隐藏本地光标</option></select></div></div><div class="remote-quality-setting"><div class="remote-quality-heading"><label for="remote_quality">画质</label><output id="remote_quality_value" for="remote_quality">${quality}</output></div><input id="remote_quality" type="range" min="0" max="9" step="1" value="${quality}" oninput="syncRemoteQualityValue(this)"><div class="remote-quality-scale"><span>0 · 更省流量</span><span>9 · 更清晰</span></div></div><div class="remote-display-help">画质控制 JPEG 压缩质量，与分辨率不是同一项；两者越高通常越占带宽。VNC 由服务器按变化发送画面，没有通用且可靠的固定帧率设置。</div><div class="check-grid"><label class="checkline"><input id="remote_shared" type="checkbox" ${options.shared !== false ? "checked" : ""}>共享会话</label><label class="checkline"><input id="remote_view_only" type="checkbox" ${options.view_only ? "checked" : ""}>仅查看</label></div><div class="grid"><div><label>SSH 剪贴板辅助</label><select id="remote_vnc_ssh_connection"><option value="0">自动匹配同主机</option>${xdmcpManagementConnectionOptions(options.source_ssh_connection_id)}</select></div><div class="connection-test-status">用于可靠传输中文剪贴板；Linux 还需 xclip/xsel 或 wl-clipboard。</div></div>`;
+  }
+  if (protocol === "xdmcp") {
+    const windowMode = normalizedXdmcpWindowMode(options);
+    return `<div class="grid3 remote-display-grid"><div><label>连接方式</label><select id="remote_xdmcp_mode"><option value="query" ${options.mode !== "indirect" && options.mode !== "broadcast" ? "selected" : ""}>直接查询</option><option value="indirect" ${options.mode === "indirect" ? "selected" : ""}>间接查询</option><option value="broadcast" ${options.mode === "broadcast" ? "selected" : ""}>局域网广播</option></select></div><div><label>显示方式</label><select id="remote_xdmcp_window_mode" onchange="syncRemoteResolutionFields('remote_xdmcp','remote_xdmcp_window_mode')"><option value="resizable" ${windowMode === "resizable" ? "selected" : ""}>可调整窗口（支持时）</option><option value="fullscreen" ${windowMode === "fullscreen" ? "selected" : ""}>全屏</option><option value="fixed" ${windowMode === "fixed" ? "selected" : ""}>固定分辨率</option></select></div><div><label>SSH 管理连接</label><select id="remote_xdmcp_ssh_connection"><option value="0">自动匹配同主机</option>${xdmcpManagementConnectionOptions(options.ssh_connection_id)}</select></div></div>${remoteResolutionFieldsMarkup("remote_xdmcp", options, windowMode === "fixed")}<div class="grid"><div><label>本地地址</label><input id="remote_xdmcp_local_address" value="${escAttr(options.local_address || "")}" placeholder="自动选择"></div><div class="remote-display-help">Linux 和 macOS 的 Xephyr 可随窗口调整；Windows 会使用所选初始尺寸打开，不能可靠动态调整。XDMCP/X11 没有通用帧率限制。</div></div><div class="xdmcp-session-auto">${icon("sparkles")}<span>桌面会话由远端登录界面自动提供</span></div><div class="connection-test-status">XDMCP 不依赖 SSH X11 转发：图形登录通过 UDP 177 直接连接远端显示管理器，SSH 连接只用于探测和配置。</div><div class="connection-test-status">SSH 管理连接可使用私钥、SSH Agent 或密码完成探测和配置；XDMCP 图形登录由远端显示管理器验证，通常仍需输入桌面账号和密码。</div><div class="connection-test-status warning">XDMCP 不加密，只应在可信局域网使用；跨公网请使用 SSH X11、RDP 或 VNC。</div>`;
+  }
   if (protocol === "ftp") return `<div class="grid"><div><label>传输安全</label><select id="remote_ftp_secure"><option value="none" ${options.secure !== "explicit" && options.secure !== "implicit" ? "selected" : ""}>FTP（不加密）</option><option value="explicit" ${options.secure === "explicit" ? "selected" : ""}>显式 FTPS</option><option value="implicit" ${options.secure === "implicit" ? "selected" : ""}>隐式 FTPS</option></select></div><div><label>默认目录</label><input id="remote_base_path" value="${escAttr(options.base_path || "/")}" placeholder="/"></div></div><div class="check-grid"><span class="protocol-mode-note">FTP 固定使用被动模式，兼容常见 NAT 和防火墙环境。</span><label class="checkline"><input id="remote_reject_unauthorized" type="checkbox" ${options.reject_unauthorized !== false ? "checked" : ""}>验证 TLS 证书</label></div>`;
   if (protocol === "telnet") return `<div class="grid"><div><label>终端类型</label><input id="remote_terminal_type" value="${escAttr(options.terminal_type || "xterm-256color")}"></div><div><label>字符编码</label>${remoteEncodingSelect("remote_encoding", options.encoding || "utf8")}</div></div><div class="connection-test-status warning">Telnet 不加密用户名、密码和终端内容，只应在可信内网或加密隧道中使用。</div>`;
   return `<div class="grid"><div><label>串口设备</label><div class="upload-line"><input id="remote_serial_path" list="remoteSerialPorts" value="${escAttr(options.path || "")}" placeholder="COM3 或 /dev/ttyUSB0"><button type="button" onclick="loadRemoteSerialPorts()">${icon("refresh-cw")}<span>扫描</span></button></div><datalist id="remoteSerialPorts"></datalist></div><div><label>波特率</label><input id="remote_baud_rate" type="number" min="50" max="4000000" value="${Number(options.baud_rate || 115200)}"></div></div><div class="grid3"><div><label>数据位</label><select id="remote_data_bits">${[8,7,6,5].map(value => `<option value="${value}" ${Number(options.data_bits || 8) === value ? "selected" : ""}>${value}</option>`).join("")}</select></div><div><label>停止位</label><select id="remote_stop_bits">${[1,1.5,2].map(value => `<option value="${value}" ${Number(options.stop_bits || 1) === value ? "selected" : ""}>${value}</option>`).join("")}</select></div><div><label>校验位</label><select id="remote_parity">${[["none","无"],["even","偶"],["odd","奇"],["mark","Mark"],["space","Space"]].map(([value,label]) => `<option value="${value}" ${String(options.parity || "none") === value ? "selected" : ""}>${label}</option>`).join("")}</select></div></div><div class="grid"><div><label>字符编码</label>${remoteEncodingSelect("remote_encoding", options.encoding || "utf8")}</div><div class="check-grid"><label class="checkline"><input id="remote_rts_cts" type="checkbox" ${options.rts_cts ? "checked" : ""}>RTS/CTS</label><label class="checkline"><input id="remote_xon" type="checkbox" ${options.xon ? "checked" : ""}>XON</label><label class="checkline"><input id="remote_xoff" type="checkbox" ${options.xoff ? "checked" : ""}>XOFF</label></div></div>`;
@@ -1144,10 +1243,13 @@ function changeRemoteProfileProtocol() {
 function remoteProfileFormOptions(protocol) {
   const sourceSshId = Number($("remote_source_ssh_connection_id")?.value || 0);
   const withSource = options => sourceSshId ? {...options, source_ssh_connection_id:sourceSshId} : options;
-  if (protocol === "rdp") return withSource({domain:$("remote_domain").value.trim(), fullscreen:$("remote_fullscreen").value === "1", width:Number($("remote_width").value), height:Number($("remote_height").value), admin_session:$("remote_admin_session").checked, clipboard:$("remote_clipboard").checked, audio:$("remote_audio").value});
+  if (protocol === "rdp") {
+    const displayMode = $("remote_rdp_display_mode").value;
+    return withSource({domain:$("remote_domain").value.trim(), display_mode:displayMode, fullscreen:displayMode === "fullscreen", width:Number($("remote_rdp_width").value), height:Number($("remote_rdp_height").value), admin_session:$("remote_admin_session").checked, clipboard:$("remote_clipboard").checked, audio:$("remote_audio").value});
+  }
   if (protocol === "vnc") {
     const vncSourceId = Number($("remote_vnc_ssh_connection")?.value || 0);
-    const options = {client_mode:$("remote_vnc_client_mode").value, view_only:$("remote_view_only").checked, shared:$("remote_shared").checked, quality:Number($("remote_quality").value)};
+    const options = {client_mode:$("remote_vnc_client_mode").value, cursor_mode:$("remote_vnc_cursor_mode").value, display_mode:$("remote_vnc_display_mode").value, view_only:$("remote_view_only").checked, shared:$("remote_shared").checked, quality:Number($("remote_quality").value)};
     return vncSourceId ? {...options, source_ssh_connection_id:vncSourceId} : options;
   }
   if (protocol === "xdmcp") return withSource({mode:$("remote_xdmcp_mode").value, window_mode:$("remote_xdmcp_window_mode").value, width:Number($("remote_xdmcp_width").value), height:Number($("remote_xdmcp_height").value), local_address:$("remote_xdmcp_local_address").value.trim(), ssh_connection_id:Number($("remote_xdmcp_ssh_connection").value || 0)});
@@ -1817,6 +1919,108 @@ async function configureXdmcpHost(id, action, button=null, installMode="online")
 function noVncRfbClass() {
   if (!noVncRfbPromise) noVncRfbPromise = import("/vendor/novnc/core/rfb.js").then(module => module.default);
   return noVncRfbPromise;
+}
+
+function normalizeVncRemotePlatform(value="") {
+  const platform = String(value || "").trim().toLowerCase();
+  if (["darwin", "mac", "macos", "osx"].includes(platform)) return "macos";
+  if (platform === "linux" || platform.startsWith("linux-")) return "linux";
+  return platform;
+}
+
+function vncCursorMode(session) {
+  const mode = String(session?.profile?.options?.cursor_mode || "auto").trim().toLowerCase();
+  return ["auto", "show", "hide"].includes(mode) ? mode : "auto";
+}
+
+function vncUsesFramebufferCursor(session) {
+  const platform = normalizeVncRemotePlatform(session?.remotePlatform || session?.vncServerDiagnostics?.platform || session?.vncServerDiagnostics?.os_id);
+  if (platform !== "macos") return false;
+  const diagnostics = session?.vncServerDiagnostics || null;
+  const serviceUnit = String(diagnostics?.service_unit || "").trim().toLowerCase();
+  const builtinScreenSharing = diagnostics?.builtin === true || serviceUnit === "com.apple.screensharing";
+  // macOS Screen Sharing paints the pointer into the framebuffer. If the
+  // server was not identified, keep the macOS-safe fallback; an explicit
+  // third-party server marker can opt out when it provides RFB cursor shapes.
+  return builtinScreenSharing || !diagnostics || diagnostics?.builtin !== false;
+}
+
+function applyVncCursorPolicy(session, rfb=session?.rfb) {
+  if (!session) return false;
+  const mode = vncCursorMode(session);
+  const hideLocalCursor = mode === "hide" || (mode === "auto" && vncUsesFramebufferCursor(session));
+  session.localCursorHidden = hideLocalCursor;
+  session.screen?.classList.toggle("vnc-hide-local-cursor", hideLocalCursor);
+  const canvas = rfb?._canvas;
+  canvas?.classList.toggle("vnc-local-cursor-target", hideLocalCursor);
+  const fallbackCursorCanvas = rfb?._cursor?._canvas;
+  fallbackCursorCanvas?.classList.toggle("vnc-local-cursor-overlay-hidden", hideLocalCursor);
+  if (rfb) rfb.showDotCursor = !hideLocalCursor;
+  renderVncCursorModeControl(session);
+  return hideLocalCursor;
+}
+
+function vncDisplayMode(session) {
+  const mode = String(session?.profile?.options?.display_mode || "scale").trim().toLowerCase();
+  return ["scale", "original", "resize"].includes(mode) ? mode : "scale";
+}
+
+function applyVncDisplayMode(session, rfb=session?.rfb) {
+  if (!session) return "scale";
+  const mode = vncDisplayMode(session);
+  session.viewport?.classList.toggle("vnc-display-original", mode === "original");
+  session.viewport?.classList.toggle("vnc-display-resize", mode === "resize");
+  if (rfb) {
+    // Keep local scaling enabled while requesting remote resize so servers
+    // without SetDesktopSize support still fill the available viewport.
+    rfb.scaleViewport = mode !== "original";
+    rfb.resizeSession = mode === "resize";
+  }
+  return mode;
+}
+
+function renderVncCursorModeControl(session) {
+  const button = session?.workspace?.querySelector("[data-vnc-cursor-mode]");
+  if (!button) return;
+  const mode = vncCursorMode(session);
+  const detail = mode === "auto"
+    ? `自动（当前${session.localCursorHidden ? "隐藏" : "显示"}本地光标）`
+    : mode === "hide"
+      ? "手动隐藏本地光标"
+      : "手动显示本地光标";
+  const label = `鼠标模式：${detail}`;
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", String(mode !== "auto"));
+  button.classList.toggle("active", mode !== "auto");
+}
+
+function showVncCursorModeMenu(event, key) {
+  const session = vncSessions.get(key);
+  if (!session) return;
+  const mode = vncCursorMode(session);
+  showActionMenu(event, [
+    {label:"自动（按远端平台）", icon:mode === "auto" ? "circle-check" : "sparkles", run:()=>setVncCursorMode(key, "auto")},
+    {separator:true},
+    {label:"手动：显示本地光标", icon:mode === "show" ? "circle-check" : "mouse-pointer-2", run:()=>setVncCursorMode(key, "show")},
+    {label:"手动：隐藏本地光标", icon:mode === "hide" ? "circle-check" : "eye-off", run:()=>setVncCursorMode(key, "hide")}
+  ]);
+}
+
+async function setVncCursorMode(key, mode) {
+  const session = vncSessions.get(key);
+  if (!session?.profile || !["auto", "show", "hide"].includes(mode)) return;
+  const profile = remoteProfileById(session.profile.id) || session.profile;
+  const updated = await api(`/api/remote-profiles/${Number(profile.id)}`, {
+    method:"PUT",
+    body:JSON.stringify({options:{...(profile.options || {}), cursor_mode:mode}})
+  });
+  const index = remoteProfiles.findIndex(item => Number(item.id) === Number(updated.id));
+  if (index >= 0) remoteProfiles[index] = updated;
+  session.profile = updated;
+  applyVncCursorPolicy(session);
+  const text = mode === "auto" ? "VNC 鼠标模式已设为自动" : mode === "hide" ? "已手动隐藏本地光标" : "已手动显示本地光标";
+  notify(text, "success");
 }
 
 function vncClipboardDefaultStatus(session) {
@@ -2768,6 +2972,11 @@ function hideVncConnectionHelp(session) {
 function showVncConnectionHelp(session, serviceAvailable=false, detail="", diagnostics=null) {
   if (!session) return;
   session.helpState = {serviceAvailable:Boolean(serviceAvailable), detail:String(detail || ""), diagnostics:diagnostics || null};
+  if (diagnostics) {
+    session.vncServerDiagnostics = diagnostics;
+    session.remotePlatform = diagnostics.platform || diagnostics.os_id || session.remotePlatform;
+    applyVncCursorPolicy(session);
+  }
   if (!session.help) return;
   session.help.innerHTML = vncConnectionHelpMarkup(session.profile, session.remotePlatform, serviceAvailable, detail, diagnostics, session.key);
   session.help.hidden = false;
@@ -2952,6 +3161,8 @@ async function runVncServerAction(profileId, key, action, button=null) {
     const after = result.after || result.before || {};
     if (session) {
       session.remotePlatform = after.platform || session.remotePlatform;
+      session.vncServerDiagnostics = after;
+      applyVncCursorPolicy(session);
       const available = after.status === "ready" || after.status === "reachable" || after.listening === true;
       const copy = vncDiagnosticCopy(after, available, result.output || "");
       vncSessionStatus(session, copy.title, "error");
@@ -3011,7 +3222,14 @@ function renderEmbeddedVnc(profile, key, diagnostics=null) {
   if (session?.workspace) {
     view.replaceChildren(session.workspace);
     session.profile = profile;
+    const sourceConnection = currentConnection(Number(profile.options?.source_ssh_connection_id || profile.options?.ssh_connection_id || 0));
+    const sourcePlatform = String(sourceConnection?.terminal_program_platform || "").toLowerCase();
+    session.vncServerDiagnostics = diagnostics || session.vncServerDiagnostics || null;
+    session.remotePlatform = diagnostics?.platform || diagnostics?.os_id || (["macos", "darwin"].includes(sourcePlatform) ? "macos" : "") || session.remotePlatform || "";
     session.viewport = session.workspace.querySelector("#vncViewport");
+    session.screen = session.workspace.querySelector(".vnc-screen") || session.screen;
+    applyVncDisplayMode(session);
+    applyVncCursorPolicy(session);
     session.status = session.workspace.querySelector("#vncStatus");
     session.clipboardStatus = session.workspace.querySelector("#vncClipboardStatus");
     session.clipboardHelperButton = session.workspace.querySelector("[data-vnc-clipboard-helper]");
@@ -3023,7 +3241,7 @@ function renderEmbeddedVnc(profile, key, diagnostics=null) {
     if (session.helpState) showVncConnectionHelp(session, session.helpState.serviceAvailable, session.helpState.detail, session.helpState.diagnostics);
     requestAnimationFrame(() => {
       try {
-        if (session.rfb) session.rfb.scaleViewport = true;
+        applyVncDisplayMode(session);
       } catch {}
       focusEmbeddedVnc(session);
     });
@@ -3040,6 +3258,7 @@ function renderEmbeddedVnc(profile, key, diagnostics=null) {
         <button class="icon-button" data-vnc-clipboard-sync onclick="toggleVncClipboardSync('${escAttr(key)}')" title="开启剪贴板自动同步" aria-label="开启剪贴板自动同步" aria-pressed="false">${icon("clipboard-check")}</button>
         <button class="icon-button" onclick="pasteClipboardToVnc('${escAttr(key)}')" title="发送本机剪贴板" aria-label="发送本机剪贴板">${icon("clipboard-paste")}</button>
         <button class="icon-button" data-vnc-clipboard-receive onclick="copyVncClipboardFromRemote('${escAttr(key)}')" title="远端尚未发送剪贴板" aria-label="远端尚未发送剪贴板" disabled>${icon("clipboard-copy")}</button>
+        <button class="icon-button" data-vnc-cursor-mode onclick="showVncCursorModeMenu(event,'${escAttr(key)}')" title="鼠标模式：自动" aria-label="鼠标模式：自动" aria-pressed="false">${icon("mouse-pointer-2")}</button>
         <button class="icon-button" onclick="toggleVncFullscreen('${escAttr(key)}')" title="全屏" aria-label="全屏">${icon("maximize-2")}</button>
         <button class="icon-button" onclick="openVncSetupGuide(${profile.id})" title="VNC 服务管理" aria-label="VNC 服务管理">${icon("server-cog")}</button>
         <button class="icon-button" onclick="reconnectEmbeddedVnc(${profile.id},'${escAttr(key)}')" title="重新连接" aria-label="重新连接">${icon("refresh-cw")}</button>
@@ -3061,16 +3280,18 @@ function renderEmbeddedVnc(profile, key, diagnostics=null) {
   }
   session.workspace = view.querySelector(".vnc-workspace");
   session.profile = profile;
+  session.vncServerDiagnostics = diagnostics || session.vncServerDiagnostics || null;
   const sourceConnection = currentConnection(Number(profile.options?.source_ssh_connection_id || profile.options?.ssh_connection_id || 0));
   const sourcePlatform = String(sourceConnection?.terminal_program_platform || "").toLowerCase();
   const previousRemotePlatform = session.remotePlatform || "";
-  session.remotePlatform = diagnostics?.os_id || (sourcePlatform === "macos" ? "macos" : "") || previousRemotePlatform;
+  session.remotePlatform = diagnostics?.platform || diagnostics?.os_id || (["macos", "darwin"].includes(sourcePlatform) ? "macos" : "") || previousRemotePlatform;
   if (session.remotePlatform !== previousRemotePlatform) {
     session.clipboardTransport = "rfb";
     session.clipboardTransportChecked = false;
     session.clipboardTransportPromise = null;
     session.remoteClipboardBridgeLastSeen = undefined;
   }
+  applyVncCursorPolicy(session);
   session.status = view.querySelector("#vncStatus");
   session.clipboardStatus = view.querySelector("#vncClipboardStatus");
   session.clipboardHelperButton = view.querySelector("[data-vnc-clipboard-helper]");
@@ -3079,6 +3300,7 @@ function renderEmbeddedVnc(profile, key, diagnostics=null) {
   session.viewport = viewport;
   session.help = viewport.querySelector("#vncConnectionHelp");
   viewport.appendChild(session.screen);
+  applyVncDisplayMode(session);
   if (session.helpState) showVncConnectionHelp(session, session.helpState.serviceAvailable, session.helpState.detail, session.helpState.diagnostics);
   vncSessionStatus(session, session.statusText || `正在连接 ${remoteProfileEndpoint(profile)}`, session.statusState || "connecting");
   renderVncClipboardControls(session);
@@ -3129,11 +3351,10 @@ async function connectEmbeddedVnc(profile, key) {
       credentials:credentials || undefined
     });
     session.rfb = rfb;
-    rfb.scaleViewport = true;
-    rfb.resizeSession = false;
+    applyVncDisplayMode(session, rfb);
     rfb.viewOnly = Boolean(profile.options?.view_only);
     rfb.qualityLevel = Math.max(0, Math.min(9, Number(profile.options?.quality ?? 8)));
-    rfb.showDotCursor = true;
+    applyVncCursorPolicy(session);
     rfb.background = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() || "#1e1e1e";
     rfb.addEventListener("connect", () => {
       if (!isCurrentConnection() || session.rfb !== rfb) return rfb.disconnect();
@@ -3407,7 +3628,7 @@ function syncVncFullscreenPresentation() {
     return;
   }
   requestAnimationFrame(() => {
-    try { if (session.rfb) session.rfb.scaleViewport = true; } catch {}
+    try { applyVncDisplayMode(session); } catch {}
     focusEmbeddedVnc(session);
   });
 }

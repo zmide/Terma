@@ -39,7 +39,7 @@ try {
     const options = protocol === "serial"
       ? {path:process.platform === "win32" ? "COM99" : "/dev/tty-test"}
       : protocol === "vnc"
-        ? {client_mode:"system", quality:7}
+        ? {client_mode:"system", cursor_mode:"hide", display_mode:"original", quality:7}
         : protocol === "xdmcp"
           ? {mode:"indirect", window_mode:"windowed", width:1600, height:900, local_address:"192.168.31.111"}
           : {};
@@ -56,7 +56,23 @@ try {
     assert.equal(db.getRemoteProfile(id).protocol, protocol);
   }
   assert.equal(db.getRemoteProfile(ids.get("vnc")).options.client_mode, "system");
-  assert.deepEqual(db.getRemoteProfile(ids.get("xdmcp")).options, {mode:"indirect", window_mode:"windowed", width:1600, height:900, local_address:"192.168.31.111", ssh_connection_id:0});
+  assert.equal(db.getRemoteProfile(ids.get("vnc")).options.cursor_mode, "hide");
+  assert.equal(db.getRemoteProfile(ids.get("vnc")).options.display_mode, "original");
+  db.updateRemoteProfile(ids.get("vnc"), {options:{client_mode:"embedded", cursor_mode:"show", display_mode:"resize", quality:9}});
+  assert.equal(db.getRemoteProfile(ids.get("vnc")).options.cursor_mode, "show");
+  assert.equal(db.getRemoteProfile(ids.get("vnc")).options.display_mode, "resize");
+  db.updateRemoteProfile(ids.get("vnc"), {options:{cursor_mode:"invalid"}});
+  assert.equal(db.getRemoteProfile(ids.get("vnc")).options.cursor_mode, "auto");
+  assert.equal(db.getRemoteProfile(ids.get("vnc")).options.display_mode, "scale");
+  assert.deepEqual(db.getRemoteProfile(ids.get("xdmcp")).options, {mode:"indirect", window_mode:"fixed", width:1600, height:900, local_address:"192.168.31.111", ssh_connection_id:0});
+  const defaultRdp = db.getRemoteProfile(ids.get("rdp")).options;
+  assert.equal(defaultRdp.display_mode, "dynamic");
+  assert.equal(defaultRdp.fullscreen, false);
+  db.updateRemoteProfile(ids.get("rdp"), {options:{fullscreen:true,width:1920,height:1080}});
+  assert.equal(db.getRemoteProfile(ids.get("rdp")).options.display_mode, "fullscreen");
+  db.updateRemoteProfile(ids.get("rdp"), {options:{display_mode:"fixed",width:7680,height:4320}});
+  assert.equal(db.getRemoteProfile(ids.get("rdp")).options.display_mode, "fixed");
+  assert.equal(db.getRemoteProfile(ids.get("rdp")).options.width, 7680);
   const listedFtp = db.listRemoteProfiles().find(item => item.id === ids.get("ftp"));
   assert.equal(listedFtp.password, undefined);
   assert.equal(listedFtp.has_password, true);

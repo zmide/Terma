@@ -19,6 +19,9 @@ TunnelDesk 是一个面向桌面端和自托管 Web 的远程连接工作台，�
     <td colspan="2"><strong>本地文件、SFTP 与任务中心</strong><br><img src=".github/assets/screenshots/desktop-sftp.png" alt="TunnelDesk 本地文件、SFTP 与任务中心"></td>
   </tr>
   <tr>
+    <td colspan="2"><strong>Linux 桌面管理</strong><br><img src=".github/assets/screenshots/desktop-linux-management.png" alt="TunnelDesk Linux 桌面管理"></td>
+  </tr>
+  <tr>
     <td colspan="2"><strong>端口转发</strong><br><img src=".github/assets/screenshots/desktop-forwarding.png" alt="TunnelDesk 端口转发"></td>
   </tr>
 </table>
@@ -71,7 +74,7 @@ TunnelDesk 是一个面向桌面端和自托管 Web 的远程连接工作台，�
 ### 远程桌面与其他协议
 
 - SSH 与其他协议使用独立活动入口；RDP、VNC、XDMCP、FTP/FTPS、Telnet 和串口可单独分组、搜索和新增，也可在新增 SSH 时或其更多菜单中按协议生成单个或全部默认配置。
-- RDP 使用系统原生客户端，由 SSH 生成的配置会按目标地址直接打开并由客户端询问桌面账号；macOS 未安装 Windows App 时可使用 Microsoft 官方独立 PKG，支持提前放入下载目录后离线安装。VNC 可选择 TunnelDesk 内置查看器、系统客户端或自动优先内置，可选加密保存密码，并在工作区内完成控制、双向剪贴板自动同步、全屏和重连；权限受限时仍可手动收发剪贴板，密码错误时可重新输入并更新保存密码。
+- RDP 使用系统原生客户端，由 SSH 生成的配置会按目标地址直接打开并由客户端询问桌面账号；macOS 未安装 Windows App 时可使用 Microsoft 官方独立 PKG，支持提前放入下载目录后离线安装。VNC 可选择 TunnelDesk 内置查看器、系统客户端或自动优先内置，可选加密保存密码，并在工作区内完成控制、双向剪贴板自动同步、全屏和重连；鼠标默认按远端平台自动选择显示策略，也可在 VNC 工具栏手动显示或隐藏本地光标。权限受限时仍可手动收发剪贴板，密码错误时可重新输入并更新保存密码。
 - Windows 桌面包内置并管理 X Server；macOS 由 TunnelDesk 管理 XQuartz 的启动、停止和 XDMCP 窗口，Linux 复用当前图形桌面并使用 Xephyr。X11 入口会通过 SSH 自动识别远端已安装的终端、工具、文件管理器、浏览器和桌面会话，保存密码的连接也可直接启动，并支持自定义程序；macOS 可探测 XQuartz、xauth、sshd 和 `XAuthLocation`，缺少组件时可在程序内安装官方 XQuartz。
 - Linux 桌面管理可通过 SSH 识别 Debian、Ubuntu、RHEL、Fedora、Arch、openSUSE 等发行版，探测并安装或卸载常见桌面环境；卸载后会按核心启动程序重新验证，不会默认清理无关的自动依赖。XDMCP、桌面管理、RDP 会话修复、SSH X11 转发和远端 X11/XQuartz 安装可使用仅限本次操作的管理员密码、私钥或 SSH Agent，凭据不会保存。X Server 管理可检查、开启或关闭远端 SSH X11 转发，启用 X11 的终端连接会直接显示实际转发结果。
 - Windows、Linux 和 macOS 桌面版均支持 XDMCP 直接查询、间接查询和局域网广播；Windows 使用随包组件，Linux 使用 Xephyr，macOS 使用 XQuartz 提供的 Xephyr。TunnelDesk 可通过同主机 SSH 连接探测桌面会话、显示管理器和 UDP 177，管理 LightDM 和仍保留 XDMCP 的旧版 GDM；GDM 50 及以上或 Debian/Ubuntu 的 SDDM 可经确认切换为 LightDM，并只撤销自身添加的 UFW/firewalld 规则。XDMCP 不加密，只应在可信局域网使用。

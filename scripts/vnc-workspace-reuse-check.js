@@ -18,6 +18,9 @@ const connectEmbeddedVnc = source.slice(connectStart, connectEnd);
 const fullscreenStart = source.indexOf("function syncVncFullscreenPresentation(");
 const fullscreenEnd = source.indexOf("\nasync function launchRemoteDesktop", fullscreenStart);
 const fullscreenSource = source.slice(fullscreenStart, fullscreenEnd);
+const cursorPolicyStart = source.indexOf("function normalizeVncRemotePlatform(");
+const cursorPolicyEnd = source.indexOf("\nfunction vncClipboardDefaultStatus", cursorPolicyStart);
+const cursorPolicy = source.slice(cursorPolicyStart, cursorPolicyEnd);
 const css = fs.readFileSync(path.resolve(__dirname, "..", "public", "app.css"), "utf8");
 
 assert.ok(openStart >= 0 && openEnd > openStart, "openRemoteDesktop source must be available");
@@ -25,6 +28,7 @@ assert.ok(renderStart >= 0 && renderEnd > renderStart, "renderEmbeddedVnc source
 assert.ok(focusStart >= 0 && focusEnd > focusStart, "VNC focus guard source must be available");
 assert.ok(connectStart >= 0 && connectEnd > connectStart, "connectEmbeddedVnc source must be available");
 assert.ok(fullscreenStart >= 0 && fullscreenEnd > fullscreenStart, "VNC fullscreen source must be available");
+assert.ok(cursorPolicyStart >= 0 && cursorPolicyEnd > cursorPolicyStart, "VNC cursor policy source must be available");
 
 const cachedWorkspace = openRemoteDesktop.indexOf("const existingVncSession");
 const desktopProbe = openRemoteDesktop.indexOf("inspectLinuxDesktopForRemoteProfile(profile)");
@@ -38,8 +42,7 @@ const cachedBranch = renderEmbeddedVnc.slice(
   renderEmbeddedVnc.indexOf("view.innerHTML =")
 );
 assert.match(cachedBranch, /view\.replaceChildren\(session\.workspace\)/, "tab switching must reattach the existing VNC workspace");
-assert.match(cachedBranch, /session\.rfb\.scaleViewport = true/, "reattached noVNC canvas must refresh its scale immediately");
-assert.doesNotMatch(cachedBranch, /session\.rfb\.scaleViewport = false/, "tab switching must not force a second canvas layout pass");
+assert.match(cachedBranch, /applyVncDisplayMode\(session\)/, "reattached noVNC canvas must restore its selected display policy immediately");
 assert.doesNotMatch(cachedBranch, /inspectLinuxDesktopForRemoteProfile|connectEmbeddedVnc\(profile, key\)[\s\S]*await/, "cached VNC restore must stay local and synchronous");
 
 assert.match(vncFocus, /session\?\.workspace\?\.isConnected/, "a detached VNC workspace must not steal keyboard focus");
@@ -52,11 +55,23 @@ assert.match(connectEmbeddedVnc, /const RFB = await noVncRfbClass\(\);\s*if \(!i
 assert.match(connectEmbeddedVnc, /vnc-credential[\s\S]*?if \(!isCurrentConnection\(\)\) return;/, "a closed or reopened tab must discard a late credential response");
 assert.match(connectEmbeddedVnc, /addEventListener\("connect"[\s\S]*?!isCurrentConnection\(\)/, "an obsolete noVNC connection event must be ignored");
 assert.match(connectEmbeddedVnc, /catch \(error\) \{\s*if \(!isCurrentConnection\(\)\) return;/, "an obsolete connection failure must not alter the replacement tab");
+assert.match(connectEmbeddedVnc, /applyVncDisplayMode\(session, rfb\)/, "new noVNC sessions must apply the saved scale or remote-resize policy");
 
 assert.match(fullscreenSource, /document\.documentElement\.requestFullscreen\(\)/, "fullscreen must keep noVNC's body-level cursor overlay inside the fullscreen tree");
 assert.match(fullscreenSource, /document\.addEventListener\("fullscreenchange", syncVncFullscreenPresentation\)/, "fullscreen exit must restore the regular VNC presentation");
-assert.match(fullscreenSource, /session\.rfb\.scaleViewport = true/, "fullscreen changes must refresh noVNC scaling");
+assert.match(fullscreenSource, /applyVncDisplayMode\(session\)/, "fullscreen changes must restore the selected VNC display policy");
 assert.doesNotMatch(fullscreenSource, /viewport\.requestFullscreen/, "the VNC viewport alone must not enter fullscreen because noVNC's fallback cursor lives under document.body");
 assert.match(css, /html\.vnc-fullscreen-document:fullscreen \.vnc-viewport\.vnc-fullscreen-active \{[^}]*position:fixed;[^}]*inset:0;[^}]*z-index:60000;/s, "the active VNC viewport must cover the fullscreen document without covering noVNC's software cursor layer");
 
-console.log("VNC 工作区复用检查通过：已有标签立即恢复，旧连接异步结果隔离，后台分屏不抢焦点，全屏保留远端光标");
+assert.match(cursorPolicy, /\["auto", "show", "hide"\]/, "VNC cursor mode must support automatic and both manual overrides");
+assert.match(cursorPolicy, /mode === "hide" \|\| \(mode === "auto" && vncUsesFramebufferCursor\(session\)\)/, "automatic mode must hide the duplicate local cursor only for framebuffer cursor servers");
+assert.match(cursorPolicy, /rfb\.showDotCursor = !hideLocalCursor/, "hidden local cursor mode must also disable noVNC's transparent-cursor dot");
+assert.match(cursorPolicy, /showVncCursorModeMenu[\s\S]*?setVncCursorMode/, "the active VNC workspace must expose automatic and manual cursor controls");
+assert.match(cursorPolicy, /\["scale", "original", "resize"\]/, "VNC display mode must support local scaling, original pixels, and remote resizing");
+assert.match(cursorPolicy, /rfb\.scaleViewport = mode !== "original"/);
+assert.match(cursorPolicy, /rfb\.resizeSession = mode === "resize"/);
+assert.match(css, /\.vnc-screen\.vnc-hide-local-cursor canvas[^}]*cursor:none !important;/s, "macOS framebuffer cursor mode must hide the noVNC CSS cursor");
+assert.match(css, /\.vnc-local-cursor-overlay-hidden[^}]*visibility:hidden !important;/s, "macOS framebuffer cursor mode must hide noVNC's fallback overlay cursor");
+assert.match(css, /\.vnc-viewport\.vnc-display-original \{[^}]*overflow:auto;/s, "original-pixel mode must allow scrolling instead of forcing local scaling");
+
+console.log("VNC 工作区复用检查通过：已有标签立即恢复，旧连接异步结果隔离，后台分屏不抢焦点，全屏与自动/手动鼠标策略有效");

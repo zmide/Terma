@@ -17,6 +17,20 @@ const XQUARTZ_BYTES = 122035963;
 const XQUARTZ_SHA256 = "9ac35a505095bfbd3009c3b4772f0c6421e2f79c4210ab908459270d1c447909";
 const XQUARTZ_TEAM_ID = "NA574AWV7E";
 
+function xdmcpWindowSettings(options = {}) {
+  const rawMode = String(options.window_mode || "");
+  const windowMode = ["resizable", "fullscreen", "fixed"].includes(rawMode)
+    ? rawMode
+    : rawMode === "windowed"
+      ? "fixed"
+      : "resizable";
+  return {
+    windowMode,
+    width:Math.max(640, Math.min(8192, Math.round(Number(options.width || 1440)))),
+    height:Math.max(480, Math.min(8192, Math.round(Number(options.height || 900))))
+  };
+}
+
 function output(command, args = [], options = {}) {
   try {
     const result = spawnSync(command, args, {
@@ -859,15 +873,16 @@ function createXServerRuntime(options = {}) {
     const port = Number(profile.port || 177);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("XDMCP 端口无效");
     const displayNumber = await availableDisplayNumber();
-    const windowMode = profile.options?.window_mode === "fullscreen" ? "fullscreen" : "windowed";
-    const width = Math.max(640, Math.min(7680, Number(profile.options?.width || 1440)));
-    const height = Math.max(480, Math.min(4320, Number(profile.options?.height || 900)));
+    const {windowMode, width, height} = xdmcpWindowSettings(profile.options);
     const args = [`:${displayNumber}`];
     if (mode === "broadcast") args.push("-broadcast");
     else args.push(mode === "indirect" ? "-indirect" : "-query", host);
     args.push("-port", String(port));
     if (windowMode === "fullscreen") args.push("-fullscreen");
-    else args.push("-screen", `${Math.round(width)}x${Math.round(height)}`);
+    else {
+      args.push("-screen", `${width}x${height}`);
+      if (windowMode === "resizable") args.push("-resizeable");
+    }
     args.push("-terminate");
     const processHandle = spawn(current.xdmcp_client, args, {
       detached:false,
@@ -894,7 +909,8 @@ function createXServerRuntime(options = {}) {
       client:path.basename(current.xdmcp_client),
       display:`:${displayNumber}.0`,
       pid:processHandle.pid,
-      mode
+      mode,
+      window_mode:windowMode
     };
   }
 
@@ -924,15 +940,16 @@ function createXServerRuntime(options = {}) {
     const port = Number(profile.port || 177);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("XDMCP 端口无效");
     const displayNumber = await availableDisplayNumber();
-    const windowMode = profile.options?.window_mode === "fullscreen" ? "fullscreen" : "windowed";
-    const width = Math.max(640, Math.min(7680, Number(profile.options?.width || 1440)));
-    const height = Math.max(480, Math.min(4320, Number(profile.options?.height || 900)));
+    const {windowMode, width, height} = xdmcpWindowSettings(profile.options);
     const args = [`:${displayNumber}`];
     if (mode === "broadcast") args.push("-broadcast");
     else args.push(mode === "indirect" ? "-indirect" : "-query", host);
     args.push("-port", String(port));
     if (windowMode === "fullscreen") args.push("-fullscreen");
-    else args.push("-screen", `${Math.round(width)}x${Math.round(height)}`);
+    else {
+      args.push("-screen", `${width}x${height}`);
+      if (windowMode === "resizable") args.push("-resizeable");
+    }
     args.push("-terminate");
     const processHandle = spawn(current.xdmcp_client, args, {
       detached:false,
@@ -959,7 +976,8 @@ function createXServerRuntime(options = {}) {
       client:"TunnelDesk 内置 XDMCP（XQuartz）",
       display:`:${displayNumber}.0`,
       pid:processHandle.pid,
-      mode
+      mode,
+      window_mode:windowMode
     };
   }
 
@@ -977,9 +995,7 @@ function createXServerRuntime(options = {}) {
     const port = Number(profile.port || 177);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("XDMCP 端口无效");
     const displayNumber = await availableDisplayNumber();
-    const windowMode = profile.options?.window_mode === "fullscreen" ? "fullscreen" : "windowed";
-    const width = Math.max(640, Math.min(7680, Number(profile.options?.width || 1440)));
-    const height = Math.max(480, Math.min(4320, Number(profile.options?.height || 900)));
+    const {windowMode, width, height} = xdmcpWindowSettings(profile.options);
     const localAddress = String(profile.options?.local_address || "").trim();
     if (localAddress.includes("\0") || /[\r\n]/.test(localAddress)) throw new Error("XDMCP 本地地址无效");
     fs.mkdirSync(runtimeDataDir, {recursive:true});
@@ -990,7 +1006,7 @@ function createXServerRuntime(options = {}) {
       ...(mode === "broadcast" ? [] : [host]),
       "-port", String(port),
       ...(localAddress ? ["-from", localAddress] : []),
-      ...(windowMode === "fullscreen" ? ["-fullscreen"] : ["-screen", "0", `${Math.round(width)}x${Math.round(height)}`]),
+      ...(windowMode === "fullscreen" ? ["-fullscreen"] : ["-screen", "0", `${width}x${height}`]),
       "-swcursor",
       "-lesspointer",
       "-clipboard",
@@ -1036,7 +1052,9 @@ function createXServerRuntime(options = {}) {
       client:bundledWindowsExecutable() ? "TunnelDesk 内置 X Server" : path.basename(executable),
       display:`127.0.0.1:${displayNumber}.0`,
       pid:processHandle.pid,
-      mode
+      mode,
+      window_mode:windowMode === "resizable" ? "fixed" : windowMode,
+      requested_window_mode:windowMode
     };
   }
 
@@ -1118,6 +1136,7 @@ module.exports = {
   isWindowsDisplayCollisionError,
   retryWindowsDisplayLaunch,
   wildcardXauthorityRecords,
+  xdmcpWindowSettings,
   parseXQuartzProcessIds,
   parseXQuartzProcessOutput,
   XQUARTZ_BYTES,

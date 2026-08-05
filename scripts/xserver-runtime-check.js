@@ -23,6 +23,7 @@ const {
   parseXQuartzProcessOutput,
   retryWindowsDisplayLaunch,
   terminateTrackedXdmcpChildren,
+  xdmcpWindowSettings,
   xdmcpLaunchFailureMessage,
   wildcardXauthorityRecords
 } = require("../desktop/xserver-runtime");
@@ -83,6 +84,11 @@ async function main() {
     assert.match(source, /"-terminate", "5"/);
     assert.match(source, /"-logfile", launchLogFile/);
     assert.match(source, /waitForStableProcess\(processHandle\)/);
+    assert.deepEqual(xdmcpWindowSettings({window_mode:"windowed",width:1600,height:900}), {windowMode:"fixed",width:1600,height:900});
+    assert.deepEqual(xdmcpWindowSettings({window_mode:"resizable",width:7680,height:4320}), {windowMode:"resizable",width:7680,height:4320});
+    assert.deepEqual(xdmcpWindowSettings({width:99999,height:99999}), {windowMode:"resizable",width:8192,height:8192});
+    assert.match(source, /if \(windowMode === "resizable"\) args\.push\("-resizeable"\)/);
+    assert.match(source, /window_mode:windowMode === "resizable" \? "fixed" : windowMode/);
     assert.match(xdmcpLaunchFailureMessage("(EE) XDMCP fatal error: Session failed", 7), /TCP 6007/);
     assert.match(xdmcpLaunchFailureMessage("(EE) XDMCP fatal error: Session failed", 7), /VPN、NAT/);
     assert.equal(XQUARTZ_VERSION, "2.8.6");

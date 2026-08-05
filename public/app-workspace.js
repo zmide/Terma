@@ -1,5 +1,6 @@
 let workspaceTabDrag = null;
 let workspaceTabSuppressClickUntil = 0;
+let legacyWorkspaceTabHistory = [];
 const WORKSPACE_TAB_DRAG_THRESHOLD = 5;
 const ACTIVITY_BAR_WIDTH_DEFAULT = 40;
 const ACTIVITY_BAR_WIDTH_MIN = 36;
@@ -504,12 +505,31 @@ function moveWorkspaceTab(key, offset) {
   [...$("tabs").querySelectorAll(".tab")].find(item => item.dataset.tabKey === key)?.focus({preventScroll:true});
 }
 
+function rememberLegacyWorkspaceTab(key, previousKey=activeTabKey) {
+  const available = new Set(tabs.map(tab => tab.key));
+  legacyWorkspaceTabHistory = legacyWorkspaceTabHistory.filter(tabKey => available.has(tabKey) && tabKey !== previousKey && tabKey !== key);
+  if (previousKey && previousKey !== key && available.has(previousKey)) legacyWorkspaceTabHistory.push(previousKey);
+  if (key && available.has(key)) legacyWorkspaceTabHistory.push(key);
+}
+
+function recentLegacyWorkspaceTab(excludedKeys) {
+  const available = new Set(tabs.map(tab => tab.key));
+  legacyWorkspaceTabHistory = legacyWorkspaceTabHistory.filter(key => available.has(key));
+  for (let index = legacyWorkspaceTabHistory.length - 1; index >= 0; index -= 1) {
+    const key = legacyWorkspaceTabHistory[index];
+    if (!excludedKeys.has(key)) return key;
+  }
+  return "";
+}
+
 function addTab(key, title, subtitle, viewName, closable=true, meta={}) {
+  const previousKey = activeTabKey;
   if (key !== "welcome") tabs = tabs.filter(tab => tab.key !== "welcome");
   if (key === "welcome" && tabs.some(tab => tab.key !== "welcome")) return;
   const found = tabs.find(tab => tab.key === key);
   if (found) Object.assign(found, {title, subtitle, viewName, closable, ...meta});
   else tabs.push({key, title, subtitle, viewName, closable, ...meta});
+  rememberLegacyWorkspaceTab(key, previousKey);
   activeTabKey = key;
   renderTabs();
   revealWorkspaceTab(key);
@@ -554,6 +574,7 @@ function activateTab(key) {
   if (activeView === "sftp" && activeTabKey !== key && typeof rememberSftpViewState === "function") {
     rememberSftpViewState(activeTabKey);
   }
+  rememberLegacyWorkspaceTab(key, activeTabKey);
   activeTabKey = key;
   renderTabs();
   revealWorkspaceTab(key);
@@ -569,6 +590,7 @@ function closeTabsByKey(keys, anchorKey="") {
   const targets = new Set(keys);
   const previousTabs = [...tabs];
   const anchorIndex = Math.max(0, previousTabs.findIndex(tab => tab.key === anchorKey));
+  const recentKey = targets.has(activeTabKey) ? recentLegacyWorkspaceTab(targets) : "";
   for (const key of targets) {
     closeTerminalSession(key);
     if (typeof closeRemoteProtocolSession === "function") closeRemoteProtocolSession(key);
@@ -580,9 +602,10 @@ function closeTabsByKey(keys, anchorKey="") {
     if (key === "command") stopBatchCommand();
   }
   tabs = tabs.filter(tab => !targets.has(tab.key));
+  legacyWorkspaceTabHistory = legacyWorkspaceTabHistory.filter(key => tabs.some(tab => tab.key === key));
   if (!targets.has(activeTabKey)) return renderTabs();
   const previousKeys = previousTabs.map(tab => tab.key);
-  const fallbackKey = [previousKeys[anchorIndex], ...previousKeys.slice(0, anchorIndex).reverse(), ...previousKeys.slice(anchorIndex + 1)]
+  const fallbackKey = [recentKey, previousKeys[anchorIndex], ...previousKeys.slice(0, anchorIndex).reverse(), ...previousKeys.slice(anchorIndex + 1)]
     .find(key => !targets.has(key) && tabs.some(tab => tab.key === key));
   if (fallbackKey) activateTab(fallbackKey);
   else renderWelcome();
@@ -656,6 +679,7 @@ function restoreTabsState() {
     window.restoringTabs = true;
     tabs = restored;
     activeTabKey = restored.some(tab => tab.key === saved.activeTabKey) ? saved.activeTabKey : restored[0].key;
+    legacyWorkspaceTabHistory = activeTabKey ? [activeTabKey] : [];
     renderTabs();
     revealWorkspaceTab(activeTabKey);
     renderTabContent(tabs.find(tab => tab.key === activeTabKey) || tabs[0]);
@@ -1014,11 +1038,13 @@ function renderStartupSummary(box=$("startupSummary")) {
   const running = forwards.filter(forward => forward.status === "running").length;
   const reconnecting = forwards.filter(forward => forward.status === "reconnecting").length;
   const failed = forwards.filter(forward => forward.status === "failed").length;
+  const latestFailed = forwards.filter(forward => forward.status === "failed").sort((a,b) => Number(b.updated_at || 0) - Number(a.updated_at || 0))[0];
   const urls = [s.local_url, ...(s.lan_urls || [])].filter(Boolean);
   const starting = s.state === "starting";
   const warning = !starting && failed > 0;
-  const title = starting ? "启动任务正在执行" : warning ? "TunnelDesk 已就绪，部分转发异常" : "TunnelDesk 已就绪";
-  box.innerHTML = `<div class="startup-summary ${warning ? "warning" : "ready"}"><div><strong>${title}</strong><span>${urls.map(esc).join(" · ")}</span></div><div class="startup-counts"><span>运行中 ${running}</span>${reconnecting ? `<span>重连中 ${reconnecting}</span>` : ""}<span class="${failed ? "bad" : ""}">异常 ${failed}</span><button onclick="openTodaySystemLog()">系统日志</button></div></div>`;
+  const title = starting ? "启动任务正在执行" : warning ? "TunnelDesk 已就绪，存在启动失败的转发" : "TunnelDesk 已就绪";
+  const logAction = latestFailed?.updated_at ? `openSystemLogAt(${Number(latestFailed.updated_at)})` : "openTodaySystemLog()";
+  box.innerHTML = `<div class="startup-summary ${warning ? "warning" : "ready"}"><div><strong>${title}</strong><span>${urls.map(esc).join(" · ")}</span></div><div class="startup-counts"><span>运行中 ${running}</span>${reconnecting ? `<span>重连中 ${reconnecting}</span>` : ""}${failed ? `<button class="startup-status-button bad" onclick="showPrimary('running',true)" title="查看启动失败的转发">启动失败 ${failed}</button>` : `<span>启动失败 0</span>`}<button onclick="${logAction}">${failed ? "失败日志" : "系统日志"}</button></div></div>`;
 }
 
 async function loadStartupSummary(box=$("startupSummary")) {

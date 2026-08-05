@@ -129,6 +129,8 @@ function loadDockingModel() {
       addTab,
       setWorkspaceTabConnectionStatus,
       renderTabContent,
+      activateTab,
+      closeTabsByKey,
       setLayout:value => { workspaceLayout = value; },
       getLayout:() => workspaceLayout,
       setFocusedPane:value => { focusedPaneId = value; },
@@ -145,6 +147,51 @@ function loadDockingModel() {
 
   vm.runInNewContext(source, sandbox, {filename, timeout:5000});
   return {api:sandbox.__dockingModel, sandbox, storage};
+}
+
+function loadLegacyWorkspaceModel() {
+  const noop = () => {};
+  const sandbox = {
+    console,
+    Map,
+    Set,
+    Date,
+    Math,
+    JSON,
+    tabs:[],
+    activeTabKey:"",
+    activeView:"welcome",
+    responsiveLayoutMobile:false,
+    terminalSessions:new Map(),
+    sftpDisconnectedTabs:new Set(),
+    sftpViewStates:new Map(),
+    isMobileLayout:() => false,
+    requestAnimationFrame:callback => { callback(); return 1; },
+    cancelAnimationFrame:noop,
+    localStorage:{getItem:() => null, setItem:noop},
+    window:{addEventListener:noop, removeEventListener:noop},
+    document:{body:{classList:{add:noop, remove:noop, toggle:noop}}}
+  };
+  sandbox.globalThis = sandbox;
+
+  const filename = path.join(root, "public", "app-workspace.js");
+  const source = fs.readFileSync(filename, "utf8")
+    .replace(/\r?\ninitActivityBarSizing\(\);\r?\ninitOperationPaneSizing\(\);\s*$/, "")
+    + `\nrenderTabs = () => {};
+      revealWorkspaceTab = () => {};
+      renderTabContent = () => {};
+      renderWelcome = () => {};
+      closeTerminalSession = () => {};
+      globalThis.__legacyWorkspaceModel = {
+        addTab,
+        activateTab,
+        closeTabsByKey,
+        getTabs:() => tabs,
+        getActiveTabKey:() => activeTabKey
+      };`;
+
+  vm.runInNewContext(source, sandbox, {filename, timeout:5000});
+  return sandbox.__legacyWorkspaceModel;
 }
 
 function pane(id, tabs=[]) {
@@ -511,6 +558,72 @@ function runWorkspaceDockingChecks({silent=false}={}) {
     assert.match(copied.key, /^settings-copy-\d+$/);
     assert.equal(copied.kind, "settings");
     assert.equal(api.workspaceFindPane("pane-31").activeTabKey, copied.key);
+  });
+
+  check("closing a newly opened tab returns to the previously used middle tab", () => {
+    api.setTabs([
+      {key:"first", kind:"terminal", title:"First"},
+      {key:"second", kind:"terminal", title:"Second"},
+      {key:"third", kind:"terminal", title:"Third"}
+    ]);
+    api.setLayout(pane("pane-mru", ["first", "second", "third"]));
+    api.setFocusedPane("pane-mru");
+    sandbox.activeTabKey = "first";
+
+    api.activateTab("second");
+    api.addTab("settings", "Settings", "General", "settings", true, {kind:"settings"});
+    assert.equal(api.workspaceFindPane("pane-mru").activeTabKey, "settings");
+
+    api.closeTabsByKey(["settings"], "settings");
+    assert.equal(api.workspaceFindPane("pane-mru").activeTabKey, "second");
+    assert.equal(sandbox.activeTabKey, "second");
+  });
+
+  check("legacy tab layout also returns to the previously used tab", () => {
+    const legacy = loadLegacyWorkspaceModel();
+    legacy.addTab("first", "First", "", "terminal", true, {kind:"terminal"});
+    legacy.addTab("second", "Second", "", "terminal", true, {kind:"terminal"});
+    legacy.addTab("third", "Third", "", "terminal", true, {kind:"terminal"});
+    legacy.activateTab("second");
+    legacy.addTab("settings", "Settings", "General", "settings", true, {kind:"settings"});
+    legacy.closeTabsByKey(["settings"], "settings");
+    assert.equal(legacy.getActiveTabKey(), "second");
+    assert.equal(legacy.getTabs().map(tab => tab.key).join(","), "first,second,third");
+  });
+
+  check("recent-tab fallback stays inside its pane and skips tabs closed in the same batch", () => {
+    api.setTabs([
+      {key:"left-a", kind:"terminal"},
+      {key:"left-b", kind:"terminal"},
+      {key:"left-c", kind:"settings"},
+      {key:"left-d", kind:"settings"},
+      {key:"right-a", kind:"sftp"},
+      {key:"right-b", kind:"sftp"}
+    ]);
+    api.setLayout(split(
+      "split-mru",
+      "row",
+      pane("pane-mru-left", ["left-a", "left-b", "left-c", "left-d"]),
+      pane("pane-mru-right", ["right-a", "right-b"])
+    ));
+    api.setFocusedPane("pane-mru-left");
+    sandbox.activeTabKey = "left-a";
+
+    api.activateTab("left-b");
+    api.activateTab("left-c");
+    api.activateTab("right-b");
+    api.activateTab("left-d");
+    api.closeTabsByKey(["left-d", "left-c"], "left-d");
+
+    assert.equal(api.workspaceFindPane("pane-mru-left").activeTabKey, "left-b");
+    assert.equal(api.workspaceFindPane("pane-mru-right").activeTabKey, "right-b");
+    assert.equal(sandbox.activeTabKey, "left-b");
+  });
+
+  check("recent-tab history remains runtime-only", () => {
+    const saved = JSON.parse(storage.get("workspaceTabs"));
+    assert.equal(JSON.stringify(saved).includes("workspacePaneTabHistory"), false);
+    assert.equal(JSON.stringify(saved).includes("tabHistory"), false);
   });
 
   check("mobile layout exposes only the focused pane", () => {

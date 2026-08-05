@@ -248,6 +248,21 @@ async function openTodaySystemLog() {
   inPane(() => openLog(log.path, log.label || `system-${today}`));
 }
 
+async function openSystemLogAt(timestamp) {
+  const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
+  const value = Number(timestamp || 0);
+  const date = new Date(value > 1e12 ? value : value * 1000);
+  if (!Number.isFinite(value) || value <= 0 || Number.isNaN(date.getTime())) return openTodaySystemLog();
+  logsData = await api("/api/logs");
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  const day = `${yyyy}-${mm}-${dd}`;
+  const log = (logsData.system || []).find(item => String(item.path || item.label || "").includes(day));
+  if (!log) return notify(`${yyyy}年${Number(mm)}月${Number(dd)}日没有对应系统日志`, "info");
+  inPane(() => openLog(log.path, log.label || `system-${day}`));
+}
+
 function logPathsForKey(key) {
   if (key === "system") {
     return (logsData.system || []).map(log => log.path);
