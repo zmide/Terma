@@ -3,9 +3,23 @@ const http = require("node:http");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
-const { spawn } = require("node:child_process");
 const { URL } = require("node:url");
-const { DatabaseSync } = require("node:sqlite");
+
+function probeTcpEndpoint(host, port, timeoutMs=2200) {
+  return new Promise<{ok:boolean, error:string}>(resolve => {
+    let settled = false;
+    const socket = net.createConnection({host:String(host || ""), port:Number(port || 0)});
+    const finish = (ok, error="") => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve({ok, error:String(error || "")});
+    };
+    socket.setTimeout(timeoutMs, () => finish(false, "连接超时"));
+    socket.once("connect", () => finish(true));
+    socket.once("error", error => finish(false, error?.message || "连接失败"));
+  });
+}
 const {
   DATA_DIR,
   BASE_DIR,
@@ -16,6 +30,7 @@ const {
   PID_FILE,
   PUBLIC_DIR,
   PROJECT_SSH_DIR,
+  USER_SSH_DIR,
   DEFAULT_HOST,
   DEFAULT_HOSTS,
   DEFAULT_PORT,
@@ -26,13 +41,28 @@ const {
 } = require("./config");
 const {
   listConnections,
+  listRemoteProfiles,
+  getRemoteProfile,
+  insertRemoteProfile,
+  createRemoteProfileFromConnection,
+  createAllRemoteProfilesFromConnection,
+  updateRemoteProfile,
+  getVncProfileCredential,
+  updateVncProfileCredential,
+  duplicateRemoteProfile,
+  deleteRemoteProfile,
+  updateRemoteProfileUsage,
+  updateRemoteProfileFlags,
   getConnection,
   getForward,
   insertConnection,
   duplicateConnection,
   updateConnection,
+  updateConnectionUsage,
+  updateConnectionFlags,
   updateTerminalPreferences,
   updateTerminalStartup,
+  updateConnectionX11Mode,
   updateSftpTextEncoding,
   updateSftpFilenameEncoding,
   bulkUpdateConnections,
@@ -42,6 +72,17 @@ const {
   updateForward,
   deleteConnection,
   deleteForward,
+  listCommandSnippets,
+  insertCommandSnippet,
+  updateCommandSnippet,
+  deleteCommandSnippet,
+  useCommandSnippet,
+  listNamedWorkspaces,
+  insertNamedWorkspace,
+  updateNamedWorkspace,
+  duplicateNamedWorkspace,
+  useNamedWorkspace,
+  deleteNamedWorkspace,
   listForwardTemplates,
   insertForwardTemplate,
   updateForwardTemplate,
@@ -80,28 +121,47 @@ const {
   testSsh,
   batchRunCommands,
   runSshCommandForConnection,
+  runSshCommandForConnectionStreaming,
   clearConnectionHealthCache
 } = require("./ssh");
 const { discoverRemoteTerminalCapabilities } = require("./ssh-capabilities");
+const { buildRemotePosixCommand } = require("./remote-posix");
+const { deployGeneratedPublicKey, generateSshKey } = require("./ssh-key-wizard");
 const { createTerminalStartupTicket } = require("./terminal-startup");
+const { buildRemoteX11InstallPlan, discoverRemoteX11Applications, verifyRemoteX11Application, x11RuntimeDiagnostics } = require("./x11");
+const { DETECT_SCRIPT: SSH_X11_DETECT_SCRIPT, buildConfigureScript: buildSshX11ConfigureScript, buildInteractiveConfigureCommand: buildInteractiveSshX11ConfigureCommand, parseDetectionOutput: parseSshX11Detection } = require("./x11-sshd-config");
+const { configureXdmcpServer, detectXdmcpServer, resolveManagementConnection } = require("./xdmcp-manager");
+const { packagePlan: rdpServerPackagePlan } = require("./rdp-server-manager");
+const { createRemotePrivilegeGrant, getRemotePrivilegeGrant, revokeRemotePrivilegeGrant, handoffRemotePrivilegeGrant, runRemotePrivilegeCommand, runRemotePrivilegeCommandStreaming } = require("./remote-privilege");
+const { DESKTOP_IDS, DESKTOP_META, DETECT_SCRIPT: LINUX_DESKTOP_DETECT_SCRIPT, buildInstallScript: buildLinuxDesktopInstallScript, buildUninstallScript: buildLinuxDesktopUninstallScript, desktopInstallPlan, parseDetectionOutput: parseLinuxDesktopDetection } = require("./linux-desktop-manager");
 const { getPart } = require("./multipart");
 const { parseConfigText, batchTest, saveImported, exportConfig } = require("./importer");
 const { handleTerminalUpgrade, closeAllTerminals } = require("./terminal");
+const { closeAllRemoteTerminals, handleRemoteTerminalUpgrade, listSerialPorts, testRemoteTerminalProfile } = require("./remote-terminal");
+const { closeAllVncSessions, handleVncUpgrade, testVncProfile } = require("./vnc-proxy");
+const { buildVncStartCommand, detectVncServer } = require("./vnc-server-manager");
+const { componentInstallCommand } = require("./remote-component-installer");
+const { createRemoteOfflineTaskManager } = require("./remote-offline-tasks");
+const { clearVncClipboardCapabilityCache, inspectVncClipboardHelper, readVncRemoteClipboard, vncClipboardHelperGuideResult, writeVncRemoteClipboard } = require("./vnc-clipboard");
+const { cleanupFtpTemp, deleteFtpPath, downloadFtpFile, listFtpDirectory, makeFtpDirectory, renameFtpPath, testFtpProfile, uploadFtpFile } = require("./ftp");
+const { chmodLocalPath, createLocalEntry, deleteLocalPaths, listLocalDirectory, renameLocalPath, uploadLocalPaths } = require("./local-files");
 const {
   closeAllSftpSessions,
   connectSftpSession,
   createNativeSftpDragTicket,
-  deliverSftpPaths,
   disconnectSftpSession,
   getNativeSftpDragTicket,
   openNativeSftpDragTicketFile,
+  planSftpPathDelivery,
   releaseNativeSftpDragTicket,
   sftpSessionStatus,
   stageSftpPaths
 } = require("./sftp-session");
 const { deleteCommandTemplate, handleBatchCommandUpgrade, listCommandTemplates, saveCommandTemplate, updateCommandTemplate } = require("./commands");
 const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemoteRecycleItem, encodeRemoteText, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, renameRemotePath, resolveRemoteUploadTarget, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
-const { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, pauseSftpJob, receiveUploadJobContent, resumeSftpJob, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream } = require("./sftp-jobs");
+const { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, pauseSftpJob, receiveUploadJobContent, resumeSftpJob, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream } = require("./sftp-jobs");
+const { getExternalEdit, listExternalEdits, resolveExternalEdit, startExternalEdit, stopAllExternalEdits, stopExternalEdit, stopExternalEditsForConnection } = require("./sftp-external-edit");
+const { cancelSyncJob, clearFinishedSyncJobs, deleteSyncJob, getSyncJob, listSyncJobs, retrySyncJob, startSyncJob, startSyncPlanningJob } = require("./sftp-sync");
 const {
   appendSystemLog,
   deleteLogs,
@@ -115,6 +175,8 @@ const {
 } = require("./logs");
 const { listNotifications, notifyEvent } = require("./notifications");
 const { AuthenticationError, authRequired, createSession, isAuthenticated, isLocalRequest, login, logout, publicSecuritySettings, readSecuritySettings, resetWebAccessSecurity, sameOrigin, secureHeaders, sessionCookie, setPassword, setToken, updateSecurityOptions, writeSecuritySettings } = require("./security");
+const { acceptHostTrust, hostTrustErrorResponse, listTrustedHosts, removeTrustedHost } = require("./ssh-host-trust");
+const { closeJumpConnectionPool, ensureConnectionHostTrusted } = require("./ssh2-client");
 const { disableEncryption, enableEncryption, encryptionReady, encryptText, lockEncryption, unlockEncryption } = require("./crypto-store");
 const { createConfigSnapshot, deleteConfigSnapshot, listConfigSnapshots, restoreConfigSnapshotById } = require("./config-snapshots");
 const { ptyRuntimeStatus } = require("./pty-runtime");
@@ -124,6 +186,7 @@ const { createDatabaseBundleHeader, DatabaseTransferStore } = require("./databas
 const { handleLogRoutes } = require("./routes/log-routes");
 const { handlePublicAuthRoutes, handleSecurityRoutes } = require("./routes/security-routes");
 const { handleUpdateRoutes } = require("./routes/update-routes");
+const { createStorageRestoreHelpers } = require("./storage-restore");
 const {
   MAX_PORT_FALLBACKS,
   availableListenHosts,
@@ -207,6 +270,7 @@ const VENDOR_FILES = new Map([
   ["/vendor/xterm/addon-fit.mjs", vendorFile("@xterm/addon-fit", "lib/addon-fit.mjs")]
 ]);
 const ACE_VENDOR_DIR = vendorFile("ace-builds", "src-min-noconflict");
+const NOVNC_VENDOR_DIR = vendorFile("@novnc/novnc", "core/..");
 
 function readBody(req, maxBytes = 100 * 1024 * 1024): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -357,7 +421,7 @@ async function inspectServer(connectionId) {
     "printf '\\n## ports\\n'",
     "(ss -tuln 2>/dev/null | sed -n '1,12p' || netstat -tuln 2>/dev/null | sed -n '1,12p' || true)"
   ].join("\n");
-  const result: any = await runSshCommandForConnection(connection, script, 20000);
+  const result: any = await runSshCommandForConnection(connection, buildRemotePosixCommand(script), 20000);
   const output = `${result.stdout || ""}${result.stderr || ""}${result.error ? result.error.message : ""}`.trim();
   return {
     id: connection.id,
@@ -376,273 +440,760 @@ async function terminalCapabilitiesForConnection(connection) {
   );
 }
 
-function connectionRowsFromBackup(tempDb) {
-  const table = tempDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='connections'").get();
-  if (!table) return [];
-  const columns = new Set(tempDb.prepare("PRAGMA table_info(connections)").all().map((item: any) => item.name));
-  if (!columns.has("id") || !columns.has("name")) return [];
-  if (!columns.has("sort_order")) {
-    tempDb.exec("ALTER TABLE connections ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 1");
-    columns.add("sort_order");
-  }
-  const optional = [
-    ["ssh_host", "''"], ["ssh_port", "22"], ["ssh_user", "''"], ["auth_type", "'key'"],
-    ["identity_file", "NULL"], ["ssh_password", "NULL"], ["extra_args", "''"], ["sort_order", "1"]
-  ].map(([name, fallback]) => columns.has(name) ? name : `${fallback} AS ${name}`);
-  return tempDb.prepare(`SELECT id, name, ${optional.join(", ")} FROM connections ORDER BY id`).all();
+async function x11ApplicationsForConnection(connection) {
+  return discoverRemoteX11Applications(
+    async (command) => runSshCommandForConnection(connection, command, 12000)
+  );
 }
 
-function storageSettingsView() {
+async function x11InstallPlanForConnection(connection) {
+  const discovery = await x11ApplicationsForConnection(connection);
   return {
-    root:RUNTIME_ROOT,
-    data_dir:DATA_DIR,
-    ssh_dir:PROJECT_SSH_DIR,
-    environment_override:Boolean(process.env.TUNNELDESK_DATA_DIR || process.env.TUNNELDESK_SSH_DIR)
+    discovery,
+    install_plan:discovery.install_plan || buildRemoteX11InstallPlan(discovery)
   };
 }
 
-function pathInside(parent, candidate) {
-  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
-  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+function removeKnownSudoWrappers(command) {
+  return String(command || "")
+    .replace(/\bsudo\s+(?=(?:\/usr\/sbin\/installer|apt-get\b|dnf\b|pacman\b|yum\b|zypper\b))/g, "");
 }
 
-function copyRuntimeDirectory(source, target) {
-  if (!fs.existsSync(source) || path.resolve(source) === path.resolve(target)) return;
-  if (pathInside(source, target)) throw new Error("新目录不能位于当前数据目录内部");
-  fs.mkdirSync(target, { recursive:true });
-  fs.cpSync(source, target, { recursive:true, force:false, errorOnExist:false });
-}
-
-function saveWebStorageSettings(data) {
-  if (desktopIntegration?.saveSettings) throw new Error("桌面端请使用桌面数据路径模式");
-  const rootValue = String(data?.root || "").trim();
-  if (!rootValue || rootValue.includes("\0") || !path.isAbsolute(rootValue)) throw new Error("请选择有效的绝对运行根目录");
-  const root = path.resolve(rootValue);
-  const targetData = path.join(root, "data");
-  const targetSsh = path.join(root, ".ssh");
-  if (Boolean(data?.migrate) && path.resolve(root) !== path.resolve(RUNTIME_ROOT)) {
-    const targetDb = path.join(targetData, "tunnels.db");
-    if (fs.existsSync(targetDb)) throw new Error("目标目录已有 TunnelDesk 数据库，已拒绝覆盖");
-    copyRuntimeDirectory(DATA_DIR, targetData);
-    copyRuntimeDirectory(PROJECT_SSH_DIR, targetSsh);
-  } else {
-    fs.mkdirSync(targetData, { recursive:true });
-    fs.mkdirSync(targetSsh, { recursive:true });
+async function installX11ApplicationsForConnection(connection, data: any = {}) {
+  const planResult = await x11InstallPlanForConnection(connection);
+  const plan = planResult.install_plan || planResult.discovery?.install_plan || {};
+  const action = String(data?.action || "install").trim().toLowerCase();
+  if (!["install", "install-offline", "install-local-offline", "online", "offline", "local-offline", "offline-local", "uninstall"].includes(action)) {
+    throw new Error("X11 组件安装操作无效");
   }
-  const temporary = `${STORAGE_SETTINGS_FILE}.tmp-${process.pid}-${Date.now()}`;
-  fs.writeFileSync(temporary, JSON.stringify({root, updated_at:new Date().toISOString()}, null, 2), "utf8");
-  fs.renameSync(temporary, STORAGE_SETTINGS_FILE);
-
-  const environment = {...process.env};
-  delete environment.TUNNELDESK_DATA_DIR;
-  delete environment.TUNNELDESK_SSH_DIR;
-  const restartPayload = {
-    cwd:BASE_DIR,
-    entry:path.join(BASE_DIR, "dist", "server.js"),
-    args:["--host", (args.requested_hosts || args.listen_hosts).join(","), "--port", String(args.requested_port || args.listen_port)],
-    env:environment,
-    logFile:path.join(targetData, "web.log")
-  };
-  const encoded = Buffer.from(JSON.stringify(restartPayload), "utf8").toString("base64");
-  const helper = spawn(process.execPath, [path.join(BASE_DIR, "scripts", "restart-web.js"), String(process.pid), encoded], {
-    cwd:BASE_DIR,
-    detached:true,
-    windowsHide:true,
-    stdio:"ignore"
+  if (["install-local-offline", "local-offline", "offline-local"].includes(action)) {
+    const localPlan = plan.local_offline || plan.component_plan?.local_offline || {};
+    const packages = localPlan.package_names || plan.local_offline_packages || [];
+    if (!localPlan.available || !packages.length || plan.platform !== "linux" || plan.package_manager !== "apt") {
+      throw new Error(`本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前检测到 ${plan.package_manager || planResult.discovery?.package_manager || "非 APT 包管理器"}，请返回选择其他可用方式`);
+    }
+    const grant = createRemoteAdminGrant(connection, data, "x11.remote-install-local-offline");
+    if (!planResult.discovery?.privileged && !grant) throw new Error("此操作需要临时管理员授权");
+    try {
+      const task = remoteOfflineTasks.startAptInstall({
+        connection,
+        component:"x11",
+        component_label:"X11 组件",
+        packages,
+        grant,
+        elevate:true,
+        direct_root:Boolean(planResult.discovery?.privileged),
+        scope:"x11.remote-install-local-offline",
+        verify:() => x11ApplicationsForConnection(connection),
+        validate:after => Boolean(after?.xauth_available) || "X11 离线安装已结束，但远端仍未检测到 xauth",
+        release_grant:releaseRemoteAdminGrant
+      });
+      return {ok:true, action:"install-local-offline", mode:"local-offline", discovery:planResult.discovery, install_plan:plan, task, temporary_authorization:Boolean(grant)};
+    } catch (error) {
+      releaseRemoteAdminGrant(grant);
+      throw error;
+    }
+  }
+  const uninstalling = action === "uninstall";
+  const mode = ["install-offline", "offline"].includes(action) ? "offline" : "online";
+  const selected = uninstalling ? plan.uninstall : componentInstallCommand(plan.component_plan || plan, mode)
+    || (mode === "online" ? componentInstallCommand(plan.component_plan || plan, "install") : null);
+  const command = String(selected?.command || (uninstalling ? "" : mode === "online" ? plan.command : plan.offline_command) || "").trim();
+  if (!command) {
+    if (uninstalling) throw new Error(selected?.reason || "当前远端没有可安全自动执行的 X11 卸载方案，请查看手动说明");
+    throw new Error(mode === "offline" ? "远端没有可用的 X11 软件包缓存；请返回安装界面选择仍可用的方式，或查看手动说明" : "当前远端没有可自动执行的 X11 安装命令");
+  }
+  const grantScope = uninstalling ? "x11.remote-uninstall" : mode === "offline" ? "x11.remote-install-offline" : "x11.remote-install";
+  const grant = createRemoteAdminGrant(connection, data, grantScope);
+  if ((uninstalling || plan.requires_password) && !planResult.discovery?.privileged && !grant) throw new Error(`${uninstalling ? "卸载" : "安装"}远端 X11 组件需要临时管理员授权`);
+  const task = startRemoteComponentCommandTask({
+    connection,
+    component:"x11",
+    componentLabel:"X11 组件",
+    action:uninstalling ? "uninstall" : mode === "offline" ? "install-offline" : "install",
+    actionLabel:uninstalling ? "卸载" : mode === "offline" ? "使用远端缓存安装" : "在线安装",
+    mode:uninstalling ? "uninstall" : mode,
+    command,
+    before:planResult.discovery,
+    grant,
+    scope:grantScope,
+    directRoot:Boolean(planResult.discovery?.privileged),
+    normalizeCommand:value => grant ? removeKnownSudoWrappers(value) : value,
+    verify:() => x11ApplicationsForConnection(connection),
+    validate:after => uninstalling
+      ? !after?.xauth_available || "X11 卸载命令已结束，但远端仍检测到 xauth"
+      : Boolean(after?.xauth_available) || "X11 安装命令已结束，但远端仍未检测到 xauth"
   });
-  helper.unref();
-  setTimeout(() => shutdown().catch(error => console.error(`storage restart failed: ${error.message}`)), 250);
-  return {ok:true, restart_required:true, root, data_dir:targetData, ssh_dir:targetSsh};
+  return {ok:true, action:task.action, mode:task.mode, discovery:planResult.discovery, install_plan:plan, task, temporary_authorization:Boolean(grant)};
 }
 
-function listLocalDirectories(requestedPath) {
-  const current = path.resolve(String(requestedPath || RUNTIME_ROOT));
-  const stat = fs.statSync(current);
-  if (!stat.isDirectory()) throw new Error("所选路径不是目录");
-  const roots = process.platform === "win32"
-    ? Array.from({length:26}, (_, index) => `${String.fromCharCode(65 + index)}:\\`)
-      .filter(root => fs.existsSync(root))
-      .map(root => ({name:root, path:root}))
-    : [{name:"/", path:"/"}];
-  const directories = fs.readdirSync(current, {withFileTypes:true})
-    .filter(entry => entry.isDirectory())
-    .slice(0, 500)
-    .map(entry => ({name:entry.name, path:path.join(current, entry.name)}));
-  const parent = path.dirname(current);
-  return {current, parent:parent === current ? "" : parent, roots, directories};
-}
-
-function normalizeIdentityBindings(value) {
-  const bindings = new Map();
-  for (const item of Array.isArray(value) ? value : []) {
-    const connectionId = Number(item?.connection_id);
-    const identityPath = String(item?.identity_path || "").trim();
-    if (Number.isInteger(connectionId) && connectionId > 0 && identityPath) bindings.set(connectionId, identityPath);
+function createRemoteAdminGrant(connection, data, scope) {
+  const auth = data?.admin_auth || data?.authorization || null;
+  const requestedGrant = String(data?.admin_grant_id || "").trim();
+  if (requestedGrant) return getRemotePrivilegeGrant(requestedGrant, connection, scope);
+  if (!auth || typeof auth !== "object") return null;
+  if (auth.identity_file) {
+    const requestedPath = path.resolve(String(auth.identity_file));
+    const comparablePath = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+    const allowed = listIdentityFiles().some(item => comparablePath(item.path) === comparablePath(requestedPath));
+    if (!allowed) throw new Error("临时授权只能使用 TunnelDesk 已识别的私钥文件");
   }
-  return bindings;
+  return createRemotePrivilegeGrant(connection, auth, scope);
 }
 
-function identityTargetMap(rows, requestedBindings = []) {
-  const identities = listIdentityFiles();
-  const allowedPaths: Map<string, any> = new Map(identities.map(item => [path.resolve(item.path), item]));
-  const bindings = normalizeIdentityBindings(requestedBindings);
-  const mappings = [];
-  const unresolved = [];
-  const encrypted = [];
-  const missingByName = new Map();
-  for (const row of rows) {
-    if (String(row.identity_file || "").startsWith("tdenc:v1:")) {
-      encrypted.push({ connection_id:row.id, connection_name:row.name });
-      continue;
-    }
-    const keyName = path.posix.basename(String(row.identity_file || "").replace(/\\/g, "/"));
-    const requested = bindings.get(Number(row.id));
-    if (requested && !allowedPaths.has(path.resolve(requested))) throw new Error(`连接 ${row.name || row.id} 的私钥绑定无效，请重新选择`);
-    const target = requested ? allowedPaths.get(path.resolve(requested))?.path : null;
-    const item = {
-      connection_id: row.id,
-      connection_name: row.name,
-      ssh_host: row.ssh_host || "",
-      ssh_port: Number(row.ssh_port || 22),
-      ssh_user: row.ssh_user || "",
-      auth_type: row.auth_type || "key",
-      extra_args: row.extra_args || "",
-      key_name: keyName,
-      old_path: row.identity_file,
-      target_path: target || path.join(PROJECT_SSH_DIR, keyName)
-    };
-    if (target && fs.existsSync(target)) mappings.push(item);
-    else {
-      unresolved.push(item);
-      if (!missingByName.has(keyName)) {
-        missingByName.set(keyName, { ...item, connection_count: 1, connection_names: [row.name] });
-      } else {
-        const missingItem = missingByName.get(keyName);
-        missingItem.connection_count += 1;
-        if (row.name && !missingItem.connection_names.includes(row.name)) missingItem.connection_names.push(row.name);
-      }
-    }
-  }
-  return { missing: [...missingByName.values()], unresolved, encrypted, mappings };
+function releaseRemoteAdminGrant(grant) {
+  if (grant?.id) revokeRemotePrivilegeGrant(grant.id);
 }
 
-function normalizeCredentialBindings(value) {
-  const bindings = new Map();
-  for (const item of Array.isArray(value) ? value : []) {
-    const connectionId = Number(item?.connection_id);
-    if (!Number.isInteger(connectionId) || connectionId <= 0) continue;
-    const hasSortOrder = Object.prototype.hasOwnProperty.call(item || {}, "sort_order");
-    const sortOrder = hasSortOrder ? validateSortOrder(item.sort_order) : undefined;
-    const authType = String(item?.auth_type || "");
-    if (!authType) {
-      if (hasSortOrder) bindings.set(connectionId, {connection_id:connectionId, sort_order:sortOrder});
-      continue;
-    }
-    if (authType === "key") {
-      const identityPath = String(item?.identity_path || "").trim();
-      bindings.set(connectionId, {connection_id:connectionId, auth_type:"key", identity_path:identityPath, ...(hasSortOrder ? {sort_order:sortOrder} : {})});
-      continue;
-    }
-    if (authType !== "password") throw new Error(`连接 ${connectionId} 的验证方式无效`);
-    const passwordAction = ["preserve", "replace", "clear"].includes(String(item?.password_action)) ? String(item.password_action) : "preserve";
-    const password = passwordAction === "replace" ? String(item?.password || "") : "";
-    if (passwordAction === "replace" && !password) throw new Error(`连接 ${connectionId} 的新密码不能为空`);
-    if (password.length > 4096) throw new Error(`连接 ${connectionId} 的密码过长`);
-    bindings.set(connectionId, {connection_id:connectionId, auth_type:"password", password_action:passwordAction, password, ...(hasSortOrder ? {sort_order:sortOrder} : {})});
-  }
-  return bindings;
-}
-
-function inspectRestoreDatabaseFile(databasePath, security = null, credentialBindings = [], identityBindings = []) {
-  const tempDb = new DatabaseSync(databasePath);
+function startRemoteComponentCommandTask({
+  connection,
+  component,
+  componentLabel,
+  action,
+  actionLabel,
+  mode = "online",
+  command,
+  before = null,
+  grant = null,
+  scope,
+  timeoutMs = 20 * 60 * 1000,
+  directRoot = false,
+  normalizeCommand = value => value,
+  verify = null,
+  validate = null
+}: any) {
+  const normalized = String(normalizeCommand(String(command || "")) || "").trim();
+  if (!normalized) throw new Error(`${componentLabel || "远端组件"}${actionLabel || "操作"}缺少可执行命令`);
   try {
-    const rows = connectionRowsFromBackup(tempDb);
-    const requestedCredentials = normalizeCredentialBindings(credentialBindings);
-    const keyRows = rows.filter((row) => {
-      const requested = requestedCredentials.get(Number(row.id));
-      return requested?.auth_type === "key" || (requested?.auth_type !== "password" && String(row.auth_type || "key") !== "password" && String(row.identity_file || "").trim());
+    return remoteOfflineTasks.startCommand({
+      connection,
+      component,
+      component_label:componentLabel,
+      action,
+      action_label:actionLabel,
+      mode,
+      before,
+      run:onChunk => grant
+        ? runRemotePrivilegeCommandStreaming(connection, normalized, {grant_id:grant.id, scope, timeout_ms:timeoutMs}, onChunk)
+        : directRoot
+          ? runSshCommandForConnectionStreaming(connection, buildRemotePosixCommand(normalized), timeoutMs, onChunk)
+          : runRemotePrivilegeCommandStreaming(connection, normalized, {scope, timeout_ms:timeoutMs}, onChunk),
+      verify,
+      validate,
+      release:() => releaseRemoteAdminGrant(grant)
     });
-    const requestedIdentities = [
-      ...(Array.isArray(identityBindings) ? identityBindings : []),
-      ...[...requestedCredentials.values()].filter((item) => item.auth_type === "key" && item.identity_path).map((item) => ({connection_id:item.connection_id, identity_path:item.identity_path}))
-    ];
-    const identities = identityTargetMap(keyRows, requestedIdentities);
-    return {
-      ok: true,
-      connections: rows.map((row) => {
-        const authType = String(row.auth_type || "key") === "password" ? "password" : "key";
-        const identityFile = String(row.identity_file || "");
-        const password = String(row.ssh_password || "");
-        return {
-          connection_id: Number(row.id),
-          connection_name: row.name || `连接 ${row.id}`,
-          ssh_host: row.ssh_host || "",
-          ssh_port: Number(row.ssh_port || 22),
-          ssh_user: row.ssh_user || "",
-          sort_order: Number(row.sort_order || 1),
-          auth_type: authType,
-          original_auth_type: authType,
-          key_name: identityFile && !identityFile.startsWith("tdenc:v1:") ? path.posix.basename(identityFile.replace(/\\/g, "/")) : "",
-          identity_encrypted: identityFile.startsWith("tdenc:v1:"),
-          has_password: Boolean(password),
-          password_encrypted: password.startsWith("tdenc:v1:"),
-          extra_args: row.extra_args || ""
-        };
-      }),
-      identity_bindings_complete: identities.missing.length === 0,
-      missing_identities: identities.missing,
-      unresolved_identities: identities.unresolved,
-      encrypted_identities: identities.encrypted,
-      mapped_identities: identities.mappings,
-      available_identities: listIdentityFiles(),
-      upload_directory: PROJECT_SSH_DIR,
-      encrypted_bundle: Boolean(security?.encryption_enabled),
-      password_replacement_allowed: security
-        ? !Boolean(security.encryption_enabled)
-        : (!readSecuritySettings().encryption_enabled || encryptionReady())
-    };
-  } finally {
-    tempDb.close();
+  } catch (error) {
+    releaseRemoteAdminGrant(grant);
+    throw error;
   }
 }
 
-function normalizeRestoredCredentials(dbPath, identityBindings = [], credentialBindings = [], encryptedBundle = false, encryptionEnabled = false) {
-  const restoredDb = new DatabaseSync(dbPath);
-  try {
-    const rows = connectionRowsFromBackup(restoredDb);
-    const credentials = normalizeCredentialBindings(credentialBindings);
-    const keyRows = rows.filter((row) => {
-      const requested = credentials.get(Number(row.id));
-      return requested?.auth_type === "key" || (requested?.auth_type !== "password" && String(row.auth_type || "key") !== "password" && String(row.identity_file || "").trim());
-    });
-    const requestedIdentities = [
-      ...(Array.isArray(identityBindings) ? identityBindings : []),
-      ...[...credentials.values()].filter((item) => item.auth_type === "key" && item.identity_path).map((item) => ({connection_id:item.connection_id, identity_path:item.identity_path}))
-    ];
-    const identities = identityTargetMap(keyRows, requestedIdentities);
-    const updateIdentity = restoredDb.prepare("UPDATE connections SET auth_type='key', identity_file=?, ssh_password=NULL WHERE id=?");
-    for (const item of identities.mappings) {
-      updateIdentity.run(item.target_path, item.connection_id);
+async function inspectVncServerForProfile(profile) {
+  return detectVncServer(profile, {
+    getConnection,
+    runSshCommandForConnection
+  });
+}
+
+async function configureVncServerForProfile(profile, data: any = {}) {
+  const action = String(data.action || "guide").trim().toLowerCase();
+  if (!["guide", "install", "install-offline", "install-local-offline", "uninstall", "start", "stop", "restart", "enable", "disable"].includes(action)) throw new Error("VNC 服务操作无效");
+  const before = await inspectVncServerForProfile(profile);
+  if (action === "guide") return {
+    ok:true,
+    action,
+    before,
+    after:before,
+    guide:before.guide,
+    install_plan:before.install_plan || null,
+    uninstall_plan:before.uninstall_plan || null,
+    service_actions:before.service_actions || {}
+  };
+  const connectionId = Number(before.ssh_connection?.id || profile.options?.source_ssh_connection_id || profile.options?.ssh_connection_id || 0);
+  if (!connectionId) throw new Error("该 VNC 连接没有关联的 SSH 管理连接，无法执行远程操作");
+  const connection = getConnection(connectionId);
+  let command = "";
+  let mode = action;
+  if (action === "install-local-offline") {
+    const localPlan = before.install_plan?.local_offline || before.package_plan?.local_offline;
+    const packages = localPlan?.package_names || before.package_plan?.local_offline_packages || [];
+    if (before.platform !== "linux" || before.package_manager !== "apt" || !localPlan?.available || !packages.length) {
+      throw new Error(`本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前检测到 ${before.package_manager || before.platform || "非 APT 包管理器"}，请返回选择其他可用方式`);
     }
-    for (const item of identities.unresolved) {
-      updateIdentity.run(null, item.connection_id);
+  } else if (action === "install" || action === "install-offline") {
+    mode = action === "install-offline" ? "offline" : "online";
+    const selected = componentInstallCommand(before.install_plan, mode)
+      || (mode === "online" ? componentInstallCommand(before.install_plan, "install") : null);
+    command = String(selected?.command || before.package_plan?.[mode === "offline" ? "offline_command" : "command"] || "").trim();
+    if (!command) throw new Error(action === "install-offline" ? "远端没有可用的 VNC 离线缓存包，请改用在线安装或手动说明" : "当前 Linux 发行版没有可用的在线安装方案，请打开手动安装说明");
+  } else if (["start", "restart", "enable"].includes(action)) {
+    // A password entered for this one start operation is never persisted.
+    // It is only used to create the remote VNC password file; saved profile
+    // credentials remain the fallback for normal reconnects.
+    const savedPassword = String(data.vnc_password || data.password || profile.password || "");
+    const startPlan = before.start_plan || null;
+    const supportsNoPassword = startPlan?.supports_no_password === true;
+    // The no-password mode is intentionally opt-in for each start request.
+    // Do not infer it from an empty saved password or from a truthy value.
+    const allowNoPassword = data.allow_no_password === true;
+    if (allowNoPassword && !supportsNoPassword) {
+      throw new Error("当前 VNC 服务方案不支持明确的无密码模式");
     }
-    const updatePassword = restoredDb.prepare("UPDATE connections SET auth_type='password', identity_file=NULL, ssh_password=? WHERE id=?");
-    const preservePassword = restoredDb.prepare("UPDATE connections SET auth_type='password', identity_file=NULL WHERE id=?");
-    const updateSortOrder = restoredDb.prepare("UPDATE connections SET sort_order=? WHERE id=?");
-    for (const item of credentials.values()) {
-      if (item.sort_order) updateSortOrder.run(item.sort_order, item.connection_id);
-      if (item.auth_type !== "password") continue;
-      if (item.password_action === "replace" && encryptedBundle) throw new Error("加密迁移包不能在恢复前改写密码；请恢复并解锁后在连接设置中修改");
-      if (item.password_action === "replace") updatePassword.run(encryptionEnabled ? encryptText(item.password) : item.password, item.connection_id);
-      else if (item.password_action === "clear") updatePassword.run(null, item.connection_id);
-      else preservePassword.run(item.connection_id);
+    const hasRemotePasswordFile = Boolean(String(before.password_file || "").trim());
+    if (!savedPassword && !hasRemotePasswordFile && !allowNoPassword && (supportsNoPassword || startPlan?.requires_vnc_password === true)) {
+      throw new Error("请先输入 VNC 密码，再配置并启动服务");
     }
-    return { ...identities, credential_bindings: [...credentials.values()].map((item) => ({...item, password:item.password ? "(replaced)" : ""})) };
-  } finally {
-    restoredDb.close();
+    // Rebuild the command so the per-request password/no-password choice is
+    // reflected in the generated x11vnc/TigerVNC service configuration.
+    command = startPlan
+      ? buildVncStartCommand(before, savedPassword, {allow_no_password:allowNoPassword})
+      : "";
+    if (!command) throw new Error(before.start_plan?.requires_vnc_password ? "请先在 VNC 连接设置中保存连接密码，再配置并启动服务" : "没有检测到可自动配置/启动的 VNC 服务方案，请打开手动配置说明");
+    mode = "service";
+  } else if (["stop", "disable"].includes(action)) {
+    const selected = before.service_actions?.[action] || before.package_plan?.service_actions?.[action];
+    command = String(selected?.command || "").trim();
+    if (!selected?.available || !command) throw new Error(selected?.reason || `没有检测到可自动${action === "stop" ? "停止" : "禁用"}的 VNC 服务`);
+    mode = "service";
+  } else if (action === "uninstall") {
+    const selected = before.uninstall_plan || before.package_plan?.uninstall;
+    command = String(selected?.command || "").trim();
+    if (!selected?.available || !command) throw new Error(selected?.reason || "当前主机没有可安全自动执行的 VNC 卸载方案，请查看手动说明");
+    mode = "uninstall";
+  }
+  const grant = createRemoteAdminGrant(connection, data, `vnc.server.${action}`);
+  if (!before.privileged && !grant) throw new Error("此操作需要临时管理员授权");
+  if (action === "install-local-offline") {
+    const localPlan = before.install_plan?.local_offline || before.package_plan?.local_offline;
+    const packages = localPlan?.package_names || before.package_plan?.local_offline_packages || [];
+    try {
+      const task = remoteOfflineTasks.startAptInstall({
+        connection,
+        component:"vnc-server",
+        component_label:"VNC 服务",
+        packages,
+        grant,
+        elevate:true,
+        direct_root:Boolean(before.privileged),
+        scope:"vnc.server.install-local-offline",
+        verify:() => inspectVncServerForProfile(profile),
+        validate:after => Boolean(after?.installed) || "VNC 离线安装已结束，但远端仍未检测到 VNC Server",
+        release_grant:releaseRemoteAdminGrant
+      });
+      return {ok:true, action, mode:"local-offline", before, task, temporary_authorization:Boolean(grant)};
+    } catch (error) {
+      releaseRemoteAdminGrant(grant);
+      throw error;
+    }
+  }
+  const actionLabels = {
+    install:"在线安装", "install-offline":"使用远端缓存安装", uninstall:"卸载",
+    start:"启动", stop:"停止", restart:"重新启动", enable:"启用并启动", disable:"停止并禁用"
+  };
+  const task = startRemoteComponentCommandTask({
+    connection,
+    component:"vnc-server",
+    componentLabel:"VNC 服务",
+    action,
+    actionLabel:actionLabels[action] || action,
+    mode,
+    command,
+    before,
+    grant,
+    scope:`vnc.server.${action}`,
+    timeoutMs:action === "install" || action === "install-offline" || action === "uninstall" ? 20 * 60 * 1000 : 120000,
+    directRoot:Boolean(before.root),
+    verify:() => inspectVncServerForProfile(profile),
+    validate:after => {
+      if (action === "install" || action === "install-offline") return Boolean(after?.installed) || "VNC 安装命令已结束，但远端仍未检测到 VNC Server";
+      if (action === "uninstall") return !after?.installed || "VNC 卸载命令已结束，但远端仍检测到 VNC Server";
+      if (["start", "restart", "enable"].includes(action)) return Boolean(after?.listening || after?.service_state === "active") || "VNC 服务命令已结束，但目标端口仍未监听";
+      return !after?.listening && after?.service_state !== "active" || "VNC 服务命令已结束，但目标端口仍在监听";
+    }
+  });
+  return {
+    ok:true,
+    action,
+    mode,
+    before,
+    install_plan:before.install_plan || null,
+    uninstall_plan:before.uninstall_plan || null,
+    service_actions:before.service_actions || {},
+    task,
+    temporary_authorization:Boolean(grant),
+    guide:before.guide
+  };
+}
+
+async function inspectVncClipboardHelperForProfile(profile) {
+  clearVncClipboardCapabilityCache();
+  return inspectVncClipboardHelper(profile, { getConnection, listConnections, runSshCommandForConnection });
+}
+
+async function configureVncClipboardHelperForProfile(profile, data: any = {}) {
+  const action = String(data.action || "guide").trim().toLowerCase();
+  if (!["guide", "install", "install-offline", "install-local-offline", "uninstall"].includes(action)) throw new Error("剪贴板辅助工具操作无效");
+  const requestedConnectionId = Number(data.connection_id || 0);
+  const inspectionProfile = requestedConnectionId > 0
+    ? {...profile, options:{...(profile.options || {}), source_ssh_connection_id:requestedConnectionId}}
+    : profile;
+  const before = await inspectVncClipboardHelperForProfile(inspectionProfile);
+  if (action === "guide") return vncClipboardHelperGuideResult(before);
+  const uninstalling = action === "uninstall";
+  if (before.platform === "macos") throw new Error(uninstalling
+    ? "macOS 的 pbcopy/pbpaste 是系统自带工具，TunnelDesk 不提供卸载"
+    : "macOS 已自带 pbcopy/pbpaste，无需安装；请按检查说明确认图形登录会话和剪贴板权限");
+  if (before.platform !== "linux") throw new Error(`尚未识别到 Linux 远端，无法自动${uninstalling ? "卸载" : "安装"}剪贴板辅助工具`);
+  const connectionId = Number(before.connection_id || 0);
+  if (!connectionId) throw new Error("VNC 连接没有可用的 SSH 剪贴板辅助连接");
+  const connection = getConnection(connectionId);
+  const mode = uninstalling ? "uninstall" : action === "install-local-offline" ? "local-offline" : action === "install-offline" ? "offline" : "online";
+  const selected = uninstalling
+    ? before.uninstall_plan || before.install_plan?.uninstall
+    : componentInstallCommand(before.install_plan, mode);
+  if (mode === "local-offline" && before.install_plan?.local_offline?.available !== true) {
+    throw new Error(`本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前检测到 ${before.package_manager || "非 APT 包管理器"}，请返回选择其他可用方式`);
+  }
+  if (uninstalling) {
+    if (!before.available) throw new Error("当前没有检测到可卸载的 Linux 剪贴板辅助工具");
+    if (!selected?.available || !String(selected.command || "").trim()) throw new Error(selected?.reason || "当前系统没有可安全自动执行的剪贴板辅助卸载方案");
+  } else if (!selected?.command && !selected?.package_names?.length) {
+    throw new Error("当前系统没有可用的此类安装方案，请查看手动安装说明");
+  }
+  const grant = createRemoteAdminGrant(connection, data, `vnc.clipboard-helper.${action}`);
+  if (!before.root && !grant) throw new Error(`${uninstalling ? "卸载" : "安装"}剪贴板辅助工具需要临时管理员授权`);
+  if (mode === "local-offline") {
+    const packages = selected.package_names || [];
+    try {
+      const task = remoteOfflineTasks.startAptInstall({
+        connection,
+        component:"vnc-clipboard-helper",
+        component_label:"Unicode 剪贴板辅助工具",
+        packages,
+        package_alternatives:before.install_plan?.package_alternatives || [],
+        grant,
+        elevate:true,
+        direct_root:Boolean(before.root),
+        before,
+        scope:"vnc.clipboard-helper.install-local-offline",
+        verify:async () => {
+          clearVncClipboardCapabilityCache();
+          return inspectVncClipboardHelperForProfile(inspectionProfile);
+        },
+        validate:after => Boolean(after?.available) || "剪贴板辅助工具安装命令已结束，但重新探测后仍不可用",
+        release_grant:releaseRemoteAdminGrant
+      });
+      return {ok:true, action, mode, before, install_plan:before.install_plan, uninstall_plan:before.uninstall_plan || null, task, temporary_authorization:Boolean(grant)};
+    } catch (error) {
+      releaseRemoteAdminGrant(grant);
+      throw error;
+    }
+  }
+  const task = startRemoteComponentCommandTask({
+    connection,
+    component:"vnc-clipboard-helper",
+    componentLabel:"Unicode 剪贴板辅助工具",
+    action,
+    actionLabel:uninstalling ? "卸载" : mode === "offline" ? "使用远端缓存安装" : "在线安装",
+    mode,
+    command:selected.command,
+    before,
+    grant,
+    scope:`vnc.clipboard-helper.${action}`,
+    directRoot:Boolean(before.root),
+    verify:async () => {
+      clearVncClipboardCapabilityCache();
+      return inspectVncClipboardHelperForProfile(inspectionProfile);
+    },
+    validate:after => uninstalling
+      ? !after?.available || "剪贴板辅助工具卸载命令已结束，但重新探测后仍可用"
+      : Boolean(after?.available) || "剪贴板辅助工具安装命令已结束，但重新探测后仍不可用"
+  });
+  return {
+    ok:true,
+    action,
+    mode,
+    before,
+    install_plan:before.install_plan,
+    uninstall_plan:before.uninstall_plan || before.install_plan?.uninstall || null,
+    task,
+    temporary_authorization:Boolean(grant)
+  };
+}
+
+async function detectSshX11ForConnection(connection) {
+  const probeConnection = { ...connection, x11_mode:"off" };
+  const result = await runSshCommandForConnection(probeConnection, buildRemotePosixCommand(SSH_X11_DETECT_SCRIPT), 15000);
+  if (result.status !== 0) {
+    const output = `${result.stderr || ""}${result.stdout || ""}${result.error ? result.error.message : ""}`.trim();
+    throw new Error(output || "SSH X11 转发配置探测失败");
+  }
+  const diagnostics = parseSshX11Detection(result.stdout);
+  return {
+    ...diagnostics,
+    terminal_commands:diagnostics.can_terminal_manage ? {
+      enable:buildInteractiveSshX11ConfigureCommand("enable"),
+      disable:buildInteractiveSshX11ConfigureCommand("disable")
+    } : {},
+    connection:{id:connection.id, name:connection.name, host:connection.ssh_host, user:connection.ssh_user}
+  };
+}
+
+async function configureSshX11ForConnection(connection, action, grant = null) {
+  if (!["enable", "disable"].includes(String(action || ""))) throw new Error("SSH X11 转发操作无效");
+  const before = await detectSshX11ForConnection(connection);
+  if (!before.sshd_present || !before.config_present) throw new Error("远端没有找到可管理的 sshd_config");
+  if (!before.can_manage && !grant) throw new Error("修改 sshd_config 需要 root 或免密 sudo 权限；可以使用临时管理员授权");
+  const commandConnection = { ...connection, x11_mode:"off" };
+  const result = grant
+    ? await runRemotePrivilegeCommand(commandConnection, buildRemotePosixCommand(buildSshX11ConfigureScript(action)), {grant_id:grant.id, scope:"x11.sshd-config", timeout_ms:30000})
+    : await runSshCommandForConnection(commandConnection, buildRemotePosixCommand(buildSshX11ConfigureScript(action)), 30000);
+  if (result.status !== 0) {
+    const output = `${result.stderr || ""}${result.stdout || ""}${result.error ? result.error.message : ""}`.trim();
+    throw new Error(output || `SSH X11 转发${action === "enable" ? "开启" : "关闭"}失败`);
+  }
+  const after = await detectSshX11ForConnection(connection);
+  const expected = action === "enable";
+  if (after.enabled !== expected) throw new Error(`sshd_config 已修改，但 sshd 的实际 X11 转发状态仍为${after.enabled ? "开启" : "关闭"}`);
+  return { before, after, output:`${result.stdout || ""}${result.stderr || ""}`.trim(), temporary_authorization:Boolean(grant) };
+}
+
+async function startSshX11ConfigurationTask(connection, action, grant = null) {
+  if (!["enable", "disable"].includes(String(action || ""))) throw new Error("SSH X11 转发操作无效");
+  const before = await detectSshX11ForConnection(connection);
+  if (!before.sshd_present || !before.config_present) throw new Error("远端没有找到可管理的 sshd_config");
+  if (!before.can_manage && !grant) throw new Error("修改 sshd_config 需要 root、免密 sudo 或临时管理员授权");
+  const expected = action === "enable";
+  const task = startRemoteComponentCommandTask({
+    connection:{...connection, x11_mode:"off"},
+    component:"x11-forwarding",
+    componentLabel:"SSH X11 转发",
+    action,
+    actionLabel:expected ? "开启" : "关闭",
+    mode:"service",
+    command:buildSshX11ConfigureScript(action),
+    before,
+    grant,
+    scope:"x11.sshd-config",
+    timeoutMs:30000,
+    verify:() => detectSshX11ForConnection(connection),
+    validate:after => after?.enabled === expected || `sshd_config 已修改，但 SSH X11 转发仍为${after?.enabled ? "开启" : "关闭"}`
+  });
+  return {ok:true, action, before, task, temporary_authorization:Boolean(grant)};
+}
+
+async function verifyX11ApplicationForConnection(connection, command) {
+  return verifyRemoteX11Application(
+    async (script) => runSshCommandForConnection(connection, script, 12000),
+    command
+  );
+}
+
+const linuxDesktopTasks = new Map();
+let linuxDesktopTaskSequence = 0;
+const remoteOfflineTasks = createRemoteOfflineTaskManager({
+  data_dir:path.join(DATA_DIR, "remote-components"),
+  run_ssh_command:runSshCommandForConnection,
+  run_ssh_stream:runSshCommandForConnectionStreaming,
+  run_privileged_stream:runRemotePrivilegeCommandStreaming,
+  start_upload:startUploadJob,
+  list_sftp_jobs:listSftpJobs,
+  release_grant:releaseRemoteAdminGrant
+});
+
+function linuxDesktopTaskView(task) {
+  return {
+    id: task.id,
+    connection_id: task.connection_id,
+    connection_name: task.connection_name,
+    desktop_id: task.desktop_id,
+    desktop_label: DESKTOP_META[task.desktop_id]?.label || task.desktop_id,
+    action: task.action || "install",
+    action_label: task.action === "uninstall" ? "卸载" : "安装",
+    mode: task.mode || "online",
+    status: task.status,
+    stage: task.stage,
+    progress: Number(task.progress || 0),
+    logs: task.logs.slice(-300),
+    error: task.error || "",
+    created_at: task.created_at,
+    updated_at: task.updated_at,
+    finished_at: task.finished_at || 0,
+    diagnostics: task.diagnostics || null
+  };
+}
+
+function listLinuxDesktopTasks() {
+  return [...linuxDesktopTasks.values()]
+    .map(linuxDesktopTaskView)
+    .sort((left, right) => Number(right.updated_at || 0) - Number(left.updated_at || 0));
+}
+
+function deleteLinuxDesktopTask(taskId) {
+  const task = linuxDesktopTasks.get(String(taskId || ""));
+  if (!task) return false;
+  if (task.status === "running") throw new Error("运行中的桌面任务不能删除");
+  return linuxDesktopTasks.delete(task.id);
+}
+
+function clearFinishedLinuxDesktopTasks() {
+  let removed = 0;
+  for (const task of linuxDesktopTasks.values()) {
+    if (!['done', 'cancelled'].includes(task.status)) continue;
+    linuxDesktopTasks.delete(task.id);
+    removed += 1;
+  }
+  return {removed};
+}
+
+function appendLinuxDesktopTaskChunk(task, chunk, stream = "stdout") {
+  task.partial = `${task.partial || ""}${Buffer.from(chunk || "").toString("utf8")}`;
+  const lines = task.partial.split(/\r?\n/);
+  task.partial = lines.pop() || "";
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!line) continue;
+    const stage = /^TD_DESKTOP_STAGE=(.*)$/.exec(line);
+    if (stage) {
+      task.stage = stage[1] || task.stage;
+      task.progress = {prepare: 12, packages: 30, refresh: 88, verify: 94, done: 100}[task.stage] ?? task.progress;
+      task.updated_at = Date.now();
+      continue;
+    }
+    const log = /^TD_DESKTOP_LOG=(.*)$/.exec(line);
+    task.logs.push({at:Date.now(), stream, text:log ? log[1] : line});
+    if (task.logs.length > 400) task.logs.splice(0, task.logs.length - 400);
+    task.updated_at = Date.now();
   }
 }
+
+async function detectLinuxDesktopForConnection(connection) {
+  const result = await runSshCommandForConnection(connection, buildRemotePosixCommand(LINUX_DESKTOP_DETECT_SCRIPT), 30000);
+  if (result.status !== 0) {
+    const output = `${result.stderr || ""}${result.stdout || ""}${result.error ? result.error.message : ""}`.trim();
+    throw new Error(output || "Linux 桌面探测失败");
+  }
+  const diagnostics = parseLinuxDesktopDetection(result.stdout);
+  diagnostics.connection = {id:connection.id, name:connection.name, host:connection.ssh_host, user:connection.ssh_user};
+  diagnostics.installable_desktops = DESKTOP_IDS.filter(id => Boolean(desktopInstallPlan({...diagnostics, requested_desktop:id})));
+  diagnostics.desktop_install_plans = Object.fromEntries(DESKTOP_IDS.map(id => [id, desktopInstallPlan({...diagnostics, requested_desktop:id})]).filter(([, plan]) => Boolean(plan)));
+  diagnostics.rdp_install_plan = rdpServerPackagePlan(diagnostics);
+  diagnostics.desktop_catalog = DESKTOP_IDS.map(id => ({id, ...(DESKTOP_META[id] || {})}));
+  return diagnostics;
+}
+
+async function configureRdpServerForConnection(connection, data: any = {}) {
+  const action = String(data.action || "guide").trim().toLowerCase();
+  if (!["guide", "install", "install-offline", "install-local-offline", "uninstall", "start", "stop", "restart", "enable", "disable"].includes(action)) throw new Error("RDP 服务操作无效");
+  const before = await detectLinuxDesktopForConnection(connection);
+  const plan = before.rdp_install_plan || rdpServerPackagePlan(before);
+  if (action === "guide") return {
+    ok:true,
+    action,
+    before,
+    after:before,
+    install_plan:plan?.install_plan || plan?.component_plan || null,
+    uninstall_plan:plan?.uninstall || null,
+    service_actions:plan?.service_actions || {},
+    package_plan:plan
+  };
+  if (!before.platform_supported || !plan) throw new Error("当前 SSH 主机不是支持自动管理 RDP 服务的 Linux 系统");
+  const grantScope = `rdp.server.${action}`;
+  const grant = createRemoteAdminGrant(connection, data, grantScope);
+  if (!before.privileged && !grant) throw new Error("此操作需要临时管理员授权");
+  if (action === "install-local-offline") {
+    const localPlan = plan.local_offline || plan.install_plan?.local_offline || plan.component_plan?.local_offline;
+    const packages = localPlan?.package_names || plan.local_offline_packages || [];
+    if (!localPlan?.available || before.package_manager !== "apt" || !packages.length) {
+      releaseRemoteAdminGrant(grant);
+      throw new Error(`本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前检测到 ${before.package_manager || "非 APT 包管理器"}，请返回选择其他可用方式`);
+    }
+    try {
+      const task = remoteOfflineTasks.startAptInstall({
+        connection,
+        component:"rdp-server",
+        component_label:"RDP 服务",
+        packages,
+        grant,
+        elevate:true,
+        direct_root:Boolean(before.privileged),
+        scope:"rdp.server.install-local-offline",
+        verify:() => detectLinuxDesktopForConnection(connection),
+        validate:after => Boolean(after?.xrdp_installed) || "RDP 离线安装已结束，但远端仍未检测到 xrdp",
+        release_grant:releaseRemoteAdminGrant
+      });
+      return {ok:true, action, mode:"local-offline", before, install_plan:plan.install_plan || plan.component_plan, package_plan:plan, task, temporary_authorization:Boolean(grant)};
+    } catch (error) {
+      releaseRemoteAdminGrant(grant);
+      throw error;
+    }
+  }
+  const installing = action === "install" || action === "install-offline";
+  const mode = action === "install-offline" ? "offline" : action === "uninstall" ? "uninstall" : "service";
+  const selected = installing
+    ? componentInstallCommand(plan.install_plan || plan.component_plan || plan, mode) || componentInstallCommand(plan, mode)
+    : action === "uninstall"
+      ? plan.uninstall
+      : plan.service_actions?.[action];
+  const command = String(selected?.command || (installing ? plan[mode === "offline" ? "offline_command" : "online_command"] || plan.command : "") || "").trim();
+  if (!command) {
+    releaseRemoteAdminGrant(grant);
+    if (action === "uninstall") throw new Error("当前发行版没有可安全自动执行的 RDP 卸载方案，请查看手动说明");
+    if (!installing) throw new Error(`当前主机没有可执行的 RDP ${action}方案`);
+    throw new Error(action === "install-offline" ? "远端没有可用的 RDP 软件包缓存；请返回安装界面选择仍可用的方式，或查看手动说明" : "当前发行版没有可用的 RDP 在线安装方案");
+  }
+  const actionLabels = {
+    install:"在线安装", "install-offline":"使用远端缓存安装", uninstall:"卸载",
+    start:"启动", stop:"停止", restart:"重新启动", enable:"启用并启动", disable:"停止并禁用"
+  };
+  const task = startRemoteComponentCommandTask({
+    connection,
+    component:"rdp-server",
+    componentLabel:"RDP 服务",
+    action,
+    actionLabel:actionLabels[action] || action,
+    mode,
+    command,
+    before,
+    grant,
+    scope:grantScope,
+    verify:() => detectLinuxDesktopForConnection(connection),
+    validate:after => {
+      if (installing) return Boolean(after?.xrdp_installed) || "RDP 安装命令已结束，但远端仍未检测到 xrdp";
+      if (action === "uninstall") return !after?.xrdp_installed || "RDP 卸载命令已结束，但远端仍检测到 xrdp";
+      if (["start", "restart", "enable"].includes(action)) return Boolean(after?.xrdp_active || after?.xrdp_listening) || "RDP 服务命令已结束，但服务仍未运行";
+      return !after?.xrdp_active && !after?.xrdp_listening || "RDP 服务命令已结束，但服务仍在运行";
+    }
+  });
+  return {
+    ok:true,
+    action,
+    mode,
+    before,
+    install_plan:plan.install_plan || plan.component_plan,
+    uninstall_plan:plan.uninstall || null,
+    service_actions:plan.service_actions || {},
+    package_plan:plan,
+    task,
+    temporary_authorization:Boolean(grant)
+  };
+}
+
+function startLinuxDesktopInstall(connectionId, desktopId, action = "install", grant = null, mode = "online") {
+  const connection = getConnection(Number(connectionId));
+  const requested = String(desktopId || "").toLowerCase();
+  const operation = action === "uninstall" ? "uninstall" : "install";
+  const normalizedMode = operation === "install" && String(mode || "online").toLowerCase() === "offline"
+    ? "offline"
+    : operation === "install" && ["local-offline", "install-local-offline", "offline-local"].includes(String(mode || "").toLowerCase())
+      ? "local-offline"
+      : "online";
+  const localOffline = normalizedMode === "local-offline";
+  if (!DESKTOP_IDS.includes(requested)) throw new Error("Linux 桌面类型无效");
+  const task = {
+    id:`linux-desktop-${Date.now()}-${++linuxDesktopTaskSequence}`,
+    connection_id:connection.id,
+    connection_name:connection.name,
+    desktop_id:requested,
+    action:operation,
+    status:"running",
+    stage:"prepare",
+    progress:5,
+    logs:[{at:Date.now(), stream:"system", text:`开始${operation === "uninstall" ? "卸载" : "安装"} ${DESKTOP_META[requested]?.label || requested}`}],
+    error:"",
+    created_at:Date.now(),
+    updated_at:Date.now(),
+    finished_at:0,
+    partial:"",
+    remote_task_id:"",
+    diagnostics:null,
+    admin_grant_id:grant?.id || "",
+    mode:operation === "uninstall" ? "uninstall" : normalizedMode
+  };
+  linuxDesktopTasks.set(task.id, task);
+  void (async () => {
+    let delegatedGrant = false;
+    try {
+      const before = await detectLinuxDesktopForConnection(connection);
+      task.diagnostics = before;
+      if (!before.platform_supported) throw new Error("当前连接不是 Linux 主机");
+       if (!before.privileged && !grant) throw new Error("操作桌面需要 root 或免密码 sudo 权限；可以使用临时管理员授权");
+       if (operation === "uninstall" && !before.desktops.some(item => item.id === requested)) throw new Error("当前没有检测到该桌面环境，无法卸载");
+       if (localOffline) {
+         const installPlan = before.desktop_install_plans?.[requested] || desktopInstallPlan({...before, requested_desktop:requested});
+         const localPlan = installPlan?.local_offline || installPlan?.component_plan?.local_offline;
+         const packages = localPlan?.package_names || installPlan?.local_offline_packages || [];
+         if (!localPlan?.available || before.package_manager !== "apt" || !packages.length) throw new Error(`本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前检测到 ${before.package_manager || "非 APT 包管理器"}，请返回选择其他可用方式`);
+         const remoteTask = remoteOfflineTasks.startAptInstall({
+           connection,
+           component:`linux-desktop-${requested}`,
+           component_label:`Linux 桌面 · ${DESKTOP_META[requested]?.label || requested}`,
+           packages,
+           grant,
+           direct_root:Boolean(before.privileged),
+           scope:"linux-desktop.install-local-offline",
+           release_grant:releaseRemoteAdminGrant
+         });
+         delegatedGrant = true;
+         task.remote_task_id = remoteTask.id;
+         for (;;) {
+           const snapshot = remoteOfflineTasks.list().find(item => String(item.id) === String(remoteTask.id));
+           if (!snapshot) throw new Error("远端组件离线任务不存在或已过期");
+           task.stage = snapshot.stage || task.stage;
+           task.progress = Number(snapshot.progress || task.progress);
+           task.logs = Array.isArray(snapshot.logs) ? snapshot.logs.slice(-400) : task.logs;
+           task.error = snapshot.error || "";
+           task.updated_at = Date.now();
+           if (snapshot.status === "done") break;
+           if (snapshot.status === "failed") throw new Error(snapshot.error || "Linux 桌面本机离线安装失败");
+           await new Promise(resolve => setTimeout(resolve, 500));
+         }
+         task.stage = "verify";
+         task.progress = 94;
+         task.logs.push({at:Date.now(), stream:"system", text:"软件包安装完成，正在重新探测桌面会话"});
+         const afterOffline = await detectLinuxDesktopForConnection(connection);
+         task.diagnostics = afterOffline;
+         if (!afterOffline.desktops.some(item => item.id === requested)) throw new Error(`${DESKTOP_META[requested]?.label || requested} 离线安装已结束，但未检测到可用桌面会话`);
+         task.stage = "done";
+         task.progress = 100;
+         task.status = "done";
+         task.logs.push({at:Date.now(), stream:"system", text:"本机离线安装完成，桌面列表已重新探测"});
+         return;
+       }
+       const privilegedDiagnostics = grant && !before.privileged ? {...before, privileged:true} : before;
+       const script = operation === "uninstall" ? buildLinuxDesktopUninstallScript(privilegedDiagnostics, requested) : buildLinuxDesktopInstallScript(privilegedDiagnostics, requested, normalizedMode);
+       const installScope = operation === "uninstall" ? "linux-desktop.uninstall" : normalizedMode === "offline" ? "linux-desktop.install-offline" : "linux-desktop.install";
+       const result = grant
+          ? await runRemotePrivilegeCommandStreaming(connection, buildRemotePosixCommand(script), {grant_id:grant.id, scope:installScope, timeout_ms:20 * 60 * 1000}, (chunk, stream) => appendLinuxDesktopTaskChunk(task, chunk, stream))
+         : await runSshCommandForConnectionStreaming(connection, buildRemotePosixCommand(script), 20 * 60 * 1000, (chunk, stream) => appendLinuxDesktopTaskChunk(task, chunk, stream));
+      if (task.partial) appendLinuxDesktopTaskChunk(task, "\n", "stdout");
+      if (result.status !== 0) throw new Error(`${result.stderr || result.stdout || result.error?.message || `远端${operation === "uninstall" ? "卸载" : "安装"}退出码 ${result.status}`}`.trim());
+      task.stage = "verify";
+      task.progress = 94;
+      task.logs.push({at:Date.now(), stream:"system", text:"正在验证远端桌面会话状态"});
+      const after = await detectLinuxDesktopForConnection(connection);
+      task.diagnostics = after;
+      const stillDetected = after.desktops.some(item => item.id === requested);
+      if (operation === "install" && !stillDetected) throw new Error(`${DESKTOP_META[requested]?.label || requested} 安装命令已结束，但未检测到可用桌面会话`);
+      if (operation === "uninstall" && stillDetected) throw new Error(`${DESKTOP_META[requested]?.label || requested} 卸载未完成，远端仍存在对应桌面核心程序或会话`);
+      task.stage = "done";
+      task.progress = 100;
+      task.status = "done";
+      task.logs.push({at:Date.now(), stream:"system", text:`${operation === "uninstall" ? "卸载" : "安装"}完成，桌面列表已重新探测`});
+    } catch (error) {
+      task.status = "failed";
+      task.error = error.message || String(error);
+      task.logs.push({at:Date.now(), stream:"error", text:task.error});
+     } finally {
+       if (!delegatedGrant) releaseRemoteAdminGrant(grant);
+       task.finished_at = Date.now();
+      task.updated_at = task.finished_at;
+      setTimeout(() => linuxDesktopTasks.delete(task.id), 60 * 60 * 1000).unref?.();
+    }
+  })();
+  return linuxDesktopTaskView(task);
+}
+
 
 function loginPage() {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TunnelDesk 登录</title><style>
@@ -671,6 +1222,12 @@ function serveStatic(req, res, pathname) {
     if (!/^(?:ace|mode-[a-z0-9_-]+|theme-[a-z0-9_-]+|worker-[a-z0-9_-]+|ext-[a-z0-9_-]+)\.js$/i.test(name)) return sendJson(res, {error:"Not found"}, 404);
     file = path.resolve(ACE_VENDOR_DIR, name);
     isVendorFile = file.startsWith(path.resolve(ACE_VENDOR_DIR) + path.sep);
+  } else if (pathname.startsWith("/vendor/novnc/")) {
+    const name = pathname.slice("/vendor/novnc/".length);
+    if (!/^(?:core|vendor)\/[a-z0-9_./-]+\.js$/i.test(name)) return sendJson(res, {error:"Not found"}, 404);
+    file = path.resolve(NOVNC_VENDOR_DIR, name);
+    const root = path.resolve(NOVNC_VENDOR_DIR) + path.sep;
+    isVendorFile = file.startsWith(root) && (name.startsWith("core/") || name.startsWith("vendor/"));
   } else {
     const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
     file = path.resolve(PUBLIC_DIR, rel);
@@ -737,6 +1294,23 @@ async function handleApi(req, res, pathname) {
   if (await handlePublicAuthRoutes(req, res, pathname, securityRouteDependencies)) return;
   if (!isAuthenticated(req)) return sendJson(res, { error: "Unauthorized" }, 401);
   if (await handleSecurityRoutes(req, res, pathname, securityRouteDependencies)) return;
+  if (req.method === "GET" && pathname === "/api/ssh/trusted-hosts") {
+    return sendJson(res, { hosts: listTrustedHosts() });
+  }
+  if (req.method === "DELETE" && pathname === "/api/ssh/trusted-hosts") {
+    const data = await readJson(req);
+    return sendJson(res, removeTrustedHost(data.id));
+  }
+  if (req.method === "POST" && pathname === "/api/ssh/host-trust") {
+    const data = await readJson(req);
+    return sendJson(res, acceptHostTrust(data.token, data.mode));
+  }
+  if (req.method === "POST" && pathname === "/api/ssh/preflight") {
+    const data = await readJson(req);
+    const connection = data.connection_id ? getConnection(Number(data.connection_id)) : data.connection;
+    if (!connection) throw new Error("缺少 SSH 连接配置");
+    return sendJson(res, await ensureConnectionHostTrusted(connection));
+  }
   if (req.method === "GET" && pathname === "/api/about") return sendJson(res, aboutInfo());
   if (req.method === "GET" && pathname === "/api/desktop-settings") {
     const localRequest = isLocalRequest(req);
@@ -1005,9 +1579,164 @@ async function handleApi(req, res, pathname) {
     }
   }
   if (req.method === "GET" && pathname === "/api/connections") return sendJson(res, listConnections());
+  if (req.method === "GET" && pathname === "/api/remote-profiles") return sendJson(res, listRemoteProfiles());
+  if (req.method === "GET" && pathname === "/api/serial/ports") return sendJson(res, await listSerialPorts());
+  if (req.method === "GET" && pathname === "/api/remote-clients/diagnostics") {
+    const x11 = isLocalRequest(req) && desktopIntegration?.xServerDiagnostics
+      ? await Promise.resolve(desktopIntegration.xServerDiagnostics())
+      : x11RuntimeDiagnostics();
+    const xdmcp = {
+      available:Boolean(x11?.xdmcp_available),
+      client:x11?.xdmcp_available
+        ? x11.platform === "darwin"
+          ? "TunnelDesk 内置 XDMCP（XQuartz）"
+          : x11.mode === "bundled"
+            ? "TunnelDesk 内置 X Server"
+            : x11.platform === "linux"
+              ? "TunnelDesk XDMCP（Xephyr）"
+              : x11.server || "X Server"
+        : "",
+      executable:x11?.xdmcp_available ? x11.xdmcp_client || x11.executable || "" : "",
+      can_install:Boolean(x11?.can_install),
+      install_label:process.platform === "darwin" ? "安装 XQuartz" : process.platform === "linux" ? "安装 Xephyr" : ""
+    };
+    if (!isLocalRequest(req) || !desktopIntegration?.remoteClientDiagnostics) return sendJson(res, {
+      platform:process.platform,
+      desktop:false,
+      rdp:{available:false,client:"",executable:""},
+      vnc:{available:false,client:"",executable:""},
+      xdmcp,
+      x11,
+      message:"RDP、VNC 和 XDMCP 需要在运行 TunnelDesk 的桌面设备上打开"
+    });
+    return sendJson(res, {desktop:true, ...await Promise.resolve(desktopIntegration.remoteClientDiagnostics()), xdmcp, x11});
+  }
+  if (req.method === "POST" && pathname === "/api/remote-clients/install") {
+    if (!isLocalRequest(req) || !desktopIntegration?.installRemoteClient) return sendJson(res, {error:"客户端只能由本机桌面版安装"}, 403);
+    const body = await readJson(req);
+    const protocol = String(body.protocol || "").toLowerCase();
+    if (protocol !== "rdp") return sendJson(res, {error:"当前只支持安装 RDP 客户端"}, 400);
+    return sendJson(res, await Promise.resolve(desktopIntegration.installRemoteClient(protocol)));
+  }
+  if (req.method === "POST" && pathname === "/api/xserver/install") {
+    if (!isLocalRequest(req)) return sendJson(res, {error:"图形组件只能由本机桌面版安装"}, 403);
+    if (process.platform === "darwin" && desktopIntegration?.installXQuartz) {
+      return sendJson(res, await Promise.resolve(desktopIntegration.installXQuartz()));
+    }
+    if (process.platform === "linux" && desktopIntegration?.installLinuxGraphicsComponents) {
+      return sendJson(res, await Promise.resolve(desktopIntegration.installLinuxGraphicsComponents()));
+    }
+    return sendJson(res, {error:"当前平台没有可自动安装的图形组件"}, 403);
+  }
+  if (pathname === "/api/xserver") {
+    if (req.method === "GET") {
+      const diagnostics = isLocalRequest(req) && desktopIntegration?.xServerDiagnostics
+        ? await Promise.resolve(desktopIntegration.xServerDiagnostics())
+        : x11RuntimeDiagnostics();
+      return sendJson(res, diagnostics);
+    }
+    if (req.method === "POST") {
+      if (!isLocalRequest(req) || !desktopIntegration?.startXServer) return sendJson(res, {error:"X Server 只能由本机桌面端启动"}, 403);
+      return sendJson(res, await Promise.resolve(desktopIntegration.startXServer()));
+    }
+    if (req.method === "DELETE") {
+      if (!isLocalRequest(req) || !desktopIntegration?.stopXServer) return sendJson(res, {error:"X Server 只能由本机桌面端停止"}, 403);
+      return sendJson(res, await Promise.resolve(desktopIntegration.stopXServer()));
+    }
+  }
+  if (req.method === "GET" && pathname === "/api/ssh/config/detect") {
+    const configPath = path.join(USER_SSH_DIR, "config");
+    if (!fs.existsSync(configPath)) return sendJson(res, {available:false, path:configPath, count:0, conflicts:[], text:""});
+    const text = fs.readFileSync(configPath, "utf8");
+    const parsed = parseConfigText(text);
+    const existing = new Set(listConnections().map(item => String(item.name).toLowerCase()));
+    const conflicts = parsed.tunnels.filter(item => existing.has(String(item.name).toLowerCase())).map(item => item.name);
+    return sendJson(res, {available:true, path:configPath, count:parsed.count, conflicts, text});
+  }
+  if (req.method === "GET" && pathname === "/api/command-snippets") return sendJson(res, listCommandSnippets());
+  if (req.method === "GET" && pathname === "/api/named-workspaces") return sendJson(res, listNamedWorkspaces());
   if (req.method === "GET" && pathname === "/api/command-templates") return sendJson(res, listCommandTemplates());
   if (req.method === "GET" && pathname === "/api/forward-templates") return sendJson(res, listForwardTemplates());
   if (req.method === "GET" && pathname === "/api/sftp/jobs") return sendJson(res, listSftpJobs());
+  if (pathname === "/api/local-files" || pathname.startsWith("/api/local-files/")) {
+    if (!isLocalRequest(req) || !desktopIntegration?.getDesktopDirectory) {
+      return sendJson(res, {error:"本地文件只支持在 TunnelDesk 桌面端使用"}, 403);
+    }
+    if (req.method === "GET" && pathname === "/api/local-files") {
+      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const defaultDirectory = await Promise.resolve(desktopIntegration.getDesktopDirectory());
+      const location = url.searchParams.get("location") || "directory";
+      return sendJson(res, listLocalDirectory(location === "computer" ? "" : url.searchParams.get("path") || defaultDirectory, {
+        defaultDirectory,
+        location,
+        page:url.searchParams.get("page"),
+        page_size:url.searchParams.get("page_size"),
+        query:url.searchParams.get("query"),
+        sort:url.searchParams.get("sort"),
+        dir:url.searchParams.get("dir")
+      }));
+    }
+    if (req.method === "GET" && pathname === "/api/local-files/locations") {
+      return sendJson(res, {
+        desktop:await Promise.resolve(desktopIntegration.getDesktopDirectory()),
+        downloads:await Promise.resolve(desktopIntegration.getDownloadDirectory()),
+        home:os.homedir()
+      });
+    }
+    if (req.method === "POST" && pathname === "/api/local-files/open") {
+      if (!desktopIntegration?.openLocalPath) return sendJson(res, {error:"当前桌面端不能打开本地文件"}, 403);
+      const data = await readJson(req);
+      return sendJson(res, await Promise.resolve(desktopIntegration.openLocalPath(data.path || "")));
+    }
+    if (req.method === "POST" && pathname === "/api/local-files/rename") {
+      const data = await readJson(req);
+      return sendJson(res, renameLocalPath(data.path, data.new_name));
+    }
+    if (req.method === "POST" && pathname === "/api/local-files/delete") {
+      const data = await readJson(req);
+      return sendJson(res, deleteLocalPaths(data.paths || []));
+    }
+    if (req.method === "POST" && pathname === "/api/local-files/create") {
+      const data = await readJson(req);
+      return sendJson(res, createLocalEntry(data.directory, data.name, data.type));
+    }
+    if (req.method === "POST" && pathname === "/api/local-files/chmod") {
+      const data = await readJson(req);
+      return sendJson(res, chmodLocalPath(data.path, data.mode));
+    }
+    if (req.method === "POST" && pathname === "/api/local-files/upload") {
+      const data = await readJson(req);
+      const result = await uploadLocalPaths(Number(data.connection_id), data.paths || [], data.target || ".", data.conflict || "error");
+      return sendJson(res, result, 202);
+    }
+    if (req.method === "POST" && pathname === "/api/local-files/receive-plan") {
+      const data = await readJson(req);
+      return sendJson(res, planSftpPathDelivery(data.paths || [], data.target || ""));
+    }
+    if (req.method === "POST" && pathname === "/api/local-files/receive") {
+      const data = await readJson(req);
+      return sendJson(res, startLocalDeliveryJob(Number(data.connection_id), data.paths || [], data.target || "", data.conflict || "rename"), 202);
+    }
+    if (req.method === "POST" && pathname === "/api/local-files/receive-desktop") {
+      const data = await readJson(req);
+      const desktopDirectory = await Promise.resolve(desktopIntegration.getDesktopDirectory());
+      return sendJson(res, startLocalDeliveryJob(Number(data.connection_id), data.paths || [], desktopDirectory, "rename", {
+        label:"发送到桌面",
+        deliveryMode:"desktop"
+      }), 202);
+    }
+  }
+  if (req.method === "GET" && pathname === "/api/linux-desktop/tasks") return sendJson(res, listLinuxDesktopTasks());
+  if (req.method === "POST" && pathname === "/api/linux-desktop/tasks/clear-finished") return sendJson(res, clearFinishedLinuxDesktopTasks());
+  if (req.method === "GET" && pathname === "/api/remote-component/tasks") return sendJson(res, remoteOfflineTasks.list());
+  if (req.method === "POST" && pathname === "/api/remote-component/tasks/clear-finished") return sendJson(res, remoteOfflineTasks.clearFinished());
+  if (req.method === "GET" && pathname === "/api/sftp/external-edits") return sendJson(res, listExternalEdits());
+  if (req.method === "GET" && pathname === "/api/sftp/sync/jobs") return sendJson(res, listSyncJobs());
+  if (req.method === "POST" && pathname === "/api/sftp/sync/jobs/clear-finished") return sendJson(res, clearFinishedSyncJobs());
+  if (req.method === "POST" && pathname === "/api/sftp/sync/choose-directory") {
+    if (!isLocalRequest(req) || !desktopIntegration?.chooseSyncDirectory) return sendJson(res, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
+    return sendJson(res, {path:await Promise.resolve(desktopIntegration.chooseSyncDirectory())});
+  }
   if (req.method === "GET" && pathname === "/api/sftp/download-settings") {
     const saved = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
     const desktop = Boolean(isLocalRequest(req) && desktopIntegration?.getDownloadDirectory);
@@ -1086,6 +1815,9 @@ async function handleApi(req, res, pathname) {
     }
     return sendJson(res, result);
   }
+  if (req.method === "POST" && pathname === "/api/ssh/keys/generate") {
+    return sendJson(res, generateSshKey(await readJson(req)), 201);
+  }
   if (req.method === "POST" && pathname === "/api/terminal/startup-tickets") {
     const data = await readJson(req);
     getConnection(Number(data.connection_id));
@@ -1135,6 +1867,16 @@ async function handleApi(req, res, pathname) {
     const id = insertConnection(await readJson(req), DEFAULT_EXTRA_ARGS);
     return sendJson(res, { id }, 201);
   }
+  if (req.method === "POST" && pathname === "/api/remote-profiles") {
+    const id = insertRemoteProfile(await readJson(req));
+    return sendJson(res, {id}, 201);
+  }
+  if (req.method === "POST" && pathname === "/api/command-snippets") {
+    return sendJson(res, insertCommandSnippet(await readJson(req)), 201);
+  }
+  if (req.method === "POST" && pathname === "/api/named-workspaces") {
+    return sendJson(res, insertNamedWorkspace(await readJson(req)), 201);
+  }
   if (req.method === "POST" && pathname === "/api/connections/bulk-delete") {
     const data = await readJson(req);
     const ids = [...new Set((data.ids || []).map(Number).filter((id) => Number.isInteger(id) && id > 0))];
@@ -1143,7 +1885,10 @@ async function handleApi(req, res, pathname) {
     const existingIds = new Set(listConnections().map((item) => item.id));
     if (ids.some((id) => !existingIds.has(id))) throw new Error("部分 SSH 连接不存在，请刷新后重试");
     createConfigSnapshot("批量删除 SSH 连接前自动快照");
-    for (const id of ids) deleteConnection(id, stopForward);
+    for (const id of ids) {
+      stopExternalEditsForConnection(id);
+      deleteConnection(id, stopForward);
+    }
     return sendJson(res, { ok: true, deleted: ids.length });
   }
   if (req.method === "POST" && pathname === "/api/connections/bulk-update") {
@@ -1173,7 +1918,7 @@ async function handleApi(req, res, pathname) {
     if (!currentName || currentName.length > 100 || !newName || newName.length > 100) {
       throw new Error("分组名称长度必须在 1-100 个字符之间");
     }
-    const groupNames = new Set(all("SELECT DISTINCT group_name FROM connections").map((item) => item.group_name));
+    const groupNames = new Set(all("SELECT group_name FROM connections UNION SELECT group_name FROM remote_profiles").map((item) => item.group_name));
     if (!groupNames.has(currentName)) throw new Error("分组不存在，请刷新后重试");
     if (currentName !== newName && groupNames.has(newName)) throw new Error("该分组名称已存在，请使用其他名称");
     if (currentName === newName) return sendJson(res, { ok: true, updated: 0, group_name: newName });
@@ -1193,20 +1938,344 @@ async function handleApi(req, res, pathname) {
   }
 
   const parts = pathname.split("/").filter(Boolean);
+  if (parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "rdp-server") {
+    const connectionId = Number(parts[2]);
+    if (!Number.isInteger(connectionId) || connectionId < 1) throw new Error("SSH 连接 ID 无效");
+    const connection = getConnection(connectionId);
+    if (req.method === "GET") return sendJson(res, await detectLinuxDesktopForConnection(connection));
+    if (req.method === "POST") {
+      const result = await configureRdpServerForConnection(connection, await readJson(req));
+      return sendJson(res, result, result?.task ? 202 : 200);
+    }
+  }
+  if (parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "linux-desktop") {
+    const connectionId = Number(parts[2]);
+    if (!Number.isInteger(connectionId) || connectionId < 1) throw new Error("SSH 连接 ID 无效");
+    const connection = getConnection(connectionId);
+    if (req.method === "GET") return sendJson(res, await detectLinuxDesktopForConnection(connection));
+  }
+  if (parts.length === 5 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "linux-desktop" && parts[4] === "install") {
+    const connectionId = Number(parts[2]);
+    if (!Number.isInteger(connectionId) || connectionId < 1) throw new Error("SSH 连接 ID 无效");
+    if (req.method === "POST") {
+      const data = await readJson(req);
+      const connection = getConnection(connectionId);
+      const requestedMode = String(data.mode || data.install_mode || data.action || "online").toLowerCase();
+      const mode = ["local-offline", "install-local-offline", "offline-local"].includes(requestedMode)
+        ? "local-offline"
+        : ["offline", "install-offline"].includes(requestedMode)
+          ? "offline"
+          : ["online", "install", "install-online"].includes(requestedMode)
+            ? "online"
+            : "";
+      if (!mode) throw new Error("Linux 桌面安装方式无效");
+      const grantScope = mode === "local-offline" ? "linux-desktop.install-local-offline" : mode === "offline" ? "linux-desktop.install-offline" : "linux-desktop.install";
+      const grant = createRemoteAdminGrant(connection, data, grantScope);
+      const task = handoffRemotePrivilegeGrant(grant, () => startLinuxDesktopInstall(connectionId, data.desktop_id, "install", grant, mode));
+      return sendJson(res, task, 202);
+    }
+  }
+  if (parts.length === 5 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "linux-desktop" && parts[4] === "uninstall") {
+    const connectionId = Number(parts[2]);
+    if (!Number.isInteger(connectionId) || connectionId < 1) throw new Error("SSH 连接 ID 无效");
+    if (req.method === "POST") {
+      const data = await readJson(req);
+      const connection = getConnection(connectionId);
+      const grant = createRemoteAdminGrant(connection, data, "linux-desktop.uninstall");
+      const task = handoffRemotePrivilegeGrant(grant, () => startLinuxDesktopInstall(connectionId, data.desktop_id, "uninstall", grant));
+      return sendJson(res, task, 202);
+    }
+  }
+  if (parts.length === 4 && parts[0] === "api" && parts[1] === "linux-desktop" && parts[2] === "tasks") {
+    const task = linuxDesktopTasks.get(parts[3]);
+    if (!task) return sendJson(res, {error:"桌面管理任务不存在或已过期"}, 404);
+    if (req.method === "GET") return sendJson(res, linuxDesktopTaskView(task));
+    if (req.method === "DELETE") return sendJson(res, {removed:deleteLinuxDesktopTask(parts[3])});
+  }
+  if (parts.length === 4 && parts[0] === "api" && parts[1] === "remote-component" && parts[2] === "tasks") {
+    const task = remoteOfflineTasks.list().find(item => String(item.id) === String(parts[3]));
+    if (!task) return sendJson(res, {error:"远端组件任务不存在或已过期"}, 404);
+    if (req.method === "GET") return sendJson(res, task);
+    if (req.method === "DELETE") return sendJson(res, {removed:remoteOfflineTasks.remove(parts[3])});
+  }
+  if (parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "x11-forwarding") {
+    const connectionId = Number(parts[2]);
+    if (!Number.isInteger(connectionId) || connectionId < 1) throw new Error("SSH 连接 ID 无效");
+    const connection = getConnection(connectionId);
+    if (req.method === "GET") return sendJson(res, await detectSshX11ForConnection(connection));
+    if (req.method === "POST") {
+      const data = await readJson(req);
+      const grant = createRemoteAdminGrant(connection, data, "x11.sshd-config");
+      try {
+        const result = await startSshX11ConfigurationTask(connection, data.action, grant);
+        return sendJson(res, result, result?.task ? 202 : 200);
+      } catch (error) {
+        releaseRemoteAdminGrant(grant);
+        throw error;
+      }
+    }
+  }
+  if (parts.length >= 3 && parts[0] === "api" && parts[1] === "remote-profiles") {
+    const id = Number(parts[2]);
+    if (!Number.isInteger(id) || id < 1) throw new Error("远程连接 ID 无效");
+    if (req.method === "PUT" && parts.length === 3) return sendJson(res, updateRemoteProfile(id, await readJson(req)));
+    if (req.method === "DELETE" && parts.length === 3) return sendJson(res, deleteRemoteProfile(id));
+    if (req.method === "POST" && parts.length === 4 && parts[3] === "flags") return sendJson(res, updateRemoteProfileFlags(id, await readJson(req)));
+    if (req.method === "POST" && parts.length === 4 && parts[3] === "usage") return sendJson(res, updateRemoteProfileUsage(id));
+    if (req.method === "POST" && parts.length === 4 && parts[3] === "duplicate") return sendJson(res, duplicateRemoteProfile(id), 201);
+    if (parts.length === 4 && parts[3] === "vnc-credential") {
+      res.setHeader("Cache-Control", "no-store");
+      if (req.method === "POST") return sendJson(res, getVncProfileCredential(id));
+      if (req.method === "PUT") return sendJson(res, updateVncProfileCredential(id, (await readJson(req)).password));
+    }
+    if (parts.length === 4 && parts[3] === "vnc-clipboard") {
+      res.setHeader("Cache-Control", "no-store");
+      const profile = getRemoteProfile(id);
+      const dependencies = { getConnection, listConnections, runSshCommandForConnection };
+      if (req.method === "GET") return sendJson(res, await readVncRemoteClipboard(profile, dependencies));
+      if (req.method === "POST") return sendJson(res, await writeVncRemoteClipboard(profile, (await readJson(req)).text, dependencies));
+    }
+    if (parts.length === 5 && parts[3] === "vnc-clipboard" && parts[4] === "helper") {
+      res.setHeader("Cache-Control", "no-store");
+      const profile = getRemoteProfile(id);
+      if (req.method === "GET") return sendJson(res, await inspectVncClipboardHelperForProfile(profile));
+      if (req.method === "POST") {
+        const result = await configureVncClipboardHelperForProfile(profile, await readJson(req));
+        return sendJson(res, result, result?.task ? 202 : 200);
+      }
+    }
+    if (parts.length === 5 && parts[3] === "rdp" && parts[4] === "server") {
+      const profile = getRemoteProfile(id);
+      if (profile.protocol !== "rdp") throw new Error("该连接不是 RDP 配置");
+      const management = resolveManagementConnection(profile, {getConnection, listConnections});
+      if (req.method === "GET") return sendJson(res, await detectLinuxDesktopForConnection(management));
+      if (req.method === "POST") {
+        const result = await configureRdpServerForConnection(management, await readJson(req));
+        return sendJson(res, result, result?.task ? 202 : 200);
+      }
+    }
+    if (parts.length === 5 && parts[3] === "vnc" && parts[4] === "server") {
+      const profile = getRemoteProfile(id);
+      if (profile.protocol !== "vnc") throw new Error("该连接不是 VNC 配置");
+      if (req.method === "GET") return sendJson(res, await inspectVncServerForProfile(profile));
+      if (req.method === "POST") {
+        const result = await configureVncServerForProfile(profile, await readJson(req));
+        return sendJson(res, result, result?.task ? 202 : 200);
+      }
+    }
+    if (req.method === "POST" && parts.length === 4 && parts[3] === "test") {
+      const profile = getRemoteProfile(id);
+      if (profile.protocol === "ftp") return sendJson(res, await testFtpProfile(id));
+      if (["telnet", "serial"].includes(profile.protocol)) return sendJson(res, await testRemoteTerminalProfile(id));
+      if (profile.protocol === "vnc") return sendJson(res, await testVncProfile(id));
+      if (profile.protocol === "xdmcp") {
+        if (!isLocalRequest(req) || !desktopIntegration?.testXdmcp) return sendJson(res, {ok:false, protocol:"xdmcp", message:"XDMCP 只能由本机桌面版检测"});
+        return sendJson(res, await Promise.resolve(desktopIntegration.testXdmcp({
+          id:profile.id,
+          protocol:profile.protocol,
+          host:profile.host,
+          port:profile.port,
+          options:profile.options
+        })));
+      }
+      const diagnostics = isLocalRequest(req) && desktopIntegration?.remoteClientDiagnostics
+        ? await Promise.resolve(desktopIntegration.remoteClientDiagnostics())
+        : {desktop:false, [profile.protocol]:{available:false}};
+      return sendJson(res, {
+        ok:Boolean(diagnostics?.[profile.protocol]?.available),
+        protocol:profile.protocol,
+        client:diagnostics?.[profile.protocol]?.client || "",
+        message:diagnostics?.[profile.protocol]?.available ? "系统客户端可用" : diagnostics?.[profile.protocol]?.reason || "当前设备未检测到可用客户端"
+      });
+    }
+    if (req.method === "GET" && parts.length === 5 && parts[3] === "xdmcp" && parts[4] === "server") {
+      const profile = getRemoteProfile(id);
+      if (profile.protocol !== "xdmcp") throw new Error("该连接不是 XDMCP 配置");
+      return sendJson(res, await detectXdmcpServer(profile, {
+        getConnection,
+        listConnections,
+        runSshCommandForConnection
+      }));
+    }
+    if (req.method === "POST" && parts.length === 5 && parts[3] === "xdmcp" && parts[4] === "server") {
+      const profile = getRemoteProfile(id);
+      if (profile.protocol !== "xdmcp") throw new Error("该连接不是 XDMCP 配置");
+      const data = await readJson(req);
+      const management = resolveManagementConnection(profile, {getConnection, listConnections});
+      const requestedAction = String(data.action || "enable").toLowerCase();
+      const grantScope = requestedAction.includes("local-offline") ? `xdmcp.${requestedAction}` : "xdmcp.configure";
+      const grant = createRemoteAdminGrant(management, data, grantScope);
+      let deferGrantRelease = false;
+      try {
+        const dependencies: any = {getConnection, listConnections, runSshCommandForConnection};
+        if (grant) dependencies.runPrivilegedSshCommandForConnection = (connection, command, timeoutMs) => runRemotePrivilegeCommand(connection, command, {grant_id:grant.id, scope:grantScope, timeout_ms:timeoutMs});
+        dependencies.startRemoteOfflineInstall = options => remoteOfflineTasks.startAptInstall({...options, grant, elevate:true, scope:grantScope, release_grant:releaseRemoteAdminGrant});
+        dependencies.startRemoteCommandTask = options => startRemoteComponentCommandTask({
+          connection:options.connection || management,
+          component:options.component,
+          componentLabel:options.component_label,
+          action:options.action,
+          actionLabel:options.action_label,
+          mode:options.mode,
+          command:options.command,
+          before:options.before,
+          grant,
+          scope:grantScope,
+          timeoutMs:options.timeout_ms,
+          verify:options.verify,
+          validate:options.validate
+        });
+        const result = await configureXdmcpServer(profile, data, dependencies);
+        deferGrantRelease = Boolean(result?.defer_grant_release);
+        return sendJson(res, result, result?.task ? 202 : 200);
+      } finally {
+        if (!deferGrantRelease) releaseRemoteAdminGrant(grant);
+      }
+    }
+    if (req.method === "POST" && parts.length === 4 && parts[3] === "launch") {
+      const profile = getRemoteProfile(id);
+      if (!isLocalRequest(req)) return sendJson(res, {error:"图形桌面只能在本机桌面版中打开"}, 403);
+      if (!["rdp", "vnc", "xdmcp"].includes(profile.protocol)) throw new Error("该连接不是图形桌面配置");
+      const launcher = profile.protocol === "xdmcp" ? desktopIntegration?.openXdmcp : desktopIntegration?.openRemoteClient;
+      if (!launcher) return sendJson(res, {error:profile.protocol === "xdmcp" ? "当前桌面版不支持 XDMCP" : "当前桌面版不支持系统远程桌面客户端"}, 403);
+      if (profile.protocol === "rdp") {
+        const endpoint = await probeTcpEndpoint(profile.host, profile.port || 3389);
+        if (!endpoint.ok) throw new Error(`无法从本机连接 RDP 服务 ${profile.host}:${profile.port || 3389}（${endpoint.error || "端口不可达"}）。请检查远端服务、防火墙和网络路由。`);
+      }
+      const result = await Promise.resolve(launcher({
+        id:profile.id,
+        protocol:profile.protocol,
+        host:profile.host,
+        port:profile.port,
+        username:profile.username,
+        options:profile.options
+      }));
+      updateRemoteProfileUsage(id);
+      return sendJson(res, result);
+    }
+    if (parts.length >= 4 && parts[3] === "ftp") {
+      const profile = getRemoteProfile(id);
+      if (profile.protocol !== "ftp") throw new Error("该连接不是 FTP 配置");
+      if (req.method === "GET" && parts.length === 4) {
+        const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+        return sendJson(res, await listFtpDirectory(id, url.searchParams.get("path") || ""));
+      }
+      if (req.method === "POST" && parts.length === 5 && parts[4] === "mkdir") {
+        const data = await readJson(req);
+        return sendJson(res, await makeFtpDirectory(id, data.path, data.name), 201);
+      }
+      if (req.method === "POST" && parts.length === 5 && parts[4] === "rename") {
+        const data = await readJson(req);
+        return sendJson(res, await renameFtpPath(id, data.path, data.name, data.new_name));
+      }
+      if (req.method === "POST" && parts.length === 5 && parts[4] === "delete") {
+        const data = await readJson(req);
+        return sendJson(res, await deleteFtpPath(id, data.path, data.name, data.type === "directory"));
+      }
+      if (req.method === "POST" && parts.length === 5 && parts[4] === "upload") {
+        const body = await readBody(req);
+        const file = getPart(req.headers["content-type"], body, "file");
+        const requestedPath = getPart(req.headers["content-type"], body, "path").data.toString("utf8");
+        return sendJson(res, await uploadFtpFile(id, requestedPath, file.filename || "upload.bin", file.data), 201);
+      }
+      if (req.method === "GET" && parts.length === 5 && parts[4] === "download") {
+        const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+        const item = await downloadFtpFile(id, url.searchParams.get("path") || "/", url.searchParams.get("name") || "");
+        res.writeHead(200, secureHeaders({
+          "Content-Type":"application/octet-stream",
+          "Content-Length":item.size,
+          "Content-Disposition":`attachment; filename*=UTF-8''${encodeURIComponent(item.name)}`,
+          "Cache-Control":"no-store"
+        }));
+        const stream = fs.createReadStream(item.path);
+        const cleanup = () => item.cleanup();
+        stream.once("close", cleanup);
+        stream.once("error", error => res.destroy(error));
+        res.once("close", cleanup);
+        stream.pipe(res);
+        return;
+      }
+    }
+  }
   if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "duplicate") {
     const source = getConnection(Number(parts[2]));
     const result = duplicateConnection(source.id, DEFAULT_EXTRA_ARGS);
     appendSystemLog(`已复制 SSH 连接：${source.name} -> ${result.name}`);
     return sendJson(res, result, 201);
   }
+  if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "usage") {
+    return sendJson(res, updateConnectionUsage(Number(parts[2]), (await readJson(req)).action));
+  }
+  if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "flags") {
+    return sendJson(res, updateConnectionFlags(Number(parts[2]), await readJson(req)));
+  }
+  if (parts.length >= 3 && parts[0] === "api" && parts[1] === "command-snippets") {
+    if (req.method === "PUT" && parts.length === 3) return sendJson(res, updateCommandSnippet(parts[2], await readJson(req)));
+    if (req.method === "DELETE" && parts.length === 3) return sendJson(res, deleteCommandSnippet(parts[2]));
+    if (req.method === "POST" && parts.length === 4 && parts[3] === "use") return sendJson(res, useCommandSnippet(parts[2]));
+  }
+  if (parts.length >= 3 && parts[0] === "api" && parts[1] === "named-workspaces") {
+    if (req.method === "PUT" && parts.length === 3) return sendJson(res, updateNamedWorkspace(parts[2], await readJson(req)));
+    if (req.method === "DELETE" && parts.length === 3) return sendJson(res, deleteNamedWorkspace(parts[2]));
+    if (req.method === "POST" && parts.length === 4 && parts[3] === "duplicate") return sendJson(res, duplicateNamedWorkspace(parts[2]), 201);
+    if (req.method === "POST" && parts.length === 4 && parts[3] === "use") return sendJson(res, useNamedWorkspace(parts[2]));
+  }
   if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "terminal-preferences") {
     const id = Number(parts[2]);
     const result = updateTerminalPreferences(id, await readJson(req));
     return sendJson(res, result);
   }
+  if (req.method === "POST" && parts.length === 5 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "ssh-key" && parts[4] === "deploy") {
+    const data = await readJson(req);
+    return sendJson(res, await deployGeneratedPublicKey(Number(parts[2]), data.public_path));
+  }
+  if (req.method === "POST" && parts.length === 5 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "external-tools" && parts[4] === "vscode") {
+    if (!isLocalRequest(req) || !desktopIntegration?.openVsCodeRemote) return sendJson(res, {error:"VS Code Remote SSH 只能在本机桌面端中使用"}, 403);
+    const connection = getConnection(Number(parts[2]));
+    const data = await readJson(req);
+    return sendJson(res, await Promise.resolve(desktopIntegration.openVsCodeRemote({
+      user:connection.ssh_user,
+      host:connection.ssh_host,
+      port:connection.ssh_port,
+      path:String(data.path || "")
+    })));
+  }
   if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "terminal-startup") {
     const id = Number(parts[2]);
     return sendJson(res, { startup:updateTerminalStartup(id, await readJson(req)) });
+  }
+  if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "x11-mode") {
+    return sendJson(res, updateConnectionX11Mode(Number(parts[2]), (await readJson(req)).mode));
+  }
+  if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "remote-profiles") {
+    const data = await readJson(req);
+    if (String(data.protocol || "").toLowerCase() === "all") {
+      const result = createAllRemoteProfilesFromConnection(Number(parts[2]));
+      for (const item of result.results.filter(value => value.created)) {
+        appendSystemLog(`已从 SSH 连接生成 ${item.protocol.toUpperCase()} 连接：${item.name}`);
+      }
+      return sendJson(res, result, result.created_count ? 201 : 200);
+    }
+    const result = createRemoteProfileFromConnection(Number(parts[2]), data.protocol);
+    if (result.created) appendSystemLog(`已从 SSH 连接生成 ${result.protocol.toUpperCase()} 连接：${result.name}`);
+    return sendJson(res, result, result.created ? 201 : 200);
+  }
+  if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "x11-applications") {
+    const connection = getConnection(Number(parts[2]));
+    return sendJson(res, {discovery:await x11ApplicationsForConnection(connection)});
+  }
+  if (req.method === "POST" && parts.length === 5 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "x11-applications" && parts[4] === "install-plan") {
+    const connection = getConnection(Number(parts[2]));
+    return sendJson(res, await x11InstallPlanForConnection(connection));
+  }
+  if (req.method === "POST" && parts.length === 5 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "x11-applications" && parts[4] === "install") {
+    const connection = getConnection(Number(parts[2]));
+    return sendJson(res, await installX11ApplicationsForConnection(connection, await readJson(req)));
+  }
+  if (req.method === "POST" && parts.length === 5 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "x11-applications" && parts[4] === "verify") {
+    const connection = getConnection(Number(parts[2]));
+    const data = await readJson(req);
+    return sendJson(res, {application:await verifyX11ApplicationForConnection(connection, data.command)});
   }
   if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "terminal-capabilities") {
     const connection = getConnection(Number(parts[2]));
@@ -1257,6 +2326,20 @@ async function handleApi(req, res, pathname) {
       return;
     }
   }
+  if (parts.length >= 3 && parts[0] === "api" && parts[1] === "sftp" && parts[2] === "external-edits") {
+    if (req.method === "GET" && parts.length === 4) return sendJson(res, getExternalEdit(parts[3]));
+    if (req.method === "DELETE" && parts.length === 4) return sendJson(res, stopExternalEdit(parts[3]));
+    if (req.method === "POST" && parts.length === 5 && parts[4] === "resolve") {
+      const data = await readJson(req);
+      return sendJson(res, await resolveExternalEdit(parts[3], data.action, data));
+    }
+  }
+  if (parts.length >= 4 && parts[0] === "api" && parts[1] === "sftp" && parts[2] === "sync" && parts[3] === "jobs") {
+    if (req.method === "GET" && parts.length === 5) return sendJson(res, getSyncJob(parts[4]));
+    if (req.method === "DELETE" && parts.length === 5) return sendJson(res, deleteSyncJob(parts[4]));
+    if (req.method === "POST" && parts.length === 6 && parts[5] === "cancel") return sendJson(res, cancelSyncJob(parts[4]));
+    if (req.method === "POST" && parts.length === 6 && parts[5] === "retry") return sendJson(res, retrySyncJob(parts[4]), 202);
+  }
   if (parts.length >= 3 && parts[0] === "api" && parts[1] === "forward-templates") {
     if (req.method === "PUT" && parts.length === 3) {
       updateForwardTemplate(parts[2], await readJson(req));
@@ -1280,11 +2363,29 @@ async function handleApi(req, res, pathname) {
   }
   if (parts.length >= 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "sftp") {
     const connectionId = Number(parts[2]);
+    if (req.method === "POST" && parts.length === 5 && parts[4] === "external-edit") {
+      if (!isLocalRequest(req) || !desktopIntegration?.openExternalFile) return sendJson(res, {error:"外部编辑器只能在本机桌面端中使用"}, 403);
+      const data = await readJson(req);
+      return sendJson(res, await startExternalEdit(connectionId, data.path, {
+        editor:data.editor || {},
+        open:(file, editor) => desktopIntegration.openExternalFile(file, editor)
+      }), 201);
+    }
+    if (req.method === "POST" && parts.length === 6 && parts[4] === "sync" && parts[5] === "plan") {
+      if (!isLocalRequest(req) || !desktopIntegration?.chooseSyncDirectory) return sendJson(res, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
+      return sendJson(res, startSyncPlanningJob(connectionId, await readJson(req)), 202);
+    }
+    if (req.method === "POST" && parts.length === 6 && parts[4] === "sync" && parts[5] === "execute") {
+      if (!isLocalRequest(req) || !desktopIntegration?.chooseSyncDirectory) return sendJson(res, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
+      const data = await readJson(req);
+      return sendJson(res, startSyncJob(data.plan_id, data.selected_indexes, data.overrides), 202);
+    }
     if (parts.length === 5 && parts[4] === "session") {
       if (req.method === "GET") return sendJson(res, sftpSessionStatus(connectionId));
       if (req.method === "POST") return sendJson(res, await connectSftpSession(connectionId, { explicit: true }));
       if (req.method === "DELETE") {
         const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+        stopExternalEditsForConnection(connectionId);
         return sendJson(res, disconnectSftpSession(connectionId, { remember: url.searchParams.get("forget") !== "1" }));
       }
     }
@@ -1319,7 +2420,10 @@ async function handleApi(req, res, pathname) {
       const targetDirectory = desktop ? (saved.sftp_download_directory || defaultDirectory) : "";
       if (data.mode === "separate") {
         if (!desktop || !targetDirectory) return sendJson(res, {error:"分别下载文件和目录仅支持本机桌面版；当前设备请使用打包下载"}, 400);
-        return sendJson(res, await deliverSftpPaths(connectionId, paths, targetDirectory));
+        return sendJson(res, startLocalDeliveryJob(connectionId, paths, targetDirectory, "rename", {
+          label:"批量下载到本机",
+          deliveryMode:"download-directory"
+        }), 202);
       }
       return sendJson(res, startArchiveDownloadJob(connectionId, paths, {
         deliveryMode:desktop ? "desktop" : "browser",
@@ -1554,6 +2658,7 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, { ok: true });
   }
   if (req.method === "DELETE" && parts.length === 3 && parts[0] === "api" && parts[1] === "connections") {
+    stopExternalEditsForConnection(Number(parts[2]));
     deleteConnection(Number(parts[2]), stopForward);
     clearConnectionHealthCache(Number(parts[2]));
     return sendJson(res, { ok: true });
@@ -1577,7 +2682,9 @@ function requestHandler(req, res) {
     if (pathname.startsWith("/api/")) await handleApi(req, res, pathname);
     else serveStatic(req, res, pathname);
   }).catch((error) => {
-    if (!res.headersSent) sendJson(res, { error: error.message || String(error) }, 400);
+    const hostTrust = hostTrustErrorResponse(error);
+    if (!res.headersSent && hostTrust) sendJson(res, hostTrust.body, hostTrust.status);
+    else if (!res.headersSent) sendJson(res, { error: error.message || String(error) }, 400);
     else res.destroy();
   });
 }
@@ -1587,6 +2694,8 @@ function upgradeHandler(req, socket) {
     if (!sameOrigin(req) || !isAuthenticated(req)) return socket.destroy();
     const { pathname } = new URL(req.url, `http://${req.headers.host || "localhost"}`);
     if (pathname === "/ws/terminal") return handleTerminalUpgrade(req, socket);
+    if (pathname === "/ws/remote-terminal") return handleRemoteTerminalUpgrade(req, socket);
+    if (pathname === "/ws/vnc") return handleVncUpgrade(req, socket);
     if (pathname === "/ws/batch-command") return handleBatchCommandUpgrade(req, socket);
   } catch {}
   socket.destroy();
@@ -1652,6 +2761,28 @@ let activeServers: any[] = [];
 let exitOnShutdown = true;
 let onShutdown: null | (() => any) = null;
 let desktopIntegration: any = null;
+const {
+  connectionRowsFromBackup,
+  storageSettingsView,
+  saveWebStorageSettings,
+  listLocalDirectories,
+  inspectRestoreDatabaseFile,
+  normalizeRestoredCredentials
+} = createStorageRestoreHelpers({
+  BASE_DIR,
+  DATA_DIR,
+  PROJECT_SSH_DIR,
+  RUNTIME_ROOT,
+  STORAGE_SETTINGS_FILE,
+  encryptionReady,
+  encryptText,
+  listIdentityFiles,
+  readSecuritySettings,
+  validateSortOrder,
+  getDesktopIntegration:() => desktopIntegration,
+  getArgs:() => args,
+  requestShutdown:() => shutdown()
+});
 let updateCheckTimer = null;
 let installedUpdateCleanupTimer = null;
 let startupTaskTimer = null;
@@ -1999,7 +3130,11 @@ async function shutdown() {
       appendSystemLog("TunnelDesk 正在关闭");
       await stopForwardHealthMonitor();
       closeAllTerminals();
+      closeAllRemoteTerminals();
+      closeAllVncSessions();
       closeAllSftpSessions();
+      stopAllExternalEdits();
+      closeJumpConnectionPool();
       stopAllForwards({ preserveRestoreState: true });
       closeDatabase();
     } catch (error) {
@@ -2026,6 +3161,7 @@ function startServer(customArgs: any = parseArgs(), options: any = {}) {
   startupEffectsStarted = false;
   shutdownPromise = null;
   fs.mkdirSync(DATA_DIR, { recursive: true });
+  cleanupFtpTemp();
   scheduleInstalledUpdateCleanup();
   if (process.env.TUNNELDESK_RESET_WEB_ACCESS === "1") {
     resetWebAccessSecurity();

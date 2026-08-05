@@ -9,6 +9,8 @@ const WORKSPACE_HEADER_HEIGHT_MAX = 64;
 const WORKSPACE_TAB_HEIGHT_DEFAULT = 32;
 const WORKSPACE_TAB_HEIGHT_MIN = 26;
 const WORKSPACE_TAB_HEIGHT_MAX = 48;
+const WORKSPACE_GROUP_STORAGE_VERSION = 1;
+const WORKSPACE_GROUP_MAIN_ID = "workspace-main";
 const legacyWorkspaceApi = {
   renderTabs,
   updateWorkspaceTabScrollControls,
@@ -48,6 +50,20 @@ let workspaceChromeLastFitAt = 0;
 let workspaceHeaderHeight = WORKSPACE_HEADER_HEIGHT_DEFAULT;
 let workspaceTabHeight = WORKSPACE_TAB_HEIGHT_DEFAULT;
 const workspacePaneNodes = new Map();
+let workspaceGroupSerial = 0;
+let activeWorkspaceGroupId = WORKSPACE_GROUP_MAIN_ID;
+let workspaceGroups = [{
+  id:WORKSPACE_GROUP_MAIN_ID,
+  name:"主工作区",
+  tabs:[],
+  layout:null,
+  activeTabKey:"",
+  focusedPaneId:"pane-1"
+}];
+const workspaceSelectedTabKeys = new Set();
+let workspaceGroupSwitching = false;
+let workspaceGroupSelectionMode = false;
+let workspaceGroupDragId = "";
 
 function workspaceCssEscape(value) {
   if (typeof cssEscape === "function") return cssEscape(value);
@@ -57,6 +73,384 @@ function workspaceCssEscape(value) {
 
 function workspaceDockElement() {
   return document.getElementById("workspaceDock");
+}
+
+function currentWorkspaceGroup() {
+  return workspaceGroups.find(group => group.id === activeWorkspaceGroupId)
+    || workspaceGroups[0]
+    || null;
+}
+
+function workspaceAllTabs() {
+  const result = [...tabs];
+  for (const group of workspaceGroups) {
+    if (group.id === activeWorkspaceGroupId) continue;
+    result.push(...(group.tabs || []));
+  }
+  return result;
+}
+
+function workspaceTabsByKey(key) {
+  const normalized = String(key || "");
+  return workspaceAllTabs().filter(tab => tab?.key === normalized);
+}
+
+function workspaceTabByKey(key) {
+  return workspaceTabsByKey(key)[0] || null;
+}
+
+function workspaceHasTabKey(key) {
+  return Boolean(workspaceTabByKey(key));
+}
+
+function workspaceGroupName() {
+  return currentWorkspaceGroup()?.name || "主工作区";
+}
+
+function workspaceGroupPersistableTab(tab) {
+  if (!tab?.kind) return null;
+  const {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned} = tab;
+  return {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned:Boolean(pinned)};
+}
+
+function workspaceFilterLayout(node, allowedKeys) {
+  if (!node) return null;
+  if (node.type === "pane") {
+    const paneTabs = (node.tabs || []).filter(key => allowedKeys.has(key));
+    if (!paneTabs.length) return null;
+    return {
+      type:"pane",
+      id:node.id,
+      tabs:paneTabs,
+      activeTabKey:paneTabs.includes(node.activeTabKey) ? node.activeTabKey : paneTabs[0]
+    };
+  }
+  const first = workspaceFilterLayout(node.first, allowedKeys);
+  const second = workspaceFilterLayout(node.second, allowedKeys);
+  if (!first) return second;
+  if (!second) return first;
+  return {
+    type:"split",
+    id:node.id,
+    direction:node.direction === "column" ? "column" : "row",
+    ratio:Math.max(WORKSPACE_MIN_SPLIT_RATIO, Math.min(WORKSPACE_MAX_SPLIT_RATIO, Number(node.ratio) || 0.5)),
+    first,
+    second
+  };
+}
+
+function captureCurrentWorkspaceGroup() {
+  const group = currentWorkspaceGroup();
+  if (!group || workspaceGroupSwitching) return group;
+  group.tabs = tabs.filter(tab => tab?.kind);
+  group.layout = serializeWorkspaceLayout();
+  group.activeTabKey = activeTabKey;
+  group.focusedPaneId = focusedPaneId;
+  return group;
+}
+
+function workspaceGroupBarElement() {
+  let bar = document.getElementById("workspaceGroupBar");
+  const dock = workspaceDockElement();
+  if (bar || !dock?.parentElement) return bar;
+  bar = document.createElement("nav");
+  bar.id = "workspaceGroupBar";
+  bar.className = "workspace-group-bar";
+  bar.setAttribute("aria-label", "工作区组");
+  dock.parentElement.insertBefore(bar, dock);
+  return bar;
+}
+
+function renderWorkspaceGroupBar() {
+  const bar = workspaceGroupBarElement();
+  if (!bar) return;
+  captureCurrentWorkspaceGroup();
+  for (const key of [...workspaceSelectedTabKeys]) {
+    if (!tabs.some(tab => tab.key === key)) workspaceSelectedTabKeys.delete(key);
+  }
+  const show = workspaceGroups.length > 1 || workspaceGroupSelectionMode || workspaceSelectedTabKeys.size > 0;
+  bar.hidden = !show;
+  document.body.classList.toggle("workspace-groups-visible", show);
+  if (!show) {
+    bar.replaceChildren();
+    return;
+  }
+  const selectedCount = workspaceSelectedTabKeys.size;
+  const groupButtons = workspaceGroups.map(group => {
+    const active = group.id === activeWorkspaceGroupId;
+    const tabCount = group.tabs.filter(tab => tab?.kind).length;
+    const hasActivity = group.tabs.some(tab => tab?.activityState);
+    return `<button class="workspace-group-tab${active ? " active" : ""}${hasActivity ? " has-activity" : ""}" type="button" role="tab" aria-selected="${active}" draggable="true" data-workspace-group-id="${escAttr(group.id)}" title="${escAttr(group.name)}，${tabCount} 个标签${hasActivity ? "，有新的终端活动" : ""}" onclick="switchWorkspaceGroup('${escAttr(group.id)}')" oncontextmenu="showWorkspaceGroupContextMenu(event,'${escAttr(group.id)}')" ondragstart="beginWorkspaceGroupDrag(event,'${escAttr(group.id)}')" ondragover="moveWorkspaceGroupDrag(event,'${escAttr(group.id)}')" ondrop="dropWorkspaceGroup(event,'${escAttr(group.id)}')" ondragend="endWorkspaceGroupDrag()">${icon("panels-top-left")}<span>${esc(group.name)}</span>${hasActivity ? `<i class="workspace-group-activity" aria-label="有新的终端活动"></i>` : ""}<small>${tabCount}</small></button>`;
+  }).join("");
+  const selectionActions = workspaceGroupSelectionMode
+    ? `<span class="workspace-group-selection">选择要组合的标签 · 已选 ${selectedCount} 个</span><button class="primary" type="button" onclick="confirmWorkspaceGroupSelection()" ${selectedCount < 2 ? "disabled" : ""}>${icon("check")}<span>确认组合</span></button><button type="button" onclick="cancelWorkspaceGroupSelection()">${icon("x")}<span>取消</span></button>`
+    : "";
+  bar.innerHTML = `<div class="workspace-group-tabs" role="tablist">${groupButtons}</div><div class="workspace-group-actions">${selectionActions}</div>`;
+}
+
+function clearWorkspaceTabSelection(options={}) {
+  if (!workspaceSelectedTabKeys.size && !workspaceGroupSelectionMode) return;
+  workspaceSelectedTabKeys.clear();
+  if (options.render !== false) renderTabs();
+}
+
+function beginWorkspaceGroupSelection(seedKey="") {
+  hideTabContextMenu();
+  if (!workspaceGroupSelectionMode) workspaceSelectedTabKeys.clear();
+  workspaceGroupSelectionMode = true;
+  if (seedKey && tabs.some(tab => tab.key === seedKey)) workspaceSelectedTabKeys.add(seedKey);
+  renderTabs();
+  if (seedKey) revealWorkspaceTab(seedKey);
+}
+
+function cancelWorkspaceGroupSelection() {
+  workspaceGroupSelectionMode = false;
+  workspaceSelectedTabKeys.clear();
+  hideTabContextMenu();
+  renderTabs();
+}
+
+async function confirmWorkspaceGroupSelection() {
+  if (workspaceSelectedTabKeys.size < 2) return notify("请选择至少两个标签", "info");
+  await createWorkspaceGroupFromSelection();
+}
+
+function toggleWorkspaceTabSelection(key) {
+  if (!tabs.some(tab => tab.key === key)) return;
+  workspaceGroupSelectionMode = true;
+  if (workspaceSelectedTabKeys.has(key)) workspaceSelectedTabKeys.delete(key);
+  else workspaceSelectedTabKeys.add(key);
+  renderTabs();
+  revealWorkspaceTab(key);
+}
+
+function nextWorkspaceGroupId() {
+  let id = "";
+  do {
+    workspaceGroupSerial += 1;
+    id = `workspace-group-${workspaceGroupSerial}`;
+  } while (workspaceGroups.some(group => group.id === id));
+  return id;
+}
+
+function defaultWorkspaceGroupName() {
+  const used = new Set(workspaceGroups.map(group => String(group.name || "").toLowerCase()));
+  let index = 1;
+  let name = `工作区 ${index}`;
+  while (used.has(name.toLowerCase())) {
+    index += 1;
+    name = `工作区 ${index}`;
+  }
+  return name;
+}
+
+async function createWorkspaceGroupFromSelection() {
+  const selectedKeys = [...workspaceSelectedTabKeys].filter(key => tabs.some(tab => tab.key === key));
+  if (selectedKeys.length < 2) return notify("请选择至少两个标签", "info");
+  hideTabContextMenu();
+  const name = await inputModal("组成工作区", "工作区名称", defaultWorkspaceGroupName());
+  if (!name) return;
+  const normalizedName = String(name).trim();
+  if (workspaceGroups.some(group => group.name.toLowerCase() === normalizedName.toLowerCase())) {
+    return notify("已经存在同名工作区", "info");
+  }
+  const source = captureCurrentWorkspaceGroup();
+  if (!source) return;
+  const sourceLayout = source.layout || serializeWorkspaceLayout();
+  const selectedSet = new Set(selectedKeys);
+  const selectedTabs = source.tabs.filter(tab => selectedSet.has(tab.key));
+  const remainingTabs = source.tabs.filter(tab => !selectedSet.has(tab.key));
+  const group = {
+    id:nextWorkspaceGroupId(),
+    name:normalizedName,
+    tabs:selectedTabs,
+    layout:workspaceFilterLayout(sourceLayout, selectedSet),
+    activeTabKey:selectedSet.has(activeTabKey) ? activeTabKey : selectedTabs[0]?.key || "",
+    focusedPaneId:workspaceFindPaneForTab(selectedSet.has(activeTabKey) ? activeTabKey : selectedTabs[0]?.key)?.id || "pane-1"
+  };
+  source.tabs = remainingTabs;
+  source.layout = workspaceFilterLayout(sourceLayout, new Set(remainingTabs.map(tab => tab.key)));
+  if (!remainingTabs.some(tab => tab.key === source.activeTabKey)) source.activeTabKey = remainingTabs[0]?.key || "";
+  workspaceGroups.push(group);
+  workspaceGroupSelectionMode = false;
+  workspaceSelectedTabKeys.clear();
+  switchWorkspaceGroup(group.id, {notify:false, skipCapture:true});
+  notify(`已组成工作区“${normalizedName}”`, "success");
+}
+
+function applyWorkspaceGroupState(group) {
+  workspaceGroupSwitching = true;
+  window.restoringTabs = true;
+  try {
+    tabs = [...(group.tabs || [])];
+    const validKeys = new Set(tabs.map(tab => tab.key));
+    const usedKeys = new Set();
+    workspaceLayout = restoreWorkspaceLayoutNode(group.layout, validKeys, usedKeys, new Set(), new Set())
+      || {type:"pane", id:"pane-1", tabs:[], activeTabKey:""};
+    const firstPane = workspaceLeaves()[0];
+    for (const tab of tabs) {
+      if (usedKeys.has(tab.key)) continue;
+      firstPane.tabs.push(tab.key);
+      usedKeys.add(tab.key);
+    }
+    if (!firstPane.activeTabKey || !firstPane.tabs.includes(firstPane.activeTabKey)) firstPane.activeTabKey = firstPane.tabs[0] || "";
+    focusedPaneId = workspaceFindPane(group.focusedPaneId)?.id
+      || workspaceFindPaneForTab(group.activeTabKey)?.id
+      || firstPane.id;
+    const focusedPane = workspaceFindPane(focusedPaneId);
+    if (focusedPane?.tabs.includes(group.activeTabKey)) focusedPane.activeTabKey = group.activeTabKey;
+    activeTabKey = focusedPane?.activeTabKey || tabs[0]?.key || "";
+    activeView = tabs.find(tab => tab.key === activeTabKey)?.viewName || tabs.find(tab => tab.key === activeTabKey)?.kind || "welcome";
+    renderTabs();
+    const visiblePanes = workspaceVisiblePanes();
+    for (const pane of visiblePanes.filter(pane => pane.id !== focusedPaneId)) renderWorkspacePaneContent(pane.id);
+    if (activeTabKey) renderWorkspacePaneContent(focusedPaneId);
+    else renderWelcome();
+    syncFocusedWorkspaceClasses();
+    syncWorkspaceToolbarPlacements();
+  } finally {
+    window.restoringTabs = false;
+    workspaceGroupSwitching = false;
+  }
+}
+
+function switchWorkspaceGroup(groupId, options={}) {
+  const target = workspaceGroups.find(group => group.id === groupId);
+  if (!target || target.id === activeWorkspaceGroupId) {
+    clearWorkspaceTabSelection();
+    return;
+  }
+  saveFocusedSftpPaneState();
+  if (!options.skipCapture) captureCurrentWorkspaceGroup();
+  activeWorkspaceGroupId = target.id;
+  workspaceGroupSelectionMode = false;
+  workspaceSelectedTabKeys.clear();
+  applyWorkspaceGroupState(target);
+  saveTabsState();
+  revealWorkspaceTab(activeTabKey);
+  if (options.notify !== false) notify(`已切换到“${target.name}”`, "success");
+}
+
+function beginWorkspaceGroupDrag(event, groupId) {
+  workspaceGroupDragId = groupId;
+  event.stopPropagation();
+  event.dataTransfer?.setData("text/x-tunneldesk-workspace-group", groupId);
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+  event.currentTarget?.classList.add("dragging");
+}
+
+function moveWorkspaceGroupDrag(event, groupId) {
+  if (!workspaceGroupDragId || workspaceGroupDragId === groupId) return;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+}
+
+function dropWorkspaceGroup(event, targetGroupId) {
+  if (!workspaceGroupDragId || workspaceGroupDragId === targetGroupId) return endWorkspaceGroupDrag();
+  event.preventDefault();
+  event.stopPropagation();
+  const sourceIndex = workspaceGroups.findIndex(group => group.id === workspaceGroupDragId);
+  const targetIndex = workspaceGroups.findIndex(group => group.id === targetGroupId);
+  if (sourceIndex < 0 || targetIndex < 0) return endWorkspaceGroupDrag();
+  const [moving] = workspaceGroups.splice(sourceIndex, 1);
+  const targetNode = event.currentTarget?.closest?.(".workspace-group-tab") || event.currentTarget;
+  const rect = targetNode?.getBoundingClientRect?.();
+  const insertAfter = rect ? event.clientX > rect.left + rect.width / 2 : false;
+  let insertion = workspaceGroups.findIndex(group => group.id === targetGroupId);
+  if (insertAfter) insertion += 1;
+  workspaceGroups.splice(Math.max(0, insertion), 0, moving);
+  endWorkspaceGroupDrag();
+  renderWorkspaceGroupBar();
+  saveTabsState();
+}
+
+function endWorkspaceGroupDrag() {
+  workspaceGroupDragId = "";
+  document.querySelectorAll?.(".workspace-group-tab.dragging").forEach(node => node.classList.remove("dragging"));
+}
+
+async function renameWorkspaceGroup(groupId) {
+  hideTabContextMenu();
+  const group = workspaceGroups.find(item => item.id === groupId);
+  if (!group) return;
+  const name = await inputModal("重命名工作区", "工作区名称", group.name);
+  if (!name) return;
+  const normalizedName = String(name).trim();
+  if (workspaceGroups.some(item => item.id !== group.id && item.name.toLowerCase() === normalizedName.toLowerCase())) {
+    return notify("已经存在同名工作区", "info");
+  }
+  group.name = normalizedName;
+  renderWorkspaceGroupBar();
+  saveTabsState();
+}
+
+async function dissolveWorkspaceGroup(groupId) {
+  hideTabContextMenu();
+  const group = workspaceGroups.find(item => item.id === groupId);
+  if (!group || group.id === WORKSPACE_GROUP_MAIN_ID) return;
+  if (!await confirmModal(`“${group.name}”中的标签会移回主工作区，会话不会关闭。`, "解散工作区", "解散", "取消", true)) return;
+  if (group.id === activeWorkspaceGroupId) captureCurrentWorkspaceGroup();
+  const main = workspaceGroups.find(item => item.id === WORKSPACE_GROUP_MAIN_ID) || workspaceGroups[0];
+  const existing = new Set(main.tabs.map(tab => tab.key));
+  const moving = group.tabs.filter(tab => !existing.has(tab.key));
+  main.tabs.push(...moving);
+  const mergedKeys = new Set(main.tabs.map(tab => tab.key));
+  const mainLayout = workspaceFilterLayout(main.layout, mergedKeys);
+  if (mainLayout?.type === "pane") {
+    for (const tab of moving) if (!mainLayout.tabs.includes(tab.key)) mainLayout.tabs.push(tab.key);
+    main.layout = mainLayout;
+  } else {
+    const first = (() => {
+      let node = mainLayout;
+      while (node && node.type !== "pane") node = node.first;
+      return node;
+    })();
+    if (first) for (const tab of moving) if (!first.tabs.includes(tab.key)) first.tabs.push(tab.key);
+    main.layout = mainLayout;
+  }
+  if (!main.layout) main.layout = {type:"pane", id:"pane-1", tabs:main.tabs.map(tab => tab.key), activeTabKey:main.tabs[0]?.key || ""};
+  workspaceGroups = workspaceGroups.filter(item => item.id !== group.id);
+  if (activeWorkspaceGroupId === group.id) {
+    activeWorkspaceGroupId = main.id;
+    applyWorkspaceGroupState(main);
+  }
+  renderWorkspaceGroupBar();
+  saveTabsState();
+  notify(`工作区“${group.name}”已解散`, "success");
+}
+
+function listWorkspaceGroups() {
+  captureCurrentWorkspaceGroup();
+  return workspaceGroups.map(group => ({id:group.id, name:group.name, tabCount:group.tabs.length, active:group.id === activeWorkspaceGroupId}));
+}
+
+function showWorkspaceGroupContextMenu(event, groupId) {
+  event.preventDefault();
+  event.stopPropagation();
+  hideTabContextMenu();
+  const group = workspaceGroups.find(item => item.id === groupId);
+  if (!group) return;
+  const menu = document.createElement("div");
+  menu.id = "tabContextMenu";
+  menu.className = "context-menu tab-context-menu";
+  const options = [
+    ["打开工作区", () => switchWorkspaceGroup(group.id), group.id !== activeWorkspaceGroupId, "panels-top-left"],
+    ["重命名", () => renameWorkspaceGroup(group.id), true, "pencil"],
+    ["保存为预设", () => { hideTabContextMenu(); if (group.id !== activeWorkspaceGroupId) switchWorkspaceGroup(group.id, {notify:false}); saveCurrentNamedWorkspace(); }, true, "save"],
+    ["解散工作区", () => dissolveWorkspaceGroup(group.id), group.id !== WORKSPACE_GROUP_MAIN_ID, "ungroup"]
+  ];
+  for (const [label, action, enabled, iconName] of options) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.innerHTML = `${icon(iconName)}<span>${esc(label)}</span>`;
+    button.disabled = !enabled;
+    button.onclick = action;
+    menu.appendChild(button);
+  }
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, window.innerWidth - rect.width - 8)}px`;
+  menu.style.top = `${Math.min(event.clientY, window.innerHeight - rect.height - 8)}px`;
 }
 
 function workspaceLeaves(node=workspaceLayout, result=[]) {
@@ -138,7 +532,10 @@ function scheduleWorkspaceChromeFit() {
     workspaceChromeFitFrame = 0;
     workspaceChromeLastFitAt = globalThis.performance?.now?.() ?? Date.now();
     if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
-    for (const pane of workspaceVisiblePanes()) updateWorkspaceTabScrollControls(pane.id);
+    for (const pane of workspaceVisiblePanes()) {
+      updateWorkspaceTabScrollControls(pane.id);
+      if (pane.activeTabKey) revealWorkspaceTab(pane.activeTabKey);
+    }
     if (typeof syncSftpListLayout === "function") {
       for (const pane of workspaceVisiblePanes()) {
         const list = workspacePaneElement(pane.id)?.querySelector("#sftpList");
@@ -582,7 +979,7 @@ function workspaceViewsFragment(paneId) {
     return fragment;
   }
   const fragment = document.createDocumentFragment();
-  for (const name of ["welcome", "terminal", "forwards", "edit", "import", "log", "command", "sftp", "settings", "dashboard"]) {
+  for (const name of ["welcome", "terminal", "forwards", "edit", "import", "log", "command", "sftp", "local-files", "settings", "dashboard", "remote-desktop", "remote-terminal", "ftp", "linux-desktop"]) {
     const section = document.createElement("section");
     section.id = `view-${name}`;
     section.className = "view";
@@ -616,6 +1013,21 @@ function createWorkspacePaneElement(paneId) {
   const tabsNode = pane.querySelector(".tabs");
   tabsNode.addEventListener("scroll", () => updateWorkspaceTabScrollControls(paneId), {passive:true});
   tabsNode.addEventListener("wheel", event => handleWorkspaceTabsWheel(event, paneId), {passive:false});
+  if (typeof ResizeObserver === "function") {
+    pane._workspaceTabResizeObserver = new ResizeObserver(() => {
+      requestAnimationFrame(() => {
+        if (!workspaceFindPane(paneId)) return;
+        updateWorkspaceTabScrollControls(paneId);
+        const activeKey = workspaceFindPane(paneId)?.activeTabKey;
+        if (activeKey) revealWorkspaceTab(activeKey);
+      });
+    });
+    pane._workspaceTabResizeObserver.observe(tabsNode);
+  }
+  pane.querySelector(".tabs-shell").addEventListener("contextmenu", event => {
+    if (event.target.closest(".tab,button")) return;
+    showWorkspaceTabsContextMenu(event);
+  });
   pane.querySelector(".tabs-scroll-left").addEventListener("click", () => scrollWorkspaceTabs(-1, paneId));
   pane.querySelector(".tabs-scroll-right").addEventListener("click", () => scrollWorkspaceTabs(1, paneId));
   bindWorkspaceChromeResizeHandle(pane.querySelector(".workspace-tab-resizer"), "tabs");
@@ -684,6 +1096,7 @@ function renderWorkspaceLayout() {
   const livePaneIds = new Set(workspaceLeaves().map(pane => pane.id));
   for (const [paneId, pane] of workspacePaneNodes) {
     if (livePaneIds.has(paneId)) continue;
+    pane._workspaceTabResizeObserver?.disconnect?.();
     pane.remove();
     workspacePaneNodes.delete(paneId);
   }
@@ -755,12 +1168,17 @@ function syncWorkspaceLegacyTabIds() {
 }
 
 function workspaceTabHtml(tab, pane) {
-  const fullTitle = [tab.title, tab.subtitle].filter(Boolean).join(" - ");
+  const presentation = workspaceTabPresentation(tab);
+  const broadcastSelected = typeof isTerminalBroadcastTarget === "function" && isTerminalBroadcastTarget(tab.key);
+  const multiSelected = workspaceSelectedTabKeys.has(tab.key);
+  const visibleInPane = tab.key === pane.activeTabKey;
+  if (visibleInPane && tab.activityState) tab.activityState = "";
+  const fullTitle = [tab.title, tab.subtitle, broadcastSelected ? "终端同步中" : "", multiSelected ? "已选中，可组成工作区" : ""].filter(Boolean).join(" - ");
   const connectionStatus = ["terminal", "sftp"].includes(tab.kind) ? (tab.connectionStatus || "connecting") : "";
   const connectionDot = connectionStatus
     ? `<span class="tab-connection-dot ${connectionStatus}" title="${connectionStatus === "connected" ? "已连接" : connectionStatus === "disconnected" ? "已断开" : "连接中"}" aria-hidden="true"></span>`
     : "";
-  return `<button class="tab ${tab.key === pane.activeTabKey ? "active" : ""}" role="tab" aria-selected="${tab.key === pane.activeTabKey}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(tab.title)}" onpointerdown="beginWorkspaceTabDrag(event,'${escAttr(tab.key)}')" onclick="activateWorkspaceTabFromClick(event,'${escAttr(tab.key)}')" oncontextmenu="showTabContextMenu(event,'${escAttr(tab.key)}')" ondragover="handleSftpTabDragOver(event,'${escAttr(tab.key)}')" ondragleave="handleSftpTabDragLeave(event,'${escAttr(tab.key)}')" ondrop="dropSftpItemsOnTab(event,'${escAttr(tab.key)}')">${connectionDot}<span class="tab-title">${esc(tab.title)}</span>${tab.closable ? `<span class="tab-close" title="关闭标签" aria-label="关闭标签" onpointerdown="event.stopPropagation()" onclick="closeTab(event,'${escAttr(tab.key)}')">x</span>` : ""}</button>`;
+  return `<button class="tab ${tab.key === pane.activeTabKey ? "active" : ""}${multiSelected ? " multi-selected" : ""}${tab.pinned ? " pinned" : ""}${broadcastSelected ? " broadcast-selected" : ""}${tab.activityState ? ` activity-${escAttr(tab.activityState)}` : ""}" role="tab" aria-selected="${tab.key === pane.activeTabKey}" aria-checked="${multiSelected}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(`${tab.title}${broadcastSelected ? "，已加入终端同步" : ""}${multiSelected ? "，已选择" : ""}`)}" onpointerdown="beginWorkspaceTabDrag(event,'${escAttr(tab.key)}')" onclick="activateWorkspaceTabFromClick(event,'${escAttr(tab.key)}')" oncontextmenu="showTabContextMenu(event,'${escAttr(tab.key)}')" ondragover="handleSftpTabDragOver(event,'${escAttr(tab.key)}')" ondragleave="handleSftpTabDragLeave(event,'${escAttr(tab.key)}')" ondrop="dropSftpItemsOnTab(event,'${escAttr(tab.key)}')">${connectionDot}${presentation.icon}${tab.pinned ? `<span class="tab-pin" aria-hidden="true">${icon("pin")}</span>` : ""}<span class="tab-title">${esc(presentation.title)}</span>${tab.closable && !tab.pinned ? `<span class="tab-close" title="关闭标签" aria-label="关闭标签" onpointerdown="event.stopPropagation()" onclick="closeTab(event,'${escAttr(tab.key)}')">x</span>` : ""}</button>`;
 }
 
 renderTabs = function() {
@@ -782,6 +1200,12 @@ renderTabs = function() {
   }
   syncWorkspaceLegacyTabIds();
   syncWorkspaceToolbarPlacements();
+  renderWorkspaceGroupBar();
+  requestAnimationFrame(() => {
+    for (const pane of workspaceVisiblePanes()) {
+      if (pane.activeTabKey) revealWorkspaceTab(pane.activeTabKey);
+    }
+  });
   if (!window.restoringTabs) saveTabsState();
 };
 
@@ -823,8 +1247,12 @@ revealWorkspaceTab = function(key) {
     if (!container || !tabNode) return;
     const containerRect = container.getBoundingClientRect();
     const tabRect = tabNode.getBoundingClientRect();
-    if (tabRect.left < containerRect.left) container.scrollLeft -= containerRect.left - tabRect.left;
-    else if (tabRect.right > containerRect.right) container.scrollLeft += tabRect.right - containerRect.right;
+    const margin = Math.min(6, Math.max(2, container.clientWidth * 0.02));
+    if (tabRect.left < containerRect.left + margin) {
+      container.scrollLeft = Math.max(0, container.scrollLeft - (containerRect.left + margin - tabRect.left));
+    } else if (tabRect.right > containerRect.right - margin) {
+      container.scrollLeft = Math.min(container.scrollWidth - container.clientWidth, container.scrollLeft + (tabRect.right - containerRect.right + margin));
+    }
     updateWorkspaceTabScrollControls(pane.id);
   });
 };
@@ -855,6 +1283,7 @@ function focusWorkspacePane(paneId) {
     if (typeof restoreSftpRuntimeForTab === "function" && tab.kind === "sftp") restoreSftpRuntimeForTab(tab.key);
     const subtitle = document.getElementById("workspaceSubtitle");
     if (subtitle) subtitle.textContent = tab.subtitle || "";
+    revealWorkspaceTab(tab.key);
   }
   if (wasFocused) return;
   syncFocusedWorkspaceClasses();
@@ -868,9 +1297,10 @@ function syncFocusedWorkspaceClasses() {
   const tab = tabs.find(item => item.key === activeTabKey);
   const viewName = tab?.viewName || tab?.kind || activeView || "welcome";
   const content = document.getElementById("content");
-  content?.classList.toggle("terminal-content", viewName === "terminal");
+  const terminalLike = ["terminal", "remote-terminal"].includes(viewName);
+  content?.classList.toggle("terminal-content", terminalLike);
   content?.classList.toggle("sftp-content", viewName === "sftp");
-  document.body.classList.toggle("mobile-terminal-active", isMobileLayout() && viewName === "terminal");
+  document.body.classList.toggle("mobile-terminal-active", isMobileLayout() && terminalLike);
 }
 
 function workspaceReplacePaneWithSplit(targetPaneId, splitNode, node=workspaceLayout) {
@@ -957,9 +1387,9 @@ addTab = function(key, title, subtitle, viewName, closable=true, meta={}) {
 
 setWorkspaceTabConnectionStatus = function(key, status) {
   const normalized = ["connected", "disconnected", "connecting"].includes(status) ? status : "disconnected";
-  const tab = tabs.find(item => item.key === key);
-  if (!tab) return;
-  tab.connectionStatus = normalized;
+  const matchingTabs = workspaceTabsByKey(key);
+  if (!matchingTabs.length) return;
+  for (const tab of matchingTabs) tab.connectionStatus = normalized;
   document.querySelectorAll(`.workspace-pane .tab[data-tab-key="${workspaceCssEscape(key)}"] .tab-connection-dot`).forEach(dot => {
     dot.className = `tab-connection-dot ${normalized}`;
     dot.title = normalized === "connected" ? "已连接" : normalized === "disconnected" ? "已断开" : "连接中";
@@ -975,6 +1405,14 @@ renderTabContent = function(tab) {
   if (tab.kind === "command") return openBatchCommand(false);
   if (tab.kind === "sftp") return openSftp(tab.id, tab.path || ".", false, tab.key);
   if (tab.kind === "dashboard") return openServerDashboard(tab.id, false);
+  if (tab.kind === "remote-edit") return tab.id ? editRemoteProfile(tab.id, false) : newRemoteProfile(tab.protocol || "rdp");
+  if (tab.kind === "remote-desktop") return openRemoteDesktop(tab.id, false);
+  if (tab.kind === "linux-desktop") {
+    const connectionId = Number(tab.id || String(tab.key || "").match(/^linux-desktop-(\d+)$/)?.[1] || 0);
+    return openLinuxDesktopManager(connectionId, false);
+  }
+  if (tab.kind === "remote-terminal") return openRemoteTerminal(tab.id, false, tab.key, tab.title);
+  if (tab.kind === "ftp") return openFtpProfile(tab.id, tab.path || "/", false, tab.key);
   if (tab.kind === "settings") return openSettings(false);
   return setWorkspace(tab.title, tab.subtitle, tab.viewName, tab.key, false, tab.closable);
 };
@@ -1040,8 +1478,9 @@ setWorkspace = function(title, subtitle, viewName, key=viewName, updateTab=true,
   workspace.querySelectorAll(":scope > .view").forEach(item => { item.hidden = true; });
   if (view) view.hidden = false;
   pane.dataset.activeView = viewName;
-  workspace.classList.toggle("terminal-workspace", viewName === "terminal");
-  pane.classList.toggle("terminal-pane", viewName === "terminal");
+  const terminalLike = ["terminal", "remote-terminal"].includes(viewName);
+  workspace.classList.toggle("terminal-workspace", terminalLike);
+  pane.classList.toggle("terminal-pane", terminalLike);
   pane.classList.toggle("sftp-pane", viewName === "sftp");
   if (resolvedPaneId === focusedPaneId) {
     const heading = document.getElementById("workspaceTitle");
@@ -1067,11 +1506,18 @@ closeTab = function(event, key) {
 };
 
 closeTabsByKey = function(keys, anchorKey="") {
-  const targets = new Set(keys);
+  const targets = new Set(keys.filter(key => !tabs.find(item => item.key === key)?.pinned));
+  if (!targets.size) {
+    if (keys.length) notify("固定标签需要先取消固定后才能关闭", "info");
+    return;
+  }
+  if (typeof rememberClosedWorkspaceTabs === "function") rememberClosedWorkspaceTabs([...targets]);
   const anchorPane = workspaceFindPaneForTab(anchorKey) || workspaceFindPane(focusedPaneId);
   for (const key of targets) {
     const tab = tabs.find(item => item.key === key);
     closeTerminalSession(key);
+    if (typeof closeRemoteProtocolSession === "function") closeRemoteProtocolSession(key);
+    if (typeof ftpProfileStates !== "undefined") ftpProfileStates.delete(key);
     if (tab?.kind === "sftp" && typeof closeSftpSession === "function") closeSftpSession(key);
     if (tab?.kind === "log" && typeof disposeLogViewerState === "function") disposeLogViewerState(key);
     sftpDisconnectedTabs.delete(key);
@@ -1137,6 +1583,7 @@ function nextWorkspaceTabCopyKey(tab) {
 }
 
 function workspaceTabCopyTitle(tab) {
+  if (tab?.kind === "local-files") return "本地文件";
   const base = String(tab?.title || "标签").replace(/ · 副本(?: \d+)?$/, "");
   const copyCount = tabs.filter(item => String(item.title || "").startsWith(`${base} · 副本`)).length + 1;
   return `${base} · 副本${copyCount > 1 ? ` ${copyCount}` : ""}`;
@@ -1207,6 +1654,9 @@ function duplicateWorkspaceTab(key, options={}) {
     if (typeof duplicateSftpTab === "function") return duplicateSftpTab(key);
     return openSftp(tab.id, tab.path || ".", true, duplicateKey);
   }
+  if (tab.kind === "local-files" && typeof openLocalFiles === "function") {
+    return openLocalFiles(tab.path || "", true, duplicateKey);
+  }
   addWorkspaceTabCopy(tab, duplicateKey, duplicateTitle);
   renderWorkspacePaneContent(pane.id);
   return duplicateKey;
@@ -1214,6 +1664,15 @@ function duplicateWorkspaceTab(key, options={}) {
 
 function workspaceCanDuplicateTab(tab) {
   return Boolean(tab?.kind);
+}
+
+function toggleWorkspaceTabPinned(key) {
+  const tab = tabs.find(item => item.key === key);
+  if (!tab) return;
+  tab.pinned = !tab.pinned;
+  hideTabContextMenu();
+  renderTabs();
+  saveTabsState();
 }
 
 showTabContextMenu = function(event, key) {
@@ -1227,21 +1686,24 @@ showTabContextMenu = function(event, key) {
   if (!tab || !pane || index < 0) return;
   focusWorkspacePane(pane.id);
   const options = [
-    ["复制标签", () => duplicateWorkspaceTab(key), workspaceCanDuplicateTab(tab)],
-    ["向左移动", () => moveWorkspaceTab(key, -1), index > 0],
-    ["向右移动", () => moveWorkspaceTab(key, 1), index < paneTabs.length - 1],
-    ["关闭当前标签", () => closeTabsByMode("current", key), Boolean(tab.closable)],
-    ["关闭其他标签", () => closeTabsByMode("others", key), paneTabs.some(tabKey => tabs.find(item => item.key === tabKey)?.closable && tabKey !== key)],
-    ["关闭右侧标签", () => closeTabsByMode("right", key), paneTabs.slice(index + 1).some(tabKey => tabs.find(item => item.key === tabKey)?.closable)],
-    ["关闭此窗格标签", () => closeTabsByMode("all", key), paneTabs.some(tabKey => tabs.find(item => item.key === tabKey)?.closable)]
+    ["组成工作区", () => beginWorkspaceGroupSelection(key), true, "combine"],
+    [tab.pinned ? "取消固定标签" : "固定标签", () => toggleWorkspaceTabPinned(key), true, "pin"],
+    ...(tab.kind === "terminal" ? [[tab.notificationsMuted ? "开启此标签通知" : "静音此标签通知", () => toggleTabNotifications(key), true, tab.notificationsMuted ? "bell" : "bell-off"]] : []),
+    ["复制标签", () => duplicateWorkspaceTab(key), workspaceCanDuplicateTab(tab), "copy"],
+    ["向左移动", () => moveWorkspaceTab(key, -1), index > 0, "arrow-left"],
+    ["向右移动", () => moveWorkspaceTab(key, 1), index < paneTabs.length - 1, "arrow-right"],
+    ["关闭当前标签", () => closeTabsByMode("current", key), Boolean(tab.closable && !tab.pinned), "x"],
+    ["关闭其他标签", () => closeTabsByMode("others", key), paneTabs.some(tabKey => tabs.find(item => item.key === tabKey)?.closable && !tabs.find(item => item.key === tabKey)?.pinned && tabKey !== key), "circle-x"],
+    ["关闭右侧标签", () => closeTabsByMode("right", key), paneTabs.slice(index + 1).some(tabKey => tabs.find(item => item.key === tabKey)?.closable && !tabs.find(item => item.key === tabKey)?.pinned), "panel-right-close"],
+    ["关闭此窗格标签", () => closeTabsByMode("all", key), paneTabs.some(tabKey => tabs.find(item => item.key === tabKey)?.closable && !tabs.find(item => item.key === tabKey)?.pinned), "panel-top-close"]
   ];
   const menu = document.createElement("div");
   menu.id = "tabContextMenu";
   menu.className = "context-menu tab-context-menu";
-  for (const [label, action, enabled] of options) {
+  for (const [label, action, enabled, iconName] of options) {
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = label;
+    button.innerHTML = `${icon(iconName)}<span>${esc(label)}</span>`;
     button.disabled = !enabled;
     button.onclick = action;
     menu.appendChild(button);
@@ -1251,6 +1713,25 @@ showTabContextMenu = function(event, key) {
   menu.style.left = `${Math.min(event.clientX, window.innerWidth - rect.width - 8)}px`;
   menu.style.top = `${Math.min(event.clientY, window.innerHeight - rect.height - 8)}px`;
 };
+
+function showWorkspaceTabsContextMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  hideTabContextMenu();
+  const menu = document.createElement("div");
+  menu.id = "tabContextMenu";
+  menu.className = "context-menu tab-context-menu";
+  const button = document.createElement("button");
+  button.type = "button";
+  button.innerHTML = `${icon("combine")}<span>组成工作区</span>`;
+  button.disabled = tabs.length < 2;
+  button.onclick = () => beginWorkspaceGroupSelection();
+  menu.appendChild(button);
+  document.body.appendChild(menu);
+  const rect = menu.getBoundingClientRect();
+  menu.style.left = `${Math.min(event.clientX, window.innerWidth - rect.width - 8)}px`;
+  menu.style.top = `${Math.min(event.clientY, window.innerHeight - rect.height - 8)}px`;
+}
 
 function workspaceClearDropIndicators() {
   for (const pane of workspacePaneNodes.values()) {
@@ -1369,8 +1850,26 @@ function updateWorkspaceTabDockAutoScroll() {
   scheduleWorkspaceTabDockAutoScroll();
 }
 
+activateWorkspaceTabFromClick = function(event, key) {
+  if (Date.now() < workspaceTabSuppressClickUntil) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  if (workspaceGroupSelectionMode || (event.ctrlKey || event.metaKey) && !isMobileLayout()) {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleWorkspaceTabSelection(key);
+    return;
+  }
+  clearWorkspaceTabSelection({render:false});
+  activateTab(key);
+};
+
 beginWorkspaceTabDrag = function(event, key) {
   if (event.button !== 0 || event.target.closest(".tab-close")) return;
+  if (workspaceGroupSelectionMode) return;
+  if (event.ctrlKey || event.metaKey) return;
   if (workspaceTabDrag) finishWorkspaceTabDrag(null, true);
   const pane = workspaceFindPaneForTab(key);
   if (!pane) return;
@@ -1587,21 +2086,119 @@ function serializeWorkspaceLayout(node=workspaceLayout) {
   };
 }
 
+function serializeWorkspaceGroupsForPreset() {
+  captureCurrentWorkspaceGroup();
+  return workspaceGroups.map(group => ({
+    id:group.id,
+    name:group.name,
+    tabs:(group.tabs || []).map(workspaceGroupPersistableTab).filter(Boolean),
+    layout:group.layout ? JSON.parse(JSON.stringify(group.layout)) : null,
+    activeTabKey:group.activeTabKey || "",
+    focusedPaneId:group.focusedPaneId || "pane-1"
+  }));
+}
+
+function applyWorkspaceGroupPreset(saved={}) {
+  const hasGroups = Array.isArray(saved.workspaceGroups) && saved.workspaceGroups.length > 0;
+  restoreWorkspaceGroups(hasGroups ? saved : {
+    ...saved,
+    workspaceGroups:[],
+    activeWorkspaceGroupId:WORKSPACE_GROUP_MAIN_ID
+  });
+  let target = currentWorkspaceGroup();
+  if (!target?.tabs?.length) {
+    target = workspaceGroups.find(group => group.tabs?.length) || target;
+    if (target) activeWorkspaceGroupId = target.id;
+  }
+  if (!target) return null;
+  applyWorkspaceGroupState(target);
+  saveTabsState();
+  revealWorkspaceTab(activeTabKey);
+  return target;
+}
+
 persistableTabs = function() {
-  return tabs.filter(tab => tab.kind).map(({key,title,subtitle,viewName,closable,kind,id,path}) => ({key,title,subtitle,viewName,closable,kind,id,path}));
+  return tabs.map(workspaceGroupPersistableTab).filter(Boolean);
 };
 
 saveTabsState = function() {
   try {
+    captureCurrentWorkspaceGroup();
+    const groups = workspaceGroups.map(group => ({
+      id:group.id,
+      name:group.name,
+      tabs:(group.tabs || []).map(workspaceGroupPersistableTab).filter(Boolean),
+      layout:group.layout,
+      activeTabKey:group.activeTabKey,
+      focusedPaneId:group.focusedPaneId
+    }));
+    const activeGroup = groups.find(group => group.id === activeWorkspaceGroupId) || groups[0];
     localStorage.setItem("workspaceTabs", JSON.stringify({
       version:WORKSPACE_LAYOUT_VERSION,
-      activeTabKey,
-      focusedPaneId,
-      tabs:persistableTabs(),
-      layout:serializeWorkspaceLayout()
+      workspaceGroupsVersion:WORKSPACE_GROUP_STORAGE_VERSION,
+      activeWorkspaceGroupId,
+      workspaceGroups:groups,
+      activeTabKey:activeGroup?.activeTabKey || activeTabKey,
+      focusedPaneId:activeGroup?.focusedPaneId || focusedPaneId,
+      tabs:activeGroup?.tabs || persistableTabs(),
+      layout:activeGroup?.layout || serializeWorkspaceLayout()
     }));
   } catch {}
 };
+
+function restoreWorkspaceGroups(saved) {
+  const storedGroups = Array.isArray(saved.workspaceGroups) ? saved.workspaceGroups : [];
+  const usedGroupIds = new Set();
+  const restoredGroups = [];
+  for (const stored of storedGroups) {
+    if (!stored || typeof stored !== "object") continue;
+    let groupId = typeof stored.id === "string" && stored.id ? stored.id : nextWorkspaceGroupId();
+    if (usedGroupIds.has(groupId)) groupId = nextWorkspaceGroupId();
+    usedGroupIds.add(groupId);
+    const serial = Number(groupId.match(/(\d+)$/)?.[1] || 0);
+    workspaceGroupSerial = Math.max(workspaceGroupSerial, serial);
+    const groupTabs = [];
+    const groupTabKeys = new Set();
+    for (const tab of Array.isArray(stored.tabs) ? stored.tabs : []) {
+      if (!tab || typeof tab !== "object" || typeof tab.key !== "string" || !tab.key || !tab.kind || groupTabKeys.has(tab.key)) continue;
+      groupTabs.push({...tab});
+      groupTabKeys.add(tab.key);
+    }
+    restoredGroups.push({
+      id:groupId,
+      name:String(stored.name || (groupId === WORKSPACE_GROUP_MAIN_ID ? "主工作区" : defaultWorkspaceGroupName())).trim() || "工作区",
+      tabs:groupTabs,
+      layout:stored.layout || null,
+      activeTabKey:groupTabs.some(tab => tab.key === stored.activeTabKey) ? stored.activeTabKey : groupTabs[0]?.key || "",
+      focusedPaneId:typeof stored.focusedPaneId === "string" ? stored.focusedPaneId : "pane-1"
+    });
+  }
+  if (!restoredGroups.length) {
+    const legacyTabs = [];
+    const legacyKeys = new Set();
+    for (const tab of Array.isArray(saved.tabs) ? saved.tabs : []) {
+      if (!tab || typeof tab !== "object" || typeof tab.key !== "string" || !tab.key || !tab.kind || legacyKeys.has(tab.key)) continue;
+      legacyTabs.push({...tab});
+      legacyKeys.add(tab.key);
+    }
+    restoredGroups.push({
+      id:WORKSPACE_GROUP_MAIN_ID,
+      name:"主工作区",
+      tabs:legacyTabs,
+      layout:saved.layout || null,
+      activeTabKey:legacyTabs.some(tab => tab.key === saved.activeTabKey) ? saved.activeTabKey : legacyTabs[0]?.key || "",
+      focusedPaneId:typeof saved.focusedPaneId === "string" ? saved.focusedPaneId : "pane-1"
+    });
+  }
+  if (!restoredGroups.some(group => group.id === WORKSPACE_GROUP_MAIN_ID)) {
+    restoredGroups.unshift({id:WORKSPACE_GROUP_MAIN_ID, name:"主工作区", tabs:[], layout:null, activeTabKey:"", focusedPaneId:"pane-1"});
+  }
+  workspaceGroups = restoredGroups;
+  activeWorkspaceGroupId = workspaceGroups.some(group => group.id === saved.activeWorkspaceGroupId)
+    ? saved.activeWorkspaceGroupId
+    : workspaceGroups.find(group => group.tabs.length)?.id || WORKSPACE_GROUP_MAIN_ID;
+  return currentWorkspaceGroup();
+}
 
 function restoreWorkspaceLayoutNode(saved, validKeys, usedKeys, usedPaneIds, usedSplitIds, depth=0, budget={count:0}) {
   if (!saved || typeof saved !== "object") return null;
@@ -1648,24 +2245,21 @@ restoreTabsState = function() {
     workspaceLayout,
     focusedPaneId,
     activeTabKey,
-    activeView
+    activeView,
+    workspaceGroups,
+    activeWorkspaceGroupId
   };
   try {
     if (runtimeSettings?.saved?.restore_workspace_tabs === false) return false;
     const saved = JSON.parse(localStorage.getItem("workspaceTabs") || "{}");
-    const restored = [];
-    const restoredKeys = new Set();
-    for (const tab of Array.isArray(saved.tabs) ? saved.tabs : []) {
-      if (!tab || typeof tab !== "object" || typeof tab.key !== "string" || !tab.key || !tab.kind || restoredKeys.has(tab.key)) continue;
-      restored.push({...tab});
-      restoredKeys.add(tab.key);
-    }
+    const activeGroup = restoreWorkspaceGroups(saved);
+    const restored = activeGroup?.tabs || [];
     if (!restored.length) return false;
     window.restoringTabs = true;
-    tabs = restored;
+    tabs = [...restored];
     const validKeys = new Set(restored.map(tab => tab.key));
     const usedKeys = new Set();
-    const restoredLayout = restoreWorkspaceLayoutNode(saved.layout, validKeys, usedKeys, new Set(), new Set());
+    const restoredLayout = restoreWorkspaceLayoutNode(activeGroup.layout, validKeys, usedKeys, new Set(), new Set());
     workspaceLayout = restoredLayout || {type:"pane", id:"pane-1", tabs:[], activeTabKey:""};
     const firstPane = workspaceLeaves()[0];
     for (const tab of restored) {
@@ -1674,11 +2268,11 @@ restoreTabsState = function() {
       usedKeys.add(tab.key);
     }
     if (!firstPane.activeTabKey || !firstPane.tabs.includes(firstPane.activeTabKey)) firstPane.activeTabKey = firstPane.tabs[0];
-    focusedPaneId = workspaceFindPane(saved.focusedPaneId)?.id
-      || workspaceFindPaneForTab(saved.activeTabKey)?.id
+    focusedPaneId = workspaceFindPane(activeGroup.focusedPaneId)?.id
+      || workspaceFindPaneForTab(activeGroup.activeTabKey)?.id
       || firstPane.id;
     const focusedPane = workspaceFindPane(focusedPaneId);
-    if (focusedPane.tabs.includes(saved.activeTabKey)) focusedPane.activeTabKey = saved.activeTabKey;
+    if (focusedPane.tabs.includes(activeGroup.activeTabKey)) focusedPane.activeTabKey = activeGroup.activeTabKey;
     activeTabKey = focusedPane.activeTabKey;
     const activeTab = tabs.find(tab => tab.key === activeTabKey);
     activeView = activeTab?.viewName || activeTab?.kind || "welcome";
@@ -1690,6 +2284,8 @@ restoreTabsState = function() {
     saveTabsState();
     syncFocusedWorkspaceClasses();
     syncWorkspaceToolbarPlacements();
+    captureCurrentWorkspaceGroup();
+    renderWorkspaceGroupBar();
     return true;
   } catch (error) {
     console.error("restore workspace layout failed", error);
@@ -1698,6 +2294,8 @@ restoreTabsState = function() {
     focusedPaneId = previousState.focusedPaneId;
     activeTabKey = previousState.activeTabKey;
     activeView = previousState.activeView;
+    workspaceGroups = previousState.workspaceGroups;
+    activeWorkspaceGroupId = previousState.activeWorkspaceGroupId;
     window.restoringTabs = false;
     return false;
   }
@@ -1742,6 +2340,13 @@ function restoreLegacyWorkspaceApi() {
 }
 
 initWorkspaceChromeSizing();
+
+window.addEventListener("resize", () => requestAnimationFrame(() => {
+  for (const pane of workspaceVisiblePanes()) {
+    updateWorkspaceTabScrollControls(pane.id);
+    if (pane.activeTabKey) revealWorkspaceTab(pane.activeTabKey);
+  }
+}));
 
 if (workspaceDockElement()) {
   ensureWorkspacePaneElement("pane-1");

@@ -8,6 +8,44 @@ const source = fs.readFileSync(
   path.join(__dirname, "..", "src", "addon.cc"),
   "utf8"
 );
+const entry = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+const types = fs.readFileSync(path.join(__dirname, "..", "index.d.ts"), "utf8");
+
+assert.match(
+  source,
+  /constexpr DWORD kX11WindowGuardIntervalMs = 250[\s\S]*constexpr LONG kX11WindowGuardMinimumVisibleWidth = 96/,
+  "The native X11 window guard must use the bounded polling and reachability thresholds"
+);
+assert.match(
+  source,
+  /GetWindowThreadProcessId\(window, &window_process_id\)[\s\S]*IsWindowVisible\(window\)[\s\S]*IsIconic\(window\)[\s\S]*IsZoomed\(window\)[\s\S]*style & WS_CAPTION[\s\S]*GetClassNameW[\s\S]*kVcXsrvWindowClassPrefix/,
+  "The X11 guard must only inspect visible decorated VcXsrv windows owned by the requested PID"
+);
+assert.match(
+  source,
+  /MonitorFromWindow\(window, MONITOR_DEFAULTTONEAREST\)[\s\S]*GetMonitorInfoW[\s\S]*visible_title_height[\s\S]*visible_width < kX11WindowGuardMinimumVisibleWidth[\s\S]*SetWindowPos[\s\S]*SWP_ASYNCWINDOWPOS/,
+  "Unreachable VcXsrv windows must be restored to the nearest monitor work area without blocking cleanup"
+);
+assert.match(
+  source,
+  /bool StartX11WindowGuardWorker[\s\S]*StopX11WindowGuardLocked\(\)[\s\S]*g_x11_window_guard_worker =\s*std::thread/,
+  "Starting a guard must replace and join any previous guard thread"
+);
+assert.match(
+  source,
+  /void Cleanup\(void\*\)[\s\S]*StopX11WindowGuardWorker\(\)/,
+  "Environment cleanup must stop and join the X11 window guard"
+);
+assert.match(source, /\{"startX11WindowGuard", nullptr, StartX11WindowGuard/);
+assert.match(source, /\{"stopX11WindowGuard", nullptr, StopX11WindowGuard/);
+assert.match(entry, /withX11WindowGuardFallback[\s\S]*startX11WindowGuard[\s\S]*stopX11WindowGuard/);
+assert.match(
+  entry,
+  /compatibleFallback[\s\S]*typeof loaded\.startX11WindowGuard === "function"[\s\S]*typeof loaded\.stopX11WindowGuard === "function"/,
+  "Development builds with the native guard must take priority over an older compatible prebuild"
+);
+assert.match(types, /startX11WindowGuard\(processId: number\): boolean/);
+assert.match(types, /stopX11WindowGuard\(\): boolean/);
 
 assert.match(
   source,
@@ -52,6 +90,41 @@ assert.match(
   source,
   /if \(output->size\(\) != fetch_length\)/,
   "Short HTTP responses must fail instead of returning a truncated stream"
+);
+assert.match(
+  source,
+  /constexpr size_t kReadAheadBytes = 4 \* 1024 \* 1024/,
+  "Native virtual-file reads should coalesce requests into a 4 MiB range"
+);
+assert.match(
+  source,
+  /BeginContentStream\(\)[\s\S]*RecordContentRead\(item_index_, read_start, chunk\)[\s\S]*EndContentStream\(\)/,
+  "Every virtual stream must account for bytes consumed by Explorer"
+);
+assert.match(
+  source,
+  /void MaybeMarkContentComplete\(\)[\s\S]*content_read_bytes >= content_total_bytes[\s\S]*Emit\("contentComplete"\)/,
+  "The native provider must publish a content-complete signal only after all bytes are read"
+);
+assert.match(
+  source,
+  /performed_effect_set_\.store\(true\)[\s\S]*SetEvent\(session_->async_event\)/,
+  "A performed drop effect must wake the asynchronous completion handshake"
+);
+assert.match(
+  source,
+  /kAsyncCompletionGraceMs[\s\S]*content_complete\.load\(\)[\s\S]*DROPEFFECT_COPY[\s\S]*async_completion_fallback/,
+  "Missing EndOperation may complete only after content and copy-effect confirmation"
+);
+assert.match(
+  source,
+  /content_complete_since != 0[\s\S]*now - content_complete_since >= kAsyncCompletionTimeoutMs[\s\S]*async_completion_timed_out[\s\S]*did not confirm completion/,
+  "A completed stream without copy-effect confirmation must time out as an error, never as success"
+);
+assert.doesNotMatch(
+  source,
+  /async_wait_started[\s\S]*kAsyncCompletionTimeoutMs/,
+  "A slow but active transfer must not time out before Explorer finishes reading content"
 );
 assert.match(
   source,

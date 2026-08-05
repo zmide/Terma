@@ -19,9 +19,13 @@ interface TerminalStartupConfig {
   terminal_program_platform: TerminalStartupPlatform;
 }
 
+interface TerminalStartupOverride extends TerminalStartupConfig {
+  x11_mode?: "off" | "untrusted" | "trusted" | null;
+}
+
 interface StartupTicket {
   connection_id: number;
-  startup: TerminalStartupConfig;
+  startup: TerminalStartupOverride;
   expires_at: number;
 }
 
@@ -118,7 +122,11 @@ function buildRemoteStartupCommand(value: any = {}): string {
 
 function mergeTerminalStartup(connection: any, override: any = null): any {
   if (!override) return { ...connection, ...normalizeTerminalStartup(connection) };
-  return { ...connection, ...normalizeTerminalStartup(override) };
+  return {
+    ...connection,
+    ...normalizeTerminalStartup(override),
+    x11_mode:["off", "untrusted", "trusted"].includes(String(override.x11_mode || "")) ? override.x11_mode : connection.x11_mode
+  };
 }
 
 function purgeExpiredStartupTickets(now = Date.now()): void {
@@ -131,14 +139,18 @@ function createTerminalStartupTicket(connectionId: unknown, override: unknown): 
   const id = Number(connectionId);
   if (!Number.isInteger(id) || id < 1) throw new Error("连接 ID 无效");
   const startup = normalizeTerminalStartup(override);
+  const requestedX11Mode = String((override as any)?.x11_mode || "");
+  const x11Mode: "off" | "untrusted" | "trusted" | null = ["off", "untrusted", "trusted"].includes(requestedX11Mode)
+    ? requestedX11Mode as "off" | "untrusted" | "trusted"
+    : null;
   purgeExpiredStartupTickets();
   const token = crypto.randomUUID();
   const expiresAt = Date.now() + STARTUP_TICKET_TTL_MS;
-  startupTickets.set(token, { connection_id: id, startup, expires_at: expiresAt });
+  startupTickets.set(token, { connection_id: id, startup:{...startup, x11_mode:x11Mode}, expires_at: expiresAt });
   return { token, expires_at: expiresAt };
 }
 
-function consumeTerminalStartupTicket(token: unknown, connectionId: unknown): TerminalStartupConfig | null {
+function consumeTerminalStartupTicket(token: unknown, connectionId: unknown): TerminalStartupOverride | null {
   const cleanToken = String(token || "");
   if (!cleanToken) return null;
   purgeExpiredStartupTickets();

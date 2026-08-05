@@ -1,6 +1,7 @@
 const OUTPUT_LIMIT = 128 * 1024;
 const VALUE_LIMIT = 2048;
 const DEFAULT_TIMEOUT_MS = 7000;
+const { buildRemotePosixCommand } = require("./remote-posix");
 
 export type TerminalProfileKind = "shell" | "repl" | "session" | "tool";
 export type TerminalProfilePlatform = "posix" | "windows";
@@ -101,11 +102,7 @@ for td_name in sh bash zsh fish ksh dash ash csh tcsh python3 python node deno b
 done
 `;
 
-function quotePosixSingle(text: string): string {
-  return `'${text.replace(/'/g, `'\"'\"'`)}'`;
-}
-
-export const POSIX_CAPABILITY_PROBE = `/bin/sh -c ${quotePosixSingle(POSIX_SCRIPT)}`;
+export const POSIX_CAPABILITY_PROBE = buildRemotePosixCommand(POSIX_SCRIPT);
 
 const WINDOWS_POWERSHELL_SCRIPT = String.raw`
 $ErrorActionPreference='SilentlyContinue'

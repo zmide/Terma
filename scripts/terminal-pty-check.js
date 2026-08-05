@@ -3,10 +3,13 @@ const os = require("node:os");
 const path = require("node:path");
 const { generateKeyPairSync } = require("node:crypto");
 const { Server } = require("ssh2");
-const { openSshShell } = require("../dist/ssh2-client");
 
 const expected = Buffer.from("a\x7f\x1b[A\x1b[B\x1b[C\x1b[D");
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-pty-"));
+process.env.TUNNELDESK_DATA_DIR = path.join(tempDir, "data");
+process.env.TUNNELDESK_SSH_DIR = path.join(tempDir, "ssh");
+const { openSshShell } = require("../dist/ssh2-client");
+const { trustTestHost } = require("./ssh-host-trust-test-helper");
 const keyFile = path.join(tempDir, "id_rsa");
 const { privateKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
@@ -49,13 +52,15 @@ async function main() {
     server.listen(0, "127.0.0.1", resolve);
   });
   const address = server.address();
-  ({ client, stream } = await openSshShell({
+  const connection = {
     auth_type: "key",
     ssh_host: "127.0.0.1",
     ssh_port: address.port,
     ssh_user: "test",
     identity_file: keyFile
-  }, { term: "xterm-256color", cols: 100, rows: 30 }));
+  };
+  await trustTestHost(connection);
+  ({ client, stream } = await openSshShell(connection, { term: "xterm-256color", cols: 100, rows: 30 }));
 
   stream.write(expected);
   await new Promise((resolve, reject) => {

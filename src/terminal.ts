@@ -6,10 +6,11 @@ const { SSH_BIN } = require("./config");
 const { getConnection } = require("./db");
 const { buildTerminalCommand } = require("./ssh");
 const { appendSystemLog, appendTerminalLog, createTerminalLog } = require("./logs");
-const { isPasswordConnection, openSshShell } = require("./ssh2-client");
+const { openSshShell, shouldUseBuiltinSsh } = require("./ssh2-client");
 const { loadNodePty } = require("./pty-runtime");
 const { WebSocketFrameParser, closeWebSocket, sendWebSocketFrame, validateWebSocketUpgrade, websocketAccept } = require("./websocket");
 const { consumeTerminalStartupTicket, mergeTerminalStartup } = require("./terminal-startup");
+const { terminalX11Environment } = require("./x11");
 
 let pty = null;
 let ptyLoadError = "";
@@ -64,6 +65,11 @@ function handleTerminalUpgrade(req, socket) {
     const startupToken = url.searchParams.get("startup_token") || "";
     const startupOverride = startupToken ? consumeTerminalStartupTicket(startupToken, id) : null;
     const connection = mergeTerminalStartup(storedConnection, startupOverride);
+    const requestedEncoding = String(url.searchParams.get("encoding") || "").toLowerCase();
+    if (requestedEncoding) {
+      if (!TERMINAL_ENCODINGS.has(requestedEncoding)) throw new Error("不支持的终端编码");
+      connection.terminal_encoding = requestedEncoding;
+    }
     const accept = websocketAccept(key);
     socket.write([
       "HTTP/1.1 101 Switching Protocols",
@@ -122,6 +128,7 @@ function terminalEnv() {
     if (typeof value === "string") env[key] = value;
   }
   env.TERM = "xterm-256color";
+  Object.assign(env, terminalX11Environment());
   return env;
 }
 
@@ -150,7 +157,7 @@ function sendTerminalOutput(session, data) {
 }
 
 function startPlainTerminal(session, connection, args, cwd, log) {
-  const child = spawn(SSH_BIN, args, { stdio: ["pipe", "pipe", "pipe"], cwd });
+  const child = spawn(SSH_BIN, args, { stdio: ["pipe", "pipe", "pipe"], cwd, env:terminalEnv() });
   session.child = child;
   child.stdout.on("data", (chunk) => sendTerminalOutput(session, chunk));
   child.stderr.on("data", (chunk) => sendTerminalOutput(session, chunk));
@@ -179,7 +186,7 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
     terminalEncoding: encoding,
     outputDecoder: encoding === "utf8" ? null : iconv.getDecoder(encoding)
   };
-  openSshShell(connection, { term: "xterm-256color", cols, rows }).then(({ client, stream }: any) => {
+  openSshShell(connection, { term: "xterm-256color", cols, rows }).then(({ client, stream, x11Diagnostics }: any) => {
     if (!sessions.has(session)) {
       try { stream.close(); } catch {}
       try { client.end(); } catch {}
@@ -187,6 +194,7 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
     }
     session.ssh2Client = client;
     session.ssh2Stream = stream;
+    session.x11Diagnostics = x11Diagnostics || null;
     client.on("error", (error) => sendTerminalOutput(session, `\r\nSSH 连接错误：${error.message}\r\n`));
     stream.on("data", (chunk) => sendTerminalOutput(session, chunk));
     stream.stderr?.on("data", (chunk) => sendTerminalOutput(session, chunk));
@@ -197,6 +205,19 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
       try { client.end(); } catch {}
       closeWebSocket(socket);
     });
+    if (["trusted", "untrusted"].includes(String(connection.x11_mode || ""))) {
+      const rawReason = String(x11Diagnostics?.reason || "");
+      const normalizedReason = /Unable to request X11|X11 forwarding request failed|administratively prohibited/i.test(rawReason)
+        ? "远端 SSH 服务未开启或拒绝了 X11 转发"
+        : rawReason || "远端没有分配 DISPLAY";
+      const x11Message = x11Diagnostics?.available
+        // DISPLAY is the authoritative end-to-end signal here.  Some remote
+        // login shells hide xauth from the probe even though sshd already
+        // created the forwarding cookie and GUI applications work.
+        ? `\r\n[X11] 转发已建立：${x11Diagnostics.display}\r\n`
+        : `\r\n[X11] 转发未建立：${normalizedReason}。本次已自动降级为普通 SSH 终端，命令行仍可正常使用；图形程序不会显示。请在 X Server 管理中检查 X11Forwarding 和远端 xauth/XQuartz。\r\n`;
+      sendTerminalOutput(session, x11Message);
+    }
     for (const pending of session.pendingInput.splice(0)) stream.write(pending);
     appendSystemLog(`终端已启动（内置 SSH PTY）：${log.label}`);
   }).catch((error) => {
@@ -218,7 +239,7 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
 
 function startTerminalProcess(connection, socket, cols, rows, title = "", logId = "") {
   const log = createTerminalLog(connection, title, logId);
-  if (isPasswordConnection(connection)) {
+  if (shouldUseBuiltinSsh(connection)) {
     return startRemotePty(connection, socket, cols, rows, log);
   }
 

@@ -125,7 +125,7 @@ async function openLog(path, title, updateTab=true, existingKey="") {
     const state = {path, title, offset:result.offset, text:result.text || "", matches:result.matches || [], matches_truncated:Boolean(result.matches_truncated), has_older:Boolean(result.has_older)};
     logViewerStates.set(tabKey, state);
     logViewerState = state;
-    renderLogViewer(state, tabKey);
+    renderLogViewer(state, tabKey, "end");
   };
   inTab(render);
 }
@@ -137,8 +137,25 @@ async function loadLogWindow(path, before) {
   return api(`/api/logs/read?${params.toString()}`);
 }
 
-function renderLogViewer(state=currentLogViewerState(), tabKey=activeTabKey) {
+function positionLogViewerScroll(container, mode="end", previous={}) {
+  if (!container) return;
+  const apply = () => {
+    if (!container.isConnected) return;
+    if (mode === "preserve") {
+      container.scrollTop = Number(previous.top || 0) + Math.max(0, container.scrollHeight - Number(previous.height || 0));
+    } else {
+      container.scrollTop = container.scrollHeight;
+    }
+  };
+  apply();
+  requestAnimationFrame(apply);
+}
+
+function renderLogViewer(state=currentLogViewerState(), tabKey=activeTabKey, scrollMode="end") {
   if (!state) return;
+  const view = $("view-log");
+  const scrollContainer = view?.closest(".workspace") || view;
+  const previousScroll = {top:scrollContainer?.scrollTop || 0, height:scrollContainer?.scrollHeight || 0};
   const matches = state.matches || [];
   let contexts = "";
   if (logSearch.trim()) {
@@ -151,8 +168,9 @@ function renderLogViewer(state=currentLogViewerState(), tabKey=activeTabKey) {
   const older = state.has_older
     ? `<div class="actions log-load-actions"><button onclick="loadOlderLog('${escAttr(tabKey)}')">${icon("chevrons-up")}加载更早内容</button><span class="muted">按 256 KB 分段读取，不会一次载入整个大日志。</span></div>`
     : "";
-  $("view-log").innerHTML = `${older}${contexts}<pre class="log-view">${highlightLogText(state.text || "日志为空")}</pre>`;
+  view.innerHTML = `${older}${contexts}<pre class="log-view">${highlightLogText(state.text || "日志为空")}</pre>`;
   refreshIcons();
+  positionLogViewerScroll(scrollContainer, scrollMode, previousScroll);
 }
 
 async function loadOlderLog(tabKey=activeTabKey) {
@@ -165,7 +183,7 @@ async function loadOlderLog(tabKey=activeTabKey) {
   state.has_older = Boolean(result.has_older);
   inTab(() => {
     logViewerState = state;
-    renderLogViewer(state, tabKey);
+    renderLogViewer(state, tabKey, "preserve");
   });
 }
 

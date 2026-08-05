@@ -158,6 +158,58 @@ function availableLocalEntry(parent, filename) {
   return target;
 }
 
+function normalizeSftpDeliveryPaths(remotePaths) {
+  const paths = [...new Set((Array.isArray(remotePaths) ? remotePaths : [])
+    .map(item => String(item || "").replace(/\\/g, "/"))
+    .filter(Boolean))];
+  if (!paths.length || paths.length > 100) throw new Error("一次最多保存 100 个远程文件或目录");
+  if (paths.some(item => item.includes("\0") || item.length > 4096)) throw new Error("远程路径无效或过长");
+  return paths;
+}
+
+function normalizeSftpDeliveryDirectory(targetDirectory) {
+  const requestedDirectory = String(targetDirectory || "").trim();
+  if (!requestedDirectory || !path.isAbsolute(requestedDirectory)) throw new Error("本机下载目录无效");
+  return path.resolve(requestedDirectory);
+}
+
+function planSftpPathDelivery(remotePaths, targetDirectory) {
+  const directory = normalizeSftpDeliveryDirectory(targetDirectory);
+  const paths = normalizeSftpDeliveryPaths(remotePaths);
+  return {
+    directory,
+    items:paths.map(remotePath => {
+      const name = safeLocalEntryName(path.posix.basename(remotePath.replace(/\/+$/, "")) || "download");
+      const target = path.join(directory, name);
+      return {path:remotePath, name, target, exists:fs.existsSync(target)};
+    })
+  };
+}
+
+function moveStagedSftpEntry(source, target) {
+  try {
+    fs.renameSync(source, target);
+  } catch (error) {
+    if (error?.code !== "EXDEV") throw error;
+    fs.cpSync(source, target, {recursive:true, errorOnExist:true, force:false});
+    fs.rmSync(source, {recursive:true, force:true});
+  }
+}
+
+function replaceLocalEntryFromStage(source, target) {
+  if (!fs.existsSync(target)) return moveStagedSftpEntry(source, target);
+  const backup = path.join(path.dirname(target), `.tunneldesk-overwrite-${crypto.randomUUID()}`);
+  fs.renameSync(target, backup);
+  try {
+    moveStagedSftpEntry(source, target);
+    fs.rmSync(backup, {recursive:true, force:true});
+  } catch (error) {
+    try { fs.rmSync(target, {recursive:true, force:true}); } catch {}
+    try { fs.renameSync(backup, target); } catch {}
+    throw error;
+  }
+}
+
 function portableDragEntryName(value, platform: string = process.platform) {
   const source = String(value || "download").normalize("NFC");
   let normalized = source.replace(/[\x00/\\]/g, "_");
@@ -803,18 +855,39 @@ function sftpReaddir(channel, remotePath) {
   return new Promise((resolve, reject) => channel.readdir(remotePath, (error, entries) => error ? reject(error) : resolve(entries || [])));
 }
 
-function sftpFastGet(channel, remotePath, localPath) {
-  return new Promise((resolve, reject) => channel.fastGet(remotePath, localPath, {}, error => error ? reject(error) : resolve(undefined)));
+function sftpFastGet(channel, remotePath, localPath, options: any = {}) {
+  const expectedSize = Math.max(0, Number(options.size || 0));
+  let reported = 0;
+  const report = (transferred) => {
+    const value = Math.max(0, Number(transferred || 0));
+    const delta = Math.max(0, value - reported);
+    reported = Math.max(reported, value);
+    if (delta > 0) options.onBytes?.(delta);
+  };
+  return new Promise((resolve, reject) => {
+    try {
+      channel.fastGet(remotePath, localPath, {
+        step: (transferred) => report(transferred)
+      }, error => {
+        if (!error && expectedSize > reported) report(expectedSize);
+        error ? reject(error) : resolve(undefined);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
 }
 
-async function downloadSftpEntry(channel, remotePath, localPath, counter) {
+async function downloadSftpEntry(channel, remotePath, localPath, counter, progress: any = null) {
   counter.value += 1;
   if (counter.value > 10000) throw new Error("一次拖出最多处理 10000 个文件和目录");
   const linkStats: any = await sftpLstat(channel, remotePath);
   const stats: any = linkStats?.isSymbolicLink?.() ? await sftpStat(channel, remotePath) : linkStats;
   if (!stats?.isDirectory?.()) {
     fs.mkdirSync(path.dirname(localPath), {recursive:true});
-    await sftpFastGet(channel, remotePath, localPath);
+    const size = Math.max(0, Number(stats?.size || 0));
+    progress?.onFile?.({path:remotePath, size});
+    await sftpFastGet(channel, remotePath, localPath, {size, onBytes:progress?.onBytes});
     return;
   }
   fs.mkdirSync(localPath, {recursive:true});
@@ -822,14 +895,12 @@ async function downloadSftpEntry(channel, remotePath, localPath, counter) {
   for (const entry of entries) {
     const name = String(entry?.filename || "");
     if (!name || name === "." || name === "..") continue;
-    await downloadSftpEntry(channel, path.posix.join(remotePath, name), availableLocalEntry(localPath, name), counter);
+    await downloadSftpEntry(channel, path.posix.join(remotePath, name), availableLocalEntry(localPath, name), counter, progress);
   }
 }
 
-async function stageSftpPaths(connectionId, remotePaths) {
-  const paths = [...new Set((Array.isArray(remotePaths) ? remotePaths : []).map(item => String(item || "").replace(/\\/g, "/")).filter(Boolean))];
-  if (!paths.length || paths.length > 100) throw new Error("一次最多拖出 100 个文件或目录");
-  if (paths.some(item => item.includes("\0") || item.length > 4096)) throw new Error("远程路径无效或过长");
+async function stageSftpPaths(connectionId, remotePaths, progress: any = null) {
+  const paths = normalizeSftpDeliveryPaths(remotePaths);
   cleanupSftpDragStaging();
   fs.mkdirSync(SFTP_DRAG_ROOT, {recursive:true});
   const directory = path.join(SFTP_DRAG_ROOT, crypto.randomUUID());
@@ -844,7 +915,7 @@ async function stageSftpPaths(connectionId, remotePaths) {
     for (const remotePath of paths) {
       const baseName = path.posix.basename(remotePath.replace(/\/+$/, "")) || "download";
       const localPath = availableLocalEntry(directory, baseName);
-      await downloadSftpEntry(channel, remotePath, localPath, counter);
+      await downloadSftpEntry(channel, remotePath, localPath, counter, progress);
       files.push(localPath);
     }
     fs.utimesSync(directory, new Date(), new Date());
@@ -860,24 +931,25 @@ async function stageSftpPaths(connectionId, remotePaths) {
   }
 }
 
-async function deliverSftpPaths(connectionId, remotePaths, targetDirectory) {
-  const requestedDirectory = String(targetDirectory || "").trim();
-  if (!requestedDirectory || !path.isAbsolute(requestedDirectory)) throw new Error("本机下载目录无效");
-  const directory = path.resolve(requestedDirectory);
+async function deliverSftpPaths(connectionId, remotePaths, targetDirectory, conflictMode = "rename", progress: any = null) {
+  const directory = normalizeSftpDeliveryDirectory(targetDirectory);
+  const conflict = ["error", "overwrite", "rename"].includes(String(conflictMode || "")) ? String(conflictMode) : "rename";
   fs.mkdirSync(directory, {recursive:true});
-  const staged = await stageSftpPaths(connectionId, remotePaths);
+  const staged = await stageSftpPaths(connectionId, remotePaths, progress);
   const saved = [];
   try {
     for (const source of staged.files) {
-      const target = availableLocalEntry(directory, path.basename(source));
-      try {
-        fs.renameSync(source, target);
-      } catch (error) {
-        if (error?.code !== "EXDEV") throw error;
-        fs.cpSync(source, target, {recursive:true, errorOnExist:true, force:false});
-        fs.rmSync(source, {recursive:true, force:true});
+      const requestedTarget = path.join(directory, safeLocalEntryName(path.basename(source)));
+      if (conflict === "error" && fs.existsSync(requestedTarget)) {
+        const error: any = new Error(`本地目录已存在同名项目：${path.basename(requestedTarget)}`);
+        error.conflict = true;
+        throw error;
       }
+      const target = conflict === "rename" ? availableLocalEntry(directory, path.basename(source)) : requestedTarget;
+      if (conflict === "overwrite") replaceLocalEntryFromStage(source, target);
+      else moveStagedSftpEntry(source, target);
       saved.push(target);
+      progress?.onItem?.({source, target});
     }
     return {ok:true, directory, files:saved};
   } finally {
@@ -956,7 +1028,9 @@ function spawnSftpSessionCommand(connection, command) {
 
 module.exports = {
   __normalizedNativeDragPaths: normalizedNativeDragPaths,
+  __moveStagedSftpEntry: moveStagedSftpEntry,
   __portableDragEntryName: portableDragEntryName,
+  __replaceLocalEntryFromStage: replaceLocalEntryFromStage,
   __validateNativeSftpDragTarget: validateNativeSftpDragTarget,
   clearSftpDragCache,
   closeAllSftpSessions,
@@ -973,6 +1047,7 @@ module.exports = {
   reserveNativeSftpDragTicket,
   sftpSessionStatus,
   sftpDragCacheInfo,
+  planSftpPathDelivery,
   stageSftpPaths,
   spawnSftpSessionCommand
 };

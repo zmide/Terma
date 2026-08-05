@@ -13,6 +13,7 @@ const {
   buildRemoteCreateFileCommand,
   __buildRemoteDirectoryEntriesCommand,
   __buildReadRemoteBinaryCommand,
+  __buildReadRemoteBinaryExecCommand,
   buildRemoteDirectorySizeCommand,
   buildRemotePermissionCommand,
   invalidateRemoteDirectoryCache,
@@ -166,6 +167,14 @@ assert.match(readLinkedFileCommand, /stat -L -c "%s"/, "打开前必须读取 GN
 assert.match(readLinkedFileCommand, /stat -L -f "%z"/, "打开前必须读取 BSD 链接目标真实大小");
 assert.match(readLinkedFileCommand, /符号链接本身为 %s B，目标文件实际为 %s B/, "超限提示必须解释链接大小与目标大小");
 assert.match(readLinkedFileCommand, /head -c 5242881 "\$TD_TARGET"/, "通过大小检查后仍要做有界读取");
+
+const readLinkedFileExecCommand = __buildReadRemoteBinaryExecCommand("/vmlinuz", 5 * 1024 * 1024);
+assert.match(readLinkedFileCommand, /\*\[!0-9\]\*/, "读取脚本包含会触发 csh\/tcsh 历史展开的数字校验表达式");
+assert.match(readLinkedFileExecCommand, /^\/bin\/sh -lc 'td_payload=[A-Za-z0-9+/=]+;/, "远端文件读取必须使用登录 Shell 安全的 POSIX 封装");
+assert.doesNotMatch(readLinkedFileExecCommand, /!/, "登录 Shell 可见的读取命令不能暴露历史展开字符");
+const readPayload = /^\/bin\/sh -lc 'td_payload=([A-Za-z0-9+/=]+);/.exec(readLinkedFileExecCommand);
+assert.ok(readPayload, "远端文件读取封装必须包含 Base64 脚本载荷");
+assert.equal(Buffer.from(readPayload[1], "base64").toString("utf8"), readLinkedFileCommand, "POSIX 封装不能改变远端文件读取脚本");
 
 const recycleId = "m1abcd23-0123456789abcdef";
 const recycleDeletedAt = 1784567890123;

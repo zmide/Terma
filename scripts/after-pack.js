@@ -113,9 +113,18 @@ function verifyNativeSftpDrag(context) {
   }
 }
 
+function verifyBundledXServer(context) {
+  if (context.electronPlatformName !== "win32") return;
+  const runtime = path.join(resourcesDir(context), "xserver");
+  verifyFile(path.join(runtime, "vcxsrv.exe"), "Windows bundled X Server");
+  verifyFile(path.join(runtime, "xauth.exe"), "Windows bundled xauth");
+  verifyFile(path.join(runtime, "tunneldesk-runtime.json"), "Windows bundled X Server manifest");
+}
+
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName === "darwin") verifyMacIcon(context);
   verifyNativeSftpDrag(context);
+  verifyBundledXServer(context);
   if (!["darwin", "linux"].includes(context.electronPlatformName)) return;
 
   const nodePtyDir = path.join(resourcesDir(context), "app.asar.unpacked", "node_modules", "node-pty");

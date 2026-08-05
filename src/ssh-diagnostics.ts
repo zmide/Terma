@@ -10,10 +10,22 @@ export function diagnoseSshError(message: unknown): SshDiagnosis {
   const lower = text.toLowerCase();
   const suggestions: string[] = [];
   let reason = "SSH 操作失败";
-  if (/unprotected private key|bad permissions|permissions.*too open/.test(lower)) {
+  if (/jump host|proxyjump|proxy jump|jumphost/.test(lower)) {
+    reason = "跳板机链路失败";
+    suggestions.push("先单独测试跳板连接，再确认跳板机允许 TCP 转发。", "检查目标地址是否能从跳板机访问。");
+  } else if (/direct-tcpip|channel open failure/.test(lower)) {
+    reason = "转发目标连接失败";
+    suggestions.push("确认目标服务已启动，且目标主机与端口正确。", "检查 SSH 服务器到目标地址的网络和防火墙。");
+  } else if (/bad decrypt|incorrect passphrase|private key.*passphrase|unable to parse private key|unsupported cipher/.test(lower)) {
+    reason = "私钥或私钥口令无效";
+    suggestions.push("检查私钥口令是否正确。", "也可以改为优先使用已加载该密钥的 SSH Agent。");
+  } else if (/subsystem request failed|sftp.*(?:unavailable|not found|disabled)|unable to start sftp/.test(lower)) {
+    reason = "远程 SFTP 子系统不可用";
+    suggestions.push("确认服务器已启用 SFTP 子系统。", "终端仍可用时，可检查 sshd_config 中的 Subsystem sftp 配置。");
+  } else if (/unprotected private key|bad permissions|permissions.*too open/.test(lower)) {
     reason = "私钥权限过宽";
     suggestions.push("在密钥管理中执行一键修复权限。", "Windows 下确保私钥只允许当前用户、SYSTEM 或 Administrators 读取。");
-  } else if (/permission denied/.test(lower)) {
+  } else if (/permission denied|all configured authentication methods failed|no more authentication methods available/.test(lower)) {
     reason = "SSH 认证失败";
     suggestions.push("检查用户名、私钥是否正确。", "确认服务器允许该用户使用公钥登录。");
   } else if (/connection timed out|operation timed out|connecttimeout/.test(lower)) {

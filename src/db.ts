@@ -46,6 +46,17 @@ CREATE TABLE IF NOT EXISTS connections (
   auth_type TEXT NOT NULL DEFAULT 'key',
   identity_file TEXT,
   ssh_password TEXT,
+  private_key_passphrase TEXT,
+  ssh_agent_mode TEXT NOT NULL DEFAULT 'auto',
+  jump_connection_id INTEGER,
+  connect_timeout_seconds INTEGER NOT NULL DEFAULT 10,
+  keepalive_interval_seconds INTEGER NOT NULL DEFAULT 60,
+  keepalive_count_max INTEGER NOT NULL DEFAULT 3,
+  tcp_keepalive INTEGER NOT NULL DEFAULT 1,
+  x11_mode TEXT NOT NULL DEFAULT 'off',
+  favorite INTEGER NOT NULL DEFAULT 0,
+  last_used_at INTEGER,
+  notifications_muted INTEGER NOT NULL DEFAULT 0,
   tags TEXT,
   extra_args TEXT,
   autostart_forwards INTEGER NOT NULL DEFAULT 0,
@@ -65,6 +76,22 @@ CREATE TABLE IF NOT EXISTS connections (
   terminal_program_platform TEXT NOT NULL DEFAULT 'auto',
   sftp_text_encoding TEXT NOT NULL DEFAULT 'auto',
   sftp_filename_encoding TEXT NOT NULL DEFAULT 'utf8',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS remote_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  group_name TEXT NOT NULL DEFAULT '默认分组',
+  protocol TEXT NOT NULL,
+  host TEXT,
+  port INTEGER,
+  username TEXT,
+  password TEXT,
+  favorite INTEGER NOT NULL DEFAULT 0,
+  last_used_at INTEGER,
+  tags TEXT,
+  options_json TEXT NOT NULL DEFAULT '{}',
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -111,11 +138,61 @@ CREATE TABLE IF NOT EXISTS forward_templates (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS command_snippets (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  group_name TEXT NOT NULL DEFAULT '默认分组',
+  command TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  tags TEXT NOT NULL DEFAULT '',
+  favorite INTEGER NOT NULL DEFAULT 0,
+  last_used_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS named_workspaces (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  layout_json TEXT NOT NULL,
+  last_used_at INTEGER,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS app_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
   `);
+
+  const remoteProfileSchema = get("SELECT sql FROM sqlite_master WHERE type='table' AND name='remote_profiles'");
+  if (/CHECK\s*\(\s*protocol\s+IN/i.test(String(remoteProfileSchema?.sql || ""))) {
+    db.exec(`
+BEGIN IMMEDIATE;
+ALTER TABLE remote_profiles RENAME TO remote_profiles_legacy_protocol_check;
+CREATE TABLE remote_profiles (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  group_name TEXT NOT NULL DEFAULT '默认分组',
+  protocol TEXT NOT NULL,
+  host TEXT,
+  port INTEGER,
+  username TEXT,
+  password TEXT,
+  favorite INTEGER NOT NULL DEFAULT 0,
+  last_used_at INTEGER,
+  tags TEXT,
+  options_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+INSERT INTO remote_profiles(id,name,group_name,protocol,host,port,username,password,favorite,last_used_at,tags,options_json,created_at,updated_at)
+SELECT id,name,group_name,protocol,host,port,username,password,favorite,last_used_at,tags,options_json,created_at,updated_at
+FROM remote_profiles_legacy_protocol_check;
+DROP TABLE remote_profiles_legacy_protocol_check;
+COMMIT;
+    `);
+  }
 
   const connectionColumns = new Set(all("PRAGMA table_info(connections)").map((row) => row.name));
   if (!connectionColumns.has("autostart_forwards")) {
@@ -124,6 +201,17 @@ CREATE TABLE IF NOT EXISTS app_meta (
   if (!connectionColumns.has("tags")) run("ALTER TABLE connections ADD COLUMN tags TEXT");
   if (!connectionColumns.has("auth_type")) run("ALTER TABLE connections ADD COLUMN auth_type TEXT NOT NULL DEFAULT 'key'");
   if (!connectionColumns.has("ssh_password")) run("ALTER TABLE connections ADD COLUMN ssh_password TEXT");
+  if (!connectionColumns.has("private_key_passphrase")) run("ALTER TABLE connections ADD COLUMN private_key_passphrase TEXT");
+  if (!connectionColumns.has("ssh_agent_mode")) run("ALTER TABLE connections ADD COLUMN ssh_agent_mode TEXT NOT NULL DEFAULT 'auto'");
+  if (!connectionColumns.has("jump_connection_id")) run("ALTER TABLE connections ADD COLUMN jump_connection_id INTEGER");
+  if (!connectionColumns.has("connect_timeout_seconds")) run("ALTER TABLE connections ADD COLUMN connect_timeout_seconds INTEGER NOT NULL DEFAULT 10");
+  if (!connectionColumns.has("keepalive_interval_seconds")) run("ALTER TABLE connections ADD COLUMN keepalive_interval_seconds INTEGER NOT NULL DEFAULT 60");
+  if (!connectionColumns.has("keepalive_count_max")) run("ALTER TABLE connections ADD COLUMN keepalive_count_max INTEGER NOT NULL DEFAULT 3");
+  if (!connectionColumns.has("tcp_keepalive")) run("ALTER TABLE connections ADD COLUMN tcp_keepalive INTEGER NOT NULL DEFAULT 1");
+  if (!connectionColumns.has("x11_mode")) run("ALTER TABLE connections ADD COLUMN x11_mode TEXT NOT NULL DEFAULT 'off'");
+  if (!connectionColumns.has("favorite")) run("ALTER TABLE connections ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0");
+  if (!connectionColumns.has("last_used_at")) run("ALTER TABLE connections ADD COLUMN last_used_at INTEGER");
+  if (!connectionColumns.has("notifications_muted")) run("ALTER TABLE connections ADD COLUMN notifications_muted INTEGER NOT NULL DEFAULT 0");
   if (!connectionColumns.has("sort_order")) {
     run("ALTER TABLE connections ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 1");
   }
@@ -160,6 +248,11 @@ CREATE TABLE IF NOT EXISTS app_meta (
   run("CREATE INDEX IF NOT EXISTS idx_connection_forwards_connection_id ON connection_forwards(connection_id,id)");
   run("CREATE INDEX IF NOT EXISTS idx_connections_group_sort ON connections(group_name,sort_order,created_at,id)");
   run("CREATE INDEX IF NOT EXISTS idx_connection_groups_sort ON connection_groups(sort_order,name)");
+  run("CREATE INDEX IF NOT EXISTS idx_connections_recent ON connections(favorite,last_used_at)");
+  run("CREATE INDEX IF NOT EXISTS idx_remote_profiles_group_sort ON remote_profiles(group_name,name,id)");
+  run("CREATE INDEX IF NOT EXISTS idx_remote_profiles_recent ON remote_profiles(favorite,last_used_at)");
+  run("CREATE INDEX IF NOT EXISTS idx_command_snippets_sort ON command_snippets(favorite,last_used_at,updated_at)");
+  run("CREATE INDEX IF NOT EXISTS idx_named_workspaces_recent ON named_workspaces(last_used_at,updated_at)");
   return db;
 }
 
@@ -198,6 +291,14 @@ function validateSortOrder(value) {
     throw new Error("排序值必须是 1-2147483647 之间的整数");
   }
   return order;
+}
+
+function boundedInteger(value, fallback, minimum, maximum, label) {
+  const number = Number(value ?? fallback);
+  if (!Number.isInteger(number) || number < minimum || number > maximum) {
+    throw new Error(`${label} 必须在 ${minimum}-${maximum} 之间`);
+  }
+  return number;
 }
 
 const TERMINAL_ENCODINGS = new Set(["utf8", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "latin1"]);
@@ -323,6 +424,23 @@ function cleanConnection(data, defaultExtraArgs, existing = null) {
     ? (submittedPassword || (existing?.ssh_password ? decryptText(existing.ssh_password) : ""))
     : "";
   if (authType === "password" && !password) throw new Error("密码登录需要填写 SSH 密码");
+  const submittedPassphrase = String(data.private_key_passphrase || "");
+  const keepExistingPassphrase = !data.clear_private_key_passphrase && existing?.private_key_passphrase;
+  const privateKeyPassphrase = authType === "key"
+    ? (submittedPassphrase || (keepExistingPassphrase ? decryptText(existing.private_key_passphrase) : ""))
+    : "";
+  const agentMode = new Set(["auto", "off", "required"]).has(String(data.ssh_agent_mode || existing?.ssh_agent_mode || "auto"))
+    ? String(data.ssh_agent_mode || existing?.ssh_agent_mode || "auto")
+    : "auto";
+  const x11Mode = String(data.x11_mode ?? existing?.x11_mode ?? "off").trim().toLowerCase();
+  if (!["off", "untrusted", "trusted"].includes(x11Mode)) throw new Error("X11 转发模式无效");
+  const jumpConnectionId = Number(data.jump_connection_id || 0) || null;
+  if (jumpConnectionId) {
+    const jump = get("SELECT id,jump_connection_id FROM connections WHERE id=?", [jumpConnectionId]);
+    if (!jump) throw new Error("选择的跳板连接不存在");
+    if (Number(existing?.id || data.id || 0) === jumpConnectionId) throw new Error("连接不能把自己设为跳板");
+    if (jump.jump_connection_id) throw new Error("当前仅支持单级跳板，请选择不依赖其他跳板的连接");
+  }
   return {
     name: String(data.name).trim(),
     group_name: String(data.group_name || "默认分组").trim() || "默认分组",
@@ -332,6 +450,16 @@ function cleanConnection(data, defaultExtraArgs, existing = null) {
     auth_type: authType,
     identity_file: authType === "key" && data.identity_file ? encryptText(String(data.identity_file).trim()) : null,
     ssh_password: password ? encryptText(password) : null,
+    private_key_passphrase: privateKeyPassphrase ? encryptText(privateKeyPassphrase) : null,
+    ssh_agent_mode: agentMode,
+    jump_connection_id: jumpConnectionId,
+    connect_timeout_seconds: boundedInteger(data.connect_timeout_seconds, existing?.connect_timeout_seconds || 10, 3, 120, "连接超时"),
+    keepalive_interval_seconds: boundedInteger(data.keepalive_interval_seconds, existing?.keepalive_interval_seconds ?? 60, 0, 300, "保活间隔"),
+    keepalive_count_max: boundedInteger(data.keepalive_count_max, existing?.keepalive_count_max || 3, 1, 20, "保活次数"),
+    tcp_keepalive: Number(data.tcp_keepalive ?? existing?.tcp_keepalive ?? 1) ? 1 : 0,
+    x11_mode:x11Mode,
+    favorite: Number(data.favorite ?? existing?.favorite ?? 0) ? 1 : 0,
+    notifications_muted: Number(data.notifications_muted ?? existing?.notifications_muted ?? 0) ? 1 : 0,
     tags: String(data.tags || "").split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean).join(","),
     extra_args: encryptText(String(data.extra_args || defaultExtraArgs).trim()),
     autostart_forwards: Number(data.autostart_forwards || 0) ? 1 : 0,
@@ -394,12 +522,264 @@ function listConnections() {
     identity_file: decryptText(conn.identity_file),
     ssh_password: undefined,
     has_password: Boolean(conn.ssh_password),
+    private_key_passphrase: undefined,
+    has_private_key_passphrase: Boolean(conn.private_key_passphrase),
     extra_args: decryptText(conn.extra_args),
     terminal_program_path: decryptText(conn.terminal_program_path),
     terminal_program_args: decryptText(conn.terminal_program_args),
     terminal_working_directory: decryptText(conn.terminal_working_directory),
     forwards: forwardsByConnection.get(conn.id) || []
   }));
+}
+
+const REMOTE_PROTOCOLS = new Set(["rdp", "vnc", "xdmcp", "ftp", "telnet", "serial"]);
+const REMOTE_DEFAULT_PORTS = { rdp:3389, vnc:5900, xdmcp:177, ftp:21, telnet:23 };
+const REMOTE_TERMINAL_ENCODINGS = new Set(["utf8", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "latin1"]);
+
+function parseRemoteOptions(value) {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(String(value));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function cleanRemoteOptions(protocol, source = {}) {
+  const value: any = parseRemoteOptions(source);
+  const bool = (key, fallback = false) => Boolean(value[key] ?? fallback);
+  const text = (key, fallback = "", maximum = 2048) => {
+    const result = String(value[key] ?? fallback).trim();
+    if (result.includes("\0") || /[\r\n]/.test(result) || result.length > maximum) throw new Error(`${key} 配置无效`);
+    return result;
+  };
+  const integer = (key, fallback, minimum, maximum) => boundedInteger(value[key], fallback, minimum, maximum, key);
+  const sourceSshId = integer("source_ssh_connection_id", 0, 0, 2147483647);
+  const withSource = (options) => sourceSshId ? {...options, source_ssh_connection_id:sourceSshId} : options;
+  if (protocol === "rdp") return withSource({
+    domain:text("domain", "", 255),
+    fullscreen:bool("fullscreen", true),
+    width:integer("width", 1440, 640, 7680),
+    height:integer("height", 900, 480, 4320),
+    admin_session:bool("admin_session"),
+    clipboard:bool("clipboard", true),
+    audio:new Set(["local", "remote", "off"]).has(String(value.audio)) ? String(value.audio) : "local"
+  });
+  if (protocol === "vnc") return withSource({
+    client_mode:new Set(["auto", "embedded", "system"]).has(String(value.client_mode)) ? String(value.client_mode) : "auto",
+    view_only:bool("view_only"),
+    shared:bool("shared", true),
+    quality:integer("quality", 8, 0, 9)
+  });
+  if (protocol === "xdmcp") return withSource({
+    mode:new Set(["query", "indirect", "broadcast"]).has(String(value.mode)) ? String(value.mode) : "query",
+    window_mode:new Set(["windowed", "fullscreen"]).has(String(value.window_mode)) ? String(value.window_mode) : "windowed",
+    width:integer("width", 1440, 640, 7680),
+    height:integer("height", 900, 480, 4320),
+    local_address:text("local_address", "", 255),
+    ssh_connection_id:integer("ssh_connection_id", 0, 0, 2147483647)
+  });
+  if (protocol === "ftp") return withSource({
+    secure:new Set(["none", "explicit", "implicit"]).has(String(value.secure)) ? String(value.secure) : "none",
+    passive:bool("passive", true),
+    reject_unauthorized:bool("reject_unauthorized", true),
+    base_path:text("base_path", "/", 2048) || "/"
+  });
+  if (protocol === "telnet") {
+    const encoding = String(value.encoding || "utf8").toLowerCase();
+    if (!REMOTE_TERMINAL_ENCODINGS.has(encoding)) throw new Error("不支持的 Telnet 编码");
+    return withSource({ terminal_type:text("terminal_type", "xterm-256color", 80) || "xterm-256color", encoding });
+  }
+  const encoding = String(value.encoding || "utf8").toLowerCase();
+  if (!REMOTE_TERMINAL_ENCODINGS.has(encoding)) throw new Error("不支持的串口编码");
+  const dataBits = Number(value.data_bits || 8);
+  const stopBits = Number(value.stop_bits || 1);
+  const parity = String(value.parity || "none").toLowerCase();
+  if (![5, 6, 7, 8].includes(dataBits)) throw new Error("串口数据位无效");
+  if (![1, 1.5, 2].includes(stopBits)) throw new Error("串口停止位无效");
+  if (!["none", "even", "odd", "mark", "space"].includes(parity)) throw new Error("串口校验位无效");
+  return withSource({
+    path:text("path", "", 1024),
+    baud_rate:integer("baud_rate", 115200, 50, 4000000),
+    data_bits:dataBits,
+    stop_bits:stopBits,
+    parity,
+    rts_cts:bool("rts_cts"),
+    xon:bool("xon"),
+    xoff:bool("xoff"),
+    encoding
+  });
+}
+
+function cleanRemoteProfile(data, existing = null) {
+  const protocol = String(data.protocol || existing?.protocol || "").trim().toLowerCase();
+  if (!REMOTE_PROTOCOLS.has(protocol)) throw new Error("不支持的远程连接协议");
+  const name = String(data.name || existing?.name || "").trim();
+  if (!name || name.length > 120) throw new Error("连接名称长度必须在 1-120 个字符之间");
+  const options = cleanRemoteOptions(protocol, data.options ?? existing?.options_json);
+  const requiresHost = protocol !== "serial" && !(protocol === "xdmcp" && options.mode === "broadcast");
+  const host = protocol === "serial" ? "" : String(data.host ?? existing?.host ?? "").trim();
+  if ((requiresHost && !host) || host.length > 255 || /[\0\r\n]/.test(host)) throw new Error("请填写有效的目标主机");
+  const submittedPassword = Object.prototype.hasOwnProperty.call(data, "password") ? String(data.password || "") : "";
+  const keepExistingPassword = !data.clear_password && existing?.password;
+  const password = submittedPassword || (keepExistingPassword ? decryptText(existing.password) : "");
+  if (password.length > 4096) throw new Error("密码长度不能超过 4096 个字符");
+  if (protocol === "serial" && !options.path) throw new Error("请选择串口设备");
+  return {
+    name,
+    group_name:String(data.group_name || existing?.group_name || "默认分组").trim() || "默认分组",
+    protocol,
+    host,
+    port:protocol === "serial" ? null : validatePort(data.port || existing?.port || REMOTE_DEFAULT_PORTS[protocol], `${protocol.toUpperCase()} 端口`),
+    username:String(data.username ?? existing?.username ?? "").trim().slice(0, 255),
+    password:password ? encryptText(password) : null,
+    favorite:Number(data.favorite ?? existing?.favorite ?? 0) ? 1 : 0,
+    tags:String(data.tags ?? existing?.tags ?? "").split(/[,，\s]+/).map(item => item.trim()).filter(Boolean).join(","),
+    options_json:JSON.stringify(options)
+  };
+}
+
+function remoteProfileView(row, includeSecret = false) {
+  const options = cleanRemoteOptions(String(row.protocol), row.options_json);
+  return {
+    ...row,
+    kind:"remote",
+    options,
+    options_json:undefined,
+    password:includeSecret ? decryptText(row.password) : undefined,
+    has_password:Boolean(row.password)
+  };
+}
+
+function listRemoteProfiles() {
+  return all(`SELECT remote_profiles.*, connection_groups.sort_order AS group_sort_order
+    FROM remote_profiles LEFT JOIN connection_groups ON connection_groups.name=remote_profiles.group_name
+    ORDER BY COALESCE(connection_groups.sort_order,2147483647), remote_profiles.name COLLATE NOCASE, remote_profiles.created_at, remote_profiles.id`)
+    .map(row => remoteProfileView(row));
+}
+
+function getRemoteProfile(id) {
+  const row = get("SELECT * FROM remote_profiles WHERE id=?", [Number(id)]);
+  if (!row) throw new Error("远程连接不存在");
+  return remoteProfileView(row, true);
+}
+
+function insertRemoteProfile(data) {
+  const item = cleanRemoteProfile(data);
+  ensureConnectionGroup(item.group_name);
+  const ts = now();
+  const result = run(`INSERT INTO remote_profiles(name,group_name,protocol,host,port,username,password,favorite,last_used_at,tags,options_json,created_at,updated_at)
+    VALUES(?,?,?,?,?,?,?,?,NULL,?,?,?,?)`, [item.name,item.group_name,item.protocol,item.host,item.port,item.username,item.password,item.favorite,item.tags,item.options_json,ts,ts]);
+  return Number(result.lastInsertRowid);
+}
+
+function createRemoteProfileFromConnection(connectionId, protocolValue) {
+  const protocol = String(protocolValue || "").trim().toLowerCase();
+  if (!REMOTE_PROTOCOLS.has(protocol) || protocol === "serial") throw new Error("该协议不能从 SSH 连接生成");
+  const connection = getConnection(connectionId);
+  const existing = listRemoteProfiles().find(profile => profile.protocol === protocol
+    && Number(profile.options?.source_ssh_connection_id || 0) === Number(connection.id));
+  if (existing) return {id:existing.id, name:existing.name, protocol, created:false};
+  const labels = {rdp:"RDP", vnc:"VNC", xdmcp:"XDMCP", ftp:"FTP", telnet:"Telnet"};
+  const baseName = `${connection.name} · ${labels[protocol] || protocol.toUpperCase()}`.slice(0, 120);
+  const names = new Set(listRemoteProfiles().map(profile => String(profile.name || "").toLocaleLowerCase()));
+  let name = baseName;
+  let suffix = 2;
+  while (names.has(name.toLocaleLowerCase())) {
+    const ending = `（${suffix}）`;
+    name = `${baseName.slice(0, Math.max(1, 120 - ending.length))}${ending}`;
+    suffix += 1;
+  }
+  const options = {
+    source_ssh_connection_id:Number(connection.id),
+    ...(protocol === "xdmcp" ? {ssh_connection_id:Number(connection.id)} : {})
+  };
+  const id = insertRemoteProfile({
+    protocol,
+    name,
+    group_name:connection.group_name || "默认分组",
+    host:connection.ssh_host,
+    port:REMOTE_DEFAULT_PORTS[protocol],
+    username:["vnc", "ftp"].includes(protocol) ? connection.ssh_user : "",
+    password:"",
+    tags:connection.tags || "",
+    options
+  });
+  return {id, name, protocol, created:true};
+}
+
+function createAllRemoteProfilesFromConnection(connectionId) {
+  const protocols = ["rdp", "vnc", "xdmcp", "ftp", "telnet"];
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const results = protocols.map(protocol => createRemoteProfileFromConnection(connectionId, protocol));
+    db.exec("COMMIT");
+    return {
+      results,
+      created_count:results.filter(item => item.created).length,
+      existing_count:results.filter(item => !item.created).length
+    };
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function updateRemoteProfile(id, data) {
+  const existing = get("SELECT * FROM remote_profiles WHERE id=?", [Number(id)]);
+  if (!existing) throw new Error("远程连接不存在");
+  const item = cleanRemoteProfile(data, existing);
+  ensureConnectionGroup(item.group_name);
+  run(`UPDATE remote_profiles SET name=?,group_name=?,protocol=?,host=?,port=?,username=?,password=?,favorite=?,tags=?,options_json=?,updated_at=? WHERE id=?`,
+    [item.name,item.group_name,item.protocol,item.host,item.port,item.username,item.password,item.favorite,item.tags,item.options_json,now(),Number(id)]);
+  return getRemoteProfile(id);
+}
+
+function getVncProfileCredential(id) {
+  const profile = getRemoteProfile(id);
+  if (profile.protocol !== "vnc") throw new Error("该连接不是 VNC 配置");
+  return {has_password:Boolean(profile.password), password:String(profile.password || "")};
+}
+
+function updateVncProfileCredential(id, value) {
+  const profile = getRemoteProfile(id);
+  if (profile.protocol !== "vnc") throw new Error("该连接不是 VNC 配置");
+  const password = String(value || "");
+  if (password.length > 4096) throw new Error("VNC 密码长度不能超过 4096 个字符");
+  run("UPDATE remote_profiles SET password=?,updated_at=? WHERE id=?", [password ? encryptText(password) : null,now(),Number(id)]);
+  return {ok:true, has_password:Boolean(password)};
+}
+
+function duplicateRemoteProfile(id) {
+  const source = getRemoteProfile(id);
+  const base = String(source.name || "连接").replace(/\s*(?:（copy\d+）|\(copy\d+\))$/i, "").trim() || "连接";
+  const existing = new Set(all("SELECT name FROM remote_profiles").map(item => String(item.name || "").toLocaleLowerCase()));
+  let index = 1;
+  while (existing.has(`${base}（copy${index}）`.toLocaleLowerCase())) index += 1;
+  const name = `${base}（copy${index}）`;
+  const profileId = insertRemoteProfile({...source, name, password:source.password || "", options:source.options});
+  return {id:profileId, name};
+}
+
+function deleteRemoteProfile(id) {
+  const result = run("DELETE FROM remote_profiles WHERE id=?", [Number(id)]);
+  if (!result.changes) throw new Error("远程连接不存在");
+  return {ok:true};
+}
+
+function updateRemoteProfileUsage(id) {
+  getRemoteProfile(id);
+  run("UPDATE remote_profiles SET last_used_at=?,updated_at=? WHERE id=?", [now(),now(),Number(id)]);
+  return {ok:true};
+}
+
+function updateRemoteProfileFlags(id, data) {
+  const profile = getRemoteProfile(id);
+  const favorite = data.favorite === undefined ? Number(profile.favorite || 0) : Number(data.favorite || 0) ? 1 : 0;
+  run("UPDATE remote_profiles SET favorite=?,updated_at=? WHERE id=?", [favorite,now(),Number(id)]);
+  return {ok:true, favorite:Boolean(favorite)};
 }
 
 function getConnection(id) {
@@ -409,6 +789,7 @@ function getConnection(id) {
     ...row,
     identity_file: decryptText(row.identity_file),
     ssh_password: decryptText(row.ssh_password),
+    private_key_passphrase: decryptText(row.private_key_passphrase),
     extra_args: decryptText(row.extra_args),
     terminal_program_path: decryptText(row.terminal_program_path),
     terminal_program_args: decryptText(row.terminal_program_args),
@@ -428,9 +809,9 @@ function insertConnection(data, defaultExtraArgs) {
   const ts = now();
   const result = run(
     `INSERT INTO connections
-     (name, group_name, ssh_host, ssh_port, ssh_user, auth_type, identity_file, ssh_password, tags, extra_args, autostart_forwards, sort_order, terminal_encoding, terminal_font_family, terminal_font_size, terminal_mobile_font_size, terminal_line_height, terminal_font_weight, terminal_startup_mode, terminal_profile_name, terminal_profile_kind, terminal_program_path, terminal_program_args, terminal_working_directory, terminal_program_platform, sftp_text_encoding, sftp_filename_encoding, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [item.name, item.group_name, item.ssh_host, item.ssh_port, item.ssh_user, item.auth_type, item.identity_file, item.ssh_password, item.tags, item.extra_args, item.autostart_forwards, item.sort_order, item.terminal_encoding, item.terminal_font_family, item.terminal_font_size, item.terminal_mobile_font_size, item.terminal_line_height, item.terminal_font_weight, item.terminal_startup_mode, item.terminal_profile_name, item.terminal_profile_kind, item.terminal_program_path, item.terminal_program_args, item.terminal_working_directory, item.terminal_program_platform, item.sftp_text_encoding, item.sftp_filename_encoding, ts, ts]
+     (name, group_name, ssh_host, ssh_port, ssh_user, auth_type, identity_file, ssh_password, private_key_passphrase, ssh_agent_mode, jump_connection_id, connect_timeout_seconds, keepalive_interval_seconds, keepalive_count_max, tcp_keepalive, x11_mode, favorite, last_used_at, notifications_muted, tags, extra_args, autostart_forwards, sort_order, terminal_encoding, terminal_font_family, terminal_font_size, terminal_mobile_font_size, terminal_line_height, terminal_font_weight, terminal_startup_mode, terminal_profile_name, terminal_profile_kind, terminal_program_path, terminal_program_args, terminal_working_directory, terminal_program_platform, sftp_text_encoding, sftp_filename_encoding, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [item.name, item.group_name, item.ssh_host, item.ssh_port, item.ssh_user, item.auth_type, item.identity_file, item.ssh_password, item.private_key_passphrase, item.ssh_agent_mode, item.jump_connection_id, item.connect_timeout_seconds, item.keepalive_interval_seconds, item.keepalive_count_max, item.tcp_keepalive, item.x11_mode, item.favorite, null, item.notifications_muted, item.tags, item.extra_args, item.autostart_forwards, item.sort_order, item.terminal_encoding, item.terminal_font_family, item.terminal_font_size, item.terminal_mobile_font_size, item.terminal_line_height, item.terminal_font_weight, item.terminal_startup_mode, item.terminal_profile_name, item.terminal_profile_kind, item.terminal_program_path, item.terminal_program_args, item.terminal_working_directory, item.terminal_program_platform, item.sftp_text_encoding, item.sftp_filename_encoding, ts, ts]
   );
   return Number(result.lastInsertRowid);
 }
@@ -466,9 +847,23 @@ function updateConnection(id, data, defaultExtraArgs) {
   const item = cleanConnection(data, defaultExtraArgs, existing);
   ensureConnectionGroup(item.group_name);
   run(
-    `UPDATE connections SET name=?, group_name=?, ssh_host=?, ssh_port=?, ssh_user=?, auth_type=?, identity_file=?, ssh_password=?, tags=?, extra_args=?, autostart_forwards=?, sort_order=?, terminal_encoding=?, terminal_font_family=?, terminal_font_size=?, terminal_mobile_font_size=?, terminal_line_height=?, terminal_font_weight=?, terminal_startup_mode=?, terminal_profile_name=?, terminal_profile_kind=?, terminal_program_path=?, terminal_program_args=?, terminal_working_directory=?, terminal_program_platform=?, sftp_text_encoding=?, sftp_filename_encoding=?, updated_at=? WHERE id=?`,
-    [item.name, item.group_name, item.ssh_host, item.ssh_port, item.ssh_user, item.auth_type, item.identity_file, item.ssh_password, item.tags, item.extra_args, item.autostart_forwards, item.sort_order, item.terminal_encoding, item.terminal_font_family, item.terminal_font_size, item.terminal_mobile_font_size, item.terminal_line_height, item.terminal_font_weight, item.terminal_startup_mode, item.terminal_profile_name, item.terminal_profile_kind, item.terminal_program_path, item.terminal_program_args, item.terminal_working_directory, item.terminal_program_platform, item.sftp_text_encoding, item.sftp_filename_encoding, now(), Number(id)]
+    `UPDATE connections SET name=?, group_name=?, ssh_host=?, ssh_port=?, ssh_user=?, auth_type=?, identity_file=?, ssh_password=?, private_key_passphrase=?, ssh_agent_mode=?, jump_connection_id=?, connect_timeout_seconds=?, keepalive_interval_seconds=?, keepalive_count_max=?, tcp_keepalive=?, x11_mode=?, favorite=?, notifications_muted=?, tags=?, extra_args=?, autostart_forwards=?, sort_order=?, terminal_encoding=?, terminal_font_family=?, terminal_font_size=?, terminal_mobile_font_size=?, terminal_line_height=?, terminal_font_weight=?, terminal_startup_mode=?, terminal_profile_name=?, terminal_profile_kind=?, terminal_program_path=?, terminal_program_args=?, terminal_working_directory=?, terminal_program_platform=?, sftp_text_encoding=?, sftp_filename_encoding=?, updated_at=? WHERE id=?`,
+    [item.name, item.group_name, item.ssh_host, item.ssh_port, item.ssh_user, item.auth_type, item.identity_file, item.ssh_password, item.private_key_passphrase, item.ssh_agent_mode, item.jump_connection_id, item.connect_timeout_seconds, item.keepalive_interval_seconds, item.keepalive_count_max, item.tcp_keepalive, item.x11_mode, item.favorite, item.notifications_muted, item.tags, item.extra_args, item.autostart_forwards, item.sort_order, item.terminal_encoding, item.terminal_font_family, item.terminal_font_size, item.terminal_mobile_font_size, item.terminal_line_height, item.terminal_font_weight, item.terminal_startup_mode, item.terminal_profile_name, item.terminal_profile_kind, item.terminal_program_path, item.terminal_program_args, item.terminal_working_directory, item.terminal_program_platform, item.sftp_text_encoding, item.sftp_filename_encoding, now(), Number(id)]
   );
+}
+
+function updateConnectionUsage(id, action = "open") {
+  getConnection(id);
+  run("UPDATE connections SET last_used_at=?,updated_at=CASE WHEN ?='edit' THEN ? ELSE updated_at END WHERE id=?", [now(), String(action), now(), Number(id)]);
+  return { ok:true, last_used_at:now() };
+}
+
+function updateConnectionFlags(id, data: any = {}) {
+  getConnection(id);
+  const favorite = Number(data.favorite || 0) ? 1 : 0;
+  const notificationsMuted = Number(data.notifications_muted || 0) ? 1 : 0;
+  run("UPDATE connections SET favorite=?,notifications_muted=?,updated_at=? WHERE id=?", [favorite, notificationsMuted, now(), Number(id)]);
+  return { favorite, notifications_muted:notificationsMuted };
 }
 
 function updateTerminalPreferences(id, data) {
@@ -499,6 +894,15 @@ function updateTerminalStartup(id, data) {
     ]
   );
   return item;
+}
+
+function updateConnectionX11Mode(id, value) {
+  const existing = get("SELECT id FROM connections WHERE id=?", [Number(id)]);
+  if (!existing) throw new Error("连接不存在");
+  const mode = String(value || "off").trim().toLowerCase();
+  if (!["off", "untrusted", "trusted"].includes(mode)) throw new Error("X11 转发模式无效");
+  run("UPDATE connections SET x11_mode=?,updated_at=? WHERE id=?", [mode,now(),Number(id)]);
+  return {ok:true,x11_mode:mode};
 }
 
 function updateSftpTextEncoding(id, value) {
@@ -574,20 +978,21 @@ function renameConnectionGroup(currentName, nextName) {
   if (!source || source.length > 100 || !target || target.length > 100) {
     throw new Error("分组名称长度必须在 1-100 个字符之间");
   }
-  const existing = get("SELECT COUNT(*) AS count FROM connections WHERE group_name=?", [source]);
+  const existing = get("SELECT (SELECT COUNT(*) FROM connections WHERE group_name=?)+(SELECT COUNT(*) FROM remote_profiles WHERE group_name=?) AS count", [source, source]);
   if (!Number(existing?.count)) throw new Error("分组不存在，请刷新后重试");
   if (source === target) return { ok: true, updated: 0, group_name: target };
-  const conflict = get("SELECT 1 AS found FROM connections WHERE group_name=? LIMIT 1", [target]);
+  const conflict = get("SELECT 1 AS found FROM connections WHERE group_name=? UNION ALL SELECT 1 AS found FROM remote_profiles WHERE group_name=? LIMIT 1", [target, target]);
   if (conflict) throw new Error("该分组名称已存在，请使用其他名称");
   const result = run("UPDATE connections SET group_name=?, updated_at=? WHERE group_name=?", [target, now(), source]);
+  const remoteResult = run("UPDATE remote_profiles SET group_name=?, updated_at=? WHERE group_name=?", [target, now(), source]);
   run("DELETE FROM connection_groups WHERE name=?", [target]);
   run("UPDATE connection_groups SET name=?,updated_at=? WHERE name=?", [target, now(), source]);
-  return { ok: true, updated: Number(result?.changes || 0), group_name: target };
+  return { ok: true, updated: Number(result?.changes || 0) + Number(remoteResult?.changes || 0), group_name: target };
 }
 
 function reorderConnectionGroups(names) {
   const requested = [...new Set((names || []).map((name) => String(name || "").trim()).filter(Boolean))];
-  const active = all("SELECT DISTINCT group_name FROM connections").map((row) => row.group_name);
+  const active = all("SELECT group_name FROM connections UNION SELECT group_name FROM remote_profiles").map((row) => row.group_name);
   if (requested.length !== active.length || active.some((name) => !requested.includes(name))) throw new Error("分组列表已变化，请刷新后重试");
   db.exec("BEGIN IMMEDIATE");
   try {
@@ -608,12 +1013,13 @@ function isEncryptedText(value) {
 }
 
 function rewriteConnectionSecrets(transform) {
-  const rows = all("SELECT id, identity_file, ssh_password, extra_args, terminal_program_path, terminal_program_args, terminal_working_directory FROM connections");
-  const update = db.prepare("UPDATE connections SET identity_file=?, ssh_password=?, extra_args=?, terminal_program_path=?, terminal_program_args=?, terminal_working_directory=?, updated_at=? WHERE id=?");
+  const rows = all("SELECT id, identity_file, ssh_password, private_key_passphrase, extra_args, terminal_program_path, terminal_program_args, terminal_working_directory FROM connections");
+  const update = db.prepare("UPDATE connections SET identity_file=?, ssh_password=?, private_key_passphrase=?, extra_args=?, terminal_program_path=?, terminal_program_args=?, terminal_working_directory=?, updated_at=? WHERE id=?");
   let changed = 0;
   for (const row of rows) {
     const identityFile = row.identity_file ? transform(row.identity_file) : row.identity_file;
     const sshPassword = row.ssh_password ? transform(row.ssh_password) : row.ssh_password;
+    const privateKeyPassphrase = row.private_key_passphrase ? transform(row.private_key_passphrase) : row.private_key_passphrase;
     const extraArgs = row.extra_args ? transform(row.extra_args) : row.extra_args;
     const terminalProgramPath = row.terminal_program_path ? transform(row.terminal_program_path) : row.terminal_program_path;
     const terminalProgramArgs = row.terminal_program_args ? transform(row.terminal_program_args) : row.terminal_program_args;
@@ -621,12 +1027,22 @@ function rewriteConnectionSecrets(transform) {
     if (
       identityFile !== row.identity_file
       || sshPassword !== row.ssh_password
+      || privateKeyPassphrase !== row.private_key_passphrase
       || extraArgs !== row.extra_args
       || terminalProgramPath !== row.terminal_program_path
       || terminalProgramArgs !== row.terminal_program_args
       || terminalWorkingDirectory !== row.terminal_working_directory
     ) {
-      update.run(identityFile, sshPassword, extraArgs, terminalProgramPath, terminalProgramArgs, terminalWorkingDirectory, now(), row.id);
+      update.run(identityFile, sshPassword, privateKeyPassphrase, extraArgs, terminalProgramPath, terminalProgramArgs, terminalWorkingDirectory, now(), row.id);
+      changed += 1;
+    }
+  }
+  const remoteRows = all("SELECT id,password FROM remote_profiles");
+  const updateRemote = db.prepare("UPDATE remote_profiles SET password=?,updated_at=? WHERE id=?");
+  for (const row of remoteRows) {
+    const password = row.password ? transform(row.password) : row.password;
+    if (password !== row.password) {
+      updateRemote.run(password, now(), row.id);
       changed += 1;
     }
   }
@@ -670,6 +1086,7 @@ function deleteConnection(id, stopForward) {
     stopForward(forward.id);
   }
   run("DELETE FROM connection_forwards WHERE connection_id=?", [Number(id)]);
+  run("UPDATE connections SET jump_connection_id=NULL WHERE jump_connection_id=?", [Number(id)]);
   run("DELETE FROM connections WHERE id=?", [Number(id)]);
 }
 
@@ -747,13 +1164,158 @@ function ensureBuiltinForwardTemplates() {
   run("INSERT OR REPLACE INTO app_meta(key,value) VALUES('builtin_forward_templates_v1',?)", [String(Date.now())]);
 }
 
+function cleanCommandSnippet(data: any = {}, existing: any = null) {
+  const name = String(data.name ?? existing?.name ?? "").trim();
+  const command = String(data.command ?? existing?.command ?? "").replace(/\r\n?/g, "\n").trim();
+  if (!name) throw new Error("命令片段需要名称");
+  if (!command) throw new Error("命令片段不能为空");
+  if (name.length > 120) throw new Error("命令片段名称不能超过 120 个字符");
+  if (command.length > 100000) throw new Error("命令片段内容过长");
+  return {
+    name,
+    group_name:String(data.group_name ?? existing?.group_name ?? "默认分组").trim() || "默认分组",
+    command,
+    description:String(data.description ?? existing?.description ?? "").trim().slice(0, 1000),
+    tags:String(data.tags ?? existing?.tags ?? "").split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean).join(","),
+    favorite:Number(data.favorite ?? existing?.favorite ?? 0) ? 1 : 0
+  };
+}
+
+function listCommandSnippets() {
+  return all(`SELECT * FROM command_snippets
+    ORDER BY favorite DESC, COALESCE(last_used_at,0) DESC, group_name COLLATE NOCASE, name COLLATE NOCASE, id`);
+}
+
+function insertCommandSnippet(data) {
+  const item = cleanCommandSnippet(data);
+  const ts = now();
+  const result = run(
+    "INSERT INTO command_snippets(name,group_name,command,description,tags,favorite,last_used_at,created_at,updated_at) VALUES(?,?,?,?,?,?,NULL,?,?)",
+    [item.name,item.group_name,item.command,item.description,item.tags,item.favorite,ts,ts]
+  );
+  return { id:Number(result.lastInsertRowid), ...item, last_used_at:null, created_at:ts, updated_at:ts };
+}
+
+function updateCommandSnippet(id, data) {
+  const existing = get("SELECT * FROM command_snippets WHERE id=?", [Number(id)]);
+  if (!existing) throw new Error("命令片段不存在");
+  const item = cleanCommandSnippet(data, existing);
+  const updatedAt = now();
+  run("UPDATE command_snippets SET name=?,group_name=?,command=?,description=?,tags=?,favorite=?,updated_at=? WHERE id=?",
+    [item.name,item.group_name,item.command,item.description,item.tags,item.favorite,updatedAt,Number(id)]);
+  return { ...existing, ...item, id:Number(id), updated_at:updatedAt };
+}
+
+function deleteCommandSnippet(id) {
+  const result = run("DELETE FROM command_snippets WHERE id=?", [Number(id)]);
+  if (!result.changes) throw new Error("命令片段不存在");
+  return { ok:true };
+}
+
+function useCommandSnippet(id) {
+  const item = get("SELECT * FROM command_snippets WHERE id=?", [Number(id)]);
+  if (!item) throw new Error("命令片段不存在");
+  const usedAt = now();
+  run("UPDATE command_snippets SET last_used_at=? WHERE id=?", [usedAt,Number(id)]);
+  return { ...item, last_used_at:usedAt };
+}
+
+function cleanNamedWorkspace(data: any = {}, existing: any = null) {
+  const name = String(data.name ?? existing?.name ?? "").trim();
+  if (!name) throw new Error("工作区需要名称");
+  if (name.length > 120) throw new Error("工作区名称不能超过 120 个字符");
+  let layout;
+  try {
+    layout = typeof data.layout === "string"
+      ? JSON.parse(data.layout)
+      : (data.layout ?? JSON.parse(existing?.layout_json || "{}"));
+  } catch {
+    throw new Error("工作区内容格式无效");
+  }
+  const layoutJson = JSON.stringify(layout);
+  if (!layout || !Array.isArray(layout.tabs)) throw new Error("工作区缺少标签信息");
+  if (Buffer.byteLength(layoutJson, "utf8") > 2 * 1024 * 1024) throw new Error("工作区内容不能超过 2 MB");
+  return {
+    name,
+    description:String(data.description ?? existing?.description ?? "").trim().slice(0, 1000),
+    layout_json:layoutJson
+  };
+}
+
+function workspaceView(row) {
+  if (!row) return null;
+  let layout = {};
+  try { layout = JSON.parse(row.layout_json); } catch {}
+  const { layout_json, ...rest } = row;
+  return { ...rest, layout };
+}
+
+function listNamedWorkspaces() {
+  return all("SELECT * FROM named_workspaces ORDER BY COALESCE(last_used_at,0) DESC, updated_at DESC, name COLLATE NOCASE").map(workspaceView);
+}
+
+function insertNamedWorkspace(data) {
+  const item = cleanNamedWorkspace(data);
+  const ts = now();
+  try {
+    const result = run("INSERT INTO named_workspaces(name,description,layout_json,last_used_at,created_at,updated_at) VALUES(?,?,?,NULL,?,?)",
+      [item.name,item.description,item.layout_json,ts,ts]);
+    return workspaceView({ id:Number(result.lastInsertRowid), ...item, last_used_at:null, created_at:ts, updated_at:ts });
+  } catch (error) {
+    if (String(error.message || "").includes("UNIQUE")) throw new Error("已存在同名工作区");
+    throw error;
+  }
+}
+
+function updateNamedWorkspace(id, data) {
+  const existing = get("SELECT * FROM named_workspaces WHERE id=?", [Number(id)]);
+  if (!existing) throw new Error("命名工作区不存在");
+  const item = cleanNamedWorkspace(data, existing);
+  const updatedAt = now();
+  try {
+    run("UPDATE named_workspaces SET name=?,description=?,layout_json=?,updated_at=? WHERE id=?",
+      [item.name,item.description,item.layout_json,updatedAt,Number(id)]);
+    return workspaceView({ ...existing, ...item, id:Number(id), updated_at:updatedAt });
+  } catch (error) {
+    if (String(error.message || "").includes("UNIQUE")) throw new Error("已存在同名工作区");
+    throw error;
+  }
+}
+
+function duplicateNamedWorkspace(id) {
+  const existing = get("SELECT * FROM named_workspaces WHERE id=?", [Number(id)]);
+  if (!existing) throw new Error("命名工作区不存在");
+  const names = new Set(all("SELECT name FROM named_workspaces").map((item) => String(item.name).toLocaleLowerCase()));
+  const base = String(existing.name).replace(/\s*\(\d+\)$/u, "").trim();
+  let index = 1;
+  while (names.has(`${base} (${index})`.toLocaleLowerCase())) index += 1;
+  return insertNamedWorkspace({ name:`${base} (${index})`, description:existing.description, layout:JSON.parse(existing.layout_json) });
+}
+
+function useNamedWorkspace(id) {
+  const existing = get("SELECT * FROM named_workspaces WHERE id=?", [Number(id)]);
+  if (!existing) throw new Error("命名工作区不存在");
+  const usedAt = now();
+  run("UPDATE named_workspaces SET last_used_at=? WHERE id=?", [usedAt,Number(id)]);
+  return workspaceView({ ...existing, last_used_at:usedAt });
+}
+
+function deleteNamedWorkspace(id) {
+  const result = run("DELETE FROM named_workspaces WHERE id=?", [Number(id)]);
+  if (!result.changes) throw new Error("命名工作区不存在");
+  return { ok:true };
+}
+
 function exportConfigSnapshot() {
   return {
     version: 1,
     connections: all("SELECT * FROM connections ORDER BY id"),
+    remote_profiles: all("SELECT * FROM remote_profiles ORDER BY id"),
     connection_groups: all("SELECT * FROM connection_groups ORDER BY sort_order,name"),
     forwards: all("SELECT * FROM connection_forwards ORDER BY id").map(row => ({...row, pid:null, status:"stopped", restore:0, reconnect_count:0, started_at:null})),
-    forward_templates: all("SELECT * FROM forward_templates ORDER BY id")
+    forward_templates: all("SELECT * FROM forward_templates ORDER BY id"),
+    command_snippets: all("SELECT * FROM command_snippets ORDER BY id"),
+    named_workspaces: all("SELECT * FROM named_workspaces ORDER BY id")
   };
 }
 
@@ -763,8 +1325,11 @@ function restoreConfigSnapshot(snapshot) {
   try {
     run("DELETE FROM connection_forwards");
     run("DELETE FROM connections");
+    run("DELETE FROM remote_profiles");
     run("DELETE FROM connection_groups");
     run("DELETE FROM forward_templates");
+    run("DELETE FROM command_snippets");
+    run("DELETE FROM named_workspaces");
     const groups = Array.isArray(snapshot.connection_groups) ? snapshot.connection_groups : [...new Set(snapshot.connections.map((row) => row.group_name))].map((name,index) => ({name,sort_order:index+1,created_at:now(),updated_at:now()}));
     for (const row of groups) run("INSERT INTO connection_groups(name,sort_order,created_at,updated_at) VALUES(?,?,?,?)", [row.name,row.sort_order,row.created_at,row.updated_at]);
     for (const row of snapshot.connections) {
@@ -778,7 +1343,7 @@ function restoreConfigSnapshot(snapshot) {
         ? String(row.terminal_program_platform)
         : "auto";
       run(
-        "INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,ssh_password,tags,extra_args,autostart_forwards,sort_order,terminal_encoding,terminal_font_family,terminal_font_size,terminal_mobile_font_size,terminal_line_height,terminal_font_weight,terminal_startup_mode,terminal_profile_name,terminal_profile_kind,terminal_program_path,terminal_program_args,terminal_working_directory,terminal_program_platform,sftp_text_encoding,sftp_filename_encoding,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,ssh_password,private_key_passphrase,ssh_agent_mode,jump_connection_id,connect_timeout_seconds,keepalive_interval_seconds,keepalive_count_max,tcp_keepalive,x11_mode,favorite,last_used_at,notifications_muted,tags,extra_args,autostart_forwards,sort_order,terminal_encoding,terminal_font_family,terminal_font_size,terminal_mobile_font_size,terminal_line_height,terminal_font_weight,terminal_startup_mode,terminal_profile_name,terminal_profile_kind,terminal_program_path,terminal_program_args,terminal_working_directory,terminal_program_platform,sftp_text_encoding,sftp_filename_encoding,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           row.id,
           row.name,
@@ -789,6 +1354,17 @@ function restoreConfigSnapshot(snapshot) {
           row.auth_type || "key",
           row.identity_file,
           row.ssh_password || null,
+          row.private_key_passphrase || null,
+          new Set(["auto","off","required"]).has(row.ssh_agent_mode) ? row.ssh_agent_mode : "auto",
+          row.jump_connection_id || null,
+          Number(row.connect_timeout_seconds) || 10,
+          Number.isInteger(Number(row.keepalive_interval_seconds)) ? Number(row.keepalive_interval_seconds) : 60,
+          Number(row.keepalive_count_max) || 3,
+          Number(row.tcp_keepalive ?? 1) ? 1 : 0,
+          ["off","untrusted","trusted"].includes(String(row.x11_mode || "")) ? row.x11_mode : "off",
+          Number(row.favorite || 0) ? 1 : 0,
+          row.last_used_at || null,
+          Number(row.notifications_muted || 0) ? 1 : 0,
           row.tags,
           row.extra_args,
           row.autostart_forwards,
@@ -813,14 +1389,26 @@ function restoreConfigSnapshot(snapshot) {
         ]
       );
     }
+    for (const row of snapshot.remote_profiles || []) {
+      const item = cleanRemoteProfile({
+        ...row,
+        password:row.password ? decryptText(row.password) : "",
+        options:row.options_json
+      });
+      run("INSERT INTO remote_profiles(id,name,group_name,protocol,host,port,username,password,favorite,last_used_at,tags,options_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+        row.id,item.name,item.group_name,item.protocol,item.host,item.port,item.username,item.password,item.favorite,row.last_used_at || null,item.tags,item.options_json,row.created_at || now(),row.updated_at || now()
+      ]);
+    }
     for (const row of snapshot.forwards) run("INSERT INTO connection_forwards(id,connection_id,mode,service_name,service_type,service_note,url_scheme,bind_host,bind_port,target_host,target_port,pid,status,restore,reconnect_count,last_error,started_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [row.id,row.connection_id,row.mode,row.service_name,row.service_type,row.service_note,row.url_scheme,row.bind_host,row.bind_port,row.target_host,row.target_port,null,"stopped",0,0,row.last_error || null,null,row.created_at,row.updated_at]);
     for (const row of snapshot.forward_templates) run("INSERT INTO forward_templates(id,name,mode,service_name,service_type,service_note,url_scheme,bind_host,bind_port,target_host,target_port,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", [row.id,row.name,row.mode,row.service_name,row.service_type,row.service_note,row.url_scheme,row.bind_host,row.bind_port,row.target_host,row.target_port,row.created_at,row.updated_at]);
+    for (const row of snapshot.command_snippets || []) run("INSERT INTO command_snippets(id,name,group_name,command,description,tags,favorite,last_used_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)", [row.id,row.name,row.group_name || "默认分组",row.command,row.description || "",row.tags || "",Number(row.favorite || 0) ? 1 : 0,row.last_used_at || null,row.created_at || now(),row.updated_at || now()]);
+    for (const row of snapshot.named_workspaces || []) run("INSERT INTO named_workspaces(id,name,description,layout_json,last_used_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", [row.id,row.name,row.description || "",row.layout_json || "{}",row.last_used_at || null,row.created_at || now(),row.updated_at || now()]);
     db.exec("COMMIT");
   } catch (error) {
     db.exec("ROLLBACK");
     throw error;
   }
-  return { ok:true, connections:snapshot.connections.length, forwards:snapshot.forwards.length, templates:snapshot.forward_templates.length };
+  return { ok:true, connections:snapshot.connections.length, remote_profiles:(snapshot.remote_profiles || []).length, forwards:snapshot.forwards.length, templates:snapshot.forward_templates.length, snippets:(snapshot.command_snippets || []).length, workspaces:(snapshot.named_workspaces || []).length };
 }
 
 ensureBuiltinForwardTemplates();
@@ -849,7 +1437,10 @@ function exportDatabaseFile(includePasswords = false) {
       if (table) {
         const columns = new Set(exportedDb.prepare("PRAGMA table_info(connections)").all().map((item) => item.name));
         if (columns.has("ssh_password")) exportedDb.exec("UPDATE connections SET ssh_password=NULL");
+        if (columns.has("private_key_passphrase")) exportedDb.exec("UPDATE connections SET private_key_passphrase=NULL");
       }
+      const remoteTable = exportedDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='remote_profiles'").get();
+      if (remoteTable) exportedDb.exec("UPDATE remote_profiles SET password=NULL");
       exportedDb.close();
       exportedDb = null;
     }
@@ -889,13 +1480,28 @@ module.exports = {
   cleanTerminalStartup,
   cleanForward,
   listConnections,
+  listRemoteProfiles,
+  getRemoteProfile,
+  insertRemoteProfile,
+  createRemoteProfileFromConnection,
+  createAllRemoteProfilesFromConnection,
+  updateRemoteProfile,
+  getVncProfileCredential,
+  updateVncProfileCredential,
+  duplicateRemoteProfile,
+  deleteRemoteProfile,
+  updateRemoteProfileUsage,
+  updateRemoteProfileFlags,
   getConnection,
   getForward,
   insertConnection,
   duplicateConnection,
   updateConnection,
+  updateConnectionUsage,
+  updateConnectionFlags,
   updateTerminalPreferences,
   updateTerminalStartup,
+  updateConnectionX11Mode,
   updateSftpTextEncoding,
   updateSftpFilenameEncoding,
   bulkUpdateConnections,
@@ -907,6 +1513,17 @@ module.exports = {
   updateForward,
   deleteConnection,
   deleteForward,
+  listCommandSnippets,
+  insertCommandSnippet,
+  updateCommandSnippet,
+  deleteCommandSnippet,
+  useCommandSnippet,
+  listNamedWorkspaces,
+  insertNamedWorkspace,
+  updateNamedWorkspace,
+  duplicateNamedWorkspace,
+  useNamedWorkspace,
+  deleteNamedWorkspace,
   listForwardTemplates,
   insertForwardTemplate,
   updateForwardTemplate,

@@ -36,7 +36,7 @@ function renderRunningForwards() {
         ${forward.service_note ? `<div class="conn-meta">${esc(forward.service_note)}</div>` : ""}
         ${forwardAccessHtml(access)}
       </div>
-      <div class="running-actions">${access.url ? `<a class="open-forward-link" href="${esc(access.url)}" target="_blank" rel="noopener">${icon("external-link")}<span>打开</span></a><button class="icon-button" title="复制地址" aria-label="复制地址" onclick="copyText('${escAttr(access.url)}')">${icon("copy")}</button>` : `<span class="muted">无可打开地址</span>`}<button title="重试转发" onclick="retryForwardFromRunning(${forward.id},this)">${icon("rotate-cw")}<span>重试</span></button><button class="danger icon-button" title="停止转发" aria-label="停止转发" onclick="stopForwardFromRunning(${forward.id})">${icon("square")}</button></div>
+      <div class="running-actions">${access.url ? `<a class="open-forward-link" href="${esc(access.url)}" target="_blank" rel="noopener">${icon("external-link")}<span>打开</span></a><button class="icon-button" title="复制地址" aria-label="复制地址" onclick="copyText('${escAttr(access.url)}')">${icon("copy")}</button>` : `<span class="muted running-no-url">无可打开地址</span>`}<button class="icon-button" title="重试转发" aria-label="重试转发" onclick="retryForwardFromRunning(${forward.id},this)">${icon("rotate-cw")}</button><button class="danger icon-button" title="停止转发" aria-label="停止转发" onclick="stopForwardFromRunning(${forward.id})">${icon("square")}</button></div>
     </div>`;
     }).join("") : ""}
   </div>`;

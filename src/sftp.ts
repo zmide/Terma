@@ -1,6 +1,7 @@
 const { randomBytes } = require("node:crypto");
 const path = require("node:path");
 const { getConnection } = require("./db");
+const { buildRemotePosixCommand } = require("./remote-posix");
 const { spawnSftpSessionCommand } = require("./sftp-session");
 const {
   decodeRemoteFilenameOutput,
@@ -31,9 +32,9 @@ function spawnRemote(connection, command) {
   return spawnSftpSessionCommand(connection, portableCommand);
 }
 
-function runRemote(connection, command, input = null, timeoutMs = 30000): Promise<Buffer> {
+function runRemoteCommand(connection, command, input = null, timeoutMs = 30000): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawnRemote(connection, command);
+    const child = spawnSftpSessionCommand(connection, command);
     const chunks = [];
     const errors = [];
     let settled = false;
@@ -58,6 +59,10 @@ function runRemote(connection, command, input = null, timeoutMs = 30000): Promis
     if (input) child.stdin.end(input);
     else child.stdin.end();
   });
+}
+
+function runRemote(connection, command, input = null, timeoutMs = 30000): Promise<Buffer> {
+  return runRemoteCommand(connection, `sh -c ${shellQuote(command)}`, input, timeoutMs);
 }
 
 function positiveInteger(value, fallback, label) {
@@ -638,10 +643,14 @@ function buildReadRemoteBinaryCommand(remotePath, maximumBytes, connection = nul
   ].join("; ");
 }
 
+function buildReadRemoteBinaryExecCommand(remotePath, maximumBytes, connection = null) {
+  return buildRemotePosixCommand(buildReadRemoteBinaryCommand(remotePath, maximumBytes, connection));
+}
+
 async function readRemoteBinaryFile(connectionId, remotePath, maximumBytes = DEFAULT_MAX_OPEN_FILE_SIZE) {
   const connection = getConnection(connectionId);
   const limit = normalizeOpenFileLimit(maximumBytes);
-  const body = await runRemote(connection, buildReadRemoteBinaryCommand(remotePath, limit, connection), null, 60000);
+  const body = await runRemoteCommand(connection, buildReadRemoteBinaryExecCommand(remotePath, limit, connection), null, 60000);
   if (body.length > limit) throw new Error(`文件超过 ${Math.round(limit / 1024 / 1024)} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限`);
   return {content:body, size:body.length, limit};
 }
@@ -719,6 +728,17 @@ async function writeRemoteFile(connectionId, remotePath, data, options: { backup
   return { ok: true, backup_path: backupPath };
 }
 
+async function setRemoteFileMtime(connectionId, remotePath, mtimeSeconds) {
+  const connection = getConnection(connectionId);
+  const epoch = Math.max(0, Math.floor(Number(mtimeSeconds || 0)));
+  if (!epoch) return {ok:true};
+  const target = remotePathOperand(connection, remotePath);
+  const command = `touch -m -d @${epoch} -- ${target} 2>/dev/null || { TD_STAMP=$(date -r ${epoch} +%Y%m%d%H%M.%S 2>/dev/null) && touch -m -t "$TD_STAMP" ${target}; }`;
+  await runRemote(connection, command, null, 30000);
+  invalidateRemoteDirectoryCache(connectionId);
+  return {ok:true};
+}
+
 module.exports = {
   listRemoteDir,
   __buildRemoteDirectoryEntriesCommand:buildRemoteDirectoryEntriesCommand,
@@ -755,6 +775,7 @@ module.exports = {
   readRemoteTextFile,
   readRemoteBinaryFile,
   __buildReadRemoteBinaryCommand:buildReadRemoteBinaryCommand,
+  __buildReadRemoteBinaryExecCommand:buildReadRemoteBinaryExecCommand,
   decodeRemoteText,
   encodeRemoteText,
   normalizeTextEncoding,
@@ -763,5 +784,6 @@ module.exports = {
   resolveRemoteUploadTarget,
   decodeRemoteFilenameOutput,
   writeRemoteFile,
+  setRemoteFileMtime,
   streamRemoteFile
 };

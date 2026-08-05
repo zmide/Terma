@@ -584,6 +584,10 @@ function checkNativeSessionRaceGuards() {
   assert.match(mainSource, /renamedItems:\[\.\.\.session\.renamedItems\.values\(\)\]/);
   assert.match(mainSource, /let succeeded = Boolean\(internalTarget\) \|\| \(ok && !session\.writeError && !contentError\)/);
   assert.match(mainSource, /finishNativeSftpDragJob\?\.\([\s\S]*cancelled \? "cancelled" : succeeded \? "done" : "failed"/);
+  assert.match(mainSource, /nativeEvent\.type === "consuming"[\s\S]*session\.consuming = true/);
+  assert.match(mainSource, /nativeEvent\.type === "contentComplete"[\s\S]*session\.contentComplete = true/);
+  assert.match(mainSource, /if \(!session\?\.terminalEvent \|\| session\.resultSent\) return/);
+  assert.match(mainSource, /if \(\["completed", "cancelled", "ended", "error", "terminalError"\]\.includes\(nativeEvent\.type\)\)[\s\S]*maybeFinishNativeDragSession\(session\)/);
   assert.match(mainSource, /outcome\?\.status === "cancelled"[\s\S]*succeeded = false/);
   assert.match(mainSource, /if \(internalTarget\) \{[\s\S]*discardNativeSftpDragJob\?\.\(session\.token\)/);
   assert.match(mainSource, /ok:succeeded/);

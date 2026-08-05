@@ -10,3 +10,4 @@ release/
 release-notes.md
 docs/
 .tmp-native-drag-acceptance/
+runtime/xserver/win32/

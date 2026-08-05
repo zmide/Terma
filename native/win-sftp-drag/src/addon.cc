@@ -47,11 +47,16 @@ namespace {
 
 constexpr uint32_t kApiVersion = 1;
 constexpr size_t kMaxItems = 10000;
-constexpr size_t kReadAheadBytes = 1024 * 1024;
+// Explorer often asks for small, non-contiguous IStream reads.  Coalescing
+// those requests into a larger range avoids opening a fresh HTTP/SFTP range
+// channel for every 1 MiB read while keeping the virtual stream bounded.
+constexpr size_t kReadAheadBytes = 4 * 1024 * 1024;
 constexpr DWORD kDefaultTimeoutMs = 30000;
 constexpr DWORD kMinTimeoutMs = 1000;
 constexpr DWORD kMaxTimeoutMs = 120000;
 constexpr size_t kMaxManifestBytes = 16 * 1024 * 1024;
+constexpr DWORD kAsyncCompletionGraceMs = 3000;
+constexpr DWORD kAsyncCompletionTimeoutMs = 30000;
 
 struct DragItem {
   std::string id;
@@ -98,6 +103,143 @@ std::mutex g_sessions_mutex;
 std::unordered_map<std::string, std::shared_ptr<DragSession>> g_sessions;
 std::atomic<uint64_t> g_request_counter{1};
 std::atomic<bool> g_shutting_down{false};
+
+constexpr DWORD kX11WindowGuardIntervalMs = 250;
+constexpr LONG kX11WindowGuardMinimumVisibleWidth = 96;
+constexpr wchar_t kVcXsrvWindowClassPrefix[] = L"vcxsrv/x X";
+
+std::mutex g_x11_window_guard_lifecycle_mutex;
+std::mutex g_x11_window_guard_wait_mutex;
+std::condition_variable g_x11_window_guard_wait_cv;
+std::thread g_x11_window_guard_worker;
+std::atomic<bool> g_x11_window_guard_stop{false};
+
+BOOL CALLBACK GuardX11Window(HWND window, LPARAM parameter) {
+  const DWORD target_process_id =
+      static_cast<DWORD>(static_cast<uintptr_t>(parameter));
+  DWORD window_process_id = 0;
+  GetWindowThreadProcessId(window, &window_process_id);
+  if (window_process_id != target_process_id || !IsWindowVisible(window) ||
+      IsIconic(window) || IsZoomed(window)) {
+    return TRUE;
+  }
+
+  const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
+  if ((style & WS_CAPTION) == 0) return TRUE;
+
+  wchar_t class_name[128]{};
+  if (GetClassNameW(window, class_name,
+                    static_cast<int>(sizeof(class_name) / sizeof(wchar_t))) <=
+      0) {
+    return TRUE;
+  }
+  constexpr size_t prefix_length =
+      (sizeof(kVcXsrvWindowClassPrefix) / sizeof(wchar_t)) - 1;
+  if (_wcsnicmp(class_name, kVcXsrvWindowClassPrefix, prefix_length) != 0) {
+    return TRUE;
+  }
+
+  RECT window_rect{};
+  POINT client_origin{};
+  if (!GetWindowRect(window, &window_rect) ||
+      !ClientToScreen(window, &client_origin)) {
+    return TRUE;
+  }
+
+  HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+  if (monitor == nullptr) return TRUE;
+  MONITORINFO monitor_info{};
+  monitor_info.cbSize = sizeof(monitor_info);
+  if (!GetMonitorInfoW(monitor, &monitor_info)) return TRUE;
+
+  const RECT& work = monitor_info.rcWork;
+  const LONG non_client_top =
+      std::max<LONG>(0, client_origin.y - window_rect.top);
+  const LONG minimum_title_visible =
+      std::min<LONG>(16, std::max<LONG>(8, non_client_top));
+  const LONG visible_title_height = std::max<LONG>(
+      0, std::min(client_origin.y, work.bottom) -
+             std::max(window_rect.top, work.top));
+  const LONG visible_width = std::max<LONG>(
+      0, std::min(window_rect.right, work.right) -
+             std::max(window_rect.left, work.left));
+  const bool title_is_unreachable =
+      non_client_top > 0 && visible_title_height < minimum_title_visible;
+  const bool window_is_horizontally_unreachable =
+      visible_width < kX11WindowGuardMinimumVisibleWidth;
+  if (!title_is_unreachable && !window_is_horizontally_unreachable) {
+    return TRUE;
+  }
+
+  const LONG width = window_rect.right - window_rect.left;
+  LONG next_left = window_rect.left;
+  LONG next_top = window_rect.top;
+  if (title_is_unreachable) {
+    next_top = work.top;
+    if (width <= work.right - work.left) {
+      next_left = std::max(
+          work.left, std::min(window_rect.left, work.right - width));
+    } else if (window_rect.left < work.left) {
+      next_left = work.left;
+    }
+  }
+  if (window_is_horizontally_unreachable) {
+    next_left = window_rect.right <=
+                        work.left + kX11WindowGuardMinimumVisibleWidth
+                    ? work.left
+                    : std::max(work.left, work.right - width);
+    if (next_top < work.top || next_top >= work.bottom - 16) {
+      next_top = work.top;
+    }
+  }
+
+  if (next_left != window_rect.left || next_top != window_rect.top) {
+    SetWindowPos(window, nullptr, next_left, next_top, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_ASYNCWINDOWPOS);
+  }
+  return TRUE;
+}
+
+void RunX11WindowGuard(DWORD process_id) {
+  while (!g_x11_window_guard_stop.load()) {
+    EnumWindows(GuardX11Window, static_cast<LPARAM>(process_id));
+    std::unique_lock<std::mutex> lock(g_x11_window_guard_wait_mutex);
+    g_x11_window_guard_wait_cv.wait_for(
+        lock, std::chrono::milliseconds(kX11WindowGuardIntervalMs), []() {
+          return g_x11_window_guard_stop.load();
+        });
+  }
+}
+
+bool StopX11WindowGuardLocked() {
+  const bool was_running = g_x11_window_guard_worker.joinable();
+  g_x11_window_guard_stop.store(true);
+  g_x11_window_guard_wait_cv.notify_all();
+  if (g_x11_window_guard_worker.joinable()) {
+    g_x11_window_guard_worker.join();
+  }
+  g_x11_window_guard_stop.store(false);
+  return was_running;
+}
+
+bool StopX11WindowGuardWorker() {
+  std::lock_guard<std::mutex> lock(g_x11_window_guard_lifecycle_mutex);
+  return StopX11WindowGuardLocked();
+}
+
+bool StartX11WindowGuardWorker(DWORD process_id) {
+  std::lock_guard<std::mutex> lock(g_x11_window_guard_lifecycle_mutex);
+  StopX11WindowGuardLocked();
+  if (process_id == 0 || g_shutting_down.load()) return false;
+  try {
+    g_x11_window_guard_worker =
+        std::thread([process_id]() { RunX11WindowGuard(process_id); });
+  } catch (...) {
+    throw;
+  }
+  return true;
+}
 
 std::string LastErrorMessage(DWORD code) {
   LPWSTR raw = nullptr;
@@ -969,7 +1111,9 @@ struct DragSession : std::enable_shared_from_this<DragSession> {
       : spec(std::move(parsed_spec)), request_id(std::move(id)),
         manifest_state(spec.items.empty() ? ManifestState::kPending
                                           : ManifestState::kReady),
-        async_event(CreateEventW(nullptr, TRUE, TRUE, nullptr)) {}
+        async_event(CreateEventW(nullptr, TRUE, TRUE, nullptr)) {
+    InitializeContentTracking();
+  }
 
   ~DragSession() {
     if (async_event != nullptr) {
@@ -1000,6 +1144,15 @@ struct DragSession : std::enable_shared_from_this<DragSession> {
   std::atomic<bool> async_in_operation{false};
   std::atomic<HRESULT> async_result{S_OK};
   HANDLE async_event = nullptr;
+  std::mutex content_mutex;
+  std::vector<std::vector<std::pair<uint64_t, uint64_t>>> content_ranges;
+  uint64_t content_total_bytes = 0;
+  uint64_t content_read_bytes = 0;
+  bool content_initialized = false;
+  std::atomic<bool> content_started{false};
+  std::atomic<bool> content_complete{false};
+  std::atomic<bool> content_complete_emitted{false};
+  std::atomic<uint32_t> open_streams{0};
   std::thread worker;
   std::thread manifest_worker;
   std::atomic<bool> manifest_worker_done{true};
@@ -1090,6 +1243,110 @@ struct DragSession : std::enable_shared_from_this<DragSession> {
     if (async_event != nullptr) SetEvent(async_event);
   }
 
+  void InitializeContentTracking() {
+    std::lock_guard<std::mutex> lock(content_mutex);
+    if (content_initialized || spec.items.empty()) return;
+    content_ranges.resize(spec.items.size());
+    for (const auto& item : spec.items) {
+      if (!item.is_directory) {
+        content_total_bytes += item.size;
+      }
+    }
+    content_initialized = true;
+    if (content_total_bytes == 0) {
+      content_complete.store(true);
+    }
+  }
+
+  void BeginContentStream() {
+    open_streams.fetch_add(1);
+    if (!content_started.exchange(true)) {
+      Emit("consuming");
+    }
+    MaybeMarkContentComplete();
+  }
+
+  void EndContentStream() {
+    uint32_t current = open_streams.load();
+    while (current > 0 &&
+           !open_streams.compare_exchange_weak(current, current - 1)) {
+    }
+    if (content_complete.load() && async_event != nullptr) {
+      SetEvent(async_event);
+    }
+  }
+
+  static uint64_t AddUniqueContentRange(
+      std::vector<std::pair<uint64_t, uint64_t>>& ranges,
+      uint64_t start,
+      uint64_t end) {
+    if (end < start) return 0;
+    uint64_t before = 0;
+    for (const auto& range : ranges) {
+      before += range.second - range.first + 1;
+    }
+    std::vector<std::pair<uint64_t, uint64_t>> merged;
+    merged.reserve(ranges.size() + 1);
+    bool inserted = false;
+    for (const auto& range : ranges) {
+      const bool range_is_before =
+          range.second < start && start - range.second > 1;
+      if (range_is_before) {
+        merged.push_back(range);
+        continue;
+      }
+      const bool range_is_after =
+          end < range.first && range.first - end > 1;
+      if (range_is_after) {
+        if (!inserted) {
+          merged.emplace_back(start, end);
+          inserted = true;
+        }
+        merged.push_back(range);
+        continue;
+      }
+      start = std::min(start, range.first);
+      end = std::max(end, range.second);
+    }
+    if (!inserted) merged.emplace_back(start, end);
+    ranges.swap(merged);
+    uint64_t after = 0;
+    for (const auto& range : ranges) {
+      after += range.second - range.first + 1;
+    }
+    return after >= before ? after - before : 0;
+  }
+
+  void RecordContentRead(size_t item_index, uint64_t offset, size_t length) {
+    if (length == 0) return;
+    {
+      std::lock_guard<std::mutex> lock(content_mutex);
+      if (!content_initialized || item_index >= content_ranges.size()) return;
+      const uint64_t max_length = std::numeric_limits<uint64_t>::max() - offset;
+      const uint64_t bounded_length =
+          std::min<uint64_t>(static_cast<uint64_t>(length), max_length);
+      if (bounded_length == 0) return;
+      const uint64_t end = offset + bounded_length - 1;
+      content_read_bytes +=
+          AddUniqueContentRange(content_ranges[item_index], offset, end);
+    }
+    MaybeMarkContentComplete();
+  }
+
+  void MaybeMarkContentComplete() {
+    bool complete = false;
+    {
+      std::lock_guard<std::mutex> lock(content_mutex);
+      complete = content_initialized && content_read_bytes >= content_total_bytes;
+    }
+    if (!complete) return;
+    content_complete.store(true);
+    if (!content_complete_emitted.exchange(true)) {
+      Emit("contentComplete");
+    }
+    if (async_event != nullptr) SetEvent(async_event);
+  }
+
   void Activate() {
     activated.store(true);
     activation_cv.notify_all();
@@ -1106,6 +1363,8 @@ struct DragSession : std::enable_shared_from_this<DragSession> {
       manifest_error.clear();
       manifest_state = ManifestState::kReady;
     }
+    InitializeContentTracking();
+    MaybeMarkContentComplete();
     manifest_cv.notify_all();
   }
 
@@ -1742,7 +2001,11 @@ HRESULT FetchRange(const std::shared_ptr<DragSession>& session,
 class RemoteFileStream final : public IStream {
  public:
   RemoteFileStream(std::shared_ptr<DragSession> session, size_t item_index)
-      : session_(std::move(session)), item_index_(item_index) {}
+      : session_(std::move(session)), item_index_(item_index) {
+    if (session_ != nullptr) {
+      session_->BeginContentStream();
+    }
+  }
 
   STDMETHODIMP QueryInterface(REFIID riid, void** object) override {
     if (object == nullptr) {
@@ -1824,9 +2087,11 @@ class RemoteFileStream final : public IStream {
           static_cast<size_t>(position_ - cache_offset_);
       size_t available = cache_.size() - cache_position;
       size_t chunk = std::min(available, wanted - copied);
+      const uint64_t read_start = position_;
       std::memcpy(output + copied, cache_.data() + cache_position, chunk);
       copied += chunk;
       position_ += chunk;
+      session_->RecordContentRead(item_index_, read_start, chunk);
     }
     if (session_->cancelled.load() || g_shutting_down.load()) {
       return CancelledReadResult(nullptr);
@@ -1975,7 +2240,11 @@ class RemoteFileStream final : public IStream {
   }
 
  private:
-  ~RemoteFileStream() = default;
+  ~RemoteFileStream() {
+    if (session_ != nullptr) {
+      session_->EndContentStream();
+    }
+  }
 
   std::atomic<ULONG> references_{1};
   std::shared_ptr<DragSession> session_;
@@ -2226,6 +2495,10 @@ class VirtualFileDataObject final : public IDataObject,
       if (release) {
         ReleaseStgMedium(medium);
       }
+      // Explorer may publish the performed effect without calling
+      // EndOperation on a few shell/code paths. Wake the worker so it can
+      // apply the bounded completion handshake instead of remaining at 99%.
+      if (session_->async_event != nullptr) SetEvent(session_->async_event);
       return S_OK;
     }
     return E_NOTIMPL;
@@ -2601,6 +2874,11 @@ bool RunDragOnWorkerThread(const std::shared_ptr<DragSession>& session) {
     session->ReleaseTsfn(napi_tsfn_release);
     return false;
   }
+  // Direct manifests and lazily loaded manifests can contain only directories
+  // or zero-byte files. Mark those sessions complete before Explorer starts
+  // probing FILECONTENTS so the lifecycle does not wait forever for a read.
+  session->InitializeContentTracking();
+  session->MaybeMarkContentComplete();
   bool expected = false;
   if (!session->dragging.compare_exchange_strong(expected, true)) {
     return false;
@@ -2694,17 +2972,47 @@ bool RunDragOnWorkerThread(const std::shared_ptr<DragSession>& session) {
                 (effect & DROPEFFECT_COPY) != 0 ? "copy" : "none",
                 drag_result, true);
 
+  bool async_completion_fallback = false;
+  bool async_completion_timed_out = false;
+  ULONGLONG content_complete_since = 0;
   while (session->async_mode.load() &&
          session->async_in_operation.load() &&
          !session->cancelled.load() && !g_shutting_down.load()) {
     DWORD event_index = 0;
     HRESULT wait_result = CoWaitForMultipleHandles(
         COWAIT_DISPATCH_CALLS | COWAIT_DISPATCH_WINDOW_MESSAGES,
-        1000, 1, &session->async_event, &event_index);
+        250, 1, &session->async_event, &event_index);
     if (wait_result != S_OK && wait_result != RPC_S_CALLPENDING) {
       session->Cancel();
       break;
     }
+    if (!session->async_in_operation.load()) break;
+
+    // The copy engine normally calls EndOperation. Some Explorer builds
+    // finish reading the IStreams and publish DROPEFFECT_COPY but omit that
+    // callback. A short grace period is safe only after both signals exist.
+    const ULONGLONG now = GetTickCount64();
+    if (session->content_complete.load() && content_complete_since == 0) {
+      content_complete_since = now;
+    }
+    if (content_complete_since != 0 && data_object->has_performed_effect()
+        && (data_object->performed_effect() & DROPEFFECT_COPY) != 0) {
+      if (now - content_complete_since >= kAsyncCompletionGraceMs) {
+        async_completion_fallback = true;
+        session->async_in_operation.store(false);
+        break;
+      }
+    }
+    if (content_complete_since != 0
+        && now - content_complete_since >= kAsyncCompletionTimeoutMs) {
+      // Content being fully read is not enough to claim success. If Explorer
+      // never confirms a copy effect, surface a terminal error instead.
+      async_completion_timed_out = true;
+      session->async_result.store(HRESULT_FROM_WIN32(ERROR_TIMEOUT));
+      session->async_in_operation.store(false);
+      break;
+    }
+    if (session->async_event != nullptr) ResetEvent(session->async_event);
   }
   const bool has_performed_effect = data_object->has_performed_effect();
   DWORD performed = data_object->performed_effect();
@@ -2736,6 +3044,10 @@ bool RunDragOnWorkerThread(const std::shared_ptr<DragSession>& session) {
     session->Emit("cancelled", {}, "none", drag_result, true);
   } else if (manifest_failed) {
     session->Emit("error", manifest_error, {}, manifest_result, true);
+  } else if (async_completion_timed_out) {
+    session->Emit("error",
+                  "Windows background file copy did not confirm completion",
+                  {}, HRESULT_FROM_WIN32(ERROR_TIMEOUT), true);
   } else if (drag_result == DRAGDROP_S_CANCEL) {
     session->Emit("cancelled", {}, "none", drag_result, true);
   } else if (FAILED(drag_result)) {
@@ -2744,10 +3056,14 @@ bool RunDragOnWorkerThread(const std::shared_ptr<DragSession>& session) {
   } else if (FAILED(async_result)) {
     session->Emit("error", "Windows background file copy failed", {},
                   async_result, true);
-  } else {
+  } else if (async_completion_fallback || !session->async_mode.load()
+             || !session->async_in_operation.load()) {
     session->Emit("completed", {},
                   (effect & DROPEFFECT_COPY) != 0 ? "copy" : "none",
                   drag_result, true);
+  } else {
+    session->Emit("error", "Windows background file copy did not finish", {},
+                  HRESULT_FROM_WIN32(ERROR_TIMEOUT), true);
   }
   session->finished.store(true);
   session->ReleaseTsfn(napi_tsfn_release);
@@ -2780,6 +3096,7 @@ void ReapFinishedSessions() {
 
 void Cleanup(void*) {
   g_shutting_down.store(true);
+  StopX11WindowGuardWorker();
   std::vector<std::shared_ptr<DragSession>> sessions;
   {
     std::lock_guard<std::mutex> lock(g_sessions_mutex);
@@ -2820,6 +3137,37 @@ napi_value Probe(napi_env env, napi_callback_info) {
   NapiSetBool(env, result, "delayedContent", true);
   NapiSetBool(env, result, "multipleItems", true);
   NapiSetBool(env, result, "directories", true);
+  return result;
+}
+
+napi_value StartX11WindowGuard(napi_env env, napi_callback_info info) {
+  size_t argument_count = 1;
+  napi_value argument;
+  napi_get_cb_info(env, info, &argument_count, &argument, nullptr, nullptr);
+  double process_id_value = 0;
+  if (argument_count < 1 ||
+      napi_get_value_double(env, argument, &process_id_value) != napi_ok ||
+      !std::isfinite(process_id_value) || process_id_value < 1 ||
+      process_id_value > std::numeric_limits<uint32_t>::max() ||
+      std::floor(process_id_value) != process_id_value) {
+    napi_throw_type_error(env, nullptr,
+                          "startX11WindowGuard requires a positive process ID");
+    return nullptr;
+  }
+  const DWORD process_id = static_cast<DWORD>(process_id_value);
+  try {
+    napi_value result;
+    napi_get_boolean(env, StartX11WindowGuardWorker(process_id), &result);
+    return result;
+  } catch (const std::exception& error) {
+    napi_throw_error(env, nullptr, error.what());
+    return nullptr;
+  }
+}
+
+napi_value StopX11WindowGuard(napi_env env, napi_callback_info) {
+  napi_value result;
+  napi_get_boolean(env, StopX11WindowGuardWorker(), &result);
   return result;
 }
 
@@ -3029,6 +3377,10 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_property_descriptor properties[] = {
       {"probe", nullptr, Probe, nullptr, nullptr, nullptr, napi_default,
        nullptr},
+      {"startX11WindowGuard", nullptr, StartX11WindowGuard, nullptr, nullptr,
+       nullptr, napi_default, nullptr},
+      {"stopX11WindowGuard", nullptr, StopX11WindowGuard, nullptr, nullptr,
+       nullptr, napi_default, nullptr},
       {"startDrag", nullptr, StartDrag, nullptr, nullptr, nullptr,
        napi_default, nullptr},
       {"activateDrag", nullptr, ActivateDrag, nullptr, nullptr, nullptr,

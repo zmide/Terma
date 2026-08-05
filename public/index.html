@@ -4,13 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>TunnelDesk</title>
-  <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=1.1.8">
-  <link rel="stylesheet" href="/app.css?v=1.1.8">
+  <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=1.2.0">
+  <link rel="stylesheet" href="/app.css?v=1.2.0">
 </head>
 <body>
-  <div class="notification-stack" aria-live="polite">
-    <div id="toast" class="toast"></div>
-  </div>
+  <div id="toast" class="notification-stack" aria-live="polite" aria-label="通知"></div>
   <div id="modal" class="modal" hidden></div>
   <div class="app">
     <div class="left-pane">
@@ -31,6 +29,7 @@
         <nav class="activity" aria-label="主导航">
           <div class="activity-top">
             <button id="navConnections" class="active" onclick="showPrimary('connections', true)" title="连接列表" aria-label="连接列表"><i data-lucide="server"></i></button>
+            <button id="navRemote" onclick="showPrimary('remote', true)" title="其他连接" aria-label="其他连接"><i data-lucide="plug-zap"></i></button>
             <button id="navRunning" onclick="showPrimary('running', true)" title="正在转发" aria-label="正在转发"><i data-lucide="route"></i></button>
             <button id="navCommand" onclick="showPrimary('command', true)" title="批量命令" aria-label="批量命令"><i data-lucide="square-terminal"></i></button>
             <button id="navImport" onclick="showPrimary('import', true)" title="导入导出" aria-label="导入导出"><i data-lucide="arrow-left-right"></i></button>
@@ -49,6 +48,7 @@
         <aside id="sidebar" class="sidebar">
           <div class="side-nav">
             <button id="sideConnections" class="active" onclick="showPrimary('connections')">连接列表</button>
+            <button id="sideRemote" onclick="showPrimary('remote')">其他连接</button>
             <button id="sideImport" onclick="showPrimary('import')">导入导出</button>
           </div>
           <div id="explorerTools" class="explorer-tools">
@@ -60,6 +60,7 @@
           <div id="connectionGroups" class="tree"></div>
         </aside>
       </div>
+      <div id="operationPaneResize" class="operation-pane-resizer" role="separator" aria-orientation="vertical" aria-label="调整操作区宽度" tabindex="0" title="拖动调整操作区宽度，双击恢复默认"></div>
     </div>
 
     <main id="content" class="content">
@@ -70,15 +71,16 @@
           <div id="workspaceSubtitle" class="cmd">选择左侧 SSH 后开始操作</div>
         </div>
         <div id="workspaceGlobalHeaderTools" class="workspace-header-tools workspace-global-header-tools" data-workspace-role="global-header-tools" hidden></div>
+        <div id="workspaceQuickActions" class="workspace-quick-actions" aria-label="全局快捷操作"></div>
         <div id="sftpTaskCenter" class="sftp-task-center">
-          <button id="sftpTaskCenterButton" class="icon-button sftp-task-center-button" type="button" onclick="toggleSftpTaskCenter(event)" title="传输任务" aria-label="传输任务" aria-expanded="false" aria-controls="sftpTaskCenterDrawer">
+          <button id="sftpTaskCenterButton" class="icon-button sftp-task-center-button" type="button" onclick="toggleSftpTaskCenter(event)" title="任务中心" aria-label="任务中心" aria-expanded="false" aria-controls="sftpTaskCenterDrawer">
             <span id="sftpTaskCenterIcon" class="sftp-task-center-icon"><i data-lucide="list-checks"></i></span>
             <span id="sftpTaskCenterBadge" class="sftp-task-center-badge" hidden></span>
           </button>
-          <span id="sftpTaskCenterProgress" class="sftp-task-center-progress" role="progressbar" aria-label="传输总进度" aria-valuemin="0" aria-valuemax="100" hidden><i></i></span>
-          <aside id="sftpTaskCenterDrawer" class="sftp-task-center-drawer" aria-label="传输任务" hidden>
+          <span id="sftpTaskCenterProgress" class="sftp-task-center-progress" role="progressbar" aria-label="任务总进度" aria-valuemin="0" aria-valuemax="100" hidden><i></i></span>
+          <aside id="sftpTaskCenterDrawer" class="sftp-task-center-drawer" aria-label="任务中心" hidden>
             <header class="sftp-task-center-head">
-              <div><strong>传输任务</strong><span id="sftpTaskCenterSummary">暂无进行中的任务</span></div>
+              <div><strong>任务中心</strong><span id="sftpTaskCenterSummary">暂无进行中的任务</span></div>
               <button class="icon-button" type="button" onclick="closeSftpTaskCenter()" title="关闭任务中心" aria-label="关闭任务中心"><i data-lucide="x"></i></button>
             </header>
             <div class="sftp-task-center-tabs" role="tablist" aria-label="任务视图">
@@ -91,7 +93,7 @@
             </footer>
           </aside>
         </div>
-        <aside id="sftpTaskFloat" class="sftp-task-float" aria-label="传输任务悬浮进度" onclick="openSftpTaskList(event)" hidden></aside>
+        <aside id="sftpTaskFloat" class="sftp-task-float" aria-label="任务悬浮进度" onclick="openSftpTaskList(event)" hidden></aside>
         <div id="notice" class="notice"></div>
         <div id="workspaceHeaderResize" class="workspace-header-resizer" role="separator" aria-orientation="horizontal" aria-label="调整工作区标题栏高度" tabindex="0" title="拖动调整标题栏高度，双击恢复默认"></div>
       </div>
@@ -105,14 +107,20 @@
         <section id="view-log" class="view" hidden></section>
         <section id="view-command" class="view" hidden></section>
         <section id="view-sftp" class="view" hidden></section>
+        <section id="view-local-files" class="view" hidden></section>
         <section id="view-settings" class="view" hidden></section>
         <section id="view-dashboard" class="view" hidden></section>
+        <section id="view-remote-desktop" class="view" hidden></section>
+        <section id="view-remote-terminal" class="view" hidden></section>
+        <section id="view-ftp" class="view" hidden></section>
+        <section id="view-linux-desktop" class="view" hidden></section>
       </template>
     </main>
   </div>
 
   <nav class="mobile-tabs">
     <button id="mobileConnections" class="active" onclick="showPrimary('connections')" title="连接列表" aria-label="连接列表"><i data-lucide="server"></i><span class="mobile-tab-label">连接</span></button>
+    <button id="mobileRemote" onclick="showPrimary('remote')" title="其他连接" aria-label="其他连接"><i data-lucide="plug-zap"></i><span class="mobile-tab-label">其他</span></button>
     <button id="mobileRunning" onclick="showPrimary('running')" title="正在转发" aria-label="正在转发"><i data-lucide="route"></i><span class="mobile-tab-label">转发</span></button>
     <button id="mobileCommand" onclick="showPrimary('command')" title="批量命令" aria-label="批量命令"><i data-lucide="square-terminal"></i><span class="mobile-tab-label">批量</span></button>
     <button id="mobileImport" onclick="showPrimary('import')" title="导入导出" aria-label="导入导出"><i data-lucide="arrow-left-right"></i><span class="mobile-tab-label">导入</span></button>
@@ -152,6 +160,11 @@
           <div id="keyStatus" class="key-status muted">未选择私钥</div>
           <div class="upload-line"><label class="file-picker"><input id="key_upload" type="file" accept="*/*" onchange="updateFilePicker(this)"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button type="button" onclick="uploadKey()">上传到当前密钥目录</button></div>
           <div class="actions"><button type="button" onclick="renderKeyStatus()">检查权限</button><button type="button" onclick="repairSelectedKey()">一键修复权限</button></div>
+          <div class="grid connection-key-options">
+            <div><label>私钥口令（可选）</label><input id="conn_key_passphrase" type="password" autocomplete="new-password" placeholder="留空表示无口令或保持原口令"></div>
+            <div><label>SSH Agent</label><select id="conn_agent_mode"><option value="auto">自动优先使用</option><option value="off">不使用 Agent</option><option value="required">只使用 Agent</option></select></div>
+          </div>
+          <label id="connClearPassphraseLine" class="checkline" hidden><input id="conn_clear_key_passphrase" type="checkbox">清除已保存的私钥口令</label>
         </div>
       </div>
       <div id="passwordAuthBox" class="auth-password" hidden>
@@ -210,10 +223,35 @@
         </div>
         <div id="connTerminalCapabilities" class="terminal-startup-capabilities" hidden></div>
       </fieldset>
-      <label>额外 SSH 参数</label><textarea id="conn_extra">-o StrictHostKeyChecking=accept-new
--o ServerAliveInterval=60
--o ServerAliveCountMax=3
--o TCPKeepAlive=yes</textarea>
+      <fieldset class="connection-advanced-card">
+        <legend>连接与跳板</legend>
+        <div class="grid3">
+          <div><label>经由跳板连接</label><select id="conn_jump"><option value="">直接连接</option></select></div>
+          <div><label>TCP KeepAlive</label><select id="conn_tcp_keepalive"><option value="1">开启</option><option value="0">关闭</option></select></div>
+          <div><label>X11 图形转发</label><select id="conn_x11_mode"><option value="off">关闭</option><option value="untrusted">受限（-X）</option><option value="trusted">可信（-Y）</option></select></div>
+        </div>
+        <div class="grid3">
+          <div><label>连接超时（秒）</label><input id="conn_connect_timeout" type="number" min="3" max="120" value="10"></div>
+          <div><label>保活间隔（秒）</label><input id="conn_keepalive_interval" type="number" min="0" max="300" value="60" title="0 表示关闭保活" aria-describedby="conn_keepalive_interval_help"><small id="conn_keepalive_interval_help" class="field-help">0 表示关闭</small></div>
+          <div><label>连续无响应次数</label><input id="conn_keepalive_count" type="number" min="1" max="20" value="3"></div>
+        </div>
+      </fieldset>
+      <label>OpenSSH 兼容参数（可选）</label><textarea id="conn_extra" placeholder="仅填写尚未提供结构化选项的 OpenSSH 参数，例如 -o Compression=yes"></textarea>
+      <div id="connRemoteGenerationLine" class="grid connection-derived-options">
+        <div>
+          <label>同时生成其他连接</label>
+          <select id="conn_remote_generation">
+            <option value="">仅保存 SSH</option>
+            <option value="all">生成全部（RDP、VNC、XDMCP、FTP、Telnet）</option>
+            <option value="rdp">生成 RDP</option>
+            <option value="vnc">生成 VNC</option>
+            <option value="xdmcp">生成 XDMCP</option>
+            <option value="ftp">生成 FTP</option>
+            <option value="telnet">生成 Telnet</option>
+          </select>
+          <small class="field-help">其他连接继承主机、分组和来源关系，协议专用密码仍需单独填写。</small>
+        </div>
+      </div>
       <div class="actions">
         <button class="primary" type="submit">保存连接</button>
         <button id="connSaveAndClear" type="button" onclick="saveConnectionForm(true,this)">保存并清空</button>
@@ -293,21 +331,26 @@
   </div>
 </template>
 
-<script src="/vendor/lucide/lucide.min.js?v=1.1.8"></script>
-<script src="/vendor/ace/ace.js?v=1.1.8"></script>
-<script src="/app-api.js?v=1.1.8"></script>
-<script src="/app-utils.js?v=1.1.8"></script>
-<script src="/app-workspace.js?v=1.1.8"></script>
-<script src="/app-docking.js?v=1.1.8"></script>
-<script src="/app-settings.js?v=1.1.8"></script>
-<script src="/app-running.js?v=1.1.8"></script>
-<script src="/app-batch.js?v=1.1.8"></script>
-<script src="/app-logs.js?v=1.1.8"></script>
-<script src="/app-connections.js?v=1.1.8"></script>
-<script src="/app-terminal.js?v=1.1.8"></script>
-<script src="/app-forwards.js?v=1.1.8"></script>
-<script src="/app-import.js?v=1.1.8"></script>
-<script src="/app-sftp.js?v=1.1.8"></script>
-<script src="/app.js?v=1.1.8"></script>
+<script src="/vendor/lucide/lucide.min.js?v=1.2.0"></script>
+<script src="/vendor/ace/ace.js?v=1.2.0"></script>
+<script src="/app-api.js?v=1.2.0"></script>
+<script src="/app-utils.js?v=1.2.0"></script>
+<script src="/app-workspace.js?v=1.2.0"></script>
+<script src="/app-docking.js?v=1.2.0"></script>
+<script src="/app-settings.js?v=1.2.0"></script>
+<script src="/app-running.js?v=1.2.0"></script>
+<script src="/app-batch.js?v=1.2.0"></script>
+<script src="/app-logs.js?v=1.2.0"></script>
+<script src="/app-connections.js?v=1.2.0"></script>
+<script src="/app-terminal.js?v=1.2.0"></script>
+<script src="/app-forwards.js?v=1.2.0"></script>
+<script src="/app-import.js?v=1.2.0"></script>
+<script src="/app-sftp.js?v=1.2.0"></script>
+<script src="/app-sftp-tasks.js?v=1.2.0"></script>
+<script src="/app-local-files.js?v=1.2.0"></script>
+<script src="/app-actions.js?v=1.2.0"></script>
+<script src="/app-productivity.js?v=1.2.0"></script>
+<script src="/app-remote.js?v=1.2.0"></script>
+<script src="/app.js?v=1.2.0"></script>
 </body>
 </html>

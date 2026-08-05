@@ -10,6 +10,12 @@ contextBridge.exposeInMainWorld("tunnelDeskDesktop", {
   setTheme(theme) {
     if (theme === "dark" || theme === "light") ipcRenderer.send("tunneldesk:set-theme", theme);
   },
+  readClipboardText() {
+    return ipcRenderer.invoke("tunneldesk:clipboard-read");
+  },
+  writeClipboardText(text) {
+    return ipcRenderer.invoke("tunneldesk:clipboard-write", String(text ?? ""));
+  },
   startSftpDrag(payload, requestId) {
     ipcRenderer.send("tunneldesk:sftp-start-drag", {
       ...(Array.isArray(payload)

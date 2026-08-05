@@ -7,7 +7,9 @@ const { getConnection } = require("./db");
 const { effectiveExtraArgs, securePrivateKeyPermissions } = require("./ssh");
 const { appendBatchCommandLog, appendSystemLog, createBatchCommandLog } = require("./logs");
 const { notifyEvent } = require("./notifications");
-const { isPasswordConnection, spawnPasswordCommand } = require("./ssh2-client");
+const { shouldUseBuiltinSsh, spawnPasswordCommand } = require("./ssh2-client");
+const { systemHostKeyArgs } = require("./ssh-host-trust");
+const { proxyJumpArgument, structuredOpenSshArgs } = require("./ssh-connection");
 const { WebSocketFrameParser, closeWebSocket, sendWebSocketFrame, validateWebSocketUpgrade, websocketAccept } = require("./websocket");
 
 const TEMPLATE_FILE = path.join(DATA_DIR, "command-templates.json");
@@ -69,7 +71,15 @@ function deleteCommandTemplate(id) {
 }
 
 function buildCommandArgs(connection) {
-  const args = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", String(connection.ssh_port || 22)];
+  const jump = connection?.jump_connection_id ? getConnection(Number(connection.jump_connection_id)) : null;
+  const args = [
+    "-T",
+    ...systemHostKeyArgs(connection, { additionalConnections:jump ? [jump] : [] }),
+    ...structuredOpenSshArgs(connection),
+    "-o", "BatchMode=yes",
+    "-p", String(connection.ssh_port || 22)
+  ];
+  if (jump) args.push("-J", proxyJumpArgument(jump));
   if (connection.identity_file) {
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
@@ -140,7 +150,7 @@ async function runBatchCommandStream(socket, payload, activeChildren) {
       sendJson(socket, { type: "start", id: connection.id, name: connection.name, command });
       appendBatchCommandLog(log.fullPath, `\n## ${connection.name} (${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port})\n`);
       await new Promise((resolve) => {
-        const child = isPasswordConnection(connection)
+        const child = shouldUseBuiltinSsh(connection)
           ? spawnPasswordCommand(connection, "sh -s")
           : spawn(SSH_BIN, buildCommandArgs(connection), { stdio: ["pipe", "pipe", "pipe"] });
         activeChildren.add(child);

@@ -1,6 +1,6 @@
 const path = require("node:path");
 const { DEFAULT_EXTRA_ARGS } = require("./config");
-const { validatePort, insertConnection, insertForward, listConnections } = require("./db");
+const { validatePort, getConnection, insertConnection, insertForward, listConnections, updateConnection } = require("./db");
 const { testSsh } = require("./ssh");
 
 function splitLine(line) {
@@ -44,7 +44,7 @@ function parseConfigText(text) {
   let aliases = [];
   let current = null;
   function flush() {
-    if (!current || !aliases.length || !current.forwards?.length) return;
+    if (!current || !aliases.length) return;
     for (const alias of aliases) {
       if (alias.includes("*") || alias.includes("?")) continue;
       const keyName = identityName(current.identity_file);
@@ -63,6 +63,7 @@ function parseConfigText(text) {
         target_host: current.forwards[0]?.target_host || "127.0.0.1",
         target_port: current.forwards[0]?.target_port || null,
         forwards: current.forwards,
+        jump_alias: current.proxy_jump || "",
         extra_args: DEFAULT_EXTRA_ARGS,
         autostart_forwards: 0,
         sort_order: 1,
@@ -83,6 +84,8 @@ function parseConfigText(text) {
       current[key] = parts[0];
     } else if (current && key === "identityfile") {
       current.identity_file = parts[0];
+    } else if (current && key === "proxyjump") {
+      current.proxy_jump = parts[0];
     } else if (current && key === "localforward") {
       current.forwards.push(parseForward("local", parts));
     } else if (current && key === "remoteforward") {
@@ -118,15 +121,35 @@ async function batchTest(tunnels) {
 function saveImported(tunnels, defaultExtraArgs) {
   const ids = [];
   const errors = [];
+  const pendingJumps = [];
   tunnels.forEach((item, index) => {
     try {
       const id = insertConnection(item, defaultExtraArgs);
       for (const forward of item.forwards || []) insertForward(id, forward);
       ids.push(id);
+      if (item.jump_alias) {
+        const rawAlias = String(item.jump_alias).split(",")[0].trim();
+        const alias = rawAlias.replace(/^.*@/, "").replace(/^\[([^\]]+)\](?::\d+)?$/, "$1").replace(/:\d+$/, "");
+        pendingJumps.push({id, alias, index, name:item.name || ""});
+      }
     } catch (error) {
       errors.push({ index: index + 1, name: item.name || "", error: error.message });
     }
   });
+  const byName = new Map(listConnections().map(item => [String(item.name).toLowerCase(), item.id]));
+  for (const pending of pendingJumps) {
+    const jumpId = byName.get(pending.alias.toLowerCase());
+    if (!jumpId) {
+      errors.push({index:pending.index + 1, name:pending.name, error:`未找到跳板连接：${pending.alias}`});
+      continue;
+    }
+    try {
+      const connection = getConnection(pending.id);
+      updateConnection(pending.id, {...connection, jump_connection_id:jumpId}, defaultExtraArgs);
+    } catch (error) {
+      errors.push({index:pending.index + 1, name:pending.name, error:error.message});
+    }
+  }
   return { saved: ids.length, ids, errors };
 }
 

@@ -5,6 +5,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const iconv = require("iconv-lite");
 const { Server } = require("ssh2");
 
 function availablePort() {
@@ -39,6 +40,25 @@ async function json(url, pathname, options = {}) {
   return { response, data };
 }
 
+async function trustConnection(url, connectionId) {
+  let result = await json(url, "/api/ssh/preflight", {
+    method:"POST",
+    body:JSON.stringify({connection_id:connectionId})
+  });
+  if (result.response.status === 409 && ["SSH_HOST_KEY_UNKNOWN", "SSH_HOST_KEY_CHANGED"].includes(result.data.code)) {
+    const accepted = await json(url, "/api/ssh/host-trust", {
+      method:"POST",
+      body:JSON.stringify({token:result.data.challenge.token, mode:"persist"})
+    });
+    assert.equal(accepted.response.status, 200, JSON.stringify(accepted.data));
+    result = await json(url, "/api/ssh/preflight", {
+      method:"POST",
+      body:JSON.stringify({connection_id:connectionId})
+    });
+  }
+  assert.equal(result.response.status, 200, JSON.stringify(result.data));
+}
+
 async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-terminal-startup-api-"));
   const keyFile = path.join(root, "fixture-key");
@@ -61,23 +81,34 @@ async function main() {
       client.on("session", acceptSession => {
         const session = acceptSession();
         let ptyRequested = false;
+        const environment = {};
+        session.on("env", (acceptEnv, _rejectEnv, info) => {
+          environment[info.key] = info.val;
+          acceptEnv?.();
+        });
         session.on("pty", acceptPty => {
           ptyRequested = true;
           acceptPty?.();
         });
         session.on("exec", (acceptExec, _rejectExec, info) => {
-          requests.push({ type:"exec", command:String(info.command || ""), pty:ptyRequested });
+          requests.push({ type:"exec", command:String(info.command || ""), pty:ptyRequested, env:{...environment} });
           const channel = acceptExec();
           channel.write("__TD_STARTUP_WS_OK__\r\n");
           channel.exit(0);
           channel.end();
         });
         session.on("shell", acceptShell => {
-          requests.push({ type:"shell", command:"", pty:ptyRequested });
+          const request = { type:"shell", command:"", pty:ptyRequested, env:{...environment}, data:Buffer.alloc(0) };
+          requests.push(request);
           const channel = acceptShell();
           channel.write("__TD_DEFAULT_WS_OK__\r\n");
-          channel.exit(0);
-          channel.end();
+          channel.on("data", chunk => {
+            request.data = Buffer.concat([request.data, chunk]);
+            if (!request.data.includes(iconv.encode("中文\r", "gb18030"))) return;
+            channel.write(iconv.encode("__TD_GB18030_OK_中文__\r\n", "gb18030"));
+            channel.exit(0);
+            channel.end();
+          });
         });
       });
     });
@@ -188,6 +219,7 @@ async function main() {
     });
     assert.equal(passwordConnection.response.status, 201);
     const passwordId = Number(passwordConnection.data.id);
+    await trustConnection(url, passwordId);
     const websocketTicket = await json(url, "/api/terminal/startup-tickets", {
       method:"POST",
       body:JSON.stringify({
@@ -223,9 +255,46 @@ async function main() {
     assert.equal(requests.length, 1);
     assert.equal(requests[0].type, "exec");
     assert.equal(requests[0].pty, true);
+    assert.deepEqual(requests[0].env, {}, "终端编码不得通过 SSH2 修改远端 locale");
     assert.match(requests[0].command, /\/usr\/bin\/python3/);
     assert.match(requests[0].command, /'-i'/);
-    console.log("终端启动配置 API 检查通过：永久保存、临时票据、输入校验及密码 SSH 的 WebSocket PTY 启动");
+
+    const defaultWebsocketUrl = `${url.replace(/^http/, "ws")}/ws/terminal?id=${passwordId}&cols=80&rows=24`;
+    const encodingSwitchOutput = await new Promise((resolve, reject) => {
+      const socket = new WebSocket(defaultWebsocketUrl);
+      socket.binaryType = "arraybuffer";
+      let outputBytes = Buffer.alloc(0);
+      let sent = false;
+      const timer = setTimeout(() => {
+        try { socket.close(); } catch {}
+        reject(new Error(`终端在线编码切换验证超时：${outputBytes.toString("hex")}`));
+      }, 10000);
+      socket.addEventListener("message", event => {
+        const chunk = event.data instanceof ArrayBuffer
+          ? Buffer.from(event.data)
+          : Buffer.isBuffer(event.data) ? event.data : Buffer.from(String(event.data || ""), "utf8");
+        outputBytes = Buffer.concat([outputBytes, chunk]);
+        if (!sent && outputBytes.includes(Buffer.from("__TD_DEFAULT_WS_OK__", "utf8"))) {
+          sent = true;
+          socket.send(JSON.stringify({type:"terminal-encoding", encoding:"gb18030"}));
+          socket.send("中文\r");
+        }
+        if (!sent || !outputBytes.includes(Buffer.from("__TD_GB18030_OK_", "ascii"))) return;
+        clearTimeout(timer);
+        try { socket.close(); } catch {}
+        resolve(outputBytes);
+      });
+      socket.addEventListener("error", () => {
+        clearTimeout(timer);
+        reject(new Error(`终端在线编码切换 WebSocket 连接失败：${outputBytes.toString("hex")}`));
+      });
+    });
+    assert.match(encodingSwitchOutput.toString("utf8"), /__TD_GB18030_OK_中文__/, "编码切换后必须在同一 WebSocket 会话双向转码");
+    assert.equal(requests.length, 2, "在线编码切换不得重新建立 SSH 会话");
+    assert.equal(requests[1].type, "shell");
+    assert.deepEqual(requests[1].env, {}, "默认 Shell 同样不得接收 locale 注入");
+    assert.ok(requests[1].data.includes(iconv.encode("中文\r", "gb18030")), "终端输入必须按在线选择的 GB18030 编码发送");
+    console.log("终端启动配置 API 检查通过：永久保存、临时票据、在线编码切换及密码 SSH 的 WebSocket PTY 启动");
   } catch (error) {
     if (output.length) console.error(output.join("").slice(-12000));
     throw error;

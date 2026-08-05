@@ -6,7 +6,7 @@ const { DATA_DIR } = require("./config");
 const { getConnection } = require("./db");
 const { notifyEvent } = require("./notifications");
 const { buildDeleteRemotePathCommand, buildRecycleRemotePathCommand, invalidateRemoteDirectoryCache, readRemoteDirectorySize } = require("./sftp");
-const { clearSftpDragCache, releaseNativeSftpDragTicket, sftpDragCacheInfo, spawnSftpSessionCommand } = require("./sftp-session");
+const { clearSftpDragCache, deliverSftpPaths, releaseNativeSftpDragTicket, sftpDragCacheInfo, spawnSftpSessionCommand } = require("./sftp-session");
 const { readSftpJobHistory, writeSftpJobHistoryAtomic } = require("./sftp-job-store");
 
 const jobs = new Map();
@@ -1199,6 +1199,134 @@ function autoSaveDownloadedFile(job) {
   }
 }
 
+function startLocalDeliveryJob(connectionId, remotePaths, targetDirectory, conflictMode = "rename", options: any = {}) {
+  const connection = getConnection(connectionId);
+  const paths = Array.isArray(remotePaths) ? remotePaths.map(item => String(item || "")).filter(Boolean) : [];
+  const id = crypto.randomUUID();
+  const names = paths.map(item => path.posix.basename(item.replace(/\\/g, "/").replace(/\/+$/, "")) || "download");
+  const label = String(options.label || (names.length === 1 ? `下载 ${names[0]} 到本机` : `下载 ${Math.max(1, names.length)} 项到本机`));
+  const job: any = {
+    id,
+    connection_id:Number(connectionId),
+    connection_name:connection.name,
+    type:"local-delivery",
+    label,
+    remote_paths:paths,
+    target_directory:String(targetDirectory || ""),
+    conflict_mode:["error", "overwrite", "rename"].includes(String(conflictMode || "")) ? String(conflictMode) : "rename",
+    delivery_mode:String(options.deliveryMode || "local-files"),
+    delivery_status:"pending",
+    status:"pending",
+    phase:"preparing",
+    current:"正在准备下载",
+    can_cancel:false,
+    can_pause:false,
+    stdout:"",
+    stderr:"",
+    error:"",
+    size:0,
+    size_known:false,
+    progress_known:false,
+    progress_unit:"bytes",
+    transferred:0,
+    progress:0,
+    item_count:paths.length,
+    item_transferred:0,
+    created_at:Date.now(),
+    started_at:null,
+    finished_at:null
+  };
+  resetTransferSpeed(job);
+  jobs.set(id, job);
+  persistJobs();
+
+  setImmediate(async () => {
+    const current = jobs.get(id);
+    if (!current) return;
+    current.status = "running";
+    current.phase = "local-saving";
+    current.current = "正在下载到本机";
+    current.started_at = Date.now();
+    persistJobs();
+    try {
+      const result = await deliverSftpPaths(connectionId, paths, current.target_directory, current.conflict_mode, {
+        onFile: ({size}) => {
+          if (current.status !== "running") return;
+          const bytes = Math.max(0, Number(size || 0));
+          if (bytes <= 0) return;
+          current.size = Math.max(0, Number(current.size || 0)) + bytes;
+          current.size_known = true;
+          current.progress_known = true;
+          updateTransferProgress(current);
+          persistJobs();
+        },
+        onBytes: (bytes) => {
+          if (current.status !== "running") return;
+          recordTransferred(current, Math.max(0, Number(bytes || 0)));
+          persistJobs();
+        },
+        onItem: () => {
+          if (current.status !== "running") return;
+          current.item_transferred = Math.min(current.item_count, Number(current.item_transferred || 0) + 1);
+          current.current = `已接收 ${current.item_transferred} / ${Math.max(1, current.item_count)} 项`;
+          persistJobs();
+        }
+      });
+      current.status = "done";
+      current.phase = "";
+      current.current = "已保存到本机";
+      current.delivery_status = "saved";
+      current.saved_path = result.directory;
+      current.saved_files = result.files;
+      if (!current.size_known) {
+        current.progress_unit = "items";
+        current.size = Math.max(1, current.item_count);
+        current.transferred = current.size;
+        current.size_known = true;
+        current.progress_known = true;
+      } else {
+        current.transferred = Math.max(Number(current.size || 0), Number(current.transferred || 0));
+      }
+      current.progress = 100;
+      current.finished_at = Date.now();
+      finishTransferMetrics(current);
+      persistJobs(true);
+      notifyEvent({
+        type:"sftp",
+        level:"success",
+        title:"SFTP 下载到本机已完成",
+        message:`${current.connection_name} · ${current.label}\n已保存到 ${current.saved_path}`,
+        action:{view:"sftp", connection_id:current.connection_id}
+      }, {cooldown_ms:0});
+    } catch (error) {
+      current.status = "failed";
+      current.phase = "";
+      current.current = "";
+      current.delivery_status = "failed";
+      current.error = error?.message || "下载到本机失败";
+      current.finished_at = Date.now();
+      finishTransferMetrics(current);
+      persistJobs(true);
+      notifyEvent({
+        type:"sftp",
+        level:"error",
+        title:"SFTP 下载到本机失败",
+        message:`${current.connection_name} · ${current.label}\n${current.error}`,
+        action:{view:"sftp", connection_id:current.connection_id}
+      }, {cooldown_ms:0});
+    }
+  });
+
+  return {
+    id,
+    status:job.status,
+    type:job.type,
+    connection_id:job.connection_id,
+    target_directory:job.target_directory,
+    delivery_mode:job.delivery_mode
+  };
+}
+
 function startDownloadJob(connectionId, remotePath, options: any = {}) {
   const connection = getConnection(connectionId);
   const id = crypto.randomUUID();
@@ -1925,4 +2053,4 @@ function compressJob(connectionId, paths, targetDir = ".", archiveName = "") {
   return { ...startSftpJob(connectionId, "compress", request.command, `压缩 ${request.paths.length} 项为 ${request.name}`), output:request.output };
 }
 
-module.exports = { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, discardNativeSftpDragJob, extractJob, finishNativeSftpDragJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, normalizeCompressionRequest, pauseSftpJob, receiveUploadJobContent, recordNativeSftpDragBytes, resumeSftpJob, setNativeSftpDragCancelHandler, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream, __addUniqueByteRange: addUniqueByteRange, __buildCompressCommand: normalizeCompressionRequest, __buildCrossCopyOverwriteCommand: buildCrossCopyOverwriteCommand, __buildDeleteJobRequest: buildDeleteJobRequest, __consumeDeleteJobOutput: consumeDeleteJobOutput };
+module.exports = { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, discardNativeSftpDragJob, extractJob, finishNativeSftpDragJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, normalizeCompressionRequest, pauseSftpJob, receiveUploadJobContent, recordNativeSftpDragBytes, resumeSftpJob, setNativeSftpDragCancelHandler, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream, __addUniqueByteRange: addUniqueByteRange, __buildCompressCommand: normalizeCompressionRequest, __buildCrossCopyOverwriteCommand: buildCrossCopyOverwriteCommand, __buildDeleteJobRequest: buildDeleteJobRequest, __consumeDeleteJobOutput: consumeDeleteJobOutput };

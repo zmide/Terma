@@ -5,17 +5,25 @@ const { spawn, spawnSync } = require("node:child_process");
 const { SSH_BIN, SSH_DIR, USER_SSH_DIR, LOG_DIR, DATA_DIR } = require("./config");
 const { all, getConnection, getForward, run, now, pidRunning } = require("./db");
 const { notifyIssue, notifyRecovery } = require("./notifications");
-const { isPasswordConnection, runPasswordCommand, startPasswordForward } = require("./ssh2-client");
+const {
+  ensureConnectionHostTrusted,
+  runPasswordCommand,
+  shouldUseBuiltinSsh,
+  startPasswordForward,
+  decodeSshOutput
+} = require("./ssh2-client");
 const { effectiveExtraArgs, splitArgs } = require("./ssh-command");
+const { proxyJumpArgument, structuredOpenSshArgs } = require("./ssh-connection");
 const { diagnoseSshError } = require("./ssh-diagnostics");
 const { buildRemoteStartupCommand } = require("./terminal-startup");
+const { isHostTrustError, systemHostKeyArgs } = require("./ssh-host-trust");
 
 const RESTORE_STATE_FILE = path.join(DATA_DIR, "forward-state.json");
 let healthMonitorTimer: any = null;
 let healthMonitorBusy = false;
 let healthMonitorTask: Promise<any> | null = null;
 const securedKeyCache = new Set();
-const passwordForwards = new Map();
+const ssh2Forwards = new Map();
 
 function looksLikePrivateKey(file) {
   try {
@@ -237,7 +245,7 @@ function restoreStateSummary() {
 }
 
 function buildForwardCommand(connection, forward) {
-  const args = ["-N", "-T", "-o", "ExitOnForwardFailure=yes", "-p", String(connection.ssh_port)];
+  const args = ["-N", "-T", ...systemConnectionArgs(connection), "-o", "ExitOnForwardFailure=yes", "-p", String(connection.ssh_port)];
   if (connection.identity_file) {
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
@@ -257,7 +265,7 @@ function appendForwardArgs(args, forward) {
 }
 
 function buildConnectionCommand(connection, forwards) {
-  const args = ["-N", "-T", "-o", "ExitOnForwardFailure=yes", "-p", String(connection.ssh_port)];
+  const args = ["-N", "-T", ...systemConnectionArgs(connection), "-o", "ExitOnForwardFailure=yes", "-p", String(connection.ssh_port)];
   if (connection.identity_file) {
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
@@ -276,7 +284,14 @@ function forwardNotifyLabel(connection, forward) {
 }
 
 function buildTerminalCommand(connection) {
-  const args = ["-tt", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", String(connection.ssh_port)];
+  const interactivePassword = connection.auth_type === "password" && ["untrusted", "trusted"].includes(String(connection.x11_mode || "off"));
+  const args = ["-tt", ...systemConnectionArgs(connection), "-o", `BatchMode=${interactivePassword ? "no" : "yes"}`, "-p", String(connection.ssh_port)];
+  args.push("-o", "SendEnv=-*");
+  if (["untrusted", "trusted"].includes(String(connection.x11_mode || "off")) && process.env.TUNNELDESK_XAUTH) {
+    args.push("-o", `XAuthLocation=${process.env.TUNNELDESK_XAUTH}`);
+  }
+  if (connection.x11_mode === "trusted") args.push("-Y");
+  else if (connection.x11_mode === "untrusted") args.push("-X");
   if (connection.identity_file) {
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
@@ -286,6 +301,16 @@ function buildTerminalCommand(connection) {
   args.push(...effectiveExtraArgs(connection.extra_args));
   args.push(`${connection.ssh_user}@${connection.ssh_host}`);
   if (startupCommand) args.push(startupCommand);
+  return args;
+}
+
+function systemConnectionArgs(connection) {
+  const jump = connection?.jump_connection_id ? getConnection(Number(connection.jump_connection_id)) : null;
+  const args = [
+    ...systemHostKeyArgs(connection, { additionalConnections:jump ? [jump] : [] }),
+    ...structuredOpenSshArgs(connection)
+  ];
+  if (jump) args.push("-J", proxyJumpArgument(jump));
   return args;
 }
 
@@ -517,13 +542,13 @@ async function startForwardInternal(id, options: any = {}) {
       throw new Error(display);
     }
   }
-  if (isPasswordConnection(connection)) {
+  if (shouldUseBuiltinSsh(connection)) {
     let managed;
     try {
       managed = await startPasswordForward(connection, forward, {
         onError: (error) => {
-          if (passwordForwards.get(Number(id)) !== managed) return;
-          const message = diagnoseSshError(error.message || "密码 SSH 转发连接已断开").display;
+          if (ssh2Forwards.get(Number(id)) !== managed) return;
+          const message = diagnoseSshError(error.message || "内置 SSH 转发连接已断开").display;
           run("UPDATE connection_forwards SET status='failed', pid=NULL, last_error=?, updated_at=? WHERE id=?", [message, now(), Number(id)]);
           notifyIssue(`forward:${Number(id)}:down`, {
             type: "forward",
@@ -534,12 +559,12 @@ async function startForwardInternal(id, options: any = {}) {
           });
         },
         onClose: () => {
-          if (passwordForwards.get(Number(id)) !== managed) return;
-          passwordForwards.delete(Number(id));
-          run("UPDATE connection_forwards SET status='failed', pid=NULL, last_error=?, updated_at=? WHERE id=?", ["密码 SSH 连接已关闭", now(), Number(id)]);
+          if (ssh2Forwards.get(Number(id)) !== managed) return;
+          ssh2Forwards.delete(Number(id));
+          run("UPDATE connection_forwards SET status='failed', pid=NULL, last_error=?, updated_at=? WHERE id=?", ["内置 SSH 连接已关闭", now(), Number(id)]);
         }
       });
-      passwordForwards.set(Number(id), managed);
+      ssh2Forwards.set(Number(id), managed);
       run("UPDATE connection_forwards SET pid=NULL, status='running', restore=1, started_at=?, reconnect_count=0, last_error=NULL, updated_at=? WHERE id=?", [now(), now(), Number(id)]);
       setRestoreConnection(forward.connection_id, true);
       notifyRecovery(`forward:${Number(id)}:down`, {
@@ -551,7 +576,8 @@ async function startForwardInternal(id, options: any = {}) {
       return;
     } catch (error) {
       try { await managed?.close(); } catch {}
-      const display = diagnoseSshError(error.message || "密码 SSH 转发启动失败").display;
+      if (isHostTrustError(error)) throw error;
+      const display = diagnoseSshError(error.message || "内置 SSH 转发启动失败").display;
       run("UPDATE connection_forwards SET status='failed', pid=NULL, last_error=?, updated_at=? WHERE id=?", [display, now(), Number(id)]);
       notifyIssue(`forward:${Number(id)}:down`, {
         type: "forward",
@@ -563,6 +589,7 @@ async function startForwardInternal(id, options: any = {}) {
       throw new Error(display);
     }
   }
+  await ensureConnectionHostTrusted(connection);
   fs.mkdirSync(LOG_DIR, { recursive: true });
   const logPath = path.join(LOG_DIR, `forward-${id}.log`);
   const log = fs.openSync(logPath, "a");
@@ -622,10 +649,11 @@ async function startConnectionForwards(connectionId, options: any = {}) {
     try {
       await startForwardInternal(forward.id, options);
     } catch (error) {
+      if (isHostTrustError(error)) throw error;
       errors.push(`${forward.mode} ${forward.bind_host}:${forward.bind_port}：${error.message}`);
     }
   }
-  const running = connectionForwards(connectionId).filter((forward) => passwordForwards.has(Number(forward.id)) || (forward.pid && pidRunning(forward.pid)));
+  const running = connectionForwards(connectionId).filter((forward) => ssh2Forwards.has(Number(forward.id)) || (forward.pid && pidRunning(forward.pid)));
   if (running.length && options.recordState !== false) setRestoreConnection(connectionId, true);
   if (errors.length) {
     if (!running.length) setRestoreConnection(connectionId, false);
@@ -635,9 +663,9 @@ async function startConnectionForwards(connectionId, options: any = {}) {
 
 function stopForward(id, options: any = {}) {
   const forward = getForward(id);
-  const managed = passwordForwards.get(Number(id));
+  const managed = ssh2Forwards.get(Number(id));
   if (managed) {
-    passwordForwards.delete(Number(id));
+    ssh2Forwards.delete(Number(id));
     managed.close().catch(() => {});
   }
   const pid = Number(forward.pid || 0);
@@ -651,9 +679,9 @@ function stopForward(id, options: any = {}) {
 function stopConnectionForwards(connectionId, options: any = {}) {
   const forwards = connectionForwards(connectionId);
   for (const forward of forwards) {
-    const managed = passwordForwards.get(Number(forward.id));
+    const managed = ssh2Forwards.get(Number(forward.id));
     if (managed) {
-      passwordForwards.delete(Number(forward.id));
+      ssh2Forwards.delete(Number(forward.id));
       managed.close().catch(() => {});
     }
   }
@@ -717,7 +745,7 @@ async function restorePreviousForwards() {
 }
 
 function connectionRunning(connectionId) {
-  return connectionForwards(connectionId).some((forward) => passwordForwards.has(Number(forward.id)) || (forward.pid && pidRunning(forward.pid)));
+  return connectionForwards(connectionId).some((forward) => ssh2Forwards.has(Number(forward.id)) || (forward.pid && pidRunning(forward.pid)));
 }
 
 function checkLocalPort(host, port) {
@@ -752,7 +780,7 @@ async function connectionHealth(connectionId, options: any = {}) {
   const ssh = await testSsh(connection);
   const forwardChecks = [];
   for (const forward of forwards) {
-    const running = Boolean(passwordForwards.has(Number(forward.id)) || (forward.pid && pidRunning(forward.pid)));
+    const running = Boolean(ssh2Forwards.has(Number(forward.id)) || (forward.pid && pidRunning(forward.pid)));
     let reachable: any = null;
     let port_usage: any = null;
     if (running && ["local", "socks"].includes(forward.mode)) {
@@ -807,7 +835,7 @@ function startForwardHealthMonitor() {
         const forwardRows = all("SELECT id, pid, restore FROM connection_forwards WHERE restore=1 OR status='running'");
         for (const row of forwardRows) {
           try {
-            const running = passwordForwards.has(Number(row.id)) || (row.pid && pidRunning(row.pid));
+            const running = ssh2Forwards.has(Number(row.id)) || (row.pid && pidRunning(row.pid));
             if (row.restore && !running) {
               run("UPDATE connection_forwards SET status='reconnecting', reconnect_count=reconnect_count+1, updated_at=? WHERE id=?", [now(), row.id]);
               await startForwardInternal(row.id, { cleanupSshPortOwner: true });
@@ -854,18 +882,22 @@ async function stopForwardHealthMonitor() {
   if (task) await task.catch(() => {});
 }
 
-function runSshTest(args, timeoutMs = 15000) {
+function runSshTest(args, timeoutMs = 15000, encoding = "utf8") {
   return new Promise((resolve) => {
     const child = spawn(SSH_BIN, args, { stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
+    const stdout = [];
+    const stderr = [];
     let settled = false;
-    const append = (current, chunk) => (current + chunk.toString()).slice(-12000);
     const finish = (status, error = null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ status, stdout, stderr, error });
+      resolve({
+        status,
+        stdout:decodeSshOutput(Buffer.concat(stdout).slice(-12000), encoding),
+        stderr:decodeSshOutput(Buffer.concat(stderr).slice(-12000), encoding),
+        error
+      });
     };
     const timer = setTimeout(() => {
       try {
@@ -874,10 +906,10 @@ function runSshTest(args, timeoutMs = 15000) {
       finish(null, new Error("SSH 测试超时"));
     }, timeoutMs);
     child.stdout?.on("data", (chunk) => {
-      stdout = append(stdout, chunk);
+      stdout.push(Buffer.from(chunk));
     });
     child.stderr?.on("data", (chunk) => {
-      stderr = append(stderr, chunk);
+      stderr.push(Buffer.from(chunk));
     });
     child.on("error", (error) => finish(null, error));
     child.on("close", (code) => finish(code));
@@ -893,14 +925,16 @@ async function testSsh(data) {
   if (!host || !user) throw new Error("缺少 SSH 主机或用户");
   const marker = "__TUNNELDESK_SSH_OK__";
   const probe = `echo ${marker}`;
-  if (isPasswordConnection(data)) {
+  if (shouldUseBuiltinSsh(data)) {
     const start = Date.now();
     const result: any = await runPasswordCommand({ ...data, ssh_password: String(data.ssh_password || "") }, probe, null, 15000);
+    if (isHostTrustError(result.error)) throw result.error;
     const rawOutput = (result.stdout || result.stderr || (result.error ? result.error.message : "") || (result.status === 0 ? "SSH 连接成功（退出码 0）" : `SSH 退出码 ${result.status}`)).trim();
     const diagnosis = diagnoseSshError(rawOutput);
     return { ok: result.status === 0, elapsed_ms: Date.now() - start, output: result.status === 0 ? "SSH 连接成功" : diagnosis.display, raw_output: rawOutput, diagnosis };
   }
-  const args = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", String(data.ssh_port || 22)];
+  await ensureConnectionHostTrusted(data);
+  const args = ["-T", ...systemConnectionArgs(data), "-o", "BatchMode=yes", "-p", String(data.ssh_port || 22)];
   if (data.identity_file) {
     securePrivateKeyPermissions(data.identity_file);
     args.push("-i", data.identity_file);
@@ -908,7 +942,7 @@ async function testSsh(data) {
   args.push(...effectiveExtraArgs(data.extra_args));
   args.push(`${user}@${host}`, probe);
   const start = Date.now();
-  const result: any = await runSshTest(args, 15000);
+  const result: any = await runSshTest(args, 15000, data.terminal_encoding);
   const ok = result.status === 0;
   const rawOutput = (result.stdout || result.stderr || (result.error ? result.error.message : "") || (ok ? "SSH 连接成功（退出码 0）" : `SSH 退出码 ${result.status}`)).trim();
   const diagnosis = diagnoseSshError(rawOutput);
@@ -921,9 +955,14 @@ async function testSsh(data) {
   };
 }
 
-function runSshCommandForConnection(connection, command, timeoutMs = 60000) {
-  if (isPasswordConnection(connection)) return runPasswordCommand(connection, command, null, timeoutMs);
-  const args = ["-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-p", String(connection.ssh_port || 22)];
+async function runSshCommandForConnection(connection, command, timeoutMs = 60000) {
+  if (shouldUseBuiltinSsh(connection)) {
+    const result: any = await runPasswordCommand(connection, command, null, timeoutMs);
+    if (isHostTrustError(result.error)) throw result.error;
+    return result;
+  }
+  await ensureConnectionHostTrusted(connection);
+  const args = ["-T", ...systemConnectionArgs(connection), "-o", "BatchMode=yes", "-p", String(connection.ssh_port || 22)];
   if (connection.identity_file) {
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
@@ -932,22 +971,67 @@ function runSshCommandForConnection(connection, command, timeoutMs = 60000) {
   args.push(`${connection.ssh_user}@${connection.ssh_host}`, String(command || ""));
   return new Promise((resolve) => {
     const child = spawn(SSH_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
+    const stdout = [];
+    const stderr = [];
     let settled = false;
-    const append = (current, chunk) => (current + chunk.toString()).slice(-60000);
     const finish = (status, error = null) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ status, stdout, stderr, error });
+      resolve({
+        status,
+        stdout:decodeSshOutput(Buffer.concat(stdout).slice(-60000), connection.terminal_encoding),
+        stderr:decodeSshOutput(Buffer.concat(stderr).slice(-60000), connection.terminal_encoding),
+        error
+      });
     };
     const timer = setTimeout(() => {
       try { child.kill("SIGKILL"); } catch {}
       finish(null, new Error("命令执行超时"));
     }, timeoutMs);
-    child.stdout?.on("data", (chunk) => { stdout = append(stdout, chunk); });
-    child.stderr?.on("data", (chunk) => { stderr = append(stderr, chunk); });
+    child.stdout?.on("data", (chunk) => { stdout.push(Buffer.from(chunk)); });
+    child.stderr?.on("data", (chunk) => { stderr.push(Buffer.from(chunk)); });
+    child.on("error", (error) => finish(null, error));
+    child.on("close", (code) => finish(code));
+  });
+}
+
+async function runSshCommandForConnectionStreaming(connection, command, timeoutMs = 60000, onChunk = null) {
+  if (shouldUseBuiltinSsh(connection)) {
+    const result: any = await runPasswordCommand(connection, command, null, timeoutMs, onChunk);
+    if (isHostTrustError(result.error)) throw result.error;
+    return result;
+  }
+  await ensureConnectionHostTrusted(connection);
+  const args = ["-T", ...systemConnectionArgs(connection), "-o", "BatchMode=yes", "-p", String(connection.ssh_port || 22)];
+  if (connection.identity_file) {
+    securePrivateKeyPermissions(connection.identity_file);
+    args.push("-i", connection.identity_file);
+  }
+  args.push(...effectiveExtraArgs(connection.extra_args));
+  args.push(`${connection.ssh_user}@${connection.ssh_host}`, String(command || ""));
+  return new Promise((resolve) => {
+    const child = spawn(SSH_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = [];
+    const stderr = [];
+    let settled = false;
+    const finish = (status, error = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        status,
+        stdout:decodeSshOutput(Buffer.concat(stdout).slice(-60000), connection.terminal_encoding),
+        stderr:decodeSshOutput(Buffer.concat(stderr).slice(-60000), connection.terminal_encoding),
+        error
+      });
+    };
+    const timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch {}
+      finish(null, new Error("SSH command timed out"));
+    }, timeoutMs);
+    child.stdout?.on("data", (chunk) => { stdout.push(Buffer.from(chunk)); onChunk?.(chunk, "stdout"); });
+    child.stderr?.on("data", (chunk) => { stderr.push(Buffer.from(chunk)); onChunk?.(chunk, "stderr"); });
     child.on("error", (error) => finish(null, error));
     child.on("close", (code) => finish(code));
   });
@@ -1014,5 +1098,6 @@ module.exports = {
   stopForwardHealthMonitor,
   testSsh,
   batchRunCommands,
-  runSshCommandForConnection
+  runSshCommandForConnection,
+  runSshCommandForConnectionStreaming
 };

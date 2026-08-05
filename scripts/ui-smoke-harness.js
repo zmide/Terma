@@ -60,7 +60,11 @@ async function main() {
   server.stderr.on("data", chunk => serverOutput.push(chunk.toString()));
   try {
     await waitForServer(url, server);
-    await runElectron({ ...process.env, TUNNELDESK_CHECK_URL:url });
+    await runElectron({
+      ...process.env,
+      TUNNELDESK_CHECK_URL:url,
+      TUNNELDESK_UI_USER_DATA:path.join(root, "electron-user-data")
+    });
   } catch (error) {
     if (serverOutput.length) console.error(serverOutput.join("").slice(-12000));
     throw error;

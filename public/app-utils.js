@@ -19,16 +19,36 @@ function refreshIcons() {
 
 function hideActionMenu() {
   $("actionMenu")?.remove();
+  $("actionSubMenu")?.remove();
   $("actionMenuBackdrop")?.remove();
 }
 
-function showActionMenu(event, actions) {
-  event.preventDefault();
-  event.stopPropagation();
-  hideActionMenu();
-  const menu = document.createElement("div");
-  menu.id = "actionMenu";
-  menu.className = "context-menu action-menu";
+function actionMenuChildren(action) {
+  if (!action?.children) return [];
+  const children = typeof action.children === "function" ? action.children() : action.children;
+  return Array.isArray(children) ? children : [];
+}
+
+function fillActionMenu(menu, actions, options={}) {
+  const mobile = Boolean(options.mobile);
+  const history = Array.isArray(options.history) ? options.history : [];
+  menu.replaceChildren();
+  if (mobile && history.length) {
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "action-menu-back";
+    back.innerHTML = `${icon("arrow-left")}<span>返回上一级</span>`;
+    back.onclick = clickEvent => {
+      clickEvent.preventDefault();
+      clickEvent.stopPropagation();
+      const previous = history.at(-1);
+      fillActionMenu(menu, previous.actions, {mobile:true, history:history.slice(0, -1)});
+    };
+    menu.appendChild(back);
+    const separator = document.createElement("div");
+    separator.className = "menu-separator";
+    menu.appendChild(separator);
+  }
   for (const action of actions) {
     if (action.separator) {
       const separator = document.createElement("div");
@@ -38,16 +58,64 @@ function showActionMenu(event, actions) {
     }
     const button = document.createElement("button");
     button.type = "button";
-    button.className = action.danger ? "danger" : "";
-    button.innerHTML = `${icon(action.icon || "circle")}<span>${esc(action.label)}</span>`;
-    button.onclick = () => {
+    button.className = `${action.danger ? "danger" : ""}${action.children ? " has-submenu" : ""}`.trim();
+    button.innerHTML = `${icon(action.icon || "circle")}<span>${esc(action.label)}</span>${action.children ? icon("chevron-right") : ""}`;
+    button.onclick = clickEvent => {
+      clickEvent.preventDefault();
+      clickEvent.stopPropagation();
+      if (action.children) {
+        const children = actionMenuChildren(action);
+        if (!children.length) return;
+        if (mobile) {
+          fillActionMenu(menu, children, {mobile:true, history:[...history, {actions}]});
+        } else {
+          showActionSubMenu(button, children);
+        }
+        return;
+      }
       hideActionMenu();
-      Promise.resolve(action.run()).catch(error => notify(error?.message || "操作失败", "error"));
+      Promise.resolve(action.run?.(clickEvent)).catch(error => notify(error?.message || "操作失败", "error"));
     };
     menu.appendChild(button);
   }
+  if (mobile) {
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "action-menu-close";
+    close.innerHTML = `${icon("x")}<span>关闭</span>`;
+    close.onclick = hideActionMenu;
+    menu.appendChild(close);
+  }
+}
+
+function showActionSubMenu(anchor, actions) {
+  $("actionSubMenu")?.remove();
+  const menu = document.createElement("div");
+  menu.id = "actionSubMenu";
+  menu.className = "context-menu action-menu action-submenu";
+  fillActionMenu(menu, actions);
   document.body.appendChild(menu);
-  if (isMobileLayout()) {
+  const anchorRect = anchor.getBoundingClientRect();
+  const rect = menu.getBoundingClientRect();
+  const right = anchorRect.right + 4;
+  const left = right + rect.width <= window.innerWidth - 8
+    ? right
+    : Math.max(8, anchorRect.left - rect.width - 4);
+  menu.style.left = `${left}px`;
+  menu.style.top = `${Math.max(8, Math.min(anchorRect.top, window.innerHeight - rect.height - 8))}px`;
+}
+
+function showActionMenu(event, actions) {
+  event.preventDefault();
+  event.stopPropagation();
+  hideActionMenu();
+  const menu = document.createElement("div");
+  menu.id = "actionMenu";
+  menu.className = "context-menu action-menu";
+  const mobile = isMobileLayout();
+  fillActionMenu(menu, actions, {mobile});
+  document.body.appendChild(menu);
+  if (mobile) {
     const backdrop = document.createElement("button");
     backdrop.id = "actionMenuBackdrop";
     backdrop.className = "action-menu-backdrop";
@@ -55,12 +123,6 @@ function showActionMenu(event, actions) {
     backdrop.setAttribute("aria-label", "关闭菜单");
     backdrop.onclick = hideActionMenu;
     document.body.insertBefore(backdrop, menu);
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "action-menu-close";
-    close.innerHTML = `${icon("x")}<span>关闭</span>`;
-    close.onclick = hideActionMenu;
-    menu.appendChild(close);
     menu.classList.add("mobile-action-menu");
     return;
   }
@@ -126,6 +188,30 @@ function saveGroupState() {
   localStorage.setItem("openGroups", JSON.stringify([...groupOpen]));
 }
 
+function loadRemoteGroupState() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem("openRemoteGroups") || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveRemoteGroupState() {
+  localStorage.setItem("openRemoteGroups", JSON.stringify([...remoteGroupOpen]));
+}
+
+function loadRemoteHostState() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem("openRemoteHostsV2") || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveRemoteHostState() {
+  localStorage.setItem("openRemoteHostsV2", JSON.stringify([...remoteHostOpen]));
+}
+
 function loadRunningState() {
   try {
     return new Set(JSON.parse(localStorage.getItem("openRunningGroups") || "[]"));
@@ -150,12 +236,84 @@ function saveLogState() {
   localStorage.setItem("openLogs", JSON.stringify([...logOpen]));
 }
 
-function dismissToast() {
-  clearTimeout(window.toastTimer);
-  const toast = $("toast");
-  if (!toast) return;
-  toast.className = "toast";
-  toast.innerHTML = "";
+const toastTimers = new Map();
+let toastSequence = 0;
+let toastLayoutFrame = 0;
+
+function prefersReducedToastMotion() {
+  return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+}
+
+function syncToastStackLayout() {
+  cancelAnimationFrame(toastLayoutFrame);
+  toastLayoutFrame = requestAnimationFrame(() => {
+    const stack = $("toast");
+    const topbar = document.querySelector(".topbar");
+    let offset = 0;
+    if (stack?.childElementCount && topbar) {
+      const stackRect = stack.getBoundingClientRect();
+      const taskFloatBaseTop = topbar.getBoundingClientRect().bottom + 8;
+      offset = Math.max(0, Math.ceil(stackRect.bottom + 8 - taskFloatBaseTop));
+    }
+    document.documentElement.style.setProperty("--notification-stack-offset", `${offset}px`);
+  });
+}
+
+function animateToastReflow(stack, previousPositions) {
+  if (prefersReducedToastMotion()) return;
+  for (const toast of stack.querySelectorAll(".toast")) {
+    const previousTop = previousPositions.get(toast);
+    if (!Number.isFinite(previousTop)) continue;
+    const delta = previousTop - toast.getBoundingClientRect().top;
+    if (Math.abs(delta) < 1 || typeof toast.animate !== "function") continue;
+    toast.animate(
+      [{transform:`translateY(${delta}px)`}, {transform:"translateY(0)"}],
+      {duration:260, easing:"cubic-bezier(.2,.8,.2,1)"}
+    );
+  }
+}
+
+function removeToastElement(toast) {
+  if (!toast?.isConnected) return;
+  const stack = toast.parentElement;
+  if (!stack) return toast.remove();
+  const previousPositions = new Map(
+    [...stack.querySelectorAll(".toast")]
+      .filter(item => item !== toast)
+      .map(item => [item, item.getBoundingClientRect().top])
+  );
+  toast.remove();
+  animateToastReflow(stack, previousPositions);
+  syncToastStackLayout();
+}
+
+function dismissToast(target) {
+  const stack = $("toast");
+  if (!stack) return;
+  if (!target) {
+    for (const toast of [...stack.querySelectorAll(".toast")]) dismissToast(toast);
+    return;
+  }
+  const toast = target instanceof Element ? target.closest(".toast") : null;
+  if (!toast || toast.classList.contains("is-leaving")) return;
+  const toastId = toast.dataset.toastId || "";
+  clearTimeout(toastTimers.get(toastId));
+  toastTimers.delete(toastId);
+  toast.classList.add("is-leaving");
+  const finish = () => removeToastElement(toast);
+  if (prefersReducedToastMotion() || typeof toast.animate !== "function") return finish();
+  const animation = toast.animate(
+    [
+      {opacity:1, transform:"translateX(0) scale(1)"},
+      {opacity:0, transform:"translateX(18px) scale(.98)"}
+    ],
+    {duration:180, easing:"cubic-bezier(.4,0,1,1)", fill:"forwards"}
+  );
+  const fallback = setTimeout(finish, 240);
+  animation.onfinish = () => {
+    clearTimeout(fallback);
+    finish();
+  };
 }
 
 function notify(text, type="info") {
@@ -165,15 +323,32 @@ function notify(text, type="info") {
     n.className = "notice";
   }
   if (text) {
-    const t = $("toast");
+    const stack = $("toast");
+    if (!stack) return;
     const lines = String(text).split("\n");
     const title = lines.shift() || "TunnelDesk";
     const detail = lines.join("\n").trim();
-    const iconName = type === "success" ? "circle-check" : type === "error" ? "circle-alert" : "info";
-    t.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(iconName)}</span><div class="toast-copy"><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ""}</div><button type="button" class="icon-button" onclick="dismissToast()" title="关闭提示" aria-label="关闭提示">${icon("x")}</button></div>`;
-    t.className = `toast show ${type}`;
-    clearTimeout(window.toastTimer);
-    window.toastTimer = setTimeout(dismissToast, type==="error"?8000:3500);
+    const toastType = ["success", "error", "info"].includes(type) ? type : "info";
+    const iconName = toastType === "success" ? "circle-check" : toastType === "error" ? "circle-alert" : "info";
+    const toastId = `toast-${Date.now()}-${++toastSequence}`;
+    const toast = document.createElement("div");
+    toast.className = `toast ${toastType}`;
+    toast.dataset.toastId = toastId;
+    toast.setAttribute("role", toastType === "error" ? "alert" : "status");
+    toast.setAttribute("aria-atomic", "true");
+    toast.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(iconName)}</span><div class="toast-copy"><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ""}</div><button type="button" class="icon-button" onclick="dismissToast(this.closest('.toast'))" title="关闭提示" aria-label="关闭提示">${icon("x")}</button></div>`;
+    stack.appendChild(toast);
+    if (!prefersReducedToastMotion() && typeof toast.animate === "function") {
+      toast.animate(
+        [
+          {opacity:0, transform:"translateY(-10px) scale(.98)"},
+          {opacity:1, transform:"translateY(0) scale(1)"}
+        ],
+        {duration:240, easing:"cubic-bezier(.2,.8,.2,1)"}
+      );
+    }
+    toastTimers.set(toastId, setTimeout(() => dismissToast(toast), toastType === "error" ? 8000 : 3500));
+    syncToastStackLayout();
   }
 }
 
@@ -205,6 +380,7 @@ function showDesktopNotification(event) {
 
 function handleNotificationAction(action) {
   if (!action) return;
+  if (action.type === "tab" && action.key && typeof activateTab === "function") return activateTab(action.key);
   if (action.view === "forwards" && action.connection_id) return openForwards(Number(action.connection_id));
   if (action.view === "sftp" && action.connection_id) return openSftp(Number(action.connection_id));
   if (action.view === "log" && action.path) return openLog(action.path, action.title || "日志");
@@ -407,6 +583,52 @@ function confirmModal(message, title="确认操作", confirmText="确定", cance
     { label: confirmText, value: true, className: danger ? "danger" : "primary" },
     { label: cancelText, value: false }
   ]);
+}
+
+function sshHostTrustModal(challenge) {
+  return new Promise(resolve => {
+    const modal = $("modal");
+    const changed = challenge?.state === "changed";
+    const permanentLabel = changed ? "更新并永久信任" : "信任并保存";
+    const finish = value => {
+      modal.onclick = null;
+      modal.onkeydown = null;
+      modal.hidden = true;
+      resolve(value);
+    };
+    modal.onclick = null;
+    modal.innerHTML = `<div class="modal-card ssh-host-trust-modal ${changed ? "changed" : "unknown"}" role="alertdialog" aria-modal="true" aria-labelledby="sshHostTrustTitle">
+      <div class="ssh-host-trust-head">
+        <span class="ssh-host-trust-icon" aria-hidden="true">${icon(changed ? "shield-alert" : "shield-question")}</span>
+        <div><h2 id="sshHostTrustTitle">${changed ? "SSH 主机密钥发生变化" : "确认 SSH 主机指纹"}</h2><span>${esc(challenge?.host_label || "未知主机")}</span></div>
+      </div>
+      <div class="ssh-host-trust-notice">${changed
+        ? "保存过的主机密钥与本次连接不一致。这可能是服务器重装或密钥更新，也可能表示连接被冒充。请先核对新指纹。"
+        : "这是 TunnelDesk 首次连接这台 SSH 主机。请与服务器管理员或可信渠道核对指纹。"}</div>
+      <dl class="ssh-host-trust-details">
+        <div><dt>算法</dt><dd>${esc(challenge?.key_type || "未知")}</dd></div>
+        ${changed ? `<div class="previous"><dt>原指纹</dt><dd><code>${esc(challenge?.previous_fingerprint || "未知")}</code></dd></div>` : ""}
+        <div class="current"><dt>${changed ? "新指纹" : "指纹"}</dt><dd><code>${esc(challenge?.fingerprint || "未知")}</code></dd></div>
+      </dl>
+      <div class="ssh-host-trust-hint">“仅本次信任”不会写入信任记录；下次连接仍会重新确认。</div>
+      <div class="actions ssh-host-trust-actions">
+        <button id="sshHostTrustOnce" type="button">仅本次信任</button>
+        <button id="sshHostTrustPersist" class="${changed ? "danger" : "primary"}" type="button">${permanentLabel}</button>
+        <button id="sshHostTrustCancel" type="button">取消</button>
+      </div>
+    </div>`;
+    modal.hidden = false;
+    $("sshHostTrustOnce").onclick = () => finish("once");
+    $("sshHostTrustPersist").onclick = () => finish("persist");
+    $("sshHostTrustCancel").onclick = () => finish(null);
+    modal.onkeydown = event => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        finish(null);
+      }
+    };
+    $("sshHostTrustCancel").focus();
+  });
 }
 
 function stateView(kind, title, detail="", actionHtml="") {

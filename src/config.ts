@@ -26,12 +26,7 @@ const SSH_BIN = process.env.SSH_BIN || "ssh";
 const DEFAULT_HOSTS = RUNTIME_SETTINGS.listen_hosts;
 const DEFAULT_HOST = DEFAULT_HOSTS[0];
 const DEFAULT_PORT = RUNTIME_SETTINGS.listen_port;
-const DEFAULT_EXTRA_ARGS = [
-  "-o StrictHostKeyChecking=accept-new",
-  "-o ServerAliveInterval=60",
-  "-o ServerAliveCountMax=3",
-  "-o TCPKeepAlive=yes"
-].join("\n");
+const DEFAULT_EXTRA_ARGS = "";
 
 module.exports = {
   BASE_DIR,

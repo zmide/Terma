@@ -1,9 +1,9 @@
 {
   "name": "tunneldesk",
-  "version": "1.1.8",
+  "version": "1.2.0",
   "private": true,
   "license": "GPL-3.0-only",
-  "description": "SSH connection and port forwarding web console",
+  "description": "Cross-platform remote connection workspace for SSH, SFTP, RDP, VNC, X11/XDMCP, file transfer and tunnels",
   "author": "zmide <zmide@users.noreply.github.com>",
   "homepage": "https://github.com/zmide/tunneldesk",
   "repository": {
@@ -19,13 +19,18 @@
     "native:build": "node scripts/build-native-sftp-drag.js",
     "native:build:if-needed": "node scripts/build-native-sftp-drag.js --if-needed --current-arch",
     "native:build:required": "node scripts/build-native-sftp-drag.js --required",
-    "package": "npm run build && npm run native:build:required && electron-builder --dir",
-    "dist": "npm run build && npm run native:build:required && electron-builder",
+    "xserver:prepare": "node scripts/prepare-xserver-runtime.js",
+    "xserver:diagnose": "node scripts/prepare-xserver-runtime.js --diagnose",
+    "package": "npm run build && npm run native:build:required && npm run xserver:prepare && electron-builder --dir",
+    "dist": "npm run build && npm run native:build:required && npm run xserver:prepare && electron-builder",
     "start": "node dist/server.js",
     "check": "tsc --noEmit",
     "check:strict": "tsc -p tsconfig.strict.json",
-    "regression": "npm run build && npm run check:strict && node scripts/check-frontend.js && node scripts/workspace-docking-check.js && node scripts/workspace-pane-isolation-check.js && node scripts/terminal-pty-check.js && node scripts/ssh-capabilities-check.js && node scripts/terminal-startup-check.js && node scripts/terminal-startup-api-check.js && node scripts/terminal-drop-upload-check.js && node scripts/terminal-log-session-check.js && node scripts/websocket-frame-check.js && node scripts/socks-forward-check.js && node scripts/auth-protection-check.js && node scripts/web-auth-integration-check.js && node scripts/log-reader-check.js && node scripts/database-transfer-check.js && node scripts/connection-duplicate-check.js && node scripts/sftp-encoding-check.js && node scripts/sftp-session-check.js && node scripts/sftp-download-integrity-check.js && node scripts/sftp-job-lifecycle-check.js && node scripts/sftp-backend-check.js && node scripts/sftp-delete-job-check.js && node scripts/sftp-native-drag-check.js && node native/win-sftp-drag/tests/source-contract-check.js && node scripts/native-sftp-drag-desktop-check.js && node scripts/fault-injection-check.js && node scripts/dependency-state-check.js && node scripts/desktop-startup-check.js && node scripts/source-runtime-path-check.js && node scripts/sftp-pagination-check.js && node scripts/update-checker-check.js && node scripts/update-installer-check.js && node scripts/runtime-settings-check.js && node scripts/database-reopen-check.js && node scripts/database-credential-backup-check.js && node scripts/ssh2-error-isolation-check.js && node scripts/web-regression-harness.js",
+    "regression": "npm run build && npm run check:strict && node scripts/check-frontend.js && node scripts/update-markdown-check.js && node scripts/remote-install-ui-check.js && node scripts/remote-component-install-plans-check.js && node scripts/remote-privilege-check.js && node scripts/remote-protocol-check.js && node scripts/remote-profile-migration-check.js && node scripts/remote-profile-from-ssh-check.js && node scripts/remote-host-group-check.js && node scripts/remote-client-adapter-check.js && node scripts/remote-offline-installer-check.js && node scripts/remote-offline-tasks-check.js && node scripts/xserver-runtime-check.js && node scripts/remote-posix-check.js && node scripts/x11-application-check.js && node scripts/x11-sshd-config-check.js && node scripts/linux-desktop-manager-check.js && node scripts/xdmcp-manager-check.js && node scripts/vnc-handshake-check.js && node scripts/vnc-proxy-check.js && node scripts/vnc-server-manager-check.js && node scripts/vnc-credential-check.js && node scripts/vnc-clipboard-check.js && node scripts/vnc-clipboard-bridge-check.js && node scripts/vnc-workspace-reuse-check.js && node scripts/productivity-features-check.js && node scripts/sftp-sync-check.js && node scripts/ssh-key-wizard-check.js && node scripts/workspace-docking-check.js && node scripts/workspace-pane-isolation-check.js && node scripts/terminal-pty-check.js && node scripts/ssh-capabilities-check.js && node scripts/ssh-connection-check.js && node scripts/ssh-auth-matrix-check.js && node scripts/terminal-startup-check.js && node scripts/terminal-startup-api-check.js && node scripts/terminal-drop-upload-check.js && node scripts/local-files-check.js && node scripts/local-files-ui-check.js && node scripts/sftp-local-delivery-check.js && node scripts/terminal-log-session-check.js && node scripts/websocket-frame-check.js && node scripts/socks-forward-check.js && node scripts/auth-protection-check.js && node scripts/web-auth-integration-check.js && node scripts/log-reader-check.js && node scripts/database-transfer-check.js && node scripts/connection-duplicate-check.js && node scripts/sftp-encoding-check.js && node scripts/sftp-session-check.js && node scripts/sftp-download-integrity-check.js && node scripts/sftp-job-lifecycle-check.js && node scripts/sftp-backend-check.js && node scripts/sftp-delete-job-check.js && node scripts/sftp-native-drag-check.js && node native/win-sftp-drag/tests/source-contract-check.js && node scripts/native-sftp-drag-desktop-check.js && node scripts/fault-injection-check.js && node scripts/dependency-state-check.js && node scripts/desktop-startup-check.js && node scripts/source-runtime-path-check.js && node scripts/sftp-pagination-check.js && node scripts/update-checker-check.js && node scripts/update-installer-check.js && node scripts/runtime-settings-check.js && node scripts/database-reopen-check.js && node scripts/database-credential-backup-check.js && node scripts/ssh-host-trust-check.js && node scripts/ssh2-error-isolation-check.js && node scripts/web-regression-harness.js",
     "ui:smoke": "npm run build && node scripts/ui-smoke-harness.js",
+    "graphics:acceptance": "npm run build && node scripts/remote-graphics-real-acceptance.js --confirm-real-graphics",
+    "x11:acceptance": "npm run build && node scripts/x11-builtin-real-acceptance.js --confirm-real-x11",
+    "xdmcp:acceptance": "npm run build && node scripts/xdmcp-real-acceptance.js --confirm-real-xdmcp",
     "sftp:acceptance": "npm run build && node scripts/sftp-real-acceptance.js --confirm-real-sftp"
   },
   "engines": {
@@ -39,16 +44,19 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@novnc/novnc": "^1.7.0",
     "@pondwader/socks5-server": "^1.0.10",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "ace-builds": "^1.44.0",
+    "basic-ftp": "^6.2.0",
     "iconv-lite": "^0.7.3",
     "lucide": "^1.24.0",
     "ssh2": "^1.17.0"
   },
   "optionalDependencies": {
-    "node-pty": "^1.1.0"
+    "node-pty": "^1.1.0",
+    "serialport": "^13.0.0"
   },
   "build": {
     "appId": "com.zmide.tunneldesk",
@@ -71,7 +79,8 @@
       "package.json"
     ],
     "extraResources": [
-      "LICENSE"
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
     ],
     "asarUnpack": [
       "node_modules/node-pty/**/*",
@@ -80,6 +89,12 @@
     "afterPack": "scripts/after-pack.js",
     "win": {
       "icon": "desktop/assets/icon.ico",
+      "extraResources": [
+        {
+          "from": "runtime/xserver/win32",
+          "to": "xserver"
+        }
+      ],
       "target": [
         "nsis",
         "portable"

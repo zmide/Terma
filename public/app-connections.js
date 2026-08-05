@@ -23,13 +23,26 @@ function connectionToggleButton(c){
   return `<button class="connection-forward-toggle" title="${text}" onclick="connectionForwardAction(${c.id},'${action}',this)">${icon(action === "start" ? "play" : "square")}<span>${text}</span></button>`;
 }
 
+function connectionCompactToggleButton(c){
+  const action=connectionHasRunningForwards(c)?"stop":"start";
+  const text=action==="start"?"启用转发":"停止转发";
+  return `<button class="icon-button connection-forward-toggle${action === "stop" ? " is-running" : ""}" title="${text}" aria-label="${text}" onclick="connectionForwardAction(${c.id},'${action}',this)">${icon(action === "start" ? "play" : "square")}</button>`;
+}
+
 function showConnectionMenu(event, id) {
   const c = connections.find(item => item.id === id);
   if (!c) return;
+  const remoteOpenActions = typeof remoteProfileOpenActionsForSsh === "function" ? remoteProfileOpenActionsForSsh(id) : [];
   showActionMenu(event, [
-    {label:"SFTP 文件", icon:"folder-open", run:()=>openSftp(id)},
+    {label:"SFTP 文件", icon:"folder-open", run:()=>runAppAction("connection.sftp", {connectionId:id})},
     {label:"服务器仪表盘", icon:"gauge", run:()=>openServerDashboard(id)},
     {label:"健康检查", icon:"activity", run:()=>checkConnectionHealth(id)},
+    {label:c.notifications_muted ? "开启命令通知" : "静音命令通知", icon:c.notifications_muted ? "bell" : "bell-off", run:()=>toggleConnectionNotifications(id)},
+    {label:c.x11_mode && c.x11_mode !== "off" ? "X11 图形终端（默认已开启）" : "X11 图形终端", icon:"app-window", children:()=>x11LaunchActions(id)},
+    ...(remoteOpenActions.length ? [
+      {label:"打开其他连接…", icon:"external-link", children:()=>remoteOpenActions},
+    ] : []),
+    {label:"生成其他连接…", icon:"plug-zap", children:()=>remoteProfileFromSshActions(id)},
     {separator:true},
     {label:"复制", icon:"copy", run:()=>duplicateConnection(id)},
     {label:"编辑连接", icon:"pencil", run:()=>editConnection(id)},
@@ -48,15 +61,31 @@ function showConnectionGroupMenu(event, groupName) {
   ]);
 }
 
-function orderedConnectionGroupNames() {
-  return [...new Set(connections.map(item => item.group_name || "默认分组"))];
+function connectionGroupItems(view=primaryView) {
+  return view === "remote" ? remoteProfiles : connections;
+}
+
+function orderedConnectionGroupNames(view=primaryView) {
+  return [...new Set(connectionGroupItems(view).map(item => item.group_name || "默认分组"))];
+}
+
+function activeConnectionGroupOpen() {
+  return primaryView === "remote" ? remoteGroupOpen : groupOpen;
+}
+
+function saveActiveConnectionGroupState() {
+  if (primaryView === "remote") saveRemoteGroupState();
+  else saveGroupState();
 }
 
 async function saveConnectionGroupOrder(names) {
-  await api("/api/connection-groups/reorder", {method:"POST", body:JSON.stringify({names})});
-  const order = new Map(names.map((name,index) => [name,index]));
+  const allNames = [...new Set([...connections, ...remoteProfiles].map(item => item.group_name || "默认分组"))];
+  const mergedNames = [...names, ...allNames.filter(name => !names.includes(name))];
+  await api("/api/connection-groups/reorder", {method:"POST", body:JSON.stringify({names:mergedNames})});
+  const order = new Map(mergedNames.map((name,index) => [name,index]));
   // The API already defines each group's item order; stable sort only moves whole groups.
   connections.sort((a,b) => (order.get(a.group_name) ?? names.length) - (order.get(b.group_name) ?? names.length));
+  remoteProfiles.sort((a,b) => (order.get(a.group_name) ?? names.length) - (order.get(b.group_name) ?? names.length));
   renderConnections();
 }
 
@@ -78,7 +107,7 @@ function toggleConnectionGroupFromHeader(groupName) {
 }
 
 function beginConnectionGroupDrag(event, groupName) {
-  if (connectionSearch || event.button > 0) return;
+  if ((primaryView === "remote" ? remoteConnectionSearch : connectionSearch) || event.button > 0) return;
   const group = event.currentTarget.closest(".group");
   const originalNames = [...$("connectionGroups").querySelectorAll(".group[data-group-name]")].map(item => decodeURIComponent(item.dataset.groupName));
   const state = {group, groupName, originalNames, pointerId:event.pointerId, startX:event.clientX, startY:event.clientY, active:false, timer:0};
@@ -165,13 +194,14 @@ async function renameConnectionGroup(currentName) {
     method:"POST",
     body:JSON.stringify({current_name:currentName, new_name:nextName})
   });
-  groupOpen.delete(currentName);
-  groupOpen.add(result.group_name);
+  if (groupOpen.delete(currentName)) groupOpen.add(result.group_name);
+  if (remoteGroupOpen.delete(currentName)) remoteGroupOpen.add(result.group_name);
   saveGroupState();
+  saveRemoteGroupState();
   await loadAll();
   if (groupSelect?.isConnected) {
     const nextValue = groupSelect.value === currentName ? result.group_name : groupSelect.value;
-    groupSelect.innerHTML = groupNames(nextValue).map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join("") + `<option value="__new_group__">新增分组...</option>`;
+    groupSelect.innerHTML = groupNames(nextValue, "ssh").map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join("") + `<option value="__new_group__">新增分组...</option>`;
     groupSelect.value = nextValue;
   }
   notify(`分组已重命名，更新 ${result.updated} 个连接`, "success");
@@ -184,10 +214,12 @@ function renderConnections(){
   }
   if (primaryView === "logs") return renderLogs().catch(e=>notify(e.message,"error"));
   if (primaryView === "running") return renderRunningForwards();
+  if (primaryView === "remote") return renderRemoteConnections();
   const uiState = captureUiState($("connectionGroups") || document);
   connectionVirtual.scrollTop = $("connectionGroups")?.scrollTop || connectionVirtual.scrollTop;
-  const groups = filteredConnections().reduce((m,c)=>{(m[c.group_name] ||= []).push(c); return m;},{});
-  const names = Object.keys(groups);
+  const sshGroups = filteredConnections().reduce((m,c)=>{(m[c.group_name] ||= []).push(c); return m;},{});
+  const names = [...new Set([...orderedConnectionGroupNames("connections"), ...Object.keys(sshGroups)])]
+    .filter(name => sshGroups[name]?.length);
   const existingIds = new Set(connections.map(c => c.id));
   [...selectedConnectionIds].forEach(id => { if (!existingIds.has(id)) selectedConnectionIds.delete(id); });
   const groupHtml = names.map(g=>{
@@ -195,13 +227,13 @@ function renderConnections(){
     return `<div class="group" data-group-name="${encodeURIComponent(g)}">
       <div class="group-head-row connection-group-head-row">
         <span class="connection-group-drag-handle" role="button" tabindex="0" title="长按拖动分组排序" aria-label="长按拖动 ${escAttr(g)} 分组排序" onpointerdown="beginConnectionGroupDrag(event,decodeURIComponent('${encodeURIComponent(g)}'))">${icon("grip-vertical")}</span>
-        <button class="group-head" onclick="toggleConnectionGroupFromHeader(decodeURIComponent('${encodeURIComponent(g)}'))" oncontextmenu="showConnectionGroupMenu(event,decodeURIComponent('${encodeURIComponent(g)}'))"><span class="chev">${open ? "▾" : "▸"}</span><span>${esc(g)}</span><span class="count">${groups[g].length}</span></button>
+        <button class="group-head" onclick="toggleConnectionGroupFromHeader(decodeURIComponent('${encodeURIComponent(g)}'))" oncontextmenu="showConnectionGroupMenu(event,decodeURIComponent('${encodeURIComponent(g)}'))"><span class="chev">${open ? "▾" : "▸"}</span><span>${esc(g)}</span><span class="count">${sshGroups[g]?.length || 0}</span></button>
         <button class="icon-button connection-group-menu-button" onclick="showConnectionGroupMenu(event,decodeURIComponent('${encodeURIComponent(g)}'))" title="分组操作" aria-label="${escAttr(g)} 分组操作">${icon("ellipsis")}</button>
       </div>
-      ${open ? renderVirtualConnectionRows(groups[g]) : ""}
+      ${open ? renderVirtualConnectionRows(sshGroups[g] || []) : ""}
     </div>`;
   }).join("");
-  const emptyHtml = stateView("empty", connectionSearch ? "没有匹配的连接" : "暂无 SSH 连接", connectionSearch ? "请调整搜索关键词。" : "添加第一台服务器后即可使用终端、转发和 SFTP。", connectionSearch ? `<button onclick="setConnectionSearch('')">清除搜索</button>` : `<button class="primary" onclick="newConnection()">添加 SSH</button>`);
+  const emptyHtml = stateView("empty", connectionSearch ? "没有匹配的 SSH 连接" : "暂无 SSH 连接", connectionSearch ? "请调整搜索关键词。" : "添加 SSH 连接后即可打开终端、SFTP、转发和 X11。", connectionSearch ? `<button onclick="setConnectionSearch('')">清除搜索</button>` : `<button class="primary" onclick="newConnection()">添加 SSH</button>`);
   $("connectionGroups").innerHTML = renderGroupCreator() + renderConnectionBulkBar() + (groupHtml || emptyHtml);
   restoreUiState(uiState);
   syncConnectionBulkBar();
@@ -281,11 +313,14 @@ function confirmAddGroup() {
   const name = $("newGroupName")?.value.trim();
   if (!name) return notify("请输入分组名称", "error");
   pendingGroup = name;
-  groupOpen.add(name);
-  saveGroupState();
+  activeConnectionGroupOpen().add(name);
+  saveActiveConnectionGroupState();
   addingGroup = false;
   renderConnections();
-  newConnection(name);
+  if (primaryView === "remote") {
+    pendingGroup = "";
+    newRemoteProfile("rdp", name);
+  } else newConnection(name);
 }
 
 function cancelAddGroup() {
@@ -305,22 +340,76 @@ function renderConnectionRow(c) {
     ${bulkCheck}
     <div class="conn-main"><span class="conn-name">${esc(c.name)}</span><span class="conn-state"><span class="status-dot${running}"></span>${running ? "运行中" : "已停止"}</span></div>
     <div class="conn-meta">${esc(c.ssh_user)}@${esc(c.ssh_host)}:${c.ssh_port}</div>
-    <div class="conn-summary"><span>${icon("route")} ${c.forwards.length} 条转发</span><span class="health-badge${healthClass}">${icon(health?.ok ? "circle-check" : health ? "circle-alert" : "circle-help")} ${esc(healthText)}</span></div>
     ${c.tags ? `<div class="forward-tags">${String(c.tags).split(",").filter(Boolean).map(tag=>`<span>${esc(tag)}</span>`).join("")}</div>` : ""}
-    <div class="conn-actions">
-      <button onclick="openTerminal(${c.id})">${icon("square-terminal")}<span>终端</span></button>
-      <button onclick="openForwards(${c.id})">${icon("route")}<span>转发</span></button>
-      ${connectionToggleButton(c)}
-      <button class="icon-button" onclick="showConnectionMenu(event,${c.id})" title="更多操作" aria-label="更多操作">${icon("ellipsis")}</button>
+    <div class="conn-footer">
+      <div class="conn-summary"><span title="${c.forwards.length} 条转发">${icon("route")} ${c.forwards.length}</span><span class="health-badge${healthClass}" title="健康状态：${escAttr(healthText)}" aria-label="健康状态：${escAttr(healthText)}">${icon(health?.ok ? "circle-check" : health ? "circle-alert" : "circle-help")}</span></div>
+      <div class="conn-actions" aria-label="${escAttr(c.name)} 快捷操作">
+        <button class="icon-button conn-primary-action" onclick="openTerminal(${c.id})" title="打开终端" aria-label="打开终端">${icon("square-terminal")}</button>
+        <button class="icon-button" onclick="openForwards(${c.id})" title="管理转发" aria-label="管理转发">${icon("route")}</button>
+        ${connectionCompactToggleButton(c)}
+        <button class="icon-button connection-favorite${c.favorite ? " active" : ""}" onclick="toggleConnectionFavorite(event,${c.id},${c.favorite ? 0 : 1})" title="${c.favorite ? "取消收藏" : "收藏连接"}" aria-label="${c.favorite ? "取消收藏" : "收藏连接"}" aria-pressed="${c.favorite ? "true" : "false"}">${icon("star")}</button>
+        <button class="icon-button" onclick="showConnectionMenu(event,${c.id})" title="更多操作" aria-label="更多操作">${icon("ellipsis")}</button>
+      </div>
     </div>
   </div>`;
+}
+
+function renderRemoteHostGroups(profiles) {
+  const grouped = new Map();
+  for (const profile of profiles || []) {
+    const key = remoteHostKey(profile);
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(profile);
+  }
+  const keys = [...grouped.keys()];
+  const searching = Boolean(String(remoteConnectionSearch || "").trim());
+  return keys.map(key => {
+    const items = grouped.get(key) || [];
+    const first = items[0] || {};
+    const encoded = encodeURIComponent(key);
+    const open = searching || remoteHostOpen.has(key);
+    const label = remoteHostLabel(first);
+    return `<div class="remote-host-group" data-remote-host-key="${encoded}">
+      <div class="remote-host-head-row">
+        <button class="remote-host-head" type="button" onclick="toggleRemoteHostOpen(decodeURIComponent('${encoded}'))" aria-expanded="${open ? "true" : "false"}">
+          <span class="chev">${open ? "▾" : "▸"}</span><span class="remote-host-icon">${icon("server")}</span><span class="remote-host-label" title="${escAttr(label)}">${esc(label)}</span><span class="count">${items.length}</span>
+        </button>
+      </div>
+      ${open ? items.map(profile => renderRemoteProfileRow(profile)).join("") : ""}
+    </div>`;
+  }).join("");
+}
+
+function renderRemoteConnections() {
+  const uiState = captureUiState($("connectionGroups") || document);
+  const visibleProfiles = filteredRemoteProfiles();
+  const groups = visibleProfiles.reduce((result,profile)=>{(result[profile.group_name] ||= []).push(profile); return result;},{});
+  const names = [...new Set([...orderedConnectionGroupNames("remote"), ...Object.keys(groups)])].filter(name => groups[name]?.length);
+  if (localStorage.getItem("openRemoteGroups") === null && names.length) {
+    names.forEach(name => remoteGroupOpen.add(name));
+    saveRemoteGroupState();
+  }
+  const groupHtml = names.map(name => {
+    const open = remoteGroupOpen.has(name);
+    return `<div class="group" data-group-name="${encodeURIComponent(name)}">
+      <div class="group-head-row connection-group-head-row">
+        <span class="connection-group-drag-handle" role="button" tabindex="0" title="长按拖动分组排序" aria-label="长按拖动 ${escAttr(name)} 分组排序" onpointerdown="beginConnectionGroupDrag(event,decodeURIComponent('${encodeURIComponent(name)}'))">${icon("grip-vertical")}</span>
+        <button class="group-head" onclick="toggleConnectionGroupFromHeader(decodeURIComponent('${encodeURIComponent(name)}'))" oncontextmenu="showConnectionGroupMenu(event,decodeURIComponent('${encodeURIComponent(name)}'))"><span class="chev">${open ? "▾" : "▸"}</span><span>${esc(name)}</span><span class="count">${groups[name]?.length || 0}</span></button>
+        <button class="icon-button connection-group-menu-button" onclick="showConnectionGroupMenu(event,decodeURIComponent('${encodeURIComponent(name)}'))" title="分组操作" aria-label="${escAttr(name)} 分组操作">${icon("ellipsis")}</button>
+      </div>
+      ${open ? renderRemoteHostGroups(groups[name] || []) : ""}
+    </div>`;
+  }).join("");
+  const emptyHtml = stateView("empty", remoteConnectionSearch ? "没有匹配的其他连接" : "暂无其他连接", remoteConnectionSearch ? "请调整搜索关键词。" : "可以单独添加连接，也可以从 SSH 连接的更多菜单快速生成。", remoteConnectionSearch ? `<button onclick="setRemoteConnectionSearch('')">清除搜索</button>` : `<button class="primary" onclick="newRemoteProfile('rdp')">添加其他连接</button>`);
+  $("connectionGroups").innerHTML = renderGroupCreator() + (groupHtml || emptyHtml);
+  restoreUiState(uiState);
 }
 
 async function openConnectionBulkSettings() {
   const count = selectedConnectionIds.size;
   if (!count) return notify("请选择 SSH 连接", "info");
   const info = await api("/api/identity-files/info");
-  const groups = groupNames().map(name => `<option value="${escAttr(name)}"></option>`).join("");
+  const groups = groupNames("", "ssh").map(name => `<option value="${escAttr(name)}"></option>`).join("");
   $("modal").hidden = false;
   $("modal").innerHTML = `<div class="modal-card wide connection-bulk-modal">
     <h2>批量设置 SSH 连接</h2>
@@ -399,10 +488,49 @@ async function performBulkDeleteConnections() {
 }
 
 function toggleGroupOpen(group) {
-  if (groupOpen.has(group)) groupOpen.delete(group);
-  else groupOpen.add(group);
-  saveGroupState();
+  const openGroups = activeConnectionGroupOpen();
+  if (openGroups.has(group)) openGroups.delete(group);
+  else openGroups.add(group);
+  saveActiveConnectionGroupState();
   renderConnections();
+}
+
+function remoteHostKey(profile) {
+  const group = String(profile?.group_name || "默认分组").trim() || "默认分组";
+  const host = typeof normalizeRemoteHost === "function"
+    ? normalizeRemoteHost(profile?.host)
+    : String(profile?.host || "").trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "").replace(/^::ffff:/, "");
+  if (profile?.protocol === "serial") return JSON.stringify(["serial", group, String(profile?.options?.path || "local").trim().toLowerCase()]);
+  return JSON.stringify(["host", group, host || "unknown"]);
+}
+
+function remoteHostLabel(profile) {
+  if (profile?.protocol === "serial") return String(profile?.options?.path || "本机串口");
+  const normalize = typeof normalizeRemoteHost === "function"
+    ? normalizeRemoteHost
+    : value => String(value || "").trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "").replace(/^::ffff:/, "");
+  const host = normalize(profile?.host);
+  const sourceId = Number(profile?.options?.source_ssh_connection_id || profile?.options?.ssh_connection_id || 0);
+  const matched = connections.find(connection => Number(connection.id) === sourceId && normalize(connection.ssh_host) === host)
+    || connections.find(connection => normalize(connection.ssh_host) === host);
+  return String(matched?.name || profile?.host || "").trim() || "未设置主机";
+}
+
+function toggleRemoteHostOpen(key) {
+  const value = String(key || "");
+  if (!value) return;
+  if (remoteHostOpen.has(value)) remoteHostOpen.delete(value);
+  else remoteHostOpen.add(value);
+  saveRemoteHostState();
+  renderConnections();
+}
+
+function revealRemoteProfile(profile) {
+  if (!profile) return;
+  remoteGroupOpen.add(profile.group_name || "默认分组");
+  remoteHostOpen.add(remoteHostKey(profile));
+  saveRemoteGroupState();
+  saveRemoteHostState();
 }
 
 function addGroup() {
@@ -419,6 +547,21 @@ function newConnection(groupName="") {
   renderGroupOptions(groupName || pendingGroup);
   loadKeys().catch(()=>{});
   wireConnectionForm();
+}
+
+async function toggleConnectionFavorite(event, id, favorite) {
+  event?.stopPropagation?.();
+  await api(`/api/connections/${id}/flags`, {method:"POST", body:JSON.stringify({favorite:Number(favorite), notifications_muted:Number(currentConnection(id)?.notifications_muted || 0)})});
+  await loadAll();
+}
+
+function noteConnectionUsage(id, action="open") {
+  const connection = currentConnection(Number(id));
+  if (connection) connection.last_used_at = Date.now();
+  void api(`/api/connections/${Number(id)}/usage`, {
+    method:"POST",
+    body:JSON.stringify({action})
+  }).catch(() => {});
 }
 
 const CONNECTION_TERMINAL_PROFILE_GROUPS = [
@@ -779,11 +922,31 @@ function connPayload(form=$("connectionForm"), validateStartup=false) {
     auth_type:passwordAuth ? "password" : "key",
     identity_file:passwordAuth ? "" : field("conn_key").value,
     ssh_password:passwordAuth ? field("conn_password").value : "",
+    private_key_passphrase:passwordAuth ? "" : field("conn_key_passphrase")?.value || "",
+    clear_private_key_passphrase:Boolean(field("conn_clear_key_passphrase")?.checked),
+    ssh_agent_mode:passwordAuth ? "off" : field("conn_agent_mode")?.value || "auto",
+    jump_connection_id:Number(field("conn_jump")?.value || 0) || null,
+    connect_timeout_seconds:Number(field("conn_connect_timeout")?.value || 10),
+    keepalive_interval_seconds:Number(field("conn_keepalive_interval")?.value ?? 60),
+    keepalive_count_max:Number(field("conn_keepalive_count")?.value || 3),
+    tcp_keepalive:Number(field("conn_tcp_keepalive")?.value ?? 1),
+    x11_mode:field("conn_x11_mode")?.value || "off",
     tags:field("conn_tags").value.trim(),
     autostart_forwards:Number(field("conn_autostart").value),
     extra_args:field("conn_extra").value.trim(),
     ...startup
   };
+}
+
+function renderJumpConnectionOptions(selected="", currentId=0) {
+  const select = $("conn_jump");
+  if (!select) return;
+  const items = connections.filter(item => Number(item.id) !== Number(currentId) && !item.jump_connection_id);
+  select.replaceChildren(
+    new Option("直接连接", ""),
+    ...items.map(item => new Option(`${item.name} · ${item.ssh_user}@${item.ssh_host}:${item.ssh_port}`, String(item.id)))
+  );
+  select.value = selected ? String(selected) : "";
 }
 
 function toggleAuthFields() {
@@ -800,10 +963,15 @@ function toggleAuthFields() {
     passwordBox.setAttribute("aria-hidden", String(!password));
     passwordBox.querySelectorAll("input, select, button").forEach(control => { control.disabled = !password; });
   }
+  const x11 = $("conn_x11_mode");
+  if (x11) x11.title = password
+    ? "X11 图形转发由内置 SSH 使用已保存密码建立"
+    : "X11 图形转发默认由内置 SSH 建立，必要时安全回退系统 OpenSSH";
 }
 
-function groupNames(extra="") {
-  const names = new Set(connections.map(c => c.group_name || "默认分组"));
+function groupNames(extra="", kind="all") {
+  const items = kind === "ssh" ? connections : kind === "remote" ? remoteProfiles : [...connections, ...remoteProfiles];
+  const names = new Set(items.map(c => c.group_name || "默认分组"));
   names.add("默认分组");
   if (extra) names.add(extra);
   return [...names];
@@ -812,7 +980,7 @@ function groupNames(extra="") {
 function renderGroupOptions(selected="") {
   if (!$("conn_group")) return;
   const value = selected || pendingGroup || "默认分组";
-  $("conn_group").innerHTML = groupNames(value).map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join("") + `<option value="__new_group__">新增分组...</option>`;
+  $("conn_group").innerHTML = groupNames(value, "ssh").map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join("") + `<option value="__new_group__">新增分组...</option>`;
   $("conn_group").value = value;
   pendingGroupSelectValue = value;
   $("conn_group").onchange = handleGroupSelectChange;
@@ -867,6 +1035,18 @@ function resetConnectionForm(){
   $("conn_sort_order").value=1;
   $("conn_auth_type").value="key";
   $("conn_password").value="";
+  if ($("conn_key_passphrase")) $("conn_key_passphrase").value="";
+  if ($("conn_agent_mode")) $("conn_agent_mode").value="auto";
+  if ($("conn_clear_key_passphrase")) $("conn_clear_key_passphrase").checked=false;
+  if ($("connClearPassphraseLine")) $("connClearPassphraseLine").hidden=true;
+  if ($("conn_connect_timeout")) $("conn_connect_timeout").value="10";
+  if ($("conn_keepalive_interval")) $("conn_keepalive_interval").value="60";
+  if ($("conn_keepalive_count")) $("conn_keepalive_count").value="3";
+  if ($("conn_tcp_keepalive")) $("conn_tcp_keepalive").value="1";
+  if ($("conn_x11_mode")) $("conn_x11_mode").value="off";
+  if ($("conn_remote_generation")) $("conn_remote_generation").value="";
+  if ($("connRemoteGenerationLine")) $("connRemoteGenerationLine").hidden=false;
+  renderJumpConnectionOptions();
   $("conn_tags").value="";
   $("conn_autostart").value="0";
   if ($("connTestStatus")) {
@@ -874,10 +1054,7 @@ function resetConnectionForm(){
     $("connTestStatus").textContent = "";
     $("connTestStatus").className = "connection-test-status";
   }
-  $("conn_extra").value=`-o StrictHostKeyChecking=accept-new
--o ServerAliveInterval=60
--o ServerAliveCountMax=3
--o TCPKeepAlive=yes`;
+  $("conn_extra").value="";
   resetConnectionTerminalStartup($("connectionForm"));
   toggleAuthFields();
 }
@@ -890,12 +1067,12 @@ function wireConnectionForm() {
   });
   form._terminalCredentialRevision = Number(form._terminalCredentialRevision || 0);
   form.addEventListener("input", event => {
-    if (!event.target.matches("#conn_host,#conn_port,#conn_user,#conn_password,#conn_extra")) return;
+    if (!event.target.matches("#conn_host,#conn_port,#conn_user,#conn_password,#conn_key_passphrase,#conn_extra,#conn_connect_timeout,#conn_keepalive_interval,#conn_keepalive_count")) return;
     form._terminalCredentialRevision += 1;
     markConnectionTerminalDetectionStale(form);
   });
   form.addEventListener("change", event => {
-    if (!event.target.matches("#conn_host,#conn_port,#conn_user,#conn_auth_type,#conn_key,#conn_extra")) return;
+    if (!event.target.matches("#conn_host,#conn_port,#conn_user,#conn_auth_type,#conn_key,#conn_agent_mode,#conn_jump,#conn_extra")) return;
     form._terminalCredentialRevision += 1;
     markConnectionTerminalDetectionStale(form);
   });
@@ -909,8 +1086,22 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null) {
   if (trigger) setButtonBusy(trigger, true, "保存中...");
   try {
     const p=connPayload(form, true);
+    const generation = !p.id ? String($("conn_remote_generation")?.value || "") : "";
+    let generated = null;
     if(p.id) await api(`/api/connections/${p.id}`,{method:"PUT",body:JSON.stringify(p)});
-    else await api("/api/connections",{method:"POST",body:JSON.stringify(p)});
+    else {
+      const saved = await api("/api/connections",{method:"POST",body:JSON.stringify(p)});
+      if (generation && saved?.id) {
+        try {
+          generated = await api(`/api/connections/${saved.id}/remote-profiles`, {
+            method:"POST",
+            body:JSON.stringify({protocol:generation})
+          });
+        } catch (generationError) {
+          notify(`SSH 已保存，但其他连接生成失败：${generationError.message}`, "error");
+        }
+      }
+    }
     pendingGroup = "";
     groupOpen.add(p.group_name);
     saveGroupState();
@@ -923,9 +1114,11 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null) {
         $("conn_name")?.focus();
       });
       await keyLoad;
-      notify("连接已保存，表单已清空","success");
+      const generatedCount = generation === "all" ? Number(generated?.created_count || 0) : generated ? 1 : 0;
+      notify(`连接已保存${generatedCount ? `，并生成 ${generatedCount} 个其他连接` : ""}，表单已清空`,"success");
     } else {
-      notify("连接已保存","success");
+      const generatedCount = generation === "all" ? Number(generated?.created_count || 0) : generated ? 1 : 0;
+      notify(`连接已保存${generatedCount ? `，并生成 ${generatedCount} 个其他连接` : ""}`,"success");
     }
   } catch(err){notify(err.message,"error");}
   finally {
@@ -1189,6 +1382,7 @@ function editConnection(id, updateTab=true){
   $("view-edit").innerHTML = $("connectionFormTpl").innerHTML;
   $("conn_id").value=c.id;
   if ($("connSaveAndClear")) $("connSaveAndClear").hidden = true;
+  if ($("connRemoteGenerationLine")) $("connRemoteGenerationLine").hidden = true;
   $("conn_name").value=c.name;
   renderGroupOptions(c.group_name);
   $("conn_user").value=c.ssh_user;
@@ -1197,6 +1391,16 @@ function editConnection(id, updateTab=true){
   $("conn_sort_order").value=c.sort_order || 1;
   $("conn_auth_type").value=c.auth_type || "key";
   $("conn_password").value="";
+  $("conn_key_passphrase").value="";
+  $("conn_agent_mode").value=c.ssh_agent_mode || "auto";
+  $("connClearPassphraseLine").hidden=!c.has_private_key_passphrase;
+  $("conn_clear_key_passphrase").checked=false;
+  $("conn_connect_timeout").value=String(c.connect_timeout_seconds || 10);
+  $("conn_keepalive_interval").value=String(Number.isInteger(Number(c.keepalive_interval_seconds)) ? Number(c.keepalive_interval_seconds) : 60);
+  $("conn_keepalive_count").value=String(c.keepalive_count_max || 3);
+  $("conn_tcp_keepalive").value=String(Number(c.tcp_keepalive ?? 1) ? 1 : 0);
+  $("conn_x11_mode").value=c.x11_mode || "off";
+  renderJumpConnectionOptions(c.jump_connection_id, c.id);
   $("conn_tags").value=c.tags || "";
   $("conn_autostart").value=String(c.autostart_forwards||0);
   $("conn_extra").value=c.extra_args||"";

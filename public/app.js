@@ -6,8 +6,11 @@ const $ = id => {
     || document.getElementById(id);
 };
 let connections = [], selectedId = null, activeView = "welcome", primaryView = "connections";
+let remoteProfiles = [], selectedRemoteProfileId = null;
 let importState = {tunnels: [], missing_keys: []};
 const groupOpen = loadGroupState();
+const remoteGroupOpen = loadRemoteGroupState();
+const remoteHostOpen = loadRemoteHostState();
 const runningOpen = loadRunningState();
 const logOpen = loadLogState();
 const logPage = new Map();
@@ -27,6 +30,8 @@ let terminalGlobalSettings = null;
 let terminalGlobalSettingsPromise = null;
 let refreshInFlight = false;
 let connectionSearch = localStorage.getItem("connectionSearch") || "";
+let remoteConnectionSearch = localStorage.getItem("remoteConnectionSearch") || "";
+let remoteDesktopQuickOpen = localStorage.getItem("remoteDesktopQuickOpen") === "1";
 let connectionBulkMode = false;
 const selectedConnectionIds = new Set();
 let logSearch = "";
@@ -74,15 +79,17 @@ async function loadAll(options={}){
   refreshInFlight = true;
   try {
     const editingSettings = activeView === "settings" && document.activeElement && ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName);
-    const [connectionRows, templateRows, security] = await Promise.all([
+    const [connectionRows, remoteRows, templateRows, security] = await Promise.all([
       api("/api/connections"),
+      api("/api/remote-profiles").catch(() => remoteProfiles),
       api("/api/forward-templates").catch(() => forwardTemplates),
       editingSettings ? Promise.resolve(securitySettings) : api("/api/security").catch(() => securitySettings)
     ]);
     connections = connectionRows;
+    remoteProfiles = remoteRows || [];
     forwardTemplates = templateRows || [];
     if (!editingSettings) securitySettings = security;
-    if (primaryView === "connections") renderConnections();
+    if (["connections", "remote"].includes(primaryView)) renderConnections();
     else if (primaryView === "running") renderRunningForwards();
     if (activeView === "forwards") renderForwards();
     if (activeView === "welcome") renderStartupSummary();
@@ -126,6 +133,11 @@ renderWelcome();
 window.restoringTabs = false;
 $("connectionGroups")?.addEventListener("scroll", onConnectionScroll, {passive:true});
 document.addEventListener("contextmenu", showCommandContextMenu);
+$("modal")?.addEventListener("click", event => {
+  if (event.target !== event.currentTarget) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}, true);
 document.addEventListener("click", event => {
   hideActionMenu();
   hideCommandContextMenu();
@@ -155,3 +167,4 @@ startAutoRefresh();
 pollNotifications();
 refreshSftpJobs();
 startSftpJobsTimer();
+initProductivityFeatures();

@@ -38,7 +38,14 @@ export interface WindowsSftpDragSpec {
 
 export type WindowsSftpDragEvent =
   | {
-      type: "preparing" | "ready" | "started" | "motion" | "released";
+      type:
+        | "preparing"
+        | "ready"
+        | "started"
+        | "motion"
+        | "released"
+        | "consuming"
+        | "contentComplete";
       requestId: string;
       screenX?: number;
       screenY?: number;
@@ -66,6 +73,8 @@ export interface WindowsSftpDragStartResult {
 }
 
 export function probe(): WindowsSftpDragProbe;
+export function startX11WindowGuard(processId: number): boolean;
+export function stopX11WindowGuard(): boolean;
 export function startDrag(
   spec: WindowsSftpDragSpec,
   onRead: ((request: unknown) => void) | undefined | null,

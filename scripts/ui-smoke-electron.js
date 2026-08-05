@@ -1,9 +1,16 @@
 const { app, BrowserWindow, clipboard, session } = require("electron");
+const os = require("node:os");
 const path = require("node:path");
+const { runMobileScenario } = require("./ui-smoke-mobile-scenario");
+const { runVisualRegression } = require("./ui-visual-regression");
 
 const url = process.env.TUNNELDESK_CHECK_URL || "http://127.0.0.1:8099";
 const errors = [];
 let smokeWindow = null;
+let rendererFailure = null;
+const smokeUserData = process.env.TUNNELDESK_UI_USER_DATA || path.join(os.tmpdir(), `tunneldesk-ui-smoke-${process.pid}`);
+app.disableHardwareAcceleration();
+app.setPath("userData", smokeUserData);
 const smokeWatchdog = setTimeout(async () => {
   let stage = "unknown";
   try {
@@ -23,6 +30,10 @@ app.whenReady().then(async () => {
     }
   });
   window.webContents.on("did-fail-load", (_event, code, description) => errors.push(`${code}: ${description}`));
+  window.webContents.on("render-process-gone", (_event, details) => {
+    rendererFailure = {reason:details.reason, exitCode:details.exitCode};
+    errors.push(`renderer process gone: ${details.reason} (${details.exitCode})`);
+  });
   await window.loadURL(url);
   await new Promise(resolve => setTimeout(resolve, 1200));
   console.log("[ui-smoke] page loaded");
@@ -115,6 +126,53 @@ app.whenReady().then(async () => {
     applyActivityBarWidth(activityWidthBefore,{fit:false});
     if (activityStoredBefore === null) localStorage.removeItem('activityBarWidth');
     else localStorage.setItem('activityBarWidth',activityStoredBefore);
+    const operationPaneRect = document.querySelector('.left-pane')?.getBoundingClientRect();
+    const connectionToolStrip = document.querySelector('#explorerTools .connection-action-strip');
+    const connectionToolStripRect = connectionToolStrip?.getBoundingClientRect();
+    const connectionToolButtons = [...(connectionToolStrip?.querySelectorAll('button') || [])].map(button=>button.getBoundingClientRect());
+    const connectionFooter = document.querySelector('.conn-footer');
+    const connectionFooterRect = connectionFooter?.getBoundingClientRect();
+    const connectionActionButtons = [...document.querySelectorAll('.conn-actions > button')];
+    const explorerTree = document.querySelector('#connectionGroups')?.closest('.tree');
+    const compactOperationPane = Boolean(operationPaneRect&&operationPaneRect.width<=292.5&&operationPaneRect.width>=280);
+    const compactConnectionTools = Boolean(connectionToolStripRect&&connectionToolButtons.length===4&&connectionToolButtons.every(rect=>Math.abs((rect.top+rect.bottom)-(connectionToolStripRect.top+connectionToolStripRect.bottom))<2&&rect.left>=connectionToolStripRect.left-0.5&&rect.right<=connectionToolStripRect.right+0.5));
+    const compactConnectionRows = Boolean(connectionFooterRect&&connectionActionButtons.length===5&&connectionActionButtons.every(button=>{const rect=button.getBoundingClientRect();return !button.textContent.trim()&&rect.width<=30&&rect.left>=connectionFooterRect.left-0.5&&rect.right<=connectionFooterRect.right+0.5;}));
+    const operationHandle = document.querySelector('#operationPaneResize');
+    const operationStoredBefore = localStorage.getItem('operationPaneWidth');
+    const operationWidthBefore = operationPaneWidth;
+    let operationPaneResizable = false;
+    if (operationHandle) {
+      const handleRect = operationHandle.getBoundingClientRect();
+      const startX = handleRect.left + handleRect.width / 2;
+      operationHandle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:92,pointerType:'mouse',button:0,clientX:startX,clientY:handleRect.top+20}));
+      window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:92,pointerType:'mouse',button:0,clientX:startX+1000,clientY:handleRect.top+20}));
+      window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:92,pointerType:'mouse',button:0,clientX:startX+1000,clientY:handleRect.top+20}));
+      const pointerMax = operationPaneWidth === OPERATION_PANE_WIDTH_MAX
+        && Number(localStorage.getItem('operationPaneWidth')) === OPERATION_PANE_WIDTH_MAX
+        && operationPaneResize === null
+        && !document.body.classList.contains('operation-pane-resizing');
+      operationHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'Home'}));
+      const keyboardMin = operationPaneWidth === OPERATION_PANE_WIDTH_MIN
+        && document.documentElement.classList.contains('operation-pane-narrow');
+      operationHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'ArrowRight',shiftKey:true}));
+      const keyboardStep = operationPaneWidth === OPERATION_PANE_WIDTH_MIN + 16
+        && !document.documentElement.classList.contains('operation-pane-narrow');
+      operationHandle.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
+      const keyboardMax = operationPaneWidth === OPERATION_PANE_WIDTH_MAX;
+      operationHandle.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
+      const doubleClickReset = operationPaneWidth === OPERATION_PANE_WIDTH_DEFAULT
+        && Number(localStorage.getItem('operationPaneWidth')) === OPERATION_PANE_WIDTH_DEFAULT;
+      operationPaneResizable = getComputedStyle(operationHandle).display !== 'none'
+        && handleRect.width >= 6
+        && operationHandle.getAttribute('aria-orientation') === 'vertical'
+        && Number(operationHandle.getAttribute('aria-valuemin')) === OPERATION_PANE_WIDTH_MIN
+        && Number(operationHandle.getAttribute('aria-valuemax')) === OPERATION_PANE_WIDTH_MAX
+        && Number(operationHandle.getAttribute('aria-valuenow')) === OPERATION_PANE_WIDTH_DEFAULT
+        && pointerMax && keyboardMin && keyboardStep && keyboardMax && doubleClickReset;
+    }
+    applyOperationPaneWidth(operationWidthBefore,{fit:false});
+    if (operationStoredBefore === null) localStorage.removeItem('operationPaneWidth');
+    else localStorage.setItem('operationPaneWidth',operationStoredBefore);
     const brandHeight = document.querySelector('.brand')?.getBoundingClientRect().height || 0;
     const topbarHeight = document.querySelector('.topbar')?.getBoundingClientRect().height || 0;
     const tabsHeight = document.querySelector('.tabs')?.getBoundingClientRect().height || 0;
@@ -141,7 +199,7 @@ app.whenReady().then(async () => {
     );
     const forwardToggle = document.querySelector('.conn-actions .connection-forward-toggle');
     const forwardToggleRect = forwardToggle?.getBoundingClientRect();
-    const forwardToggleSpanRect = forwardToggle?.querySelector('span')?.getBoundingClientRect();
+    const connectionActionsRect = forwardToggle?.closest('.conn-actions')?.getBoundingClientRect();
     const originalPaneCollapsed = operationPaneCollapsed;
     const originalPrimaryView = primaryView;
     const originalPanePinnedByView = {...operationPanePinnedByView};
@@ -247,6 +305,11 @@ app.whenReady().then(async () => {
       groupActionButton: Boolean(groupActionButton && groupActionButton.getAttribute('aria-label')?.includes('分组操作')),
       stickyGroupHeaders,
       stickyGroupHeaderSealsTop,
+      compactOperationPane,
+      compactConnectionTools,
+      compactConnectionRows,
+      operationPaneHorizontalScrollHidden:Boolean(explorerTree&&getComputedStyle(explorerTree).overflowX==='hidden'),
+      operationPaneResizable,
       operationPaneCollapsible: expandedBrand && collapsedBrand && paneExpanded && paneCollapsed && differentActivityExpands && activeActivityCollapses && collapsedContentWidth >= expandedContentWidth + 250,
       operationPanePinBehavior: pinGuideShownOnce&&pinGuideTargetsPin&&pinGuideDoesNotRepeat&&runningPinShowsAutoCollapse&&unpinnedContentClickCollapses&&pinnedContentClickStaysOpen&&independentPinPersistence,
       activityUtilities: document.querySelector('.activity-bottom')?.children[0]?.id === 'themeToggle'
@@ -262,10 +325,10 @@ app.whenReady().then(async () => {
         && workspacePaddingTop <= 12.5,
       forwardToggleFits: Boolean(
         forwardToggle
-        && forwardToggle.textContent.trim() === '停止转发'
+        && forwardToggle.getAttribute('aria-label') === '停止转发'
         && forwardToggleRect
-        && forwardToggleSpanRect
-        && forwardToggleSpanRect.right <= forwardToggleRect.right - 2
+        && connectionActionsRect
+        && forwardToggleRect.right <= connectionActionsRect.right + 0.5
       ),
       activity: {
         count: activityItems.length,
@@ -361,9 +424,9 @@ app.whenReady().then(async () => {
     const previousStoredTabs = localStorage.getItem('workspaceTabs');
     try {
       tabs = [
-        {key:'drag-a',title:'bt01 · 终端',subtitle:'root@bt01.example:22',viewName:'welcome',closable:true,kind:'fixture'},
-        {key:'drag-b',title:'测试 · 终端 #5',subtitle:'root@192.0.2.5:22',viewName:'welcome',closable:true,kind:'fixture'},
-        {key:'drag-c',title:'标签 C',subtitle:'',viewName:'welcome',closable:true,kind:'fixture'}
+        {key:'drag-a',title:'bt01 · 终端',subtitle:'root@bt01.example:22',viewName:'welcome',closable:true,kind:'terminal',id:900001},
+        {key:'drag-b',title:'测试 · 终端 #5',subtitle:'root@192.0.2.5:22',viewName:'welcome',closable:true,kind:'terminal',id:900002},
+        {key:'drag-c',title:'标签 C · SFTP',subtitle:'',viewName:'welcome',closable:true,kind:'sftp',id:900003}
       ];
       activeTabKey = 'drag-b';
       renderTabs();
@@ -373,6 +436,47 @@ app.whenReady().then(async () => {
       const lastRect = last.getBoundingClientRect();
       const shortTitleRect = last.querySelector('.tab-title').getBoundingClientRect();
       const shortCloseRect = last.querySelector('.tab-close').getBoundingClientRect();
+      const terminalKindIcon = first.querySelector('.tab-kind-icon.terminal svg');
+      const sftpKindIcon = last.querySelector('.tab-kind-icon.sftp svg');
+      const compactKindLabels = first.querySelector('.tab-title').textContent === 'bt01'
+        && document.querySelector('.tab[data-tab-key="drag-b"] .tab-title').textContent === '测试 #5'
+        && last.querySelector('.tab-title').textContent === '标签 C';
+      const distinctKindIcons = Boolean(terminalKindIcon && sftpKindIcon && terminalKindIcon.outerHTML !== sftpKindIcon.outerHTML);
+      const remoteProtocolHost = document.createElement('div');
+      remoteProtocolHost.className = 'tabs';
+      remoteProtocolHost.style.cssText = 'position:fixed;left:8px;top:8px;height:var(--workspace-tab-height);visibility:hidden;pointer-events:none';
+      const remoteProtocolFixtures = [
+        {key:'remote-rdp',title:'Linux图形界面测试 · RDP',kind:'remote-desktop',protocol:'rdp'},
+        {key:'remote-vnc',title:'Linux图形界面测试 · VNC',kind:'remote-desktop',protocol:'vnc'},
+        {key:'remote-xdmcp',title:'Linux图形界面测试 · XDMCP',kind:'remote-desktop'}
+      ];
+      remoteProtocolHost.innerHTML = remoteProtocolFixtures.map(tab => {
+        const presentation = workspaceTabPresentation(tab);
+        return '<button class="tab" data-test-protocol="'+tab.key+'">'+presentation.icon+'<span class="tab-title">'+presentation.title+'</span></button>';
+      }).join('');
+      document.body.appendChild(remoteProtocolHost);
+      const remoteProtocolTabs = [...remoteProtocolHost.querySelectorAll('.tab')];
+      const remoteProtocolTitlesCompact = remoteProtocolTabs.every(tab => tab.querySelector('.tab-title')?.textContent === 'Linux图形界面测试');
+      const remoteProtocolLetters = remoteProtocolTabs.map(tab => tab.querySelector('.tab-protocol-letter')?.textContent || '');
+      const remoteProtocolMonitorBadges = remoteProtocolTabs.every(tab => {
+        const badge = tab.querySelector('.tab-kind-icon.remote-desktop');
+        const badgeRect = badge?.getBoundingClientRect();
+        const letterRect = badge?.querySelector('.tab-protocol-letter')?.getBoundingClientRect();
+        return Boolean(badge?.querySelector('svg') && badgeRect && letterRect
+          && letterRect.left >= badgeRect.left - 0.5 && letterRect.right <= badgeRect.right + 0.5
+          && letterRect.top >= badgeRect.top - 0.5 && letterRect.bottom <= badgeRect.bottom + 0.5);
+      });
+      const remoteProtocolThemeColors = remoteProtocolTabs.map(tab => getComputedStyle(tab.querySelector('.tab-kind-icon')).color);
+      const remoteProtocolThemeAware = new Set(remoteProtocolThemeColors).size === 3
+        && remoteProtocolThemeColors.every(color => color && color !== 'rgba(0, 0, 0, 0)');
+      remoteProtocolHost.remove();
+      const activeTab = document.querySelector('.tab[data-tab-key="drag-b"]');
+      const inactiveStyle = getComputedStyle(first);
+      const activeStyle = getComputedStyle(activeTab);
+      const activeSelectionVisible = activeTab.classList.contains('active')
+        && activeStyle.backgroundColor !== inactiveStyle.backgroundColor
+        && activeStyle.boxShadow !== 'none'
+        && Number.parseInt(activeStyle.fontWeight, 10) >= 600;
       const shortTabUsesContentWidth = lastRect.width < 120
         && shortCloseRect.left - shortTitleRect.right >= 4
         && shortCloseRect.left - shortTitleRect.right <= 8;
@@ -384,7 +488,7 @@ app.whenReady().then(async () => {
       const dragGhost = document.querySelector('.workspace-tab-drag-ghost');
       const insertionIndicator = activeDraggedTab?.closest('.workspace-pane')?.querySelector('.workspace-tab-insert-indicator');
       const beganImmediately = Boolean(workspaceTabDrag?.dragging && activeDraggedTab?.classList.contains('tab-dragging') && document.body.classList.contains('workspace-tab-drag-active'));
-      const dragGhostVisible = Boolean(dragGhost && dragGhost.textContent.includes('bt01 · 终端') && getComputedStyle(dragGhost).display !== 'none');
+      const dragGhostVisible = Boolean(dragGhost && dragGhost.textContent.includes('bt01') && !dragGhost.textContent.includes('终端') && getComputedStyle(dragGhost).display !== 'none');
       const dropPositionVisible = Boolean(
         insertionIndicator
         && !insertionIndicator.hidden
@@ -453,6 +557,13 @@ app.whenReady().then(async () => {
         touchReady,
         commonTitleFits,
         numberedSessionTitleFits,
+        compactKindLabels,
+        distinctKindIcons,
+        remoteProtocolTitlesCompact,
+        remoteProtocolLetters,
+        remoteProtocolMonitorBadges,
+        remoteProtocolThemeAware,
+        activeSelectionVisible,
         tabFontWithinResizeRange,
         shortTabUsesContentWidth,
         fullTitleTooltip,
@@ -777,6 +888,117 @@ app.whenReady().then(async () => {
       else localStorage.setItem('workspaceTabs', previousStoredTabs);
     }
   })()`);
+  console.log("[ui-smoke] workspace tab visibility");
+  const workspaceTabVisibilityUi = await window.webContents.executeJavaScript(`(async () => {
+    const previousTabs = tabs.map(tab => ({...tab}));
+    const previousLayout = JSON.parse(JSON.stringify(workspaceLayout));
+    const previousFocusedPaneId = focusedPaneId;
+    const previousActiveTabKey = activeTabKey;
+    const previousActiveView = activeView;
+    const previousStoredTabs = localStorage.getItem('workspaceTabs');
+    const previousOpenLocalFiles = openLocalFiles;
+    const nextFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+    const settle = async () => { await nextFrame(); await nextFrame(); await nextFrame(); };
+    const tabVisible = (paneId, key) => {
+      const strip = workspacePaneElement(paneId)?.querySelector('.tabs');
+      const tab = strip?.querySelector('.tab[data-tab-key="' + CSS.escape(key) + '"]');
+      if (!strip || !tab) return false;
+      const stripRect = strip.getBoundingClientRect();
+      const tabRect = tab.getBoundingClientRect();
+      return tabRect.left >= stripRect.left - 1 && tabRect.right <= stripRect.right + 1;
+    };
+    try {
+      tabs = Array.from({length:9}, (_, index) => ({
+        key:'visibility-' + (index + 1),
+        title:'Visibility ' + (index + 1),
+        subtitle:'',
+        viewName:'welcome',
+        closable:true,
+        kind:'welcome'
+      }));
+      workspaceLayout = {type:'pane',id:'visibility-pane',tabs:tabs.map(tab => tab.key),activeTabKey:'visibility-7'};
+      focusedPaneId = 'visibility-pane';
+      activeTabKey = 'visibility-7';
+      activeView = 'welcome';
+      renderTabs();
+      await settle();
+      const paneElement = workspacePaneElement('visibility-pane');
+      const shell = paneElement.querySelector('.tabs-shell');
+      const strip = paneElement.querySelector('.tabs');
+      shell.style.width = '270px';
+      await settle();
+
+      strip.scrollLeft = 0;
+      activateTab('visibility-9');
+      await settle();
+      const switchKeepsActiveVisible = tabVisible('visibility-pane', 'visibility-9');
+
+      strip.scrollLeft = 0;
+      shell.style.width = '190px';
+      await settle();
+      const resizeKeepsActiveVisible = tabVisible('visibility-pane', 'visibility-9');
+
+      activateTab('visibility-1');
+      await settle();
+      applyWorkspaceTabDrop({key:'visibility-1'}, {paneId:'visibility-pane', zone:'tabs', index:9});
+      await settle();
+      const dragKeepsActiveVisible = tabVisible('visibility-pane', 'visibility-1');
+
+      const sourceOrderBeforeSplit = [...(workspaceFindPane('visibility-pane')?.tabs || [])];
+      const sourceActiveBeforeSplit = sourceOrderBeforeSplit.at(-3);
+      const sourceLastBeforeSplit = sourceOrderBeforeSplit.at(-1);
+      activateTab(sourceActiveBeforeSplit);
+      await settle();
+      const sourceScrollBefore = strip.scrollLeft;
+      const localKey = 'visibility-local-files';
+      openLocalFiles = async (requestedPath='', updateTab=true, existingKey='') => {
+        if (existingKey) return existingKey;
+        addTab(localKey, '本地文件', '', 'local-files', true, {kind:'local-files', path:requestedPath});
+        return localKey;
+      };
+      await openLocalFilesInPlacement('left');
+      await settle();
+      const sourcePane = workspaceFindPaneForTab(sourceActiveBeforeSplit);
+      const localPane = workspaceFindPaneForTab(localKey);
+      const sourceStrip = workspacePaneElement(sourcePane?.id)?.querySelector('.tabs');
+      const sourceLast = sourceStrip?.querySelector('.tab[data-tab-key="' + CSS.escape(sourceLastBeforeSplit) + '"]');
+      const sourceRect = sourceStrip?.getBoundingClientRect();
+      const lastRect = sourceLast?.getBoundingClientRect();
+      const splitSourceActivePreserved = sourcePane?.activeTabKey === sourceActiveBeforeSplit;
+      const splitSourceActiveVisible = Boolean(sourcePane && tabVisible(sourcePane.id, sourceActiveBeforeSplit));
+      const splitSourceDidNotJumpLast = Boolean(sourceRect && lastRect && lastRect.right > sourceRect.right + 1);
+      const splitSourceScrollNearPrevious = Math.abs(Number(sourceStrip?.scrollLeft || 0) - sourceScrollBefore) < 180;
+      const localSplitCreated = Boolean(localPane && sourcePane && localPane.id !== sourcePane.id && localPane.activeTabKey === localKey);
+      const splitSourceOrderPreserved = Boolean(sourcePane && JSON.stringify(sourcePane.tabs) === JSON.stringify(sourceOrderBeforeSplit));
+      const splitSourceActiveIndexPreserved = Boolean(sourcePane && sourcePane.tabs.indexOf(sourceActiveBeforeSplit) === sourcePane.tabs.length - 3);
+      return {
+        switchKeepsActiveVisible,
+        resizeKeepsActiveVisible,
+        dragKeepsActiveVisible,
+        splitSourceActivePreserved,
+        splitSourceActiveVisible,
+        splitSourceDidNotJumpLast,
+        splitSourceScrollNearPrevious,
+        localSplitCreated,
+        splitSourceOrderPreserved,
+        splitSourceActiveIndexPreserved
+      };
+    } finally {
+      openLocalFiles = previousOpenLocalFiles;
+      tabs = previousTabs;
+      workspaceLayout = previousLayout;
+      focusedPaneId = previousFocusedPaneId;
+      activeTabKey = previousActiveTabKey;
+      activeView = previousActiveView;
+      window.restoringTabs = true;
+      renderTabs();
+      const focused = workspaceFindPane(focusedPaneId) || workspaceLeaves()[0];
+      if (focused?.activeTabKey) renderWorkspacePaneContent(focused.id);
+      window.restoringTabs = false;
+      if (previousStoredTabs === null) localStorage.removeItem('workspaceTabs');
+      else localStorage.setItem('workspaceTabs', previousStoredTabs);
+    }
+  })()`);
   console.log("[ui-smoke] workspace header resize");
   const workspaceHeaderResizeUi = await window.webContents.executeJavaScript(`(async () => {
     const topbar = document.querySelector('.topbar');
@@ -947,10 +1169,25 @@ app.whenReady().then(async () => {
   console.log("[ui-smoke] primary pages");
   const pages = await window.webContents.executeJavaScript(`(async () => {
     const rows = [];
-    for (const name of ['connections','running','command','logs','settings','import']) {
+    for (const name of ['connections','remote','running','command','logs','settings','import']) {
       showPrimary(name);
       await new Promise(resolve => setTimeout(resolve, 250));
-      rows.push({name, width:document.documentElement.clientWidth, scrollWidth:document.documentElement.scrollWidth, visibleView:Array.from(document.querySelectorAll('.view')).find(el => !el.hidden)?.id || ''});
+      const tools=document.querySelector('#explorerTools');
+      const toolsRect=tools?.getBoundingClientRect();
+      const expectedMode=['settings','import'].includes(name)?'section-mode':(['connections','remote'].includes(name)?'connection-mode':'compact-mode');
+      const maxToolHeight=['settings','import'].includes(name)?220:(['connections','remote','logs'].includes(name)?96:58);
+      const controls=[...(tools?.querySelectorAll('button')||[])].map(button=>button.getBoundingClientRect());
+      rows.push({
+        name,
+        width:document.documentElement.clientWidth,
+        scrollWidth:document.documentElement.scrollWidth,
+        visibleView:Array.from(document.querySelectorAll('.view')).find(el => !el.hidden)?.id || '',
+        operationPaneWidth:document.querySelector('.left-pane')?.getBoundingClientRect().width||0,
+        toolHeight:toolsRect?.height||0,
+        toolFits:Boolean(tools&&toolsRect&&tools.scrollWidth<=tools.clientWidth+1&&controls.every(rect=>rect.left>=toolsRect.left-0.5&&rect.right<=toolsRect.right+0.5)),
+        layoutMode:Boolean(tools?.classList.contains(expectedMode)),
+        compactHeight:Boolean(toolsRect&&toolsRect.height<=maxToolHeight)
+      });
     }
     return rows;
   })()`);
@@ -1311,26 +1548,117 @@ app.whenReady().then(async () => {
       return {error:error?.stack || error?.message || String(error)};
     }
   })()`);
+  console.log("[ui-smoke] ssh host trust");
+  const hostTrustUi = await window.webContents.executeJavaScript(`(async () => {
+    const modal=document.querySelector('#modal');
+    const unknownPromise=sshHostTrustModal({
+      token:'unknown-token',state:'unknown',host_label:'server.example:22',key_type:'ssh-ed25519',
+      fingerprint:'SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    });
+    await Promise.resolve();
+    const unknownCard=modal.querySelector('.ssh-host-trust-modal.unknown');
+    const unknown={
+      open:Boolean(unknownCard&&!modal.hidden),
+      fingerprint:unknownCard?.textContent.includes('SHA256:AAAA'),
+      actions:[...unknownCard?.querySelectorAll('button')||[]].map(button=>button.textContent.trim()),
+      cancelFocused:document.activeElement?.id==='sshHostTrustCancel'
+    };
+    modal.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+    unknown.backdropIgnored=!modal.hidden;
+    modal.querySelector('#sshHostTrustOnce')?.click();
+    unknown.result=await unknownPromise;
+
+    const changedPromise=sshHostTrustModal({
+      token:'changed-token',state:'changed',host_label:'server.example:22',key_type:'ssh-ed25519',
+      previous_fingerprint:'SHA256:OLD',fingerprint:'SHA256:NEW'
+    });
+    await Promise.resolve();
+    const changedCard=modal.querySelector('.ssh-host-trust-modal.changed');
+    const changed={
+      open:Boolean(changedCard&&!modal.hidden),
+      warning:changedCard?.textContent.includes('主机密钥发生变化'),
+      oldAndNew:changedCard?.textContent.includes('SHA256:OLD')&&changedCard?.textContent.includes('SHA256:NEW'),
+      updateDanger:changedCard?.querySelector('#sshHostTrustPersist')?.classList.contains('danger'),
+      updateLabel:changedCard?.querySelector('#sshHostTrustPersist')?.textContent.trim()==='更新并永久信任'
+    };
+    changedCard?.querySelector('#sshHostTrustPersist')?.click();
+    changed.result=await changedPromise;
+
+    const cancelPromise=sshHostTrustModal({state:'unknown',host_label:'cancel.example:22',key_type:'ssh-rsa',fingerprint:'SHA256:CANCEL'});
+    await Promise.resolve();
+    modal.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+    const escapeCancelled=await cancelPromise===null&&modal.hidden;
+
+    const previousHosts=sshTrustedHosts;
+    sshTrustedHosts=[{id:'host-record',host:'server.example',port:22,host_label:'server.example:22',key_type:'ssh-ed25519',fingerprint:'SHA256:TRUSTED',updated_at:Date.now()}];
+    const fixture=document.createElement('div');
+    fixture.innerHTML=sshHostTrustPanelHtml();
+    document.body.appendChild(fixture);
+    const trustPanel=fixture.querySelector('#sshHostTrustPanel');
+    const settings={
+      visible:Boolean(trustPanel&&getComputedStyle(trustPanel).display!=='none'),
+      record:trustPanel?.textContent.includes('server.example:22')&&trustPanel?.textContent.includes('SHA256:TRUSTED'),
+      removeButton:Boolean(trustPanel?.querySelector('button[aria-label="删除信任记录"]'))
+    };
+    fixture.remove();
+    sshTrustedHosts=previousHosts;
+    return {unknown,changed,escapeCancelled,settings};
+  })()`);
   console.log("[ui-smoke] menus and actions");
   const desktopMenu = await window.webContents.executeJavaScript(`(() => {
     showPrimary('connections');
     if (!document.querySelector('.conn-row')) document.querySelector('.group-head')?.click();
-    document.querySelector('.conn-actions .icon-button')?.click();
+    document.querySelector('.conn-actions .icon-button[title="更多操作"]')?.click();
     const opened = Boolean(document.querySelector('#actionMenu'));
     const labels = [...document.querySelectorAll('#actionMenu button')].map(button => button.textContent.trim());
     const duplicateConnection = labels.includes('复制');
+    const simplifiedMenu=['复制 SSH 命令','复制 SFTP 命令','用 VS Code Remote SSH 打开'].every(label=>!labels.includes(label))&&labels.includes('生成其他连接…');
+    const menuContentIsPhysicallyLeftAligned = selector => {
+      const menu=document.querySelector(selector);
+      if (!menu) return false;
+      const menuLeft=menu.getBoundingClientRect().left;
+      return [...menu.querySelectorAll(':scope > button')].every(button => {
+        const firstContent=button.querySelector('svg, span');
+        return getComputedStyle(button).textAlign==='left'
+          && getComputedStyle(button).justifyContent==='flex-start'
+          && firstContent
+          && firstContent.getBoundingClientRect().left-menuLeft<=18;
+      });
+    };
+    const leftAligned=menuContentIsPhysicallyLeftAligned('#actionMenu');
+    const generatedMenuButton=[...document.querySelectorAll('#actionMenu button')].find(button=>button.textContent.includes('生成其他连接'));
+    generatedMenuButton?.click();
+    const parentStaysOpen=Boolean(document.querySelector('#actionMenu'));
+    const submenu=Boolean(document.querySelector('#actionSubMenu'));
+    const submenuLeftAligned=menuContentIsPhysicallyLeftAligned('#actionSubMenu');
+    const submenuLabels=[...document.querySelectorAll('#actionSubMenu button span')].map(node=>node.textContent.trim());
+    const generateAll=submenuLabels.includes('生成全部连接');
     document.dispatchEvent(new Event('scroll', {bubbles:true}));
-    return {opened, duplicateConnection, labels, closedOnScroll:!document.querySelector('#actionMenu')};
+    return {opened, duplicateConnection, simplifiedMenu, leftAligned, submenuLeftAligned, parentStaysOpen, submenu, generateAll, labels, submenuLabels, closedOnScroll:!document.querySelector('#actionMenu')&&!document.querySelector('#actionSubMenu')};
   })()`);
+  console.log("[ui-smoke] running actions");
   const runningActions = await window.webContents.executeJavaScript(`(() => {
     showPrimary('running');
+    const actions = document.querySelector('.running-actions');
     const open = document.querySelector('.running-actions .open-forward-link');
-    const retry = Array.from(document.querySelectorAll('.running-actions button')).find(button => button.textContent.includes('重试'));
-    if (!open || !retry) return {found:false};
+    const retry = document.querySelector('.running-actions button[aria-label="重试转发"]');
+    const stop = document.querySelector('.running-actions button[aria-label="停止转发"]');
+    const copy = document.querySelector('.running-actions button[aria-label="复制地址"]');
+    if (!actions || !open || !retry || !stop || !copy) return {found:false};
+    const actionsRect = actions.getBoundingClientRect();
     const openRect = open.getBoundingClientRect();
     const retryRect = retry.getBoundingClientRect();
-    return {found:true,open:{width:openRect.width,height:openRect.height},retry:{width:retryRect.width,height:retryRect.height}};
+    const buttonRects = [retry,stop,copy].map(button=>button.getBoundingClientRect());
+    return {
+      found:true,
+      fits:openRect.left>=actionsRect.left-0.5&&openRect.right<=actionsRect.right+0.5&&buttonRects.every(rect=>rect.left>=actionsRect.left-0.5&&rect.right<=actionsRect.right+0.5),
+      compact:buttonRects.every(rect=>rect.width<=31&&rect.height<=31)&&openRect.height<=31,
+      iconOnly:[retry,stop,copy].every(button=>!button.textContent.trim()),
+      open:{width:openRect.width,height:openRect.height},
+      retry:{width:retryRect.width,height:retryRect.height}
+    };
   })()`);
+  console.log("[ui-smoke] auth fields");
   const authUi = await window.webContents.executeJavaScript(`(() => {
     newConnection();
     const auth = document.querySelector('#conn_auth_type');
@@ -1355,6 +1683,7 @@ app.whenReady().then(async () => {
     };
     return {found:true,passwordMode,keyMode};
   })()`);
+  console.log("[ui-smoke] connection startup form");
   const connectionStartupUi = await window.webContents.executeJavaScript(`(async () => {
     const originalApi=api;
     const originalNotify=notify;
@@ -1383,30 +1712,37 @@ app.whenReady().then(async () => {
       return {};
     };
     notify=(...args)=>notices.push(args);
+    showPrimary('connections');
     newConnection();
-    const form=document.querySelector('#connectionForm');
-    document.querySelector('#conn_name').value='startup-smoke';
-    document.querySelector('#conn_user').value='root';
-    document.querySelector('#conn_host').value='example.test';
-    document.querySelector('#conn_terminal_startup_mode').value='program';
-    document.querySelector('#conn_terminal_profile_name').value='My shell';
-    document.querySelector('#conn_terminal_profile_kind').value='custom';
-    document.querySelector('#conn_terminal_program_path').value='/custom/my-shell';
-    document.querySelector('#conn_terminal_program_args').value='--interactive';
+    const form=$("connectionForm");
+    const field=id=>form?.querySelector('#'+id);
+    if(!form || !field('conn_host')) {
+      api=originalApi;
+      notify=originalNotify;
+      return {found:false,missingConnectionForm:true};
+    }
+    field('conn_name').value='startup-smoke';
+    field('conn_user').value='root';
+    field('conn_host').value='example.test';
+    field('conn_terminal_startup_mode').value='program';
+    field('conn_terminal_profile_name').value='My shell';
+    field('conn_terminal_profile_kind').value='custom';
+    field('conn_terminal_program_path').value='/custom/my-shell';
+    field('conn_terminal_program_args').value='--interactive';
     toggleConnectionTerminalStartup(form);
-    await testConnectionForm(document.querySelector('#connTestBtn'));
-    const select=document.querySelector('#conn_terminal_profile_select');
-    const customPreserved=document.querySelector('#conn_terminal_program_path').value==='/custom/my-shell'
+    await testConnectionForm(field('connTestBtn'));
+    const select=field('conn_terminal_profile_select');
+    const customPreserved=field('conn_terminal_program_path').value==='/custom/my-shell'
       && select.value==='__current__';
     const pythonOption=[...select.options].find(option=>option.textContent.includes('Python 3'));
     if(pythonOption) applyConnectionTerminalProfile(pythonOption.value,select);
-    const detectedApplied=document.querySelector('#conn_terminal_program_path').value==='/usr/bin/python3'
-      && document.querySelector('#conn_terminal_program_args').value==='-i'
-      && document.querySelector('#conn_terminal_profile_kind').value==='repl'
-      && document.querySelector('#conn_terminal_program_platform').value==='posix';
-    document.querySelector('#conn_host').value='changed.example';
-    document.querySelector('#conn_host').dispatchEvent(new Event('input',{bubbles:true}));
-    const card=document.querySelector('.terminal-startup-card');
+    const detectedApplied=field('conn_terminal_program_path').value==='/usr/bin/python3'
+      && field('conn_terminal_program_args').value==='-i'
+      && field('conn_terminal_profile_kind').value==='repl'
+      && field('conn_terminal_program_platform').value==='posix';
+    field('conn_host').value='changed.example';
+    field('conn_host').dispatchEvent(new Event('input',{bubbles:true}));
+    const card=form.querySelector('.terminal-startup-card');
     const formRect=form.getBoundingClientRect();
     const cardRect=card?.getBoundingClientRect();
     const result={
@@ -1415,16 +1751,17 @@ app.whenReady().then(async () => {
       requestedDiscovery:testedPayload?.discover_terminal===true,
       customPreserved,
       categories:[...select.querySelectorAll('optgroup')].map(group=>group.label),
-      toolShown:document.querySelector('#connTerminalCapabilities')?.textContent.includes('Git'),
+      toolShown:field('connTerminalCapabilities')?.textContent.includes('Git'),
       detectedApplied,
-      stale:form._terminalProbeStale===true&&document.querySelector('#connTerminalDetectionStatus')?.textContent.includes('已变化'),
+      stale:form._terminalProbeStale===true&&field('connTerminalDetectionStatus')?.textContent.includes('已变化'),
       noOverflow:Boolean(cardRect&&cardRect.left>=formRect.left-0.5&&cardRect.right<=formRect.right+0.5),
-      pathRequired:document.querySelector('#conn_terminal_program_path').required===true
+      pathRequired:field('conn_terminal_program_path').required===true
     };
     api=originalApi;
     notify=originalNotify;
     return result;
   })()`);
+  console.log("[ui-smoke] save and clear form");
   const saveAndClearUi = await window.webContents.executeJavaScript(`(async () => {
     const originalApi = api;
     const originalLoadAll = loadAll;
@@ -1448,7 +1785,14 @@ app.whenReady().then(async () => {
       visible,
       saved:saved.length===1&&saved[0].name==='save-clear-test'&&saved[0].ssh_host==='example.test'&&saved[0].sort_order===1,
       cleared:document.querySelector('#conn_name')?.value===''&&document.querySelector('#conn_user')?.value===''&&document.querySelector('#conn_host')?.value===''&&document.querySelector('#conn_port')?.value==='22',
-      defaultsRestored:document.querySelector('#conn_auth_type')?.value==='key'&&document.querySelector('#conn_sort_order')?.value==='1'&&document.querySelector('#conn_extra')?.value.includes('ServerAliveInterval=60'),
+      defaultsRestored:document.querySelector('#conn_auth_type')?.value==='key'
+        && document.querySelector('#conn_sort_order')?.value==='1'
+        && document.querySelector('#conn_extra')?.value===''
+        && document.querySelector('#conn_remote_generation')?.value===''
+        && document.querySelector('#conn_connect_timeout')?.value==='10'
+        && document.querySelector('#conn_keepalive_interval')?.value==='60'
+        && document.querySelector('#conn_keepalive_count')?.value==='3'
+        && document.querySelector('#conn_tcp_keepalive')?.value==='1',
       focused:document.activeElement===document.querySelector('#conn_name'),
       notice:notices.some(args=>String(args[0]).includes('表单已清空')),
       readyAgain:button?.disabled===false&&button?.textContent.trim()==='保存并清空'
@@ -1459,6 +1803,7 @@ app.whenReady().then(async () => {
     notify=originalNotify;
     return result;
   })()`);
+  console.log("[ui-smoke] notification cursor");
   const notificationUi = await window.webContents.executeJavaScript(`(async () => {
     const originalNotify = notify;
     const originalDesktop = showDesktopNotification;
@@ -1475,6 +1820,7 @@ app.whenReady().then(async () => {
     showDesktopNotification = originalDesktop;
     return result;
   })()`);
+  console.log("[ui-smoke] restore key modal");
   const restoreKeyUi = await window.webContents.executeJavaScript(`(async () => {
     const originalLoadIdentityBindingOptions = loadIdentityBindingOptions;
     const windowsIdentityPath = ['C:','Users','junruo','.ssh','id_rsa_junruo'].join('\\\\');
@@ -1553,6 +1899,7 @@ app.whenReady().then(async () => {
     loadIdentityBindingOptions = originalLoadIdentityBindingOptions;
     return result;
   })()`);
+  console.log("[ui-smoke] restore credential modal");
   const restoreCredentialUi = await window.webContents.executeJavaScript(`(async () => {
     const originalLoadIdentityBindingOptions = loadIdentityBindingOptions;
     loadIdentityBindingOptions = async () => ({items:[{name:'id_key',path:'/fixture/.ssh/id_key',source_label:'当前密钥目录'}],upload_directory:'/fixture/.ssh'});
@@ -1599,6 +1946,7 @@ app.whenReady().then(async () => {
       closed:modal.hidden&&!modal.querySelector('.restore-credential-modal')
     };
   })()`);
+  console.log("[ui-smoke] terminal interactions");
   const terminalUi = await window.webContents.executeJavaScript(`(async () => {
     const first = connections[0];
     if (!first) return {found:false};
@@ -1609,6 +1957,16 @@ app.whenReady().then(async () => {
     const previousLatencyStored = localStorage.getItem('terminalLatencyVisible');
     const previousTerminalGlobalSettings = terminalGlobalSettings;
     const previousTheme = document.documentElement.dataset.theme || 'light';
+    const numberingConnectionId = Number(first.id) + 900000;
+    const tabsBeforeNumberingCheck = tabs;
+    tabs = [{key:'terminal-'+numberingConnectionId+'-2',kind:'terminal',id:numberingConnectionId}];
+    terminalCounts.set(numberingConnectionId,5);
+    const numberingContinuesWithOpenTabs=nextTerminalTabIndex(numberingConnectionId)===6;
+    tabs = [];
+    terminalCounts.set(numberingConnectionId,5);
+    const numberingRestartsAfterAllClosed=nextTerminalTabIndex(numberingConnectionId)===1;
+    terminalCounts.delete(numberingConnectionId);
+    tabs = tabsBeforeNumberingCheck;
     const fixturePane = workspaceFindPane(focusedPaneId);
     const previousFixtureTabs = fixturePane ? [...fixturePane.tabs] : [];
     const previousFixtureActive = fixturePane?.activeTabKey || '';
@@ -1644,7 +2002,10 @@ app.whenReady().then(async () => {
       close(){}
     }
     window.WebSocket = FakeWebSocket;
-    connectTerminal(first,key);
+    const originalTerminalApi = api;
+    api = async (path, options={}) => path==='/api/ssh/preflight' ? {ok:true} : originalTerminalApi(path, options);
+    await connectTerminal(first,key);
+    api = originalTerminalApi;
     const fakeSocket = terminalSessions.get(key).socket;
     fakeSocket.dispatchEvent(new MessageEvent('message',{data:new Uint8Array([0xff,0xfe]).buffer}));
     const binaryType = fakeSocket.binaryType;
@@ -2151,6 +2512,60 @@ app.whenReady().then(async () => {
     const metrics=visibleToolbarButtons.map(button=>{const br=button.getBoundingClientRect(),svg=button.querySelector('svg').getBoundingClientRect();return {buttonHeight:br.height,iconWidth:svg.width,iconHeight:svg.height,centerDelta:Math.abs((svg.top+svg.height/2)-(br.top+br.height/2))}});
     toolbarViewFixture.remove();
     backFixture.remove();
+    let terminalCjkTextDoesNotClip=false;
+    let terminalCjkMetrics={};
+    try {
+      await ensureTerminalLibs();
+      const scrollbarFixture=document.createElement('div');
+      scrollbarFixture.className='terminal-box';
+      scrollbarFixture.style.cssText='position:fixed;left:-10000px;top:0;width:520px;height:240px;min-height:0;';
+      document.body.appendChild(scrollbarFixture);
+      const scrollbarTerm=new TerminalClass({allowProposedApi:true,overviewRuler:{width:8},fontSize:13});
+      const scrollbarFit=createTerminalFitAddon(scrollbarTerm);
+      scrollbarTerm.loadAddon(scrollbarFit);
+      scrollbarTerm.open(scrollbarFixture);
+      scrollbarFit.fit();
+      await new Promise(resolve=>scrollbarTerm.write(Array.from({length:80},(_,index)=>'line '+index+'\\r\\n').join(''),resolve));
+      scrollbarTerm.scrollToBottom();
+      const cjkLine='[X11] 转发未建立：远端 SSH 服务未开启或拒绝了 X11 转发。本次已自动降级为普通 SSH 终端，命令行仍可正常使用；图形程序不会显示。请在 X Server 管理中检查 X11Forwarding 和远端 xauth/XQuartz。';
+      await new Promise(resolve=>scrollbarTerm.write('\\x1b[2J\\x1b[H'+cjkLine,resolve));
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const terminalScreenRect=scrollbarFixture.querySelector('.xterm-screen')?.getBoundingClientRect();
+      const terminalScrollbarRect=scrollbarFixture.querySelector('.xterm-scrollable-element > .scrollbar.vertical')?.getBoundingClientRect();
+      const terminalXterm=scrollbarFixture.querySelector('.xterm');
+      const cjkRows=[...scrollbarFixture.querySelectorAll('.xterm-rows > div')].filter(row=>row.textContent.trim());
+      const cjkRowMetrics=cjkRows.map(row=>{
+        const rowRect=row.getBoundingClientRect();
+        const spanRects=[...row.querySelectorAll('span')].map(span=>span.getBoundingClientRect()).filter(rect=>rect.width||rect.height);
+        return {
+          text:row.textContent,
+          rowRight:rowRect.right,
+          maxSpanRight:spanRects.length?Math.max(...spanRects.map(rect=>rect.right)):rowRect.left
+        };
+      });
+      const textSpacingTrim=terminalXterm ? getComputedStyle(terminalXterm).textSpacingTrim : '';
+      const maxOverflow=cjkRowMetrics.length ? Math.max(...cjkRowMetrics.map(row=>row.maxSpanRight-row.rowRight)) : null;
+      const maxTextRight=cjkRowMetrics.length ? Math.max(...cjkRowMetrics.map(row=>row.maxSpanRight)) : null;
+      terminalCjkMetrics={
+        screenRight:terminalScreenRect?.right,
+        scrollbarLeft:terminalScrollbarRect?.left,
+        scrollbarWidth:terminalScrollbarRect?.width,
+        textSpacingTrim,
+        maxOverflow,
+        maxTextRight,
+        rows:cjkRowMetrics,
+        gap:terminalScreenRect&&terminalScrollbarRect ? terminalScrollbarRect.left-terminalScreenRect.right : null
+      };
+      terminalCjkTextDoesNotClip=Boolean(terminalScreenRect&&terminalScrollbarRect&&cjkRowMetrics.length
+        && terminalScrollbarRect.width>=7.5
+        && textSpacingTrim==='space-all'
+        && cjkRowMetrics.every(row=>row.maxSpanRight<=row.rowRight+0.25)
+        && maxTextRight<=terminalScrollbarRect.left-0.25);
+      scrollbarTerm.dispose();
+      scrollbarFixture.remove();
+    } catch (error) {
+      terminalCjkMetrics={error:String(error?.stack||error)};
+    }
     const replacementMount=document.querySelector('#terminalToolbarMount');
     const staleToolbar=document.createElement('div');
     staleToolbar.className='terminal-toolbar';
@@ -2183,7 +2598,7 @@ app.whenReady().then(async () => {
     terminalLatencyVisible = previousLatencyVisible;
     if (previousLatencyStored === null) localStorage.removeItem('terminalLatencyVisible');
     else localStorage.setItem('terminalLatencyVisible', previousLatencyStored);
-    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,enterReconnect,fontActionRestoresFocus,recentCommandsRestoreFocus,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,startupCompactIconOnly,startupWideSingleLine,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,latencyMeasured,latencyCanDisable,latencyCanEnable,terminalSettingsUi};
+    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,enterReconnect,fontActionRestoresFocus,recentCommandsRestoreFocus,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,startupCompactIconOnly,startupWideSingleLine,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,terminalSettingsUi};
   })()`);
   const terminalStartupOriginalContentSize = window.getContentSize();
   window.setContentSize(1000, 600);
@@ -2516,6 +2931,24 @@ app.whenReady().then(async () => {
     const buttonRect=fixture.querySelector('.log-item')?.getBoundingClientRect();
     result.fullTerminalTime=Boolean(time?.textContent==='2026-07-30 01:31:49'&&getComputedStyle(time).whiteSpace==='nowrap'&&timeRect&&buttonRect&&timeRect.left>=buttonRect.left-0.5&&timeRect.right<=buttonRect.right+0.5);
     fixture.remove();
+    const logFixture=document.createElement('div');
+    logFixture.style.cssText='position:fixed;left:-10000px;top:0;width:260px;height:96px;overflow:auto;';
+    logFixture.innerHTML='<pre class="log-view" style="min-height:320px">old\\nnew</pre>';
+    document.body.appendChild(logFixture);
+    positionLogViewerScroll(logFixture,'end');
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    result.defaultsToLatest=logFixture.scrollTop+logFixture.clientHeight>=logFixture.scrollHeight-1;
+    const previousTheme=document.documentElement.dataset.theme||'light';
+    const panelProbe=document.createElement('div');
+    panelProbe.style.background='var(--panel)';
+    logFixture.appendChild(panelProbe);
+    applyTheme('light');
+    const lightThemeMatches=getComputedStyle(logFixture.querySelector('.log-view')).backgroundColor===getComputedStyle(panelProbe).backgroundColor;
+    applyTheme('dark');
+    const darkThemeMatches=getComputedStyle(logFixture.querySelector('.log-view')).backgroundColor===getComputedStyle(panelProbe).backgroundColor;
+    result.followsTheme=lightThemeMatches&&darkThemeMatches;
+    applyTheme(previousTheme);
+    logFixture.remove();
     return result;
   })()`);
   console.log("[ui-smoke] SFTP views");
@@ -3916,7 +4349,9 @@ app.whenReady().then(async () => {
         && naturalTopHeight < 180
         && tallShellTopHeight < 180
         && Math.abs(tallShellTopHeight - naturalTopHeight) < 1
-        && getComputedStyle(shell).alignContent === 'start'
+        && getComputedStyle(shell).display === 'flex'
+        && getComputedStyle(shell).flexDirection === 'column'
+        && getComputedStyle(shell).alignItems === 'stretch'
         && getComputedStyle(stickyTop).display === 'flex'
         && getComputedStyle(stickyTop).flexDirection === 'column';
       shell.style.cssText = previousShellStyle;
@@ -3984,12 +4419,15 @@ app.whenReady().then(async () => {
       const globalSettingsCard = globalSettingsModal?.querySelector('.sftp-global-settings-modal');
       const globalSettingsRect = globalSettingsCard?.getBoundingClientRect();
       globalSettingsModal?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+      renderSettings();
+      const taskCenterSetting = document.querySelector('#taskCenterFloatingProgressEnabled');
+      const taskCenterSettingsSection = taskCenterSetting?.closest('section');
       globalSettingsUi = {
         found:Boolean(document.querySelector('#sftpGlobalSettingsButton') && globalSettingsCard && !globalSettingsModal?.hidden),
         globalScope:Boolean(globalSettingsCard?.textContent.includes('应用到所有 SFTP 标签和连接')),
-        controls:Boolean(document.querySelector('#sftpRecycleBinEnabled') && document.querySelector('#sftpFloatingProgressEnabled') && document.querySelector('#sftpMaxOpenFileSizeMb') && document.querySelector('#sftpGlobalSettingsSave')),
-        floatingProgressDefaultOn:Boolean(document.querySelector('#sftpFloatingProgressEnabled')?.checked),
-        floatingProgressCanRestore:Boolean(globalSettingsCard?.textContent.includes('选择“静默”后会永久关闭') && globalSettingsCard.textContent.includes('重新开启')),
+        controls:Boolean(document.querySelector('#sftpRecycleBinEnabled') && document.querySelector('#sftpMaxOpenFileSizeMb') && document.querySelector('#sftpGlobalSettingsSave')),
+        floatingProgressDefaultOn:Boolean(taskCenterSetting?.checked),
+        floatingProgressCanRestore:Boolean(taskCenterSettingsSection?.textContent.includes('任务中心') && taskCenterSettingsSection.textContent.includes('悬浮任务进度卡')),
         downloadBehavior:Boolean(globalSettingsCard?.textContent.includes('SFTP 自动保存目录') || globalSettingsCard?.textContent.includes('当前设备的浏览器下载目录')),
         defaultLimit:document.querySelector('#sftpMaxOpenFileSizeMb')?.value === '5',
         backdropIgnored:Boolean(globalSettingsCard?.isConnected && !globalSettingsModal?.hidden),
@@ -4239,7 +4677,7 @@ app.whenReady().then(async () => {
     try {
       const jobFixtures = [
         {id:'running-job',status:'running',type:'upload',phase:'uploading',label:'正在上传任务',connection_id:Number(connection.id),connection_name:'iMac',size:100,transferred:40,progress:40,can_pause:true,can_cancel:true},
-        {id:'failed-job',status:'failed',type:'upload',label:'失败任务',connection_id:Number(connection.id),connection_name:'iMac',error:'fixture failed',can_resume:true},
+        {id:'component:failed-job',status:'failed',type:'upload',label:'失败任务',connection_id:Number(connection.id),connection_name:'iMac',error:'fixture failed',can_resume:true,logs:Array.from({length:40},(_,index)=>({at:Date.now()+index,text:'task-log-line-'+String(index+1).padStart(2,'0')+' '+'.'.repeat(48)}))},
         {id:'done-job',status:'done',type:'compress',label:'完成历史任务',connection_id:Number(connection.id),connection_name:'iMac',finished_at:Date.now()-1000},
         {id:'saved-download',status:'done',type:'download',label:'桌面已保存下载',connection_id:Number(connection.id),connection_name:'iMac',delivery_mode:'desktop',delivery_status:'saved',saved_path:'C:\\Users\\fixture\\Downloads\\saved.txt',finished_at:Date.now()-1200},
         {id:'browser-download',status:'done',type:'download',label:'浏览器已保存下载',connection_name:'iMac',connection_id:1,remote_path:'/tmp/browser.txt',delivery_mode:'browser',delivery_status:'delivered',finished_at:Date.now()-1300},
@@ -4300,6 +4738,22 @@ app.whenReady().then(async () => {
         && currentText.includes('失败任务')
         && !currentText.includes('完成历史任务')
         && !currentText.includes('取消历史任务');
+      const taskLogDetails=failedRow?.querySelector('.global-task-log');
+      taskLogDetails?.querySelector('summary')?.click();
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const taskLogBeforeRefresh=taskLogDetails?.querySelector('pre');
+      const taskLogInitialOpen=Boolean(taskLogDetails?.open);
+      const taskLogInitialBottom=Boolean(taskLogBeforeRefresh&&sftpTaskLogAtBottom(taskLogBeforeRefresh));
+      const refreshedJobFixtures=jobFixtures.map(job=>job.id==='component:failed-job'
+        ? {...job,logs:[...job.logs,{at:Date.now()+100,text:'task-log-line-latest'}]}
+        : job);
+      updateSftpTaskCenter(refreshedJobFixtures);
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const refreshedTaskLogDetails=list?.querySelector('.global-task-log[data-task-id="component:failed-job"]');
+      const refreshedTaskLog=refreshedTaskLogDetails?.querySelector('pre');
+      const taskLogRefreshKeepsOpen=Boolean(refreshedTaskLogDetails?.open);
+      const taskLogRefreshShowsLatest=Boolean(refreshedTaskLog?.textContent.includes('task-log-line-latest'));
+      const taskLogRefreshFollowsBottom=Boolean(refreshedTaskLog&&sftpTaskLogAtBottom(refreshedTaskLog));
       const drawerRect = drawer?.getBoundingClientRect();
       const drawerFitsViewport = Boolean(drawerRect
         && drawerRect.left >= -1
@@ -4333,9 +4787,9 @@ app.whenReady().then(async () => {
       dismissSftpTaskFloat();
       updateSftpTaskCenter(jobFixtures);
       const floatingCloseHidesCurrent = Boolean(floatingCard?.hidden);
-      const nextFloatingJob = {...jobFixtures[0],id:'next-running-job',label:'新传输任务'};
+      const nextFloatingJob = {...jobFixtures[0],id:'next-running-job',label:'新后台任务'};
       updateSftpTaskCenter([...jobFixtures,nextFloatingJob]);
-      const floatingNewTaskReopens = Boolean(floatingCard && !floatingCard.hidden && floatingCard.textContent.includes('2 个传输任务'));
+      const floatingNewTaskReopens = Boolean(floatingCard && !floatingCard.hidden && floatingCard.textContent.includes('2 个后台任务'));
       let muteConfirmation = null;
       let mutePayload = null;
       confirmModal = async (...args) => { muteConfirmation = args; return true; };
@@ -4352,7 +4806,7 @@ app.whenReady().then(async () => {
         && runtimeSettings?.saved?.sftp_floating_progress_enabled === false
         && floatingCard?.hidden
         && muteConfirmation?.[0]?.includes('永久关闭此类悬浮进度卡')
-        && muteConfirmation?.[0]?.includes('SFTP 全局设置'));
+        && muteConfirmation?.[0]?.includes('通用设置'));
       runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, saved:{...runtimeSettings.saved, sftp_floating_progress_enabled:true}});
       updateSftpTaskCenter([nextFloatingJob]);
       const floatingSettingRestores = Boolean(floatingCard && !floatingCard.hidden);
@@ -4387,14 +4841,44 @@ app.whenReady().then(async () => {
       resolveStaleJobs?.(jobFixtures);
       await staleRefresh;
       const staleJobResponseIgnored = sftpLatestJobs.length === 1 && sftpLatestJobs[0]?.id === deleteJob.id;
-      const toastIconsAligned = ['success','info','error'].every(type => {
+      dismissToast();
+      await new Promise(resolve => setTimeout(resolve, 280));
+      const toastIconResults = [];
+      for (const type of ['success','info','error']) {
         notify('SFTP ' + type + ' 图标测试\\n图标应与提示文字对齐', type);
-        const holder = document.querySelector('#toast .toast-icon')?.getBoundingClientRect();
-        const glyph = document.querySelector('#toast .toast-icon svg')?.getBoundingClientRect();
-        if (!holder || !glyph || !holder.width || !glyph.width) return false;
-        return Math.abs((holder.left + holder.width / 2) - (glyph.left + glyph.width / 2)) <= 1
-          && Math.abs((holder.top + holder.height / 2) - (glyph.top + glyph.height / 2)) <= 1;
+        const card = document.querySelector('#toast .toast:last-child');
+        const holder = card?.querySelector('.toast-icon')?.getBoundingClientRect();
+        const glyph = card?.querySelector('.toast-icon svg')?.getBoundingClientRect();
+        toastIconResults.push(Boolean(holder && glyph && holder.width && glyph.width
+          && Math.abs((holder.left + holder.width / 2) - (glyph.left + glyph.width / 2)) <= 1
+          && Math.abs((holder.top + holder.height / 2) - (glyph.top + glyph.height / 2)) <= 1));
+      }
+      const toastIconsAligned = toastIconResults.every(Boolean);
+      await new Promise(resolve => setTimeout(resolve, 320));
+      const toastStack = document.querySelector('#toast');
+      const stackedToasts = [...(toastStack?.querySelectorAll('.toast') || [])];
+      const toastOrderPreserved = stackedToasts.length === 3
+        && stackedToasts.map(card => card.querySelector('strong')?.textContent || '').join('|') === 'SFTP success 图标测试|SFTP info 图标测试|SFTP error 图标测试';
+      const toastStackedDown = stackedToasts.length === 3 && stackedToasts.slice(1).every((card,index) => {
+        const previous = stackedToasts[index].getBoundingClientRect();
+        const current = card.getBoundingClientRect();
+        return current.top >= previous.bottom + 5;
       });
+      const toastStackRect = toastStack?.getBoundingClientRect();
+      const floatingWithToastsRect = floatingCard?.getBoundingClientRect();
+      const toastAvoidsFloatingTask = Boolean(floatingCard?.hidden
+        || (toastStackRect && floatingWithToastsRect && floatingWithToastsRect.top >= toastStackRect.bottom + 6));
+      const firstToast = stackedToasts[0];
+      const secondToastTopBefore = stackedToasts[1]?.getBoundingClientRect().top;
+      dismissToast(firstToast);
+      const toastExitAnimated = prefersReducedToastMotion() || Boolean(firstToast?.getAnimations?.().length);
+      await new Promise(resolve => setTimeout(resolve, 220));
+      const firstRemainingToast = toastStack?.querySelector('.toast');
+      const toastReflowAnimated = prefersReducedToastMotion() || Boolean(firstRemainingToast?.getAnimations?.().some(animation => animation.playState === 'running'));
+      await new Promise(resolve => setTimeout(resolve, 320));
+      const toastMovedUp = Boolean(firstRemainingToast
+        && Number.isFinite(secondToastTopBefore)
+        && firstRemainingToast.getBoundingClientRect().top < secondToastTopBefore - 4);
       dismissToast();
       jobUi = {
         found:Boolean(button && drawer && list),
@@ -4416,6 +4900,11 @@ app.whenReady().then(async () => {
         currentOnly,
         currentActions,
         currentProgress,
+        taskLogInitialOpen,
+        taskLogInitialBottom,
+        taskLogRefreshKeepsOpen,
+        taskLogRefreshShowsLatest,
+        taskLogRefreshFollowsBottom,
         drawerFitsViewport,
         historyOnly,
         historyCounts,
@@ -4426,7 +4915,13 @@ app.whenReady().then(async () => {
         nativeDragTaskStopHidden,
         itemProgress,
         staleJobResponseIgnored,
-        toastIconsAligned
+        toastIconsAligned,
+        toastOrderPreserved,
+        toastStackedDown,
+        toastAvoidsFloatingTask,
+        toastExitAnimated,
+        toastReflowAnimated,
+        toastMovedUp
       };
     } finally {
       api = previousApi;
@@ -4565,6 +5060,69 @@ app.whenReady().then(async () => {
     }
     document.querySelector('#sftpTextSave')?.click();
     await jsonEditorPromise;
+    const pagerLayoutFixture = document.createElement('div');
+    pagerLayoutFixture.style.cssText = 'position:fixed;left:-10000px;top:0;width:900px;height:360px;display:flex;';
+    pagerLayoutFixture.innerHTML = '<div class="sftp-pager-layout-probe" style="container-type:inline-size;container-name:sftp-view;display:flex;flex:1;min-height:0;flex-direction:column;"><div class="sftp-shell" style="height:100%;min-height:0;flex:1 1 auto;"><div class="sftp-top" style="position:static;min-height:48px;margin:0;padding:0;"></div><div class="sftp-list"><div class="sftp-head"></div><div class="sftp-row"></div><div class="sftp-pager-dock"><div class="pager sftp-pager"><button>previous</button><span class="pager-count"><span class="sftp-scroll-cue" title="more below">'+icon('chevron-down')+'</span>page 1/1 · 1-3 / 3 · <select><option>50 items</option></select></span><button>next</button></div></div></div></div></div>';
+    document.body.appendChild(pagerLayoutFixture);
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    const pagerProbe = pagerLayoutFixture.querySelector('.sftp-pager');
+    const pagerProbeDock = pagerLayoutFixture.querySelector('.sftp-pager-dock');
+    const pagerProbeList = pagerLayoutFixture.querySelector('.sftp-list');
+    const pagerProbeShell = pagerLayoutFixture.querySelector('.sftp-shell');
+    const pagerProbeCount = pagerProbe?.querySelector('.pager-count');
+    const pagerProbeButtons = [...(pagerProbe?.querySelectorAll('button') || [])];
+    const desktopPagerRects = [pagerProbeButtons[0], pagerProbeCount, pagerProbeButtons[1]].map(node=>node?.getBoundingClientRect());
+    const desktopPagerCenters = desktopPagerRects.map(rect=>rect ? rect.top + rect.height / 2 : Number.NaN);
+    const desktopPagerSingleRow = desktopPagerCenters.every(Number.isFinite)
+      && Math.max(...desktopPagerCenters) - Math.min(...desktopPagerCenters) <= 1;
+    const pagerBottomGap = (pagerProbeDock?.getBoundingClientRect().bottom || 0) - (pagerProbe?.getBoundingClientRect().bottom || 0);
+    const pagerFloatsAtWorkspaceBottom = Math.abs((pagerProbeList?.getBoundingClientRect().bottom || 0) - (pagerProbeShell?.getBoundingClientRect().bottom || 0)) <= 1
+      && Math.abs((pagerProbeList?.getBoundingClientRect().bottom || 0) - (pagerProbeDock?.getBoundingClientRect().bottom || 0)) <= 1
+      && pagerBottomGap >= 7
+      && pagerBottomGap <= 12;
+    const pagerStyle = getComputedStyle(pagerProbe);
+    const pagerDockStyle = getComputedStyle(pagerProbeDock);
+    const pagerOpaqueAndElevated = !['transparent','rgba(0, 0, 0, 0)'].includes(pagerStyle.backgroundColor)
+      && pagerStyle.boxShadow !== 'none'
+      && parseFloat(pagerStyle.borderRadius) >= 6;
+    const pagerDockSealsBottom = !['transparent','rgba(0, 0, 0, 0)'].includes(pagerDockStyle.backgroundColor)
+      && pagerDockStyle.boxShadow !== 'none'
+      && Math.abs((pagerProbeList?.getBoundingClientRect().bottom || 0) - (pagerProbeDock?.getBoundingClientRect().bottom || 0)) <= 1;
+    for (let index=0; index<16; index+=1) {
+      const row = document.createElement('div');
+      row.className = 'sftp-row';
+      pagerProbeList.insertBefore(row, pagerProbeDock);
+    }
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    syncSftpListScrollCue(pagerProbeList);
+    const pagerScrollCue = pagerProbe?.querySelector('.sftp-scroll-cue');
+    const scrollCueVisibleAboveContent = getComputedStyle(pagerScrollCue).display === 'grid';
+    const pagerViewportBottom = pagerProbeList.getBoundingClientRect().bottom;
+    const pagerBottomBeforeScroll = pagerProbeDock?.getBoundingClientRect().bottom || 0;
+    pagerProbeList.scrollTop = 120;
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    syncSftpListScrollCue(pagerProbeList);
+    const pagerBottomAfterScroll = pagerProbeDock?.getBoundingClientRect().bottom || 0;
+    const pagerBottomGapBeforeScroll = pagerViewportBottom - pagerBottomBeforeScroll;
+    const pagerBottomGapAfterScroll = pagerViewportBottom - pagerBottomAfterScroll;
+    const pagerPinnedToViewport = getComputedStyle(pagerProbeDock).position === 'sticky'
+      && Math.abs(pagerBottomGapBeforeScroll) <= 1
+      && Math.abs(pagerBottomGapAfterScroll) <= 1
+      && Math.abs(pagerBottomGapBeforeScroll - pagerBottomGapAfterScroll) <= 1;
+    pagerProbeList.scrollTop = pagerProbeList.scrollHeight;
+    syncSftpListScrollCue(pagerProbeList);
+    const scrollCueHidesAtEnd = getComputedStyle(pagerScrollCue).display === 'none';
+    const pagerProbeContainer = pagerLayoutFixture.querySelector('.sftp-pager-layout-probe');
+    pagerProbeContainer.style.width = '440px';
+    pagerProbeContainer.style.flex = '0 0 440px';
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    const narrowPagerCountRect = pagerProbeCount?.getBoundingClientRect();
+    const narrowPagerButtonRects = pagerProbeButtons.map(node=>node?.getBoundingClientRect());
+    const narrowPagerWraps = Boolean(narrowPagerCountRect
+      && narrowPagerButtonRects.every(Boolean)
+      && narrowPagerCountRect.bottom <= narrowPagerButtonRects[0].top + 1
+      && Math.abs(narrowPagerButtonRects[0].top - narrowPagerButtonRects[1].top) <= 1);
+    pagerLayoutFixture.remove();
     const result = {
       folderOpened: actions[0]?.kind === 'dir' && actions[0]?.path === '/fixture/folder',
       fileOpened: actions[1]?.kind === 'file' && actions[1]?.path === '/fixture/' + specialName,
@@ -4618,6 +5176,14 @@ app.whenReady().then(async () => {
       textEncodingUi,
       jobUi,
       downloadNoticeUi,
+      desktopPagerSingleRow,
+      pagerFloatsAtWorkspaceBottom,
+      pagerOpaqueAndElevated,
+      pagerDockSealsBottom,
+      pagerPinnedToViewport,
+      scrollCueVisibleAboveContent,
+      scrollCueHidesAtEnd,
+      narrowPagerWraps,
       pageRows:rows.length,
       pagerVisible:Boolean(document.querySelector('#view-sftp .sftp-pager')),
       pagerText:document.querySelector('#view-sftp .sftp-pager')?.textContent.replace(/\s+/g,' ').trim()||'',
@@ -4674,6 +5240,214 @@ app.whenReady().then(async () => {
       return {error:error?.stack || error?.message || String(error)};
     }
   })()`);
+  console.log("[ui-smoke] remote admin authorization");
+  const remoteAdminOriginalContentSize = window.getContentSize();
+  let remoteAdminUi = {desktop:{error:"not run"},mobile:{error:"not run"}};
+  await window.webContents.executeJavaScript(`(() => {
+    window.__runRemoteAdminModalSmoke = async mode => {
+      const previousApi=api;
+      const connection=connections[0];
+      const previousHasPassword=connection?.has_password;
+      let pending=null;
+      const modal=document.getElementById('modal');
+      const open=async scope => {
+        pending=requestRemoteAdminAuthorization(connection.id,scope);
+        await new Promise(resolve=>setTimeout(resolve,0));
+        return {
+          card:modal.querySelector('.remote-admin-modal'),
+          form:modal.querySelector('.remote-admin-modal'),
+          promise:pending
+        };
+      };
+      const clearPending=async () => {
+        const cancel=modal.querySelector('[data-admin-cancel]');
+        if (cancel) cancel.click();
+        if (pending) await Promise.race([pending,new Promise(resolve=>setTimeout(()=>resolve(null),100))]);
+        pending=null;
+      };
+      try {
+        if (!connection) return {error:'SSH fixture missing'};
+        connection.has_password=true;
+        api=async (path,options) => String(path)==='/api/identity-files'
+          ? [{path:'C:/Users/tester/.ssh/id_ui_smoke',label:'UI smoke private key with a deliberately long label',permission_ok:true}]
+          : previousApi(path,options);
+        const first=await open(mode==='mobile'?'移动端临时管理员授权布局检查':'桌面端临时管理员授权检查');
+        const card=first.card;
+        if (!card) return {error:'remote admin modal missing'};
+        const cardRect=card.getBoundingClientRect();
+        const title=card.querySelector('.modal-title-row');
+        const actions=card.querySelector('.actions');
+        const grid=card.querySelector('.remote-admin-grid');
+        const visibleControls=[...card.querySelectorAll('input,select,button')].filter(control=>!control.closest('[hidden]')&&getComputedStyle(control).display!=='none');
+        const controlsFit=visibleControls.every(control=>{
+          const rect=control.getBoundingClientRect();
+          return rect.left>=cardRect.left-1&&rect.right<=cardRect.right+1&&control.scrollWidth<=control.clientWidth+1;
+        });
+        const viewportFit=cardRect.left>=-1&&cardRect.right<=innerWidth+1&&cardRect.top>=-1&&cardRect.bottom<=innerHeight+1;
+        const noHorizontalOverflow=card.scrollWidth<=card.clientWidth+1;
+        if (mode==='mobile') {
+          const password=card.querySelector('#remoteAdminPassword');
+          password.value='mobile-secret';
+          card.scrollTop=card.scrollHeight;
+          await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+          const scrolledCardRect=card.getBoundingClientRect();
+          const titleRect=title.getBoundingClientRect();
+          const actionsRect=actions.getBoundingClientRect();
+          const buttons=[...actions.querySelectorAll('button')];
+          const singleColumn=getComputedStyle(grid).gridTemplateColumns.trim().split(/\\s+/).length===1;
+          const stickyRegions=titleRect.top>=scrolledCardRect.top-1&&titleRect.bottom<=scrolledCardRect.bottom+1&&actionsRect.top>=scrolledCardRect.top-1&&actionsRect.bottom<=scrolledCardRect.bottom+1;
+          const actionButtonsFit=buttons.length===2&&buttons.every(button=>{
+            const rect=button.getBoundingClientRect();
+            return rect.left>=actionsRect.left-1&&rect.right<=actionsRect.right+1&&button.scrollWidth<=button.clientWidth+1;
+          });
+          card.querySelector('[data-admin-cancel]').click();
+          const result=await first.promise;
+          pending=null;
+          return {viewportFit,noHorizontalOverflow,controlsFit,singleColumn,stickyRegions,actionButtonsFit,cancelled:result===null,secretCleared:password.value===''&&!modal.innerHTML&&modal.hidden};
+        }
+
+        const method=card.querySelector('#remoteAdminMethod');
+        const passwordBox=card.querySelector('#remoteAdminPasswordBox');
+        const keyBox=card.querySelector('#remoteAdminKeyBox');
+        const sudoMode=card.querySelector('#remoteAdminSudoMode');
+        const sudoBox=card.querySelector('#remoteAdminSudoPasswordBox');
+        const sameOption=sudoMode.querySelector('option[value="same"]');
+        const initialPasswordMode=method.value==='password'&&!passwordBox.hidden&&keyBox.hidden&&sudoMode.value==='same'&&sudoBox.hidden&&!sameOption.disabled;
+        sudoMode.value='separate';
+        sudoMode.dispatchEvent(new Event('change',{bubbles:true}));
+        const passwordSeparateSudo=sudoMode.value==='separate'&&!sudoBox.hidden;
+        method.value='key';
+        method.dispatchEvent(new Event('change',{bubbles:true}));
+        const keyMode=passwordBox.hidden&&!keyBox.hidden&&sameOption.disabled&&sudoMode.value==='separate'&&!sudoBox.hidden;
+        sudoMode.value='none';
+        sudoMode.dispatchEvent(new Event('change',{bubbles:true}));
+        const sudoNone=sudoBox.hidden;
+        method.value='agent';
+        method.dispatchEvent(new Event('change',{bubbles:true}));
+        const agentMode=passwordBox.hidden&&keyBox.hidden&&sameOption.disabled&&sudoMode.value==='none'&&sudoBox.hidden;
+        method.value='password';
+        method.dispatchEvent(new Event('change',{bubbles:true}));
+        sudoMode.value='separate';
+        sudoMode.dispatchEvent(new Event('change',{bubbles:true}));
+        const sshPassword=card.querySelector('#remoteAdminPassword');
+        const sudoPassword=card.querySelector('#remoteAdminSudoPassword');
+        sshPassword.value='ssh-secret';
+        sudoPassword.value='sudo-secret';
+        card.requestSubmit();
+        const submitted=await first.promise;
+        pending=null;
+        const separatePayload=Boolean(submitted&&submitted.auth_method==='password'&&submitted.ssh_password==='ssh-secret'&&submitted.sudo_password==='sudo-secret');
+        const submitClearsSecrets=sshPassword.value===''&&sudoPassword.value===''&&!modal.innerHTML&&modal.hidden;
+
+        const cancelCheck=await open('取消清理检查');
+        const cancelPassword=modal.querySelector('#remoteAdminPassword');
+        const cancelPassphrase=modal.querySelector('#remoteAdminPassphrase');
+        const cancelSudo=modal.querySelector('#remoteAdminSudoPassword');
+        cancelPassword.value='cancel-ssh-secret';
+        cancelPassphrase.value='cancel-key-secret';
+        cancelSudo.value='cancel-sudo-secret';
+        modal.querySelector('[data-admin-cancel]').click();
+        const cancelled=await cancelCheck.promise;
+        pending=null;
+        const cancelClearsSecrets=cancelled===null&&[cancelPassword,cancelPassphrase,cancelSudo].every(input=>input.value==='')&&!modal.innerHTML&&modal.hidden;
+
+        const backdropCheck=await open('遮罩关闭清理检查');
+        const backdropPassword=modal.querySelector('#remoteAdminPassword');
+        const backdropPassphrase=modal.querySelector('#remoteAdminPassphrase');
+        const backdropSudo=modal.querySelector('#remoteAdminSudoPassword');
+        backdropPassword.value='backdrop-ssh-secret';
+        backdropPassphrase.value='backdrop-key-secret';
+        backdropSudo.value='backdrop-sudo-secret';
+        let backdropSettled=false;
+        backdropCheck.promise.then(()=>{backdropSettled=true;});
+        modal.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+        await new Promise(resolve=>setTimeout(resolve,0));
+        const backdropIgnored=!backdropSettled&&!modal.hidden&&Boolean(modal.querySelector('.remote-admin-modal'));
+        const backdropPreservesSecrets=[backdropPassword,backdropPassphrase,backdropSudo].every(input=>input.value.startsWith('backdrop-'));
+        modal.querySelector('[data-admin-cancel]').click();
+        const backdropResult=await backdropCheck.promise;
+        pending=null;
+        const backdropCancelClearsSecrets=backdropResult===null&&[backdropPassword,backdropPassphrase,backdropSudo].every(input=>input.value==='')&&!modal.innerHTML&&modal.hidden;
+
+        const escapeCheck=await open('键盘关闭清理检查');
+        const escapePassword=modal.querySelector('#remoteAdminPassword');
+        escapePassword.value='escape-secret';
+        document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));
+        const escapeResult=await escapeCheck.promise;
+        pending=null;
+        const escapeClearsSecrets=escapeResult===null&&escapePassword.value===''&&!modal.innerHTML&&modal.hidden;
+        return {viewportFit,noHorizontalOverflow,controlsFit,initialPasswordMode,passwordSeparateSudo,keyMode,sudoNone,agentMode,separatePayload,submitClearsSecrets,cancelClearsSecrets,backdropIgnored,backdropPreservesSecrets,backdropCancelClearsSecrets,escapeClearsSecrets};
+      } catch (error) {
+        return {error:error?.stack||error?.message||String(error)};
+      } finally {
+        await clearPending();
+        api=previousApi;
+        if (connection) connection.has_password=previousHasPassword;
+      }
+    };
+  })()`);
+  try {
+    window.setContentSize(900,640);
+    await new Promise(resolve=>setTimeout(resolve,100));
+    remoteAdminUi.desktop=await window.webContents.executeJavaScript("window.__runRemoteAdminModalSmoke('desktop')");
+    window.setContentSize(390,640);
+    await new Promise(resolve=>setTimeout(resolve,100));
+    remoteAdminUi.mobile=await window.webContents.executeJavaScript("window.__runRemoteAdminModalSmoke('mobile')");
+  } finally {
+    window.setContentSize(...remoteAdminOriginalContentSize);
+    await new Promise(resolve=>setTimeout(resolve,100));
+    await window.webContents.executeJavaScript("delete window.__runRemoteAdminModalSmoke");
+  }
+  console.log("[ui-smoke] Linux desktop toolbar geometry");
+  let linuxDesktopToolbarUi = {desktop:{error:"not run"},narrow:{error:"not run"}};
+  await window.webContents.executeJavaScript(`(() => {
+    window.__runLinuxDesktopToolbarSmoke = () => {
+      const view=document.getElementById('view-linux-desktop');
+      const previousState=linuxDesktopManagerState;
+      const previousHtml=view?.innerHTML||'';
+      const previousHidden=Boolean(view?.hidden);
+      const fixture=document.createElement('div');
+      try {
+        if (!view) return {error:'Linux desktop view missing'};
+        linuxDesktopManagerState={connectionId:Number(connections?.[0]?.id||1),diagnostics:null,sshX11:null,taskId:'',task:null,logs:[]};
+        renderLinuxDesktopManager();
+        const rendered=view.querySelector('.linux-desktop-manager-toolbar');
+        if (!rendered) return {error:'Linux desktop toolbar missing'};
+        fixture.style.cssText='position:fixed;left:16px;top:16px;width:calc(100vw - 32px);visibility:hidden;pointer-events:none;z-index:-1';
+        fixture.appendChild(rendered.cloneNode(true));
+        document.body.appendChild(fixture);
+        const toolbar=fixture.querySelector('.linux-desktop-manager-toolbar');
+        const select=toolbar.querySelector('select');
+        const button=toolbar.querySelector('button');
+        const toolbarRect=toolbar.getBoundingClientRect();
+        const selectRect=select.getBoundingClientRect();
+        const buttonRect=button.getBoundingClientRect();
+        const columns=getComputedStyle(toolbar).gridTemplateColumns.trim().split(/\\s+/).filter(Boolean);
+        const insideToolbar=elementRect => elementRect.left>=toolbarRect.left-1&&elementRect.right<=toolbarRect.right+1;
+        return {
+          found:Boolean(select&&button),
+          viewportWidth:innerWidth,
+          columnCount:columns.length,
+          sameHeight:Math.abs(selectRect.height-buttonRect.height)<=0.75,
+          topAligned:Math.abs(selectRect.top-buttonRect.top)<=0.75,
+          bottomAligned:Math.abs(selectRect.bottom-buttonRect.bottom)<=0.75,
+          stacked:buttonRect.top>=selectRect.bottom+4,
+          fullWidth:Math.abs(selectRect.width-buttonRect.width)<=1,
+          noOverflow:toolbar.scrollWidth<=toolbar.clientWidth+1&&insideToolbar(selectRect)&&insideToolbar(buttonRect)
+        };
+      } catch (error) {
+        return {error:error?.stack||error?.message||String(error)};
+      } finally {
+        fixture.remove();
+        linuxDesktopManagerState=previousState;
+        if (view) {
+          view.innerHTML=previousHtml;
+          view.hidden=previousHidden;
+        }
+      }
+    };
+  })()`);
+  linuxDesktopToolbarUi.desktop=await window.webContents.executeJavaScript("window.__runLinuxDesktopToolbarSmoke()");
   console.log("[ui-smoke] clipboard and themes");
   const previousClipboard = clipboard.readText();
   window.setAlwaysOnTop(true);
@@ -4681,22 +5455,40 @@ app.whenReady().then(async () => {
   window.focus();
   window.webContents.focus();
   await new Promise(resolve => setTimeout(resolve, 120));
-  const clipboardFixture = JSON.stringify(`TunnelDesk clipboard smoke ${Date.now()}`);
-  const clipboardUi = await window.webContents.executeJavaScript(`(async()=>{
-    return Promise.race([
-      (async()=>{
-        try {
-          const expected = ${clipboardFixture};
-          await writeClipboardText(expected);
-          return {ok:true};
-        } catch (error) {
-          return {ok:false,error:error.message};
-        }
-      })(),
-      new Promise(resolve=>setTimeout(()=>resolve({ok:false,error:'clipboard timeout'}),3000))
-    ]);
-  })()`);
-  clipboard.writeText(previousClipboard);
+  const clipboardExpected = `TunnelDesk clipboard smoke ${Date.now()}`;
+  const clipboardFixture = JSON.stringify(clipboardExpected);
+  let clipboardUi = {ok:false,error:"clipboard smoke did not run",attempts:0};
+  try {
+    for (let attempt=1; attempt<=2; attempt+=1) {
+      try {
+        clipboardUi = await window.webContents.executeJavaScript(`(async()=>{
+          return Promise.race([
+            (async()=>{
+              try {
+                const expected = ${clipboardFixture};
+                await writeClipboardText(expected);
+                return {ok:true};
+              } catch (error) {
+                return {ok:false,error:error?.stack||error?.message||String(error)};
+              }
+            })(),
+            new Promise(resolve=>setTimeout(()=>resolve({ok:false,error:'clipboard timeout'}),3000))
+          ]);
+        })()`);
+        clipboardUi.attempts=attempt;
+        clipboardUi.copied=clipboard.readText()===clipboardExpected;
+        clipboardUi.ok=Boolean(clipboardUi.ok&&clipboardUi.copied);
+        if (clipboardUi.ok) break;
+      } catch (error) {
+        clipboardUi={ok:false,error:error?.stack||error?.message||String(error),attempts:attempt,executeFailed:true};
+      }
+      window.focus();
+      window.webContents.focus();
+      await new Promise(resolve=>setTimeout(resolve,180));
+    }
+  } finally {
+    clipboard.writeText(previousClipboard);
+  }
   if (process.env.TUNNELDESK_UI_NOTIFICATION_SCREENSHOT === "1") {
     window.setContentSize(1180, 760);
     window.show();
@@ -4722,8 +5514,325 @@ app.whenReady().then(async () => {
     require("node:fs").writeFileSync(path.join(process.cwd(), "data", "ui-smoke-notifications.png"), notificationImage.toPNG());
     await window.webContents.executeJavaScript("dismissToast(); updateSftpTaskCenter([]); closeSftpTaskCenter()");
   }
+  const productivityUi = await window.webContents.executeJavaScript(`(() => {
+    ensureTunnelDeskActions();
+    const panel=ensureQuickPanel();
+    panel.hidden=false;
+    renderQuickPanel('工作区');
+    const quickVisible=!panel.hidden&&Boolean(panel.querySelector('.quick-result'));
+    const actionCount=listAppActions({surface:'quick-panel'}).length;
+    renderQuickPanel(connections[0]?.name || '');
+    const connectionIndex=productivityState.quickItems.findIndex(item=>item.kind==='connection');
+    const connectionRow=panel.querySelector('.quick-result[data-index="'+connectionIndex+'"]');
+    const connectionActions=connectionRow?.querySelector('.quick-result-actions');
+    const connectionRowBounds=connectionRow?.getBoundingClientRect();
+    const connectionActionBounds=connectionActions?.getBoundingClientRect();
+    const quickConnectionActionsInline=Boolean(connectionActions&&connectionActions.parentElement===connectionRow&&connectionRow.tagName!=='BUTTON'&&Math.abs((connectionRowBounds.top+connectionRowBounds.bottom)-(connectionActionBounds.top+connectionActionBounds.bottom))<2&&connectionActionBounds.right<=connectionRowBounds.right);
+    const previousWorkspaces=productivityState.workspaces;
+    productivityState.workspaces=[...previousWorkspaces,{id:-987654,name:'test',description:'UI smoke workspace',layout:{tabs:[{kind:'terminal'}]}}];
+    renderQuickPanel('test');
+    const workspaceSearchable=productivityState.quickItems.some(item=>item.kind==='workspace'&&item.title==='test');
+    const workspaceIndex=productivityState.quickItems.findIndex(item=>item.kind==='workspace'&&item.title==='test');
+    runQuickPanelItem(workspaceIndex);
+    const workspacePreviewOpens=!document.getElementById('modal').hidden&&document.getElementById('modal').textContent.includes('打开 test');
+    closeModal();
+    productivityState.workspaces=previousWorkspaces;
+    const quickButton=document.getElementById('quickPanelButton');
+    const quickButtonPlacement=quickButton?.parentElement?.id==='workspaceQuickActions';
+    const quickButtonLightning=Boolean(quickButton?.querySelector('.lucide-zap'));
+    const previousBroadcastTargets=productivityState.broadcastTargets;
+    const previousBroadcastPaused=productivityState.broadcastPaused;
+    const broadcastKeys=['__smoke-broadcast-a','__smoke-broadcast-b'];
+    const broadcastSentA=[];
+    const broadcastSentB=[];
+    tabs.push(...broadcastKeys.map((key,index)=>({key,kind:'terminal',title:'Broadcast '+index})));
+    terminalSessions.set(broadcastKeys[0],{socket:{readyState:WebSocket.OPEN,send:value=>broadcastSentA.push(value)},sensitiveInput:false});
+    terminalSessions.set(broadcastKeys[1],{socket:{readyState:WebSocket.OPEN,send:value=>broadcastSentB.push(value)},sensitiveInput:false});
+    productivityState.broadcastTargets=new Set(broadcastKeys);
+    const previousWorkspaceVisiblePanes=workspaceVisiblePanes;
+    workspaceVisiblePanes=()=>[{activeTabKey:broadcastKeys[0]},{activeTabKey:broadcastKeys[1]}];
+    updateTerminalSmartState(broadcastKeys[1],'visible split output');
+    const visibleSplitHasNoActivity=!tabs.find(tab=>tab.key===broadcastKeys[1]).activityState;
+    const splitTab=tabs.find(tab=>tab.key===broadcastKeys[0]);
+    splitTab.activityState='output';
+    const visibleSplitHtml=workspaceTabHtml(splitTab,{activeTabKey:broadcastKeys[0]});
+    const visibleSplitClearsPriorActivity=!splitTab.activityState&&!visibleSplitHtml.includes('activity-output');
+    workspaceVisiblePanes=previousWorkspaceVisiblePanes;
+    const broadcastFromEither=handleTerminalBroadcastInput(broadcastKeys[0],'A','A')&&handleTerminalBroadcastInput(broadcastKeys[1],'B','B')&&broadcastSentA.join('')==='AB'&&broadcastSentB.join('')==='AB';
+    const broadcastTabMarked=workspaceTabHtml(tabs.find(tab=>tab.key===broadcastKeys[0]),{activeTabKey:broadcastKeys[0]}).includes('broadcast-selected');
+    updateTerminalBroadcastBar();
+    const broadcastBar=document.getElementById('terminalBroadcastBar');
+    const broadcastHeaderGrouped=broadcastBar?.nextElementSibling?.id==='workspaceQuickActions';
+    const broadcastExit=broadcastBar?.querySelector('.terminal-broadcast-exit');
+    const broadcastExitRect=broadcastExit?.getBoundingClientRect();
+    const broadcastExitCompact=Boolean(broadcastExit&&broadcastExit.querySelector('.lucide-x')&&!broadcastExit.textContent.trim()&&broadcastExit.getAttribute('aria-label')==='退出终端同步'&&broadcastExitRect.width<=25&&broadcastExitRect.height<=25);
+    broadcastBar?.remove();
+    document.body.classList.remove('terminal-broadcast-active');
+    tabs.splice(tabs.findIndex(tab=>tab.key===broadcastKeys[0]),2);
+    terminalSessions.delete(broadcastKeys[0]);
+    terminalSessions.delete(broadcastKeys[1]);
+    productivityState.broadcastTargets=previousBroadcastTargets;
+    productivityState.broadcastPaused=previousBroadcastPaused;
+    closeQuickPanel();
+    renderSftpSyncPlan(Number(connections[0].id),{
+      id:'visual-sync-plan',local_path:'C:/project',remote_path:'/srv/project',
+      totals:{upload:1,download:1,conflict:1},
+      actions:[
+        {index:0,relative:'src/app.js',action:'upload',reason:'本地文件较新',selected:true,local_size:10,remote_size:8},
+        {index:1,relative:'config.yml',action:'download',reason:'远程文件较新',selected:true,local_size:12,remote_size:14},
+        {index:2,relative:'.env',action:'conflict',reason:'两端内容不同',selected:false,local_size:4,remote_size:4}
+      ]
+    },activeTabKey);
+    const syncRows=document.querySelectorAll('.sftp-sync-plan-row').length;
+    const conflictSafe=Boolean(document.querySelector('.sftp-sync-plan-row.conflict input:disabled')&&!document.querySelector('.sftp-sync-plan-row.conflict input:checked'));
+    const namedWorkspaceTools=typeof importNamedWorkspaceData==='function'&&typeof exportNamedWorkspace==='function'&&typeof repairNamedWorkspace==='function';
+    const terminalTools=typeof toggleTabNotifications==='function'&&typeof openTerminalPathInSftp==='function';
+    closeModal();
+    return {quickVisible,actionCount,quickConnectionActionsInline,workspaceSearchable,workspacePreviewOpens,quickButtonPlacement,quickButtonLightning,broadcastFromEither,broadcastTabMarked,broadcastHeaderGrouped,broadcastExitCompact,visibleSplitHasNoActivity,visibleSplitClearsPriorActivity,syncRows,conflictSafe,namedWorkspaceTools,terminalTools};
+  })()`);
+  const remoteAccessUi = await window.webContents.executeJavaScript(`(async () => {
+    const previousProfiles=remoteProfiles;
+    const previousSelected=selectedRemoteProfileId;
+    const previousPrimaryView=primaryView;
+    const previousRemoteSearch=remoteConnectionSearch;
+    const previousEditHtml=document.getElementById('view-edit').innerHTML;
+    const previousOperationWidth=operationPaneWidth;
+    const previousApi=api;
+    try {
+      const vnc={id:910001,name:'VNC fixture',group_name:'UI Smoke',protocol:'vnc',host:'192.168.31.77',port:5900,username:'',tags:'',has_password:false,options:{client_mode:'system',quality:7,shared:true,view_only:false}};
+      const xdmcp={id:910002,name:'XDMCP fixture',group_name:'UI Smoke',protocol:'xdmcp',host:'192.168.31.77',port:177,username:'',tags:'desktop',has_password:false,options:{mode:'indirect',window_mode:'windowed',width:1600,height:900,local_address:'192.168.31.111',ssh_connection_id:Number(connections[0].id)}};
+      const derived={id:910003,name:connections[0].name+' · RDP',group_name:'UI Smoke',protocol:'rdp',host:connections[0].ssh_host,port:3389,username:'',tags:'',has_password:false,options:{source_ssh_connection_id:Number(connections[0].id)}};
+      const macVnc={id:910004,name:'macOS VNC fixture',group_name:'UI Smoke',protocol:'vnc',host:'192.168.31.109',port:5900,username:'fixture',tags:'macos',has_password:false,options:{client_mode:'system',source_ssh_connection_id:Number(connections[0].id)}};
+      remoteProfiles=[vnc,xdmcp,derived,macVnc];
+      remoteConnectionSearch='';
+      remoteGroupOpen.add('UI Smoke');
+      remoteProfiles.forEach(profile=>remoteHostOpen.add(remoteHostKey(profile)));
+      primaryView='remote';
+      renderExplorerTools();
+      renderConnections();
+      const remoteTree=document.getElementById('connectionGroups');
+      const remoteOuterHeader=remoteTree?.querySelector('.connection-group-head-row');
+      const remoteHostHeader=remoteTree?.querySelector('.remote-host-head-row');
+      const remoteOuterStyle=remoteOuterHeader?getComputedStyle(remoteOuterHeader):null;
+      const remoteHostStyle=remoteHostHeader?getComputedStyle(remoteHostHeader):null;
+      const remoteHostStickyStyle=Boolean(
+        remoteOuterStyle?.position==='sticky'
+        && parseFloat(remoteOuterStyle.top)===0
+        && remoteHostStyle?.position==='sticky'
+        && Math.abs(parseFloat(remoteHostStyle.top)-remoteOuterHeader.getBoundingClientRect().height)<=1
+        && remoteHostStyle.backgroundColor!=='rgba(0, 0, 0, 0)'
+        && remoteHostStyle.boxShadow!=='none'
+      );
+      const remoteTreeInlineStyle=remoteTree?.getAttribute('style');
+      if(remoteTree){
+        remoteTree.style.height='112px';
+        remoteTree.style.flex='0 0 112px';
+        remoteTree.style.overflowY='auto';
+        remoteTree.scrollTop=42;
+      }
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const remoteTreeRect=remoteTree?.getBoundingClientRect();
+      const remoteOuterRect=remoteOuterHeader?.getBoundingClientRect();
+      const remoteHostRect=remoteHostHeader?.getBoundingClientRect();
+      const remoteHostStickyFollowsOuter=Boolean(
+        remoteTree
+        && remoteTree.scrollHeight>remoteTree.clientHeight
+        && remoteTree.scrollTop>0
+        && remoteTreeRect
+        && remoteOuterRect
+        && remoteHostRect
+        && Math.abs(remoteOuterRect.top-remoteTreeRect.top)<=1
+        && Math.abs(remoteHostRect.top-remoteOuterRect.bottom)<=1.5
+      );
+      if(remoteTree){
+        remoteTree.scrollTop=0;
+        if(remoteTreeInlineStyle===null) remoteTree.removeAttribute('style');
+        else remoteTree.setAttribute('style',remoteTreeInlineStyle);
+      }
+      const remoteNames=[...document.querySelectorAll('.remote-profile-row .conn-name')].map(node=>node.textContent);
+      const remoteActivityChecks={
+        vnc:remoteNames.includes('VNC fixture'),
+        xdmcp:remoteNames.includes('XDMCP fixture'),
+        excludesSsh:document.querySelectorAll('#connectionGroups .conn-row:not(.remote-profile-row)').length===0,
+        nav:Boolean(document.getElementById('navRemote'))
+      };
+      const remoteActivitySeparated=Object.values(remoteActivityChecks).every(Boolean);
+      const derivedRow=document.querySelector('[data-remote-profile-id="910003"]');
+      const derivedSourcePresentation=Boolean(
+        derivedRow?.querySelector('.conn-name')?.textContent===connections[0].name
+        && derivedRow?.querySelector('.protocol-badge')?.textContent.includes('RDP')
+        && derivedRow?.querySelector('.remote-source-badge')?.title==='来源：'+connections[0].name
+      );
+      primaryView='connections';
+      renderExplorerTools();
+      renderConnections();
+      const sshActivitySeparated=document.getElementById('connectionGroups')?.textContent.includes(connections[0].name)&&!document.getElementById('connectionGroups')?.textContent.includes('VNC fixture')&&document.querySelector('#explorerTools .explorer-main-action')?.textContent.includes('添加 SSH');
+      renderRemoteProfileForm(vnc);
+      const vncModePersisted=document.getElementById('remote_vnc_client_mode')?.value==='system';
+      renderRemoteProfileForm({...vnc,id:0,name:'',has_password:false});
+      const vncPasswordForm=Boolean(
+        !document.getElementById('remotePasswordField')?.hidden
+        && document.getElementById('remote_password')
+        && document.querySelector('#remoteProfileForm button[data-clear-after-save="1"]')
+        && document.getElementById('remoteDesktopCredentialNote')?.textContent.includes('可选保存并加密存储')
+      );
+      const credentialPromise=requestVncCredentials({...vnc,has_password:true},['password'],{failureReason:'VNC 密码错误',updateByDefault:true});
+      const vncRetryPrompt=Boolean(
+        document.querySelector('.vnc-credentials-modal .connection-test-status.error')?.textContent.includes('密码错误')
+        && document.getElementById('vncCredentialSave')?.checked
+        && document.querySelector('.vnc-credentials-modal')?.textContent.includes('更新保存密码')
+      );
+      document.getElementById('vncCredentialPassword').value='replacement';
+      document.querySelector('.vnc-credentials-modal').requestSubmit();
+      const credentialResult=await credentialPromise;
+      const vncRetryValue=credentialResult?.credentials?.password==='replacement'&&credentialResult?.update_saved_password===true;
+      renderRemoteProfileForm(xdmcp);
+      const xdmcpForm=Boolean(
+        document.getElementById('remote_protocol')?.value==='xdmcp'
+        && document.getElementById('remote_xdmcp_mode')?.value==='indirect'
+        && document.getElementById('remote_xdmcp_window_mode')?.value==='windowed'
+        && document.getElementById('remote_xdmcp_width')?.value==='1600'
+        && document.getElementById('remote_xdmcp_local_address')?.value==='192.168.31.111'
+        && document.getElementById('remote_xdmcp_ssh_connection')?.value===String(connections[0].id)
+        && document.querySelector('.xdmcp-session-auto')
+        && document.getElementById('remoteCredentialFields')?.hidden
+        && document.getElementById('remoteProtocolOptions')?.textContent.includes('私钥、SSH Agent 或密码')
+      );
+      const xdmcpMenuAvailable=Boolean(REMOTE_PROTOCOL_META.xdmcp&&REMOTE_PROTOCOL_META.xdmcp.port===177);
+      api=async (path,options) => String(path)==='/api/remote-clients/diagnostics'
+        ? {xdmcp:{available:true,client:'内置 X Server'},vnc:{available:false,reason:'UI smoke 不启动系统 VNC 客户端'}}
+        : String(path).endsWith('/xdmcp/server')
+          ? {manager:'lightdm',manager_label:'LightDM',supported:true,replacement_available:false,enabled:true,listening:true,action:'ready',session_needs_repair:false,session_conflict:false,firewall:'none',firewall_managed:false,config_file:'/etc/lightdm/lightdm.conf.d/90-tunneldesk-xdmcp.conf',preferred_session:{id:'plasma',name:'Plasma (X11)'},saved_session:'lightdm-xsession',resolved_saved_session_label:'lightdm-xsession -> Plasma (X11)',sessions:[{id:'lightdm-xsession',name:'Default XSession'},{id:'plasma',name:'Plasma (X11)'}],ssh_connection:{name:connections[0].name},warning:'XDMCP 不加密，只应在可信局域网使用。'}
+          : String(path).endsWith('/linux-desktop')
+            ? {platform_supported:false,os_id:'macos',has_desktop:false,desktops:[]}
+          : String(path).endsWith('/x11-applications')
+            ? {discovery:{ok:true,platform:'Linux',xauth_available:true,warnings:[],applications:[{id:'xterm',label:'XTerm',command:'xterm',path:'/usr/bin/xterm',category:'terminal',category_label:'终端',kind:'tool',mode:'untrusted'},{id:'konsole',label:'Konsole',command:'konsole',path:'/usr/bin/konsole',category:'terminal',category_label:'终端',kind:'tool',mode:'untrusted'}]}}
+            : previousApi(path,options);
+      await openRemoteDesktop(xdmcp.id,false);
+      const xdmcpWorkspaceText=document.getElementById('view-remote-desktop')?.textContent||'';
+      const xdmcpSessionSemantics=Boolean(
+        xdmcpWorkspaceText.includes('新建图形登录')
+        && xdmcpWorkspaceText.includes('共享当前桌面（VNC）')
+        && xdmcpWorkspaceText.includes('不能接入已经打开的桌面')
+        && xdmcpWorkspaceText.includes('lightdm-xsession -> Plasma (X11)')
+        && !xdmcpWorkspaceText.includes('修复默认桌面')
+      );
+      await openRemoteDesktop(macVnc.id,false);
+      const macVncWorkspace=document.getElementById('view-remote-desktop');
+      const macVncBypassesLinuxDesktop=Boolean(
+        macVncWorkspace?.textContent.includes('macOS VNC fixture')
+        && !macVncWorkspace.querySelector('.linux-desktop-missing-notice')
+        && !macVncWorkspace.textContent.includes('前往 Linux 桌面管理')
+      );
+      const macVncHelpHost=document.createElement('div');
+      macVncHelpHost.innerHTML=vncConnectionHelpMarkup(macVnc,'macos',false,'connect ECONNREFUSED');
+      const macVncSetupGuidance=Boolean(
+        macVncHelpHost.textContent.includes('未检测到可用的 VNC 服务')
+        && macVncHelpHost.textContent.includes('系统设置 > 通用 > 共享 > 屏幕共享')
+        && macVncHelpHost.textContent.includes('远程管理')
+        && macVncHelpHost.textContent.includes('允许访问')
+        && macVncHelpHost.textContent.includes('VNC 观看者')
+        && macVncHelpHost.querySelector('button.primary')?.textContent.includes('重新连接')
+        && !macVncHelpHost.textContent.includes('Linux 桌面管理')
+      );
+      const linuxVncMissingHost=document.createElement('div');
+      linuxVncMissingHost.innerHTML=vncConnectionHelpMarkup(vnc,'linux',false,'connect ECONNREFUSED',{platform:'linux',status:'not-installed',can_install:true,port:5900,privileged:false,ssh_connection:{id:connections[0].id,name:connections[0].name},install_plan:{online:{available:true,command:'apt-get install x11vnc'},offline:{available:true,command:'apt-get --no-download install x11vnc'},local_offline:{available:true,package_names:['x11vnc','xclip']}}},'remote-desktop-910001');
+      const linuxVncStoppedHost=document.createElement('div');
+      linuxVncStoppedHost.innerHTML=vncConnectionHelpMarkup(vnc,'linux',false,'',{platform:'linux',status:'stopped',installed:true,port:5900,service_unit:'x11vnc.service',service_state:'inactive',start_plan:{kind:'service',command:'systemctl start x11vnc.service'}},'remote-desktop-910001');
+      const vncServiceDiagnosisUi=Boolean(
+        linuxVncMissingHost.textContent.includes('未安装 VNC 服务')
+        && linuxVncMissingHost.textContent.includes('在线安装')
+        && linuxVncMissingHost.textContent.includes('本机下载后离线安装')
+        && linuxVncMissingHost.textContent.includes('使用远端缓存')
+        && linuxVncMissingHost.textContent.includes('手动安装/配置说明')
+        && linuxVncMissingHost.textContent.includes('TCP 5900')
+        && linuxVncStoppedHost.textContent.includes('已安装，但尚未启动')
+        && linuxVncStoppedHost.textContent.includes('启动 VNC 服务')
+        && linuxVncStoppedHost.textContent.includes('x11vnc.service')
+      );
+      openX11AppLauncher(Number(connections[0].id));
+      await new Promise(resolve=>setTimeout(resolve,0));
+      const x11PresetValues=[...document.querySelectorAll('#x11AppPreset option')].map(option=>option.value);
+      const x11AppLauncher=Boolean(!document.getElementById('modal').hidden&&['xterm','konsole','custom'].every(value=>x11PresetValues.includes(value))&&document.getElementById('x11AppPreset')?.value==='xterm'&&document.getElementById('x11AppCommand')?.value==='/usr/bin/xterm'&&document.getElementById('x11AppDetection')?.classList.contains('success')&&document.getElementById('x11AppMode')?.value==='untrusted');
+      closeX11AppLauncher();
+      api=previousApi;
+      await openXServerManager();
+      const themeProbe=document.createElement('div');
+      themeProbe.style.background='var(--panel)';
+      document.body.appendChild(themeProbe);
+      const xServerManager=Boolean(!document.getElementById('modal').hidden&&document.querySelector('.xserver-manager')&&getComputedStyle(document.querySelector('.xserver-manager')).backgroundColor===getComputedStyle(themeProbe).backgroundColor);
+      themeProbe.remove();
+      closeXServerManager();
+      const modal=document.getElementById('modal');
+      modal.hidden=false;
+      modal.innerHTML='<div class="modal-card xserver-manager"><div class="modal-title-row"><div><h2>Adaptive modal</h2><span>long diagnostics</span></div><button class="icon-button" type="button">'+icon('x')+'</button></div><div style="height:1200px">long body</div><div class="actions"><button>cancel</button><button>confirm</button></div></div>';
+      const adaptiveCard=modal.querySelector('.modal-card');
+      const adaptiveTitle=adaptiveCard.querySelector('.modal-title-row');
+      const adaptiveActions=adaptiveCard.querySelector('.actions');
+      adaptiveCard.scrollTop=adaptiveCard.scrollHeight;
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const adaptiveRect=adaptiveCard.getBoundingClientRect();
+      const adaptiveTitleRect=adaptiveTitle.getBoundingClientRect();
+      const adaptiveActionsRect=adaptiveActions.getBoundingClientRect();
+      const adaptiveCloseRect=adaptiveTitle.querySelector('.icon-button').getBoundingClientRect();
+      const adaptiveStyle=getComputedStyle(adaptiveCard);
+      const adaptiveModal=Boolean(
+        adaptiveCard.scrollHeight>adaptiveCard.clientHeight
+        && adaptiveStyle.overflowY==='auto'
+        && adaptiveRect.top>=-1
+        && adaptiveRect.bottom<=innerHeight+1
+        && Math.abs(adaptiveTitleRect.top-adaptiveRect.top)<=2
+        && adaptiveTitleRect.bottom<=adaptiveRect.bottom+1
+        && adaptiveActionsRect.top>=adaptiveRect.top-1
+        && Math.abs(adaptiveActionsRect.bottom-adaptiveRect.bottom)<=2
+      );
+      const adaptiveModalMetrics={
+        scrollHeight:adaptiveCard.scrollHeight,
+        clientHeight:adaptiveCard.clientHeight,
+        overflowY:adaptiveStyle.overflowY,
+        viewportHeight:innerHeight,
+        card:{top:adaptiveRect.top,bottom:adaptiveRect.bottom},
+        title:{top:adaptiveTitleRect.top,bottom:adaptiveTitleRect.bottom},
+        actions:{top:adaptiveActionsRect.top,bottom:adaptiveActionsRect.bottom}
+      };
+      const modalHeaderControlsAligned=Boolean(
+        adaptiveCloseRect.top>=adaptiveTitleRect.top
+        && adaptiveCloseRect.bottom<=adaptiveTitleRect.bottom
+        && adaptiveCloseRect.left>adaptiveTitleRect.left+adaptiveTitleRect.width/2
+      );
+      let backdropDismissed=false;
+      modal.onclick=()=>{backdropDismissed=true;modal.hidden=true;};
+      modal.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+      const modalBackdropLocked=!backdropDismissed&&!modal.hidden;
+      modal.onclick=null;
+      modal.hidden=true;
+      modal.innerHTML='';
+      healthResults.set(Number(connections[0].id),{ok:true,status:'正常'});
+      renderConnections();
+      const healthRow=[...document.querySelectorAll('.conn-row')].find(row=>row.querySelector('.conn-name')?.textContent===connections[0].name);
+      const healthBadge=healthRow?.querySelector('.health-badge');
+      const healthIconOnly=Boolean(healthBadge&&!healthBadge.textContent.trim()&&healthBadge.getAttribute('aria-label')?.includes('正常'));
+      applyOperationPaneWidth(OPERATION_PANE_WIDTH_MIN,{fit:false});
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const brand=document.querySelector('.brand');
+      const brandRect=brand?.getBoundingClientRect();
+      const brandButtons=[...document.querySelectorAll('.brand .side-actions button')].map(button=>button.getBoundingClientRect());
+      const narrowBrandActionsFit=Boolean(brandRect&&brandButtons.length&&brandButtons.every(rect=>rect.left>=brandRect.left-.5&&rect.right<=brandRect.right+.5&&rect.top>=brandRect.top-.5&&rect.bottom<=brandRect.bottom+.5));
+      return {vncModePersisted,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncServiceDiagnosisUi,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,macVncBypassesLinuxDesktop,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,sshActivitySeparated,x11AppLauncher,xServerManager,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,healthIconOnly,narrowBrandActionsFit};
+    } finally {
+      applyOperationPaneWidth(previousOperationWidth,{fit:false});
+      api=previousApi;
+      remoteProfiles=previousProfiles;
+      remoteConnectionSearch=previousRemoteSearch;
+      selectedRemoteProfileId=previousSelected;
+      primaryView=previousPrimaryView;
+      document.getElementById('view-edit').innerHTML=previousEditHtml;
+      closeX11AppLauncher();
+      closeXServerManager();
+      renderConnections();
+    }
+  })()`);
   window.setAlwaysOnTop(false);
-  if (process.env.TUNNELDESK_UI_SCREENSHOT !== "1") window.hide();
   const dark = await window.webContents.executeJavaScript(`(async () => {
     const testStyle = document.createElement('style');
     testStyle.textContent = '*{transition:none!important}';
@@ -4738,6 +5847,7 @@ app.whenReady().then(async () => {
     testStyle.remove();
     return result;
   })()`);
+  const visual = await runVisualRegression(window);
   if (process.env.TUNNELDESK_UI_SCREENSHOT === "1") {
     const image = await window.webContents.capturePage();
     require("node:fs").writeFileSync(path.join(process.cwd(), "data", "ui-smoke-desktop.png"), image.toPNG());
@@ -4754,497 +5864,21 @@ app.whenReady().then(async () => {
     const viewport = await window.webContents.executeJavaScript("({width:window.innerWidth,mobile:isMobileLayout()})");
     throw new Error(`Mobile viewport did not become ready: ${JSON.stringify(viewport)}`);
   }
-  const mobile = await window.webContents.executeJavaScript(`(async()=>{
-    document.documentElement.dataset.uiSmokeStage='mobile-sftp';
-    const leftPane=document.querySelector('.left-pane');
-    const content=document.querySelector('#content');
-    const mobileWorkspaceVisible=()=>leftPane?.classList.contains('mobile-hide')&&content?.classList.contains('mobile-show');
-    const mobileExplorerVisible=()=>!leftPane?.classList.contains('mobile-hide')&&!content?.classList.contains('mobile-show');
-    const workspaceStateSurvivesResize=(input,value)=>{
-      if(!input)return false;
-      const viewBefore=activeView;
-      const tabBefore=activeTabKey;
-      input.value=value;
-      input.focus();
-      window.dispatchEvent(new Event('resize'));
-      return mobileWorkspaceVisible()&&document.activeElement===input&&input.value===value&&activeView===viewBefore&&activeTabKey===tabBefore;
-    };
-    const mobileSftpLoad = loadSftpPage;
-    const mobileSftpJobs = refreshSftpJobs;
-    const mobileSftpTimer = startSftpJobsTimer;
-    loadSftpPage = async () => true;
-    refreshSftpJobs = async () => {};
-    startSftpJobsTimer = () => {};
-    localStorage.removeItem(SFTP_MOBILE_TOOLBAR_EXPANDED_KEY);
-    const pendingMobileSftpView=$('view-sftp');
-    if(pendingMobileSftpView)pendingMobileSftpView.dataset.sftpTabKey='';
-    await openSftp(connections[0].id, '.', true);
-    syncResponsivePane();
-    await new Promise(resolve=>setTimeout(resolve,0));
-    const mobileSftpTabKey=activeTabKey;
-    const mobileSftpView=sftpRuntimeRoot(mobileSftpTabKey);
-    let mobileWorkspaceChromeResize={found:false};
-    {
-      const headerHandle=document.querySelector('#workspaceHeaderResize');
-      const activePane=workspacePaneElement(focusedPaneId);
-      const tabHandle=activePane?.querySelector('.workspace-tab-resizer');
-      const topbar=document.querySelector('.topbar');
-      const title=document.querySelector('#workspaceTitle');
-      const tabShell=activePane?.querySelector('.tabs-shell');
-      const tabNode=activePane?.querySelector('.tab');
-      const tabDot=activePane?.querySelector('.tab-connection-dot');
-      const activityHandle=document.querySelector('#activityBarResize');
-      const storedHeaderBefore=localStorage.getItem('workspaceHeaderHeight');
-      const storedTabBefore=localStorage.getItem('workspaceTabHeight');
-      const storedActivityBefore=localStorage.getItem('activityBarWidth');
-      const headerValueBefore=workspaceHeaderHeight;
-      const tabValueBefore=workspaceTabHeight;
-      const activityValueBefore=activityBarWidth;
-      const nextFrame=()=>new Promise(resolve=>setTimeout(resolve,0));
-      const snapshot=()=>({
-        headerHeight:topbar?.getBoundingClientRect().height||0,
-        headerFont:title?parseFloat(getComputedStyle(title).fontSize):0,
-        tabHeight:tabShell?.getBoundingClientRect().height||0,
-        tabFont:tabNode?parseFloat(getComputedStyle(tabNode).fontSize):0,
-        dotSize:tabDot?Math.max(tabDot.getBoundingClientRect().width,tabDot.getBoundingClientRect().height):0
-      });
-      const equalMetric=(left,right)=>Math.abs(left-right)<=0.5;
-      try{
-        const baseline=snapshot();
-        const handlesHidden=Boolean(headerHandle&&tabHandle&&activityHandle
-          && getComputedStyle(headerHandle).display==='none'
-          && getComputedStyle(tabHandle).display==='none'
-          && getComputedStyle(activityHandle).display==='none'
-          && headerHandle.getBoundingClientRect().height===0
-          && tabHandle.getBoundingClientRect().height===0
-          && activityHandle.getBoundingClientRect().width===0);
-        applyWorkspaceHeaderHeight(WORKSPACE_HEADER_HEIGHT_MAX,{fit:false});
-        applyWorkspaceTabHeight(WORKSPACE_TAB_HEIGHT_MAX,{fit:false});
-        applyActivityBarWidth(ACTIVITY_BAR_WIDTH_MAX,{fit:false});
-        await nextFrame();
-        const afterProgrammaticApply=snapshot();
-        const desktopSizingIgnored=equalMetric(afterProgrammaticApply.headerHeight,baseline.headerHeight)
-          && equalMetric(afterProgrammaticApply.headerFont,baseline.headerFont)
-          && equalMetric(afterProgrammaticApply.tabHeight,baseline.tabHeight)
-          && equalMetric(afterProgrammaticApply.tabFont,baseline.tabFont)
-          && equalMetric(afterProgrammaticApply.dotSize,baseline.dotSize);
-        applyWorkspaceHeaderHeight(headerValueBefore,{fit:false});
-        applyWorkspaceTabHeight(tabValueBefore,{fit:false});
-        applyActivityBarWidth(activityValueBefore,{fit:false});
-        const dispatchHiddenDrag=(handle,pointerId,horizontal=false)=>{
-          handle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId,pointerType:'touch',button:0,clientX:0,clientY:0}));
-          window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId,pointerType:'touch',button:0,clientX:horizontal?200:0,clientY:horizontal?0:200}));
-          window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId,pointerType:'touch',button:0,clientX:horizontal?200:0,clientY:horizontal?0:200}));
-        };
-        dispatchHiddenDrag(headerHandle,201);
-        dispatchHiddenDrag(tabHandle,202);
-        dispatchHiddenDrag(activityHandle,203,true);
-        headerHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
-        tabHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
-        activityHandle?.dispatchEvent(new KeyboardEvent('keydown',{bubbles:true,cancelable:true,key:'End'}));
-        headerHandle?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
-        tabHandle?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
-        activityHandle?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
-        await nextFrame();
-        const afterInteractions=snapshot();
-        const interactionsIgnored=workspaceHeaderHeight===headerValueBefore
-          && workspaceTabHeight===tabValueBefore
-          && activityBarWidth===activityValueBefore
-          && workspaceChromeResize===null
-          && activityBarResize===null
-          && !document.body.classList.contains('workspace-chrome-resizing')
-          && !document.body.classList.contains('activity-bar-resizing')
-          && equalMetric(afterInteractions.headerHeight,baseline.headerHeight)
-          && equalMetric(afterInteractions.headerFont,baseline.headerFont)
-          && equalMetric(afterInteractions.tabHeight,baseline.tabHeight)
-          && equalMetric(afterInteractions.tabFont,baseline.tabFont)
-          && equalMetric(afterInteractions.dotSize,baseline.dotSize);
-        const storageUntouched=localStorage.getItem('workspaceHeaderHeight')===storedHeaderBefore
-          && localStorage.getItem('workspaceTabHeight')===storedTabBefore
-          && localStorage.getItem('activityBarWidth')===storedActivityBefore;
-        mobileWorkspaceChromeResize={
-          found:Boolean(headerHandle&&tabHandle&&activityHandle&&topbar&&title&&tabShell&&tabNode&&tabDot),
-          handlesHidden,
-          desktopSizingIgnored,
-          interactionsIgnored,
-          storageUntouched,
-          baseline,
-          afterProgrammaticApply,
-          afterInteractions
-        };
-      }finally{
-        if(workspaceChromeResize)endWorkspaceChromeResize(null,true);
-        if(storedHeaderBefore===null)localStorage.removeItem('workspaceHeaderHeight');else localStorage.setItem('workspaceHeaderHeight',storedHeaderBefore);
-        if(storedTabBefore===null)localStorage.removeItem('workspaceTabHeight');else localStorage.setItem('workspaceTabHeight',storedTabBefore);
-        if(storedActivityBefore===null)localStorage.removeItem('activityBarWidth');else localStorage.setItem('activityBarWidth',storedActivityBefore);
-        applyWorkspaceHeaderHeight(headerValueBefore,{fit:false});
-        applyWorkspaceTabHeight(tabValueBefore,{fit:false});
-        applyActivityBarWidth(activityValueBefore,{fit:false});
-      }
-    }
-    document.documentElement.dataset.uiSmokeStage='mobile-import';
-    const mobileSftpToolbarMount = mobileSftpView?.querySelector('#sftpToolbarMount');
-    const mobileSftpToolbarToggle = mobileSftpView?.querySelector('#sftpMobileToolbarToggle');
-    const mobileSftpBreadcrumb = mobileSftpView?.querySelector('#sftpBreadcrumb');
-    const mobileSftpToolbarDefaultCollapsed = Boolean(mobileSftpToolbarMount?.hidden);
-    const mobileSftpToolbarToggleVisible = Boolean(mobileSftpToolbarToggle?.getBoundingClientRect().width);
-    const mobileSftpBreadcrumbAlwaysVisible = Boolean(mobileSftpBreadcrumb?.getBoundingClientRect().width);
-    mobileSftpToolbarToggle?.click();
-    const mobileSftpActions = mobileSftpView?.querySelector('.sftp-toolbar');
-    const mobileSftpActionNodes = [...(mobileSftpActions?.querySelectorAll('.sftp-toolbar-actions > button, .sftp-toolbar-actions > label') || [])];
-    const mobileSftpActionRects = mobileSftpActionNodes.map(node => node.getBoundingClientRect());
-    const mobileSftpActionTitles = mobileSftpActionNodes.map(node => node.title || node.getAttribute('aria-label') || '');
-    const expectedMobileSftpActions = ['收藏当前目录','新建文件夹','新建文件','上传文件','SFTP 回收站','搜索当前目录','切换 SFTP 文件名编码','打开此连接的终端','刷新目录','SFTP 全局设置'];
-    const mobileSftpLayout = {
-      found:Boolean(mobileSftpActions),
-      fits:Boolean(mobileSftpActions && mobileSftpActions.scrollWidth <= mobileSftpActions.clientWidth + 0.5),
-      encodingVisible:Boolean(mobileSftpView?.querySelector('#sftpFilenameEncodingButton')?.getBoundingClientRect().width),
-      terminalJumpVisible:Boolean(mobileSftpActions?.querySelector('button[title="打开此连接的终端"]')?.getBoundingClientRect().width),
-      allActionsVisible:expectedMobileSftpActions.every(title => mobileSftpActionTitles.includes(title)) && mobileSftpActionRects.every(rect => rect.width > 0 && rect.height > 0),
-      uniformButtons:mobileSftpActionRects.every(rect => Math.abs(rect.width - 38) <= 0.5 && Math.abs(rect.height - 38) <= 0.5),
-      wrapsCompletely:mobileSftpActions?.querySelector('.sftp-toolbar-actions')?.scrollWidth <= mobileSftpActions?.querySelector('.sftp-toolbar-actions')?.clientWidth + 0.5,
-      defaultCollapsed:mobileSftpToolbarDefaultCollapsed,
-      toggleVisible:mobileSftpToolbarToggleVisible,
-      breadcrumbAlwaysVisible:mobileSftpBreadcrumbAlwaysVisible,
-      expandedPersisted:localStorage.getItem(SFTP_MOBILE_TOOLBAR_EXPANDED_KEY) === '1' && !mobileSftpToolbarMount?.hidden,
-      searchFontSize:parseFloat(mobileSftpView?.querySelector('#sftpSearch') ? getComputedStyle(mobileSftpView.querySelector('#sftpSearch')).fontSize : '0')
-    };
-    toggleSftpSearch(mobileSftpTabKey);
-    const sftpResizeInput=mobileSftpView?.querySelector('#sftpSearch');
-    const sftpResizeViewBefore=activeView;
-    const sftpResizeTabBefore=activeTabKey;
-    if(sftpResizeInput){sftpResizeInput.value='mobile-resize-sftp';sftpResizeInput.focus();}
-    window.dispatchEvent(new Event('resize'));
-    const sftpResizeDiagnostics={
-      input:Boolean(sftpResizeInput),
-      workspace:mobileWorkspaceVisible(),
-      focused:document.activeElement===sftpResizeInput,
-      value:sftpResizeInput?.value||'',
-      viewBefore:sftpResizeViewBefore,
-      viewAfter:activeView,
-      tabBefore:sftpResizeTabBefore,
-      tabAfter:activeTabKey
-    };
-    const sftpWorkspaceAfterKeyboardResize=sftpResizeDiagnostics.input
-      && sftpResizeDiagnostics.workspace
-      && sftpResizeDiagnostics.focused
-      && sftpResizeDiagnostics.value==='mobile-resize-sftp'
-      && sftpResizeDiagnostics.viewAfter===sftpResizeDiagnostics.viewBefore
-      && sftpResizeDiagnostics.tabAfter===sftpResizeDiagnostics.tabBefore;
-    closeSftpSearch(mobileSftpTabKey);
-    loadSftpPage = mobileSftpLoad;
-    refreshSftpJobs = mobileSftpJobs;
-    startSftpJobsTimer = mobileSftpTimer;
-    openBatchCommand(false);
-    const batchCommandFontSize=parseFloat(document.querySelector('#batchCommandText') ? getComputedStyle(document.querySelector('#batchCommandText')).fontSize : '0');
-    const batchWorkspaceAfterKeyboardResize=workspaceStateSurvivesResize(document.querySelector('#batchCommandText'),'printf mobile-resize-batch');
-    newConnection();
-    const connectionNameFontSize=parseFloat(document.querySelector('#conn_name') ? getComputedStyle(document.querySelector('#conn_name')).fontSize : '0');
-    const connectionWorkspaceAfterKeyboardResize=workspaceStateSurvivesResize(document.querySelector('#conn_name'),'mobile-resize-connection');
-    showPrimary('import');
-    window.dispatchEvent(new Event('resize'));
-    await new Promise(resolve=>setTimeout(resolve,80));
-    const importExplorerFirst=mobileExplorerVisible();
-    document.querySelector('#explorerTools [data-explorer-section="import-source"]')?.click();
-    for(let i=0;i<40&&(activeView!=='import'||!content?.classList.contains('mobile-show'));i+=1)await new Promise(resolve=>setTimeout(resolve,25));
-    const layout={
-      width:document.documentElement.clientWidth,
-      scrollWidth:document.documentElement.scrollWidth,
-      bodyWidth:document.body.scrollWidth,
-      mobileNav:getComputedStyle(document.querySelector('.mobile-tabs')).display,
-      contentVisible:getComputedStyle(content).display,
-      active:document.querySelector('.mobile-tabs .active')?.getAttribute('aria-label')||'',
-      importExplorerFirst,
-      importWorkspaceEntered:leftPane?.classList.contains('mobile-hide')&&content?.classList.contains('mobile-show'),
-      workspaceChromeResize:mobileWorkspaceChromeResize,
-      sftp:mobileSftpLayout,
-      workspaceFormFonts:{
-        sftpSearch:mobileSftpLayout.searchFontSize,
-        batchCommand:batchCommandFontSize,
-        connectionName:connectionNameFontSize,
-        preventsFocusZoom:[mobileSftpLayout.searchFontSize,batchCommandFontSize,connectionNameFontSize].every(size=>size>=16)
-      },
-      workspaceResizeNavigation:{
-        sftpStaysInWorkspace:sftpWorkspaceAfterKeyboardResize,
-        sftpDiagnostics:sftpResizeDiagnostics,
-        batchStaysInWorkspace:batchWorkspaceAfterKeyboardResize,
-        connectionFormStaysInWorkspace:connectionWorkspaceAfterKeyboardResize,
-        explicitExplorerStaysVisible:importExplorerFirst
-      }
-    };
-    const mobileTabs=document.querySelector('.mobile-tabs');
-    const mobileTabItems=[...mobileTabs.querySelectorAll('button, a')];
-    const mobileTabLabels=[...mobileTabs.querySelectorAll('.mobile-tab-label')];
-    const mobileTabIcons=mobileTabItems.map(item=>item.querySelector('svg'));
-    const mobileTabRects=mobileTabItems.map(item=>item.getBoundingClientRect());
-    layout.mobileTabs={
-      count:mobileTabItems.length,
-      labelsHidden:mobileTabLabels.every(label=>getComputedStyle(label).display==='none'),
-      iconsCentered:mobileTabIcons.every((svg,index)=>{const icon=svg?.getBoundingClientRect();const rect=mobileTabRects[index];return Boolean(icon&&rect&&Math.abs((icon.left+icon.width/2)-(rect.left+rect.width/2))<0.5&&Math.abs((icon.top+icon.height/2)-(rect.top+rect.height/2))<0.5)}),
-      fits:mobileTabs.scrollWidth<=mobileTabs.clientWidth+0.5&&mobileTabRects.every(rect=>rect.left>=-0.5&&rect.right<=innerWidth+0.5)
-    };
-    document.documentElement.dataset.uiSmokeStage='mobile-settings';
-    showPrimary('settings');
-    await new Promise(resolve=>setTimeout(resolve,80));
-    const settingsButtons=[...document.querySelectorAll('#explorerTools > button[data-explorer-section]')];
-    const settingsLabels=settingsButtons.map(button=>button.querySelector('span')?.textContent.trim()||'');
-    const settingsRects=settingsButtons.map(button=>button.getBoundingClientRect());
-    const settingsVertical=settingsRects.every((rect,index)=>index===0||rect.top>=settingsRects[index-1].bottom-0.5)&&settingsRects.every(rect=>Math.abs(rect.left-settingsRects[0].left)<1&&Math.abs(rect.width-settingsRects[0].width)<1);
-    const settingsExplorerFirst=!leftPane?.classList.contains('mobile-hide')&&!content?.classList.contains('mobile-show');
-    document.querySelector('#explorerTools [data-explorer-section="settings-about"]')?.click();
-    for (let i=0;i<80&&(activeView!=='settings'||!document.querySelector('#settings-about')||document.querySelector('#settings-about').hidden||!content?.classList.contains('mobile-show'));i+=1) await new Promise(resolve=>setTimeout(resolve,50));
-    const visibleSettingsGroups=[...document.querySelectorAll('#view-settings .settings-group')].filter(group=>!group.hidden).map(group=>group.id);
-    layout.settingsNavigation={
-      labels:settingsLabels,
-      vertical:settingsVertical,
-      explorerFirst:settingsExplorerFirst,
-      workspaceEntered:leftPane?.classList.contains('mobile-hide')&&content?.classList.contains('mobile-show'),
-      selectedOnly:visibleSettingsGroups.length===1&&visibleSettingsGroups[0]==='settings-about',
-      noDuplicateMenu:document.querySelectorAll('.settings-nav').length===0
-    };
-    document.documentElement.dataset.uiSmokeStage='mobile-license';
-    const licenseTrigger=document.querySelector('#openLicenseBtn');
-    licenseTrigger?.click();
-    for (let i=0;i<20&&document.querySelector('#modal')?.hidden;i+=1) await new Promise(resolve=>setTimeout(resolve,25));
-    const modal=document.querySelector('#modal');
-    const card=modal?.querySelector('.license-modal');
-    const text=modal?.querySelector('#licenseText');
-    const close=document.querySelector('#licenseModalClose');
-    const cardRect=card?.getBoundingClientRect();
-    const textRect=text?.getBoundingClientRect();
-    const closeRect=close?.getBoundingClientRect();
-    layout.about={
-      modalOpen:Boolean(modal&&!modal.hidden&&card),
-      cardWithinViewport:Boolean(cardRect&&cardRect.left>=-0.5&&cardRect.right<=innerWidth+0.5&&cardRect.top>=-0.5&&cardRect.bottom<=innerHeight+0.5),
-      textWithinCard:Boolean(cardRect&&textRect&&textRect.left>=cardRect.left-0.5&&textRect.right<=cardRect.right+0.5),
-      textScrollable:Boolean(text&&text.scrollHeight>text.clientHeight&&getComputedStyle(text).overflowY==='auto'),
-      closeVisible:Boolean(closeRect&&closeRect.width>0&&closeRect.height>0&&closeRect.top>=-0.5&&closeRect.bottom<=innerHeight+0.5)
-    };
-    close?.click();
-    await new Promise(resolve=>setTimeout(resolve,25));
-    layout.about.closed=Boolean(modal?.hidden&&!modal.querySelector('.license-modal'));
-    document.documentElement.dataset.uiSmokeStage='mobile-groups';
-    showPrimary('connections');
-    if(!document.querySelector('.conn-row'))document.querySelector('.group-head')?.click();
-    const groupActionButton=document.querySelector('.connection-group-menu-button');
-    const groupDragHandle=document.querySelector('.connection-group-drag-handle');
-    const groupTitle=document.querySelector('.connection-group-head-row .group-head');
-    const actionRect=groupActionButton?.getBoundingClientRect();
-    const dragRect=groupDragHandle?.getBoundingClientRect();
-    const titleRect=groupTitle?.getBoundingClientRect();
-    layout.groupControlsInline=Boolean(actionRect&&dragRect&&titleRect&&Math.abs((actionRect.top+actionRect.height/2)-(dragRect.top+dragRect.height/2))<2&&Math.abs((actionRect.top+actionRect.height/2)-(titleRect.top+titleRect.height/2))<2);
-    layout.groupDragFirst=Boolean(actionRect&&dragRect&&titleRect&&dragRect.left<titleRect.left&&titleRect.left<actionRect.left);
-    const previousSaveConnectionGroupOrder=saveConnectionGroupOrder;
-    let groupOrderSaveCalls=0;
-    saveConnectionGroupOrder=async()=>{groupOrderSaveCalls+=1;};
-    groupDragHandle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:77,pointerType:'touch',button:0,clientX:dragRect?.left||10,clientY:dragRect?.top||10}));
-    await new Promise(resolve=>setTimeout(resolve,500));
-    const draggingNode=document.querySelector('.group-dragging');
-    renderConnections();
-    await new Promise(resolve=>setTimeout(resolve,1800));
-    layout.groupDragSurvivesRefresh=Boolean(draggingNode&&draggingNode.isConnected&&draggingNode.classList.contains('group-dragging'));
-    document.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true,pointerId:77,pointerType:'touch'}));
-    await new Promise(resolve=>setTimeout(resolve,30));
-    layout.groupCancelDoesNotSave=!document.querySelector('.group-dragging')&&groupOrderSaveCalls===0;
-    saveConnectionGroupOrder=previousSaveConnectionGroupOrder;
-    const refreshedGroupActionButton=document.querySelector('.connection-group-menu-button');
-    layout.groupActionVisible=Boolean(refreshedGroupActionButton&&getComputedStyle(refreshedGroupActionButton).opacity==='1'&&refreshedGroupActionButton.getBoundingClientRect().width>0);
-    refreshedGroupActionButton?.click();
-    layout.groupActionMenuOpened=Boolean(document.querySelector('#actionMenu')?.textContent.includes('重命名分组')&&document.querySelector('#actionMenuBackdrop'));
-    document.querySelector('#actionMenuBackdrop')?.click();
-    document.querySelector('.conn-actions .icon-button')?.click();
-    layout.menuOpened=Boolean(document.querySelector('#actionMenu')&&document.querySelector('#actionMenuBackdrop'));
-    document.querySelector('#actionMenuBackdrop')?.click();
-    layout.menuClosed=!document.querySelector('#actionMenu')&&!document.querySelector('#actionMenuBackdrop');
-    document.documentElement.dataset.uiSmokeStage='mobile-terminal-back';
-    const terminalBackFixture=document.createElement('div');
-    terminalBackFixture.className='terminal-toolbar';
-    terminalBackFixture.innerHTML='<div class="terminal-title-row"><button class="terminal-mobile-back" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="backToExplorer()">'+icon('arrow-left')+'<span>返回</span></button><span class="terminal-connection-dot"></span><span class="terminal-status">root@example.invalid:22 · 已连接</span><span class="terminal-latency good">延迟 5 ms</span></div><div class="actions terminal-actions"><button class="terminal-action-sftp">'+icon('folder-open')+'<span>SFTP</span></button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button class="terminal-action-reconnect">'+icon('refresh-cw')+'<span>重连</span></button><button class="terminal-action-forward">'+icon('play')+'<span>转发</span></button><button class="terminal-global-settings-button">'+icon('settings')+'</button></div>';
-    document.body.appendChild(terminalBackFixture);
-    document.querySelector('.left-pane')?.classList.add('mobile-hide');
-    document.querySelector('#content')?.classList.add('mobile-show');
-    document.body.classList.add('mobile-terminal-active');
-    const terminalBackButton=terminalBackFixture.querySelector('.terminal-mobile-back');
-    const terminalBackStyle=getComputedStyle(terminalBackButton);
-    const terminalBackRect=terminalBackButton.getBoundingClientRect();
-    const terminalMobileToolbarRect=terminalBackFixture.getBoundingClientRect();
-    const terminalMobileTitleRect=terminalBackFixture.querySelector('.terminal-title-row').getBoundingClientRect();
-    const terminalMobileActionsRect=terminalBackFixture.querySelector('.terminal-actions').getBoundingClientRect();
-    const terminalMobileSftpButton=terminalBackFixture.querySelector('.terminal-action-sftp');
-    const terminalBackVisible=terminalBackStyle.display!=='none'&&terminalBackRect.width>0&&terminalBackRect.height>0;
-    showTerminalFontMenu(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:180,clientY:100}),'mobile-font-smoke',connections[0].id);
-    const mobileFontMenu=document.querySelector('#actionMenu');
-    if (!(mobileFontMenu instanceof HTMLElement)) throw new Error('Mobile terminal font menu was not created');
-    const mobileFontMenuRect=mobileFontMenu.getBoundingClientRect();
-    const mobileFontClose=mobileFontMenu.querySelector('.action-menu-close');
-    if (!(mobileFontClose instanceof HTMLElement)) throw new Error('Mobile terminal font menu is missing its close button');
-    const mobileFontButtons=[...mobileFontMenu.querySelectorAll('button')];
-    layout.terminalFontMenu={
-      opened:Boolean(mobileFontMenu&&document.querySelector('#actionMenuBackdrop')),
-      withinViewport:Boolean(mobileFontMenuRect&&mobileFontMenuRect.left>=-0.5&&mobileFontMenuRect.right<=innerWidth+0.5&&mobileFontMenuRect.top>=-0.5&&mobileFontMenuRect.bottom<=innerHeight+0.5),
-      compact:Boolean(mobileFontMenuRect&&mobileFontMenuRect.height<=innerHeight*0.69),
-      scrollable:Boolean(mobileFontMenu&&mobileFontMenu.scrollHeight>mobileFontMenu.clientHeight&&getComputedStyle(mobileFontMenu).overflowY==='auto'),
-      closeSticky:getComputedStyle(mobileFontClose).position==='sticky',
-      touchTargets:mobileFontButtons.every(button=>button.getBoundingClientRect().height>=39.5)
-    };
-    hideActionMenu();
-    const previousGlobalTerminalSettings=terminalGlobalSettings;
-    terminalGlobalSettings=normalizeTerminalGlobalSettings(defaultTerminalGlobalSettings);
-    const mobileGlobalSettingsButton=terminalBackFixture.querySelector('.terminal-global-settings-button');
-    layout.terminalGlobalSettings={
-      buttonHidden:Boolean(mobileGlobalSettingsButton&&getComputedStyle(mobileGlobalSettingsButton).display==='none')
-    };
-    const longPressKey='mobile-terminal-long-press-smoke';
-    const longPressMount=document.createElement('div');
-    longPressMount.className='terminal-box';
-    longPressMount.style.cssText='position:fixed;left:0;top:0;width:300px;height:160px;z-index:-1';
-    const longPressScreen=document.createElement('div');
-    longPressScreen.className='xterm-screen';
-    longPressScreen.style.cssText='width:300px;height:160px';
-    longPressMount.appendChild(longPressScreen);
-    document.body.appendChild(longPressMount);
-    const longPressLine='root command';
-    let longPressSelection='';
-    let longPressRange=null;
-    const longPressTerm={
-      options:{},
-      rows:8,
-      cols:30,
-      element:longPressMount,
-      hasSelection:()=>Boolean(longPressSelection),
-      getSelection:()=>longPressSelection,
-      select:(column,row,length)=>{
-        longPressRange={column,row,length};
-        longPressSelection=longPressLine.slice(column,column+length);
-      },
-      clearSelection:()=>{longPressSelection='';},
-      selectAll:()=>{},
-      clear:()=>{},
-      focus:()=>{},
-      scrollLines:()=>{},
-      scrollToBottom:()=>{},
-      refresh:()=>{},
-      buffer:{active:{viewportY:0,length:1,getLine:()=>({translateToString:()=>longPressLine,getCell:index=>({getChars:()=>longPressLine[index]||''})})}}
-    };
-    longPressTerm._core={_renderService:{dimensions:{css:{cell:{width:10,height:20}}}}};
-    terminalSessions.set(longPressKey,{term:longPressTerm,id:connections[0].id});
-    terminalGlobalSettings=normalizeTerminalGlobalSettings({...defaultTerminalGlobalSettings,right_mouse_action:'paste_clipboard'});
-    bindTerminalGlobalBehavior(terminalSessions.get(longPressKey),longPressKey,connections[0].id,longPressMount);
-    longPressMount.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:15,clientY:10}));
-    const longPressMenuLabels=[...document.querySelectorAll('#actionMenu button span')].map(item=>item.textContent.trim());
-    const longPressMenuOpened=Boolean(document.querySelector('#actionMenu')&&document.querySelector('#actionMenuBackdrop')&&longPressMenuLabels.includes('光标复制')&&longPressMenuLabels.includes('会话复制')&&longPressMenuLabels.includes('粘贴')&&!longPressMenuLabels.includes('复制选中')&&!longPressMenuLabels.includes('全选终端')&&!longPressMenuLabels.includes('全局终端设置'));
-    const longPressOnlyOpensMenu=longPressSelection==='';
-    hideActionMenu();
-    showTerminalSessionText(longPressKey);
-    const sessionTextModal=document.querySelector('#modal .terminal-session-text-modal');
-    const sessionTextModalRect=sessionTextModal?.getBoundingClientRect();
-    const sessionTextEditor=document.querySelector('#terminalSessionTextEditor');
-    const sessionTextStyle=sessionTextEditor?getComputedStyle(sessionTextEditor):null;
-    document.querySelector('#modal')?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
-    layout.terminalSessionText={
-      open:Boolean(sessionTextModal&&sessionTextEditor&&!document.querySelector('#modal')?.hidden),
-      withinViewport:Boolean(sessionTextModalRect&&sessionTextModalRect.left>=-0.5&&sessionTextModalRect.right<=innerWidth+0.5&&sessionTextModalRect.top>=-0.5&&sessionTextModalRect.bottom<=innerHeight+0.5),
-      selectable:Boolean(sessionTextEditor?.readOnly&&sessionTextStyle?.userSelect==='text'),
-      scrollable:sessionTextStyle?.overflowY==='auto',
-      fullText:sessionTextEditor?.value===longPressLine,
-      copyAll:Boolean(document.querySelector('#terminalSessionTextCopy')),
-      backdropIgnored:Boolean(!document.querySelector('#modal')?.hidden)
-    };
-    let sessionTextCopied='';
-    const originalSessionTextCopy=copyText;
-    copyText=async text=>{sessionTextCopied=text;return true;};
-    document.querySelector('#terminalSessionTextCopy')?.click();
-    await new Promise(resolve=>setTimeout(resolve,0));
-    copyText=originalSessionTextCopy;
-    layout.terminalSessionText.copyAllWorks=sessionTextCopied===longPressLine&&document.querySelector('#modal')?.hidden===true;
-    let cursorCopied='';
-    const originalCopyText=copyText;
-    copyText=async text=>{cursorCopied=text;return true;};
-    startTerminalCursorCopy(longPressKey);
-    const cursorHintStarted=Boolean(terminalSessions.get(longPressKey)?.cursorCopyState&&longPressMount.classList.contains('terminal-cursor-copy-active')&&!document.querySelector('.terminal-cursor-copy-hint'));
-    longPressMount.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:11,pointerType:'touch',clientX:5,clientY:10}));
-    longPressMount.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:11,pointerType:'touch',clientX:5,clientY:10}));
-    longPressMount.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:11,pointerType:'touch',clientX:5,clientY:10}));
-    const cursorStartStored=terminalSessions.get(longPressKey)?.cursorCopyState?.phase==='end';
-    longPressMount.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:12,pointerType:'touch',clientX:5,clientY:10}));
-    longPressMount.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:12,pointerType:'touch',clientX:115,clientY:10}));
-    const cursorSelectionBlue=longPressTerm.options.theme?.selectionBackground==='#2563eb'&&longPressSelection===longPressLine;
-    longPressMount.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:12,pointerType:'touch',clientX:115,clientY:10}));
-    await new Promise(resolve=>setTimeout(resolve,0));
-    copyText=originalCopyText;
-    const cursorCopyCompleted=cursorCopied===longPressLine&&!terminalSessions.get(longPressKey)?.cursorCopyState&&!document.querySelector('.terminal-cursor-copy-cancel');
-    const clipboardDescriptor=Object.getOwnPropertyDescriptor(navigator,'clipboard');
-    let clipboardFallback=false;
-    try {
-      Object.defineProperty(navigator,'clipboard',{value:undefined,configurable:true});
-      const fallbackPromise=pasteTerminalText(longPressKey);
-      await new Promise(resolve=>setTimeout(resolve,0));
-      const fallbackEditor=document.querySelector('#terminalPasteEditor');
-      clipboardFallback=Boolean(fallbackEditor&&document.activeElement===fallbackEditor);
-      document.querySelector('#terminalPasteCancel')?.click();
-      clipboardFallback=clipboardFallback&&(await fallbackPromise)===false;
-    } finally {
-      if (clipboardDescriptor) Object.defineProperty(navigator,'clipboard',clipboardDescriptor);
-      else delete navigator.clipboard;
-    }
-    layout.terminalLongPress={
-      menuOnly:longPressOnlyOpensMenu,
-      menuOpened:longPressMenuOpened,
-      cursorHintStarted,
-      cursorStartStored,
-      cursorSelectionBlue,
-      cursorCopyCompleted,
-      clipboardFallback
-    };
-    terminalSessions.delete(longPressKey);
-    longPressMount.remove();
-    const mobilePastePromise=sendTerminalPasteText('mobile-terminal-paste-smoke','first command\\nsecond command');
-    await new Promise(resolve=>setTimeout(resolve,0));
-    const mobilePasteModal=document.querySelector('#modal .terminal-paste-modal');
-    const mobilePasteModalRect=mobilePasteModal?.getBoundingClientRect();
-    const mobilePasteEditor=document.querySelector('#terminalPasteEditor');
-    const mobilePasteActions=document.querySelector('.terminal-paste-actions');
-    const mobilePasteActionsVisible=Boolean(mobilePasteActions&&[...mobilePasteActions.querySelectorAll('button')].every(button=>{const rect=button.getBoundingClientRect();return rect.top>=-0.5&&rect.bottom<=innerHeight+0.5}));
-    document.querySelector('#modal')?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
-    const mobilePasteBackdropIgnored=Boolean(!document.querySelector('#modal')?.hidden&&mobilePasteEditor?.isConnected);
-    document.querySelector('#terminalPasteCancel')?.click();
-    const mobilePasteCancelled=(await mobilePastePromise)===false;
-    layout.terminalPasteEditor={
-      open:Boolean(mobilePasteModal&&mobilePasteEditor),
-      withinViewport:Boolean(mobilePasteModalRect&&mobilePasteModalRect.left>=-0.5&&mobilePasteModalRect.right<=innerWidth+0.5&&mobilePasteModalRect.top>=-0.5&&mobilePasteModalRect.bottom<=innerHeight+0.5),
-      editable:Boolean(mobilePasteEditor&&!mobilePasteEditor.readOnly),
-      actionsVisible:mobilePasteActionsVisible,
-      backdropIgnored:mobilePasteBackdropIgnored,
-      cancelled:mobilePasteCancelled
-    };
-    terminalGlobalSettings=previousGlobalTerminalSettings;
-    terminalBackButton.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerType:'touch'}));
-    terminalBackButton.click();
-    layout.terminalBack={
-      visible:terminalBackVisible,
-      display:terminalBackStyle.display,
-      compactToolbar:terminalMobileTitleRect.height<=48&&terminalMobileToolbarRect.height<=96&&terminalMobileActionsRect.top>=terminalMobileTitleRect.bottom-0.5,
-      titleHeight:terminalMobileTitleRect.height,
-      toolbarHeight:terminalMobileToolbarRect.height,
-      priorityOrder:[...terminalBackFixture.querySelectorAll('.terminal-action-reconnect,.terminal-action-keys,.terminal-action-forward,.terminal-action-sftp')].sort((left,right)=>Number(getComputedStyle(left).order)-Number(getComputedStyle(right).order)).map(button=>button.className.match(/terminal-action-(reconnect|keys|forward|sftp)/)?.[1]),
-      sftpTextFits:Boolean(terminalMobileSftpButton && terminalMobileSftpButton.clientWidth >= 82 && terminalMobileSftpButton.scrollWidth <= terminalMobileSftpButton.clientWidth + 1 && terminalMobileSftpButton.textContent.trim() === 'SFTP'),
-      globalSettingsHidden:getComputedStyle(mobileGlobalSettingsButton).display==='none',
-      returned:!document.querySelector('.left-pane')?.classList.contains('mobile-hide')&&!document.querySelector('#content')?.classList.contains('mobile-show')&&!document.body.classList.contains('mobile-terminal-active')
-    };
-    terminalBackFixture.remove();
-    document.documentElement.dataset.uiSmokeStage='mobile-complete';
-    return layout
-  })()`);
+  linuxDesktopToolbarUi.narrow=await window.webContents.executeJavaScript("window.__runLinuxDesktopToolbarSmoke()");
+  await window.webContents.executeJavaScript("delete window.__runLinuxDesktopToolbarSmoke");
+  const mobile = await runMobileScenario(window);
+  if (process.env.TUNNELDESK_UI_SCREENSHOT !== "1") window.hide();
   if (process.env.TUNNELDESK_UI_SCREENSHOT === "1") {
     const image = await window.webContents.capturePage();
     require("node:fs").writeFileSync(path.join(process.cwd(), "data", "ui-smoke-mobile.png"), image.toPNG());
   }
-  console.log(JSON.stringify({ ...result, refreshStateUi, workspaceTabDragUi, workspaceDockingUi, workspaceHeaderResizeUi, pages, navigationUi, aboutUi, desktopMenu, runningActions, authUi, connectionStartupUi, saveAndClearUi, notificationUi, restoreKeyUi, restoreCredentialUi, terminalUi, terminalStartupUi, logSettingsUi, sftpUi, clipboardUi, dark, mobile, errors }, null, 2));
+  console.log(JSON.stringify({ ...result, refreshStateUi, workspaceTabDragUi, workspaceDockingUi, workspaceTabVisibilityUi, workspaceHeaderResizeUi, pages, navigationUi, aboutUi, desktopMenu, runningActions, authUi, connectionStartupUi, saveAndClearUi, notificationUi, restoreKeyUi, restoreCredentialUi, terminalUi, terminalStartupUi, logSettingsUi, sftpUi, productivityUi, remoteAdminUi, linuxDesktopToolbarUi, remoteAccessUi, clipboardUi, dark, visual, mobile, errors }, null, 2));
+  const operationPagesFailed = pages.some(page => page.scrollWidth > page.width || !page.toolFits || !page.layoutMode || !page.compactHeight);
   const overflow = pages.some(page => page.scrollWidth > page.width) || mobile.scrollWidth > mobile.width || mobile.bodyWidth > mobile.width;
   const darkFailed = dark.theme !== "dark" || dark.buttonBackground === "rgb(255, 255, 255)";
-  const menuFailed = !desktopMenu.opened || !desktopMenu.duplicateConnection || !desktopMenu.closedOnScroll || !mobile.menuOpened || !mobile.menuClosed;
+  const menuFailed = !desktopMenu.opened || !desktopMenu.duplicateConnection || !desktopMenu.simplifiedMenu || !desktopMenu.leftAligned || !desktopMenu.submenuLeftAligned || !desktopMenu.parentStaysOpen || !desktopMenu.submenu || !desktopMenu.generateAll || !desktopMenu.closedOnScroll || !mobile.menuOpened || !mobile.menuClosed;
   const refreshStateUiFailed = !refreshStateUi.found || !refreshStateUi.collapsedBeforeRefresh || !refreshStateUi.collapsedAfterRefresh || !refreshStateUi.collapsePersisted || !refreshStateUi.explicitSelectionReopens || !refreshStateUi.runningCountLive || !refreshStateUi.failureCountLive || !refreshStateUi.oldStartupLabelsRemoved;
-  const workspaceTabDragUiFailed = !workspaceTabDragUi.beganImmediately || !workspaceTabDragUi.activatedOnPress || !workspaceTabDragUi.dragGhostVisible || !workspaceTabDragUi.dropPositionVisible || !workspaceTabDragUi.dropPositionRemoved || !workspaceTabDragUi.dragGhostRemoved || !workspaceTabDragUi.touchReady || !workspaceTabDragUi.commonTitleFits || !workspaceTabDragUi.numberedSessionTitleFits || !workspaceTabDragUi.tabFontWithinResizeRange || !workspaceTabDragUi.shortTabUsesContentWidth || !workspaceTabDragUi.fullTitleTooltip || JSON.stringify(workspaceTabDragUi.liveOrder) !== JSON.stringify(['drag-a','drag-b','drag-c']) || JSON.stringify(workspaceTabDragUi.savedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || JSON.stringify(workspaceTabDragUi.persistedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || !workspaceTabDragUi.activeFollowsDragged || !workspaceTabDragUi.clickSuppressed || !workspaceTabDragUi.cancelStarted || !workspaceTabDragUi.cancelRestored || !workspaceTabDragUi.closeDoesNotDrag || !workspaceTabDragUi.fallbackMove || !workspaceTabDragUi.scrollControlsVisible || !workspaceTabDragUi.scrollControlsHideWhenFit || !workspaceTabDragUi.nativeScrollbarHidden || !workspaceTabDragUi.wheelScrollsTabs;
+  const workspaceTabDragUiFailed = !workspaceTabDragUi.beganImmediately || !workspaceTabDragUi.activatedOnPress || !workspaceTabDragUi.dragGhostVisible || !workspaceTabDragUi.dropPositionVisible || !workspaceTabDragUi.dropPositionRemoved || !workspaceTabDragUi.dragGhostRemoved || !workspaceTabDragUi.touchReady || !workspaceTabDragUi.commonTitleFits || !workspaceTabDragUi.numberedSessionTitleFits || !workspaceTabDragUi.compactKindLabels || !workspaceTabDragUi.distinctKindIcons || !workspaceTabDragUi.remoteProtocolTitlesCompact || JSON.stringify(workspaceTabDragUi.remoteProtocolLetters) !== JSON.stringify(['R','V','X']) || !workspaceTabDragUi.remoteProtocolMonitorBadges || !workspaceTabDragUi.remoteProtocolThemeAware || !workspaceTabDragUi.activeSelectionVisible || !workspaceTabDragUi.tabFontWithinResizeRange || !workspaceTabDragUi.shortTabUsesContentWidth || !workspaceTabDragUi.fullTitleTooltip || JSON.stringify(workspaceTabDragUi.liveOrder) !== JSON.stringify(['drag-a','drag-b','drag-c']) || JSON.stringify(workspaceTabDragUi.savedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || JSON.stringify(workspaceTabDragUi.persistedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || !workspaceTabDragUi.activeFollowsDragged || !workspaceTabDragUi.clickSuppressed || !workspaceTabDragUi.cancelStarted || !workspaceTabDragUi.cancelRestored || !workspaceTabDragUi.closeDoesNotDrag || !workspaceTabDragUi.fallbackMove || !workspaceTabDragUi.scrollControlsVisible || !workspaceTabDragUi.scrollControlsHideWhenFit || !workspaceTabDragUi.nativeScrollbarHidden || !workspaceTabDragUi.wheelScrollsTabs;
   const workspaceDockingUiFailed = !workspaceDockingUi.firstSplit
     || !workspaceDockingUi.secondSplit
     || !workspaceDockingUi.nestedTree
@@ -5272,6 +5906,16 @@ app.whenReady().then(async () => {
     || !workspaceDockingUi.mergedNested
     || !workspaceDockingUi.mergedAll
     || !workspaceDockingUi.collapsedToSinglePane;
+  const workspaceTabVisibilityUiFailed = !workspaceTabVisibilityUi.switchKeepsActiveVisible
+    || !workspaceTabVisibilityUi.resizeKeepsActiveVisible
+    || !workspaceTabVisibilityUi.dragKeepsActiveVisible
+    || !workspaceTabVisibilityUi.splitSourceActivePreserved
+    || !workspaceTabVisibilityUi.splitSourceActiveVisible
+    || !workspaceTabVisibilityUi.splitSourceDidNotJumpLast
+    || !workspaceTabVisibilityUi.splitSourceScrollNearPrevious
+    || !workspaceTabVisibilityUi.localSplitCreated
+    || !workspaceTabVisibilityUi.splitSourceOrderPreserved
+    || !workspaceTabVisibilityUi.splitSourceActiveIndexPreserved;
   const workspaceHeaderResizeUiFailed = !workspaceHeaderResizeUi.found
     || !workspaceHeaderResizeUi.accessible
     || !workspaceHeaderResizeUi.minClamped
@@ -5285,7 +5929,7 @@ app.whenReady().then(async () => {
     || !workspaceHeaderResizeUi.doubleClickResets
     || !workspaceHeaderResizeUi.heightRestored
     || !workspaceHeaderResizeUi.tabStorageIndependent;
-  const runningActionsFailed = runningActions.found && (Math.abs(runningActions.open.width - runningActions.retry.width) > 1 || Math.abs(runningActions.open.height - runningActions.retry.height) > 1);
+  const runningActionsFailed = !runningActions.found || !runningActions.fits || !runningActions.compact || !runningActions.iconOnly;
   const authUiFailed = !authUi.found || !Object.values(authUi.passwordMode).every(Boolean) || !Object.values(authUi.keyMode).every(Boolean);
   const connectionStartupUiFailed = !Object.values(connectionStartupUi).every(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
     || !connectionStartupUi.categories.includes('Shell')
@@ -5302,9 +5946,25 @@ app.whenReady().then(async () => {
   const sessionUi = navigationUi.sessionUi || {};
   const runtimeUiFailed = !runtimeUi.found || runtimeUi.port !== '18100' || JSON.stringify(runtimeUi.selectedHosts) !== JSON.stringify(['0.0.0.0']) || !runtimeUi.sftpSettingsAbsent || !runtimeUi.terminalLatencySettingChecked || !runtimeUi.wildcardCollapsed || runtimeUi.urlLinks.length !== 2 || !runtimeUi.urlLinks.some(url=>url.includes('192.0.2.10:18100')) || !runtimeUi.restartNotice;
   const sessionUiFailed = sessionUi.ttl !== '720' || sessionUi.max !== '1000' || sessionUi.cleanup !== '10' || !sessionUi.active || !sessionUi.save;
-  const activityUiFailed = result.activity.count !== 9 || !result.activity.iconCentered || !result.activity.centersAligned || !result.activity.insideColumn || !result.activity.resizable || !result.activityUtilities;
+  const activityUiFailed = result.activity.count !== 10 || !result.activity.iconCentered || !result.activity.centersAligned || !result.activity.insideColumn || !result.activity.resizable || !result.activityUtilities;
   const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.newerVersionShowsAgain;
   const aboutUiFailed = Boolean(aboutUi.error) || !aboutUi.found || !aboutUi.aboutSelected || aboutUi.duplicateSettingsNav !== 0 || !aboutUi.versionMatches || !aboutUi.licenseMetadata || !aboutUi.sourceLink || !aboutUi.modalOpen || !aboutUi.accessible || !aboutUi.fullText || !aboutUi.textScrollable || !aboutUi.cardWithinViewport || !aboutUi.closeFocused || !aboutUi.backdropIgnored || !aboutUi.closedByEscape || !aboutUi.focusReturned || !aboutUi.followupBackdropClean || !aboutUi.followupResolved || !aboutUi.updateUi;
+  const hostTrustUiFailed = !hostTrustUi.unknown?.open
+    || !hostTrustUi.unknown?.fingerprint
+    || JSON.stringify(hostTrustUi.unknown?.actions)!==JSON.stringify(['仅本次信任','信任并保存','取消'])
+    || !hostTrustUi.unknown?.cancelFocused
+    || !hostTrustUi.unknown?.backdropIgnored
+    || hostTrustUi.unknown?.result!=='once'
+    || !hostTrustUi.changed?.open
+    || !hostTrustUi.changed?.warning
+    || !hostTrustUi.changed?.oldAndNew
+    || !hostTrustUi.changed?.updateDanger
+    || !hostTrustUi.changed?.updateLabel
+    || hostTrustUi.changed?.result!=='persist'
+    || !hostTrustUi.escapeCancelled
+    || !hostTrustUi.settings?.visible
+    || !hostTrustUi.settings?.record
+    || !hostTrustUi.settings?.removeButton;
   const expectedSettingsActions = ['通用设置','安全设置','通知设置','启动与运行','关于'];
   const mobileResizeNavigationFailed = !mobile.workspaceResizeNavigation || !Object.values(mobile.workspaceResizeNavigation).every(Boolean);
   const mobileWorkspaceChromeResizeFailed = !mobile.workspaceChromeResize?.found
@@ -5312,15 +5972,56 @@ app.whenReady().then(async () => {
     || !mobile.workspaceChromeResize?.desktopSizingIgnored
     || !mobile.workspaceChromeResize?.interactionsIgnored
     || !mobile.workspaceChromeResize?.storageUntouched;
-  const mobileNavigationFailed = mobileResizeNavigationFailed || mobileWorkspaceChromeResizeFailed || !mobile.importExplorerFirst || !mobile.importWorkspaceEntered || !mobile.sftp?.found || !mobile.sftp?.fits || !mobile.sftp?.encodingVisible || !mobile.sftp?.terminalJumpVisible || !mobile.sftp?.allActionsVisible || !mobile.sftp?.uniformButtons || !mobile.sftp?.wrapsCompletely || !mobile.sftp?.defaultCollapsed || !mobile.sftp?.toggleVisible || !mobile.sftp?.breadcrumbAlwaysVisible || !mobile.sftp?.expandedPersisted || !mobile.workspaceFormFonts?.preventsFocusZoom || !mobile.settingsNavigation?.explorerFirst || !mobile.settingsNavigation?.workspaceEntered || !mobile.settingsNavigation?.vertical || !mobile.settingsNavigation?.selectedOnly || !mobile.settingsNavigation?.noDuplicateMenu || JSON.stringify(mobile.settingsNavigation?.labels)!==JSON.stringify(expectedSettingsActions) || mobile.mobileTabs?.count !== 7 || !mobile.mobileTabs?.labelsHidden || !mobile.mobileTabs?.iconsCentered || !mobile.mobileTabs?.fits || !mobile.groupActionVisible || !mobile.groupActionMenuOpened || !mobile.groupControlsInline || !mobile.groupDragFirst || !mobile.groupCancelDoesNotSave || !mobile.groupDragSurvivesRefresh;
+  const mobileNavigationFailed = mobileResizeNavigationFailed || mobileWorkspaceChromeResizeFailed || !mobile.importExplorerFirst || !mobile.importWorkspaceEntered || !mobile.sftp?.found || !mobile.sftp?.fits || !mobile.sftp?.encodingVisible || !mobile.sftp?.terminalJumpVisible || !mobile.sftp?.allActionsVisible || !mobile.sftp?.uniformButtons || !mobile.sftp?.wrapsCompletely || !mobile.sftp?.defaultCollapsed || !mobile.sftp?.toggleVisible || !mobile.sftp?.breadcrumbAlwaysVisible || !mobile.sftp?.expandedPersisted || !mobile.workspaceFormFonts?.preventsFocusZoom || !mobile.settingsNavigation?.explorerFirst || !mobile.settingsNavigation?.workspaceEntered || !mobile.settingsNavigation?.vertical || !mobile.settingsNavigation?.selectedOnly || !mobile.settingsNavigation?.noDuplicateMenu || JSON.stringify(mobile.settingsNavigation?.labels)!==JSON.stringify(expectedSettingsActions) || mobile.mobileTabs?.count !== 8 || !mobile.mobileTabs?.labelsHidden || !mobile.mobileTabs?.iconsCentered || !mobile.mobileTabs?.fits || !mobile.groupActionVisible || !mobile.groupActionMenuOpened || !mobile.groupControlsInline || !mobile.groupDragFirst || !mobile.groupCancelDoesNotSave || !mobile.groupDragSurvivesRefresh;
   const mobileAboutFailed = !mobile.about || !mobile.about.modalOpen || !mobile.about.cardWithinViewport || !mobile.about.textWithinCard || !mobile.about.textScrollable || !mobile.about.closeVisible || !mobile.about.closed;
   const terminalLabels = ['复制选中','光标复制','会话复制','粘贴','清屏','滚动到底部','终端启动配置','断开连接','全局终端设置'];
   const terminalSettingsUi = terminalUi.terminalSettingsUi || {};
   const terminalDropUi = terminalSettingsUi.drop || {};
   const mobileTerminalSettingsUi = mobile.terminalGlobalSettings || {};
   const terminalStartupUiFailed = !terminalStartupUi.found || !Object.values(terminalStartupUi).every(Boolean);
-  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.enterReconnect || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.startupCompactIconOnly || !terminalUi.startupWideSingleLine || !terminalUi.terminalFrameLowContrast || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
-  const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || !logSettingsUi.days || !logSettingsUi.fileMb || !logSettingsUi.totalMb || !logSettingsUi.rotations || !logSettingsUi.cleanup || !logSettingsUi.save || !logSettingsUi.closed || !logSettingsUi.fullTerminalTime;
+  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.enterReconnect || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.startupCompactIconOnly || !terminalUi.startupWideSingleLine || !terminalUi.terminalFrameLowContrast || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
+  const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || !logSettingsUi.days || !logSettingsUi.fileMb || !logSettingsUi.totalMb || !logSettingsUi.rotations || !logSettingsUi.cleanup || !logSettingsUi.save || !logSettingsUi.closed || !logSettingsUi.fullTerminalTime || !logSettingsUi.defaultsToLatest || !logSettingsUi.followsTheme;
+  const productivityUiFailed = !productivityUi.quickVisible || productivityUi.actionCount < 7 || !productivityUi.quickConnectionActionsInline || !productivityUi.workspaceSearchable || !productivityUi.workspacePreviewOpens || !productivityUi.quickButtonPlacement || !productivityUi.quickButtonLightning || !productivityUi.broadcastFromEither || !productivityUi.broadcastTabMarked || !productivityUi.broadcastHeaderGrouped || !productivityUi.broadcastExitCompact || !productivityUi.visibleSplitHasNoActivity || !productivityUi.visibleSplitClearsPriorActivity || productivityUi.syncRows !== 3 || !productivityUi.conflictSafe || !productivityUi.namedWorkspaceTools || !productivityUi.terminalTools;
+  const remoteAdminUiFailed = Boolean(remoteAdminUi.desktop?.error)
+    || !remoteAdminUi.desktop?.viewportFit
+    || !remoteAdminUi.desktop?.noHorizontalOverflow
+    || !remoteAdminUi.desktop?.controlsFit
+    || !remoteAdminUi.desktop?.initialPasswordMode
+    || !remoteAdminUi.desktop?.passwordSeparateSudo
+    || !remoteAdminUi.desktop?.keyMode
+    || !remoteAdminUi.desktop?.sudoNone
+    || !remoteAdminUi.desktop?.agentMode
+    || !remoteAdminUi.desktop?.separatePayload
+    || !remoteAdminUi.desktop?.submitClearsSecrets
+    || !remoteAdminUi.desktop?.cancelClearsSecrets
+    || !remoteAdminUi.desktop?.backdropIgnored
+    || !remoteAdminUi.desktop?.backdropPreservesSecrets
+    || !remoteAdminUi.desktop?.backdropCancelClearsSecrets
+    || !remoteAdminUi.desktop?.escapeClearsSecrets
+    || Boolean(remoteAdminUi.mobile?.error)
+    || !remoteAdminUi.mobile?.viewportFit
+    || !remoteAdminUi.mobile?.noHorizontalOverflow
+    || !remoteAdminUi.mobile?.controlsFit
+    || !remoteAdminUi.mobile?.singleColumn
+    || !remoteAdminUi.mobile?.stickyRegions
+    || !remoteAdminUi.mobile?.actionButtonsFit
+    || !remoteAdminUi.mobile?.cancelled
+    || !remoteAdminUi.mobile?.secretCleared;
+  const linuxDesktopToolbarUiFailed = Boolean(linuxDesktopToolbarUi.desktop?.error)
+    || !linuxDesktopToolbarUi.desktop?.found
+    || linuxDesktopToolbarUi.desktop?.columnCount !== 2
+    || !linuxDesktopToolbarUi.desktop?.sameHeight
+    || !linuxDesktopToolbarUi.desktop?.topAligned
+    || !linuxDesktopToolbarUi.desktop?.bottomAligned
+    || !linuxDesktopToolbarUi.desktop?.noOverflow
+    || Boolean(linuxDesktopToolbarUi.narrow?.error)
+    || !linuxDesktopToolbarUi.narrow?.found
+    || linuxDesktopToolbarUi.narrow?.viewportWidth > 700
+    || linuxDesktopToolbarUi.narrow?.columnCount !== 1
+    || !linuxDesktopToolbarUi.narrow?.stacked
+    || !linuxDesktopToolbarUi.narrow?.fullWidth
+    || !linuxDesktopToolbarUi.narrow?.noOverflow;
+  const remoteAccessUiFailed = !remoteAccessUi.vncModePersisted || !remoteAccessUi.vncPasswordForm || !remoteAccessUi.vncRetryPrompt || !remoteAccessUi.vncRetryValue || !remoteAccessUi.vncServiceDiagnosisUi || !remoteAccessUi.xdmcpForm || !remoteAccessUi.xdmcpMenuAvailable || !remoteAccessUi.xdmcpSessionSemantics || !remoteAccessUi.macVncBypassesLinuxDesktop || !remoteAccessUi.macVncSetupGuidance || !remoteAccessUi.remoteActivitySeparated || !remoteAccessUi.remoteHostStickyStyle || !remoteAccessUi.remoteHostStickyFollowsOuter || !remoteAccessUi.derivedSourcePresentation || !remoteAccessUi.sshActivitySeparated || !remoteAccessUi.x11AppLauncher || !remoteAccessUi.xServerManager || !remoteAccessUi.adaptiveModal || !remoteAccessUi.modalHeaderControlsAligned || !remoteAccessUi.modalBackdropLocked || !remoteAccessUi.healthIconOnly || !remoteAccessUi.narrowBrandActionsFit;
   const expectedSftpToolActions = ['收藏当前目录','新建文件夹','新建文件','上传文件','SFTP 回收站','搜索当前目录','打开此连接的终端','刷新目录','SFTP 全局设置'];
   const directoryActionsUi = sftpUi.directoryActionsUi || {};
   const connectionSessionUi = sftpUi.connectionSessionUi || {};
@@ -5331,10 +6032,10 @@ app.whenReady().then(async () => {
   const textEncodingUi = sftpUi.textEncodingUi || {};
   const globalSettingsUi = sftpUi.globalSettingsUi || {};
   const downloadNoticeUi = sftpUi.downloadNoticeUi || {};
-  const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.currentProgress || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned;
+  const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.currentProgress || !jobUi.taskLogInitialOpen || !jobUi.taskLogInitialBottom || !jobUi.taskLogRefreshKeepsOpen || !jobUi.taskLogRefreshShowsLatest || !jobUi.taskLogRefreshFollowsBottom || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned || !jobUi.toastOrderPreserved || !jobUi.toastStackedDown || !jobUi.toastAvoidsFloatingTask || !jobUi.toastExitAnimated || !jobUi.toastReflowAnimated || !jobUi.toastMovedUp;
   const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
   const nativeDragUiFailed = !nativeDragUi.found || !nativeDragUi.webExternalDragBlocked || !nativeDragUi.linuxFallbackNoticeOnce || !nativeDragUi.linuxFallbackUsesCompatibilityMode || !nativeDragUi.streamingPreparesOnPointerDown || !nativeDragUi.streamingThresholdActivatesOnce || !nativeDragUi.streamingCaptureCancelSurvives || !nativeDragUi.pointerUpCancelsPending || !nativeDragUi.streamingSkipsStage || !nativeDragUi.streamingNativeBlocksParallelBrowserDrag || !nativeDragUi.nativeIdleHintStable || !nativeDragUi.nativeOutsideHintStaysStable || !nativeDragUi.nativeMotionTargetsSftp || !nativeDragUi.nativeTransientMissKeepsTarget || !nativeDragUi.nativeFinalTransientMissKeepsTarget || !nativeDragUi.nativeReleasedClearsStaleTarget || !nativeDragUi.nativeResultCopiesOnce || !nativeDragUi.firstDragOnlyStages || !nativeDragUi.firstDragReset || !nativeDragUi.cacheReused || !nativeDragUi.cachedUnarmedStaysInternal || !nativeDragUi.sameWindowDropDoesNotArm || !nativeDragUi.armedDragStartsSynchronously || !nativeDragUi.failureRearmed || !nativeDragUi.successClearsState || !nativeDragUi.finderRenameNoticeShown;
-  const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedTabSwitchDoesNotReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithSilentRefresh || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.pathEditorReplacesBreadcrumb || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/junruo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactNoOverflow || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.completedMutationDetected || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
+  const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedTabSwitchDoesNotReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithSilentRefresh || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.pathEditorReplacesBreadcrumb || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/junruo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactNoOverflow || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.completedMutationDetected || !sftpUi.desktopPagerSingleRow || !sftpUi.pagerFloatsAtWorkspaceBottom || !sftpUi.pagerOpaqueAndElevated || !sftpUi.pagerDockSealsBottom || !sftpUi.pagerPinnedToViewport || !sftpUi.scrollCueVisibleAboveContent || !sftpUi.scrollCueHidesAtEnd || !sftpUi.narrowPagerWraps || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
   const sftpToolbarRecoveryFailed = !directoryActionsUi.recoveredMissingToolbar || !directoryActionsUi.duplicateSftpToolbarsFollowActiveTab;
   const sftpTabIsolationFailed = !directoryActionsUi.sftpVisibleNumberingStable
     || !directoryActionsUi.activeShellMatchesTab
@@ -5342,12 +6043,13 @@ app.whenReady().then(async () => {
     || !directoryActionsUi.duplicateDirectoryStateIsolated
     || !directoryActionsUi.duplicateHistoryIsolated
     || !directoryActionsUi.duplicateShellMatchesTab;
-  const code = errors.length || overflow || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceDockingUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || navigationUiFailed || aboutUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.compactDesktopHeader || !result.forwardToggleFits ? 1 : 0;
+  const code = errors.length || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceDockingUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.forwardToggleFits ? 1 : 0;
   clearTimeout(smokeWatchdog);
   window.destroy();
   app.exit(code);
 }).catch(error => {
   clearTimeout(smokeWatchdog);
+  if (rendererFailure) console.error(`Renderer failure: ${JSON.stringify(rendererFailure)}`);
   console.error(error);
   app.exit(1);
 });

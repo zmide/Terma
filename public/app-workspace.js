@@ -7,7 +7,12 @@ const ACTIVITY_BAR_WIDTH_MAX = 64;
 let activityBarWidth = ACTIVITY_BAR_WIDTH_DEFAULT;
 let activityBarResize = null;
 let activityBarFitFrame = 0;
-const OPERATION_PANE_PRIMARY_VIEWS = ["connections", "running", "command", "import", "logs", "settings"];
+const OPERATION_PANE_WIDTH_DEFAULT = 292;
+const OPERATION_PANE_WIDTH_MIN = 260;
+const OPERATION_PANE_WIDTH_MAX = 520;
+let operationPaneWidth = OPERATION_PANE_WIDTH_DEFAULT;
+let operationPaneResize = null;
+const OPERATION_PANE_PRIMARY_VIEWS = ["connections", "remote", "running", "command", "import", "logs", "settings"];
 const OPERATION_PANE_PINNED_STORAGE_KEY = "operationPanePinnedByViewV1";
 const OPERATION_PANE_PIN_GUIDE_STORAGE_KEY = "operationPanePinGuideSeenV3";
 let operationPanePinGuideShown = false;
@@ -44,6 +49,7 @@ function syncActivityBarResizeAria() {
 function applyActivityBarWidth(value, options={}) {
   activityBarWidth = clampActivityBarWidth(value);
   document.documentElement.style.setProperty("--activity-bar-width", `${activityBarWidth}px`);
+  syncOperationPaneNarrowState();
   if (options.persist) {
     try { localStorage.setItem("activityBarWidth", String(activityBarWidth)); } catch {}
   }
@@ -132,15 +138,155 @@ function initActivityBarSizing() {
   syncActivityBarResizeAria();
 }
 
+function clampOperationPaneWidth(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return OPERATION_PANE_WIDTH_DEFAULT;
+  return Math.max(OPERATION_PANE_WIDTH_MIN, Math.min(OPERATION_PANE_WIDTH_MAX, Math.round(numeric)));
+}
+
+function syncOperationPaneNarrowState() {
+  document.documentElement.classList.toggle("operation-pane-narrow", operationPaneWidth - activityBarWidth < 228);
+}
+
+function syncOperationPaneResizeAria() {
+  const handle = document.getElementById("operationPaneResize");
+  if (!handle) return;
+  handle.setAttribute("aria-valuemin", String(OPERATION_PANE_WIDTH_MIN));
+  handle.setAttribute("aria-valuemax", String(OPERATION_PANE_WIDTH_MAX));
+  handle.setAttribute("aria-valuenow", String(operationPaneWidth));
+}
+
+function applyOperationPaneWidth(value, options={}) {
+  operationPaneWidth = clampOperationPaneWidth(value);
+  document.documentElement.style.setProperty("--operation-pane-width", `${operationPaneWidth}px`);
+  syncOperationPaneNarrowState();
+  syncOperationPaneResizeAria();
+  if (options.persist) {
+    try { localStorage.setItem("operationPaneWidth", String(operationPaneWidth)); } catch {}
+  }
+  if (options.fit !== false) scheduleActivityBarFit();
+  return operationPaneWidth;
+}
+
+function finishOperationPaneResize(event, cancelled=false) {
+  const drag = operationPaneResize;
+  if (!drag || event?.pointerId !== undefined && event.pointerId !== drag.pointerId) return;
+  window.removeEventListener("pointermove", moveOperationPaneResize);
+  window.removeEventListener("pointerup", finishOperationPaneResize);
+  window.removeEventListener("pointercancel", cancelOperationPaneResize);
+  window.removeEventListener("blur", finishOperationPaneResizeOnBlur);
+  operationPaneResize = null;
+  try {
+    if (drag.handle.hasPointerCapture?.(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
+  } catch {}
+  document.body.classList.remove("operation-pane-resizing");
+  applyOperationPaneWidth(cancelled ? drag.startValue : operationPaneWidth, {persist:!cancelled});
+}
+
+function moveOperationPaneResize(event) {
+  const drag = operationPaneResize;
+  if (!drag || event.pointerId !== drag.pointerId) return;
+  event.preventDefault();
+  applyOperationPaneWidth(drag.startValue + event.clientX - drag.startX);
+}
+
+function cancelOperationPaneResize(event) {
+  finishOperationPaneResize(event, true);
+}
+
+function finishOperationPaneResizeOnBlur() {
+  finishOperationPaneResize(null);
+}
+
+function beginOperationPaneResize(event) {
+  if (event.button !== 0 || isMobileLayout() || operationPaneCollapsed) return;
+  if (operationPaneResize) finishOperationPaneResize(null, true);
+  event.preventDefault();
+  event.stopPropagation();
+  operationPaneResize = {
+    pointerId:event.pointerId,
+    startX:event.clientX,
+    startValue:operationPaneWidth,
+    handle:event.currentTarget
+  };
+  try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch {}
+  document.body.classList.add("operation-pane-resizing");
+  window.addEventListener("pointermove", moveOperationPaneResize, {passive:false});
+  window.addEventListener("pointerup", finishOperationPaneResize);
+  window.addEventListener("pointercancel", cancelOperationPaneResize);
+  window.addEventListener("blur", finishOperationPaneResizeOnBlur);
+}
+
+function handleOperationPaneResizeKey(event) {
+  if (isMobileLayout() || operationPaneCollapsed) return;
+  const direction = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+  if (!direction && !["Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+  const value = event.key === "Home"
+    ? OPERATION_PANE_WIDTH_MIN
+    : event.key === "End"
+      ? OPERATION_PANE_WIDTH_MAX
+      : operationPaneWidth + direction * (event.shiftKey ? 16 : 4);
+  applyOperationPaneWidth(value, {persist:true});
+}
+
+function initOperationPaneSizing() {
+  let stored = OPERATION_PANE_WIDTH_DEFAULT;
+  try { stored = localStorage.getItem("operationPaneWidth") || OPERATION_PANE_WIDTH_DEFAULT; } catch {}
+  applyOperationPaneWidth(stored, {fit:false});
+  const handle = document.getElementById("operationPaneResize");
+  if (!handle) return;
+  handle.addEventListener("pointerdown", beginOperationPaneResize);
+  handle.addEventListener("pointercancel", cancelOperationPaneResize);
+  handle.addEventListener("lostpointercapture", finishOperationPaneResize);
+  handle.addEventListener("dblclick", event => {
+    if (isMobileLayout()) return;
+    event.preventDefault();
+    applyOperationPaneWidth(OPERATION_PANE_WIDTH_DEFAULT, {persist:true});
+  });
+  handle.addEventListener("keydown", handleOperationPaneResizeKey);
+  syncOperationPaneResizeAria();
+}
+
+function workspaceTabPresentation(tab) {
+  const title = String(tab?.title || "标签");
+  const savedProtocol = String(tab?.protocol || "").toLowerCase();
+  const inferredProtocol = savedProtocol || (title.match(/\s*·\s*(RDP|VNC|XDMCP)\s*$/i)?.[1] || "").toLowerCase();
+  const remoteDesktopProtocol = {
+    rdp:{label:"RDP", letter:"R", marker:/\s*·\s*RDP\s*$/i},
+    vnc:{label:"VNC", letter:"V", marker:/\s*·\s*VNC\s*$/i},
+    xdmcp:{label:"XDMCP", letter:"X", marker:/\s*·\s*XDMCP\s*$/i}
+  }[inferredProtocol];
+  if (tab?.kind === "remote-desktop" && remoteDesktopProtocol) {
+    const compactTitle = title.replace(remoteDesktopProtocol.marker, "").trim() || title;
+    return {
+      title:compactTitle,
+      icon:`<span class="tab-kind-icon remote-desktop remote-protocol-${escAttr(inferredProtocol)}" aria-hidden="true">${icon("monitor")}<span class="tab-protocol-letter">${remoteDesktopProtocol.letter}</span></span>`
+    };
+  }
+  const remoteIcons = {"remote-terminal":"square-terminal", "remote-desktop":"monitor", ftp:"folder-sync", "local-files":"hard-drive"};
+  if (remoteIcons[tab?.kind]) return {title, icon:`<span class="tab-kind-icon ${escAttr(tab.kind)}" aria-hidden="true">${icon(remoteIcons[tab.kind])}</span>`};
+  if (!["terminal", "sftp"].includes(tab?.kind)) return {title, icon:""};
+  const terminal = tab.kind === "terminal";
+  const marker = terminal
+    ? /\s*·\s*终端(?=\s*(?:#\d+|·|$))/
+    : /\s*·\s*SFTP(?=\s*(?:#\d+|·|$))/i;
+  return {
+    title:title.replace(marker, "").trim(),
+    icon:`<span class="tab-kind-icon ${tab.kind}" aria-hidden="true">${icon(terminal ? "square-terminal" : "folder-open")}</span>`
+  };
+}
+
 function renderTabs() {
   if (typeof syncSftpTabTitles === "function") syncSftpTabTitles();
   const container = $("tabs");
   const previousScrollLeft = container.scrollLeft;
   container.innerHTML = tabs.map(tab => {
+    const presentation = workspaceTabPresentation(tab);
     const fullTitle = [tab.title, tab.subtitle].filter(Boolean).join(" - ");
-    const connectionStatus = ["terminal", "sftp"].includes(tab.kind) ? (tab.connectionStatus || "connecting") : "";
+    const connectionStatus = ["terminal", "sftp", "remote-terminal"].includes(tab.kind) ? (tab.connectionStatus || "connecting") : "";
     const connectionDot = connectionStatus ? `<span class="tab-connection-dot ${connectionStatus}" title="${connectionStatus === "connected" ? "已连接" : connectionStatus === "disconnected" ? "已断开" : "连接中"}" aria-hidden="true"></span>` : "";
-    return `<button class="tab ${tab.key === activeTabKey ? "active" : ""}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(tab.title)}" onpointerdown="beginWorkspaceTabDrag(event,'${escAttr(tab.key)}')" onclick="activateWorkspaceTabFromClick(event,'${escAttr(tab.key)}')" oncontextmenu="showTabContextMenu(event,'${escAttr(tab.key)}')" ondragover="handleSftpTabDragOver(event,'${escAttr(tab.key)}')" ondragleave="handleSftpTabDragLeave(event,'${escAttr(tab.key)}')" ondrop="dropSftpItemsOnTab(event,'${escAttr(tab.key)}')">${connectionDot}<span class="tab-title">${esc(tab.title)}</span>${tab.closable ? `<span class="tab-close" title="关闭标签" aria-label="关闭标签" onpointerdown="event.stopPropagation()" onclick="closeTab(event,'${escAttr(tab.key)}')">x</span>` : ""}</button>`;
+    return `<button class="tab ${tab.key === activeTabKey ? "active" : ""}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(tab.title)}" onpointerdown="beginWorkspaceTabDrag(event,'${escAttr(tab.key)}')" onclick="activateWorkspaceTabFromClick(event,'${escAttr(tab.key)}')" oncontextmenu="showTabContextMenu(event,'${escAttr(tab.key)}')" ondragover="handleSftpTabDragOver(event,'${escAttr(tab.key)}')" ondragleave="handleSftpTabDragLeave(event,'${escAttr(tab.key)}')" ondrop="dropSftpItemsOnTab(event,'${escAttr(tab.key)}')">${connectionDot}${presentation.icon}<span class="tab-title">${esc(presentation.title)}</span>${tab.closable ? `<span class="tab-close" title="关闭标签" aria-label="关闭标签" onpointerdown="event.stopPropagation()" onclick="closeTab(event,'${escAttr(tab.key)}')">x</span>` : ""}</button>`;
   }).join("");
   container.scrollLeft = previousScrollLeft;
   requestAnimationFrame(updateWorkspaceTabScrollControls);
@@ -251,10 +397,11 @@ function moveWorkspaceTabDrag(event) {
 
 function createWorkspaceTabDragGhost(drag) {
   const tab = tabs.find(item => item.key === drag.key);
+  const presentation = workspaceTabPresentation(tab);
   const ghost = document.createElement("div");
   ghost.className = "workspace-tab-drag-ghost";
   ghost.setAttribute("aria-hidden", "true");
-  ghost.innerHTML = `${icon("grip-vertical")}<span>${esc(tab?.title || drag.tab.textContent.trim())}</span>`;
+  ghost.innerHTML = `${presentation.icon || icon("grip-vertical")}<span>${esc(presentation.title || drag.tab.textContent.trim())}</span>`;
   document.body.appendChild(ghost);
   drag.ghost = ghost;
   updateWorkspaceTabDragGhost(drag.pointerX, drag.pointerY);
@@ -389,6 +536,14 @@ function renderTabContent(tab) {
   if (tab.kind === "command") return openBatchCommand(false);
   if (tab.kind === "sftp") return openSftp(tab.id, tab.path || ".", false, tab.key);
   if (tab.kind === "dashboard") return openServerDashboard(tab.id, false);
+  if (tab.kind === "remote-edit") return tab.id ? editRemoteProfile(tab.id, false) : newRemoteProfile(tab.protocol || "rdp");
+  if (tab.kind === "remote-desktop") return openRemoteDesktop(tab.id, false);
+  if (tab.kind === "linux-desktop") {
+    const connectionId = Number(tab.id || String(tab.key || "").match(/^linux-desktop-(\d+)$/)?.[1] || 0);
+    return openLinuxDesktopManager(connectionId, false);
+  }
+  if (tab.kind === "remote-terminal") return openRemoteTerminal(tab.id, false, tab.key, tab.title);
+  if (tab.kind === "ftp") return openFtpProfile(tab.id, tab.path || "/", false, tab.key);
   if (tab.kind === "settings") return openSettings(false);
   return setWorkspace(tab.title, tab.subtitle, tab.viewName, tab.key, false, tab.closable);
 }
@@ -416,6 +571,8 @@ function closeTabsByKey(keys, anchorKey="") {
   const anchorIndex = Math.max(0, previousTabs.findIndex(tab => tab.key === anchorKey));
   for (const key of targets) {
     closeTerminalSession(key);
+    if (typeof closeRemoteProtocolSession === "function") closeRemoteProtocolSession(key);
+    if (typeof ftpProfileStates !== "undefined") ftpProfileStates.delete(key);
     if (String(key).startsWith("sftp-") && typeof closeSftpSession === "function") closeSftpSession(key);
     sftpDisconnectedTabs.delete(key);
     sftpViewStates.delete(key);
@@ -481,7 +638,7 @@ function showTabContextMenu(event, key) {
 }
 
 function persistableTabs() {
-  return tabs.filter(tab => tab.kind).map(({key,title,subtitle,viewName,closable,kind,id,path}) => ({key,title,subtitle,viewName,closable,kind,id,path}));
+  return tabs.filter(tab => tab.kind).map(({key,title,subtitle,viewName,closable,kind,id,path,protocol}) => ({key,title,subtitle,viewName,closable,kind,id,path,protocol}));
 }
 
 function saveTabsState() {
@@ -538,9 +695,9 @@ function setWorkspace(title, subtitle, viewName, key=viewName, updateTab=true, c
   document.querySelectorAll(".view").forEach(v => v.hidden = true);
   $(`view-${viewName}`).hidden = false;
   document.querySelector(".workspace")?.classList.toggle("terminal-workspace", viewName === "terminal");
-  $("content")?.classList.toggle("terminal-content", viewName === "terminal");
-  $("content")?.classList.toggle("sftp-content", viewName === "sftp");
-  document.body.classList.toggle("mobile-terminal-active", isMobileLayout() && viewName === "terminal");
+  $("content")?.classList.toggle("terminal-content", ["terminal","remote-terminal"].includes(viewName));
+  $("content")?.classList.toggle("sftp-content", ["sftp","ftp"].includes(viewName));
+  document.body.classList.toggle("mobile-terminal-active", isMobileLayout() && ["terminal","remote-terminal"].includes(viewName));
   activeView = viewName;
   if (typeof syncTerminalToolbarPlacement === "function") syncTerminalToolbarPlacement();
   if (typeof syncSftpToolbarPlacement === "function") syncSftpToolbarPlacement();
@@ -554,14 +711,17 @@ function showPrimary(name, togglePane=false) {
     : operationPaneCollapsed;
   primaryView = name;
   $("navConnections").classList.toggle("active", name === "connections");
+  $("navRemote")?.classList.toggle("active", name === "remote");
   $("navImport").classList.toggle("active", name === "import");
   $("navRunning").classList.toggle("active", name === "running");
   $("navCommand").classList.toggle("active", name === "command");
   $("navLogs").classList.toggle("active", name === "logs");
   $("navSettings")?.classList.toggle("active", name === "settings");
   $("sideConnections").classList.toggle("active", name === "connections");
+  $("sideRemote")?.classList.toggle("active", name === "remote");
   $("sideImport").classList.toggle("active", name === "import");
   $("mobileConnections").classList.toggle("active", name === "connections");
+  $("mobileRemote")?.classList.toggle("active", name === "remote");
   $("mobileImport").classList.toggle("active", name === "import");
   $("mobileRunning").classList.toggle("active", name === "running");
   $("mobileCommand").classList.toggle("active", name === "command");
@@ -718,24 +878,27 @@ function renderExplorerTools() {
   const tools = $("explorerTools");
   const tree = $("connectionGroups");
   syncOperationPaneState();
-  tools.classList.remove("log-mode", "section-mode");
+  tools.classList.remove("log-mode", "section-mode", "connection-mode", "compact-mode");
   if (tree) tree.hidden = ["settings", "import"].includes(primaryView);
   if (primaryView === "logs") {
-    tools.classList.add("log-mode");
+    tools.classList.add("compact-mode");
     tools.innerHTML = `
       <div class="search-field">${icon("search")}<input id="logSearch" placeholder="搜索日志" value="${esc(logSearch)}" oninput="setLogSearch(this.value)"></div>
-      <div class="tool-row"><button onclick="openTodaySystemLog()">${icon("calendar-days")}<span>今天日志</span></button><button onclick="showLogSettings()">${icon("settings-2")}<span>日志设置</span></button></div>
-      <button onclick="showLogCleanupMenu(event)">${icon("list-filter")}<span>清理日志</span></button>`;
+      <div class="explorer-action-strip three-actions">
+        <button class="primary explorer-main-action" onclick="openTodaySystemLog()">${icon("calendar-days")}<span>今日日志</span></button>
+        <button class="icon-button" onclick="showLogSettings()" title="日志设置" aria-label="日志设置">${icon("settings-2")}</button>
+        <button class="icon-button" onclick="showLogCleanupMenu(event)" title="清理日志" aria-label="清理日志">${icon("list-filter")}</button>
+      </div>`;
     return;
   }
   if (primaryView === "running") {
-    tools.classList.add("log-mode");
-    tools.innerHTML = `<button onclick="loadAll().then(renderRunningForwards)">${icon("refresh-cw")}<span>刷新</span></button><button onclick="restoreForwards()">${icon("history")}<span>恢复上次转发</span></button>`;
+    tools.classList.add("compact-mode");
+    tools.innerHTML = `<div class="explorer-action-strip two-actions"><button class="primary" onclick="loadAll().then(renderRunningForwards)">${icon("refresh-cw")}<span>刷新状态</span></button><button onclick="restoreForwards()">${icon("history")}<span>恢复转发</span></button></div>`;
     return;
   }
   if (primaryView === "command") {
-    tools.classList.add("log-mode");
-    tools.innerHTML = `<button class="primary" onclick="openBatchCommand()">${icon("play")}<span>批量执行</span></button><button onclick="newCommandTemplate()">${icon("plus")}<span>新增模板</span></button><button onclick="renderCommandTemplates()">${icon("refresh-cw")}<span>刷新模板</span></button>`;
+    tools.classList.add("compact-mode");
+    tools.innerHTML = `<div class="explorer-action-strip three-actions"><button class="primary explorer-main-action" onclick="openBatchCommand()">${icon("play")}<span>批量执行</span></button><button class="icon-button" onclick="newCommandTemplate()" title="新增模板" aria-label="新增模板">${icon("plus")}</button><button class="icon-button" onclick="renderCommandTemplates()" title="刷新模板" aria-label="刷新模板">${icon("refresh-cw")}</button></div>`;
     return;
   }
   if (primaryView === "import") {
@@ -753,14 +916,48 @@ function renderExplorerTools() {
     tools.innerHTML = sections.map(([id, iconName, label]) => `<button class="${id === activeSection ? "active" : ""}" data-explorer-section="${id}" onclick="openSettingsSection('${id}')">${icon(iconName)}<span>${label}</span>${id === "settings-about" ? `<i id="settingsExplorerUpdateDot" class="section-update-dot" ${updateDotHidden} aria-label="发现新版本"></i>` : ""}</button>`).join("");
     return;
   }
+  if (primaryView === "remote") {
+    tools.classList.add("connection-mode", "remote-connection-mode");
+    const linuxDesktopManagerButton = `<button class="icon-button" onclick="openLinuxDesktopManager()" title="Linux 桌面管理" aria-label="Linux 桌面管理">${icon("monitor-cog")}</button>`;
+    const quickOpenButton = `<button class="icon-button${remoteDesktopQuickOpen ? " active" : ""}" onclick="toggleRemoteDesktopQuickOpen()" title="快捷打开：${remoteDesktopQuickOpen ? "已开启，探测通过后自动打开远程桌面" : "已关闭，只进入探测界面"}" aria-label="快捷打开远程桌面" aria-pressed="${remoteDesktopQuickOpen ? "true" : "false"}">${icon("zap")}</button>`;
+    tools.innerHTML = `
+      <div class="search-field">${icon("search")}<input id="remoteConnectionSearch" placeholder="搜索其他连接、协议、主机、分组" value="${esc(remoteConnectionSearch)}" oninput="setRemoteConnectionSearch(this.value)"></div>
+      <div class="explorer-action-strip connection-action-strip">
+        <button class="primary explorer-main-action" onclick="openAddRemoteConnectionMenu(event)">${icon("plus")}<span>添加连接</span></button>
+        <button class="icon-button" onclick="addGroup()" title="添加分组" aria-label="添加分组">${icon("folder-plus")}</button>
+        ${quickOpenButton}
+        <button class="icon-button" onclick="showRemoteExplorerMenu(event)" title="其他连接操作" aria-label="其他连接操作">${icon("ellipsis")}</button>
+      </div>`;
+    tools.querySelector(".connection-action-strip")?.insertAdjacentHTML("beforeend", linuxDesktopManagerButton);
+    return;
+  }
+  tools.classList.add("connection-mode");
   tools.innerHTML = `
     <div class="search-field">${icon("search")}<input id="connectionSearch" placeholder="搜索连接、主机、用户、分组" value="${esc(connectionSearch)}" oninput="setConnectionSearch(this.value)"></div>
-    <button onclick="addGroup()">${icon("folder-plus")}<span>添加分组</span></button>
-    <button class="primary" onclick="newConnection()">${icon("server-cog")}<span>添加 SSH</span></button>
-    <button class="${connectionBulkMode ? "active" : ""}" onclick="toggleConnectionBulkMode()">${icon(connectionBulkMode ? "check-check" : "list-checks")}<span>${connectionBulkMode ? "完成管理" : "批量管理"}</span></button>
-    <button onclick="startAllForwards(this)">${icon("play")}<span>启动全部</span></button>
-    <button onclick="stopAllForwardsUi(this)">${icon("square")}<span>停止全部</span></button>
-    <button onclick="checkAllHealth(this)">${icon("activity")}<span>健康检查</span></button>`;
+    <div class="explorer-action-strip connection-action-strip">
+      <button class="primary explorer-main-action" onclick="newConnection()">${icon("plus")}<span>添加 SSH</span></button>
+      <button class="icon-button" onclick="addGroup()" title="添加分组" aria-label="添加分组">${icon("folder-plus")}</button>
+      <button class="icon-button${connectionBulkMode ? " active" : ""}" onclick="toggleConnectionBulkMode()" title="${connectionBulkMode ? "完成批量管理" : "批量管理"}" aria-label="${connectionBulkMode ? "完成批量管理" : "批量管理"}">${icon(connectionBulkMode ? "check-check" : "list-checks")}</button>
+      <button class="icon-button" onclick="showConnectionExplorerMenu(event)" title="连接列表操作" aria-label="连接列表操作">${icon("ellipsis")}</button>
+    </div>`;
+}
+
+function toggleRemoteDesktopQuickOpen() {
+  remoteDesktopQuickOpen = !remoteDesktopQuickOpen;
+  localStorage.setItem("remoteDesktopQuickOpen", remoteDesktopQuickOpen ? "1" : "0");
+  renderExplorerTools();
+  notify(remoteDesktopQuickOpen
+    ? "已开启快捷打开：远程桌面探测通过后会自动启动"
+    : "已关闭快捷打开：远程桌面默认停留在探测界面", "info");
+}
+
+function showConnectionExplorerMenu(event) {
+  showActionMenu(event, [
+    {label:"启动全部转发", icon:"play", run:()=>startAllForwards()},
+    {label:"停止全部转发", icon:"square", run:()=>stopAllForwardsUi()},
+    {separator:true},
+    {label:"检查全部连接", icon:"activity", run:()=>checkAllHealth()}
+  ]);
 }
 
 function backToExplorer() {
@@ -778,12 +975,13 @@ function showMobileWorkspace() {
   mobilePaneView = "workspace";
   document.querySelector(".left-pane").classList.add("mobile-hide");
   $("content").classList.add("mobile-show");
-  document.body.classList.toggle("mobile-terminal-active", activeView === "terminal");
+  document.body.classList.toggle("mobile-terminal-active", ["terminal","remote-terminal"].includes(activeView));
 }
 
 function syncResponsivePane() {
   const mobile = isMobileLayout();
   if (mobile && activityBarResize) finishActivityBarResize(null, true);
+  if (mobile && operationPaneResize) finishOperationPaneResize(null, true);
   syncOperationPaneState();
   if (typeof syncTerminalResponsiveFontSizes === "function") syncTerminalResponsiveFontSizes();
   if (!mobile) {
@@ -834,3 +1032,4 @@ async function loadStartupSummary(box=$("startupSummary")) {
 }
 
 initActivityBarSizing();
+initOperationPaneSizing();

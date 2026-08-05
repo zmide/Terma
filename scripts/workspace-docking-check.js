@@ -88,6 +88,9 @@ function loadDockingModel() {
     sandbox.selectedId = id;
     return {id};
   };
+  sandbox.openLinuxDesktopManager = (connectionId, updateTab) => {
+    sandbox.linuxDesktopManagerOpen = {connectionId, updateTab};
+  };
   sandbox.isMobileLayout = () => sandbox.__mobile === true;
   sandbox.globalThis = sandbox;
 
@@ -100,6 +103,10 @@ function loadDockingModel() {
       workspaceFindSplit,
       workspaceReplacePaneWithSplit,
       pruneWorkspaceLayout,
+      workspaceFilterLayout,
+      workspaceAllTabs,
+      workspaceTabByKey,
+      workspaceHasTabKey,
       serializeWorkspaceLayout,
       restoreWorkspaceLayoutNode,
       workspaceDropZoneAtPoint,
@@ -109,13 +116,30 @@ function loadDockingModel() {
       setWorkspaceSplitRatio,
       focusWorkspacePane,
       duplicateWorkspaceTab,
+      captureCurrentWorkspaceGroup,
+      serializeWorkspaceGroupsForPreset,
+      applyWorkspaceGroupPreset,
+      restoreWorkspaceGroups,
+      switchWorkspaceGroup,
+      beginWorkspaceGroupSelection,
+      cancelWorkspaceGroupSelection,
+      activateWorkspaceTabFromClick,
+      beginWorkspaceGroupDrag,
+      dropWorkspaceGroup,
       addTab,
+      setWorkspaceTabConnectionStatus,
+      renderTabContent,
       setLayout:value => { workspaceLayout = value; },
       getLayout:() => workspaceLayout,
       setFocusedPane:value => { focusedPaneId = value; },
       getFocusedPane:() => focusedPaneId,
       setTabs:value => { tabs = value; },
       getTabs:() => tabs,
+      setWorkspaceGroups:(value, activeId) => { workspaceGroups = value; activeWorkspaceGroupId = activeId; },
+      getWorkspaceGroups:() => workspaceGroups,
+      getActiveWorkspaceGroupId:() => activeWorkspaceGroupId,
+      getWorkspaceGroupSelectionMode:() => workspaceGroupSelectionMode,
+      getWorkspaceSelectedTabKeys:() => [...workspaceSelectedTabKeys],
       resetSerials:() => { workspacePaneSerial = 1; workspaceSplitSerial = 0; }
     };`;
 
@@ -179,6 +203,19 @@ function runWorkspaceDockingChecks({silent=false}={}) {
     assert.equal(api.workspaceLeaves().map(item => item.id).join(","), "pane-4,pane-1,pane-2,pane-3");
   });
 
+  check("Linux desktop manager tabs restore their content and legacy connection id", () => {
+    api.renderTabContent({key:"linux-desktop-17", kind:"linux-desktop", id:17});
+    assert.equal(sandbox.linuxDesktopManagerOpen.connectionId, 17);
+    assert.equal(sandbox.linuxDesktopManagerOpen.updateTab, false);
+
+    api.renderTabContent({key:"linux-desktop-29", kind:"linux-desktop"});
+    assert.equal(sandbox.linuxDesktopManagerOpen.connectionId, 29);
+    assert.equal(sandbox.linuxDesktopManagerOpen.updateTab, false);
+
+    api.renderTabContent({key:"linux-desktop-select", kind:"linux-desktop"});
+    assert.equal(sandbox.linuxDesktopManagerOpen.connectionId, 0);
+  });
+
   check("empty panes collapse without flattening surviving nested splits", () => {
     const layout = split(
       "split-1",
@@ -189,6 +226,153 @@ function runWorkspaceDockingChecks({silent=false}={}) {
     const pruned = api.pruneWorkspaceLayout(layout);
     assert.equal(pruned.id, "split-2");
     assert.equal(api.workspaceLeaves(pruned).map(item => item.id).join(","), "pane-2,pane-3");
+  });
+
+  check("workspace groups keep only their selected tabs while preserving internal splits", () => {
+    const layout = split(
+      "split-groups",
+      "row",
+      pane("pane-group-left", ["a", "b"]),
+      pane("pane-group-right", ["c"])
+    );
+    const selected = api.workspaceFilterLayout(layout, new Set(["b", "c"]));
+    const remaining = api.workspaceFilterLayout(layout, new Set(["a"]));
+    assert.equal(selected.type, "split");
+    assert.equal(api.workspaceLeaves(selected).map(item => item.tabs.join(",")).join("|"), "b|c");
+    assert.equal(remaining.type, "pane");
+    assert.equal(remaining.tabs.join(","), "a");
+  });
+
+  check("explicit workspace composition mode supports empty entry, left-click toggles and cancel", () => {
+    api.setTabs([{key:"a", kind:"terminal"},{key:"b", kind:"sftp"}]);
+    api.setLayout(pane("pane-select", ["a", "b"]));
+    api.beginWorkspaceGroupSelection();
+    assert.equal(api.getWorkspaceGroupSelectionMode(), true);
+    assert.equal(api.getWorkspaceSelectedTabKeys().join(","), "");
+    const click = {preventDefault:() => {}, stopPropagation:() => {}, ctrlKey:false, metaKey:false};
+    api.activateWorkspaceTabFromClick(click, "a");
+    api.activateWorkspaceTabFromClick(click, "b");
+    assert.equal(api.getWorkspaceSelectedTabKeys().join(","), "a,b");
+    api.activateWorkspaceTabFromClick(click, "a");
+    assert.equal(api.getWorkspaceSelectedTabKeys().join(","), "b");
+    api.cancelWorkspaceGroupSelection();
+    assert.equal(api.getWorkspaceGroupSelectionMode(), false);
+    assert.equal(api.getWorkspaceSelectedTabKeys().join(","), "");
+  });
+
+  check("workspace group drag sorting changes and persists group order", () => {
+    const groups = [
+      {id:"workspace-main", name:"Main", tabs:[{key:"a", kind:"terminal"}], layout:pane("pane-a", ["a"]), activeTabKey:"a", focusedPaneId:"pane-a"},
+      {id:"workspace-group-1", name:"One", tabs:[{key:"b", kind:"sftp"}], layout:pane("pane-b", ["b"]), activeTabKey:"b", focusedPaneId:"pane-b"},
+      {id:"workspace-group-2", name:"Two", tabs:[{key:"c", kind:"terminal"}], layout:pane("pane-c", ["c"]), activeTabKey:"c", focusedPaneId:"pane-c"}
+    ];
+    api.setWorkspaceGroups(groups, "workspace-main");
+    api.setTabs(groups[0].tabs);
+    api.setLayout(groups[0].layout);
+    api.setFocusedPane("pane-a");
+    sandbox.activeTabKey = "a";
+    const classList = {add:() => {}, remove:() => {}};
+    api.beginWorkspaceGroupDrag({stopPropagation:() => {}, dataTransfer:{setData:() => {}}, currentTarget:{classList}}, "workspace-group-2");
+    api.dropWorkspaceGroup({preventDefault:() => {}, stopPropagation:() => {}, clientX:0, currentTarget:{closest:() => ({getBoundingClientRect:() => ({left:0, width:100})})}}, "workspace-main");
+    assert.equal(api.getWorkspaceGroups().map(group => group.id).join(","), "workspace-group-2,workspace-main,workspace-group-1");
+    const saved = JSON.parse(storage.get("workspaceTabs"));
+    assert.equal(saved.workspaceGroups.map(group => group.id).join(","), "workspace-group-2,workspace-main,workspace-group-1");
+  });
+
+  check("switching workspace groups captures the old layout and restores the target independently", () => {
+    sandbox.__mobile = false;
+    const groupA = {
+      id:"workspace-main",
+      name:"Main",
+      tabs:[{key:"a", kind:"terminal", title:"A"}],
+      layout:pane("pane-a", ["a"]),
+      activeTabKey:"a",
+      focusedPaneId:"pane-a"
+    };
+    const groupB = {
+      id:"workspace-group-1",
+      name:"Ops",
+      tabs:[{key:"b", kind:"sftp", title:"B"}],
+      layout:pane("pane-b", ["b"]),
+      activeTabKey:"b",
+      focusedPaneId:"pane-b"
+    };
+    api.setWorkspaceGroups([groupA, groupB], groupA.id);
+    api.setTabs(groupA.tabs);
+    api.setLayout(groupA.layout);
+    api.setFocusedPane("pane-a");
+    sandbox.activeTabKey = "a";
+
+    api.switchWorkspaceGroup(groupB.id, {notify:false});
+
+    assert.equal(api.getActiveWorkspaceGroupId(), groupB.id);
+    assert.equal(api.getTabs().map(tab => tab.key).join(","), "b");
+    assert.equal(api.workspaceLeaves().map(item => item.id).join(","), "pane-b");
+    assert.equal(api.getWorkspaceGroups()[0].tabs.map(tab => tab.key).join(","), "a");
+    const saved = JSON.parse(storage.get("workspaceTabs"));
+    assert.equal(saved.activeWorkspaceGroupId, groupB.id);
+    assert.equal(saved.workspaceGroups.length, 2);
+    assert.equal(saved.workspaceGroups[0].tabs[0].key, "a");
+  });
+
+  check("stateless singleton tab keys can persist independently in different workspace groups", () => {
+    const restored = api.restoreWorkspaceGroups({
+      activeWorkspaceGroupId:"workspace-main",
+      workspaceGroups:[
+        {id:"workspace-main", name:"Main", tabs:[{key:"settings", kind:"settings"}]},
+        {id:"workspace-group-2", name:"Other", tabs:[{key:"settings", kind:"settings"}]}
+      ]
+    });
+    assert.equal(restored.tabs[0].key, "settings");
+    assert.equal(api.getWorkspaceGroups()[1].tabs[0].key, "settings");
+  });
+
+  check("background sessions can resolve and update tabs in inactive workspace groups", () => {
+    const active = {id:"workspace-main", name:"Main", tabs:[{key:"active", kind:"terminal"}], layout:pane("pane-active", ["active"]), activeTabKey:"active", focusedPaneId:"pane-active"};
+    const hidden = {id:"workspace-group-3", name:"Hidden", tabs:[{key:"hidden", kind:"sftp", connectionStatus:"connecting"}], layout:pane("pane-hidden", ["hidden"]), activeTabKey:"hidden", focusedPaneId:"pane-hidden"};
+    api.setWorkspaceGroups([active, hidden], active.id);
+    api.setTabs(active.tabs);
+    api.setLayout(active.layout);
+    api.setFocusedPane("pane-active");
+    sandbox.activeTabKey = "active";
+
+    assert.equal(api.workspaceHasTabKey("hidden"), true);
+    assert.equal(api.workspaceTabByKey("hidden").kind, "sftp");
+    assert.equal(api.workspaceAllTabs().map(tab => tab.key).join(","), "active,hidden");
+    api.setWorkspaceTabConnectionStatus("hidden", "connected");
+    assert.equal(hidden.tabs[0].connectionStatus, "connected");
+  });
+
+  check("workspace group presets preserve order, names and recursive split trees", () => {
+    const first = {
+      id:"workspace-main",
+      name:"主工作区",
+      tabs:[{key:"a", kind:"terminal", title:"A"}],
+      layout:pane("pane-a", ["a"]),
+      activeTabKey:"a",
+      focusedPaneId:"pane-a"
+    };
+    const second = {
+      id:"workspace-group-9",
+      name:"开发组",
+      tabs:[{key:"b", kind:"sftp", title:"B"},{key:"c", kind:"terminal", title:"C"}],
+      layout:split("split-preset", "row", pane("pane-b", ["b"]), pane("pane-c", ["c"])),
+      activeTabKey:"c",
+      focusedPaneId:"pane-c"
+    };
+    api.setWorkspaceGroups([first, second], second.id);
+    api.setTabs(second.tabs);
+    api.setLayout(second.layout);
+    api.setFocusedPane("pane-c");
+    sandbox.activeTabKey = "c";
+    const preset = api.serializeWorkspaceGroupsForPreset();
+    assert.deepEqual(preset.map(group => group.name), ["主工作区", "开发组"]);
+    assert.equal(preset[1].layout.type, "split");
+    assert.equal(preset[1].layout.first.tabs[0], "b");
+    api.applyWorkspaceGroupPreset({workspaceGroups:preset, activeWorkspaceGroupId:"workspace-group-9"});
+    assert.equal(api.getActiveWorkspaceGroupId(), "workspace-group-9");
+    assert.equal(api.getWorkspaceGroups()[1].name, "开发组");
+    assert.equal(api.workspaceLeaves().map(item => item.id).join(","), "pane-b,pane-c");
   });
 
   check("recursive layouts serialize and restore with bounded ratios", () => {

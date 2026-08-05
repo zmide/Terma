@@ -2,6 +2,25 @@
 
 const path = require("node:path");
 
+function withX11WindowGuardFallback(target) {
+  if (!target) return target;
+  if (typeof target.startX11WindowGuard !== "function") {
+    Object.defineProperty(target, "startX11WindowGuard", {
+      value() {
+        return false;
+      },
+    });
+  }
+  if (typeof target.stopX11WindowGuard !== "function") {
+    Object.defineProperty(target, "stopX11WindowGuard", {
+      value() {
+        return false;
+      },
+    });
+  }
+  return target;
+}
+
 function loadBinding() {
   if (process.platform !== "win32") {
     return null;
@@ -13,9 +32,17 @@ function loadBinding() {
   ];
 
   let lastError = null;
+  let compatibleFallback = null;
   for (const candidate of candidates) {
     try {
-      return require(candidate);
+      const loaded = require(candidate);
+      if (
+        typeof loaded.startX11WindowGuard === "function" &&
+        typeof loaded.stopX11WindowGuard === "function"
+      ) {
+        return loaded;
+      }
+      compatibleFallback ||= loaded;
     } catch (error) {
       if (error && error.code !== "MODULE_NOT_FOUND") {
         lastError = error;
@@ -23,6 +50,9 @@ function loadBinding() {
     }
   }
 
+  if (compatibleFallback) {
+    return compatibleFallback;
+  }
   if (lastError) {
     throw lastError;
   }
@@ -31,9 +61,9 @@ function loadBinding() {
 
 let binding = null;
 try {
-  binding = loadBinding();
+  binding = withX11WindowGuardFallback(loadBinding());
 } catch (error) {
-  binding = {
+  binding = withX11WindowGuardFallback({
     probe() {
       return {
         available: false,
@@ -56,10 +86,10 @@ try {
     cancelDrag() {
       return false;
     },
-  };
+  });
 }
 
-module.exports = binding || {
+module.exports = binding || withX11WindowGuardFallback({
   probe() {
     return {
       available: false,
@@ -82,4 +112,4 @@ module.exports = binding || {
   cancelDrag() {
     return false;
   },
-};
+});

@@ -20,6 +20,7 @@ const {
 const { buildTerminalCommand } = require("../dist/ssh");
 const { openSshShell } = require("../dist/ssh2-client");
 const { closeDatabase } = require("../dist/db");
+const { trustTestHost } = require("./ssh-host-trust-test-helper");
 
 let currentStage = "初始化";
 function markStage(stage) {
@@ -137,7 +138,7 @@ function checkTickets() {
   assert.match(ticket.token, /^[0-9a-f-]{36}$/i);
   assert.ok(ticket.expires_at > createdAt, "临时启动票据必须有未来过期时间");
   assert.ok(ticket.expires_at - createdAt <= 60_000, "临时启动票据应保持短期有效，避免长期重放");
-  assert.deepEqual(consumeTerminalStartupTicket(ticket.token, 42), programConfig);
+  assert.deepEqual(consumeTerminalStartupTicket(ticket.token, 42), {...programConfig, x11_mode:null});
   expectThrow(
     () => consumeTerminalStartupTicket(ticket.token, 42),
     /失效|重新连接/,
@@ -164,6 +165,8 @@ function checkTickets() {
     "过期票据必须被清理"
   );
   assert.equal(consumeTerminalStartupTicket("", 42), null);
+  const x11Ticket = createTerminalStartupTicket(42, {...programConfig, x11_mode:"untrusted"});
+  assert.deepEqual(consumeTerminalStartupTicket(x11Ticket.token, 42), {...programConfig, x11_mode:"untrusted"});
   expectThrow(() => createTerminalStartupTicket(0, programConfig), /连接 ID/, "非法连接 ID 必须被拒绝");
 }
 
@@ -177,6 +180,16 @@ function checkSystemSshCommand() {
   const defaultArgs = buildTerminalCommand({ ...connection, ...canonicalDefault });
   assert.equal(defaultArgs.at(-1), "tester@example.test");
   assert.ok(!defaultArgs.includes(""), "默认模式不得追加空启动命令");
+  assert.ok(defaultArgs.includes("SendEnv=-*"), "终端编码只控制客户端转码，必须清除 OpenSSH 配置继承的 locale 转发");
+
+const legacyEncodingArgs = buildTerminalCommand({...connection, ...canonicalDefault, terminal_encoding:"gbk"});
+  assert.ok(legacyEncodingArgs.includes("SendEnv=-*"), "GBK/GB18030 终端同样不得发送远端 locale");
+
+  const terminalUi = fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal.js"), "utf8");
+  assert.match(terminalUi, /socket\.send\(JSON\.stringify\(\{type:"terminal-encoding", encoding:settings\.terminal_encoding\}\)\)/, "切换终端编码必须在线通知当前会话转码器");
+  assert.doesNotMatch(terminalUi, /previousEncoding !== settings\.terminal_encoding[\s\S]*?reconnectTerminal\(/, "切换终端编码不得断开或重连 SSH 会话");
+  assert.match(terminalUi, /terminalSessions\.get\(key\)\?\.terminalEncoding/, "每个终端标签必须保留自己的运行时编码");
+  assert.match(terminalUi, /encoding=\$\{encodeURIComponent\(session\.terminalEncoding/, "重连必须在握手阶段沿用当前标签的运行时编码");
 
   const programArgs = buildTerminalCommand({ ...connection, ...programConfig });
   const expectedStartup = buildRemoteStartupCommand(programConfig);
@@ -289,8 +302,12 @@ async function checkSsh2Requests() {
       connection.on("ready", () => {
         connection.on("session", acceptSession => {
           const session = acceptSession();
-          const request = { type: "", command: "", pty: null, data: Buffer.alloc(0) };
+          const request = { type: "", command: "", pty: null, env: {}, data: Buffer.alloc(0) };
           requests.push(request);
+          session.on("env", (acceptEnv, _rejectEnv, info) => {
+            request.env[info.key] = info.val;
+            acceptEnv?.();
+          });
           session.on("pty", (acceptPty, _rejectPty, info) => {
             request.pty = info;
             acceptPty?.();
@@ -324,6 +341,7 @@ async function checkSsh2Requests() {
       ssh_user: "test",
       ssh_password: "test-password"
     };
+    await trustTestHost(baseConnection);
 
     const defaultResource = await openSshShell(
       { ...baseConnection, ...canonicalDefault },
@@ -341,6 +359,7 @@ async function checkSsh2Requests() {
     assert.equal(requests[0].pty?.term, "xterm-256color");
     assert.equal(requests[0].pty?.cols, 101);
     assert.equal(requests[0].pty?.rows, 31);
+    assert.deepEqual(requests[0].env, {}, "内置 SSH 的 UTF-8 PTY 不得注入远端 locale");
     assert.deepEqual(requests[0].data.subarray(0, input.length), input);
     try { defaultResource.stream.end(); } catch {}
     try { defaultResource.client.end(); } catch {}
@@ -363,7 +382,18 @@ async function checkSsh2Requests() {
     assert.equal(requests[1].pty?.term, "xterm-256color", "program 模式 exec 必须携带 PTY");
     assert.equal(requests[1].pty?.cols, 119);
     assert.equal(requests[1].pty?.rows, 41);
+    assert.deepEqual(requests[1].env, {}, "带 PTY 的自定义程序也不得注入远端 locale");
     assert.deepEqual(requests[1].data.subarray(0, input.length), input);
+
+    markStage("SSH2 打开旧编码 shell");
+    const legacyResource = await openSshShell(
+      { ...baseConnection, ...canonicalDefault, terminal_encoding:"gbk" },
+      { term:"xterm-256color", cols:80, rows:24 }
+    );
+    clientResources.push(legacyResource);
+    legacyResource.stream.end();
+    await waitFor(() => requests[2]?.type === "shell", "旧编码 Shell 请求验证超时");
+    assert.deepEqual(requests[2].env, {}, "GBK/GB18030 等旧编码 PTY 不得注入 UTF-8 locale");
   } catch (error) {
     mainError = error;
   } finally {

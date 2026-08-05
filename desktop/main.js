@@ -1,7 +1,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { app, BrowserWindow, Menu, Notification, Tray, dialog, ipcMain, nativeImage, nativeTheme, screen, shell } = require("electron");
+const { spawn, spawnSync } = require("node:child_process");
+const { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, screen, shell } = require("electron");
 const { createNativeSftpDrag } = require("./native-sftp-drag");
+const { createRemoteClientAdapter } = require("./remote-clients");
+const { createXServerRuntime } = require("./xserver-runtime");
 
 let startServer = null;
 let shutdown = null;
@@ -25,15 +28,52 @@ let SETTINGS_FILE = "";
 let BOOT_SETTINGS_FILE = "";
 let dataPath = "";
 let sshPath = "";
+const DISPLAY_CLIENT_ARG = "--tunneldesk-display-client";
+const DISPLAY_CLIENT_URL_ENV = "TUNNELDESK_DISPLAY_CLIENT_URL";
+const LINUX_DISPLAY_SESSION_KEYS = [
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+  "DBUS_SESSION_BUS_ADDRESS",
+  "XDG_RUNTIME_DIR",
+  "XDG_SESSION_ID",
+  "XDG_SESSION_TYPE",
+  "XDG_CURRENT_DESKTOP",
+  "XDG_SESSION_DESKTOP",
+  "DESKTOP_SESSION",
+  "GDMSESSION",
+  "SESSION_MANAGER"
+];
+const displayClientMode = process.platform === "linux" && process.argv.includes(DISPLAY_CLIENT_ARG);
+const localLinuxDisplaySession = captureLinuxDisplaySession();
+const localLinuxDisplayKey = linuxDisplaySessionKey(localLinuxDisplaySession);
+let displayClientProfileDir = "";
+if (displayClientMode) {
+  displayClientProfileDir = path.join(app.getPath("temp"), `tunneldesk-display-client-${process.pid}`);
+  app.setPath("userData", displayClientProfileDir);
+  app.setPath("sessionData", displayClientProfileDir);
+}
+let xServerRuntime = null;
+const remoteClientAdapter = displayClientMode ? null : createRemoteClientAdapter({
+  getDataDir:()=>DATA_DIR,
+  shell,
+  getXServerDiagnostics:()=>xServerRuntime?.diagnostics?.() || null
+});
 
 let mainWindow = null;
 let tray = null;
 let webUrl = "";
 let quitting = false;
+let pendingWindowReveal = false;
+let startupRevealScheduled = false;
+let desktopStartupInProgress = true;
 let trayStateTimer = null;
 let trayState = { runningConnections: 0, runningForwards: 0, failedForwards: 0, totalForwards: 0, online: false };
 let pendingStorageMigrationNotice = "";
 let nativeSftpDrag = null;
+let linuxNotificationProbe = { checkedAt: 0, available: false };
+const pendingDisplayClientSessions = new Map();
+const displayClientProcesses = new Map();
 const nativeSftpDragSessions = new Map();
 const NATIVE_SFTP_DRAG_SESSION_TIMEOUT_MS = 70 * 60 * 1000;
 const NATIVE_SFTP_DRAG_CANCEL_GRACE_MS = 90 * 1000;
@@ -48,22 +88,188 @@ const STORAGE_MIGRATION_VERSION = 1;
 const TRANSIENT_DATA_FILES = new Set(["web.pid", "web.url", "web.json"]);
 
 app.setName("TunnelDesk");
+if (!displayClientMode) {
+  xServerRuntime = createXServerRuntime({
+    appIsPackaged:app.isPackaged,
+    resourcesPath:process.resourcesPath,
+    projectRoot:path.resolve(__dirname, ".."),
+    userDataPath:app.getPath("userData")
+  });
+}
 configureWindowsAppIdentity();
 
-const singleInstanceLocked = app.requestSingleInstanceLock();
+const singleInstanceLocked = displayClientMode || app.requestSingleInstanceLock({
+  tunneldeskDisplaySession: localLinuxDisplaySession
+});
 if (!singleInstanceLocked) {
   app.exit(0);
 }
 
-app.on("second-instance", () => {
-  showWindow();
-  notify("TunnelDesk 已在运行，已切换到现有窗口");
-});
+if (displayClientMode) {
+  process.on("message", handleDisplayClientControlMessage);
+  process.on("disconnect", () => {
+    quitting = true;
+    app.quit();
+  });
+} else {
+  app.on("second-instance", handleSecondInstance);
+}
 
 function configureWindowsAppIdentity() {
   if (process.platform !== "win32") return;
   app.setAppUserModelId(app.isPackaged ? APP_USER_MODEL_ID : process.execPath);
   if (typeof app.setToastActivatorCLSID === "function") app.setToastActivatorCLSID(TOAST_ACTIVATOR_CLSID);
+}
+
+function normalizeLinuxDisplaySession(value = {}) {
+  const session = {};
+  for (const key of LINUX_DISPLAY_SESSION_KEYS) {
+    const item = value && typeof value === "object" ? value[key] : undefined;
+    if (typeof item !== "string" || !item || item.includes("\0") || item.length > 8192) continue;
+    session[key] = item;
+  }
+  return session;
+}
+
+function captureLinuxDisplaySession(environment = process.env) {
+  if (process.platform !== "linux") return {};
+  return normalizeLinuxDisplaySession(environment);
+}
+
+function linuxDisplaySessionKey(session = {}) {
+  const normalized = normalizeLinuxDisplaySession(session);
+  const display = String(normalized.DISPLAY || "").trim();
+  if (display) return `x11:${display}`;
+  const waylandDisplay = String(normalized.WAYLAND_DISPLAY || "").trim();
+  if (waylandDisplay) return `wayland:${waylandDisplay}`;
+  const sessionId = String(normalized.XDG_SESSION_ID || "").trim();
+  return sessionId ? `session:${sessionId}` : "";
+}
+
+function displayClientUrl(value = process.env[DISPLAY_CLIENT_URL_ENV]) {
+  try {
+    const target = new URL(String(value || "").trim());
+    if (target.protocol !== "http:" && target.protocol !== "https:") return "";
+    if (target.username || target.password) return "";
+    return target.href;
+  } catch {
+    return "";
+  }
+}
+
+function displayClientSpawnArguments() {
+  const args = process.argv.slice(1).filter(arg => arg !== START_IN_TRAY_ARG && arg !== DISPLAY_CLIENT_ARG);
+  return [...args, DISPLAY_CLIENT_ARG];
+}
+
+function displayClientEnvironment(session, url) {
+  const environment = { ...process.env };
+  for (const key of LINUX_DISPLAY_SESSION_KEYS) delete environment[key];
+  Object.assign(environment, normalizeLinuxDisplaySession(session));
+  environment[DISPLAY_CLIENT_URL_ENV] = url;
+  return environment;
+}
+
+function focusDisplayClientProcess(child) {
+  if (!child || child.exitCode !== null || child.killed || typeof child.send !== "function") return false;
+  try {
+    child.send({ type:"show" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function launchDisplayClient(session) {
+  const normalized = normalizeLinuxDisplaySession(session);
+  const key = linuxDisplaySessionKey(normalized);
+  if (!key) return false;
+
+  const existing = displayClientProcesses.get(key);
+  if (focusDisplayClientProcess(existing)) return true;
+  if (existing) displayClientProcesses.delete(key);
+
+  const targetUrl = displayClientUrl(webUrl);
+  if (!targetUrl) {
+    pendingDisplayClientSessions.set(key, normalized);
+    return false;
+  }
+
+  let child;
+  try {
+    child = spawn(process.execPath, displayClientSpawnArguments(), {
+      env: displayClientEnvironment(normalized, targetUrl),
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      windowsHide: true
+    });
+  } catch (error) {
+    console.error(`failed to open TunnelDesk on ${key}: ${error.message}`);
+    return false;
+  }
+  displayClientProcesses.set(key, child);
+  const forget = () => {
+    if (displayClientProcesses.get(key) === child) displayClientProcesses.delete(key);
+  };
+  child.once?.("error", error => {
+    forget();
+    console.error(`TunnelDesk display client ${key} failed: ${error.message}`);
+  });
+  child.once?.("exit", forget);
+  return true;
+}
+
+function requestDisplayClient(session) {
+  const normalized = normalizeLinuxDisplaySession(session);
+  const key = linuxDisplaySessionKey(normalized);
+  if (!key) return false;
+  if (!webUrl) {
+    pendingDisplayClientSessions.set(key, normalized);
+    return true;
+  }
+  return launchDisplayClient(normalized);
+}
+
+function flushPendingDisplayClients() {
+  if (!webUrl) return 0;
+  const sessions = [...pendingDisplayClientSessions.values()];
+  pendingDisplayClientSessions.clear();
+  for (const session of sessions) launchDisplayClient(session);
+  return sessions.length;
+}
+
+function handleSecondInstance(_event, _commandLine, _workingDirectory, additionalData = {}) {
+  const requestedSession = normalizeLinuxDisplaySession(additionalData?.tunneldeskDisplaySession);
+  const requestedKey = linuxDisplaySessionKey(requestedSession);
+  if (process.platform === "linux" && requestedKey && requestedKey !== localLinuxDisplayKey) {
+    requestDisplayClient(requestedSession);
+    return;
+  }
+  showWindow();
+  notify("TunnelDesk 已在运行，已切换到现有窗口");
+}
+
+function handleDisplayClientControlMessage(message) {
+  if (!message || typeof message !== "object") return;
+  if (message.type === "show") {
+    showWindow();
+    return;
+  }
+  if (message.type === "quit") {
+    quitting = true;
+    app.quit();
+  }
+}
+
+function cleanupDisplayClientProfile() {
+  if (!displayClientMode || !displayClientProfileDir) return;
+  try {
+    const temporaryRoot = path.resolve(app.getPath("temp"));
+    const target = path.resolve(displayClientProfileDir);
+    const relative = path.relative(temporaryRoot, target);
+    if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+      fs.rmSync(target, { recursive:true, force:true });
+    }
+  } catch {}
 }
 
 function removeLegacyElectronShortcut() {
@@ -118,7 +324,8 @@ function defaultDesktopSettings() {
     openAtLogin: false,
     minimizeToTray: true,
     startMinimizedToTray: false,
-    showStartupNotification: true
+    showStartupNotification: true,
+    xServerAutoStart: true
   };
 }
 
@@ -369,9 +576,58 @@ function createWindow(options = {}) {
     });
   }
   mainWindow.once("ready-to-show", () => {
+    if (options.displayClient) {
+      pendingWindowReveal = false;
+      startupRevealScheduled = false;
+      bringMainWindowToFront();
+      return;
+    }
     const settings = readSettings();
-    if (shouldStartInTray(settings)) mainWindow.hide();
+    // A second launch can arrive while the first instance is still starting.
+    // Do not hide the window for tray startup when that launch explicitly
+    // asked us to reveal the existing instance.
+    const revealRequested = pendingWindowReveal || startupRevealScheduled;
+    pendingWindowReveal = false;
+    startupRevealScheduled = false;
+    if (shouldStartInTray(settings) && !revealRequested) mainWindow.hide();
     else bringMainWindowToFront();
+  });
+  mainWindow.webContents.once?.("did-finish-load", () => {
+    if (options.displayClient) {
+      if (startupRevealScheduled) return;
+      startupRevealScheduled = true;
+      setTimeout(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        pendingWindowReveal = false;
+        startupRevealScheduled = false;
+        bringMainWindowToFront();
+      }, 120);
+      return;
+    }
+    // macOS can occasionally skip ready-to-show for a hidden Electron
+    // window launched from Finder or `open`. Reveal a normal manual launch
+    // after the page is ready so the app cannot remain menu-bar-only.
+    if (process.platform === "darwin" && !shouldStartInTray(readSettings()) && !startupRevealScheduled) {
+      startupRevealScheduled = true;
+      setTimeout(() => {
+        if (!mainWindow || mainWindow.isDestroyed() || !startupRevealScheduled) return;
+        pendingWindowReveal = false;
+        startupRevealScheduled = false;
+        bringMainWindowToFront();
+      }, 120);
+      return;
+    }
+    if (!pendingWindowReveal || startupRevealScheduled) return;
+    startupRevealScheduled = true;
+    // Some Linux window managers never emit ready-to-show for an X11
+    // renderer that was initially created hidden. Reveal after the page is
+    // loaded so a second launch cannot remain stuck behind the notification.
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed() || !pendingWindowReveal) return;
+      pendingWindowReveal = false;
+      startupRevealScheduled = false;
+      bringMainWindowToFront();
+    }, 120);
   });
   mainWindow.loadURL(webUrl);
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -379,13 +635,26 @@ function createWindow(options = {}) {
     return { action: "deny" };
   });
   const renderer = mainWindow.webContents;
+  renderer.on?.("will-navigate", (event, url) => {
+    if (urlBelongsToDesktop(url)) return;
+    event.preventDefault();
+    if (/^(https?|ftp|ssh|telnet):\/\//i.test(url)) shell.openExternal(url);
+  });
   renderer.on?.("render-process-gone", () => cancelNativeSftpDragSessionsForSender(renderer, "界面进程已结束，拖出任务已取消"));
   renderer.once?.("destroyed", () => cancelNativeSftpDragSessionsForSender(renderer, "界面已关闭，拖出任务已取消"));
   mainWindow.on("close", event => {
+    if (options.displayClient) return;
     if (quitting || !readSettings().minimizeToTray) return;
     event.preventDefault();
     mainWindow.hide();
   });
+  if (options.displayClient) {
+    mainWindow.once("closed", () => {
+      mainWindow = null;
+      quitting = true;
+      app.quit();
+    });
+  }
 }
 
 function applyDesktopTheme(theme) {
@@ -396,13 +665,16 @@ function applyDesktopTheme(theme) {
   }
 }
 
-function rendererBelongsToDesktop(event) {
+function urlBelongsToDesktop(value) {
   try {
-    const senderUrl = event.senderFrame?.url || event.sender?.getURL?.() || "";
-    return Boolean(webUrl) && new URL(senderUrl).origin === new URL(webUrl).origin;
+    return Boolean(webUrl) && new URL(String(value || "")).origin === new URL(webUrl).origin;
   } catch {
     return false;
   }
+}
+
+function rendererBelongsToDesktop(event) {
+  return urlBelongsToDesktop(event.senderFrame?.url || event.sender?.getURL?.() || "");
 }
 
 function handleDesktopTheme(event, theme) {
@@ -413,7 +685,9 @@ function handleDesktopTheme(event, theme) {
 function handleDesktopCapabilities(event) {
   const allowed = Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents && rendererBelongsToDesktop(event));
   event.returnValue = allowed
-    ? nativeSftpDrag?.capabilities?.() || {platform:process.platform, sftpExternalDrag:"staged"}
+    ? displayClientMode
+      ? {platform:process.platform, sftpExternalDrag:false, displayClient:true}
+      : nativeSftpDrag?.capabilities?.() || {platform:process.platform, sftpExternalDrag:"staged"}
     : {platform:process.platform, sftpExternalDrag:false};
 }
 
@@ -470,14 +744,16 @@ function safeNativeSftpTarget(value, session) {
   if (!value || typeof value !== "object") return null;
   const id = Number(value.id);
   const tabKey = String(value.tabKey || "").slice(0, 256);
-  const targetPath = String(value.path || ".").replace(/\\/g, "/").slice(0, 4096);
-  const kind = value.kind === "terminal" ? "terminal" : "sftp";
-  if (!Number.isInteger(id) || id <= 0 || !tabKey || tabKey === session.sourceTabKey) return null;
+  const kind = value.kind === "terminal" ? "terminal" : value.kind === "local-files" ? "local-files" : "sftp";
+  const targetPath = kind === "local-files"
+    ? String(value.path || "").slice(0, 4096)
+    : String(value.path || ".").replace(/\\/g, "/").slice(0, 4096);
+  if ((kind !== "local-files" && (!Number.isInteger(id) || id <= 0)) || !tabKey || tabKey === session.sourceTabKey) return null;
   return {
-    id,
+    id:kind === "local-files" ? 1 : id,
     tabKey,
     path:targetPath || ".",
-    title:String(value.title || (kind === "terminal" ? "终端" : "SFTP")).slice(0, 256),
+    title:String(value.title || (kind === "terminal" ? "终端" : kind === "local-files" ? "本地文件" : "SFTP")).slice(0, 256),
     kind
   };
 }
@@ -969,18 +1245,49 @@ function handleSftpStartDrag(event, payload) {
 function bringMainWindowToFront() {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
   if (mainWindow.isMinimized()) mainWindow.restore();
+
+  // Linux window managers may keep a hidden Electron window behind the
+  // current workspace even after show()/focus(). Temporarily raising it
+  // gives the WM a real activation request without leaving TunnelDesk
+  // permanently above other applications.
+  const temporarilyRaiseLinuxWindow = process.platform === "linux"
+    && typeof mainWindow.setAlwaysOnTop === "function"
+    && !(typeof mainWindow.isAlwaysOnTop === "function" && mainWindow.isAlwaysOnTop());
+  const temporarilyShowOnAllLinuxWorkspaces = process.platform === "linux"
+    && typeof mainWindow.setVisibleOnAllWorkspaces === "function";
+  if (temporarilyRaiseLinuxWindow) {
+    try { mainWindow.setAlwaysOnTop(true, "normal"); } catch {}
+  }
+  if (temporarilyShowOnAllLinuxWorkspaces) {
+    try { mainWindow.setVisibleOnAllWorkspaces(true); } catch {}
+  }
   mainWindow.show();
-  if (process.platform === "win32") mainWindow.moveTop?.();
+  if (process.platform === "win32" || process.platform === "linux") mainWindow.moveTop?.();
   try {
     if (process.platform === "darwin") app.focus?.({ steal:true });
-    else app.focus?.();
+    else if (process.platform === "win32") app.focus?.();
   } catch {}
   mainWindow.focus();
+  if (temporarilyRaiseLinuxWindow) {
+    try { mainWindow.setAlwaysOnTop(false, "normal"); } catch {}
+  }
+  if (temporarilyShowOnAllLinuxWorkspaces) {
+    try { mainWindow.setVisibleOnAllWorkspaces(false); } catch {}
+  }
   return true;
 }
 
 function showWindow() {
-  if (!bringMainWindowToFront()) createWindow();
+  if (bringMainWindowToFront()) return true;
+  // `second-instance` may fire before app.whenReady() has finished starting
+  // the backend and before the first BrowserWindow exists. Creating a window
+  // at that point would load an empty URL and strand the real startup window.
+  if (desktopStartupInProgress || !webUrl) {
+    pendingWindowReveal = true;
+    return false;
+  }
+  createWindow();
+  return true;
 }
 
 function trayIcon() {
@@ -1034,6 +1341,28 @@ async function stopAllConnectionForwards() {
   notify("已停止全部连接转发");
 }
 
+function desktopNotificationsAvailable() {
+  if (!Notification.isSupported()) return false;
+  if (process.platform !== "linux") return true;
+  const now = Date.now();
+  if (now - linuxNotificationProbe.checkedAt < 30_000) return linuxNotificationProbe.available;
+  let available = false;
+  try {
+    const probe = spawnSync("dbus-send", [
+      "--session",
+      "--dest=org.freedesktop.DBus",
+      "--type=method_call",
+      "--print-reply",
+      "/org/freedesktop/DBus",
+      "org.freedesktop.DBus.NameHasOwner",
+      "string:org.freedesktop.Notifications"
+    ], { encoding: "utf8", timeout: 1200, windowsHide: true });
+    available = probe.status === 0 && /boolean\s+true\b/.test(String(probe.stdout || ""));
+  } catch {}
+  linuxNotificationProbe = { checkedAt: now, available };
+  return available;
+}
+
 function notify(body) {
   if (process.platform === "win32" && tray && typeof tray.displayBalloon === "function") {
     tray.displayBalloon({
@@ -1044,7 +1373,7 @@ function notify(body) {
     });
     return;
   }
-  if (Notification.isSupported()) new Notification({ title: "TunnelDesk", body, icon: iconPath("icon.png") }).show();
+  if (desktopNotificationsAvailable()) new Notification({ title: "TunnelDesk", body, icon: iconPath("icon.png") }).show();
 }
 
 function buildAppMenu() {
@@ -1116,6 +1445,7 @@ function desktopSettingsView() {
   return {
     settings,
     paths,
+    xserver:xServerDiagnostics(),
     project_mode_available: !app.isPackaged || isWindowsPortable(),
     project_mode_label: isWindowsPortable() ? "便携程序所在文件夹" : "项目所在文件夹"
   };
@@ -1137,7 +1467,8 @@ function normalizeDesktopSettings(value) {
     openAtLogin: Boolean(value?.openAtLogin),
     minimizeToTray: Boolean(value?.minimizeToTray),
     startMinimizedToTray: Boolean(value?.startMinimizedToTray),
-    showStartupNotification: Boolean(value?.showStartupNotification)
+    showStartupNotification: Boolean(value?.showStartupNotification),
+    xServerAutoStart: value?.xServerAutoStart !== false
   };
 }
 
@@ -1166,6 +1497,10 @@ function defaultDownloadDirectory() {
   return app.getPath("downloads");
 }
 
+function defaultDesktopDirectory() {
+  return app.getPath("desktop");
+}
+
 function validateDownloadDirectory(value) {
   const target = path.resolve(String(value || defaultDownloadDirectory()));
   fs.mkdirSync(target, { recursive:true });
@@ -1183,11 +1518,117 @@ async function chooseDownloadDirectory() {
   return result.canceled ? "" : result.filePaths[0];
 }
 
+async function chooseSyncDirectory() {
+  const result = await dialog.showOpenDialog(mainWindow || undefined, {
+    title:"选择本地同步目录",
+    properties:["openDirectory", "createDirectory"]
+  });
+  return result.canceled ? "" : result.filePaths[0];
+}
+
 async function openDownloadDirectory(value) {
   const target = validateDownloadDirectory(value);
   const error = await shell.openPath(target);
   if (error) throw new Error(error);
   return {ok:true, path:target};
+}
+
+async function openLocalPath(value) {
+  const target = path.resolve(String(value || ""));
+  if (!fs.existsSync(target)) throw new Error("本地文件或目录不存在");
+  const error = await shell.openPath(target);
+  if (error) throw new Error(error);
+  return {ok:true, path:target};
+}
+
+async function openVsCodeRemote(value={}) {
+  const user = String(value.user || "").trim();
+  const host = String(value.host || "").trim();
+  const port = Number(value.port || 22);
+  const remotePath = String(value.path || "").replace(/\\/g, "/").trim();
+  if (!user || !host || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error("VS Code Remote SSH 目标无效");
+  const target = `${user}@${host}${port === 22 ? "" : `:${port}`}`;
+  const suffix = remotePath ? `/${remotePath.replace(/^\/+/, "").split("/").map(encodeURIComponent).join("/")}` : "";
+  const uri = `vscode://vscode-remote/ssh-remote+${encodeURIComponent(target)}${suffix}`;
+  await shell.openExternal(uri);
+  return {ok:true};
+}
+
+async function openExternalFile(file, editor={}) {
+  const target = path.resolve(String(file || ""));
+  if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error("外部编辑临时文件不存在");
+  const mode = String(editor.mode || "system");
+  if (mode === "system") {
+    const error = await shell.openPath(target);
+    if (error) throw new Error(error);
+    return {ok:true, mode};
+  }
+  if (mode === "vscode") {
+    await shell.openExternal(`vscode://file/${target.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/")}`);
+    return {ok:true, mode};
+  }
+  if (mode !== "custom") throw new Error("外部编辑器类型无效");
+  const executable = path.resolve(String(editor.path || ""));
+  if (!path.isAbsolute(executable) || !fs.existsSync(executable) || !fs.statSync(executable).isFile()) throw new Error("自定义编辑器程序不存在");
+  const configuredArgs = Array.isArray(editor.args) ? editor.args.map(value => String(value)) : [];
+  const args = configuredArgs.some(value => value.includes("${file}"))
+    ? configuredArgs.map(value => value.replaceAll("${file}", target))
+    : [...configuredArgs, target];
+  await new Promise((resolve, reject) => {
+    const child = spawn(executable, args, {detached:true, stdio:"ignore", windowsHide:true});
+    child.once("spawn", () => { child.unref(); resolve(null); });
+    child.once("error", reject);
+  });
+  return {ok:true, mode};
+}
+
+function remoteClientDiagnostics() {
+  return remoteClientAdapter.diagnostics();
+}
+
+async function openRemoteClient(profile={}) {
+  if (process.platform === "darwin" && profile.protocol === "rdp") {
+    const current = remoteClientAdapter.diagnostics().rdp;
+    if (current.mode === "freerdp" && !current.available) await xServerRuntime.start();
+  }
+  return remoteClientAdapter.open(profile);
+}
+
+async function installRemoteClient(protocol="") {
+  if (process.platform === "linux" && protocol === "rdp") return xServerRuntime.installLinuxGraphicsComponents();
+  return remoteClientAdapter.install(String(protocol || ""));
+}
+
+function xServerDiagnostics() {
+  return {...xServerRuntime.diagnostics(), auto_start:readSettings().xServerAutoStart !== false};
+}
+
+async function startXServer() {
+  const result = await xServerRuntime.start();
+  writeSettings({...readSettings(), xServerAutoStart:true});
+  return {...result, auto_start:true};
+}
+
+async function stopXServer() {
+  const result = await xServerRuntime.stop({force:true});
+  writeSettings({...readSettings(), xServerAutoStart:false});
+  return {...result, auto_start:false};
+}
+
+async function installXQuartz() {
+  return xServerRuntime.installXQuartz();
+}
+
+async function installLinuxGraphicsComponents() {
+  return xServerRuntime.installLinuxGraphicsComponents();
+}
+
+async function openXdmcp(profile={}) {
+  return xServerRuntime.openXdmcp(profile);
+}
+
+async function testXdmcp(profile={}) {
+  return xServerRuntime.testXdmcp(profile);
 }
 
 function validatedUpdatePackagePath(file) {
@@ -1233,12 +1674,56 @@ function quitApp() {
   setTimeout(() => app.quit(), 300);
 }
 
+function assertDesktopClipboardSender(event) {
+  if (!mainWindow || mainWindow.isDestroyed() || event?.sender !== mainWindow.webContents || !rendererBelongsToDesktop(event)) {
+    throw new Error("剪贴板请求来源无效");
+  }
+}
+
+function registerDesktopClipboardHandlers() {
+  ipcMain.handle("tunneldesk:clipboard-read", event => {
+    assertDesktopClipboardSender(event);
+    return clipboard.readText();
+  });
+  ipcMain.handle("tunneldesk:clipboard-write", (event, text) => {
+    assertDesktopClipboardSender(event);
+    clipboard.writeText(String(text ?? ""));
+    return {ok:true};
+  });
+}
+
+function startDisplayClient() {
+  const targetUrl = displayClientUrl();
+  if (!targetUrl) {
+    dialog.showErrorBox("TunnelDesk", "无法连接已经运行的 TunnelDesk 后端，请在当前图形会话中重新启动。");
+    quitting = true;
+    app.exit(1);
+    return false;
+  }
+  webUrl = targetUrl;
+  Menu.setApplicationMenu(null);
+  ipcMain.on("tunneldesk:capabilities", handleDesktopCapabilities);
+  ipcMain.on("tunneldesk:set-theme", handleDesktopTheme);
+  createWindow({ displayClient:true });
+  desktopStartupInProgress = false;
+  return true;
+}
+
 app.whenReady().then(async () => {
+  registerDesktopClipboardHandlers();
+  if (displayClientMode) {
+    startDisplayClient();
+    return;
+  }
   configureWindowsAppIdentity();
   removeLegacyElectronShortcut();
   initializeDesktopSettingsFile();
   const firstRun = !settingsExists();
   loadBackend();
+  const startupDesktopSettings = readSettings();
+  if (startupDesktopSettings.xServerAutoStart) {
+    try { await xServerRuntime.start(); } catch (error) { console.warn(`X Server auto-start skipped: ${error.message}`); }
+  }
   nativeSftpDrag = createNativeSftpDrag({
     app,
     nativeImage,
@@ -1265,15 +1750,31 @@ app.whenReady().then(async () => {
         saveSettings: saveDesktopSettings,
         chooseDataDir: chooseDesktopDataDir,
         getDownloadDirectory: defaultDownloadDirectory,
+        getDesktopDirectory: defaultDesktopDirectory,
         validateDownloadDirectory,
         chooseDownloadDirectory,
+        chooseSyncDirectory,
         openDownloadDirectory,
+        openLocalPath,
+        openVsCodeRemote,
+        openExternalFile,
+        remoteClientDiagnostics,
+        openRemoteClient,
+        installRemoteClient,
+        xServerDiagnostics,
+        startXServer,
+        stopXServer,
+        installXQuartz,
+        installLinuxGraphicsComponents,
+        openXdmcp,
+        testXdmcp,
         openUpdatePackage,
         openUpdateDirectory
       }
     });
     if (backend?.ready && typeof backend.ready.then === "function") await backend.ready;
     webUrl = await waitForWebUrl();
+    flushPendingDisplayClients();
   } catch (error) {
     const message = error?.code === "TUNNELDESK_ALREADY_RUNNING"
       ? `${error.message}\n\n请使用已经打开的 TunnelDesk 窗口，或先停止已有无界面服务。`
@@ -1292,6 +1793,7 @@ app.whenReady().then(async () => {
   ipcMain.on("tunneldesk:sftp-drag-cancel", handleSftpDragCancel);
   createTray();
   createWindow({ openDesktopSettings:firstRun });
+  desktopStartupInProgress = false;
   if (pendingStorageMigrationNotice) setTimeout(() => notify(pendingStorageMigrationNotice), 1200);
   updateTrayState().catch(() => {});
   trayStateTimer = setInterval(() => updateTrayState().catch(() => {}), 10000);
@@ -1314,6 +1816,15 @@ app.on("activate", showWindow);
 
 app.on("before-quit", () => {
   quitting = true;
+  if (!displayClientMode) {
+    for (const child of displayClientProcesses.values()) {
+      try { child.send?.({ type:"quit" }); } catch {}
+    }
+    displayClientProcesses.clear();
+  }
+  void xServerRuntime?.dispose?.().catch(() => {});
   try { nativeSftpDrag?.dispose?.(); } catch {}
   for (const session of nativeSftpDragSessions.values()) releaseNativeDragSession(session);
 });
+
+app.on("quit", cleanupDisplayClientProfile);

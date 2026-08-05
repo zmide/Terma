@@ -65,7 +65,7 @@ function showCommandContextMenu(event) {
 async function renderCommandTemplates() {
   await loadCommandTemplates();
   $("connectionGroups").innerHTML = `<div class="command-template-manager">
-    <div id="templateEditor">${renderTemplateEditor()}</div>
+    <div id="templateEditor"></div>
     <div class="template-list">
       ${commandTemplates.map(template => renderTemplateRow(template)).join("") || stateView("empty", "暂无命令模板", "可以新建模板，也可以直接进入批量执行输入命令。", `<button class="primary" onclick="newCommandTemplate()">新增模板</button>`)}
     </div>
@@ -97,8 +97,8 @@ function renderTemplateRow(template) {
       ${template.description ? `<span class="muted">${esc(template.description)}</span>` : ""}
     </button>
     <div class="template-actions">
-      <button onclick="editCommandTemplate('${escAttr(template.id)}')">编辑</button>
-      <button class="danger" onclick="deleteCommandTemplate('${escAttr(template.id)}')">删除</button>
+      <button class="icon-button" onclick="editCommandTemplate('${escAttr(template.id)}')" title="编辑模板" aria-label="编辑模板">${icon("pencil")}</button>
+      <button class="danger icon-button" onclick="deleteCommandTemplate('${escAttr(template.id)}')" title="删除模板" aria-label="删除模板">${icon("trash-2")}</button>
     </div>
   </div>`;
 }
@@ -270,6 +270,17 @@ async function runBatchCommand() {
   if (commandInput.value !== command) commandInput.value = command;
   if (commandLooksDangerous(command) && !await confirmModal("这条命令看起来有破坏风险，确定要批量执行吗？", "危险命令确认", "继续执行", "取消", true)) return;
   if (!tabIsActive()) return;
+  batchElement("batchCommandStatus", root).textContent = "正在验证 SSH 主机身份...";
+  try {
+    for (const id of ids) {
+      await api("/api/ssh/preflight", {method:"POST", body:JSON.stringify({connection_id:id})});
+      if (!tabIsActive()) return;
+    }
+  } catch (error) {
+    batchElement("batchCommandStatus", root).textContent = error.code === "SSH_HOST_TRUST_CANCELLED" ? "已取消执行" : "SSH 主机身份校验失败";
+    if (error.code !== "SSH_HOST_TRUST_CANCELLED") notify(error.message || "SSH 主机身份校验失败", "error");
+    return;
+  }
   batchCommandExport = {command, started_at:new Date().toISOString(), finished_at:null, results:Object.fromEntries(ids.map(id => { const c=currentConnection(id); return [id,{id,name:c?.name || String(id),host:c ? `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}` : "",output:"",ok:null,exit_code:null,error:"",elapsed_ms:null}]; }))};
   batchElement("batchExportTxtBtn", root).hidden = true;
   batchElement("batchExportJsonBtn", root).hidden = true;

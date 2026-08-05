@@ -76,9 +76,44 @@ const terminalStartupOverrides = new Map();
 const terminalStartupKinds = new Set(["shell", "repl", "session", "tool", "custom"]);
 const terminalStartupPlatforms = new Set(["auto", "posix", "windows"]);
 let terminalStartupModalSerial = 0;
+const TERMINAL_GLYPH_SAFETY_GUTTER = 3;
+
+function createTerminalFitAddon(term) {
+  const fit = new FitAddonClass();
+  const proposeDimensions = fit.proposeDimensions.bind(fit);
+  fit.proposeDimensions = () => {
+    const dimensions = proposeDimensions();
+    const element = term?.element;
+    const parent = element?.parentElement;
+    const renderDimensions = term?._core?._renderService?.dimensions;
+    const cellWidth = Number(renderDimensions?.css?.cell?.width || 0);
+    if (!dimensions || !parent || !cellWidth) return dimensions;
+    const parentStyle = getComputedStyle(parent);
+    const elementStyle = getComputedStyle(element);
+    const cssPixels = value => Number.parseInt(value, 10) || 0;
+    const scrollbarWidth = term.options.scrollback === 0 ? 0 : Number(term.options.overviewRuler?.width || 14);
+    const parentWidth = Number(parent.clientWidth || cssPixels(parentStyle.width));
+    const availableWidth = Math.max(0,
+      parentWidth
+      - cssPixels(elementStyle.paddingLeft)
+      - cssPixels(elementStyle.paddingRight)
+      - scrollbarWidth
+    );
+    const deviceCellWidth = Number(renderDimensions?.device?.cell?.width || 0);
+    const projectedScreenWidth = deviceCellWidth
+      ? Math.round(deviceCellWidth * dimensions.cols / Math.max(1, window.devicePixelRatio || 1))
+      : Math.round(dimensions.cols * cellWidth);
+    if (availableWidth - projectedScreenWidth < TERMINAL_GLYPH_SAFETY_GUTTER) {
+      dimensions.cols = Math.max(2, dimensions.cols - 1);
+    }
+    return dimensions;
+  };
+  return fit;
+}
 
 function normalizeTerminalStartupConfig(value={}) {
   const mode = value.terminal_startup_mode === "program" ? "program" : "default";
+  const x11Mode = ["off", "untrusted", "trusted"].includes(String(value.x11_mode || "")) ? value.x11_mode : null;
   if (mode === "default") return {
     terminal_startup_mode:"default",
     terminal_profile_name:"",
@@ -86,7 +121,8 @@ function normalizeTerminalStartupConfig(value={}) {
     terminal_program_path:"",
     terminal_program_args:"",
     terminal_working_directory:"",
-    terminal_program_platform:"auto"
+    terminal_program_platform:"auto",
+    ...(x11Mode ? {x11_mode:x11Mode} : {})
   };
   return {
     terminal_startup_mode:"program",
@@ -95,7 +131,8 @@ function normalizeTerminalStartupConfig(value={}) {
     terminal_program_path:String(value.terminal_program_path || "").trim(),
     terminal_program_args:String(value.terminal_program_args || "").trim(),
     terminal_working_directory:String(value.terminal_working_directory || "").trim(),
-    terminal_program_platform:terminalStartupPlatforms.has(value.terminal_program_platform) ? value.terminal_program_platform : "auto"
+    terminal_program_platform:terminalStartupPlatforms.has(value.terminal_program_platform) ? value.terminal_program_platform : "auto",
+    ...(x11Mode ? {x11_mode:x11Mode} : {})
   };
 }
 
@@ -282,9 +319,10 @@ function bindTerminalDropUpload(session, connection, key, mount) {
   };
   mount.addEventListener("dragenter", event => {
     const drag = terminalSftpDragPayload(event.dataTransfer);
-    if (!drag && !terminalDataTransferHasFiles(event.dataTransfer)) return;
+    const localPayload = typeof readLocalFileDragPayload === "function" ? readLocalFileDragPayload(event.dataTransfer) : null;
+    if (!drag && !localPayload && !terminalDataTransferHasFiles(event.dataTransfer)) return;
     event.preventDefault();
-    if (drag) {
+    if (drag || localPayload) {
       event.stopPropagation();
       if (typeof markSftpDragInsideWindow === "function") markSftpDragInsideWindow();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
@@ -294,9 +332,10 @@ function bindTerminalDropUpload(session, connection, key, mount) {
   });
   mount.addEventListener("dragover", event => {
     const drag = terminalSftpDragPayload(event.dataTransfer);
-    if (!drag && !terminalDataTransferHasFiles(event.dataTransfer)) return;
+    const localPayload = typeof readLocalFileDragPayload === "function" ? readLocalFileDragPayload(event.dataTransfer) : null;
+    if (!drag && !localPayload && !terminalDataTransferHasFiles(event.dataTransfer)) return;
     event.preventDefault();
-    if (drag) {
+    if (drag || localPayload) {
       event.stopPropagation();
       if (typeof markSftpDragInsideWindow === "function") markSftpDragInsideWindow();
     }
@@ -311,7 +350,8 @@ function bindTerminalDropUpload(session, connection, key, mount) {
   });
   mount.addEventListener("drop", async event => {
     const drag = terminalSftpDragPayload(event.dataTransfer);
-    if (!drag && !terminalDataTransferHasFiles(event.dataTransfer)) return;
+    const localPayload = typeof readLocalFileDragPayload === "function" ? readLocalFileDragPayload(event.dataTransfer) : null;
+    if (!drag && !localPayload && !terminalDataTransferHasFiles(event.dataTransfer)) return;
     event.preventDefault();
     event.stopPropagation();
     clear();
@@ -325,6 +365,15 @@ function bindTerminalDropUpload(session, connection, key, mount) {
     if (!directory) {
       if (drag && typeof finishSftpDragPayload === "function") finishSftpDragPayload(drag);
       return notify("无法确认终端当前目录，请先重连终端", "error");
+    }
+    if (localPayload) {
+      if (typeof uploadLocalFilesToSftp !== "function") return notify("当前版本不支持本地文件上传", "error");
+      try {
+        await uploadLocalFilesToSftp(localPayload, {kind:"terminal", id:connection.id, title:`终端：${directory}`, path:directory}, key);
+      } catch (error) {
+        notify(error.message || "上传本地文件到终端失败", "error");
+      }
+      return;
     }
     if (drag) {
       if (typeof copySftpDraggedItemsToDirectory !== "function") {
@@ -344,6 +393,18 @@ function bindTerminalDropUpload(session, connection, key, mount) {
       notify(error.message || "终端文件上传失败", "error");
     }
   });
+}
+
+async function uploadLocalFilesToTerminalTab(payload, tab) {
+  const key = String(tab?.key || "");
+  const connection = currentConnection(Number(tab?.id || 0));
+  const session = terminalSessions.get(key);
+  if (!connection || !session?.connected) throw new Error("终端尚未连接，无法接收文件");
+  const directory = session.currentDirectoryKnown
+    ? session.currentDirectory
+    : await initializeTerminalDirectory(session, connection, key);
+  if (!directory) throw new Error("无法确认终端当前目录，请先重连终端");
+  return uploadLocalFilesToSftp(payload, {kind:"terminal", id:connection.id, title:`终端：${directory}`, path:directory}, key);
 }
 
 function terminalStartupConfigLabel(config) {
@@ -1552,8 +1613,12 @@ function showTerminalStartupSettings(key, connectionId) {
   requestAnimationFrame(() => $("terminalStartupProfile")?.focus({preventScroll:true}));
 }
 
-function terminalEncodingLabel(connection) {
-  return terminalEncodingOptions.find(([value]) => value === (connection.terminal_encoding || "utf8"))?.[1] || "UTF-8";
+function terminalSessionEncoding(key, connection) {
+  return terminalSessions.get(key)?.terminalEncoding || connection?.terminal_encoding || "utf8";
+}
+
+function terminalEncodingLabel(connection, key="") {
+  return terminalEncodingOptions.find(([value]) => value === terminalSessionEncoding(key, connection))?.[1] || "UTF-8";
 }
 
 function terminalElementForKey(key, selector) {
@@ -1580,7 +1645,7 @@ function updateTerminalStatusForLayout(key=activeTabKey) {
 
 function syncTerminalToolbarPlacement(tabKey=activeTabKey) {
   const key = String(tabKey || "");
-  const tab = tabs.find(item => item.key === key);
+  const tab = typeof workspaceTabByKey === "function" ? workspaceTabByKey(key) : tabs.find(item => item.key === key);
   if (tab?.kind !== "terminal") return;
   const pane = typeof workspaceFindPaneForTab === "function" ? workspaceFindPaneForTab(key) : null;
   const view = pane && typeof workspacePaneElement === "function"
@@ -1711,14 +1776,27 @@ function createTerminalLogId() {
   return `${Date.now()}-${String(random).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64)}`;
 }
 
+function nextTerminalTabIndex(connectionId) {
+  const id = Number(connectionId);
+  const siblings = tabs.filter(tab => tab.kind === "terminal" && Number(tab.id) === id);
+  let current = siblings.length ? Number(terminalCounts.get(id) || 0) : 0;
+  for (const tab of siblings) {
+    current = Math.max(current, Number(String(tab.key).match(new RegExp(`^terminal-${id}-(\\d+)$`))?.[1] || 0));
+  }
+  let next = current + 1;
+  while (tabs.some(tab => tab.key === `terminal-${id}-${next}`) || terminalSessions.has(`terminal-${id}-${next}`)) next += 1;
+  terminalCounts.set(id, next);
+  return next;
+}
+
 function openTerminal(id, updateTab=true, existingKey="", existingTitle="") {
   const c = selectConnection(id);
   if (!c) return;
+  if (updateTab && typeof noteConnectionUsage === "function") noteConnectionUsage(c.id, "terminal");
   let key = existingKey;
   let title = existingTitle;
   if (!key) {
-    const next = (terminalCounts.get(c.id) || 0) + 1;
-    terminalCounts.set(c.id, next);
+    const next = nextTerminalTabIndex(c.id);
     key = `terminal-${c.id}-${next}`;
     title = `${c.name} · 终端${next > 1 ? ` #${next}` : ""}`;
   } else {
@@ -1732,7 +1810,14 @@ function openTerminal(id, updateTab=true, existingKey="", existingTitle="") {
     .replace("connection-forward-toggle", "connection-forward-toggle terminal-action-forward")
     .replace("<button ", "<button onpointerdown=\"keepTerminalKeyboardClosed(event)\" ");
   const terminalView = $("view-terminal");
-  terminalView.innerHTML = `<div class="terminal-toolbar"><div class="terminal-title-row"><button class="terminal-mobile-back" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="backToExplorer()">${icon("arrow-left")}<span>返回</span></button><span class="terminal-connection-dot"></span><div class="terminal-status" id="terminalStatus" title="${esc(connectionAddress)}">${esc(connectionAddress)}</div>${terminalLatencyHtml(key)}</div><div class="actions terminal-actions"><button class="icon-button terminal-action-sftp" title="打开此连接的 SFTP" aria-label="打开此连接的 SFTP" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="openSftp(${c.id})">${icon("folder-open")}<span>SFTP</span></button><button class="icon-button terminal-action-font" title="减小字体（Ctrl+滚轮）" aria-label="减小字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',-1)">${icon("minus")}</button><button class="icon-button terminal-action-font" title="增大字体（Ctrl+滚轮）" aria-label="增大字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',1)">${icon("plus")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端编码" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalEncodingMenu(event,'${key}',${c.id})">${icon("languages")}<span>${esc(terminalEncodingLabel(c))}</span>${icon("chevron-down")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalFontMenu(event,'${key}',${c.id})">${icon("type")}<span>字体</span>${icon("chevron-down")}</button><button class="icon-button terminal-startup-button" title="终端启动配置" aria-label="终端启动配置" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalStartupSettings('${key}',${c.id})">${icon("command")}<span>启动</span></button><button class="icon-button terminal-global-settings-button" title="全局终端设置" aria-label="全局终端设置" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalGlobalSettings('${key}')">${icon("settings")}</button><button class="terminal-action-keys" title="${terminalKeysVisible ? "隐藏快捷键" : "显示快捷键"}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalKeys('${key}')">${icon("keyboard")}<span>${terminalKeysVisible ? "隐藏快捷键" : "快捷键"}</span></button><button class="terminal-action-recent" title="最近命令" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showRecentTerminalCommands('${key}')">${icon("history")}<span>最近命令</span></button><button class="terminal-action-reconnect" title="重新连接终端" aria-label="重新连接终端" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalConnection(${c.id}, '${key}')">${icon("link-2")}<span>重连</span></button>${forwardButton}</div></div>${renderTerminalKeys(key)}<div id="terminalMount" class="terminal-box"></div><div class="terminal-mobile-composer"><input id="terminalMobileInput" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入命令" onkeydown="handleMobileTerminalInput(event,'${key}')"><button class="primary icon-button" title="发送命令" onclick="sendMobileTerminalInput('${key}')">${icon("send")}</button></div>`;
+  terminalView.innerHTML = `<div class="terminal-toolbar"><div class="terminal-title-row"><button class="terminal-mobile-back" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="backToExplorer()">${icon("arrow-left")}<span>返回</span></button><span class="terminal-connection-dot"></span><div class="terminal-status" id="terminalStatus" title="${esc(connectionAddress)}">${esc(connectionAddress)}</div>${terminalLatencyHtml(key)}</div><div class="actions terminal-actions"><button class="icon-button terminal-action-sftp" title="打开此连接的 SFTP" aria-label="打开此连接的 SFTP" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="openSftp(${c.id})">${icon("folder-open")}<span>SFTP</span></button><button class="icon-button terminal-action-font" title="减小字体（Ctrl+滚轮）" aria-label="减小字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',-1)">${icon("minus")}</button><button class="icon-button terminal-action-font" title="增大字体（Ctrl+滚轮）" aria-label="增大字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',1)">${icon("plus")}</button><button class="terminal-dropdown-button terminal-action-display terminal-action-encoding" title="切换终端编码" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalEncodingMenu(event,'${key}',${c.id})">${icon("languages")}<span>${esc(terminalEncodingLabel(c, key))}</span>${icon("chevron-down")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalFontMenu(event,'${key}',${c.id})">${icon("type")}<span>字体</span>${icon("chevron-down")}</button><button class="icon-button terminal-startup-button" title="终端启动配置" aria-label="终端启动配置" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalStartupSettings('${key}',${c.id})">${icon("command")}<span>启动</span></button><button class="icon-button terminal-global-settings-button" title="全局终端设置" aria-label="全局终端设置" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalGlobalSettings('${key}')">${icon("settings")}</button><button class="terminal-action-keys" title="${terminalKeysVisible ? "隐藏快捷键" : "显示快捷键"}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalKeys('${key}')">${icon("keyboard")}<span>${terminalKeysVisible ? "隐藏快捷键" : "快捷键"}</span></button><button class="terminal-action-recent" title="最近命令" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showRecentTerminalCommands('${key}')">${icon("history")}<span>最近命令</span></button><button class="terminal-action-reconnect" title="重新连接终端" aria-label="重新连接终端" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalConnection(${c.id}, '${key}')">${icon("link-2")}<span>重连</span></button>${forwardButton}</div></div>${renderTerminalKeys(key)}<div id="terminalMount" class="terminal-box"></div><div class="terminal-mobile-composer"><input id="terminalMobileInput" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入命令" onkeydown="handleMobileTerminalInput(event,'${key}')"><button class="primary icon-button" title="发送命令" onclick="sendMobileTerminalInput('${key}')">${icon("send")}</button></div>`;
+  terminalView.querySelector(".terminal-startup-button")?.insertAdjacentHTML("afterend", `<button class="icon-button terminal-x11-button${c.x11_mode && c.x11_mode !== "off" ? " active" : ""}" title="X11 图形转发" aria-label="X11 图形转发" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showX11LaunchMenu(event,${c.id})">${icon("app-window")}</button>`);
+  if (typeof remoteDesktopJumpButtonHtml === "function") {
+    terminalView.querySelector(".terminal-action-sftp")?.insertAdjacentHTML("afterend", remoteDesktopJumpButtonHtml(c.id));
+  }
+  if (typeof localFilesToolbarButtonHtml === "function") {
+    terminalView.querySelector(".terminal-action-sftp")?.insertAdjacentHTML("afterend", localFilesToolbarButtonHtml(key));
+  }
   terminalView.dataset.workspaceTabKey = key;
   terminalView.dataset.terminalTabKey = key;
   const toolbar = terminalView.querySelector(":scope > .terminal-toolbar");
@@ -1774,9 +1859,9 @@ async function attachTerminal(c, key) {
       wordSeparator:terminalWordSeparator(),
       theme:terminalThemeForSettings()
     });
-    const fit = new FitAddonClass();
+    const fit = createTerminalFitAddon(term);
     term.loadAddon(fit);
-    session = {term, fit, socket:null, connected:false, id:c.id, logId:createTerminalLogId(), fontLayoutMobile:isMobileLayout(), currentDirectory:"", currentDirectoryKnown:false};
+    session = {term, fit, socket:null, connected:false, id:c.id, logId:createTerminalLogId(), terminalEncoding:c.terminal_encoding || "utf8", fontLayoutMobile:isMobileLayout(), currentDirectory:"", currentDirectoryKnown:false};
     terminalSessions.set(key, session);
     registerTerminalDirectoryTracking(session);
   }
@@ -1870,6 +1955,7 @@ function sendMobileTerminalInput(key) {
   const session = terminalSessions.get(key);
   const connection = session ? currentConnection(session.id) : null;
   if (session && connection) void trackTerminalDirectoryCommand(session, connection, key, command);
+  if (typeof noteTerminalCommandStarted === "function") noteTerminalCommandStarted(key);
   sendTerminalData(key, `${command}\r`);
   saveRecentTerminalCommand(command);
   input.value = "";
@@ -2079,7 +2165,7 @@ function focusTerminalSession(key) {
 function showTerminalEncodingMenu(event, key, connectionId) {
   const connection = connections.find(item => item.id === connectionId);
   if (!connection) return;
-  const current = connection.terminal_encoding || "utf8";
+  const current = terminalSessionEncoding(key, connection);
   showActionMenu(event, terminalEncodingOptions.map(([value,label]) => ({
     label,
     icon:value === current ? "check" : "languages",
@@ -2151,20 +2237,29 @@ async function applyTerminalPreferences(key, connectionId, changes, successText=
       })
     });
     Object.assign(connection, settings);
-    for (const activeSession of terminalSessions.values()) {
+    for (const [sessionKey, activeSession] of terminalSessions) {
       if (activeSession.id !== connectionId) continue;
       activeSession.term.options.fontFamily = settings.terminal_font_family;
       activeSession.term.options.fontSize = terminalFontSizeForCurrentLayout(settings);
       activeSession.fontLayoutMobile = isMobileLayout();
       activeSession.term.options.lineHeight = settings.terminal_line_height;
       activeSession.term.options.fontWeight = settings.terminal_font_weight;
-      if (activeSession.socket?.readyState === WebSocket.OPEN) {
-        activeSession.socket.send(JSON.stringify({type:"terminal-encoding", encoding:settings.terminal_encoding}));
-      }
       setTimeout(() => { try { activeSession.fit.fit(); } catch {} }, 0);
+      const encodingButton = terminalElementForKey(sessionKey, ".terminal-action-encoding span");
+      if (encodingButton) encodingButton.textContent = terminalEncodingLabel(connection, sessionKey);
     }
-    const encodingButton = document.querySelector(`button[onclick*="showTerminalEncodingMenu"][onclick*="'${key}'"] span`);
-    if (encodingButton) encodingButton.textContent = terminalEncodingLabel(connection);
+    if (changes.terminal_encoding !== undefined) {
+      const activeSession = terminalSessions.get(key);
+      if (activeSession?.id === connectionId) {
+        activeSession.terminalEncoding = settings.terminal_encoding;
+        const socket = activeSession.socket;
+        const sendEncoding = () => {
+          if (activeSession.socket !== socket || activeSession.terminalEncoding !== settings.terminal_encoding) return;
+          if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({type:"terminal-encoding", encoding:settings.terminal_encoding}));
+        };
+        if (socket?.readyState === WebSocket.OPEN) sendEncoding();
+      }
+    }
     notify(successText, "success");
   } finally {
     focusTerminalSession(key);
@@ -2254,6 +2349,7 @@ function showTerminalContextMenu(event, key, connectionId) {
     {separator:true},
     {label:"清屏", icon:"eraser", run:()=>{ session.term.clear(); session.term.focus(); }},
     {label:"滚动到底部", icon:"arrow-down-to-line", run:()=>session.term.scrollToBottom()},
+    {label:session.term.getSelection?.().trim() ? "在 SFTP 打开选中路径" : "在 SFTP 打开当前目录", icon:"folder-open", run:()=>openTerminalPathInSftp(connectionId, key)},
     {separator:true},
     {label:"终端启动配置", icon:"command", run:()=>showTerminalStartupSettings(key, connectionId)},
     {label:session.connected ? "断开连接" : "重新连接", icon:session.connected ? "link-2-off" : "link-2", run:()=>toggleTerminalConnection(connectionId, key)},
@@ -2272,7 +2368,7 @@ async function connectTerminal(c, key) {
   try { session.inputDisposable?.dispose(); } catch {}
   try { session.resizeDisposable?.dispose(); } catch {}
   const protocol = location.protocol === "https:" ? "wss" : "ws";
-  const tab = tabs.find(item => item.key === key);
+  const tab = typeof workspaceTabByKey === "function" ? workspaceTabByKey(key) : tabs.find(item => item.key === key);
   const title = tab?.title || `${c.name} · 终端`;
   session.connected = false;
   session.currentDirectory = "";
@@ -2281,6 +2377,18 @@ async function connectTerminal(c, key) {
   session.homeDirectory = "";
   updateTerminalConnectionStatus(c, key, "连接中");
   session.term.writeln(`连接 ${c.ssh_user}@${c.ssh_host}:${c.ssh_port} ...`);
+  try {
+    await api("/api/ssh/preflight", {
+      method:"POST",
+      body:JSON.stringify({connection_id:c.id})
+    });
+  } catch (error) {
+    if (session.connectionAttempt !== attempt || terminalSessions.get(key) !== session) return;
+    session.term.writeln(`\r\n[${error.code === "SSH_HOST_TRUST_CANCELLED" ? "已取消连接" : `SSH 主机身份校验失败：${error.message}`}]`);
+    updateTerminalConnectionStatus(c, key, "已断开");
+    if (error.code !== "SSH_HOST_TRUST_CANCELLED") notify(error.message || "SSH 主机身份校验失败", "error");
+    return;
+  }
   let startupToken = "";
   try {
     if (terminalStartupOverrides.has(key)) {
@@ -2303,23 +2411,27 @@ async function connectTerminal(c, key) {
   if (
     session.connectionAttempt !== attempt
     || terminalSessions.get(key) !== session
-    || !tabs.some(item => item.key === key)
+    || !(typeof workspaceHasTabKey === "function" ? workspaceHasTabKey(key) : tabs.some(item => item.key === key))
   ) return;
   const startupQuery = startupToken ? `&startup_token=${encodeURIComponent(startupToken)}` : "";
   const logQuery = session.logId ? `&log_id=${encodeURIComponent(session.logId)}` : "";
-  const socket = new WebSocket(`${protocol}://${location.host}/ws/terminal?id=${encodeURIComponent(c.id)}&cols=${session.term.cols || 80}&rows=${session.term.rows || 24}&title=${encodeURIComponent(title)}${logQuery}${startupQuery}`);
+  const encodingQuery = `&encoding=${encodeURIComponent(session.terminalEncoding || c.terminal_encoding || "utf8")}`;
+  const socket = new WebSocket(`${protocol}://${location.host}/ws/terminal?id=${encodeURIComponent(c.id)}&cols=${session.term.cols || 80}&rows=${session.term.rows || 24}&title=${encodeURIComponent(title)}${encodingQuery}${logQuery}${startupQuery}`);
   socket.binaryType = "arraybuffer";
   session.socket = socket;
   socket.addEventListener("open", () => {
     if (session.socket !== socket) return;
     session.connected = true;
+    socket.send(JSON.stringify({type:"terminal-encoding", encoding:session.terminalEncoding || c.terminal_encoding || "utf8"}));
     updateTerminalConnectionStatus(c, key, "已连接");
     void initializeTerminalDirectory(session, c, key);
   });
   socket.addEventListener("message", event => {
     if (session.socket !== socket) return;
     finishTerminalLatencySample(session, key);
-    session.term.write(event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data);
+    const terminalOutput = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data;
+    session.term.write(terminalOutput);
+    if (typeof updateTerminalSmartState === "function") updateTerminalSmartState(key, typeof event.data === "string" ? event.data : "");
     if (isMobileLayout()) scheduleTerminalFit();
   });
   socket.addEventListener("close", () => {
@@ -2337,9 +2449,10 @@ async function connectTerminal(c, key) {
     const beforeCtrl = terminalCtrlArmed || terminalCtrlLocked;
     const outgoing = transformTerminalInputForCtrl(key, data);
     if (!beforeCtrl) trackTerminalCommand(session, data);
+    if ((data.includes("\r") || data.includes("\n")) && typeof noteTerminalCommandStarted === "function") noteTerminalCommandStarted(key);
     if (socket.readyState === WebSocket.OPEN) {
       startTerminalLatencySample(session);
-      socket.send(outgoing);
+      if (!(typeof handleTerminalBroadcastInput === "function" && handleTerminalBroadcastInput(key, outgoing, data))) socket.send(outgoing);
     } else if (terminalReconnectInput(data) && session.socket === socket) {
       reconnectTerminal(c.id, key);
     }

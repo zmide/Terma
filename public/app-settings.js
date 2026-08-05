@@ -4,6 +4,7 @@ let runtimeSettings = null;
 let desktopSettings = null;
 let sftpDownloadSettings = null;
 let programCacheSettings = null;
+let sshTrustedHosts = [];
 let runtimeSettingsMessage = null;
 let runtimeSettingsCheck = null;
 let licenseModalKeyHandler = null;
@@ -88,6 +89,46 @@ async function loadCachedUpdateStatus() {
 async function loadSecuritySettings() {
   securitySettings = await api("/api/security");
   return securitySettings;
+}
+
+async function loadTrustedSshHosts() {
+  const result = await api("/api/ssh/trusted-hosts", {skipSftpConnect:true, skipHostTrustPrompt:true});
+  sshTrustedHosts = Array.isArray(result.hosts) ? result.hosts : [];
+  const panel = $("sshHostTrustPanel");
+  if (panel) panel.outerHTML = sshHostTrustPanelHtml();
+  return sshTrustedHosts;
+}
+
+function sshHostTrustPanelHtml() {
+  const rows = sshTrustedHosts.map(item => `<div class="ssh-trust-record">
+    <div class="ssh-trust-record-main"><strong>${esc(item.host_label || `${item.host}:${item.port}`)}</strong><span>${esc(item.key_type || "未知算法")}</span><code>${esc(item.fingerprint || "")}</code></div>
+    <div class="ssh-trust-record-side"><span>${item.updated_at ? esc(new Date(item.updated_at).toLocaleString("zh-CN", {hour12:false})) : ""}</span><button class="icon-button danger" type="button" title="删除信任记录" aria-label="删除信任记录" onclick="removeTrustedSshHost('${escAttr(item.id)}')">${icon("trash-2")}</button></div>
+  </div>`).join("");
+  return `<section id="sshHostTrustPanel" class="ssh-trust-settings-section">
+    <h3>SSH 主机信任</h3>
+    <div class="muted">首次连接会要求核对主机指纹；已保存的指纹发生变化时会显示红色警告，并由你决定仅本次信任、更新记录或取消。</div>
+    <div class="ssh-trust-records">${rows || `<div class="ui-state empty compact"><span class="ui-state-icon" aria-hidden="true"></span><strong>暂无已信任主机</strong><span>首次连接 SSH 主机后会在这里显示。</span></div>`}</div>
+  </section>`;
+}
+
+async function removeTrustedSshHost(id) {
+  const record = sshTrustedHosts.find(item => item.id === id);
+  if (!record) return;
+  const confirmed = await confirmModal(
+    `删除 ${record.host_label || record.host} 的 ${record.key_type} 指纹后，下次连接会重新要求确认。`,
+    "删除 SSH 主机信任",
+    "删除",
+    "取消",
+    true
+  );
+  if (!confirmed) return;
+  try {
+    await api("/api/ssh/trusted-hosts", {method:"DELETE", body:JSON.stringify({id}), skipHostTrustPrompt:true});
+    await loadTrustedSshHosts();
+    notify("SSH 主机信任记录已删除", "success");
+  } catch (error) {
+    notify(error.message || "删除 SSH 主机信任记录失败", "error");
+  }
 }
 
 async function loadAboutSettings() {
@@ -209,6 +250,8 @@ async function waitForStorageRestart(expectedDataDir) {
 function desktopBehaviorPanelHtml() {
   if (!desktopSettings?.available) return "";
   const settings = desktopSettings.settings || {};
+  const xserver = desktopSettings.xserver || {};
+  const xserverState = xserver.available ? `已就绪${xserver.display ? ` · ${xserver.display}` : ""}` : xserver.installed ? "可启动" : "未安装";
   return `<section class="desktop-settings-section">
     <h3>桌面端行为</h3>
     <div class="muted">这些选项只在本机桌面版显示。</div>
@@ -218,8 +261,10 @@ function desktopBehaviorPanelHtml() {
         <label class="check-row"><input id="desktopMinimizeToTray" type="checkbox" ${settings.minimizeToTray ? "checked" : ""}> 关闭窗口时最小化到托盘</label>
         <label class="check-row"><input id="desktopStartMinimized" type="checkbox" ${settings.startMinimizedToTray ? "checked" : ""}> 开机自动启动时静默到托盘</label>
         <label class="check-row"><input id="desktopStartupNotification" type="checkbox" ${settings.showStartupNotification ? "checked" : ""}> 启动完成后显示系统通知</label>
+        <label class="check-row"><input id="desktopXServerAutoStart" type="checkbox" ${settings.xServerAutoStart !== false ? "checked" : ""}> 启动 TunnelDesk 时自动准备 X Server</label>
       </div>
     </div>
+    <div class="desktop-runtime-row"><span>${icon(xserver.available ? "circle-check" : xserver.installed ? "circle-pause" : "circle-alert")}<b>X Server</b><small>${esc(xserverState)}</small></span><button type="button" onclick="openXServerManager()">${icon("app-window")}<span>管理</span></button></div>
     <div class="actions"><button id="desktopSettingsSaveBtn" class="primary" type="button" onclick="saveDesktopSettings(this)">${icon("save")}<span>保存桌面行为</span></button></div>
   </section>`;
 }
@@ -249,7 +294,8 @@ async function saveDesktopSettings(button=$("desktopSettingsSaveBtn")) {
       openAtLogin:$("desktopOpenAtLogin").checked,
       minimizeToTray:$("desktopMinimizeToTray").checked,
       startMinimizedToTray:$("desktopStartMinimized").checked,
-      showStartupNotification:$("desktopStartupNotification").checked
+      showStartupNotification:$("desktopStartupNotification").checked,
+      xServerAutoStart:$("desktopXServerAutoStart").checked
     })});
     notify("桌面设置已保存，TunnelDesk 正在重启", "success");
   } catch (error) {
@@ -602,8 +648,9 @@ function syncWorkspaceToolbarPlacementInputs(value) {
 async function saveWorkspaceSettings() {
   const inPane = captureSettingsPane();
   const input = $("restoreWorkspaceTabs");
+  const floatingProgress = $("taskCenterFloatingProgressEnabled");
   const button = $("restoreWorkspaceTabsSave");
-  if (!input || !button) return;
+  if (!input || !floatingProgress || !button) return;
   setButtonBusy(button, true, "保存中");
   try {
     const workspace_toolbar_placement = workspaceToolbarPlacementFormValue();
@@ -611,19 +658,23 @@ async function saveWorkspaceSettings() {
       method:"PUT",
       body:JSON.stringify({
         restore_workspace_tabs:input.checked,
+        sftp_floating_progress_enabled:floatingProgress.checked,
         workspace_toolbar_placement
       })
     });
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
     inPane(() => {
       input.checked = runtimeSettings.saved.restore_workspace_tabs;
+      floatingProgress.checked = runtimeSettings.saved.sftp_floating_progress_enabled;
       syncWorkspaceToolbarPlacementInputs(runtimeSettings.saved.workspace_toolbar_placement);
       if (typeof syncWorkspaceToolbarPlacements === "function") syncWorkspaceToolbarPlacements();
+      if (typeof updateSftpTaskFloat === "function") updateSftpTaskFloat(typeof sftpLatestJobs === "undefined" ? [] : sftpLatestJobs);
     });
     notify("工作区设置已保存", "success");
   } catch (error) {
     inPane(() => {
       input.checked = runtimeSettings?.saved?.restore_workspace_tabs !== false;
+      floatingProgress.checked = runtimeSettings?.saved?.sftp_floating_progress_enabled !== false;
       syncWorkspaceToolbarPlacementInputs(runtimeSettings?.saved?.workspace_toolbar_placement);
     });
     notify(error.message || "工作区设置保存失败", "error");
@@ -692,28 +743,29 @@ async function clearProgramCache() {
 
 async function saveSftpGlobalSettings() {
   const recycle = $("sftpRecycleBinEnabled");
-  const floatingProgress = $("sftpFloatingProgressEnabled");
   const sizeInput = $("sftpMaxOpenFileSizeMb");
   const button = $("sftpGlobalSettingsSave");
-  if (!recycle || !floatingProgress || !sizeInput || !button) return;
+  if (!recycle || !sizeInput || !button) return;
   const maximumSize = Number(sizeInput.value);
   if (!Number.isInteger(maximumSize) || maximumSize < 1 || maximumSize > 100) return notify("SFTP 文件打开上限必须是 1-100 MB 的整数", "error");
   setButtonBusy(button, true, "保存中");
   try {
+    if (window.tunnelDeskDesktop && $("sftpExternalEditorMode")) {
+      localStorage.setItem("sftpExternalEditorMode", $("sftpExternalEditorMode").value);
+      localStorage.setItem("sftpExternalEditorPath", $("sftpExternalEditorPath")?.value.trim() || "");
+      localStorage.setItem("sftpExternalEditorArgs", $("sftpExternalEditorArgs")?.value.trim() || "");
+    }
     const result = await api("/api/runtime-settings", {
       method:"PUT",
       body:JSON.stringify({
         sftp_recycle_bin_enabled:recycle.checked,
-        sftp_floating_progress_enabled:floatingProgress.checked,
         sftp_max_open_file_size_mb:maximumSize,
         ...(sftpDownloadSettings?.delivery_mode === "desktop" ? {sftp_download_directory:$('sftpDownloadDirectory')?.value.trim() || ""} : {})
       })
     });
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
     recycle.checked = runtimeSettings.saved.sftp_recycle_bin_enabled;
-    floatingProgress.checked = runtimeSettings.saved.sftp_floating_progress_enabled;
     sizeInput.value = runtimeSettings.saved.sftp_max_open_file_size_mb;
-    if (typeof updateSftpTaskFloat === "function") updateSftpTaskFloat(typeof sftpLatestJobs === "undefined" ? [] : sftpLatestJobs);
     if (sftpDownloadSettings?.delivery_mode === "desktop") {
       sftpDownloadSettings = await api("/api/sftp/download-settings");
       if ($('sftpDownloadDirectory')) $('sftpDownloadDirectory').value = sftpDownloadSettings.configured_directory || "";
@@ -722,7 +774,6 @@ async function saveSftpGlobalSettings() {
     notify("SFTP 全局设置已保存", "success");
   } catch (error) {
     recycle.checked = runtimeSettings?.saved?.sftp_recycle_bin_enabled === true;
-    floatingProgress.checked = runtimeSettings?.saved?.sftp_floating_progress_enabled !== false;
     sizeInput.value = runtimeSettings?.saved?.sftp_max_open_file_size_mb || 5;
     notify(error.message || "SFTP 全局设置保存失败", "error");
   } finally {
@@ -740,15 +791,15 @@ async function showSftpGlobalSettings() {
     <div class="sftp-modal-head"><div><h2 id="sftpGlobalSettingsTitle">SFTP 全局设置</h2><span>应用到所有 SFTP 标签和连接</span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" onclick="closeSftpGlobalSettings()">${icon("x")}</button></div>
     <label class="check-row"><input id="sftpRecycleBinEnabled" type="checkbox" ${saved.sftp_recycle_bin_enabled ? "checked" : ""}> 删除远程文件时先移入回收站</label>
     <div class="muted">默认关闭。开启后，每台远端服务器会在当前 SSH 用户主目录创建 TunnelDesk 专用隐藏目录；关闭只影响之后的删除，不会自动清空已有内容。</div>
-    <label class="check-row"><input id="sftpFloatingProgressEnabled" type="checkbox" ${saved.sftp_floating_progress_enabled !== false ? "checked" : ""}> 显示右上角悬浮传输进度卡</label>
-    <div class="muted">默认开启。悬浮卡中的“关闭”只隐藏当前任务；选择“静默”后会永久关闭，可在这里重新开启。</div>
     <label>可在程序中打开的最大文件（MB）</label>
     <input id="sftpMaxOpenFileSizeMb" type="number" min="1" max="100" step="1" value="${Number(saved.sftp_max_open_file_size_mb || 5)}">
     <div class="muted">适用于在线文本编辑和图片预览，范围 1-100 MB。更大的文件仍可正常下载。</div>
     ${sftpDownloadSettings.delivery_mode === "desktop" ? `<label>SFTP 自动保存目录</label>
     <div class="upload-line"><input id="sftpDownloadDirectory" value="${escAttr(sftpDownloadSettings.configured_directory || "")}" placeholder="留空时使用系统下载目录"><button type="button" onclick="chooseSftpDownloadDirectory()">${icon("folder-open")}<span>选择目录</span></button></div>
     <div id="sftpDownloadDirectoryEffective" class="muted">当前保存到：${esc(sftpDownloadSettings.effective_directory || sftpDownloadSettings.default_directory || "系统下载目录")}</div>
-    <div class="actions compact"><button type="button" onclick="useDefaultSftpDownloadDirectory()">恢复系统默认</button><button type="button" onclick="openSftpDownloadDirectory()">${icon("folder-open")}<span>打开目录</span></button></div>` : `<label>下载位置</label>
+    <div class="actions compact"><button type="button" onclick="useDefaultSftpDownloadDirectory()">恢复系统默认</button><button type="button" onclick="openSftpDownloadDirectory()">${icon("folder-open")}<span>打开目录</span></button></div>
+    <label>外部编辑器</label><select id="sftpExternalEditorMode" onchange="toggleSftpExternalEditorFields()"><option value="system" ${localStorage.getItem("sftpExternalEditorMode") !== "vscode" && localStorage.getItem("sftpExternalEditorMode") !== "custom" ? "selected" : ""}>系统关联程序</option><option value="vscode" ${localStorage.getItem("sftpExternalEditorMode") === "vscode" ? "selected" : ""}>VS Code</option><option value="custom" ${localStorage.getItem("sftpExternalEditorMode") === "custom" ? "selected" : ""}>自定义程序</option></select>
+    <div id="sftpExternalEditorCustom"><label>程序路径</label><input id="sftpExternalEditorPath" value="${escAttr(localStorage.getItem("sftpExternalEditorPath") || "")}" placeholder="编辑器可执行文件绝对路径"><label>启动参数</label><input id="sftpExternalEditorArgs" value="${escAttr(localStorage.getItem("sftpExternalEditorArgs") || "")}" placeholder="可选；用 ${"${file}"} 表示临时文件"></div>` : `<label>下载位置</label>
     <div class="muted">通过局域网或浏览器访问时，文件会直接下载到当前设备的浏览器下载目录，不会保存到运行 TunnelDesk 的服务器目录。具体位置由当前设备的浏览器设置决定。</div>`}
     <div class="warning">回收站仍占用远端磁盘空间。永久删除和清空回收站无法撤销。</div>
     <div class="actions"><button type="button" onclick="closeSftpGlobalSettings()">取消</button><button id="sftpGlobalSettingsSave" class="primary" type="button" onclick="saveSftpGlobalSettings()">${icon("save")}<span>保存 SFTP 设置</span></button></div>
@@ -758,6 +809,12 @@ async function showSftpGlobalSettings() {
     if (event.key === "Escape") closeSftpGlobalSettings();
   };
   $("sftpRecycleBinEnabled")?.focus();
+  toggleSftpExternalEditorFields();
+}
+
+function toggleSftpExternalEditorFields() {
+  const custom = $("sftpExternalEditorCustom");
+  if (custom) custom.hidden = $("sftpExternalEditorMode")?.value !== "custom";
 }
 
 async function chooseSftpDownloadDirectory() {
@@ -795,6 +852,7 @@ async function openSettings(updateTab=true) {
   const inTab = typeof captureWorkspaceTab === "function" ? captureWorkspaceTab(tabKey) : inPane;
   try {
     await loadSecuritySettings();
+    await loadTrustedSshHosts();
     try {
       await loadAboutSettings();
     } catch (error) {
@@ -837,6 +895,9 @@ function renderSettings() {
             <h3>工作区</h3>
             <label class="check-row"><input id="restoreWorkspaceTabs" type="checkbox" ${runtimeSettings?.saved?.restore_workspace_tabs !== false ? "checked" : ""}> 恢复上次未关闭的标签</label>
             <div class="muted">默认开启。重新启动 TunnelDesk 后会恢复终端、SFTP、转发、设置、日志、导入导出等所有未关闭的工作区标签。</div>
+            <h3>任务中心</h3>
+            <label class="check-row"><input id="taskCenterFloatingProgressEnabled" type="checkbox" ${runtimeSettings?.saved?.sftp_floating_progress_enabled !== false ? "checked" : ""}> 显示右上角悬浮任务进度卡</label>
+            <div class="muted">用于显示传输、目录同步和 Linux 桌面安装/卸载等后台任务。关闭悬浮卡不会停止任务，仍可从工作区标题栏的任务中心查看。</div>
             <h3>操作按钮位置</h3>
             <div class="muted">桌面端可以分别设置终端和 SFTP 的操作按钮。选择“工作区标题栏”时，只显示当前焦点标签的按钮；移动端仍使用紧凑布局。</div>
             <label for="toolbarPlacementUnsplitTerminal">未分屏 · 终端</label>
@@ -859,13 +920,14 @@ function renderSettings() {
               <option value="tab" ${toolbarPlacement.split.sftp === "tab" ? "selected" : ""}>各自标签内</option>
               <option value="header" ${toolbarPlacement.split.sftp === "header" ? "selected" : ""}>工作区标题栏</option>
             </select>
-            <div class="actions"><button id="restoreWorkspaceTabsSave" class="primary" type="button" onclick="saveWorkspaceSettings()">${icon("save")}<span>保存工作区设置</span></button></div>
+            <div class="actions"><button id="restoreWorkspaceTabsSave" class="primary" type="button" onclick="saveWorkspaceSettings()">${icon("save")}<span>保存通用设置</span></button></div>
           </section>
         </div>
       </div>
       <div class="settings-group" id="settings-basic">
-        <div class="settings-group-head"><h3>安全设置</h3><span>管理 Web 访问认证、密码、Token 和配置加密。</span></div>
+        <div class="settings-group-head"><h3>安全设置</h3><span>管理 Web 访问认证、SSH 主机信任、密码、Token 和配置加密。</span></div>
         <div class="settings-grid">
+      ${sshHostTrustPanelHtml()}
       <section>
         <h3>Web 访问保护</h3>
         <label>认证策略</label>
@@ -1082,6 +1144,106 @@ function updateStatusHtml() {
   </div>`;
 }
 
+function safeUpdateMarkdownUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch {
+    return "";
+  }
+}
+
+function updateMarkdownInlineHtml(value) {
+  const tokens = [];
+  const placeholder = html => {
+    const index = tokens.push(html) - 1;
+    return `\uE000${index}\uE001`;
+  };
+  let source = String(value || "");
+  source = source.replace(/`([^`\n]+)`/g, (_, code) => placeholder(`<code>${esc(code)}</code>`));
+  source = source.replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, (match, label, href) => {
+    const safe = safeUpdateMarkdownUrl(href);
+    return safe ? placeholder(`<a href="${escAttr(safe)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`) : match;
+  });
+  let html = esc(source)
+    .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/__([^_\n]+)__/g, "<strong>$1</strong>")
+    .replace(/\*([^*\n]+)\*/g, "<em>$1</em>")
+    .replace(/_([^_\n]+)_/g, "<em>$1</em>");
+  return html.replace(/\uE000(\d+)\uE001/g, (_, index) => tokens[Number(index)] || "");
+}
+
+function updateMarkdownHtml(value) {
+  const lines = String(value || "暂无更新说明").slice(0, 12000).replace(/\r\n?/g, "\n").split("\n");
+  const result = [];
+  let paragraph = [];
+  let list = "";
+  const closeList = () => {
+    if (!list) return;
+    result.push(`</${list}>`);
+    list = "";
+  };
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    result.push(`<p>${updateMarkdownInlineHtml(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  };
+  const flushBlocks = () => {
+    flushParagraph();
+    closeList();
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^```/.test(line.trim())) {
+      flushBlocks();
+      const code = [];
+      for (index += 1; index < lines.length && !/^```/.test(lines[index].trim()); index += 1) code.push(lines[index]);
+      result.push(`<pre><code>${esc(code.join("\n"))}</code></pre>`);
+      continue;
+    }
+    if (!line.trim()) {
+      flushBlocks();
+      continue;
+    }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line.trim());
+    if (heading) {
+      flushBlocks();
+      const level = Math.min(6, heading[1].length + 3);
+      result.push(`<h${level}>${updateMarkdownInlineHtml(heading[2])}</h${level}>`);
+      continue;
+    }
+    if (/^\s*(?:---+|___+|\*\*\*+)\s*$/.test(line)) {
+      flushBlocks();
+      result.push("<hr>");
+      continue;
+    }
+    const unordered = /^\s*[-*+]\s+(.+)$/.exec(line);
+    const ordered = /^\s*\d+\.\s+(.+)$/.exec(line);
+    if (unordered || ordered) {
+      flushParagraph();
+      const nextList = unordered ? "ul" : "ol";
+      if (list && list !== nextList) closeList();
+      if (!list) {
+        list = nextList;
+        result.push(`<${list}>`);
+      }
+      result.push(`<li>${updateMarkdownInlineHtml((unordered || ordered)[1])}</li>`);
+      continue;
+    }
+    const quote = /^\s*>\s?(.*)$/.exec(line);
+    if (quote) {
+      flushBlocks();
+      result.push(`<blockquote>${updateMarkdownInlineHtml(quote[1])}</blockquote>`);
+      continue;
+    }
+    closeList();
+    paragraph.push(line.trim());
+  }
+  flushBlocks();
+  return result.join("");
+}
+
 function updateReleaseNotesHtml(update) {
   const history = Array.isArray(update?.release_notes) && update.release_notes.length
     ? update.release_notes.slice(0, 2)
@@ -1092,7 +1254,7 @@ function updateReleaseNotesHtml(update) {
   return `<div class="update-notes"><strong>最近版本更新内容</strong><div class="update-release-list">${history.map((item, index) => {
     const version = String(item?.version || "").replace(/^v/i, "");
     const published = item?.published_at ? new Date(item.published_at).toLocaleDateString("zh-CN") : "";
-    return `<section class="update-release-entry"><div class="update-release-head"><b>${version ? `v${esc(version)}` : index === 0 ? "最新版本" : "上一版本"}</b>${index === 0 ? `<span class="status-pill running">最新</span>` : ""}${published ? `<small>${esc(published)}</small>` : ""}</div><pre>${esc(String(item?.notes || "暂无更新说明").slice(0, 6000))}</pre></section>`;
+    return `<section class="update-release-entry"><div class="update-release-head"><b>${version ? `v${esc(version)}` : index === 0 ? "最新版本" : "上一版本"}</b>${index === 0 ? `<span class="status-pill running">最新</span>` : ""}${published ? `<small>${esc(published)}</small>` : ""}</div><div class="update-release-markdown">${updateMarkdownHtml(item?.notes)}</div></section>`;
   }).join("")}</div></div>`;
 }
 

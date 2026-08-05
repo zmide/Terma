@@ -11,6 +11,7 @@ process.env.TUNNELDESK_DATA_DIR = path.join(temporaryRoot, "data");
 process.env.TUNNELDESK_SSH_DIR = path.join(temporaryRoot, ".ssh");
 fs.mkdirSync(process.env.TUNNELDESK_DATA_DIR, { recursive:true });
 fs.mkdirSync(process.env.TUNNELDESK_SSH_DIR, { recursive:true });
+const { trustTestHost } = require("./ssh-host-trust-test-helper");
 
 const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength:2048 });
 const hostKey = privateKey.export({ type:"pkcs1", format:"pem" });
@@ -114,6 +115,7 @@ async function main() {
   };
   const originalGetConnection = dbModule.exports.getConnection;
   dbModule.exports.getConnection = id => Number(id) === connection.id ? connection : originalGetConnection(id);
+  await trustTestHost(connection);
   const sessions = require("../dist/sftp-session");
   const jobs = require("../dist/sftp-jobs");
   const jobIds = [];

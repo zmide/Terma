@@ -16,6 +16,7 @@ function captureForwardWorkspace(connectionId=selectedId) {
 function openForwards(id, updateTab=true) {
   const c = selectConnection(id);
   if (!c) return;
+  if (updateTab && typeof noteConnectionUsage === "function") noteConnectionUsage(c.id, "forwards");
   $("view-forwards").innerHTML = `<div class="workspace-head"><div class="subtitle">${c.forwards.length} 条转发规则</div><div class="actions">${connectionToggleButton(c)}</div></div>` + $("forwardManagerTpl").innerHTML;
   $("forward_conn_id").value = c.id;
   wireForwardForm();
@@ -393,9 +394,14 @@ function renderForwardCard(f) {
 }
 
 function showForwardMenu(event, id) {
+  const forward = currentForward(id);
+  const access = forward ? forwardAccessInfo(forward) : null;
   showActionMenu(event, [
     {label:"编辑规则", icon:"pencil", run:()=>editForward(id)},
-    {label:"复制规则信息", icon:"copy", run:()=>copyText(forwardText(currentForward(id)))},
+    {label:"复制规则信息", icon:"copy", run:()=>copyText(forwardText(forward))},
+    ...(access?.url ? [{label:"复制本地访问地址", icon:"link", run:()=>copyText(access.url)}] : []),
+    ...(forward?.mode !== "socks" ? [{label:"复制目标地址", icon:"target", run:()=>copyText(`${forward.target_host}:${forward.target_port}`)}] : []),
+    ...(forward?.mode !== "remote" ? [{label:"快速测试连通性", icon:"activity", run:()=>diagnoseForwardPort(id)}] : []),
     {separator:true},
     {label:"删除规则", icon:"trash-2", danger:true, run:()=>deleteForward(id)}
   ]);
