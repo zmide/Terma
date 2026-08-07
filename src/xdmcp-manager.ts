@@ -2,14 +2,25 @@ const path = require("node:path");
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { componentInstallCommand, componentInstallPlan } = require("./remote-component-installer");
 const { packagePlan: rdpPackagePlan } = require("./rdp-server-manager");
+const { createXdmcpRenderingDiagnostics } = require("./remote-graphics-rendering");
+const { selectRemoteProbeLines } = require("./remote-probe-protocol");
+
+const TERMA_LIGHTDM_CONFIG = "/etc/lightdm/lightdm.conf.d/90-terma-xdmcp.conf";
+const LEGACY_LIGHTDM_CONFIG = "/etc/lightdm/lightdm.conf.d/90-tunneldesk-xdmcp.conf";
+const TERMA_STATE_DIR = "/var/lib/terma";
+const LEGACY_STATE_DIR = "/var/lib/tunneldesk";
 
 const DETECT_SCRIPT = String.raw`set +e
+td_original_path=$PATH
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+[ -z "$td_original_path" ] || PATH="$PATH:$td_original_path"
+export PATH
 # The command is executed through the account's default shell (often zsh).
 # Enumerate desktop files with find instead of a shell pathname glob. This
 # keeps empty macOS/Linux directories from aborting under zsh NO_MATCH while
 # still returning real X11 sessions when they exist.
-td_clean() { printf '%s' "$1" | tr '\r\n=' '   '; }
-td_emit() { printf 'TD_%s=%s\n' "$1" "$(td_clean "$2")"; }
+terma_clean() { printf '%s' "$1" | tr '\r\n=' '   '; }
+terma_emit() { printf 'TERMA_%s=%s\n' "$1" "$(terma_clean "$2")"; }
 
 td_os_id=""
 td_os_like=""
@@ -63,7 +74,15 @@ td_enabled=0
 td_config=""
 td_configured_session=""
 if [ "$td_manager" = "lightdm" ]; then
-  td_config=/etc/lightdm/lightdm.conf.d/90-tunneldesk-xdmcp.conf
+  td_terma_config=/etc/lightdm/lightdm.conf.d/90-terma-xdmcp.conf
+  td_legacy_config=/etc/lightdm/lightdm.conf.d/90-tunneldesk-xdmcp.conf
+  if [ -f "$td_terma_config" ]; then
+    td_config=$td_terma_config
+  elif [ -f "$td_legacy_config" ]; then
+    td_config=$td_legacy_config
+  else
+    td_config=$td_terma_config
+  fi
   if lightdm --show-config 2>&1 | awk '
     /^[[:space:]]*\[XDMCPServer\]/{inside=1;next}
     /^[[:space:]]*\[/{inside=0}
@@ -106,17 +125,21 @@ td_firewall=none
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then td_firewall=ufw-active; fi
 if command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state 2>/dev/null | grep -qi running; then td_firewall=firewalld-active; fi
 td_firewall_managed=0
+[ -f /var/lib/terma/xdmcp-firewall-owner ] && td_firewall_managed=1
 [ -f /var/lib/tunneldesk/xdmcp-firewall-owner ] && td_firewall_managed=1
 td_lightdm_managed=0
 td_lightdm_previous_service=""
 td_lightdm_backup=""
-td_lightdm_owner=/var/lib/tunneldesk/xdmcp-lightdm-owner
-if [ -r "$td_lightdm_owner" ]; then
+td_lightdm_owner=""
+for td_candidate_owner in /var/lib/terma/xdmcp-lightdm-owner /var/lib/tunneldesk/xdmcp-lightdm-owner; do
+  [ -r "$td_candidate_owner" ] && td_lightdm_owner=$td_candidate_owner && break
+done
+if [ -n "$td_lightdm_owner" ]; then
   td_lightdm_previous_service=$(sed -n 's/^previous_service=//p' "$td_lightdm_owner" | head -n 1)
   td_lightdm_backup=$(sed -n 's/^backup=//p' "$td_lightdm_owner" | head -n 1)
   td_lightdm_managed=1
 elif [ "$td_manager" = lightdm ]; then
-  td_lightdm_backup=$(find /etc/X11 -maxdepth 1 -type f -name 'default-display-manager.tunneldesk-backup-*' -print 2>/dev/null | sort | tail -n 1)
+  td_lightdm_backup=$(find /etc/X11 -maxdepth 1 -type f \( -name 'default-display-manager.terma-backup-*' -o -name 'default-display-manager.tunneldesk-backup-*' \) -print 2>/dev/null | sort | tail -n 1)
   if [ -n "$td_lightdm_backup" ] && [ -r "$td_lightdm_backup" ]; then
     td_lightdm_previous_service=$(basename "$(cat "$td_lightdm_backup" 2>/dev/null)")
     td_lightdm_previous_service=${"$"}{td_lightdm_previous_service%.service}
@@ -157,7 +180,7 @@ if command -v loginctl >/dev/null 2>&1; then
     td_session_seat=$(loginctl show-session "$td_session_id" -p Seat --value 2>/dev/null)
     td_session_desktop=$(loginctl show-session "$td_session_id" -p Desktop --value 2>/dev/null)
     td_session_state=$(loginctl show-session "$td_session_id" -p State --value 2>/dev/null || true)
-    td_emit GRAPHICAL_SESSION "$td_session_id|$td_session_service|$td_session_display|$td_session_seat|$td_session_desktop|$td_session_state"
+    terma_emit GRAPHICAL_SESSION "$td_session_id|$td_session_service|$td_session_display|$td_session_seat|$td_session_desktop|$td_session_state"
   done
 fi
 
@@ -169,35 +192,35 @@ for td_process_name in plasmashell kwin_x11 ksmserver; do
   [ -n "$td_plasma_display" ] && break
 done
 
-td_emit OS_ID "$td_os_id"
-td_emit OS_LIKE "$td_os_like"
-td_emit MANAGER "$td_manager"
-td_emit MANAGER_VERSION "$td_manager_version"
-td_emit GDM_XDMCP_CAPABLE "$td_gdm_xdmcp_capable"
-td_emit SERVICE "$td_service"
-td_emit PACKAGE_MANAGER "$td_package_manager"
-td_emit PRIVILEGED "$([ "$td_root" = 1 ] || [ "$td_sudo" = 1 ] && printf 1 || printf 0)"
-td_emit CONFIG "$td_config"
-td_emit ENABLED "$td_enabled"
-td_emit LISTENING "$td_listening"
-td_emit FIREWALL "$td_firewall"
-td_emit FIREWALL_MANAGED "$td_firewall_managed"
-td_emit LIGHTDM_MANAGED "$td_lightdm_managed"
-td_emit LIGHTDM_PREVIOUS_SERVICE "$td_lightdm_previous_service"
-td_emit LIGHTDM_BACKUP "$td_lightdm_backup"
-td_emit CONFIGURED_SESSION "$td_configured_session"
-td_emit SAVED_SESSION "$td_saved_session"
-td_emit SESSION_MANAGER_TARGET "$td_session_manager_target"
-td_emit XRDP_INSTALLED "$td_xrdp_installed"
-td_emit XRDP_XFCE_CONFIGURED "$td_xrdp_xfce_configured"
-td_emit LOGIN_USER "$td_login_user"
-td_emit PLASMA_DISPLAY "$td_plasma_display"
+terma_emit OS_ID "$td_os_id"
+terma_emit OS_LIKE "$td_os_like"
+terma_emit MANAGER "$td_manager"
+terma_emit MANAGER_VERSION "$td_manager_version"
+terma_emit GDM_XDMCP_CAPABLE "$td_gdm_xdmcp_capable"
+terma_emit SERVICE "$td_service"
+terma_emit PACKAGE_MANAGER "$td_package_manager"
+terma_emit PRIVILEGED "$([ "$td_root" = 1 ] || [ "$td_sudo" = 1 ] && printf 1 || printf 0)"
+terma_emit CONFIG "$td_config"
+terma_emit ENABLED "$td_enabled"
+terma_emit LISTENING "$td_listening"
+terma_emit FIREWALL "$td_firewall"
+terma_emit FIREWALL_MANAGED "$td_firewall_managed"
+terma_emit LIGHTDM_MANAGED "$td_lightdm_managed"
+terma_emit LIGHTDM_PREVIOUS_SERVICE "$td_lightdm_previous_service"
+terma_emit LIGHTDM_BACKUP "$td_lightdm_backup"
+terma_emit CONFIGURED_SESSION "$td_configured_session"
+terma_emit SAVED_SESSION "$td_saved_session"
+terma_emit SESSION_MANAGER_TARGET "$td_session_manager_target"
+terma_emit XRDP_INSTALLED "$td_xrdp_installed"
+terma_emit XRDP_XFCE_CONFIGURED "$td_xrdp_xfce_configured"
+terma_emit LOGIN_USER "$td_login_user"
+terma_emit PLASMA_DISPLAY "$td_plasma_display"
 if [ -d /usr/share/xsessions ]; then
   find /usr/share/xsessions -maxdepth 1 -type f -name '*.desktop' -print 2>/dev/null | while IFS= read -r td_file; do
     [ -n "$td_file" ] || continue
     td_name=$(sed -n 's/^Name=//p' "$td_file" | head -n 1)
     [ -n "$td_name" ] || td_name=$(basename "$td_file" .desktop)
-    td_emit SESSION "$(basename "$td_file" .desktop)|$td_name"
+    terma_emit SESSION "$(basename "$td_file" .desktop)|$td_name"
   done
 fi
 `;
@@ -296,7 +319,7 @@ function xdmcpPackagePlan(diagnostics: any = {}, actionValue = "install-lightdm"
     local_offline_packages:manager === "apt" ? packages : [],
     local_offline_command:manager === "apt" ? offlineCommand : "",
     local_offline_description:manager === "apt"
-      ? "仅适用于 Debian/Ubuntu 及兼容 APT/.deb 系统：TunnelDesk 在本机下载匹配的软件包和依赖，再通过 SFTP 上传并安装"
+      ? "仅适用于 Debian/Ubuntu 及兼容 APT/.deb 系统：Terma 在本机下载匹配的软件包和依赖，再通过 SFTP 上传并安装"
       : `本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前检测到 ${manager || "未识别包管理器"}，无法自动解析并上传 XDMCP 组件依赖`,
     manual_description:"查看当前系统对应的 XDMCP、桌面会话和服务配置说明"
   });
@@ -328,20 +351,20 @@ function lightdmUninstallPlan(diagnostics: any = {}) {
   const previousService = String(diagnostics.lightdm_previous_service || "").trim().replace(/\.service$/, "");
   const backup = String(diagnostics.lightdm_backup || "").trim();
   const safePrevious = /^[A-Za-z0-9_.@-]+$/.test(previousService) && previousService !== "lightdm";
-  const safeBackup = /^\/etc\/X11\/default-display-manager\.tunneldesk-backup-[0-9]+$/.test(backup);
+  const safeBackup = /^\/etc\/X11\/default-display-manager\.(?:terma|tunneldesk)-backup-[0-9]+$/.test(backup);
   if (!diagnostics.lightdm_managed || !safePrevious || !safeBackup) {
     return {
       available:false,
       command:"",
-      reason:"未找到 TunnelDesk 切换 LightDM 前保存的显示管理器信息，不能安全自动卸载；请使用手动说明切换显示管理器"
+      reason:"未找到 Terma 切换 LightDM 前保存的显示管理器信息，不能安全自动卸载；请使用手动说明切换显示管理器"
     };
   }
   if (String(diagnostics.package_manager || "").toLowerCase() !== "apt") {
-    return {available:false, command:"", reason:"当前仅支持安全自动卸载由 TunnelDesk 在 Debian/Ubuntu 上切换的 LightDM"};
+    return {available:false, command:"", reason:"当前仅支持安全自动卸载由 Terma 在 Debian/Ubuntu 上切换的 LightDM"};
   }
   const serviceUnit = `${previousService}.service`;
   const command = rootWrapper(String.raw`set -eu
-rm -f /etc/lightdm/lightdm.conf.d/90-tunneldesk-xdmcp.conf
+rm -f ${shellQuote(TERMA_LIGHTDM_CONFIG)} ${shellQuote(LEGACY_LIGHTDM_CONFIG)}
 ${firewallConfigurationScript(diagnostics.firewall, false)}
 systemctl disable --now lightdm.service 2>/dev/null || true
 td_packages=""
@@ -353,8 +376,8 @@ cp -a ${shellQuote(backup)} /etc/X11/default-display-manager
 systemctl daemon-reload
 systemctl enable --force ${shellQuote(serviceUnit)}
 systemctl restart ${shellQuote(serviceUnit)}
-rm -f /var/lib/tunneldesk/xdmcp-lightdm-owner
-printf 'TD_UNINSTALLED=lightdm\nTD_RESTORED_DISPLAY_MANAGER=%s\n' ${shellQuote(previousService)}
+rm -f ${shellQuote(`${TERMA_STATE_DIR}/xdmcp-lightdm-owner`)} ${shellQuote(`${LEGACY_STATE_DIR}/xdmcp-lightdm-owner`)}
+printf 'TERMA_UNINSTALLED=lightdm\nTERMA_RESTORED_DISPLAY_MANAGER=%s\n' ${shellQuote(previousService)}
 `);
   return {
     available:true,
@@ -368,8 +391,8 @@ function parseDetectionOutput(output) {
   const values = new Map();
   const sessions = [];
   const graphicalSessions = [];
-  for (const line of String(output || "").split(/\r?\n/)) {
-    const match = /^TD_([A-Z_]+)=(.*)$/.exec(line.trim());
+  for (const line of selectRemoteProbeLines(output)) {
+    const match = /^([A-Z_]+)=(.*)$/.exec(line);
     if (!match) continue;
     if (match[1] === "SESSION") {
       const separator = match[2].indexOf("|");
@@ -464,6 +487,7 @@ function parseDetectionOutput(output) {
     package_manager:packageManager,
     privileged,
     config_file:values.get("CONFIG") || "",
+    legacy_config:(values.get("CONFIG") || "") === LEGACY_LIGHTDM_CONFIG,
     enabled,
     listening,
     firewall:values.get("FIREWALL") || "none",
@@ -506,7 +530,7 @@ function parseDetectionOutput(output) {
     action,
     required_action:detectedAction,
     warning:macos
-      ? "macOS 不提供可由 TunnelDesk 配置的 XDMCP 图形登录服务。请使用 VNC 共享桌面，或通过 SSH X11 打开单个图形程序。"
+      ? "macOS 不提供可由 Terma 配置的 XDMCP 图形登录服务。请使用 VNC 共享桌面，或通过 SSH X11 打开单个图形程序。"
       : !privileged && action === "manual"
       ? "当前 SSH 管理账号没有 root 或免密 sudo 权限。可点击操作按钮输入一次性管理员账号、密码、私钥或 SSH Agent，也可以在终端中手动执行。"
       : sessionConflict
@@ -522,15 +546,20 @@ function parseDetectionOutput(output) {
           ? "XDMCP 配置已经写入，但 UDP 177 尚未监听；同时远端没有可启动的 X11 桌面会话。请先安装桌面，再应用并重启显示管理器。"
           : "XDMCP 尚未启用、UDP 177 未监听，并且远端没有可启动的 X11 桌面会话。请先安装桌面，再启用 XDMCP 服务。"
       : sessionNeedsRepair
-      ? `管理账号保存的桌面会话 ${savedSession || "default"} 无法启动完整桌面，可由 TunnelDesk 自动改为 ${preferredSession?.name || preferredSession?.id}。`
+      ? `管理账号保存的桌面会话 ${savedSession || "default"} 无法启动完整桌面，可由 Terma 自动改为 ${preferredSession?.name || preferredSession?.id}。`
       : manager === "sddm"
       ? "当前 SDDM 不提供 XDMCP 服务端；Debian/Ubuntu 可安装并切换 LightDM。"
       : manager === "gdm" && !gdmXdmcpCapable
       ? `当前 GDM${managerVersion ? ` ${managerVersion}` : ""} 不提供可用的 XDMCP 服务端；GDM 50 起已移除该能力，Debian/Ubuntu 可安装并切换 LightDM。`
       : manager === "unknown" || manager === "xdm"
-        ? "当前显示管理器无法由 TunnelDesk 自动配置。"
+        ? "当前显示管理器无法由 Terma 自动配置。"
       : "XDMCP 不加密，只应在可信局域网使用。"
   };
+  result.graphics_rendering = createXdmcpRenderingDiagnostics({
+    enabled,
+    listening,
+    ready:result.ready_for_login
+  });
   const packagePlans = {
     lightdm:xdmcpPackagePlan(result, "install-lightdm"),
     xfce:xdmcpPackagePlan(result, "install-xfce"),
@@ -547,31 +576,39 @@ function parseDetectionOutput(output) {
 }
 
 function firewallConfigurationScript(firewall, enable) {
-  const marker = "/var/lib/tunneldesk/xdmcp-firewall-owner";
+  const marker = `${TERMA_STATE_DIR}/xdmcp-firewall-owner`;
+  const legacyMarker = `${LEGACY_STATE_DIR}/xdmcp-firewall-owner`;
   if (enable && firewall === "ufw-active") return String.raw`td_firewall_marker=${shellQuote(marker)}
+td_legacy_firewall_marker=${shellQuote(legacyMarker)}
+[ ! -f "$td_legacy_firewall_marker" ] || { mkdir -p "$(dirname "$td_firewall_marker")"; [ -f "$td_firewall_marker" ] || cp -p "$td_legacy_firewall_marker" "$td_firewall_marker"; rm -f "$td_legacy_firewall_marker"; }
 if ! ufw status 2>/dev/null | grep -Eiq '(^|[[:space:]])177/udp([[:space:]]|$)'; then
-  ufw allow 177/udp comment 'TunnelDesk XDMCP'
+  ufw allow 177/udp comment 'Terma XDMCP'
   mkdir -p "$(dirname "$td_firewall_marker")"
   printf 'ufw\n' > "$td_firewall_marker"
 fi`;
   if (enable && firewall === "firewalld-active") return String.raw`td_firewall_marker=${shellQuote(marker)}
+td_legacy_firewall_marker=${shellQuote(legacyMarker)}
+[ ! -f "$td_legacy_firewall_marker" ] || { mkdir -p "$(dirname "$td_firewall_marker")"; [ -f "$td_firewall_marker" ] || cp -p "$td_legacy_firewall_marker" "$td_firewall_marker"; rm -f "$td_legacy_firewall_marker"; }
 if ! firewall-cmd --permanent --query-port=177/udp >/dev/null 2>&1; then
   firewall-cmd --permanent --add-port=177/udp
   firewall-cmd --reload
   mkdir -p "$(dirname "$td_firewall_marker")"
   printf 'firewalld\n' > "$td_firewall_marker"
 fi`;
-  if (!enable) return String.raw`td_firewall_marker=${shellQuote(marker)}
-if [ -f "$td_firewall_marker" ]; then
+  if (!enable) return String.raw`td_firewall_removed=0
+for td_firewall_marker in ${shellQuote(marker)} ${shellQuote(legacyMarker)}; do
+  [ -f "$td_firewall_marker" ] || continue
   td_firewall_owner=$(cat "$td_firewall_marker" 2>/dev/null || true)
-  if [ "$td_firewall_owner" = "ufw" ] && command -v ufw >/dev/null 2>&1; then
+  if [ "$td_firewall_removed" = 0 ] && [ "$td_firewall_owner" = "ufw" ] && command -v ufw >/dev/null 2>&1; then
     ufw --force delete allow 177/udp || true
-  elif [ "$td_firewall_owner" = "firewalld" ] && command -v firewall-cmd >/dev/null 2>&1; then
+    td_firewall_removed=1
+  elif [ "$td_firewall_removed" = 0 ] && [ "$td_firewall_owner" = "firewalld" ] && command -v firewall-cmd >/dev/null 2>&1; then
     firewall-cmd --permanent --remove-port=177/udp || true
     firewall-cmd --reload || true
+    td_firewall_removed=1
   fi
   rm -f "$td_firewall_marker"
-fi`;
+done`;
   return ":";
 }
 
@@ -585,7 +622,7 @@ p = pathlib.Path(sys.argv[1])
 enabled = sys.argv[2] == "1"
 text = p.read_text(encoding="utf-8") if p.exists() else ""
 if p.exists():
-    shutil.copy2(p, p.with_name(p.name + ".tunneldesk-backup-" + str(int(time.time()))))
+    shutil.copy2(p, p.with_name(p.name + ".terma-backup-" + str(int(time.time()))))
 
 def set_key(source, section, key, value):
     lines = source.splitlines()
@@ -620,13 +657,13 @@ for td_candidate in /etc/gdm/custom.conf /etc/gdm3/custom.conf /etc/gdm3/daemon.
 done
 [ -n "$td_file" ] || td_file=/etc/gdm/custom.conf
 command -v python3 >/dev/null 2>&1 || { echo '自动配置 GDM 需要 python3' >&2; exit 69; }
-td_editor=/tmp/tunneldesk-gdm-xdmcp-$$.py
+td_editor=/tmp/terma-gdm-xdmcp-$$.py
 trap 'rm -f "$td_editor"' EXIT
 printf '%s' '${editor}' | base64 -d > "$td_editor"
 python3 "$td_editor" "$td_file" '${enable ? "1" : "0"}'
 ${firewallConfigurationScript(firewall, enable)}
 ${restart ? "systemctl restart gdm.service 2>/dev/null || systemctl restart gdm3.service" : ":"}
-printf 'TD_CONFIGURED=gdm\nTD_ENABLED=${enable ? "1" : "0"}\n'
+printf 'TERMA_CONFIGURED=gdm\nTERMA_ENABLED=${enable ? "1" : "0"}\n'
 `);
 }
 
@@ -643,8 +680,8 @@ dnf install -y dbus-x11`;
 function xrdpXfceConfigurationScript() {
   return String.raw`if command -v xrdp >/dev/null 2>&1 && [ -f /etc/xrdp/startwm.sh ]; then
   td_xrdp_file=/etc/xrdp/startwm.sh
-  cp -a "$td_xrdp_file" "$td_xrdp_file.tunneldesk-backup-$(date +%s)"
-  cat > "$td_xrdp_file" <<'TD_XRDP_STARTWM'
+  cp -a "$td_xrdp_file" "$td_xrdp_file.terma-backup-$(date +%s)"
+  cat > "$td_xrdp_file" <<'TERMA_XRDP_STARTWM'
 #!/bin/sh
 set -eu
 if test -r /etc/profile; then . /etc/profile; fi
@@ -655,10 +692,10 @@ export XDG_CURRENT_DESKTOP=XFCE
 export XDG_SESSION_DESKTOP=xfce
 export DESKTOP_SESSION=xfce
 exec dbus-run-session -- startxfce4
-TD_XRDP_STARTWM
+TERMA_XRDP_STARTWM
   chmod 0755 "$td_xrdp_file"
   systemctl restart xrdp.service 2>/dev/null || true
-  printf 'TD_XRDP_CONFIGURED=xfce\n'
+  printf 'TERMA_XRDP_CONFIGURED=xfce\n'
 fi`;
 }
 
@@ -691,6 +728,94 @@ function lightdmConfigurationScript({
     ? `${previousService}.service`
     : "";
   return rootWrapper(String.raw`set -eu
+td_dir=/etc/lightdm/lightdm.conf.d
+td_file=$td_dir/90-terma-xdmcp.conf
+td_legacy_file=$td_dir/90-tunneldesk-xdmcp.conf
+td_terma_owner=/var/lib/terma/xdmcp-lightdm-owner
+td_legacy_owner=/var/lib/tunneldesk/xdmcp-lightdm-owner
+td_default_manager=/etc/X11/default-display-manager
+td_transaction_dir=$(mktemp -d /tmp/terma-xdmcp-rollback.XXXXXX)
+td_transaction_changed=0
+td_config_tmp=""
+td_dmrc=""
+td_dm_backup=""
+
+td_snapshot_file() {
+  td_snapshot_path=$1
+  td_snapshot_name=$2
+  if [ -e "$td_snapshot_path" ] || [ -L "$td_snapshot_path" ]; then
+    printf '1\n' > "$td_transaction_dir/$td_snapshot_name.present"
+    cp -a "$td_snapshot_path" "$td_transaction_dir/$td_snapshot_name"
+  else
+    printf '0\n' > "$td_transaction_dir/$td_snapshot_name.present"
+  fi
+}
+
+td_restore_file() {
+  td_restore_path=$1
+  td_restore_name=$2
+  if [ "$(cat "$td_transaction_dir/$td_restore_name.present" 2>/dev/null || printf 0)" = 1 ]; then
+    mkdir -p "$(dirname "$td_restore_path")"
+    rm -f "$td_restore_path"
+    cp -a "$td_transaction_dir/$td_restore_name" "$td_restore_path"
+  else
+    rm -f "$td_restore_path"
+  fi
+}
+
+td_snapshot_file "$td_file" terma-config
+td_snapshot_file "$td_legacy_file" legacy-config
+td_snapshot_file "$td_terma_owner" terma-owner
+td_snapshot_file "$td_legacy_owner" legacy-owner
+td_snapshot_file "$td_default_manager" default-manager
+
+td_lightdm_was_enabled=0
+td_lightdm_was_active=0
+systemctl is-enabled lightdm.service >/dev/null 2>&1 && td_lightdm_was_enabled=1 || true
+systemctl is-active lightdm.service >/dev/null 2>&1 && td_lightdm_was_active=1 || true
+${previousServiceUnit ? String.raw`td_previous_was_enabled=0
+td_previous_was_active=0
+systemctl is-enabled ${previousServiceUnit} >/dev/null 2>&1 && td_previous_was_enabled=1 || true
+systemctl is-active ${previousServiceUnit} >/dev/null 2>&1 && td_previous_was_active=1 || true` : ""}
+
+${enable && session ? String.raw`td_login_user="${"$"}{SUDO_USER:-$(id -un)}"
+td_login_home=$(getent passwd "$td_login_user" 2>/dev/null | cut -d: -f6)
+if [ -n "$td_login_home" ]; then
+  td_dmrc="$td_login_home/.dmrc"
+  td_snapshot_file "$td_dmrc" user-dmrc
+fi` : ":"}
+
+${install ? String.raw`if [ -f "$td_default_manager" ]; then
+  td_dm_backup="$td_default_manager.terma-backup-$(date +%s)"
+  cp -a "$td_default_manager" "$td_dm_backup"
+fi` : ":"}
+
+td_restore_lightdm_transaction() {
+  td_status=$?
+  [ "$td_status" -ne 0 ] || td_status=1
+  trap - EXIT HUP INT TERM
+  set +e
+  rm -f "$td_config_tmp"
+  if [ "$td_transaction_changed" = 1 ]; then
+    td_restore_file "$td_file" terma-config
+    td_restore_file "$td_legacy_file" legacy-config
+    td_restore_file "$td_terma_owner" terma-owner
+    td_restore_file "$td_legacy_owner" legacy-owner
+    td_restore_file "$td_default_manager" default-manager
+    if [ -n "$td_dmrc" ]; then td_restore_file "$td_dmrc" user-dmrc; fi
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    [ "$td_lightdm_was_enabled" = 1 ] && systemctl enable --force lightdm.service >/dev/null 2>&1 || systemctl disable lightdm.service >/dev/null 2>&1 || true
+${previousServiceUnit ? String.raw`    systemctl stop lightdm.service >/dev/null 2>&1 || true
+    [ "$td_previous_was_enabled" = 1 ] && systemctl enable --force ${previousServiceUnit} >/dev/null 2>&1 || systemctl disable ${previousServiceUnit} >/dev/null 2>&1 || true
+    systemctl restart ${previousServiceUnit} >/dev/null 2>&1 || true
+    [ "$td_lightdm_was_active" = 1 ] && systemctl restart lightdm.service >/dev/null 2>&1 || systemctl stop lightdm.service >/dev/null 2>&1 || true` : String.raw`    systemctl restart lightdm.service >/dev/null 2>&1 || true`}
+    echo 'LightDM XDMCP 配置验证失败，已恢复修改前的新旧配置和状态并重新启动显示管理器' >&2
+  fi
+  rm -rf "$td_transaction_dir"
+  exit "$td_status"
+}
+trap td_restore_lightdm_transaction EXIT HUP INT TERM
+${install ? "td_transaction_changed=1" : ":"}
  ${install ? installCommand ? String.raw`${installCommand}
  command -v lightdm >/dev/null 2>&1 || { echo 'LightDM 离线安装命令已结束，但仍未检测到 lightdm' >&2; exit 69; }` : String.raw`if ! command -v lightdm >/dev/null 2>&1; then
   command -v apt-get >/dev/null 2>&1 || { echo '当前系统不支持自动安装 LightDM' >&2; exit 69; }
@@ -701,18 +826,27 @@ function lightdmConfigurationScript({
  fi` : "command -v lightdm >/dev/null 2>&1 || { echo 'LightDM 未安装' >&2; exit 69; }"}
  ${installDesktop ? desktopInstallCommand || x11DesktopInstallScript(packageManager) : ""}
 ${installDesktop ? xrdpXfceConfigurationScript() : ""}
-td_dir=/etc/lightdm/lightdm.conf.d
-td_file=$td_dir/90-tunneldesk-xdmcp.conf
+td_transaction_changed=1
 mkdir -p "$td_dir"
-[ ! -f "$td_file" ] || cp -a "$td_file" "$td_file.tunneldesk-backup-$(date +%s)"
-cat > "$td_file" <<'TD_XDMCP_CONFIG'
+td_config_tmp=$(mktemp "$td_dir/.90-terma-xdmcp.XXXXXX")
+cat > "$td_config_tmp" <<'TERMA_XDMCP_CONFIG'
 [XDMCPServer]
 enabled=${enable ? "true" : "false"}
 port=177
 ${enable && session ? `
 [Seat:*]
 user-session=${session}` : ""}
-TD_XDMCP_CONFIG
+TERMA_XDMCP_CONFIG
+[ ! -f "$td_file" ] || cp -a "$td_file" "$td_file.terma-backup-$(date +%s)"
+# LightDM reads every active *.conf file in this directory. Remove the legacy
+# file before installing the new one so 90-tunneldesk-xdmcp.conf can never
+# override 90-terma-xdmcp.conf in the same daemon reload.
+if [ -f "$td_legacy_file" ]; then
+  cp -a "$td_legacy_file" "$td_legacy_file.terma-backup-$(date +%s)"
+  rm -f "$td_legacy_file"
+fi
+install -m 644 "$td_config_tmp" "$td_file"
+rm -f "$td_config_tmp"
 ${enable && session ? String.raw`td_login_user="${"$"}{SUDO_USER:-$(id -un)}"
 td_login_home=$(getent passwd "$td_login_user" 2>/dev/null | cut -d: -f6)
 if [ -n "$td_login_home" ]; then
@@ -725,26 +859,75 @@ if [ -n "$td_login_home" ]; then
     [ -n "$td_default_target" ] && [ -x "$td_default_target" ] && td_saved_valid=1
   fi
   if [ "${forceUserSession ? "1" : "0"}" = 1 ] || [ "$td_saved_valid" = 0 ]; then
-    [ ! -f "$td_dmrc" ] || cp -a "$td_dmrc" "$td_dmrc.tunneldesk-backup-$(date +%s)"
+    [ ! -f "$td_dmrc" ] || cp -a "$td_dmrc" "$td_dmrc.terma-backup-$(date +%s)"
     printf '[Desktop]\nSession=%s\n' '${session}' > "$td_dmrc"
     chown "$(id -u "$td_login_user"):$(id -g "$td_login_user")" "$td_dmrc"
     chmod 0644 "$td_dmrc"
   fi
 fi` : ":"}
-${firewallConfigurationScript(firewall, enable)}
-${install ? String.raw`td_dm_backup=""
-if [ -f /etc/X11/default-display-manager ]; then
-  td_dm_backup="/etc/X11/default-display-manager.tunneldesk-backup-$(date +%s)"
-  cp -a /etc/X11/default-display-manager "$td_dm_backup"
-fi
-mkdir -p /var/lib/tunneldesk
-printf 'previous_service=%s\nbackup=%s\n' ${shellQuote(previousService)} "$td_dm_backup" > /var/lib/tunneldesk/xdmcp-lightdm-owner
-printf '/usr/sbin/lightdm\n' > /etc/X11/default-display-manager
+${install ? String.raw`mkdir -p /var/lib/terma
+printf 'previous_service=%s\nbackup=%s\n' ${shellQuote(previousService)} "$td_dm_backup" > "$td_terma_owner"
+rm -f "$td_legacy_owner"
+printf '/usr/sbin/lightdm\n' > "$td_default_manager"
 ${previousServiceUnit ? `systemctl disable ${previousServiceUnit} 2>/dev/null || true` : ":"}
 systemctl enable --force lightdm.service
 systemctl daemon-reload` : ""}
-${restart ? (install ? `${previousServiceUnit ? `systemctl stop ${previousServiceUnit} 2>/dev/null || true\n` : ""}systemctl restart lightdm.service` : "systemctl restart lightdm.service") : ":"}
-printf 'TD_CONFIGURED=lightdm\nTD_ENABLED=${enable ? "1" : "0"}\n'
+
+td_lightdm_enabled_in_config() {
+  lightdm --show-config 2>&1 | awk '
+    /^[[:space:]]*\[XDMCPServer\]/{inside=1;next}
+    /^[[:space:]]*\[/{inside=0}
+    inside && /^[[:space:]]*([[:upper:]][[:space:]]+)?enabled[[:space:]]*=[[:space:]]*(true|yes|1)[[:space:]]*$/ {found=1}
+    END{exit found?0:1}
+  '
+}
+
+td_lightdm_show_config=$(lightdm --show-config 2>&1) || {
+  printf '%s\n' "$td_lightdm_show_config" >&2
+  echo 'LightDM 配置校验失败，将恢复修改前配置' >&2
+  exit 70
+}
+${enable ? String.raw`td_lightdm_enabled_in_config || {
+  echo 'LightDM 配置校验后未启用 XDMCP，将恢复修改前配置' >&2
+  exit 70
+}` : String.raw`if td_lightdm_enabled_in_config; then
+  echo 'LightDM 配置校验后 XDMCP 仍处于启用状态，将恢复修改前配置' >&2
+  exit 70
+fi`}
+
+td_udp_177_listening() {
+  if command -v ss >/dev/null 2>&1; then
+    ss -H -lun 2>/dev/null | awk '$4 ~ /:177$/ {found=1} END{exit found?0:1}'
+  elif command -v netstat >/dev/null 2>&1; then
+    netstat -lun 2>/dev/null | awk '$4 ~ /:177$/ {found=1} END{exit found?0:1}'
+  else
+    return 1
+  fi
+}
+
+${restart ? String.raw`${install && previousServiceUnit ? `systemctl stop ${previousServiceUnit} 2>/dev/null || true
+` : ""}systemctl restart lightdm.service
+systemctl is-active lightdm.service >/dev/null 2>&1 || {
+  echo 'LightDM 重启后未保持运行，将恢复修改前配置' >&2
+  exit 70
+}
+td_listener_ready=0
+for td_listener_attempt in 1 2 3 4 5 6 7 8 9; do
+  if ${enable ? "td_udp_177_listening" : "! td_udp_177_listening"}; then
+    td_listener_ready=1
+    break
+  fi
+  sleep 1
+done
+[ "$td_listener_ready" = 1 ] || {
+  echo '${enable ? "LightDM 已重启，但 UDP 177 未监听，将恢复修改前配置" : "LightDM 已重启，但 UDP 177 仍在监听，将恢复修改前配置"}' >&2
+  exit 70
+}` : ":"}
+
+trap - EXIT HUP INT TERM
+rm -rf "$td_transaction_dir"
+${firewallConfigurationScript(firewall, enable)}
+printf 'TERMA_CONFIGURED=lightdm\nTERMA_ENABLED=${enable ? "1" : "0"}\n'
 `);
 }
 
@@ -783,7 +966,7 @@ if command -v loginctl >/dev/null 2>&1; then
     fi
   done
 fi
-[ -z "$td_local_sessions" ] || { echo "检测到同 DISPLAY 的本地图形会话，TunnelDesk 不会自动结束：$td_local_sessions" >&2; exit 78; }
+[ -z "$td_local_sessions" ] || { echo "检测到同 DISPLAY 的本地图形会话，Terma 不会自动结束：$td_local_sessions" >&2; exit 78; }
 td_cleaned=0
 for td_session_id in $td_expected_sessions; do
   td_session_uid=$(loginctl show-session "$td_session_id" -p User --value 2>/dev/null || true)
@@ -818,14 +1001,14 @@ for td_process_pid in $td_process_ids; do
   kill -TERM "$td_process_pid" 2>/dev/null || true
 done
 sleep 1
-printf 'TD_CLEANED_SESSIONS=%s\nTD_CLEANED_USER=%s\nTD_CLEANED_DISPLAY=%s\n' "$td_cleaned" "$td_login_user" "$td_target_display"
+printf 'TERMA_CLEANED_SESSIONS=%s\nTERMA_CLEANED_USER=%s\nTERMA_CLEANED_DISPLAY=%s\n' "$td_cleaned" "$td_login_user" "$td_target_display"
 `);
 }
 
 function buildConfigurationScript(diagnostics, action, restart = true, options: any = {}) {
   if (!diagnostics.privileged) throw new Error("所选 SSH 连接需要 root 或免密 sudo 权限");
   if (action === "cleanup-sessions") {
-    if (!diagnostics.can_cleanup_remote_sessions) throw new Error("没有可由 TunnelDesk 安全结束的远程图形会话");
+    if (!diagnostics.can_cleanup_remote_sessions) throw new Error("没有可由 Terma 安全结束的远程图形会话");
     return remoteGraphicalCleanupScript(diagnostics);
   }
   if (action === "uninstall-lightdm") {
@@ -843,11 +1026,11 @@ function buildConfigurationScript(diagnostics, action, restart = true, options: 
     if (!diagnostics.xrdp_needs_repair) throw new Error("当前系统没有检测到需要修复的 XFCE xrdp 会话");
     return rootWrapper(String.raw`set -eu
 ${xrdpXfceConfigurationScript()}
-printf 'TD_XRDP_CONFIGURED=xfce\n'
+printf 'TERMA_XRDP_CONFIGURED=xfce\n'
 `);
   }
   if (action === "install-xfce") {
-    if (diagnostics.manager !== "lightdm" || !diagnostics.can_install_xfce) throw new Error("当前系统无法由 TunnelDesk 自动安装并配置 XFCE");
+    if (diagnostics.manager !== "lightdm" || !diagnostics.can_install_xfce) throw new Error("当前系统无法由 Terma 自动安装并配置 XFCE");
     return lightdmConfigurationScript({
       enable:true,
       restart,
@@ -860,7 +1043,7 @@ printf 'TD_XRDP_CONFIGURED=xfce\n'
       forceUserSession:true
     });
   }
-  if (!diagnostics.supported) throw new Error("当前显示管理器无法由 TunnelDesk 自动配置 XDMCP");
+  if (!diagnostics.supported) throw new Error("当前显示管理器无法由 Terma 自动配置 XDMCP");
   const enable = action !== "disable";
   return diagnostics.manager === "gdm"
     ? gdmConfigurationScript({enable, restart, firewall:diagnostics.firewall})
@@ -879,6 +1062,29 @@ async function detectXdmcpServer(profile, dependencies) {
     ...parseDetectionOutput(result.stdout),
     ssh_connection:{id:connection.id, name:connection.name, host:connection.ssh_host, user:connection.ssh_user}
   };
+}
+
+function validateXdmcpState(action, after, restart = true) {
+  if (action === "uninstall-lightdm") return after?.manager !== "lightdm" || "LightDM 卸载命令已结束，但远端仍在使用 LightDM";
+  if (action === "disable") return !after?.enabled && !after?.listening || "XDMCP 关闭命令已结束，但 UDP 177 仍在监听";
+  if (action === "repair-xrdp") return !after?.xrdp_needs_repair || "RDP 会话修复命令已结束，但仍检测到配置异常";
+  if (action === "cleanup-sessions") return !after?.session_conflict || "冲突会话清理命令已结束，但仍检测到同账号图形会话冲突";
+  if (!after?.enabled) return "XDMCP 配置命令已结束，但远端配置仍未启用 XDMCP";
+  if (restart && !after?.listening) return "XDMCP 配置已写入，但 UDP 177 仍未监听";
+  return true;
+}
+
+async function waitForXdmcpState(profile, dependencies, action, restart = true) {
+  let after = null;
+  const delay = typeof dependencies.waitForXdmcpRetry === "function"
+    ? dependencies.waitForXdmcpRetry
+    : timeoutMs => new Promise(resolve => setTimeout(resolve, timeoutMs));
+  for (let attempt = 0; attempt < 9; attempt += 1) {
+    after = await detectXdmcpServer(profile, dependencies);
+    if (validateXdmcpState(action, after, restart) === true) return after;
+    if (attempt < 8) await delay(750);
+  }
+  return after;
 }
 
 async function configureXdmcpServer(profile, data, dependencies) {
@@ -943,8 +1149,8 @@ async function configureXdmcpServer(profile, data, dependencies) {
         if (result?.stderr) onChunk(Buffer.from(result.stderr), "stderr");
         return result;
       },
-      verify:() => detectXdmcpServer(profile, dependencies),
-      validate:after => Boolean(after?.enabled) || "离线安装已结束，但 XDMCP 仍未启用"
+      verify:() => waitForXdmcpState(profile, dependencies, localAction, data?.restart !== false),
+      validate:after => validateXdmcpState(localAction, after, data?.restart !== false)
     });
     return {ok:true, action, mode:"local-offline", before, package_plan:packagePlan, install_plan:packagePlan?.component_plan || null, task, defer_grant_release:true};
   }
@@ -956,6 +1162,7 @@ async function configureXdmcpServer(profile, data, dependencies) {
     if (!installCommand) throw new Error("远端没有可用的 XDMCP 软件包缓存；请返回安装界面选择仍可用的方式，或查看手动说明");
   }
   const effectiveAction = offlineAction || action;
+  const validateAfter = after => validateXdmcpState(effectiveAction, after, data?.restart !== false);
   const script = buildConfigurationScript(privileged && !before.privileged ? {...before, privileged:true} : before, effectiveAction, data?.restart !== false, {install_command:installCommand});
   const command = buildRemotePosixCommand(script);
   const timeoutMs = ["install-lightdm", "uninstall-lightdm", "install-xfce"].includes(effectiveAction) ? 10 * 60 * 1000 : 90000;
@@ -976,14 +1183,8 @@ async function configureXdmcpServer(profile, data, dependencies) {
       command:script,
       before,
       timeout_ms:timeoutMs,
-      verify:() => detectXdmcpServer(profile, dependencies),
-      validate:after => {
-        if (effectiveAction === "uninstall-lightdm") return after?.manager !== "lightdm" || "LightDM 卸载命令已结束，但远端仍在使用 LightDM";
-        if (effectiveAction === "disable") return !after?.enabled && !after?.listening || "XDMCP 关闭命令已结束，但 UDP 177 仍在监听";
-        if (effectiveAction === "repair-xrdp") return !after?.xrdp_needs_repair || "RDP 会话修复命令已结束，但仍检测到配置异常";
-        if (effectiveAction === "cleanup-sessions") return !after?.session_conflict || "冲突会话清理命令已结束，但仍检测到同账号图形会话冲突";
-        return Boolean(after?.enabled) || "XDMCP 配置命令已结束，但远端仍未启用 XDMCP";
-      }
+      verify:() => waitForXdmcpState(profile, dependencies, effectiveAction, data?.restart !== false),
+      validate:validateAfter
     });
     return {
       ok:true,
@@ -1005,7 +1206,9 @@ async function configureXdmcpServer(profile, data, dependencies) {
     const message = `${result.stderr || result.stdout || result.error?.message || "配置失败"}`.trim();
     throw new Error(message || "XDMCP 配置失败");
   }
-  const after = await detectXdmcpServer(profile, dependencies);
+  const after = await waitForXdmcpState(profile, dependencies, effectiveAction, data?.restart !== false);
+  const validation = validateAfter(after);
+  if (validation !== true) throw new Error(typeof validation === "string" ? validation : "XDMCP 状态验证未通过");
   return {ok:true, action, mode:offlineAction ? "offline" : "online", before, after, output:String(result.stdout || "").trim(), temporary_authorization:privileged};
 }
 
@@ -1018,5 +1221,7 @@ module.exports = {
   xdmcpPackagePlan,
   parseDetectionOutput,
   remoteGraphicalCleanupScript,
-  resolveManagementConnection
+  resolveManagementConnection,
+  validateXdmcpState,
+  waitForXdmcpState
 };

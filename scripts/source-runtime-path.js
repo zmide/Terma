@@ -19,7 +19,13 @@ function readJson(file) {
 }
 
 function desktopUserDataRoot({ env = process.env, platform = process.platform, homeDirectory = os.homedir() } = {}) {
-  if (env.TUNNELDESK_USER_DATA_DIR) return path.resolve(env.TUNNELDESK_USER_DATA_DIR);
+  if (env.TERMA_USER_DATA_DIR || env.TUNNELDESK_USER_DATA_DIR) return path.resolve(env.TERMA_USER_DATA_DIR || env.TUNNELDESK_USER_DATA_DIR);
+  if (platform === "win32") return path.join(env.APPDATA || path.join(homeDirectory, "AppData", "Roaming"), "Terma");
+  if (platform === "darwin") return path.join(homeDirectory, "Library", "Application Support", "Terma");
+  return path.join(env.XDG_CONFIG_HOME || path.join(homeDirectory, ".config"), "Terma");
+}
+
+function legacyDesktopUserDataRoot({ env = process.env, platform = process.platform, homeDirectory = os.homedir() } = {}) {
   if (platform === "win32") return path.join(env.APPDATA || path.join(homeDirectory, "AppData", "Roaming"), "TunnelDesk");
   if (platform === "darwin") return path.join(homeDirectory, "Library", "Application Support", "TunnelDesk");
   return path.join(env.XDG_CONFIG_HOME || path.join(homeDirectory, ".config"), "TunnelDesk");
@@ -46,9 +52,20 @@ function resolveRuntimeDirectories(options = {}) {
     platform,
     homeDirectory: options.homeDirectory || os.homedir()
   });
+  const legacyUserDataRoot = legacyDesktopUserDataRoot({
+    env,
+    platform,
+    homeDirectory: options.homeDirectory || os.homedir()
+  });
+  // A source checkout must follow Terma's own settings.  The legacy settings
+  // file remains a stop/scan candidate, but must not redirect a fresh Terma
+  // launch to an empty renamed profile before the brand migration runs.
   const settings = readJson(path.join(userDataRoot, "desktop-settings.json")) || {};
+  const legacySettings = readJson(path.join(legacyUserDataRoot, "desktop-settings.json")) || {};
   const customRoot = String(settings.customDataDir || "").trim();
   const customDataDir = customRoot ? path.join(path.resolve(projectRoot, customRoot), "data") : "";
+  const legacyCustomRoot = String(legacySettings.customDataDir || "").trim();
+  const legacyCustomDataDir = legacyCustomRoot ? path.join(path.resolve(projectRoot, legacyCustomRoot), "data") : "";
   const projectDataDir = path.join(projectRoot, "data");
   const userDataDir = path.join(userDataRoot, "runtime", "data");
   const desktopDataDir = settings.dataMode === "custom" && customDataDir
@@ -57,12 +74,15 @@ function resolveRuntimeDirectories(options = {}) {
       ? userDataDir
       : projectDataDir;
 
-  const storageSettings = readJson(path.join(projectRoot, ".tunneldesk-storage.json")) || {};
+  const storageSettings = readJson(path.join(projectRoot, ".terma-storage.json"))
+    || readJson(path.join(projectRoot, ".tunneldesk-storage.json"))
+    || {};
   const storedRoot = path.isAbsolute(String(storageSettings.root || ""))
     ? path.resolve(String(storageSettings.root))
     : "";
-  const webDataDir = env.TUNNELDESK_DATA_DIR
-    ? path.resolve(env.TUNNELDESK_DATA_DIR)
+  const webDataOverride = env.TERMA_DATA_DIR || env.TUNNELDESK_DATA_DIR;
+  const webDataDir = webDataOverride
+    ? path.resolve(webDataOverride)
     : storedRoot
       ? path.join(storedRoot, "data")
       : projectDataDir;
@@ -77,8 +97,10 @@ function resolveRuntimeDirectories(options = {}) {
       projectDataDir,
       userDataDir,
       customDataDir,
+      legacyCustomDataDir,
       webDataDir,
-      env.TUNNELDESK_DATA_DIR
+      webDataOverride,
+      path.join(legacyUserDataRoot, "runtime", "data")
     ], platform)
   };
 }
@@ -122,12 +144,12 @@ function isSourceProcess(processInfo, projectRoot) {
     && (commandLine.includes(`\"${normalizedRoot}\"`) || commandLine.includes(` ${normalizedRoot} `) || commandLine.endsWith(` ${normalizedRoot}`));
 }
 
-function looksLikeTunnelDesk(processInfo) {
+function looksLikeTerma(processInfo) {
   const name = String(processInfo?.Name || "").toLowerCase();
   const commandLine = normalizedCommand(processInfo?.CommandLine);
-  if (name === "tunneldesk.exe") return true;
+  if (name === "terma.exe" || name === "tunneldesk.exe") return true;
   if (name === "node.exe") return /(?:^|[\s\"'])[^\s\"']*dist\/server\.js(?:[\s\"']|$)/i.test(commandLine);
-  return name === "electron.exe" && commandLine.includes("tunneldesk");
+  return name === "electron.exe" && (commandLine.includes("terma") || commandLine.includes("tunneldesk"));
 }
 
 function readRuntimePid(dataDirectory) {
@@ -227,7 +249,7 @@ async function stopSourceInstances(runtimeState, dependencies = {}) {
       continue;
     }
     if (!isSourceProcess(processInfo, runtimeState.projectRoot)) {
-      if (looksLikeTunnelDesk(processInfo)) conflicts.push({ pid, dataDirectory });
+      if (looksLikeTerma(processInfo)) conflicts.push({ pid, dataDirectory });
       else cleanupRuntimeFiles(dataDirectory, pid);
       continue;
     }
@@ -240,11 +262,11 @@ async function stopSourceInstances(runtimeState, dependencies = {}) {
 
   if (conflicts.length) {
     const conflict = conflicts[0];
-    throw new Error(`Runtime directory is used by another TunnelDesk process (pid=${conflict.pid}): ${conflict.dataDirectory}`);
+    throw new Error(`运行目录正被另一个 Terma 或旧版 TunnelDesk 进程使用（pid=${conflict.pid}）：${conflict.dataDirectory}`);
   }
 
   for (const instance of instances.values()) {
-    log(`Stopping current TunnelDesk source instance, pid=${instance.pid}...`);
+    log(`正在停止当前 Terma 源码实例，pid=${instance.pid}...`);
     if (instance.urls.length) await gracefulShutdown(instance.urls[0]);
     let stopped = await waitForExit(instance.pid, 8000);
     if (!stopped) {
@@ -255,9 +277,9 @@ async function stopSourceInstances(runtimeState, dependencies = {}) {
         stopped = await waitForExit(instance.pid, 5000);
       }
     }
-    if (!stopped) throw new Error(`Unable to stop current TunnelDesk source instance, pid=${instance.pid}`);
+    if (!stopped) throw new Error(`无法停止当前 Terma 源码实例，pid=${instance.pid}`);
     for (const dataDirectory of instance.directories) cleanupRuntimeFiles(dataDirectory, instance.pid);
-    log(`Stopped current TunnelDesk source instance, pid=${instance.pid}.`);
+    log(`已停止当前 Terma 源码实例，pid=${instance.pid}。`);
   }
 
   return { stopped: instances.size };
@@ -282,8 +304,9 @@ if (require.main === module) {
 module.exports = {
   cleanupRuntimeFiles,
   desktopUserDataRoot,
+  legacyDesktopUserDataRoot,
   isSourceProcess,
-  looksLikeTunnelDesk,
+  looksLikeTerma,
   resolveRuntimeDirectories,
   stopSourceInstances,
   verifiedRuntimeUrl

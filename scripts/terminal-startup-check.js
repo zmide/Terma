@@ -6,9 +6,9 @@ const path = require("node:path");
 const { generateKeyPairSync } = require("node:crypto");
 const { Server } = require("ssh2");
 
-const testRuntimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-terminal-startup-runtime-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(testRuntimeDir, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(testRuntimeDir, "ssh");
+const testRuntimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "terma-terminal-startup-runtime-"));
+process.env.TERMA_DATA_DIR = path.join(testRuntimeDir, "data");
+process.env.TERMA_SSH_DIR = path.join(testRuntimeDir, "ssh");
 
 const {
   buildRemoteStartupCommand,
@@ -206,7 +206,7 @@ const legacyEncodingArgs = buildTerminalCommand({...connection, ...canonicalDefa
   });
   assert.ok(
     conflictingArgs.indexOf("RemoteCommand=none") < conflictingArgs.indexOf("RemoteCommand=/usr/bin/old-command"),
-    "命令行禁用值必须先于连接额外参数，确保 OpenSSH 使用 TunnelDesk 当前选择的启动程序"
+    "命令行禁用值必须先于连接额外参数，确保 OpenSSH 使用 Terma 当前选择的启动程序"
   );
 }
 

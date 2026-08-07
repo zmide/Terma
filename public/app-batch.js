@@ -361,7 +361,7 @@ function exportBatchCommand(format) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `tunneldesk-batch-${new Date().toISOString().replace(/[:.]/g,"-")}.${format}`;
+  a.download = `terma-batch-${new Date().toISOString().replace(/[:.]/g,"-")}.${format}`;
   a.click();
   URL.revokeObjectURL(url);
 }

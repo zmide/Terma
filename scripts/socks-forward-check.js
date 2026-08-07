@@ -84,7 +84,7 @@ async function proxyRoundTrip(proxyPort, addressType, target, targetPort, expect
   const reply = await readAtLeast(socket, 10, "连接响应");
   assert.equal(reply[0], 5);
   assert.equal(reply[1], 0);
-  const payload = Buffer.from(`tunneldesk-${addressType}`);
+  const payload = Buffer.from(`terma-${addressType}`);
   socket.write(payload);
   stage = `等待回显 ${addressType}`;
   const echoed = await readAtLeast(socket, payload.length, "回显数据");

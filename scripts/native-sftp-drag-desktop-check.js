@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const {EventEmitter} = require("node:events");
 const Module = require("node:module");
+const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
 
@@ -246,13 +247,14 @@ function checkMacPromiseUsesTicketItemId() {
 function checkLinuxHelperUtilities() {
   const {
     __linuxHelperCandidates: linuxHelperCandidates,
+    __findLinuxHelper: findLinuxHelper,
     __parseJsonLine: parseJsonLine
   } = require(adapterPath);
   const appPath = path.join(root, ".native-drag-fixture", "app");
   const candidates = linuxHelperCandidates({getAppPath: () => appPath});
-  const executable = process.platform === "win32"
-    ? "tunneldesk-linux-sftp-dragfs.exe"
-    : "tunneldesk-linux-sftp-dragfs";
+  const suffix = process.platform === "win32" ? ".exe" : "";
+  const executable = `terma-linux-sftp-dragfs${suffix}`;
+  const legacyExecutable = `tunneldesk-linux-sftp-dragfs${suffix}`;
 
   assert.ok(candidates.length >= 4);
   assert.equal(new Set(candidates).size, candidates.length);
@@ -265,6 +267,26 @@ function checkLinuxHelperUtilities() {
     executable
   ))));
   assert.ok(candidates.includes(path.resolve(appPath, "native", "linux-sftp-drag", "build", executable)));
+  const primaryPrebuild = path.resolve(root, "native", "linux-sftp-drag", "prebuilds", `linux-${process.arch}`, executable);
+  const legacyPrebuild = path.resolve(root, "native", "linux-sftp-drag", "prebuilds", `linux-${process.arch}`, legacyExecutable);
+  const primaryBuild = path.resolve(root, "native", "linux-sftp-drag", "build", executable);
+  assert.ok(candidates.includes(legacyPrebuild), "旧 helper 名称必须保留为读取后备");
+  assert.ok(candidates.indexOf(primaryPrebuild) < candidates.indexOf(legacyPrebuild), "新 helper 必须优先于旧 helper");
+  const originalStatSync = fs.statSync;
+  try {
+    let available = new Set([primaryBuild, legacyPrebuild]);
+    fs.statSync = candidate => {
+      if (available.has(path.resolve(candidate))) return {isFile:() => true};
+      const error = new Error("not found");
+      error.code = "ENOENT";
+      throw error;
+    };
+    assert.equal(findLinuxHelper({getAppPath: () => appPath}), primaryBuild, "任一目录存在新 helper 时都必须优先于旧名称");
+    available = new Set([legacyPrebuild]);
+    assert.equal(findLinuxHelper({getAppPath: () => appPath}), legacyPrebuild, "缺少新 helper 时必须能回退读取旧 helper");
+  } finally {
+    fs.statSync = originalStatSync;
+  }
 
   assert.deepEqual(parseJsonLine('  {"event":"ready","paths":["/mnt/a"]}  '), {
     event: "ready",
@@ -272,6 +294,22 @@ function checkLinuxHelperUtilities() {
   });
   assert.equal(parseJsonLine("not-json"), null);
   assert.equal(parseJsonLine(""), null);
+}
+
+function checkLinuxArtifactNamingContract() {
+  const {verifyPackaged} = require("./native-sftp-drag-artifacts-check");
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "terma-native-drag-artifacts-"));
+  try {
+    const nativeDirectory = path.join(fixture, "resources", "native");
+    fs.mkdirSync(nativeDirectory, {recursive:true});
+    fs.writeFileSync(path.join(nativeDirectory, "tunneldesk-linux-sftp-dragfs"), "legacy");
+    assert.throws(
+      () => verifyPackaged("linux", fixture),
+      /unexpected legacy artifacts[\s\S]*tunneldesk-linux-sftp-dragfs/
+    );
+  } finally {
+    fs.rmSync(fixture, {recursive:true, force:true});
+  }
 }
 
 function createLinuxHelperFixture() {
@@ -335,7 +373,7 @@ async function checkLinuxAdapterStateMachine() {
   try {
     const {createNativeSftpDrag} = require(adapterPath);
     fs.statSync = candidate => {
-      if (/^tunneldesk-linux-sftp-dragfs(?:\.exe)?$/.test(path.basename(String(candidate)))) {
+      if (/^(?:terma|tunneldesk)-linux-sftp-dragfs(?:\.exe)?$/.test(path.basename(String(candidate)))) {
         return {isFile:() => true};
       }
       return originalStatSync(candidate);
@@ -533,7 +571,7 @@ function checkPreloadCapabilityFallback() {
   let exposedValue = null;
   const ipcRenderer = {
     sendSync(channel) {
-      assert.equal(channel, "tunneldesk:capabilities");
+      assert.equal(channel, "terma:capabilities");
       return undefined;
     },
     send() {},
@@ -560,7 +598,7 @@ function checkPreloadCapabilityFallback() {
     String
   }, {filename: "desktop/preload.js"});
 
-  assert.equal(exposedName, "tunnelDeskDesktop");
+  assert.equal(exposedName, "termaDesktop");
   assert.ok(exposedValue);
   assert.equal(exposedValue.capabilities.platform, "linux");
   assert.equal(exposedValue.capabilities.sftpExternalDrag, false);
@@ -602,7 +640,7 @@ function checkNativeSessionRaceGuards() {
   assert.match(mainSource, /windowsReleaseAcknowledged/);
   assert.match(mainSource, /NATIVE_SFTP_DRAG_WINDOWS_TARGET_ACK_TIMEOUT_MS = 2000/);
   assert.match(mainSource, /\(point\.x - bounds\.x\) \/ zoomFactor/);
-  assert.match(mainSource, /tunneldesk:sftp-drag-activate/);
+  assert.match(mainSource, /terma:sftp-drag-activate/);
   assert.match(mainSource, /cancelled \? "已取消拖出"/);
   assert.match(mainSource, /forceTicketRelease:process\.platform === "linux"/);
   assert.match(adapterSource, /const LINUX_DROP_SETTLE_MS = 150/);
@@ -626,7 +664,7 @@ function checkNativeSessionRaceGuards() {
   assert.match(rendererSource, /pointer\.activated && pointer\.nativeStarted/);
   assert.doesNotMatch(rendererSource, /pointer\.activated && \(pointer\.nativeReady \|\| pointer\.nativeStarted\)/);
   assert.match(rendererSource, /event\.type === "ready"[\s\S]*sftpNativeDragPointer\.nativeReady = true/);
-  assert.match(rendererSource, /event\.type === "ready"[\s\S]*request\.activated\) window\.tunnelDeskDesktop\?\.activateSftpDrag/);
+  assert.match(rendererSource, /event\.type === "ready"[\s\S]*request\.activated\) window\.termaDesktop\?\.activateSftpDrag/);
   assert.match(rendererSource, /event\.type === "transferStarted"[\s\S]*refreshSftpJobs\(\)/);
   assert.doesNotMatch(rendererSource, /dataTransfer\.setData\("text\/plain"/);
   assert.doesNotMatch(rendererSource, /activateSftpNativeDragPointer\(pointer\);\s*if \(pointer\.row\)/);
@@ -644,6 +682,7 @@ async function main() {
   checkWindowsDelayedDirectoryInternalCancelPath();
   checkMacPromiseUsesTicketItemId();
   checkLinuxHelperUtilities();
+  checkLinuxArtifactNamingContract();
   await checkLinuxAdapterStateMachine();
   checkLinuxFuseOptionsContract();
   checkPreloadCapabilityFallback();

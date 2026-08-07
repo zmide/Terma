@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const vm = require("node:vm");
 const { spawn } = require("node:child_process");
 
 function availablePort() {
@@ -30,12 +31,74 @@ async function waitForServer(url, child) {
   throw new Error("等待认证验证服务器启动超时");
 }
 
+function assertLoginPagePasswordToggle(html) {
+  assert.equal((html.match(/id="passwordToggle"/g) || []).length, 1);
+  assert.match(html, /<button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false">/);
+  assert.equal((html.match(/class="password-toggle"/g) || []).length, 1);
+  assert.match(html, /id="passwordHideIcon"[^>]*hidden/);
+  assert.match(html, /\.card\{[^}]*width:min\(360px,100%\)[^}]*box-sizing:border-box/);
+  assert.match(html, /body\{[^}]*padding:16px[^}]*overflow-x:hidden/);
+
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+  assert.ok(script, "登录页应包含密码切换脚本");
+  const makeElement = (properties = {}) => ({
+    ...properties,
+    attributes: new Map(),
+    listeners: new Map(),
+    addEventListener(type, listener) { this.listeners.set(type, listener); },
+    setAttribute(name, value) { this.attributes.set(name, String(value)); },
+    getAttribute(name) { return this.attributes.get(name) ?? null; },
+    focus(options) { this.focusOptions = options; this.focusCount = (this.focusCount || 0) + 1; },
+    setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; }
+  });
+  const password = makeElement({ value: "unchanged-secret", type: "password", selectionStart: 3, selectionEnd: 9 });
+  const toggle = makeElement({ title: "显示密码" });
+  toggle.setAttribute("aria-label", "显示密码");
+  toggle.setAttribute("aria-pressed", "false");
+  const showIcon = makeElement({ hidden: false });
+  const hideIcon = makeElement({ hidden: true });
+  const elements = {
+    password,
+    passwordToggle: toggle,
+    passwordShowIcon: showIcon,
+    passwordHideIcon: hideIcon,
+    err: makeElement()
+  };
+  const context = {
+    document: { getElementById(id) { return elements[id]; } },
+    fetch: async () => ({ ok: true }),
+    location: { href: "" }
+  };
+  vm.runInNewContext(script, context, { timeout: 1000 });
+  const click = toggle.listeners.get("click");
+  assert.equal(typeof click, "function", "密码眼睛按钮应绑定点击处理器");
+  click();
+  assert.equal(password.type, "text");
+  assert.equal(password.value, "unchanged-secret");
+  assert.equal(password.selectionStart, 3);
+  assert.equal(password.selectionEnd, 9);
+  assert.equal(toggle.title, "隐藏密码");
+  assert.equal(toggle.getAttribute("aria-label"), "隐藏密码");
+  assert.equal(toggle.getAttribute("aria-pressed"), "true");
+  assert.equal(showIcon.hidden, true);
+  assert.equal(hideIcon.hidden, false);
+  assert.equal(password.focusOptions.preventScroll, true);
+  click();
+  assert.equal(password.type, "password");
+  assert.equal(password.value, "unchanged-secret");
+  assert.equal(toggle.title, "显示密码");
+  assert.equal(toggle.getAttribute("aria-label"), "显示密码");
+  assert.equal(toggle.getAttribute("aria-pressed"), "false");
+  assert.equal(showIcon.hidden, false);
+  assert.equal(hideIcon.hidden, true);
+}
+
 async function main() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-auth-integration-"));
-  const previousData = process.env.TUNNELDESK_DATA_DIR;
-  const previousSsh = process.env.TUNNELDESK_SSH_DIR;
-  process.env.TUNNELDESK_DATA_DIR = path.join(root, "data");
-  process.env.TUNNELDESK_SSH_DIR = path.join(root, ".ssh");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-auth-integration-"));
+  const previousData = process.env.TERMA_DATA_DIR;
+  const previousSsh = process.env.TERMA_SSH_DIR;
+  process.env.TERMA_DATA_DIR = path.join(root, "data");
+  process.env.TERMA_SSH_DIR = path.join(root, ".ssh");
   const password = `Td-${crypto.randomBytes(18).toString("base64url")}`;
   const security = require("../dist/security");
   security.setPassword(password);
@@ -65,6 +128,9 @@ async function main() {
   server.stderr.on("data", chunk => output.push(chunk.toString()));
   try {
     await waitForServer(url, server);
+    const loginPageResponse = await fetch(url + "/login");
+    assert.equal(loginPageResponse.status, 200);
+    assertLoginPagePasswordToggle(await loginPageResponse.text());
     assert.equal((await fetch(`${url}/api/about`)).status, 401);
     for (let index = 0; index < 4; index += 1) {
       const response = await fetch(`${url}/api/auth/login`, {
@@ -142,10 +208,10 @@ async function main() {
       });
     });
     fs.rmSync(root, { recursive:true, force:true });
-    if (previousData === undefined) delete process.env.TUNNELDESK_DATA_DIR;
-    else process.env.TUNNELDESK_DATA_DIR = previousData;
-    if (previousSsh === undefined) delete process.env.TUNNELDESK_SSH_DIR;
-    else process.env.TUNNELDESK_SSH_DIR = previousSsh;
+    if (previousData === undefined) delete process.env.TERMA_DATA_DIR;
+    else process.env.TERMA_DATA_DIR = previousData;
+    if (previousSsh === undefined) delete process.env.TERMA_SSH_DIR;
+    else process.env.TERMA_SSH_DIR = previousSsh;
   }
 }
 

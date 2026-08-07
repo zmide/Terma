@@ -153,7 +153,7 @@ async function main() {
 
   const startupHosts = await bindableLoopbackHosts();
 
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-runtime-settings-check-"));
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-runtime-settings-check-"));
   temporaryRoots.push(temporaryRoot);
   const dataDir = path.join(temporaryRoot, "data");
   const sshDir = path.join(temporaryRoot, ".ssh");
@@ -182,9 +182,9 @@ async function main() {
       cwd: root,
       env: {
         ...process.env,
-        TUNNELDESK_DATA_DIR: dataDir,
-        TUNNELDESK_SSH_DIR: sshDir,
-        TUNNELDESK_DISABLE_UPDATE_CHECK: "1"
+        TERMA_DATA_DIR: dataDir,
+        TERMA_SSH_DIR: sshDir,
+        TERMA_DISABLE_UPDATE_CHECK: "1"
       },
       stdio: ["ignore", "pipe", "pipe"]
     });

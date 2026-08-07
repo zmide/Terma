@@ -17,7 +17,7 @@ function buildRemotePosixCommand(script: unknown): string {
     "elif command -v openssl >/dev/null 2>&1; then",
     "printf %s \"$td_payload\" | openssl base64 -d -A;",
     "else",
-    "printf \"%s\\n\" \"TunnelDesk requires base64 or openssl on the remote host\" >&2; return 127;",
+    "printf \"%s\\n\" \"Terma requires base64 or openssl on the remote host\" >&2; return 127;",
     "fi;",
     "};",
     "td_decode | /bin/sh"

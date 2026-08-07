@@ -6,9 +6,73 @@ const path = require("path");
 const { createRemoteOfflineTaskManager } = require("../dist/remote-offline-tasks");
 
 (async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-offline-task-check-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-offline-task-check-"));
   const packageFile = path.join(root, "xclip_1_amd64.deb");
   fs.writeFileSync(packageFile, "deb", "utf8");
+  let releaseResourceTask;
+  const resourceTaskGate = new Promise(resolve => { releaseResourceTask = resolve; });
+  const resourceManager = createRemoteOfflineTaskManager({data_dir:root});
+  const resourceTask = resourceManager.startCommand({
+    connection:{id:99, name:"resource-lock", ssh_host:"resource-lock.test"},
+    component:"vnc-server",
+    component_label:"VNC 服务",
+    resource_key:"vnc-server:15",
+    action:"stop",
+    async run() {
+      await resourceTaskGate;
+      return {status:0, stdout:"stopped"};
+    }
+  });
+  let duplicateExecutorRan = false;
+  assert.throws(() => resourceManager.startCommand({
+    connection:{id:99, name:"resource-lock", ssh_host:"resource-lock.test"},
+    component:"vnc-server",
+    component_label:"VNC 服务",
+    resource_key:"vnc-server:15",
+    action:"uninstall",
+    async run() { duplicateExecutorRan = true; return {status:0}; }
+  }), error => error?.statusCode === 409 && error?.code === "REMOTE_TASK_CONFLICT" && error?.task?.id === resourceTask.id);
+  assert.equal(duplicateExecutorRan, false, "a conflicting executor must never start");
+  assert.throws(() => resourceManager.startAptInstall({
+    connection:{id:99, name:"resource-lock", ssh_host:"resource-lock.test"},
+    component:"vnc-server",
+    component_label:"VNC 服务",
+    resource_key:"vnc-server:15",
+    packages:["tigervnc"]
+  }), error => error?.statusCode === 409 && error?.code === "REMOTE_TASK_CONFLICT" && error?.task?.id === resourceTask.id, "command and local-offline tasks must share the same resource lock");
+  const parallelResource = resourceManager.startCommand({
+    connection:{id:99, name:"resource-lock", ssh_host:"resource-lock.test"},
+    component:"rdp-server",
+    component_label:"RDP 服务",
+    resource_key:"rdp-server:99",
+    action:"start",
+    async run() { return {status:0}; }
+  });
+  assert.equal(parallelResource.status, "running", "different resources should remain independently manageable");
+  releaseResourceTask();
+  const resourceDeadline = Date.now() + 3000;
+  while (Date.now() < resourceDeadline && resourceManager.list().find(item => item.id === resourceTask.id)?.status === "running") {
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(resourceManager.list().find(item => item.id === resourceTask.id)?.status, "done");
+  const resourceRetry = resourceManager.startCommand({
+    connection:{id:99, name:"resource-lock", ssh_host:"resource-lock.test"},
+    component:"vnc-server",
+    component_label:"VNC 服务",
+    resource_key:"vnc-server:15",
+    action:"uninstall",
+    async run() { return {status:0}; }
+  });
+  assert.equal(resourceRetry.status, "running", "resource lock should be released after the original task reaches a terminal state");
+  assert.ok(resourceRetry.resource_keys.includes("package-manager:99"), "install and uninstall tasks must reserve the host package manager");
+  assert.throws(() => resourceManager.startCommand({
+    connection:{id:99, name:"resource-lock", ssh_host:"resource-lock.test"},
+    component:"rdp-server",
+    component_label:"RDP 服务",
+    resource_key:"rdp-server:99",
+    action:"install",
+    async run() { return {status:0}; }
+  }), error => error?.statusCode === 409 && error?.code === "REMOTE_TASK_CONFLICT" && error?.task?.id === resourceRetry.id, "different components must not run package-manager operations concurrently on the same host");
   const commands = [];
   let sshCalls = 0;
   let released = false;
@@ -85,8 +149,8 @@ const { createRemoteOfflineTaskManager } = require("../dist/remote-offline-tasks
       fallbackSshCalls += 1;
       if (fallbackSshCalls <= 2) return {status:100, stderr:"E: Package has no installation candidate"};
       if (fallbackSshCalls === 3) return {status:0, stdout:[
-        "TD_APT_OS_ID=linx", "TD_APT_CODENAME=buster", "TD_APT_ARCH=amd64",
-        "TD_APT_INSTALLED=libx11-6:amd64\tinstall ok installed\t"
+        "TERMA_APT_OS_ID=linx", "TERMA_APT_CODENAME=buster", "TERMA_APT_ARCH=amd64",
+        "TERMA_APT_INSTALLED=libx11-6:amd64\tinstall ok installed\t"
       ].join("\n")};
       return {status:0, stdout:""};
     },
@@ -125,6 +189,75 @@ const { createRemoteOfflineTaskManager } = require("../dist/remote-offline-tasks
   assert.ok(fallbackTask.logs.some(item => item.text.includes("本机刷新")));
   assert.equal(fallbackManager.remove(fallbackTask.id), true);
 
+  let satisfiedProbeCalls = 0;
+  let satisfiedResolverCalls = 0;
+  let satisfiedDownloads = 0;
+  let satisfiedUploads = 0;
+  let satisfiedStreams = 0;
+  let satisfiedConfigurations = 0;
+  let satisfiedVerifications = 0;
+  const satisfiedManager = createRemoteOfflineTaskManager({
+    data_dir:root,
+    async run_ssh_command(_connection, command) {
+      satisfiedProbeCalls += 1;
+      if (satisfiedProbeCalls === 1) return {status:0, stdout:"xrdp is already the newest version"};
+      if (satisfiedProbeCalls === 2) return {status:0, stdout:[
+        "TERMA_APT_OS_ID=debian", "TERMA_APT_CODENAME=buster", "TERMA_APT_ARCH=arm64",
+        "TERMA_APT_INSTALLED=xrdp:arm64\tinstall ok installed\t",
+        "TERMA_APT_INSTALLED=xorgxrdp:arm64\tinstall ok installed\t"
+      ].join("\n")};
+      return {status:0, stdout:""}; // temporary-directory cleanup
+    },
+    async resolve_apt_packages(packages, platform) {
+      satisfiedResolverCalls += 1;
+      assert.deepEqual(packages, ["xrdp", "xorgxrdp"]);
+      assert.equal(platform.installed.has("xrdp"), true);
+      assert.equal(platform.installed.has("xorgxrdp"), true);
+      return [];
+    },
+    async download_apt_bundle() { satisfiedDownloads += 1; throw new Error("already-satisfied task must not download"); },
+    start_upload() { satisfiedUploads += 1; throw new Error("already-satisfied task must not upload"); },
+    async run_privileged_stream() { satisfiedStreams += 1; throw new Error("already-satisfied task must not install"); },
+    async run_ssh_stream() { satisfiedStreams += 1; throw new Error("already-satisfied task must not install"); }
+  });
+  const satisfiedStarted = satisfiedManager.startAptInstall({
+    connection:{id:72, name:"already-installed", ssh_host:"already-installed.test"},
+    component:"rdp-server", component_label:"RDP 服务", packages:["xrdp", "xorgxrdp"],
+    async after_install(onChunk) {
+      satisfiedConfigurations += 1;
+      onChunk(Buffer.from("existing packages configured\n"), "stdout");
+      return {status:0, stdout:""};
+    },
+    async verify() {
+      satisfiedVerifications += 1;
+      return {xrdp_installed:true, xorgxrdp_installed:true};
+    },
+    validate(after) {
+      assert.equal(after.xrdp_installed, true);
+      assert.equal(after.xorgxrdp_installed, true);
+      return true;
+    }
+  });
+  const satisfiedDeadline = Date.now() + 3000;
+  let satisfiedTask;
+  while (Date.now() < satisfiedDeadline) {
+    satisfiedTask = satisfiedManager.list().find(item => item.id === satisfiedStarted.id);
+    if (satisfiedTask?.status !== "running") break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(satisfiedTask.status, "done");
+  assert.equal(satisfiedTask.progress, 100);
+  assert.equal(satisfiedTask.after.xrdp_installed, true);
+  assert.equal(satisfiedResolverCalls, 1);
+  assert.equal(satisfiedConfigurations, 1);
+  assert.equal(satisfiedVerifications, 1);
+  assert.equal(satisfiedDownloads, 0);
+  assert.equal(satisfiedUploads, 0);
+  assert.equal(satisfiedStreams, 0);
+  assert.ok(satisfiedTask.logs.some(item => item.text.includes("跳过下载、上传和重复安装")));
+  assert.ok(satisfiedTask.logs.some(item => item.text.includes("现有安装状态验证通过")));
+  assert.equal(satisfiedManager.remove(satisfiedTask.id), true);
+
   let repairCalls = 0;
   let repairedDownloads = 0;
   let repairUpload = 0;
@@ -136,7 +269,7 @@ const { createRemoteOfflineTaskManager } = require("../dist/remote-offline-tasks
       if (repairCalls === 2) return {status:0, stdout:""}; // first mkdir
       if (repairCalls === 3) return {status:1, stderr:"E: Some packages could not be downloaded"}; // dependency preflight
       if (repairCalls === 4) return {status:0, stdout:[
-        "TD_APT_OS_ID=linx", "TD_APT_CODENAME=buster", "TD_APT_ARCH=amd64"
+        "TERMA_APT_OS_ID=linx", "TERMA_APT_CODENAME=buster", "TERMA_APT_ARCH=amd64"
       ].join("\n")};
       if (repairCalls === 5) return {status:0, stdout:""}; // retry mkdir
       return {status:0, stdout:""}; // retry preflight

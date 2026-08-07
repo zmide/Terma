@@ -22,13 +22,13 @@ assert.match(remoteSource, /保存并检测/);
 assert.match(remoteSource, /session\.rfb !== rfb/);
 assert.match(cssSource, /\.vnc-clipboard-status/);
 assert.match(cssSource, /\.vnc-toolbar-actions \.icon-button\.active/);
-assert.match(mainSource, /ipcMain\.handle\("tunneldesk:clipboard-read"/);
-assert.match(mainSource, /ipcMain\.handle\("tunneldesk:clipboard-write"/);
+assert.match(mainSource, /ipcMain\.handle\("terma:clipboard-read"/);
+assert.match(mainSource, /ipcMain\.handle\("terma:clipboard-write"/);
 assert.match(mainSource, /event\?\.sender !== mainWindow\.webContents/);
 assert.match(mainSource, /!rendererBelongsToDesktop\(event\)/);
 assert.match(mainSource, /renderer\.on\?\.\("will-navigate"/);
-assert.match(preloadSource, /ipcRenderer\.invoke\("tunneldesk:clipboard-read"/);
-assert.match(preloadSource, /ipcRenderer\.invoke\("tunneldesk:clipboard-write"/);
+assert.match(preloadSource, /ipcRenderer\.invoke\("terma:clipboard-read"/);
+assert.match(preloadSource, /ipcRenderer\.invoke\("terma:clipboard-write"/);
 assert.match(remoteSource, /session\.clipboardLastSeenLocal = undefined/);
 assert.match(remoteSource, /vnc-clipboard/);
 assert.match(remoteSource, /已发送（服务端未确认）/);
@@ -78,7 +78,7 @@ const context = vm.createContext({
       writeText:async text => clipboard.browserWrites.push(String(text))
     }
   },
-  window:{tunnelDeskDesktop:null},
+  window:{termaDesktop:null},
   document:{
     visibilityState:"visible",
     hasFocus:() => true,
@@ -212,7 +212,7 @@ const makeSession = rfb => ({
   assert.equal(denied.clipboardAutoSync, false);
   assert.equal(denied.clipboardPermissionBlocked, true);
 
-  context.window.tunnelDeskDesktop = {
+  context.window.termaDesktop = {
     readClipboardText:async () => "desktop clipboard",
     writeClipboardText:async text => clipboard.desktopWrites.push(String(text))
   };

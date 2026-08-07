@@ -31,7 +31,7 @@ function createStorageRestoreHelpers(options: any = {}) {
       root:RUNTIME_ROOT,
       data_dir:DATA_DIR,
       ssh_dir:PROJECT_SSH_DIR,
-      environment_override:Boolean(process.env.TUNNELDESK_DATA_DIR || process.env.TUNNELDESK_SSH_DIR)
+      environment_override:Boolean(process.env.TERMA_DATA_DIR || process.env.TERMA_SSH_DIR || process.env.TUNNELDESK_DATA_DIR || process.env.TUNNELDESK_SSH_DIR)
     };
   }
 
@@ -56,7 +56,7 @@ function createStorageRestoreHelpers(options: any = {}) {
     const targetSsh = path.join(root, ".ssh");
     if (Boolean(data?.migrate) && path.resolve(root) !== path.resolve(RUNTIME_ROOT)) {
       const targetDb = path.join(targetData, "tunnels.db");
-      if (fs.existsSync(targetDb)) throw new Error("目标目录已有 TunnelDesk 数据库，已拒绝覆盖");
+      if (fs.existsSync(targetDb)) throw new Error("目标目录已有 Terma 数据库，已拒绝覆盖");
       copyRuntimeDirectory(DATA_DIR, targetData);
       copyRuntimeDirectory(PROJECT_SSH_DIR, targetSsh);
     } else {
@@ -68,6 +68,8 @@ function createStorageRestoreHelpers(options: any = {}) {
     fs.renameSync(temporary, STORAGE_SETTINGS_FILE);
 
     const environment = {...process.env};
+    delete environment.TERMA_DATA_DIR;
+    delete environment.TERMA_SSH_DIR;
     delete environment.TUNNELDESK_DATA_DIR;
     delete environment.TUNNELDESK_SSH_DIR;
     const restartPayload = {

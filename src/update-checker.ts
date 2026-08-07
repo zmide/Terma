@@ -4,6 +4,7 @@ const path = require("node:path");
 const DEFAULT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 10 * 1000;
 const CACHE_FILENAME = "update-check.json";
+const CACHE_SCHEMA_VERSION = 3;
 
 function parseVersion(value) {
   const text = String(value || "").trim().replace(/^v(?=\d)/i, "");
@@ -132,7 +133,7 @@ function releaseResult(packageInfo, releaseInput, checkedAt, fromCache) {
 }
 
 function cachedResult(cache, packageInfo) {
-  if (Number(cache?.schema_version || 0) < 2 || !cache?.result || !Array.isArray(cache.result.release_notes)) return null;
+  if (Number(cache?.schema_version || 0) < CACHE_SCHEMA_VERSION || !cache?.result || !Array.isArray(cache.result.release_notes)) return null;
   const current = parseVersion(packageInfo?.version);
   const latest = parseVersion(cache.result.latest_version);
   const ignored = parseVersion(cache.ignored_latest_version);
@@ -158,6 +159,7 @@ function createUpdateChecker(options: any = {}) {
   const packageInfo = options.packageInfo || readJson(packagePath);
   if (!packageInfo?.version) throw new Error("无法读取 package.json 中的当前版本");
   const repository = parseGitHubRepository(packageInfo.repository || packageInfo.homepage);
+  const repositoryCacheKey = `${repository.owner}/${repository.repo}`.toLowerCase();
   const fetchImpl = options.fetch || globalThis.fetch;
   if (typeof fetchImpl !== "function") throw new Error("当前运行环境不支持网络更新检查");
   const now = typeof options.now === "function" ? options.now : () => Date.now();
@@ -168,11 +170,16 @@ function createUpdateChecker(options: any = {}) {
   let inFlight = null;
 
   function readCache() {
-    return readJson(cachePath, {}) || {};
+    const cache = readJson(cachePath, {}) || {};
+    return String(cache.repository_key || "").toLowerCase() === repositoryCacheKey ? cache : {};
   }
 
   function saveCache(cache) {
-    writeJson(cachePath, { ...cache, schema_version: 2 });
+    writeJson(cachePath, {
+      ...cache,
+      schema_version: CACHE_SCHEMA_VERSION,
+      repository_key: repositoryCacheKey
+    });
   }
 
   async function notifyOnce(result) {
@@ -197,7 +204,7 @@ function createUpdateChecker(options: any = {}) {
       }, timeoutMs);
     });
     const headers: any = {
-      "User-Agent": `TunnelDesk/${packageInfo.version}`,
+      "User-Agent": `Terma/${packageInfo.version}`,
       "Accept": "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28"
     };

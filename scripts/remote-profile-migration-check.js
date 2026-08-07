@@ -4,8 +4,8 @@ const os = require("node:os");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-remote-migration-"));
-process.env.TUNNELDESK_DATA_DIR = temporary;
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "terma-remote-migration-"));
+process.env.TERMA_DATA_DIR = temporary;
 
 let db;
 try {
@@ -56,7 +56,7 @@ VALUES('legacy-vnc','迁移测试','vnc','127.0.0.1',5900,'',NULL,1,123,'desktop
   try { db?.closeDatabase(); } catch {}
   const resolved = path.resolve(temporary);
   const root = path.resolve(os.tmpdir());
-  if (resolved.startsWith(`${root}${path.sep}`) && path.basename(resolved).startsWith("tunneldesk-remote-migration-")) {
+  if (resolved.startsWith(`${root}${path.sep}`) && path.basename(resolved).startsWith("terma-remote-migration-")) {
     fs.rmSync(resolved, {recursive:true, force:true});
   }
 }

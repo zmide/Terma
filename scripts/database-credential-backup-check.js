@@ -6,9 +6,9 @@ const os = require("node:os");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-credential-backup-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(temporaryRoot, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(temporaryRoot, ".ssh");
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-credential-backup-"));
+process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
+process.env.TERMA_SSH_DIR = path.join(temporaryRoot, ".ssh");
 
 const database = require("../dist/db");
 

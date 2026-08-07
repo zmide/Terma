@@ -83,7 +83,7 @@ function copyBuiltFile(source, destination) {
 
 function requestedArchitectures(platform) {
   const supported = new Set(["ia32", "x64", "arm64"]);
-  const configured = String(process.env.TUNNELDESK_NATIVE_ARCHES || "")
+  const configured = String(process.env.TERMA_NATIVE_ARCHES || process.env.TUNNELDESK_NATIVE_ARCHES || "")
     .split(",")
     .map(value => value.trim())
     .filter(Boolean);
@@ -135,7 +135,7 @@ function nativeBuildState(platform) {
         ...sourceFiles(path.join(directory, "src"))
       ],
       outputs:requestedArchitectures(platform).map(arch => ({
-        file:path.join(directory, "prebuilds", `darwin-${arch}`, "tunneldesk_macos_sftp_drag.node"),
+        file:path.join(directory, "prebuilds", `darwin-${arch}`, "terma_macos_sftp_drag.node"),
         arch
       }))
     };
@@ -149,7 +149,7 @@ function nativeBuildState(platform) {
         ...sourceFiles(path.join(directory, "src"))
       ],
       outputs:[{
-        file:path.join(directory, "prebuilds", `linux-${process.arch}`, "tunneldesk-linux-sftp-dragfs"),
+        file:path.join(directory, "prebuilds", `linux-${process.arch}`, "terma-linux-sftp-dragfs"),
         arch:process.arch
       }]
     };
@@ -261,7 +261,7 @@ function buildLinuxHelper() {
     "--output-on-failure"
   ]);
 
-  const outputName = "tunneldesk-linux-sftp-dragfs";
+  const outputName = "terma-linux-sftp-dragfs";
   const source = path.join(buildDirectory, outputName);
   const destination = path.join(
     sourceDirectory,
@@ -291,7 +291,7 @@ function main() {
   if (process.platform === "darwin") {
     return buildNodeApiAddon(
       path.join(root, "native", "macos-sftp-drag"),
-      "tunneldesk_macos_sftp_drag.node",
+      "terma_macos_sftp_drag.node",
       "darwin"
     );
   }

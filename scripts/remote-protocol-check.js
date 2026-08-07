@@ -3,8 +3,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-remote-protocol-"));
-process.env.TUNNELDESK_DATA_DIR = temporary;
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "terma-remote-protocol-"));
+process.env.TERMA_DATA_DIR = temporary;
 
 let db;
 try {
@@ -93,13 +93,13 @@ try {
   assert.equal(db.listRemoteProfiles().length, 7);
 
   const { buildTerminalCommand } = require("../dist/ssh");
-  const previousXauth = process.env.TUNNELDESK_XAUTH;
-  process.env.TUNNELDESK_XAUTH = process.platform === "win32" ? "C:\\TunnelDesk\\xauth.exe" : "/opt/tunneldesk/xauth";
+  const previousXauth = process.env.TERMA_XAUTH;
+  process.env.TERMA_XAUTH = process.platform === "win32" ? "C:\\Terma\\xauth.exe" : "/opt/terma/xauth";
   const args = buildTerminalCommand(db.getConnection(sshId));
   assert.equal(args.includes("-Y"), true);
-  assert.equal(args.includes(`XAuthLocation=${process.env.TUNNELDESK_XAUTH}`), true);
-  if (previousXauth === undefined) delete process.env.TUNNELDESK_XAUTH;
-  else process.env.TUNNELDESK_XAUTH = previousXauth;
+  assert.equal(args.includes(`XAuthLocation=${process.env.TERMA_XAUTH}`), true);
+  if (previousXauth === undefined) delete process.env.TERMA_XAUTH;
+  else process.env.TERMA_XAUTH = previousXauth;
   const { shouldUseBuiltinSsh } = require("../dist/ssh2-client");
   assert.equal(shouldUseBuiltinSsh(db.getConnection(sshId)), false);
 
@@ -115,7 +115,7 @@ try {
   try { db?.closeDatabase(); } catch {}
   const resolved = path.resolve(temporary);
   const root = path.resolve(os.tmpdir());
-  if (resolved.startsWith(`${root}${path.sep}`) && path.basename(resolved).startsWith("tunneldesk-remote-protocol-")) {
+  if (resolved.startsWith(`${root}${path.sep}`) && path.basename(resolved).startsWith("terma-remote-protocol-")) {
     fs.rmSync(resolved, {recursive:true, force:true});
   }
 }

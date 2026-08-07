@@ -2,6 +2,7 @@ const OUTPUT_LIMIT = 128 * 1024;
 const VALUE_LIMIT = 2048;
 const DEFAULT_TIMEOUT_MS = 7000;
 const { buildRemotePosixCommand } = require("./remote-posix");
+const { remoteProbeMarker } = require("./remote-probe-protocol");
 
 export type TerminalProfileKind = "shell" | "repl" | "session" | "tool";
 export type TerminalProfilePlatform = "posix" | "windows";
@@ -58,46 +59,46 @@ export interface DiscoverRemoteTerminalOptions {
 export const PLATFORM_CAPABILITY_PROBE = "uname -s";
 
 const POSIX_SCRIPT = String.raw`
-td_line() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
-td_os="$(uname -s 2>/dev/null || printf unknown)"
-td_line TD_CAPS_V1 "" ""
-td_line PLATFORM "$td_os" ""
-td_user="$(id -un 2>/dev/null || printf '')"
-td_shell=""
-td_source=""
-if [ "$td_os" = Darwin ] && command -v dscl >/dev/null 2>&1 && [ -n "$td_user" ]; then
-  td_shell="$(dscl . -read "/Users/$td_user" UserShell 2>/dev/null | sed -n 's/^UserShell:[[:space:]]*//p' | head -n 1)"
-  [ -n "$td_shell" ] && td_source=directory_service
+terma_line() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
+terma_os="$(uname -s 2>/dev/null || printf unknown)"
+terma_line TERMA_CAPS_V1 "" ""
+terma_line PLATFORM "$terma_os" ""
+terma_user="$(id -un 2>/dev/null || printf '')"
+terma_shell=""
+terma_source=""
+if [ "$terma_os" = Darwin ] && command -v dscl >/dev/null 2>&1 && [ -n "$terma_user" ]; then
+  terma_shell="$(dscl . -read "/Users/$terma_user" UserShell 2>/dev/null | sed -n 's/^UserShell:[[:space:]]*//p' | head -n 1)"
+  [ -n "$terma_shell" ] && terma_source=directory_service
 fi
-if [ -z "$td_shell" ] && command -v getent >/dev/null 2>&1 && [ -n "$td_user" ]; then
-  td_record="$(getent passwd "$td_user" 2>/dev/null | head -n 1)"
-  td_shell="$(printf '%s\n' "$td_record" | awk -F: '{print $NF}')"
-  [ -n "$td_shell" ] && td_source=passwd
+if [ -z "$terma_shell" ] && command -v getent >/dev/null 2>&1 && [ -n "$terma_user" ]; then
+  terma_record="$(getent passwd "$terma_user" 2>/dev/null | head -n 1)"
+  terma_shell="$(printf '%s\n' "$terma_record" | awk -F: '{print $NF}')"
+  [ -n "$terma_shell" ] && terma_source=passwd
 fi
-if [ -z "$td_shell" ] && [ -n "$td_user" ]; then
-  td_record="$(id -P "$td_user" 2>/dev/null | head -n 1)"
-  td_shell="$(printf '%s\n' "$td_record" | awk -F: '{print $NF}')"
-  [ -n "$td_shell" ] && td_source=passwd
+if [ -z "$terma_shell" ] && [ -n "$terma_user" ]; then
+  terma_record="$(id -P "$terma_user" 2>/dev/null | head -n 1)"
+  terma_shell="$(printf '%s\n' "$terma_record" | awk -F: '{print $NF}')"
+  [ -n "$terma_shell" ] && terma_source=passwd
 fi
-if [ -z "$td_shell" ] && [ -n "$SHELL" ]; then
-  td_shell="$SHELL"
-  td_source=environment
+if [ -z "$terma_shell" ] && [ -n "$SHELL" ]; then
+  terma_shell="$SHELL"
+  terma_source=environment
 fi
-td_line DEFAULT_SHELL "$td_shell" "$td_source"
+terma_line DEFAULT_SHELL "$terma_shell" "$terma_source"
 if [ -r /etc/shells ]; then
-  while IFS= read -r td_path; do
-    case "$td_path" in
+  while IFS= read -r terma_path; do
+    case "$terma_path" in
       /*/sh|/*/bash|/*/zsh|/*/fish|/*/ksh|/*/dash|/*/ash|/*/csh|/*/tcsh)
-        td_name="$(basename "$td_path")"
-        td_line SHELL "$td_name" "$td_path"
+        terma_name="$(basename "$terma_path")"
+        terma_line SHELL "$terma_name" "$terma_path"
         ;;
     esac
   done < /etc/shells
 fi
-for td_name in sh bash zsh fish ksh dash ash csh tcsh python3 python node deno bun tmux screen copilot git gh; do
-  td_path="$(command -v "$td_name" 2>/dev/null || printf '')"
-  case "$td_path" in
-    /*) td_line EXEC "$td_name" "$td_path" ;;
+for terma_name in sh bash zsh fish ksh dash ash csh tcsh python3 python node deno bun tmux screen copilot git gh; do
+  terma_path="$(command -v "$terma_name" 2>/dev/null || printf '')"
+  case "$terma_path" in
+    /*) terma_line EXEC "$terma_name" "$terma_path" ;;
   esac
 done
 `;
@@ -107,7 +108,7 @@ export const POSIX_CAPABILITY_PROBE = buildRemotePosixCommand(POSIX_SCRIPT);
 const WINDOWS_POWERSHELL_SCRIPT = String.raw`
 $ErrorActionPreference='SilentlyContinue'
 function O([string]$a,[string]$b,[string]$c){[Console]::Out.WriteLine($a+[char]9+$b+[char]9+$c)}
-O 'TD_CAPS_V1' '' ''
+O 'TERMA_CAPS_V1' '' ''
 O 'PLATFORM' 'windows' ''
 $d=(Get-ItemProperty 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -ErrorAction SilentlyContinue).DefaultShell
 $s='openssh_registry'
@@ -183,8 +184,8 @@ const PROFILE_ARGS: Record<string, string> = {
   node: "-i",
   deno: "repl",
   bun: "repl",
-  tmux: "new-session -A -s tunneldesk",
-  screen: "-xRR tunneldesk"
+  tmux: "new-session -A -s terma",
+  screen: "-xRR terma"
 };
 
 interface ParsedProbe {
@@ -222,7 +223,7 @@ function cleanValue(value: unknown): string {
 
 function parseTaggedOutput(value: unknown): ParsedProbe | null {
   const output = cleanOutput(value);
-  if (!output.split("\n").some((line) => line.split("\t")[0].trim() === "TD_CAPS_V1")) return null;
+  if (!remoteProbeMarker(output, "CAPS_V1")) return null;
   const parsed: ParsedProbe = {
     rawPlatform: "",
     defaultPath: "",

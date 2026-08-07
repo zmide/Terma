@@ -97,7 +97,7 @@ const frontendContext = {};
 vm.createContext(frontendContext);
 vm.runInContext(fs.readFileSync(path.join(__dirname, "../public/app-sftp.js"), "utf8"), frontendContext);
 assert.equal(frontendContext.joinRemotePath("/", "Users"), "/Users");
-assert.equal(frontendContext.joinRemotePath("/Users", "junruo"), "/Users/junruo");
+assert.equal(frontendContext.joinRemotePath("/Users", "demo"), "/Users/demo");
 assert.equal(frontendContext.parentRemotePath("/"), "/");
 assert.equal(frontendContext.parentRemotePath("/Users"), "/");
 assert.equal(frontendContext.parentRemotePath("relative"), ".");
@@ -146,12 +146,12 @@ assert.throws(() => buildRemoteCreateFileCommand("folder/../../outside.txt"), /�
 assert.throws(() => buildRemoteCreateFileCommand("folder/"), /文件名不能以斜杠结尾/);
 
 const directorySizeCommand = buildRemoteDirectorySizeCommand("/srv/a b/o'k", null, "0123456789abcdef");
-assert.match(directorySizeCommand, /TD_TARGET='\/srv\/a b\/o'\\''k'/, "目录大小路径必须经过 shell 安全引用");
+assert.match(directorySizeCommand, /TERMA_TARGET='\/srv\/a b\/o'\\''k'/, "目录大小路径必须经过 shell 安全引用");
 assert.match(directorySizeCommand, /stat -c '%s'/, "Linux 和 BusyBox 应使用 GNU stat 字节数");
 assert.match(directorySizeCommand, /stat -f '%z'/, "macOS 和 BSD 应使用 BSD stat 字节数");
-assert.match(directorySizeCommand, /find "\$TD_TARGET" -type f/, "目录大小必须递归统计普通文件");
+assert.match(directorySizeCommand, /find "\$TERMA_TARGET" -type f/, "目录大小必须递归统计普通文件");
 assert.match(directorySizeCommand, /目录存在无法读取的内容，未返回不完整大小/, "权限或遍历失败时不能返回不完整的估算值");
-assert.match(directorySizeCommand, /\.tunneldesk-size-0123456789abcdef/, "临时统计文件名应可预测且会由 trap 清理");
+assert.match(directorySizeCommand, /\.terma-size-0123456789abcdef/, "临时统计文件名应可预测且会由 trap 清理");
 assert.doesNotMatch(directorySizeCommand, /\bdu\b/, "目录大小应汇总精确文件字节数，不能使用按块取整的 du");
 assert.throws(() => buildRemoteDirectorySizeCommand(""), /远程目录路径无效/);
 assert.throws(() => buildRemoteDirectorySizeCommand("bad\0path"), /远程目录路径无效/);
@@ -160,13 +160,17 @@ const directoryEntriesCommand = __buildRemoteDirectoryEntriesCommand();
 assert.match(directoryEntriesCommand, /\[ -L "\$entry" \]/, "目录列表必须识别符号链接");
 assert.match(directoryEntriesCommand, /stat -L -c "%s %Y %a %U %G"/, "GNU stat 必须展示链接目标的真实元数据");
 assert.match(directoryEntriesCommand, /stat -L -f "%z %m %Lp %Su %Sg"/, "BSD stat 必须展示链接目标的真实元数据");
-assert.match(directoryEntriesCommand, /td_link_size/, "目录列表必须保留链接本身大小以解释显示差异");
+assert.match(directoryEntriesCommand, /terma_link_size/, "目录列表必须保留链接本身大小以解释显示差异");
+assert.match(directoryEntriesCommand, /\.terma-recycle-bin/);
+assert.match(directoryEntriesCommand, /\.tunneldesk-recycle-bin/);
+assert.match(directoryEntriesCommand, /\.terma-upload-\*\.part/);
+assert.match(directoryEntriesCommand, /\.tunneldesk-upload-\*\.part/);
 
 const readLinkedFileCommand = __buildReadRemoteBinaryCommand("/vmlinuz", 5 * 1024 * 1024);
 assert.match(readLinkedFileCommand, /stat -L -c "%s"/, "打开前必须读取 GNU 链接目标真实大小");
 assert.match(readLinkedFileCommand, /stat -L -f "%z"/, "打开前必须读取 BSD 链接目标真实大小");
 assert.match(readLinkedFileCommand, /符号链接本身为 %s B，目标文件实际为 %s B/, "超限提示必须解释链接大小与目标大小");
-assert.match(readLinkedFileCommand, /head -c 5242881 "\$TD_TARGET"/, "通过大小检查后仍要做有界读取");
+assert.match(readLinkedFileCommand, /head -c 5242881 "\$TERMA_TARGET"/, "通过大小检查后仍要做有界读取");
 
 const readLinkedFileExecCommand = __buildReadRemoteBinaryExecCommand("/vmlinuz", 5 * 1024 * 1024);
 assert.match(readLinkedFileCommand, /\*\[!0-9\]\*/, "读取脚本包含会触发 csh\/tcsh 历史展开的数字校验表达式");
@@ -180,33 +184,51 @@ const recycleId = "m1abcd23-0123456789abcdef";
 const recycleDeletedAt = 1784567890123;
 const recyclePath = "/srv/data/o'k 文件.txt";
 const recycleCommand = buildRecycleRemotePathCommand(recyclePath, recycleId, recycleDeletedAt);
-assert.match(recycleCommand, /\.tunneldesk-recycle-bin/);
-assert.match(recycleCommand, /\$td_root\/items/);
+assert.match(recycleCommand, /\.terma-recycle-bin/);
+assert.doesNotMatch(recycleCommand, /\.tunneldesk-recycle-bin/);
+assert.match(recycleCommand, /\$terma_root\/items/);
 assert.match(recycleCommand, /'\/srv\/data\/o'\\''k 文件\.txt'/, "回收站移动命令必须安全引用特殊路径");
 assert.match(recycleCommand, new RegExp(Buffer.from(recyclePath, "utf8").toString("base64")));
 assert.match(recycleCommand, new RegExp(String(recycleDeletedAt)));
 assert.match(recycleCommand, /if mv .*payload/);
 
 const parsedRecycleItems = parseRemoteRecycleItems([
-  `m1abcd23-0123456789abcdef\t${Buffer.from("/srv/较早.txt").toString("base64")}\t100\tfile`,
-  `m1abcd24-fedcba9876543210\t${Buffer.from("/srv/目录 空格").toString("base64")}\t200\tdir`
+  `m1abcd23-0123456789abcdef\t${Buffer.from("/srv/较早.txt").toString("base64")}\t100\tfile\ttunneldesk`,
+  `m1abcd24-fedcba9876543210\t${Buffer.from("/srv/目录 空格").toString("base64")}\t200\tdir\tterma`
 ].join("\n"));
 assert.equal(parsedRecycleItems.length, 2);
 assert.equal(parsedRecycleItems[0].original_path, "/srv/目录 空格");
 assert.equal(parsedRecycleItems[0].name, "目录 空格");
 assert.equal(parsedRecycleItems[0].type, "dir");
+assert.equal(parsedRecycleItems[0].storage, "terma");
 assert.equal(parsedRecycleItems[1].deleted_at, 100);
+assert.equal(parsedRecycleItems[1].storage, "tunneldesk");
 
 const restoreCommand = buildRestoreRemoteRecycleCommand(recycleId, recyclePath);
+assert.match(restoreCommand, /\.terma-recycle-bin/);
 assert.match(restoreCommand, /原路径已有同名项目，无法恢复/);
 assert.match(restoreCommand, /mkdir -p '\/srv\/data'/);
-assert.match(restoreCommand, /mv "\$td_item\/payload" '\/srv\/data\/o'\\''k 文件\.txt'/);
-assert.match(buildListRemoteRecycleCommand(), /path\.b64/);
-assert.match(buildDeleteRemoteRecycleCommand(recycleId), /rm -rf "\$td_item"/);
-assert.match(buildClearRemoteRecycleCommand(), /rm -rf "\$td_root\/items"/);
+assert.match(restoreCommand, /mv "\$terma_item\/payload" '\/srv\/data\/o'\\''k 文件\.txt'/);
+const legacyRestoreCommand = buildRestoreRemoteRecycleCommand(recycleId, recyclePath, null, "tunneldesk");
+assert.match(legacyRestoreCommand, /\.tunneldesk-recycle-bin/);
+const listRecycleCommand = buildListRemoteRecycleCommand();
+assert.match(listRecycleCommand, /path\.b64/);
+assert.match(listRecycleCommand, /\.terma-recycle-bin/);
+assert.match(listRecycleCommand, /\.tunneldesk-recycle-bin/);
+assert.match(listRecycleCommand, /'terma'/);
+assert.match(listRecycleCommand, /'tunneldesk'/);
+assert.match(buildDeleteRemoteRecycleCommand(recycleId), /\.terma-recycle-bin/);
+assert.match(buildDeleteRemoteRecycleCommand(recycleId), /rm -rf "\$terma_item"/);
+assert.match(buildDeleteRemoteRecycleCommand(recycleId, "tunneldesk"), /\.tunneldesk-recycle-bin/);
+const clearRecycleCommand = buildClearRemoteRecycleCommand();
+assert.match(clearRecycleCommand, /\.terma-recycle-bin/);
+assert.match(clearRecycleCommand, /\.tunneldesk-recycle-bin/);
+assert.equal((clearRecycleCommand.match(/rm -rf "\$terma_root\/items"/g) || []).length, 2);
 assert.throws(() => buildRecycleRemotePathCommand("/", recycleId), /根目录或当前目录/);
+assert.throws(() => buildRecycleRemotePathCommand("/home/user/.terma-recycle-bin/items", recycleId), /回收站目录/);
 assert.throws(() => buildRecycleRemotePathCommand("/home/user/.tunneldesk-recycle-bin/items", recycleId), /回收站目录/);
 assert.throws(() => buildDeleteRemoteRecycleCommand("../../outside"), /项目编号无效/);
+assert.throws(() => buildDeleteRemoteRecycleCommand(recycleId, "unknown"), /回收站来源无效/);
 assert.throws(() => parseRemoteRecycleItems(`${recycleId}\tnot-base64!\t1\tfile`), /元数据已损坏/);
 
 const singleArchive = normalizeCompressionRequest(["/srv/file.txt"], "/srv", "file-copy");

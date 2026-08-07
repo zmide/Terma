@@ -17,7 +17,7 @@
 
 #include <fuse.h>
 
-namespace tunneldesk::dragfs {
+namespace terma::dragfs {
 
 struct MountOptions {
   std::chrono::seconds lease_duration{300};
@@ -124,4 +124,4 @@ class DragFileSystem {
   static int on_statfs(const char* path, struct statvfs* statistics);
 };
 
-}  // namespace tunneldesk::dragfs
+}  // namespace terma::dragfs

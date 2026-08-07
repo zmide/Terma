@@ -443,10 +443,12 @@ function toggleConnectionBulkField(name, enabled) {
 function toggleConnectionBulkAuthType() {
   const enabled = Boolean($("bulkSetAuth")?.checked);
   const password = $("bulkAuthType")?.value === "password";
-  $("bulkPassword").hidden = !password;
+  const passwordInput = $("bulkPassword");
+  passwordInput.hidden = !password;
   $("bulkIdentity").hidden = password;
-  $("bulkPassword").disabled = !enabled || !password;
+  passwordInput.disabled = !enabled || !password;
   $("bulkIdentity").disabled = !enabled || password;
+  syncPasswordVisibilityControl(passwordInput);
 }
 
 async function applyConnectionBulkSettings() {
@@ -542,6 +544,7 @@ function addGroup() {
 function newConnection(groupName="") {
   selectedId = null;
   $("view-edit").innerHTML = $("connectionFormTpl").innerHTML;
+  refreshIcons();
   setWorkspace("添加 SSH", groupName || pendingGroup ? `分组：${groupName || pendingGroup}` : "新建连接", "edit");
   resetConnectionForm();
   renderGroupOptions(groupName || pendingGroup);
@@ -1380,6 +1383,7 @@ function editConnection(id, updateTab=true){
   const c = selectConnection(id);
   if(!c) return;
   $("view-edit").innerHTML = $("connectionFormTpl").innerHTML;
+  refreshIcons();
   $("conn_id").value=c.id;
   if ($("connSaveAndClear")) $("connSaveAndClear").hidden = true;
   if ($("connRemoteGenerationLine")) $("connRemoteGenerationLine").hidden = true;

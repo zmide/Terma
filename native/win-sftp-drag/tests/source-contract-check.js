@@ -204,7 +204,7 @@ assert.match(
 assert.match(
   source,
   /IsCursorOverSourceWindow\(\)[\s\S]*WindowFromPoint\(cursor\)[\s\S]*GetAncestor\(source_window, GA_ROOT\)[\s\S]*source_root == target_root/,
-  "A drop anywhere inside the TunnelDesk window must stay out of Windows file extraction"
+  "A drop anywhere inside the Terma window must stay out of Windows file extraction"
 );
 assert.match(
   source,

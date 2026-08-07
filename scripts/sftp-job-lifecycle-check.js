@@ -5,11 +5,11 @@ const path = require("node:path");
 const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
 
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-sftp-job-lifecycle-check-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(temporaryRoot, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(temporaryRoot, ".ssh");
-fs.mkdirSync(process.env.TUNNELDESK_DATA_DIR, { recursive:true });
-fs.mkdirSync(process.env.TUNNELDESK_SSH_DIR, { recursive:true });
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-job-lifecycle-check-"));
+process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
+process.env.TERMA_SSH_DIR = path.join(temporaryRoot, ".ssh");
+fs.mkdirSync(process.env.TERMA_DATA_DIR, { recursive:true });
+fs.mkdirSync(process.env.TERMA_SSH_DIR, { recursive:true });
 
 const children = [];
 
@@ -33,7 +33,7 @@ function fakeRemoteChild(command) {
   if (child.command.includes("wc -c")) {
     setTimeout(() => {
       if (child.killed) return;
-      child.stdout.write(child.command.includes(".tunneldesk-upload-") ? "0" : "1048576");
+      child.stdout.write(child.command.includes(".terma-upload-") ? "0" : "1048576");
       child.stdout.end();
       child.stderr.end();
       child.emit("close", 0, null);
@@ -99,7 +99,7 @@ async function main() {
     const upload = jobs.startUploadJob(connection.id, uploadLocal, "/tmp/upload.bin", fs.statSync(uploadLocal).size);
     jobIds.push(upload.id);
     const initialUploadState = jobs.listSftpJobs().find(item => item.id === upload.id);
-    assert.match(initialUploadState.remote_temp_path, /^\/tmp\/\.tunneldesk-upload-[0-9a-f-]+\.part$/i);
+    assert.match(initialUploadState.remote_temp_path, /^\/tmp\/\.terma-upload-[0-9a-f-]+\.part$/i);
     assert.ok(children.at(-1).command.includes(initialUploadState.remote_temp_path), "upload bytes must target the remote temporary path");
     assert.ok(!children.at(-1).command.includes("cat > '/tmp/upload.bin'"), "upload must not truncate the final path before commit");
     assert.throws(() => jobs.deleteSftpJob(upload.id), /请先暂停或取消运行中的任务/);
@@ -228,7 +228,7 @@ async function main() {
     const copy = jobs.copyJob(connection.id, ["/tmp/copy-a", "/tmp/copy-b"], "/tmp/target");
     jobIds.push(copy.id);
     const copyChild = children.at(-1);
-    const marker = copyChild.command.match(/(__TUNNELDESK_JOB_[a-f0-9]+__:)/i)?.[1];
+    const marker = copyChild.command.match(/(__TERMA_JOB_[a-f0-9]+__:)/i)?.[1];
     assert.ok(marker, "copy jobs must include a private progress marker");
     copyChild.stdout.write(`${marker}1\n`);
     await new Promise(resolve => setImmediate(resolve));

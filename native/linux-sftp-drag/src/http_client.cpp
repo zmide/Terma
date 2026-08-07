@@ -13,7 +13,7 @@
 
 #include <curl/curl.h>
 
-namespace tunneldesk::dragfs {
+namespace terma::dragfs {
 namespace {
 
 struct CurlGlobal {
@@ -121,7 +121,7 @@ HttpResponse perform_request(
 
     curl_easy_setopt(easy, CURLOPT_URL, url.c_str());
     curl_easy_setopt(easy, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(easy, CURLOPT_USERAGENT, "TunnelDesk-Linux-SFTP-DragFS/1");
+    curl_easy_setopt(easy, CURLOPT_USERAGENT, "Terma-Linux-SFTP-DragFS/1");
     curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, receive_body);
     curl_easy_setopt(easy, CURLOPT_WRITEDATA, &target);
     curl_easy_setopt(easy, CURLOPT_ERRORBUFFER, error_buffer.data());
@@ -293,4 +293,4 @@ std::string HttpClient::content_url(std::size_t entry_index) const {
   return ticket_url_ + "/content/" + std::to_string(entry_index);
 }
 
-}  // namespace tunneldesk::dragfs
+}  // namespace terma::dragfs

@@ -16,7 +16,7 @@ function validateWebSocketUpgrade(req) {
 }
 
 function sendWebSocketFrame(socket, data, opcode = 1) {
-  if (socket.destroyed || socket.writableEnded || socket.writableDestroyed || (socket._tunneldeskClosing && opcode !== 8)) return false;
+  if (socket.destroyed || socket.writableEnded || socket.writableDestroyed || (socket._termaClosing && opcode !== 8)) return false;
   const payload = Buffer.isBuffer(data) ? data : Buffer.from(String(data), "utf8");
   let header;
   if (payload.length < 126) {
@@ -41,8 +41,8 @@ function sendWebSocketFrame(socket, data, opcode = 1) {
 }
 
 function closeWebSocket(socket, code = 1000, reason = "") {
-  if (socket.destroyed || socket.writableEnded || socket.writableDestroyed || socket._tunneldeskClosing) return;
-  socket._tunneldeskClosing = true;
+  if (socket.destroyed || socket.writableEnded || socket.writableDestroyed || socket._termaClosing) return;
+  socket._termaClosing = true;
   const reasonBytes = Buffer.from(String(reason || ""), "utf8").subarray(0, 123);
   const payload = Buffer.alloc(2 + reasonBytes.length);
   payload.writeUInt16BE(code, 0);

@@ -33,10 +33,22 @@ function unavailable(reason) {
 
 if (process.platform !== "darwin") {
   module.exports = unavailable(
-    "TunnelDesk macOS SFTP 拖出模块只能在 macOS 上加载"
+    "Terma macOS SFTP 拖出模块只能在 macOS 上加载"
   );
 } else {
   const candidates = [
+    path.join(
+      __dirname,
+      "build",
+      "Release",
+      "terma_macos_sftp_drag.node"
+    ),
+    path.join(
+      __dirname,
+      "prebuilds",
+      `${process.platform}-${process.arch}`,
+      "terma_macos_sftp_drag.node"
+    ),
     path.join(
       __dirname,
       "build",

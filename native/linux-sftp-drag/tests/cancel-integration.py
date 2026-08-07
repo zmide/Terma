@@ -132,7 +132,7 @@ def main():
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 
-    root = tempfile.mkdtemp(prefix="tunneldesk-linux-cancel-")
+    root = tempfile.mkdtemp(prefix="terma-linux-cancel-")
     helper = None
     copy = None
     reader = None

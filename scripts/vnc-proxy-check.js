@@ -6,8 +6,8 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-vnc-proxy-"));
-process.env.TUNNELDESK_DATA_DIR = temporary;
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "terma-vnc-proxy-"));
+process.env.TERMA_DATA_DIR = temporary;
 let db;
 let proxy;
 let fixture;
@@ -91,7 +91,7 @@ run().finally(async () => {
   try { db?.closeDatabase(); } catch {}
   const resolved = path.resolve(temporary);
   const root = path.resolve(os.tmpdir());
-  if (resolved.startsWith(`${root}${path.sep}`) && path.basename(resolved).startsWith("tunneldesk-vnc-proxy-")) fs.rmSync(resolved, {recursive:true, force:true});
+  if (resolved.startsWith(`${root}${path.sep}`) && path.basename(resolved).startsWith("terma-vnc-proxy-")) fs.rmSync(resolved, {recursive:true, force:true});
 }).catch(error => {
   console.error(error.stack || error);
   process.exitCode = 1;

@@ -63,7 +63,7 @@ async function main() {
     throw new Error("打包应用启动检查需要 --confirm-packaged-smoke");
   }
   if (!fs.existsSync(executable)) throw new Error(`打包应用不存在：${executable}`);
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-packaged-smoke-"));
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "terma-packaged-smoke-"));
   fs.writeFileSync(path.join(userData, "desktop-settings.json"), JSON.stringify({
     dataMode:"user",
     customDataDir:"",
@@ -93,7 +93,7 @@ async function main() {
     const about = await waitForJson(`${base}/api/about`, child, output);
     const xserver = await waitForJson(`${base}/api/xserver`, child, output);
     const productName = about.product_name || about.name;
-    if (productName !== "TunnelDesk") {
+    if (productName !== "Terma") {
       throw new Error(`包内 about 接口异常：${JSON.stringify({product_name:about.product_name, name:about.name, version:about.version})}`);
     }
     if (!Object.prototype.hasOwnProperty.call(xserver, "available")) {

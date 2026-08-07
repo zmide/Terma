@@ -1,6 +1,10 @@
 @echo off
-setlocal
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
+
+for %%V in (LAN WEB_ONLY NO_BROWSER NO_PAUSE KEEP_WINDOW) do (
+  if not defined TERMA_%%V if defined TUNNELDESK_%%V set "TERMA_%%V=!TUNNELDESK_%%V!"
+)
 
 node scripts\source-runtime-path.js --stop
 if errorlevel 1 goto failed
@@ -10,7 +14,7 @@ if exist "%URL_FILE%" del "%URL_FILE%" >nul 2>nul
 if exist "%INFO_FILE%" del "%INFO_FILE%" >nul 2>nul
 set "SERVER_ARGS=%*"
 set "SHOW_LAN_URLS="
-set "LAN_FLAG=%TUNNELDESK_LAN: =%"
+set "LAN_FLAG=%TERMA_LAN: =%"
 call :parse_server_args %*
 echo %SERVER_ARGS% | findstr /c:"--host 0.0.0.0" >nul 2>nul
 if not errorlevel 1 set "SHOW_LAN_URLS=1"
@@ -34,7 +38,7 @@ if errorlevel 1 goto failed
 goto build_app
 
 :install_deps_done
-if not "%TUNNELDESK_WEB_ONLY%"=="1" (
+if not "%TERMA_WEB_ONLY%"=="1" (
   echo Electron is not installed. Installing desktop dependencies...
   call npm install --include=dev
   if errorlevel 1 goto failed
@@ -46,7 +50,7 @@ if not "%TUNNELDESK_WEB_ONLY%"=="1" (
 call npm run build
 if errorlevel 1 goto failed
 
-if not "%TUNNELDESK_WEB_ONLY%"=="1" (
+if not "%TERMA_WEB_ONLY%"=="1" (
   if exist "node_modules\.bin\electron.cmd" (
     call :ensure_electron
     if errorlevel 1 goto start_web
@@ -54,7 +58,7 @@ if not "%TUNNELDESK_WEB_ONLY%"=="1" (
     if errorlevel 1 goto failed
     call :start_desktop_detached
     if errorlevel 1 goto start_web
-    echo TunnelDesk desktop is starting.
+    echo Terma desktop is starting.
     echo Mode: desktop. Logs: data\web.log and data\desktop-error.log
     set "DESKTOP_MODE=1"
     goto wait_url
@@ -66,9 +70,9 @@ call :set_runtime_files web
 if errorlevel 1 goto failed
 node scripts\start-detached.js web %SERVER_ARGS%
 if errorlevel 1 goto failed
-echo TunnelDesk is starting in the background.
-if "%TUNNELDESK_WEB_ONLY%"=="1" (
-  echo Mode: Web-only requested by TUNNELDESK_WEB_ONLY=1.
+echo Terma is starting in the background.
+if "%TERMA_WEB_ONLY%"=="1" (
+  echo Mode: Web-only requested by TERMA_WEB_ONLY=1.
 ) else (
   echo Mode: Web fallback. Desktop runtime is unavailable.
 )
@@ -99,11 +103,16 @@ node scripts\start-detached.js desktop %SERVER_ARGS%
 exit /b %errorlevel%
 
 :wait_url
-for /l %%i in (1,1,12) do (
+for /l %%i in (1,1,60) do (
   if exist "%URL_FILE%" goto url_ready
+  if exist "data\web.url" (
+    set "URL_FILE=%~dp0data\web.url"
+    set "INFO_FILE=%~dp0data\web.json"
+    goto url_ready
+  )
   ping -n 2 127.0.0.1 >nul 2>nul
 )
-echo TunnelDesk started, but the web URL file is not ready yet.
+echo Terma started, but the web URL file is not ready yet.
 echo Check data\web.log and data\startup-status.json for the startup error.
 echo The configured port may have moved automatically when it was occupied.
 set "EXIT_CODE=1"
@@ -114,7 +123,7 @@ set /p WEB_URL=<"%URL_FILE%"
 echo Open %WEB_URL%
 call :check_web_api "%WEB_URL%"
 call :print_lan_urls
-if not defined DESKTOP_MODE if not "%TUNNELDESK_NO_BROWSER%"=="1" start "" "%WEB_URL%"
+if not defined DESKTOP_MODE if not "%TERMA_NO_BROWSER%"=="1" start "" "%WEB_URL%"
 goto done
 
 :check_web_api
@@ -142,7 +151,7 @@ if /i "%~1"=="web" (
   for /f "usebackq delims=" %%i in (`node scripts\source-runtime-path.js --desktop-data-dir`) do set "RUNTIME_DATA_DIR=%%i"
 )
 if not defined RUNTIME_DATA_DIR (
-  echo Unable to resolve the TunnelDesk runtime data directory.
+  echo Unable to resolve the Terma runtime data directory.
   exit /b 1
 )
 set "URL_FILE=%RUNTIME_DATA_DIR%\web.url"
@@ -169,11 +178,12 @@ shift
 goto parse_server_args
 
 :failed
-echo TunnelDesk failed to start.
+echo Terma failed to start.
 set "EXIT_CODE=%errorlevel%"
-if not "%TUNNELDESK_NO_PAUSE%"=="1" pause
+if not "%TERMA_NO_PAUSE%"=="1" pause
 
 :done
-echo Use stop.bat to stop TunnelDesk and SSH tunnels.
-if "%TUNNELDESK_KEEP_WINDOW%"=="1" pause
+echo Use stop.bat to stop Terma and SSH tunnels.
+if "%TERMA_KEEP_WINDOW%"=="1" pause
 if defined EXIT_CODE exit /b %EXIT_CODE%
+exit /b 0

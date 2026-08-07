@@ -28,17 +28,17 @@
 
 #include <nlohmann/json.hpp>
 
-#ifndef TUNNELDESK_DRAGFS_VERSION
-#define TUNNELDESK_DRAGFS_VERSION "development"
+#ifndef TERMA_DRAGFS_VERSION
+#define TERMA_DRAGFS_VERSION "development"
 #endif
 
 namespace {
 
 using Json = nlohmann::json;
-using tunneldesk::dragfs::DragFileSystem;
-using tunneldesk::dragfs::HttpClient;
-using tunneldesk::dragfs::Manifest;
-using tunneldesk::dragfs::MountOptions;
+using terma::dragfs::DragFileSystem;
+using terma::dragfs::HttpClient;
+using terma::dragfs::Manifest;
+using terma::dragfs::MountOptions;
 
 struct Arguments {
   bool help = false;
@@ -184,12 +184,12 @@ Arguments parse_arguments(int count, char** values) {
 
 void print_help() {
   std::cout
-    << "TunnelDesk Linux SFTP dragfs\n\n"
+    << "Terma Linux SFTP dragfs\n\n"
     << "Usage:\n"
-    << "  tunneldesk-linux-sftp-dragfs --ticket-url-fd 3 [options]\n"
-    << "  tunneldesk-linux-sftp-dragfs --probe\n"
-    << "  tunneldesk-linux-sftp-dragfs --validate-fuse-options\n"
-    << "  tunneldesk-linux-sftp-dragfs --validate-manifest FILE\n\n"
+    << "  terma-linux-sftp-dragfs --ticket-url-fd 3 [options]\n"
+    << "  terma-linux-sftp-dragfs --probe\n"
+    << "  terma-linux-sftp-dragfs --validate-fuse-options\n"
+    << "  terma-linux-sftp-dragfs --validate-manifest FILE\n\n"
     << "Options:\n"
     << "  --ticket-url-fd FD       Read the loopback ticket URL from a pipe\n"
     << "  --ticket-url URL         Debug only; exposes the ticket in process arguments\n"
@@ -281,10 +281,10 @@ std::filesystem::path default_mount_parent() {
       && S_ISDIR(details.st_mode)
       && details.st_uid == geteuid()
       && access(runtime, W_OK | X_OK) == 0) {
-      return std::filesystem::path(runtime) / "tunneldesk" / "sftp-drag";
+      return std::filesystem::path(runtime) / "terma" / "sftp-drag";
     }
   }
-  return std::filesystem::path("/tmp") / ("tunneldesk-" + std::to_string(geteuid())) / "sftp-drag";
+  return std::filesystem::path("/tmp") / ("terma-" + std::to_string(geteuid())) / "sftp-drag";
 }
 
 void ensure_private_directory(const std::filesystem::path& directory) {
@@ -467,13 +467,13 @@ std::string read_text_file(const std::filesystem::path& path, std::size_t maximu
 }
 
 int validate_manifest_file(const Arguments& arguments) {
-  const auto manifest = tunneldesk::dragfs::parse_manifest(
+  const auto manifest = terma::dragfs::parse_manifest(
     read_text_file(arguments.validate_manifest, 16U * 1024U * 1024U),
     arguments.maximum_entries
   );
   std::uint64_t bytes = 0;
   for (const auto& entry : manifest.entries) {
-    if (entry.type == tunneldesk::dragfs::EntryType::file) {
+    if (entry.type == terma::dragfs::EntryType::file) {
       bytes += entry.size;
     }
   }
@@ -505,7 +505,7 @@ int run_filesystem(const Arguments& arguments) {
 
   HttpClient http(ticket_url);
   try {
-    Manifest manifest = tunneldesk::dragfs::parse_manifest(
+    Manifest manifest = terma::dragfs::parse_manifest(
       http.fetch_manifest(),
       arguments.maximum_entries
     );
@@ -526,7 +526,7 @@ int run_filesystem(const Arguments& arguments) {
 
 void emit_error(const std::exception& error) noexcept {
   try {
-    std::cerr << "TunnelDesk Linux SFTP dragfs: " << error.what() << '\n';
+    std::cerr << "Terma Linux SFTP dragfs: " << error.what() << '\n';
     std::cout << Json{
       {"event", "error"},
       {"message", error.what()}
@@ -545,7 +545,7 @@ int main(int count, char** values) {
       return 0;
     }
     if (arguments.version) {
-      std::cout << TUNNELDESK_DRAGFS_VERSION << '\n';
+      std::cout << TERMA_DRAGFS_VERSION << '\n';
       return 0;
     }
     if (arguments.probe) {

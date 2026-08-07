@@ -3,8 +3,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-ssh-connection-"));
-process.env.TUNNELDESK_DATA_DIR = temporaryRoot;
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-ssh-connection-"));
+process.env.TERMA_DATA_DIR = temporaryRoot;
 fs.writeFileSync(path.join(temporaryRoot, "id_ed25519"), "test-key-placeholder");
 
 const {

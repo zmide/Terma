@@ -1895,10 +1895,26 @@ function enableTerminalFontWheel(session, key) {
   if (!box || session.fontWheelBox === box) return;
   session.fontWheelBox = box;
   box.addEventListener("wheel", event => {
-    if (!event.ctrlKey) return;
+    if (!event.ctrlKey || !event.deltaY) return;
     event.preventDefault();
-    changeTerminalFont(key, event.deltaY < 0 ? 1 : -1);
-  }, {passive:false});
+    event.stopPropagation();
+    const term = session.term;
+    const activeBuffer = term?.buffer?.active;
+    const viewportY = Number(activeBuffer?.viewportY || 0);
+    const baseY = Number(activeBuffer?.baseY || 0);
+    const direction = event.deltaY < 0 ? -1 : 1;
+    const magnitude = Math.abs(Number(event.deltaY) || 0);
+    const unit = event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+      ? Math.max(1, Number(term?.rows) || 1)
+      : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 1 : 1 / 16;
+    const lines = Math.max(1, Math.round(magnitude * unit));
+    const canScrollHistory = direction < 0 ? viewportY > 0 : viewportY < baseY;
+    if (canScrollHistory) {
+      term.scrollLines(direction * lines);
+      return;
+    }
+    changeTerminalFont(key, direction < 0 ? 1 : -1);
+  }, {passive:false,capture:true});
 }
 
 function observeTerminalBox(session) {

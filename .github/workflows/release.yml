@@ -52,7 +52,7 @@ jobs:
       - name: Upload Windows workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: TunnelDesk-windows-x64
+          name: Terma-windows-x64
           path: |
             release/*.exe
             release/*.blockmap
@@ -114,7 +114,7 @@ jobs:
       - name: Upload Linux workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: TunnelDesk-linux-x64
+          name: Terma-linux-x64
           path: |
             release/*.AppImage
             release/*.deb
@@ -151,14 +151,15 @@ jobs:
       - name: Verify packaged PTY helper
         shell: bash
         run: |
-          find release -path '*/Contents/Resources/app.asar.unpacked/node_modules/node-pty/*' -type f -name spawn-helper -print > /tmp/tunneldesk-pty-helpers.txt
-          test -s /tmp/tunneldesk-pty-helpers.txt
+          find release -path '*/Contents/Resources/app.asar.unpacked/node_modules/node-pty/*' -type f -name spawn-helper -print > /tmp/terma-pty-helpers.txt
+          test -s /tmp/terma-pty-helpers.txt
           while IFS= read -r helper; do
             test -x "$helper"
-          done < /tmp/tunneldesk-pty-helpers.txt
+          done < /tmp/terma-pty-helpers.txt
       - name: Verify packaged macOS icon
         shell: bash
         run: |
+          PRODUCT_NAME="$(node -p 'require("./package.json").build.productName')"
           app_count=0
           while IFS= read -r plist; do
             app_count=$((app_count + 1))
@@ -166,10 +167,11 @@ jobs:
             test "$icon_file" = "icon.icns"
             icon_path="$(dirname "$plist")/Resources/$icon_file"
             test -s "$icon_path"
-            iconset_dir="$(mktemp -d)/TunnelDesk.iconset"
+            iconset_dir="$(mktemp -d)/Terma.iconset"
             /usr/bin/iconutil -c iconset "$icon_path" -o "$iconset_dir"
             test -s "$iconset_dir/icon_512x512@2x.png"
-          done < <(find release -path '*/TunnelDesk.app/Contents/Info.plist' -type f -print)
+            node scripts/mac-icon-padding-check.js "$iconset_dir/icon_512x512@2x.png"
+          done < <(find release -path "*/${PRODUCT_NAME}.app/Contents/Info.plist" -type f -print)
           test "$app_count" -eq 2
       - name: Create release notes
         run: node scripts/release-notes.js
@@ -189,7 +191,7 @@ jobs:
       - name: Upload macOS workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: TunnelDesk-macos-x64-arm64
+          name: Terma-macos-x64-arm64
           path: |
             release/*.dmg
             release/*.zip
@@ -218,6 +220,8 @@ jobs:
         shell: bash
         run: |
           VERSION="$(node -p 'require("./package.json").version')"
+          PRODUCT_NAME="$(node -p 'require("./package.json").build.productName')"
+          PRODUCT_SLUG="$(node -p 'require("./package.json").name')"
           mkdir -p release-source
           tar \
             --exclude='.git' \
@@ -227,13 +231,18 @@ jobs:
             --exclude='release-source' \
             --exclude='data' \
             --exclude='.ssh' \
-            --transform='s,^\./,tunneldesk/,' \
-            --transform='s,^\.$,tunneldesk,' \
-            -czf "release-source/TunnelDesk-${VERSION}-linux-source-noarch.tar.gz" .
+            --transform="s,^\./,${PRODUCT_SLUG}/," \
+            --transform="s,^\.$,${PRODUCT_SLUG}," \
+            -czf "release-source/${PRODUCT_NAME}-${VERSION}-linux-source-noarch.tar.gz" .
 
       - name: Verify Linux/source artifact name
         shell: bash
-        run: node scripts/release-artifacts-check.js linux-source release-source
+        run: |
+          node scripts/release-artifacts-check.js linux-source release-source
+          PRODUCT_SLUG="$(node -p 'require("./package.json").name')"
+          archive="$(find release-source -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
+          test -n "$archive"
+          tar -tzf "$archive" | grep -q "^${PRODUCT_SLUG}/"
 
       - name: Create release notes
         run: node scripts/release-notes.js
@@ -250,5 +259,5 @@ jobs:
       - name: Upload Linux/source workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TunnelDesk-linux-source-noarch
+          name: Terma-linux-source-noarch
           path: release-source/*.tar.gz

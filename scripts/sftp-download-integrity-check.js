@@ -5,11 +5,11 @@ const os = require("node:os");
 const path = require("node:path");
 const { Server } = require("ssh2");
 
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-sftp-download-check-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(temporaryRoot, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(temporaryRoot, ".ssh");
-fs.mkdirSync(process.env.TUNNELDESK_DATA_DIR, { recursive:true });
-fs.mkdirSync(process.env.TUNNELDESK_SSH_DIR, { recursive:true });
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-download-check-"));
+process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
+process.env.TERMA_SSH_DIR = path.join(temporaryRoot, ".ssh");
+fs.mkdirSync(process.env.TERMA_DATA_DIR, { recursive:true });
+fs.mkdirSync(process.env.TERMA_SSH_DIR, { recursive:true });
 const { trustTestHost } = require("./ssh-host-trust-test-helper");
 
 const payload = Buffer.alloc(640 * 1024);
@@ -87,7 +87,7 @@ async function main() {
     archiveJobId = archived.id;
     await waitForJob(jobs, archiveJobId);
     const archive = jobs.getSftpJobFile(archiveJobId);
-    assert.match(archive.name, /^tunneldesk-.+\.tar\.gz$/, "a browser archive download must keep its tar.gz filename");
+    assert.match(archive.name, /^terma-.+\.tar\.gz$/, "a browser archive download must keep its tar.gz filename");
     assert.ok(fs.statSync(archive.path).size > 0, "the archive response must use the completed job artifact");
     console.log("SFTP download integrity check passed.");
   } finally {

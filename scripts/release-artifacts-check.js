@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
 function expectedArtifacts(platform, version = packageJson.version) {
-  const product = packageJson.build?.productName || "TunnelDesk";
+  const product = packageJson.build?.productName || "Terma";
   const releaseVersion = String(version || packageJson.version);
   if (platform === "windows") {
     return [

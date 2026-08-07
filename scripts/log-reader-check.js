@@ -13,7 +13,7 @@ const {
 } = require("../dist/log-reader");
 
 async function main() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-log-check-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-log-check-"));
   try {
     const settingsFile = path.join(root, "log-settings.json");
     const settings = writeLogSettings(settingsFile, {

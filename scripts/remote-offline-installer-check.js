@@ -20,6 +20,7 @@ const {
   validateDownloadUrl,
   verifyFileChecksum
 } = require("../dist/remote-offline-installer");
+const legacyPrefix = ["T", "D"].join("");
 
 const parsed = parseAptPrintUris([
   "Reading package lists...",
@@ -35,20 +36,30 @@ assert.deepEqual(normalizeAptPackages(["xclip", "x11vnc", "xclip"]), ["xclip", "
 assert.throws(() => normalizeAptPackages(["xclip;id"]), /软件包名称无效/);
 assert.match(buildAptPrintUrisCommand(["xclip", "x11vnc"]), /--print-uris/);
 assert.match(buildAptPrintUrisCommand(["xclip", "x11vnc"]), /'xclip' 'x11vnc'/);
-assert.match(buildAptPlatformProbeCommand(), /TD_APT_INSTALLED=\$\{binary:Package\}/);
+assert.doesNotMatch(buildAptPrintUrisCommand(["xclip", "x11vnc"]), /--reinstall/);
+assert.match(buildAptPlatformProbeCommand(), /TERMA_APT_INSTALLED=\$\{binary:Package\}/);
+assert.equal(buildAptPlatformProbeCommand().includes(`${legacyPrefix}_APT_`), false);
 assert.equal(shouldUseAptRepositoryFallback("E: Package 'xclip' has no installation candidate"), true);
 assert.equal(shouldUseAptRepositoryFallback("E: 有几个软件包无法下载，要不运行 apt-get update 或者加上 --fix-missing 的选项再试试？"), true);
 assert.equal(aptOutputNeedsLocalResolution("E: Unmet dependencies"), true);
 
 const platform = parseAptPlatformProbe([
-  "TD_APT_OS_ID=Linx",
-  "TD_APT_CODENAME=buster",
-  "TD_APT_ARCH=amd64",
-  "TD_APT_INSTALLED=libx11-6:amd64\tinstall ok installed\t"
+  "TERMA_APT_OS_ID=Linx",
+  "TERMA_APT_CODENAME=buster",
+  "TERMA_APT_ARCH=amd64",
+  "TERMA_APT_INSTALLED=libx11-6:amd64\tinstall ok installed\t"
 ].join("\n"));
 assert.equal(platform.os_id, "linx");
 assert.equal(platform.codename, "buster");
 assert.equal(platform.installed.has("libx11-6"), true);
+const legacyPlatform = parseAptPlatformProbe([
+  `${legacyPrefix}_APT_OS_ID=debian`,
+  `${legacyPrefix}_APT_ARCH=arm64`,
+  `${legacyPrefix}_APT_INSTALLED=xrdp:arm64\tinstall ok installed\t`
+].join("\n"));
+assert.equal(legacyPlatform.os_id, "debian");
+assert.equal(legacyPlatform.arch, "arm64");
+assert.equal(legacyPlatform.installed.has("xrdp"), true);
 
 const packageIndex = [
   "Package: xclip",
@@ -62,19 +73,19 @@ const packageIndex = [
 ].join("\n");
 assert.equal(parseDebianPackageIndex(packageIndex)[0].package, "xclip");
 
-const install = buildAptOfflineInstallCommand("/tmp/tunneldesk-offline-test_1", ["xclip", "x11vnc"]);
+const install = buildAptOfflineInstallCommand("/tmp/terma-offline-test_1", ["xclip", "x11vnc"]);
 assert.match(install, /Dir::Etc::sourcelist=\/dev\/null/);
 assert.match(install, /Dir::Etc::sourceparts=\/dev\/null/);
 assert.match(install, /dpkg --unpack \"\$@\"/);
 assert.match(install, /--no-download --fix-broken install -y/);
-assert.match(install, /tunneldesk-offline-test_1['"]?\/\*\.deb/);
+assert.match(install, /terma-offline-test_1['"]?\/\*\.deb/);
 assert.doesNotMatch(install, /apt-get[^\n]*install -y \"\$@\"/);
 assert.doesNotMatch(install, /apt-get update/);
-const preflight = buildAptOfflinePreflightCommand("/tmp/tunneldesk-offline-test_1");
+const preflight = buildAptOfflinePreflightCommand("/tmp/terma-offline-test_1");
 assert.match(preflight, /Dir::Etc::sourcelist=\/dev\/null/);
 assert.match(preflight, /Dir::Etc::sourceparts=\/dev\/null/);
 assert.match(preflight, /--no-download --simulate install -y/);
-assert.match(preflight, /tunneldesk-offline-test_1['"]?\/\*\.deb/);
+assert.match(preflight, /terma-offline-test_1['"]?\/\*\.deb/);
 assert.match(preflight, /--simulate install -y \"\$@\"/);
 assert.throws(() => buildAptOfflineInstallCommand("/root/packages", ["xclip"]), /目录无效/);
 
@@ -86,9 +97,9 @@ assert.throws(() => validateDownloadUrl("file:///etc/passwd"), /HTTP\/HTTPS/);
 assert.throws(() => validateDownloadUrl("http://127.0.0.1/package.deb"), /拒绝/);
 
 (async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-offline-check-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "terma-offline-check-"));
   const filename = path.join(directory, "sample.deb");
-  fs.writeFileSync(filename, "TunnelDesk offline package check", "utf8");
+  fs.writeFileSync(filename, "Terma offline package check", "utf8");
   const checksum = crypto.createHash("sha256").update(fs.readFileSync(filename)).digest("hex");
   assert.equal(await verifyFileChecksum(filename, "sha256", checksum), true);
   assert.equal(await verifyFileChecksum(filename, "sha256", "0".repeat(64)), false);
@@ -104,6 +115,34 @@ assert.throws(() => validateDownloadUrl("http://127.0.0.1/package.deb"), /拒绝
   });
   assert.equal(fallback.length, 1);
   assert.equal(fallback[0].filename, "xclip_0.13-1_amd64.deb");
+
+  const rdpIndex = [
+    "Package: xrdp",
+    "Version: 0.9.17-2",
+    "Architecture: amd64",
+    "Filename: pool/main/x/xrdp/xrdp_0.9.17-2_amd64.deb",
+    "Size: 100",
+    `SHA256: ${"b".repeat(64)}`,
+    "",
+    "Package: xorgxrdp",
+    "Version: 0.2.17-1",
+    "Architecture: amd64",
+    "Depends: xrdp (>= 0.9.17)",
+    "Filename: pool/main/x/xorgxrdp/xorgxrdp_0.2.17-1_amd64.deb",
+    "Size: 200",
+    `SHA256: ${"c".repeat(64)}`,
+    ""
+  ].join("\n");
+  const installedXrdp = await resolveAptPackagesFromOfficialRepositories(["xrdp", "xorgxrdp"], {
+    os_id:"debian", codename:"buster", arch:"amd64", installed:new Set(["xrdp"]), provided:new Set()
+  }, {
+    async fetch_impl(url) {
+      return String(url).includes("/main/")
+        ? {ok:true, arrayBuffer:async () => zlib.gzipSync(Buffer.from(rdpIndex))}
+        : {ok:false, arrayBuffer:async () => new ArrayBuffer(0)};
+    }
+  });
+  assert.deepEqual(installedXrdp.map(item => item.filename), ["xorgxrdp_0.2.17-1_amd64.deb"]);
   assert.match(fallback[0].url, /^https:\/\/archive\.debian\.org\/debian\/pool\/main\/x\/xclip\//);
   const recommendIndex = [
     "Package: xclip",

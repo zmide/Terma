@@ -6,7 +6,7 @@ const { SSH_BIN } = require("./config");
 const { getConnection } = require("./db");
 const { buildTerminalCommand } = require("./ssh");
 const { appendSystemLog, appendTerminalLog, createTerminalLog } = require("./logs");
-const { openSshShell, shouldUseBuiltinSsh } = require("./ssh2-client");
+const { normalizeSshTransportError, openSshShell, shouldUseBuiltinSsh } = require("./ssh2-client");
 const { loadNodePty } = require("./pty-runtime");
 const { WebSocketFrameParser, closeWebSocket, sendWebSocketFrame, validateWebSocketUpgrade, websocketAccept } = require("./websocket");
 const { consumeTerminalStartupTicket, mergeTerminalStartup } = require("./terminal-startup");
@@ -195,10 +195,10 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
     session.ssh2Client = client;
     session.ssh2Stream = stream;
     session.x11Diagnostics = x11Diagnostics || null;
-    client.on("error", (error) => sendTerminalOutput(session, `\r\nSSH 连接错误：${error.message}\r\n`));
+    client.on("error", (error) => sendTerminalOutput(session, `\r\nSSH 连接错误：${normalizeSshTransportError(error, connection).message}\r\n`));
     stream.on("data", (chunk) => sendTerminalOutput(session, chunk));
     stream.stderr?.on("data", (chunk) => sendTerminalOutput(session, chunk));
-    stream.on("error", (error) => sendTerminalOutput(session, `\r\n终端错误：${error.message}\r\n`));
+    stream.on("error", (error) => sendTerminalOutput(session, `\r\n终端错误：${normalizeSshTransportError(error, connection).message}\r\n`));
     stream.on("close", (code, signal) => {
       sendTerminalOutput(session, `\r\nSSH 会话已结束${signal ? `，信号 ${signal}` : `，退出码 ${code ?? ""}`}\r\n`);
       sessions.delete(session);

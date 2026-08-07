@@ -104,7 +104,7 @@ function createRemoteClientAdapter(options = {}) {
         reason:rdpApp || (freeRdp && freeRdpDisplayReady)
           ? ""
           : freeRdpCanStartXServer
-            ? "已检测到 FreeRDP；连接时 TunnelDesk 会自动启动 XQuartz"
+            ? "已检测到 FreeRDP；连接时 Terma 会自动启动 XQuartz"
             : freeRdp
               ? "已检测到 FreeRDP，但尚未安装可用的 XQuartz；可安装 XQuartz，或改用 Windows App"
             : "macOS 未检测到 RDP 客户端；可安装 Windows App 后重试"
@@ -125,7 +125,7 @@ function createRemoteClientAdapter(options = {}) {
         executable:rdpClient,
         mode:/remmina$/i.test(rdpClient) ? "remmina" : "freerdp",
         application:"",
-        reason:!rdpClient ? "未找到 FreeRDP 或 Remmina" : rdpDisplayReady ? "" : "当前 TunnelDesk 没有可用的图形桌面 DISPLAY",
+        reason:!rdpClient ? "未找到 FreeRDP 或 Remmina" : rdpDisplayReady ? "" : "当前 Terma 没有可用的图形桌面 DISPLAY",
         can_install:!rdpClient,
         install_label:"安装 FreeRDP"
       };
@@ -135,14 +135,14 @@ function createRemoteClientAdapter(options = {}) {
         executable:vncClient,
         mode:/remmina$/i.test(vncClient) ? "remmina" : /gvncviewer$/i.test(vncClient) ? "gvncviewer" : "vncviewer",
         application:"",
-        reason:!vncClient ? "未找到系统 VNC 客户端" : vncDisplayReady ? "" : "当前 TunnelDesk 没有可用的图形桌面 DISPLAY"
+        reason:!vncClient ? "未找到系统 VNC 客户端" : vncDisplayReady ? "" : "当前 Terma 没有可用的图形桌面 DISPLAY"
       };
     }
     return {
       platform,
       rdp,
       vnc,
-      password_policy:"系统客户端自行请求或管理凭据，TunnelDesk 不会把密码放入命令行"
+      password_policy:"系统客户端自行请求或管理凭据，Terma 不会把密码放入命令行"
     };
   }
 
@@ -159,7 +159,7 @@ function createRemoteClientAdapter(options = {}) {
   function readableLaunchError(stderr, executable, code) {
     const text = String(stderr || "").replace(/\x1b\[[0-9;]*m/g, "");
     if (/failed to open display|cannot open display/i.test(text)) {
-      return "FreeRDP 无法连接当前 Linux 图形桌面（DISPLAY 不可用），请从桌面会话启动 TunnelDesk";
+      return "FreeRDP 无法连接当前 Linux 图形桌面（DISPLAY 不可用），请从桌面会话启动 Terma";
     }
     if (/certificate name mismatch/i.test(text)) {
       return "RDP 证书名称与连接地址不一致，请在 FreeRDP 证书提示中确认后重试";
@@ -252,7 +252,7 @@ function createRemoteClientAdapter(options = {}) {
     const temporary = `${file}.tmp-${process.pid}-${Date.now()}`;
     try {
       const response = await runtimeFetch(MAC_WINDOWS_APP_PACKAGE_URL, {
-        headers:{"User-Agent":"TunnelDesk-Windows-App-Installer"},
+        headers:{"User-Agent":"Terma-Windows-App-Installer"},
         redirect:"follow"
       });
       if (!response?.ok || !response.body) throw new Error(`Windows App 下载失败：HTTP ${response?.status || "未知"}`);
@@ -300,7 +300,7 @@ function createRemoteClientAdapter(options = {}) {
       "prompt for credentials:i:1",
       "authentication level:i:2"
     ];
-    const file = path.join(temporaryDirectory(), `tunneldesk-${Number(profile.id)}-${Date.now()}.rdp`);
+    const file = path.join(temporaryDirectory(), `terma-${Number(profile.id)}-${Date.now()}.rdp`);
     fs.writeFileSync(file, `\uFEFF${lines.join("\r\n")}\r\n`, "utf16le");
     setTimeout(() => { try { fs.unlinkSync(file); } catch {} }, 10 * 60 * 1000).unref?.();
     return file;

@@ -1,5 +1,7 @@
 const DESKTOP_IDS = ["xfce", "gnome", "plasma", "mate", "cinnamon", "lxqt"];
 const { componentInstallPlan } = require("./remote-component-installer");
+const { XRDP_RENDER_PROBE_SCRIPT, createXrdpRenderingDiagnostics } = require("./remote-graphics-rendering");
+const { selectRemoteProbeLines } = require("./remote-probe-protocol");
 const LINUX_OS_IDS = new Set([
   "almalinux", "alpine", "amzn", "arch", "centos", "debian", "elementary", "fedora", "gentoo",
   "kali", "linux", "linuxmint", "manjaro", "neon", "nixos", "ol", "opensuse", "oracle", "pop",
@@ -24,7 +26,11 @@ const DESKTOP_META = {
 };
 
 const DETECT_SCRIPT = String.raw`set +e
-td_emit() { printf 'TD_%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n=' '   ')"; }
+td_original_path=$PATH
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+[ -z "$td_original_path" ] || PATH="$PATH:$td_original_path"
+export PATH
+terma_emit() { printf 'TERMA_%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n=' '   ')"; }
 td_kernel=$(uname -s 2>/dev/null || printf unknown)
 td_os_id=""
 td_os_like=""
@@ -175,6 +181,18 @@ td_privileged=0
 td_xrdp_active=0
 td_xrdp_listening=0
 td_xrdp_enabled=0
+td_xrdp_installed=0
+if command -v xrdp >/dev/null 2>&1 || [ -x /usr/sbin/xrdp ] || [ -x /usr/sbin/xrdp-sesman ]; then
+  td_xrdp_installed=1
+elif command -v dpkg-query >/dev/null 2>&1 && dpkg-query -s xrdp 2>/dev/null | grep -q '^Status:[[:space:]]*install ok installed$'; then
+  td_xrdp_installed=1
+elif command -v rpm >/dev/null 2>&1 && rpm -q xrdp >/dev/null 2>&1; then
+  td_xrdp_installed=1
+elif command -v apk >/dev/null 2>&1 && apk info -e xrdp >/dev/null 2>&1; then
+  td_xrdp_installed=1
+elif command -v pacman >/dev/null 2>&1 && pacman -Q xrdp >/dev/null 2>&1; then
+  td_xrdp_installed=1
+fi
 if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled --quiet xrdp.service 2>/dev/null; then
   td_xrdp_enabled=1
 elif command -v rc-update >/dev/null 2>&1 && rc-update show default 2>/dev/null | grep -Eq '(^|[[:space:]])xrdp([[:space:]]|$)'; then
@@ -192,43 +210,50 @@ if command -v ss >/dev/null 2>&1; then
 elif command -v netstat >/dev/null 2>&1; then
   netstat -ltn 2>/dev/null | awk 'NR > 2 {print $4}' | grep -Eq '(^|[.:])3389$' && td_xrdp_listening=1
 fi
-td_emit OS_ID "$td_os_id"
-td_emit OS_LIKE "$td_os_like"
-td_emit KERNEL "$td_kernel"
-td_emit PACKAGE_MANAGER "$td_package_manager"
-td_emit DISPLAY_MANAGER "$td_manager"
-td_emit PRIVILEGED "$td_privileged"
-td_emit XRDP_INSTALLED "$(command -v xrdp >/dev/null 2>&1 && printf 1 || printf 0)"
-td_emit XRDP_ACTIVE "$td_xrdp_active"
-td_emit XRDP_LISTENING "$td_xrdp_listening"
-td_emit XRDP_ENABLED "$td_xrdp_enabled"
-td_emit VNC_SERVER "$(command -v vncserver >/dev/null 2>&1 || command -v Xtigervnc >/dev/null 2>&1 || command -v Xvnc >/dev/null 2>&1 || command -v x11vnc >/dev/null 2>&1 || command -v wayvnc >/dev/null 2>&1 && printf 1 || printf 0)"
-td_emit LOGIN_USER "$td_login_user"
-td_emit SYSTEM_SESSION "$td_system_session"
-td_emit SYSTEM_SESSION_SOURCE "$td_system_session_source"
-td_emit XDMCP_ENABLED "$td_xdmcp_enabled"
-td_emit XDMCP_SESSION "$td_xdmcp_session"
-td_emit XDMCP_SESSION_SOURCE "$td_xdmcp_session_source"
-td_emit SAVED_SESSION "$td_saved_session"
-td_emit SAVED_SESSION_SOURCE "$td_saved_session_source"
-td_emit SESSION_MANAGER_TARGET "$td_session_manager_target"
-td_emit XRDP_SESSION "$td_xrdp_session"
-td_emit XRDP_SESSION_SOURCE "$td_xrdp_session_source"
-td_emit VNC_CONFIGURED_SESSION "$td_vnc_session"
-td_emit VNC_CONFIGURED_SOURCE "$td_vnc_session_source"
-td_emit SESSION_COUNT "0"
-command -v startxfce4 >/dev/null 2>&1 && td_emit DESKTOP xfce
-command -v gnome-session >/dev/null 2>&1 && td_emit DESKTOP gnome
-( command -v startplasma-x11 >/dev/null 2>&1 || command -v startplasma-wayland >/dev/null 2>&1 ) && td_emit DESKTOP plasma
-command -v mate-session >/dev/null 2>&1 && td_emit DESKTOP mate
-command -v cinnamon-session >/dev/null 2>&1 && td_emit DESKTOP cinnamon
-command -v startlxqt >/dev/null 2>&1 && td_emit DESKTOP lxqt
+${XRDP_RENDER_PROBE_SCRIPT}
+terma_emit OS_ID "$td_os_id"
+terma_emit OS_LIKE "$td_os_like"
+terma_emit KERNEL "$td_kernel"
+terma_emit PACKAGE_MANAGER "$td_package_manager"
+terma_emit DISPLAY_MANAGER "$td_manager"
+terma_emit PRIVILEGED "$td_privileged"
+terma_emit XRDP_INSTALLED "$td_xrdp_installed"
+terma_emit XRDP_ACTIVE "$td_xrdp_active"
+terma_emit XRDP_LISTENING "$td_xrdp_listening"
+terma_emit XRDP_ENABLED "$td_xrdp_enabled"
+terma_emit XRDP_RENDER_DISPLAY "$td_render_xrdp_display"
+terma_emit XRDP_RENDER_LOG "$td_render_xrdp_log"
+terma_emit XRDP_DRM_DEVICE "$td_render_xrdp_drm_device"
+terma_emit XRDP_DRM_AVAILABLE "$td_render_xrdp_drm_available"
+terma_emit XRDP_DRI3_CONFIGURED "$td_render_xrdp_dri3"
+terma_emit XRDP_SOFTWARE_RENDERING "$td_render_xrdp_software"
+terma_emit VNC_SERVER "$(command -v vncserver >/dev/null 2>&1 || command -v Xtigervnc >/dev/null 2>&1 || command -v Xvnc >/dev/null 2>&1 || command -v x11vnc >/dev/null 2>&1 || command -v wayvnc >/dev/null 2>&1 && printf 1 || printf 0)"
+terma_emit LOGIN_USER "$td_login_user"
+terma_emit SYSTEM_SESSION "$td_system_session"
+terma_emit SYSTEM_SESSION_SOURCE "$td_system_session_source"
+terma_emit XDMCP_ENABLED "$td_xdmcp_enabled"
+terma_emit XDMCP_SESSION "$td_xdmcp_session"
+terma_emit XDMCP_SESSION_SOURCE "$td_xdmcp_session_source"
+terma_emit SAVED_SESSION "$td_saved_session"
+terma_emit SAVED_SESSION_SOURCE "$td_saved_session_source"
+terma_emit SESSION_MANAGER_TARGET "$td_session_manager_target"
+terma_emit XRDP_SESSION "$td_xrdp_session"
+terma_emit XRDP_SESSION_SOURCE "$td_xrdp_session_source"
+terma_emit VNC_CONFIGURED_SESSION "$td_vnc_session"
+terma_emit VNC_CONFIGURED_SOURCE "$td_vnc_session_source"
+terma_emit SESSION_COUNT "0"
+command -v startxfce4 >/dev/null 2>&1 && terma_emit DESKTOP xfce
+command -v gnome-session >/dev/null 2>&1 && terma_emit DESKTOP gnome
+( command -v startplasma-x11 >/dev/null 2>&1 || command -v startplasma-wayland >/dev/null 2>&1 ) && terma_emit DESKTOP plasma
+command -v mate-session >/dev/null 2>&1 && terma_emit DESKTOP mate
+command -v cinnamon-session >/dev/null 2>&1 && terma_emit DESKTOP cinnamon
+command -v startlxqt >/dev/null 2>&1 && terma_emit DESKTOP lxqt
 if [ -d /usr/share/xsessions ]; then
   find /usr/share/xsessions -maxdepth 1 -type f -name '*.desktop' -print 2>/dev/null | while IFS= read -r td_file; do
     td_id=$(basename "$td_file" .desktop)
     td_name=$(sed -n 's/^Name=//p' "$td_file" | head -n 1)
     [ -n "$td_name" ] || td_name="$td_id"
-    td_emit SESSION "$td_id|$td_name"
+    terma_emit SESSION "$td_id|$td_name"
   done
 fi
 if [ -d /usr/share/wayland-sessions ]; then
@@ -236,7 +261,7 @@ if [ -d /usr/share/wayland-sessions ]; then
     td_id=$(basename "$td_file" .desktop)
     td_name=$(sed -n 's/^Name=//p' "$td_file" | head -n 1)
     [ -n "$td_name" ] || td_name="$td_id"
-    td_emit WAYLAND_SESSION "$td_id|$td_name"
+    terma_emit WAYLAND_SESSION "$td_id|$td_name"
   done
 fi
 if command -v loginctl >/dev/null 2>&1; then
@@ -259,7 +284,7 @@ if command -v loginctl >/dev/null 2>&1; then
         td_session_desktop=$(tr '\0' '\n' < "/proc/$td_session_leader/environ" 2>/dev/null | sed -n -e 's/^XDG_CURRENT_DESKTOP=//p' -e 's/^DESKTOP_SESSION=//p' | head -n 1)
       fi
     fi
-    td_emit GRAPHICAL_SESSION "$td_session_id|$td_session_user|$td_session_service|$td_session_display|$td_session_seat|$td_session_desktop|$td_session_state"
+    terma_emit GRAPHICAL_SESSION "$td_session_id|$td_session_user|$td_session_service|$td_session_display|$td_session_seat|$td_session_desktop|$td_session_state"
   done
 fi
 if command -v ps >/dev/null 2>&1; then
@@ -276,7 +301,7 @@ if command -v ps >/dev/null 2>&1; then
       td_vnc_desktop=$(tr '\0' '\n' < "/proc/$td_vnc_pid/environ" 2>/dev/null | sed -n -e 's/^XDG_CURRENT_DESKTOP=//p' -e 's/^DESKTOP_SESSION=//p' | head -n 1)
     fi
     [ -n "$td_vnc_display" ] || td_vnc_display=$(printf '%s' "$td_vnc_args" | grep -Eo ':[0-9]+([.][0-9]+)?' | head -n 1)
-    td_emit VNC_PROCESS "$td_vnc_pid|$td_vnc_user|$td_vnc_kind|$td_vnc_display|$td_vnc_desktop|$td_vnc_command"
+    terma_emit VNC_PROCESS "$td_vnc_pid|$td_vnc_user|$td_vnc_kind|$td_vnc_display|$td_vnc_desktop|$td_vnc_command"
   done
 fi
 `;
@@ -287,7 +312,7 @@ function shellQuote(value) {
 
 function rootWrapper(script) {
   const payload = Buffer.from(script, "utf8").toString("base64");
-  return `td_payload=${shellQuote(payload)}; if [ "$(id -u 2>/dev/null)" = "0" ]; then printf '%s' "$td_payload" | base64 -d | sh; elif sudo -n true >/dev/null 2>&1; then printf '%s' "$td_payload" | base64 -d | sudo -n sh; else echo 'TunnelDesk requires root or passwordless sudo' >&2; exit 77; fi`;
+  return `td_payload=${shellQuote(payload)}; if [ "$(id -u 2>/dev/null)" = "0" ]; then printf '%s' "$td_payload" | base64 -d | sh; elif sudo -n true >/dev/null 2>&1; then printf '%s' "$td_payload" | base64 -d | sudo -n sh; else echo 'Terma requires root or passwordless sudo' >&2; exit 77; fi`;
 }
 
 function normalizeDesktopId(value) {
@@ -328,8 +353,8 @@ function parseDetectionOutput(output) {
   const graphicalSessions = [];
   const vncProcesses = [];
   const detectedDesktopIds = [];
-  for (const line of String(output || "").split(/\r?\n/)) {
-    const match = /^TD_([A-Z_]+)=(.*)$/.exec(line.trim());
+  for (const line of selectRemoteProbeLines(output)) {
+    const match = /^([A-Z0-9_]+)=(.*)$/.exec(line);
     if (!match) continue;
     if (match[1] === "DESKTOP") {
       const id = String(match[2] || "").trim().toLowerCase();
@@ -369,6 +394,15 @@ function parseDetectionOutput(output) {
   const xrdpActive = values.get("XRDP_ACTIVE") === "1";
   const xrdpListening = values.get("XRDP_LISTENING") === "1";
   const xrdpEnabled = values.get("XRDP_ENABLED") === "1";
+  const xrdpRendering = createXrdpRenderingDiagnostics({
+    installed:xrdpInstalled,
+    active:xrdpActive,
+    display:values.get("XRDP_RENDER_DISPLAY") || "",
+    drm_device:values.get("XRDP_DRM_DEVICE") || "",
+    drm_device_available:values.get("XRDP_DRM_AVAILABLE") === "1",
+    software_rendering:values.get("XRDP_SOFTWARE_RENDERING") === "1",
+    log_file:values.get("XRDP_RENDER_LOG") || ""
+  });
   const vncServerInstalled = values.get("VNC_SERVER") === "1";
   const activeGraphicalSessions = graphicalSessions
     .filter(item => !["closing", "dead"].includes(String(item.state || "").toLowerCase()))
@@ -469,6 +503,8 @@ function parseDetectionOutput(output) {
     xrdp_active: xrdpActive,
     xrdp_listening: xrdpListening,
     xrdp_enabled: xrdpEnabled,
+    xrdp_dri3_configured: values.get("XRDP_DRI3_CONFIGURED") === "1",
+    graphics_rendering:xrdpRendering,
     vnc_server_installed: vncServerInstalled,
     sessions,
     wayland_sessions: waylandSessions,
@@ -564,7 +600,7 @@ function desktopInstallPlan(diagnostics: any = {}) {
     local_offline_packages:aptPackages,
     local_offline_command:localOfflineCommand,
     local_offline_description:manager === "apt"
-      ? "仅适用于 Debian/Ubuntu 及兼容 APT/.deb 系统：TunnelDesk 在本机下载匹配的桌面软件包和依赖，再通过 SFTP 上传并安装"
+      ? "仅适用于 Debian/Ubuntu 及兼容 APT/.deb 系统：Terma 在本机下载匹配的桌面软件包和依赖，再通过 SFTP 上传并安装"
       : `本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前检测到 ${manager || "未识别包管理器"}，无法自动解析并上传桌面软件包依赖`,
     manual_description:"查看当前发行版对应的桌面安装、卸载和会话配置说明"
   });
@@ -647,16 +683,16 @@ function buildDesktopTaskScript(diagnostics: any, desktopId, action = "install",
   const label = DESKTOP_META[requested]?.label || requested;
   const verb = action === "uninstall" ? "卸载" : "安装";
   const script = String.raw`set -eu
-td_emit() { printf 'TD_DESKTOP_%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n=' '   ')"; }
-td_emit STAGE "prepare"
-td_emit LOG "正在准备${verb} ${label}"
-td_emit STAGE "packages"
-td_emit LOG "正在使用 ${plan.package_manager} 包管理器处理软件包"
+terma_emit() { printf 'TERMA_DESKTOP_%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n=' '   ')"; }
+terma_emit STAGE "prepare"
+terma_emit LOG "正在准备${verb} ${label}"
+terma_emit STAGE "packages"
+terma_emit LOG "正在使用 ${plan.package_manager} 包管理器处理软件包"
 ${command}
-td_emit STAGE "refresh"
-td_emit LOG "软件包处理完成，正在重新探测桌面会话"
-td_emit STAGE "verify"
-td_emit LOG "${label} ${verb}命令已完成"
+terma_emit STAGE "refresh"
+terma_emit LOG "软件包处理完成，正在重新探测桌面会话"
+terma_emit STAGE "verify"
+terma_emit LOG "${label} ${verb}命令已完成"
 `;
   return rootWrapper(script);
 }

@@ -1,11 +1,11 @@
-# TunnelDesk Windows SFTP 原生拖出模块
+# Terma Windows SFTP 原生拖出模块
 
 该模块使用 Windows Shell 虚拟文件协议实现 SFTP 文件的一次拖出：
 
 - `CFSTR_FILEDESCRIPTORW` 提供文件和目录清单。
 - `CFSTR_FILECONTENTS` + `IStream` 在目标程序真正读取时按需获取内容。
 - 拖放运行在独立 STA 线程，不阻塞 Electron 主线程。
-- 原生层只访问本机 TunnelDesk 的临时票据接口，不接触 SSH 密码或私钥。
+- 原生层只访问本机 Terma 的临时票据接口，不接触 SSH 密码或私钥。
 
 ## 导出接口
 
@@ -73,7 +73,7 @@ Electron 内的其他 SFTP 标签，并在浏览器拖放事件不可用时完�
   // 可选。优先于 baseUrl + token；支持 {id} 占位符。
   contentBaseUrl: "http://127.0.0.1:8088/api/sftp/native-drag/ticket/content",
   // 可选，仅允许无换行的请求头。token 默认作为 Bearer Token 发送。
-  headers: { "X-TunnelDesk-Drag": "..." },
+  headers: { "X-Terma-Drag": "..." },
   timeoutMs: 30000,
   // 可选。主要用于测试；生产环境通常由 manifestUrl 在线获取。
   items: [

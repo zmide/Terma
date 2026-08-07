@@ -99,7 +99,7 @@ function handleVncUpgrade(req, socket) {
 }
 
 function closeAllVncSessions() {
-  for (const session of [...sessions]) closeVncSession(session, 1001, "TunnelDesk 正在关闭");
+  for (const session of [...sessions]) closeVncSession(session, 1001, "Terma 正在关闭");
 }
 
 module.exports = { closeAllVncSessions, handleVncUpgrade, testVncProfile };

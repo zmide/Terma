@@ -6,11 +6,11 @@ const os = require("node:os");
 const path = require("node:path");
 const { Server } = require("ssh2");
 
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-sftp-delete-job-check-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(temporaryRoot, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(temporaryRoot, ".ssh");
-fs.mkdirSync(process.env.TUNNELDESK_DATA_DIR, { recursive:true });
-fs.mkdirSync(process.env.TUNNELDESK_SSH_DIR, { recursive:true });
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-delete-job-check-"));
+process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
+process.env.TERMA_SSH_DIR = path.join(temporaryRoot, ".ssh");
+fs.mkdirSync(process.env.TERMA_DATA_DIR, { recursive:true });
+fs.mkdirSync(process.env.TERMA_SSH_DIR, { recursive:true });
 const { trustTestHost } = require("./ssh-host-trust-test-helper");
 
 const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength:2048 });
@@ -23,7 +23,7 @@ const sshServer = new Server({ hostKeys:[hostKey] }, client => {
     session.on("exec", (acceptExec, _reject, info) => {
       const stream = acceptExec();
       const command = String(info?.command || "");
-      const markers = [...new Set(command.match(/__TUNNELDESK_DELETE_[0-9a-f]{24}__:\d+/g) || [])];
+      const markers = [...new Set(command.match(/__TERMA_DELETE_[0-9a-f]{24}__:\d+/g) || [])];
       commands.push(command);
       let index = 0;
       const sendNext = () => {
@@ -140,8 +140,9 @@ async function main() {
     assert.equal(recycled.transferred, 2);
     assert.equal(recycled.size, 2);
     assert.equal(recycled.progress, 100);
-    const recycleCommand = commands.find(command => command.includes(".tunneldesk-recycle-bin"));
-    assert.ok(recycleCommand, "recycle-enabled jobs must use the existing remote recycle directory");
+    const recycleCommand = commands.find(command => command.includes(".terma-recycle-bin"));
+    assert.ok(recycleCommand, "recycle-enabled jobs must write to the Terma recycle directory");
+    assert.equal(recycleCommand.includes(".tunneldesk-recycle-bin"), false);
     assert.match(recycleCommand, new RegExp(Buffer.from("/tmp/回收 one.txt", "utf8").toString("base64")));
     const recycleIds = [...recycleCommand.matchAll(/items\/([a-z0-9-]{8,80})/g)].map(match => match[1]);
     assert.equal(new Set(recycleIds).size, 2, "each recycled path must keep an independent recycle item");
@@ -152,6 +153,7 @@ async function main() {
     assert.equal(permanent.item_count, 1, "the legacy single-path contract must remain supported");
     const permanentCommand = commands.find(command => command.includes("one") && command.includes("rm -rf --"));
     assert.ok(permanentCommand);
+    assert.equal(permanentCommand.includes(".terma-recycle-bin"), false);
     assert.equal(permanentCommand.includes(".tunneldesk-recycle-bin"), false);
 
     const failedStart = jobs.deletePathsJob(connection.id, ["/tmp/first.txt", "/tmp/fail-me.txt"], false);
@@ -190,7 +192,7 @@ async function main() {
     await waitForJob(jobs, legacyBody.id, "done");
 
     fs.writeFileSync(
-      path.join(process.env.TUNNELDESK_DATA_DIR, "runtime-settings.json"),
+      path.join(process.env.TERMA_DATA_DIR, "runtime-settings.json"),
       JSON.stringify({listen_hosts:["127.0.0.1"], listen_port:port, sftp_recycle_bin_enabled:true}),
       "utf8"
     );

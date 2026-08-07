@@ -1042,7 +1042,7 @@ function renderStartupSummary(box=$("startupSummary")) {
   const urls = [s.local_url, ...(s.lan_urls || [])].filter(Boolean);
   const starting = s.state === "starting";
   const warning = !starting && failed > 0;
-  const title = starting ? "启动任务正在执行" : warning ? "TunnelDesk 已就绪，存在启动失败的转发" : "TunnelDesk 已就绪";
+  const title = starting ? "启动任务正在执行" : warning ? "Terma 已就绪，存在启动失败的转发" : "Terma 已就绪";
   const logAction = latestFailed?.updated_at ? `openSystemLogAt(${Number(latestFailed.updated_at)})` : "openTodaySystemLog()";
   box.innerHTML = `<div class="startup-summary ${warning ? "warning" : "ready"}"><div><strong>${title}</strong><span>${urls.map(esc).join(" · ")}</span></div><div class="startup-counts"><span>运行中 ${running}</span>${reconnecting ? `<span>重连中 ${reconnecting}</span>` : ""}${failed ? `<button class="startup-status-button bad" onclick="showPrimary('running',true)" title="查看启动失败的转发">启动失败 ${failed}</button>` : `<span>启动失败 0</span>`}<button onclick="${logAction}">${failed ? "失败日志" : "系统日志"}</button></div></div>`;
 }

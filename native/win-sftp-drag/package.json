@@ -1,8 +1,8 @@
 {
-  "name": "@tunneldesk/win-sftp-drag",
+  "name": "@terma/win-sftp-drag",
   "version": "0.1.0",
   "private": true,
-  "description": "Windows virtual-file drag provider for TunnelDesk SFTP",
+  "description": "Windows virtual-file drag provider for Terma SFTP",
   "main": "index.js",
   "types": "index.d.ts",
   "gypfile": true,

@@ -43,7 +43,7 @@ function runRegression(environment) {
 }
 
 async function main() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-web-regression-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-web-regression-"));
   const port = await availablePort();
   const url = `http://127.0.0.1:${port}`;
   const output = [];
@@ -51,8 +51,8 @@ async function main() {
     cwd: path.resolve(__dirname, ".."),
     env: {
       ...process.env,
-      TUNNELDESK_DATA_DIR: path.join(root, "data"),
-      TUNNELDESK_SSH_DIR: path.join(root, ".ssh")
+      TERMA_DATA_DIR: path.join(root, "data"),
+      TERMA_SSH_DIR: path.join(root, ".ssh")
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
@@ -63,8 +63,8 @@ async function main() {
     await waitForServer(url, server);
     await runRegression({
       ...process.env,
-      TUNNELDESK_CHECK_URL:url,
-      TUNNELDESK_REGRESSION_ISOLATED:"1"
+      TERMA_CHECK_URL:url,
+      TERMA_REGRESSION_ISOLATED:"1"
     });
   } catch (error) {
     if (output.length) console.error(output.join("").slice(-12000));

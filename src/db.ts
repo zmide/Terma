@@ -586,14 +586,23 @@ function cleanRemoteOptions(protocol, source = {}) {
       audio:new Set(["local", "remote", "off"]).has(String(value.audio)) ? String(value.audio) : "local"
     });
   }
-  if (protocol === "vnc") return withSource({
-    client_mode:new Set(["auto", "embedded", "system"]).has(String(value.client_mode)) ? String(value.client_mode) : "auto",
-    cursor_mode:new Set(["auto", "show", "hide"]).has(String(value.cursor_mode)) ? String(value.cursor_mode) : "auto",
-    display_mode:new Set(["scale", "original", "resize"]).has(String(value.display_mode)) ? String(value.display_mode) : "scale",
-    view_only:bool("view_only"),
-    shared:bool("shared", true),
-    quality:integer("quality", 8, 0, 9)
-  });
+  if (protocol === "vnc") {
+    const serverSessionMode = new Set(["auto", "shared", "virtual"]).has(String(value.server_session_mode))
+      ? String(value.server_session_mode)
+      : "auto";
+    const serverDisplay = text("server_display", "", 32);
+    if (serverDisplay && !/^:[0-9]+(?:\.[0-9]+)?$/.test(serverDisplay)) throw new Error("VNC 服务端显示编号无效");
+    return withSource({
+      client_mode:new Set(["auto", "embedded", "system"]).has(String(value.client_mode)) ? String(value.client_mode) : "auto",
+      cursor_mode:new Set(["auto", "show", "hide"]).has(String(value.cursor_mode)) ? String(value.cursor_mode) : "auto",
+      display_mode:new Set(["scale", "original", "resize"]).has(String(value.display_mode)) ? String(value.display_mode) : "scale",
+      server_session_mode:serverSessionMode,
+      server_display:serverSessionMode === "shared" ? serverDisplay : "",
+      view_only:bool("view_only"),
+      shared:bool("shared", true),
+      quality:integer("quality", 8, 0, 9)
+    });
+  }
   if (protocol === "xdmcp") {
     const rawWindowMode = String(value.window_mode || "");
     const windowMode = new Set(["resizable", "fullscreen", "fixed"]).has(rawWindowMode)

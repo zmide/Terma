@@ -69,7 +69,7 @@ using System;
 using System.Text;
 using System.Runtime.InteropServices;
 
-public static class TunnelDeskX11WindowGuardNative {
+public static class TermaX11WindowGuardNative {
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
     [StructLayout(LayoutKind.Sequential)]
@@ -161,30 +161,30 @@ while ($true) {
         break
     }
 
-    [TunnelDeskX11WindowGuardNative]::EnumWindows({
+    [TermaX11WindowGuardNative]::EnumWindows({
         param([IntPtr]$hWnd, [IntPtr]$lParam)
 
         [uint32]$windowProcessId = 0
-        [TunnelDeskX11WindowGuardNative]::GetWindowThreadProcessId($hWnd, [ref]$windowProcessId) | Out-Null
+        [TermaX11WindowGuardNative]::GetWindowThreadProcessId($hWnd, [ref]$windowProcessId) | Out-Null
         if ($windowProcessId -ne $serverProcessId) { return $true }
-        if (-not [TunnelDeskX11WindowGuardNative]::IsWindowVisible($hWnd)) { return $true }
-        if ([TunnelDeskX11WindowGuardNative]::IsIconic($hWnd) -or [TunnelDeskX11WindowGuardNative]::IsZoomed($hWnd)) { return $true }
-        if (([TunnelDeskX11WindowGuardNative]::GetWindowStyle($hWnd) -band $WS_CAPTION) -eq 0) { return $true }
+        if (-not [TermaX11WindowGuardNative]::IsWindowVisible($hWnd)) { return $true }
+        if ([TermaX11WindowGuardNative]::IsIconic($hWnd) -or [TermaX11WindowGuardNative]::IsZoomed($hWnd)) { return $true }
+        if (([TermaX11WindowGuardNative]::GetWindowStyle($hWnd) -band $WS_CAPTION) -eq 0) { return $true }
 
         $className = New-Object System.Text.StringBuilder 128
-        [TunnelDeskX11WindowGuardNative]::GetClassName($hWnd, $className, $className.Capacity) | Out-Null
+        [TermaX11WindowGuardNative]::GetClassName($hWnd, $className, $className.Capacity) | Out-Null
         if (-not $className.ToString().StartsWith("vcxsrv/x X", [StringComparison]::OrdinalIgnoreCase)) { return $true }
 
-        $rect = New-Object TunnelDeskX11WindowGuardNative+RECT
-        if (-not [TunnelDeskX11WindowGuardNative]::GetWindowRect($hWnd, [ref]$rect)) { return $true }
-        $clientOrigin = New-Object TunnelDeskX11WindowGuardNative+POINT
-        if (-not [TunnelDeskX11WindowGuardNative]::ClientToScreen($hWnd, [ref]$clientOrigin)) { return $true }
+        $rect = New-Object TermaX11WindowGuardNative+RECT
+        if (-not [TermaX11WindowGuardNative]::GetWindowRect($hWnd, [ref]$rect)) { return $true }
+        $clientOrigin = New-Object TermaX11WindowGuardNative+POINT
+        if (-not [TermaX11WindowGuardNative]::ClientToScreen($hWnd, [ref]$clientOrigin)) { return $true }
 
-        $monitor = [TunnelDeskX11WindowGuardNative]::MonitorFromWindow($hWnd, $MONITOR_DEFAULTTONEAREST)
+        $monitor = [TermaX11WindowGuardNative]::MonitorFromWindow($hWnd, $MONITOR_DEFAULTTONEAREST)
         if ($monitor -eq [IntPtr]::Zero) { return $true }
-        $monitorInfo = New-Object TunnelDeskX11WindowGuardNative+MONITORINFO
+        $monitorInfo = New-Object TermaX11WindowGuardNative+MONITORINFO
         $monitorInfo.cbSize = [Runtime.InteropServices.Marshal]::SizeOf($monitorInfo)
-        if (-not [TunnelDeskX11WindowGuardNative]::GetMonitorInfo($monitor, [ref]$monitorInfo)) { return $true }
+        if (-not [TermaX11WindowGuardNative]::GetMonitorInfo($monitor, [ref]$monitorInfo)) { return $true }
 
         $work = $monitorInfo.rcWork
         $nonClientTop = [Math]::Max(0, $clientOrigin.Y - $rect.Top)
@@ -213,7 +213,7 @@ while ($true) {
         }
 
         if ($nextLeft -ne $rect.Left -or $nextTop -ne $rect.Top) {
-            [TunnelDeskX11WindowGuardNative]::SetWindowPos($hWnd, [IntPtr]::Zero, $nextLeft, $nextTop, 0, 0, $setWindowFlags) | Out-Null
+            [TermaX11WindowGuardNative]::SetWindowPos($hWnd, [IntPtr]::Zero, $nextLeft, $nextTop, 0, 0, $setWindowFlags) | Out-Null
         }
         return $true
     }, [IntPtr]::Zero) | Out-Null

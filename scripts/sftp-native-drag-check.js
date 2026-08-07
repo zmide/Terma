@@ -5,17 +5,17 @@ const os = require("node:os");
 const path = require("node:path");
 const { PassThrough, Readable } = require("node:stream");
 
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-native-drag-check-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(temporaryRoot, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(temporaryRoot, ".ssh");
-process.env.TUNNELDESK_DISABLE_UPDATE_CHECK = "1";
-fs.mkdirSync(process.env.TUNNELDESK_DATA_DIR, {recursive:true});
-fs.mkdirSync(process.env.TUNNELDESK_SSH_DIR, {recursive:true});
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-native-drag-check-"));
+process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
+process.env.TERMA_SSH_DIR = path.join(temporaryRoot, ".ssh");
+process.env.TERMA_DISABLE_UPDATE_CHECK = "1";
+fs.mkdirSync(process.env.TERMA_DATA_DIR, {recursive:true});
+fs.mkdirSync(process.env.TERMA_SSH_DIR, {recursive:true});
 const interruptedDownloadPath = path.join(temporaryRoot, "partial-download.bin");
 const interruptedUploadPath = path.join(temporaryRoot, "pending-upload.bin");
 fs.writeFileSync(interruptedDownloadPath, "partial download");
 fs.writeFileSync(interruptedUploadPath, "pending upload");
-fs.writeFileSync(path.join(process.env.TUNNELDESK_DATA_DIR, "sftp-jobs.json"), JSON.stringify({
+fs.writeFileSync(path.join(process.env.TERMA_DATA_DIR, "sftp-jobs.json"), JSON.stringify({
   jobs:[
     {
       id:"interrupted-native-drag-running",
@@ -161,7 +161,7 @@ try {
   assert.deepEqual(jobs.cancelSftpJob("regular-download-running"), {ok:true, status:"failed"}, "cancelling a recovered job must be idempotent");
   assert.equal(restoredJobs.some(item => "native_drag_token" in item || "native_drag_ranges" in item), false);
 
-  const jobsFile = path.join(process.env.TUNNELDESK_DATA_DIR, "sftp-jobs.json");
+  const jobsFile = path.join(process.env.TERMA_DATA_DIR, "sftp-jobs.json");
   const firstPersistedText = fs.readFileSync(jobsFile, "utf8");
   const persistedJobs = JSON.parse(firstPersistedText).jobs;
   assert.equal(persistedJobs.find(item => item.id === "interrupted-native-drag-running").status, "failed");

@@ -50,7 +50,7 @@ function addNotification(event) {
     time: Date.now(),
     type: event.type || "system",
     level: event.level || "info",
-    title: String(event.title || "TunnelDesk"),
+    title: String(event.title || "Terma"),
     message: String(event.message || ""),
     key: event.key || "",
     action: event.action || null

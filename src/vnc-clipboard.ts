@@ -1,5 +1,6 @@
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { componentInstallPlan } = require("./remote-component-installer");
+const { remoteProbeValue, selectRemoteProbeLines } = require("./remote-probe-protocol");
 
 const MAX_CLIPBOARD_BYTES = 32 * 1024;
 const CAPABILITY_TTL_MS = 5 * 60 * 1000;
@@ -61,7 +62,7 @@ function commandFailure(result, fallback) {
 function buildClipboardDetectionScript(vncPort = 5900) {
   const normalizedVncPort = Number.isInteger(Number(vncPort)) && Number(vncPort) > 0 && Number(vncPort) <= 65535 ? Number(vncPort) : 5900;
   const script = String.raw`set +e
-td_emit() { printf 'TD_VNC_CLIPBOARD_%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n=' '   ')"; }
+terma_emit() { printf 'TERMA_VNC_CLIPBOARD_%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n=' '   ')"; }
 td_os=$(uname -s 2>/dev/null || printf unknown)
 td_mode=unsupported
 td_tool=""
@@ -178,26 +179,26 @@ elif [ "$td_os" = Linux ]; then
   fi
 fi
 
-td_emit MODE "$td_mode"
-td_emit TOOL "$td_tool"
-td_emit OS "$td_os"
-td_emit DISPLAY "$td_display"
-td_emit XAUTHORITY "$td_xauthority"
-td_emit WAYLAND_DISPLAY "$td_wayland_display"
-td_emit XDG_RUNTIME_DIR "$td_runtime_dir"
-td_emit SESSION_USER "$td_session_user"
-td_emit SESSION_UID "$td_session_uid"
-td_emit SESSION_HOME "$td_session_home"
-td_emit SESSION_TYPE "$td_session_type"
-td_emit PACKAGE_MANAGER "$td_package_manager"
-td_emit ROOT "$td_root"`;
+terma_emit MODE "$td_mode"
+terma_emit TOOL "$td_tool"
+terma_emit OS "$td_os"
+terma_emit DISPLAY "$td_display"
+terma_emit XAUTHORITY "$td_xauthority"
+terma_emit WAYLAND_DISPLAY "$td_wayland_display"
+terma_emit XDG_RUNTIME_DIR "$td_runtime_dir"
+terma_emit SESSION_USER "$td_session_user"
+terma_emit SESSION_UID "$td_session_uid"
+terma_emit SESSION_HOME "$td_session_home"
+terma_emit SESSION_TYPE "$td_session_type"
+terma_emit PACKAGE_MANAGER "$td_package_manager"
+terma_emit ROOT "$td_root"`;
   return script.replace(/\\\$\{/g, "${");
 }
 
 function parseClipboardDetection(output, connectionId) {
   const values = new Map();
-  for (const line of String(output || "").split(/\r?\n/)) {
-    const match = /^TD_VNC_CLIPBOARD_([A-Z_]+)=(.*)$/.exec(line.trim());
+  for (const line of selectRemoteProbeLines(output, "VNC_CLIPBOARD_")) {
+    const match = /^([A-Z_]+)=(.*)$/.exec(line);
     if (match) values.set(match[1], match[2]);
   }
   const mode = String(values.get("MODE") || "unsupported").toLowerCase();
@@ -240,7 +241,7 @@ function vncClipboardHelperUninstallPlan(capability: any = {}) {
     package_manager:"",
     package_names:[],
     reason:platform === "macos"
-      ? "macOS 的 pbcopy/pbpaste 是系统自带工具，TunnelDesk 不提供卸载"
+      ? "macOS 的 pbcopy/pbpaste 是系统自带工具，Terma 不提供卸载"
       : "尚未识别到可卸载剪贴板辅助工具的 Linux 远端"
   };
   const manager = String(capability.package_manager || "").toLowerCase();
@@ -348,14 +349,14 @@ function vncClipboardHelperGuide(capability: any = {}) {
   const platform = String(capability.platform || "unknown").toLowerCase();
   if (platform === "macos") return {
     title:"macOS 剪贴板辅助检查说明",
-    summary:"macOS 自带 pbcopy/pbpaste，TunnelDesk 不会在 macOS 上安装 Linux 的 xclip、xsel 或 wl-clipboard。",
+    summary:"macOS 自带 pbcopy/pbpaste，Terma 不会在 macOS 上安装 Linux 的 xclip、xsel 或 wl-clipboard。",
     steps:[
       "确认 SSH 辅助连接使用的是当前 VNC 所在的 macOS 主机和账号。",
       "确认该账号已经登录 macOS 图形桌面；仅有后台 SSH 会话时，系统剪贴板可能不可访问。",
       "在终端执行 /usr/bin/pbcopy 和 /usr/bin/pbpaste 验证该账号能否读写系统剪贴板。",
-      "若命令存在但仍无法读写，请退出并重新登录图形桌面，再返回 TunnelDesk 重新检测。"
+      "若命令存在但仍无法读写，请退出并重新登录图形桌面，再返回 Terma 重新检测。"
     ],
-    commands:["command -v /usr/bin/pbcopy /usr/bin/pbpaste", "printf 'TunnelDesk clipboard test' | /usr/bin/pbcopy && /usr/bin/pbpaste"]
+    commands:["command -v /usr/bin/pbcopy /usr/bin/pbpaste", "printf 'Terma clipboard test' | /usr/bin/pbcopy && /usr/bin/pbpaste"]
   };
   const sessionType = String(capability.session_type || "").toLowerCase();
   const manager = String(capability.package_manager || "").toLowerCase();
@@ -371,7 +372,7 @@ function vncClipboardHelperGuide(capability: any = {}) {
     steps:[
       "X11 会话安装 xclip 或 xsel；Wayland 会话安装 wl-clipboard。",
       "SSH 辅助账号必须能访问正在运行的图形会话，并具有正确的 DISPLAY/XAUTHORITY 或 WAYLAND_DISPLAY/XDG_RUNTIME_DIR。",
-      "安装后返回 TunnelDesk 重新检测，无需重建 VNC 连接。",
+      "安装后返回 Terma 重新检测，无需重建 VNC 连接。",
       offlineStep
     ],
     commands:["printf '%s\\n' \"XDG_SESSION_TYPE=$XDG_SESSION_TYPE\" \"DISPLAY=$DISPLAY\" \"WAYLAND_DISPLAY=$WAYLAND_DISPLAY\"", "command -v xclip xsel wl-copy wl-paste"]
@@ -453,8 +454,8 @@ async function readVncRemoteClipboard(profile, dependencies) {
   const base64Command = capability.transport === "ssh-macos" ? "/usr/bin/base64" : "base64";
   const emptySelectionAllowed = capability.transport === "ssh-linux-x11";
   const script = [
-    "td_clip=$(mktemp /tmp/tunneldesk-vnc-clipboard.XXXXXX)",
-    "td_clip_err=$(mktemp /tmp/tunneldesk-vnc-clipboard-error.XXXXXX)",
+    "td_clip=$(mktemp /tmp/terma-vnc-clipboard.XXXXXX)",
+    "td_clip_err=$(mktemp /tmp/terma-vnc-clipboard-error.XXXXXX)",
     "trap 'rm -f \"$td_clip\" \"$td_clip_err\"' EXIT HUP INT TERM",
     `${readCommand} > "$td_clip" 2>"$td_clip_err"`,
     "td_status=$?",
@@ -462,15 +463,15 @@ async function readVncRemoteClipboard(profile, dependencies) {
       ? `if [ "$td_status" -ne 0 ]; then if [ "$td_status" -eq 124 ] || grep -qiE 'target .* not available|no selection|selection .* not available' "$td_clip_err"; then : > "$td_clip"; else cat "$td_clip_err" >&2; exit "$td_status"; fi; fi`
       : `if [ "$td_status" -ne 0 ]; then cat "$td_clip_err" >&2; exit "$td_status"; fi`,
     "td_size=$(wc -c < \"$td_clip\" | tr -d ' ')",
-    "printf 'TD_SIZE=%s\\nTD_DATA=' \"$td_size\"",
+    "printf 'TERMA_SIZE=%s\\nTERMA_DATA=' \"$td_size\"",
     `dd if="$td_clip" bs=${MAX_CLIPBOARD_BYTES} count=1 2>/dev/null | ${base64Command} | tr -d '\\r\\n'`,
     "printf '\\n'"
   ].join("\n");
   const result = await dependencies.runSshCommandForConnection(connection, buildRemotePosixCommand(script), CLIPBOARD_COMMAND_TIMEOUT_MS);
   if (result?.status !== 0) throw new Error(commandFailure(result, "读取远端系统剪贴板失败"));
   const output = String(result.stdout || "");
-  const size = Number(/(?:^|\n)TD_SIZE=(\d+)/.exec(output)?.[1] || 0);
-  const encoded = /(?:^|\n)TD_DATA=([A-Za-z0-9+/=]*)/.exec(output)?.[1] || "";
+  const size = Number(remoteProbeValue(output, "SIZE") || 0);
+  const encoded = remoteProbeValue(output, "DATA");
   const text = Buffer.from(encoded, "base64").toString("utf8");
   return {
     available:true,

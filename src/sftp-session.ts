@@ -5,7 +5,7 @@ const path = require("node:path");
 const { PassThrough } = require("node:stream");
 const { DATA_DIR } = require("./config");
 const { getConnection } = require("./db");
-const { connectSsh } = require("./ssh2-client");
+const { connectSsh, normalizeSshTransportError } = require("./ssh2-client");
 
 const sessions = new Map();
 const SFTP_DRAG_ROOT = path.join(DATA_DIR, "sftp-drag");
@@ -96,7 +96,7 @@ async function connectSftpSession(connectionId, options: any = {}) {
       record.connecting = null;
       client.once("close", () => markDisconnected(record));
       client.once("end", () => markDisconnected(record));
-      client.on("error", (error) => markDisconnected(record, error));
+      client.on("error", (error) => markDisconnected(record, normalizeSshTransportError(error, connection)));
       return sessionView(record);
     } catch (error) {
       if (sessions.get(id) === record) markDisconnected(record, error);
@@ -198,7 +198,7 @@ function moveStagedSftpEntry(source, target) {
 
 function replaceLocalEntryFromStage(source, target) {
   if (!fs.existsSync(target)) return moveStagedSftpEntry(source, target);
-  const backup = path.join(path.dirname(target), `.tunneldesk-overwrite-${crypto.randomUUID()}`);
+  const backup = path.join(path.dirname(target), `.terma-overwrite-${crypto.randomUUID()}`);
   fs.renameSync(target, backup);
   try {
     moveStagedSftpEntry(source, target);
@@ -820,6 +820,7 @@ function clearSftpDragCache(now = Date.now()) {
 
 async function openSftpChannel(connectionId) {
   const id = Number(connectionId);
+  const connection = getConnection(id);
   let lastError = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -827,7 +828,7 @@ async function openSftpChannel(connectionId) {
       const record = sessions.get(id);
       if (!record?.client || record.status !== "connected") throw new Error("SFTP 会话未连接");
       return await new Promise((resolve, reject) => {
-        record.client.sftp((error, channel) => error ? reject(error) : resolve(channel));
+        record.client.sftp((error, channel) => error ? reject(normalizeSshTransportError(error, connection)) : resolve(channel));
       });
     } catch (error) {
       lastError = error;
@@ -836,7 +837,7 @@ async function openSftpChannel(connectionId) {
         endSessionRecord(record);
         record.status = "disconnected";
         record.manualDisconnected = false;
-        record.error = error?.message || "";
+        record.error = normalizeSshTransportError(error, connection)?.message || "";
       }
     }
   }
@@ -978,7 +979,7 @@ function spawnSftpSessionCommand(connection, command) {
     child.emit("close", code, signal);
   };
   const reportError = (error) => {
-    child.emit("error", error);
+    child.emit("error", normalizeSshTransportError(error, connection));
     close(null);
   };
   child.kill = (signal = "SIGTERM") => {
@@ -997,7 +998,7 @@ function spawnSftpSessionCommand(connection, command) {
         const record = sessions.get(Number(connection.id));
         if (!record?.client || record.status !== "connected") throw new Error("SFTP 会话未连接");
         const channel: any = await new Promise((resolve, reject) => {
-          record.client.exec(String(command || ""), (error, openedChannel) => error ? reject(error) : resolve(openedChannel));
+          record.client.exec(String(command || ""), (error, openedChannel) => error ? reject(normalizeSshTransportError(error, connection)) : resolve(openedChannel));
         });
         if (child.killed) {
           try { channel.close(); } catch {}
@@ -1017,7 +1018,7 @@ function spawnSftpSessionCommand(connection, command) {
           endSessionRecord(record);
           record.status = "disconnected";
           record.manualDisconnected = false;
-          record.error = error?.message || "";
+          record.error = normalizeSshTransportError(error, connection)?.message || "";
         }
       }
     }

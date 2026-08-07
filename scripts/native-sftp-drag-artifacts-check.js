@@ -28,6 +28,16 @@ function assertFiles(label, files, predicate, expectedCount = 1) {
   return usable;
 }
 
+function assertNoFiles(label, files, predicate) {
+  const matches = files.filter(predicate);
+  if (matches.length) {
+    throw new Error(
+      `${label} verification failed: unexpected legacy artifacts:\n` +
+      matches.map(file => `  ${file}`).join("\n")
+    );
+  }
+}
+
 function assertArchitecture(files, architecture, label) {
   for (const file of files) {
     assertNativeArchitecture(file, architecture, label);
@@ -44,14 +54,17 @@ function verifySource(platform) {
     ), "x64", "Windows native drag addon");
   }
   if (platform === "macos") {
+    assertNoFiles("macOS native drag addon", files, file =>
+      path.basename(file) === "tunneldesk_macos_sftp_drag.node"
+    );
     const x64 = assertArchitecture(assertFiles("macOS x64 native drag addon", files, file =>
       file.endsWith(path.join(
-        "prebuilds", "darwin-x64", "tunneldesk_macos_sftp_drag.node"
+        "prebuilds", "darwin-x64", "terma_macos_sftp_drag.node"
       ))
     ), "x64", "macOS native drag addon");
     const arm64 = assertArchitecture(assertFiles("macOS arm64 native drag addon", files, file =>
       file.endsWith(path.join(
-        "prebuilds", "darwin-arm64", "tunneldesk_macos_sftp_drag.node"
+        "prebuilds", "darwin-arm64", "terma_macos_sftp_drag.node"
       ))
     ), "arm64", "macOS native drag addon");
     return [...x64, ...arm64];
@@ -59,7 +72,7 @@ function verifySource(platform) {
   if (platform === "linux") {
     return assertArchitecture(assertFiles("Linux native drag helper", files, file =>
       file.endsWith(path.join(
-        "prebuilds", `linux-${process.arch}`, "tunneldesk-linux-sftp-dragfs"
+        "prebuilds", `linux-${process.arch}`, "terma-linux-sftp-dragfs"
       ))
     ), process.arch, "Linux native drag helper");
   }
@@ -75,19 +88,27 @@ function verifyPackaged(platform, directory) {
     ), "x64", "Packaged Windows native drag addon");
   }
   if (platform === "macos") {
+    assertNoFiles("Packaged macOS native drag addon", files, file =>
+      path.basename(file) === "tunneldesk_macos_sftp_drag.node" &&
+      file.includes(`${path.sep}app.asar.unpacked${path.sep}native${path.sep}`)
+    );
     const x64 = assertArchitecture(assertFiles("Packaged macOS x64 native drag addon", files, file =>
-      file.endsWith("tunneldesk_macos_sftp_drag.node") &&
+      file.endsWith("terma_macos_sftp_drag.node") &&
       file.includes(`${path.sep}darwin-x64${path.sep}`)
     ), "x64", "Packaged macOS native drag addon");
     const arm64 = assertArchitecture(assertFiles("Packaged macOS arm64 native drag addon", files, file =>
-      file.endsWith("tunneldesk_macos_sftp_drag.node") &&
+      file.endsWith("terma_macos_sftp_drag.node") &&
       file.includes(`${path.sep}darwin-arm64${path.sep}`)
     ), "arm64", "Packaged macOS native drag addon");
     return [...x64, ...arm64];
   }
   if (platform === "linux") {
-    return assertArchitecture(assertFiles("Packaged Linux native drag helper", files, file =>
+    assertNoFiles("Packaged Linux native drag helper", files, file =>
       path.basename(file) === "tunneldesk-linux-sftp-dragfs" &&
+      file.includes(`${path.sep}resources${path.sep}native${path.sep}`)
+    );
+    return assertArchitecture(assertFiles("Packaged Linux native drag helper", files, file =>
+      path.basename(file) === "terma-linux-sftp-dragfs" &&
       file.includes(`${path.sep}resources${path.sep}native${path.sep}`)
     ), process.arch, "Packaged Linux native drag helper");
   }

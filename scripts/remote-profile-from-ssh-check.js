@@ -5,9 +5,9 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-remote-from-ssh-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(temporaryRoot, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(temporaryRoot, ".ssh");
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-remote-from-ssh-"));
+process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
+process.env.TERMA_SSH_DIR = path.join(temporaryRoot, ".ssh");
 
 const database = require("../dist/db");
 const connectionUi = fs.readFileSync(path.join(__dirname, "..", "public", "app-connections.js"), "utf8");

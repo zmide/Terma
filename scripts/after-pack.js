@@ -1,9 +1,11 @@
 "use strict";
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const childProcess = require("node:child_process");
 const { assertNativeArchitecture } = require("./native-binary-check");
+const { verifyMacIconPadding } = require("./mac-icon-padding-check");
 
 function resourcesDir(context) {
   if (context.electronPlatformName === "darwin") {
@@ -27,6 +29,24 @@ function verifyMacIcon(context) {
   }
   if (!fs.existsSync(iconPath) || fs.readFileSync(iconPath).subarray(0, 4).toString("ascii") !== "icns") {
     throw new Error(`macOS bundle icon is missing or invalid: ${iconPath}`);
+  }
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-icon-"));
+  try {
+    const iconsetPath = path.join(temporaryRoot, "Terma.iconset");
+    const extraction = childProcess.spawnSync(
+      "/usr/bin/iconutil",
+      ["-c", "iconset", iconPath, "-o", iconsetPath],
+      { encoding: "utf8", stdio: "pipe" }
+    );
+    if (extraction.error || extraction.status !== 0) {
+      throw new Error(
+        `Could not inspect macOS bundle icon: ` +
+        `${extraction.error?.message || extraction.stderr || `exit ${extraction.status}`}`
+      );
+    }
+    verifyMacIconPadding(path.join(iconsetPath, "icon_512x512@2x.png"));
+  } finally {
+    fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
   console.log(`Verified macOS bundle icon: ${iconPath}`);
 }
@@ -87,7 +107,7 @@ function verifyNativeSftpDrag(context) {
         "macos-sftp-drag",
         "prebuilds",
         `darwin-${arch}`,
-        "tunneldesk_macos_sftp_drag.node"
+        "terma_macos_sftp_drag.node"
       );
     verifyFile(addon, `macOS ${arch} SFTP native drag addon`);
     assertNativeArchitecture(addon, arch, "macOS SFTP native drag addon");
@@ -95,7 +115,7 @@ function verifyNativeSftpDrag(context) {
   }
 
   if (context.electronPlatformName === "linux") {
-    const helper = path.join(resources, "native", "tunneldesk-linux-sftp-dragfs");
+    const helper = path.join(resources, "native", "terma-linux-sftp-dragfs");
     verifyFile(helper, `Linux ${arch} SFTP native drag helper`);
     assertNativeArchitecture(helper, arch, "Linux SFTP native drag helper");
     fs.chmodSync(helper, 0o755);
@@ -118,7 +138,10 @@ function verifyBundledXServer(context) {
   const runtime = path.join(resourcesDir(context), "xserver");
   verifyFile(path.join(runtime, "vcxsrv.exe"), "Windows bundled X Server");
   verifyFile(path.join(runtime, "xauth.exe"), "Windows bundled xauth");
-  verifyFile(path.join(runtime, "tunneldesk-runtime.json"), "Windows bundled X Server manifest");
+  verifyFile(path.join(runtime, "terma-runtime.json"), "Windows bundled X Server manifest");
+  if (fs.existsSync(path.join(runtime, "tunneldesk-runtime.json"))) {
+    throw new Error("Windows bundled X Server contains the legacy TunnelDesk manifest");
+  }
 }
 
 exports.default = async function afterPack(context) {

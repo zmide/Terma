@@ -3,6 +3,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
+const { DatabaseSync } = require("node:sqlite");
+const { isLegacyBrandWindowsProcess } = require("../desktop/windows-brand-process");
 
 const root = path.resolve(__dirname, "..");
 const desktopMainPath = path.join(root, "desktop", "main.js");
@@ -13,8 +15,19 @@ const readyIndex = desktopMainSource.indexOf(readyMarker);
 assert.notEqual(readyIndex, -1, "desktop/main.js must contain the app.whenReady startup block");
 assert.match(desktopMainSource, /org\.freedesktop\.Notifications/, "Linux notifications must verify the D-Bus service before showing");
 assert.match(desktopMainSource, /desktopNotificationsAvailable\(\)/, "desktop notifications must use the availability probe");
-assert.match(desktopMainSource, /tunneldeskDisplaySession/, "Linux second launches must report their graphical session");
+assert.match(desktopMainSource, /termaDisplaySession:\s*localLinuxDisplaySession/, "Linux second launches must report their graphical session with the Terma field");
+assert.match(desktopMainSource, /additionalData\?\.termaDisplaySession\s*\|\|\s*additionalData\?\.tunneldeskDisplaySession/, "Linux second launches must still accept the legacy TunnelDesk field");
 assert.match(desktopMainSource, /stdio:\s*\["ignore",\s*"ignore",\s*"ignore",\s*"ipc"\]/, "display clients must keep an IPC focus channel");
+assert.doesNotMatch(
+  desktopMainSource.slice(0, readyIndex),
+  /migrateLegacyBrandUserData\(\);/,
+  "brand migration must not run before desktop storage settings are loaded"
+);
+assert.ok(
+  desktopMainSource.indexOf("prepareLegacyBrandMigrationAtStartup(startupDesktopSettings, startupRuntime)")
+    < desktopMainSource.indexOf("loadBackend(startupDesktopSettings)"),
+  "eligible brand migration must finish before the backend opens the database"
+);
 
 const testableSource = `${desktopMainSource.slice(0, readyIndex)}
 globalThis.__desktopStartupTestApi = {
@@ -22,6 +35,13 @@ globalThis.__desktopStartupTestApi = {
   DISPLAY_CLIENT_ARG,
   DISPLAY_CLIENT_URL_ENV,
   displayClientMode,
+  PRODUCT_NAME,
+  PRODUCT_ID,
+  legacyBrandUserDataPath,
+  inspectLegacyBrandMigration,
+  migrateLegacyBrandUserData,
+  migrateLegacyBrandData,
+  prepareLegacyBrandMigrationAtStartup,
   applyLoginSetting,
   shouldStartInTray,
   relaunchInForeground,
@@ -68,14 +88,19 @@ function createHarness({
   wasOpenedAtLogin = false,
   env = {},
   persistSettings = true,
-  singleInstanceLock = true
+  singleInstanceLock = true,
+  legacyRunning = false,
+  windowsProcesses = null,
+  prepareFilesystem = null
 } = {}) {
-  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-desktop-check-"));
+  const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-desktop-check-"));
   temporaryRoots.push(temporaryRoot);
   const userData = path.join(temporaryRoot, "user-data");
+  const appData = path.join(temporaryRoot, "appData");
+  const legacyUserData = path.join(appData, "TunnelDesk");
   const defaultExecPath = platform === "darwin"
-    ? path.join(temporaryRoot, "Applications", "TunnelDesk.app", "Contents", "MacOS", "TunnelDesk")
-    : path.join(temporaryRoot, "installed", platform === "win32" ? "TunnelDesk.exe" : "tunneldesk");
+    ? path.join(temporaryRoot, "Applications", "Terma.app", "Contents", "MacOS", "terma")
+    : path.join(temporaryRoot, "installed", platform === "win32" ? "terma.exe" : "terma");
   const processArgv = argv || [defaultExecPath];
   fs.mkdirSync(path.dirname(processArgv[0]), { recursive: true });
   const state = {
@@ -95,10 +120,17 @@ function createHarness({
     scheduledTimeouts: [],
     xServerRuntimeCreateCount: 0,
     temporaryRoot,
+    appData,
+    legacyUserData,
     userData,
     execPath: processArgv[0],
     settingsFile: path.join(userData, "desktop-settings.json")
   };
+  if (typeof prepareFilesystem === "function") prepareFilesystem(state);
+  if (persistSettings) {
+    fs.mkdirSync(userData, { recursive: true });
+    fs.writeFileSync(state.settingsFile, JSON.stringify(settings, null, 2), "utf8");
+  }
 
   class FakeBrowserWindow {
     constructor(options) {
@@ -292,7 +324,19 @@ function createHarness({
           state.spawnCalls.push({ command, args, options, child });
           return child;
         },
-        spawnSync: () => ({status:1, stdout:"", stderr:""})
+        spawnSync: (command, args) => {
+          const executable = String(command || "").toLowerCase();
+          const requested = (args || []).map(value => String(value).toLowerCase());
+          const legacyProbe = executable.includes("tasklist") || executable.includes("pgrep");
+          if (legacyRunning && legacyProbe && requested.some(value => value.includes("tunneldesk"))) {
+            return {status:0, stdout:platform === "win32" ? "TunnelDesk.exe 123 Console" : "123", stderr:""};
+          }
+          if (platform === "win32" && executable.includes("powershell") && windowsProcesses !== null) {
+            const processList = typeof windowsProcesses === "function" ? windowsProcesses(state) : windowsProcesses;
+            return {status:0, stdout:JSON.stringify(processList || []), stderr:""};
+          }
+          return {status:1, stdout:"", stderr:""};
+        }
       };
       if (id === "./native-sftp-drag") return {
         createNativeSftpDrag: () => ({
@@ -321,16 +365,14 @@ function createHarness({
           };
         }
       };
+      if (id === "./brand-data-migration") return require(path.join(root, "desktop", "brand-data-migration.js"));
+      if (id === "./windows-brand-process") return require(path.join(root, "desktop", "windows-brand-process.js"));
       throw new Error(`unexpected require in desktop startup check: ${id}`);
     }
   });
 
   vm.runInContext(testableSource, context, { filename: desktopMainPath });
   if (!context.__desktopStartupTestApi.displayClientMode) context.__desktopStartupTestApi.initializeDesktopSettingsFile();
-  if (persistSettings) {
-    fs.mkdirSync(userData, { recursive: true });
-    fs.writeFileSync(state.settingsFile, JSON.stringify(settings, null, 2), "utf8");
-  }
   return { api: context.__desktopStartupTestApi, state };
 }
 
@@ -362,6 +404,21 @@ check("Existing Windows login settings are migrated during normal startup setup"
   assert.deepEqual(Array.from(state.loginSettings[0].args), [api.START_IN_TRAY_ARG]);
 });
 
+function createMarkerDatabase(file, entries) {
+  fs.mkdirSync(path.dirname(file), { recursive:true });
+  const db = new DatabaseSync(file);
+  db.exec("CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+  const insert = db.prepare("INSERT INTO app_meta(key,value) VALUES(?,?)");
+  for (const [key, value] of Object.entries(entries)) insert.run(key, value);
+  db.close();
+}
+
+function markerValue(file, key) {
+  const db = new DatabaseSync(file, { readOnly:true });
+  try { return db.prepare("SELECT value FROM app_meta WHERE key=?").get(key)?.value; }
+  finally { db.close(); }
+}
+
 check("Desktop application menu is hidden without changing tray menu setup", () => {
   const { api, state } = createHarness();
   api.buildAppMenu();
@@ -370,7 +427,7 @@ check("Desktop application menu is hidden without changing tray menu setup", () 
 
 check("Manual Windows launch remains visible even when login startup is configured for the tray", () => {
   const { api, state } = createHarness({
-    argv: ["TunnelDesk.exe"],
+    argv: ["terma.exe"],
     settings: { startMinimizedToTray: true }
   });
   assert.equal(api.shouldStartInTray({ startMinimizedToTray: true }), false);
@@ -396,7 +453,7 @@ check("Desktop window uses the isolated native-theme bridge", () => {
 });
 
 check("Explicit Windows login launch starts in the tray", () => {
-  const argv = ["TunnelDesk.exe", "--start-in-tray"];
+  const argv = ["terma.exe", "--start-in-tray"];
   const { api, state } = createHarness({ argv });
   assert.equal(api.shouldStartInTray({ startMinimizedToTray: true }), true);
   api.createWindow();
@@ -411,7 +468,7 @@ check("Explicit Windows login launch starts in the tray", () => {
 });
 
 check("Foreground activation restores a minimized desktop window before focusing it", () => {
-  const { api, state } = createHarness({ argv: ["TunnelDesk.exe"] });
+  const { api, state } = createHarness({ argv: ["terma.exe"] });
   api.createWindow();
   const window = state.windows[0];
   window.minimized = true;
@@ -424,7 +481,7 @@ check("Foreground activation restores a minimized desktop window before focusing
 });
 
 check("Linux foreground activation raises a hidden window without leaving it always on top", () => {
-  const { api, state } = createHarness({ platform: "linux", argv: ["tunneldesk"] });
+  const { api, state } = createHarness({ platform: "linux", argv: ["terma"] });
   api.createWindow();
   const window = state.windows[0];
   window.hide();
@@ -445,14 +502,14 @@ check("Linux single-instance registration includes the current DISPLAY session",
     }
   });
   assert.equal(state.singleInstanceRequests.length, 1);
-  const session = state.singleInstanceRequests[0].tunneldeskDisplaySession;
+  const session = state.singleInstanceRequests[0].termaDisplaySession;
   assert.equal(session.DISPLAY, ":0");
   assert.equal(session.XAUTHORITY, "/run/user/1000/xauth-main");
   assert.equal(session.DBUS_SESSION_BUS_ADDRESS, "unix:path=/run/user/1000/bus");
 });
 
 check("A second launch on the same Linux DISPLAY focuses the existing window", () => {
-  const { api, state } = createHarness({ platform:"linux", env:{DISPLAY:":0"} });
+  const { api, state } = createHarness({ platform:"linux", argv:["terma"], env:{DISPLAY:":0"} });
   api.setWebUrl("http://127.0.0.1:8088");
   api.createWindow();
   const window = state.windows[0];
@@ -483,7 +540,7 @@ check("A second launch on another Linux DISPLAY queues one isolated display clie
     XDG_SESSION_ID:"8",
     XDG_SESSION_TYPE:"x11"
   };
-  secondInstance(null, [], "", {tunneldeskDisplaySession:targetSession});
+  secondInstance(null, [], "", {termaDisplaySession:targetSession});
   assert.deepEqual(Array.from(api.getPendingDisplayClientKeys()), ["x11::3"]);
   assert.equal(state.spawnCalls.length, 0);
 
@@ -499,7 +556,7 @@ check("A second launch on another Linux DISPLAY queues one isolated display clie
   assert.equal(spawned.options.env.DBUS_SESSION_BUS_ADDRESS, "unix:path=/run/user/1000/xdmcp-bus");
   assert.equal(spawned.options.env[api.DISPLAY_CLIENT_URL_ENV], "http://127.0.0.1:8088/");
 
-  secondInstance(null, [], "", {tunneldeskDisplaySession:targetSession});
+  secondInstance(null, [], "", {termaDisplaySession:targetSession});
   assert.equal(state.spawnCalls.length, 1);
   assert.equal(state.spawnCalls[0].child.messages.length, 1);
   assert.equal(state.spawnCalls[0].child.messages[0].type, "show");
@@ -509,10 +566,10 @@ check("A second launch on another Linux DISPLAY queues one isolated display clie
 check("Linux display-client mode skips the backend profile and handles an early focus request", () => {
   const { api, state } = createHarness({
     platform:"linux",
-    argv:["tunneldesk", "--tunneldesk-display-client"],
+    argv:["terma", "--terma-display-client"],
     env:{
       DISPLAY:":3",
-      TUNNELDESK_DISPLAY_CLIENT_URL:"http://127.0.0.1:8088"
+      TERMA_DISPLAY_CLIENT_URL:"http://127.0.0.1:8088"
     },
     persistSettings:false
   });
@@ -530,8 +587,8 @@ check("Linux display-client mode skips the backend profile and handles an early 
   assert.equal(api.startDisplayClient(), true);
   assert.equal(api.getWebUrl(), "http://127.0.0.1:8088/");
   assert.equal(state.windows.length, 1);
-  assert.equal(state.ipcListeners.has("tunneldesk:capabilities"), true);
-  assert.equal(state.ipcListeners.has("tunneldesk:set-theme"), true);
+  assert.equal(state.ipcListeners.has("terma:capabilities"), true);
+  assert.equal(state.ipcListeners.has("terma:set-theme"), true);
   const window = state.windows[0];
   window.emitWebContentsOnce("did-finish-load");
   const revealTimer = state.scheduledTimeouts.find(timer => timer.delay === 120 && !timer.cancelled);
@@ -542,8 +599,24 @@ check("Linux display-client mode skips the backend profile and handles an early 
   assert.equal(fs.existsSync(state.settingsFile), false);
 });
 
+check("Linux display-client mode still accepts legacy TunnelDesk arguments and environment", () => {
+  const { api, state } = createHarness({
+    platform:"linux",
+    argv:["tunneldesk", "--tunneldesk-display-client"],
+    env:{
+      DISPLAY:":4",
+      TUNNELDESK_DISPLAY_CLIENT_URL:"http://127.0.0.1:8090"
+    },
+    persistSettings:false
+  });
+  assert.equal(api.displayClientMode, true);
+  assert.equal(api.startDisplayClient(), true);
+  assert.equal(api.getWebUrl(), "http://127.0.0.1:8090/");
+  assert.equal(state.xServerRuntimeCreateCount, 0);
+});
+
 check("Second launch before the first window exists waits for ready-to-show", () => {
-  const { api, state } = createHarness({ platform: "linux", argv: ["tunneldesk"] });
+  const { api, state } = createHarness({ platform: "linux", argv: ["terma"] });
   const secondInstance = state.appEvents.get("second-instance")?.[0];
   assert.equal(typeof secondInstance, "function");
   secondInstance();
@@ -556,7 +629,7 @@ check("Second launch before the first window exists waits for ready-to-show", ()
 });
 
 check("Second launch reveals a hidden Linux window", () => {
-  const { api, state } = createHarness({ platform: "linux", argv: ["tunneldesk"] });
+  const { api, state } = createHarness({ platform: "linux", argv: ["terma"] });
   api.createWindow();
   const window = state.windows[0];
   window.emitOnce("ready-to-show");
@@ -610,7 +683,7 @@ check("macOS login launch stays hidden when page load precedes ready-to-show", (
 
 check("Relaunch removes every tray-only argument and preserves other arguments", () => {
   const { api, state } = createHarness({
-    argv: ["TunnelDesk.exe", "app.asar", "--start-in-tray", "--inspect=9229", "--start-in-tray"]
+    argv: ["terma.exe", "app.asar", "--start-in-tray", "--inspect=9229", "--start-in-tray"]
   });
   api.relaunchInForeground();
   assert.equal(state.relaunchOptions.length, 1);
@@ -634,8 +707,237 @@ check("Packaged desktop defaults to the user runtime directory", () => {
   assert.equal(api.desktopSettingsView().project_mode_available, false);
 });
 
+check("Packaged Terma automatically migrates persistent TunnelDesk data into an empty profile", () => {
+  const { api, state } = createHarness({
+    platform: "linux",
+    persistSettings: false,
+    prepareFilesystem({ legacyUserData }) {
+      fs.mkdirSync(path.join(legacyUserData, "runtime", "data"), { recursive: true });
+      fs.mkdirSync(path.join(legacyUserData, "runtime", ".ssh"), { recursive: true });
+      fs.mkdirSync(path.join(legacyUserData, "Cache"), { recursive: true });
+      fs.mkdirSync(path.join(legacyUserData, "runtime", "data", "offline-task-old"), { recursive: true });
+      createMarkerDatabase(path.join(legacyUserData, "runtime", "data", "tunnels.db"), { legacy:"legacy database" });
+      fs.writeFileSync(path.join(legacyUserData, "runtime", "data", "web.pid"), "123", "utf8");
+      fs.writeFileSync(path.join(legacyUserData, "runtime", "data", "offline-task-old", "payload.bin"), "temporary", "utf8");
+      fs.writeFileSync(path.join(legacyUserData, "runtime", ".ssh", "id_ed25519"), "legacy key", "utf8");
+      fs.writeFileSync(path.join(legacyUserData, "desktop-settings.json"), JSON.stringify({ dataMode: "user" }), "utf8");
+      fs.writeFileSync(path.join(legacyUserData, "Cache", "cache.bin"), "cache", "utf8");
+      fs.writeFileSync(path.join(legacyUserData, "SingletonLock"), "lock", "utf8");
+    }
+  });
+
+  api.prepareLegacyBrandMigrationAtStartup(api.prepareRuntimeSettings());
+  const migration = api.inspectLegacyBrandMigration();
+  assert.equal(migration.status, "migrated");
+  assert.equal(migration.completed, true);
+  assert.equal(migration.last_migration.product, "Terma");
+  assert.equal(migration.last_migration.legacy_product, "TunnelDesk");
+  assert.equal(migration.last_migration.preserved_legacy_directory, true);
+  assert.equal(markerValue(path.join(state.userData, "runtime", "data", "tunnels.db"), "legacy"), "legacy database");
+  assert.equal(fs.readFileSync(path.join(state.userData, "runtime", ".ssh", "id_ed25519"), "utf8"), "legacy key");
+  assert.equal(fs.existsSync(path.join(state.userData, "runtime", "data", "web.pid")), false);
+  assert.equal(fs.existsSync(path.join(state.userData, "runtime", "data", "offline-task-old")), false);
+  assert.equal(fs.existsSync(path.join(state.userData, "Cache")), false);
+  assert.equal(fs.existsSync(path.join(state.userData, "SingletonLock")), false);
+  assert.equal(fs.existsSync(path.join(state.legacyUserData, "runtime", "data", "tunnels.db")), true);
+});
+
+check("Confirmed brand migration backs up and merges the active Terma runtime", () => {
+  const customRuntime = fs.mkdtempSync(path.join(os.tmpdir(), "terma-brand-custom-runtime-"));
+  temporaryRoots.push(customRuntime);
+  const { api, state } = createHarness({
+    platform: "linux",
+    isPackaged: false,
+    settings: { dataMode:"custom", customDataDir:customRuntime },
+    prepareFilesystem({ legacyUserData }) {
+      fs.mkdirSync(path.join(legacyUserData, "runtime", "data"), { recursive: true });
+      createMarkerDatabase(path.join(legacyUserData, "runtime", "data", "tunnels.db"), { legacy:"legacy database" });
+      createMarkerDatabase(path.join(customRuntime, "data", "tunnels.db"), { current:"current database" });
+    }
+  });
+
+  const startup = api.prepareLegacyBrandMigrationAtStartup(api.prepareRuntimeSettings());
+  assert.equal(startup.status, "available");
+  const preview = api.inspectLegacyBrandMigration();
+  assert.equal(preview.source_available, true);
+  assert.equal(preview.target_has_data, true);
+  assert.equal(preview.target_data_dir, path.join(customRuntime, "data"));
+  assert.equal(markerValue(path.join(customRuntime, "data", "tunnels.db"), "current"), "current database");
+
+  const migration = api.migrateLegacyBrandUserData({
+    manual:true,
+    force:true,
+    target_data_dir:path.join(customRuntime, "data"),
+    target_ssh_dir:path.join(customRuntime, ".ssh")
+  });
+  assert.equal(migration.status, "migrated");
+  assert.match(path.basename(migration.backup), /^\.terma-brand-migration-backup-/);
+  assert.equal(markerValue(path.join(customRuntime, "data", "tunnels.db"), "current"), "current database");
+  assert.equal(markerValue(path.join(customRuntime, "data", "tunnels.db"), "legacy"), "legacy database");
+  assert.equal(markerValue(path.join(migration.backup, "data", "tunnels.db"), "current"), "current database");
+  assert.equal(fs.existsSync(path.join(state.legacyUserData, "runtime", "data", "tunnels.db")), true);
+});
+
+check("Project and custom runtimes keep legacy data pending until the user confirms", () => {
+  const customRuntime = fs.mkdtempSync(path.join(os.tmpdir(), "terma-brand-unpackaged-runtime-"));
+  temporaryRoots.push(customRuntime);
+  const { api, state } = createHarness({
+    platform: "win32",
+    isPackaged: false,
+    settings: { dataMode:"custom", customDataDir:customRuntime },
+    prepareFilesystem({ legacyUserData }) {
+      fs.mkdirSync(path.join(legacyUserData, "runtime", "data"), { recursive: true });
+      createMarkerDatabase(path.join(legacyUserData, "runtime", "data", "tunnels.db"), { legacy:"legacy database" });
+      createMarkerDatabase(path.join(customRuntime, "data", "tunnels.db"), { current:"current database" });
+    }
+  });
+
+  const startup = api.prepareLegacyBrandMigrationAtStartup(api.prepareRuntimeSettings());
+  const migration = api.inspectLegacyBrandMigration();
+  assert.equal(startup.status, "available");
+  assert.equal(migration.status, "available");
+  assert.equal(migration.completed, false);
+  assert.equal(markerValue(path.join(customRuntime, "data", "tunnels.db"), "current"), "current database");
+  assert.equal(markerValue(path.join(customRuntime, "data", "tunnels.db"), "legacy"), undefined);
+  assert.equal(fs.existsSync(path.join(state.legacyUserData, "runtime", "data", "tunnels.db")), true);
+});
+
+check("An existing user runtime also requires confirmation before merging legacy data", () => {
+  const { api, state } = createHarness({
+    platform:"linux",
+    persistSettings:false,
+    prepareFilesystem({ legacyUserData, userData }) {
+      fs.mkdirSync(path.join(legacyUserData, "runtime", "data"), { recursive:true });
+      createMarkerDatabase(path.join(legacyUserData, "runtime", "data", "tunnels.db"), { legacy:"legacy database" });
+      createMarkerDatabase(path.join(userData, "runtime", "data", "tunnels.db"), { current:"current database" });
+    }
+  });
+
+  const startup = api.prepareLegacyBrandMigrationAtStartup(api.prepareRuntimeSettings());
+  assert.equal(startup.status, "available");
+  assert.equal(markerValue(path.join(state.userData, "runtime", "data", "tunnels.db"), "current"), "current database");
+  assert.equal(markerValue(path.join(state.userData, "runtime", "data", "tunnels.db"), "legacy"), undefined);
+});
+
+check("Failed brand migration restores the existing Terma profile", () => {
+  const customRuntime = fs.mkdtempSync(path.join(os.tmpdir(), "terma-brand-failure-runtime-"));
+  temporaryRoots.push(customRuntime);
+  const { api, state } = createHarness({
+    platform: "linux",
+    isPackaged: false,
+    settings: { dataMode:"custom", customDataDir:customRuntime },
+    prepareFilesystem({ legacyUserData }) {
+      fs.mkdirSync(path.join(legacyUserData, "runtime", "data"), { recursive: true });
+      createMarkerDatabase(path.join(legacyUserData, "runtime", "data", "tunnels.db"), { legacy:"legacy database" });
+      createMarkerDatabase(path.join(customRuntime, "data", "tunnels.db"), { current:"current database" });
+    }
+  });
+  const originalRenameSync = fs.renameSync;
+  fs.renameSync = (source, destination) => {
+    if (String(source).includes(".terma-brand-migration-staging-") && path.resolve(destination) === path.resolve(path.join(customRuntime, "data", "tunnels.db"))) {
+      throw new Error("simulated promotion failure");
+    }
+    return originalRenameSync(source, destination);
+  };
+  let migration;
+  try {
+    migration = api.migrateLegacyBrandUserData({
+      manual:true,
+      force:true,
+      target_data_dir:path.join(customRuntime, "data"),
+      target_ssh_dir:path.join(customRuntime, ".ssh")
+    });
+  } finally {
+    fs.renameSync = originalRenameSync;
+  }
+  assert.equal(migration.status, "failed");
+  assert.match(path.basename(migration.backup), /^\.terma-brand-migration-backup-/);
+  assert.equal(markerValue(path.join(customRuntime, "data", "tunnels.db"), "current"), "current database");
+  assert.equal(markerValue(path.join(state.legacyUserData, "runtime", "data", "tunnels.db"), "legacy"), "legacy database");
+});
+
+check("Brand migration refuses to run while TunnelDesk is still active", () => {
+  const { api, state } = createHarness({
+    platform: "win32",
+    persistSettings: false,
+    legacyRunning: true,
+    prepareFilesystem({ legacyUserData }) {
+      fs.mkdirSync(path.join(legacyUserData, "runtime", "data"), { recursive: true });
+      fs.writeFileSync(path.join(legacyUserData, "runtime", "data", "tunnels.db"), "legacy database", "utf8");
+    }
+  });
+
+  api.prepareLegacyBrandMigrationAtStartup(api.prepareRuntimeSettings());
+  const preview = api.inspectLegacyBrandMigration();
+  assert.equal(preview.status, "legacy-running");
+  assert.equal(preview.legacy_running, true);
+  const requested = api.migrateLegacyBrandData({ replace_current: true });
+  assert.equal(requested.ok, false);
+  assert.match(requested.error, /旧版程序/);
+  assert.equal(fs.existsSync(path.join(state.userData, "runtime", "data", "tunnels.db")), false);
+  assert.equal(fs.existsSync(path.join(state.legacyUserData, "runtime", "data", "tunnels.db")), true);
+});
+
+check("Windows brand migration detects a legacy source Electron profile", () => {
+  const { api } = createHarness({
+    platform:"win32",
+    persistSettings:false,
+    windowsProcesses: state => [{
+      ProcessId:8123,
+      ParentProcessId:8000,
+      Name:"electron.exe",
+      ExecutablePath:path.join(root, "node_modules", "electron", "dist", "electron.exe"),
+      CommandLine:`electron.exe --type=utility --user-data-dir="${state.legacyUserData}"`
+    }],
+    prepareFilesystem({ legacyUserData }) {
+      fs.mkdirSync(path.join(legacyUserData, "runtime", "data"), { recursive:true });
+      fs.writeFileSync(path.join(legacyUserData, "runtime", "data", "tunnels.db"), "legacy database", "utf8");
+    }
+  });
+
+  api.prepareLegacyBrandMigrationAtStartup(api.prepareRuntimeSettings());
+  const preview = api.inspectLegacyBrandMigration();
+  assert.equal(preview.status, "legacy-running");
+  assert.equal(preview.legacy_running, true);
+});
+
+check("Windows legacy Electron detection excludes the current Terma source process", () => {
+  const fixtureRoot = path.win32.join("C:\\Temp", "TermaStartupFixture");
+  const legacyUserData = path.win32.join(fixtureRoot, "TunnelDesk");
+  const currentUserData = path.win32.join(fixtureRoot, "Terma");
+  const currentProject = path.win32.join(fixtureRoot, "TermaSource");
+  assert.equal(isLegacyBrandWindowsProcess({
+    ProcessId:100,
+    Name:"electron.exe",
+    ExecutablePath:`${currentProject}\\node_modules\\electron\\dist\\electron.exe`,
+    CommandLine:`electron.exe ${currentProject}`
+  }, {currentPid:100, currentUserData, legacyUserData}), false);
+  assert.equal(isLegacyBrandWindowsProcess({
+    ProcessId:101,
+    Name:"electron.exe",
+    ExecutablePath:`${currentProject}\\node_modules\\electron\\dist\\electron.exe`,
+    CommandLine:`electron.exe ${currentProject}`
+  }, {currentPid:100, currentUserData, legacyUserData}), false);
+  assert.equal(isLegacyBrandWindowsProcess({
+    ProcessId:102,
+    Name:"electron.exe",
+    ExecutablePath:`${currentProject}\\node_modules\\electron\\dist\\electron.exe`,
+    CommandLine:`electron.exe --type=renderer --user-data-dir="${currentUserData}" --app-user-model-id="${currentProject}\\node_modules\\electron\\dist\\electron.exe" --app-path="${currentProject}"`
+  }, {currentPid:100, currentUserData, legacyUserData}), false);
+  assert.equal(isLegacyBrandWindowsProcess({
+    ProcessId:103,
+    Name:"electron.exe",
+    CommandLine:"electron.exe --type=renderer --app-user-model-id=com.zmide.terma"
+  }, {currentPid:100, currentUserData, legacyUserData}), false);
+  assert.equal(isLegacyBrandWindowsProcess({
+    ProcessId:104,
+    Name:"electron.exe",
+    CommandLine:"electron.exe --type=renderer --app-user-model-id=com.zmide.tunneldesk"
+  }, {currentPid:100, currentUserData, legacyUserData}), true);
+});
+
 check("Packaged desktop preserves an explicitly configured custom runtime directory", () => {
-  const customRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-custom-runtime-check-"));
+  const customRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-custom-runtime-check-"));
   temporaryRoots.push(customRoot);
   const { api } = createHarness({
     platform: "linux",
@@ -650,7 +952,7 @@ check("Packaged desktop preserves an explicitly configured custom runtime direct
 });
 
 check("Windows portable uses PORTABLE_EXECUTABLE_DIR instead of its temporary executable", () => {
-  const portableRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-portable-check-"));
+  const portableRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-portable-check-"));
   temporaryRoots.push(portableRoot);
   const { api, state } = createHarness({
     platform: "win32",
@@ -683,7 +985,7 @@ check("macOS migrates legacy app data before selecting the user runtime", () => 
   const settings = api.prepareRuntimeSettings();
   const targetRoot = path.join(state.userData, "runtime");
   assert.equal(settings.dataMode, "user");
-  assert.equal(settings.storageMigrationVersion, 1);
+  assert.equal(settings.storageMigrationVersion, 2);
   assert.equal(settings.lastStorageMigration.status, "migrated");
   assert.equal(fs.readFileSync(path.join(targetRoot, "data", "tunnels.db"), "utf8"), "legacy database");
   assert.equal(fs.readFileSync(path.join(targetRoot, "data", "security.json"), "utf8"), "legacy security");

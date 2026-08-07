@@ -2,7 +2,7 @@
 
 该模块只负责把一次鼠标拖动转换为 macOS 的 `NSFilePromiseProvider` /
 `NSDraggingSession`。它不会提前下载远端内容，也不会接触 SSH 密码或私钥。
-Finder 接受拖放并确定目标路径后，模块通过事件请求 TunnelDesk 后端写入文件。
+Finder 接受拖放并确定目标路径后，模块通过事件请求 Terma 后端写入文件。
 
 ## 导出接口
 
@@ -115,7 +115,7 @@ Finder 可能对同一个顶层项目重复请求写入。每次回调都有独�
 
 ### 其他方法
 
-- `setInternalTarget(sessionId, targetJson)`：保存当前 TunnelDesk 内部 SFTP
+- `setInternalTarget(sessionId, targetJson)`：保存当前 Terma 内部 SFTP
   投放目标；结束事件会原样带回该 JSON，供桌面端完成跨主机复制。
 - `cancelDrag(sessionId?)`：取消尚未进入原生拖动的已武装状态；Finder 已经发出
   `writeRequested` 后也可请求取消，成功接受时返回 `true` 并发送一次 `cancelled`。
@@ -141,7 +141,7 @@ npx node-gyp rebuild \
 ```
 
 Apple Silicon 构建时使用 `--arch=arm64`。生成文件位于
-`native/macos-sftp-drag/build/Release/tunneldesk_macos_sftp_drag.node`，
+`native/macos-sftp-drag/build/Release/terma_macos_sftp_drag.node`，
 打包时必须放入 `asarUnpack`，并随应用一起签名。
 
 ## 尚需真机确认

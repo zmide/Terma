@@ -21,7 +21,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace tunneldesk::dragfs {
+namespace terma::dragfs {
 namespace {
 
 using Json = nlohmann::json;
@@ -61,11 +61,11 @@ std::uint64_t clamp_lease_seconds(const Json& command, std::uint64_t fallback) {
 
 struct fuse_args make_fuse_arguments() {
   struct fuse_args arguments = FUSE_ARGS_INIT(0, nullptr);
-  if (fuse_opt_add_arg(&arguments, "tunneldesk-linux-sftp-dragfs") != 0
+  if (fuse_opt_add_arg(&arguments, "terma-linux-sftp-dragfs") != 0
     || fuse_opt_add_arg(&arguments, "-o") != 0
     || fuse_opt_add_arg(
       &arguments,
-      "ro,default_permissions,auto_unmount,fsname=TunnelDesk-SFTP,subtype=tunneldesk-dragfs"
+      "ro,default_permissions,auto_unmount,fsname=Terma-SFTP,subtype=terma-dragfs"
     ) != 0) {
     fuse_opt_free_args(&arguments);
     throw std::runtime_error("failed to allocate FUSE arguments");
@@ -976,4 +976,4 @@ int DragFileSystem::run() {
   return result == 0 ? 0 : 1;
 }
 
-}  // namespace tunneldesk::dragfs
+}  // namespace terma::dragfs

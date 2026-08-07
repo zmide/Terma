@@ -4,6 +4,7 @@ const IMPORT_SECTION_META = {
   "configSnapshots": "配置快照"
 };
 let activeImportSection = "import-source";
+let legacyBrandMigrationState = null;
 
 function showImport(updateTab=true) {
   const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
@@ -12,6 +13,7 @@ function showImport(updateTab=true) {
   setWorkspace("导入导出", "SSH config 与数据库迁移", "import", "import", updateTab, true, {kind:"import"});
   renderBackupControls();
   loadSecuritySettings().then(() => inPane(renderBackupControls)).catch(() => {});
+  renderLegacyBrandMigration();
   renderImport();
   renderConfigSnapshots();
   showImportSection(activeImportSection, {moveToWorkspace:false});
@@ -98,8 +100,67 @@ function renderBackupControls() {
   const enabled = Boolean(securitySettings?.encryption_enabled);
   bundleBtn.hidden = !enabled;
   bundleNote.textContent = enabled
-    ? "已启用配置加密：建议下载 .tdbackup 加密迁移包。迁移包包含完整数据库和配置加密元数据，不包含 SSH 私钥文件、Web 密码或访问 Token。"
+    ? "已启用配置加密：建议下载 .termabackup 加密迁移包。迁移包包含完整数据库和配置加密元数据，不包含 SSH 私钥文件、Web 密码或访问 Token。旧版 .tdbackup 文件仍可导入。"
     : "未启用配置加密：通常下载普通 .db 数据库备份即可。启用配置加密后才会显示加密迁移包下载入口。";
+}
+
+function legacyBrandMigrationStatus(state) {
+  if (state?.legacy_running) return {kind:"error", icon:"circle-alert", text:"旧版程序仍在运行。请先退出旧版，再迁移数据。"};
+  if (state?.status === "failed") return {kind:"error", icon:"circle-alert", text:state.message || "上一次旧版数据迁移失败。"};
+  if (state?.completed) return {kind:"success", icon:"circle-check", text:"已完成旧版数据合并。当前数据和旧目录都已保留。"};
+  if (state?.target_has_data) return {kind:"info", icon:"shield-alert", text:"Terma 已有数据。迁移前会完整备份，再合并缺失的连接、分组、远程配置、工作区和密钥。"};
+  if (state?.source_available) return {kind:"info", icon:"database", text:"发现可迁移的旧版数据。"};
+  return {kind:"info", icon:"circle-check", text:"未发现可迁移的旧版数据。"};
+}
+
+async function renderLegacyBrandMigration() {
+  const box = $("legacyBrandMigration");
+  if (!box) return;
+  box.innerHTML = stateView("loading", "正在检查旧版数据");
+  try {
+    const state = await api("/api/legacy-brand-migration");
+    legacyBrandMigrationState = state;
+    if (!state?.available) {
+      box.innerHTML = `<div class="runtime-feedback info">${icon("monitor-off")}<span>${esc(state?.message || "旧版数据迁移仅能在本机桌面版中执行")}</span></div>`;
+      refreshIcons();
+      return;
+    }
+    const status = legacyBrandMigrationStatus(state);
+    const migration = state.last_migration || {};
+    const canMigrate = Boolean(state.source_available) && !state.legacy_running;
+    const actionLabel = state.completed ? "重新检查并合并" : state.target_has_data ? "备份并合并旧数据" : "迁移并重新启动";
+    const action = canMigrate
+      ? `<button class="${state.target_has_data ? "danger" : "primary"}" data-ui-action-key="legacy-brand-migration" onclick="migrateLegacyBrandData(this)">${actionLabel}</button>`
+      : "";
+    const lastBackup = migration.backup ? `<div class="muted">当前 Terma 数据备份：<code>${esc(migration.backup)}</code></div>` : "";
+    const migratedAt = migration.migrated_at ? `<div class="muted">最近迁移：${esc(new Date(migration.migrated_at).toLocaleString("zh-CN", {hour12:false}))}</div>` : "";
+    const currentSource = state.source_available ? `<div class="muted">旧版目录：<code>${esc(state.source)}</code></div>` : "";
+    box.innerHTML = `<div class="legacy-brand-migration-content"><div class="runtime-feedback ${status.kind}">${icon(status.icon)}<span>${esc(status.text)}</span></div>${currentSource}${migratedAt}${lastBackup}<div class="actions tight"><button onclick="renderLegacyBrandMigration()" title="重新检测旧版数据" aria-label="重新检测旧版数据">${icon("refresh-cw")}</button>${action}</div></div>`;
+    refreshIcons();
+  } catch (error) {
+    box.innerHTML = stateView("error", "旧版数据检查失败", error.message || "无法读取迁移状态");
+  }
+}
+
+async function migrateLegacyBrandData(button) {
+  const state = legacyBrandMigrationState || await api("/api/legacy-brand-migration");
+  if (!state?.available || !state.source_available) return renderLegacyBrandMigration();
+  if (state.legacy_running) return notify("请先退出旧版程序，再迁移数据", "error");
+  const mergeCurrent = Boolean(state.target_has_data);
+  const message = mergeCurrent
+    ? "会先完整备份当前 Terma 数据，再合并旧版数据中缺失的连接、分组、远程配置、工作区和密钥；同名项目保留当前设置，只补齐缺失凭据。旧版目录不会删除。继续？"
+    : "会迁移旧版数据中的连接、分组、远程配置、工作区和密钥并重新启动 Terma。旧版目录不会删除。继续？";
+  if (!await confirmModal(message, "迁移旧版数据", mergeCurrent ? "备份并合并" : "迁移并重启", "取消", mergeCurrent)) return;
+  if (!beginUiAction("legacy-brand-migration", button, "迁移中...")) return;
+  try {
+    const result = await api("/api/legacy-brand-migration", {method:"POST", body:JSON.stringify({merge_current:mergeCurrent})});
+    if (!result?.ok) throw new Error(result?.error || "旧版数据迁移未启动");
+    notify("正在迁移旧版数据，Terma 即将重新启动", "success");
+  } catch (error) {
+    notify(error.message || "旧版数据迁移失败", "error");
+    endUiAction("legacy-brand-migration", button);
+    await renderLegacyBrandMigration();
+  }
 }
 
 async function parseImportConfig(){
@@ -200,7 +261,7 @@ async function downloadDatabaseBackup() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `tunneldesk-${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
+  a.download = `terma-${new Date().toISOString().replace(/[:.]/g, "-")}.db`;
   a.click();
   URL.revokeObjectURL(url);
   notify(includePasswords ? "数据库备份已下载（包含 SSH 密码）" : "数据库备份已下载（不包含 SSH 密码）", "success");
@@ -224,7 +285,7 @@ async function downloadBackupBundle() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `tunneldesk-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.tdbackup.json`;
+  a.download = `terma-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.termabackup`;
   a.click();
   URL.revokeObjectURL(url);
   notify("加密迁移包已下载", "success");
@@ -384,6 +445,7 @@ function showDatabaseCredentialModal(items, options={}) {
       <div class="actions credential-binding-actions"><button id="restoreKeyCancel">取消</button><button id="identityBindingTest" type="button">测试选中连接</button><button id="credentialClearSelected" type="button">清除选中凭据</button><button id="identityBindingStage" type="button">绑定所选私钥</button><button id="credentialPasswordStage" type="button" ${options.password_replacement_allowed === false ? "disabled" : ""}>设置所填密码</button><button id="identityBindingFinish" class="primary" type="button">继续恢复</button></div>
     </div>`;
     modal.hidden = false;
+    enhancePasswordInputs(modal);
     const status = $("restoreKeyStatus");
     const candidateSelect = $("identityBindingCandidate");
     const passwordInput = $("credentialPassword");
@@ -536,7 +598,7 @@ async function bindImportIdentities() {
 async function inspectDatabaseBackup(file) {
   const response = await fetch("/api/restore/database/check", {
     method:"POST",
-    headers:{"Content-Type":"application/octet-stream", "X-TunnelDesk-Filename":encodeURIComponent(file.name || "backup.db")},
+    headers:{"Content-Type":"application/octet-stream", "X-Terma-Filename":encodeURIComponent(file.name || "backup.db")},
     body:file
   });
   const result = await response.json().catch(()=>({error:"数据库检查失败"}));

@@ -287,8 +287,9 @@ function buildTerminalCommand(connection) {
   const interactivePassword = connection.auth_type === "password" && ["untrusted", "trusted"].includes(String(connection.x11_mode || "off"));
   const args = ["-tt", ...systemConnectionArgs(connection), "-o", `BatchMode=${interactivePassword ? "no" : "yes"}`, "-p", String(connection.ssh_port)];
   args.push("-o", "SendEnv=-*");
-  if (["untrusted", "trusted"].includes(String(connection.x11_mode || "off")) && process.env.TUNNELDESK_XAUTH) {
-    args.push("-o", `XAuthLocation=${process.env.TUNNELDESK_XAUTH}`);
+  const xauthLocation = process.env.TERMA_XAUTH || process.env.TUNNELDESK_XAUTH;
+  if (["untrusted", "trusted"].includes(String(connection.x11_mode || "off")) && xauthLocation) {
+    args.push("-o", `XAuthLocation=${xauthLocation}`);
   }
   if (connection.x11_mode === "trusted") args.push("-Y");
   else if (connection.x11_mode === "untrusted") args.push("-X");
@@ -487,7 +488,7 @@ function configuredPortOwner(port, excludeId = 0) {
 function killPortOwner(pid) {
   const id = Number(pid);
   if (!id) throw new Error("缺少 PID");
-  if (id === process.pid) throw new Error("不能关闭当前 TunnelDesk 进程");
+  if (id === process.pid) throw new Error("不能关闭当前 Terma 进程");
   const info = processInfo(id);
   if (!pidRunning(id)) return { ok: true, already_stopped: true, process: info };
   if (process.platform === "win32") {
@@ -923,7 +924,7 @@ async function testSsh(data) {
   const host = String(data.ssh_host || "").trim();
   const user = String(data.ssh_user || "").trim();
   if (!host || !user) throw new Error("缺少 SSH 主机或用户");
-  const marker = "__TUNNELDESK_SSH_OK__";
+  const marker = "__TERMA_SSH_OK__";
   const probe = `echo ${marker}`;
   if (shouldUseBuiltinSsh(data)) {
     const start = Date.now();

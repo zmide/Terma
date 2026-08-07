@@ -5,8 +5,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-vnc-credential-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(temporaryRoot, "data");
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-vnc-credential-"));
+process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
 
 const database = require("../dist/db");
 

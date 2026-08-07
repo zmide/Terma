@@ -59,6 +59,15 @@ function packageCandidateSets(packages, alternatives=[]) {
   }, [[]]);
 }
 
+function aptPlatformSatisfiesPackages(platform, packages) {
+  const installed = platform?.installed instanceof Set ? platform.installed : new Set(platform?.installed || []);
+  const provided = platform?.provided instanceof Set ? platform.provided : new Set(platform?.provided || []);
+  return packages.every(value => {
+    const packageName = String(value || "").replace(/:[a-z0-9-]+$/i, "");
+    return installed.has(packageName) || provided.has(packageName);
+  });
+}
+
 const ACTION_LABELS = {
   install:"在线安装",
   "install-offline":"使用远端缓存安装",
@@ -85,6 +94,8 @@ function taskView(task) {
     action:task.action,
     action_label:task.action_label,
     mode:task.mode || "",
+    resource_key:task.resource_key || "",
+    resource_keys:[...(task.resource_keys || (task.resource_key ? [task.resource_key] : []))],
     connection_id:task.connection_id,
     connection_name:task.connection_name,
     status:task.status,
@@ -200,9 +211,41 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
     return {removed};
   }
 
+  function normalizedResourceKeys(primaryKey, extraKeys = []) {
+    return [...new Set([primaryKey, ...(Array.isArray(extraKeys) ? extraKeys : [])]
+      .map(value => String(value || "").trim())
+      .filter(Boolean))];
+  }
+
+  function packageManagerResourceKey(connection) {
+    return `package-manager:${Number(connection?.id || 0)}`;
+  }
+
+  function assertResourcesAvailable(resourceKeys, componentLabel="远端组件") {
+    const requested = new Set(normalizedResourceKeys("", resourceKeys));
+    if (!requested.size) return;
+    const running = [...tasks.values()].find(task => {
+      if (task.status !== "running") return false;
+      const occupied = normalizedResourceKeys(task.resource_key, task.resource_keys);
+      return occupied.some(key => requested.has(key));
+    });
+    if (!running) return;
+    const error: any = new Error(`${componentLabel}已有“${running.action_label || "管理"}”任务正在执行，请等待完成后再试`);
+    error.code = "REMOTE_TASK_CONFLICT";
+    error.statusCode = 409;
+    error.task = taskView(running);
+    throw error;
+  }
+
   function startAptInstall(options: any = {}) {
     const connection = options.connection;
     if (!connection) throw new Error("离线安装缺少 SSH 管理连接");
+    const resourceKey = String(options.resource_key || `remote-component:${Number(connection.id || 0)}:${String(options.component || "remote-component")}`).trim();
+    const resourceKeys = normalizedResourceKeys(resourceKey, [
+      ...(Array.isArray(options.resource_keys) ? options.resource_keys : []),
+      packageManagerResourceKey(connection)
+    ]);
+    assertResourcesAvailable(resourceKeys, options.component_label);
     let packages = normalizeAptPackages(options.packages);
     const requestedPackages = [...packages];
     const task = {
@@ -212,6 +255,8 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
       action:String(options.action || "install-local-offline"),
       action_label:actionLabel(options.action || "install-local-offline", options.action_label),
       mode:"local-offline",
+      resource_key:resourceKey,
+      resource_keys:resourceKeys,
       connection_id:Number(connection.id || 0),
       connection_name:String(connection.name || connection.ssh_host || ""),
       status:"running",
@@ -234,13 +279,46 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
     append(task, `开始本机离线安装：${task.component_label}（${packages.join(", ")}）`);
     void (async () => {
       let localDirectory = "";
-      let remoteDirectory = `/tmp/tunneldesk-offline-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+      let remoteDirectory = `/tmp/terma-offline-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
       try {
         let probe = null;
         let probeOutput = "";
         let usedLocalRepository = false;
         let platform = null;
+        let packagesAlreadySatisfied = false;
         const candidateSets = packageCandidateSets(requestedPackages, options.package_alternatives);
+        const onChunk = (chunk, stream) => appendChunk(task, chunk, stream || "stdout");
+        const runAfterInstall = async () => {
+          if (typeof options.after_install !== "function") return;
+          update(task, "configure", 91, String(options.configure_label || "正在应用服务配置"));
+          const configured = await options.after_install(onChunk);
+          flushTaskLogs(task);
+          if (configured?.status !== 0) throw new Error(`${configured?.stderr || configured?.stdout || configured?.error?.message || "远端服务配置失败"}`.trim());
+        };
+        const completeAfterVerification = async (readyLog, doneLog) => {
+          await runAfterInstall();
+          update(task, "verify", 96, "正在验证安装结果");
+          append(task, readyLog);
+          if (typeof options.verify === "function") task.after = await options.verify();
+          if (typeof options.validate === "function") {
+            const validation = await options.validate(task.after);
+            if (validation === false) throw new Error(`${task.component_label}安装命令已结束，但状态验证未通过`);
+            if (typeof validation === "string" && validation) throw new Error(validation);
+          }
+          task.status = "done";
+          task.progress = 100;
+          task.stage = "done";
+          task.current = "已完成";
+          append(task, doneLog);
+        };
+        const completeIfPackagesAlreadySatisfied = async () => {
+          if (!packagesAlreadySatisfied) return false;
+          await completeAfterVerification(
+            `远端已安装的软件包已满足本次请求（${packages.join(", ")}），跳过下载、上传和重复安装`,
+            "现有安装状态验证通过"
+          );
+          return true;
+        };
         const resolveWithLocalRepository = async (reason = "") => {
           usedLocalRepository = true;
           append(task, reason ? `${reason}；将由本机刷新匹配的软件包索引` : "远端 APT 索引不可用，正在由本机刷新匹配的软件包索引", "warning");
@@ -267,10 +345,17 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
                 if (candidate.join("\n") !== requestedPackages.join("\n")) append(task, `本机索引已切换可用候选：${candidate.join(", ")}`, "warning");
                 break;
               }
+              if (Array.isArray(next) && !next.length && aptPlatformSatisfiesPackages(platform, candidate)) {
+                resolved = [];
+                packages = candidate;
+                packagesAlreadySatisfied = true;
+                break;
+              }
             } catch (error) {
               lastResolveError = error;
             }
           }
+          if (packagesAlreadySatisfied) return [];
           if (!Array.isArray(resolved) || !resolved.length) {
             throw lastResolveError || new Error("本机官方软件源索引没有解析出可安装的软件包");
           }
@@ -300,9 +385,10 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
             : "远端 APT 索引过期、镜像不可达或软件包不可下载，正在自动切换本机官方索引";
           items = await resolveWithLocalRepository(reason);
         }
+        if (await completeIfPackagesAlreadySatisfied()) return;
         if (!items?.length) {
           const detail = probeOutput.trim() || parseError?.message || "远端 apt 无法解析软件包依赖";
-          throw new Error(`${detail}\nTunnelDesk 未能安全切换本机索引；请检查远端发行版信息，或改用在线安装/手动安装说明`);
+          throw new Error(`${detail}\nTerma 未能安全切换本机索引；请检查远端发行版信息，或改用在线安装/手动安装说明`);
         }
         const downloadAndUpload = async (resolvedItems, attempt = 1) => {
           const totalBytes = resolvedItems.reduce((sum, item) => sum + Math.max(0, Number(item.size || 0)), 0);
@@ -354,6 +440,7 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
         let preflightOutput = `${preflight?.stdout || ""}${preflight?.stderr || ""}`;
         if (preflight?.status !== 0 && aptOutputNeedsLocalResolution(preflightOutput) && !usedLocalRepository) {
           items = await resolveWithLocalRepository("远端软件包清单缺少依赖，正在自动补全并重新上传");
+          if (await completeIfPackagesAlreadySatisfied()) return;
           await downloadAndUpload(items, 2);
           update(task, "verify", 83, "正在重新检查离线依赖");
           const retry = await dependencies.run_ssh_command(connection, buildRemotePosixCommand(buildAptOfflinePreflightCommand(remoteDirectory)), 120000);
@@ -369,7 +456,6 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
         }
         update(task, "install", 86, "正在使用远端管理员权限安装");
         const installCommand = buildAptOfflineInstallCommand(remoteDirectory, packages);
-        const onChunk = (chunk, stream) => appendChunk(task, chunk, stream || "stdout");
         // A root SSH session must execute the uploaded package paths directly;
         // trying to create a privileged grant without credentials makes a
         // root-only offline install fail before apt is reached.
@@ -379,25 +465,7 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
           : await dependencies.run_ssh_stream(connection, buildRemotePosixCommand(installCommand), 20 * 60 * 1000, onChunk);
         flushTaskLogs(task);
         if (result?.status !== 0) throw new Error(`${result?.stderr || result?.stdout || result?.error?.message || "远端离线安装失败"}`.trim());
-        if (typeof options.after_install === "function") {
-          update(task, "configure", 91, String(options.configure_label || "正在应用服务配置"));
-          const configured = await options.after_install(onChunk);
-          flushTaskLogs(task);
-          if (configured?.status !== 0) throw new Error(`${configured?.stderr || configured?.stdout || configured?.error?.message || "远端服务配置失败"}`.trim());
-        }
-        update(task, "verify", 96, "正在验证安装结果");
-        append(task, "远端离线安装命令已完成");
-        if (typeof options.verify === "function") task.after = await options.verify();
-        if (typeof options.validate === "function") {
-          const validation = await options.validate(task.after);
-          if (validation === false) throw new Error(`${task.component_label}安装命令已结束，但状态验证未通过`);
-          if (typeof validation === "string" && validation) throw new Error(validation);
-        }
-        task.status = "done";
-        task.progress = 100;
-        task.stage = "done";
-        task.current = "已完成";
-        append(task, "离线安装完成");
+        await completeAfterVerification("远端离线安装命令已完成", "离线安装完成");
       } catch (error) {
         flushTaskLogs(task);
         task.status = "failed";
@@ -426,6 +494,14 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
     if (!connection) throw new Error("远端操作缺少 SSH 管理连接");
     if (typeof options.run !== "function") throw new Error("远端操作缺少执行函数");
     const action = String(options.action || "configure");
+    const resourceKey = String(options.resource_key || `remote-component:${Number(connection.id || 0)}:${String(options.component || "remote-component")}`).trim();
+    const packageManagerLock = options.package_manager_lock === true
+      || /(?:^|-)install(?:-|$)|(?:^|-)uninstall(?:-|$)/.test(action.toLowerCase());
+    const resourceKeys = normalizedResourceKeys(resourceKey, [
+      ...(Array.isArray(options.resource_keys) ? options.resource_keys : []),
+      ...(packageManagerLock ? [packageManagerResourceKey(connection)] : [])
+    ]);
+    assertResourcesAvailable(resourceKeys, options.component_label);
     const task = {
       id:`remote-component-${now()}-${++sequence}`,
       component:String(options.component || "remote-component"),
@@ -433,6 +509,8 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
       action,
       action_label:actionLabel(action, options.action_label),
       mode:String(options.mode || "online"),
+      resource_key:resourceKey,
+      resource_keys:resourceKeys,
       connection_id:Number(connection.id || 0),
       connection_name:String(connection.name || connection.ssh_host || ""),
       status:"running",

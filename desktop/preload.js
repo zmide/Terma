@@ -1,23 +1,23 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-const capabilities = Object.freeze(ipcRenderer.sendSync("tunneldesk:capabilities") || {
+const capabilities = Object.freeze(ipcRenderer.sendSync("terma:capabilities") || {
   platform:process.platform,
   sftpExternalDrag:false
 });
 
-contextBridge.exposeInMainWorld("tunnelDeskDesktop", {
+contextBridge.exposeInMainWorld("termaDesktop", {
   capabilities,
   setTheme(theme) {
-    if (theme === "dark" || theme === "light") ipcRenderer.send("tunneldesk:set-theme", theme);
+    if (theme === "dark" || theme === "light") ipcRenderer.send("terma:set-theme", theme);
   },
   readClipboardText() {
-    return ipcRenderer.invoke("tunneldesk:clipboard-read");
+    return ipcRenderer.invoke("terma:clipboard-read");
   },
   writeClipboardText(text) {
-    return ipcRenderer.invoke("tunneldesk:clipboard-write", String(text ?? ""));
+    return ipcRenderer.invoke("terma:clipboard-write", String(text ?? ""));
   },
   startSftpDrag(payload, requestId) {
-    ipcRenderer.send("tunneldesk:sftp-start-drag", {
+    ipcRenderer.send("terma:sftp-start-drag", {
       ...(Array.isArray(payload)
         ? {files:payload}
         : {
@@ -29,38 +29,38 @@ contextBridge.exposeInMainWorld("tunnelDeskDesktop", {
     });
   },
   activateSftpDrag(requestId) {
-    ipcRenderer.send("tunneldesk:sftp-drag-activate", {
+    ipcRenderer.send("terma:sftp-drag-activate", {
       requestId:String(requestId || "")
     });
   },
   setSftpDragTarget(requestId, target, options={}) {
-    ipcRenderer.send("tunneldesk:sftp-drag-target", {
+    ipcRenderer.send("terma:sftp-drag-target", {
       requestId:String(requestId || ""),
       target:target && typeof target === "object" ? target : null,
       final:Boolean(options?.final)
     });
   },
   cancelSftpDrag(requestId) {
-    ipcRenderer.send("tunneldesk:sftp-drag-cancel", {
+    ipcRenderer.send("terma:sftp-drag-cancel", {
       requestId:String(requestId || "")
     });
   },
   onSftpDragEvent(callback) {
     if (typeof callback !== "function") return () => {};
     const handler = (_event, result) => callback(result && typeof result === "object" ? result : {});
-    ipcRenderer.on("tunneldesk:sftp-drag-event", handler);
-    return () => ipcRenderer.removeListener("tunneldesk:sftp-drag-event", handler);
+    ipcRenderer.on("terma:sftp-drag-event", handler);
+    return () => ipcRenderer.removeListener("terma:sftp-drag-event", handler);
   },
   onSftpDragResult(callback) {
     if (typeof callback !== "function") return () => {};
     const handler = (_event, result) => callback(result && typeof result === "object" ? result : {ok:false, message:"无法启动系统拖拽"});
-    ipcRenderer.on("tunneldesk:sftp-drag-result", handler);
-    return () => ipcRenderer.removeListener("tunneldesk:sftp-drag-result", handler);
+    ipcRenderer.on("terma:sftp-drag-result", handler);
+    return () => ipcRenderer.removeListener("terma:sftp-drag-result", handler);
   },
   onSftpDragError(callback) {
     if (typeof callback !== "function") return () => {};
     const handler = (_event, message) => callback(String(message || "无法启动系统拖拽"));
-    ipcRenderer.on("tunneldesk:sftp-drag-error", handler);
-    return () => ipcRenderer.removeListener("tunneldesk:sftp-drag-error", handler);
+    ipcRenderer.on("terma:sftp-drag-error", handler);
+    return () => ipcRenderer.removeListener("terma:sftp-drag-error", handler);
   }
 });

@@ -2,8 +2,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const temporaryDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-vnc-clipboard-acceptance-"));
-process.env.TUNNELDESK_DATA_DIR = temporaryDataDir;
+const temporaryDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "terma-vnc-clipboard-acceptance-"));
+process.env.TERMA_DATA_DIR = temporaryDataDir;
 const { readVncRemoteClipboard, writeVncRemoteClipboard } = require("../dist/vnc-clipboard");
 const { runSshCommandForConnection } = require("../dist/ssh");
 const { closeDatabase } = require("../dist/db");
@@ -45,7 +45,7 @@ async function main() {
   const dependencies = { getConnection:() => connection, runSshCommandForConnection };
   await trustTestHost(connection, "persist");
   const before = await readVncRemoteClipboard(profile, dependencies);
-  const marker = `TunnelDesk VNC clipboard acceptance\n中文剪贴板 🙂 ${Date.now()}`;
+  const marker = `Terma VNC clipboard acceptance\n中文剪贴板 🙂 ${Date.now()}`;
   let restored = false;
   try {
     const written = await writeVncRemoteClipboard(profile, marker, dependencies);
@@ -71,7 +71,7 @@ main().catch(error => {
   try { closeDatabase(); } catch {}
   const resolved = path.resolve(temporaryDataDir);
   const tempRoot = path.resolve(os.tmpdir());
-  if (resolved.startsWith(`${tempRoot}${path.sep}`) && path.basename(resolved).startsWith("tunneldesk-vnc-clipboard-acceptance-")) {
+  if (resolved.startsWith(`${tempRoot}${path.sep}`) && path.basename(resolved).startsWith("terma-vnc-clipboard-acceptance-")) {
     fs.rmSync(resolved, {recursive:true, force:true});
   }
 });

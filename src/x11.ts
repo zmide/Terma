@@ -5,6 +5,7 @@ const path = require("node:path");
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { spawnSync } = require("node:child_process");
 const { componentInstallPlan } = require("./remote-component-installer");
+const { remoteProbeMarker } = require("./remote-probe-protocol");
 
 const X11_APPLICATION_CATALOG = [
   {id:"xterm", label:"XTerm", command:"xterm", category:"terminal", category_label:"终端", kind:"tool", mode:"untrusted"},
@@ -54,14 +55,14 @@ function shellJoin(values) {
 function remoteXQuartzInstallCommand() {
   return [
     "set -eu",
-    "td_dir=$(mktemp -d -t tunneldesk-xquartz.XXXXXX)",
-    "trap 'rm -rf \"$td_dir\"' EXIT INT TERM",
-    `td_pkg="$td_dir/XQuartz-${REMOTE_XQUARTZ_VERSION}.pkg"`,
-    `curl -fL --retry 3 --connect-timeout 20 -o "$td_pkg" ${shellJoin([REMOTE_XQUARTZ_URL])}`,
-    `test "$(stat -f %z "$td_pkg")" = "${REMOTE_XQUARTZ_BYTES}"`,
-    `test "$(shasum -a 256 "$td_pkg" | awk '{print $1}')" = "${REMOTE_XQUARTZ_SHA256}"`,
-    `pkgutil --check-signature "$td_pkg" | grep -q ${shellJoin([REMOTE_XQUARTZ_TEAM_ID])}`,
-    "sudo /usr/sbin/installer -pkg \"$td_pkg\" -target /",
+    "terma_dir=$(mktemp -d -t terma-xquartz.XXXXXX)",
+    "trap 'rm -rf \"$terma_dir\"' EXIT INT TERM",
+    `terma_pkg="$terma_dir/XQuartz-${REMOTE_XQUARTZ_VERSION}.pkg"`,
+    `curl -fL --retry 3 --connect-timeout 20 -o "$terma_pkg" ${shellJoin([REMOTE_XQUARTZ_URL])}`,
+    `test "$(stat -f %z "$terma_pkg")" = "${REMOTE_XQUARTZ_BYTES}"`,
+    `test "$(shasum -a 256 "$terma_pkg" | awk '{print $1}')" = "${REMOTE_XQUARTZ_SHA256}"`,
+    `pkgutil --check-signature "$terma_pkg" | grep -q ${shellJoin([REMOTE_XQUARTZ_TEAM_ID])}`,
+    "sudo /usr/sbin/installer -pkg \"$terma_pkg\" -target /",
     "test -x /opt/X11/bin/xauth",
     "printf '\\nXQuartz installation verified: /opt/X11/bin/xauth\\n'"
   ].join("; ");
@@ -73,7 +74,7 @@ function buildRemoteX11UninstallPlan(discovery: any = {}) {
     return {
       available:false,
       command:"",
-      reason:"XQuartz 会安装系统级组件，TunnelDesk 不会在无法确认安装来源时自动删除；请使用手动卸载说明"
+      reason:"XQuartz 会安装系统级组件，Terma 不会在无法确认安装来源时自动删除；请使用手动卸载说明"
     };
   }
   const packageManager = String(discovery.package_manager || "none").toLowerCase();
@@ -81,9 +82,9 @@ function buildRemoteX11UninstallPlan(discovery: any = {}) {
   if (!packages.length || packageManager === "brew") return null;
   const args = shellJoin(packages);
   const commands = {
-    apt:`td_packages=""; for td_package in ${args}; do dpkg-query -W -f='${"${Status}"}' "$td_package" 2>/dev/null | grep -q 'install ok installed' && td_packages="$td_packages $td_package" || true; done; [ -z "$td_packages" ] || DEBIAN_FRONTEND=noninteractive apt-get purge -y $td_packages`,
-    dnf:`td_packages=""; for td_package in ${args}; do rpm -q "$td_package" >/dev/null 2>&1 && td_packages="$td_packages $td_package" || true; done; [ -z "$td_packages" ] || dnf remove -y $td_packages`,
-    pacman:`td_packages=""; for td_package in ${args}; do pacman -Q "$td_package" >/dev/null 2>&1 && td_packages="$td_packages $td_package" || true; done; [ -z "$td_packages" ] || pacman -R --noconfirm $td_packages`
+    apt:`terma_packages=""; for terma_package in ${args}; do dpkg-query -W -f='${"${Status}"}' "$terma_package" 2>/dev/null | grep -q 'install ok installed' && terma_packages="$terma_packages $terma_package" || true; done; [ -z "$terma_packages" ] || DEBIAN_FRONTEND=noninteractive apt-get purge -y $terma_packages`,
+    dnf:`terma_packages=""; for terma_package in ${args}; do rpm -q "$terma_package" >/dev/null 2>&1 && terma_packages="$terma_packages $terma_package" || true; done; [ -z "$terma_packages" ] || dnf remove -y $terma_packages`,
+    pacman:`terma_packages=""; for terma_package in ${args}; do pacman -Q "$terma_package" >/dev/null 2>&1 && terma_packages="$terma_packages $terma_package" || true; done; [ -z "$terma_packages" ] || pacman -R --noconfirm $terma_packages`
   };
   const command = commands[packageManager] || "";
   return command ? {
@@ -91,7 +92,7 @@ function buildRemoteX11UninstallPlan(discovery: any = {}) {
     package_manager:packageManager,
     package_names:packages,
     command,
-    warning:"卸载会移除 TunnelDesk X11 探测建议中的基础工具；其他桌面或软件也可能正在使用这些组件"
+    warning:"卸载会移除 Terma X11 探测建议中的基础工具；其他桌面或软件也可能正在使用这些组件"
   } : null;
 }
 
@@ -134,7 +135,7 @@ function buildRemoteX11InstallPlan(discovery: any = {}) {
       xquartz_installed:Boolean(discovery.xquartz_installed),
       instructions:installed
         ? ["远端 XQuartz 与 xauth 已安装，无需重复安装。", "如果刚开启 SSH X11 转发，请重新建立 SSH 会话后再启动图形程序。"]
-        : ["TunnelDesk 会下载并校验 XQuartz 官方安装包，然后调用 macOS 安装器。", "终端出现 sudo 密码提示时，请输入远端 macOS 账号密码；安装后重新检测 X11 程序。"]
+        : ["Terma 会下载并校验 XQuartz 官方安装包，然后调用 macOS 安装器。", "终端出现 sudo 密码提示时，请输入远端 macOS 账号密码；安装后重新检测 X11 程序。"]
     };
   }
   if (!packages.length) {
@@ -187,7 +188,7 @@ function buildRemoteX11InstallPlan(discovery: any = {}) {
     local_offline_packages:packageManager === "apt" ? packages : [],
     local_offline_command:localOfflineCommand,
     local_offline_description:packageManager === "apt"
-      ? "仅适用于 Debian/Ubuntu 及兼容 APT/.deb 系统：TunnelDesk 在本机下载匹配的 X11 软件包和依赖，再通过 SFTP 上传并安装"
+      ? "仅适用于 Debian/Ubuntu 及兼容 APT/.deb 系统：Terma 在本机下载匹配的 X11 软件包和依赖，再通过 SFTP 上传并安装"
       : `本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前检测到 ${packageManager || "未识别包管理器"}，无法自动解析并上传 X11 软件包依赖`,
     manual_description:"查看当前发行版、xauth 和常用 X11 应用的安装说明"
   });
@@ -218,23 +219,23 @@ function posixQuote(value) {
 }
 
 const X11_DISCOVERY_SCRIPT = [
-  "printf 'TD_X11_APPS_V1\\n'",
-  "td_platform=$(uname -s 2>/dev/null || printf unknown)",
-  "printf 'PLATFORM\\t%s\\n' \"$td_platform\"",
-  "td_xauth=$(command -v xauth 2>/dev/null || true)",
-  "[ -n \"$td_xauth\" ] || for td_candidate in /opt/X11/bin/xauth /usr/X11/bin/xauth /usr/bin/xauth; do [ -x \"$td_candidate\" ] && td_xauth=\"$td_candidate\" && break; done",
-  "printf 'XAUTH\\t%s\\n' \"$td_xauth\"",
-  "td_xquartz=0; [ -d /Applications/Utilities/XQuartz.app ] || [ -d /Applications/XQuartz.app ] || [ -x /opt/X11/bin/xauth ] && td_xquartz=1",
-  "printf 'XQUARTZ\\t%s\\n' \"$td_xquartz\"",
-  "td_package_manager=none",
-  "command -v apt-get >/dev/null 2>&1 && td_package_manager=apt",
-  "command -v dnf >/dev/null 2>&1 && td_package_manager=dnf",
-  "command -v pacman >/dev/null 2>&1 && td_package_manager=pacman",
-  "command -v brew >/dev/null 2>&1 && td_package_manager=brew",
-  "printf 'PACKAGE_MANAGER\\t%s\\n' \"$td_package_manager\"",
-  "td_privileged=0; [ \"$(id -u 2>/dev/null)\" = \"0\" ] && td_privileged=1; [ \"$td_privileged\" = \"1\" ] || sudo -n true >/dev/null 2>&1 && td_privileged=1",
-  "printf 'PRIVILEGED\\t%s\\n' \"$td_privileged\"",
-  ...X11_APPLICATION_CATALOG.map((item) => `td_path=$(command -v ${posixQuote(item.command)} 2>/dev/null || true); [ -n \"$td_path\" ] || for td_candidate in /opt/X11/bin/${posixQuote(item.command)} /usr/X11/bin/${posixQuote(item.command)}; do [ -x \"$td_candidate\" ] && td_path=\"$td_candidate\" && break; done; [ -n \"$td_path\" ] && printf 'APP\\t${item.id}\\t%s\\n' \"$td_path\"`),
+  "printf 'TERMA_X11_APPS_V1\\n'",
+  "terma_platform=$(uname -s 2>/dev/null || printf unknown)",
+  "printf 'PLATFORM\\t%s\\n' \"$terma_platform\"",
+  "terma_xauth=$(command -v xauth 2>/dev/null || true)",
+  "[ -n \"$terma_xauth\" ] || for terma_candidate in /opt/X11/bin/xauth /usr/X11/bin/xauth /usr/bin/xauth; do [ -x \"$terma_candidate\" ] && terma_xauth=\"$terma_candidate\" && break; done",
+  "printf 'XAUTH\\t%s\\n' \"$terma_xauth\"",
+  "terma_xquartz=0; [ -d /Applications/Utilities/XQuartz.app ] || [ -d /Applications/XQuartz.app ] || [ -x /opt/X11/bin/xauth ] && terma_xquartz=1",
+  "printf 'XQUARTZ\\t%s\\n' \"$terma_xquartz\"",
+  "terma_package_manager=none",
+  "command -v apt-get >/dev/null 2>&1 && terma_package_manager=apt",
+  "command -v dnf >/dev/null 2>&1 && terma_package_manager=dnf",
+  "command -v pacman >/dev/null 2>&1 && terma_package_manager=pacman",
+  "command -v brew >/dev/null 2>&1 && terma_package_manager=brew",
+  "printf 'PACKAGE_MANAGER\\t%s\\n' \"$terma_package_manager\"",
+  "terma_privileged=0; [ \"$(id -u 2>/dev/null)\" = \"0\" ] && terma_privileged=1; [ \"$terma_privileged\" = \"1\" ] || sudo -n true >/dev/null 2>&1 && terma_privileged=1",
+  "printf 'PRIVILEGED\\t%s\\n' \"$terma_privileged\"",
+  ...X11_APPLICATION_CATALOG.map((item) => `terma_path=$(command -v ${posixQuote(item.command)} 2>/dev/null || true); [ -n \"$terma_path\" ] || for terma_candidate in /opt/X11/bin/${posixQuote(item.command)} /usr/X11/bin/${posixQuote(item.command)}; do [ -x \"$terma_candidate\" ] && terma_path=\"$terma_candidate\" && break; done; [ -n \"$terma_path\" ] && printf 'APP\\t${item.id}\\t%s\\n' \"$terma_path\"`),
   "exit 0"
 ].join("\n");
 
@@ -244,7 +245,7 @@ function cleanProbeValue(value, maximum = 2048) {
 
 function parseX11ApplicationDiscovery(value) {
   const output = String(value || "").slice(0, 128 * 1024).replace(/\r\n?/g, "\n");
-  if (!output.split("\n").some((line) => line.trim() === "TD_X11_APPS_V1")) throw new Error("远端返回了无法识别的 X11 探测结果");
+  if (!remoteProbeMarker(output, "X11_APPS_V1")) throw new Error("远端返回了无法识别的 X11 探测结果");
   let platform = "";
   let xauth = "";
   let packageManager = "none";
@@ -301,15 +302,16 @@ function normalizeX11ApplicationCommand(value) {
 
 async function verifyRemoteX11Application(runCommand, value) {
   const command = normalizeX11ApplicationCommand(value);
-  const script = `td_path=$(command -v ${posixQuote(command)} 2>/dev/null || true); [ -n \"$td_path\" ] || for td_candidate in /opt/X11/bin/${posixQuote(command)} /usr/X11/bin/${posixQuote(command)}; do [ -x \"$td_candidate\" ] && td_path=\"$td_candidate\" && break; done; if [ -n \"$td_path\" ]; then printf 'TD_X11_APP_OK\\t%s\\n' \"$td_path\"; else printf 'TD_X11_APP_MISSING\\n'; exit 127; fi`;
+  const script = `terma_path=$(command -v ${posixQuote(command)} 2>/dev/null || true); [ -n \"$terma_path\" ] || for terma_candidate in /opt/X11/bin/${posixQuote(command)} /usr/X11/bin/${posixQuote(command)}; do [ -x \"$terma_candidate\" ] && terma_path=\"$terma_candidate\" && break; done; if [ -n \"$terma_path\" ]; then printf 'TERMA_X11_APP_OK\\t%s\\n' \"$terma_path\"; else printf 'TERMA_X11_APP_MISSING\\n'; exit 127; fi`;
   const result = await runCommand(buildRemotePosixCommand(script));
   const output = String(result?.stdout || "").replace(/\r\n?/g, "\n");
-  const found = output.split("\n").find((line) => line.startsWith("TD_X11_APP_OK\t"));
+  const marker = remoteProbeMarker(output, "X11_APP_OK");
+  const found = marker ? output.split("\n").find((line) => line.startsWith(`${marker}\t`)) : "";
   if (result?.status !== 0 || !found) {
     const detail = String(result?.stderr || result?.error?.message || "").trim();
     throw new Error(detail || `远端未安装或无法执行 ${command}`);
   }
-  return {ok:true, command, path:cleanProbeValue(found.slice("TD_X11_APP_OK\t".length))};
+  return {ok:true, command, path:cleanProbeValue(found.slice(`${marker}\t`.length))};
 }
 
 function commandOutput(command, args = []) {
@@ -363,8 +365,8 @@ function xauthExecutable() {
   const discovered = commandOutput(process.platform === "win32" ? "where" : "which", [process.platform === "win32" ? "xauth.exe" : "xauth"])
     .split(/\r?\n/)[0] || "";
   const candidates = process.platform === "darwin"
-    ? [process.env.TUNNELDESK_XAUTH, discovered, "/opt/X11/bin/xauth", "/usr/X11/bin/xauth", "/usr/bin/xauth"]
-    : [process.env.TUNNELDESK_XAUTH, discovered];
+    ? [process.env.TERMA_XAUTH, process.env.TUNNELDESK_XAUTH, discovered, "/opt/X11/bin/xauth", "/usr/X11/bin/xauth", "/usr/bin/xauth"]
+    : [process.env.TERMA_XAUTH, process.env.TUNNELDESK_XAUTH, discovered];
   return String(candidates.find(file => {
     try { return file && fs.statSync(file).isFile(); } catch { return false; }
   }) || "").trim();
@@ -395,7 +397,7 @@ function localX11Authorization(mode = "untrusted") {
   const sourceAuthority = localX11AuthorityFile();
   try {
     if (mode === "untrusted") {
-      authorityFile = path.join(os.tmpdir(), `tunneldesk-x11-${process.pid}-${crypto.randomUUID()}`);
+      authorityFile = path.join(os.tmpdir(), `terma-x11-${process.pid}-${crypto.randomUUID()}`);
       if (sourceAuthority) fs.copyFileSync(sourceAuthority, authorityFile);
       const generated = spawnSync(xauth, ["-f", authorityFile, "generate", endpoint.display, ".", "untrusted", "timeout", "600"], {
         encoding:"utf8",
@@ -443,7 +445,7 @@ function macDisplay() {
   if (state.running && display) {
     process.env.DISPLAY = display;
     const xauth = xauthExecutable();
-    if (xauth) process.env.TUNNELDESK_XAUTH = xauth;
+    if (xauth) process.env.TERMA_XAUTH = xauth;
     if (state.authorityFile && fs.existsSync(state.authorityFile)) process.env.XAUTHORITY = state.authorityFile;
   }
   return display;
@@ -506,7 +508,7 @@ function terminalX11Environment() {
   if (!diagnostics.display) return {};
   const environment: any = {DISPLAY:diagnostics.display};
   const xauth = xauthExecutable();
-  if (xauth) environment.TUNNELDESK_XAUTH = xauth;
+  if (xauth) environment.TERMA_XAUTH = xauth;
   if (diagnostics.authority_file) environment.XAUTHORITY = diagnostics.authority_file;
   return environment;
 }

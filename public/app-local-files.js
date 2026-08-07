@@ -1,4 +1,4 @@
-const LOCAL_FILES_DRAG_MIME = "application/x-tunneldesk-local-files";
+const LOCAL_FILES_DRAG_MIME = "application/x-terma-local-files";
 const LOCAL_FILES_COMPUTER_PATH = "::computer::";
 const localFileRuntimes = new Map();
 const localDeliveryJobTargets = new Map();
@@ -12,7 +12,7 @@ function localFilesInlineArg(value) {
 }
 
 function localFilesAvailable() {
-  return Boolean(window.tunnelDeskDesktop);
+  return Boolean(window.termaDesktop);
 }
 
 function localFilesRoot(tabKey) {
@@ -101,7 +101,7 @@ async function openLocalFilesInPlacement(splitZone="") {
 
 async function openLocalFiles(requestedPath="", updateTab=true, existingKey="") {
   if (!localFilesAvailable()) {
-    notify("本地文件只支持在 TunnelDesk 桌面端使用", "info");
+    notify("本地文件只支持在 Terma 桌面端使用", "info");
     return "";
   }
   const key = existingKey || `local-files-${Date.now()}-${++localFileTabSerial}`;
@@ -304,7 +304,7 @@ function showLocalFileEntryMenu(event, pathValue, type, tabKey) {
     {separator:true},
     ...(canMutate && selectionCount === 1 ? [{label:"重命名", icon:"pencil", run:() => renameLocalPath(pathValue, tabKey)}] : []),
     ...(canMutate ? [{label:selectionCount > 1 ? `删除已选 ${selectionCount} 项` : "删除", icon:"trash-2", danger:true, run:() => deleteLocalFiles(selectedPaths, tabKey)}] : []),
-    ...(window.tunnelDeskDesktop && canMutate ? [{label:"上传到 SFTP", icon:"upload", children:() => localFilesUploadActions(tabKey)}] : []),
+    ...(window.termaDesktop && canMutate ? [{label:"上传到 SFTP", icon:"upload", children:() => localFilesUploadActions(tabKey)}] : []),
     ...(canMutate && selectionCount === 1 ? [{label:"设置权限", icon:"key-round", run:() => chmodLocalPath(pathValue, tabKey)}] : [])
   ];
   showActionMenu(event, actions);
@@ -350,7 +350,7 @@ async function renameLocalPath(pathValue, tabKey) {
 async function deleteLocalFiles(paths, tabKey) {
   const items = Array.isArray(paths) ? paths.filter(Boolean) : [];
   if (!items.length) return notify("请选择文件或目录", "info");
-  if (!await confirmModal(`确认删除 ${items.length} 个本地项目？删除后无法通过 TunnelDesk 恢复。`, "删除本地项目", "删除", "取消", true)) return;
+  if (!await confirmModal(`确认删除 ${items.length} 个本地项目？删除后无法通过 Terma 恢复。`, "删除本地项目", "删除", "取消", true)) return;
   try {
     await api("/api/local-files/delete", {method:"POST", body:JSON.stringify({paths:items})});
     await localFilesMutationRefresh(tabKey);
@@ -749,8 +749,8 @@ function finishLocalFileDrag(eventOrOptions={}) {
 }
 
 function bindLocalFileDragLifecycle() {
-  if (typeof document === "undefined" || typeof document.addEventListener !== "function" || document.__tunneldeskLocalFileDragLifecycleBound) return;
-  document.__tunneldeskLocalFileDragLifecycleBound = true;
+  if (typeof document === "undefined" || typeof document.addEventListener !== "function" || document.__termaLocalFileDragLifecycleBound) return;
+  document.__termaLocalFileDragLifecycleBound = true;
   document.addEventListener("dragend", event => finishLocalFileDrag(event), true);
   document.addEventListener("drop", () => setTimeout(() => finishLocalFileDrag({immediate:true}), 0), true);
 }

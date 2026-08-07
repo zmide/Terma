@@ -107,9 +107,9 @@ for (const viewport of [320, 392, 520]) {
   assert.ok(contentWidth - fixedColumnsAndGaps >= 0, `${viewport}px 窄窗下本地文件名称列必须保留非负宽度`);
 }
 
-const temp = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-local-files-check-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(temp, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(temp, "ssh");
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "terma-local-files-check-"));
+process.env.TERMA_DATA_DIR = path.join(temp, "data");
+process.env.TERMA_SSH_DIR = path.join(temp, "ssh");
 try {
   const directory = path.join(temp, "browse");
   fs.mkdirSync(path.join(directory, "Folder"), {recursive:true});

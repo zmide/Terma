@@ -834,7 +834,7 @@ void EnsureLoopbackUrl(const std::wstring& url) {
   if (host != L"localhost" && host != L"127.0.0.1" && host != L"::1" &&
       host != L"[::1]") {
     throw std::runtime_error(
-        "Content URL must point to the local TunnelDesk service");
+        "Content URL must point to the local Terma service");
   }
 }
 
@@ -1494,7 +1494,7 @@ bool FetchDocument(const std::shared_ptr<DragSession>& session,
   }
 
   Handle internet(WinHttpOpen(
-      L"TunnelDesk-SFTP-Drag/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY,
+      L"Terma-SFTP-Drag/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY,
       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
   if (!internet) {
     *error = LastErrorMessage(GetLastError());
@@ -1826,7 +1826,7 @@ HRESULT FetchRange(const std::shared_ptr<DragSession>& session,
   }
 
   Handle internet(WinHttpOpen(
-      L"TunnelDesk-SFTP-Drag/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY,
+      L"Terma-SFTP-Drag/1.0", WINHTTP_ACCESS_TYPE_NO_PROXY,
       WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0));
   if (!internet) {
     return fail(LastErrorMessage(GetLastError()));
@@ -2605,7 +2605,7 @@ class VirtualFileDataObject final : public IDataObject,
   HRESULT ResolveManifestForDataRequest() {
     if (session_->IsManifestPending()) {
       // Chromium probes the OLE data object while the pointer is still over
-      // TunnelDesk. Waiting here keeps the hidden drag window's mouse capture
+      // Terma. Waiting here keeps the hidden drag window's mouse capture
       // alive and makes the application appear frozen for large directories.
       // Explorer's asynchronous extraction retries after StartOperation.
       if ((!session_->released.load() && IsCursorOverSourceWindow()) ||
@@ -2897,7 +2897,7 @@ bool RunDragOnWorkerThread(const std::shared_ptr<DragSession>& session) {
   ScopedThreadInputAttachment input_attachment(session->spec.source_window);
   HWND drag_window = CreateWindowExW(
       WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT, L"STATIC",
-      L"TunnelDesk SFTP virtual drag", WS_POPUP, -32000, -32000, 1, 1,
+      L"Terma SFTP virtual drag", WS_POPUP, -32000, -32000, 1, 1,
       nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
   if (drag_window == nullptr) {
     OleUninitialize();
@@ -2953,7 +2953,7 @@ bool RunDragOnWorkerThread(const std::shared_ptr<DragSession>& session) {
 
   // Advertise delayed extraction before entering OLE drag/drop. Explorer then
   // releases the pointer gesture immediately and consumes the remote streams
-  // in its copy operation while TunnelDesk's main thread stays responsive.
+  // in its copy operation while Terma's main thread stays responsive.
   data_object->SetAsyncMode(TRUE);
   session->Emit("started", {}, {}, S_OK, true);
   DWORD effect = DROPEFFECT_NONE;
@@ -3222,7 +3222,7 @@ napi_value StartDrag(napi_env env, napi_callback_info info) {
     auto session =
         std::make_shared<DragSession>(std::move(spec), request_id);
     napi_value resource_name;
-    napi_create_string_utf8(env, "TunnelDesk Windows SFTP drag",
+    napi_create_string_utf8(env, "Terma Windows SFTP drag",
                             NAPI_AUTO_LENGTH, &resource_name);
     napi_status status = napi_create_threadsafe_function(
         env, event_callback, nullptr, resource_name, 0, 1, nullptr, nullptr,

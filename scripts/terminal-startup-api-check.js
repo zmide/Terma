@@ -60,7 +60,7 @@ async function trustConnection(url, connectionId) {
 }
 
 async function main() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-terminal-startup-api-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-terminal-startup-api-"));
   const keyFile = path.join(root, "fixture-key");
   fs.writeFileSync(keyFile, "fixture", { mode:0o600 });
   const port = await availablePort();
@@ -93,7 +93,7 @@ async function main() {
         session.on("exec", (acceptExec, _rejectExec, info) => {
           requests.push({ type:"exec", command:String(info.command || ""), pty:ptyRequested, env:{...environment} });
           const channel = acceptExec();
-          channel.write("__TD_STARTUP_WS_OK__\r\n");
+          channel.write("__TERMA_STARTUP_WS_OK__\r\n");
           channel.exit(0);
           channel.end();
         });
@@ -101,11 +101,11 @@ async function main() {
           const request = { type:"shell", command:"", pty:ptyRequested, env:{...environment}, data:Buffer.alloc(0) };
           requests.push(request);
           const channel = acceptShell();
-          channel.write("__TD_DEFAULT_WS_OK__\r\n");
+          channel.write("__TERMA_DEFAULT_WS_OK__\r\n");
           channel.on("data", chunk => {
             request.data = Buffer.concat([request.data, chunk]);
             if (!request.data.includes(iconv.encode("中文\r", "gb18030"))) return;
-            channel.write(iconv.encode("__TD_GB18030_OK_中文__\r\n", "gb18030"));
+            channel.write(iconv.encode("__TERMA_GB18030_OK_中文__\r\n", "gb18030"));
             channel.exit(0);
             channel.end();
           });
@@ -122,8 +122,8 @@ async function main() {
     cwd:path.resolve(__dirname, ".."),
     env:{
       ...process.env,
-      TUNNELDESK_DATA_DIR:path.join(root, "data"),
-      TUNNELDESK_SSH_DIR:path.join(root, ".ssh")
+      TERMA_DATA_DIR:path.join(root, "data"),
+      TERMA_SSH_DIR:path.join(root, ".ssh")
     },
     stdio:["ignore", "pipe", "pipe"],
     windowsHide:true
@@ -241,7 +241,7 @@ async function main() {
         text += event.data instanceof ArrayBuffer
           ? Buffer.from(event.data).toString("utf8")
           : Buffer.isBuffer(event.data) ? event.data.toString("utf8") : String(event.data || "");
-        if (!text.includes("__TD_STARTUP_WS_OK__")) return;
+        if (!text.includes("__TERMA_STARTUP_WS_OK__")) return;
         clearTimeout(timer);
         try { socket.close(); } catch {}
         resolve(text);
@@ -251,7 +251,7 @@ async function main() {
         reject(new Error(`终端 WebSocket 连接失败：${text}`));
       });
     });
-    assert.match(websocketOutput, /__TD_STARTUP_WS_OK__/);
+    assert.match(websocketOutput, /__TERMA_STARTUP_WS_OK__/);
     assert.equal(requests.length, 1);
     assert.equal(requests[0].type, "exec");
     assert.equal(requests[0].pty, true);
@@ -274,12 +274,12 @@ async function main() {
           ? Buffer.from(event.data)
           : Buffer.isBuffer(event.data) ? event.data : Buffer.from(String(event.data || ""), "utf8");
         outputBytes = Buffer.concat([outputBytes, chunk]);
-        if (!sent && outputBytes.includes(Buffer.from("__TD_DEFAULT_WS_OK__", "utf8"))) {
+        if (!sent && outputBytes.includes(Buffer.from("__TERMA_DEFAULT_WS_OK__", "utf8"))) {
           sent = true;
           socket.send(JSON.stringify({type:"terminal-encoding", encoding:"gb18030"}));
           socket.send("中文\r");
         }
-        if (!sent || !outputBytes.includes(Buffer.from("__TD_GB18030_OK_", "ascii"))) return;
+        if (!sent || !outputBytes.includes(Buffer.from("__TERMA_GB18030_OK_", "ascii"))) return;
         clearTimeout(timer);
         try { socket.close(); } catch {}
         resolve(outputBytes);
@@ -289,7 +289,7 @@ async function main() {
         reject(new Error(`终端在线编码切换 WebSocket 连接失败：${outputBytes.toString("hex")}`));
       });
     });
-    assert.match(encodingSwitchOutput.toString("utf8"), /__TD_GB18030_OK_中文__/, "编码切换后必须在同一 WebSocket 会话双向转码");
+    assert.match(encodingSwitchOutput.toString("utf8"), /__TERMA_GB18030_OK_中文__/, "编码切换后必须在同一 WebSocket 会话双向转码");
     assert.equal(requests.length, 2, "在线编码切换不得重新建立 SSH 会话");
     assert.equal(requests[1].type, "shell");
     assert.deepEqual(requests[1].env, {}, "默认 Shell 同样不得接收 locale 注入");

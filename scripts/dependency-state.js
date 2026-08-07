@@ -4,7 +4,8 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 const nodeModules = path.join(root, "node_modules");
-const marker = path.join(nodeModules, ".tunneldesk-dependencies.sha256");
+const marker = path.join(nodeModules, ".terma-dependencies.sha256");
+const legacyMarker = path.join(nodeModules, ".tunneldesk-dependencies.sha256");
 const manifests = ["package.json", "package-lock.json"]
   .map((name) => path.join(root, name))
   .filter((file) => fs.existsSync(file));
@@ -24,11 +25,20 @@ const required = [
 if (process.argv.includes("--write")) {
   fs.mkdirSync(nodeModules, { recursive: true });
   fs.writeFileSync(marker, `${fingerprint}\n`, "utf8");
+  try { fs.rmSync(legacyMarker, { force: true }); } catch {}
   process.exit(0);
 }
 
 let stored = "";
 try {
   stored = fs.readFileSync(marker, "utf8").trim();
-} catch {}
+} catch {
+  try {
+    stored = fs.readFileSync(legacyMarker, "utf8").trim();
+    if (stored === fingerprint) {
+      fs.writeFileSync(marker, `${stored}\n`, "utf8");
+      fs.rmSync(legacyMarker, { force: true });
+    }
+  } catch {}
+}
 process.exit(stored === fingerprint && required.every((file) => fs.existsSync(file)) ? 0 : 1);

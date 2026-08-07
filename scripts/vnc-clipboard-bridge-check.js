@@ -5,16 +5,21 @@ const {
   clearVncClipboardCapabilityCache,
   detectVncClipboardBridge,
   inspectVncClipboardHelper,
+  parseClipboardDetection,
   readVncRemoteClipboard,
   vncClipboardHelperGuideResult,
   vncClipboardHelperInstallPlan,
   writeVncRemoteClipboard
 } = require("../dist/vnc-clipboard");
+const legacyPrefix = ["T", "D"].join("");
 
 const detectionScript = buildClipboardDetectionScript(5900);
 assert.match(detectionScript, /td_is_local_display/);
 assert.match(detectionScript, /SSH X11-forwarded processes/);
 assert.match(detectionScript, /td_is_local_display "\$td_candidate_display" \|\| td_candidate_display=""/);
+assert.ok(detectionScript.includes("TERMA_VNC_CLIPBOARD_"));
+assert.equal(detectionScript.includes(`${legacyPrefix}_VNC_CLIPBOARD_`), false);
+assert.equal(parseClipboardDetection(`${legacyPrefix}_VNC_CLIPBOARD_MODE=macos\n${legacyPrefix}_VNC_CLIPBOARD_OS=Darwin`, 73).available, true);
 
 function decodeRemotePosixPayload(command) {
   const encoded = /td_payload=([A-Za-z0-9+/=]+);/.exec(String(command || ""))?.[1] || "";
@@ -25,7 +30,7 @@ async function main() {
   const profile = {id:7, protocol:"vnc", options:{source_ssh_connection_id:73}};
   const connection = {id:73, ssh_host:"mac.test", ssh_port:22, ssh_user:"tester"};
   const commands = [];
-  const text = "TunnelDesk macOS VNC clipboard 中文\n第二行 😀";
+  const text = "Terma macOS VNC clipboard 中文\n第二行 😀";
   const encoded = Buffer.from(text, "utf8").toString("base64");
   let step = 0;
   const dependencies = {
@@ -37,8 +42,8 @@ async function main() {
       assert.equal(receivedConnection, connection);
       commands.push(command);
       step += 1;
-      if (step === 1) return {status:0, stdout:"TD_VNC_CLIPBOARD_MODE=macos\nTD_VNC_CLIPBOARD_TOOL=pbcopy\nTD_VNC_CLIPBOARD_OS=Darwin\n", stderr:""};
-      if (step === 2) return {status:0, stdout:`TD_SIZE=${Buffer.byteLength(text)}\nTD_DATA=${encoded}\n`, stderr:""};
+      if (step === 1) return {status:0, stdout:"TERMA_VNC_CLIPBOARD_MODE=macos\nTERMA_VNC_CLIPBOARD_TOOL=pbcopy\nTERMA_VNC_CLIPBOARD_OS=Darwin\n", stderr:""};
+      if (step === 2) return {status:0, stdout:`TERMA_SIZE=${Buffer.byteLength(text)}\nTERMA_DATA=${encoded}\n`, stderr:""};
       return {status:0, stdout:"", stderr:""};
     }
   };
@@ -93,7 +98,7 @@ async function main() {
       {id:91, name:"Other host", ssh_host:"other.test", ssh_port:22, ssh_user:"tester"},
       connection
     ],
-    runSshCommandForConnection:async () => ({status:0, stdout:"TD_VNC_CLIPBOARD_MODE=macos\nTD_VNC_CLIPBOARD_TOOL=pbcopy\nTD_VNC_CLIPBOARD_OS=Darwin\n", stderr:""})
+    runSshCommandForConnection:async () => ({status:0, stdout:"TERMA_VNC_CLIPBOARD_MODE=macos\nTERMA_VNC_CLIPBOARD_TOOL=pbcopy\nTERMA_VNC_CLIPBOARD_OS=Darwin\n", stderr:""})
   });
   assert.equal(automaticallyMatchedId, 0, "按主机匹配不应依赖再次查询数据库");
   assert.equal(autoCapability.available, true);
@@ -123,17 +128,17 @@ async function main() {
       linuxCommands.push(String(command));
       linuxStep += 1;
       if (linuxStep === 1) return {status:0, stdout:[
-        "TD_VNC_CLIPBOARD_MODE=linux-x11",
-        "TD_VNC_CLIPBOARD_TOOL=xclip",
-        "TD_VNC_CLIPBOARD_OS=Linux",
-        "TD_VNC_CLIPBOARD_DISPLAY=:0",
-        "TD_VNC_CLIPBOARD_XAUTHORITY=/home/operator/.Xauthority",
-        "TD_VNC_CLIPBOARD_SESSION_USER=operator",
-        "TD_VNC_CLIPBOARD_SESSION_UID=1000",
-        "TD_VNC_CLIPBOARD_PACKAGE_MANAGER=apt",
-        "TD_VNC_CLIPBOARD_ROOT=false"
+        "TERMA_VNC_CLIPBOARD_MODE=linux-x11",
+        "TERMA_VNC_CLIPBOARD_TOOL=xclip",
+        "TERMA_VNC_CLIPBOARD_OS=Linux",
+        "TERMA_VNC_CLIPBOARD_DISPLAY=:0",
+        "TERMA_VNC_CLIPBOARD_XAUTHORITY=/home/operator/.Xauthority",
+        "TERMA_VNC_CLIPBOARD_SESSION_USER=operator",
+        "TERMA_VNC_CLIPBOARD_SESSION_UID=1000",
+        "TERMA_VNC_CLIPBOARD_PACKAGE_MANAGER=apt",
+        "TERMA_VNC_CLIPBOARD_ROOT=false"
       ].join("\n") + "\n", stderr:""};
-      if (linuxStep === 2) return {status:0, stdout:`TD_SIZE=${Buffer.byteLength(linuxText)}\nTD_DATA=${linuxEncoded}\n`, stderr:""};
+      if (linuxStep === 2) return {status:0, stdout:`TERMA_SIZE=${Buffer.byteLength(linuxText)}\nTERMA_DATA=${linuxEncoded}\n`, stderr:""};
       return {status:0, stdout:"", stderr:""};
     }
   };
@@ -163,11 +168,11 @@ async function main() {
     getConnection:id => Number(id) === 74 ? linuxConnection : null,
     async runSshCommandForConnection() {
       return {status:0, stdout:[
-        "TD_VNC_CLIPBOARD_MODE=unsupported",
-        "TD_VNC_CLIPBOARD_OS=Linux",
-        "TD_VNC_CLIPBOARD_SESSION_TYPE=x11",
-        "TD_VNC_CLIPBOARD_PACKAGE_MANAGER=apt",
-        "TD_VNC_CLIPBOARD_ROOT=false"
+        "TERMA_VNC_CLIPBOARD_MODE=unsupported",
+        "TERMA_VNC_CLIPBOARD_OS=Linux",
+        "TERMA_VNC_CLIPBOARD_SESSION_TYPE=x11",
+        "TERMA_VNC_CLIPBOARD_PACKAGE_MANAGER=apt",
+        "TERMA_VNC_CLIPBOARD_ROOT=false"
       ].join("\n") + "\n", stderr:""};
     }
   });
@@ -205,7 +210,7 @@ async function main() {
   clearVncClipboardCapabilityCache();
   const unsupported = await detectVncClipboardBridge(profile, {
     getConnection:() => connection,
-    runSshCommandForConnection:async () => ({status:0, stdout:"TD_VNC_CLIPBOARD_MODE=unsupported\n", stderr:""})
+    runSshCommandForConnection:async () => ({status:0, stdout:"TERMA_VNC_CLIPBOARD_MODE=unsupported\n", stderr:""})
   });
   assert.equal(unsupported.available, false);
   assert.equal(unsupported.transport, "rfb");

@@ -73,15 +73,15 @@ assert.match(clipboardDnf.local_offline.description, /当前检测到 dnf/);
 assert.match(vncClipboardHelperGuide({platform:"linux", package_manager:"dnf", session_type:"x11"}).steps.join("\n"), /不支持“本机下载后离线安装”/);
 
 const xdmcp = parseXdmcpDetection([
-  "TD_OS_ID=debian",
-  "TD_MANAGER=sddm",
-  "TD_SERVICE=sddm",
-  "TD_PACKAGE_MANAGER=apt",
-  "TD_PRIVILEGED=1",
-  "TD_ENABLED=0",
-  "TD_LISTENING=0",
-  "TD_FIREWALL=none",
-  "TD_SESSION=plasma|Plasma (X11)"
+  "TERMA_OS_ID=debian",
+  "TERMA_MANAGER=sddm",
+  "TERMA_SERVICE=sddm",
+  "TERMA_PACKAGE_MANAGER=apt",
+  "TERMA_PRIVILEGED=1",
+  "TERMA_ENABLED=0",
+  "TERMA_LISTENING=0",
+  "TERMA_FIREWALL=none",
+  "TERMA_SESSION=plasma|Plasma (X11)"
 ].join("\n"));
 assert.deepEqual(xdmcp.package_plans.lightdm.local_offline.package_names, ["lightdm", "lightdm-gtk-greeter"]);
 assert.deepEqual(xdmcp.package_plans.xfce.local_offline.package_names, ["xfce4", "dbus-x11"]);
@@ -103,15 +103,15 @@ assert.match(xdmcpDnf.local_offline.description, /当前检测到 dnf/);
       listConnections:() => [row],
       getConnection:() => row,
       runSshCommandForConnection:async () => ({status:0, stdout:[
-        "TD_OS_ID=debian",
-        "TD_MANAGER=sddm",
-        "TD_SERVICE=sddm",
-        "TD_PACKAGE_MANAGER=apt",
-        "TD_PRIVILEGED=1",
-        "TD_ENABLED=0",
-        "TD_LISTENING=0",
-        "TD_FIREWALL=none",
-        "TD_SESSION=plasma|Plasma (X11)"
+        "TERMA_OS_ID=debian",
+        "TERMA_MANAGER=sddm",
+        "TERMA_SERVICE=sddm",
+        "TERMA_PACKAGE_MANAGER=apt",
+        "TERMA_PRIVILEGED=1",
+        "TERMA_ENABLED=0",
+        "TERMA_LISTENING=0",
+        "TERMA_FIREWALL=none",
+        "TERMA_SESSION=plasma|Plasma (X11)"
       ].join("\n"), stderr:""}),
       startRemoteOfflineInstall:async options => {
         started = options;

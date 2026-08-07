@@ -7,7 +7,8 @@ const { DatabaseSync } = require("node:sqlite");
 const {
   createDatabaseBundleHeader,
   DatabaseTransferStore,
-  DATABASE_BUNDLE_MAGIC
+  DATABASE_BUNDLE_MAGIC,
+  LEGACY_DATABASE_BUNDLE_MAGIC
 } = require("../dist/database-transfer");
 
 function createFixture(root) {
@@ -22,8 +23,15 @@ async function rejectStage(store, body, pattern) {
   await assert.rejects(() => store.stage(Readable.from(body), "broken.tdbackup"), pattern);
 }
 
+function createBundle(magic, metadata, database) {
+  const body = Buffer.from(JSON.stringify(metadata), "utf8");
+  const size = Buffer.alloc(4);
+  size.writeUInt32BE(body.length, 0);
+  return Buffer.concat([magic, size, body, database]);
+}
+
 async function main() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-db-transfer-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-db-transfer-"));
   try {
     const fixture = createFixture(root);
     const store = new DatabaseTransferStore(root, 30 * 60 * 1000, 200 * 1024 * 1024);
@@ -38,15 +46,27 @@ async function main() {
 
     const security = { encryption_enabled: true, encryption_salt: "salt", encryption_check: "check" };
     const header = createDatabaseBundleHeader({
-      type: "tunneldesk-backup-v2",
+      type: "terma-backup-v3",
       created_at: new Date().toISOString(),
       security
     });
-    const bundle = await store.stage(Readable.from(Buffer.concat([header, fixture])), "fixture.tdbackup");
-    assert.equal(bundle.format, "bundle-v2");
+    assert.equal(header.subarray(0, DATABASE_BUNDLE_MAGIC.length).equals(DATABASE_BUNDLE_MAGIC), true);
+    const bundle = await store.stage(Readable.from(Buffer.concat([header, fixture])), "fixture.termabackup");
+    assert.equal(bundle.format, "bundle-v3");
     assert.deepEqual(bundle.security, security);
     assert.deepEqual(fs.readFileSync(bundle.database_path), fixture);
     store.discard(bundle);
+
+    const legacyV2 = createBundle(LEGACY_DATABASE_BUNDLE_MAGIC, {
+      type: "tunneldesk-backup-v2",
+      created_at: new Date().toISOString(),
+      security
+    }, fixture);
+    const legacyV2Stage = await store.stage(Readable.from(legacyV2), "fixture.tdbackup");
+    assert.equal(legacyV2Stage.format, "bundle-v2");
+    assert.deepEqual(legacyV2Stage.security, security);
+    assert.deepEqual(fs.readFileSync(legacyV2Stage.database_path), fixture);
+    store.discard(legacyV2Stage);
 
     const legacy = Buffer.from(JSON.stringify({
       type: "tunneldesk-backup-v1",
@@ -57,6 +77,20 @@ async function main() {
     assert.equal(legacyStage.format, "bundle-v1");
     assert.deepEqual(legacyStage.security, security);
     store.discard(legacyStage);
+
+    const restoreRequest = Buffer.from(JSON.stringify({
+      type: "tunneldesk-restore-request-v1",
+      payload_base64: legacy.toString("base64"),
+      identity_bindings: [{connection_id:1, identity_path:"~/.ssh/id_ed25519"}],
+      credential_bindings: [{connection_id:1, credential:"legacy"}]
+    }));
+    const requestStage = await store.stage(Readable.from(restoreRequest), "legacy-request.json");
+    assert.equal(requestStage.format, "request-v1");
+    assert.deepEqual(requestStage.security, security);
+    assert.equal(requestStage.legacy_identity_bindings.length, 1);
+    assert.equal(requestStage.legacy_credential_bindings.length, 1);
+    assert.deepEqual(fs.readFileSync(requestStage.database_path), fixture);
+    store.discard(requestStage);
 
     await rejectStage(store, DATABASE_BUNDLE_MAGIC, /文件为空|头部不完整/);
     const impossibleLength = Buffer.concat([DATABASE_BUNDLE_MAGIC, Buffer.from([0x7f, 0xff, 0xff, 0xff])]);

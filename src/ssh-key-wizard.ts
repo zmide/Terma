@@ -7,7 +7,7 @@ const { runSshCommandForConnection } = require("./ssh");
 const { buildRemotePosixCommand } = require("./remote-posix");
 
 function cleanKeyName(value) {
-  const name = String(value || "id_ed25519_tunneldesk").trim();
+  const name = String(value || "id_ed25519_terma").trim();
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(name) || name === "." || name === "..") {
     throw new Error("密钥名称只能包含字母、数字、点、横线和下划线");
   }
@@ -43,7 +43,7 @@ function generateUsableEd25519Key(comment, passphrase) {
 function generateSshKey(data: any = {}) {
   const target = uniqueKeyPath(data.name);
   const passphrase = String(data.passphrase || "");
-  const comment = String(data.comment || "TunnelDesk").trim().slice(0, 120);
+  const comment = String(data.comment || "Terma").trim().slice(0, 120);
   const keys = generateUsableEd25519Key(comment, passphrase);
   fs.writeFileSync(target, keys.private, {encoding:"utf8", mode:0o600, flag:"wx"});
   fs.writeFileSync(`${target}.pub`, `${String(keys.public).trim()}\n`, {encoding:"utf8", mode:0o644, flag:"wx"});
@@ -66,7 +66,7 @@ async function deployGeneratedPublicKey(connectionId, publicPath) {
   const target = path.resolve(String(publicPath || ""));
   const relative = path.relative(path.resolve(PROJECT_SSH_DIR), target);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || !target.endsWith(".pub")) {
-    throw new Error("公钥不在 TunnelDesk 密钥目录中");
+    throw new Error("公钥不在 Terma 密钥目录中");
   }
   const publicKey = fs.readFileSync(target, "utf8").trim();
   if (!/^ssh-ed25519\s+\S+/.test(publicKey)) throw new Error("公钥格式无效");

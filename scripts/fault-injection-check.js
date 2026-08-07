@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { readSftpJobHistory, writeSftpJobHistoryAtomic } = require("../dist/sftp-job-store");
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-faults-"));
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-faults-"));
 try {
   const state = path.join(root, "sftp-jobs.json");
   fs.writeFileSync(state, "{\"jobs\":[", "utf8");

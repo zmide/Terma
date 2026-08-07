@@ -3,8 +3,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-sync-check-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(root, "data");
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sync-check-"));
+process.env.TERMA_DATA_DIR = path.join(root, "data");
 const workspace = path.join(root, "workspace");
 
 try {

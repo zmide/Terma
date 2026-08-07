@@ -125,6 +125,7 @@ const {
   clearConnectionHealthCache
 } = require("./ssh");
 const { discoverRemoteTerminalCapabilities } = require("./ssh-capabilities");
+const { diagnoseSshError } = require("./ssh-diagnostics");
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { deployGeneratedPublicKey, generateSshKey } = require("./ssh-key-wizard");
 const { createTerminalStartupTicket } = require("./terminal-startup");
@@ -139,7 +140,7 @@ const { parseConfigText, batchTest, saveImported, exportConfig } = require("./im
 const { handleTerminalUpgrade, closeAllTerminals } = require("./terminal");
 const { closeAllRemoteTerminals, handleRemoteTerminalUpgrade, listSerialPorts, testRemoteTerminalProfile } = require("./remote-terminal");
 const { closeAllVncSessions, handleVncUpgrade, testVncProfile } = require("./vnc-proxy");
-const { buildVncStartCommand, detectVncServer } = require("./vnc-server-manager");
+const { buildVncStartCommand, detectVncServer, validateVncServerComponent, vncServerStartValidation, vncServerStopValidation } = require("./vnc-server-manager");
 const { componentInstallCommand } = require("./remote-component-installer");
 const { createRemoteOfflineTaskManager } = require("./remote-offline-tasks");
 const { clearVncClipboardCapabilityCache, inspectVncClipboardHelper, readVncRemoteClipboard, vncClipboardHelperGuideResult, writeVncRemoteClipboard } = require("./vnc-clipboard");
@@ -211,7 +212,7 @@ const updateChecker = createUpdateChecker({
       type: "update",
       level: "info",
       key: `update:${result.latest_version}`,
-      title: "发现 TunnelDesk 新版本",
+      title: "发现 Terma 新版本",
       message: `当前版本 ${result.current_version}，最新版本 ${result.latest_version}${result.name ? `（${result.name}）` : ""}。`,
       action: { url: result.release_url }
     }, { cooldown_ms: 0 });
@@ -232,7 +233,7 @@ function aboutInfo() {
     ? packageJson.author.replace(/\s*<[^>]+>\s*$/, "").trim()
     : String(packageJson.author?.name || "").trim();
   return {
-    product_name: "TunnelDesk",
+    product_name: "Terma",
     version: packageJson.version,
     author,
     license: packageJson.license,
@@ -479,6 +480,7 @@ async function installX11ApplicationsForConnection(connection, data: any = {}) {
         connection,
         component:"x11",
         component_label:"X11 组件",
+        resource_key:`x11-components:${Number(connection.id || 0)}`,
         packages,
         grant,
         elevate:true,
@@ -510,6 +512,7 @@ async function installX11ApplicationsForConnection(connection, data: any = {}) {
     connection,
     component:"x11",
     componentLabel:"X11 组件",
+    resourceKey:`x11-components:${Number(connection.id || 0)}`,
     action:uninstalling ? "uninstall" : mode === "offline" ? "install-offline" : "install",
     actionLabel:uninstalling ? "卸载" : mode === "offline" ? "使用远端缓存安装" : "在线安装",
     mode:uninstalling ? "uninstall" : mode,
@@ -529,20 +532,95 @@ async function installX11ApplicationsForConnection(connection, data: any = {}) {
 
 function createRemoteAdminGrant(connection, data, scope) {
   const auth = data?.admin_auth || data?.authorization || null;
-  const requestedGrant = String(data?.admin_grant_id || "").trim();
+  const requestedGrant = String(data?.admin_grant_id || auth?.admin_grant_id || auth?.grant_id || "").trim();
   if (requestedGrant) return getRemotePrivilegeGrant(requestedGrant, connection, scope);
   if (!auth || typeof auth !== "object") return null;
   if (auth.identity_file) {
     const requestedPath = path.resolve(String(auth.identity_file));
     const comparablePath = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
     const allowed = listIdentityFiles().some(item => comparablePath(item.path) === comparablePath(requestedPath));
-    if (!allowed) throw new Error("临时授权只能使用 TunnelDesk 已识别的私钥文件");
+    if (!allowed) throw new Error("临时授权只能使用 Terma 已识别的私钥文件");
   }
   return createRemotePrivilegeGrant(connection, auth, scope);
 }
 
 function releaseRemoteAdminGrant(grant) {
-  if (grant?.id) revokeRemotePrivilegeGrant(grant.id);
+  const policy = String(grant?.reuse_policy || grant?.reusePolicy || "once");
+  if (grant?.id && policy === "once") revokeRemotePrivilegeGrant(grant.id);
+}
+
+function adminGrantView(grant) {
+  if (!grant?.id) return null;
+  return {
+    id:String(grant.id),
+    expires_at:Number(grant.expires_at || grant.expiresAt || 0),
+    reuse_policy:String(grant.reuse_policy || grant.reusePolicy || "once"),
+    reusable:String(grant.reuse_policy || grant.reusePolicy || "once") !== "once",
+    ssh_user:String(grant.ssh_user || grant.connection?.ssh_user || ""),
+    auth_method:String(grant.auth_method || grant.authorization?.auth_method || "")
+  };
+}
+
+function normalizeRemoteAdminAuthorizationError(error) {
+  const raw = String(error?.message || error || "").trim();
+  const diagnosis = diagnoseSshError(raw);
+  const lower = raw.toLowerCase();
+  if (/all configured authentication methods failed|no more authentication methods available|permission denied \(publickey|authentication failed/.test(lower)) {
+    const normalized: any = new Error(`SSH 认证失败：请检查临时管理员 SSH 用户名、密码、私钥或 Agent。${diagnosis.suggestions?.[0] || "请重新检查认证信息后再试。"}`);
+    normalized.code = "REMOTE_ADMIN_AUTH_FAILED";
+    return normalized;
+  }
+  if (/sudo:\s*(?:incorrect password|a password is required|authentication failure|sorry, try again|管理权限验证失败)/i.test(raw)) {
+    const normalized: any = new Error("sudo 认证失败：sudo 密码不正确或当前账号没有免密 sudo 权限，请重新授权后再试。");
+    normalized.code = "REMOTE_ADMIN_SUDO_FAILED";
+    return normalized;
+  }
+  return error instanceof Error ? error : new Error(raw || "临时管理员授权失败");
+}
+
+async function issueRemoteAdminGrant(connection, data: any = {}) {
+  const grant = createRemoteAdminGrant(connection, {admin_auth:data.admin_auth || data.authorization || data}, "");
+  if (!grant) throw new Error("请提供临时管理员 SSH 认证信息");
+  try {
+    // Validate the SSH/root-or-sudo capability while the authorization dialog
+    // is still visible; this keeps later service errors separate from login errors.
+    const probe = await runRemotePrivilegeCommand(connection, "true", {grant_id:grant.id, timeout_ms:30000});
+    if (probe?.status !== 0) {
+      throw new Error(`${probe?.stderr || probe?.stdout || probe?.error?.message || "临时管理员 SSH 验证失败"}`.trim());
+    }
+    return {ok:true, admin_grant:adminGrantView(grant), admin_grant_id:grant.id};
+  } catch (error) {
+    // A failed initial probe must never leave reusable credentials in memory.
+    revokeRemotePrivilegeGrant(grant.id);
+    throw normalizeRemoteAdminAuthorizationError(error);
+  }
+}
+
+function normalizeVncRemoteCommandResult(result: any = {}) {
+  if (result?.status === 0) return result;
+  const raw = `${result?.stderr || ""}${result?.stdout || ""}${result?.error ? result.error.message || result.error : ""}`.trim();
+  if (!raw) return result;
+  const lower = raw.toLowerCase();
+  if (/all configured authentication methods failed|no more authentication methods available|permission denied \(publickey|authentication failed/.test(lower)) {
+    const diagnosis = diagnoseSshError(raw);
+    return {
+      ...result,
+      stdout:"",
+      stderr:`SSH 认证失败：临时管理员 SSH 用户名、密码、私钥或 Agent 不正确。${diagnosis.suggestions?.[0] || "请重新检查认证信息后再试。"}`,
+      error:null,
+      raw_error:raw
+    };
+  }
+  if (/sudo:\s*(?:incorrect password|a password is required|authentication failure|sorry, try again)/i.test(raw)) {
+    return {
+      ...result,
+      stdout:"",
+      stderr:"sudo 认证失败：sudo 密码不正确或当前账号没有免密 sudo 权限，请重新授权后再试。",
+      error:null,
+      raw_error:raw
+    };
+  }
+  return result;
 }
 
 function startRemoteComponentCommandTask({
@@ -556,9 +634,11 @@ function startRemoteComponentCommandTask({
   before = null,
   grant = null,
   scope,
+  resourceKey = "",
   timeoutMs = 20 * 60 * 1000,
   directRoot = false,
   normalizeCommand = value => value,
+  normalizeResult = value => value,
   verify = null,
   validate = null
 }: any) {
@@ -572,12 +652,13 @@ function startRemoteComponentCommandTask({
       action,
       action_label:actionLabel,
       mode,
+      resource_key:resourceKey,
       before,
-      run:onChunk => grant
+      run:async onChunk => normalizeResult(await (grant
         ? runRemotePrivilegeCommandStreaming(connection, normalized, {grant_id:grant.id, scope, timeout_ms:timeoutMs}, onChunk)
         : directRoot
           ? runSshCommandForConnectionStreaming(connection, buildRemotePosixCommand(normalized), timeoutMs, onChunk)
-          : runRemotePrivilegeCommandStreaming(connection, normalized, {scope, timeout_ms:timeoutMs}, onChunk),
+          : runRemotePrivilegeCommandStreaming(connection, normalized, {scope, timeout_ms:timeoutMs}, onChunk))),
       verify,
       validate,
       release:() => releaseRemoteAdminGrant(grant)
@@ -595,10 +676,46 @@ async function inspectVncServerForProfile(profile) {
   });
 }
 
+function selectedVncComponentState(diagnostics: any = {}, targetComponent = "") {
+  const component = String(targetComponent || diagnostics.target_component || diagnostics.server_session_selection?.component || "").trim();
+  if (!component) return null;
+  return diagnostics.selected_component
+    || diagnostics.component_states?.[component]
+    || null;
+}
+
+function vncComponentListening(diagnostics: any = {}, targetComponent = "") {
+  const state = selectedVncComponentState(diagnostics, targetComponent);
+  return state ? state.listening === true : diagnostics.listening === true;
+}
+
+function waitMs(timeoutMs) {
+  return new Promise(resolve => setTimeout(resolve, timeoutMs));
+}
+
+async function waitForVncServerAction(profile, targetComponent, action, initial = null) {
+  const starting = ["start", "restart", "enable"].includes(action);
+  let latest = initial;
+  const attempts = starting ? 12 : 8;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    latest = await inspectVncServerForProfile(profile);
+    const state = selectedVncComponentState(latest, targetComponent);
+    const ready = state ? state.listening === true : latest?.listening === true;
+    const running = state ? state.running === true : latest?.service_state === "active";
+    if (starting && ready) return latest;
+    if (!starting && !running && !ready) return latest;
+    if (starting && state && (state.service_state === "failed" || state.listener_mismatch)) return latest;
+    if (attempt + 1 < attempts) await waitMs(starting ? 750 : 500);
+  }
+  return latest;
+}
+
 async function configureVncServerForProfile(profile, data: any = {}) {
   const action = String(data.action || "guide").trim().toLowerCase();
   if (!["guide", "install", "install-offline", "install-local-offline", "uninstall", "start", "stop", "restart", "enable", "disable"].includes(action)) throw new Error("VNC 服务操作无效");
   const before = await inspectVncServerForProfile(profile);
+  const targetComponent = String(before.server_session_selection?.component || before.selected_component?.key || "").trim();
+  const targetComponentLabel = String(before.selected_component?.label || "VNC 服务");
   if (action === "guide") return {
     ok:true,
     action,
@@ -670,14 +787,17 @@ async function configureVncServerForProfile(profile, data: any = {}) {
       const task = remoteOfflineTasks.startAptInstall({
         connection,
         component:"vnc-server",
-        component_label:"VNC 服务",
+        component_label:targetComponentLabel,
+        resource_key:`vnc-server:${Number(connection.id || 0)}`,
         packages,
         grant,
         elevate:true,
         direct_root:Boolean(before.privileged),
         scope:"vnc.server.install-local-offline",
         verify:() => inspectVncServerForProfile(profile),
-        validate:after => Boolean(after?.installed) || "VNC 离线安装已结束，但远端仍未检测到 VNC Server",
+        validate:after => targetComponent
+          ? validateVncServerComponent(after, targetComponent, true)
+          : Boolean(after?.installed) || "VNC 离线安装已结束，但远端仍未检测到 VNC Server",
         release_grant:releaseRemoteAdminGrant
       });
       return {ok:true, action, mode:"local-offline", before, task, temporary_authorization:Boolean(grant)};
@@ -693,7 +813,8 @@ async function configureVncServerForProfile(profile, data: any = {}) {
   const task = startRemoteComponentCommandTask({
     connection,
     component:"vnc-server",
-    componentLabel:"VNC 服务",
+    componentLabel:targetComponentLabel,
+    resourceKey:`vnc-server:${Number(connection.id || 0)}`,
     action,
     actionLabel:actionLabels[action] || action,
     mode,
@@ -703,12 +824,23 @@ async function configureVncServerForProfile(profile, data: any = {}) {
     scope:`vnc.server.${action}`,
     timeoutMs:action === "install" || action === "install-offline" || action === "uninstall" ? 20 * 60 * 1000 : 120000,
     directRoot:Boolean(before.root),
-    verify:() => inspectVncServerForProfile(profile),
+    normalizeResult:normalizeVncRemoteCommandResult,
+    verify:() => ["start", "restart", "enable", "stop", "disable"].includes(action)
+      ? waitForVncServerAction(profile, targetComponent, action)
+      : inspectVncServerForProfile(profile),
     validate:after => {
-      if (action === "install" || action === "install-offline") return Boolean(after?.installed) || "VNC 安装命令已结束，但远端仍未检测到 VNC Server";
-      if (action === "uninstall") return !after?.installed || "VNC 卸载命令已结束，但远端仍检测到 VNC Server";
-      if (["start", "restart", "enable"].includes(action)) return Boolean(after?.listening || after?.service_state === "active") || "VNC 服务命令已结束，但目标端口仍未监听";
-      return !after?.listening && after?.service_state !== "active" || "VNC 服务命令已结束，但目标端口仍在监听";
+      if (action === "install" || action === "install-offline") return targetComponent
+        ? validateVncServerComponent(after, targetComponent, true)
+        : Boolean(after?.installed) || "VNC 安装命令已结束，但远端仍未检测到 VNC Server";
+      if (action === "uninstall") return targetComponent
+        ? validateVncServerComponent(after, targetComponent, false)
+        : !after?.installed || "VNC 卸载命令已结束，但远端仍检测到 VNC Server";
+      if (["start", "restart", "enable"].includes(action)) return targetComponent
+        ? vncServerStartValidation(after, targetComponent)
+        : vncComponentListening(after, targetComponent) || "VNC 服务命令已结束，但目标端口仍未监听";
+      return targetComponent
+        ? vncServerStopValidation(after, targetComponent)
+        : !vncComponentListening(after, targetComponent) || "VNC 服务命令已结束，但目标端口仍在监听";
     }
   });
   return {
@@ -741,7 +873,7 @@ async function configureVncClipboardHelperForProfile(profile, data: any = {}) {
   if (action === "guide") return vncClipboardHelperGuideResult(before);
   const uninstalling = action === "uninstall";
   if (before.platform === "macos") throw new Error(uninstalling
-    ? "macOS 的 pbcopy/pbpaste 是系统自带工具，TunnelDesk 不提供卸载"
+    ? "macOS 的 pbcopy/pbpaste 是系统自带工具，Terma 不提供卸载"
     : "macOS 已自带 pbcopy/pbpaste，无需安装；请按检查说明确认图形登录会话和剪贴板权限");
   if (before.platform !== "linux") throw new Error(`尚未识别到 Linux 远端，无法自动${uninstalling ? "卸载" : "安装"}剪贴板辅助工具`);
   const connectionId = Number(before.connection_id || 0);
@@ -769,6 +901,7 @@ async function configureVncClipboardHelperForProfile(profile, data: any = {}) {
         connection,
         component:"vnc-clipboard-helper",
         component_label:"Unicode 剪贴板辅助工具",
+        resource_key:`vnc-clipboard-helper:${Number(connection.id || 0)}`,
         packages,
         package_alternatives:before.install_plan?.package_alternatives || [],
         grant,
@@ -793,6 +926,7 @@ async function configureVncClipboardHelperForProfile(profile, data: any = {}) {
     connection,
     component:"vnc-clipboard-helper",
     componentLabel:"Unicode 剪贴板辅助工具",
+    resourceKey:`vnc-clipboard-helper:${Number(connection.id || 0)}`,
     action,
     actionLabel:uninstalling ? "卸载" : mode === "offline" ? "使用远端缓存安装" : "在线安装",
     mode,
@@ -868,6 +1002,7 @@ async function startSshX11ConfigurationTask(connection, action, grant = null) {
     connection:{...connection, x11_mode:"off"},
     component:"x11-forwarding",
     componentLabel:"SSH X11 转发",
+    resourceKey:`x11-forwarding:${Number(connection.id || 0)}`,
     action,
     actionLabel:expected ? "开启" : "关闭",
     mode:"service",
@@ -953,14 +1088,14 @@ function appendLinuxDesktopTaskChunk(task, chunk, stream = "stdout") {
   for (const raw of lines) {
     const line = raw.trimEnd();
     if (!line) continue;
-    const stage = /^TD_DESKTOP_STAGE=(.*)$/.exec(line);
+    const stage = /^(?:TERMA|TD)_DESKTOP_STAGE=(.*)$/.exec(line);
     if (stage) {
       task.stage = stage[1] || task.stage;
       task.progress = {prepare: 12, packages: 30, refresh: 88, verify: 94, done: 100}[task.stage] ?? task.progress;
       task.updated_at = Date.now();
       continue;
     }
-    const log = /^TD_DESKTOP_LOG=(.*)$/.exec(line);
+    const log = /^(?:TERMA|TD)_DESKTOP_LOG=(.*)$/.exec(line);
     task.logs.push({at:Date.now(), stream, text:log ? log[1] : line});
     if (task.logs.length > 400) task.logs.splice(0, task.logs.length - 400);
     task.updated_at = Date.now();
@@ -1013,6 +1148,7 @@ async function configureRdpServerForConnection(connection, data: any = {}) {
         connection,
         component:"rdp-server",
         component_label:"RDP 服务",
+        resource_key:`rdp-server:${Number(connection.id || 0)}`,
         packages,
         grant,
         elevate:true,
@@ -1050,6 +1186,7 @@ async function configureRdpServerForConnection(connection, data: any = {}) {
     connection,
     component:"rdp-server",
     componentLabel:"RDP 服务",
+    resourceKey:`rdp-server:${Number(connection.id || 0)}`,
     action,
     actionLabel:actionLabels[action] || action,
     mode,
@@ -1090,6 +1227,14 @@ function startLinuxDesktopInstall(connectionId, desktopId, action = "install", g
       : "online";
   const localOffline = normalizedMode === "local-offline";
   if (!DESKTOP_IDS.includes(requested)) throw new Error("Linux 桌面类型无效");
+  const runningTask = [...linuxDesktopTasks.values()].find(item => Number(item.connection_id || 0) === Number(connection.id || 0) && item.status === "running");
+  if (runningTask) {
+    const error: any = new Error("该 SSH 主机已有 Linux 桌面任务正在执行，请等待完成后再试");
+    error.code = "REMOTE_TASK_CONFLICT";
+    error.statusCode = 409;
+    error.task = linuxDesktopTaskView(runningTask);
+    throw error;
+  }
   const task = {
     id:`linux-desktop-${Date.now()}-${++linuxDesktopTaskSequence}`,
     connection_id:connection.id,
@@ -1196,10 +1341,16 @@ function startLinuxDesktopInstall(connectionId, desktopId, action = "install", g
 
 
 function loginPage() {
-  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>TunnelDesk 登录</title><style>
-body{margin:0;min-height:100vh;display:grid;place-items:center;font:14px system-ui,-apple-system,"Segoe UI",sans-serif;background:#f4f6f8;color:#1f2933}.card{width:min(360px,calc(100vw - 32px));background:#fff;border:1px solid #d6dde3;border-radius:6px;padding:22px;box-shadow:0 12px 32px rgba(15,23,42,.12)}h1{font-size:22px;margin:0 0 8px}.muted{color:#687782;margin-bottom:18px}label{display:block;font-size:12px;color:#687782;margin-bottom:6px}input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccd4dc;border-radius:4px}button{width:100%;margin-top:14px;padding:10px;border:0;border-radius:4px;background:#2563eb;color:#fff;font-weight:600}.err{color:#b42318;min-height:20px;margin-top:10px}</style><div class="card"><h1>TunnelDesk</h1><div class="muted">请输入 Web 访问密码。</div><label>密码</label><input id="password" type="password" autofocus><button onclick="login()">登录</button><div id="err" class="err"></div></div><script>
+  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Terma 登录</title><style>
+body{margin:0;min-height:100vh;min-height:100dvh;padding:16px;box-sizing:border-box;display:grid;place-items:center;font:14px system-ui,-apple-system,"Segoe UI",sans-serif;background:#f4f6f8;color:#1f2933;overflow-x:hidden}.card{width:min(360px,100%);box-sizing:border-box;background:#fff;border:1px solid #d6dde3;border-radius:6px;padding:22px;box-shadow:0 12px 32px rgba(15,23,42,.12)}h1{font-size:22px;margin:0 0 8px}.muted{color:#687782;margin-bottom:18px}label{display:block;font-size:12px;color:#687782;margin-bottom:6px}.password-field{position:relative;min-width:0}.password-field input{width:100%;min-width:0;box-sizing:border-box;padding:10px 44px 10px 10px;border:1px solid #ccd4dc;border-radius:4px;font:inherit}.password-toggle{position:absolute;inset:1px 1px 1px auto;width:40px;min-width:40px;margin:0;padding:0;display:grid;place-items:center;border:0;border-radius:3px;background:transparent;color:#52616b;cursor:pointer}.password-toggle:hover{background:#eef2f6;color:#1f2933}.password-toggle:focus-visible{outline:2px solid #2563eb;outline-offset:-3px}.password-toggle svg{width:18px;height:18px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.password-toggle svg[hidden]{display:none}.login-button{width:100%;margin-top:14px;padding:10px;border:0;border-radius:4px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}.err{color:#b42318;min-height:20px;margin-top:10px}</style><div class="card"><h1>Terma</h1><div class="muted">请输入 Web 访问密码。</div><label for="password">密码</label><div class="password-field"><input id="password" type="password" autocomplete="current-password" autofocus><button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false"><svg id="passwordShowIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg><svg id="passwordHideIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 3l18 18"></path><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c6.5 0 10 8 10 8a18.3 18.3 0 0 1-2.3 3.5"></path><path d="M6.6 6.6C3.7 8.5 2 12 2 12s3.5 8 10 8a10.8 10.8 0 0 0 5.4-1.4"></path></svg></button></div><button class="login-button" type="button" onclick="login()">登录</button><div id="err" class="err"></div></div><script>
+const passwordInput=document.getElementById('password');
+const passwordToggle=document.getElementById('passwordToggle');
+const passwordShowIcon=document.getElementById('passwordShowIcon');
+const passwordHideIcon=document.getElementById('passwordHideIcon');
+function setPasswordVisible(visible){const selectionStart=passwordInput.selectionStart;const selectionEnd=passwordInput.selectionEnd;passwordInput.type=visible?'text':'password';const actionLabel=visible?'隐藏密码':'显示密码';passwordToggle.title=actionLabel;passwordToggle.setAttribute('aria-label',actionLabel);passwordToggle.setAttribute('aria-pressed',String(visible));passwordShowIcon.hidden=visible;passwordHideIcon.hidden=!visible;passwordInput.focus({preventScroll:true});if(selectionStart!==null&&selectionEnd!==null){try{passwordInput.setSelectionRange(selectionStart,selectionEnd)}catch{}}}
+passwordToggle.addEventListener('click',()=>setPasswordVisible(passwordInput.type==='password'));
 async function login(){const password=document.getElementById('password').value;const res=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});if(res.ok){location.href='/';return;}let text='登录失败';try{text=(await res.json()).error||text}catch{}document.getElementById('err').textContent=text}
-document.getElementById('password').addEventListener('keydown',e=>{if(e.key==='Enter')login()});
+passwordInput.addEventListener('keydown',e=>{if(e.key==='Enter')login()});
 </script></html>`;
 }
 
@@ -1248,6 +1399,71 @@ function serveStatic(req, res, pathname) {
   const body = fs.readFileSync(file);
   res.writeHead(200, secureHeaders({ "Content-Type": types[ext] || "application/octet-stream", "Content-Length": body.length, "Cache-Control":"no-cache" }));
   res.end(body);
+}
+
+function remoteClientDiagnosticsWithoutDesktopIntegration(x11: any = {}) {
+  const x11Reason = String(x11?.reason || "").trim();
+  const integrationReason = "当前请求无法调用 Terma 桌面集成";
+  return {
+    platform:process.platform,
+    desktop:false,
+    integration_available:false,
+    rdp:{
+      available:false,
+      client:"",
+      executable:"",
+      reason:"系统 RDP 客户端只能由本机桌面版调用"
+    },
+    vnc:{
+      available:false,
+      client:"",
+      executable:"",
+      reason:"系统 VNC 客户端只能由本机桌面版调用（内置 VNC 不受此限制）"
+    },
+    xdmcp:{
+      available:false,
+      client:"",
+      executable:"",
+      can_install:false,
+      install_label:process.platform === "darwin" ? "安装 XQuartz" : process.platform === "linux" ? "安装 Xephyr" : "",
+      reason:x11Reason ? `${x11Reason}；${integrationReason}` : `XDMCP 窗口只能由本机桌面版调用；${integrationReason}`
+    },
+    x11,
+    message:integrationReason
+  };
+}
+
+function xServerDiagnosticsWithoutDesktopIntegration(serverSide: any = x11RuntimeDiagnostics()) {
+  return {
+    platform:process.platform,
+    desktop:false,
+    integration_available:false,
+    available:false,
+    installed:false,
+    running:false,
+    managed:false,
+    can_start:false,
+    can_stop:false,
+    can_install:false,
+    mode:"unavailable",
+    server:"",
+    display:"",
+    reason:"当前连接的是独立 Web/测试后端，无法读取运行 Terma 桌面设备上的 X Server",
+    server_side:serverSide
+  };
+}
+
+function xdmcpTaskResourceKey(connection: any, request: any = {}, task: any = {}) {
+  const hint = [
+    request?.action,
+    request?.target_action,
+    request?.target,
+    request?.component,
+    task?.action,
+    task?.component
+  ].map(value => String(value || "").toLowerCase()).join(" ");
+  const family = /\bx?rdp\b/.test(hint) ? "rdp-server" : "xdmcp-server";
+  return `${family}:${Number(connection?.id || connection || 0)}`;
 }
 
 async function handleApi(req, res, pathname) {
@@ -1312,6 +1528,20 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, await ensureConnectionHostTrusted(connection));
   }
   if (req.method === "GET" && pathname === "/api/about") return sendJson(res, aboutInfo());
+  if (req.method === "GET" && pathname === "/api/legacy-brand-migration") {
+    if (!isLocalRequest(req) || !desktopIntegration?.getLegacyBrandMigration) {
+      return sendJson(res, {available:false, message:"旧版数据迁移仅能在运行 Terma 的本机桌面版中执行"});
+    }
+    return sendJson(res, {available:true, ...await Promise.resolve(desktopIntegration.getLegacyBrandMigration())});
+  }
+  if (req.method === "POST" && pathname === "/api/legacy-brand-migration") {
+    if (!isLocalRequest(req) || !desktopIntegration?.migrateLegacyBrandData) {
+      return sendJson(res, {error:"旧版数据迁移仅能在运行 Terma 的本机桌面版中执行"}, 403);
+    }
+    const data = await readJson(req);
+    const result = await Promise.resolve(desktopIntegration.migrateLegacyBrandData(data || {}));
+    return sendJson(res, result, result?.ok ? 202 : 409);
+  }
   if (req.method === "GET" && pathname === "/api/desktop-settings") {
     const localRequest = isLocalRequest(req);
     const storageManagementAvailable = localRequest || (!desktopIntegration && authRequired(req));
@@ -1320,8 +1550,8 @@ async function handleApi(req, res, pathname) {
       available:false,
       storage_management_available:true,
       settings:{
-        dataMode:process.env.TUNNELDESK_DATA_DIR || process.env.TUNNELDESK_SSH_DIR ? "environment" : "project",
-        customDataDir:String(process.env.TUNNELDESK_DATA_DIR || "")
+        dataMode:process.env.TERMA_DATA_DIR || process.env.TERMA_SSH_DIR || process.env.TUNNELDESK_DATA_DIR || process.env.TUNNELDESK_SSH_DIR ? "environment" : "project",
+        customDataDir:String(process.env.TERMA_DATA_DIR || process.env.TUNNELDESK_DATA_DIR || "")
       },
       paths:{dataDir:DATA_DIR, sshDir:PROJECT_SSH_DIR},
       project_mode_available:true,
@@ -1444,8 +1674,8 @@ async function handleApi(req, res, pathname) {
     res.writeHead(200, {
       "Content-Type": "application/octet-stream",
       "Content-Length": exported.size,
-      "Content-Disposition": `attachment; filename="tunneldesk-${Date.now()}${includePasswords ? "-with-passwords" : ""}.db"`,
-      "X-TunnelDesk-Passwords-Included": includePasswords ? "1" : "0",
+      "Content-Disposition": `attachment; filename="terma-${Date.now()}${includePasswords ? "-with-passwords" : ""}.db"`,
+      "X-Terma-Passwords-Included": includePasswords ? "1" : "0",
       ...secureHeaders()
     });
     const stream = fs.createReadStream(exported.path);
@@ -1460,7 +1690,7 @@ async function handleApi(req, res, pathname) {
     const security = readSecuritySettings();
     const exported = exportDatabaseFile(true);
     const header = createDatabaseBundleHeader({
-      type: "tunneldesk-backup-v2",
+      type: "terma-backup-v3",
       created_at: new Date().toISOString(),
       security: {
         encryption_enabled: Boolean(security.encryption_enabled),
@@ -1471,7 +1701,7 @@ async function handleApi(req, res, pathname) {
     res.writeHead(200, secureHeaders({
       "Content-Type": "application/octet-stream",
       "Content-Length": header.length + exported.size,
-      "Content-Disposition": `attachment; filename="tunneldesk-backup-${Date.now()}.tdbackup"`
+      "Content-Disposition": `attachment; filename="terma-backup-${Date.now()}.termabackup"`
     }));
     res.write(header);
     const stream = fs.createReadStream(exported.path);
@@ -1485,7 +1715,7 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && pathname === "/api/restore/database/check") {
     let stage = null;
     try {
-      stage = await databaseTransferStore.stage(req, String(req.headers["x-tunneldesk-filename"] || "backup.db"));
+      stage = await databaseTransferStore.stage(req, String(req.headers["x-terma-filename"] || req.headers["x-tunneldesk-filename"] || "backup.db"));
       const inspection = inspectRestoreDatabaseFile(
         stage.database_path,
         stage.security,
@@ -1582,34 +1812,28 @@ async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/remote-profiles") return sendJson(res, listRemoteProfiles());
   if (req.method === "GET" && pathname === "/api/serial/ports") return sendJson(res, await listSerialPorts());
   if (req.method === "GET" && pathname === "/api/remote-clients/diagnostics") {
+    const integrationAvailable = Boolean(isLocalRequest(req) && desktopIntegration?.remoteClientDiagnostics);
     const x11 = isLocalRequest(req) && desktopIntegration?.xServerDiagnostics
       ? await Promise.resolve(desktopIntegration.xServerDiagnostics())
       : x11RuntimeDiagnostics();
+    if (!integrationAvailable) return sendJson(res, remoteClientDiagnosticsWithoutDesktopIntegration(x11));
     const xdmcp = {
       available:Boolean(x11?.xdmcp_available),
       client:x11?.xdmcp_available
         ? x11.platform === "darwin"
-          ? "TunnelDesk 内置 XDMCP（XQuartz）"
+          ? "Terma 内置 XDMCP（XQuartz）"
           : x11.mode === "bundled"
-            ? "TunnelDesk 内置 X Server"
+            ? "Terma 内置 X Server"
             : x11.platform === "linux"
-              ? "TunnelDesk XDMCP（Xephyr）"
+              ? "Terma XDMCP（Xephyr）"
               : x11.server || "X Server"
         : "",
       executable:x11?.xdmcp_available ? x11.xdmcp_client || x11.executable || "" : "",
       can_install:Boolean(x11?.can_install),
-      install_label:process.platform === "darwin" ? "安装 XQuartz" : process.platform === "linux" ? "安装 Xephyr" : ""
+      install_label:process.platform === "darwin" ? "安装 XQuartz" : process.platform === "linux" ? "安装 Xephyr" : "",
+      reason:x11?.xdmcp_available ? "" : String(x11?.reason || "未检测到可用的 XDMCP X Server")
     };
-    if (!isLocalRequest(req) || !desktopIntegration?.remoteClientDiagnostics) return sendJson(res, {
-      platform:process.platform,
-      desktop:false,
-      rdp:{available:false,client:"",executable:""},
-      vnc:{available:false,client:"",executable:""},
-      xdmcp,
-      x11,
-      message:"RDP、VNC 和 XDMCP 需要在运行 TunnelDesk 的桌面设备上打开"
-    });
-    return sendJson(res, {desktop:true, ...await Promise.resolve(desktopIntegration.remoteClientDiagnostics()), xdmcp, x11});
+    return sendJson(res, {desktop:true, integration_available:true, ...await Promise.resolve(desktopIntegration.remoteClientDiagnostics()), xdmcp, x11});
   }
   if (req.method === "POST" && pathname === "/api/remote-clients/install") {
     if (!isLocalRequest(req) || !desktopIntegration?.installRemoteClient) return sendJson(res, {error:"客户端只能由本机桌面版安装"}, 403);
@@ -1630,10 +1854,11 @@ async function handleApi(req, res, pathname) {
   }
   if (pathname === "/api/xserver") {
     if (req.method === "GET") {
-      const diagnostics = isLocalRequest(req) && desktopIntegration?.xServerDiagnostics
-        ? await Promise.resolve(desktopIntegration.xServerDiagnostics())
-        : x11RuntimeDiagnostics();
-      return sendJson(res, diagnostics);
+      if (isLocalRequest(req) && desktopIntegration?.xServerDiagnostics) {
+        const diagnostics = await Promise.resolve(desktopIntegration.xServerDiagnostics());
+        return sendJson(res, {...diagnostics, desktop:true, integration_available:true});
+      }
+      return sendJson(res, xServerDiagnosticsWithoutDesktopIntegration());
     }
     if (req.method === "POST") {
       if (!isLocalRequest(req) || !desktopIntegration?.startXServer) return sendJson(res, {error:"X Server 只能由本机桌面端启动"}, 403);
@@ -1660,7 +1885,7 @@ async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/sftp/jobs") return sendJson(res, listSftpJobs());
   if (pathname === "/api/local-files" || pathname.startsWith("/api/local-files/")) {
     if (!isLocalRequest(req) || !desktopIntegration?.getDesktopDirectory) {
-      return sendJson(res, {error:"本地文件只支持在 TunnelDesk 桌面端使用"}, 403);
+      return sendJson(res, {error:"本地文件只支持在 Terma 桌面端使用"}, 403);
     }
     if (req.method === "GET" && pathname === "/api/local-files") {
       const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
@@ -1728,6 +1953,13 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "GET" && pathname === "/api/linux-desktop/tasks") return sendJson(res, listLinuxDesktopTasks());
   if (req.method === "POST" && pathname === "/api/linux-desktop/tasks/clear-finished") return sendJson(res, clearFinishedLinuxDesktopTasks());
+  if (req.method === "POST" && pathname === "/api/admin-grants") {
+    const data = await readJson(req);
+    const connectionId = Number(data.connection_id || data.id || 0);
+    if (!Number.isInteger(connectionId) || connectionId < 1) throw new Error("SSH 连接 ID 无效");
+    const connection = getConnection(connectionId);
+    return sendJson(res, await issueRemoteAdminGrant(connection, data), 201);
+  }
   if (req.method === "GET" && pathname === "/api/remote-component/tasks") return sendJson(res, remoteOfflineTasks.list());
   if (req.method === "POST" && pathname === "/api/remote-component/tasks/clear-finished") return sendJson(res, remoteOfflineTasks.clearFinished());
   if (req.method === "GET" && pathname === "/api/sftp/external-edits") return sendJson(res, listExternalEdits());
@@ -2109,7 +2341,7 @@ async function handleApi(req, res, pathname) {
       try {
         const dependencies: any = {getConnection, listConnections, runSshCommandForConnection};
         if (grant) dependencies.runPrivilegedSshCommandForConnection = (connection, command, timeoutMs) => runRemotePrivilegeCommand(connection, command, {grant_id:grant.id, scope:grantScope, timeout_ms:timeoutMs});
-        dependencies.startRemoteOfflineInstall = options => remoteOfflineTasks.startAptInstall({...options, grant, elevate:true, scope:grantScope, release_grant:releaseRemoteAdminGrant});
+        dependencies.startRemoteOfflineInstall = options => remoteOfflineTasks.startAptInstall({...options, resource_key:xdmcpTaskResourceKey(management, data, options), grant, elevate:true, scope:grantScope, release_grant:releaseRemoteAdminGrant});
         dependencies.startRemoteCommandTask = options => startRemoteComponentCommandTask({
           connection:options.connection || management,
           component:options.component,
@@ -2117,6 +2349,7 @@ async function handleApi(req, res, pathname) {
           action:options.action,
           actionLabel:options.action_label,
           mode:options.mode,
+          resourceKey:xdmcpTaskResourceKey(management, data, options),
           command:options.command,
           before:options.before,
           grant,
@@ -2521,12 +2754,12 @@ async function handleApi(req, res, pathname) {
       return send(res, 200, await readRemoteDirectorySize(connectionId, data.path), { "Cache-Control":"no-store" });
     }
     if (req.method === "POST" && parts[4] === "trash" && parts[5] === "restore") {
-      const result = await restoreRemoteRecycleItem(connectionId, data.id);
+      const result = await restoreRemoteRecycleItem(connectionId, data.id, data.storage);
       invalidateRemoteDirectoryCache(connectionId);
       return sendJson(res, result);
     }
     if (req.method === "POST" && parts[4] === "trash" && parts[5] === "delete") {
-      return sendJson(res, await deleteRemoteRecycleItem(connectionId, data.id));
+      return sendJson(res, await deleteRemoteRecycleItem(connectionId, data.id, data.storage));
     }
     if (req.method === "POST" && parts[4] === "trash" && parts[5] === "clear") {
       return sendJson(res, await clearRemoteRecycleItems(connectionId));
@@ -2684,7 +2917,13 @@ function requestHandler(req, res) {
   }).catch((error) => {
     const hostTrust = hostTrustErrorResponse(error);
     if (!res.headersSent && hostTrust) sendJson(res, hostTrust.body, hostTrust.status);
-    else if (!res.headersSent) sendJson(res, { error: error.message || String(error) }, 400);
+    else if (!res.headersSent) {
+      const status = Number(error?.statusCode || error?.status_code || 400);
+      const body: any = {error:error.message || String(error)};
+      if (error?.code) body.code = String(error.code);
+      if (error?.task) body.task = error.task;
+      sendJson(res, body, status >= 400 && status <= 599 ? status : 400);
+    }
     else res.destroy();
   });
 }
@@ -3084,10 +3323,10 @@ function completeStartup(binding) {
     started_at: new Date().toISOString()
   }, null, 2), "utf8");
   writeStartupStatus({ state:"starting", local_url:urls.localUrl, lan_urls:urls.lanUrls, host:args.host, port:actualPort, requested_hosts:args.requested_hosts, requested_port:args.requested_port, actual_hosts:actualHosts, actual_port:actualPort });
-  console.log(`TunnelDesk listening on http://${args.host}:${actualPort}`);
-  if (urls.lanUrls.length) console.log(`TunnelDesk LAN URLs:\n${urls.lanUrls.map((url) => `  ${url}`).join("\n")}`);
-  appendSystemLog(`TunnelDesk 已启动：http://${args.host}:${actualPort}`);
-  if (process.env.TUNNELDESK_DISABLE_UPDATE_CHECK !== "1") {
+  console.log(`Terma listening on http://${args.host}:${actualPort}`);
+  if (urls.lanUrls.length) console.log(`Terma LAN URLs:\n${urls.lanUrls.map((url) => `  ${url}`).join("\n")}`);
+  appendSystemLog(`Terma 已启动：http://${args.host}:${actualPort}`);
+  if (process.env.TERMA_DISABLE_UPDATE_CHECK !== "1" && process.env.TUNNELDESK_DISABLE_UPDATE_CHECK !== "1") {
     clearTimeout(updateCheckTimer);
     updateCheckTimer = setTimeout(() => {
       updateChecker.check().catch(() => {});
@@ -3127,7 +3366,7 @@ async function shutdown() {
     clearTimeout(startupTaskTimer);
     startupTaskTimer = null;
     try {
-      appendSystemLog("TunnelDesk 正在关闭");
+      appendSystemLog("Terma 正在关闭");
       await stopForwardHealthMonitor();
       closeAllTerminals();
       closeAllRemoteTerminals();
@@ -3163,9 +3402,9 @@ function startServer(customArgs: any = parseArgs(), options: any = {}) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   cleanupFtpTemp();
   scheduleInstalledUpdateCleanup();
-  if (process.env.TUNNELDESK_RESET_WEB_ACCESS === "1") {
+  if (process.env.TERMA_RESET_WEB_ACCESS === "1" || process.env.TUNNELDESK_RESET_WEB_ACCESS === "1") {
     resetWebAccessSecurity();
-    appendSystemLog("已根据 TUNNELDESK_RESET_WEB_ACCESS 重置 Web 访问密码和 Token");
+    appendSystemLog("已根据 TERMA_RESET_WEB_ACCESS 重置 Web 访问密码和 Token");
   }
   const ready = bindWithFallback(args.listen_hosts, args.listen_port).then(async (binding) => {
     activeServers = binding.listeners;
@@ -3186,7 +3425,7 @@ function startServer(customArgs: any = parseArgs(), options: any = {}) {
     };
   }).catch((error) => {
     writeStartupStatus({ state: "error", error: error.message || String(error), code: error.code || "", failed_at: Date.now() });
-    appendSystemLog(`TunnelDesk 启动失败：${error.message || error}`);
+    appendSystemLog(`Terma 启动失败：${error.message || error}`);
     throw error;
   });
   // Desktop callers may intentionally ignore the promise; keep a rejection handler attached.
@@ -3213,6 +3452,9 @@ if (require.main === module) {
 
 module.exports = {
   __nativeDragByteRange:nativeDragByteRange,
+  __remoteClientDiagnosticsWithoutDesktopIntegration:remoteClientDiagnosticsWithoutDesktopIntegration,
+  __xServerDiagnosticsWithoutDesktopIntegration:xServerDiagnosticsWithoutDesktopIntegration,
+  __xdmcpTaskResourceKey:xdmcpTaskResourceKey,
   startServer,
   shutdown,
   parseArgs,

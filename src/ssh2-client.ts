@@ -12,6 +12,7 @@ const { splitArgs } = require("./ssh-command");
 const { connectionSettings, ssh2TimingOptions } = require("./ssh-connection");
 const { localX11Authorization } = require("./x11");
 const { buildRemotePosixCommand } = require("./remote-posix");
+const { remoteProbeValue } = require("./remote-probe-protocol");
 
 const BUILTIN_OPENSSH_OPTIONS = new Set([
   "batchmode",
@@ -197,6 +198,50 @@ function connectionOptions(connection, onHostTrustError: any = () => {}, socket 
   return options;
 }
 
+function normalizeSshTransportError(error, connection: any = {}) {
+  if (!error) return error;
+  if (error.name === "SshTransportError" || error.name === "SshHostTrustError" || /^SSH_HOST_KEY_/.test(String(error.code || ""))) return error;
+  const raw = String(error?.message || error).trim();
+  const searchable = `${String(error?.code || "")} ${raw}`.toLowerCase();
+  let message = "";
+  if (/timed out while waiting for handshake|handshake timeout|etimedout|operation timed out/.test(searchable) && !/econnreset|connection reset|connection lost|socket disconnected/.test(searchable)) {
+    message = "SSH 握手超时，请检查主机地址、端口和 SSH 服务";
+  } else if (/connection lost before handshake|connection reset before handshake|econnreset/.test(searchable)) {
+    message = /before handshake/.test(searchable)
+      ? "SSH 握手前连接已断开，请检查主机地址、端口和 SSH 服务"
+      : "SSH 连接已断开，请重新连接后再试";
+  } else if (/econnrefused|connection refused/.test(searchable)) {
+    message = "SSH 连接被拒绝，请检查远端 SSH 服务和端口";
+  } else if (/enotfound|eai_again|getaddrinfo|could not resolve hostname/.test(searchable)) {
+    message = "无法解析 SSH 主机地址，请检查主机名或 DNS";
+  } else if (/all configured authentication methods failed|no more authentication methods available|authentication failed|permission denied \(publickey/.test(searchable)) {
+    message = "SSH 认证失败，请检查用户名、密码、私钥或代理设置";
+  } else if (/no matching (?:host key|cipher|mac|key exchange)|key exchange failed|handshake failed/.test(searchable)) {
+    message = "SSH 握手失败，客户端与服务器没有可兼容的算法";
+  } else if (/channel open failure|administratively prohibited|unable to open channel/.test(searchable)) {
+    message = "SSH 通道打开失败，请检查远端转发权限和目标地址";
+  } else if (/unable to start subsystem|subsystem request failed/.test(searchable)) {
+    message = "远端 SSH 子系统不可用，请检查服务器配置";
+  } else if (/not connected|connection closed|socket closed|no existing session/.test(searchable)) {
+    message = "SSH 连接已断开，请重新连接后再试";
+  } else if (/eaddrinuse|address already in use/.test(searchable)) {
+    message = "本地监听端口已被占用，请更换端口或停止占用程序";
+  } else if (/eacces|access denied|permission denied.*listen/.test(searchable)) {
+    message = "没有权限监听本地端口，请更换端口或检查运行权限";
+  }
+  if (!message) {
+    if (/[\u3400-\u9fff]/u.test(raw)) return error;
+    message = "SSH 连接失败，请检查连接配置、网络和远端 SSH 服务";
+  }
+  const normalized: any = new Error(message);
+  normalized.name = "SshTransportError";
+  normalized.code = String(error.code || "SSH_TRANSPORT_FAILED");
+  Object.defineProperty(normalized, "cause", {value:error, enumerable:false, configurable:true});
+  normalized.host = String(connection?.ssh_host || "").trim();
+  normalized.port = Number(connection?.ssh_port || 22);
+  return normalized;
+}
+
 function connectDirectSsh(connection, socket = null, options: any = {}) {
   return new Promise((resolve, reject) => {
     const client = new Client();
@@ -216,7 +261,7 @@ function connectDirectSsh(connection, socket = null, options: any = {}) {
       finish();
     };
     const onError = (error) => {
-      if (!settled) finish(hostTrustError || error);
+      if (!settled) finish(hostTrustError || normalizeSshTransportError(error, connection));
     };
     client.once("ready", onReady);
     client.on("error", onError);
@@ -229,7 +274,7 @@ function connectDirectSsh(connection, socket = null, options: any = {}) {
     try {
       client.connect(connectionOptions(connection, (error) => { hostTrustError = error; }, socket, options));
     } catch (error) {
-      finish(error);
+      finish(hostTrustError || normalizeSshTransportError(error, connection));
     }
   });
 }
@@ -262,9 +307,10 @@ function spawnPasswordCommand(connection, command) {
   };
 
   const reportError = (error) => {
+    const normalized = normalizeSshTransportError(error, connection);
     if (!firstError) {
-      firstError = error;
-      child.emit("error", error);
+      firstError = normalized;
+      child.emit("error", normalized);
     }
     try { child.channel?.close(); } catch {}
     try { child.client?.end(); } catch {}
@@ -336,16 +382,16 @@ function runPasswordCommand(connection, command, input = null, timeoutMs = 60000
 }
 
 const BUILTIN_X11_PROBE_COMMAND = [
-  "printf 'TD_X11_DISPLAY=%s\\n' \"$DISPLAY\"",
-  "td_xauth=$(command -v xauth 2>/dev/null || true)",
-  "if [ -z \"$td_xauth\" ]; then for td_candidate in /opt/X11/bin/xauth /usr/X11/bin/xauth /usr/bin/xauth; do [ -x \"$td_candidate\" ] && td_xauth=\"$td_candidate\" && break; done; fi",
-  "printf 'TD_X11_XAUTH=%s\\n' \"$td_xauth\""
+  "printf 'TERMA_X11_DISPLAY=%s\\n' \"$DISPLAY\"",
+  "terma_xauth=$(command -v xauth 2>/dev/null || true)",
+  "if [ -z \"$terma_xauth\" ]; then for terma_candidate in /opt/X11/bin/xauth /usr/X11/bin/xauth /usr/bin/xauth; do [ -x \"$terma_candidate\" ] && terma_xauth=\"$terma_candidate\" && break; done; fi",
+  "printf 'TERMA_X11_XAUTH=%s\\n' \"$terma_xauth\""
 ].join("\n");
 const BUILTIN_X11_PROBE_EXEC_COMMAND = buildRemotePosixCommand(BUILTIN_X11_PROBE_COMMAND);
 
 function parseBuiltinX11ProbeOutput(stdout, stderr = "") {
-  const display = /^TD_X11_DISPLAY=(.*)$/m.exec(String(stdout || ""))?.[1]?.trim() || "";
-  const xauthPath = /^TD_X11_XAUTH=(.*)$/m.exec(String(stdout || ""))?.[1]?.trim() || "";
+  const display = remoteProbeValue(stdout, "DISPLAY", "X11_").trim();
+  const xauthPath = remoteProbeValue(stdout, "XAUTH", "X11_").trim();
   return {
     requested:true,
     available:Boolean(display),
@@ -355,7 +401,7 @@ function parseBuiltinX11ProbeOutput(stdout, stderr = "") {
   };
 }
 
-function probeBuiltinX11Session(client, x11Options) {
+function probeBuiltinX11Session(client, x11Options, connection) {
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
@@ -376,7 +422,7 @@ function probeBuiltinX11Session(client, x11Options) {
     // valid xauth installation can be reported as missing even though the
     // forwarding channel is already usable.
     client.exec(BUILTIN_X11_PROBE_EXEC_COMMAND, {x11:x11Options}, (error, channel) => {
-      if (error) return finish({requested:true, available:false, display:"", xauth_path:"", reason:error.message || "远端拒绝 X11 转发"});
+      if (error) return finish({requested:true, available:false, display:"", xauth_path:"", reason:normalizeSshTransportError(error, connection)?.message || "远端拒绝 X11 转发"});
       stream = channel;
       channel.on("data", chunk => { stdout = (stdout + chunk.toString("utf8")).slice(-8192); });
       channel.stderr?.on("data", chunk => { stderr = (stderr + chunk.toString("utf8")).slice(-8192); });
@@ -405,7 +451,7 @@ async function openPasswordShell(connection, options: any = {}) {
       if (error) {
         removeX11Handler();
         try { client.end(); } catch {}
-        reject(error);
+        reject(normalizeSshTransportError(error, connection));
         return;
       }
       resolve({ client, stream, x11Diagnostics });
@@ -427,7 +473,7 @@ async function openPasswordShell(connection, options: any = {}) {
           available:false,
           display:"",
           xauth_path:"",
-          reason:error?.message || "本机 X Server 不可用"
+          reason:normalizeSshTransportError(error, connection)?.message || "本机 X Server 不可用"
         };
       }
     }
@@ -437,7 +483,7 @@ async function openPasswordShell(connection, options: any = {}) {
       else client.shell(pty, channelOptions, callback);
     };
     if (x11Options) {
-      probeBuiltinX11Session(client, x11Options).then((diagnostics) => {
+      probeBuiltinX11Session(client, x11Options, connection).then((diagnostics) => {
         x11Diagnostics = diagnostics;
         if (shouldFallbackFromX11(diagnostics)) {
           removeX11Handler();
@@ -509,7 +555,7 @@ function openBuiltinX11Channel(authorization, accept, reject) {
 function openJumpSocket(client, connection) {
   return new Promise((resolve, reject) => {
     client.forwardOut("127.0.0.1", 0, String(connection.ssh_host || ""), Number(connection.ssh_port || 22), (error, stream) => {
-      if (error) reject(error);
+      if (error) reject(normalizeSshTransportError(error, connection));
       else resolve(stream);
     });
   });
@@ -572,7 +618,7 @@ async function connectSsh(connection) {
   try {
     const socket: any = await openJumpSocket(lease.client, connection);
     const client: any = await connectDirectSsh(connection, socket);
-    client.__tunneldeskJumpClient = lease.client;
+    client.__termaJumpClient = lease.client;
     client.once("close", lease.release);
     return client;
   } catch (error) {
@@ -705,7 +751,7 @@ async function startRemoteForward(client, forward, onError) {
 async function startPasswordForward(connection, forward, callbacks: any = {}) {
   const client: any = await connectPassword(connection);
   let closing = false;
-  const onError = (error) => callbacks.onError?.(error);
+  const onError = (error) => callbacks.onError?.(normalizeSshTransportError(error, connection));
   client.on("error", onError);
   client.on("close", () => {
     if (!closing) callbacks.onClose?.();
@@ -717,7 +763,7 @@ async function startPasswordForward(connection, forward, callbacks: any = {}) {
     else listener = await startSocksForward(client, forward, onError);
   } catch (error) {
     try { client.end(); } catch {}
-    throw error;
+    throw normalizeSshTransportError(error, connection);
   }
   return {
     client,
@@ -749,6 +795,7 @@ module.exports = {
   runPasswordCommand,
   normalizeSshOutputEncoding,
   decodeSshOutput,
+  normalizeSshTransportError,
   spawnPasswordCommand,
   shouldUseBuiltinSsh,
   sshTransportForConnection,

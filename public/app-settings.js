@@ -17,9 +17,13 @@ const SETTINGS_SECTION_META = {
   "settings-about": "关于"
 };
 let activeSettingsSection = "settings-general";
-const UPDATE_NOTICE_SESSION_KEY = "tunneldeskUpdateReadVersion";
+const UPDATE_NOTICE_SESSION_KEY = "termaUpdateReadVersion";
+const LEGACY_UPDATE_NOTICE_SESSION_KEY = "tunneldeskUpdateReadVersion";
 let updateNoticeReadVersion = "";
-try { updateNoticeReadVersion = sessionStorage.getItem(UPDATE_NOTICE_SESSION_KEY) || ""; } catch {}
+try {
+  updateNoticeReadVersion = sessionStorage.getItem(UPDATE_NOTICE_SESSION_KEY) || sessionStorage.getItem(LEGACY_UPDATE_NOTICE_SESSION_KEY) || "";
+  if (updateNoticeReadVersion) sessionStorage.setItem(UPDATE_NOTICE_SESSION_KEY, updateNoticeReadVersion);
+} catch {}
 
 function captureSettingsPane() {
   return typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
@@ -152,7 +156,7 @@ function storageSettingsPanelHtml() {
   const configurable = Boolean(desktopSettings?.available);
   if (desktopSettings?.storage_management_available === false) return `<section class="desktop-settings-section storage-settings-section">
     <h3>数据存储</h3>
-    <div class="warning">远程管理数据路径需要启用 Web 密码并登录。关闭局域网密码时，只能在运行 TunnelDesk 的本机修改。</div>
+    <div class="warning">远程管理数据路径需要启用 Web 密码并登录。关闭局域网密码时，只能在运行 Terma 的本机修改。</div>
   </section>`;
   return `<section class="desktop-settings-section storage-settings-section">
     <h3>数据存储</h3>
@@ -172,7 +176,7 @@ function storageSettingsPanelHtml() {
         <label for="webStorageRoot">运行根目录</label>
         <div class="upload-line"><input id="webStorageRoot" value="${escAttr(storage.root || desktopSettings?.base_dir || "")}" placeholder="选择或输入绝对路径"><button type="button" onclick="openStorageDirectoryBrowser()">${icon("folder-open")}<span>浏览</span></button></div>
         <label class="check-row"><input id="webStorageMigrate" type="checkbox" checked> 复制当前数据库、设置和密钥到新目录</label>
-        <div class="muted">保存后 TunnelDesk 会自动重启。目标已有数据库时不会覆盖；也可在启动前使用 TUNNELDESK_DATA_DIR 和 TUNNELDESK_SSH_DIR 分别覆盖目录。</div>`}
+        <div class="muted">保存后 Terma 会自动重启。目标已有数据库时不会覆盖；也可在启动前使用 TERMA_DATA_DIR 和 TERMA_SSH_DIR 分别覆盖目录，旧版 TUNNELDESK_* 变量仍可兼容读取。</div>`}
         <div class="desktop-current-paths"><code>数据：${esc(paths.dataDir || "")}</code><code>密钥：${esc(paths.sshDir || "")}</code></div>
       </div>
       <div class="actions"><button class="primary" type="button" onclick="${configurable ? "saveDesktopSettings(this)" : "saveWebStorageSettings(this)"}">${icon("save")}<span>保存数据路径并重启</span></button></div>
@@ -216,11 +220,11 @@ async function saveWebStorageSettings(button) {
   const root = $("webStorageRoot")?.value.trim() || "";
   const migrate = Boolean($("webStorageMigrate")?.checked);
   if (!root) return notify("请选择运行根目录", "error");
-  if (!await confirmModal("保存后会停止当前转发、迁移数据并重启 TunnelDesk。继续？", "更改数据路径", "保存并重启", "取消", true)) return;
+  if (!await confirmModal("保存后会停止当前转发、迁移数据并重启 Terma。继续？", "更改数据路径", "保存并重启", "取消", true)) return;
   try {
     setButtonBusy(button, true, "正在保存");
     const result = await api("/api/desktop-settings", {method:"PUT", body:JSON.stringify({root, migrate})});
-    notify("数据路径已保存，正在重启 TunnelDesk", "success");
+    notify("数据路径已保存，正在重启 Terma", "success");
     await waitForStorageRestart(result.data_dir);
   } catch (error) {
     setButtonBusy(button, false);
@@ -261,7 +265,7 @@ function desktopBehaviorPanelHtml() {
         <label class="check-row"><input id="desktopMinimizeToTray" type="checkbox" ${settings.minimizeToTray ? "checked" : ""}> 关闭窗口时最小化到托盘</label>
         <label class="check-row"><input id="desktopStartMinimized" type="checkbox" ${settings.startMinimizedToTray ? "checked" : ""}> 开机自动启动时静默到托盘</label>
         <label class="check-row"><input id="desktopStartupNotification" type="checkbox" ${settings.showStartupNotification ? "checked" : ""}> 启动完成后显示系统通知</label>
-        <label class="check-row"><input id="desktopXServerAutoStart" type="checkbox" ${settings.xServerAutoStart !== false ? "checked" : ""}> 启动 TunnelDesk 时自动准备 X Server</label>
+        <label class="check-row"><input id="desktopXServerAutoStart" type="checkbox" ${settings.xServerAutoStart !== false ? "checked" : ""}> 启动 Terma 时自动准备 X Server</label>
       </div>
     </div>
     <div class="desktop-runtime-row"><span>${icon(xserver.available ? "circle-check" : xserver.installed ? "circle-pause" : "circle-alert")}<b>X Server</b><small>${esc(xserverState)}</small></span><button type="button" onclick="openXServerManager()">${icon("app-window")}<span>管理</span></button></div>
@@ -297,7 +301,7 @@ async function saveDesktopSettings(button=$("desktopSettingsSaveBtn")) {
       showStartupNotification:$("desktopStartupNotification").checked,
       xServerAutoStart:$("desktopXServerAutoStart").checked
     })});
-    notify("桌面设置已保存，TunnelDesk 正在重启", "success");
+    notify("桌面设置已保存，Terma 正在重启", "success");
   } catch (error) {
     setButtonBusy(button, false);
     notify(error.message || "桌面设置保存失败", "error");
@@ -443,7 +447,7 @@ function runtimeHostOptionsHtml(data=runtimeSettings) {
     const detail = wildcard
       ? "包含当前及以后出现的所有 IPv4 网卡"
       : address === "127.0.0.1"
-        ? "仅本机可访问（只能从运行 TunnelDesk 的本机访问）"
+        ? "仅本机可访问（只能从运行 Terma 的本机访问）"
         : `${entry.interface && entry.interface !== "saved" ? `${entry.interface} · ` : ""}仅绑定此网卡地址`;
     return `<label class="runtime-host-option ${wildcard ? "wildcard" : ""}" data-runtime-host-option="${escAttr(address)}">
       <input type="checkbox" name="runtimeListenHost" value="${escAttr(address)}" ${selected.has(address) ? "checked" : ""} onchange="syncRuntimeHostOptions(this)">
@@ -464,7 +468,7 @@ function runtimeFeedbackHtml() {
   const requestedPort = result.requested_port || result.listen_port || $("runtimeListenPort")?.value || "";
   if (result.error && result.available !== false) return `<div class="runtime-feedback error">${icon("circle-alert")}<span>${esc(result.error)}</span></div>`;
   if (result.available && (result.occupied_by_current || result.current)) {
-    return `<div class="runtime-feedback info">${icon("info")}<span>端口 ${esc(requestedPort)} 正由当前 TunnelDesk 使用；保存后仍需重启才能应用新的监听地址。</span></div>`;
+    return `<div class="runtime-feedback info">${icon("info")}<span>端口 ${esc(requestedPort)} 正由当前 Terma 使用；保存后仍需重启才能应用新的监听地址。</span></div>`;
   }
   if (result.available) return `<div class="runtime-feedback success">${icon("check-circle-2")}<span>端口 ${esc(requestedPort)} 可用，可以保存此监听配置。</span></div>`;
   const suggestion = runtimePortValue(result.suggested_port, 0);
@@ -498,9 +502,9 @@ function runtimeSettingsPanelHtml(data=runtimeSettings) {
     <div class="runtime-port-field">
       <label for="runtimeListenPort">监听端口</label>
       <input id="runtimeListenPort" type="number" inputmode="numeric" min="1" max="65535" step="1" value="${escAttr(saved.listen_port)}" oninput="clearRuntimeSettingsFeedback()">
-      <span>允许填写 1-65535。保存不会中断当前连接，重启 TunnelDesk 后生效。</span>
+      <span>允许填写 1-65535。保存不会中断当前连接，重启 Terma 后生效。</span>
     </div>
-    <div class="runtime-security-note">${icon("shield-alert")}<div><strong>局域网访问前先确认认证策略</strong><span>选择指定网卡 IP 或 0.0.0.0 后，同一网络中的设备可能访问 TunnelDesk。建议保留 Web 密码并使用“仅局域网访问时校验密码”或“始终校验密码”。0.0.0.0 表示所有 IPv4 网卡，不只代表某一个局域网地址。</span></div></div>
+    <div class="runtime-security-note">${icon("shield-alert")}<div><strong>局域网访问前先确认认证策略</strong><span>选择指定网卡 IP 或 0.0.0.0 后，同一网络中的设备可能访问 Terma。建议保留 Web 密码并使用“仅局域网访问时校验密码”或“始终校验密码”。0.0.0.0 表示所有 IPv4 网卡，不只代表某一个局域网地址。</span></div></div>
     <div class="actions runtime-config-actions"><button id="runtimeCheckBtn" type="button" onclick="checkRuntimeSettings()">${icon("scan-search")}<span>检查占用</span></button><button id="runtimeSaveBtn" class="primary" type="button" onclick="saveRuntimeSettings()">${icon("save")}<span>保存监听配置</span></button></div>
     <div id="runtimeSettingsFeedback">${runtimeFeedbackHtml()}</div>
   </div>`;
@@ -607,9 +611,9 @@ async function saveRuntimeSettings() {
       restart_required:result.restart_required !== false
     });
     runtimeSettingsCheck = null;
-    runtimeSettingsMessage = {type:"success", text:"监听配置已保存。当前服务不会立即断开，请重启 TunnelDesk 后应用新的地址和端口。"};
+    runtimeSettingsMessage = {type:"success", text:"监听配置已保存。当前服务不会立即断开，请重启 Terma 后应用新的地址和端口。"};
     inPane(renderRuntimeSettingsPanel);
-    notify("监听配置已保存，重启 TunnelDesk 后生效", "success");
+    notify("监听配置已保存，重启 Terma 后生效", "success");
   } catch (error) {
     runtimeSettingsMessage = {type:"error", text:error.message || "监听配置保存失败"};
     inPane(renderRuntimeSettingsFeedback);
@@ -750,7 +754,7 @@ async function saveSftpGlobalSettings() {
   if (!Number.isInteger(maximumSize) || maximumSize < 1 || maximumSize > 100) return notify("SFTP 文件打开上限必须是 1-100 MB 的整数", "error");
   setButtonBusy(button, true, "保存中");
   try {
-    if (window.tunnelDeskDesktop && $("sftpExternalEditorMode")) {
+    if (window.termaDesktop && $("sftpExternalEditorMode")) {
       localStorage.setItem("sftpExternalEditorMode", $("sftpExternalEditorMode").value);
       localStorage.setItem("sftpExternalEditorPath", $("sftpExternalEditorPath")?.value.trim() || "");
       localStorage.setItem("sftpExternalEditorArgs", $("sftpExternalEditorArgs")?.value.trim() || "");
@@ -790,7 +794,7 @@ async function showSftpGlobalSettings() {
   modal.innerHTML = `<div class="modal-card sftp-global-settings-modal" role="dialog" aria-modal="true" aria-labelledby="sftpGlobalSettingsTitle">
     <div class="sftp-modal-head"><div><h2 id="sftpGlobalSettingsTitle">SFTP 全局设置</h2><span>应用到所有 SFTP 标签和连接</span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" onclick="closeSftpGlobalSettings()">${icon("x")}</button></div>
     <label class="check-row"><input id="sftpRecycleBinEnabled" type="checkbox" ${saved.sftp_recycle_bin_enabled ? "checked" : ""}> 删除远程文件时先移入回收站</label>
-    <div class="muted">默认关闭。开启后，每台远端服务器会在当前 SSH 用户主目录创建 TunnelDesk 专用隐藏目录；关闭只影响之后的删除，不会自动清空已有内容。</div>
+    <div class="muted">默认关闭。开启后，每台远端服务器会在当前 SSH 用户主目录创建 Terma 专用隐藏目录；关闭只影响之后的删除，不会自动清空已有内容。</div>
     <label>可在程序中打开的最大文件（MB）</label>
     <input id="sftpMaxOpenFileSizeMb" type="number" min="1" max="100" step="1" value="${Number(saved.sftp_max_open_file_size_mb || 5)}">
     <div class="muted">适用于在线文本编辑和图片预览，范围 1-100 MB。更大的文件仍可正常下载。</div>
@@ -800,7 +804,7 @@ async function showSftpGlobalSettings() {
     <div class="actions compact"><button type="button" onclick="useDefaultSftpDownloadDirectory()">恢复系统默认</button><button type="button" onclick="openSftpDownloadDirectory()">${icon("folder-open")}<span>打开目录</span></button></div>
     <label>外部编辑器</label><select id="sftpExternalEditorMode" onchange="toggleSftpExternalEditorFields()"><option value="system" ${localStorage.getItem("sftpExternalEditorMode") !== "vscode" && localStorage.getItem("sftpExternalEditorMode") !== "custom" ? "selected" : ""}>系统关联程序</option><option value="vscode" ${localStorage.getItem("sftpExternalEditorMode") === "vscode" ? "selected" : ""}>VS Code</option><option value="custom" ${localStorage.getItem("sftpExternalEditorMode") === "custom" ? "selected" : ""}>自定义程序</option></select>
     <div id="sftpExternalEditorCustom"><label>程序路径</label><input id="sftpExternalEditorPath" value="${escAttr(localStorage.getItem("sftpExternalEditorPath") || "")}" placeholder="编辑器可执行文件绝对路径"><label>启动参数</label><input id="sftpExternalEditorArgs" value="${escAttr(localStorage.getItem("sftpExternalEditorArgs") || "")}" placeholder="可选；用 ${"${file}"} 表示临时文件"></div>` : `<label>下载位置</label>
-    <div class="muted">通过局域网或浏览器访问时，文件会直接下载到当前设备的浏览器下载目录，不会保存到运行 TunnelDesk 的服务器目录。具体位置由当前设备的浏览器设置决定。</div>`}
+    <div class="muted">通过局域网或浏览器访问时，文件会直接下载到当前设备的浏览器下载目录，不会保存到运行 Terma 的服务器目录。具体位置由当前设备的浏览器设置决定。</div>`}
     <div class="warning">回收站仍占用远端磁盘空间。永久删除和清空回收站无法撤销。</div>
     <div class="actions"><button type="button" onclick="closeSftpGlobalSettings()">取消</button><button id="sftpGlobalSettingsSave" class="primary" type="button" onclick="saveSftpGlobalSettings()">${icon("save")}<span>保存 SFTP 设置</span></button></div>
   </div>`;
@@ -856,7 +860,7 @@ async function openSettings(updateTab=true) {
     try {
       await loadAboutSettings();
     } catch (error) {
-      aboutSettings = { product_name:"TunnelDesk", repository_url:"https://github.com/zmide/tunneldesk", load_error:error.message };
+      aboutSettings = { product_name:"Terma", repository_url:"https://github.com/zmide/Terma", load_error:error.message };
     }
     await loadRuntimeSettings();
     await loadDesktopSettings();
@@ -894,7 +898,7 @@ function renderSettings() {
           <section>
             <h3>工作区</h3>
             <label class="check-row"><input id="restoreWorkspaceTabs" type="checkbox" ${runtimeSettings?.saved?.restore_workspace_tabs !== false ? "checked" : ""}> 恢复上次未关闭的标签</label>
-            <div class="muted">默认开启。重新启动 TunnelDesk 后会恢复终端、SFTP、转发、设置、日志、导入导出等所有未关闭的工作区标签。</div>
+            <div class="muted">默认开启。重新启动 Terma 后会恢复终端、SFTP、转发、设置、日志、导入导出等所有未关闭的工作区标签。</div>
             <h3>任务中心</h3>
             <label class="check-row"><input id="taskCenterFloatingProgressEnabled" type="checkbox" ${runtimeSettings?.saved?.sftp_floating_progress_enabled !== false ? "checked" : ""}> 显示右上角悬浮任务进度卡</label>
             <div class="muted">用于显示传输、目录同步和 Linux 桌面安装/卸载等后台任务。关闭悬浮卡不会停止任务，仍可从工作区标题栏的任务中心查看。</div>
@@ -978,7 +982,7 @@ function renderSettings() {
         <details id="securityAdvancedDetails" class="advanced-settings" open>
           <summary>配置加密 ${s.encryption_enabled ? "（已启用）" : "（可选）"}</summary>
           <div class="muted">配置加密不是普通使用必需项。启用时会自动加密现有和以后保存的私钥路径、额外 SSH 参数；不会加密私钥文件本身。个人或局域网自用场景通常保持关闭即可。</div>
-          <div class="warning">启用后，SSH 连接、SFTP、终端、转发和批量命令在使用加密字段前需要先解锁。重启 TunnelDesk 后如果没有解锁，依赖私钥或额外 SSH 参数的连接可能无法正常启动。关闭加密会要求主密码，并把已加密字段解密回普通数据库字段。</div>
+          <div class="warning">启用后，SSH 连接、SFTP、终端、转发和批量命令在使用加密字段前需要先解锁。重启 Terma 后如果没有解锁，依赖私钥或额外 SSH 参数的连接可能无法正常启动。关闭加密会要求主密码，并把已加密字段解密回普通数据库字段。</div>
           <label>主密码</label>
           <input id="securityMasterPassword" type="password" placeholder="至少 8 位">
           <div class="actions">
@@ -1015,7 +1019,7 @@ function renderSettings() {
           </section>
           <section>
             <h3>当前访问地址</h3>
-            <div class="muted">这些地址来自当前正在运行的 TunnelDesk；保存监听配置后，重启程序才会刷新实际地址。</div>
+            <div class="muted">这些地址来自当前正在运行的 Terma；保存监听配置后，重启程序才会刷新实际地址。</div>
             <div id="runtimeCurrentUrls">${runtimeUrlListHtml()}</div>
             <h3 class="runtime-diagnostics-title">运行诊断</h3>
             <div class="muted">查看进程、数据目录、日志、Web 启动路径和 PTY 依赖状态。</div>
@@ -1025,10 +1029,10 @@ function renderSettings() {
         </div>
       </div>
       <div class="settings-group" id="settings-about">
-        <div class="settings-group-head"><h3>关于 TunnelDesk</h3><span>版本、更新、项目地址与开源许可信息。</span></div>
+        <div class="settings-group-head"><h3>关于 Terma</h3><span>版本、更新、项目地址与开源许可信息。</span></div>
         <div class="settings-grid single">
           <section class="about-section">
-            <div class="about-product"><div class="about-mark" aria-hidden="true">TD</div><div><h3>${esc(about.product_name || "TunnelDesk")}</h3><div class="muted">版本 ${esc(about.version || "未知")}</div></div></div>
+            <div class="about-product"><img class="about-mark" src="/assets/terma-icon.png" alt="" aria-hidden="true"><div><h3>${esc(about.product_name || "Terma")}</h3><div class="muted">版本 ${esc(about.version || "未知")}</div></div></div>
             <dl class="about-meta">
               <div><dt>开源许可</dt><dd>${esc(about.license_name || "GNU General Public License v3.0 only")}（${esc(about.license || "GPL-3.0-only")}）</dd></div>
               <div><dt>项目作者</dt><dd>${esc(about.author || "zmide")}</dd></div>
@@ -1037,7 +1041,7 @@ function renderSettings() {
             ${about.load_error || about.license_error ? `<div class="warning">程序版本与许可信息加载失败：${esc(about.load_error || about.license_error)}</div>` : ""}
             <div id="updateCheckArea">${updateStatusHtml()}</div>
             <div class="muted">本软件按现状提供，不附带任何担保。使用、修改和再分发须遵守 GNU GPL v3.0 条款。</div>
-            <div class="actions about-actions"><a class="button-link" href="${escAttr(about.repository_url || "https://github.com/zmide/tunneldesk")}" target="_blank" rel="noopener">${icon("github")}<span>GitHub 源码</span></a><button id="openLicenseBtn" onclick="showLicenseModal()">${icon("scroll-text")}<span>查看开源许可正文</span></button></div>
+            <div class="actions about-actions"><a class="button-link" href="${escAttr(about.repository_url || "https://github.com/zmide/Terma")}" target="_blank" rel="noopener">${icon("github")}<span>GitHub 源码</span></a><button id="openLicenseBtn" onclick="showLicenseModal()">${icon("scroll-text")}<span>查看开源许可正文</span></button></div>
           </section>
         </div>
       </div>
@@ -1048,6 +1052,7 @@ function renderSettings() {
   syncRuntimeHostOptions();
   syncDesktopCustomDataMode();
   syncUpdateNoticeForCurrentSection();
+  refreshIcons();
 }
 
 function updateStatusHtml() {
@@ -1140,7 +1145,7 @@ function updateStatusHtml() {
     ${notes}${downloadError}
     <div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>检查更新</span></button>${downloadAction}${releaseLink}</div>
     ${ignoreControl}
-    <div class="muted">自动匹配运行 TunnelDesk 主机的平台、架构和 Windows 安装类型；下载前会测试直连与加速线路并自动选择最快线路，文件仍按 GitHub 提供的 SHA-256 校验，不会静默安装或自动回滚。</div>
+    <div class="muted">自动匹配运行 Terma 主机的平台、架构和 Windows 安装类型；下载前会测试直连与加速线路并自动选择最快线路，文件仍按 GitHub 提供的 SHA-256 校验，不会静默安装或自动回滚。</div>
   </div>`;
 }
 
@@ -1321,7 +1326,10 @@ async function setUpdateVersionIgnored(input) {
     if (downloadStatus) updateSettings.download_status = downloadStatus;
     if (!enabled && updateNoticeReadVersion === currentUpdateNoticeVersion()) {
       updateNoticeReadVersion = "";
-      try { sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY); } catch {}
+      try {
+        sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY);
+        sessionStorage.removeItem(LEGACY_UPDATE_NOTICE_SESSION_KEY);
+      } catch {}
     }
     inPane(() => {
       const area = $("updateCheckArea");
@@ -1431,7 +1439,7 @@ async function openDownloadedUpdate() {
 async function openDownloadedUpdateDirectory() {
   const portable = updateSettings?.download_status?.package_type === "portable";
   const message = portable
-    ? "将打开便携版所在目录。请先关闭当前 TunnelDesk，再用新版本文件替换旧版本并重新启动；运行中的便携版不会自动覆盖自身。"
+    ? "将打开便携版所在目录。请先关闭当前 Terma，再用新版本文件替换旧版本并重新启动；运行中的便携版不会自动覆盖自身。"
     : "将打开已校验安装包所在目录，方便手动运行、复制或留存安装包。";
   if (!await confirmModal(
     message,
@@ -1487,7 +1495,7 @@ async function showLicenseModal() {
     if (!about.license_text) throw new Error(about.license_error || "未找到随程序提供的开源许可正文");
     const modal = $("modal");
     modal.innerHTML = `<div class="modal-card wide license-modal" role="dialog" aria-modal="true" aria-labelledby="licenseModalTitle">
-      <div class="license-modal-head"><div><h2 id="licenseModalTitle">GNU General Public License v3.0</h2><span>${esc(about.product_name || "TunnelDesk")} · ${esc(about.license || "GPL-3.0-only")}</span></div><button id="licenseModalClose" class="icon-button" type="button" title="关闭许可正文" aria-label="关闭许可正文">${icon("x")}</button></div>
+      <div class="license-modal-head"><div><h2 id="licenseModalTitle">GNU General Public License v3.0</h2><span>${esc(about.product_name || "Terma")} · ${esc(about.license || "GPL-3.0-only")}</span></div><button id="licenseModalClose" class="icon-button" type="button" title="关闭许可正文" aria-label="关闭许可正文">${icon("x")}</button></div>
       <pre id="licenseText" class="license-text" tabindex="0"></pre>
       <div class="actions"><button type="button" onclick="closeLicenseModal()">关闭</button></div>
     </div>`;
@@ -1573,7 +1581,7 @@ async function saveSecurityOptions() {
   const trusted_proxy_addresses = String($("securityTrustedProxyAddresses")?.value || "").split(/[\s,]+/).filter(Boolean);
   let confirm_unsafe = false;
   if (auth_mode === "off" || !lan_auth_enabled) {
-    confirm_unsafe = await confirmModal("关闭局域网访问密码会让同一局域网内设备直接操作 TunnelDesk。确认关闭？", "高风险设置", "确认关闭", "取消", true);
+    confirm_unsafe = await confirmModal("关闭局域网访问密码会让同一局域网内设备直接操作 Terma。确认关闭？", "高风险设置", "确认关闭", "取消", true);
     if (!confirm_unsafe) return;
   }
   securitySettings = await api("/api/security", {method:"PUT", body:JSON.stringify({auth_mode, lan_auth_enabled, secure_cookie_mode, trusted_proxy_enabled, trusted_proxy_addresses, confirm_unsafe})});

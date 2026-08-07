@@ -15,7 +15,7 @@ const SFTP_DROP_LEAVE_GRACE_MS = 90;
 const SFTP_NATIVE_TARGET_MISS_GRACE_MS = 180;
 const SFTP_NATIVE_DRAG_ACTIVE_TTL_MS = 2 * 60 * 1000;
 const SFTP_DRAG_FEEDBACK_STALE_MS = 900;
-const SFTP_INTERNAL_DRAG_MIME = "application/x-tunneldesk-sftp";
+const SFTP_INTERNAL_DRAG_MIME = "application/x-terma-sftp";
 const SFTP_INTERNAL_DRAG_HANDOFF_TTL_MS = 15 * 1000;
 const SFTP_MOBILE_TOOLBAR_EXPANDED_KEY = "sftpMobileToolbarExpanded";
 const sftpFilenameEncodingOptions = [
@@ -287,8 +287,8 @@ function disposeSftpRuntime(tabKey) {
 }
 
 if (typeof window !== "undefined") {
-  window.tunnelDeskDesktop?.onSftpDragResult?.(result => handleSftpNativeDragResult(result));
-  window.tunnelDeskDesktop?.onSftpDragEvent?.(event => handleSftpNativeDragEvent(event));
+  window.termaDesktop?.onSftpDragResult?.(result => handleSftpNativeDragResult(result));
+  window.termaDesktop?.onSftpDragEvent?.(event => handleSftpNativeDragEvent(event));
 }
 
 function sftpFileOpenKey(connectionId, remotePath) {
@@ -1238,7 +1238,7 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
           <button onclick="copySftpSelection('copy','${escAttr(tabKey)}')">${icon("copy")}<span>复制</span></button>
           <button onclick="copySftpSelection('move','${escAttr(tabKey)}')">${icon("folder-input")}<span>移动</span></button>
           <button onclick="downloadSftpSelection('${escAttr(tabKey)}')">${icon("download")}<span>下载</span></button>
-          ${window.tunnelDeskDesktop ? `<button onclick="sendSftpSelectionToDesktop('${escAttr(tabKey)}')">${icon("monitor-down")}<span>发送到桌面</span></button>` : ""}
+          ${window.termaDesktop ? `<button onclick="sendSftpSelectionToDesktop('${escAttr(tabKey)}')">${icon("monitor-down")}<span>发送到桌面</span></button>` : ""}
           <button id="sftpSelectionCompress" onclick="compressSftpSelection('${escAttr(tabKey)}')">${icon("archive")}<span>压缩</span></button>
           <button id="sftpSelectionPermissions" onclick="openSftpPermissionsForSelection(null,'${escAttr(tabKey)}')">${icon("key-round")}<span>权限</span></button>
           <button id="sftpSelectionExtract" onclick="extractSftpSelection('${escAttr(tabKey)}')" hidden>${icon("archive-restore")}<span>解压</span></button>
@@ -1939,39 +1939,39 @@ function sftpNativeDragKey(connectionId, entries) {
 }
 
 function sftpExternalDragMode() {
-  const mode = window.tunnelDeskDesktop?.capabilities?.sftpExternalDrag;
-  if ((mode === "staged" || mode === "streaming") && typeof window.tunnelDeskDesktop?.startSftpDrag === "function") return mode;
+  const mode = window.termaDesktop?.capabilities?.sftpExternalDrag;
+  if ((mode === "staged" || mode === "streaming") && typeof window.termaDesktop?.startSftpDrag === "function") return mode;
   return false;
 }
 
 function sftpNativeDragStartTiming() {
-  return window.tunnelDeskDesktop?.capabilities?.sftpNativeDragStart === "pointerdown"
+  return window.termaDesktop?.capabilities?.sftpNativeDragStart === "pointerdown"
     ? "pointerdown"
     : "leave-window";
 }
 
 function sftpNativeDragFallbackInfo() {
-  const capabilities = window.tunnelDeskDesktop?.capabilities;
+  const capabilities = window.termaDesktop?.capabilities;
   if (capabilities?.platform !== "linux" || capabilities?.sftpExternalDrag !== "staged") return null;
   const reason = String(capabilities.sftpNativeDragReason || "").trim();
   const normalizedReason = reason.toLowerCase();
   let reasonText = reason || "系统缺少 FUSE3 运行环境";
-  let action = "请检查系统 FUSE3 运行环境后重启 TunnelDesk";
+  let action = "请检查系统 FUSE3 运行环境后重启 Terma";
   if (normalizedReason.includes("/dev/fuse is unavailable")) {
     reasonText = "系统没有提供 /dev/fuse";
     action = "请安装 FUSE3 并启用 FUSE 内核设备；容器或沙箱中还需向应用开放 /dev/fuse";
   } else if (normalizedReason.includes("cannot access /dev/fuse")) {
     reasonText = "当前用户无权访问 /dev/fuse";
-    action = "请按当前发行版的方式授予 FUSE 设备访问权限，重新登录后再启动 TunnelDesk";
+    action = "请按当前发行版的方式授予 FUSE 设备访问权限，重新登录后再启动 Terma";
   } else if (normalizedReason.includes("fusermount3 is unavailable")) {
     reasonText = "系统没有安装 FUSE3（fusermount3）";
-    action = "请安装 fuse3 运行包后重启 TunnelDesk";
+    action = "请安装 fuse3 运行包后重启 Terma";
   } else if (normalizedReason.includes("runtime directory cannot be prepared")) {
     reasonText = "当前用户的运行目录不可写";
-    action = "请检查 XDG_RUNTIME_DIR 权限后重启 TunnelDesk";
+    action = "请检查 XDG_RUNTIME_DIR 权限后重启 Terma";
   } else if (normalizedReason.includes("辅助程序尚未安装")) {
     reasonText = "安装包中缺少 Linux 拖出组件";
-    action = "请重新安装完整的 TunnelDesk 桌面版";
+    action = "请重新安装完整的 Terma 桌面版";
   }
   return {
     reason:reasonText,
@@ -2177,7 +2177,7 @@ function clearSftpNativeDragPointer(options={}) {
       request.cancelled = true;
       sftpNativeDragRequests.delete(pointer.nativeRequestId);
     }
-    window.tunnelDeskDesktop?.cancelSftpDrag?.(pointer.nativeRequestId);
+    window.termaDesktop?.cancelSftpDrag?.(pointer.nativeRequestId);
     clearSftpDragVisuals(pointer.row);
   }
 }
@@ -2211,7 +2211,7 @@ function activateSftpNativeDragPointer(pointer) {
   document.body.classList.add("sftp-item-drag-active");
   showSftpDragHint(sftpDragSourceHint(), false, "", pointer.sourceTabKey);
   showSftpDragPreview(pointer.entries, pointer.lastX ?? pointer.startX, pointer.lastY ?? pointer.startY);
-  window.tunnelDeskDesktop?.activateSftpDrag?.(pointer.nativeRequestId);
+  window.termaDesktop?.activateSftpDrag?.(pointer.nativeRequestId);
 }
 
 function handleSftpNativeDragPointerMove(event) {
@@ -2412,8 +2412,8 @@ function checkSftpDragFeedbackWatchdog() {
 
 function bindSftpDragFeedbackLifecycle() {
   if (typeof window === "undefined" || typeof document === "undefined") return;
-  if (window.__tunneldeskSftpDragFeedbackLifecycleBound) return;
-  window.__tunneldeskSftpDragFeedbackLifecycleBound = true;
+  if (window.__termaSftpDragFeedbackLifecycleBound) return;
+  window.__termaSftpDragFeedbackLifecycleBound = true;
   const clearAfterEvent = () => setTimeout(() => clearSftpDragFeedback(), 0);
   document.addEventListener("dragend", clearAfterEvent, true);
   document.addEventListener("drop", clearAfterEvent, true);
@@ -2604,7 +2604,7 @@ function startSftpNativeDrag(row, connectionId, entries, cached, mode=sftpExtern
     const payload = mode === "streaming"
       ? {connectionId:Number(connectionId), entries:request.entries, sourceTabKey:request.sourceTabKey}
       : request.files;
-    window.tunnelDeskDesktop.startSftpDrag(payload, requestId);
+    window.termaDesktop.startSftpDrag(payload, requestId);
     return requestId;
   } catch (error) {
     sftpNativeDragRequests.delete(requestId);
@@ -2629,7 +2629,7 @@ function updateSftpNativeDragTarget(requestId, request, target, options={}) {
   if (request.nativeTargetKey === key && !options.final) return;
   request.nativeTargetKey = key;
   request.nativeTarget = normalized;
-  window.tunnelDeskDesktop?.setSftpDragTarget?.(requestId, normalized, {final:Boolean(options.final)});
+  window.termaDesktop?.setSftpDragTarget?.(requestId, normalized, {final:Boolean(options.final)});
 }
 
 function showSftpNativeDragTargetFeedback(target) {
@@ -2764,7 +2764,7 @@ function handleSftpNativeDragEvent(event) {
   if (event.type === "ready") {
     request.nativeReady = true;
     if (sftpNativeDragPointer?.nativeRequestId === requestId) sftpNativeDragPointer.nativeReady = true;
-    if (request.activated) window.tunnelDeskDesktop?.activateSftpDrag?.(requestId);
+    if (request.activated) window.termaDesktop?.activateSftpDrag?.(requestId);
     return;
   }
   if (event.type === "started") {
@@ -3531,7 +3531,7 @@ function downloadWithProgress(url, onProgress, fallbackName="download") {
       }, 1000);
       resolve();
     };
-    xhr.onerror = () => reject(new Error("下载连接失败：可能是 TunnelDesk 服务重启或网络中断。"));
+    xhr.onerror = () => reject(new Error("下载连接失败：可能是 Terma 服务重启或网络中断。"));
     xhr.send();
   });
 }
@@ -3775,7 +3775,7 @@ function sftpDataTransferHasFiles(dataTransfer) {
   if (types.includes("files")) return true;
   if (Number(dataTransfer?.files?.length || 0) > 0) return true;
   if (Array.from(dataTransfer?.items || []).some(item => item.kind === "file")) return true;
-  const desktopPlatform = String(window.tunnelDeskDesktop?.capabilities?.platform || "");
+  const desktopPlatform = String(window.termaDesktop?.capabilities?.platform || "");
   return Boolean(desktopPlatform && types.includes("text/uri-list"));
 }
 
@@ -4083,7 +4083,7 @@ function uploadWithProgress(url, body, job) {
         finish(() => reject(new Error(xhr.responseText || xhr.statusText || "上传失败")));
       }
     };
-    xhr.onerror = () => finish(() => reject(request.cancelled ? uploadCancelledError() : new Error("上传连接失败：可能是 TunnelDesk 服务重启或网络中断。")));
+    xhr.onerror = () => finish(() => reject(request.cancelled ? uploadCancelledError() : new Error("上传连接失败：可能是 Terma 服务重启或网络中断。")));
     xhr.onabort = () => finish(() => reject(uploadCancelledError()));
     xhr.ontimeout = () => finish(() => reject(new Error("上传连接超时")));
     xhr.send(body);
@@ -4120,10 +4120,10 @@ function showSftpEntryMenu(event, id, path, name, type, tabKey=sftpTabKeyFromNod
       : isSftpImageName(name)
         ? {label:"预览图片", icon:"image", run:()=>previewSftpImage(id, path)}
         : {label:"以文本打开", icon:"file-text", run:()=>previewSftpText(id, path)},
-    ...(!isDir && window.tunnelDeskDesktop ? [{label:"用外部编辑器打开", icon:"external-link", run:()=>openSftpExternalEdit(id, path)}] : []),
-    ...(isDir && window.tunnelDeskDesktop ? [{label:"与本地目录比较同步", icon:"refresh-cw", run:()=>openSftpDirectorySync(id, path, tabKey)}] : []),
+    ...(!isDir && window.termaDesktop ? [{label:"用外部编辑器打开", icon:"external-link", run:()=>openSftpExternalEdit(id, path)}] : []),
+    ...(isDir && window.termaDesktop ? [{label:"与本地目录比较同步", icon:"refresh-cw", run:()=>openSftpDirectorySync(id, path, tabKey)}] : []),
     {label:"下载", icon:"download", run:()=>downloadSftp(id, path, isDir ? "dir" : "file")},
-    ...(window.tunnelDeskDesktop && typeof sendSftpPathsToDesktop === "function" ? [{label:"发送到桌面", icon:"monitor-down", run:()=>sendSftpPathsToDesktop(id, [path])}] : []),
+    ...(window.termaDesktop && typeof sendSftpPathsToDesktop === "function" ? [{label:"发送到桌面", icon:"monitor-down", run:()=>sendSftpPathsToDesktop(id, [path])}] : []),
     ...(!isDir && isArchiveName(name) ? [{label:"解压", icon:"archive-restore", run:()=>extractSingleSftp(id, path, tabKey)}] : []),
     {label:"压缩", icon:"archive", run:()=>compressSingleSftp(id, path, tabKey)},
     {separator:true},
@@ -4148,7 +4148,7 @@ function showSftpDirectoryMenu(event, tabKey=sftpTabKeyFromNode(event?.currentTa
     {label:"新建文件", icon:"file-plus-2", run:()=>createSftpFile(tabKey)},
     {label:"新建文件夹", icon:"folder-plus", run:()=>mkdirSftp(tabKey)},
     {label:"上传文件或文件夹", icon:"upload", run:()=>sftpElement("sftpUpload", tabKey)?.click()},
-    ...(window.tunnelDeskDesktop ? [{label:"与本地目录比较同步", icon:"refresh-cw", run:()=>{
+    ...(window.termaDesktop ? [{label:"与本地目录比较同步", icon:"refresh-cw", run:()=>{
       const runtime = sftpTabRuntimes.get(String(tabKey || ""));
       const tab = tabs.find(item => item.key === tabKey);
       return openSftpDirectorySync(tab?.id, runtime?.state.path || ".", tabKey);

@@ -4,11 +4,11 @@ const os = require("node:os");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-db-reopen-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(temporaryRoot, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(temporaryRoot, ".ssh");
-fs.mkdirSync(process.env.TUNNELDESK_DATA_DIR, {recursive:true});
-const legacy = new DatabaseSync(path.join(process.env.TUNNELDESK_DATA_DIR, "tunnels.db"));
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-db-reopen-"));
+process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
+process.env.TERMA_SSH_DIR = path.join(temporaryRoot, ".ssh");
+fs.mkdirSync(process.env.TERMA_DATA_DIR, {recursive:true});
+const legacy = new DatabaseSync(path.join(process.env.TERMA_DATA_DIR, "tunnels.db"));
 legacy.exec(`CREATE TABLE connections (
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT '默认分组',
   ssh_host TEXT NOT NULL, ssh_port INTEGER NOT NULL DEFAULT 22, ssh_user TEXT NOT NULL,

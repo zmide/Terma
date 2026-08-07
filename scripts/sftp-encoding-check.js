@@ -2,11 +2,11 @@ const assert = require("node:assert");
 const iconv = require("iconv-lite");
 const { decodeRemoteFilenameOutput, decodeRemoteText, encodeRemoteText, normalizeTextEncoding, remotePathOperand } = require("../dist/sftp");
 
-const sample = "你好，TunnelDesk\r\n";
+const sample = "你好，Terma\r\n";
 const samples = {
-  shift_jis: "こんにちは、TunnelDesk\r\n",
-  "euc-kr": "안녕하세요, TunnelDesk\r\n",
-  latin1: "TunnelDesk café\r\n"
+  shift_jis: "こんにちは、Terma\r\n",
+  "euc-kr": "안녕하세요, Terma\r\n",
+  latin1: "Terma café\r\n"
 };
 for (const encoding of ["utf8", "utf8bom", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "latin1"]) {
   const source = samples[encoding] || sample;

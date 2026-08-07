@@ -5,6 +5,19 @@ const { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, ipcMain
 const { createNativeSftpDrag } = require("./native-sftp-drag");
 const { createRemoteClientAdapter } = require("./remote-clients");
 const { createXServerRuntime } = require("./xserver-runtime");
+const { copyLegacyProfileMissing, mergeLegacyRuntime, removeCreatedFiles } = require("./brand-data-migration");
+const { legacyBrandWindowsAppRunning } = require("./windows-brand-process");
+
+const PRODUCT_NAME = "Terma";
+const LEGACY_PRODUCT_NAME = "TunnelDesk";
+const PRODUCT_ID = "terma";
+const LEGACY_PRODUCT_ID = "tunneldesk";
+const APP_USER_MODEL_ID = "com.zmide.terma";
+const LEGACY_APP_USER_MODEL_ID = "com.zmide.tunneldesk";
+const TOAST_ACTIVATOR_CLSID = "{75F75A3C-FD87-47D7-B50D-15D5C636B26E}";
+const BRAND_MIGRATION_VERSION = 2;
+
+app.setName(PRODUCT_NAME);
 
 let startServer = null;
 let shutdown = null;
@@ -28,8 +41,10 @@ let SETTINGS_FILE = "";
 let BOOT_SETTINGS_FILE = "";
 let dataPath = "";
 let sshPath = "";
-const DISPLAY_CLIENT_ARG = "--tunneldesk-display-client";
-const DISPLAY_CLIENT_URL_ENV = "TUNNELDESK_DISPLAY_CLIENT_URL";
+const DISPLAY_CLIENT_ARG = "--terma-display-client";
+const LEGACY_DISPLAY_CLIENT_ARG = "--tunneldesk-display-client";
+const DISPLAY_CLIENT_URL_ENV = "TERMA_DISPLAY_CLIENT_URL";
+const LEGACY_DISPLAY_CLIENT_URL_ENV = "TUNNELDESK_DISPLAY_CLIENT_URL";
 const LINUX_DISPLAY_SESSION_KEYS = [
   "DISPLAY",
   "WAYLAND_DISPLAY",
@@ -44,12 +59,12 @@ const LINUX_DISPLAY_SESSION_KEYS = [
   "GDMSESSION",
   "SESSION_MANAGER"
 ];
-const displayClientMode = process.platform === "linux" && process.argv.includes(DISPLAY_CLIENT_ARG);
+const displayClientMode = process.platform === "linux" && (process.argv.includes(DISPLAY_CLIENT_ARG) || process.argv.includes(LEGACY_DISPLAY_CLIENT_ARG));
 const localLinuxDisplaySession = captureLinuxDisplaySession();
 const localLinuxDisplayKey = linuxDisplaySessionKey(localLinuxDisplaySession);
 let displayClientProfileDir = "";
 if (displayClientMode) {
-  displayClientProfileDir = path.join(app.getPath("temp"), `tunneldesk-display-client-${process.pid}`);
+  displayClientProfileDir = path.join(app.getPath("temp"), `${PRODUCT_ID}-display-client-${process.pid}`);
   app.setPath("userData", displayClientProfileDir);
   app.setPath("sessionData", displayClientProfileDir);
 }
@@ -70,6 +85,7 @@ let desktopStartupInProgress = true;
 let trayStateTimer = null;
 let trayState = { runningConnections: 0, runningForwards: 0, failedForwards: 0, totalForwards: 0, online: false };
 let pendingStorageMigrationNotice = "";
+let legacyBrandMigration = { status:"not-checked", source:"", target:"", backup:"", message:"" };
 let nativeSftpDrag = null;
 let linuxNotificationProbe = { checkedAt: 0, available: false };
 const pendingDisplayClientSessions = new Map();
@@ -79,27 +95,14 @@ const NATIVE_SFTP_DRAG_SESSION_TIMEOUT_MS = 70 * 60 * 1000;
 const NATIVE_SFTP_DRAG_CANCEL_GRACE_MS = 90 * 1000;
 const NATIVE_SFTP_DRAG_MAC_COMPLETION_GRACE_MS = 3000;
 const NATIVE_SFTP_DRAG_WINDOWS_TARGET_ACK_TIMEOUT_MS = 2000;
-const NATIVE_SFTP_DRAG_DEBUG = process.env.TUNNELDESK_NATIVE_DRAG_DEBUG === "1";
+const NATIVE_SFTP_DRAG_DEBUG = process.env.TERMA_NATIVE_DRAG_DEBUG === "1" || process.env.TUNNELDESK_NATIVE_DRAG_DEBUG === "1";
 
-const APP_USER_MODEL_ID = "com.zmide.tunneldesk";
-const TOAST_ACTIVATOR_CLSID = "{4BCB7691-AE54-4E32-B6D3-B22E3F4E3444}";
 const START_IN_TRAY_ARG = "--start-in-tray";
-const STORAGE_MIGRATION_VERSION = 1;
+const STORAGE_MIGRATION_VERSION = 2;
 const TRANSIENT_DATA_FILES = new Set(["web.pid", "web.url", "web.json"]);
 
-app.setName("TunnelDesk");
-if (!displayClientMode) {
-  xServerRuntime = createXServerRuntime({
-    appIsPackaged:app.isPackaged,
-    resourcesPath:process.resourcesPath,
-    projectRoot:path.resolve(__dirname, ".."),
-    userDataPath:app.getPath("userData")
-  });
-}
-configureWindowsAppIdentity();
-
 const singleInstanceLocked = displayClientMode || app.requestSingleInstanceLock({
-  tunneldeskDisplaySession: localLinuxDisplaySession
+  termaDisplaySession: localLinuxDisplaySession
 });
 if (!singleInstanceLocked) {
   app.exit(0);
@@ -146,7 +149,7 @@ function linuxDisplaySessionKey(session = {}) {
   return sessionId ? `session:${sessionId}` : "";
 }
 
-function displayClientUrl(value = process.env[DISPLAY_CLIENT_URL_ENV]) {
+function displayClientUrl(value = process.env[DISPLAY_CLIENT_URL_ENV] || process.env[LEGACY_DISPLAY_CLIENT_URL_ENV]) {
   try {
     const target = new URL(String(value || "").trim());
     if (target.protocol !== "http:" && target.protocol !== "https:") return "";
@@ -158,7 +161,7 @@ function displayClientUrl(value = process.env[DISPLAY_CLIENT_URL_ENV]) {
 }
 
 function displayClientSpawnArguments() {
-  const args = process.argv.slice(1).filter(arg => arg !== START_IN_TRAY_ARG && arg !== DISPLAY_CLIENT_ARG);
+  const args = process.argv.slice(1).filter(arg => arg !== START_IN_TRAY_ARG && arg !== DISPLAY_CLIENT_ARG && arg !== LEGACY_DISPLAY_CLIENT_ARG);
   return [...args, DISPLAY_CLIENT_ARG];
 }
 
@@ -167,6 +170,7 @@ function displayClientEnvironment(session, url) {
   for (const key of LINUX_DISPLAY_SESSION_KEYS) delete environment[key];
   Object.assign(environment, normalizeLinuxDisplaySession(session));
   environment[DISPLAY_CLIENT_URL_ENV] = url;
+  delete environment[LEGACY_DISPLAY_CLIENT_URL_ENV];
   return environment;
 }
 
@@ -203,7 +207,7 @@ function launchDisplayClient(session) {
       windowsHide: true
     });
   } catch (error) {
-    console.error(`failed to open TunnelDesk on ${key}: ${error.message}`);
+    console.error(`failed to open ${PRODUCT_NAME} on ${key}: ${error.message}`);
     return false;
   }
   displayClientProcesses.set(key, child);
@@ -212,7 +216,7 @@ function launchDisplayClient(session) {
   };
   child.once?.("error", error => {
     forget();
-    console.error(`TunnelDesk display client ${key} failed: ${error.message}`);
+    console.error(`${PRODUCT_NAME} display client ${key} failed: ${error.message}`);
   });
   child.once?.("exit", forget);
   return true;
@@ -238,14 +242,14 @@ function flushPendingDisplayClients() {
 }
 
 function handleSecondInstance(_event, _commandLine, _workingDirectory, additionalData = {}) {
-  const requestedSession = normalizeLinuxDisplaySession(additionalData?.tunneldeskDisplaySession);
+  const requestedSession = normalizeLinuxDisplaySession(additionalData?.termaDisplaySession || additionalData?.tunneldeskDisplaySession);
   const requestedKey = linuxDisplaySessionKey(requestedSession);
   if (process.platform === "linux" && requestedKey && requestedKey !== localLinuxDisplayKey) {
     requestDisplayClient(requestedSession);
     return;
   }
   showWindow();
-  notify("TunnelDesk 已在运行，已切换到现有窗口");
+  notify(`${PRODUCT_NAME} 已在运行，已切换到现有窗口`);
 }
 
 function handleDisplayClientControlMessage(message) {
@@ -290,17 +294,248 @@ function removeLegacyElectronShortcut() {
   }
 }
 
+function legacyBrandUserDataPath() {
+  return path.join(app.getPath("appData"), LEGACY_PRODUCT_NAME);
+}
+
+function brandMigrationMetadataPath() {
+  return path.join(app.getPath("userData"), "brand-migration.json");
+}
+
+function readBrandMigrationMetadata() {
+  try {
+    const value = JSON.parse(fs.readFileSync(brandMigrationMetadataPath(), "utf8"));
+    return value && typeof value === "object" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeBrandMigrationMetadata(value) {
+  const destination = brandMigrationMetadataPath();
+  fs.mkdirSync(path.dirname(destination), { recursive:true });
+  const temporary = `${destination}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(value, null, 2), "utf8");
+    fs.renameSync(temporary, destination);
+  } finally {
+    try { fs.rmSync(temporary, { force:true }); } catch {}
+  }
+}
+
+function legacyBrandAppRunning() {
+  try {
+    if (process.platform === "win32") {
+      return legacyBrandWindowsAppRunning({
+        spawnSync,
+        currentPid:process.pid,
+        currentUserData:app.getPath("userData"),
+        legacyUserData:legacyBrandUserDataPath()
+      });
+    }
+    for (const processName of [LEGACY_PRODUCT_NAME, LEGACY_PRODUCT_ID]) {
+      const result = spawnSync("pgrep", ["-x", processName], { encoding:"utf8" });
+      if (result.status === 0 && Boolean(String(result.stdout || "").trim())) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function brandMigrationRuntimePaths() {
+  if (dataPath && sshPath) return { dataDir:dataPath, sshDir:sshPath };
+  let stored = {};
+  try {
+    stored = JSON.parse(fs.readFileSync(path.join(app.getPath("userData"), "desktop-settings.json"), "utf8"));
+  } catch {}
+  return resolveRuntimePaths({
+    ...defaultDesktopSettings(),
+    ...(stored && typeof stored === "object" ? stored : {})
+  });
+}
+
+function inspectLegacyBrandMigration() {
+  const source = legacyBrandUserDataPath();
+  const targetProfile = app.getPath("userData");
+  const runtime = brandMigrationRuntimePaths();
+  const target = path.dirname(runtime.dataDir);
+  const metadata = readBrandMigrationMetadata();
+  const sourceAvailable = source !== targetProfile && runtimeHasPersistentData(path.join(source, "runtime"));
+  const targetHasData = runtimeHasPersistentData(target);
+  return {
+    ...legacyBrandMigration,
+    source,
+    target,
+    target_profile:targetProfile,
+    target_data_dir:runtime.dataDir,
+    target_ssh_dir:runtime.sshDir,
+    source_available:sourceAvailable,
+    target_has_data:targetHasData,
+    legacy_running:sourceAvailable && legacyBrandAppRunning(),
+    completed:Boolean(metadata?.status === "migrated"),
+    last_migration:metadata || null
+  };
+}
+
+function migrateLegacyBrandUserData(options = {}) {
+  const source = legacyBrandUserDataPath();
+  const targetProfile = app.getPath("userData");
+  const runtime = options.target_data_dir && options.target_ssh_dir
+    ? { dataDir:path.resolve(options.target_data_dir), sshDir:path.resolve(options.target_ssh_dir) }
+    : brandMigrationRuntimePaths();
+  const target = path.dirname(runtime.dataDir);
+  const result = {
+    status:"not-needed",
+    source,
+    target,
+    backup:"",
+    message:""
+  };
+  if (path.resolve(source) === path.resolve(targetProfile) || !runtimeHasPersistentData(path.join(source, "runtime"))) {
+    legacyBrandMigration = result;
+    return result;
+  }
+  if (legacyBrandAppRunning()) {
+    result.status = "legacy-running";
+    result.message = "检测到旧版程序仍在运行。请先退出旧版，再迁移数据。";
+    legacyBrandMigration = result;
+    return result;
+  }
+  const previousMigration = readBrandMigrationMetadata();
+  if (!options.manual && previousMigration?.status === "migrated" && Number(previousMigration?.migration_version || 0) >= BRAND_MIGRATION_VERSION) {
+    result.status = "already-migrated";
+    result.backup = String(previousMigration.backup || "");
+    result.message = "旧版数据已经完成合并，可在设置中手动重新检查。";
+    legacyBrandMigration = result;
+    return result;
+  }
+  const createdProfileFiles = copyLegacyProfileMissing(source, targetProfile);
+  try {
+    const migration = mergeLegacyRuntime({
+      sourceDataDir:path.join(source, "runtime", "data"),
+      sourceSshDir:path.join(source, "runtime", ".ssh"),
+      targetDataDir:runtime.dataDir,
+      targetSshDir:runtime.sshDir,
+      backupParent:targetProfile
+    });
+    result.backup = migration.backupRoot || "";
+    result.summary = migration.summary;
+    result.ssh = migration.ssh;
+    const metadata = {
+      status:"migrated",
+      migration_version:BRAND_MIGRATION_VERSION,
+      migrated_at:new Date().toISOString(),
+      source,
+      target,
+      target_profile:targetProfile,
+      target_data_dir:runtime.dataDir,
+      target_ssh_dir:runtime.sshDir,
+      backup:result.backup,
+      legacy_product:LEGACY_PRODUCT_NAME,
+      product:PRODUCT_NAME,
+      preserved_legacy_directory:true,
+      merged_with_current:true,
+      counts:migration.summary,
+      ssh:migration.ssh
+    };
+    let metadataWarning = "";
+    try { writeBrandMigrationMetadata(metadata); }
+    catch (metadataError) { metadataWarning = `（迁移记录写入失败：${metadataError.message || metadataError}）`; }
+    result.status = "migrated";
+    result.message = `已将 ${LEGACY_PRODUCT_NAME} 数据合并到 ${PRODUCT_NAME}，当前数据和旧目录都已保留。${metadataWarning}`;
+    legacyBrandMigration = result;
+    return result;
+  } catch (error) {
+    removeCreatedFiles(createdProfileFiles);
+    result.backup = String(error.migrationBackup || "");
+    result.status = "failed";
+    result.message = `旧版数据合并失败，当前 Terma 数据未被替换：${error.message || error}${result.backup ? `；当前数据备份：${result.backup}` : ""}`;
+    legacyBrandMigration = result;
+    return result;
+  }
+}
+
+function migrateLegacyBrandData(value = {}) {
+  const preview = inspectLegacyBrandMigration();
+  if (!preview.source_available) return { ok:false, ...preview, error:"未发现可迁移的旧版数据" };
+  if (preview.legacy_running) return { ok:false, ...preview, error:"旧版程序仍在运行，请退出后再迁移" };
+  if (preview.target_has_data && !Boolean(value.merge_current || value.replace_current)) {
+    return {
+      ok:false,
+      ...preview,
+      needs_merge_confirmation:true,
+      needs_replace_confirmation:true,
+      error:"Terma 已有数据，确认后会先完整备份，再合并旧版连接、分组、远程配置、工作区和密钥"
+    };
+  }
+  setTimeout(async () => {
+    quitting = true;
+    try { await Promise.resolve(shutdown?.()); } catch (error) { console.error(error); }
+    const migrated = migrateLegacyBrandUserData({
+      manual:true,
+      force:true,
+      target_data_dir:preview.target_data_dir,
+      target_ssh_dir:preview.target_ssh_dir
+    });
+    if (migrated.status === "migrated") relaunchInForeground();
+    else quitting = false;
+    if (migrated.status === "migrated") app.exit(0);
+  }, 250);
+  return { ok:true, restart_required:true, ...preview };
+}
+
+function prepareLegacyBrandMigrationAtStartup(settings, runtime = resolveRuntimePaths(settings)) {
+  const source = legacyBrandUserDataPath();
+  const targetProfile = app.getPath("userData");
+  const target = path.dirname(runtime.dataDir);
+  const sourceAvailable = path.resolve(source) !== path.resolve(targetProfile)
+    && runtimeHasPersistentData(path.join(source, "runtime"));
+  if (!sourceAvailable) {
+    legacyBrandMigration = { status:"not-needed", source, target, backup:"", message:"" };
+    return legacyBrandMigration;
+  }
+
+  const targetHasData = runtimeHasPersistentData(target);
+  if (String(settings?.dataMode || "") !== "user" || targetHasData) {
+    legacyBrandMigration = {
+      status:"available",
+      source,
+      target,
+      backup:"",
+      message:String(settings?.dataMode || "") === "user"
+        ? "检测到旧版数据；当前用户目录已有数据，请在迁移界面确认后合并。"
+        : "检测到旧版数据；当前使用项目或自定义数据目录，请在迁移界面确认后合并。"
+    };
+    return legacyBrandMigration;
+  }
+
+  return migrateLegacyBrandUserData({
+    target_data_dir:runtime.dataDir,
+    target_ssh_dir:runtime.sshDir
+  });
+}
+
+if (!displayClientMode) {
+  xServerRuntime = createXServerRuntime({
+    appIsPackaged:app.isPackaged,
+    resourcesPath:process.resourcesPath,
+    projectRoot:path.resolve(__dirname, ".."),
+    userDataPath:app.getPath("userData")
+  });
+}
+configureWindowsAppIdentity();
+
 function iconPath(filename = process.platform === "win32" ? "icon.ico" : "icon.png") {
   return path.join(__dirname, "assets", filename);
 }
 
-function loadBackend() {
-  const settings = prepareRuntimeSettings();
+function loadBackend(settings = prepareRuntimeSettings()) {
   const paths = resolveRuntimePaths(settings);
   dataPath = paths.dataDir;
   sshPath = paths.sshDir;
-  process.env.TUNNELDESK_DATA_DIR = dataPath;
-  process.env.TUNNELDESK_SSH_DIR = sshPath;
+  process.env.TERMA_DATA_DIR = dataPath;
+  process.env.TERMA_SSH_DIR = sshPath;
   ({ startServer, shutdown, parseArgs:parseServerArgs } = require("../dist/server"));
   ({ DATA_DIR, LOG_DIR, PROJECT_SSH_DIR, PID_FILE, WEB_URL_FILE, DEFAULT_HOST, DEFAULT_PORT } = require("../dist/config"));
   ({
@@ -466,7 +701,7 @@ function migrateLegacyPackagedRuntime(settings) {
       throw error;
     }
     status = "conflict-backed-up";
-    pendingStorageMigrationNotice = `检测到旧程序目录和用户目录中都有 TunnelDesk 数据。现继续使用用户目录，旧程序数据已完整备份到：${backupRoot}`;
+    pendingStorageMigrationNotice = `检测到旧程序目录和用户目录中都有旧版数据。现继续使用用户目录，旧程序数据已完整备份到：${backupRoot}`;
   } else if (sourceHasData) {
     const stagingRoot = uniqueMigrationPath(app.getPath("userData"), "runtime-migration-staging");
     try {
@@ -478,7 +713,7 @@ function migrateLegacyPackagedRuntime(settings) {
       throw error;
     }
     status = "migrated";
-    pendingStorageMigrationNotice = `TunnelDesk 数据已从旧程序目录迁移到用户目录：${targetRoot}。旧目录仍保留，可用于回滚。`;
+    pendingStorageMigrationNotice = `旧版数据已从旧程序目录迁移到用户目录：${targetRoot}。旧目录仍保留，可用于回滚。`;
   }
 
   const migratedSettings = {
@@ -552,7 +787,7 @@ function createWindow(options = {}) {
     height: 780,
     minWidth: 900,
     minHeight: 620,
-    title: "TunnelDesk",
+    title: PRODUCT_NAME,
     icon: iconPath(),
     show: false,
     backgroundColor: "#f4f6f8",
@@ -564,10 +799,10 @@ function createWindow(options = {}) {
   });
   if (process.platform === "win32") {
     mainWindow.setAppDetails({
-      appId: "com.zmide.tunneldesk",
+      appId: APP_USER_MODEL_ID,
       appIconPath: iconPath("icon.ico"),
       appIconIndex: 0,
-      relaunchDisplayName: "TunnelDesk"
+      relaunchDisplayName: PRODUCT_NAME
     });
   }
   if (options.openDesktopSettings) {
@@ -692,12 +927,12 @@ function handleDesktopCapabilities(event) {
 }
 
 function sendSftpDragResult(event, requestId, ok, message="") {
-  if (!event.sender.isDestroyed()) event.sender.send("tunneldesk:sftp-drag-result", {requestId, ok, message});
+  if (!event.sender.isDestroyed()) event.sender.send("terma:sftp-drag-result", {requestId, ok, message});
 }
 
 function sendSftpDragEvent(session, payload) {
   if (!session?.sender || session.sender.isDestroyed()) return;
-  session.sender.send("tunneldesk:sftp-drag-event", {
+  session.sender.send("terma:sftp-drag-event", {
     ...payload,
     requestId:session.requestId
   });
@@ -849,7 +1084,7 @@ function maybeFinishNativeDragSession(session) {
     }
   }
   if (!session.sender.isDestroyed()) {
-    session.sender.send("tunneldesk:sftp-drag-result", {
+    session.sender.send("terma:sftp-drag-result", {
       requestId:session.requestId,
       ok:succeeded,
       message,
@@ -1248,7 +1483,7 @@ function bringMainWindowToFront() {
 
   // Linux window managers may keep a hidden Electron window behind the
   // current workspace even after show()/focus(). Temporarily raising it
-  // gives the WM a real activation request without leaving TunnelDesk
+  // gives the WM a real activation request without leaving Terma
   // permanently above other applications.
   const temporarilyRaiseLinuxWindow = process.platform === "linux"
     && typeof mainWindow.setAlwaysOnTop === "function"
@@ -1318,7 +1553,7 @@ async function updateTrayState() {
   };
   if (tray) {
     const failed = trayState.failedForwards ? `，异常 ${trayState.failedForwards} 条` : "";
-    tray.setToolTip(`TunnelDesk：正在转发 ${trayState.runningForwards}/${trayState.totalForwards} 条${failed}`);
+    tray.setToolTip(`${PRODUCT_NAME}：正在转发 ${trayState.runningForwards}/${trayState.totalForwards} 条${failed}`);
     refreshTrayMenu();
   }
 }
@@ -1371,14 +1606,14 @@ function desktopNotificationsAvailable() {
 function notify(body) {
   if (process.platform === "win32" && tray && typeof tray.displayBalloon === "function") {
     tray.displayBalloon({
-      title: "TunnelDesk",
+      title: PRODUCT_NAME,
       content: body,
       icon: nativeImage.createFromPath(iconPath("icon.ico")),
       largeIcon: true
     });
     return;
   }
-  if (desktopNotificationsAvailable()) new Notification({ title: "TunnelDesk", body, icon: iconPath("icon.png") }).show();
+  if (desktopNotificationsAvailable()) new Notification({ title:PRODUCT_NAME, body, icon:iconPath("icon.png") }).show();
 }
 
 function buildAppMenu() {
@@ -1390,7 +1625,7 @@ function buildAppMenu() {
 function createTray() {
   try {
     tray = new Tray(trayIcon());
-    tray.setToolTip("TunnelDesk");
+    tray.setToolTip(PRODUCT_NAME);
     tray.on("double-click", showWindow);
     refreshTrayMenu();
   } catch (error) {
@@ -1404,7 +1639,7 @@ function refreshTrayMenu() {
     ? `正在转发：${trayState.runningForwards}/${trayState.totalForwards} 条，连接 ${trayState.runningConnections} 个${trayState.failedForwards ? `，异常 ${trayState.failedForwards} 条` : ""}`
     : "正在转发：状态读取中";
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "打开 TunnelDesk", click: showWindow },
+    { label: `打开 ${PRODUCT_NAME}`, click: showWindow },
     { label: "在浏览器打开", click: () => shell.openExternal(webUrl) },
     { label: statusLabel, enabled: false },
     { type: "separator" },
@@ -1415,12 +1650,12 @@ function refreshTrayMenu() {
     { label: "打开日志目录", click: () => shell.openPath(LOG_DIR) },
     { label: "导出日志", click: exportLogs },
     { type: "separator" },
-    { label: "退出 TunnelDesk", click: quitApp }
+    { label: `退出 ${PRODUCT_NAME}`, click: quitApp }
   ]));
 }
 
 function showError(error) {
-  dialog.showErrorBox("TunnelDesk", error.message || String(error));
+  dialog.showErrorBox(PRODUCT_NAME, error.message || String(error));
 }
 
 async function exportLogs() {
@@ -1430,7 +1665,7 @@ async function exportLogs() {
       properties: ["openDirectory", "createDirectory"]
     });
     if (result.canceled || !result.filePaths[0]) return;
-    const target = path.join(result.filePaths[0], `tunneldesk-logs-${timestampName()}`);
+    const target = path.join(result.filePaths[0], `${PRODUCT_ID}-logs-${timestampName()}`);
     fs.mkdirSync(target, { recursive: true });
     if (fs.existsSync(LOG_DIR)) fs.cpSync(LOG_DIR, target, { recursive: true });
     notify("日志已导出");
@@ -1492,7 +1727,7 @@ function saveDesktopSettings(value) {
 
 async function chooseDesktopDataDir() {
   const result = await dialog.showOpenDialog(mainWindow || undefined, {
-    title: "选择 TunnelDesk 数据根目录",
+    title: `选择 ${PRODUCT_NAME} 数据根目录`,
     properties: ["openDirectory", "createDirectory"]
   });
   return result.canceled ? "" : result.filePaths[0];
@@ -1686,11 +1921,11 @@ function assertDesktopClipboardSender(event) {
 }
 
 function registerDesktopClipboardHandlers() {
-  ipcMain.handle("tunneldesk:clipboard-read", event => {
+  ipcMain.handle("terma:clipboard-read", event => {
     assertDesktopClipboardSender(event);
     return clipboard.readText();
   });
-  ipcMain.handle("tunneldesk:clipboard-write", (event, text) => {
+  ipcMain.handle("terma:clipboard-write", (event, text) => {
     assertDesktopClipboardSender(event);
     clipboard.writeText(String(text ?? ""));
     return {ok:true};
@@ -1700,15 +1935,15 @@ function registerDesktopClipboardHandlers() {
 function startDisplayClient() {
   const targetUrl = displayClientUrl();
   if (!targetUrl) {
-    dialog.showErrorBox("TunnelDesk", "无法连接已经运行的 TunnelDesk 后端，请在当前图形会话中重新启动。");
+    dialog.showErrorBox(PRODUCT_NAME, `无法连接已经运行的 ${PRODUCT_NAME} 后端，请在当前图形会话中重新启动。`);
     quitting = true;
     app.exit(1);
     return false;
   }
   webUrl = targetUrl;
   Menu.setApplicationMenu(null);
-  ipcMain.on("tunneldesk:capabilities", handleDesktopCapabilities);
-  ipcMain.on("tunneldesk:set-theme", handleDesktopTheme);
+  ipcMain.on("terma:capabilities", handleDesktopCapabilities);
+  ipcMain.on("terma:set-theme", handleDesktopTheme);
   createWindow({ displayClient:true });
   desktopStartupInProgress = false;
   return true;
@@ -1724,8 +1959,10 @@ app.whenReady().then(async () => {
   removeLegacyElectronShortcut();
   initializeDesktopSettingsFile();
   const firstRun = !settingsExists();
-  loadBackend();
-  const startupDesktopSettings = readSettings();
+  const startupDesktopSettings = prepareRuntimeSettings();
+  const startupRuntime = resolveRuntimePaths(startupDesktopSettings);
+  prepareLegacyBrandMigrationAtStartup(startupDesktopSettings, startupRuntime);
+  loadBackend(startupDesktopSettings);
   if (startupDesktopSettings.xServerAutoStart) {
     try { await xServerRuntime.start(); } catch (error) { console.warn(`X Server auto-start skipped: ${error.message}`); }
   }
@@ -1753,6 +1990,8 @@ app.whenReady().then(async () => {
       desktopIntegration: {
         getSettings: desktopSettingsView,
         saveSettings: saveDesktopSettings,
+        getLegacyBrandMigration: inspectLegacyBrandMigration,
+        migrateLegacyBrandData,
         chooseDataDir: chooseDesktopDataDir,
         getDownloadDirectory: defaultDownloadDirectory,
         getDesktopDirectory: defaultDesktopDirectory,
@@ -1781,21 +2020,22 @@ app.whenReady().then(async () => {
     webUrl = await waitForWebUrl();
     flushPendingDisplayClients();
   } catch (error) {
-    const message = error?.code === "TUNNELDESK_ALREADY_RUNNING"
-      ? `${error.message}\n\n请使用已经打开的 TunnelDesk 窗口，或先停止已有无界面服务。`
+    const alreadyRunning = error?.code === "TERMA_ALREADY_RUNNING" || error?.code === "TUNNELDESK_ALREADY_RUNNING";
+    const message = alreadyRunning
+      ? `${error.message}\n\n请使用已经打开的 ${PRODUCT_NAME} 窗口，或先停止已有无界面服务。`
       : (error?.message || String(error));
-    dialog.showErrorBox("TunnelDesk 启动失败", message);
+    dialog.showErrorBox(`${PRODUCT_NAME} 启动失败`, message);
     quitting = true;
     app.exit(1);
     return;
   }
   buildAppMenu();
-  ipcMain.on("tunneldesk:capabilities", handleDesktopCapabilities);
-  ipcMain.on("tunneldesk:set-theme", handleDesktopTheme);
-  ipcMain.on("tunneldesk:sftp-start-drag", handleSftpStartDrag);
-  ipcMain.on("tunneldesk:sftp-drag-activate", handleSftpDragActivate);
-  ipcMain.on("tunneldesk:sftp-drag-target", handleSftpDragTarget);
-  ipcMain.on("tunneldesk:sftp-drag-cancel", handleSftpDragCancel);
+  ipcMain.on("terma:capabilities", handleDesktopCapabilities);
+  ipcMain.on("terma:set-theme", handleDesktopTheme);
+  ipcMain.on("terma:sftp-start-drag", handleSftpStartDrag);
+  ipcMain.on("terma:sftp-drag-activate", handleSftpDragActivate);
+  ipcMain.on("terma:sftp-drag-target", handleSftpDragTarget);
+  ipcMain.on("terma:sftp-drag-cancel", handleSftpDragCancel);
   createTray();
   createWindow({ openDesktopSettings:firstRun });
   desktopStartupInProgress = false;

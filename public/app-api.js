@@ -44,6 +44,30 @@ async function api(path, opts = {}) {
     if (mode === "persist" && typeof loadTrustedSshHosts === "function") loadTrustedSshHosts().catch(() => {});
     return result;
   }
+  if (res.status === 409 && data.code === "REMOTE_TASK_CONFLICT" && data.task?.id) {
+    const conflictMessage = data.error || "已有任务正在执行";
+    const task = {...data.task, resource_conflict:true, resource_conflict_message:conflictMessage};
+    if (task.type === "remote-component") {
+      let requestedAction = "";
+      if (typeof fetchOptions.body === "string") {
+        try { requestedAction = String(JSON.parse(fetchOptions.body)?.action || "").trim().toLowerCase(); }
+        catch {}
+      }
+      const runningAction = String(task.action || "").trim().toLowerCase();
+      const sameAction = Boolean(requestedAction && runningAction && requestedAction === runningAction);
+      return {
+        ok:sameAction,
+        reused_task:sameAction,
+        task_conflict:true,
+        conflict_same_action:sameAction,
+        requested_action:requestedAction,
+        running_action:runningAction,
+        error:conflictMessage,
+        task
+      };
+    }
+    return task;
+  }
   if (!res.ok) {
     const error = new Error(data.error || res.statusText);
     error.code = data.code || "";

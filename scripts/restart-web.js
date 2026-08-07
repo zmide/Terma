@@ -14,7 +14,7 @@ async function main() {
   for (let attempt = 0; attempt < 120 && running(parentPid); attempt += 1) {
     await new Promise(resolve => setTimeout(resolve, 250));
   }
-  if (running(parentPid)) throw new Error("旧 TunnelDesk 进程未能按时退出");
+  if (running(parentPid)) throw new Error("旧 Terma 进程未能按时退出");
   fs.mkdirSync(path.dirname(payload.logFile), { recursive: true });
   const output = fs.openSync(payload.logFile, "a");
   const child = spawn(process.execPath, [payload.entry, ...(payload.args || [])], {

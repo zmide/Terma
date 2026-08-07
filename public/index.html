@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>TunnelDesk</title>
-  <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=1.2.1">
-  <link rel="stylesheet" href="/app.css?v=1.2.1">
+  <title>Terma</title>
+  <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=1.3.0">
+  <link rel="stylesheet" href="/app.css?v=1.3.0">
 </head>
 <body>
   <div id="toast" class="notification-stack" aria-live="polite" aria-label="通知"></div>
@@ -13,7 +13,7 @@
   <div class="app">
     <div class="left-pane">
       <div class="brand">
-        <h1 aria-label="TunnelDesk"><span class="brand-name-full" aria-hidden="true">TunnelDesk</span><span class="brand-name-short" aria-hidden="true">TD</span></h1>
+        <h1 aria-label="Terma"><img class="brand-mark" src="/assets/terma-icon.png" alt="" aria-hidden="true"><span class="brand-name-full" aria-hidden="true">Terma</span></h1>
         <div class="side-actions">
           <button id="operationPanePin" class="operation-pane-pin icon-button is-pinned" type="button" data-icon="pin" onclick="toggleOperationPanePinned()" title="操作区已固定；点击改为自动收起" aria-label="操作区已固定；点击改为自动收起" aria-pressed="true"><i data-lucide="pin"></i></button>
           <button id="operationPaneCollapse" class="operation-pane-collapse icon-button" type="button" onclick="setOperationPaneCollapsed(true)" title="收起操作区" aria-label="收起操作区"><i data-lucide="panel-left-close"></i></button>
@@ -39,7 +39,7 @@
           <div class="activity-bottom">
             <button id="themeToggle" class="theme-toggle" type="button" onclick="toggleTheme()" title="切换主题" aria-label="切换主题"><i data-lucide="moon"></i></button>
             <button id="activityRefresh" type="button" onclick="loadAll()" title="刷新数据" aria-label="刷新数据"><i data-lucide="refresh-cw"></i></button>
-            <a class="github-link" href="https://github.com/zmide/tunneldesk" target="_blank" rel="noopener" title="GitHub">
+            <a class="github-link" href="https://github.com/zmide/Terma" target="_blank" rel="noopener" title="GitHub">
               <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.2.8-.6v-2c-3.3.7-4-1.4-4-1.4-.5-1.3-1.2-1.6-1.2-1.6-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 .1.6 2.1 3.4 1.5.1-.7.4-1.2.7-1.5-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>
             </a>
           </div>
@@ -85,12 +85,14 @@
             </header>
             <div class="sftp-task-center-tabs" role="tablist" aria-label="任务视图">
               <button id="sftpTaskCenterCurrentTab" type="button" role="tab" aria-selected="true" onclick="setSftpTaskCenterView('current')"><span>进行中</span><small id="sftpTaskCenterCurrentCount">0</small></button>
+              <button id="sftpTaskCenterFailedTab" type="button" role="tab" aria-selected="false" onclick="setSftpTaskCenterView('failed')"><span>失败</span><small id="sftpTaskCenterFailedCount">0</small></button>
               <button id="sftpTaskCenterHistoryTab" type="button" role="tab" aria-selected="false" onclick="setSftpTaskCenterView('history')"><span>历史记录</span><small id="sftpTaskCenterHistoryCount">0</small></button>
             </div>
             <div id="sftpTaskCenterList" class="sftp-task-center-list" role="tabpanel"></div>
             <footer id="sftpTaskCenterFooter" class="sftp-task-center-footer" hidden>
-              <button class="danger" type="button" onclick="clearFinishedSftpJobs()"><i data-lucide="trash-2"></i><span>清空历史</span></button>
+              <button class="danger" type="button" onclick="event.stopPropagation();clearFinishedSftpJobs(this)"><i data-lucide="trash-2"></i><span>清空历史</span></button>
             </footer>
+            <div id="sftpTaskCenterResize" class="sftp-task-center-resize-handle" role="button" tabindex="0" aria-label="调整任务中心大小" title="拖动调整任务中心大小，双击恢复默认" onpointerdown="startSftpTaskCenterResize(event)" ondblclick="resetSftpTaskCenterSize(event)" onkeydown="handleSftpTaskCenterResizeKey(event)"></div>
           </aside>
         </div>
         <aside id="sftpTaskFloat" class="sftp-task-float" aria-label="任务悬浮进度" onclick="openSftpTaskList(event)" hidden></aside>
@@ -126,7 +128,7 @@
     <button id="mobileImport" onclick="showPrimary('import')" title="导入导出" aria-label="导入导出"><i data-lucide="arrow-left-right"></i><span class="mobile-tab-label">导入</span></button>
     <button id="mobileLogs" onclick="showPrimary('logs')" title="日志" aria-label="日志"><i data-lucide="scroll-text"></i><span class="mobile-tab-label">日志</span></button>
     <button id="mobileSettings" onclick="showPrimary('settings')" title="设置" aria-label="设置"><i data-lucide="settings"></i><span class="mobile-tab-label">设置</span><span id="mobileSettingsUpdateDot" class="nav-update-dot" hidden aria-label="发现新版本"></span></button>
-    <a class="mobile-github-link" href="https://github.com/zmide/tunneldesk" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub">
+    <a class="mobile-github-link" href="https://github.com/zmide/Terma" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub">
       <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.2.8-.6v-2c-3.3.7-4-1.4-4-1.4-.5-1.3-1.2-1.6-1.2-1.6-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 .1.6 2.1 3.4 1.5.1-.7.4-1.2.7-1.5-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>
     </a>
   </nav>
@@ -146,7 +148,7 @@
       <div class="grid3">
         <div><label>SSH 端口</label><input id="conn_port" type="number" min="1" max="65535" value="22"></div>
         <div><label>排序</label><input id="conn_sort_order" type="number" min="1" max="2147483647" step="1" value="1"></div>
-        <div><label>启动 TunnelDesk 时自动启用转发</label><select id="conn_autostart"><option value="0">否</option><option value="1">是</option></select></div>
+        <div><label>启动 Terma 时自动启用转发</label><select id="conn_autostart"><option value="0">否</option><option value="1">是</option></select></div>
       </div>
       <label>标签</label><input id="conn_tags" placeholder="例如：生产 数据库 海外">
       <div class="auth-switch">
@@ -324,33 +326,37 @@
         <h3><i data-lucide="database-backup"></i>数据库导入导出</h3>
         <div class="actions"><button onclick="downloadDatabaseBackup()">下载数据库备份</button><button id="backupBundleBtn" onclick="downloadBackupBundle()" hidden>下载加密迁移包</button></div>
         <label>恢复数据库 / 加密迁移包</label>
-        <div class="upload-line"><label class="file-picker"><input id="db_restore_upload" type="file" accept=".db,.json,.tdbackup,.tdbackup.json,application/json,application/octet-stream,*/*" onchange="updateFilePicker(this)"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button class="danger" onclick="restoreDatabaseBackup()">上传恢复</button></div>
-        <div id="backupBundleNote" class="muted">普通备份使用 .db 文件；启用配置加密后会显示 .tdbackup 加密迁移包下载入口。</div>
+        <div class="upload-line"><label class="file-picker"><input id="db_restore_upload" type="file" accept=".db,.json,.termabackup,.tdbackup,.tdbackup.json,application/json,application/octet-stream,*/*" onchange="updateFilePicker(this)"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button class="danger" onclick="restoreDatabaseBackup()">上传恢复</button></div>
+        <div id="backupBundleNote" class="muted">普通备份使用 .db 文件；启用配置加密后会显示 .termabackup 加密迁移包下载入口。</div>
+        <div class="import-export-config legacy-brand-migration-block">
+          <h3><i data-lucide="refresh-cw"></i>旧版数据迁移</h3>
+          <div id="legacyBrandMigration"></div>
+        </div>
       </section>
     </div>
   </div>
 </template>
 
-<script src="/vendor/lucide/lucide.min.js?v=1.2.1"></script>
-<script src="/vendor/ace/ace.js?v=1.2.1"></script>
-<script src="/app-api.js?v=1.2.1"></script>
-<script src="/app-utils.js?v=1.2.1"></script>
-<script src="/app-workspace.js?v=1.2.1"></script>
-<script src="/app-docking.js?v=1.2.1"></script>
-<script src="/app-settings.js?v=1.2.1"></script>
-<script src="/app-running.js?v=1.2.1"></script>
-<script src="/app-batch.js?v=1.2.1"></script>
-<script src="/app-logs.js?v=1.2.1"></script>
-<script src="/app-connections.js?v=1.2.1"></script>
-<script src="/app-terminal.js?v=1.2.1"></script>
-<script src="/app-forwards.js?v=1.2.1"></script>
-<script src="/app-import.js?v=1.2.1"></script>
-<script src="/app-sftp.js?v=1.2.1"></script>
-<script src="/app-sftp-tasks.js?v=1.2.1"></script>
-<script src="/app-local-files.js?v=1.2.1"></script>
-<script src="/app-actions.js?v=1.2.1"></script>
-<script src="/app-productivity.js?v=1.2.1"></script>
-<script src="/app-remote.js?v=1.2.1"></script>
-<script src="/app.js?v=1.2.1"></script>
+<script src="/vendor/lucide/lucide.min.js?v=1.3.0"></script>
+<script src="/vendor/ace/ace.js?v=1.3.0"></script>
+<script src="/app-api.js?v=1.3.0"></script>
+<script src="/app-utils.js?v=1.3.0"></script>
+<script src="/app-workspace.js?v=1.3.0"></script>
+<script src="/app-docking.js?v=1.3.0"></script>
+<script src="/app-settings.js?v=1.3.0"></script>
+<script src="/app-running.js?v=1.3.0"></script>
+<script src="/app-batch.js?v=1.3.0"></script>
+<script src="/app-logs.js?v=1.3.0"></script>
+<script src="/app-connections.js?v=1.3.0"></script>
+<script src="/app-terminal.js?v=1.3.0"></script>
+<script src="/app-forwards.js?v=1.3.0"></script>
+<script src="/app-import.js?v=1.3.0"></script>
+<script src="/app-sftp.js?v=1.3.0"></script>
+<script src="/app-sftp-tasks.js?v=1.3.0"></script>
+<script src="/app-local-files.js?v=1.3.0"></script>
+<script src="/app-actions.js?v=1.3.0"></script>
+<script src="/app-productivity.js?v=1.3.0"></script>
+<script src="/app-remote.js?v=1.3.0"></script>
+<script src="/app.js?v=1.3.0"></script>
 </body>
 </html>

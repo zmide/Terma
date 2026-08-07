@@ -8,7 +8,7 @@ const { DatabaseSync } = require("node:sqlite");
 
 const CONFIRMATION_FLAG = "--confirm-real-sftp";
 const TEST_GROUP = "测试";
-const TEST_PREFIX = ".tunneldesk-test-";
+const TEST_PREFIX = ".terma-test-";
 const JOB_TIMEOUT_MS = 120000;
 
 if (!process.argv.includes(CONFIRMATION_FLAG)) {
@@ -18,12 +18,22 @@ if (!process.argv.includes(CONFIRMATION_FLAG)) {
 }
 
 function databaseCandidates() {
-  if (process.env.TUNNELDESK_DATA_DIR) return [path.resolve(process.env.TUNNELDESK_DATA_DIR)];
+  const configured = process.env.TERMA_DATA_DIR || process.env.TUNNELDESK_DATA_DIR;
+  if (configured) return [path.resolve(configured)];
   const platform = process.platform === "win32"
-    ? [path.join(process.env.APPDATA || "", "TunnelDesk", "runtime", "data")]
+    ? [
+        path.join(process.env.APPDATA || "", "Terma", "runtime", "data"),
+        path.join(process.env.APPDATA || "", "TunnelDesk", "runtime", "data")
+      ]
     : process.platform === "darwin"
-      ? [path.join(os.homedir(), "Library", "Application Support", "TunnelDesk", "runtime", "data")]
-      : [path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "TunnelDesk", "runtime", "data")];
+      ? [
+          path.join(os.homedir(), "Library", "Application Support", "Terma", "runtime", "data"),
+          path.join(os.homedir(), "Library", "Application Support", "TunnelDesk", "runtime", "data")
+        ]
+      : [
+          path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "Terma", "runtime", "data"),
+          path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "TunnelDesk", "runtime", "data")
+        ];
   return [...new Set([...platform, path.resolve(__dirname, "..", "data")].filter(Boolean))];
 }
 
@@ -54,8 +64,8 @@ function selectDataDirectory() {
 }
 
 const selectedDataDirectory = selectDataDirectory();
-process.env.TUNNELDESK_DATA_DIR = selectedDataDirectory;
-if (!process.env.TUNNELDESK_SSH_DIR) process.env.TUNNELDESK_SSH_DIR = path.join(path.dirname(selectedDataDirectory), ".ssh");
+process.env.TERMA_DATA_DIR = selectedDataDirectory;
+if (!process.env.TERMA_SSH_DIR) process.env.TERMA_SSH_DIR = process.env.TUNNELDESK_SSH_DIR || path.join(path.dirname(selectedDataDirectory), ".ssh");
 
 const database = require("../dist/db");
 const sftp = require("../dist/sftp");
@@ -104,7 +114,7 @@ function remoteJoin(...parts) {
 
 function assertSafeRemoteRoot(value) {
   const name = path.posix.basename(String(value || ""));
-  assert.match(name, /^\.tunneldesk-test-[0-9a-f-]{36}$/i, "拒绝清理非验收临时目录");
+  assert.match(name, /^\.terma-test-[0-9a-f-]{36}$/i, "拒绝清理非验收临时目录");
 }
 
 function removeLocalDirectory(directory) {
@@ -188,7 +198,7 @@ async function verifyPerHost(connection) {
   await sftp.renameRemotePath(connection.id, emptyPath, remoteJoin(remoteRoot, "renamed.txt"));
   record(name, "新建目录、文件及重命名", "passed");
 
-  const largeText = `${"TunnelDesk SFTP acceptance 0123456789\n".repeat(21000)}END\n`;
+  const largeText = `${"Terma SFTP acceptance 0123456789\n".repeat(21000)}END\n`;
   assert.ok(Buffer.byteLength(largeText) > 512 * 1024);
   const largePath = remoteJoin(sourceDir, "large.txt");
   await sftp.writeRemoteFile(connection.id, largePath, Buffer.from(largeText, "utf8"));
@@ -244,7 +254,10 @@ async function verifyPerHost(connection) {
   trackedJobs.add(cancellable.id);
   const cancellableProgress = await waitForUploadProgress(cancellable.id);
   const uploadingList = await sftp.listRemoteDir(connection.id, remoteRoot, {refresh:true, page_size:1000});
-  assert.ok(!(uploadingList.entries || []).some(item => item.name.startsWith(".tunneldesk-upload-")), "目录列表不应显示上传暂存文件");
+  assert.ok(
+    !(uploadingList.entries || []).some(item => item.name.startsWith(".terma-upload-") || item.name.startsWith(".tunneldesk-upload-")),
+    "目录列表不应显示新旧上传暂存文件"
+  );
   jobs.cancelSftpJob(cancellable.id);
   await waitForJobStatus(cancellable.id, "cancelled");
   await pause(700);
@@ -386,7 +399,7 @@ async function cleanConnection(connection) {
     for (const item of recycleItems) {
       const original = String(item.original_path || "");
       if (original === remoteRoot || original.startsWith(`${remoteRoot}/`)) {
-        try { await sftp.deleteRemoteRecycleItem(connection.id, item.id); } catch {}
+        try { await sftp.deleteRemoteRecycleItem(connection.id, item.id, item.storage); } catch {}
       }
     }
     await sftp.deleteRemotePath(connection.id, remoteRoot);

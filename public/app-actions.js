@@ -1,17 +1,17 @@
-const tunnelDeskActions = new Map();
+const termaActions = new Map();
 
 function registerAppAction(action) {
   if (!action?.id || typeof action.run !== "function") throw new Error("动作必须提供 id 和 run");
-  tunnelDeskActions.set(String(action.id), Object.freeze({...action}));
+  termaActions.set(String(action.id), Object.freeze({...action}));
   return action;
 }
 
 function listAppActions(context={}) {
-  return [...tunnelDeskActions.values()].filter(action => typeof action.visible !== "function" || action.visible(context));
+  return [...termaActions.values()].filter(action => typeof action.visible !== "function" || action.visible(context));
 }
 
 function appAction(id) {
-  return tunnelDeskActions.get(String(id || "")) || null;
+  return termaActions.get(String(id || "")) || null;
 }
 
 function runAppAction(id, context={}) {

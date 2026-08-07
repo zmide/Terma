@@ -33,12 +33,12 @@ async function waitForStream(stream, timeoutMs = 20000) {
 
 async function main() {
   if (!process.argv.includes("--confirm-real-x11")) throw new Error("真实内置 X11 验收需要 --confirm-real-x11");
-  const dataDir = argument("--data-dir", process.env.TUNNELDESK_DATA_DIR || "");
+  const dataDir = argument("--data-dir", process.env.TERMA_DATA_DIR || process.env.TUNNELDESK_DATA_DIR || "");
   const connectionId = Number(argument("--connection-id", "0"));
   const program = argument("--program", "/usr/bin/xclock");
   const programArgs = argument("--program-args", "");
   const durationSeconds = Math.max(2, Math.min(30, Number(argument("--duration", "3")) || 3));
-  if (dataDir) process.env.TUNNELDESK_DATA_DIR = path.resolve(dataDir);
+  if (dataDir) process.env.TERMA_DATA_DIR = path.resolve(dataDir);
   if (!connectionId) throw new Error("请使用 --connection-id 指定已保存的真实 SSH 测试连接");
 
   const { getConnection } = require("../dist/db");
@@ -48,7 +48,7 @@ async function main() {
     ? String(connection.x11_mode || "off")
     : process.argv.includes("--trusted") ? "trusted" : "untrusted";
   if (x11Mode === "off") throw new Error("保存的连接没有开启默认 X11 转发");
-  const runtimeDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-x11-builtin-"));
+  const runtimeDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "terma-x11-builtin-"));
   const manager = createXServerRuntime({platform:process.platform, projectRoot:path.resolve(__dirname, ".."), userDataPath:runtimeDataDir});
   let client = null;
   try {
@@ -57,7 +57,7 @@ async function main() {
     const result = await openSshShell({
       ...connection,
       terminal_startup_mode:"program",
-      terminal_profile_name:"TunnelDesk X11 acceptance",
+      terminal_profile_name:"Terma X11 acceptance",
       terminal_profile_kind:"tool",
       terminal_program_path:"/usr/bin/timeout",
       terminal_program_args:`${durationSeconds} ${program}${programArgs ? ` ${programArgs}` : ""}`,

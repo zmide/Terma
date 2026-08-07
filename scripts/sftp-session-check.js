@@ -5,9 +5,9 @@ const os = require("node:os");
 const path = require("node:path");
 const { Server } = require("ssh2");
 
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-sftp-session-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(temporaryRoot, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(temporaryRoot, "ssh");
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-session-"));
+process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
+process.env.TERMA_SSH_DIR = path.join(temporaryRoot, "ssh");
 
 const db = require("../dist/db");
 const dbModule = require.cache[require.resolve("../dist/db")];

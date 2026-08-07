@@ -373,7 +373,7 @@ function switchWorkspaceGroup(groupId, options={}) {
 function beginWorkspaceGroupDrag(event, groupId) {
   workspaceGroupDragId = groupId;
   event.stopPropagation();
-  event.dataTransfer?.setData("text/x-tunneldesk-workspace-group", groupId);
+  event.dataTransfer?.setData("text/x-terma-workspace-group", groupId);
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
   event.currentTarget?.classList.add("dragging");
 }

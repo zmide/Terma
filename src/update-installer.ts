@@ -477,7 +477,7 @@ export class UpdateInstaller {
         this.fetchImpl(url, {
           method: "GET",
           headers: {
-            "User-Agent": `TunnelDesk/${release.latest_version}`,
+            "User-Agent": `Terma/${release.latest_version}`,
             "Accept": "application/octet-stream",
             "Range": `bytes=0-${Math.max(0, targetBytes - 1)}`,
             "Cache-Control": "no-cache"
@@ -577,7 +577,7 @@ export class UpdateInstaller {
     try {
       const response = await withIdleTimeout(this.fetchImpl(route.url, {
         method: "GET",
-        headers: { "User-Agent": `TunnelDesk/${release.latest_version}`, "Accept": "application/octet-stream" },
+        headers: { "User-Agent": `Terma/${release.latest_version}`, "Accept": "application/octet-stream" },
         redirect: "follow",
         signal: controller.signal
       }));

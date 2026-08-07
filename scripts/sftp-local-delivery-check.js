@@ -6,9 +6,9 @@ const os = require("node:os");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-sftp-local-delivery-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(temporaryRoot, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(temporaryRoot, "ssh");
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-local-delivery-"));
+process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
+process.env.TERMA_SSH_DIR = path.join(temporaryRoot, "ssh");
 
 try {
   const session = require(path.join(root, "dist", "sftp-session.js"));
@@ -24,7 +24,7 @@ try {
   session.__replaceLocalEntryFromStage(overwriteSource, path.join(targetDirectory, "same.txt"));
   assert.equal(fs.readFileSync(path.join(targetDirectory, "same.txt"), "utf8"), "new");
   assert.equal(fs.existsSync(overwriteSource), false);
-  assert.equal(fs.readdirSync(targetDirectory).some(name => name.startsWith(".tunneldesk-overwrite-")), false);
+  assert.equal(fs.readdirSync(targetDirectory).some(name => name.startsWith(".terma-overwrite-")), false);
 
   const moveSource = path.join(temporaryRoot, "move-source.txt");
   fs.writeFileSync(moveSource, "moved", "utf8");

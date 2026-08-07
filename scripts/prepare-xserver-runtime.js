@@ -15,21 +15,52 @@ const EXPECTED_BYTES = 41781489;
 const projectRoot = path.resolve(__dirname, "..");
 const runtimeRoot = path.join(projectRoot, "runtime", "xserver");
 const targetDirectory = path.join(runtimeRoot, "win32");
-const executable = path.join(targetDirectory, "vcxsrv.exe");
-const manifestFile = path.join(targetDirectory, "tunneldesk-runtime.json");
+const MANIFEST_NAME = "terma-runtime.json";
+const LEGACY_MANIFEST_NAME = "tunneldesk-runtime.json";
+
+function runtimeFiles(directory = targetDirectory) {
+  return {
+    executable:path.join(directory, "vcxsrv.exe"),
+    xauth:path.join(directory, "xauth.exe"),
+    manifest:path.join(directory, MANIFEST_NAME),
+    legacyManifest:path.join(directory, LEGACY_MANIFEST_NAME)
+  };
+}
+
+const {
+  executable,
+  manifest:manifestFile,
+  legacyManifest:legacyManifestFile
+} = runtimeFiles();
 
 function isWithin(parent, child) {
   const relative = path.relative(path.resolve(parent), path.resolve(child));
   return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-function verifiedRuntime() {
+function verifiedRuntime(directory = targetDirectory) {
+  const files = runtimeFiles(directory);
   try {
-    const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
-    return fs.statSync(executable).size > 0
-      && fs.statSync(path.join(targetDirectory, "xauth.exe")).size > 0
-      && manifest.version === VERSION
-      && manifest.sha256 === SHA256;
+    if (fs.statSync(files.executable).size <= 0 || fs.statSync(files.xauth).size <= 0) return false;
+    let selectedManifest = "";
+    for (const candidate of [files.manifest, files.legacyManifest]) {
+      if (!fs.existsSync(candidate)) continue;
+      try {
+        const manifest = JSON.parse(fs.readFileSync(candidate, "utf8"));
+        if (manifest.version === VERSION && manifest.sha256 === SHA256) {
+          selectedManifest = candidate;
+          break;
+        }
+      } catch {}
+    }
+    if (!selectedManifest) return false;
+    if (selectedManifest === files.legacyManifest) {
+      fs.copyFileSync(files.legacyManifest, files.manifest);
+    }
+    if (fs.existsSync(files.legacyManifest)) {
+      fs.rmSync(files.legacyManifest, {force:true});
+    }
+    return true;
   } catch {
     return false;
   }
@@ -41,7 +72,7 @@ function removeTarget() {
 }
 
 async function downloadInstaller(destination) {
-  const response = await fetch(DOWNLOAD_URL, {headers:{"User-Agent":"TunnelDesk-XServer-Build"}, redirect:"follow"});
+  const response = await fetch(DOWNLOAD_URL, {headers:{"User-Agent":"Terma-XServer-Build"}, redirect:"follow"});
   if (!response.ok || !response.body) throw new Error(`VcXsrv download failed: HTTP ${response.status}`);
   await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(destination, {flags:"wx"}));
 }
@@ -64,7 +95,7 @@ async function prepare() {
   }
   removeTarget();
   fs.mkdirSync(runtimeRoot, {recursive:true});
-  const installer = path.join(os.tmpdir(), `tunneldesk-vcxsrv-${VERSION}-${process.pid}-${Date.now()}.exe`);
+  const installer = path.join(os.tmpdir(), `terma-vcxsrv-${VERSION}-${process.pid}-${Date.now()}.exe`);
   try {
     console.log(`Downloading VcXsrv ${VERSION} from SourceForge...`);
     await downloadInstaller(installer);
@@ -80,12 +111,12 @@ async function prepare() {
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        "$process = Start-Process -FilePath $env:TUNNELDESK_XSERVER_INSTALLER -ArgumentList @('/S',('/D=' + $env:TUNNELDESK_XSERVER_TARGET)) -WindowStyle Hidden -Wait -PassThru; exit $process.ExitCode"
+        "$process = Start-Process -FilePath $env:TERMA_XSERVER_INSTALLER -ArgumentList @('/S',('/D=' + $env:TERMA_XSERVER_TARGET)) -WindowStyle Hidden -Wait -PassThru; exit $process.ExitCode"
       ], {
         encoding:"utf8",
         windowsHide:true,
         timeout:180000,
-        env:{...process.env, TUNNELDESK_XSERVER_INSTALLER:installer, TUNNELDESK_XSERVER_TARGET:targetDirectory}
+        env:{...process.env, TERMA_XSERVER_INSTALLER:installer, TERMA_XSERVER_TARGET:targetDirectory}
       });
     }
     if (result.error || result.status !== 0) {
@@ -111,18 +142,30 @@ async function prepare() {
   }
 }
 
-if (process.argv.includes("--diagnose")) {
-  if (!verifiedRuntime()) {
-    console.error(`Bundled VcXsrv ${VERSION} is not prepared: ${targetDirectory}`);
-    process.exitCode = 1;
+if (require.main === module) {
+  if (process.argv.includes("--diagnose")) {
+    if (!verifiedRuntime()) {
+      console.error(`Bundled VcXsrv ${VERSION} is not prepared: ${targetDirectory}`);
+      process.exitCode = 1;
+    } else {
+      console.log(`Bundled VcXsrv ${VERSION} is ready: ${executable}`);
+    }
   } else {
-    console.log(`Bundled VcXsrv ${VERSION} is ready: ${executable}`);
+    prepare().catch(error => {
+      console.error(error.stack || error.message || String(error));
+      process.exitCode = 1;
+    });
   }
-} else {
-  prepare().catch(error => {
-    console.error(error.stack || error.message || String(error));
-    process.exitCode = 1;
-  });
 }
 
-module.exports = { DOWNLOAD_URL, EXPECTED_BYTES, SHA256, VERSION, targetDirectory, verifiedRuntime };
+module.exports = {
+  DOWNLOAD_URL,
+  EXPECTED_BYTES,
+  LEGACY_MANIFEST_NAME,
+  MANIFEST_NAME,
+  SHA256,
+  VERSION,
+  runtimeFiles,
+  targetDirectory,
+  verifiedRuntime
+};

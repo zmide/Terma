@@ -13,6 +13,24 @@ const MAX_PASSWORD_LENGTH = 4096;
 const GRANT_TTL_MS = 10 * 60 * 1000;
 const grants = new Map();
 
+const REUSE_POLICIES = new Set(["once", "10m", "30m", "session"]);
+
+function normalizeReusePolicy(value) {
+  const normalized = text(value).trim().toLowerCase();
+  if (["10", "10min", "10-min", "10minutes"].includes(normalized)) return "10m";
+  if (["30", "30min", "30-min", "30minutes"].includes(normalized)) return "30m";
+  if (["run", "process", "app", "runtime", "session"].includes(normalized)) return "session";
+  return REUSE_POLICIES.has(normalized) ? normalized : "once";
+}
+
+function reusePolicyTtl(policy) {
+  if (policy === "10m") return 10 * 60 * 1000;
+  if (policy === "30m") return 30 * 60 * 1000;
+  // Session grants are deliberately process-local; a restart drops them.
+  if (policy === "session") return 0;
+  return GRANT_TTL_MS;
+}
+
 function text(value) {
   return String(value ?? "");
 }
@@ -77,6 +95,7 @@ function normalizeRemotePrivilegeRequest(request: any = {}) {
     agent_requested:agentRequested,
     sudo_requested:sudoRequested,
     sudo_password:sudoPassword,
+    reuse_policy:normalizeReusePolicy(source.reuse_policy || source.reusePolicy || source.grant_reuse || source.reuse),
     timeout_ms:boundedTimeout(source.timeout_ms || request.timeout_ms),
     require_sudo_password:source.require_sudo_password === true
   };
@@ -142,23 +161,37 @@ function createRemotePrivilegeGrant(baseConnection: any, request: any = {}, scop
   const { connection, authorization } = createTemporaryAdminConnection(baseConnection, request);
   if (!authorization.auth_method) throw new Error("请选择临时 SSH 认证方式");
   const id = crypto.randomBytes(24).toString("base64url");
-  const expiresAt = Date.now() + GRANT_TTL_MS;
+  const reusePolicy = authorization.reuse_policy || "once";
+  const ttl = reusePolicyTtl(reusePolicy);
+  const expiresAt = ttl > 0 ? Date.now() + ttl : 0;
   const baseHost = nonEmpty(baseConnection?.ssh_host).toLowerCase();
   const basePort = Number(baseConnection?.ssh_port || 22);
-  grants.set(id, { id, connection, authorization, scope:String(scope || ""), expiresAt, baseId:Number(baseConnection?.id || 0), baseHost, basePort });
+  grants.set(id, {
+    id,
+    connection,
+    authorization,
+    scope:String(scope || ""),
+    reusePolicy,
+    expiresAt,
+    baseId:Number(baseConnection?.id || 0),
+    baseHost,
+    basePort
+  });
   return {
     id,
     expires_at:expiresAt,
     ssh_user:connection.ssh_user,
     auth_method:authorization.auth_method,
-    scope:String(scope || "")
+    scope:String(scope || ""),
+    reuse_policy:reusePolicy,
+    reusable:reusePolicy !== "once"
   };
 }
 
 function getRemotePrivilegeGrant(id, baseConnection: any = null, scope = "") {
   const key = text(id).trim();
   const grant = grants.get(key);
-  if (!grant || grant.expiresAt < Date.now()) {
+  if (!grant || (grant.expiresAt > 0 && grant.expiresAt < Date.now())) {
     if (grant) revokeRemotePrivilegeGrant(key);
     throw new Error("临时管理员授权已过期，请重新授权");
   }
@@ -168,7 +201,7 @@ function getRemotePrivilegeGrant(id, baseConnection: any = null, scope = "") {
   if (baseConnection && (nonEmpty(baseConnection.ssh_host).toLowerCase() !== grant.baseHost || Number(baseConnection.ssh_port || 22) !== grant.basePort)) {
     throw new Error("临时管理员授权与当前 SSH 主机不匹配");
   }
-  if (scope && grant.scope && grant.scope !== scope) throw new Error("临时管理员授权不能用于此操作");
+  if (scope && grant.scope && grant.scope !== scope && grant.reusePolicy === "once") throw new Error("临时管理员授权不能用于此操作");
   return grant;
 }
 
@@ -191,14 +224,15 @@ function handoffRemotePrivilegeGrant(grant, callback) {
   try {
     return callback();
   } catch (error) {
-    if (grant?.id) revokeRemotePrivilegeGrant(grant.id);
+    const policy = String(grant?.reuse_policy || grant?.reusePolicy || grant?.authorization?.reuse_policy || "once");
+    if (grant?.id && policy === "once") revokeRemotePrivilegeGrant(grant.id);
     throw error;
   }
 }
 
 function reapRemotePrivilegeGrants() {
   const now = Date.now();
-  for (const [id, grant] of grants) if (grant.expiresAt < now) revokeRemotePrivilegeGrant(id);
+  for (const [id, grant] of grants) if (grant.expiresAt > 0 && grant.expiresAt < now) revokeRemotePrivilegeGrant(id);
 }
 
 async function probeRemotePrivilege(connection, authorization) {

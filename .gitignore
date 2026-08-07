@@ -2,6 +2,7 @@ data/
 __pycache__/
 *.pyc
 .ssh/
+.terma-storage.json
 .tunneldesk-storage.json
 node_modules/
 npm-debug.log*
@@ -10,4 +11,5 @@ release/
 release-notes.md
 docs/
 .tmp-native-drag-acceptance/
+/.terma-brand-migration-*/
 runtime/xserver/win32/

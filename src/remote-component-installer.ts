@@ -17,7 +17,7 @@ function componentInstallPlan(options: any = {}) {
     ? Boolean(options.local_offline_command || options.local_offline_remote_command || (Array.isArray(options.local_offline_packages) && options.local_offline_packages.length))
     : Boolean(options.local_offline_available);
   const localOfflineDescription = options.local_offline_description || (localOfflineAvailable
-    ? "仅适用于 Debian/Ubuntu 及兼容 APT/.deb 系统：TunnelDesk 在本机下载匹配的软件包和依赖，再通过 SFTP 上传并安装"
+    ? "仅适用于 Debian/Ubuntu 及兼容 APT/.deb 系统：Terma 在本机下载匹配的软件包和依赖，再通过 SFTP 上传并安装"
     : "本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前系统无法自动解析并上传对应的软件包依赖");
   const localOffline = installMode("local-offline", options.local_offline_label || "本机下载后离线安装", options.local_offline_command || options.local_offline_remote_command || "", localOfflineDescription, {
     available:localOfflineAvailable,

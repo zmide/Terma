@@ -1,28 +1,30 @@
-# TunnelDesk
+# Terma
 
-TunnelDesk 是一个面向桌面端和自托管 Web 的远程连接工作台，用于集中管理 SSH、终端、SFTP、远程桌面、端口转发和批量命令。
+Terma 是一个面向桌面端和自托管 Web 的远程连接工作台，用于集中管理 SSH、终端、SFTP、远程桌面、端口转发和批量命令。
 
-[下载最新版本](https://github.com/zmide/tunneldesk/releases/latest) · [查看版本记录](https://github.com/zmide/tunneldesk/releases) · [GPL-3.0 许可](LICENSE)
+> 名称迁移：Terma 保留对旧版 TunnelDesk 数据和 `TUNNELDESK_*` 环境变量的兼容；桌面版发现旧数据时会提示迁移，旧目录仍保留供回滚。
+
+[下载最新版本](https://github.com/zmide/Terma/releases/latest) · [查看版本记录](https://github.com/zmide/Terma/releases) · [GPL-3.0 许可](LICENSE)
 
 <p align="center">
-  <img src=".github/assets/screenshots/desktop-overview.png" alt="TunnelDesk 组合工作区与跨平台终端" width="100%">
+  <img src=".github/assets/screenshots/desktop-overview.png" alt="Terma 连接管理与服务器仪表盘" width="100%">
 </p>
 
 ## 界面预览
 
 <table>
   <tr>
-    <td width="50%"><strong>终端与递归分屏</strong><br><img src=".github/assets/screenshots/desktop-terminal.png" alt="TunnelDesk 终端与递归分屏"></td>
-    <td width="50%"><strong>远程桌面与其他连接</strong><br><img src=".github/assets/screenshots/desktop-remote.png" alt="TunnelDesk 远程桌面与其他连接"></td>
+    <td width="50%"><strong>终端会话与运行诊断</strong><br><img src=".github/assets/screenshots/desktop-terminal.png" alt="Terma 终端会话与运行诊断"></td>
+    <td width="50%"><strong>远程桌面与其他连接</strong><br><img src=".github/assets/screenshots/desktop-remote.png" alt="Terma 远程桌面与其他连接"></td>
   </tr>
   <tr>
-    <td colspan="2"><strong>本地文件、SFTP 与任务中心</strong><br><img src=".github/assets/screenshots/desktop-sftp.png" alt="TunnelDesk 本地文件、SFTP 与任务中心"></td>
+    <td colspan="2"><strong>SFTP 文件管理</strong><br><img src=".github/assets/screenshots/desktop-sftp.png" alt="Terma SFTP 文件管理"></td>
   </tr>
   <tr>
-    <td colspan="2"><strong>Linux 桌面管理</strong><br><img src=".github/assets/screenshots/desktop-linux-management.png" alt="TunnelDesk Linux 桌面管理"></td>
+    <td colspan="2"><strong>Linux 桌面管理</strong><br><img src=".github/assets/screenshots/desktop-linux-management.png" alt="Terma Linux 桌面管理"></td>
   </tr>
   <tr>
-    <td colspan="2"><strong>端口转发</strong><br><img src=".github/assets/screenshots/desktop-forwarding.png" alt="TunnelDesk 端口转发"></td>
+    <td colspan="2"><strong>端口转发</strong><br><img src=".github/assets/screenshots/desktop-forwarding.png" alt="Terma 端口转发"></td>
   </tr>
 </table>
 
@@ -74,10 +76,10 @@ TunnelDesk 是一个面向桌面端和自托管 Web 的远程连接工作台，�
 ### 远程桌面与其他协议
 
 - SSH 与其他协议使用独立活动入口；RDP、VNC、XDMCP、FTP/FTPS、Telnet 和串口可单独分组、搜索和新增，也可在新增 SSH 时或其更多菜单中按协议生成单个或全部默认配置。
-- RDP 使用系统原生客户端，由 SSH 生成的配置会按目标地址直接打开并由客户端询问桌面账号；macOS 未安装 Windows App 时可使用 Microsoft 官方独立 PKG，支持提前放入下载目录后离线安装。VNC 可选择 TunnelDesk 内置查看器、系统客户端或自动优先内置，可选加密保存密码，并在工作区内完成控制、双向剪贴板自动同步、全屏和重连；鼠标默认按远端平台自动选择显示策略，也可在 VNC 工具栏手动显示或隐藏本地光标。权限受限时仍可手动收发剪贴板，密码错误时可重新输入并更新保存密码。
-- Windows 桌面包内置并管理 X Server；macOS 由 TunnelDesk 管理 XQuartz 的启动、停止和 XDMCP 窗口，Linux 复用当前图形桌面并使用 Xephyr。X11 入口会通过 SSH 自动识别远端已安装的终端、工具、文件管理器、浏览器和桌面会话，保存密码的连接也可直接启动，并支持自定义程序；macOS 可探测 XQuartz、xauth、sshd 和 `XAuthLocation`，缺少组件时可在程序内安装官方 XQuartz。
+- RDP 使用系统原生客户端，由 SSH 生成的配置会按目标地址直接打开并由客户端询问桌面账号；macOS 未安装 Windows App 时可使用 Microsoft 官方独立 PKG，支持提前放入下载目录后离线安装。VNC 可选择 Terma 内置查看器、系统客户端或自动优先内置，可选加密保存密码，并在工作区内完成控制、双向剪贴板自动同步、全屏和重连；鼠标默认按远端平台自动选择显示策略，也可在 VNC 工具栏手动显示或隐藏本地光标。权限受限时仍可手动收发剪贴板，密码错误时可重新输入并更新保存密码。
+- Windows 桌面包内置并管理 X Server；macOS 由 Terma 管理 XQuartz 的启动、停止和 XDMCP 窗口，Linux 复用当前图形桌面并使用 Xephyr。X11 入口会通过 SSH 自动识别远端已安装的终端、工具、文件管理器、浏览器和桌面会话，保存密码的连接也可直接启动，并支持自定义程序；macOS 可探测 XQuartz、xauth、sshd 和 `XAuthLocation`，缺少组件时可在程序内安装官方 XQuartz。
 - Linux 桌面管理可通过 SSH 识别 Debian、Ubuntu、RHEL、Fedora、Arch、openSUSE 等发行版，探测并安装或卸载常见桌面环境；卸载后会按核心启动程序重新验证，不会默认清理无关的自动依赖。XDMCP、桌面管理、RDP 会话修复、SSH X11 转发和远端 X11/XQuartz 安装可使用仅限本次操作的管理员密码、私钥或 SSH Agent，凭据不会保存。X Server 管理可检查、开启或关闭远端 SSH X11 转发，启用 X11 的终端连接会直接显示实际转发结果。
-- Windows、Linux 和 macOS 桌面版均支持 XDMCP 直接查询、间接查询和局域网广播；Windows 使用随包组件，Linux 使用 Xephyr，macOS 使用 XQuartz 提供的 Xephyr。TunnelDesk 可通过同主机 SSH 连接探测桌面会话、显示管理器和 UDP 177，管理 LightDM 和仍保留 XDMCP 的旧版 GDM；GDM 50 及以上或 Debian/Ubuntu 的 SDDM 可经确认切换为 LightDM，并只撤销自身添加的 UFW/firewalld 规则。XDMCP 不加密，只应在可信局域网使用。
+- Windows、Linux 和 macOS 桌面版均支持 XDMCP 直接查询、间接查询和局域网广播；Windows 使用随包组件，Linux 使用 Xephyr，macOS 使用 XQuartz 提供的 Xephyr。Terma 可通过同主机 SSH 连接探测桌面会话、显示管理器和 UDP 177，管理 LightDM 和仍保留 XDMCP 的旧版 GDM；GDM 50 及以上或 Debian/Ubuntu 的 SDDM 可经确认切换为 LightDM，并只撤销自身添加的 UFW/firewalld 规则。XDMCP 不加密，只应在可信局域网使用。
 - FTP/FTPS 提供内置文件工作区；Telnet 和串口提供内置终端，并分别支持常用终端编码和串口参数。
 
 ### 转发与批量运维
@@ -134,13 +136,13 @@ Electron 桌面端 ─┐
 - npm
 - Git（从仓库获取源码时）
 - OpenSSH 客户端，命令行可执行 `ssh`
-- macOS 使用 X11/XDMCP 时需安装 XQuartz，TunnelDesk 可在本机下载、校验并请求管理员授权安装，也可通过 SSH 探测远端 X11 状态；macOS RDP 需安装 Windows App 或可用的 FreeRDP。Linux 使用 X11 时需具备桌面 DISPLAY 和 `xauth`，XDMCP 客户端需 Xephyr，完整远端桌面还需支持 XDMCP 的显示管理器监听 UDP 177（优先使用 LightDM；GDM 50 及以上已不支持）
+- macOS 使用 X11/XDMCP 时需安装 XQuartz，Terma 可在本机下载、校验并请求管理员授权安装，也可通过 SSH 探测远端 X11 状态；macOS RDP 需安装 Windows App 或可用的 FreeRDP。Linux 使用 X11 时需具备桌面 DISPLAY 和 `xauth`，XDMCP 客户端需 Xephyr，完整远端桌面还需支持 XDMCP 的显示管理器监听 UDP 177（优先使用 LightDM；GDM 50 及以上已不支持）
 
 从源码运行前获取项目：
 
 ```sh
-git clone https://github.com/zmide/tunneldesk.git
-cd tunneldesk
+git clone https://github.com/zmide/Terma.git
+cd Terma
 ```
 
 启动脚本会检查 `package.json` 和 `package-lock.json`。依赖缺失或清单发生变化时会自动执行安装，然后编译并启动程序。
@@ -182,7 +184,7 @@ pkg install git nodejs openssh
 
 ```sh
 chmod +x start.sh stop.sh
-TUNNELDESK_WEB_ONLY=1 ./start.sh
+TERMA_WEB_ONLY=1 ./start.sh
 ./stop.sh
 ```
 
@@ -193,19 +195,26 @@ Termux 和无图形 Linux 不打包桌面程序；`start.sh` 会自动检查依�
 推荐在“设置 > 启动与运行”中选择监听地址并设置 Web 密码。也可以临时使用：
 
 ```sh
-TUNNELDESK_LAN=1 ./start.sh
+TERMA_LAN=1 ./start.sh
 # 或
-TUNNELDESK_WEB_ONLY=1 ./start.sh --host 0.0.0.0 --port 8088
+TERMA_WEB_ONLY=1 ./start.sh --host 0.0.0.0 --port 8088
 ```
 
 常用环境变量：
 
 | 变量 | 作用 |
 | --- | --- |
-| `TUNNELDESK_WEB_ONLY=1` | 只启动 Web 服务 |
-| `TUNNELDESK_LAN=1` | 临时监听全部 IPv4 网卡 |
+| `TERMA_WEB_ONLY=1` | 只启动 Web 服务 |
+| `TERMA_LAN=1` | 临时监听全部 IPv4 网卡 |
+| `TERMA_NO_BROWSER=1` | Web 模式启动后不自动打开浏览器 |
+| `TERMA_DATA_DIR` | 覆盖运行数据目录 |
+| `TERMA_SSH_DIR` | 覆盖 SSH 密钥目录 |
+| `TERMA_RESET_WEB_ACCESS=1` | 重置 Web 密码和访问 Token |
+| `TERMA_DISABLE_UPDATE_CHECK=1` | 关闭启动时自动检查更新 |
 | `TUNNEL_WEB_HOST` | 指定监听地址 |
 | `TUNNEL_WEB_PORT` | 指定监听端口，默认 `8088` |
+
+旧版 `TUNNELDESK_WEB_ONLY`、`TUNNELDESK_LAN` 等同名变量仍作为兼容输入，新脚本和新部署应改用 `TERMA_*`。
 
 ## 开发与验证
 
@@ -256,10 +265,17 @@ npm run dist -- --mac dmg zip --x64 --arm64 --publish never
 
 - Windows 安装版：运行 `*-installer.exe` 并按向导安装；便携版直接运行 `*-portable.exe`。
 - Linux：AppImage 执行 `chmod +x release/*.AppImage` 后即可运行；DEB、RPM 使用系统包管理器安装。
-- macOS DMG：打开与机器架构对应的 `.dmg`，将 TunnelDesk 拖入“应用程序”后启动。
-- macOS ZIP：解压后可直接运行 `TunnelDesk.app`，无需安装；它只表示应用免安装，运行数据仍保存在系统用户数据目录。Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
+- macOS DMG：打开与机器架构对应的 `.dmg`，将 Terma 拖入“应用程序”后启动。
+- macOS ZIP：解压后可直接运行 `Terma.app`，无需安装；它只表示应用免安装，运行数据仍保存在系统用户数据目录。Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
 
 推送 `v*` 标签时，Release 工作流会在 Windows、Linux 和 macOS 上分别构建并验证产物。
+
+## 从 TunnelDesk 升级
+
+- 新桌面标识为 `com.zmide.terma`，主程序和 Linux 包名使用 `terma`；Windows 安装向导、macOS `/Applications/Terma.app` 和 Linux 应用菜单均使用 Terma。旧 TunnelDesk 安装不会被当作新程序继续写入。
+- 桌面数据默认迁移到 Windows `%APPDATA%\Terma\runtime`、Linux `~/.config/Terma/runtime`、macOS `~/Library/Application Support/Terma/runtime`。旧 `TunnelDesk` 目录只作为迁移来源并保留供回滚。
+- “导入导出 > 旧版数据迁移”可重新探测并一键迁移。新旧目录都已有数据时不会静默覆盖；确认迁移后会先备份当前 Terma 数据。
+- Terma 会识别旧版备份、`TUNNELDESK_*` 兼容变量和远端 `tunneldesk-*` 管理配置。新建的 XDMCP、VNC 与 SSH X11 配置使用 `terma` 名称；迁移成功前不要手工删除旧配置或旧应用。
 
 ## 数据与安全
 
@@ -267,9 +283,9 @@ npm run dist -- --mac dmg zip --x64 --arm64 --publish never
 - SSH 密码、私钥路径、访问 Token 和数据库备份属于敏感数据，请保护运行数据目录并按需启用配置加密。
 - 已永久信任的 SSH 主机密钥保存在运行数据目录，可在“设置 > 安全”中查看或删除；删除后下次连接会重新确认指纹。
 - 服务默认只监听 `127.0.0.1`。局域网访问应设置 Web 密码；远程访问建议通过 Tailscale、ZeroTier、WireGuard 等私有网络。
-- 不建议将 TunnelDesk 直接暴露到公网。它可以操作终端、SFTP、隧道、密钥和备份，风险高于普通只读管理页面。
+- 不建议将 Terma 直接暴露到公网。它可以操作终端、SFTP、隧道、密钥和备份，风险高于普通只读管理页面。
 - 不要提交 `data/`、`.ssh/`、日志或数据库备份。
 
 ## 许可
 
-TunnelDesk 使用 [GNU General Public License v3.0](LICENSE) 发布，随包第三方组件及对应源码位置见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+Terma 使用 [GNU General Public License v3.0](LICENSE) 发布，随包第三方组件及对应源码位置见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

@@ -8,6 +8,7 @@ const {
   parsePosixCapabilityOutput,
   parseWindowsCapabilityOutput
 } = require("../dist/ssh-capabilities");
+const legacyPrefix = ["T", "D"].join("");
 
 function profile(capabilities, id) {
   return capabilities.profiles.find((item) => item.id === id);
@@ -18,9 +19,17 @@ function tool(capabilities, id) {
 }
 
 async function main() {
+  const legacyLinux = parsePosixCapabilityOutput([
+    `${legacyPrefix}_CAPS_V1\t\t`,
+    "PLATFORM\tLinux\t",
+    "DEFAULT_SHELL\t/bin/sh\tpasswd",
+    "SHELL\tsh\t/bin/sh"
+  ].join("\n"));
+  assert.equal(legacyLinux.platform, "linux");
+  assert.equal(legacyLinux.default_shell.name, "sh");
   const linuxFixture = [
     "noise before marker",
-    "TD_CAPS_V1\t\t",
+    "TERMA_CAPS_V1\t\t",
     "PLATFORM\tLinux\t",
     "DEFAULT_SHELL\t/bin/bash\tpasswd",
     "SHELL\tsh\t/bin/sh",
@@ -53,7 +62,7 @@ async function main() {
   assert.equal(profile(linux, "git-bash"), undefined, "Linux 上安装 Git 不能被误标为 Git Bash");
 
   const macFixture = [
-    "TD_CAPS_V1\t\t",
+    "TERMA_CAPS_V1\t\t",
     "PLATFORM\tDarwin\t",
     "DEFAULT_SHELL\t/bin/zsh\tdirectory_service",
     "SHELL\tsh\t/bin/sh",
@@ -73,10 +82,10 @@ async function main() {
   assert.equal(mac.default_shell.name, "zsh");
   assert.equal(mac.default_shell.source, "directory_service");
   assert.equal(profile(mac, "zsh").is_default, true);
-  assert.equal(profile(mac, "screen").args, "-xRR tunneldesk");
+  assert.equal(profile(mac, "screen").args, "-xRR terma");
 
   const windowsFixture = [
-    "TD_CAPS_V1\t\t",
+    "TERMA_CAPS_V1\t\t",
     "PLATFORM\twindows\t",
     "DEFAULT_SHELL\tC:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe\topenssh_registry",
     "EXEC\tcmd\tC:\\Windows\\System32\\cmd.exe",
@@ -114,7 +123,7 @@ async function main() {
   assert.ok(tool(windows, "gh"));
 
   const fakeGitBashFixture = [
-    "TD_CAPS_V1\t\t",
+    "TERMA_CAPS_V1\t\t",
     "PLATFORM\twindows\t",
     "DEFAULT_SHELL\tC:\\Windows\\System32\\cmd.exe\tcomspec",
     "EXEC\tcmd\tC:\\Windows\\System32\\cmd.exe",
@@ -128,7 +137,7 @@ async function main() {
   assert.equal(profile(fakeGitBash, "bash").label, "Bash");
 
   const noDefault = parsePosixCapabilityOutput([
-    "TD_CAPS_V1\t\t",
+    "TERMA_CAPS_V1\t\t",
     "PLATFORM\tLinux\t",
     "DEFAULT_SHELL\t\t",
     "EXEC\tbash\t/bin/bash"

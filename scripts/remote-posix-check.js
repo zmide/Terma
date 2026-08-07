@@ -6,7 +6,7 @@ const { buildRemotePosixCommand } = require("../dist/remote-posix");
 const source = [
   "set +e",
   "td_value='quoted value'",
-  "printf 'TD_REMOTE_POSIX=%s\\n' \"$td_value\""
+  "printf 'TERMA_REMOTE_POSIX=%s\\n' \"$td_value\""
 ].join("\n");
 const command = buildRemotePosixCommand(source);
 assert.match(command, /^\/bin\/sh -lc '/);

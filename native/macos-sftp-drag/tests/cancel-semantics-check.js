@@ -16,8 +16,8 @@ assert.match(
 );
 assert.match(
   source,
-  /errorWithDomain:@"com\.tunneldesk\.sftp-drag"\s+code:1003/,
-  "ordinary delivery failures must keep the TunnelDesk error domain"
+  /errorWithDomain:@"com\.zmide\.terma\.sftp-drag"\s+code:1003/,
+  "ordinary delivery failures must keep the Terma error domain"
 );
 assert.match(
   source,

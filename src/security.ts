@@ -285,8 +285,8 @@ function isAuthenticated(req) {
   if (!authRequired(req)) return true;
   const settings = readSecuritySettings();
   if (sessionFromRequest(req)) return true;
-  const envToken = process.env.TUNNELDESK_AUTH_TOKEN || "";
-  const provided = bearerToken(req) || String(req.headers["x-tunneldesk-token"] || "");
+  const envToken = process.env.TERMA_AUTH_TOKEN || process.env.TUNNELDESK_AUTH_TOKEN || "";
+  const provided = bearerToken(req) || String(req.headers["x-terma-token"] || req.headers["x-tunneldesk-token"] || "");
   if (envToken && provided) {
     const a = Buffer.from(provided);
     const b = Buffer.from(envToken);

@@ -7,7 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
-namespace tunneldesk::dragfs {
+namespace terma::dragfs {
 namespace {
 
 using Json = nlohmann::json;
@@ -200,4 +200,4 @@ Manifest parse_manifest(std::string_view json_text, std::size_t maximum_entries)
   return result;
 }
 
-}  // namespace tunneldesk::dragfs
+}  // namespace terma::dragfs

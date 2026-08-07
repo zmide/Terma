@@ -274,10 +274,40 @@ function removeTrustedHost(id) {
   return { ok: true };
 }
 
+function hostKeyProbeError(error, host, port) {
+  const label = hostLabel(host, port);
+  const code = String(error?.code || "").trim().toUpperCase();
+  const detail = String(error?.message || error || "").trim();
+  const searchable = `${code} ${detail}`.toLowerCase();
+  let message = "";
+  if (/enotfound|eai_again|getaddrinfo/.test(searchable)) {
+    message = `无法解析 SSH 主机地址：${host}`;
+  } else if (/econnrefused|connection refused/.test(searchable)) {
+    message = `SSH 连接被拒绝：${label}`;
+  } else if (/etimedout|timed out|timeout/.test(searchable)) {
+    message = `SSH 主机密钥探测超时：${label}`;
+  } else if (/ehostunreach|enetunreach|no route to host|network is unreachable/.test(searchable)) {
+    message = `无法连接 SSH 主机：${label}`;
+  } else if (/all configured authentication methods failed|authentication failed/.test(searchable)) {
+    message = "SSH 认证失败，请检查用户名、密码、私钥或代理设置";
+  } else if (/handshake failed|no matching (?:host key|cipher|mac|key exchange)|key exchange failed/.test(searchable)) {
+    message = `SSH 握手失败，客户端与服务器没有可兼容的算法：${label}`;
+  } else if (/econnreset|connection reset|connection lost|socket disconnected|client-socket/.test(searchable)) {
+    message = `SSH 连接在主机密钥探测期间中断：${label}`;
+  } else {
+    message = `SSH 主机密钥探测失败：${label}`;
+  }
+  const normalized: any = new Error(message);
+  normalized.name = "SshHostKeyProbeError";
+  normalized.code = code || "SSH_HOST_KEY_PROBE_FAILED";
+  Object.defineProperty(normalized, "cause", {value:error, enumerable:false, configurable:true});
+  return normalized;
+}
+
 function probeHostKey(connection, options: any = {}) {
   const { host, port } = connectionTarget(connection);
   return new Promise((resolve, reject) => {
-    const client = new Client();
+    const client = typeof options.clientFactory === "function" ? options.clientFactory() : new Client();
     let settled = false;
     const finish = (error = null, descriptor = null) => {
       if (settled) return;
@@ -286,13 +316,19 @@ function probeHostKey(connection, options: any = {}) {
       if (error) reject(error);
       else resolve(descriptor);
     };
-    client.once("error", (error) => finish(error));
+    // ssh2 can emit another error while client.end() tears down a failed
+    // handshake. Keep this listener for the complete client lifetime so a
+    // late socket error cannot become an uncaught EventEmitter error.
+    client.on("error", (error) => {
+      if (settled) return;
+      finish(hostKeyProbeError(error, host, port));
+    });
     try {
       client.connect({
         host,
         port,
         ...(options.sock ? { sock:options.sock } : {}),
-        username: String(connection?.ssh_user || "tunneldesk-host-key-probe"),
+        username: String(connection?.ssh_user || "terma-host-key-probe"),
         readyTimeout: 12000,
         keepaliveInterval: 0,
         authHandler: () => false,
@@ -306,7 +342,7 @@ function probeHostKey(connection, options: any = {}) {
         }
       });
     } catch (error) {
-      finish(error);
+      finish(hostKeyProbeError(error, host, port));
     }
   });
 }
@@ -387,6 +423,7 @@ module.exports = {
   hostTrustErrorResponse,
   isHostTrustError,
   listTrustedHosts,
+  probeHostKey,
   removeTrustedHost,
   systemHostKeyArgs,
   verifyHostKey

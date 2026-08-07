@@ -36,7 +36,7 @@ async function capture(window, name) {
   const stats = {...imageStats(image), ...layout};
   if (!stats.nonblank) throw new Error(`视觉回归 ${name} 截图为空白或颜色异常`);
   if (stats.overflow) throw new Error(`视觉回归 ${name} 出现页面横向溢出`);
-  const directory = process.env.TUNNELDESK_UI_VISUAL_DIR;
+  const directory = process.env.TERMA_UI_VISUAL_DIR || process.env.TUNNELDESK_UI_VISUAL_DIR;
   if (directory) {
     fs.mkdirSync(directory, {recursive:true});
     fs.writeFileSync(path.join(directory, `${name}.png`), image.toPNG());
@@ -56,9 +56,9 @@ async function runVisualRegression(window) {
   const localFilesFixture = await window.webContents.executeJavaScript(`(async () => {
     try {
     window.__visualRegressionOriginalApi = api;
-    window.__visualRegressionHadDesktopBridge = Object.prototype.hasOwnProperty.call(window, 'tunnelDeskDesktop');
-    window.__visualRegressionDesktopBridge = window.tunnelDeskDesktop;
-    window.tunnelDeskDesktop = {capabilities:{platform:'win32'}};
+    window.__visualRegressionHadDesktopBridge = Object.prototype.hasOwnProperty.call(window, 'termaDesktop');
+    window.__visualRegressionDesktopBridge = window.termaDesktop;
+    window.termaDesktop = {capabilities:{platform:'win32'}};
     api = async path => {
       if (String(path).startsWith('/api/local-files')) {
         return {
@@ -149,8 +149,8 @@ async function runVisualRegression(window) {
     cancelWorkspaceGroupSelection();
     closeTabsByKey(['visual-local-files'], 'visual-local-files');
     api = window.__visualRegressionOriginalApi;
-    if (window.__visualRegressionHadDesktopBridge) window.tunnelDeskDesktop = window.__visualRegressionDesktopBridge;
-    else delete window.tunnelDeskDesktop;
+    if (window.__visualRegressionHadDesktopBridge) window.termaDesktop = window.__visualRegressionDesktopBridge;
+    else delete window.termaDesktop;
     delete window.__visualRegressionOriginalApi;
     delete window.__visualRegressionHadDesktopBridge;
     delete window.__visualRegressionDesktopBridge;

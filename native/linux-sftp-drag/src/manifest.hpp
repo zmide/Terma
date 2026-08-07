@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-namespace tunneldesk::dragfs {
+namespace terma::dragfs {
 
 enum class EntryType {
   file,
@@ -41,4 +41,4 @@ class ManifestError final : public std::runtime_error {
 Manifest parse_manifest(std::string_view json_text, std::size_t maximum_entries);
 std::string validate_relative_path(std::string_view input);
 
-}  // namespace tunneldesk::dragfs
+}  // namespace terma::dragfs

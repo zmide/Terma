@@ -112,7 +112,7 @@ function readHistory(): any[] {
     const interrupted = {
       ...restored,
       status:"failed",
-      error:"TunnelDesk 已重启，任务已中断",
+      error:"Terma 已重启，任务已中断",
       can_resume:false,
       speed_bps:0,
       average_bps:0,
@@ -353,7 +353,7 @@ function buildDeleteJobRequest(connection, paths, recycleEnabled = false) {
   }
   if (!prepared.length) throw new Error("请选择要删除的文件或目录");
   const createdAt = Date.now();
-  const markerPrefix = `__TUNNELDESK_DELETE_${crypto.randomBytes(12).toString("hex")}__:`;
+  const markerPrefix = `__TERMA_DELETE_${crypto.randomBytes(12).toString("hex")}__:`;
   const operations = prepared.map((request, index) => {
     const operation = recycleEnabled
       ? buildRecycleRemotePathCommand(
@@ -733,7 +733,7 @@ function createUploadJob(connectionId, localPath, remotePath, size = 0, phase = 
   const id = crypto.randomUUID();
   const normalizedRemotePath = String(remotePath || "").replace(/\\/g, "/");
   const remoteParent = path.posix.dirname(normalizedRemotePath);
-  const remoteTempName = `.tunneldesk-upload-${id}.part`;
+  const remoteTempName = `.terma-upload-${id}.part`;
   const remoteTempPath = remoteParent === "/"
     ? `/${remoteTempName}`
     : remoteParent === "."
@@ -1617,7 +1617,7 @@ function startArchiveDownloadJob(connectionId, remotePaths, options: any = {}) {
   const names = paths.map(item => path.posix.basename(item.replace(/\/+$/, "")));
   const id = crypto.randomUUID();
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const basename = `tunneldesk-${timestamp}.tar.gz`;
+  const basename = `terma-${timestamp}.tar.gz`;
   fs.mkdirSync(DOWNLOADS_DIR, {recursive:true});
   const tempPath = path.join(DOWNLOADS_DIR, `${id}-${basename}`);
   const job: any = {
@@ -1773,7 +1773,7 @@ function clearSftpCache() {
 }
 
 function buildCrossCopyOverwriteCommand(targetConnection, targetDir, names) {
-  const temporaryName = `.tunneldesk-cross-copy-${crypto.randomUUID()}`;
+  const temporaryName = `.terma-cross-copy-${crypto.randomUUID()}`;
   const temporaryRoot = `./${temporaryName}`;
   const incomingRoot = `${temporaryRoot}/incoming`;
   const backupRoot = `${temporaryRoot}/backup`;
@@ -1886,7 +1886,7 @@ function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir =
     targetCommand = buildCrossCopyOverwriteCommand(targetConnection, targetDir, names);
   } else if (conflict === "rename") {
     if (filenameEncoding(targetConnection) !== "utf8") throw new Error("非 UTF-8 文件名编码暂不支持自动改名，请选择覆盖或取消");
-    const temporaryName = `.tunneldesk-cross-copy-${crypto.randomUUID()}`;
+    const temporaryName = `.terma-cross-copy-${crypto.randomUUID()}`;
     const moves = names.map((name) => {
       const extension = path.posix.extname(name);
       const base = extension && extension !== name ? name.slice(0, -extension.length) : name;
@@ -1985,7 +1985,7 @@ function buildItemProgressJobCommand(connection, action, paths, targetDir) {
   const source = [...new Set((Array.isArray(paths) ? paths : []).map(item => String(item || "").replace(/\\/g, "/")).filter(Boolean))];
   if (!source.length) throw new Error(`请选择要${action === "copy" ? "复制" : "移动"}的文件`);
   if (source.length > 200 || source.some(item => item.includes("\0") || item.length > 4096)) throw new Error("远程路径无效或数量过多");
-  const marker = `__TUNNELDESK_JOB_${crypto.randomBytes(12).toString("hex")}__:`;
+  const marker = `__TERMA_JOB_${crypto.randomBytes(12).toString("hex")}__:`;
   const commandName = action === "copy" ? "cp -a" : "mv";
   const target = remotePathOperand(connection, targetDir);
   const commands = source.map((item, index) => (
@@ -2041,7 +2041,7 @@ function normalizeCompressionRequest(paths, targetDir = ".", archiveName = "", c
   if (Buffer.byteLength(name, "utf8") > 255) throw new Error("压缩包名称过长");
   const output = path.posix.join(target, name);
   if (normalizedPaths.includes(output)) throw new Error("压缩包不能覆盖被选中的源文件");
-  const temporaryOutput = path.posix.join(target, `.tunneldesk-${crypto.randomUUID()}.tar.gz.part`);
+  const temporaryOutput = path.posix.join(target, `.terma-${crypto.randomUUID()}.tar.gz.part`);
   const names = normalizedPaths.map((item) => `./${path.posix.basename(item)}`);
   const command = `if [ -e ${remotePathOperand(connection, output)} ]; then echo "目标压缩包已存在" >&2; exit 1; fi; tar -czf ${remotePathOperand(connection, temporaryOutput)} -C ${remotePathOperand(connection, parent)} -- ${names.map((item) => remotePathOperand(connection, item)).join(" ")} && mv -- ${remotePathOperand(connection, temporaryOutput)} ${remotePathOperand(connection, output)} || { status=$?; rm -f -- ${remotePathOperand(connection, temporaryOutput)}; exit $status; }`;
   return { paths: normalizedPaths, target, parent, name, output, temporary_output: temporaryOutput, command };

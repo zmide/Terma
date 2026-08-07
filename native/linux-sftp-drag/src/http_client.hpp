@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace tunneldesk::dragfs {
+namespace terma::dragfs {
 
 class HttpError final : public std::runtime_error {
  public:
@@ -40,4 +40,4 @@ class HttpClient {
   std::string content_url(std::size_t entry_index) const;
 };
 
-}  // namespace tunneldesk::dragfs
+}  // namespace terma::dragfs

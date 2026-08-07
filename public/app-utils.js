@@ -11,7 +11,66 @@ function icon(name, label="") {
   return `<svg class="lucide lucide-${escAttr(name)}" ${accessibility} width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${children}</svg>`;
 }
 
+function syncPasswordVisibilityControl(input) {
+  if (!input?.matches?.("input[data-password-visibility-input]")) return;
+  const control = input.closest(".password-input-control");
+  const button = control?.querySelector(".password-visibility-toggle");
+  if (!control || !button) return;
+  const visible = input.type === "text";
+  const label = visible ? "隐藏密码" : "显示密码";
+  button.disabled = Boolean(input.disabled);
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", String(visible));
+  button.innerHTML = icon(visible ? "eye-off" : "eye");
+  if (input.hidden) {
+    control.hidden = true;
+    control.dataset.hiddenByPasswordInput = "true";
+  } else if (control.dataset.hiddenByPasswordInput === "true") {
+    control.hidden = false;
+    delete control.dataset.hiddenByPasswordInput;
+  }
+}
+
+function enhancePasswordInputs(root=document) {
+  if (!root) return;
+  const inputs = [];
+  if (root.matches?.("input[type='password'], input[data-password-visibility-input]")) inputs.push(root);
+  inputs.push(...root.querySelectorAll?.("input[type='password'], input[data-password-visibility-input]") || []);
+  for (const input of inputs) {
+    if (input?.tagName !== "INPUT") continue;
+    if (!input.dataset.passwordVisibilityInput) {
+      input.dataset.passwordVisibilityInput = "true";
+      const control = document.createElement("div");
+      control.className = "password-input-control";
+      input.parentNode?.insertBefore(control, input);
+      control.appendChild(input);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "password-visibility-toggle";
+      button.addEventListener("pointerdown", event => event.preventDefault());
+      button.addEventListener("click", event => {
+        event.preventDefault();
+        const activeElement = document.activeElement;
+        const selectionStart = input.selectionStart;
+        const selectionEnd = input.selectionEnd;
+        input.type = input.type === "password" ? "text" : "password";
+        syncPasswordVisibilityControl(input);
+        if (activeElement === input) {
+          input.focus({preventScroll:true});
+          if (selectionStart !== null && selectionEnd !== null) {
+            try { input.setSelectionRange(selectionStart, selectionEnd); } catch {}
+          }
+        }
+      });
+      control.appendChild(button);
+    }
+    syncPasswordVisibilityControl(input);
+  }
+}
+
 function refreshIcons() {
+  enhancePasswordInputs(document);
   if (!window.lucide || !document.querySelector("i[data-lucide]")) return;
   window.lucide.createIcons({attrs:{"stroke-width":1.8}});
   document.querySelectorAll("svg[data-lucide]").forEach(svg => svg.removeAttribute("data-lucide"));
@@ -167,7 +226,7 @@ function applyTheme(theme) {
     btn.setAttribute("aria-label", text);
     btn.innerHTML = icon(theme === "dark" ? "sun" : "moon");
   });
-  window.tunnelDeskDesktop?.setTheme?.(theme);
+  window.termaDesktop?.setTheme?.(theme);
   if (typeof applyTerminalGlobalSettingsToSessions === "function") applyTerminalGlobalSettingsToSessions();
   if (typeof syncTerminalBackgroundForm === "function") syncTerminalBackgroundForm();
 }
@@ -326,7 +385,7 @@ function notify(text, type="info") {
     const stack = $("toast");
     if (!stack) return;
     const lines = String(text).split("\n");
-    const title = lines.shift() || "TunnelDesk";
+    const title = lines.shift() || "Terma";
     const detail = lines.join("\n").trim();
     const toastType = ["success", "error", "info"].includes(type) ? type : "info";
     const iconName = toastType === "success" ? "circle-check" : toastType === "error" ? "circle-alert" : "info";
@@ -365,7 +424,7 @@ async function requestDesktopNotifications() {
 function showDesktopNotification(event) {
   if (!desktopNotificationEnabled()) return;
   try {
-    const n = new Notification(event.title || "TunnelDesk", {
+    const n = new Notification(event.title || "Terma", {
       body: event.message || "",
       tag: event.key || String(event.id || Date.now()),
       renotify: false
@@ -450,6 +509,62 @@ function setButtonBusy(button, busy, text) {
     }
     button.removeAttribute("aria-busy");
   }
+}
+
+// Serializes user-triggered actions that can be exposed by more than one button
+// (for example, a task row and its floating progress card).
+const uiActionLocks = new Map();
+
+function syncUiActionControls(key, busy) {
+  const actionKey = String(key || "").trim();
+  if (!actionKey || typeof document === "undefined") return;
+  document.querySelectorAll("[data-ui-action-key]").forEach(control => {
+    if (String(control.dataset?.uiActionKey || "") !== actionKey) return;
+    if (busy) {
+      if (control.dataset.uiActionLockDisabled !== "true") {
+        control.dataset.uiActionLockDisabled = "true";
+        control.dataset.uiActionLockWasDisabled = control.disabled ? "true" : "false";
+      }
+      control.disabled = true;
+      control.setAttribute("aria-busy", "true");
+      return;
+    }
+    if (control.dataset.uiActionLockDisabled !== "true") return;
+    control.disabled = control.dataset.uiActionLockWasDisabled === "true";
+    delete control.dataset.uiActionLockDisabled;
+    delete control.dataset.uiActionLockWasDisabled;
+    if (control.dataset.uiActionBusy !== "true") control.removeAttribute("aria-busy");
+  });
+}
+
+function beginUiAction(key, button=null, text="处理中...") {
+  const actionKey = String(key || "").trim();
+  if (actionKey && uiActionLocks.has(actionKey)) return false;
+  if (button?.dataset?.uiActionBusy === "true") return false;
+  if (actionKey) {
+    uiActionLocks.set(actionKey, button || true);
+    syncUiActionControls(actionKey, true);
+  }
+  if (button) {
+    button.dataset.uiActionBusy = "true";
+    setButtonBusy(button, true, text);
+  }
+  return true;
+}
+
+function endUiAction(key, button=null) {
+  const actionKey = String(key || "").trim();
+  if (actionKey) uiActionLocks.delete(actionKey);
+  if (button) {
+    delete button.dataset.uiActionBusy;
+    if (document.contains(button)) setButtonBusy(button, false);
+  }
+  if (actionKey) syncUiActionControls(actionKey, false);
+}
+
+function isUiActionInFlight(key) {
+  const actionKey = String(key || "").trim();
+  return Boolean(actionKey && uiActionLocks.has(actionKey));
 }
 
 function captureUiState(root=document) {
@@ -604,7 +719,7 @@ function sshHostTrustModal(challenge) {
       </div>
       <div class="ssh-host-trust-notice">${changed
         ? "保存过的主机密钥与本次连接不一致。这可能是服务器重装或密钥更新，也可能表示连接被冒充。请先核对新指纹。"
-        : "这是 TunnelDesk 首次连接这台 SSH 主机。请与服务器管理员或可信渠道核对指纹。"}</div>
+        : "这是 Terma 首次连接这台 SSH 主机。请与服务器管理员或可信渠道核对指纹。"}</div>
       <dl class="ssh-host-trust-details">
         <div><dt>算法</dt><dd>${esc(challenge?.key_type || "未知")}</dd></div>
         ${changed ? `<div class="previous"><dt>原指纹</dt><dd><code>${esc(challenge?.previous_fingerprint || "未知")}</code></dd></div>` : ""}

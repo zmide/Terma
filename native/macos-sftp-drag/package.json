@@ -1,8 +1,8 @@
 {
-  "name": "@tunneldesk/macos-sftp-drag",
+  "name": "@terma/macos-sftp-drag",
   "private": true,
   "version": "0.0.0",
-  "description": "TunnelDesk macOS SFTP file-promise drag provider",
+  "description": "Terma macOS SFTP file-promise drag provider",
   "main": "index.js",
   "types": "index.d.ts",
   "gypfile": true,

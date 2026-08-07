@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-TunnelDesk includes or integrates the following third-party components in addition to the dependencies listed in `package.json`.
+Terma includes or integrates the following third-party components in addition to the dependencies listed in `package.json`.
 
 ## noVNC
 

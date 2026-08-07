@@ -4,9 +4,10 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const { spawn } = require("node:child_process");
 const iconv = require("iconv-lite");
 const { Server } = require("ssh2");
-const { runPasswordCommand } = require("../dist/ssh2-client");
+const { normalizeSshTransportError, runPasswordCommand } = require("../dist/ssh2-client");
 const { trustTestHost } = require("./ssh-host-trust-test-helper");
 
 function listen(server) {
@@ -23,6 +24,95 @@ function close(server) {
   return new Promise((resolve) => server.close(resolve));
 }
 
+function availablePort() {
+  const server = net.createServer();
+  return listen(server).then(port => close(server).then(() => port));
+}
+
+async function waitForServer(url, child) {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) throw new Error(`SSH 错误隔离验证服务器提前退出，退出码 ${child.exitCode}`);
+    try {
+      if ((await fetch(`${url}/api/about`)).ok) return;
+    } catch {}
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error("等待 SSH 错误隔离验证服务器超时");
+}
+
+async function stopChild(child) {
+  try { child.kill("SIGTERM"); } catch {}
+  await new Promise(resolve => {
+    if (child.exitCode !== null) return resolve();
+    const timer = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch {}
+      resolve();
+    }, 3000);
+    child.once("close", () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+async function checkHandshakeTimeoutApi() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-ssh-timeout-api-"));
+  const webPort = await availablePort();
+  const url = `http://127.0.0.1:${webPort}`;
+  const sockets = new Set();
+  const silentServer = net.createServer(socket => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  const silentPort = await listen(silentServer);
+  const output = [];
+  const child = spawn(process.execPath, [path.join("dist", "server.js"), "--host", "127.0.0.1", "--port", String(webPort)], {
+    cwd:path.resolve(__dirname, ".."),
+    env:{
+      ...process.env,
+      TERMA_DATA_DIR:path.join(root, "data"),
+      TERMA_SSH_DIR:path.join(root, ".ssh"),
+      TERMA_DISABLE_UPDATE_CHECK:"1"
+    },
+    stdio:["ignore", "pipe", "pipe"],
+    windowsHide:true
+  });
+  child.stdout.on("data", chunk => output.push(chunk.toString()));
+  child.stderr.on("data", chunk => output.push(chunk.toString()));
+  try {
+    await waitForServer(url, child);
+    const response = await fetch(`${url}/api/test-ssh`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        auth_type:"password",
+        ssh_host:"127.0.0.1",
+        ssh_port:silentPort,
+        ssh_user:"fixture",
+        ssh_password:"fixture",
+        connect_timeout_seconds:3,
+        keepalive_interval_seconds:0
+      })
+    });
+    const data = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(data));
+    assert.equal(data.ok, false);
+    const visible = [data.output, data.raw_output, data.error].filter(Boolean).join("\n");
+    assert.match(visible, /SSH 握手超时/);
+    assert.doesNotMatch(visible, /Timed out while waiting for handshake|Connection lost before handshake/i);
+
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.equal(child.exitCode, null, `迟到 SSH 错误不应结束服务进程：${output.join("").slice(-2000)}`);
+    assert.equal((await fetch(`${url}/api/about`)).status, 200, "握手超时后的 API 服务仍应可用");
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    await close(silentServer);
+    await stopChild(child);
+    fs.rmSync(root, {recursive:true, force:true});
+  }
+}
+
 function connection(port) {
   return {
     auth_type: "password",
@@ -34,6 +124,24 @@ function connection(port) {
 }
 
 async function main() {
+  assert.equal(
+    normalizeSshTransportError(new Error("Timed out while waiting for handshake"), {ssh_host:"example.com", ssh_port:22}).message,
+    "SSH 握手超时，请检查主机地址、端口和 SSH 服务"
+  );
+  assert.equal(
+    normalizeSshTransportError(new Error("Connection lost before handshake"), {ssh_host:"example.com", ssh_port:22}).message,
+    "SSH 握手前连接已断开，请检查主机地址、端口和 SSH 服务"
+  );
+  assert.equal(
+    normalizeSshTransportError(new Error("Unexpected ssh2 transport detail"), {ssh_host:"example.com", ssh_port:22}).message,
+    "SSH 连接失败，请检查连接配置、网络和远端 SSH 服务"
+  );
+  assert.doesNotMatch(
+    JSON.stringify(normalizeSshTransportError(new Error("Unexpected ssh2 transport detail"), {ssh_host:"example.com", ssh_port:22})),
+    /Unexpected ssh2 transport detail/i,
+    "归一化错误的 cause 不得把 ssh2 原始详情序列化到 API"
+  );
+  await checkHandshakeTimeoutApi();
   let uncaught = null;
   let unhandled = null;
   const onUncaught = (error) => { uncaught = error; };
@@ -77,9 +185,9 @@ async function main() {
   const succeeded = await runPasswordCommand(encodedConnection, "true", null, 3000);
   await close(sshServer);
 
-  const encryptedDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-encrypted-key-"));
+  const encryptedDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "terma-encrypted-key-"));
   const encryptedKeyPath = path.join(encryptedDirectory, "id_rsa");
-  const passphrase = "tunneldesk-test-passphrase";
+  const passphrase = "terma-test-passphrase";
   fs.writeFileSync(encryptedKeyPath, privateKey.export({
     type:"pkcs1",
     format:"pem",

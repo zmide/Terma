@@ -5,6 +5,7 @@ const path = require("path");
 const { Readable } = require("stream");
 const { pipeline } = require("stream/promises");
 const zlib = require("zlib");
+const { selectRemoteProbeLines } = require("./remote-probe-protocol");
 
 const APT_PACKAGE_RE = /^[a-z0-9][a-z0-9+.-]*(?::[a-z0-9][a-z0-9-]*)?$/i;
 const MAX_APT_PACKAGES = 512;
@@ -29,33 +30,36 @@ function normalizeAptPackages(values) {
 
 function buildAptPrintUrisCommand(packages) {
   const normalized = normalizeAptPackages(packages);
-  return `LC_ALL=C apt-get --print-uris --yes --reinstall --download-only install ${normalized.map(shellQuote).join(" ")}`;
+  // Do not force already installed packages back into the bundle. A host may
+  // have a newer vendor or locally built package than the configured mirror;
+  // uploading the older archive would turn a dependency install into an
+  // unexpected downgrade during remote preflight.
+  return `LC_ALL=C apt-get --print-uris --yes --download-only install ${normalized.map(shellQuote).join(" ")}`;
 }
 
 function buildAptPlatformProbeCommand() {
   return [
     "set +e",
-    `td_os_value() { sed -n "s/^$1=//p" /etc/os-release 2>/dev/null | head -n 1 | sed 's/^"//;s/"$//' | tr '\\r\\n=' '   '; }`,
-    `printf 'TD_APT_OS_ID=%s\\n' "$(td_os_value ID)"`,
-    `printf 'TD_APT_OS_LIKE=%s\\n' "$(td_os_value ID_LIKE)"`,
-    `printf 'TD_APT_CODENAME=%s\\n' "$(td_os_value VERSION_CODENAME)"`,
-    `printf 'TD_APT_UBUNTU_CODENAME=%s\\n' "$(td_os_value UBUNTU_CODENAME)"`,
-    `printf 'TD_APT_VERSION_ID=%s\\n' "$(td_os_value VERSION_ID)"`,
-    `printf 'TD_APT_ARCH=%s\\n' "$(dpkg --print-architecture 2>/dev/null)"`,
-    "dpkg-query -W -f='TD_APT_INSTALLED=${binary:Package}\\t${Status}\\t${Provides}\\n' 2>/dev/null"
+    `terma_os_value() { sed -n "s/^$1=//p" /etc/os-release 2>/dev/null | head -n 1 | sed 's/^"//;s/"$//' | tr '\\r\\n=' '   '; }`,
+    `printf 'TERMA_APT_OS_ID=%s\\n' "$(terma_os_value ID)"`,
+    `printf 'TERMA_APT_OS_LIKE=%s\\n' "$(terma_os_value ID_LIKE)"`,
+    `printf 'TERMA_APT_CODENAME=%s\\n' "$(terma_os_value VERSION_CODENAME)"`,
+    `printf 'TERMA_APT_UBUNTU_CODENAME=%s\\n' "$(terma_os_value UBUNTU_CODENAME)"`,
+    `printf 'TERMA_APT_VERSION_ID=%s\\n' "$(terma_os_value VERSION_ID)"`,
+    `printf 'TERMA_APT_ARCH=%s\\n' "$(dpkg --print-architecture 2>/dev/null)"`,
+    "dpkg-query -W -f='TERMA_APT_INSTALLED=${binary:Package}\\t${Status}\\t${Provides}\\n' 2>/dev/null"
   ].join("\n");
 }
 
 function parseAptPlatformProbe(output) {
   const result: any = {installed:new Set(), provided:new Set()};
-  for (const rawLine of String(output || "").split(/\r?\n/)) {
-    const line = rawLine.trim();
-    const field = /^TD_APT_(OS_ID|OS_LIKE|CODENAME|UBUNTU_CODENAME|VERSION_ID|ARCH)=(.*)$/.exec(line);
+  for (const line of selectRemoteProbeLines(output, "APT_")) {
+    const field = /^(OS_ID|OS_LIKE|CODENAME|UBUNTU_CODENAME|VERSION_ID|ARCH)=(.*)$/.exec(line);
     if (field) {
       result[field[1].toLowerCase()] = field[2].trim().toLowerCase();
       continue;
     }
-    const installed = /^TD_APT_INSTALLED=([^\t]+)\tinstall ok installed(?:\t(.*))?$/.exec(line);
+    const installed = /^INSTALLED=([^\t]+)\tinstall ok installed(?:\t(.*))?$/.exec(line);
     if (!installed) continue;
     const packageName = installed[1].replace(/:[a-z0-9-]+$/i, "");
     if (packageName) result.installed.add(packageName);
@@ -140,7 +144,7 @@ async function fetchAptIndex(url, options: any = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Number(options.timeout_ms || APT_INDEX_TIMEOUT_MS));
   try {
-    const response = await fetchImpl(url, {signal:controller.signal, headers:{"User-Agent":"TunnelDesk offline installer"}});
+    const response = await fetchImpl(url, {signal:controller.signal, headers:{"User-Agent":"Terma offline installer"}});
     if (!response?.ok) return null;
     const compressed = Buffer.from(await response.arrayBuffer());
     const content = zlib.gunzipSync(compressed, {maxOutputLength:MAX_APT_INDEX_BYTES});
@@ -167,7 +171,7 @@ function resolveRepositoryEntries(packages, platform, entries, repositoryBase) {
   const visiting = new Set();
   function include(packageName, direct = false) {
     const normalized = String(packageName || "").replace(/:[a-z0-9-]+$/i, "");
-    if (!direct && (installed.has(normalized) || installedProvides.has(normalized))) return;
+    if (installed.has(normalized) || installedProvides.has(normalized)) return;
     if (selected.has(normalized) || visiting.has(normalized)) return;
     const entry = byName.get(normalized) || providers.get(normalized);
     if (!entry) throw new Error(`官方软件源索引中没有找到依赖：${normalized}`);
@@ -290,7 +294,7 @@ async function downloadPackage(item, directory, options: any = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Number(options.timeout_ms || DOWNLOAD_TIMEOUT_MS));
     try {
-      response = await fetch(current, {redirect:"manual", signal:controller.signal, headers:{"User-Agent":"TunnelDesk offline installer"}});
+      response = await fetch(current, {redirect:"manual", signal:controller.signal, headers:{"User-Agent":"Terma offline installer"}});
     } finally {
       clearTimeout(timer);
     }
@@ -332,7 +336,7 @@ async function verifyFileChecksum(filename, algorithm, expected) {
 }
 
 async function downloadAptBundle(items, options: any = {}) {
-  const directory = options.directory || fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-offline-"));
+  const directory = options.directory || fs.mkdtempSync(path.join(os.tmpdir(), "terma-offline-"));
   fs.mkdirSync(directory, {recursive:true});
   const files = [];
   for (const item of items) files.push(await downloadPackage(item, directory, options));
@@ -341,7 +345,7 @@ async function downloadAptBundle(items, options: any = {}) {
 
 function buildAptOfflineInstallCommand(remoteDirectory, packages) {
   const directory = String(remoteDirectory || "").trim();
-  if (!/^\/tmp\/tunneldesk-offline-[a-zA-Z0-9_-]+$/.test(directory)) throw new Error("远端离线安装目录无效");
+  if (!/^\/tmp\/terma-offline-[a-zA-Z0-9_-]+$/.test(directory)) throw new Error("远端离线安装目录无效");
   const normalized = normalizeAptPackages(packages);
   return [
     "set -eu",
@@ -360,7 +364,7 @@ function buildAptOfflineInstallCommand(remoteDirectory, packages) {
 
 function buildAptOfflinePreflightCommand(remoteDirectory) {
   const directory = String(remoteDirectory || "").trim();
-  if (!/^\/tmp\/tunneldesk-offline-[a-zA-Z0-9_-]+$/.test(directory)) throw new Error("远端离线安装目录无效");
+  if (!/^\/tmp\/terma-offline-[a-zA-Z0-9_-]+$/.test(directory)) throw new Error("远端离线安装目录无效");
   return [
     "set +e",
     `test -d ${shellQuote(directory)}`,

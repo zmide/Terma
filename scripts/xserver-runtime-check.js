@@ -21,14 +21,22 @@ const {
   parseWindowsXServerDisplayNumbers,
   parseXQuartzProcessIds,
   parseXQuartzProcessOutput,
+  resolveXdmcpLocalAddress,
   retryWindowsDisplayLaunch,
   terminateTrackedXdmcpChildren,
   xdmcpWindowSettings,
   xdmcpLaunchFailureMessage,
   wildcardXauthorityRecords
 } = require("../desktop/xserver-runtime");
+const {
+  LEGACY_MANIFEST_NAME,
+  MANIFEST_NAME,
+  SHA256:VCXSRV_SHA256,
+  VERSION:VCXSRV_VERSION,
+  verifiedRuntime
+} = require("./prepare-xserver-runtime");
 
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-xserver-check-"));
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "terma-xserver-check-"));
 
 async function main() {
   try {
@@ -49,11 +57,35 @@ async function main() {
     assert.equal(diagnostics.xdmcp_available, true);
     assert.match(diagnostics.executable, /runtime[\\/]xserver[\\/]win32[\\/]vcxsrv\.exe$/i);
 
+    const preparedRuntime = path.join(temporary, "prepared-runtime");
+    fs.mkdirSync(preparedRuntime, {recursive:true});
+    fs.writeFileSync(path.join(preparedRuntime, "vcxsrv.exe"), "fixture");
+    fs.writeFileSync(path.join(preparedRuntime, "xauth.exe"), "fixture");
+    const validManifest = JSON.stringify({version:VCXSRV_VERSION, sha256:VCXSRV_SHA256});
+    const currentManifest = path.join(preparedRuntime, MANIFEST_NAME);
+    const legacyManifest = path.join(preparedRuntime, LEGACY_MANIFEST_NAME);
+
+    fs.writeFileSync(legacyManifest, validManifest);
+    assert.equal(verifiedRuntime(preparedRuntime), true);
+    assert.equal(fs.existsSync(currentManifest), true);
+    assert.equal(fs.existsSync(legacyManifest), false);
+
+    fs.writeFileSync(currentManifest, validManifest);
+    fs.writeFileSync(legacyManifest, validManifest);
+    assert.equal(verifiedRuntime(preparedRuntime), true);
+    assert.equal(fs.existsSync(legacyManifest), false);
+
+    fs.writeFileSync(currentManifest, "{broken");
+    fs.writeFileSync(legacyManifest, validManifest);
+    assert.equal(verifiedRuntime(preparedRuntime), true);
+    assert.deepEqual(JSON.parse(fs.readFileSync(currentManifest, "utf8")), JSON.parse(validManifest));
+    assert.equal(fs.existsSync(legacyManifest), false);
+
     const source = fs.readFileSync(path.join(__dirname, "..", "desktop", "xserver-runtime.js"), "utf8");
     assert.match(source, /"-auth", attemptAuthorityFile/);
     assert.doesNotMatch(source, /["']-ac["']/);
     assert.match(source, /XAUTHORITY/);
-    assert.match(source, /TUNNELDESK_XAUTH/);
+    assert.match(source, /TERMA_XAUTH/);
     assert.match(source, /waitForUntrustedXauth\(display, xauth, attemptAuthorityFile\)/);
     assert.match(source, /env:\{\.\.\.environment, DISPLAY:display, XAUTHORITY:probeFile\}/);
     assert.match(source, /if \(await canConnect\(port, 250\)\) continue/);
@@ -84,6 +116,8 @@ async function main() {
     assert.match(source, /"-terminate", "5"/);
     assert.match(source, /"-logfile", launchLogFile/);
     assert.match(source, /waitForStableProcess\(processHandle\)/);
+    assert.match(xdmcpLaunchSource, /await resolveXdmcpLocalAddress\(host, port, requestedLocalAddress, \{mode\}\)/);
+    assert.match(xdmcpLaunchSource, /local_address:localAddress/);
     assert.deepEqual(xdmcpWindowSettings({window_mode:"windowed",width:1600,height:900}), {windowMode:"fixed",width:1600,height:900});
     assert.deepEqual(xdmcpWindowSettings({window_mode:"resizable",width:7680,height:4320}), {windowMode:"resizable",width:7680,height:4320});
     assert.deepEqual(xdmcpWindowSettings({width:99999,height:99999}), {windowMode:"resizable",width:8192,height:8192});
@@ -91,6 +125,7 @@ async function main() {
     assert.match(source, /window_mode:windowMode === "resizable" \? "fixed" : windowMode/);
     assert.match(xdmcpLaunchFailureMessage("(EE) XDMCP fatal error: Session failed", 7), /TCP 6007/);
     assert.match(xdmcpLaunchFailureMessage("(EE) XDMCP fatal error: Session failed", 7), /VPN、NAT/);
+    assert.match(xdmcpLaunchFailureMessage("(EE) XDMCP fatal error: Session failed", 7, "10.126.126.2"), /10\.126\.126\.2:6007/);
     assert.equal(XQUARTZ_VERSION, "2.8.6");
     assert.equal(XQUARTZ_BYTES, 122035963);
     assert.equal(XQUARTZ_SHA256, "9ac35a505095bfbd3009c3b4772f0c6421e2f79c4210ab908459270d1c447909");
@@ -121,7 +156,7 @@ async function main() {
     assert.match(source, /freerdp2-x11/);
     assert.match(source, /openLinuxXdmcp/);
     assert.match(source, /openMacXdmcp/);
-    assert.match(source, /TunnelDesk 内置 XDMCP（XQuartz）/);
+    assert.match(source, /Terma 内置 XDMCP（XQuartz）/);
     assert.match(source, /tell application \"XQuartz\" to quit/);
     assert.match(source, /waitForMacXephyr/);
     const macDiagnostics = createXServerRuntime({platform:"darwin", userDataPath:path.join(temporary, "mac-data"), environment:{HOME:path.join(temporary, "home")}}).diagnostics();
@@ -173,7 +208,7 @@ async function main() {
       '"C:\\Program Files\\VcXsrv\\vcxsrv.exe" :0 -multiwindow',
       'C:\\tools\\Xming.exe 127.0.0.1:3.0 -clipboard',
       'C:\\Windows\\System32\\notepad.exe :7',
-      '"C:\\TunnelDesk\\vcxsrv.exe" :0 -query 192.168.1.10'
+      '"C:\\Terma\\vcxsrv.exe" :0 -query 192.168.1.10'
     ].join("\n")), [0, 3]);
     assert.equal(isWindowsDisplayCollisionError(new Error("Invalid MIT-MAGIC-COOKIE-1 key")), true);
     assert.equal(isWindowsDisplayCollisionError(new Error("ordinary startup failure")), false);
@@ -280,6 +315,8 @@ async function main() {
       payload.copy(response, 6);
       xdmcpFixture.send(response, remote.port, remote.address);
     });
+    assert.equal(await resolveXdmcpLocalAddress("127.0.0.1", xdmcpFixture.address().port), "127.0.0.1");
+    assert.equal(await resolveXdmcpLocalAddress("127.0.0.1", xdmcpFixture.address().port, "192.0.2.25"), "192.0.2.25");
     const tested = await manager.testXdmcp({host:"127.0.0.1", port:xdmcpFixture.address().port, options:{mode:"query"}});
     xdmcpFixture.close();
     assert.equal(tested.ok, true);

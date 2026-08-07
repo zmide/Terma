@@ -90,7 +90,7 @@ async function chooseSftpSyncLocalDirectory() {
 }
 
 async function openSftpDirectorySync(connectionId, remotePath=".", tabKey=activeTabKey) {
-  if (!window.tunnelDeskDesktop) return notify("目录同步仅在桌面端提供", "info");
+  if (!window.termaDesktop) return notify("目录同步仅在桌面端提供", "info");
   let localPath = "";
   try { localPath = await chooseSftpSyncLocalDirectory(); }
   catch (error) { return notify(error.message || "无法选择本地目录", "error"); }
@@ -215,11 +215,11 @@ function productivitySearchText(...values) {
 }
 
 function quickPanelCommands() {
-  ensureTunnelDeskActions();
+  ensureTermaActions();
   return listAppActions({surface:"quick-panel"}).filter(action => action.quick !== false).map(action => ({...action, kind:"command", run:()=>runAppAction(action.id, {surface:"quick-panel"})}));
 }
 
-function ensureTunnelDeskActions() {
+function ensureTermaActions() {
   if (appAction("snippets.manage")) return;
   registerAppAction({id:"snippets.manage", icon:"library", title:"管理命令片段", detail:"命令片段", search:"snippet command 命令 片段", run:openCommandSnippetManager});
   registerAppAction({id:"workspaces.manage", icon:"panels-top-left", title:"管理命名工作区", detail:"工作区", search:"workspace save restore 工作区", run:openNamedWorkspaceManager});
@@ -228,7 +228,7 @@ function ensureTunnelDeskActions() {
   registerAppAction({id:"tabs.restore", icon:"undo-2", title:"恢复最近关闭的标签", detail:"标签", search:"restore closed tab 恢复 关闭 标签", run:restoreRecentlyClosedTab});
   registerAppAction({id:"ssh.key-wizard", icon:"key-round", title:"SSH 密钥向导", detail:"安全", search:"ssh key generate deploy 密钥 生成 部署", run:openSshKeyWizard});
   registerAppAction({id:"ssh.config-import", icon:"file-input", title:"检测 SSH config", detail:"导入", search:"ssh config import detect 导入 检测", run:openSshConfigImport});
-  registerAppAction({id:"sftp.external-edits", icon:"file-pen-line", title:"管理外部编辑会话", detail:"SFTP", search:"external editor sftp 外部 编辑", visible:()=>Boolean(window.tunnelDeskDesktop), run:openSftpExternalEditManager});
+  registerAppAction({id:"sftp.external-edits", icon:"file-pen-line", title:"管理外部编辑会话", detail:"SFTP", search:"external editor sftp 外部 编辑", visible:()=>Boolean(window.termaDesktop), run:openSftpExternalEditManager});
   registerAppAction({id:"connection.terminal", quick:false, run:context=>openTerminal(Number(context.connectionId))});
   registerAppAction({id:"connection.sftp", quick:false, run:context=>openSftp(Number(context.connectionId), context.path || ".")});
   registerAppAction({id:"connection.forwards", quick:false, run:context=>openForwards(Number(context.connectionId))});
@@ -413,11 +413,11 @@ async function openCommandSnippetManager() {
 }
 
 function exportCommandSnippets() {
-  const payload = {format:"tunneldesk-command-snippets", version:1, exported_at:new Date().toISOString(), snippets:productivityState.snippets.map(({id, created_at, updated_at, last_used_at, ...item}) => item)};
+  const payload = {format:"terma-command-snippets", version:2, exported_at:new Date().toISOString(), snippets:productivityState.snippets.map(({id, created_at, updated_at, last_used_at, ...item}) => item)};
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = "tunneldesk-command-snippets.json";
+  link.download = "terma-command-snippets.json";
   document.body.appendChild(link);
   link.click();
   setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
@@ -433,7 +433,7 @@ function importCommandSnippetsFile() {
     try {
       const payload = JSON.parse(await file.text());
       const items = Array.isArray(payload) ? payload : payload?.snippets;
-      if (!Array.isArray(items)) throw new Error("不是有效的 TunnelDesk 命令片段文件");
+      if (!Array.isArray(items)) throw new Error("不是有效的 Terma 命令片段文件");
       const names = new Set(productivityState.snippets.map(item => String(item.name).toLowerCase()));
       let imported = 0;
       for (const source of items.slice(0, 1000)) {
@@ -754,11 +754,11 @@ async function retryWorkspaceForwards(forwardIds) {
 function exportNamedWorkspace(id) {
   const workspace = productivityState.workspaces.find(item => Number(item.id) === Number(id));
   if (!workspace) return;
-  const payload = {format:"tunneldesk-named-workspace", version:1, exported_at:new Date().toISOString(), workspace:{name:workspace.name, description:workspace.description || "", layout:workspace.layout}};
+  const payload = {format:"terma-named-workspace", version:2, exported_at:new Date().toISOString(), workspace:{name:workspace.name, description:workspace.description || "", layout:workspace.layout}};
   const blob = new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"});
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `${String(workspace.name || "workspace").replace(/[\\/:*?"<>|]+/g, "-")}.tunneldesk-workspace.json`;
+  link.download = `${String(workspace.name || "workspace").replace(/[\\/:*?"<>|]+/g, "-")}.terma-workspace.json`;
   document.body.appendChild(link);
   link.click();
   setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
@@ -767,7 +767,7 @@ function exportNamedWorkspace(id) {
 function importNamedWorkspaceFile() {
   const input = document.createElement("input");
   input.type = "file";
-  input.accept = ".json,.tunneldesk-workspace.json,application/json";
+  input.accept = ".json,.terma-workspace.json,.tunneldesk-workspace.json,application/json";
   input.onchange = async () => {
     const file = input.files?.[0];
     if (!file) return;
@@ -792,7 +792,7 @@ function matchImportedRemoteProfile(reference) {
 
 async function importNamedWorkspaceData(payload) {
   const source = payload?.workspace || payload;
-  if (!source?.layout || !namedWorkspaceSavedTabs(source.layout).length) throw new Error("不是有效的 TunnelDesk 命名工作区文件");
+  if (!source?.layout || !namedWorkspaceSavedTabs(source.layout).length) throw new Error("不是有效的 Terma 命名工作区文件");
   const layout = JSON.parse(JSON.stringify(source.layout));
   const idMap = new Map();
   for (const reference of layout.connection_refs || []) {
@@ -891,7 +891,7 @@ function openSshKeyWizard() {
   const modal = $("modal");
   modal.hidden = false;
   modal.innerHTML = `<div class="modal-card wide ssh-key-wizard"><h2>SSH 密钥向导</h2>
-    <div class="grid"><div><label>密钥名称</label><input id="sshKeyName" value="id_ed25519_tunneldesk" maxlength="80"></div><div><label>备注</label><input id="sshKeyComment" value="TunnelDesk" maxlength="120"></div></div>
+    <div class="grid"><div><label>密钥名称</label><input id="sshKeyName" value="id_ed25519_terma" maxlength="80"></div><div><label>备注</label><input id="sshKeyComment" value="Terma" maxlength="120"></div></div>
     <label>私钥口令（可选）</label><input id="sshKeyPassphrase" type="password" autocomplete="new-password">
     <div class="actions"><button class="primary" onclick="generateSshKeyUi()">${icon("key-round")}<span>生成 Ed25519 密钥</span></button><button onclick="closeModal()">取消</button></div>
   </div>`;
@@ -1283,7 +1283,7 @@ function installProductivityTabHooks() {
 }
 
 function initProductivityFeatures() {
-  ensureTunnelDeskActions();
+  ensureTermaActions();
   loadClosedWorkspaceTabs();
   installProductivityHeaderButton();
   installProductivityKeyboard();

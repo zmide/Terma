@@ -1,6 +1,13 @@
 #!/data/data/com.termux/files/usr/bin/sh
 cd "$(dirname "$0")"
 
+# Terma names its runtime toggles with TERMA_. Keep the old names as a
+# one-release compatibility input for existing launch scripts.
+TERMA_LAN="${TERMA_LAN:-${TUNNELDESK_LAN:-}}"
+TERMA_WEB_ONLY="${TERMA_WEB_ONLY:-${TUNNELDESK_WEB_ONLY:-}}"
+TERMA_NO_BROWSER="${TERMA_NO_BROWSER:-${TUNNELDESK_NO_BROWSER:-}}"
+export TERMA_LAN TERMA_WEB_ONLY TERMA_NO_BROWSER
+
 TERMUX_ANDROID_NDK_PATH=""
 if [ "$(uname -o 2>/dev/null)" = "Android" ] && [ -n "$PREFIX" ]; then
   TERMUX_ANDROID_NDK_PATH="${npm_config_android_ndk_path:-$PREFIX}"
@@ -50,16 +57,16 @@ if [ -f data/web.pid ]; then
     *)
       if pid_is_running "$PID"; then
         PROCESS_COMMAND="$(process_command "$PID")"
-        if [ -n "$PROCESS_COMMAND" ] && ! printf '%s' "$PROCESS_COMMAND" | grep -Eiq '(tunneldesk|dist/server\.js|electron)'; then
-          echo "Ignoring stale TunnelDesk PID file that now belongs to pid=$PID."
+        if [ -n "$PROCESS_COMMAND" ] && ! printf '%s' "$PROCESS_COMMAND" | grep -Eiq '(terma|tunneldesk|dist/server\.js|electron)'; then
+          echo "Ignoring stale Terma PID file that now belongs to pid=$PID."
         else
           WEB_URL="$(cat data/web.url 2>/dev/null || true)"
-          echo "TunnelDesk is already running, pid=$PID"
+          echo "Terma is already running, pid=$PID"
           [ -n "$WEB_URL" ] && echo "Open $WEB_URL"
           if [ -f data/web.json ] && command -v node >/dev/null 2>&1; then
             node -e "try{const d=require('fs').readFileSync('data/web.json','utf8'); const j=JSON.parse(d); for(const u of (j.lan_urls||[])) console.log('  '+u)}catch{}"
           fi
-          if [ "$TUNNELDESK_WEB_ONLY" != "1" ] && has_gui && printf '%s' "$PROCESS_COMMAND" | grep -Eiq '(electron|tunneldesk)'; then
+          if [ "$TERMA_WEB_ONLY" != "1" ] && has_gui && printf '%s' "$PROCESS_COMMAND" | grep -Eiq '(electron|terma|tunneldesk)'; then
             if [ -x node_modules/.bin/electron ]; then
               npm run desktop:run >/dev/null 2>&1 &
               echo "The existing desktop window has been brought to the foreground."
@@ -81,7 +88,7 @@ if ! node scripts/dependency-state.js >/dev/null 2>&1; then
   npm_install || exit 1
   node scripts/dependency-state.js --write || exit 1
 fi
-if [ "$TUNNELDESK_WEB_ONLY" != "1" ] && [ ! -x node_modules/.bin/electron ]; then
+if [ "$TERMA_WEB_ONLY" != "1" ] && [ ! -x node_modules/.bin/electron ]; then
   npm_install || exit 1
   node scripts/dependency-state.js --write || exit 1
 fi
@@ -111,7 +118,7 @@ parse_server_args "$@"
 case " $SERVER_ARGS " in
   *" --host 0.0.0.0 "*) SHOW_LAN_URLS=1 ;;
 esac
-if [ "$TUNNELDESK_LAN" = "1" ]; then
+if [ "$TERMA_LAN" = "1" ]; then
   SERVER_ARGS="--host 0.0.0.0 $SERVER_ARGS"
   TUNNEL_WEB_HOST="0.0.0.0"
   export TUNNEL_WEB_HOST
@@ -121,7 +128,7 @@ fi
 rm -f data/web.url data/web.json
 
 open_url() {
-  [ "$TUNNELDESK_NO_BROWSER" = "1" ] && return 0
+  [ "$TERMA_NO_BROWSER" = "1" ] && return 0
   if command -v termux-open-url >/dev/null 2>&1; then termux-open-url "$1" >/dev/null 2>&1 &
   elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1 &
   elif command -v open >/dev/null 2>&1; then open "$1" >/dev/null 2>&1 &
@@ -142,7 +149,7 @@ check_web_api() {
 }
 
 wait_for_url() {
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60; do
     if [ -f data/web.url ]; then
       WEB_URL="$(cat data/web.url)"
       echo "Open $WEB_URL"
@@ -151,15 +158,15 @@ wait_for_url() {
         node -e "try{const data=require('fs').readFileSync('data/web.json','utf8'); const urls=JSON.parse(data).lan_urls||[]; if(urls.length){ console.log('LAN access:'); for(const url of urls) console.log('  '+url)}}catch{}"
       fi
       [ "$1" = "open_browser" ] && open_url "$WEB_URL"
-      echo "Use ./stop.sh to stop TunnelDesk and SSH tunnels."
+      echo "Use ./stop.sh to stop Terma and SSH tunnels."
       return 0
     fi
     sleep 1
   done
-  echo "TunnelDesk started, but the web URL file is not ready yet."
+  echo "Terma started, but the web URL file is not ready yet."
   echo "Check data/web.log and data/startup-status.json for the startup error."
   echo "The configured port may have moved automatically when it was occupied."
-  echo "Use ./stop.sh to stop TunnelDesk and SSH tunnels."
+  echo "Use ./stop.sh to stop Terma and SSH tunnels."
   return 1
 }
 
@@ -169,7 +176,7 @@ if [ "$1" = "--foreground" ]; then
   exit $?
 fi
 
-if [ "$TUNNELDESK_WEB_ONLY" != "1" ] && has_gui && [ -x node_modules/.bin/electron ]; then
+if [ "$TERMA_WEB_ONLY" != "1" ] && has_gui && [ -x node_modules/.bin/electron ]; then
   if ! node -e "try{const fs=require('fs'); const electron=require('electron'); process.exit(typeof electron==='string' && fs.existsSync(electron) ? 0 : 1)}catch{process.exit(1)}" >/dev/null 2>&1; then
     echo "Downloading Electron binary..."
     npx install-electron --no >/dev/null 2>&1 || true
@@ -181,9 +188,9 @@ if [ "$TUNNELDESK_WEB_ONLY" != "1" ] && has_gui && [ -x node_modules/.bin/electr
   if node -e "try{const fs=require('fs'); const electron=require('electron'); process.exit(typeof electron==='string' && fs.existsSync(electron) ? 0 : 1)}catch{process.exit(1)}" >/dev/null 2>&1; then
     npm run native:build:if-needed || echo "Native SFTP drag build failed; desktop mode will use the available fallback."
     npm run desktop:run -- "$@" >/dev/null 2>&1 &
-    echo "TunnelDesk desktop is starting."
+    echo "Terma desktop is starting."
     echo "Mode: desktop. Web log: data/web.log"
-    echo "Set TUNNELDESK_WEB_ONLY=1 to force background Web mode."
+    echo "Set TERMA_WEB_ONLY=1 to force background Web mode."
     wait_for_url
     exit 0
   fi
@@ -198,9 +205,9 @@ else
   node dist/server.js $SERVER_ARGS > data/web.log 2>&1 < /dev/null &
 fi
 
-echo "TunnelDesk is starting in the background."
-if [ "$TUNNELDESK_WEB_ONLY" = "1" ]; then
-  echo "Mode: Web-only requested by TUNNELDESK_WEB_ONLY=1."
+echo "Terma is starting in the background."
+if [ "$TERMA_WEB_ONLY" = "1" ]; then
+  echo "Mode: Web-only requested by TERMA_WEB_ONLY=1."
 else
   echo "Mode: Web fallback or headless environment."
 fi

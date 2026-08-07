@@ -3,13 +3,13 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-sftp-backend-check-"));
+const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-backend-check-"));
 const dataDir = path.join(temporaryRoot, "data");
 const sshDir = path.join(temporaryRoot, ".ssh");
 const runtimeSettingsFile = path.join(dataDir, "runtime-settings.json");
-process.env.TUNNELDESK_DATA_DIR = dataDir;
-process.env.TUNNELDESK_SSH_DIR = sshDir;
-process.env.TUNNELDESK_DISABLE_UPDATE_CHECK = "1";
+process.env.TERMA_DATA_DIR = dataDir;
+process.env.TERMA_SSH_DIR = sshDir;
+process.env.TERMA_DISABLE_UPDATE_CHECK = "1";
 fs.mkdirSync(dataDir, {recursive:true});
 fs.mkdirSync(sshDir, {recursive:true});
 

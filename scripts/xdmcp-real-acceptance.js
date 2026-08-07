@@ -6,13 +6,13 @@ const { configureXdmcpServer, detectXdmcpServer } = require("../dist/xdmcp-manag
 const { createXServerRuntime } = require("../desktop/xserver-runtime");
 const { trustTestHost } = require("./ssh-host-trust-test-helper");
 
-const HOST = process.env.TUNNELDESK_XDMCP_TEST_HOST || "192.168.31.77";
-const USER = process.env.TUNNELDESK_XDMCP_TEST_USER || "root";
-const IDENTITY_FILE = process.env.TUNNELDESK_XDMCP_TEST_KEY
-  || "C:\\Users\\junruo\\.ssh\\id_rsa_junruo";
+const HOST = process.env.TERMA_XDMCP_TEST_HOST || process.env.TUNNELDESK_XDMCP_TEST_HOST || "";
+const USER = process.env.TERMA_XDMCP_TEST_USER || process.env.TUNNELDESK_XDMCP_TEST_USER || "";
+const IDENTITY_FILE = process.env.TERMA_XDMCP_TEST_KEY || process.env.TUNNELDESK_XDMCP_TEST_KEY || "";
 
 function createDependencies() {
-  if (!fs.existsSync(IDENTITY_FILE)) throw new Error(`XDMCP 测试私钥不存在：${IDENTITY_FILE}`);
+  if (!HOST || !USER || !IDENTITY_FILE) throw new Error("真实 XDMCP 验收需要设置 TERMA_XDMCP_TEST_HOST、TERMA_XDMCP_TEST_USER 和 TERMA_XDMCP_TEST_KEY");
+  if (!fs.existsSync(IDENTITY_FILE)) throw new Error("XDMCP 测试私钥不可用");
   const connection = {
     id:1,
     name:"Linux 图形测试机",
@@ -79,7 +79,7 @@ async function main() {
   const runtime = createXServerRuntime({
     platform:"win32",
     projectRoot:path.resolve(__dirname, ".."),
-    userDataPath:path.join(os.tmpdir(), "tunneldesk-xdmcp-real-acceptance")
+    userDataPath:path.join(os.tmpdir(), "terma-xdmcp-real-acceptance")
   });
   const networkProbe = await runtime.testXdmcp({host:HOST, port:177, options:{mode:"query"}});
   console.log("Windows XDMCP 网络探测：", JSON.stringify(networkProbe, null, 2));

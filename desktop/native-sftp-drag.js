@@ -34,18 +34,23 @@ function safeProbe(module, platform) {
 }
 
 function linuxHelperCandidates(app) {
-  const executable = process.platform === "win32"
-    ? "tunneldesk-linux-sftp-dragfs.exe"
-    : "tunneldesk-linux-sftp-dragfs";
+  const suffix = process.platform === "win32" ? ".exe" : "";
+  const executables = [
+    `terma-linux-sftp-dragfs${suffix}`,
+    `tunneldesk-linux-sftp-dragfs${suffix}`
+  ];
   const resourcesPath = process.resourcesPath || "";
-  return [...new Set([
-    resourcesPath && path.join(resourcesPath, "native", executable),
-    path.join(__dirname, "..", "native", "linux-sftp-drag", "prebuilds", `linux-${process.arch}`, executable),
-    path.join(__dirname, "..", "native", "linux-sftp-drag", "build", executable),
-    path.join(__dirname, "..", "build", "native", "linux-sftp-drag", executable),
-    path.join(__dirname, "..", "build", "linux-sftp-drag", executable),
-    app?.getAppPath?.() && path.join(app.getAppPath(), "native", "linux-sftp-drag", "build", executable)
-  ].filter(Boolean).map(candidate => path.resolve(candidate)))];
+  const directories = [
+    resourcesPath && path.join(resourcesPath, "native"),
+    path.join(__dirname, "..", "native", "linux-sftp-drag", "prebuilds", `linux-${process.arch}`),
+    path.join(__dirname, "..", "native", "linux-sftp-drag", "build"),
+    path.join(__dirname, "..", "build", "native", "linux-sftp-drag"),
+    path.join(__dirname, "..", "build", "linux-sftp-drag"),
+    app?.getAppPath?.() && path.join(app.getAppPath(), "native", "linux-sftp-drag", "build")
+  ].filter(Boolean);
+  return [...new Set(executables.flatMap(executable =>
+    directories.map(directory => path.resolve(directory, executable))
+  ))];
 }
 
 function findLinuxHelper(app) {
@@ -708,6 +713,7 @@ function createNativeSftpDrag(options) {
 
 module.exports = {
   __linuxHelperCandidates: linuxHelperCandidates,
+  __findLinuxHelper: findLinuxHelper,
   __nativeWindowHandle: nativeWindowHandle,
   __parseJsonLine: parseJsonLine,
   createNativeSftpDrag

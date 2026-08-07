@@ -6,8 +6,8 @@ const os = require("node:os");
 const path = require("node:path");
 const { Server } = require("ssh2");
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-auth-matrix-"));
-process.env.TUNNELDESK_DATA_DIR = root;
+const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-auth-matrix-"));
+process.env.TERMA_DATA_DIR = root;
 
 function listen(server) {
   return new Promise((resolve, reject) => {

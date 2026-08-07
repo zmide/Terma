@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://tunneldesk.local/schema/sftp-native-drag-manifest-v1.json",
-  "title": "TunnelDesk SFTP native drag manifest",
+  "$id": "https://terma.local/schema/sftp-native-drag-manifest-v1.json",
+  "title": "Terma SFTP native drag manifest",
   "type": "object",
   "required": ["entries"],
   "properties": {

@@ -16,7 +16,9 @@ const DEFAULT_DIRECTORY_PAGE_SIZE = 50;
 const MAX_DIRECTORY_PAGE_SIZE = 200;
 const DIRECTORY_CACHE_TTL_MS = 15 * 1000;
 const DIRECTORY_CACHE_MAX_SNAPSHOTS = 20;
-const SFTP_RECYCLE_DIRECTORY = ".tunneldesk-recycle-bin";
+const SFTP_RECYCLE_DIRECTORY = ".terma-recycle-bin";
+const LEGACY_SFTP_RECYCLE_DIRECTORY = ".tunneldesk-recycle-bin";
+const SFTP_RECYCLE_DIRECTORIES = [SFTP_RECYCLE_DIRECTORY, LEGACY_SFTP_RECYCLE_DIRECTORY];
 const directorySnapshots = new Map();
 const directoryAliases = new Map();
 const directoryNameCollator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
@@ -185,12 +187,12 @@ function invalidateRemoteDirectoryCache(connectionId) {
 
 function buildRemoteDirectoryEntriesCommand() {
   return [
-    `if stat -c "%s" . >/dev/null 2>&1; then TD_STAT_STYLE=gnu`,
-    `elif stat -f "%z" . >/dev/null 2>&1; then TD_STAT_STYLE=bsd`,
+    `if stat -c "%s" . >/dev/null 2>&1; then TERMA_STAT_STYLE=gnu`,
+    `elif stat -f "%z" . >/dev/null 2>&1; then TERMA_STAT_STYLE=bsd`,
     `else echo "远程系统缺少兼容的 stat 命令" >&2; exit 1`,
     `fi`,
-    `export TD_STAT_STYLE`,
-    `find . ! -name . ! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(".tunneldesk-upload-*.part")} -prune -exec sh -c 'for entry in "$@"; do td_link=0; td_link_size=0; td_link_missing=0; if [ -L "$entry" ]; then td_link=1; fi; if [ -d "$entry" ]; then type=d; else type=f; fi; if [ "$TD_STAT_STYLE" = gnu ]; then if [ "$td_link" = 1 ]; then own_meta=$(stat -c "%s %Y %a %U %G" "$entry") || exit 1; td_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -c "%s %Y %a %U %G" "$entry") || exit 1; else meta=$own_meta; td_link_missing=1; fi; else meta=$(stat -c "%s %Y %a %U %G" "$entry") || exit 1; fi; else if [ "$td_link" = 1 ]; then own_meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; td_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; else meta=$own_meta; td_link_missing=1; fi; else meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; fi; fi; name=\${entry#./}; printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$name" "$type" "$meta" "$td_link" "$td_link_size" "$td_link_missing"; done' sh {} +`
+    `export TERMA_STAT_STYLE`,
+    `find . ! -name . ! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(LEGACY_SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(".terma-upload-*.part")} ! -name ${shellQuote(".tunneldesk-upload-*.part")} -prune -exec sh -c 'for entry in "$@"; do terma_link=0; terma_link_size=0; terma_link_missing=0; if [ -L "$entry" ]; then terma_link=1; fi; if [ -d "$entry" ]; then type=d; else type=f; fi; if [ "$TERMA_STAT_STYLE" = gnu ]; then if [ "$terma_link" = 1 ]; then own_meta=$(stat -c "%s %Y %a %U %G" "$entry") || exit 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -c "%s %Y %a %U %G" "$entry") || exit 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -c "%s %Y %a %U %G" "$entry") || exit 1; fi; else if [ "$terma_link" = 1 ]; then own_meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; fi; fi; name=\${entry#./}; printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$name" "$type" "$meta" "$terma_link" "$terma_link_size" "$terma_link_missing"; done' sh {} +`
   ].join("; ");
 }
 
@@ -247,13 +249,13 @@ function buildRemoteDirectorySizeCommand(remotePath, connection = null, token = 
     ? String(token)
     : randomBytes(12).toString("hex");
   return [
-    `TD_TARGET=${remotePathOperand(connection, pathValue)}`,
-    `TD_SIZE_FILE="\${TMPDIR:-/tmp}/.tunneldesk-size-${safeToken}"`,
-    `trap 'rm -f "$TD_SIZE_FILE"' 0 1 2 3 15`,
-    `if [ ! -d "$TD_TARGET" ]; then printf '%s\\n' '目标不是目录或已不存在' >&2; exit 1; fi`,
-    `if stat -c '%s' "$TD_TARGET" >/dev/null 2>&1; then TD_STAT_STYLE=gnu; elif stat -f '%z' "$TD_TARGET" >/dev/null 2>&1; then TD_STAT_STYLE=bsd; else printf '%s\\n' '远程系统缺少兼容的 stat 命令' >&2; exit 1; fi`,
-    `if [ "$TD_STAT_STYLE" = gnu ]; then if ! find "$TD_TARGET" -type f -exec stat -c '%s' {} + > "$TD_SIZE_FILE"; then printf '%s\\n' '目录存在无法读取的内容，未返回不完整大小' >&2; exit 1; fi; else if ! find "$TD_TARGET" -type f -exec stat -f '%z' {} + > "$TD_SIZE_FILE"; then printf '%s\\n' '目录存在无法读取的内容，未返回不完整大小' >&2; exit 1; fi; fi`,
-    `awk 'BEGIN { total=0 } { if ($1 !~ /^[0-9]+$/) exit 2; total += $1 } END { if (NR == 0) print "0"; else printf "%.0f\\n", total }' "$TD_SIZE_FILE"`
+    `TERMA_TARGET=${remotePathOperand(connection, pathValue)}`,
+    `TERMA_SIZE_FILE="\${TMPDIR:-/tmp}/.terma-size-${safeToken}"`,
+    `trap 'rm -f "$TERMA_SIZE_FILE"' 0 1 2 3 15`,
+    `if [ ! -d "$TERMA_TARGET" ]; then printf '%s\\n' '目标不是目录或已不存在' >&2; exit 1; fi`,
+    `if stat -c '%s' "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_STAT_STYLE=gnu; elif stat -f '%z' "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_STAT_STYLE=bsd; else printf '%s\\n' '远程系统缺少兼容的 stat 命令' >&2; exit 1; fi`,
+    `if [ "$TERMA_STAT_STYLE" = gnu ]; then if ! find "$TERMA_TARGET" -type f -exec stat -c '%s' {} + > "$TERMA_SIZE_FILE"; then printf '%s\\n' '目录存在无法读取的内容，未返回不完整大小' >&2; exit 1; fi; else if ! find "$TERMA_TARGET" -type f -exec stat -f '%z' {} + > "$TERMA_SIZE_FILE"; then printf '%s\\n' '目录存在无法读取的内容，未返回不完整大小' >&2; exit 1; fi; fi`,
+    `awk 'BEGIN { total=0 } { if ($1 !~ /^[0-9]+$/) exit 2; total += $1 } END { if (NR == 0) print "0"; else printf "%.0f\\n", total }' "$TERMA_SIZE_FILE"`
   ].join("; ");
 }
 
@@ -337,7 +339,7 @@ function normalizeRemoteRecyclePath(remotePath) {
   if (!normalized || ["/", ".", ".."].includes(normalized) || normalized.startsWith("../")) {
     throw new Error("不能将根目录或当前目录移入回收站");
   }
-  if (normalized.split("/").includes(SFTP_RECYCLE_DIRECTORY)) throw new Error("不能操作 TunnelDesk 回收站目录");
+  if (normalized.split("/").some(part => SFTP_RECYCLE_DIRECTORIES.includes(part))) throw new Error("不能操作 Terma 回收站目录");
   return normalized;
 }
 
@@ -347,8 +349,16 @@ function normalizeRemoteRecycleItemId(value) {
   return id;
 }
 
-function remoteRecycleRootAssignment() {
-  return `if [ -z "$HOME" ]; then echo "远端用户主目录不可用" >&2; exit 1; fi; td_root="$HOME/${SFTP_RECYCLE_DIRECTORY}"`;
+function normalizeRemoteRecycleStorage(value) {
+  const storage = String(value || "terma").trim().toLowerCase();
+  if (storage === "terma") return { key:"terma", directory:SFTP_RECYCLE_DIRECTORY };
+  if (storage === "tunneldesk") return { key:"tunneldesk", directory:LEGACY_SFTP_RECYCLE_DIRECTORY };
+  throw new Error("回收站来源无效");
+}
+
+function remoteRecycleRootAssignment(storage = "terma") {
+  const directory = normalizeRemoteRecycleStorage(storage).directory;
+  return `if [ -z "$HOME" ]; then echo "远端用户主目录不可用" >&2; exit 1; fi; terma_root="$HOME/${directory}"`;
 }
 
 function buildRecycleRemotePathCommand(remotePath, itemId, deletedAt = Date.now(), connection = null) {
@@ -358,21 +368,26 @@ function buildRecycleRemotePathCommand(remotePath, itemId, deletedAt = Date.now(
   const sourceOperand = permissionPathOperand(source);
   return [
     remoteRecycleRootAssignment(),
-    `td_item="$td_root/items/${id}"`,
+    `terma_item="$terma_root/items/${id}"`,
     `if [ ! -e ${remotePathOperand(connection, sourceOperand)} ] && [ ! -L ${remotePathOperand(connection, sourceOperand)} ]; then echo "远程项目不存在" >&2; exit 1; fi`,
-    `mkdir -p "$td_root/items" && mkdir "$td_item"`,
-    `printf '%s\\n' ${shellQuote(encodedPath)} > "$td_item/path.b64"`,
-    `printf '%s\\n' ${shellQuote(String(Number(deletedAt) || Date.now()))} > "$td_item/deleted-at"`,
-    `if mv ${remotePathOperand(connection, sourceOperand)} "$td_item/payload"; then :; else rm -rf "$td_item"; exit 1; fi`
+    `mkdir -p "$terma_root/items" && mkdir "$terma_item"`,
+    `printf '%s\\n' ${shellQuote(encodedPath)} > "$terma_item/path.b64"`,
+    `printf '%s\\n' ${shellQuote(String(Number(deletedAt) || Date.now()))} > "$terma_item/deleted-at"`,
+    `if mv ${remotePathOperand(connection, sourceOperand)} "$terma_item/payload"; then :; else rm -rf "$terma_item"; exit 1; fi`
   ].join("; ");
 }
 
 function buildListRemoteRecycleCommand() {
-  return [
-    remoteRecycleRootAssignment(),
-    `td_items="$td_root/items"`,
-    `if [ -d "$td_items" ]; then for td_item in "$td_items"/*; do [ -d "$td_item" ] || continue; td_id=\${td_item##*/}; td_path=$(tr -d '\\r\\n' < "$td_item/path.b64" 2>/dev/null) || continue; td_deleted=$(tr -d '\\r\\n' < "$td_item/deleted-at" 2>/dev/null); if [ -d "$td_item/payload" ]; then td_type=dir; else td_type=file; fi; printf '%s\\t%s\\t%s\\t%s\\n' "$td_id" "$td_path" "$td_deleted" "$td_type"; done; fi`
-  ].join("; ");
+  const commands = [`if [ -z "$HOME" ]; then echo "远端用户主目录不可用" >&2; exit 1; fi`];
+  for (const storage of ["terma", "tunneldesk"]) {
+    const source = normalizeRemoteRecycleStorage(storage);
+    commands.push(
+      `terma_root="$HOME/${source.directory}"`,
+      `terma_items="$terma_root/items"`,
+      `if [ -d "$terma_items" ]; then for terma_item in "$terma_items"/*; do [ -d "$terma_item" ] || continue; terma_id=\${terma_item##*/}; terma_path=$(tr -d '\\r\\n' < "$terma_item/path.b64" 2>/dev/null) || continue; terma_deleted=$(tr -d '\\r\\n' < "$terma_item/deleted-at" 2>/dev/null); if [ -d "$terma_item/payload" ]; then terma_type=dir; else terma_type=file; fi; printf '%s\\t%s\\t%s\\t%s\\t%s\\n' "$terma_id" "$terma_path" "$terma_deleted" "$terma_type" ${shellQuote(source.key)}; done; fi`
+    );
+  }
+  return commands.join("; ");
 }
 
 function decodeRemoteRecyclePath(value) {
@@ -383,7 +398,7 @@ function decodeRemoteRecyclePath(value) {
 
 function parseRemoteRecycleItems(output) {
   return String(output || "").split(/\r?\n/).filter(Boolean).map((line) => {
-    const [rawId, encodedPath, rawDeletedAt, rawType] = line.split("\t");
+    const [rawId, encodedPath, rawDeletedAt, rawType, rawStorage] = line.split("\t");
     const id = normalizeRemoteRecycleItemId(rawId);
     const originalPath = decodeRemoteRecyclePath(encodedPath);
     return {
@@ -391,39 +406,40 @@ function parseRemoteRecycleItems(output) {
       original_path: originalPath,
       name: path.posix.basename(originalPath),
       type: rawType === "dir" ? "dir" : "file",
-      deleted_at: Number(rawDeletedAt) || 0
+      deleted_at: Number(rawDeletedAt) || 0,
+      storage: normalizeRemoteRecycleStorage(rawStorage || "terma").key
     };
   }).sort((left, right) => right.deleted_at - left.deleted_at);
 }
 
-function buildRestoreRemoteRecycleCommand(itemId, originalPath, connection = null) {
+function buildRestoreRemoteRecycleCommand(itemId, originalPath, connection = null, storage = "terma") {
   const id = normalizeRemoteRecycleItemId(itemId);
   const target = normalizeRemoteRecyclePath(originalPath);
   const targetOperand = permissionPathOperand(target);
   const parentOperand = permissionPathOperand(path.posix.dirname(target));
   return [
-    remoteRecycleRootAssignment(),
-    `td_item="$td_root/items/${id}"`,
-    `if [ ! -e "$td_item/payload" ] && [ ! -L "$td_item/payload" ]; then echo "回收站项目不存在" >&2; exit 1; fi`,
+    remoteRecycleRootAssignment(storage),
+    `terma_item="$terma_root/items/${id}"`,
+    `if [ ! -e "$terma_item/payload" ] && [ ! -L "$terma_item/payload" ]; then echo "回收站项目不存在" >&2; exit 1; fi`,
     `if [ -e ${remotePathOperand(connection, targetOperand)} ] || [ -L ${remotePathOperand(connection, targetOperand)} ]; then echo "原路径已有同名项目，无法恢复" >&2; exit 1; fi`,
     `mkdir -p ${remotePathOperand(connection, parentOperand)}`,
-    `mv "$td_item/payload" ${remotePathOperand(connection, targetOperand)}`,
-    `rm -rf "$td_item"`
+    `mv "$terma_item/payload" ${remotePathOperand(connection, targetOperand)}`,
+    `rm -rf "$terma_item"`
   ].join("; ");
 }
 
-function buildDeleteRemoteRecycleCommand(itemId) {
+function buildDeleteRemoteRecycleCommand(itemId, storage = "terma") {
   const id = normalizeRemoteRecycleItemId(itemId);
-  return `${remoteRecycleRootAssignment()}; td_item="$td_root/items/${id}"; if [ ! -d "$td_item" ]; then echo "回收站项目不存在" >&2; exit 1; fi; rm -rf "$td_item"`;
+  return `${remoteRecycleRootAssignment(storage)}; terma_item="$terma_root/items/${id}"; if [ ! -d "$terma_item" ]; then echo "回收站项目不存在" >&2; exit 1; fi; rm -rf "$terma_item"`;
 }
 
 function buildClearRemoteRecycleCommand() {
-  return `${remoteRecycleRootAssignment()}; rm -rf "$td_root/items"; mkdir -p "$td_root/items"`;
+  return ["terma", "tunneldesk"].map(storage => `${remoteRecycleRootAssignment(storage)}; rm -rf "$terma_root/items"; mkdir -p "$terma_root/items"`).join("; ");
 }
 
-async function readRemoteRecycleItem(connection, itemId) {
+async function readRemoteRecycleItem(connection, itemId, storage = "terma") {
   const id = normalizeRemoteRecycleItemId(itemId);
-  const command = `${remoteRecycleRootAssignment()}; td_item="$td_root/items/${id}"; cat "$td_item/path.b64"`;
+  const command = `${remoteRecycleRootAssignment(storage)}; terma_item="$terma_root/items/${id}"; cat "$terma_item/path.b64"`;
   return decodeRemoteRecyclePath((await runRemote(connection, command)).toString("utf8"));
 }
 
@@ -441,16 +457,16 @@ async function listRemoteRecycleItems(connectionId) {
   return parseRemoteRecycleItems((await runRemote(connection, buildListRemoteRecycleCommand())).toString("utf8"));
 }
 
-async function restoreRemoteRecycleItem(connectionId, itemId) {
+async function restoreRemoteRecycleItem(connectionId, itemId, storage = "terma") {
   const connection = getConnection(connectionId);
-  const originalPath = await readRemoteRecycleItem(connection, itemId);
-  await runRemote(connection, buildRestoreRemoteRecycleCommand(itemId, originalPath, connection), null, 60000);
+  const originalPath = await readRemoteRecycleItem(connection, itemId, storage);
+  await runRemote(connection, buildRestoreRemoteRecycleCommand(itemId, originalPath, connection, storage), null, 60000);
   return { ok: true, original_path: originalPath };
 }
 
-async function deleteRemoteRecycleItem(connectionId, itemId) {
+async function deleteRemoteRecycleItem(connectionId, itemId, storage = "terma") {
   const connection = getConnection(connectionId);
-  await runRemote(connection, buildDeleteRemoteRecycleCommand(itemId), null, 60000);
+  await runRemote(connection, buildDeleteRemoteRecycleCommand(itemId, storage), null, 60000);
   return { ok: true };
 }
 
@@ -629,17 +645,17 @@ function buildReadRemoteBinaryCommand(remotePath, maximumBytes, connection = nul
   const limit = normalizeOpenFileLimit(maximumBytes);
   const limitMb = Math.max(1, Math.round(limit / 1024 / 1024));
   return [
-    `TD_TARGET=${remotePathOperand(connection, remotePath)}`,
-    `TD_LIMIT=${limit}`,
-    `if [ -L "$TD_TARGET" ]; then TD_IS_LINK=1; else TD_IS_LINK=0; fi`,
-    `if [ "$TD_IS_LINK" = 1 ] && [ ! -e "$TD_TARGET" ]; then printf "%s\\n" "符号链接指向的目标不存在" >&2; exit 1; fi`,
-    `if [ ! -f "$TD_TARGET" ]; then printf "%s\\n" "目标不是普通文件" >&2; exit 1; fi`,
-    `if stat -L -c "%s" "$TD_TARGET" >/dev/null 2>&1; then TD_STAT_STYLE=gnu; TD_SIZE=$(stat -L -c "%s" "$TD_TARGET"); if [ "$TD_IS_LINK" = 1 ]; then TD_LINK_SIZE=$(stat -c "%s" "$TD_TARGET"); fi`,
-    `elif stat -L -f "%z" "$TD_TARGET" >/dev/null 2>&1; then TD_STAT_STYLE=bsd; TD_SIZE=$(stat -L -f "%z" "$TD_TARGET"); if [ "$TD_IS_LINK" = 1 ]; then TD_LINK_SIZE=$(stat -f "%z" "$TD_TARGET"); fi`,
+    `TERMA_TARGET=${remotePathOperand(connection, remotePath)}`,
+    `TERMA_LIMIT=${limit}`,
+    `if [ -L "$TERMA_TARGET" ]; then TERMA_IS_LINK=1; else TERMA_IS_LINK=0; fi`,
+    `if [ "$TERMA_IS_LINK" = 1 ] && [ ! -e "$TERMA_TARGET" ]; then printf "%s\\n" "符号链接指向的目标不存在" >&2; exit 1; fi`,
+    `if [ ! -f "$TERMA_TARGET" ]; then printf "%s\\n" "目标不是普通文件" >&2; exit 1; fi`,
+    `if stat -L -c "%s" "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_STAT_STYLE=gnu; TERMA_SIZE=$(stat -L -c "%s" "$TERMA_TARGET"); if [ "$TERMA_IS_LINK" = 1 ]; then TERMA_LINK_SIZE=$(stat -c "%s" "$TERMA_TARGET"); fi`,
+    `elif stat -L -f "%z" "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_STAT_STYLE=bsd; TERMA_SIZE=$(stat -L -f "%z" "$TERMA_TARGET"); if [ "$TERMA_IS_LINK" = 1 ]; then TERMA_LINK_SIZE=$(stat -f "%z" "$TERMA_TARGET"); fi`,
     `else printf "%s\\n" "远程系统缺少兼容的 stat 命令" >&2; exit 1; fi`,
-    `case "$TD_SIZE" in ""|*[!0-9]*) printf "%s\\n" "远程文件大小返回格式无效" >&2; exit 1;; esac`,
-    `if [ "$TD_SIZE" -gt "$TD_LIMIT" ]; then if [ "$TD_IS_LINK" = 1 ]; then printf "符号链接本身为 %s B，目标文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "\${TD_LINK_SIZE:-0}" "$TD_SIZE" >&2; else printf "文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "$TD_SIZE" >&2; fi; exit 1; fi`,
-    `head -c ${limit + 1} "$TD_TARGET"`
+    `case "$TERMA_SIZE" in ""|*[!0-9]*) printf "%s\\n" "远程文件大小返回格式无效" >&2; exit 1;; esac`,
+    `if [ "$TERMA_SIZE" -gt "$TERMA_LIMIT" ]; then if [ "$TERMA_IS_LINK" = 1 ]; then printf "符号链接本身为 %s B，目标文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "\${TERMA_LINK_SIZE:-0}" "$TERMA_SIZE" >&2; else printf "文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "$TERMA_SIZE" >&2; fi; exit 1; fi`,
+    `head -c ${limit + 1} "$TERMA_TARGET"`
   ].join("; ");
 }
 
@@ -733,7 +749,7 @@ async function setRemoteFileMtime(connectionId, remotePath, mtimeSeconds) {
   const epoch = Math.max(0, Math.floor(Number(mtimeSeconds || 0)));
   if (!epoch) return {ok:true};
   const target = remotePathOperand(connection, remotePath);
-  const command = `touch -m -d @${epoch} -- ${target} 2>/dev/null || { TD_STAMP=$(date -r ${epoch} +%Y%m%d%H%M.%S 2>/dev/null) && touch -m -t "$TD_STAMP" ${target}; }`;
+  const command = `touch -m -d @${epoch} -- ${target} 2>/dev/null || { TERMA_STAMP=$(date -r ${epoch} +%Y%m%d%H%M.%S 2>/dev/null) && touch -m -t "$TERMA_STAMP" ${target}; }`;
   await runRemote(connection, command, null, 30000);
   invalidateRemoteDirectoryCache(connectionId);
   return {ok:true};

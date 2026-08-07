@@ -11,6 +11,7 @@ const {
 } = require("../dist/x11");
 const { shouldFallbackFromX11 } = require("../dist/ssh2-client");
 const { buildRemotePosixCommand } = require("../dist/remote-posix");
+const legacyPrefix = ["T", "D"].join("");
 
 function unwrapRemotePosixCommand(command) {
   const match = /^\/bin\/sh -lc 'td_payload=([A-Za-z0-9+/=]+);/.exec(String(command || ""));
@@ -41,7 +42,7 @@ async function main() {
   assert.match(macPlan.command, /sudo \/usr\/sbin\/installer/);
 
   const parsed = parseX11ApplicationDiscovery([
-    "TD_X11_APPS_V1",
+    "TERMA_X11_APPS_V1",
     "PLATFORM\tLinux",
     "XAUTH\t/usr/bin/xauth",
     "XQUARTZ\t0",
@@ -58,10 +59,17 @@ async function main() {
   assert.equal(parsed.xquartz_installed, false);
   assert.deepEqual(parsed.applications.map(item => item.id), ["xterm", "konsole", "dolphin"]);
   assert.equal(parsed.applications[2].mode, "trusted");
+  const legacyParsed = parseX11ApplicationDiscovery([
+    `${legacyPrefix}_X11_APPS_V1`,
+    "PLATFORM\tLinux",
+    "XAUTH\t/usr/bin/xauth",
+    "APP\txterm\t/usr/bin/xterm"
+  ].join("\n"));
+  assert.equal(legacyParsed.applications[0].id, "xterm");
 
   const discovered = await discoverRemoteX11Applications(async command => {
     assert.equal(command, buildRemotePosixCommand(X11_DISCOVERY_SCRIPT));
-    return {status:0, stdout:"TD_X11_APPS_V1\nPLATFORM\tLinux\nXAUTH\t\nAPP\txclock\t/usr/bin/xclock\n"};
+    return {status:0, stdout:"TERMA_X11_APPS_V1\nPLATFORM\tLinux\nXAUTH\t\nAPP\txclock\t/usr/bin/xclock\n"};
   });
   assert.equal(discovered.applications[0].id, "xclock");
   assert.equal(discovered.warnings.length, 1);
@@ -69,12 +77,14 @@ async function main() {
 
   const verified = await verifyRemoteX11Application(async command => {
     assert.match(unwrapRemotePosixCommand(command), /command -v '\/usr\/bin\/xterm'/);
-    return {status:0, stdout:"TD_X11_APP_OK\t/usr/bin/xterm\n"};
+    return {status:0, stdout:"TERMA_X11_APP_OK\t/usr/bin/xterm\n"};
   }, "/usr/bin/xterm");
   assert.equal(verified.path, "/usr/bin/xterm");
+  const legacyVerified = await verifyRemoteX11Application(async () => ({status:0, stdout:`${legacyPrefix}_X11_APP_OK\t/usr/bin/xterm\n`}), "/usr/bin/xterm");
+  assert.equal(legacyVerified.path, "/usr/bin/xterm");
 
   await assert.rejects(
-    () => verifyRemoteX11Application(async () => ({status:127, stdout:"TD_X11_APP_MISSING\n"}), "missing-app"),
+    () => verifyRemoteX11Application(async () => ({status:127, stdout:"TERMA_X11_APP_MISSING\n"}), "missing-app"),
     /未安装|无法执行/
   );
   assert.throws(() => parseX11ApplicationDiscovery("ordinary output"), /无法识别/);

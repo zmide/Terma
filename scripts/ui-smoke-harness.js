@@ -42,7 +42,7 @@ function runElectron(environment) {
 }
 
 async function main() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-ui-smoke-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-ui-smoke-"));
   const port = await availablePort();
   const url = `http://127.0.0.1:${port}`;
   const serverOutput = [];
@@ -50,8 +50,8 @@ async function main() {
     cwd: path.resolve(__dirname, ".."),
     env: {
       ...process.env,
-      TUNNELDESK_DATA_DIR: path.join(root, "data"),
-      TUNNELDESK_SSH_DIR: path.join(root, ".ssh")
+      TERMA_DATA_DIR: path.join(root, "data"),
+      TERMA_SSH_DIR: path.join(root, ".ssh")
     },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true
@@ -62,8 +62,8 @@ async function main() {
     await waitForServer(url, server);
     await runElectron({
       ...process.env,
-      TUNNELDESK_CHECK_URL:url,
-      TUNNELDESK_UI_USER_DATA:path.join(root, "electron-user-data")
+      TERMA_CHECK_URL:url,
+      TERMA_UI_USER_DATA:path.join(root, "electron-user-data")
     });
   } catch (error) {
     if (serverOutput.length) console.error(serverOutput.join("").slice(-12000));

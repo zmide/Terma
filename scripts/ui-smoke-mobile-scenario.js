@@ -174,6 +174,28 @@ async function runMobileScenario(window) {
         expandedPersisted:localStorage.getItem(SFTP_MOBILE_TOOLBAR_EXPANDED_KEY) === '1' && !mobileSftpToolbarMount?.hidden,
         searchFontSize:parseFloat(mobileSftpView?.querySelector('#sftpSearch') ? getComputedStyle(mobileSftpView.querySelector('#sftpSearch')).fontSize : '0')
       };
+      closeSftpTaskCenter();
+      await toggleSftpTaskCenter();
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const mobileTaskCenterDrawer=document.querySelector('#sftpTaskCenterDrawer');
+      const mobileTaskCenterList=document.querySelector('#sftpTaskCenterList');
+      const mobileTaskCenterResize=document.querySelector('#sftpTaskCenterResize');
+      const mobileTaskCenterRect=mobileTaskCenterDrawer?.getBoundingClientRect();
+      const mobileTaskCenterStyle=mobileTaskCenterDrawer?getComputedStyle(mobileTaskCenterDrawer):null;
+      mobileSftpLayout.taskCenter={
+        opened:Boolean(mobileTaskCenterDrawer&&!mobileTaskCenterDrawer.hidden),
+        withinViewport:Boolean(mobileTaskCenterRect
+          && mobileTaskCenterRect.left>=-0.5
+          && mobileTaskCenterRect.right<=innerWidth+0.5
+          && mobileTaskCenterRect.top>=-0.5
+          && mobileTaskCenterRect.bottom<=innerHeight+0.5),
+        contentAdaptive:Boolean(mobileTaskCenterList
+          && mobileTaskCenterList.scrollWidth<=mobileTaskCenterList.clientWidth+0.5
+          && mobileTaskCenterList.getBoundingClientRect().right<=mobileTaskCenterRect.right+0.5),
+        resizeHandleHidden:Boolean(mobileTaskCenterResize&&getComputedStyle(mobileTaskCenterResize).display==='none'),
+        nativeResizeDisabled:mobileTaskCenterStyle?.resize==='none'
+      };
+      closeSftpTaskCenter();
       toggleSftpSearch(mobileSftpTabKey);
       const sftpResizeInput=mobileSftpView?.querySelector('#sftpSearch');
       const sftpResizeViewBefore=activeView;

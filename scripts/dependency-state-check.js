@@ -4,7 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const helper = path.join(__dirname, "dependency-state.js");
-const marker = path.join(__dirname, "..", "node_modules", ".tunneldesk-dependencies.sha256");
+const marker = path.join(__dirname, "..", "node_modules", ".terma-dependencies.sha256");
+const legacyMarker = path.join(__dirname, "..", "node_modules", ".tunneldesk-dependencies.sha256");
 const run = (...args) => spawnSync(process.execPath, [helper, ...args], { stdio:"pipe" });
 
 assert.strictEqual(run("--write").status, 0, "dependency fingerprint can be written");
@@ -12,4 +13,8 @@ assert.strictEqual(run().status, 0, "current dependency fingerprint is accepted"
 fs.writeFileSync(marker, "outdated\n", "utf8");
 assert.strictEqual(run().status, 1, "changed dependency fingerprint requests npm install");
 assert.strictEqual(run("--write").status, 0, "dependency fingerprint is restored after install");
+fs.renameSync(marker, legacyMarker);
+assert.strictEqual(run().status, 0, "legacy dependency fingerprint is migrated");
+assert.strictEqual(fs.existsSync(marker), true, "Terma dependency fingerprint is restored");
+assert.strictEqual(fs.existsSync(legacyMarker), false, "legacy dependency fingerprint is removed");
 console.log("启动依赖检查通过：依赖完整且 package/package-lock 指纹一致");

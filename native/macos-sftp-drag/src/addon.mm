@@ -404,7 +404,7 @@ static void TDEnsureMouseDownMonitor(void) {
   self = [super init];
   if (self != nil) {
     _writeQueue = [[NSOperationQueue alloc] init];
-    _writeQueue.name = @"com.tunneldesk.sftp-file-promise";
+    _writeQueue.name = @"com.zmide.terma.sftp-file-promise";
     _writeQueue.maxConcurrentOperationCount = 1;
     _writeQueue.qualityOfService = NSQualityOfServiceUserInitiated;
   }
@@ -423,7 +423,7 @@ static void TDEnsureMouseDownMonitor(void) {
   TDDragController *controller = self.controller;
   if (controller == nil) {
     NSError *error = [NSError
-        errorWithDomain:@"com.tunneldesk.sftp-drag"
+        errorWithDomain:@"com.zmide.terma.sftp-drag"
                    code:1007
                userInfo:@{
                  NSLocalizedDescriptionKey :
@@ -811,7 +811,7 @@ static void TDEnsureMouseDownMonitor(void) {
               (void (^)(NSError *_Nullable))completionHandler {
   if (!url.isFileURL || url.path.length == 0) {
     NSError *error = [NSError
-        errorWithDomain:@"com.tunneldesk.sftp-drag"
+        errorWithDomain:@"com.zmide.terma.sftp-drag"
                    code:1002
                userInfo:@{
                  NSLocalizedDescriptionKey : @"Finder 没有提供有效的目标路径"
@@ -854,7 +854,7 @@ static void TDEnsureMouseDownMonitor(void) {
 
   if (![self emitEvent:std::move(request)]) {
     [self completeRequest:requestId
-                    error:@"无法把文件写入请求发送给 TunnelDesk"];
+                    error:@"无法把文件写入请求发送给 Terma"];
   }
 }
 
@@ -891,7 +891,7 @@ static void TDEnsureMouseDownMonitor(void) {
   NSError *nativeError = nil;
   if (error.length > 0) {
     nativeError = [NSError
-        errorWithDomain:@"com.tunneldesk.sftp-drag"
+        errorWithDomain:@"com.zmide.terma.sftp-drag"
                    code:1003
                userInfo:@{NSLocalizedDescriptionKey : error}];
   }
@@ -1016,7 +1016,7 @@ static void TDEnsureMouseDownMonitor(void) {
   [_pendingLock unlock];
 
   NSError *error = [NSError
-      errorWithDomain:@"com.tunneldesk.sftp-drag"
+      errorWithDomain:@"com.zmide.terma.sftp-drag"
                  code:1006
              userInfo:@{
                NSLocalizedDescriptionKey :
@@ -1219,7 +1219,7 @@ static napi_value TDStartDrag(napi_env env, napi_callback_info info) {
   const double cssScale =
       TDGetNamedDouble(env, argv[0], "cssScale", 1);
 
-  napi_value resourceName = TDString(env, "TunnelDesk macOS SFTP drag");
+  napi_value resourceName = TDString(env, "Terma macOS SFTP drag");
   napi_threadsafe_function threadsafeFunction = nullptr;
   napi_status functionStatus = napi_create_threadsafe_function(
       env,
@@ -1452,7 +1452,7 @@ static void TDDisposeAll(void *) {
     TDEnsureControllers();
     for (TDDragController *controller in [gControllers copy]) {
       TDCleanupController(
-          controller, YES, @"TunnelDesk 正在关闭");
+          controller, YES, @"Terma 正在关闭");
     }
     gActiveController = nil;
     if (gMouseDownMonitor != nil) {

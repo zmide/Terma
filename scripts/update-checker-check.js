@@ -16,13 +16,13 @@ process.on("exit", () => {
 });
 
 function temporaryProject(version = "1.0.7") {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-update-check-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-update-check-"));
   temporaryRoots.push(root);
   const dataDir = path.join(root, "data");
   const packagePath = path.join(root, "package.json");
   fs.writeFileSync(packagePath, JSON.stringify({
     version,
-    repository: { type: "git", url: "https://github.com/zmide/tunneldesk.git" }
+    repository: { type: "git", url: "https://github.com/zmide/Terma.git" }
   }), "utf8");
   return { root, dataDir, packagePath };
 }
@@ -30,15 +30,15 @@ function temporaryProject(version = "1.0.7") {
 function release(tag = "v1.0.8", overrides = {}) {
   return {
     tag_name: tag,
-    name: `TunnelDesk ${tag}`,
-    html_url: `https://github.com/zmide/tunneldesk/releases/tag/${tag}`,
+    name: `Terma ${tag}`,
+    html_url: `https://github.com/zmide/Terma/releases/tag/${tag}`,
     published_at: "2026-07-20T00:00:00Z",
     body: "Release notes",
     draft: false,
     prerelease: false,
     assets: [{
-      name: `TunnelDesk-${tag}.dmg`,
-      browser_download_url: `https://example.invalid/TunnelDesk-${tag}.dmg`,
+      name: `Terma-${tag}.dmg`,
+      browser_download_url: `https://example.invalid/Terma-${tag}.dmg`,
       size: 1234,
       content_type: "application/x-apple-diskimage"
     }],
@@ -73,8 +73,8 @@ async function check(name, callback) {
   });
 
   await check("GitHub repository formats are normalized", async () => {
-    assert.deepEqual(parseGitHubRepository("git@github.com:zmide/tunneldesk.git"), { owner: "zmide", repo: "tunneldesk" });
-    assert.deepEqual(parseGitHubRepository({ url: "git+https://github.com/zmide/tunneldesk.git" }), { owner: "zmide", repo: "tunneldesk" });
+    assert.deepEqual(parseGitHubRepository("git@github.com:zmide/Terma.git"), { owner: "zmide", repo: "Terma" });
+    assert.deepEqual(parseGitHubRepository({ url: "git+https://github.com/zmide/Terma.git" }), { owner: "zmide", repo: "Terma" });
   });
 
   await check("successful checks send GitHub headers and use the six-hour cache", async () => {
@@ -94,19 +94,62 @@ async function check(name, callback) {
     assert.equal(first.latest_version, "1.0.8");
     assert.equal(first.update_available, true);
     assert.equal(first.from_cache, false);
-    assert.equal(first.assets[0].name, "TunnelDesk-v1.0.8.dmg");
+    assert.equal(first.assets[0].name, "Terma-v1.0.8.dmg");
     assert.deepEqual(first.release_notes.map(item => item.version), ["1.0.8", "1.0.7"]);
     assert.equal(first.release_notes[1].notes, "Previous release notes");
     assert.equal(requests.length, 1);
-    assert.match(requests[0].url, /repos\/zmide\/tunneldesk\/releases\?per_page=10$/);
+    assert.match(requests[0].url, /repos\/zmide\/Terma\/releases\?per_page=10$/);
     assert.equal(requests[0].options.headers.Accept, "application/vnd.github+json");
     assert.equal(requests[0].options.headers["X-GitHub-Api-Version"], "2022-11-28");
-    assert.match(requests[0].options.headers["User-Agent"], /^TunnelDesk\/1\.0\.7$/);
+    assert.match(requests[0].options.headers["User-Agent"], /^Terma\/1\.0\.7$/);
     now += 5 * 60 * 60 * 1000;
     const second = await checker.check();
     assert.equal(second.from_cache, true);
     assert.equal(requests.length, 1);
     assert.equal(fs.existsSync(path.join(project.dataDir, "update-check.json")), true);
+    const cache = JSON.parse(fs.readFileSync(path.join(project.dataDir, "update-check.json"), "utf8"));
+    assert.equal(cache.schema_version, 3);
+    assert.equal(cache.repository_key, "zmide/terma");
+  });
+
+  await check("renamed repositories invalidate legacy release caches and ETags", async () => {
+    const project = temporaryProject("1.3.0");
+    fs.mkdirSync(project.dataDir, { recursive: true });
+    fs.writeFileSync(path.join(project.dataDir, "update-check.json"), JSON.stringify({
+      schema_version: 2,
+      checked_at_ms: Date.parse("2026-08-07T01:00:00Z"),
+      etag: '"legacy-tunneldesk-release"',
+      result: {
+        current_version: "1.2.1",
+        latest_version: "1.2.1",
+        update_available: false,
+        release_url: "https://github.com/zmide/tunneldesk/releases/tag/v1.2.1",
+        name: "TunnelDesk v1.2.1",
+        published_at: "2026-08-01T00:00:00Z",
+        notes: "Legacy release",
+        release_notes: [],
+        assets: [],
+        checked_at: "2026-08-07T01:00:00.000Z",
+        from_cache: true,
+        source: "github"
+      }
+    }), "utf8");
+    const requests = [];
+    const checker = createUpdateChecker({
+      ...project,
+      now: () => Date.parse("2026-08-07T02:00:00Z"),
+      fetch: async (url, options) => {
+        requests.push({ url, options });
+        return response(200, release("v1.3.1"), { etag: '"terma-release"' });
+      }
+    });
+    assert.equal(checker.status(), null);
+    const result = await checker.check();
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].url, /repos\/zmide\/Terma\/releases\?per_page=10$/);
+    assert.equal(requests[0].options.headers["If-None-Match"], undefined);
+    assert.equal(result.latest_version, "1.3.1");
+    assert.equal(result.release_url, "https://github.com/zmide/Terma/releases/tag/v1.3.1");
   });
 
   await check("forced checks revalidate cached releases with ETag and accept 304", async () => {

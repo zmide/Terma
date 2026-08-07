@@ -1,7 +1,7 @@
 {
   "targets": [
     {
-      "target_name": "tunneldesk_macos_sftp_drag",
+      "target_name": "terma_macos_sftp_drag",
       "sources": [
         "src/addon.mm"
       ],

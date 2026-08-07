@@ -108,7 +108,7 @@ function packagePlan(diagnostics: any = {}) {
     local_offline_packages:manager === "apt" ? packages : [],
     local_offline_command:manager === "apt" ? offline : "",
     local_offline_description:manager === "apt"
-      ? "仅适用于 Debian/Ubuntu 及兼容 APT/.deb 系统：TunnelDesk 在本机下载匹配的 xrdp 软件包和依赖，再通过 SFTP 上传并安装"
+      ? "仅适用于 Debian/Ubuntu 及兼容 APT/.deb 系统：Terma 在本机下载匹配的 xrdp 软件包和依赖，再通过 SFTP 上传并安装"
       : `本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前检测到 ${manager || "未识别包管理器"}，无法自动解析并上传 xrdp 软件包依赖`,
     manual_description:"查看当前发行版的 xrdp 安装、桌面会话和防火墙配置说明"
   });

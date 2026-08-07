@@ -48,8 +48,8 @@ async function checkTerminalInteraction(connection, marker) {
 }
 
 async function main() {
-  const requestedName = process.argv[2] || process.env.TUNNELDESK_TEST_CONNECTION_NAME || "测试";
-  const requestedGroup = process.env.TUNNELDESK_TEST_CONNECTION_GROUP || "";
+  const requestedName = process.argv[2] || process.env.TERMA_TEST_CONNECTION_NAME || process.env.TUNNELDESK_TEST_CONNECTION_NAME || "测试";
+  const requestedGroup = process.env.TERMA_TEST_CONNECTION_GROUP || process.env.TUNNELDESK_TEST_CONNECTION_GROUP || "";
   const matches = database.listConnections().filter(item =>
     item.name === requestedName && (!requestedGroup || item.group_name === requestedGroup)
   );
@@ -58,12 +58,12 @@ async function main() {
     throw new Error(`未找到${scope}“${requestedName}”连接`);
   }
   if (matches.length > 1) {
-    throw new Error(`存在多个名为“${requestedName}”的连接，请设置 TUNNELDESK_TEST_CONNECTION_GROUP 指定分组`);
+    throw new Error(`存在多个名为“${requestedName}”的连接，请设置 TERMA_TEST_CONNECTION_GROUP 指定分组`);
   }
   const connection = matches[0];
   const fullConnection = database.getConnection(connection.id);
-  const marker = `tunneldesk-real-check-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
-  const remoteDirectory = `./.tunneldesk-test-${crypto.randomUUID()}`;
+  const marker = `terma-real-check-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+  const remoteDirectory = `./.terma-test-${crypto.randomUUID()}`;
   const remotePath = `${remoteDirectory}/marker.txt`;
   const nestedDirectory = `${remoteDirectory}/nested`;
   const nestedPath = `${nestedDirectory}/payload.bin`;

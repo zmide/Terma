@@ -183,10 +183,45 @@ function readLogTail(file, maxBytes = 16000) {
   }
 }
 
-function xdmcpLaunchFailureMessage(rawMessage, displayNumber) {
+async function resolveXdmcpLocalAddress(host, port, requestedAddress = "", options = {}) {
+  const requested = String(requestedAddress || "").trim();
+  if (requested) return requested;
+  if (options.mode === "broadcast" || net.isIP(host) === 6) return "";
+  const createSocket = options.createSocket || (() => dgram.createSocket("udp4"));
+  const socket = createSocket();
+  return new Promise(resolve => {
+    let settled = false;
+    let timer = null;
+    const finish = address => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      try { socket.close(); } catch {}
+      resolve(String(address || ""));
+    };
+    socket.once("error", () => finish(""));
+    timer = setTimeout(() => finish(""), Math.max(100, Number(options.timeoutMs || 1200)));
+    timer.unref?.();
+    try {
+      socket.connect(port, host, () => {
+        try {
+          const address = socket.address()?.address || "";
+          finish(net.isIP(address) === 4 && address !== "0.0.0.0" ? address : "");
+        } catch {
+          finish("");
+        }
+      });
+    } catch {
+      finish("");
+    }
+  });
+}
+
+function xdmcpLaunchFailureMessage(rawMessage, displayNumber, localAddress = "") {
   const raw = String(rawMessage || "").trim();
   if (/XDMCP fatal error:\s*Session failed/i.test(raw)) {
-    return `XDMCP 会话建立失败：远端已响应 UDP 177，但未能连接本机 X Server。XDMCP 还要求远端反向访问本机 TCP ${6000 + Number(displayNumber || 0)}；请检查双方直连路由和防火墙。经过 VPN、NAT 或端口映射时无法回连，可改用 VNC 或 RDP。`;
+    const endpoint = localAddress ? `${localAddress}:${6000 + Number(displayNumber || 0)}` : `TCP ${6000 + Number(displayNumber || 0)}`;
+    return `XDMCP 会话建立失败：远端已响应 UDP 177，但未能连接本机 X Server。远端还必须反向访问本机 ${endpoint}；请检查远端到该地址的回程路由。经过 VPN、NAT 或端口映射时通常无法回连，可改用 VNC 或 RDP。`;
   }
   const fatal = /Fatal server error:\s*[\r\n]+(?:\(EE\)\s*)?([^\r\n]+)/i.exec(raw)?.[1]
     || /\(EE\)\s+([^\r\n]+)/i.exec(raw)?.[1]
@@ -268,7 +303,7 @@ function createXServerRuntime(options = {}) {
   let managedDisplay = "";
   let authorityFile = "";
   let lastError = "";
-  let macStartedByTunnelDesk = false;
+  let macStartedByTerma = false;
   let windowsWindowGuard = null;
 
   function bundledWindowsExecutable() {
@@ -341,7 +376,7 @@ function createXServerRuntime(options = {}) {
     if (!state?.running || !state.display) return;
     environment.DISPLAY = state.display;
     const xauth = existingFile(["/opt/X11/bin/xauth", "/usr/X11/bin/xauth", "/usr/bin/xauth"]);
-    if (xauth) environment.TUNNELDESK_XAUTH = xauth;
+    if (xauth) environment.TERMA_XAUTH = xauth;
     if (state.authorityFile && fs.existsSync(state.authorityFile)) environment.XAUTHORITY = state.authorityFile;
   }
 
@@ -394,7 +429,7 @@ function createXServerRuntime(options = {}) {
           : running
             ? "检测到 X Server，但 DISPLAY 未就绪"
             : executable
-              ? "X Server 已安装，可由 TunnelDesk 启动"
+              ? "X Server 已安装，可由 Terma 启动"
               : "当前安装包不包含 X Server 运行时")
       };
     }
@@ -411,7 +446,7 @@ function createXServerRuntime(options = {}) {
         available:Boolean(application && running && display),
         installed:Boolean(application),
         running,
-        managed:Boolean(macStartedByTunnelDesk && running),
+        managed:Boolean(macStartedByTerma && running),
         can_start:Boolean(application && !running),
         can_stop:Boolean(running),
         can_install:Boolean(!application || !xdmcpClient),
@@ -423,7 +458,7 @@ function createXServerRuntime(options = {}) {
         display,
         authority_file:authority,
         reason:lastError || (application
-          ? running && display ? "XQuartz 已就绪" : running ? "XQuartz 正在运行，但尚未识别 DISPLAY" : "XQuartz 可由 TunnelDesk 启动"
+          ? running && display ? "XQuartz 已就绪" : running ? "XQuartz 正在运行，但尚未识别 DISPLAY" : "XQuartz 可由 Terma 启动"
           : "未安装 XQuartz")
       };
     }
@@ -609,7 +644,7 @@ function createXServerRuntime(options = {}) {
       [pathKey]:runtimePath,
       DISPLAY:display,
       XAUTHORITY:attemptAuthorityFile,
-      TUNNELDESK_XAUTH:xauth
+      TERMA_XAUTH:xauth
     };
     let launchError = "";
     let launchStderr = "";
@@ -669,7 +704,7 @@ function createXServerRuntime(options = {}) {
     environment[pathKey] = runtimePath;
     environment.DISPLAY = display;
     environment.XAUTHORITY = attemptAuthorityFile;
-    environment.TUNNELDESK_XAUTH = xauth;
+    environment.TERMA_XAUTH = xauth;
     processHandle.once("exit", () => {
       if (windowsWindowGuard === windowGuard) {
         stopWindowsX11WindowGuard(windowGuard);
@@ -680,7 +715,7 @@ function createXServerRuntime(options = {}) {
       managedDisplay = "";
       if (environment.DISPLAY === display) delete environment.DISPLAY;
       if (environment.XAUTHORITY === attemptAuthorityFile) delete environment.XAUTHORITY;
-      if (environment.TUNNELDESK_XAUTH === xauth) delete environment.TUNNELDESK_XAUTH;
+      if (environment.TERMA_XAUTH === xauth) delete environment.TERMA_XAUTH;
     });
     return diagnostics();
   }
@@ -705,7 +740,7 @@ function createXServerRuntime(options = {}) {
     for (let attempt = 0; attempt < 50; attempt += 1) {
       const next = diagnostics();
       if (next.available) {
-        macStartedByTunnelDesk = true;
+        macStartedByTerma = true;
         return diagnostics();
       }
       await delay(200);
@@ -716,7 +751,7 @@ function createXServerRuntime(options = {}) {
   async function stopMac(force = false) {
     const current = diagnostics();
     if (!current.running) return current;
-    if (!force && !macStartedByTunnelDesk) return current;
+    if (!force && !macStartedByTerma) return current;
     const result = spawnSync("/usr/bin/osascript", ["-e", 'tell application "XQuartz" to quit'], {
       encoding:"utf8",
       timeout:8000,
@@ -742,10 +777,10 @@ function createXServerRuntime(options = {}) {
       }
     }
     if (xQuartzProcessState().running) throw new Error("XQuartz 未能在限定时间内停止");
-    macStartedByTunnelDesk = false;
+    macStartedByTerma = false;
     delete environment.DISPLAY;
     delete environment.XAUTHORITY;
-    delete environment.TUNNELDESK_XAUTH;
+    delete environment.TERMA_XAUTH;
     return diagnostics();
   }
 
@@ -777,7 +812,7 @@ function createXServerRuntime(options = {}) {
     }
     const temporary = `${file}.tmp-${process.pid}-${Date.now()}`;
     try {
-      const response = await fetch(XQUARTZ_URL, {headers:{"User-Agent":"TunnelDesk-XQuartz-Installer"}, redirect:"follow"});
+      const response = await fetch(XQUARTZ_URL, {headers:{"User-Agent":"Terma-XQuartz-Installer"}, redirect:"follow"});
       if (!response.ok || !response.body) throw new Error(`XQuartz 下载失败：HTTP ${response.status}`);
       await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, {flags:"wx"}));
       verifyXQuartzPackage(temporary);
@@ -850,7 +885,7 @@ function createXServerRuntime(options = {}) {
     managedDisplay = "";
     if (display && environment.DISPLAY === display) delete environment.DISPLAY;
     if (authorityFile && environment.XAUTHORITY === authorityFile) delete environment.XAUTHORITY;
-    if (platform === "win32" && environment.TUNNELDESK_XAUTH) delete environment.TUNNELDESK_XAUTH;
+    if (platform === "win32" && environment.TERMA_XAUTH) delete environment.TERMA_XAUTH;
     if (authorityFile) {
       try { fs.rmSync(authorityFile, {force:true}); } catch {}
     }
@@ -863,7 +898,7 @@ function createXServerRuntime(options = {}) {
     if (!current.display || !current.xdmcp_client) {
       throw new Error(current.display
         ? "Linux XDMCP 需要安装 Xephyr；请在 X Server 管理中安装 Linux 图形组件"
-        : "Linux 当前桌面会话没有 DISPLAY，请从图形桌面启动 TunnelDesk");
+        : "Linux 当前桌面会话没有 DISPLAY，请从图形桌面启动 Terma");
     }
     const mode = new Set(["query", "indirect", "broadcast"]).has(String(profile.options?.mode))
       ? String(profile.options.mode)
@@ -973,7 +1008,7 @@ function createXServerRuntime(options = {}) {
     return {
       ok:true,
       protocol:"xdmcp",
-      client:"TunnelDesk 内置 XDMCP（XQuartz）",
+      client:"Terma 内置 XDMCP（XQuartz）",
       display:`:${displayNumber}.0`,
       pid:processHandle.pid,
       mode,
@@ -996,8 +1031,11 @@ function createXServerRuntime(options = {}) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("XDMCP 端口无效");
     const displayNumber = await availableDisplayNumber();
     const {windowMode, width, height} = xdmcpWindowSettings(profile.options);
-    const localAddress = String(profile.options?.local_address || "").trim();
-    if (localAddress.includes("\0") || /[\r\n]/.test(localAddress)) throw new Error("XDMCP 本地地址无效");
+    const requestedLocalAddress = String(profile.options?.local_address || "").trim();
+    if (requestedLocalAddress.includes("\0") || /[\r\n]/.test(requestedLocalAddress) || (requestedLocalAddress && net.isIP(requestedLocalAddress) !== 4)) {
+      throw new Error("XDMCP 本地地址必须是本机 IPv4 地址");
+    }
+    const localAddress = await resolveXdmcpLocalAddress(host, port, requestedLocalAddress, {mode});
     fs.mkdirSync(runtimeDataDir, {recursive:true});
     const launchLogFile = path.join(runtimeDataDir, `xdmcp-${process.pid}-${displayNumber}-${Date.now()}.log`);
     const args = [
@@ -1040,19 +1078,20 @@ function createXServerRuntime(options = {}) {
     if (!await waitForDisplayPort(displayNumber, 8000, processHandle)) {
       try { processHandle.kill(); } catch {}
       launchError = launchError || readLogTail(launchLogFile);
-      throw new Error(xdmcpLaunchFailureMessage(launchError, displayNumber));
+      throw new Error(xdmcpLaunchFailureMessage(launchError, displayNumber, localAddress));
     }
     if (!await waitForStableProcess(processHandle)) {
       launchError = launchError || readLogTail(launchLogFile);
-      throw new Error(xdmcpLaunchFailureMessage(launchError, displayNumber));
+      throw new Error(xdmcpLaunchFailureMessage(launchError, displayNumber, localAddress));
     }
     return {
       ok:true,
       protocol:"xdmcp",
-      client:bundledWindowsExecutable() ? "TunnelDesk 内置 X Server" : path.basename(executable),
+      client:bundledWindowsExecutable() ? "Terma 内置 X Server" : path.basename(executable),
       display:`127.0.0.1:${displayNumber}.0`,
       pid:processHandle.pid,
       mode,
+      local_address:localAddress,
       window_mode:windowMode === "resizable" ? "fixed" : windowMode,
       requested_window_mode:windowMode
     };
@@ -1097,9 +1136,9 @@ function createXServerRuntime(options = {}) {
           ok:opcode === 5,
           protocol:"xdmcp",
           client:platform === "win32" && bundledWindowsExecutable()
-            ? "TunnelDesk 内置 X Server"
+            ? "Terma 内置 X Server"
             : platform === "darwin"
-              ? "TunnelDesk 内置 XDMCP（XQuartz）"
+              ? "Terma 内置 XDMCP（XQuartz）"
               : path.basename(executable),
           hostname:hostname.value,
           message:status.value || (opcode === 5 ? "XDMCP 服务可用" : "XDMCP 服务拒绝连接")
@@ -1130,6 +1169,7 @@ function createXServerRuntime(options = {}) {
 module.exports = {
   createXServerRuntime,
   environmentKey,
+  resolveXdmcpLocalAddress,
   terminateTrackedXdmcpChildren,
   parseWindowsXServerDisplayNumbers,
   xdmcpLaunchFailureMessage,

@@ -1,7 +1,10 @@
 const SSHD_CONFIG_PATH = "/etc/ssh/sshd_config";
+const TERMA_SSHD_BACKUP_PATH = `${SSHD_CONFIG_PATH}.terma.bak`;
+const LEGACY_SSHD_BACKUP_PATH = `${SSHD_CONFIG_PATH}.tunneldesk.bak`;
+const { selectRemoteProbeLines } = require("./remote-probe-protocol");
 
 const DETECT_SCRIPT = String.raw`set +e
-td_emit() { printf 'TD_SSH_X11_%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n=' '   ')"; }
+terma_emit() { printf 'TERMA_SSH_X11_%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n=' '   ')"; }
 td_platform=$(uname -s 2>/dev/null || printf unknown)
 td_sshd=$(command -v sshd 2>/dev/null || true)
 [ -n "$td_sshd" ] || for td_candidate in /usr/sbin/sshd /sbin/sshd /usr/local/sbin/sshd /usr/lib/openssh/sshd; do [ -e "$td_candidate" ] && td_sshd="$td_candidate" && break; done
@@ -37,20 +40,20 @@ td_xquartz=0
 td_manage=0
 [ "$(id -u 2>/dev/null)" = "0" ] && td_manage=1
 [ "$td_manage" = "1" ] || sudo -n true >/dev/null 2>&1 && td_manage=1
-td_emit PLATFORM "$td_platform"
-td_emit SSHD_PRESENT "$( [ -n "$td_sshd" ] && printf 1 || printf 0 )"
-td_emit SSHD_PATH "$td_sshd"
-td_emit CONFIG_FILE "$td_config"
-td_emit CONFIG_PRESENT "$( [ -r "$td_config" ] && printf 1 || printf 0 )"
-td_emit X11_FORWARDING "$td_forward"
-td_emit X11_USE_LOCALHOST "$td_localhost"
-td_emit X11_DISPLAY_OFFSET "$td_offset"
-td_emit XAUTH_PATH "$td_xauth"
-td_emit XAUTH_LOCATION "$td_xauth_location"
-td_emit XAUTH_LOCATION_VALID "$( [ -n "$td_xauth_location" ] && [ -x "$td_xauth_location" ] && printf 1 || printf 0 )"
-td_emit XQUARTZ_INSTALLED "$td_xquartz"
-td_emit CAN_MANAGE "$td_manage"
-td_emit CAN_TERMINAL_MANAGE "$( [ -r "$td_config" ] && [ -n "$td_sshd" ] && printf 1 || printf 0 )"
+terma_emit PLATFORM "$td_platform"
+terma_emit SSHD_PRESENT "$( [ -n "$td_sshd" ] && printf 1 || printf 0 )"
+terma_emit SSHD_PATH "$td_sshd"
+terma_emit CONFIG_FILE "$td_config"
+terma_emit CONFIG_PRESENT "$( [ -r "$td_config" ] && printf 1 || printf 0 )"
+terma_emit X11_FORWARDING "$td_forward"
+terma_emit X11_USE_LOCALHOST "$td_localhost"
+terma_emit X11_DISPLAY_OFFSET "$td_offset"
+terma_emit XAUTH_PATH "$td_xauth"
+terma_emit XAUTH_LOCATION "$td_xauth_location"
+terma_emit XAUTH_LOCATION_VALID "$( [ -n "$td_xauth_location" ] && [ -x "$td_xauth_location" ] && printf 1 || printf 0 )"
+terma_emit XQUARTZ_INSTALLED "$td_xquartz"
+terma_emit CAN_MANAGE "$td_manage"
+terma_emit CAN_TERMINAL_MANAGE "$( [ -r "$td_config" ] && [ -n "$td_sshd" ] && printf 1 || printf 0 )"
 `;
 
 function shellQuote(value) {
@@ -60,7 +63,7 @@ function shellQuote(value) {
 function rootWrapper(script) {
   const payload = Buffer.from(script, "utf8").toString("base64");
   const decoder = `if command -v openssl >/dev/null 2>&1; then openssl base64 -d -A; else base64 -d; fi`;
-  return `td_payload=${shellQuote(payload)}; if [ "$(id -u 2>/dev/null)" = "0" ]; then printf '%s' "$td_payload" | (${decoder}) | sh; elif sudo -n true >/dev/null 2>&1; then printf '%s' "$td_payload" | (${decoder}) | sudo -n sh; else echo 'TunnelDesk requires root or passwordless sudo' >&2; exit 77; fi`;
+  return `td_payload=${shellQuote(payload)}; if [ "$(id -u 2>/dev/null)" = "0" ]; then printf '%s' "$td_payload" | (${decoder}) | sh; elif sudo -n true >/dev/null 2>&1; then printf '%s' "$td_payload" | (${decoder}) | sudo -n sh; else echo 'Terma requires root or passwordless sudo' >&2; exit 77; fi`;
 }
 
 function interactiveRootWrapper(script) {
@@ -71,8 +74,8 @@ function interactiveRootWrapper(script) {
 
 function parseDetectionOutput(output) {
   const values: any = {};
-  for (const line of String(output || "").split(/\r?\n/)) {
-    const match = /^TD_SSH_X11_([A-Z0-9_]+)=(.*)$/.exec(line.trim());
+  for (const line of selectRemoteProbeLines(output, "SSH_X11_")) {
+    const match = /^([A-Z0-9_]+)=(.*)$/.exec(line);
     if (match) values[match[1].toLowerCase()] = match[2];
   }
   return {
@@ -102,22 +105,31 @@ function configurePayload(mode) {
   if (!enabled && mode !== "disable") throw new Error("Invalid SSH X11 forwarding action");
   const value = enabled ? "yes" : "no";
   return String.raw`set -eu
-td_emit() { printf 'TD_SSH_X11_%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n=' '   ')"; }
+terma_emit() { printf 'TERMA_SSH_X11_%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\r\n=' '   ')"; }
 td_config=${shellQuote(SSHD_CONFIG_PATH)}
-td_backup="${SSHD_CONFIG_PATH}.tunneldesk.bak"
+td_terma_backup=${shellQuote(TERMA_SSHD_BACKUP_PATH)}
+td_legacy_backup=${shellQuote(LEGACY_SSHD_BACKUP_PATH)}
+td_backup="$td_terma_backup"
 td_platform=$(uname -s 2>/dev/null || printf unknown)
 td_sshd=$(command -v sshd 2>/dev/null || true)
 [ -n "$td_sshd" ] || [ ! -x /usr/sbin/sshd ] || td_sshd=/usr/sbin/sshd
 td_xauth=$(command -v xauth 2>/dev/null || true)
 [ -n "$td_xauth" ] || for td_candidate in /opt/X11/bin/xauth /usr/X11/bin/xauth /usr/bin/xauth; do [ -x "$td_candidate" ] && td_xauth="$td_candidate" && break; done
 if [ ! -r "$td_config" ]; then echo "sshd_config not found: $td_config" >&2; exit 2; fi
-td_emit STAGE prepare
-td_emit LOG "Backing up sshd_config"
+terma_emit STAGE prepare
+terma_emit LOG "Backing up sshd_config"
+# A previous TunnelDesk deployment may already have captured the original
+# sshd_config. Preserve that history before touching the current file, which
+# may already contain its managed X11 settings.
+if [ -e "$td_legacy_backup" ]; then
+  [ -e "$td_terma_backup" ] || cp -p "$td_legacy_backup" "$td_terma_backup"
+  td_backup="$td_terma_backup"
+fi
 if [ ! -e "$td_backup" ]; then cp -p "$td_config" "$td_backup"; fi
 td_rollback=$(mktemp)
 cp -p "$td_config" "$td_rollback"
-td_emit STAGE configure
-td_emit LOG "Setting X11Forwarding ${value}"
+terma_emit STAGE configure
+terma_emit LOG "Setting X11Forwarding ${value}"
 td_tmp=$(mktemp)
 awk -v value=${shellQuote(value)} -v xauth="$td_xauth" -v configure_xauth=${enabled ? "1" : "0"} '
   BEGIN { print "X11Forwarding " value; if (configure_xauth == 1 && xauth != "") print "XAuthLocation " xauth; global_scope=1 }
@@ -129,7 +141,7 @@ awk -v value=${shellQuote(value)} -v xauth="$td_xauth" -v configure_xauth=${enab
 ' "$td_config" > "$td_tmp"
 cat "$td_tmp" > "$td_config"
 rm -f "$td_tmp"
-td_emit STAGE validate
+terma_emit STAGE validate
 if [ -n "$td_sshd" ] && ! "$td_sshd" -t -f "$td_config" >/dev/null 2>&1; then
   cp -p "$td_rollback" "$td_config"
   rm -f "$td_rollback"
@@ -137,16 +149,16 @@ if [ -n "$td_sshd" ] && ! "$td_sshd" -t -f "$td_config" >/dev/null 2>&1; then
   exit 3
 fi
 rm -f "$td_rollback"
-td_emit STAGE reload
+terma_emit STAGE reload
 if [ "$td_platform" = "Darwin" ]; then
-  td_emit LOG "macOS will use the updated SSH configuration for new sessions"
+  terma_emit LOG "macOS will use the updated SSH configuration for new sessions"
 elif command -v systemctl >/dev/null 2>&1 && systemctl reload sshd >/dev/null 2>&1; then :
 elif command -v systemctl >/dev/null 2>&1 && systemctl reload ssh >/dev/null 2>&1; then :
 elif command -v service >/dev/null 2>&1 && service ssh reload >/dev/null 2>&1; then :
 elif command -v service >/dev/null 2>&1 && service sshd reload >/dev/null 2>&1; then :
 else echo "SSH configuration changed, but the service could not be reloaded automatically" >&2; fi
-td_emit STAGE done
-td_emit LOG "X11 forwarding ${enabled ? "enabled" : "disabled"}"
+terma_emit STAGE done
+terma_emit LOG "X11 forwarding ${enabled ? "enabled" : "disabled"}"
 `;
 }
 

@@ -5,7 +5,7 @@ const path = require("node:path");
 const {EventEmitter} = require("node:events");
 const {MAC_WINDOWS_APP_PACKAGE_URL, MAC_WINDOWS_APP_URL, createRemoteClientAdapter} = require("../desktop/remote-clients");
 
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-remote-client-"));
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "terma-remote-client-"));
 const mainSource = fs.readFileSync(path.join(__dirname, "..", "desktop", "main.js"), "utf8");
 const remoteUiSource = fs.readFileSync(path.join(__dirname, "..", "public", "app-remote.js"), "utf8");
 const serverSource = fs.readFileSync(path.join(__dirname, "..", "src", "server.ts"), "utf8");
@@ -25,6 +25,47 @@ function unavailableCommand() {
 }
 
 async function main() {
+  const {
+    __remoteClientDiagnosticsWithoutDesktopIntegration,
+    __xServerDiagnosticsWithoutDesktopIntegration,
+    __xdmcpTaskResourceKey
+  } = require("../dist/server");
+  const resourceConnection = {id:42};
+  assert.equal(__xdmcpTaskResourceKey(resourceConnection,{action:"enable"}), "xdmcp-server:42");
+  assert.equal(__xdmcpTaskResourceKey(resourceConnection,{action:"repair-xrdp"}), "rdp-server:42");
+  assert.equal(__xdmcpTaskResourceKey(resourceConnection,{action:"install-local-offline",target_action:"rdp"}), "rdp-server:42");
+  assert.equal(__xdmcpTaskResourceKey(resourceConnection,{action:"install-lightdm"}), "xdmcp-server:42");
+  const limitedClients = __remoteClientDiagnosticsWithoutDesktopIntegration({
+    platform:"win32",
+    available:true,
+    running:true,
+    server:"vcxsrv.exe",
+    reason:"本机 X Server 已就绪"
+  });
+  assert.equal(limitedClients.desktop, false);
+  assert.equal(limitedClients.integration_available, false);
+  assert.equal(limitedClients.rdp.reason, "系统 RDP 客户端只能由本机桌面版调用");
+  assert.equal(limitedClients.vnc.reason, "系统 VNC 客户端只能由本机桌面版调用（内置 VNC 不受此限制）");
+  assert.equal(limitedClients.xdmcp.available, false);
+  assert.match(limitedClients.xdmcp.reason, /^本机 X Server 已就绪；当前请求无法调用 Terma 桌面集成$/);
+  assert.doesNotMatch(limitedClients.message, /RDP、VNC 和 XDMCP/);
+  const limitedXServer = __xServerDiagnosticsWithoutDesktopIntegration({
+    platform:"win32",
+    available:true,
+    running:true,
+    server:"vcxsrv.exe",
+    display:":0.0",
+    reason:"本机 X Server 已就绪"
+  });
+  assert.equal(limitedXServer.desktop, false);
+  assert.equal(limitedXServer.integration_available, false);
+  assert.equal(limitedXServer.available, false, "独立后端不能把服务端进程状态冒充为桌面集成状态");
+  assert.equal(limitedXServer.reason, "当前连接的是独立 Web/测试后端，无法读取运行 Terma 桌面设备上的 X Server");
+  assert.equal(limitedXServer.server_side.available, true);
+  assert.equal(limitedXServer.server_side.server, "vcxsrv.exe");
+  assert.match(serverSource, /remote-clients\/diagnostics[\s\S]*?remoteClientDiagnosticsWithoutDesktopIntegration\(x11\)/);
+  assert.match(serverSource, /pathname === "\/api\/xserver"[\s\S]*?xServerDiagnosticsWithoutDesktopIntegration\(\)/);
+
   const windows = createRemoteClientAdapter({
     platform:"win32",
     environment:{SystemRoot:"C:\\Windows",ProgramFiles:"C:\\Program Files"},
@@ -233,7 +274,7 @@ async function main() {
 main().finally(() => {
   const resolved = path.resolve(temporary);
   const root = path.resolve(os.tmpdir());
-  if (resolved.startsWith(`${root}${path.sep}`) && path.basename(resolved).startsWith("tunneldesk-remote-client-")) fs.rmSync(resolved,{recursive:true,force:true});
+  if (resolved.startsWith(`${root}${path.sep}`) && path.basename(resolved).startsWith("terma-remote-client-")) fs.rmSync(resolved,{recursive:true,force:true});
 }).catch(error => {
   console.error(error);
   process.exitCode = 1;

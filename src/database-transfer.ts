@@ -4,7 +4,8 @@ import path from "node:path";
 import { Readable, Transform, TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-export const DATABASE_BUNDLE_MAGIC = Buffer.from("TUNNELDESK-BACKUP-V2\n", "ascii");
+export const DATABASE_BUNDLE_MAGIC = Buffer.from("TERMA-BACKUP-V3\n", "ascii");
+export const LEGACY_DATABASE_BUNDLE_MAGIC = Buffer.from("TUNNELDESK-BACKUP-V2\n", "ascii");
 const SQLITE_HEADER = Buffer.from("SQLite format 3\0", "ascii");
 const MAX_METADATA_BYTES = 1024 * 1024;
 const MAX_LEGACY_BYTES = 100 * 1024 * 1024;
@@ -16,7 +17,7 @@ export interface BundleSecurity {
 }
 
 export interface DatabaseBundleMetadata {
-  type: "tunneldesk-backup-v2";
+  type: "terma-backup-v3";
   created_at: string;
   security: BundleSecurity | null;
 }
@@ -27,7 +28,7 @@ export interface RestoreStage {
   upload_path: string | null;
   filename: string;
   size: number;
-  format: "sqlite" | "bundle-v2" | "bundle-v1" | "request-v1";
+  format: "sqlite" | "bundle-v3" | "bundle-v2" | "bundle-v1" | "request-v1";
   security: BundleSecurity | null;
   legacy_identity_bindings: unknown[];
   legacy_credential_bindings: unknown[];
@@ -70,7 +71,7 @@ function readPrefix(file: string, length: number, position = 0): Buffer {
 function assertSqlite(file: string): void {
   const header = readPrefix(file, SQLITE_HEADER.length);
   if (header.length !== SQLITE_HEADER.length || !header.equals(SQLITE_HEADER)) {
-    throw new Error("请选择有效的 SQLite 数据库备份或 TunnelDesk 迁移包");
+    throw new Error("请选择有效的 SQLite 数据库备份或 Terma 迁移包");
   }
 }
 
@@ -194,28 +195,35 @@ export class DatabaseTransferStore {
     identityBindings: unknown[];
     credentialBindings: unknown[];
   }> {
-    const prefix = readPrefix(upload, Math.max(SQLITE_HEADER.length, DATABASE_BUNDLE_MAGIC.length + 4));
+    const prefix = readPrefix(upload, Math.max(SQLITE_HEADER.length, DATABASE_BUNDLE_MAGIC.length + 4, LEGACY_DATABASE_BUNDLE_MAGIC.length + 4));
     if (prefix.subarray(0, SQLITE_HEADER.length).equals(SQLITE_HEADER)) {
       fs.renameSync(upload, database);
       return { format: "sqlite", security: null, identityBindings: [], credentialBindings: [] };
     }
-    if (prefix.subarray(0, DATABASE_BUNDLE_MAGIC.length).equals(DATABASE_BUNDLE_MAGIC)) {
-      if (prefix.length < DATABASE_BUNDLE_MAGIC.length + 4) throw new Error("迁移包头部不完整");
-      const metadataLength = prefix.readUInt32BE(DATABASE_BUNDLE_MAGIC.length);
+    const magic = prefix.subarray(0, DATABASE_BUNDLE_MAGIC.length).equals(DATABASE_BUNDLE_MAGIC)
+      ? DATABASE_BUNDLE_MAGIC
+      : prefix.subarray(0, LEGACY_DATABASE_BUNDLE_MAGIC.length).equals(LEGACY_DATABASE_BUNDLE_MAGIC)
+        ? LEGACY_DATABASE_BUNDLE_MAGIC
+        : null;
+    if (magic) {
+      if (prefix.length < magic.length + 4) throw new Error("迁移包头部不完整");
+      const metadataLength = prefix.readUInt32BE(magic.length);
       if (!metadataLength || metadataLength > MAX_METADATA_BYTES) throw new Error("迁移包元数据长度无效");
-      const databaseOffset = DATABASE_BUNDLE_MAGIC.length + 4 + metadataLength;
+      const databaseOffset = magic.length + 4 + metadataLength;
       if (databaseOffset + SQLITE_HEADER.length > size) throw new Error("迁移包内容不完整");
-      const metadataBody = readPrefix(upload, metadataLength, DATABASE_BUNDLE_MAGIC.length + 4);
+      const metadataBody = readPrefix(upload, metadataLength, magic.length + 4);
       let metadata: Record<string, unknown>;
       try {
         metadata = JSON.parse(metadataBody.toString("utf8")) as Record<string, unknown>;
       } catch {
         throw new Error("迁移包元数据无效");
       }
-      if (metadata.type !== "tunneldesk-backup-v2") throw new Error("不支持的迁移包版本");
+      const legacyBundle = magic.equals(LEGACY_DATABASE_BUNDLE_MAGIC);
+      const expectedType = legacyBundle ? "tunneldesk-backup-v2" : "terma-backup-v3";
+      if (metadata.type !== expectedType) throw new Error("不支持的迁移包版本");
       await pipeline(fs.createReadStream(upload, { start: databaseOffset }), fs.createWriteStream(database, { flags: "wx" }));
       return {
-        format: "bundle-v2",
+        format: legacyBundle ? "bundle-v2" : "bundle-v3",
         security: normalizeSecurity(metadata.security),
         identityBindings: [],
         credentialBindings: []
@@ -228,7 +236,7 @@ export class DatabaseTransferStore {
     try {
       parsed = JSON.parse(fs.readFileSync(upload, "utf8")) as Record<string, unknown>;
     } catch {
-      throw new Error("请选择有效的 SQLite 数据库备份或 TunnelDesk 迁移包");
+      throw new Error("请选择有效的 SQLite 数据库备份或 Terma 迁移包");
     }
     const identityBindings = Array.isArray(parsed.identity_bindings) ? parsed.identity_bindings : [];
     const credentialBindings = Array.isArray(parsed.credential_bindings) ? parsed.credential_bindings : [];

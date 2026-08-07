@@ -82,7 +82,7 @@ function createLocalFilesUiModel() {
     Array,
     URLSearchParams,
     CSS:{escape:value => String(value)},
-    window:{tunnelDeskDesktop:true},
+    window:{termaDesktop:true},
     document:{querySelector:() => null},
     navigator:{platform:"Win32"},
     tabs:[{key:"sftp-main", kind:"sftp", id:7, title:"主机 A"}],
@@ -267,7 +267,7 @@ async function main() {
   assert.equal(dragData.get("text/plain"), `${checks[1].value}\n${checks[2].value}`);
 
   const protectedDataTransfer = {
-    types:["text/plain", "application/x-tunneldesk-local-files"],
+    types:["text/plain", "application/x-terma-local-files"],
     getData() { return ""; }
   };
   const protectedPayload = model.readLocalFileDragPayload(protectedDataTransfer);

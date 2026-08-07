@@ -1,6 +1,6 @@
-# TunnelDesk Linux SFTP 拖出桥
+# Terma Linux SFTP 拖出桥
 
-这个辅助程序把一次 SFTP 拖出的票据挂载成短期、只读的 FUSE3 文件系统。Electron 得到真实的本地路径后即可调用 `webContents.startDrag({ files })`；Nautilus、Dolphin、Thunar 等目标程序在用户松手后读取文件时，辅助程序才通过本机 TunnelDesk HTTP 接口读取远端内容。
+这个辅助程序把一次 SFTP 拖出的票据挂载成短期、只读的 FUSE3 文件系统。Electron 得到真实的本地路径后即可调用 `webContents.startDrag({ files })`；Nautilus、Dolphin、Thunar 等目标程序在用户松手后读取文件时，辅助程序才通过本机 Terma HTTP 接口读取远端内容。
 
 它不提前下载文件正文，因此多文件和目录可以保持一次拖动。X11 与 Wayland 都复用 Electron 的系统拖放通道，FUSE 层不依赖桌面环境私有的拖放协议。
 
@@ -62,14 +62,14 @@ cmake -S native/linux-sftp-drag -B build/linux-sftp-drag \
 cmake --build build/linux-sftp-drag --parallel
 ```
 
-产物是 `tunneldesk-linux-sftp-dragfs`。正式打包时应把它作为 Electron 的非 ASAR 资源安装，并保留可执行权限。
+产物是 `terma-linux-sftp-dragfs`。正式打包时应把它作为 Electron 的非 ASAR 资源安装，并保留可执行权限。
 
 ## 启动方式
 
 推荐通过额外匿名管道传票据 URL，避免令牌出现在进程命令行中：
 
 ```text
-tunneldesk-linux-sftp-dragfs --ticket-url-fd 3
+terma-linux-sftp-dragfs --ticket-url-fd 3
 ```
 
 父进程向文件描述符 3 写入一行 URL 后关闭写端。程序成功挂载后在标准输出写一行 JSON：
@@ -77,9 +77,9 @@ tunneldesk-linux-sftp-dragfs --ticket-url-fd 3
 ```json
 {
   "event": "ready",
-  "mount_point": "/run/user/1000/tunneldesk/sftp-drag/drag-1234-abcd",
+  "mount_point": "/run/user/1000/terma/sftp-drag/drag-1234-abcd",
   "paths": [
-    "/run/user/1000/tunneldesk/sftp-drag/drag-1234-abcd/example.txt"
+    "/run/user/1000/terma/sftp-drag/drag-1234-abcd/example.txt"
   ],
   "lease_seconds": 300
 }
@@ -110,14 +110,14 @@ tunneldesk-linux-sftp-dragfs --ticket-url-fd 3
 ## 能力探测
 
 ```bash
-tunneldesk-linux-sftp-dragfs --probe
+terma-linux-sftp-dragfs --probe
 ```
 
 探测会检查 `/dev/fuse`、`fusermount3`、运行时目录，以及当前 X11/Wayland 会话变量，并输出 JSON。探测通过只代表系统具备运行条件，不等于已经完成实际桌面文件管理器拖放验收。
 
 ## 运行环境与降级
 
-正式安装包会携带 TunnelDesk 的拖出辅助程序，但 FUSE 内核设备和 `fusermount3` 属于 Linux 系统运行环境，不能由 AppImage 内置或在应用启动时擅自修改。
+正式安装包会携带 Terma 的拖出辅助程序，但 FUSE 内核设备和 `fusermount3` 属于 Linux 系统运行环境，不能由 AppImage 内置或在应用启动时擅自修改。
 
 - Debian / Ubuntu 缺少运行包时安装 `fuse3`。
 - Fedora / RHEL 系缺少运行包时安装 `fuse3` 和 `fuse3-libs`。

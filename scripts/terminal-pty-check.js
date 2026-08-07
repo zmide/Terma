@@ -5,9 +5,9 @@ const { generateKeyPairSync } = require("node:crypto");
 const { Server } = require("ssh2");
 
 const expected = Buffer.from("a\x7f\x1b[A\x1b[B\x1b[C\x1b[D");
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-pty-"));
-process.env.TUNNELDESK_DATA_DIR = path.join(tempDir, "data");
-process.env.TUNNELDESK_SSH_DIR = path.join(tempDir, "ssh");
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "terma-pty-"));
+process.env.TERMA_DATA_DIR = path.join(tempDir, "data");
+process.env.TERMA_SSH_DIR = path.join(tempDir, "ssh");
 const { openSshShell } = require("../dist/ssh2-client");
 const { trustTestHost } = require("./ssh-host-trust-test-helper");
 const keyFile = path.join(tempDir, "id_rsa");

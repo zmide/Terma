@@ -63,11 +63,11 @@ function routeForUrl(url, sourceUrl) {
 }
 
 async function main() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "tunneldesk-update-installer-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-update-installer-"));
   try {
     const windowsAssets = [
-      { name:"TunnelDesk-1.2.0-windows-x64-portable.exe" },
-      { name:"TunnelDesk-1.2.0-windows-x64-installer.exe" }
+      { name:"Terma-1.2.0-windows-x64-portable.exe" },
+      { name:"Terma-1.2.0-windows-x64-installer.exe" }
     ];
     assert.equal(selectUpdateAsset(windowsAssets, "win32", "x64", "installer").name.endsWith("-installer.exe"), true);
     assert.equal(selectUpdateAsset(windowsAssets, "win32", "x64", "portable").name.endsWith("-portable.exe"), true);
@@ -75,9 +75,9 @@ async function main() {
       () => selectUpdateAsset([windowsAssets[1]], "win32", "x64", "portable"),
       /没有适用于/
     );
-    assert.equal(selectUpdateAsset([{ name:"TunnelDesk-1.2.0-windows-x64-setup.exe" }], "win32", "x64").name.endsWith("-setup.exe"), true);
-    assert.equal(selectUpdateAsset([{ name:"TunnelDesk-1.2.0-macos-arm64.dmg" }], "darwin", "arm64").name.endsWith(".dmg"), true);
-    assert.equal(selectUpdateAsset([{ name:"TunnelDesk-1.2.0-linux-x86_64.AppImage" }], "linux", "x64").name.endsWith(".AppImage"), true);
+    assert.equal(selectUpdateAsset([{ name:"Terma-1.2.0-windows-x64-setup.exe" }], "win32", "x64").name.endsWith("-setup.exe"), true);
+    assert.equal(selectUpdateAsset([{ name:"Terma-1.2.0-macos-arm64.dmg" }], "darwin", "arm64").name.endsWith(".dmg"), true);
+    assert.equal(selectUpdateAsset([{ name:"Terma-1.2.0-linux-x86_64.AppImage" }], "linux", "x64").name.endsWith(".AppImage"), true);
     assert.deepEqual(
       UPDATE_DOWNLOAD_ROUTES.map(route => route.prefix),
       [
@@ -112,8 +112,8 @@ async function main() {
 
     const body = Buffer.from("signed-update-fixture");
     const asset = {
-      name: "TunnelDesk-1.2.0-windows-x64-installer.exe",
-      url: "https://github.com/zmide/tunneldesk/releases/download/v1.2.0/TunnelDesk.exe",
+      name: "Terma-1.2.0-windows-x64-installer.exe",
+      url: "https://github.com/zmide/Terma/releases/download/v1.2.0/Terma.exe",
       size: body.length,
       digest: digest(body)
     };
@@ -130,7 +130,7 @@ async function main() {
     assert.equal((await installer.verifyDownloaded()).state, "downloaded");
     const portableAsset = {
       ...asset,
-      name: "TunnelDesk-1.2.0-windows-x64-portable.exe"
+      name: "Terma-1.2.0-windows-x64-portable.exe"
     };
     const currentRelease = {
       latest_version: "1.2.0",
@@ -210,9 +210,9 @@ async function main() {
 
     const untrusted = new UpdateInstaller(path.join(root, "untrusted"), { platform:"win32", arch:"x64" });
     await assert.rejects(() => untrusted.download(release({...asset, url:"https://example.invalid/update.exe"})), /不是受信任/);
-    await assert.rejects(() => untrusted.download(release({...asset, url:"https://token:secret@github.com/zmide/tunneldesk/releases/download/v1.2.0/TunnelDesk.exe"})), /不是受信任/);
-    await assert.rejects(() => untrusted.download(release({...asset, url:"https://github.com/zmide/tunneldesk/archive/refs/tags/v1.2.0.zip"})), /不是有效的 GitHub Release/);
-    await assert.rejects(() => untrusted.download(release({...asset, url:"https://github.com/zmide/tunneldesk/releases/download/v1.2.0/TunnelDesk.exe?token=private"})), /不是受信任/);
+    await assert.rejects(() => untrusted.download(release({...asset, url:"https://token:secret@github.com/zmide/Terma/releases/download/v1.2.0/Terma.exe"})), /不是受信任/);
+    await assert.rejects(() => untrusted.download(release({...asset, url:"https://github.com/zmide/Terma/archive/refs/tags/v1.2.0.zip"})), /不是有效的 GitHub Release/);
+    await assert.rejects(() => untrusted.download(release({...asset, url:"https://github.com/zmide/Terma/releases/download/v1.2.0/Terma.exe?token=private"})), /不是受信任/);
 
     const staleRoot = path.join(root, "stale-failure");
     fs.mkdirSync(path.join(staleRoot, "updates"), { recursive: true });

@@ -99,32 +99,32 @@ function shellQuote(value) {
 
 function buildRemoteScript(command) {
   const lines = String(command || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const runs = lines.map((line) => `td_run ${shellQuote(line)}\ntd_status=$?`).join("\n");
+  const runs = lines.map((line) => `terma_run ${shellQuote(line)}\ntd_status=$?`).join("\n");
   return [
-    "td_status=0",
-    "td_prompt() {",
-    "  td_user=$(id -un 2>/dev/null || whoami 2>/dev/null || printf user)",
-    "  td_host=$(hostname -s 2>/dev/null || hostname 2>/dev/null || printf host)",
+    "terma_status=0",
+    "terma_prompt() {",
+    "  terma_user=$(id -un 2>/dev/null || whoami 2>/dev/null || printf user)",
+    "  terma_host=$(hostname -s 2>/dev/null || hostname 2>/dev/null || printf host)",
     "  if [ -n \"$HOME\" ] && [ \"$PWD\" = \"$HOME\" ]; then",
-    "    td_dir=\"~\"",
+    "    terma_dir=\"~\"",
     "  elif [ -n \"$HOME\" ] && [ \"${PWD#\"$HOME\"/}\" != \"$PWD\" ]; then",
-    "    td_dir=\"~/${PWD#\"$HOME\"/}\"",
+    "    terma_dir=\"~/${PWD#\"$HOME\"/}\"",
     "  else",
-    "    td_dir=\"$PWD\"",
+    "    terma_dir=\"$PWD\"",
     "  fi",
-    "  if [ \"$(id -u 2>/dev/null)\" = \"0\" ]; then td_mark=\"#\"; else td_mark=\"$\"; fi",
-    "  printf '%s@%s:%s%s ' \"$td_user\" \"$td_host\" \"$td_dir\" \"$td_mark\"",
+    "  if [ \"$(id -u 2>/dev/null)\" = \"0\" ]; then terma_mark=\"#\"; else terma_mark=\"$\"; fi",
+    "  printf '%s@%s:%s%s ' \"$terma_user\" \"$terma_host\" \"$terma_dir\" \"$terma_mark\"",
     "}",
-    "td_run() {",
-    "  td_cmd=$1",
-    "  td_prompt",
-    "  printf '%s\\n' \"$td_cmd\"",
-    "  eval \"$td_cmd\"",
+    "terma_run() {",
+    "  terma_cmd=$1",
+    "  terma_prompt",
+    "  printf '%s\\n' \"$terma_cmd\"",
+    "  eval \"$terma_cmd\"",
     "}",
     runs,
-    "td_prompt",
+    "terma_prompt",
     "printf '\\n'",
-    "exit \"$td_status\"",
+    "exit \"$terma_status\"",
     ""
   ].join("\n");
 }

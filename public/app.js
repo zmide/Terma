@@ -158,7 +158,7 @@ refreshIcons();
 document.addEventListener("scroll", () => {
   if (!isMobileLayout()) hideActionMenu();
 }, true);
-window.tunnelDeskDesktop?.onSftpDragError?.(message => notify(message, "error"));
+window.termaDesktop?.onSftpDragError?.(message => notify(message, "error"));
 Promise.all([loadAll(), loadRuntimeSettings()]).then(() => {
   if (!restoreTabsState()) renderWelcome();
   syncResponsivePane();
