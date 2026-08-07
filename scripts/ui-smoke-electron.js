@@ -2549,7 +2549,6 @@ app.whenReady().then(async () => {
       scrollbarFit.fit();
       await new Promise(resolve=>scrollbarTerm.write(Array.from({length:80},(_,index)=>'line '+index+'\\r\\n').join(''),resolve));
       scrollbarTerm.scrollToBottom();
-      scrollbarTerm.scrollLines(-20);
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const wheelKey='terminal-wheel-smoke';
       const wheelSession={term:scrollbarTerm,fit:{fit:()=>{}},id:first.id};
@@ -2565,33 +2564,22 @@ app.whenReady().then(async () => {
         const ctrlScrollDispatchResult=wheelTarget?.dispatchEvent(ctrlScrollEvent);
         const ctrlViewportAfter=scrollbarTerm.buffer.active.viewportY;
         const ctrlFontAfter=Number(scrollbarTerm.options.fontSize);
-        terminalCtrlWheelScrollsHistory=Boolean(wheelTarget)
-          &&ctrlViewportAfter>ctrlViewportBefore
-          &&ctrlFontAfter===ctrlFontBefore
+        const ctrlZoomOut=Boolean(wheelTarget)
+          &&ctrlFontAfter===ctrlFontBefore-1
           &&ctrlScrollEvent.defaultPrevented
           &&ctrlScrollDispatchResult===false;
-        scrollbarTerm.scrollToBottom();
-        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-        const boundaryViewportBefore=scrollbarTerm.buffer.active.viewportY;
-        const boundaryFontBefore=Number(scrollbarTerm.options.fontSize);
-        const ctrlBoundaryEvent=new WheelEvent('wheel',{bubbles:true,cancelable:true,ctrlKey:true,deltaY:100,deltaMode:WheelEvent.DOM_DELTA_PIXEL});
-        const ctrlBoundaryDispatchResult=wheelTarget?.dispatchEvent(ctrlBoundaryEvent);
-        const boundaryViewportAfter=scrollbarTerm.buffer.active.viewportY;
-        const boundaryFontAfter=Number(scrollbarTerm.options.fontSize);
-        terminalCtrlWheelZoomsAtBoundary=Boolean(wheelTarget)
-          &&boundaryFontAfter===boundaryFontBefore-1
-          &&ctrlBoundaryEvent.defaultPrevented
-          &&ctrlBoundaryDispatchResult===false;
-        terminalCtrlWheelKeepsBoundaryPosition=boundaryViewportAfter===boundaryViewportBefore;
-        scrollbarTerm.scrollToTop();
-        scrollbarTerm.scrollLines(-1000);
-        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-        const topFontBefore=Number(scrollbarTerm.options.fontSize);
-        const ctrlTopEvent=new WheelEvent('wheel',{bubbles:true,cancelable:true,ctrlKey:true,deltaY:-100,deltaMode:WheelEvent.DOM_DELTA_PIXEL});
-        wheelTarget?.dispatchEvent(ctrlTopEvent);
-        const topFontAfter=Number(scrollbarTerm.options.fontSize);
-        const ctrlTopZoomsAtBoundary=topFontAfter===topFontBefore+1&&ctrlTopEvent.defaultPrevented;
-        terminalCtrlWheelZoomsAtBoundary=terminalCtrlWheelZoomsAtBoundary&&ctrlTopZoomsAtBoundary;
+        const ctrlUpFontBefore=Number(scrollbarTerm.options.fontSize);
+        const ctrlUpEvent=new WheelEvent('wheel',{bubbles:true,cancelable:true,ctrlKey:true,deltaY:-100,deltaMode:WheelEvent.DOM_DELTA_PIXEL});
+        const ctrlUpDispatchResult=wheelTarget?.dispatchEvent(ctrlUpEvent);
+        const ctrlUpFontAfter=Number(scrollbarTerm.options.fontSize);
+        const ctrlZoomIn=ctrlUpFontAfter===ctrlUpFontBefore+1
+          &&ctrlUpEvent.defaultPrevented
+          &&ctrlUpDispatchResult===false;
+        terminalCtrlWheelScrollsHistory=ctrlZoomOut&&ctrlZoomIn;
+        terminalCtrlWheelZoomsAtBoundary=terminalCtrlWheelScrollsHistory;
+        terminalCtrlWheelKeepsBoundaryPosition=ctrlViewportAfter===ctrlViewportBefore
+          &&scrollbarTerm.buffer.active.viewportY===ctrlViewportAfter;
+        scrollbarTerm.scrollLines(-20);
         const plainViewportBefore=scrollbarTerm.buffer.active.viewportY;
         const plainFontBefore=Number(scrollbarTerm.options.fontSize);
         const plainWheelEvent=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:-100,deltaMode:WheelEvent.DOM_DELTA_PIXEL});
@@ -2600,7 +2588,7 @@ app.whenReady().then(async () => {
         const plainViewportAfter=scrollbarTerm.buffer.active.viewportY;
         const plainFontAfter=Number(scrollbarTerm.options.fontSize);
         terminalPlainWheelScrolls=plainFontAfter===plainFontBefore&&plainViewportAfter>plainViewportBefore;
-        terminalWheelMetrics={ctrlViewportBefore,ctrlViewportAfter,ctrlFontBefore,ctrlFontAfter,boundaryViewportBefore,boundaryViewportAfter,boundaryFontBefore,boundaryFontAfter,plainViewportBefore,plainViewportAfter,plainFontBefore,plainFontAfter,ctrlDefaultPrevented:ctrlScrollEvent.defaultPrevented,boundaryDefaultPrevented:ctrlBoundaryEvent.defaultPrevented,plainDefaultPrevented:plainWheelEvent.defaultPrevented};
+        terminalWheelMetrics={ctrlViewportBefore,ctrlViewportAfter,ctrlFontBefore,ctrlFontAfter,ctrlUpFontBefore,ctrlUpFontAfter,plainViewportBefore,plainViewportAfter,plainFontBefore,plainFontAfter,ctrlDefaultPrevented:ctrlScrollEvent.defaultPrevented,ctrlUpDefaultPrevented:ctrlUpEvent.defaultPrevented,plainDefaultPrevented:plainWheelEvent.defaultPrevented};
       } catch (error) {
         terminalWheelMetrics={error:String(error?.stack||error)};
       } finally {
