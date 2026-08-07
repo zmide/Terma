@@ -2,10 +2,10 @@
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const https = require("node:https");
 const os = require("node:os");
 const path = require("node:path");
 const { pipeline } = require("node:stream/promises");
-const { Readable } = require("node:stream");
 const { spawnSync } = require("node:child_process");
 
 const VERSION = "21.1.10.0";
@@ -71,10 +71,58 @@ function removeTarget() {
   fs.rmSync(targetDirectory, {recursive:true, force:true});
 }
 
+function downloadInstallerOnce(destination, url = DOWNLOAD_URL, redirectsLeft = 8) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, {
+      headers:{"User-Agent":"Terma-XServer-Build", "Accept-Encoding":"identity"}
+    }, response => {
+      const status = Number(response.statusCode || 0);
+      const redirect = response.headers.location;
+      if ([301, 302, 303, 307, 308].includes(status) && redirect) {
+        response.resume();
+        if (redirectsLeft <= 0) {
+          reject(new Error("VcXsrv download failed: too many redirects"));
+          return;
+        }
+        let nextUrl;
+        try { nextUrl = new URL(redirect, url); } catch (error) {
+          reject(new Error(`VcXsrv download failed: invalid redirect (${error.message})`));
+          return;
+        }
+        if (nextUrl.protocol === "http:") nextUrl.protocol = "https:";
+        if (nextUrl.protocol !== "https:") {
+          reject(new Error(`VcXsrv download refused non-HTTPS redirect: ${nextUrl.protocol}`));
+          return;
+        }
+        downloadInstallerOnce(destination, nextUrl, redirectsLeft - 1).then(resolve, reject);
+        return;
+      }
+      if (status < 200 || status >= 300) {
+        response.resume();
+        reject(new Error(`VcXsrv download failed: HTTP ${status}`));
+        return;
+      }
+      pipeline(response, fs.createWriteStream(destination, {flags:"wx"})).then(resolve, reject);
+    });
+    request.setTimeout(120000, () => request.destroy(new Error("VcXsrv download timed out")));
+    request.on("error", reject);
+  });
+}
+
 async function downloadInstaller(destination) {
-  const response = await fetch(DOWNLOAD_URL, {headers:{"User-Agent":"Terma-XServer-Build"}, redirect:"follow"});
-  if (!response.ok || !response.body) throw new Error(`VcXsrv download failed: HTTP ${response.status}`);
-  await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(destination, {flags:"wx"}));
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      fs.rmSync(destination, {force:true});
+      await downloadInstallerOnce(destination);
+      return;
+    } catch (error) {
+      lastError = error;
+      fs.rmSync(destination, {force:true});
+      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+    }
+  }
+  throw lastError;
 }
 
 function verifyInstaller(file) {
@@ -160,6 +208,7 @@ if (require.main === module) {
 
 module.exports = {
   DOWNLOAD_URL,
+  downloadInstaller,
   EXPECTED_BYTES,
   LEGACY_MANIFEST_NAME,
   MANIFEST_NAME,

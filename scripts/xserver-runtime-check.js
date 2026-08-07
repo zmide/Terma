@@ -29,6 +29,7 @@ const {
   wildcardXauthorityRecords
 } = require("../desktop/xserver-runtime");
 const {
+  downloadInstaller,
   LEGACY_MANIFEST_NAME,
   MANIFEST_NAME,
   SHA256:VCXSRV_SHA256,
@@ -80,6 +81,14 @@ async function main() {
     assert.equal(verifiedRuntime(preparedRuntime), true);
     assert.deepEqual(JSON.parse(fs.readFileSync(currentManifest, "utf8")), JSON.parse(validManifest));
     assert.equal(fs.existsSync(legacyManifest), false);
+
+    const prepareSource = fs.readFileSync(path.join(__dirname, "prepare-xserver-runtime.js"), "utf8");
+    assert.equal(typeof downloadInstaller, "function");
+    assert.match(prepareSource, /https\.get\(url/);
+    assert.match(prepareSource, /nextUrl\.protocol === "http:"/);
+    assert.match(prepareSource, /nextUrl\.protocol !== "https:"/);
+    assert.match(prepareSource, /attempt <= 3/);
+    assert.doesNotMatch(prepareSource, /\bfetch\(/);
 
     const source = fs.readFileSync(path.join(__dirname, "..", "desktop", "xserver-runtime.js"), "utf8");
     assert.match(source, /"-auth", attemptAuthorityFile/);
