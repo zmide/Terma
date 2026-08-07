@@ -560,7 +560,7 @@ function runWorkspaceDockingChecks({silent=false}={}) {
     assert.equal(api.workspaceFindPane("pane-31").activeTabKey, copied.key);
   });
 
-  check("closing a newly opened tab returns to the previously used middle tab", () => {
+  check("new tabs open after the active tab and close back to it", () => {
     api.setTabs([
       {key:"first", kind:"terminal", title:"First"},
       {key:"second", kind:"terminal", title:"Second"},
@@ -573,19 +573,22 @@ function runWorkspaceDockingChecks({silent=false}={}) {
     api.activateTab("second");
     api.addTab("settings", "Settings", "General", "settings", true, {kind:"settings"});
     assert.equal(api.workspaceFindPane("pane-mru").activeTabKey, "settings");
+    assert.equal(api.workspaceFindPane("pane-mru").tabs.join(","), "first,second,settings,third");
+    assert.equal(api.getTabs().map(tab => tab.key).join(","), "first,second,settings,third");
 
     api.closeTabsByKey(["settings"], "settings");
     assert.equal(api.workspaceFindPane("pane-mru").activeTabKey, "second");
     assert.equal(sandbox.activeTabKey, "second");
   });
 
-  check("legacy tab layout also returns to the previously used tab", () => {
+  check("legacy tabs also open after the active tab and close back to it", () => {
     const legacy = loadLegacyWorkspaceModel();
     legacy.addTab("first", "First", "", "terminal", true, {kind:"terminal"});
     legacy.addTab("second", "Second", "", "terminal", true, {kind:"terminal"});
     legacy.addTab("third", "Third", "", "terminal", true, {kind:"terminal"});
     legacy.activateTab("second");
     legacy.addTab("settings", "Settings", "General", "settings", true, {kind:"settings"});
+    assert.equal(legacy.getTabs().map(tab => tab.key).join(","), "first,second,settings,third");
     legacy.closeTabsByKey(["settings"], "settings");
     assert.equal(legacy.getActiveTabKey(), "second");
     assert.equal(legacy.getTabs().map(tab => tab.key).join(","), "first,second,third");

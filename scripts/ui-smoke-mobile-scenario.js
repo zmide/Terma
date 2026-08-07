@@ -346,7 +346,7 @@ async function runMobileScenario(window) {
       document.documentElement.dataset.uiSmokeStage='mobile-terminal-back';
       const terminalBackFixture=document.createElement('div');
       terminalBackFixture.className='terminal-toolbar';
-      terminalBackFixture.innerHTML='<div class="terminal-title-row"><button class="terminal-mobile-back" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="backToExplorer()">'+icon('arrow-left')+'<span>返回</span></button><span class="terminal-connection-dot"></span><span class="terminal-status">root@example.invalid:22 · 已连接</span><span class="terminal-latency good">延迟 5 ms</span></div><div class="actions terminal-actions"><button class="terminal-action-sftp">'+icon('folder-open')+'<span>SFTP</span></button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button class="terminal-action-reconnect">'+icon('refresh-cw')+'<span>重连</span></button><button class="terminal-action-forward">'+icon('play')+'<span>转发</span></button><button class="terminal-global-settings-button">'+icon('settings')+'</button></div>';
+      terminalBackFixture.innerHTML='<div class="terminal-title-row"><button class="terminal-mobile-back" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="backToExplorer()">'+icon('arrow-left')+'<span>返回</span></button><span class="terminal-connection-dot"></span><span class="terminal-status">root@example.invalid:22 · 已连接</span><span class="terminal-latency good">延迟 5 ms</span></div><div class="actions terminal-actions"><button class="terminal-action-sftp">'+icon('folder-open')+'<span>SFTP</span></button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button class="terminal-action-reconnect">'+icon('refresh-cw')+'<span>重连</span></button><button class="terminal-action-forward-list">'+icon('route')+'<span>转发列表</span></button><button class="terminal-action-forward">'+icon('play')+'<span>转发</span></button><button class="terminal-global-settings-button">'+icon('settings')+'</button></div>';
       document.body.appendChild(terminalBackFixture);
       document.querySelector('.left-pane')?.classList.add('mobile-hide');
       document.querySelector('#content')?.classList.add('mobile-show');
@@ -448,18 +448,19 @@ async function runMobileScenario(window) {
       const originalCopyText=copyText;
       copyText=async text=>{cursorCopied=text;return true;};
       startTerminalCursorCopy(longPressKey);
-      const cursorHintStarted=Boolean(terminalSessions.get(longPressKey)?.cursorCopyState&&longPressMount.classList.contains('terminal-cursor-copy-active')&&!document.querySelector('.terminal-cursor-copy-hint'));
+      const cursorHint=document.querySelector('.terminal-cursor-copy-hint');
+      const cursorHintStarted=Boolean(terminalSessions.get(longPressKey)?.cursorCopyState&&longPressMount.classList.contains('terminal-cursor-copy-active')&&cursorHint?.textContent.includes('光标复制：拖到复制起点后松手')&&cursorHint.querySelector('.terminal-cursor-copy-cancel'));
       longPressMount.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:11,pointerType:'touch',clientX:5,clientY:10}));
       longPressMount.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:11,pointerType:'touch',clientX:5,clientY:10}));
       longPressMount.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:11,pointerType:'touch',clientX:5,clientY:10}));
-      const cursorStartStored=terminalSessions.get(longPressKey)?.cursorCopyState?.phase==='end';
+      const cursorStartStored=terminalSessions.get(longPressKey)?.cursorCopyState?.phase==='end'&&document.querySelector('.terminal-cursor-copy-message')?.textContent==='已选起点，请拖到复制终点后松手';
       longPressMount.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:12,pointerType:'touch',clientX:5,clientY:10}));
       longPressMount.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:12,pointerType:'touch',clientX:115,clientY:10}));
       const cursorSelectionBlue=longPressTerm.options.theme?.selectionBackground==='#2563eb'&&longPressSelection===longPressLine;
       longPressMount.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:12,pointerType:'touch',clientX:115,clientY:10}));
       await new Promise(resolve=>setTimeout(resolve,0));
       copyText=originalCopyText;
-      const cursorCopyCompleted=cursorCopied===longPressLine&&!terminalSessions.get(longPressKey)?.cursorCopyState&&!document.querySelector('.terminal-cursor-copy-cancel');
+      const cursorCopyCompleted=cursorCopied===longPressLine&&!terminalSessions.get(longPressKey)?.cursorCopyState&&!document.querySelector('.terminal-cursor-copy-hint')&&!document.querySelector('.terminal-cursor-copy-cancel');
       const clipboardDescriptor=Object.getOwnPropertyDescriptor(navigator,'clipboard');
       let clipboardFallback=false;
       try {
@@ -513,7 +514,7 @@ async function runMobileScenario(window) {
         compactToolbar:terminalMobileTitleRect.height<=48&&terminalMobileToolbarRect.height<=96&&terminalMobileActionsRect.top>=terminalMobileTitleRect.bottom-0.5,
         titleHeight:terminalMobileTitleRect.height,
         toolbarHeight:terminalMobileToolbarRect.height,
-        priorityOrder:[...terminalBackFixture.querySelectorAll('.terminal-action-reconnect,.terminal-action-keys,.terminal-action-forward,.terminal-action-sftp')].sort((left,right)=>Number(getComputedStyle(left).order)-Number(getComputedStyle(right).order)).map(button=>button.className.match(/terminal-action-(reconnect|keys|forward|sftp)/)?.[1]),
+        priorityOrder:[...terminalBackFixture.querySelectorAll('.terminal-action-reconnect,.terminal-action-keys,.terminal-action-forward-list,.terminal-action-forward,.terminal-action-sftp')].sort((left,right)=>Number(getComputedStyle(left).order)-Number(getComputedStyle(right).order)).map(button=>button.className.match(/terminal-action-(reconnect|keys|forward-list|forward|sftp)/)?.[1]),
         sftpTextFits:Boolean(terminalMobileSftpButton && terminalMobileSftpButton.clientWidth >= 82 && terminalMobileSftpButton.scrollWidth <= terminalMobileSftpButton.clientWidth + 1 && terminalMobileSftpButton.textContent.trim() === 'SFTP'),
         globalSettingsHidden:getComputedStyle(mobileGlobalSettingsButton).display==='none',
         returned:!document.querySelector('.left-pane')?.classList.contains('mobile-hide')&&!document.querySelector('#content')?.classList.contains('mobile-show')&&!document.body.classList.contains('mobile-terminal-active')

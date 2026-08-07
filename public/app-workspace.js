@@ -528,7 +528,10 @@ function addTab(key, title, subtitle, viewName, closable=true, meta={}) {
   if (key === "welcome" && tabs.some(tab => tab.key !== "welcome")) return;
   const found = tabs.find(tab => tab.key === key);
   if (found) Object.assign(found, {title, subtitle, viewName, closable, ...meta});
-  else tabs.push({key, title, subtitle, viewName, closable, ...meta});
+  else {
+    const insertion = tabs.findIndex(tab => tab.key === previousKey);
+    tabs.splice(insertion >= 0 ? insertion + 1 : tabs.length, 0, {key, title, subtitle, viewName, closable, ...meta});
+  }
   rememberLegacyWorkspaceTab(key, previousKey);
   activeTabKey = key;
   renderTabs();
@@ -665,6 +668,7 @@ function persistableTabs() {
 }
 
 function saveTabsState() {
+  if (window.workspaceRestorePending) return;
   try {
     localStorage.setItem("workspaceTabs", JSON.stringify({activeTabKey, tabs:persistableTabs()}));
   } catch {}
@@ -709,6 +713,29 @@ function closeTerminalSession(key) {
   if (typeof terminalStartupOverrides !== "undefined") terminalStartupOverrides.delete(key);
 }
 
+function workspaceDocumentEndpoint(subtitle="") {
+  const value = String(subtitle || "").trim();
+  if (!value) return "";
+  const resource = value.includes("·") ? value.split("·").at(-1).trim() : value;
+  const address = resource.includes("@") ? resource.slice(resource.lastIndexOf("@") + 1) : resource;
+  return address.replace(/^\w+:\/\//, "").replace(/\/$/, "");
+}
+
+function syncWorkspaceDocumentTitle(title, subtitle, viewName, key=viewName, meta={}) {
+  const tab = tabs.find(item => item.key === key) || {};
+  const kind = String(meta.kind || tab.kind || viewName || "");
+  const protocol = String(meta.protocol || tab.protocol || "").toUpperCase();
+  const label = {
+    terminal:"终端",
+    "remote-terminal":"终端",
+    sftp:"SFTP",
+    ftp:"FTP",
+    "remote-desktop":protocol || "远程桌面"
+  }[kind] || "";
+  const endpoint = workspaceDocumentEndpoint(subtitle || tab.subtitle || "");
+  document.title = label && endpoint ? `Terma · ${endpoint} · ${label}` : "Terma";
+}
+
 function setWorkspace(title, subtitle, viewName, key=viewName, updateTab=true, closable=true, meta={}) {
   if (activeView === "sftp" && activeTabKey !== key && typeof rememberSftpViewState === "function") {
     rememberSftpViewState(activeTabKey);
@@ -723,6 +750,7 @@ function setWorkspace(title, subtitle, viewName, key=viewName, updateTab=true, c
   $("content")?.classList.toggle("sftp-content", ["sftp","ftp"].includes(viewName));
   document.body.classList.toggle("mobile-terminal-active", isMobileLayout() && ["terminal","remote-terminal"].includes(viewName));
   activeView = viewName;
+  syncWorkspaceDocumentTitle(title, subtitle, viewName, key, meta);
   if (typeof syncTerminalToolbarPlacement === "function") syncTerminalToolbarPlacement();
   if (typeof syncSftpToolbarPlacement === "function") syncSftpToolbarPlacement();
   if (isMobileLayout() && viewName !== "welcome") showMobileWorkspace();

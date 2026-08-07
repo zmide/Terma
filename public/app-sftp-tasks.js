@@ -2,7 +2,43 @@ const sftpTaskLogViewStates = new Map();
 const SFTP_TASK_CENTER_MIN_WIDTH = 340;
 const SFTP_TASK_CENTER_MIN_HEIGHT = 240;
 const SFTP_TASK_CENTER_VIEWPORT_GAP = 12;
+const SFTP_TASK_CENTER_SIZE_STORAGE_KEY = "sftpTaskCenterSizeV1";
 let sftpTaskCenterResize = null;
+
+function savedSftpTaskCenterSize() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY) || "null");
+    const width = Number(saved?.width);
+    const height = Number(saved?.height);
+    return Number.isFinite(width) && Number.isFinite(height) ? {width, height} : null;
+  } catch {
+    return null;
+  }
+}
+
+function persistSftpTaskCenterSize(drawer) {
+  if (!drawer || isMobileLayout()) return;
+  const rect = drawer.getBoundingClientRect();
+  try {
+    localStorage.setItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY, JSON.stringify({
+      width:Math.round(rect.width),
+      height:Math.round(rect.height)
+    }));
+  } catch {}
+}
+
+function restoreSftpTaskCenterSize(drawer) {
+  if (!drawer) return false;
+  if (isMobileLayout()) {
+    drawer.style.removeProperty("width");
+    drawer.style.removeProperty("height");
+    return false;
+  }
+  const saved = savedSftpTaskCenterSize();
+  if (!saved) return false;
+  applySftpTaskCenterSize(drawer, saved.width, saved.height);
+  return true;
+}
 
 function sftpTaskCenterResizeBounds(drawer) {
   const rect = drawer.getBoundingClientRect();
@@ -81,6 +117,7 @@ function finishSftpTaskCenterResize(event, cancelled=false) {
   } catch {}
   document.body.classList.remove("sftp-task-center-resizing");
   if (cancelled) applySftpTaskCenterSize(drag.drawer, drag.startWidth, drag.startHeight);
+  else persistSftpTaskCenterSize(drag.drawer);
 }
 
 function resetSftpTaskCenterSize(event) {
@@ -90,6 +127,7 @@ function resetSftpTaskCenterSize(event) {
   const drawer = document.getElementById("sftpTaskCenterDrawer");
   drawer?.style.removeProperty("width");
   drawer?.style.removeProperty("height");
+  try { localStorage.removeItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY); } catch {}
 }
 
 function handleSftpTaskCenterResizeKey(event) {
@@ -105,6 +143,7 @@ function handleSftpTaskCenterResizeKey(event) {
   const width = rect.width + (event.key === "ArrowLeft" ? step : event.key === "ArrowRight" ? -step : 0);
   const height = rect.height + (event.key === "ArrowDown" ? step : event.key === "ArrowUp" ? -step : 0);
   applySftpTaskCenterSize(drawer, width, height);
+  persistSftpTaskCenterSize(drawer);
 }
 
 function startSftpJobsTimer() {
@@ -464,6 +503,7 @@ async function toggleSftpTaskCenter(event) {
   if (!drawer || !button) return;
   if (!drawer.hidden) return closeSftpTaskCenter();
   drawer.hidden = false;
+  restoreSftpTaskCenterSize(drawer);
   button.setAttribute("aria-expanded", "true");
   renderSftpTaskCenterDrawer();
   await refreshSftpJobs();

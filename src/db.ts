@@ -361,9 +361,9 @@ function cleanTerminalStartup(data: any = {}, existing: any = null) {
     if (value.length > maximum) throw new Error(`${label}长度不能超过 ${maximum} 个字符`);
     return value;
   };
-  const profileName = singleLine("terminal_profile_name", "终端启动配置名称", 120);
+  const profileName = singleLine("terminal_profile_name", "终端配置名称", 120);
   const profileKind = String(readValue("terminal_profile_kind", "custom") || "custom").trim().toLowerCase();
-  if (!TERMINAL_PROFILE_KINDS.has(profileKind)) throw new Error("不支持的终端启动配置类型");
+  if (!TERMINAL_PROFILE_KINDS.has(profileKind)) throw new Error("不支持的终端配置类型");
   const programPath = singleLine("terminal_program_path", "终端启动程序路径", 2048);
   if (!programPath) throw new Error("自定义终端启动方式需要填写程序路径");
   const programArgs = singleLine("terminal_program_args", "终端启动参数", 4096);

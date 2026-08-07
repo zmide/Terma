@@ -268,7 +268,7 @@ function desktopBehaviorPanelHtml() {
         <label class="check-row"><input id="desktopXServerAutoStart" type="checkbox" ${settings.xServerAutoStart !== false ? "checked" : ""}> 启动 Terma 时自动准备 X Server</label>
       </div>
     </div>
-    <div class="desktop-runtime-row"><span>${icon(xserver.available ? "circle-check" : xserver.installed ? "circle-pause" : "circle-alert")}<b>X Server</b><small>${esc(xserverState)}</small></span><button type="button" onclick="openXServerManager()">${icon("app-window")}<span>管理</span></button></div>
+    <div class="desktop-runtime-row"><span>${icon(xserver.available ? "circle-check" : xserver.installed ? "circle-pause" : "circle-alert")}<b>X Server</b><small>${esc(xserverState)}</small></span><button type="button" onclick="openXServerManager()">${icon("x11")}<span>管理</span></button></div>
     <div class="actions"><button id="desktopSettingsSaveBtn" class="primary" type="button" onclick="saveDesktopSettings(this)">${icon("save")}<span>保存桌面行为</span></button></div>
   </section>`;
 }

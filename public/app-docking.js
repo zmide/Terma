@@ -1410,14 +1410,23 @@ addTab = function(key, title, subtitle, viewName, closable=true, meta={}) {
     normalizeWorkspaceLayoutAfterMutation(focusedPaneId);
   }
   if (key === "welcome" && tabs.some(tab => tab.key !== "welcome")) return;
+  let pane = workspaceFindPaneForTab(key)
+    || workspaceFindPane(workspaceExecutionPaneId)
+    || workspaceFindPane(focusedPaneId)
+    || workspaceLeaves()[0];
+  const insertionAnchorKey = pane?.activeTabKey || activeTabKey;
   let found = tabs.find(tab => tab.key === key);
   if (found) Object.assign(found, {title, subtitle, viewName, closable, ...meta});
   else {
     found = {key, title, subtitle, viewName, closable, ...meta};
-    tabs.push(found);
+    const insertion = tabs.findIndex(tab => tab.key === insertionAnchorKey);
+    tabs.splice(insertion >= 0 ? insertion + 1 : tabs.length, 0, found);
   }
-  let pane = workspaceFindPaneForTab(key) || workspaceFindPane(focusedPaneId) || workspaceLeaves()[0];
-  if (!pane.tabs.includes(key)) pane.tabs.push(key);
+  pane = workspaceFindPaneForTab(key) || pane || workspaceLeaves()[0];
+  if (!pane.tabs.includes(key)) {
+    const insertion = pane.tabs.indexOf(insertionAnchorKey);
+    pane.tabs.splice(insertion >= 0 ? insertion + 1 : pane.tabs.length, 0, key);
+  }
   rememberWorkspacePaneTab(pane, key, pane.activeTabKey);
   pane.activeTabKey = key;
   focusedPaneId = pane.id;
@@ -1531,6 +1540,7 @@ setWorkspace = function(title, subtitle, viewName, key=viewName, updateTab=true,
     if (heading) heading.textContent = "工作区";
     if (description) description.textContent = subtitle || "";
     activeView = viewName;
+    if (typeof syncWorkspaceDocumentTitle === "function") syncWorkspaceDocumentTitle(title, subtitle, viewName, key, meta);
     syncFocusedWorkspaceClasses();
   }
   const previousExecutionPane = workspaceExecutionPaneId;
@@ -2170,6 +2180,7 @@ persistableTabs = function() {
 };
 
 saveTabsState = function() {
+  if (window.workspaceRestorePending) return;
   try {
     captureCurrentWorkspaceGroup();
     const groups = workspaceGroups.map(group => ({

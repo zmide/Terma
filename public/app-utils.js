@@ -3,12 +3,18 @@ function isLoopbackHost(host) {
 }
 
 function icon(name, label="") {
+  if (name === "x11") return x11Icon(label);
   const key = String(name || "").split("-").map(part => part ? part[0].toUpperCase() + part.slice(1) : "").join("");
   const nodes = window.lucide?.icons?.[key] || window.lucide?.[key];
   if (!Array.isArray(nodes)) return `<span class="icon-fallback" aria-hidden="true"></span>`;
   const children = nodes.map(([tag, attrs]) => `<${tag} ${Object.entries(attrs).map(([attr,value]) => `${attr}="${esc(String(value))}"`).join(" ")}></${tag}>`).join("");
   const accessibility = label ? `aria-label="${escAttr(label)}"` : `aria-hidden="true"`;
   return `<svg class="lucide lucide-${escAttr(name)}" ${accessibility} width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${children}</svg>`;
+}
+
+function x11Icon(label="") {
+  const accessibility = label ? `aria-label="${escAttr(label)}"` : `aria-hidden="true"`;
+  return `<span class="composite-icon x11-icon" ${accessibility}>${icon("monitor")}<b>X11</b></span>`;
 }
 
 function syncPasswordVisibilityControl(input) {
@@ -634,25 +640,18 @@ function fitVisibleTerminals() {
   if (typeof terminalSessions === "undefined") return;
   for (const session of terminalSessions.values()) {
     const box = session.term?.element?.closest?.(".terminal-box");
-    let grew = false;
-    const buffer = session.term?.buffer?.active;
-    const previousViewportY = Number(buffer?.viewportY || 0);
-    const wasAtBottom = !buffer || previousViewportY >= Number(buffer.baseY || 0) - 1;
+    const viewport = typeof captureTerminalViewport === "function" ? captureTerminalViewport(session) : null;
     if (box) {
       box.style.minHeight = "0px";
       const rect = box.getBoundingClientRect();
       if (rect.height > 0) {
-        grew = Number(session.lastBoxHeight || 0) && rect.height > Number(session.lastBoxHeight || 0) + 24;
         session.lastBoxHeight = rect.height;
         session.term.element.style.height = `${Math.floor(rect.height)}px`;
       }
     }
     try { session.fit?.fit(); } catch {}
     try { session.term?.refresh?.(0, Math.max(0, session.term.rows - 1)); } catch {}
-    try {
-      if (wasAtBottom) session.term?.scrollToBottom?.();
-      else session.term?.scrollToLine?.(previousViewportY);
-    } catch {}
+    if (typeof restoreTerminalViewport === "function") restoreTerminalViewport(session, viewport);
   }
 }
 

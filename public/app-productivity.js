@@ -1207,6 +1207,10 @@ function installProductivityHeaderButton() {
 
 let xServerQuickStatusTimer = 0;
 
+function xServerQuickIcon() {
+  return '<svg class="xserver-x-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8.8" ry="5.2" transform="rotate(-10 12 12)"></ellipse><path d="M7.5 5.5 16.5 18.5M16.5 5.5 7.5 18.5"></path></svg>';
+}
+
 function installXServerQuickAction(host = document.getElementById("workspaceQuickActions")) {
   if (!host || typeof openXServerManager !== "function") return;
   let button = document.getElementById("xServerQuickButton");
@@ -1237,13 +1241,13 @@ async function refreshXServerQuickAction() {
     button.className = `icon-button xserver-quick-button ${state}`;
     button.title = `${label}${diagnostics?.display ? ` · ${diagnostics.display}` : ""}`;
     button.setAttribute("aria-label", button.title);
-    button.innerHTML = icon(diagnostics?.available ? "server-cog" : diagnostics?.running ? "server" : "server-off");
+    button.innerHTML = xServerQuickIcon();
     refreshIcons();
   } catch {
     button.className = "icon-button xserver-quick-button error";
     button.title = "X Server 状态不可用";
     button.setAttribute("aria-label", button.title);
-    button.innerHTML = icon("server-off");
+    button.innerHTML = xServerQuickIcon();
     refreshIcons();
   }
 }

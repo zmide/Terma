@@ -646,7 +646,7 @@ function showSftpFilenameEncodingMenu(event, connectionId) {
   const current = connection.sftp_filename_encoding || "utf8";
   showActionMenu(event, sftpFilenameEncodingOptions.map(([value, label]) => ({
     label,
-    icon:value === current ? "check" : "languages",
+    icon:value === current ? "check" : "earth",
     run:()=>applySftpFilenameEncoding(connectionId, value, label, tabKey)
   })));
 }
@@ -1205,7 +1205,7 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
           <span id="sftpClipboardActions" class="sftp-clipboard-actions">${renderSftpClipboardActions(tabKey)}</span>
           <span class="sftp-toolbar-separator" aria-hidden="true"></span>
           <button class="icon-button" title="搜索当前目录" aria-label="搜索当前目录" onclick="toggleSftpSearch('${escAttr(tabKey)}')">${icon("search")}</button>
-          <button id="sftpFilenameEncodingButton" class="sftp-encoding-button" title="切换 SFTP 文件名编码" onclick="showSftpFilenameEncodingMenu(event,${id})">${icon("languages")}<span>${esc(sftpFilenameEncodingLabel(c))}</span>${icon("chevron-down")}</button>
+          <button id="sftpFilenameEncodingButton" class="sftp-encoding-button" title="切换 SFTP 文件名编码" aria-label="切换 SFTP 文件名编码" onclick="showSftpFilenameEncodingMenu(event,${id})">${icon("earth")}<span>${esc(sftpFilenameEncodingLabel(c))}</span>${icon("chevron-down")}</button>
           <button class="icon-button" title="打开此连接的终端" aria-label="打开此连接的终端" onclick="openTerminal(${id})">${icon("square-terminal")}</button>
           <button id="sftpConnectionToggle" class="icon-button sftp-connection-toggle" data-status="connecting" title="正在连接 SFTP" aria-label="正在连接 SFTP" onclick="toggleSftpConnection(${id},'${escAttr(tabKey)}')">${icon("loader-circle")}</button>
           <button class="icon-button" title="刷新目录" aria-label="刷新目录" onclick="refreshSftp({tabKey:'${escAttr(tabKey)}'})">${icon("refresh-cw")}</button>

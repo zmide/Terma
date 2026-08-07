@@ -115,12 +115,51 @@ function remoteDesktopJumpButtonHtml(connectionId) {
   return `<button class="icon-button workspace-jump-button remote-desktop-jump-button" type="button" title="${escAttr(title)}" aria-label="${escAttr(title)}" onclick="${handler}">${icon("monitor-up")}</button>`;
 }
 
+function remoteDesktopProfilesForProfile(profile) {
+  if (!profile) return [];
+  const connectionId = linuxDesktopManagerConnectionIdForProfile(profile);
+  const host = normalizeRemoteHost(profile.host);
+  return remoteProfiles.filter(candidate => {
+    if (!["rdp", "vnc", "xdmcp"].includes(String(candidate.protocol || "").toLowerCase())) return false;
+    if (connectionId) return linuxDesktopManagerConnectionIdForProfile(candidate) === connectionId;
+    return Boolean(host) && normalizeRemoteHost(candidate.host) === host;
+  });
+}
+
+function remoteDesktopSwitchProfiles(profileId) {
+  const current = remoteProfileById(profileId);
+  return remoteDesktopProfilesForProfile(current)
+    .filter(profile => Number(profile.id) !== Number(profileId));
+}
+
+function openRemoteDesktopSwitchMenu(event, profileId) {
+  const profiles = remoteDesktopSwitchProfiles(profileId);
+  if (!profiles.length) return;
+  showActionMenu(event, profiles.map(profile => ({
+    label:`打开 ${REMOTE_PROTOCOL_META[profile.protocol]?.label || String(profile.protocol || "").toUpperCase()} · ${profile.name}`,
+    icon:REMOTE_PROTOCOL_META[profile.protocol]?.icon || "monitor-up",
+    run:() => openRemoteProfile(profile)
+  })));
+}
+
+function remoteDesktopSwitchButtonHtml(profile) {
+  const profiles = remoteDesktopSwitchProfiles(profile?.id);
+  const disabled = !profiles.length;
+  const title = disabled
+    ? "当前服务器没有其他远程桌面"
+    : `切换到当前服务器的其他远程桌面（${profiles.length} 个）`;
+  const handler = disabled ? "" : ` onclick="openRemoteDesktopSwitchMenu(event,${Number(profile?.id || 0)})"`;
+  return `<button class="icon-button workspace-jump-button remote-desktop-switch-button" type="button" title="${escAttr(title)}" aria-label="${escAttr(title)}"${handler} ${disabled ? "disabled" : ""}>${icon("monitor-up")}</button>`;
+}
+
 function remoteWorkspaceJumpButtonsHtml(profile) {
   const connectionId = linuxDesktopManagerConnectionIdForProfile(profile);
-  if (!connectionId) return "";
+  const remoteSwitch = remoteDesktopSwitchButtonHtml(profile);
+  if (!connectionId && !remoteSwitch) return "";
   return `<span class="workspace-jump-actions" aria-label="关联工作区">
-    <button class="icon-button workspace-jump-button" type="button" title="打开关联终端" aria-label="打开关联终端" onclick="openTerminal(${connectionId})">${icon("square-terminal")}</button>
-    <button class="icon-button workspace-jump-button" type="button" title="打开关联 SFTP" aria-label="打开关联 SFTP" onclick="openSftp(${connectionId})">${icon("folder-open")}</button>
+    ${connectionId ? `<button class="icon-button workspace-jump-button" type="button" title="打开关联终端" aria-label="打开关联终端" onclick="openTerminal(${connectionId})">${icon("square-terminal")}</button>` : ""}
+    ${connectionId ? `<button class="icon-button workspace-jump-button" type="button" title="打开关联 SFTP" aria-label="打开关联 SFTP" onclick="openSftp(${connectionId})">${icon("folder-open")}</button>` : ""}
+    ${remoteSwitch}
   </span>`;
 }
 
@@ -202,7 +241,7 @@ function openAddRemoteConnectionMenu(event) {
 function showRemoteExplorerMenu(event) {
   showActionMenu(event, [
     {label:"从 SSH 连接生成…", icon:"server-cog", run:()=>showPrimary("connections")},
-    {label:"X Server 管理", icon:"app-window", run:()=>openXServerManager()},
+    {label:"X Server 管理", icon:"x11", run:()=>openXServerManager()},
     {separator:true},
     {label:"刷新其他连接", icon:"refresh-cw", run:()=>loadAll()}
   ]);
@@ -1263,7 +1302,7 @@ function renderRemoteProfileRow(profile) {
   const sourceTitle = sourceConnection ? ` · 来自 SSH：${sourceConnection.name}` : "";
   const displayName = sourceConnection ? sourceConnection.name : profile.name;
   return `<div class="conn-row remote-profile-row${active}" data-remote-profile-id="${profile.id}">
-    <div class="conn-main"><span class="conn-name" title="${escAttr(profile.name)}">${esc(displayName)}</span><span class="protocol-badge protocol-${escAttr(profile.protocol)}">${icon(meta.icon)} ${esc(meta.label)}</span></div>
+    <div class="conn-main"><span class="conn-name conn-name-open" title="双击${escAttr(meta.action)}" ondblclick="event.stopPropagation();${primary}">${esc(displayName)}</span><span class="protocol-badge protocol-${escAttr(profile.protocol)}">${icon(meta.icon)} ${esc(meta.label)}</span></div>
     <div class="conn-meta" title="${escAttr(remoteProfileEndpoint(profile))}">${esc(remoteProfileEndpoint(profile))}</div>
     ${profile.tags ? `<div class="forward-tags">${String(profile.tags).split(",").filter(Boolean).map(tag => `<span>${esc(tag)}</span>`).join("")}</div>` : ""}
     <div class="conn-footer">
@@ -4680,10 +4719,10 @@ function x11LaunchActions(connectionId) {
   return [
     {label:"启动 X11 图形应用…", icon:"panels-top-left", run:()=>openX11AppLauncher(connectionId)},
     {separator:true},
-    {label:"临时启动 X11（受限）", icon:"app-window", run:()=>openX11Terminal(connectionId,"untrusted")},
+    {label:"临时启动 X11（受限）", icon:"x11", run:()=>openX11Terminal(connectionId,"untrusted")},
     {label:"临时启动可信 X11", icon:"badge-check", run:()=>openX11Terminal(connectionId,"trusted")},
     {separator:true},
-    {label:"X Server 管理", icon:"app-window", run:()=>openXServerManager(connectionId)},
+    {label:"X Server 管理", icon:"x11", run:()=>openXServerManager(connectionId)},
     {separator:true},
     {label:"默认使用受限 X11（-X）", icon:"shield-check", run:()=>saveConnectionX11Mode(connectionId,"untrusted")},
     {label:"默认使用可信 X11（-Y）", icon:"badge-check", run:()=>saveConnectionX11Mode(connectionId,"trusted")},

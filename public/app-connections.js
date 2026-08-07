@@ -20,7 +20,7 @@ function connectionHasRunningForwards(c){ return (c.forwards||[]).some(f=>f.stat
 function connectionToggleButton(c){
   const action=connectionHasRunningForwards(c)?"stop":"start";
   const text=action==="start"?"启用转发":"停止转发";
-  return `<button class="connection-forward-toggle" title="${text}" onclick="connectionForwardAction(${c.id},'${action}',this)">${icon(action === "start" ? "play" : "square")}<span>${text}</span></button>`;
+  return `<button class="connection-forward-toggle" type="button" title="${text}" aria-label="${text}" onclick="connectionForwardAction(${c.id},'${action}',this)">${icon(action === "start" ? "play" : "square")}<span>${text}</span></button>`;
 }
 
 function connectionCompactToggleButton(c){
@@ -38,7 +38,7 @@ function showConnectionMenu(event, id) {
     {label:"服务器仪表盘", icon:"gauge", run:()=>openServerDashboard(id)},
     {label:"健康检查", icon:"activity", run:()=>checkConnectionHealth(id)},
     {label:c.notifications_muted ? "开启命令通知" : "静音命令通知", icon:c.notifications_muted ? "bell" : "bell-off", run:()=>toggleConnectionNotifications(id)},
-    {label:c.x11_mode && c.x11_mode !== "off" ? "X11 图形终端（默认已开启）" : "X11 图形终端", icon:"app-window", children:()=>x11LaunchActions(id)},
+    {label:c.x11_mode && c.x11_mode !== "off" ? "X11 图形终端（默认已开启）" : "X11 图形终端", icon:"x11", children:()=>x11LaunchActions(id)},
     ...(remoteOpenActions.length ? [
       {label:"打开其他连接…", icon:"external-link", children:()=>remoteOpenActions},
     ] : []),
@@ -338,13 +338,14 @@ function renderConnectionRow(c) {
   const bulkCheck = connectionBulkMode ? `<label class="connection-bulk-check" title="选择 ${escAttr(c.name)}"><input type="checkbox" ${selectedConnectionIds.has(c.id) ? "checked" : ""} onchange="setConnectionSelected(${c.id},this.checked)"><span class="sr-only">选择 ${esc(c.name)}</span></label>` : "";
   return `<div class="conn-row${active}${bulkClass}">
     ${bulkCheck}
-    <div class="conn-main"><span class="conn-name">${esc(c.name)}</span><span class="conn-state"><span class="status-dot${running}"></span>${running ? "运行中" : "已停止"}</span></div>
+    <div class="conn-main"><span class="conn-name conn-name-open" title="双击打开终端" ondblclick="event.stopPropagation();openTerminal(${c.id})">${esc(c.name)}</span><span class="conn-state"><span class="status-dot${running}"></span>${running ? "运行中" : "已停止"}</span></div>
     <div class="conn-meta">${esc(c.ssh_user)}@${esc(c.ssh_host)}:${c.ssh_port}</div>
     ${c.tags ? `<div class="forward-tags">${String(c.tags).split(",").filter(Boolean).map(tag=>`<span>${esc(tag)}</span>`).join("")}</div>` : ""}
     <div class="conn-footer">
       <div class="conn-summary"><span title="${c.forwards.length} 条转发">${icon("route")} ${c.forwards.length}</span><span class="health-badge${healthClass}" title="健康状态：${escAttr(healthText)}" aria-label="健康状态：${escAttr(healthText)}">${icon(health?.ok ? "circle-check" : health ? "circle-alert" : "circle-help")}</span></div>
       <div class="conn-actions" aria-label="${escAttr(c.name)} 快捷操作">
         <button class="icon-button conn-primary-action" onclick="openTerminal(${c.id})" title="打开终端" aria-label="打开终端">${icon("square-terminal")}</button>
+        <button class="icon-button" onclick="openSftp(${c.id})" title="打开 SFTP" aria-label="打开 SFTP">${icon("folder-open")}</button>
         <button class="icon-button" onclick="openForwards(${c.id})" title="管理转发" aria-label="管理转发">${icon("route")}</button>
         ${connectionCompactToggleButton(c)}
         <button class="icon-button connection-favorite${c.favorite ? " active" : ""}" onclick="toggleConnectionFavorite(event,${c.id},${c.favorite ? 0 : 1})" title="${c.favorite ? "取消收藏" : "收藏连接"}" aria-label="${c.favorite ? "取消收藏" : "收藏连接"}" aria-pressed="${c.favorite ? "true" : "false"}">${icon("star")}</button>

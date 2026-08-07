@@ -118,6 +118,7 @@ function startAutoRefresh() {
     }
   });
 }
+window.workspaceRestorePending = true;
 applyTheme(preferredTheme());
 renderExplorerTools();
 initOperationPaneBehavior();
@@ -160,9 +161,15 @@ document.addEventListener("scroll", () => {
 }, true);
 window.termaDesktop?.onSftpDragError?.(message => notify(message, "error"));
 Promise.all([loadAll(), loadRuntimeSettings()]).then(() => {
-  if (!restoreTabsState()) renderWelcome();
+  const restored = restoreTabsState();
+  if (!restored) renderWelcome();
+  window.workspaceRestorePending = false;
+  saveTabsState();
   syncResponsivePane();
-}).catch(e=>notify(e.message,"error"));
+}).catch(e=>{
+  window.workspaceRestorePending = false;
+  notify(e.message,"error");
+});
 startAutoRefresh();
 pollNotifications();
 refreshSftpJobs();
