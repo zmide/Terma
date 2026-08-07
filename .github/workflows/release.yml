@@ -159,7 +159,7 @@ jobs:
       - name: Verify packaged macOS icon
         shell: bash
         run: |
-          PRODUCT_NAME="$(node -p 'require("./package.json").build.productName')"
+          PRODUCT_FILENAME="$(node -p 'require("./package.json").build.executableName || require("./package.json").build.productName')"
           app_count=0
           while IFS= read -r plist; do
             app_count=$((app_count + 1))
@@ -171,7 +171,7 @@ jobs:
             /usr/bin/iconutil -c iconset "$icon_path" -o "$iconset_dir"
             test -s "$iconset_dir/icon_512x512@2x.png"
             node scripts/mac-icon-padding-check.js "$iconset_dir/icon_512x512@2x.png"
-          done < <(find release -path "*/${PRODUCT_NAME}.app/Contents/Info.plist" -type f -print)
+          done < <(find release -path "*/${PRODUCT_FILENAME}.app/Contents/Info.plist" -type f -print)
           test "$app_count" -eq 2
       - name: Create release notes
         run: node scripts/release-notes.js
@@ -242,7 +242,7 @@ jobs:
           PRODUCT_SLUG="$(node -p 'require("./package.json").name')"
           archive="$(find release-source -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"
           test -n "$archive"
-          tar -tzf "$archive" | grep -q "^${PRODUCT_SLUG}/"
+          tar -tzf "$archive" | grep "^${PRODUCT_SLUG}/" > /dev/null
 
       - name: Create release notes
         run: node scripts/release-notes.js
