@@ -7,8 +7,10 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const iconv = require("iconv-lite");
 const { Server } = require("ssh2");
-const { normalizeSshTransportError, runPasswordCommand } = require("../dist/ssh2-client");
 const { trustTestHost } = require("./ssh-host-trust-test-helper");
+
+let normalizeSshTransportError;
+let runPasswordCommand;
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -124,6 +126,12 @@ function connection(port) {
 }
 
 async function main() {
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-ssh2-error-isolation-"));
+  const fixtureSshRoot = path.join(fixtureRoot, ".ssh");
+  const previousSshDir = process.env.TERMA_SSH_DIR;
+  fs.mkdirSync(fixtureSshRoot, { recursive: true });
+  process.env.TERMA_SSH_DIR = fixtureSshRoot;
+  ({ normalizeSshTransportError, runPasswordCommand } = require("../dist/ssh2-client"));
   assert.equal(
     normalizeSshTransportError(new Error("Timed out while waiting for handshake"), {ssh_host:"example.com", ssh_port:22}).message,
     "SSH 握手超时，请检查主机地址、端口和 SSH 服务"
@@ -185,8 +193,7 @@ async function main() {
   const succeeded = await runPasswordCommand(encodedConnection, "true", null, 3000);
   await close(sshServer);
 
-  const encryptedDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "terma-encrypted-key-"));
-  const encryptedKeyPath = path.join(encryptedDirectory, "id_rsa");
+  const encryptedKeyPath = path.join(fixtureSshRoot, "id_rsa_fixture");
   const passphrase = "terma-test-passphrase";
   fs.writeFileSync(encryptedKeyPath, privateKey.export({
     type:"pkcs1",
@@ -225,7 +232,9 @@ async function main() {
   await trustTestHost(keyConnection, "once");
   const keySucceeded = await runPasswordCommand(keyConnection, "true", null, 3000);
   await close(keyServer);
-  fs.rmSync(encryptedDirectory, {recursive:true, force:true});
+  fs.rmSync(fixtureRoot, {recursive:true, force:true});
+  if (previousSshDir === undefined) delete process.env.TERMA_SSH_DIR;
+  else process.env.TERMA_SSH_DIR = previousSshDir;
 
   process.removeListener("uncaughtException", onUncaught);
   process.removeListener("unhandledRejection", onUnhandled);

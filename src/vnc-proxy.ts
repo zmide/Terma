@@ -37,7 +37,7 @@ function handleVncUpgrade(req, socket) {
   let session;
   try {
     const key = validateWebSocketUpgrade(req);
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    const url = new URL(req.url, "http://terma.invalid");
     const profile = vncProfile(Number(url.searchParams.get("id")));
     socket.write([
       "HTTP/1.1 101 Switching Protocols",

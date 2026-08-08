@@ -4,8 +4,10 @@ cd /d "%~dp0"
 
 set "PID_FILE=%~1"
 if "%PID_FILE%"=="" set "PID_FILE=data\web.pid"
-set "URL_FILE=data\web.url"
-set "INFO_FILE=data\web.json"
+for %%I in ("%PID_FILE%") do set "RUNTIME_DIR=%%~dpI"
+set "URL_FILE=%RUNTIME_DIR%web.url"
+set "INFO_FILE=%RUNTIME_DIR%web.json"
+set "TOKEN_FILE=%RUNTIME_DIR%shutdown.token"
 
 if not exist "%PID_FILE%" (
   echo PID file not found: %PID_FILE%
@@ -23,7 +25,7 @@ if "%PORT%"=="" set "PORT=8088"
 set "WEB_URL=http://127.0.0.1:%PORT%"
 if exist "%URL_FILE%" set /p WEB_URL=<"%URL_FILE%"
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { Invoke-RestMethod -Uri '%WEB_URL%/api/shutdown' -Method Post -TimeoutSec 5 | Out-Null; exit 0 } catch { exit 1 }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $headers=@{}; if(Test-Path -LiteralPath '%TOKEN_FILE%'){ $token=(Get-Content -LiteralPath '%TOKEN_FILE%' -Raw).Trim(); if($token){ $headers['X-Terma-Shutdown-Token']=$token } }; Invoke-RestMethod -Uri '%WEB_URL%/api/shutdown' -Method Post -Headers $headers -TimeoutSec 5 | Out-Null; exit 0 } catch { exit 1 }"
 if not errorlevel 1 (
   echo Stopped Terma gracefully, pid=%WEB_PID%
   set "EXIT_CODE=0"
@@ -41,6 +43,7 @@ if errorlevel 1 (
 del "%PID_FILE%" >nul 2>nul
 del "%URL_FILE%" >nul 2>nul
 del "%INFO_FILE%" >nul 2>nul
+del "%TOKEN_FILE%" >nul 2>nul
 set "EXIT_CODE=0"
 goto kill_by_name
 
@@ -50,6 +53,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "$root=(Resolve-Path '.')
 del "%PID_FILE%" >nul 2>nul
 del "%URL_FILE%" >nul 2>nul
 del "%INFO_FILE%" >nul 2>nul
+del "%TOKEN_FILE%" >nul 2>nul
 set "EXIT_CODE=0"
 
 :done

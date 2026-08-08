@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
@@ -45,6 +46,8 @@ const DISPLAY_CLIENT_ARG = "--terma-display-client";
 const LEGACY_DISPLAY_CLIENT_ARG = "--tunneldesk-display-client";
 const DISPLAY_CLIENT_URL_ENV = "TERMA_DISPLAY_CLIENT_URL";
 const LEGACY_DISPLAY_CLIENT_URL_ENV = "TUNNELDESK_DISPLAY_CLIENT_URL";
+const DESKTOP_TOKEN_ENV = "TERMA_DESKTOP_AUTH_TOKEN";
+const LEGACY_DESKTOP_TOKEN_ENV = "TUNNELDESK_DESKTOP_AUTH_TOKEN";
 const LINUX_DISPLAY_SESSION_KEYS = [
   "DISPLAY",
   "WAYLAND_DISPLAY",
@@ -60,6 +63,11 @@ const LINUX_DISPLAY_SESSION_KEYS = [
   "SESSION_MANAGER"
 ];
 const displayClientMode = process.platform === "linux" && (process.argv.includes(DISPLAY_CLIENT_ARG) || process.argv.includes(LEGACY_DISPLAY_CLIENT_ARG));
+let desktopAuthToken = displayClientMode
+  ? String(process.env[DESKTOP_TOKEN_ENV] || process.env[LEGACY_DESKTOP_TOKEN_ENV] || "").trim()
+  : crypto.randomBytes(32).toString("base64url");
+delete process.env[DESKTOP_TOKEN_ENV];
+delete process.env[LEGACY_DESKTOP_TOKEN_ENV];
 const localLinuxDisplaySession = captureLinuxDisplaySession();
 const localLinuxDisplayKey = linuxDisplaySessionKey(localLinuxDisplaySession);
 let displayClientProfileDir = "";
@@ -99,7 +107,7 @@ const NATIVE_SFTP_DRAG_DEBUG = process.env.TERMA_NATIVE_DRAG_DEBUG === "1" || pr
 
 const START_IN_TRAY_ARG = "--start-in-tray";
 const STORAGE_MIGRATION_VERSION = 2;
-const TRANSIENT_DATA_FILES = new Set(["web.pid", "web.url", "web.json"]);
+const TRANSIENT_DATA_FILES = new Set(["web.pid", "web.url", "web.json", "shutdown.token"]);
 
 const singleInstanceLocked = displayClientMode || app.requestSingleInstanceLock({
   termaDisplaySession: localLinuxDisplaySession
@@ -170,7 +178,9 @@ function displayClientEnvironment(session, url) {
   for (const key of LINUX_DISPLAY_SESSION_KEYS) delete environment[key];
   Object.assign(environment, normalizeLinuxDisplaySession(session));
   environment[DISPLAY_CLIENT_URL_ENV] = url;
+  environment[DESKTOP_TOKEN_ENV] = desktopAuthToken;
   delete environment[LEGACY_DISPLAY_CLIENT_URL_ENV];
+  delete environment[LEGACY_DESKTOP_TOKEN_ENV];
   return environment;
 }
 
@@ -870,7 +880,10 @@ function createWindow(options = {}) {
       bringMainWindowToFront();
     }, 120);
   });
-  mainWindow.loadURL(webUrl);
+  loadWindowWithDesktopCookie(mainWindow).catch(error => {
+    console.warn(`failed to install desktop authorization cookie: ${error.message}`);
+    try { mainWindow.loadURL(webUrl); } catch {}
+  });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^(https?|ftp|ssh|telnet):\/\//i.test(url)) shell.openExternal(url);
     return { action: "deny" };
@@ -912,6 +925,24 @@ function urlBelongsToDesktop(value) {
   } catch {
     return false;
   }
+}
+
+async function loadWindowWithDesktopCookie(window) {
+  if (!window || window.isDestroyed()) return;
+  if (!String(webUrl || "").trim()) return;
+  if (desktopAuthToken) {
+    const target = new URL(webUrl);
+    await window.webContents.session.cookies.set({
+      url:`${target.origin}/`,
+      name:"td_desktop",
+      value:desktopAuthToken,
+      path:"/",
+      httpOnly:true,
+      sameSite:"strict",
+      secure:target.protocol === "https:"
+    });
+  }
+  if (!window.isDestroyed()) await window.loadURL(webUrl);
 }
 
 function rendererBelongsToDesktop(event) {
@@ -1541,7 +1572,11 @@ function trayIcon() {
 }
 
 async function fetchJson(pathname, options = {}) {
-  const res = await fetch(`${webUrl}${pathname}`, options);
+  const headers = {
+    ...(options.headers || {}),
+    ...(desktopAuthToken ? {"X-Terma-Desktop-Token":desktopAuthToken} : {})
+  };
+  const res = await fetch(`${webUrl}${pathname}`, {...options, headers});
   if (!res.ok) throw new Error(await res.text() || res.statusText);
   return res.json();
 }
@@ -1987,6 +2022,7 @@ app.whenReady().then(async () => {
     const desktopServerArgs = { ...parseServerArgs(), pidFile:PID_FILE };
     const backend = startServer(desktopServerArgs, {
       exitOnShutdown: false,
+      desktopAuthToken,
       onShutdown: () => {
         quitting = true;
         if (trayStateTimer) clearInterval(trayStateTimer);

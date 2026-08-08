@@ -3,6 +3,8 @@ const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { DATA_DIR, LOG_DIR, DB_PATH } = require("./config");
 const { decryptText, encryptText } = require("./crypto-store");
+const { assertAllowedIdentityPath } = require("./identity-path");
+const { assertSafeExtraArgs } = require("./ssh-command");
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -401,12 +403,14 @@ function ensureConnectionGroup(name) {
 }
 
 function pidRunning(pid) {
-  if (!pid) return false;
+  if (typeof pid === "boolean" || Array.isArray(pid)) return false;
+  const id = Number(pid);
+  if (!Number.isSafeInteger(id) || id <= 1) return false;
   try {
-    process.kill(Number(pid), 0);
+    process.kill(id, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    return error?.code === "EPERM";
   }
 }
 
@@ -415,6 +419,9 @@ function cleanConnection(data, defaultExtraArgs, existing = null) {
     if (!data[key]) throw new Error(`缺少字段: ${key}`);
   }
   const authType = String(data.auth_type || existing?.auth_type || "key") === "password" ? "password" : "key";
+  if (authType === "key" && data.identity_file) {
+    data.identity_file = assertAllowedIdentityPath(String(data.identity_file));
+  }
   if (authType === "key" && data.identity_file && !fs.existsSync(data.identity_file)) {
     throw new Error("私钥路径不存在");
   }
@@ -424,6 +431,8 @@ function cleanConnection(data, defaultExtraArgs, existing = null) {
     ? (submittedPassword || (existing?.ssh_password ? decryptText(existing.ssh_password) : ""))
     : "";
   if (authType === "password" && !password) throw new Error("密码登录需要填写 SSH 密码");
+  const extraArgs = String(data.extra_args || defaultExtraArgs).trim();
+  assertSafeExtraArgs(extraArgs);
   const submittedPassphrase = String(data.private_key_passphrase || "");
   const keepExistingPassphrase = !data.clear_private_key_passphrase && existing?.private_key_passphrase;
   const privateKeyPassphrase = authType === "key"
@@ -461,7 +470,7 @@ function cleanConnection(data, defaultExtraArgs, existing = null) {
     favorite: Number(data.favorite ?? existing?.favorite ?? 0) ? 1 : 0,
     notifications_muted: Number(data.notifications_muted ?? existing?.notifications_muted ?? 0) ? 1 : 0,
     tags: String(data.tags || "").split(/[,，\s]+/).map((item) => item.trim()).filter(Boolean).join(","),
-    extra_args: encryptText(String(data.extra_args || defaultExtraArgs).trim()),
+    extra_args: encryptText(extraArgs),
     autostart_forwards: Number(data.autostart_forwards || 0) ? 1 : 0,
     sort_order: validateSortOrder(data.sort_order ?? existing?.sort_order ?? 1),
     ...cleanTerminalPreferences(data, existing),
@@ -983,7 +992,7 @@ function bulkUpdateConnections(connectionIds, changes: any = {}) {
       assignments.push("auth_type=?", "identity_file=?", "ssh_password=?");
       values.push("password", null, encryptText(password));
     } else if (authType === "key") {
-      const identityFile = String(changes.auth.identity_file || "").trim();
+      const identityFile = assertAllowedIdentityPath(String(changes.auth.identity_file || ""));
       if (!identityFile || !fs.existsSync(identityFile)) throw new Error("请选择存在的私钥文件");
       assignments.push("auth_type=?", "identity_file=?", "ssh_password=?");
       values.push("key", encryptText(identityFile), null);

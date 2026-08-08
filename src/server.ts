@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
 const net = require("node:net");
@@ -36,6 +37,7 @@ const {
   DEFAULT_PORT,
   DEFAULT_EXTRA_ARGS,
   RUNTIME_SETTINGS_FILE,
+  SHUTDOWN_TOKEN_FILE,
   WEB_INFO_FILE,
   WEB_URL_FILE
 } = require("./config");
@@ -175,7 +177,30 @@ const {
   updateLogSettings
 } = require("./logs");
 const { listNotifications, notifyEvent } = require("./notifications");
-const { AuthenticationError, authRequired, createSession, isAuthenticated, isLocalRequest, login, logout, publicSecuritySettings, readSecuritySettings, resetWebAccessSecurity, sameOrigin, secureHeaders, sessionCookie, setPassword, setToken, updateSecurityOptions, writeSecuritySettings } = require("./security");
+const {
+  AuthenticationError,
+  authRequired,
+  createSession,
+  hostAllowed,
+  isAuthenticated,
+  isDirectLoopbackRequest,
+  isDesktopRequest,
+  isLocalRequest,
+  login,
+  logout,
+  publicSecuritySettings,
+  readSecuritySettings,
+  resetWebAccessSecurity,
+  sameOrigin,
+  secureHeaders,
+  sessionCookie,
+  setDesktopAuthToken,
+  setPassword,
+  setToken,
+  updateSecurityOptions,
+  webSocketOriginAllowed,
+  writeSecuritySettings
+} = require("./security");
 const { acceptHostTrust, hostTrustErrorResponse, listTrustedHosts, removeTrustedHost } = require("./ssh-host-trust");
 const { closeJumpConnectionPool, ensureConnectionHostTrusted } = require("./ssh2-client");
 const { disableEncryption, enableEncryption, encryptionReady, encryptText, lockEncryption, unlockEncryption } = require("./crypto-store");
@@ -1342,7 +1367,7 @@ function startLinuxDesktopInstall(connectionId, desktopId, action = "install", g
 
 function loginPage() {
   return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Terma 登录</title><style>
-body{margin:0;min-height:100vh;min-height:100dvh;padding:16px;box-sizing:border-box;display:grid;place-items:center;font:14px system-ui,-apple-system,"Segoe UI",sans-serif;background:#f4f6f8;color:#1f2933;overflow-x:hidden}.card{width:min(360px,100%);box-sizing:border-box;background:#fff;border:1px solid #d6dde3;border-radius:6px;padding:22px;box-shadow:0 12px 32px rgba(15,23,42,.12)}h1{font-size:22px;margin:0 0 8px}.muted{color:#687782;margin-bottom:18px}label{display:block;font-size:12px;color:#687782;margin-bottom:6px}.password-field{position:relative;min-width:0}.password-field input{width:100%;min-width:0;box-sizing:border-box;padding:10px 44px 10px 10px;border:1px solid #ccd4dc;border-radius:4px;font:inherit}.password-toggle{position:absolute;inset:1px 1px 1px auto;width:40px;min-width:40px;margin:0;padding:0;display:grid;place-items:center;border:0;border-radius:3px;background:transparent;color:#52616b;cursor:pointer}.password-toggle:hover{background:#eef2f6;color:#1f2933}.password-toggle:focus-visible{outline:2px solid #2563eb;outline-offset:-3px}.password-toggle svg{width:18px;height:18px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.password-toggle svg[hidden]{display:none}.login-button{width:100%;margin-top:14px;padding:10px;border:0;border-radius:4px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}.err{color:#b42318;min-height:20px;margin-top:10px}</style><div class="card"><h1>Terma</h1><div class="muted">请输入 Web 访问密码。</div><label for="password">密码</label><div class="password-field"><input id="password" type="password" autocomplete="current-password" autofocus><button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false"><svg id="passwordShowIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg><svg id="passwordHideIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 3l18 18"></path><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c6.5 0 10 8 10 8a18.3 18.3 0 0 1-2.3 3.5"></path><path d="M6.6 6.6C3.7 8.5 2 12 2 12s3.5 8 10 8a10.8 10.8 0 0 0 5.4-1.4"></path></svg></button></div><button class="login-button" type="button" onclick="login()">登录</button><div id="err" class="err"></div></div><script>
+body{margin:0;min-height:100vh;min-height:100dvh;padding:16px;box-sizing:border-box;display:grid;place-items:center;font:14px system-ui,-apple-system,"Segoe UI",sans-serif;background:#f4f6f8;color:#1f2933;overflow-x:hidden}.card{width:min(360px,100%);box-sizing:border-box;background:#fff;border:1px solid #d6dde3;border-radius:6px;padding:22px;box-shadow:0 12px 32px rgba(15,23,42,.12)}h1{font-size:22px;margin:0 0 8px}.muted{color:#687782;margin-bottom:18px}label{display:block;font-size:12px;color:#687782;margin-bottom:6px}.password-field{position:relative;min-width:0}.password-field input{width:100%;min-width:0;box-sizing:border-box;padding:10px 44px 10px 10px;border:1px solid #ccd4dc;border-radius:4px;font:inherit}.password-toggle{position:absolute;inset:1px 1px 1px auto;width:40px;min-width:40px;margin:0;padding:0;display:grid;place-items:center;border:0;border-radius:3px;background:transparent;color:#52616b;cursor:pointer}.password-toggle:hover{background:#eef2f6;color:#1f2933}.password-toggle:focus-visible{outline:2px solid #2563eb;outline-offset:-3px}.password-toggle svg{width:18px;height:18px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.password-toggle svg[hidden]{display:none}.login-button{width:100%;margin-top:14px;padding:10px;border:0;border-radius:4px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}.err{color:#b42318;min-height:20px;margin-top:10px}</style><div class="card"><h1>Terma</h1><div class="muted">请输入 Web 访问密码；仅配置 Token 时也可直接输入 Token。</div><label for="password">密码或 Token</label><div class="password-field"><input id="password" type="password" autocomplete="current-password" autofocus><button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false"><svg id="passwordShowIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg><svg id="passwordHideIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 3l18 18"></path><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c6.5 0 10 8 10 8a18.3 18.3 0 0 1-2.3 3.5"></path><path d="M6.6 6.6C3.7 8.5 2 12 2 12s3.5 8 10 8a10.8 10.8 0 0 0 5.4-1.4"></path></svg></button></div><button class="login-button" type="button" onclick="login()">登录</button><div id="err" class="err"></div></div><script>
 const passwordInput=document.getElementById('password');
 const passwordToggle=document.getElementById('passwordToggle');
 const passwordShowIcon=document.getElementById('passwordShowIcon');
@@ -1466,8 +1491,26 @@ function xdmcpTaskResourceKey(connection: any, request: any = {}, task: any = {}
   return `${family}:${Number(connection?.id || connection || 0)}`;
 }
 
+function hasShutdownToken(req) {
+  const provided = String(req.headers["x-terma-shutdown-token"] || "").trim();
+  if (!provided || !shutdownAuthToken) return false;
+  const actual = Buffer.from(provided);
+  const expected = Buffer.from(shutdownAuthToken);
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
 async function handleApi(req, res, pathname) {
+  if (!hostAllowed(req)) return sendJson(res, { error:"Unrecognized Host" }, 421);
   if (!sameOrigin(req)) return sendJson(res, { error: "Forbidden" }, 403);
+  if (req.method === "POST" && pathname === "/api/shutdown") {
+    const sourceWebRequest = !desktopIntegration && isDirectLoopbackRequest(req) && isAuthenticated(req);
+    if (!hasShutdownToken(req) && !isDesktopRequest(req) && !sourceWebRequest) {
+      return sendJson(res, { error:"Forbidden" }, 403);
+    }
+    sendJson(res, { ok:true });
+    shutdown();
+    return;
+  }
   const nativeDragParts = pathname.split("/").filter(Boolean);
   if (
     req.method === "GET"
@@ -1477,7 +1520,7 @@ async function handleApi(req, res, pathname) {
     && nativeDragParts[2] === "native-drag"
     && nativeDragParts[4] === "content"
   ) {
-    if (!isLocalRequest(req) || !desktopIntegration) return sendJson(res, {error:"原生拖出内容只能由本机桌面端读取"}, 403);
+    if (!isDirectLoopbackRequest(req) || !desktopIntegration) return sendJson(res, {error:"原生拖出内容只能由本机桌面端读取"}, 403);
     return streamNativeSftpDragContent(req, res, nativeDragParts[3], Number(nativeDragParts[5]));
   }
   if (
@@ -1487,7 +1530,7 @@ async function handleApi(req, res, pathname) {
     && nativeDragParts[1] === "sftp"
     && nativeDragParts[2] === "native-drag"
   ) {
-    if (!isLocalRequest(req) || !desktopIntegration) return sendJson(res, {error:"原生拖出凭据只能由本机桌面端读取"}, 403);
+    if (!isDirectLoopbackRequest(req) || !desktopIntegration) return sendJson(res, {error:"原生拖出凭据只能由本机桌面端读取"}, 403);
     return sendJson(res, await getNativeSftpDragTicket(nativeDragParts[3]));
   }
   if (
@@ -1497,7 +1540,7 @@ async function handleApi(req, res, pathname) {
     && nativeDragParts[1] === "sftp"
     && nativeDragParts[2] === "native-drag"
   ) {
-    if (!isLocalRequest(req) || !desktopIntegration) {
+    if (!isDirectLoopbackRequest(req) || !desktopIntegration) {
       return sendJson(res, {error:"原生拖出凭据只能由本机桌面端使用"}, 403);
     }
     return sendJson(res, {ok:releaseNativeSftpDragTicket(nativeDragParts[3])});
@@ -1529,13 +1572,13 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "GET" && pathname === "/api/about") return sendJson(res, aboutInfo());
   if (req.method === "GET" && pathname === "/api/legacy-brand-migration") {
-    if (!isLocalRequest(req) || !desktopIntegration?.getLegacyBrandMigration) {
+    if (!isDesktopRequest(req) || !desktopIntegration?.getLegacyBrandMigration) {
       return sendJson(res, {available:false, message:"旧版数据迁移仅能在运行 Terma 的本机桌面版中执行"});
     }
     return sendJson(res, {available:true, ...await Promise.resolve(desktopIntegration.getLegacyBrandMigration())});
   }
   if (req.method === "POST" && pathname === "/api/legacy-brand-migration") {
-    if (!isLocalRequest(req) || !desktopIntegration?.migrateLegacyBrandData) {
+    if (!isDesktopRequest(req) || !desktopIntegration?.migrateLegacyBrandData) {
       return sendJson(res, {error:"旧版数据迁移仅能在运行 Terma 的本机桌面版中执行"}, 403);
     }
     const data = await readJson(req);
@@ -1543,8 +1586,9 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, result, result?.ok ? 202 : 409);
   }
   if (req.method === "GET" && pathname === "/api/desktop-settings") {
-    const localRequest = isLocalRequest(req);
-    const storageManagementAvailable = localRequest || (!desktopIntegration && authRequired(req));
+    const desktopRequest = isDesktopRequest(req);
+    const storageManagementAvailable = desktopRequest
+      || (!desktopIntegration && (isDirectLoopbackRequest(req) || authRequired(req)));
     if (!storageManagementAvailable) return sendJson(res, {available:false, storage_management_available:false});
     if (!desktopIntegration?.getSettings) return sendJson(res, {
       available:false,
@@ -1562,18 +1606,22 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, { available:true, storage_management_available:true, ...(await Promise.resolve(desktopIntegration.getSettings())), storage:storageSettingsView() });
   }
   if (req.method === "PUT" && pathname === "/api/desktop-settings") {
-    if (!isLocalRequest(req) && (desktopIntegration || !authRequired(req))) return sendJson(res, { error:"远程修改数据路径需要启用 Web 密码并登录" }, 403);
+    if (!isDesktopRequest(req) && (desktopIntegration || (!isDirectLoopbackRequest(req) && !authRequired(req)))) {
+      return sendJson(res, { error:"远程修改数据路径需要启用 Web 密码并登录" }, 403);
+    }
     const data = await readJson(req);
     if (!desktopIntegration?.saveSettings) return sendJson(res, saveWebStorageSettings(data));
     return sendJson(res, await Promise.resolve(desktopIntegration.saveSettings(data)));
   }
   if (req.method === "POST" && pathname === "/api/desktop-settings/choose-data-dir") {
-    if (!isLocalRequest(req) || !desktopIntegration?.chooseDataDir) return sendJson(res, { error:"目录选择仅能在本机桌面版中使用" }, 403);
+    if (!isDesktopRequest(req) || !desktopIntegration?.chooseDataDir) return sendJson(res, { error:"目录选择仅能在本机桌面版中使用" }, 403);
     return sendJson(res, { path:await Promise.resolve(desktopIntegration.chooseDataDir()) });
   }
   if (req.method === "GET" && pathname === "/api/storage/directories") {
-    if (!isLocalRequest(req) && (desktopIntegration || !authRequired(req))) return sendJson(res, {error:"远程浏览目录需要启用 Web 密码并登录"}, 403);
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    if (!isDesktopRequest(req) && (desktopIntegration || (!isDirectLoopbackRequest(req) && !authRequired(req)))) {
+      return sendJson(res, {error:"远程浏览目录需要启用 Web 密码并登录"}, 403);
+    }
+    const url = new URL(req.url, "http://terma.invalid");
     return sendJson(res, listLocalDirectories(url.searchParams.get("path") || ""));
   }
   if (req.method === "GET" && pathname === "/api/runtime-settings") return sendJson(res, runtimeSettingsView());
@@ -1599,7 +1647,7 @@ async function handleApi(req, res, pathname) {
       terminal: data.terminal ?? current.terminal
     });
     if (data.sftp_download_directory !== undefined && desktopIntegration) {
-      if (!isLocalRequest(req) || !desktopIntegration?.validateDownloadDirectory) return sendJson(res, { error:"下载目录只能在本机桌面端中修改" }, 403);
+      if (!isDesktopRequest(req) || !desktopIntegration?.validateDownloadDirectory) return sendJson(res, { error:"下载目录只能在本机桌面端中修改" }, 403);
       await Promise.resolve(desktopIntegration.validateDownloadDirectory(next.sftp_download_directory));
     }
     if (data.listen_hosts !== undefined || data.listen_port !== undefined) {
@@ -1620,18 +1668,12 @@ async function handleApi(req, res, pathname) {
     checker:updateChecker,
     installer:updateInstaller,
     sendJson,
-    isLocalRequest,
+    isLocalRequest:isDesktopRequest,
     canOpenPackage:()=>Boolean(desktopIntegration?.openUpdatePackage),
     canOpenDirectory:()=>Boolean(desktopIntegration?.openUpdateDirectory),
     openPackage:(file)=>Promise.resolve(desktopIntegration.openUpdatePackage(file)),
     openDirectory:(file)=>Promise.resolve(desktopIntegration.openUpdateDirectory(file))
   })) return;
-  if (req.method === "POST" && pathname === "/api/shutdown") {
-    if (!isLocalRequest(req)) return sendJson(res, { error: "Forbidden" }, 403);
-    sendJson(res, { ok: true });
-    shutdown();
-    return;
-  }
   if (req.method === "GET" && pathname === "/api/identity-files") return sendJson(res, listIdentityFiles());
   if (req.method === "GET" && pathname === "/api/identity-files/info") return sendJson(res, { items:listIdentityFiles(), upload_directory:PROJECT_SSH_DIR });
   if (req.method === "POST" && pathname === "/api/identity-files/check") {
@@ -1664,11 +1706,11 @@ async function handleApi(req, res, pathname) {
   const snapshotDelete = pathname.match(/^\/api\/config-snapshots\/([A-Za-z0-9-]+)$/);
   if (req.method === "DELETE" && snapshotDelete) return sendJson(res, deleteConfigSnapshot(snapshotDelete[1]));
   if (req.method === "GET" && pathname === "/api/notifications") {
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    const url = new URL(req.url, "http://terma.invalid");
     return sendJson(res, listNotifications(Number(url.searchParams.get("since") || 0)));
   }
   if (req.method === "GET" && pathname === "/api/backup/database") {
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    const url = new URL(req.url, "http://terma.invalid");
     const includePasswords = url.searchParams.get("include_passwords") === "1";
     const exported = exportDatabaseFile(includePasswords);
     res.writeHead(200, {
@@ -1812,8 +1854,8 @@ async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/remote-profiles") return sendJson(res, listRemoteProfiles());
   if (req.method === "GET" && pathname === "/api/serial/ports") return sendJson(res, await listSerialPorts());
   if (req.method === "GET" && pathname === "/api/remote-clients/diagnostics") {
-    const integrationAvailable = Boolean(isLocalRequest(req) && desktopIntegration?.remoteClientDiagnostics);
-    const x11 = isLocalRequest(req) && desktopIntegration?.xServerDiagnostics
+    const integrationAvailable = Boolean(isDesktopRequest(req) && desktopIntegration?.remoteClientDiagnostics);
+    const x11 = isDesktopRequest(req) && desktopIntegration?.xServerDiagnostics
       ? await Promise.resolve(desktopIntegration.xServerDiagnostics())
       : x11RuntimeDiagnostics();
     if (!integrationAvailable) return sendJson(res, remoteClientDiagnosticsWithoutDesktopIntegration(x11));
@@ -1836,14 +1878,14 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, {desktop:true, integration_available:true, ...await Promise.resolve(desktopIntegration.remoteClientDiagnostics()), xdmcp, x11});
   }
   if (req.method === "POST" && pathname === "/api/remote-clients/install") {
-    if (!isLocalRequest(req) || !desktopIntegration?.installRemoteClient) return sendJson(res, {error:"客户端只能由本机桌面版安装"}, 403);
+    if (!isDesktopRequest(req) || !desktopIntegration?.installRemoteClient) return sendJson(res, {error:"客户端只能由本机桌面版安装"}, 403);
     const body = await readJson(req);
     const protocol = String(body.protocol || "").toLowerCase();
     if (protocol !== "rdp") return sendJson(res, {error:"当前只支持安装 RDP 客户端"}, 400);
     return sendJson(res, await Promise.resolve(desktopIntegration.installRemoteClient(protocol)));
   }
   if (req.method === "POST" && pathname === "/api/xserver/install") {
-    if (!isLocalRequest(req)) return sendJson(res, {error:"图形组件只能由本机桌面版安装"}, 403);
+    if (!isDesktopRequest(req)) return sendJson(res, {error:"图形组件只能由本机桌面版安装"}, 403);
     if (process.platform === "darwin" && desktopIntegration?.installXQuartz) {
       return sendJson(res, await Promise.resolve(desktopIntegration.installXQuartz()));
     }
@@ -1854,18 +1896,18 @@ async function handleApi(req, res, pathname) {
   }
   if (pathname === "/api/xserver") {
     if (req.method === "GET") {
-      if (isLocalRequest(req) && desktopIntegration?.xServerDiagnostics) {
+      if (isDesktopRequest(req) && desktopIntegration?.xServerDiagnostics) {
         const diagnostics = await Promise.resolve(desktopIntegration.xServerDiagnostics());
         return sendJson(res, {...diagnostics, desktop:true, integration_available:true});
       }
       return sendJson(res, xServerDiagnosticsWithoutDesktopIntegration());
     }
     if (req.method === "POST") {
-      if (!isLocalRequest(req) || !desktopIntegration?.startXServer) return sendJson(res, {error:"X Server 只能由本机桌面端启动"}, 403);
+      if (!isDesktopRequest(req) || !desktopIntegration?.startXServer) return sendJson(res, {error:"X Server 只能由本机桌面端启动"}, 403);
       return sendJson(res, await Promise.resolve(desktopIntegration.startXServer()));
     }
     if (req.method === "DELETE") {
-      if (!isLocalRequest(req) || !desktopIntegration?.stopXServer) return sendJson(res, {error:"X Server 只能由本机桌面端停止"}, 403);
+      if (!isDesktopRequest(req) || !desktopIntegration?.stopXServer) return sendJson(res, {error:"X Server 只能由本机桌面端停止"}, 403);
       return sendJson(res, await Promise.resolve(desktopIntegration.stopXServer()));
     }
   }
@@ -1884,11 +1926,11 @@ async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/forward-templates") return sendJson(res, listForwardTemplates());
   if (req.method === "GET" && pathname === "/api/sftp/jobs") return sendJson(res, listSftpJobs());
   if (pathname === "/api/local-files" || pathname.startsWith("/api/local-files/")) {
-    if (!isLocalRequest(req) || !desktopIntegration?.getDesktopDirectory) {
+    if (!isDesktopRequest(req) || !desktopIntegration?.getDesktopDirectory) {
       return sendJson(res, {error:"本地文件只支持在 Terma 桌面端使用"}, 403);
     }
     if (req.method === "GET" && pathname === "/api/local-files") {
-      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const url = new URL(req.url, "http://terma.invalid");
       const defaultDirectory = await Promise.resolve(desktopIntegration.getDesktopDirectory());
       const location = url.searchParams.get("location") || "directory";
       return sendJson(res, listLocalDirectory(location === "computer" ? "" : url.searchParams.get("path") || defaultDirectory, {
@@ -1966,12 +2008,12 @@ async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/sftp/sync/jobs") return sendJson(res, listSyncJobs());
   if (req.method === "POST" && pathname === "/api/sftp/sync/jobs/clear-finished") return sendJson(res, clearFinishedSyncJobs());
   if (req.method === "POST" && pathname === "/api/sftp/sync/choose-directory") {
-    if (!isLocalRequest(req) || !desktopIntegration?.chooseSyncDirectory) return sendJson(res, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
+    if (!isDesktopRequest(req) || !desktopIntegration?.chooseSyncDirectory) return sendJson(res, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
     return sendJson(res, {path:await Promise.resolve(desktopIntegration.chooseSyncDirectory())});
   }
   if (req.method === "GET" && pathname === "/api/sftp/download-settings") {
     const saved = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
-    const desktop = Boolean(isLocalRequest(req) && desktopIntegration?.getDownloadDirectory);
+    const desktop = Boolean(isDesktopRequest(req) && desktopIntegration?.getDownloadDirectory);
     const defaultDirectory = desktop ? await Promise.resolve(desktopIntegration.getDownloadDirectory()) : "";
     return sendJson(res, {
       delivery_mode: desktop ? "desktop" : "browser",
@@ -1983,11 +2025,11 @@ async function handleApi(req, res, pathname) {
     });
   }
   if (req.method === "POST" && pathname === "/api/sftp/download-settings/choose") {
-    if (!isLocalRequest(req) || !desktopIntegration?.chooseDownloadDirectory) return sendJson(res, { error:"目录选择仅能在本机桌面端中使用" }, 403);
+    if (!isDesktopRequest(req) || !desktopIntegration?.chooseDownloadDirectory) return sendJson(res, { error:"目录选择仅能在本机桌面端中使用" }, 403);
     return sendJson(res, { path:await Promise.resolve(desktopIntegration.chooseDownloadDirectory()) });
   }
   if (req.method === "POST" && pathname === "/api/sftp/download-settings/open") {
-    if (!isLocalRequest(req) || !desktopIntegration?.openDownloadDirectory) return sendJson(res, { error:"打开目录仅能在本机桌面端中使用" }, 403);
+    if (!isDesktopRequest(req) || !desktopIntegration?.openDownloadDirectory) return sendJson(res, { error:"打开目录仅能在本机桌面端中使用" }, 403);
     const saved = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
     const directory = saved.sftp_download_directory || await Promise.resolve(desktopIntegration.getDownloadDirectory());
     return sendJson(res, await Promise.resolve(desktopIntegration.openDownloadDirectory(directory)));
@@ -2067,7 +2109,7 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, await batchRunCommands(data.ids || [], data.command || "", data));
   }
   if (req.method === "GET" && pathname === "/api/health") {
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    const url = new URL(req.url, "http://terma.invalid");
     return sendJson(res, await allConnectionsHealth({force:url.searchParams.get("refresh") === "1"}));
   }
   if (req.method === "GET" && pathname === "/api/forwards/restore-state") return sendJson(res, restoreStateSummary());
@@ -2091,7 +2133,7 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "POST" && pathname === "/api/ports/kill") {
     const data = await readJson(req);
-    const result = killPortOwner(data.pid);
+    const result = await killPortOwner(data.pid, data.port, data.host);
     appendSystemLog(`已尝试关闭端口占用进程：${result.process?.name || "未知程序"} PID ${data.pid}`);
     return sendJson(res, result);
   }
@@ -2301,7 +2343,7 @@ async function handleApi(req, res, pathname) {
       if (["telnet", "serial"].includes(profile.protocol)) return sendJson(res, await testRemoteTerminalProfile(id));
       if (profile.protocol === "vnc") return sendJson(res, await testVncProfile(id));
       if (profile.protocol === "xdmcp") {
-        if (!isLocalRequest(req) || !desktopIntegration?.testXdmcp) return sendJson(res, {ok:false, protocol:"xdmcp", message:"XDMCP 只能由本机桌面版检测"});
+        if (!isDesktopRequest(req) || !desktopIntegration?.testXdmcp) return sendJson(res, {ok:false, protocol:"xdmcp", message:"XDMCP 只能由本机桌面版检测"});
         return sendJson(res, await Promise.resolve(desktopIntegration.testXdmcp({
           id:profile.id,
           protocol:profile.protocol,
@@ -2310,7 +2352,7 @@ async function handleApi(req, res, pathname) {
           options:profile.options
         })));
       }
-      const diagnostics = isLocalRequest(req) && desktopIntegration?.remoteClientDiagnostics
+      const diagnostics = isDesktopRequest(req) && desktopIntegration?.remoteClientDiagnostics
         ? await Promise.resolve(desktopIntegration.remoteClientDiagnostics())
         : {desktop:false, [profile.protocol]:{available:false}};
       return sendJson(res, {
@@ -2367,7 +2409,7 @@ async function handleApi(req, res, pathname) {
     }
     if (req.method === "POST" && parts.length === 4 && parts[3] === "launch") {
       const profile = getRemoteProfile(id);
-      if (!isLocalRequest(req)) return sendJson(res, {error:"图形桌面只能在本机桌面版中打开"}, 403);
+      if (!isDesktopRequest(req)) return sendJson(res, {error:"图形桌面只能在本机桌面版中打开"}, 403);
       if (!["rdp", "vnc", "xdmcp"].includes(profile.protocol)) throw new Error("该连接不是图形桌面配置");
       const launcher = profile.protocol === "xdmcp" ? desktopIntegration?.openXdmcp : desktopIntegration?.openRemoteClient;
       if (!launcher) return sendJson(res, {error:profile.protocol === "xdmcp" ? "当前桌面版不支持 XDMCP" : "当前桌面版不支持系统远程桌面客户端"}, 403);
@@ -2390,7 +2432,7 @@ async function handleApi(req, res, pathname) {
       const profile = getRemoteProfile(id);
       if (profile.protocol !== "ftp") throw new Error("该连接不是 FTP 配置");
       if (req.method === "GET" && parts.length === 4) {
-        const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+        const url = new URL(req.url, "http://terma.invalid");
         return sendJson(res, await listFtpDirectory(id, url.searchParams.get("path") || ""));
       }
       if (req.method === "POST" && parts.length === 5 && parts[4] === "mkdir") {
@@ -2412,7 +2454,7 @@ async function handleApi(req, res, pathname) {
         return sendJson(res, await uploadFtpFile(id, requestedPath, file.filename || "upload.bin", file.data), 201);
       }
       if (req.method === "GET" && parts.length === 5 && parts[4] === "download") {
-        const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+        const url = new URL(req.url, "http://terma.invalid");
         const item = await downloadFtpFile(id, url.searchParams.get("path") || "/", url.searchParams.get("name") || "");
         res.writeHead(200, secureHeaders({
           "Content-Type":"application/octet-stream",
@@ -2463,7 +2505,7 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, await deployGeneratedPublicKey(Number(parts[2]), data.public_path));
   }
   if (req.method === "POST" && parts.length === 5 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "external-tools" && parts[4] === "vscode") {
-    if (!isLocalRequest(req) || !desktopIntegration?.openVsCodeRemote) return sendJson(res, {error:"VS Code Remote SSH 只能在本机桌面端中使用"}, 403);
+    if (!isDesktopRequest(req) || !desktopIntegration?.openVsCodeRemote) return sendJson(res, {error:"VS Code Remote SSH 只能在本机桌面端中使用"}, 403);
     const connection = getConnection(Number(parts[2]));
     const data = await readJson(req);
     return sendJson(res, await Promise.resolve(desktopIntegration.openVsCodeRemote({
@@ -2597,7 +2639,7 @@ async function handleApi(req, res, pathname) {
   if (parts.length >= 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "sftp") {
     const connectionId = Number(parts[2]);
     if (req.method === "POST" && parts.length === 5 && parts[4] === "external-edit") {
-      if (!isLocalRequest(req) || !desktopIntegration?.openExternalFile) return sendJson(res, {error:"外部编辑器只能在本机桌面端中使用"}, 403);
+      if (!isDesktopRequest(req) || !desktopIntegration?.openExternalFile) return sendJson(res, {error:"外部编辑器只能在本机桌面端中使用"}, 403);
       const data = await readJson(req);
       return sendJson(res, await startExternalEdit(connectionId, data.path, {
         editor:data.editor || {},
@@ -2605,11 +2647,11 @@ async function handleApi(req, res, pathname) {
       }), 201);
     }
     if (req.method === "POST" && parts.length === 6 && parts[4] === "sync" && parts[5] === "plan") {
-      if (!isLocalRequest(req) || !desktopIntegration?.chooseSyncDirectory) return sendJson(res, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
+      if (!isDesktopRequest(req) || !desktopIntegration?.chooseSyncDirectory) return sendJson(res, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
       return sendJson(res, startSyncPlanningJob(connectionId, await readJson(req)), 202);
     }
     if (req.method === "POST" && parts.length === 6 && parts[4] === "sync" && parts[5] === "execute") {
-      if (!isLocalRequest(req) || !desktopIntegration?.chooseSyncDirectory) return sendJson(res, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
+      if (!isDesktopRequest(req) || !desktopIntegration?.chooseSyncDirectory) return sendJson(res, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
       const data = await readJson(req);
       return sendJson(res, startSyncJob(data.plan_id, data.selected_indexes, data.overrides), 202);
     }
@@ -2617,13 +2659,13 @@ async function handleApi(req, res, pathname) {
       if (req.method === "GET") return sendJson(res, sftpSessionStatus(connectionId));
       if (req.method === "POST") return sendJson(res, await connectSftpSession(connectionId, { explicit: true }));
       if (req.method === "DELETE") {
-        const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+        const url = new URL(req.url, "http://terma.invalid");
         stopExternalEditsForConnection(connectionId);
         return sendJson(res, disconnectSftpSession(connectionId, { remember: url.searchParams.get("forget") !== "1" }));
       }
     }
     if (req.method === "GET" && parts.length === 4) {
-      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const url = new URL(req.url, "http://terma.invalid");
       const result = await listRemoteDir(connectionId, url.searchParams.get("path") || ".", {
         page: url.searchParams.get("page"),
         page_size: url.searchParams.get("page_size"),
@@ -2637,7 +2679,7 @@ async function handleApi(req, res, pathname) {
     if (req.method === "POST" && parts[4] === "download") {
       const data = await readJson(req);
       const saved = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
-      const desktop = Boolean(isLocalRequest(req) && desktopIntegration?.getDownloadDirectory);
+      const desktop = Boolean(isDesktopRequest(req) && desktopIntegration?.getDownloadDirectory);
       const defaultDirectory = desktop ? await Promise.resolve(desktopIntegration.getDownloadDirectory()) : "";
       return sendJson(res, startDownloadJob(connectionId, data.path || "", {
         deliveryMode: desktop ? "desktop" : "browser",
@@ -2648,7 +2690,7 @@ async function handleApi(req, res, pathname) {
       const data = await readJson(req);
       const paths = Array.isArray(data.paths) ? data.paths : [];
       const saved = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
-      const desktop = Boolean(isLocalRequest(req) && desktopIntegration?.getDownloadDirectory);
+      const desktop = Boolean(isDesktopRequest(req) && desktopIntegration?.getDownloadDirectory);
       const defaultDirectory = desktop ? await Promise.resolve(desktopIntegration.getDownloadDirectory()) : "";
       const targetDirectory = desktop ? (saved.sftp_download_directory || defaultDirectory) : "";
       if (data.mode === "separate") {
@@ -2664,7 +2706,7 @@ async function handleApi(req, res, pathname) {
       }), 202);
     }
     if (req.method === "GET" && parts[4] === "download") {
-      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const url = new URL(req.url, "http://terma.invalid");
       const remotePath = url.searchParams.get("path") || "";
       streamRemoteFile(connectionId, remotePath, res, req);
       return;
@@ -2676,14 +2718,14 @@ async function handleApi(req, res, pathname) {
       });
     }
     if (req.method === "GET" && parts[4] === "read") {
-      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const url = new URL(req.url, "http://terma.invalid");
       const remotePath = url.searchParams.get("path") || "";
       const maximumBytes = readRuntimeSettings(RUNTIME_SETTINGS_FILE).sftp_max_open_file_size_mb * 1024 * 1024;
       const result = await readRemoteTextFile(connectionId, remotePath, url.searchParams.get("encoding") || "", maximumBytes);
       return send(res, 200, { path: remotePath, ...result }, { "Cache-Control": "no-store" });
     }
     if (req.method === "GET" && parts[4] === "preview-image") {
-      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const url = new URL(req.url, "http://terma.invalid");
       const remotePath = url.searchParams.get("path") || "";
       const extension = path.posix.extname(remotePath).toLowerCase();
       const imageTypes = new Map([[".png","image/png"],[".jpg","image/jpeg"],[".jpeg","image/jpeg"],[".gif","image/gif"],[".webp","image/webp"],[".bmp","image/bmp"],[".ico","image/x-icon"],[".svg","image/svg+xml"]]);
@@ -2702,14 +2744,14 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, await planRemoteUploads(connectionId, data.path || ".", data.filenames || []));
     }
     if (req.method === "POST" && parts[4] === "native-drag") {
-      if (!isLocalRequest(req) || !desktopIntegration) return sendJson(res, {error:"拖出到本机只能在桌面版中使用"}, 403);
+      if (!isDesktopRequest(req) || !desktopIntegration) return sendJson(res, {error:"拖出到本机只能在桌面版中使用"}, 403);
       const data = await readJson(req);
       return sendJson(res, await createNativeSftpDragTicket(connectionId, data.paths || [], {
         platform:String(data.platform || process.platform)
       }));
     }
     if (req.method === "POST" && parts[4] === "stage-drag") {
-      if (!isLocalRequest(req) || !desktopIntegration) return sendJson(res, {error:"拖出到本机仅能在桌面版中使用"}, 403);
+      if (!isDesktopRequest(req) || !desktopIntegration) return sendJson(res, {error:"拖出到本机仅能在桌面版中使用"}, 403);
       const data = await readJson(req);
       return sendJson(res, await stageSftpPaths(connectionId, data.paths || []));
     }
@@ -2727,7 +2769,7 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, {...result, remote_path:target.path, renamed:target.renamed}, 201);
     }
     if (req.method === "POST" && parts[4] === "upload") {
-      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const url = new URL(req.url, "http://terma.invalid");
       const dir = url.searchParams.get("path") || ".";
       const filename = decodeURIComponent(String(req.headers["x-file-name"] || url.searchParams.get("filename") || "upload.bin"));
       const conflict = ["overwrite", "rename"].includes(url.searchParams.get("conflict") || "") ? url.searchParams.get("conflict") : "error";
@@ -2911,7 +2953,8 @@ async function handleApi(req, res, pathname) {
 
 function requestHandler(req, res) {
   Promise.resolve().then(async () => {
-    const { pathname } = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    if (!hostAllowed(req)) return sendJson(res, { error:"Unrecognized Host" }, 421);
+    const { pathname } = new URL(req.url, "http://terma.invalid");
     if (pathname.startsWith("/api/")) await handleApi(req, res, pathname);
     else serveStatic(req, res, pathname);
   }).catch((error) => {
@@ -2930,8 +2973,8 @@ function requestHandler(req, res) {
 
 function upgradeHandler(req, socket) {
   try {
-    if (!sameOrigin(req) || !isAuthenticated(req)) return socket.destroy();
-    const { pathname } = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    if (!hostAllowed(req) || !webSocketOriginAllowed(req) || !isAuthenticated(req)) return socket.destroy();
+    const { pathname } = new URL(req.url, "http://terma.invalid");
     if (pathname === "/ws/terminal") return handleTerminalUpgrade(req, socket);
     if (pathname === "/ws/remote-terminal") return handleRemoteTerminalUpgrade(req, socket);
     if (pathname === "/ws/vnc") return handleVncUpgrade(req, socket);
@@ -3000,6 +3043,7 @@ let activeServers: any[] = [];
 let exitOnShutdown = true;
 let onShutdown: null | (() => any) = null;
 let desktopIntegration: any = null;
+let shutdownAuthToken = "";
 const {
   connectionRowsFromBackup,
   storageSettingsView,
@@ -3027,6 +3071,19 @@ let installedUpdateCleanupTimer = null;
 let startupTaskTimer = null;
 let startupEffectsStarted = false;
 let shutdownPromise: Promise<any> | null = null;
+
+function writeShutdownTokenFile(token) {
+  fs.writeFileSync(SHUTDOWN_TOKEN_FILE, `${token}\n`, {encoding:"utf8", mode:0o600});
+  try { fs.chmodSync(SHUTDOWN_TOKEN_FILE, 0o600); } catch {}
+}
+
+function removeShutdownTokenFile(token = shutdownAuthToken) {
+  try {
+    if (!fs.existsSync(SHUTDOWN_TOKEN_FILE)) return;
+    if (token && fs.readFileSync(SHUTDOWN_TOKEN_FILE, "utf8").trim() !== token) return;
+    fs.unlinkSync(SHUTDOWN_TOKEN_FILE);
+  } catch {}
+}
 
 function scheduleInstalledUpdateCleanup(attempt = 0) {
   clearTimeout(installedUpdateCleanupTimer);
@@ -3383,9 +3440,12 @@ async function shutdown() {
       if (fs.existsSync(args.pidFile) && fs.readFileSync(args.pidFile, "utf8").trim() === String(process.pid)) fs.unlinkSync(args.pidFile);
       if (fs.existsSync(WEB_URL_FILE)) fs.unlinkSync(WEB_URL_FILE);
       if (fs.existsSync(WEB_INFO_FILE)) fs.unlinkSync(WEB_INFO_FILE);
+      removeShutdownTokenFile();
     } catch {}
     await closeListeners(activeServers);
     activeServers = [];
+    setDesktopAuthToken("");
+    shutdownAuthToken = "";
     if (exitOnShutdown) process.exit(0);
     if (onShutdown) await Promise.resolve(onShutdown()).catch((error) => console.error(`shutdown callback failed: ${error.message}`));
   })();
@@ -3397,6 +3457,7 @@ function startServer(customArgs: any = parseArgs(), options: any = {}) {
   exitOnShutdown = options.exitOnShutdown !== false;
   onShutdown = typeof options.onShutdown === "function" ? options.onShutdown : null;
   desktopIntegration = options.desktopIntegration || null;
+  setDesktopAuthToken(desktopIntegration ? options.desktopAuthToken : "");
   startupEffectsStarted = false;
   shutdownPromise = null;
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -3409,8 +3470,12 @@ function startServer(customArgs: any = parseArgs(), options: any = {}) {
   const ready = bindWithFallback(args.listen_hosts, args.listen_port).then(async (binding) => {
     activeServers = binding.listeners;
     try {
+      shutdownAuthToken = crypto.randomBytes(32).toString("base64url");
+      writeShutdownTokenFile(shutdownAuthToken);
       completeStartup(binding);
     } catch (error) {
+      removeShutdownTokenFile();
+      shutdownAuthToken = "";
       await closeListeners(activeServers);
       activeServers = [];
       throw error;

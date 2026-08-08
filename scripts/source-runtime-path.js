@@ -8,7 +8,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
-const TRANSIENT_RUNTIME_FILES = ["web.pid", "web.url", "web.json"];
+const TRANSIENT_RUNTIME_FILES = ["web.pid", "web.url", "web.json", "shutdown.token"];
 
 function readJson(file) {
   try {
@@ -187,12 +187,22 @@ function verifiedRuntimeUrl(dataDirectory, pid) {
   }
 }
 
-function requestGracefulShutdown(baseUrl, timeoutMs = 5000) {
+function readShutdownToken(dataDirectory) {
+  try {
+    const token = fs.readFileSync(path.join(dataDirectory, "shutdown.token"), "utf8").trim();
+    return /^[A-Za-z0-9_-]{32,128}$/.test(token) ? token : "";
+  } catch {
+    return "";
+  }
+}
+
+function requestGracefulShutdown(baseUrl, timeoutMs = 5000, shutdownToken = "") {
   if (!baseUrl) return Promise.resolve(false);
   return new Promise(resolve => {
     const url = new URL("/api/shutdown", `${baseUrl}/`);
     const transport = url.protocol === "https:" ? https : http;
-    const request = transport.request(url, { method: "POST", timeout: timeoutMs }, response => {
+    const headers = shutdownToken ? {"X-Terma-Shutdown-Token":shutdownToken} : {};
+    const request = transport.request(url, { method: "POST", timeout: timeoutMs, headers }, response => {
       response.resume();
       response.on("end", () => resolve(response.statusCode >= 200 && response.statusCode < 300));
     });
@@ -253,10 +263,10 @@ async function stopSourceInstances(runtimeState, dependencies = {}) {
       else cleanupRuntimeFiles(dataDirectory, pid);
       continue;
     }
-    const instance = instances.get(pid) || { pid, directories: [], urls: [] };
+    const instance = instances.get(pid) || { pid, directories: [], controls: [] };
     instance.directories.push(dataDirectory);
     const url = verifiedRuntimeUrl(dataDirectory, pid);
-    if (url) instance.urls.push(url);
+    if (url) instance.controls.push({url, token:readShutdownToken(dataDirectory)});
     instances.set(pid, instance);
   }
 
@@ -267,7 +277,10 @@ async function stopSourceInstances(runtimeState, dependencies = {}) {
 
   for (const instance of instances.values()) {
     log(`正在停止当前 Terma 源码实例，pid=${instance.pid}...`);
-    if (instance.urls.length) await gracefulShutdown(instance.urls[0]);
+    if (instance.controls.length) {
+      const control = instance.controls[0];
+      await gracefulShutdown(control.url, 5000, control.token);
+    }
     let stopped = await waitForExit(instance.pid, 8000);
     if (!stopped) {
       if (!isSourceProcess(inspectProcess(instance.pid), runtimeState.projectRoot)) {

@@ -76,8 +76,14 @@ export async function handleSecurityRoutes(
     return true;
   }
   if (request.method === "POST" && pathname === "/api/security/token") {
-    const token = dependencies.setToken();
-    dependencies.sendJson(response, { ...(dependencies.publicSecuritySettings(request) as object), token });
+    const accessToken = dependencies.setToken();
+    const sessionToken = dependencies.createSession();
+    dependencies.send(response, 200, {
+      ...(dependencies.publicSecuritySettings(request) as object),
+      token: accessToken
+    }, {
+      "Set-Cookie": dependencies.sessionCookie(request, sessionToken)
+    });
     return true;
   }
   if (request.method === "POST" && pathname === "/api/security/encryption/enable") {

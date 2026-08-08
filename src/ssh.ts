@@ -1,6 +1,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const net = require("node:net");
+const os = require("node:os");
+const dns = require("node:dns").promises;
 const { spawn, spawnSync } = require("node:child_process");
 const { SSH_BIN, SSH_DIR, USER_SSH_DIR, LOG_DIR, DATA_DIR } = require("./config");
 const { all, getConnection, getForward, run, now, pidRunning } = require("./db");
@@ -17,26 +19,14 @@ const { proxyJumpArgument, structuredOpenSshArgs } = require("./ssh-connection")
 const { diagnoseSshError } = require("./ssh-diagnostics");
 const { buildRemoteStartupCommand } = require("./terminal-startup");
 const { isHostTrustError, systemHostKeyArgs } = require("./ssh-host-trust");
+const { allowedIdentityPath, assertAllowedIdentityPath, looksLikePrivateKeyData } = require("./identity-path");
 
 const RESTORE_STATE_FILE = path.join(DATA_DIR, "forward-state.json");
 let healthMonitorTimer: any = null;
 let healthMonitorBusy = false;
 let healthMonitorTask: Promise<any> | null = null;
-const securedKeyCache = new Set();
+const securedKeyCache = new Map();
 const ssh2Forwards = new Map();
-
-function looksLikePrivateKey(file) {
-  try {
-    const stat = fs.statSync(file);
-    if (!stat.isFile() || stat.size > 1024 * 1024) return false;
-    const name = path.basename(file);
-    if (name.endsWith(".pub") || ["authorized_keys", "known_hosts", "config"].includes(name)) return false;
-    const head = fs.readFileSync(file, "utf8").slice(0, 300);
-    return head.includes("PRIVATE KEY") || name.startsWith("id_") || name.startsWith("identity");
-  } catch {
-    return false;
-  }
-}
 
 function ensureSshDirs() {
   fs.mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 });
@@ -53,29 +43,51 @@ function windowsAclPrincipals(output, file) {
   }).filter(Boolean);
 }
 
-function riskyWindowsAclPrincipals(principals) {
-  const risky = new Set([
-    "everyone",
-    "nt authority\\authenticated users",
-    "builtin\\users",
-    "s-1-1-0",
-    "s-1-5-11",
-    "s-1-5-32-545",
-    "*s-1-1-0",
-    "*s-1-5-11",
-    "*s-1-5-32-545"
-  ]);
-  return principals.filter((principal) => risky.has(principal.toLowerCase()));
+function windowsAllowedAclPrincipals() {
+  const username = String(process.env.USERNAME || "").trim();
+  const domain = String(process.env.USERDOMAIN || "").trim();
+  const account = username ? (domain ? `${domain}\\${username}` : username) : "";
+  return new Set([
+    account,
+    username,
+    "nt authority\\system",
+    "builtin\\administrators",
+    "s-1-5-18",
+    "s-1-5-32-544",
+    "*s-1-5-18",
+    "*s-1-5-32-544"
+  ].map(item => item.toLowerCase()).filter(Boolean));
+}
+
+function unexpectedWindowsAclPrincipals(principals) {
+  const allowed = windowsAllowedAclPrincipals();
+  return principals.filter(principal => !allowed.has(principal.toLowerCase()));
+}
+
+function identityFileSignature(file) {
+  try {
+    const stat = fs.statSync(file);
+    return [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs, stat.mode, stat.nlink].join(":");
+  } catch {
+    return "";
+  }
 }
 
 function securePrivateKeyPermissions(file) {
+  const allowed = assertAllowedIdentityPath(String(file || ""));
+  file = allowed;
   const cacheKey = String(file || "");
-  if (cacheKey && securedKeyCache.has(cacheKey)) return;
+  const signature = identityFileSignature(file);
+  if (process.platform !== "win32" && cacheKey && signature && securedKeyCache.get(cacheKey) === signature) return;
+  let chmodSucceeded = false;
   try {
     fs.chmodSync(file, 0o600);
+    chmodSucceeded = true;
   } catch {}
   if (process.platform !== "win32") {
-    if (cacheKey) securedKeyCache.add(cacheKey);
+    const currentSignature = identityFileSignature(file);
+    if (cacheKey && chmodSucceeded && currentSignature) securedKeyCache.set(cacheKey, currentSignature);
+    else if (cacheKey) securedKeyCache.delete(cacheKey);
     return;
   }
   const username = process.env.USERNAME;
@@ -84,21 +96,16 @@ function securePrivateKeyPermissions(file) {
   try {
     spawnSync("icacls", [file, "/inheritance:r"], { encoding: "utf8" });
     const listing = spawnSync("icacls", [file], { encoding: "utf8" }).stdout || "";
-    const allowed = new Set([
-      account?.toLowerCase(),
-      username?.toLowerCase(),
-      "nt authority\\system",
-      "builtin\\administrators"
-    ].filter(Boolean));
+    const allowed = windowsAllowedAclPrincipals();
     for (const principal of windowsAclPrincipals(listing, file)) {
       if (principal && !allowed.has(principal.toLowerCase())) {
         spawnSync("icacls", [file, "/remove:g", principal], { encoding: "utf8" });
       }
     }
-    if (account) spawnSync("icacls", [file, "/grant:r", `${account}:R`], { encoding: "utf8" });
+    if (account) spawnSync("icacls", [file, "/grant:r", `${account}:F`], { encoding: "utf8" });
     spawnSync("icacls", [file, "/remove:g", "*S-1-5-11", "*S-1-5-32-545", "*S-1-1-0"], { encoding: "utf8" });
   } catch {}
-  if (cacheKey) securedKeyCache.add(cacheKey);
+  if (cacheKey) securedKeyCache.delete(cacheKey);
 }
 
 function identityPermissionStatus(file) {
@@ -112,6 +119,13 @@ function identityPermissionStatus(file) {
     issues: []
   };
   try {
+    const allowed = allowedIdentityPath(String(file || ""));
+    if (!allowed) {
+      item.details = "该文件不在允许的密钥目录中，或不是普通私钥文件";
+      item.issues.push("not-allowed");
+      return item;
+    }
+    file = allowed;
     if (!file || !fs.existsSync(file)) {
       item.details = "私钥文件不存在";
       item.issues.push("missing");
@@ -134,12 +148,12 @@ function identityPermissionStatus(file) {
       return item;
     }
     const principals = windowsAclPrincipals(output, file);
-    const risky = riskyWindowsAclPrincipals(principals);
-    item.ok = principals.length > 0 && risky.length === 0;
+    const unexpected = unexpectedWindowsAclPrincipals(principals);
+    item.ok = principals.length > 0 && unexpected.length === 0;
     item.details = item.ok
       ? "权限正常：仅当前用户、SYSTEM 或 Administrators 等受限账户可访问"
-      : risky.length
-        ? `权限过宽：${risky.join("、")}`
+      : unexpected.length
+        ? `权限过宽或包含未识别账户：${unexpected.join("、")}`
         : "无法识别 Windows ACL 权限主体";
     if (!item.ok) item.issues.push("acl");
     return item;
@@ -151,6 +165,7 @@ function identityPermissionStatus(file) {
 }
 
 function repairIdentityFile(file) {
+  file = assertAllowedIdentityPath(String(file || ""));
   if (!file || !fs.existsSync(file)) throw new Error("私钥文件不存在");
   securePrivateKeyPermissions(file);
   return identityPermissionStatus(file);
@@ -169,9 +184,9 @@ function listIdentityFiles() {
     if (!fs.existsSync(root)) continue;
     for (const name of fs.readdirSync(root).sort()) {
       const file = path.join(root, name);
-      if (!looksLikePrivateKey(file)) continue;
-      if (rootInfo.source === "project") securePrivateKeyPermissions(file);
-      const resolved = fs.realpathSync(file);
+      const resolved = allowedIdentityPath(file);
+      if (!resolved) continue;
+      if (rootInfo.source === "project") securePrivateKeyPermissions(resolved);
       if (seen.has(resolved)) continue;
       seen.add(resolved);
       const status = identityPermissionStatus(resolved);
@@ -206,16 +221,22 @@ function saveUploadedKey(filename, data) {
   ensureSshDirs();
   if (!data.length) throw new Error("上传文件为空");
   if (data.length > 1024 * 1024) throw new Error("私钥文件不能超过 1MB");
-  if (!data.subarray(0, 500).toString("utf8").includes("PRIVATE KEY")) throw new Error("文件看起来不是 SSH 私钥");
   const safe = path.basename(filename || "uploaded_key").replace(/[^A-Za-z0-9._-]/g, "_").replace(/^[._]+|[._]+$/g, "") || "uploaded_key";
-  if (safe.endsWith(".pub")) throw new Error("请选择私钥文件，不要上传 .pub 公钥");
+  if (safe.toLowerCase().endsWith(".pub")) throw new Error("请选择私钥文件，不要上传 .pub 公钥");
+  if (!looksLikePrivateKeyData(safe, data)) throw new Error("文件看起来不是 SSH 私钥");
   let target = path.join(SSH_DIR, safe);
   const ext = path.extname(safe);
   const stem = path.basename(safe, ext);
   for (let i = 1; fs.existsSync(target); i += 1) target = path.join(SSH_DIR, `${stem}-${i}${ext}`);
   fs.writeFileSync(target, data, { mode: 0o600, flag: "wx" });
-  securePrivateKeyPermissions(target);
-  return { label: path.basename(target), path: target, directory: SSH_DIR };
+  try {
+    target = assertAllowedIdentityPath(target);
+    securePrivateKeyPermissions(target);
+    return { label: path.basename(target), path: target, directory: SSH_DIR };
+  } catch (error) {
+    try { fs.rmSync(target, { force: true }); } catch {}
+    throw error;
+  }
 }
 
 function readRestoreState() {
@@ -362,7 +383,7 @@ function runProcess(command, args, timeoutMs = 5000) {
 
 function processInfo(pid) {
   const id = Number(pid);
-  if (!id) return null;
+  if (!Number.isSafeInteger(id) || id <= 1) return null;
   if (process.platform === "win32") {
     const script = `Get-Process -Id ${id} -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,Path | ConvertTo-Json -Compress`;
     const out = spawnSync("powershell.exe", ["-NoProfile", "-Command", script], { encoding: "utf8" });
@@ -379,78 +400,185 @@ function processInfo(pid) {
   return { pid: id, name: `PID ${id}`, path: "" };
 }
 
-async function processInfoAsync(pid) {
-  const id = Number(pid);
-  if (!id) return null;
-  if (process.platform === "win32") {
-    const script = `Get-Process -Id ${id} -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,Path | ConvertTo-Json -Compress`;
-    const out: any = await runProcess("powershell.exe", ["-NoProfile", "-Command", script], 4000);
-    const item = parseJsonOutput(out.stdout, null);
-    if (item) return { pid: Number(item.Id || id), name: item.ProcessName || `PID ${id}`, path: item.Path || "" };
+function normalizeListenerAddress(value, familyHint = "") {
+  let address = String(value || "").trim();
+  if (!address) return "";
+  if (address.startsWith("[") && address.includes("]")) address = address.slice(1, address.indexOf("]"));
+  const zone = address.indexOf("%");
+  if (zone >= 0) address = address.slice(0, zone);
+  const lower = address.toLowerCase();
+  if (lower === "*" || lower === "+") {
+    return String(familyHint).toLowerCase().includes("6") ? "::" : "0.0.0.0";
+  }
+  if (lower === "0.0.0.0") return "0.0.0.0";
+  if (lower === "::") return "::";
+  if (/^::ffff:\d+\.\d+\.\d+\.\d+$/i.test(address)) return address.slice(7);
+  return address.toLowerCase();
+}
+
+function addressFamily(address, familyHint = "") {
+  const literal = net.isIP(address);
+  if (literal) return literal;
+  const hint = String(familyHint || "").toLowerCase();
+  if (hint.includes("6") || hint === "ipv6") return 6;
+  if (hint.includes("4") || hint === "ipv4") return 4;
+  return 0;
+}
+
+function parseListenEndpoint(value, familyHint = "") {
+  let endpoint = String(value || "").trim();
+  if (!endpoint) return null;
+  let port = null;
+  if (endpoint.startsWith("[") && endpoint.includes("]")) {
+    const suffix = endpoint.slice(endpoint.indexOf("]") + 1);
+    if (/^:\d+$/.test(suffix)) port = Number(suffix.slice(1));
+    endpoint = endpoint.slice(0, endpoint.indexOf("]") + 1);
   } else {
-    const out: any = await runProcess("ps", ["-p", String(id), "-o", "pid=,comm=,args="], 4000);
-    const line = String(out.stdout || "").trim();
-    if (line) {
-      const match = line.match(/^\s*(\d+)\s+(\S+)\s*(.*)$/);
-      if (match) return { pid: Number(match[1]), name: match[2], path: match[3] || "" };
+    const colon = endpoint.lastIndexOf(":");
+    if (colon > -1 && /^\d+$/.test(endpoint.slice(colon + 1))) {
+      port = Number(endpoint.slice(colon + 1));
+      endpoint = endpoint.slice(0, colon);
     }
   }
-  return { pid: id, name: `PID ${id}`, path: "" };
+  const address = normalizeListenerAddress(endpoint, familyHint);
+  if (!address) return null;
+  return { address, family: addressFamily(address, familyHint), port };
 }
 
 function uniqueProcesses(items) {
   const map = new Map();
   for (const item of items || []) {
     const pid = Number(item?.pid);
-    if (!pid || map.has(pid)) continue;
-    map.set(pid, { pid, name: item.name || `PID ${pid}`, path: item.path || "" });
+    if (!Number.isSafeInteger(pid) || pid <= 1) continue;
+    const normalizedAddress = item.address ? normalizeListenerAddress(item.address, item.address_family || item.family) : "";
+    const listener = item.local_address
+      ? parseListenEndpoint(item.local_address, item.address_family || item.family)
+      : normalizedAddress
+        ? {address:normalizedAddress, family:addressFamily(normalizedAddress, item.address_family || item.family), port:Number(item.port) || null}
+        : null;
+    if (!map.has(pid)) map.set(pid, { pid, name: item.name || `PID ${pid}`, path: item.path || "", listeners: [] });
+    const current = map.get(pid);
+    if (!current.name || current.name === `PID ${pid}`) current.name = item.name || current.name;
+    if (!current.path) current.path = item.path || "";
+    if (listener?.address && !current.listeners.some((entry) => entry.address === listener.address && entry.family === listener.family)) {
+      current.listeners.push(listener);
+    }
   }
   return [...map.values()];
 }
 
-async function inspectPortOwner(port) {
+function isLocalListenAddress(value) {
+  const address = normalizeListenerAddress(value);
+  if (["0.0.0.0", "::", "::1"].includes(address) || address.startsWith("127.")) return true;
+  const interfaces: any[] = Object.values(os.networkInterfaces()).flat() as any[];
+  return interfaces.some((item) => normalizeListenerAddress(item?.address) === address);
+}
+
+async function resolveListenHost(host) {
+  const value = normalizePortHost(host);
+  const stripped = value.startsWith("[") && value.endsWith("]") ? value.slice(1, -1) : value;
+  if (["", "0.0.0.0"].includes(stripped)) return [{address:"0.0.0.0", family:4}];
+  if (stripped === "::") return [{address:"::", family:6}];
+  const literalFamily = net.isIP(stripped);
+  if (literalFamily) {
+    const address = normalizeListenerAddress(stripped);
+    return isLocalListenAddress(address) ? [{address, family:literalFamily}] : [];
+  }
+  try {
+    const record: any = await dns.lookup(stripped, {verbatim:true});
+    const address = normalizeListenerAddress(record.address);
+    return isLocalListenAddress(address) ? [{address, family:record.family}] : [];
+  } catch {
+    return [];
+  }
+}
+
+function listenerConflictsWithHost(owner, targetAddresses) {
+  if (!targetAddresses.length || !owner?.listeners?.length) return false;
+  return owner.listeners.some((listener) => targetAddresses.some((target) => {
+    if (!listener.family || !target.family || listener.family !== target.family) return false;
+    if (listener.address === target.address) return true;
+    if (listener.family === 4 && (listener.address === "0.0.0.0" || target.address === "0.0.0.0")) return true;
+    if (listener.family === 6 && (listener.address === "::" || target.address === "::")) return true;
+    return false;
+  }));
+}
+
+function parseLsofListeners(text) {
+  const records = [];
+  let current = null;
+  for (const line of String(text || "").split(/\r?\n/)) {
+    if (line.startsWith("p")) {
+      current = {pid:Number(line.slice(1))};
+    } else if (current) {
+      if (line.startsWith("c")) current.name = line.slice(1);
+      else if (line.startsWith("t")) current.family = line.slice(1);
+      else if (line.startsWith("n")) records.push({...current, local_address:line.slice(1)});
+    }
+  }
+  return records;
+}
+
+async function inspectPortOwner(port, host = "127.0.0.1") {
   const targetPort = Number(port);
   if (!targetPort) return [];
+  const targetAddresses = await resolveListenHost(host);
+  if (!targetAddresses.length) return [];
+  let records = [];
   if (process.platform === "win32") {
     const script = [
-      `$items = Get-NetTCPConnection -LocalPort ${targetPort} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique`,
-      `$items | ForEach-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,Path } | ConvertTo-Json -Compress`
+      `$items = @(Get-NetTCPConnection -LocalPort ${targetPort} -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress,AddressFamily,OwningProcess)`,
+      `$items | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; [pscustomobject]@{Id=$_.OwningProcess;ProcessName=$p.ProcessName;Path=$p.Path;LocalAddress=$_.LocalAddress;AddressFamily=$_.AddressFamily} } | ConvertTo-Json -Compress`
     ].join("; ");
     const out: any = await runProcess("powershell.exe", ["-NoProfile", "-Command", script], 5000);
     const data = parseJsonOutput(out.stdout, []);
-    return uniqueProcesses((Array.isArray(data) ? data : [data]).map((item) => ({
+    records = (Array.isArray(data) ? data : [data]).filter(Boolean).map((item) => ({
       pid: item.Id,
       name: item.ProcessName,
-      path: item.Path
-    })));
-  }
-  const lsof: any = await runProcess("lsof", ["-nP", `-iTCP:${targetPort}`, "-sTCP:LISTEN"], 4000);
-  if (lsof.status === 0 && lsof.stdout) {
-    const rows = lsof.stdout.trim().split(/\r?\n/).slice(1);
-    return uniqueProcesses(rows.map((line) => {
-      const parts = line.trim().split(/\s+/);
-      return { name: parts[0], pid: Number(parts[1]), path: parts.slice(8).join(" ") };
+      path: item.Path,
+      address: item.LocalAddress,
+      address_family: item.AddressFamily,
+      port:targetPort
     }));
+  } else {
+    const lsof: any = await runProcess("lsof", ["-nP", "-FpcfnT", "-a", `-iTCP:${targetPort}`, "-sTCP:LISTEN"], 4000);
+    if (lsof.status === 0 && lsof.stdout) {
+      records = parseLsofListeners(lsof.stdout);
+    }
+    if (!records.length) {
+      const ssResults: any[] = await Promise.all([4, 6].map((family) => runProcess("ss", ["-H", `-${family}`, "-ltnp", `sport = :${targetPort}`], 4000)));
+      for (let index = 0; index < ssResults.length; index += 1) {
+        const result = ssResults[index];
+        if (result.status !== 0 || !result.stdout) continue;
+        for (const line of String(result.stdout).split(/\r?\n/)) {
+          const endpoint = line.match(/^\S+\s+\d+\s+\d+\s+(\S+)/)?.[1];
+          const local = parseListenEndpoint(endpoint, index === 0 ? "IPv4" : "IPv6");
+          if (!local) continue;
+          for (const match of line.matchAll(/pid=(\d+)/g)) records.push({pid:Number(match[1]), address:local.address, address_family:local.family, port:local.port});
+        }
+      }
+    }
+    if (!records.length) {
+      const netstat: any = await runProcess("netstat", ["-ltnp"], 4000);
+      if (netstat.status === 0 && netstat.stdout) {
+        records = String(netstat.stdout).split(/\r?\n/).map((line) => {
+          const parts = line.trim().split(/\s+/);
+          const local = parseListenEndpoint(parts[3], parts[0]);
+          const match = parts.find((part) => /^(\d+)\/[^\s]+$/.test(part));
+          return local?.port === targetPort && match
+            ? {pid:Number(match.split("/")[0]), address:local.address, address_family:local.family, port:local.port, name:match.split("/")[1]}
+            : null;
+        }).filter(Boolean);
+      }
+    }
   }
-  const ss: any = await runProcess("ss", ["-ltnp", `sport = :${targetPort}`], 4000);
-  if (ss.status === 0 && ss.stdout) {
-    const matches = [...ss.stdout.matchAll(/pid=(\d+),/g)];
-    return uniqueProcesses((await Promise.all(matches.map((match) => processInfoAsync(Number(match[1]))))).filter(Boolean));
-  }
-  const netstat: any = await runProcess("netstat", ["-ltnp"], 4000);
-  if (netstat.status === 0 && netstat.stdout) {
-    const rows = netstat.stdout.split(/\r?\n/).filter((line) => line.includes(`:${targetPort} `));
-    return uniqueProcesses(rows.map((line) => {
-      const match = line.match(/\s(\d+)\/([^\s]+)\s*$/);
-      return match ? { pid: Number(match[1]), name: match[2], path: "" } : null;
-    }).filter(Boolean));
-  }
-  return [];
+  const owners = uniqueProcesses(records);
+  return owners.filter((owner) => listenerConflictsWithHost(owner, targetAddresses));
 }
 
 async function diagnosePortUsage(host, port) {
   const occupied = !(await portAvailable(host, port));
-  const processes = occupied ? await inspectPortOwner(port) : [];
+  const processes = occupied ? await inspectPortOwner(port, host) : [];
   const label = `${host}:${port}`;
   return {
     host,
@@ -485,23 +613,59 @@ function configuredPortOwner(port, excludeId = 0) {
   return row || null;
 }
 
-function killPortOwner(pid) {
-  const id = Number(pid);
-  if (!id) throw new Error("缺少 PID");
+function normalizeProcessId(value) {
+  if (!["number", "string"].includes(typeof value) || String(value).trim() === "") {
+    throw new Error("PID 必须是大于 1 的安全整数");
+  }
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id <= 1) throw new Error("PID 必须是大于 1 的安全整数");
+  return id;
+}
+
+function normalizePortNumber(value) {
+  if (!["number", "string"].includes(typeof value) || String(value).trim() === "") {
+    throw new Error("端口必须是 1-65535 之间的整数");
+  }
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65535) throw new Error("端口必须是 1-65535 之间的整数");
+  return port;
+}
+
+function normalizePortHost(value) {
+  if (typeof value !== "string") throw new Error("监听地址无效");
+  const host = value.trim();
+  if (!host || host.length > 255 || !/^[A-Za-z0-9:._-]+$/.test(host)) throw new Error("监听地址无效");
+  return host;
+}
+
+async function killPortOwner(pid, port, host) {
+  const id = normalizeProcessId(pid);
+  const targetPort = normalizePortNumber(port);
+  const targetHost = normalizePortHost(host);
   if (id === process.pid) throw new Error("不能关闭当前 Terma 进程");
-  const info = processInfo(id);
-  if (!pidRunning(id)) return { ok: true, already_stopped: true, process: info };
+  const usage = await diagnosePortUsage(targetHost, targetPort);
+  const owner = (usage.processes || []).find(item => Number(item?.pid) === id);
+  if (!owner) {
+    if (!pidRunning(id)) return { ok: true, already_stopped: true, port: targetPort, process: processInfo(id) };
+    const error: any = new Error("端口占用状态已变化，请重新诊断后再试");
+    error.statusCode = 409;
+    throw error;
+  }
   if (process.platform === "win32") {
     const result = spawnSync("taskkill", ["/PID", String(id), "/T", "/F"], { encoding: "utf8" });
-    if (result.status !== 0 && pidRunning(id)) throw new Error((result.stderr || result.stdout || "关闭进程失败").trim());
+    if (result.status !== 0) {
+      if (!pidRunning(id)) return { ok: true, already_stopped: true, port: targetPort, process: owner };
+      throw new Error((result.stderr || result.stdout || "关闭进程失败").trim());
+    }
   } else {
     try {
       process.kill(id, "SIGTERM");
     } catch (error) {
+      if (error?.code === "ESRCH" || !pidRunning(id)) return { ok: true, already_stopped: true, port: targetPort, process: owner };
       throw new Error(error.message);
     }
   }
-  return { ok: true, process: info };
+  return { ok: true, port: targetPort, process: owner };
 }
 
 async function startForward(id) {

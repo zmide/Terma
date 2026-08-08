@@ -8,9 +8,10 @@ const expected = Buffer.from("a\x7f\x1b[A\x1b[B\x1b[C\x1b[D");
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "terma-pty-"));
 process.env.TERMA_DATA_DIR = path.join(tempDir, "data");
 process.env.TERMA_SSH_DIR = path.join(tempDir, "ssh");
+fs.mkdirSync(process.env.TERMA_SSH_DIR, {recursive:true});
 const { openSshShell } = require("../dist/ssh2-client");
 const { trustTestHost } = require("./ssh-host-trust-test-helper");
-const keyFile = path.join(tempDir, "id_rsa");
+const keyFile = path.join(process.env.TERMA_SSH_DIR, "id_rsa");
 const { privateKey } = generateKeyPairSync("rsa", {
   modulusLength: 2048,
   privateKeyEncoding: { type: "pkcs1", format: "pem" }

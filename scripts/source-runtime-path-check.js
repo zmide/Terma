@@ -61,6 +61,10 @@ async function check(name, callback) {
     assert.match(runtimeCheck, /require\("node:sqlite"\)/);
     assert.match(posixStart, /terma-test-toolchain\/current\/bin/);
     assert.match(posixStart, /\.local\/opt\/node-current\/bin/);
+    assert.match(windowsStart, /api\/auth\/status/);
+    assert.match(posixStart, /api\/auth\/status/);
+    assert.doesNotMatch(windowsStart, /TrimEnd\('\/'\) \+ '\/api\/connections'/);
+    assert.doesNotMatch(posixStart, /API_URL="\$\{1%\/\}\/api\/connections"/);
   });
 
   await check("Linux and macOS source launchers wait in the selected runtime and surface early exits", () => {
@@ -172,29 +176,31 @@ async function check(name, callback) {
     const projectRoot = temporaryRoot();
     const firstData = path.join(projectRoot, "data");
     const secondData = path.join(temporaryRoot(), "data");
+    const shutdownToken = "source-runtime-shutdown-token-1234567890";
     for (const directory of [firstData, secondData]) {
       fs.mkdirSync(directory, { recursive: true });
       fs.writeFileSync(path.join(directory, "web.pid"), "101", "utf8");
       fs.writeFileSync(path.join(directory, "web.url"), "http://127.0.0.1:8088", "utf8");
       writeJson(path.join(directory, "web.json"), { pid: 101 });
+      fs.writeFileSync(path.join(directory, "shutdown.token"), shutdownToken, "utf8");
     }
-    const gracefulUrls = [];
+    const gracefulRequests = [];
     const terminated = [];
     const result = await stopSourceInstances({ projectRoot, candidates: [firstData, secondData] }, {
       inspectProcess: pid => pid === 101 ? {
         Name: "node.exe",
         CommandLine: `node ${path.join(projectRoot, "dist", "server.js")}`
       } : null,
-      gracefulShutdown: async url => { gracefulUrls.push(url); return true; },
+      gracefulShutdown: async (url, timeout, token) => { gracefulRequests.push({url, timeout, token}); return true; },
       waitForExit: async () => true,
       terminateTree: pid => { terminated.push(pid); return true; },
       log() {}
     });
     assert.equal(result.stopped, 1);
-    assert.deepEqual(gracefulUrls, ["http://127.0.0.1:8088"]);
+    assert.deepEqual(gracefulRequests, [{url:"http://127.0.0.1:8088", timeout:5000, token:shutdownToken}]);
     assert.deepEqual(terminated, []);
     for (const directory of [firstData, secondData]) {
-      for (const name of ["web.pid", "web.url", "web.json"]) assert.equal(fs.existsSync(path.join(directory, name)), false);
+      for (const name of ["web.pid", "web.url", "web.json", "shutdown.token"]) assert.equal(fs.existsSync(path.join(directory, name)), false);
     }
   });
 

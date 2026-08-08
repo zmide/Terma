@@ -276,7 +276,7 @@ function handleRemoteTerminalUpgrade(req, socket) {
   let upgraded = false;
   try {
     const key = validateWebSocketUpgrade(req);
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    const url = new URL(req.url, "http://terma.invalid");
     const profile = remoteTerminalProfile(Number(url.searchParams.get("id")));
     socket.write([
       "HTTP/1.1 101 Switching Protocols",

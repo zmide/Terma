@@ -8,6 +8,7 @@ const { EventEmitter } = require("node:events");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-host-trust-"));
 process.env.TERMA_DATA_DIR = path.join(root, "data");
 process.env.TERMA_SSH_DIR = path.join(root, "ssh");
+fs.mkdirSync(process.env.TERMA_SSH_DIR, {recursive:true});
 
 const {
   acceptHostTrust,
@@ -162,7 +163,7 @@ async function main() {
 
   console.log("检查内置 SSH 默认优先和系统 OpenSSH 自动回退...");
   const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength:2048 });
-  const keyFile = path.join(root, "id_rsa");
+  const keyFile = path.join(process.env.TERMA_SSH_DIR, "id_rsa");
   fs.writeFileSync(keyFile, privateKey.export({type:"pkcs1", format:"pem"}), {mode:0o600});
   const keyConnection = {auth_type:"key", identity_file:keyFile, extra_args:"-o ServerAliveInterval=60"};
   assert.equal(sshTransportForConnection(keyConnection), "builtin");

@@ -20,6 +20,7 @@ call :set_runtime_files desktop
 if errorlevel 1 goto failed
 if exist "%URL_FILE%" del "%URL_FILE%" >nul 2>nul
 if exist "%INFO_FILE%" del "%INFO_FILE%" >nul 2>nul
+if exist "%TOKEN_FILE%" del "%TOKEN_FILE%" >nul 2>nul
 set "SERVER_ARGS=%*"
 set "SHOW_LAN_URLS="
 set "LAN_FLAG=%TERMA_LAN: =%"
@@ -76,6 +77,7 @@ if not "%TERMA_WEB_ONLY%"=="1" (
 :start_web
 call :set_runtime_files web
 if errorlevel 1 goto failed
+if exist "%TOKEN_FILE%" del "%TOKEN_FILE%" >nul 2>nul
 node scripts\start-detached.js web %SERVER_ARGS%
 if errorlevel 1 goto failed
 echo Terma is starting in the background.
@@ -135,9 +137,9 @@ if not defined DESKTOP_MODE if not "%TERMA_NO_BROWSER%"=="1" start "" "%WEB_URL%
 goto done
 
 :check_web_api
-powershell -NoProfile -Command "$url='%~1'.TrimEnd('/') + '/api/connections'; try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 $url | Out-Null; exit 0 } catch { exit 1 }" >nul 2>nul
+powershell -NoProfile -Command "$url='%~1'.TrimEnd('/') + '/api/auth/status'; try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 $url | Out-Null; exit 0 } catch { exit 1 }" >nul 2>nul
 if errorlevel 1 (
-  echo Web API health check warning: %~1/api/connections is not ready yet.
+  echo Web API health check warning: %~1/api/auth/status is not ready yet.
 ) else (
   echo Web API OK.
 )
@@ -165,6 +167,7 @@ if not defined RUNTIME_DATA_DIR (
 set "URL_FILE=%RUNTIME_DATA_DIR%\web.url"
 set "INFO_FILE=%RUNTIME_DATA_DIR%\web.json"
 set "PID_FILE=%RUNTIME_DATA_DIR%\web.pid"
+set "TOKEN_FILE=%RUNTIME_DATA_DIR%\shutdown.token"
 exit /b 0
 
 :parse_server_args

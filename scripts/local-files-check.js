@@ -18,7 +18,7 @@ assert.match(server, /pathname === "\/api\/local-files\/rename"/);
 assert.match(server, /pathname === "\/api\/local-files\/delete"/);
 assert.match(server, /pathname === "\/api\/local-files\/create"/);
 assert.match(server, /pathname === "\/api\/local-files\/chmod"/);
-assert.match(server, /!isLocalRequest\(req\) \|\| !desktopIntegration\?\.getDesktopDirectory/);
+assert.match(server, /!isDesktopRequest\(req\) \|\| !desktopIntegration\?\.getDesktopDirectory/);
 assert.match(server, /startLocalDeliveryJob\(Number\(data\.connection_id\), data\.paths \|\| \[\], data\.target/);
 assert.match(server, /pathname === "\/api\/local-files\/receive"[\s\S]*?sendJson\(res, startLocalDeliveryJob\(/);
 assert.match(server, /pathname === "\/api\/local-files\/receive-desktop"[\s\S]*?deliveryMode:"desktop"/);

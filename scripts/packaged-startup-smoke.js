@@ -99,7 +99,11 @@ async function main() {
     if (!Object.prototype.hasOwnProperty.call(xserver, "available")) {
       throw new Error(`包内 X Server 诊断异常：${JSON.stringify(xserver)}`);
     }
-    await fetch(`${base}/api/shutdown`, {method:"POST"}).catch(() => {});
+    const shutdownToken = fs.readFileSync(path.join(userData, "runtime", "data", "shutdown.token"), "utf8").trim();
+    await fetch(`${base}/api/shutdown`, {
+      method:"POST",
+      headers:{"X-Terma-Shutdown-Token":shutdownToken}
+    }).catch(() => {});
     if (!await waitForExit(child, 10000)) {
       child.kill();
       await waitForExit(child, 5000);

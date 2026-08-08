@@ -58,7 +58,7 @@ function handleTerminalUpgrade(req, socket) {
   let upgraded = false;
   try {
     const key = validateWebSocketUpgrade(req);
-    const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+    const url = new URL(req.url, "http://terma.invalid");
     const id = Number(url.searchParams.get("id"));
     if (!id) throw new Error("缺少连接 ID");
     const storedConnection = getConnection(id);

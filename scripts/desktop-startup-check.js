@@ -34,6 +34,7 @@ globalThis.__desktopStartupTestApi = {
   START_IN_TRAY_ARG,
   DISPLAY_CLIENT_ARG,
   DISPLAY_CLIENT_URL_ENV,
+  DESKTOP_TOKEN_ENV,
   displayClientMode,
   PRODUCT_NAME,
   PRODUCT_ID,
@@ -119,6 +120,7 @@ function createHarness({
     appPathOverrides: new Map(),
     spawnCalls: [],
     scheduledTimeouts: [],
+    desktopCookies: [],
     xServerRuntimeCreateCount: 0,
     temporaryRoot,
     appData,
@@ -146,10 +148,19 @@ function createHarness({
       this.alwaysOnTopCalls = [];
       this.visibleOnAllWorkspacesCalls = [];
       this.minimized = false;
+      this.loadedUrl = "";
       this.onceHandlers = new Map();
       this.handlers = new Map();
       this.webContentsOnceHandlers = new Map();
       this.webContents = {
+        session: {
+          cookies: {
+            set: details => {
+              state.desktopCookies.push(details);
+              return Promise.resolve();
+            }
+          }
+        },
         once: (event, handler) => {
           this.webContentsOnceHandlers.set(event, handler);
         },
@@ -306,6 +317,7 @@ function createHarness({
     },
     require(id) {
       if (id === "electron") return electron;
+      if (id === "node:crypto") return { randomBytes: size => Buffer.alloc(size, 0x5a) };
       if (id === "node:fs") return fs;
       if (id === "node:path") return path;
       if (id === "node:child_process") return {
@@ -523,6 +535,10 @@ check("A second launch on the same Linux DISPLAY focuses the existing window", (
   api.setWebUrl("http://127.0.0.1:8088");
   api.createWindow();
   const window = state.windows[0];
+  assert.equal(state.desktopCookies.length, 1);
+  assert.equal(state.desktopCookies[0].name, "td_desktop");
+  assert.equal(state.desktopCookies[0].httpOnly, true);
+  assert.equal(state.desktopCookies[0].sameSite, "strict");
   window.emitOnce("ready-to-show");
   window.hide();
   const secondInstance = state.appEvents.get("second-instance")?.[0];
@@ -565,6 +581,7 @@ check("A second launch on another Linux DISPLAY queues one isolated display clie
   assert.equal(spawned.options.env.XAUTHORITY, "/run/user/1000/xauth-xdmcp");
   assert.equal(spawned.options.env.DBUS_SESSION_BUS_ADDRESS, "unix:path=/run/user/1000/xdmcp-bus");
   assert.equal(spawned.options.env[api.DISPLAY_CLIENT_URL_ENV], "http://127.0.0.1:8088/");
+  assert.ok(spawned.options.env[api.DESKTOP_TOKEN_ENV]);
 
   secondInstance(null, [], "", {termaDisplaySession:targetSession});
   assert.equal(state.spawnCalls.length, 1);

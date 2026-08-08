@@ -10,6 +10,7 @@ const { buildRemoteStartupCommand } = require("./terminal-startup");
 const { ensureHostTrusted, verifyHostKey } = require("./ssh-host-trust");
 const { splitArgs } = require("./ssh-command");
 const { connectionSettings, ssh2TimingOptions } = require("./ssh-connection");
+const { assertAllowedIdentityPath } = require("./identity-path");
 const { localX11Authorization } = require("./x11");
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { remoteProbeValue } = require("./remote-probe-protocol");
@@ -85,12 +86,13 @@ function unsupportedOpenSshArgument(text) {
 
 function privateKeyCompatibility(file, passphrase = "") {
   try {
-    const stat = fs.statSync(file);
+    const identityFile = assertAllowedIdentityPath(String(file || ""));
+    const stat = fs.statSync(identityFile);
     const passphraseKey = passphrase ? crypto.createHash("sha256").update(String(passphrase)).digest("hex") : "";
-    const cacheKey = `${file}\n${stat.size}\n${stat.mtimeMs}\n${passphraseKey}`;
+    const cacheKey = `${identityFile}\n${stat.size}\n${stat.mtimeMs}\n${passphraseKey}`;
     const cached = keyCompatibilityCache.get(cacheKey);
     if (cached) return cached;
-    const parsed = ssh2Utils.parseKey(fs.readFileSync(file), passphrase || undefined);
+    const parsed = ssh2Utils.parseKey(fs.readFileSync(identityFile), passphrase || undefined);
     const error = Array.isArray(parsed) ? parsed.find((item) => item instanceof Error) : (parsed instanceof Error ? parsed : null);
     const result = error
       ? { supported: false, reason: error.message || "内置 SSH 无法解析该私钥" }
@@ -163,7 +165,8 @@ function passwordConnectOptions(connection) {
 }
 
 function keyConnectOptions(connection) {
-  const identityFile = String(connection?.identity_file || "").trim();
+  const requestedIdentityFile = String(connection?.identity_file || "").trim();
+  const identityFile = requestedIdentityFile ? assertAllowedIdentityPath(requestedIdentityFile) : "";
   const settings = connectionSettings(connection);
   const options: any = {
     host: String(connection.ssh_host || "").trim(),

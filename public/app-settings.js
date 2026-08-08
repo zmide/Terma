@@ -951,6 +951,9 @@ function renderSettings() {
         <label>可信代理 IP</label>
         <input id="securityTrustedProxyAddresses" value="${escAttr((s.trusted_proxy_addresses || []).join(", "))}" placeholder="例如 127.0.0.1, 192.168.1.2">
         <div class="muted">仅来自这些 IP 的请求可以使用 X-Forwarded-For 和 X-Forwarded-Proto。自动模式只在直连 HTTPS 或可信代理明确报告 HTTPS 时发送 Secure Cookie。</div>
+        <label>允许的 Host / 反代域名</label>
+        <input id="securityAllowedHosts" value="${escAttr((s.allowed_hosts || []).join(", "))}" placeholder="例如 terma.example.com, terma.example.com:8443">
+        <div class="muted">直接访问本机、当前机器名或监听 IP 无需填写；使用自定义反代域名时，请填写浏览器实际使用的精确 Host，不支持通配符。</div>
         <div class="muted">登录密码在 5 分钟内连续错误 ${Number(s.login_protection?.max_failures || 5)} 次会锁定来源地址 ${Number(s.login_protection?.lock_seconds || 300)} 秒；过期会话会自动清理。</div>
         <div class="warning">关闭局域网密码后，局域网内设备可能直接操作 SSH、SFTP、密钥、转发和批量命令。</div>
         <div class="actions"><button class="primary" onclick="saveSecurityOptions()">保存认证策略</button><button onclick="logout()">退出登录</button></div>
@@ -974,7 +977,7 @@ function renderSettings() {
         <div class="muted">Web 密码用于浏览器登录，普通使用、手机访问和局域网访问一般只需要设置这个。</div>
         <div class="actions"><button onclick="saveWebPassword()">保存密码</button></div>
         <label>访问 Token <span id="securityTokenState">${s.token_set ? "（已设置）" : "（未设置）"}</span></label>
-        <div class="muted">Token 只给脚本、curl 或第三方工具通过 Bearer Token 调用 API 使用；未设置 Token 时，这类外部 Token 调用不可用。Web 页面和本机访问仍按当前认证策略工作。Token 由系统随机生成，只显示一次。</div>
+        <div class="muted">Token 主要给脚本、curl 或第三方工具通过 Bearer Token 调用 API 使用；未设置 Web 密码而当前访问需要认证时，也可在登录页输入 Token。Token 由系统随机生成，只显示一次。</div>
         <div class="actions"><button id="securityTokenBtn" onclick="generateAccessToken()">${s.token_set ? "重新生成 Token" : "生成 Token"}</button></div>
       </section>
       <section class="security-encryption-section">
@@ -1579,12 +1582,13 @@ async function saveSecurityOptions() {
   const secure_cookie_mode = $("securitySecureCookieMode")?.value || "auto";
   const trusted_proxy_enabled = Boolean($("securityTrustedProxyEnabled")?.checked);
   const trusted_proxy_addresses = String($("securityTrustedProxyAddresses")?.value || "").split(/[\s,]+/).filter(Boolean);
+  const allowed_hosts = String($("securityAllowedHosts")?.value || "").split(/[\s,]+/).filter(Boolean);
   let confirm_unsafe = false;
   if (auth_mode === "off" || !lan_auth_enabled) {
     confirm_unsafe = await confirmModal("关闭局域网访问密码会让同一局域网内设备直接操作 Terma。确认关闭？", "高风险设置", "确认关闭", "取消", true);
     if (!confirm_unsafe) return;
   }
-  securitySettings = await api("/api/security", {method:"PUT", body:JSON.stringify({auth_mode, lan_auth_enabled, secure_cookie_mode, trusted_proxy_enabled, trusted_proxy_addresses, confirm_unsafe})});
+  securitySettings = await api("/api/security", {method:"PUT", body:JSON.stringify({auth_mode, lan_auth_enabled, secure_cookie_mode, trusted_proxy_enabled, trusted_proxy_addresses, allowed_hosts, confirm_unsafe})});
   notify("安全策略已保存", "success");
 }
 

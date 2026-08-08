@@ -10,7 +10,7 @@ const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 
 const SQLITE_HEADER = Buffer.from("SQLite format 3\u0000", "utf8");
-const TRANSIENT_DATA_FILES = new Set(["web.pid", "web.url", "web.json"]);
+const TRANSIENT_DATA_FILES = new Set(["web.pid", "web.url", "web.json", "shutdown.token"]);
 const DATABASE_FILES = new Set(["tunnels.db", "tunnels.db-wal", "tunnels.db-shm"]);
 const KNOWN_TABLES = new Set([
   "app_meta",

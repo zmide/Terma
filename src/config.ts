@@ -27,6 +27,7 @@ const SSH_DIR = PROJECT_SSH_DIR;
 const PID_FILE = path.join(DATA_DIR, "web.pid");
 const WEB_URL_FILE = path.join(DATA_DIR, "web.url");
 const WEB_INFO_FILE = path.join(DATA_DIR, "web.json");
+const SHUTDOWN_TOKEN_FILE = path.join(DATA_DIR, "shutdown.token");
 const RUNTIME_SETTINGS_FILE = path.join(DATA_DIR, "runtime-settings.json");
 const { resolveRuntimeSettings } = require("./runtime-settings");
 const RUNTIME_SETTINGS = resolveRuntimeSettings(RUNTIME_SETTINGS_FILE);
@@ -51,6 +52,7 @@ module.exports = {
   PID_FILE,
   WEB_URL_FILE,
   WEB_INFO_FILE,
+  SHUTDOWN_TOKEN_FILE,
   RUNTIME_SETTINGS_FILE,
   SSH_BIN,
   DEFAULT_HOSTS,

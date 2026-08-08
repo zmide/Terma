@@ -184,12 +184,31 @@ async function main() {
       }
     });
     assert.equal(sessionSettings.active_sessions, 1);
-    assert.equal((await fetch(`${url}/api/auth/logout`, {
+    const rotateTokenResponse = await fetch(`${url}/api/security/token`, {
       method:"POST",
       headers:{Cookie:sessionCookie, "Content-Type":"application/json"},
       body:"{}"
-    })).status, 200);
+    });
+    assert.equal(rotateTokenResponse.status, 200);
+    const rotatedTokenCookie = rotateTokenResponse.headers.get("set-cookie");
+    assert.match(rotatedTokenCookie, /td_session=/);
+    const rotatedSessionCookie = rotatedTokenCookie.split(";")[0];
+    const rotatedTokenResult = await rotateTokenResponse.json();
+    assert.match(rotatedTokenResult.token, /^[A-Za-z0-9_-]{32,128}$/);
     assert.equal((await fetch(`${url}/api/about`, { headers:{Cookie:sessionCookie} })).status, 401);
+    assert.equal((await fetch(`${url}/api/about`, { headers:{Cookie:rotatedSessionCookie} })).status, 200);
+    const tokenLogin = await fetch(`${url}/api/auth/login`, {
+      method:"POST",
+      headers:{"Content-Type":"application/json", "X-Forwarded-For":"192.0.2.12"},
+      body:JSON.stringify({password:rotatedTokenResult.token})
+    });
+    assert.equal(tokenLogin.status, 200);
+    assert.equal((await fetch(`${url}/api/auth/logout`, {
+      method:"POST",
+      headers:{Cookie:rotatedSessionCookie, "Content-Type":"application/json"},
+      body:"{}"
+    })).status, 200);
+    assert.equal((await fetch(`${url}/api/about`, { headers:{Cookie:rotatedSessionCookie} })).status, 401);
     console.log("Web 登录集成检查通过：来源锁定、Retry-After、随机密码、会话策略保存、动态 Cookie 有效期和注销");
   } catch (error) {
     if (output.length) console.error(output.join("").slice(-12000));

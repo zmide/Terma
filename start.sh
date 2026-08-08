@@ -117,6 +117,7 @@ set_runtime_files() {
   URL_FILE="$RUNTIME_DATA_DIR/web.url"
   INFO_FILE="$RUNTIME_DATA_DIR/web.json"
   PID_FILE="$RUNTIME_DATA_DIR/web.pid"
+  TOKEN_FILE="$RUNTIME_DATA_DIR/shutdown.token"
   STATUS_FILE="$RUNTIME_DATA_DIR/startup-status.json"
   mkdir -p "$RUNTIME_DATA_DIR" "$PROJECT_DATA_DIR"
 }
@@ -148,9 +149,9 @@ check_existing_instance() {
     CANDIDATE_PID_FILE="$DATA_CANDIDATE/web.pid"
     [ -f "$CANDIDATE_PID_FILE" ] || continue
     EXISTING_PID="$(cat "$CANDIDATE_PID_FILE" 2>/dev/null || true)"
-    case "$EXISTING_PID" in ''|*[!0-9]*) rm -f "$CANDIDATE_PID_FILE" ;; *)
+    case "$EXISTING_PID" in ''|*[!0-9]*) rm -f "$CANDIDATE_PID_FILE" "$DATA_CANDIDATE/web.url" "$DATA_CANDIDATE/web.json" "$DATA_CANDIDATE/shutdown.token" ;; *)
       if ! pid_is_running "$EXISTING_PID"; then
-        rm -f "$DATA_CANDIDATE/web.pid" "$DATA_CANDIDATE/web.url" "$DATA_CANDIDATE/web.json"
+        rm -f "$DATA_CANDIDATE/web.pid" "$DATA_CANDIDATE/web.url" "$DATA_CANDIDATE/web.json" "$DATA_CANDIDATE/shutdown.token"
         continue
       fi
       PROCESS_COMMAND="$(process_command "$EXISTING_PID")"
@@ -162,7 +163,7 @@ check_existing_instance() {
           return 0
         fi
         echo "Ignoring a stale Terma PID file that now belongs to pid=$EXISTING_PID."
-        rm -f "$DATA_CANDIDATE/web.pid" "$DATA_CANDIDATE/web.url" "$DATA_CANDIDATE/web.json"
+        rm -f "$DATA_CANDIDATE/web.pid" "$DATA_CANDIDATE/web.url" "$DATA_CANDIDATE/web.json" "$DATA_CANDIDATE/shutdown.token"
         continue
       fi
       echo "Terma is already running, pid=$EXISTING_PID"
@@ -244,7 +245,7 @@ open_url() {
 }
 
 check_web_api() {
-  API_URL="${1%/}/api/connections"
+  API_URL="${1%/}/api/auth/status"
   if command -v curl >/dev/null 2>&1; then
     curl -fsS --max-time 3 "$API_URL" >/dev/null 2>&1 && { echo "Web API OK."; return 0; }
   elif command -v wget >/dev/null 2>&1; then
@@ -296,7 +297,7 @@ wait_for_url() {
 if [ "$1" = "--foreground" ]; then
   shift
   set_runtime_files "$WEB_DATA_DIR"
-  rm -f "$URL_FILE" "$INFO_FILE"
+  rm -f "$URL_FILE" "$INFO_FILE" "$TOKEN_FILE"
   TERMA_DATA_DIR="$WEB_DATA_DIR" node dist/server.js "$@"
   exit $?
 fi
@@ -317,7 +318,7 @@ if [ "$TERMA_WEB_ONLY" != "1" ] && has_gui && [ -x node_modules/.bin/electron ];
   if electron_ready; then
     npm run native:build:if-needed || echo "Native SFTP drag build failed; desktop mode will use the available fallback."
     set_runtime_files "$DESKTOP_DATA_DIR"
-    rm -f "$URL_FILE" "$INFO_FILE"
+    rm -f "$URL_FILE" "$INFO_FILE" "$TOKEN_FILE"
     DESKTOP_ARGS=""
     if [ "$(uname -s 2>/dev/null)" = "Linux" ] && [ "$(id -u 2>/dev/null)" = "0" ]; then
       DESKTOP_ARGS="--no-sandbox $DESKTOP_ARGS"
@@ -341,7 +342,7 @@ if [ "$TERMA_WEB_ONLY" != "1" ] && has_gui && [ -x node_modules/.bin/electron ];
 fi
 
 set_runtime_files "$WEB_DATA_DIR"
-rm -f "$URL_FILE" "$INFO_FILE"
+rm -f "$URL_FILE" "$INFO_FILE" "$TOKEN_FILE"
 STARTED_PID="$(TERMA_DATA_DIR="$WEB_DATA_DIR" TERMA_START_PRINT_PID=1 node scripts/start-detached.js web "$@")"
 if [ -z "$STARTED_PID" ]; then
   print_startup_diagnostics

@@ -71,13 +71,16 @@ wait_for_exit() {
 
 request_shutdown() {
   SHUTDOWN_URL="$1"
+  SHUTDOWN_TOKEN_FILE="$2"
   [ -n "$SHUTDOWN_URL" ] || return 1
+  SHUTDOWN_TOKEN="$(cat "$SHUTDOWN_TOKEN_FILE" 2>/dev/null || true)"
+  [ -n "$SHUTDOWN_TOKEN" ] || return 1
   if command -v curl >/dev/null 2>&1; then
-    curl -fsS --max-time 5 -X POST "${SHUTDOWN_URL%/}/api/shutdown" >/dev/null 2>&1
+    curl -fsS --max-time 5 -X POST -H "X-Terma-Shutdown-Token: $SHUTDOWN_TOKEN" "${SHUTDOWN_URL%/}/api/shutdown" >/dev/null 2>&1
   elif command -v wget >/dev/null 2>&1; then
-    wget -q -T 5 --method=POST -O /dev/null "${SHUTDOWN_URL%/}/api/shutdown" >/dev/null 2>&1
+    wget -q -T 5 --method=POST --header="X-Terma-Shutdown-Token: $SHUTDOWN_TOKEN" -O /dev/null "${SHUTDOWN_URL%/}/api/shutdown" >/dev/null 2>&1
   elif select_node_path; then
-    node -e "fetch(process.argv[1] + '/api/shutdown', {method:'POST'}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" "${SHUTDOWN_URL%/}"
+    node -e "fetch(process.argv[1] + '/api/shutdown', {method:'POST',headers:{'X-Terma-Shutdown-Token':process.argv[2]}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" "${SHUTDOWN_URL%/}" "$SHUTDOWN_TOKEN"
   else
     return 1
   fi
@@ -85,7 +88,7 @@ request_shutdown() {
 
 cleanup_runtime_files() {
   DATA_DIRECTORY="$1"
-  rm -f "$DATA_DIRECTORY/web.pid" "$DATA_DIRECTORY/web.url" "$DATA_DIRECTORY/web.json"
+  rm -f "$DATA_DIRECTORY/web.pid" "$DATA_DIRECTORY/web.url" "$DATA_DIRECTORY/web.json" "$DATA_DIRECTORY/shutdown.token"
 }
 
 stop_runtime() {
@@ -118,7 +121,7 @@ stop_runtime() {
   fi
 
   RUNTIME_URL="$(cat "$DATA_DIRECTORY/web.url" 2>/dev/null || true)"
-  request_shutdown "$RUNTIME_URL" || true
+  request_shutdown "$RUNTIME_URL" "$DATA_DIRECTORY/shutdown.token" || true
   if ! wait_for_exit "$RUNTIME_PID"; then
     CURRENT_COMMAND="$(process_command "$RUNTIME_PID")"
     if source_process "$CURRENT_COMMAND"; then

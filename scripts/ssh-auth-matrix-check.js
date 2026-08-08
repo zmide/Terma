@@ -8,6 +8,9 @@ const { Server } = require("ssh2");
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-auth-matrix-"));
 process.env.TERMA_DATA_DIR = root;
+const sshRoot = path.join(root, ".ssh");
+process.env.TERMA_SSH_DIR = sshRoot;
+fs.mkdirSync(sshRoot, {recursive:true});
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -42,7 +45,7 @@ function commandServer(hostKey) {
 async function main() {
   const { privateKey } = crypto.generateKeyPairSync("rsa", {modulusLength:2048});
   const hostKey = privateKey.export({type:"pkcs1", format:"pem"});
-  const encryptedKey = path.join(root, "id_rsa");
+  const encryptedKey = path.join(sshRoot, "id_rsa");
   fs.writeFileSync(encryptedKey, privateKey.export({type:"pkcs1", format:"pem", cipher:"aes-256-cbc", passphrase:"key-passphrase"}));
 
   const targetServer = commandServer(hostKey);

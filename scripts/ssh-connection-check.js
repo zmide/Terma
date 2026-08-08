@@ -1,11 +1,20 @@
 const assert = require("node:assert/strict");
+const { generateKeyPairSync } = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-ssh-connection-"));
-process.env.TERMA_DATA_DIR = temporaryRoot;
-fs.writeFileSync(path.join(temporaryRoot, "id_ed25519"), "test-key-placeholder");
+const temporaryDataDir = path.join(temporaryRoot, "data");
+const temporarySshDir = path.join(temporaryRoot, ".ssh");
+process.env.TERMA_DATA_DIR = temporaryDataDir;
+process.env.TERMA_SSH_DIR = temporarySshDir;
+fs.mkdirSync(temporarySshDir, {recursive:true});
+const { privateKey } = generateKeyPairSync("rsa", {
+  modulusLength:2048,
+  privateKeyEncoding:{type:"pkcs1", format:"pem"}
+});
+fs.writeFileSync(path.join(temporarySshDir, "id_ed25519"), privateKey, {mode:0o600});
 
 const {
   closeDatabase,
@@ -32,7 +41,7 @@ function connection(name, overrides={}) {
     ssh_port:22,
     ssh_user:"tester",
     auth_type:"key",
-    identity_file:path.join(temporaryRoot, "id_ed25519"),
+    identity_file:path.join(temporarySshDir, "id_ed25519"),
     private_key_passphrase:"secret-passphrase",
     ssh_agent_mode:"off",
     connect_timeout_seconds:17,

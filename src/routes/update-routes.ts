@@ -44,7 +44,7 @@ export async function handleUpdateRoutes(
     return true;
   }
   if (request.method === "GET" && pathname === "/api/updates/check") {
-    const url = new URL(request.url || pathname, `http://${request.headers.host || "localhost"}`);
+    const url = new URL(request.url || pathname, "http://terma.invalid");
     try {
       sendJson(response, await checker.check({ force: url.searchParams.get("force") === "1" }));
     } catch (error) {
@@ -54,7 +54,7 @@ export async function handleUpdateRoutes(
     return true;
   }
   if (request.method === "POST" && pathname === "/api/updates/ignore") {
-    const url = new URL(request.url || pathname, `http://${request.headers.host || "localhost"}`);
+    const url = new URL(request.url || pathname, "http://terma.invalid");
     const enabled = url.searchParams.get("enabled");
     if (!["0", "1"].includes(String(enabled))) {
       sendJson(response, { error: "忽略更新设置无效" }, 400);

@@ -27,7 +27,7 @@ export async function handleLogRoutes(
     return true;
   }
   if (method === "GET" && pathname === "/api/logs/read") {
-    const url = new URL(request.url || pathname, `http://${request.headers.host || "localhost"}`);
+    const url = new URL(request.url || pathname, "http://terma.invalid");
     const logPath = url.searchParams.get("path") || "";
     const raw = url.searchParams.get("raw") === "1";
     if (url.searchParams.get("download") === "1") {

@@ -61,8 +61,14 @@ async function trustConnection(url, connectionId) {
 
 async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-terminal-startup-api-"));
-  const keyFile = path.join(root, "fixture-key");
-  fs.writeFileSync(keyFile, "fixture", { mode:0o600 });
+  const sshRoot = path.join(root, ".ssh");
+  fs.mkdirSync(sshRoot, {recursive:true});
+  const keyFile = path.join(sshRoot, "id_rsa_fixture");
+  const { privateKey: fixturePrivateKey } = generateKeyPairSync("rsa", {
+    modulusLength:2048,
+    privateKeyEncoding:{ type:"pkcs1", format:"pem" }
+  });
+  fs.writeFileSync(keyFile, fixturePrivateKey, { mode:0o600 });
   const port = await availablePort();
   const url = `http://127.0.0.1:${port}`;
   const output = [];

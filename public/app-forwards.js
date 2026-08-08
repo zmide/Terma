@@ -531,7 +531,7 @@ async function offerKillPortOwners(diagnosis) {
   if (!await confirmModal(`${diagnosis.message}\n\n${detail}\n\n是否尝试关闭这些占用程序？`, "关闭占用程序", "尝试关闭", "取消", true)) return false;
   for (const p of processes) {
     if (!await confirmModal(`确认关闭 ${p.name || "未知程序"} PID ${p.pid}？`, "确认关闭进程", "关闭", "跳过", true)) continue;
-    await api("/api/ports/kill", {method:"POST", body:JSON.stringify({pid:p.pid})});
+    await api("/api/ports/kill", {method:"POST", body:JSON.stringify({pid:p.pid, host:diagnosis.host, port:diagnosis.port})});
   }
   return true;
 }
