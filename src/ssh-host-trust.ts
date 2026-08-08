@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { Client } = require("ssh2");
 const { DATA_DIR } = require("./config");
+const { ensurePrivateDirectory } = require("./storage-permissions");
 
 const TRUST_STORE_FILE = path.join(DATA_DIR, "ssh-host-trust.json");
 const KNOWN_HOSTS_FILE = path.join(DATA_DIR, "ssh-known-hosts");
@@ -132,14 +133,14 @@ function knownHostsLine(record) {
 }
 
 function writeKnownHosts(records, file = KNOWN_HOSTS_FILE) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  ensurePrivateDirectory(path.dirname(file));
   const body = records.map(knownHostsLine).join("\n");
   fs.writeFileSync(file, body ? `${body}\n` : "", { encoding: "utf8", mode: 0o600 });
   try { fs.chmodSync(file, 0o600); } catch {}
 }
 
 function writeStore(store) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  ensurePrivateDirectory(DATA_DIR);
   const normalized = { version: 1, hosts: store.hosts.map(normalizeRecord) };
   const temporary = `${TRUST_STORE_FILE}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(temporary, JSON.stringify(normalized, null, 2), { encoding: "utf8", mode: 0o600 });
@@ -167,7 +168,7 @@ function cleanupTransientState() {
     if (item.expires_at <= now || item.remaining <= 0) onceTrustedKeys.delete(key);
   }
   try {
-    fs.mkdirSync(ONCE_DIRECTORY, { recursive: true });
+    ensurePrivateDirectory(ONCE_DIRECTORY);
     for (const name of fs.readdirSync(ONCE_DIRECTORY)) {
       const file = path.join(ONCE_DIRECTORY, name);
       try {
@@ -258,11 +259,33 @@ function acceptHostTrust(token, mode) {
   return { ok: true, mode, record };
 }
 
-function listTrustedHosts() {
+function sortedTrustedHosts() {
   return readStore().hosts
     .slice()
     .sort((left, right) => left.host_label.localeCompare(right.host_label) || left.key_type.localeCompare(right.key_type))
     .map(({ key_base64, ...record }) => record);
+}
+
+function listTrustedHosts() {
+  return sortedTrustedHosts();
+}
+
+function listTrustedHostsPage(options: any = {}) {
+  const all = sortedTrustedHosts();
+  const requestedPage = Number(options.page || 1);
+  const requestedPageSize = Number(options.page_size || options.pageSize || 20);
+  const pageSize = Number.isInteger(requestedPageSize) ? Math.max(1, Math.min(100, requestedPageSize)) : 20;
+  const total = all.length;
+  const totalPages = total ? Math.ceil(total / pageSize) : 0;
+  const page = totalPages ? Math.max(1, Math.min(totalPages, Number.isInteger(requestedPage) ? requestedPage : 1)) : 1;
+  const start = (page - 1) * pageSize;
+  return {
+    hosts: all.slice(start, start + pageSize),
+    page,
+    page_size: pageSize,
+    total,
+    total_pages: totalPages
+  };
 }
 
 function removeTrustedHost(id) {
@@ -423,6 +446,7 @@ module.exports = {
   hostTrustErrorResponse,
   isHostTrustError,
   listTrustedHosts,
+  listTrustedHostsPage,
   probeHostKey,
   removeTrustedHost,
   systemHostKeyArgs,

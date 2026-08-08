@@ -243,6 +243,9 @@ function createStorageRestoreHelpers(options: any = {}) {
   }
 
   function normalizeRestoredCredentials(dbPath, identityBindings = [], credentialBindings = [], encryptedBundle = false, encryptionEnabled = false) {
+    if (encryptionEnabled && typeof encryptionReady === "function" && !encryptionReady()) {
+      throw new Error("当前实例已启用配置加密，请先解锁主密码后再恢复普通数据库");
+    }
     const restoredDb = new DatabaseSync(dbPath);
     try {
       const rows = connectionRowsFromBackup(restoredDb);
@@ -274,13 +277,48 @@ function createStorageRestoreHelpers(options: any = {}) {
         else if (item.password_action === "clear") updatePassword.run(null, item.connection_id);
         else preservePassword.run(item.connection_id);
       }
-      return { ...identities, credential_bindings: [...credentials.values()].map((item) => ({...item, password:item.password ? "(replaced)" : ""})) };
+      let encrypted_fields = 0;
+      if (encryptionEnabled && !encryptedBundle) encrypted_fields = encryptRestoredSecrets(restoredDb);
+      return {
+        ...identities,
+        encrypted_fields,
+        credential_bindings: [...credentials.values()].map((item) => ({...item, password:item.password ? "(replaced)" : ""}))
+      };
     } finally {
       restoredDb.close();
     }
   }
 
-  return {connectionRowsFromBackup, storageSettingsView, pathInside, copyRuntimeDirectory, saveWebStorageSettings, listLocalDirectories, normalizeIdentityBindings, identityTargetMap, normalizeCredentialBindings, inspectRestoreDatabaseFile, normalizeRestoredCredentials};
+  function encryptRestoredSecrets(restoredDb) {
+    const columnsByTable = {
+      connections: ["identity_file", "ssh_password", "private_key_passphrase", "extra_args", "terminal_program_path", "terminal_program_args", "terminal_working_directory"],
+      remote_profiles: ["password"],
+      tunnels: ["identity_file", "extra_args"]
+    };
+    let changed = 0;
+    for (const [table, columns] of Object.entries(columnsByTable)) {
+      const exists = restoredDb.prepare("SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name=?").get(table);
+      if (!exists) continue;
+      const available = new Set(restoredDb.prepare(`PRAGMA table_info(${table})`).all().map((item:any) => item.name));
+      const selected = columns.filter(column => available.has(column));
+      if (!selected.length) continue;
+      const rows = restoredDb.prepare(`SELECT id, ${selected.join(", ")} FROM ${table}`).all();
+      const update = restoredDb.prepare(`UPDATE ${table} SET ${selected.map(column => `${column}=?`).join(", ")} WHERE id=?`);
+      for (const row of rows) {
+        const values = selected.map(column => {
+          const value = row[column];
+          if (value == null || value === "") return value;
+          if (String(value).startsWith("tdenc:v1:")) return value;
+          changed += 1;
+          return encryptText(value);
+        });
+        if (values.some((value, index) => value !== row[selected[index]])) update.run(...values, row.id);
+      }
+    }
+    return changed;
+  }
+
+  return {connectionRowsFromBackup, storageSettingsView, pathInside, copyRuntimeDirectory, saveWebStorageSettings, listLocalDirectories, normalizeIdentityBindings, identityTargetMap, normalizeCredentialBindings, inspectRestoreDatabaseFile, normalizeRestoredCredentials, encryptRestoredSecrets};
 }
 
 module.exports = { createStorageRestoreHelpers };

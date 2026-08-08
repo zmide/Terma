@@ -3,7 +3,7 @@ const crypto = require("node:crypto");
 const { SSH_BIN } = require("./config");
 const { getConnection } = require("./db");
 const { effectiveExtraArgs } = require("./ssh-command");
-const { proxyJumpArgument, structuredOpenSshArgs } = require("./ssh-connection");
+const { proxyJumpArgument, sshDestinationArgs, structuredOpenSshArgs } = require("./ssh-connection");
 const { runPasswordCommand, shouldUseBuiltinSsh, decodeSshOutput } = require("./ssh2-client");
 const { securePrivateKeyPermissions } = require("./ssh");
 const { ensureConnectionHostTrusted, isHostTrustError, systemHostKeyArgs } = require("./ssh-host-trust");
@@ -201,7 +201,9 @@ function getRemotePrivilegeGrant(id, baseConnection: any = null, scope = "") {
   if (baseConnection && (nonEmpty(baseConnection.ssh_host).toLowerCase() !== grant.baseHost || Number(baseConnection.ssh_port || 22) !== grant.basePort)) {
     throw new Error("临时管理员授权与当前 SSH 主机不匹配");
   }
-  if (scope && grant.scope && grant.scope !== scope && grant.reusePolicy === "once") throw new Error("临时管理员授权不能用于此操作");
+  const requestedScope = String(scope || "").trim();
+  const grantedScope = String(grant.scope || "").trim();
+  if (grantedScope !== requestedScope && grantedScope !== "host:*") throw new Error("临时管理员授权不能用于此操作");
   return grant;
 }
 
@@ -263,7 +265,7 @@ function runCommandWithInput(connection: any, command, input, timeoutMs, onChunk
       args.push("-i", connection.identity_file);
     }
     args.push(...effectiveExtraArgs(connection.extra_args));
-    args.push(`${connection.ssh_user}@${connection.ssh_host}`, String(command || ""));
+    args.push(...sshDestinationArgs(connection), String(command || ""));
     const child = spawn(SSH_BIN, args, { stdio:["pipe", "pipe", "pipe"] });
     const stdout = [];
     const stderr = [];

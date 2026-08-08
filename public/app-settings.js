@@ -5,6 +5,10 @@ let desktopSettings = null;
 let sftpDownloadSettings = null;
 let programCacheSettings = null;
 let sshTrustedHosts = [];
+let sshTrustedHostsPage = 1;
+let sshTrustedHostsPageSize = 20;
+let sshTrustedHostsTotal = 0;
+let sshTrustedHostsTotalPages = 0;
 let runtimeSettingsMessage = null;
 let runtimeSettingsCheck = null;
 let licenseModalKeyHandler = null;
@@ -95,12 +99,23 @@ async function loadSecuritySettings() {
   return securitySettings;
 }
 
-async function loadTrustedSshHosts() {
-  const result = await api("/api/ssh/trusted-hosts", {skipSftpConnect:true, skipHostTrustPrompt:true});
+async function loadTrustedSshHosts(page = sshTrustedHostsPage) {
+  const requestedPage = Math.max(1, Number(page) || 1);
+  const result = await api(`/api/ssh/trusted-hosts?page=${requestedPage}&page_size=${sshTrustedHostsPageSize}`, {skipSftpConnect:true, skipHostTrustPrompt:true});
   sshTrustedHosts = Array.isArray(result.hosts) ? result.hosts : [];
+  sshTrustedHostsPage = Number(result.page || requestedPage);
+  sshTrustedHostsPageSize = Number(result.page_size || sshTrustedHostsPageSize);
+  sshTrustedHostsTotal = Number(result.total || 0);
+  sshTrustedHostsTotalPages = Number(result.total_pages || 0);
   const panel = $("sshHostTrustPanel");
   if (panel) panel.outerHTML = sshHostTrustPanelHtml();
   return sshTrustedHosts;
+}
+
+async function changeTrustedSshHostsPage(page) {
+  const target = Math.max(1, Math.min(sshTrustedHostsTotalPages || 1, Number(page) || 1));
+  if (target === sshTrustedHostsPage && sshTrustedHosts.length) return;
+  await loadTrustedSshHosts(target);
 }
 
 function sshHostTrustPanelHtml() {
@@ -108,10 +123,16 @@ function sshHostTrustPanelHtml() {
     <div class="ssh-trust-record-main"><strong>${esc(item.host_label || `${item.host}:${item.port}`)}</strong><span>${esc(item.key_type || "未知算法")}</span><code>${esc(item.fingerprint || "")}</code></div>
     <div class="ssh-trust-record-side"><span>${item.updated_at ? esc(new Date(item.updated_at).toLocaleString("zh-CN", {hour12:false})) : ""}</span><button class="icon-button danger" type="button" title="删除信任记录" aria-label="删除信任记录" onclick="removeTrustedSshHost('${escAttr(item.id)}')">${icon("trash-2")}</button></div>
   </div>`).join("");
+  const pager = sshTrustedHostsTotalPages > 1 ? `<div class="ssh-trust-pager" aria-label="SSH 主机信任分页">
+      <button class="icon-button" type="button" title="上一页" aria-label="上一页" ${sshTrustedHostsPage <= 1 ? "disabled" : ""} onclick="changeTrustedSshHostsPage(${sshTrustedHostsPage - 1})">${icon("chevron-left")}</button>
+      <span>第 ${sshTrustedHostsPage} / ${sshTrustedHostsTotalPages} 页，共 ${sshTrustedHostsTotal} 条</span>
+      <button class="icon-button" type="button" title="下一页" aria-label="下一页" ${sshTrustedHostsPage >= sshTrustedHostsTotalPages ? "disabled" : ""} onclick="changeTrustedSshHostsPage(${sshTrustedHostsPage + 1})">${icon("chevron-right")}</button>
+    </div>` : (sshTrustedHostsTotal ? `<div class="ssh-trust-pager"><span>共 ${sshTrustedHostsTotal} 条</span></div>` : "");
   return `<section id="sshHostTrustPanel" class="ssh-trust-settings-section">
     <h3>SSH 主机信任</h3>
     <div class="muted">首次连接会要求核对主机指纹；已保存的指纹发生变化时会显示红色警告，并由你决定仅本次信任、更新记录或取消。</div>
     <div class="ssh-trust-records">${rows || `<div class="ui-state empty compact"><span class="ui-state-icon" aria-hidden="true"></span><strong>暂无已信任主机</strong><span>首次连接 SSH 主机后会在这里显示。</span></div>`}</div>
+    ${pager}
   </section>`;
 }
 
@@ -954,7 +975,21 @@ function renderSettings() {
         <label>允许的 Host / 反代域名</label>
         <input id="securityAllowedHosts" value="${escAttr((s.allowed_hosts || []).join(", "))}" placeholder="例如 terma.example.com, terma.example.com:8443">
         <div class="muted">直接访问本机、当前机器名或监听 IP 无需填写；使用自定义反代域名时，请填写浏览器实际使用的精确 Host，不支持通配符。</div>
-        <div class="muted">登录密码在 5 分钟内连续错误 ${Number(s.login_protection?.max_failures || 5)} 次会锁定来源地址 ${Number(s.login_protection?.lock_seconds || 300)} 秒；过期会话会自动清理。</div>
+        <h3>登录限速</h3>
+        <label>单来源失败次数</label>
+        <input id="securityLoginMaxFailures" type="number" min="${Number(s.login_protection?.limits?.maxFailures?.min || 1)}" max="${Number(s.login_protection?.limits?.maxFailures?.max || 100)}" value="${Number(s.login_protection?.max_failures || 5)}">
+        <label>单来源统计窗口（秒）</label>
+        <input id="securityLoginWindowSeconds" type="number" min="${Number(s.login_protection?.limits?.windowSeconds?.min || 30)}" max="${Number(s.login_protection?.limits?.windowSeconds?.max || 86400)}" value="${Number(s.login_protection?.window_seconds || 300)}">
+        <label>单来源锁定时间（秒）</label>
+        <input id="securityLoginLockSeconds" type="number" min="${Number(s.login_protection?.limits?.lockSeconds?.min || 1)}" max="${Number(s.login_protection?.limits?.lockSeconds?.max || 86400)}" value="${Number(s.login_protection?.lock_seconds || 300)}">
+        <label class="check-row"><input id="securityGlobalLoginProtectionEnabled" type="checkbox" ${s.login_protection?.global_enabled !== false ? "checked" : ""}> 启用全局登录失败保护</label>
+        <label>全局失败次数</label>
+        <input id="securityGlobalLoginMaxFailures" type="number" min="${Number(s.login_protection?.limits?.globalMaxFailures?.min || 0)}" max="${Number(s.login_protection?.limits?.globalMaxFailures?.max || 10000)}" value="${Number(s.login_protection?.global_max_failures || 50)}">
+        <label>全局统计窗口（秒）</label>
+        <input id="securityGlobalLoginWindowSeconds" type="number" min="${Number(s.login_protection?.limits?.globalWindowSeconds?.min || 30)}" max="${Number(s.login_protection?.limits?.globalWindowSeconds?.max || 86400)}" value="${Number(s.login_protection?.global_window_seconds || 300)}">
+        <label>全局锁定时间（秒）</label>
+        <input id="securityGlobalLoginLockSeconds" type="number" min="${Number(s.login_protection?.limits?.globalLockSeconds?.min || 1)}" max="${Number(s.login_protection?.limits?.globalLockSeconds?.max || 86400)}" value="${Number(s.login_protection?.global_lock_seconds || 60)}">
+        <div class="muted">单来源保护只影响当前来源地址；全局保护会在多个来源累计失败达到阈值后短暂暂停新的登录尝试。关闭全局保护不会关闭单来源保护。</div>
         <div class="warning">关闭局域网密码后，局域网内设备可能直接操作 SSH、SFTP、密钥、转发和批量命令。</div>
         <div class="actions"><button class="primary" onclick="saveSecurityOptions()">保存认证策略</button><button onclick="logout()">退出登录</button></div>
       </section>
@@ -1583,12 +1618,19 @@ async function saveSecurityOptions() {
   const trusted_proxy_enabled = Boolean($("securityTrustedProxyEnabled")?.checked);
   const trusted_proxy_addresses = String($("securityTrustedProxyAddresses")?.value || "").split(/[\s,]+/).filter(Boolean);
   const allowed_hosts = String($("securityAllowedHosts")?.value || "").split(/[\s,]+/).filter(Boolean);
+  const login_max_failures = Number($("securityLoginMaxFailures")?.value);
+  const login_window_seconds = Number($("securityLoginWindowSeconds")?.value);
+  const login_lock_seconds = Number($("securityLoginLockSeconds")?.value);
+  const global_login_protection_enabled = Boolean($("securityGlobalLoginProtectionEnabled")?.checked);
+  const global_login_max_failures = Number($("securityGlobalLoginMaxFailures")?.value);
+  const global_login_window_seconds = Number($("securityGlobalLoginWindowSeconds")?.value);
+  const global_login_lock_seconds = Number($("securityGlobalLoginLockSeconds")?.value);
   let confirm_unsafe = false;
   if (auth_mode === "off" || !lan_auth_enabled) {
     confirm_unsafe = await confirmModal("关闭局域网访问密码会让同一局域网内设备直接操作 Terma。确认关闭？", "高风险设置", "确认关闭", "取消", true);
     if (!confirm_unsafe) return;
   }
-  securitySettings = await api("/api/security", {method:"PUT", body:JSON.stringify({auth_mode, lan_auth_enabled, secure_cookie_mode, trusted_proxy_enabled, trusted_proxy_addresses, allowed_hosts, confirm_unsafe})});
+  securitySettings = await api("/api/security", {method:"PUT", body:JSON.stringify({auth_mode, lan_auth_enabled, secure_cookie_mode, trusted_proxy_enabled, trusted_proxy_addresses, allowed_hosts, login_max_failures, login_window_seconds, login_lock_seconds, global_login_protection_enabled, global_login_max_failures, global_login_window_seconds, global_login_lock_seconds, confirm_unsafe})});
   notify("安全策略已保存", "success");
 }
 

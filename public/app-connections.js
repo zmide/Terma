@@ -328,12 +328,30 @@ function cancelAddGroup() {
   renderConnections();
 }
 
+const IDENTITY_FILE_UNSAFE_FALLBACK = "私钥已不在安全目录，请编辑连接并导入 Terma 密钥目录或用户 ~/.ssh 顶层。";
+
+function connectionIdentityWarningMessage(connection) {
+  if (connection?.identity_file_status !== "unsafe") return "";
+  return String(connection.identity_file_message || IDENTITY_FILE_UNSAFE_FALLBACK);
+}
+
+function connectionFormIdentityWarning(form) {
+  if (form?.dataset?.identityFileStatus !== "unsafe") return "";
+  return String(form.dataset.identityFileMessage || IDENTITY_FILE_UNSAFE_FALLBACK);
+}
+
+function connectionLegacyIdentityOption(form) {
+  if (!connectionFormIdentityWarning(form)) return "";
+  return `<option value="" data-legacy-unsafe="1" selected disabled>当前私钥已失效，请重新导入</option>`;
+}
+
 function renderConnectionRow(c) {
   const active = c.id === selectedId ? " active" : "";
   const running = connectionHasRunningForwards(c) ? " running" : "";
   const health = healthResults.get(c.id);
   const healthClass = health ? (health.ok ? " ok" : " bad") : "";
   const healthText = health ? health.status : "未检测";
+  const identityWarning = connectionIdentityWarningMessage(c);
   const bulkClass = connectionBulkMode ? " bulk-mode" : "";
   const bulkCheck = connectionBulkMode ? `<label class="connection-bulk-check" title="选择 ${escAttr(c.name)}"><input type="checkbox" ${selectedConnectionIds.has(c.id) ? "checked" : ""} onchange="setConnectionSelected(${c.id},this.checked)"><span class="sr-only">选择 ${esc(c.name)}</span></label>` : "";
   return `<div class="conn-row${active}${bulkClass}">
@@ -342,7 +360,7 @@ function renderConnectionRow(c) {
     <div class="conn-meta">${esc(c.ssh_user)}@${esc(c.ssh_host)}:${c.ssh_port}</div>
     ${c.tags ? `<div class="forward-tags">${String(c.tags).split(",").filter(Boolean).map(tag=>`<span>${esc(tag)}</span>`).join("")}</div>` : ""}
     <div class="conn-footer">
-      <div class="conn-summary"><span title="${c.forwards.length} 条转发">${icon("route")} ${c.forwards.length}</span></div>
+      <div class="conn-summary"><span title="${c.forwards.length} 条转发">${icon("route")} ${c.forwards.length}</span>${identityWarning ? `<span class="connection-identity-warning" title="${escAttr(identityWarning)}" aria-label="${escAttr(identityWarning)}">${icon("triangle-alert")} 私钥需重新导入</span>` : ""}</div>
       <div class="conn-actions" aria-label="${escAttr(c.name)} 快捷操作">
         <button class="icon-button conn-primary-action" onclick="openTerminal(${c.id})" title="打开终端" aria-label="打开终端">${icon("square-terminal")}</button>
         <button class="icon-button" onclick="openSftp(${c.id})" title="打开 SFTP" aria-label="打开 SFTP">${icon("folder-open")}</button>
@@ -911,6 +929,10 @@ function connPayload(form=$("connectionForm"), validateStartup=false) {
   const field = id => connectionFormField(form, id);
   const groupValue = field("conn_group").value;
   const passwordAuth = field("conn_auth_type").value === "password";
+  const selectedKey = field("conn_key");
+  if (!passwordAuth && selectedKey?.selectedOptions?.[0]?.dataset?.legacyUnsafe === "1") {
+    throw new Error(connectionFormIdentityWarning(form) || IDENTITY_FILE_UNSAFE_FALLBACK);
+  }
   const startup = connectionTerminalFormConfig(form);
   if (validateStartup && startup.terminal_startup_mode === "program" && !startup.terminal_program_path) {
     throw new Error("请填写要在远端启动的程序完整路径");
@@ -1137,8 +1159,13 @@ async function loadKeys(selected, select=$("conn_key")) {
   const keys = await api("/api/identity-files");
   if (!select.isConnected) return;
   const current = selected ?? select.value;
-  select.innerHTML = `<option value="">不使用私钥</option>` + keys.map(k=>`<option value="${esc(k.path)}">${esc(k.label)}${k.permission_ok ? "" : "（需检查权限）"}</option>`).join("");
-  if (current) select.value = current;
+  const currentAllowed = Boolean(current) && keys.some(k => String(k.path || "") === String(current));
+  const previousWasLegacy = select.selectedOptions?.[0]?.dataset?.legacyUnsafe === "1";
+  const showLegacy = Boolean(connectionFormIdentityWarning(select.form))
+    && !currentAllowed
+    && (selected !== undefined ? Boolean(current) : previousWasLegacy);
+  select.innerHTML = `${showLegacy ? connectionLegacyIdentityOption(select.form) : ""}<option value="">不使用私钥</option>` + keys.map(k=>`<option value="${esc(k.path)}">${esc(k.label)}${k.permission_ok ? "" : "（需检查权限）"}</option>`).join("");
+  if (currentAllowed) select.value = current;
   renderKeyStatus(select, root.querySelector?.("#keyStatus"));
 }
 
@@ -1167,6 +1194,11 @@ async function uploadKey(){
 
 async function renderKeyStatus(select=$("conn_key"), box=$("keyStatus")) {
   if (!box) return;
+  if (select?.selectedOptions?.[0]?.dataset?.legacyUnsafe === "1") {
+    box.textContent = connectionFormIdentityWarning(select.form) || IDENTITY_FILE_UNSAFE_FALLBACK;
+    box.className = "key-status warning";
+    return;
+  }
   const key = select?.value || "";
   if (!key) {
     box.textContent = "未选择私钥";
@@ -1385,6 +1417,9 @@ function editConnection(id, updateTab=true){
   if(!c) return;
   $("view-edit").innerHTML = $("connectionFormTpl").innerHTML;
   refreshIcons();
+  const form = $("connectionForm");
+  form.dataset.identityFileStatus = String(c.identity_file_status || "none");
+  form.dataset.identityFileMessage = connectionIdentityWarningMessage(c);
   $("conn_id").value=c.id;
   if ($("connSaveAndClear")) $("connSaveAndClear").hidden = true;
   if ($("connRemoteGenerationLine")) $("connRemoteGenerationLine").hidden = true;
@@ -1409,7 +1444,7 @@ function editConnection(id, updateTab=true){
   $("conn_tags").value=c.tags || "";
   $("conn_autostart").value=String(c.autostart_forwards||0);
   $("conn_extra").value=c.extra_args||"";
-  fillConnectionTerminalStartup($("connectionForm"), c);
+  fillConnectionTerminalStartup(form, c);
   toggleAuthFields();
   loadKeys(c.identity_file);
   wireConnectionForm();

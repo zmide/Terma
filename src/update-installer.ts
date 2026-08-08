@@ -134,6 +134,40 @@ function responseContentType(response: Response): string {
   catch { return ""; }
 }
 
+function responseHeader(response: Response, name: string): string {
+  try { return String(response.headers?.get(name) || "").trim(); }
+  catch { return ""; }
+}
+
+async function fetchWithValidatedRedirects(
+  fetchImpl: typeof fetch,
+  initialUrl: string,
+  options: RequestInit,
+  maxRedirects = 3
+): Promise<Response> {
+  let current = new URL(initialUrl);
+  const allowedHosts = new Set([...TRUSTED_GITHUB_ASSET_HOSTS, current.hostname]);
+  for (let redirectCount = 0; redirectCount <= maxRedirects; redirectCount += 1) {
+    const response = await fetchImpl(current.href, { ...options, redirect: "manual" });
+    if (![301, 302, 303, 307, 308].includes(Number(response.status))) return response;
+    const location = responseHeader(response, "location");
+    if (!location) throw new Error("更新下载重定向缺少目标地址");
+    if (redirectCount >= maxRedirects) throw new Error("更新下载重定向次数过多");
+    const next = new URL(location, current);
+    if (
+      next.protocol !== "https:"
+      || !allowedHosts.has(next.hostname)
+      || next.username
+      || next.password
+      || next.hash
+    ) {
+      throw new Error("更新下载重定向指向了不受信任的地址");
+    }
+    current = next;
+  }
+  throw new Error("更新下载重定向失败");
+}
+
 function appendResponsePrefix(current: Buffer, chunk: Buffer): Buffer {
   if (current.length >= 512) return current;
   return Buffer.concat([current, chunk.subarray(0, 512 - current.length)]);
@@ -474,7 +508,7 @@ export class UpdateInstaller {
     });
     try {
       const response = await Promise.race([
-        this.fetchImpl(url, {
+        fetchWithValidatedRedirects(this.fetchImpl, url, {
           method: "GET",
           headers: {
             "User-Agent": `Terma/${release.latest_version}`,
@@ -482,7 +516,6 @@ export class UpdateInstaller {
             "Range": `bytes=0-${Math.max(0, targetBytes - 1)}`,
             "Cache-Control": "no-cache"
           },
-          redirect: "follow",
           signal: controller.signal
         }),
         timeoutPromise
@@ -575,10 +608,9 @@ export class UpdateInstaller {
       }
     };
     try {
-      const response = await withIdleTimeout(this.fetchImpl(route.url, {
+      const response = await withIdleTimeout(fetchWithValidatedRedirects(this.fetchImpl, route.url, {
         method: "GET",
         headers: { "User-Agent": `Terma/${release.latest_version}`, "Accept": "application/octet-stream" },
-        redirect: "follow",
         signal: controller.signal
       }));
       if (!response.ok || !response.body) throw new Error(`HTTP ${response.status || "未知"}`);

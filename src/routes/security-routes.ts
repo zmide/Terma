@@ -5,6 +5,7 @@ interface SecurityRouteDependencies {
   readJson(request: IncomingMessage): Promise<any>;
   send(response: ServerResponse, status: number, data: unknown, headers?: Record<string, string>): void;
   sendJson(response: ServerResponse, data: unknown, status?: number): void;
+  publicAuthStatus(request: IncomingMessage): unknown;
   publicSecuritySettings(request: IncomingMessage): unknown;
   login(password: string, request: IncomingMessage): string;
   logout(request: IncomingMessage): void;
@@ -28,7 +29,7 @@ export async function handlePublicAuthRoutes(
   dependencies: SecurityRouteDependencies
 ): Promise<boolean> {
   if (request.method === "GET" && pathname === "/api/auth/status") {
-    dependencies.sendJson(response, dependencies.publicSecuritySettings(request));
+    dependencies.sendJson(response, dependencies.publicAuthStatus(request));
     return true;
   }
   if (request.method !== "POST" || pathname !== "/api/auth/login") return false;

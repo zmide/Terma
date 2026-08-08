@@ -4,7 +4,8 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { DATA_DIR } = require("./config");
-const { LoginRateLimiter, SessionStore } = require("./auth-protection");
+const { LOGIN_PROTECTION_LIMITS, LoginRateLimiter, SessionStore } = require("./auth-protection");
+const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 
 const SECURITY_FILE = path.join(DATA_DIR, "security.json");
 const DEFAULT_SESSION_TTL_MINUTES = 12 * 60;
@@ -57,6 +58,13 @@ function defaultSettings() {
     session_ttl_minutes: DEFAULT_SESSION_TTL_MINUTES,
     session_max_sessions: DEFAULT_SESSION_MAX_SESSIONS,
     session_cleanup_minutes: DEFAULT_SESSION_CLEANUP_MINUTES,
+    login_max_failures: 5,
+    login_window_seconds: 5 * 60,
+    login_lock_seconds: 5 * 60,
+    global_login_protection_enabled: true,
+    global_login_max_failures: 50,
+    global_login_window_seconds: 5 * 60,
+    global_login_lock_seconds: 60,
     updated_at: Date.now()
   };
 }
@@ -140,7 +148,14 @@ function readSecuritySettings() {
       allowed_hosts: normalizeAllowedHosts(stored?.allowed_hosts),
       session_ttl_minutes: normalizeBoundedInteger(stored?.session_ttl_minutes, DEFAULT_SESSION_TTL_MINUTES, SESSION_LIMITS.ttl_minutes),
       session_max_sessions: normalizeBoundedInteger(stored?.session_max_sessions, DEFAULT_SESSION_MAX_SESSIONS, SESSION_LIMITS.max_sessions),
-      session_cleanup_minutes: normalizeBoundedInteger(stored?.session_cleanup_minutes, DEFAULT_SESSION_CLEANUP_MINUTES, SESSION_LIMITS.cleanup_minutes)
+      session_cleanup_minutes: normalizeBoundedInteger(stored?.session_cleanup_minutes, DEFAULT_SESSION_CLEANUP_MINUTES, SESSION_LIMITS.cleanup_minutes),
+      login_max_failures: normalizeBoundedInteger(stored?.login_max_failures, 5, LOGIN_PROTECTION_LIMITS.maxFailures),
+      login_window_seconds: normalizeBoundedInteger(stored?.login_window_seconds, 5 * 60, LOGIN_PROTECTION_LIMITS.windowSeconds),
+      login_lock_seconds: normalizeBoundedInteger(stored?.login_lock_seconds, 5 * 60, LOGIN_PROTECTION_LIMITS.lockSeconds),
+      global_login_protection_enabled: stored?.global_login_protection_enabled !== false,
+      global_login_max_failures: normalizeBoundedInteger(stored?.global_login_max_failures, 50, { ...LOGIN_PROTECTION_LIMITS.globalMaxFailures, min:1 }),
+      global_login_window_seconds: normalizeBoundedInteger(stored?.global_login_window_seconds, 5 * 60, LOGIN_PROTECTION_LIMITS.globalWindowSeconds),
+      global_login_lock_seconds: normalizeBoundedInteger(stored?.global_login_lock_seconds, 60, LOGIN_PROTECTION_LIMITS.globalLockSeconds)
     };
   } catch {
     return defaultSettings();
@@ -165,7 +180,12 @@ function publicSecuritySettings(req = null) {
     login_protection: {
       max_failures: loginLimiter.options.maxFailures,
       window_seconds: Math.floor(loginLimiter.options.windowMs / 1000),
-      lock_seconds: Math.floor(loginLimiter.options.lockMs / 1000)
+      lock_seconds: Math.floor(loginLimiter.options.lockMs / 1000),
+      global_enabled: loginLimiter.options.globalMaxFailures > 0,
+      global_max_failures: loginLimiter.options.globalMaxFailures,
+      global_window_seconds: Math.floor(loginLimiter.options.globalWindowMs / 1000),
+      global_lock_seconds: Math.floor(loginLimiter.options.globalLockMs / 1000),
+      limits: LOGIN_PROTECTION_LIMITS
     },
     session_management: {
       ttl_minutes: settings.session_ttl_minutes,
@@ -179,10 +199,21 @@ function publicSecuritySettings(req = null) {
   };
 }
 
+function publicAuthStatus(req = null) {
+  const settings = readSecuritySettings();
+  return {
+    password_set: Boolean(settings.password_hash),
+    token_set: Boolean(settings.token_hash),
+    auth_required: req ? authRequired(req) : null,
+    request_secure: req ? isRequestSecure(req) : null
+  };
+}
+
 function writeSecuritySettings(next) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
+  ensurePrivateDirectory(DATA_DIR);
   const merged = { ...readSecuritySettings(), ...next, updated_at: Date.now() };
-  fs.writeFileSync(SECURITY_FILE, JSON.stringify(merged, null, 2));
+  fs.writeFileSync(SECURITY_FILE, JSON.stringify(merged, null, 2), { encoding:"utf8", mode:0o600 });
+  ensurePrivateFile(SECURITY_FILE);
   applySessionManagementSettings(merged);
 }
 
@@ -234,6 +265,13 @@ function updateSecurityOptions(data) {
   if (typeof data.session_cleanup_minutes !== "undefined") {
     next.session_cleanup_minutes = requireBoundedInteger(data.session_cleanup_minutes, "清理间隔", SESSION_LIMITS.cleanup_minutes);
   }
+  if (typeof data.login_max_failures !== "undefined") next.login_max_failures = requireBoundedInteger(data.login_max_failures, "单来源失败次数", LOGIN_PROTECTION_LIMITS.maxFailures);
+  if (typeof data.login_window_seconds !== "undefined") next.login_window_seconds = requireBoundedInteger(data.login_window_seconds, "单来源统计窗口", LOGIN_PROTECTION_LIMITS.windowSeconds);
+  if (typeof data.login_lock_seconds !== "undefined") next.login_lock_seconds = requireBoundedInteger(data.login_lock_seconds, "单来源锁定时间", LOGIN_PROTECTION_LIMITS.lockSeconds);
+  if (typeof data.global_login_protection_enabled !== "undefined") next.global_login_protection_enabled = Boolean(data.global_login_protection_enabled);
+  if (typeof data.global_login_max_failures !== "undefined") next.global_login_max_failures = requireBoundedInteger(data.global_login_max_failures, "全局失败次数", { ...LOGIN_PROTECTION_LIMITS.globalMaxFailures, min:1 });
+  if (typeof data.global_login_window_seconds !== "undefined") next.global_login_window_seconds = requireBoundedInteger(data.global_login_window_seconds, "全局统计窗口", LOGIN_PROTECTION_LIMITS.globalWindowSeconds);
+  if (typeof data.global_login_lock_seconds !== "undefined") next.global_login_lock_seconds = requireBoundedInteger(data.global_login_lock_seconds, "全局锁定时间", LOGIN_PROTECTION_LIMITS.globalLockSeconds);
   const merged = { ...readSecuritySettings(), ...next };
   if (merged.trusted_proxy_enabled && !merged.trusted_proxy_addresses.length) {
     throw new Error("启用可信反向代理前至少填写一个代理 IP 地址");
@@ -260,7 +298,14 @@ function resetWebAccessSecurity() {
     allowed_hosts: [],
     session_ttl_minutes: DEFAULT_SESSION_TTL_MINUTES,
     session_max_sessions: DEFAULT_SESSION_MAX_SESSIONS,
-    session_cleanup_minutes: DEFAULT_SESSION_CLEANUP_MINUTES
+    session_cleanup_minutes: DEFAULT_SESSION_CLEANUP_MINUTES,
+    login_max_failures: 5,
+    login_window_seconds: 5 * 60,
+    login_lock_seconds: 5 * 60,
+    global_login_protection_enabled: true,
+    global_login_max_failures: 50,
+    global_login_window_seconds: 5 * 60,
+    global_login_lock_seconds: 60
   });
   sessions.clear();
   loginLimiter.clear();
@@ -535,6 +580,14 @@ function applySessionManagementSettings(settings) {
     ttlMs: normalizeBoundedInteger(settings?.session_ttl_minutes, DEFAULT_SESSION_TTL_MINUTES, SESSION_LIMITS.ttl_minutes) * 60 * 1000,
     maxSessions: normalizeBoundedInteger(settings?.session_max_sessions, DEFAULT_SESSION_MAX_SESSIONS, SESSION_LIMITS.max_sessions)
   });
+  loginLimiter.configure({
+    maxFailures: Number(settings?.login_max_failures || 5),
+    windowMs: Number(settings?.login_window_seconds || 5 * 60) * 1000,
+    lockMs: Number(settings?.login_lock_seconds || 5 * 60) * 1000,
+    globalMaxFailures: settings?.global_login_protection_enabled === false ? 0 : Number(settings?.global_login_max_failures || 50),
+    globalWindowMs: Number(settings?.global_login_window_seconds || 5 * 60) * 1000,
+    globalLockMs: Number(settings?.global_login_lock_seconds || 60) * 1000
+  });
   const intervalMs = normalizeBoundedInteger(
     settings?.session_cleanup_minutes,
     DEFAULT_SESSION_CLEANUP_MINUTES,
@@ -565,6 +618,7 @@ module.exports = {
   login,
   logout,
   publicSecuritySettings,
+  publicAuthStatus,
   readSecuritySettings,
   requestSourceAddress,
   resetWebAccessSecurity,

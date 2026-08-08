@@ -9,6 +9,15 @@ export interface LoginProtectionOptions {
   globalLockMs: number;
 }
 
+export const LOGIN_PROTECTION_LIMITS = {
+  maxFailures: { min:1, max:100 },
+  windowSeconds: { min:30, max:24 * 60 * 60 },
+  lockSeconds: { min:1, max:24 * 60 * 60 },
+  globalMaxFailures: { min:0, max:10000 },
+  globalWindowSeconds: { min:30, max:24 * 60 * 60 },
+  globalLockSeconds: { min:1, max:24 * 60 * 60 }
+};
+
 export interface LoginCheckResult {
   allowed: boolean;
   retryAfterMs: number;
@@ -41,6 +50,16 @@ export class LoginRateLimiter {
     this.now = now;
   }
 
+  configure(options: Partial<LoginProtectionOptions>): void {
+    this.options.maxFailures = Number(options.maxFailures ?? this.options.maxFailures);
+    this.options.windowMs = Number(options.windowMs ?? this.options.windowMs);
+    this.options.lockMs = Number(options.lockMs ?? this.options.lockMs);
+    this.options.globalMaxFailures = Number(options.globalMaxFailures ?? this.options.globalMaxFailures);
+    this.options.globalWindowMs = Number(options.globalWindowMs ?? this.options.globalWindowMs);
+    this.options.globalLockMs = Number(options.globalLockMs ?? this.options.globalLockMs);
+    this.clear();
+  }
+
   check(source: string): LoginCheckResult {
     const current = this.now();
     this.prune(current);
@@ -64,8 +83,8 @@ export class LoginRateLimiter {
     }
     this.attempts.set(source, attempt);
 
-    this.globalFailures.push(current);
-    if (this.globalFailures.length >= this.options.globalMaxFailures) {
+    if (this.options.globalMaxFailures > 0) this.globalFailures.push(current);
+    if (this.options.globalMaxFailures > 0 && this.globalFailures.length >= this.options.globalMaxFailures) {
       this.globalLockedUntil = Math.max(this.globalLockedUntil, current + this.options.globalLockMs);
       this.globalFailures = [];
     }

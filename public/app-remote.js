@@ -615,7 +615,7 @@ function watchRemoteComponentTask(task, options={}) {
   return completion;
 }
 
-function reusableRemoteAdminGrant(connectionId) {
+function reusableRemoteAdminGrant(connectionId, scope = "") {
   const id = Number(connectionId || 0);
   const grant = remoteAdminGrantCache.get(id);
   if (!grant?.id) return null;
@@ -624,6 +624,7 @@ function reusableRemoteAdminGrant(connectionId) {
     remoteAdminGrantCache.delete(id);
     return null;
   }
+  if (grant.scope && grant.scope !== String(scope || "").trim() && grant.scope !== "host:*") return null;
   return grant;
 }
 
@@ -634,7 +635,8 @@ function rememberRemoteAdminGrant(connectionId, grant={}) {
   remoteAdminGrantCache.set(id, {
     id:String(grant.id),
     reuse_policy:policy,
-    expires_at:Number(grant.expires_at || 0)
+    expires_at:Number(grant.expires_at || 0),
+    scope:String(grant.scope || "").trim()
   });
 }
 
@@ -642,7 +644,7 @@ async function requestRemoteAdminAuthorization(connectionId, scope="远端管理
   const normalizedConnectionId = Number(connectionId || 0);
   const connection = currentConnection(normalizedConnectionId);
   if (!connection) throw new Error("SSH 连接不存在");
-  const cachedGrant = reusableRemoteAdminGrant(normalizedConnectionId);
+  const cachedGrant = reusableRemoteAdminGrant(normalizedConnectionId, scope);
   if (cachedGrant) return {admin_grant_id:cachedGrant.id};
   let identities = [];
   try { identities = await api("/api/identity-files"); } catch {}

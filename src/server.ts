@@ -188,6 +188,7 @@ const {
   isLocalRequest,
   login,
   logout,
+  publicAuthStatus,
   publicSecuritySettings,
   readSecuritySettings,
   resetWebAccessSecurity,
@@ -201,7 +202,7 @@ const {
   webSocketOriginAllowed,
   writeSecuritySettings
 } = require("./security");
-const { acceptHostTrust, hostTrustErrorResponse, listTrustedHosts, removeTrustedHost } = require("./ssh-host-trust");
+const { acceptHostTrust, hostTrustErrorResponse, listTrustedHosts, listTrustedHostsPage, removeTrustedHost } = require("./ssh-host-trust");
 const { closeJumpConnectionPool, ensureConnectionHostTrusted } = require("./ssh2-client");
 const { disableEncryption, enableEncryption, encryptionReady, encryptText, lockEncryption, unlockEncryption } = require("./crypto-store");
 const { createConfigSnapshot, deleteConfigSnapshot, listConfigSnapshots, restoreConfigSnapshotById } = require("./config-snapshots");
@@ -566,7 +567,7 @@ function createRemoteAdminGrant(connection, data, scope) {
     const allowed = listIdentityFiles().some(item => comparablePath(item.path) === comparablePath(requestedPath));
     if (!allowed) throw new Error("临时授权只能使用 Terma 已识别的私钥文件");
   }
-  return createRemotePrivilegeGrant(connection, auth, scope);
+  return createRemotePrivilegeGrant(connection, auth, String(scope || data?.scope || "host:*").trim() || "host:*");
 }
 
 function releaseRemoteAdminGrant(grant) {
@@ -582,7 +583,8 @@ function adminGrantView(grant) {
     reuse_policy:String(grant.reuse_policy || grant.reusePolicy || "once"),
     reusable:String(grant.reuse_policy || grant.reusePolicy || "once") !== "once",
     ssh_user:String(grant.ssh_user || grant.connection?.ssh_user || ""),
-    auth_method:String(grant.auth_method || grant.authorization?.auth_method || "")
+    auth_method:String(grant.auth_method || grant.authorization?.auth_method || ""),
+    scope:String(grant.scope || "")
   };
 }
 
@@ -604,12 +606,13 @@ function normalizeRemoteAdminAuthorizationError(error) {
 }
 
 async function issueRemoteAdminGrant(connection, data: any = {}) {
-  const grant = createRemoteAdminGrant(connection, {admin_auth:data.admin_auth || data.authorization || data}, "");
+  const requestedScope = String(data?.scope || "").trim() || "host:*";
+  const grant = createRemoteAdminGrant(connection, {admin_auth:data.admin_auth || data.authorization || data}, requestedScope);
   if (!grant) throw new Error("请提供临时管理员 SSH 认证信息");
   try {
     // Validate the SSH/root-or-sudo capability while the authorization dialog
     // is still visible; this keeps later service errors separate from login errors.
-    const probe = await runRemotePrivilegeCommand(connection, "true", {grant_id:grant.id, timeout_ms:30000});
+    const probe = await runRemotePrivilegeCommand(connection, "true", {grant_id:grant.id, scope:requestedScope, timeout_ms:30000});
     if (probe?.status !== 0) {
       throw new Error(`${probe?.stderr || probe?.stdout || probe?.error?.message || "临时管理员 SSH 验证失败"}`.trim());
     }
@@ -1548,13 +1551,17 @@ async function handleApi(req, res, pathname) {
   const securityRouteDependencies = {
     AuthenticationError, createSession, decryptStoredConnectionSecrets, disableEncryption, enableEncryption,
     encryptStoredConnectionSecrets, login, logout, publicSecuritySettings, readJson, readSecuritySettings,
-    send, sendJson, sessionCookie, setPassword, setToken, unlockEncryption, updateSecurityOptions
+    publicAuthStatus, send, sendJson, sessionCookie, setPassword, setToken, unlockEncryption, updateSecurityOptions
   };
   if (await handlePublicAuthRoutes(req, res, pathname, securityRouteDependencies)) return;
   if (!isAuthenticated(req)) return sendJson(res, { error: "Unauthorized" }, 401);
   if (await handleSecurityRoutes(req, res, pathname, securityRouteDependencies)) return;
   if (req.method === "GET" && pathname === "/api/ssh/trusted-hosts") {
-    return sendJson(res, { hosts: listTrustedHosts() });
+    const query = new URL(req.url || "/api/ssh/trusted-hosts", "http://terma.invalid").searchParams;
+    return sendJson(res, listTrustedHostsPage({
+      page: Number(query.get("page") || 1),
+      page_size: Number(query.get("page_size") || 20)
+    }));
   }
   if (req.method === "DELETE" && pathname === "/api/ssh/trusted-hosts") {
     const data = await readJson(req);
@@ -1831,7 +1838,8 @@ async function handleApi(req, res, pathname) {
           missing_identities: identities.missing,
           unresolved_identities: identities.unresolved,
           encrypted_identities: identities.encrypted,
-          mapped_identities: identities.mappings
+          mapped_identities: identities.mappings,
+          encrypted_fields: identities.encrypted_fields || 0
         });
       } catch (error) {
         try {

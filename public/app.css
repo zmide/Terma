@@ -176,6 +176,7 @@ body.operation-pane-resizing, body.operation-pane-resizing * { cursor:col-resize
 .conn-summary { min-width:0; display:flex; align-items:center; gap:7px; margin:0; color:var(--muted); font-size:10px; }
 .conn-summary span { min-width:0; display:inline-flex; align-items:center; gap:3px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .conn-summary span:first-child { flex:0 0 auto; }
+.conn-summary .connection-identity-warning { color:var(--warn); }
 .operation-pane-narrow .conn-footer { grid-template-columns:minmax(0,1fr); gap:4px; }
 .operation-pane-narrow .conn-actions { justify-content:flex-start; }
 .operation-pane-narrow .brand { padding-inline:9px 7px; }
@@ -538,6 +539,7 @@ body.sftp-task-center-resizing, body.sftp-task-center-resizing * { cursor:nesw-r
 .grid3 { display:grid; grid-template-columns:1fr 120px 1fr; gap:10px; }
 .key-picker, .upload-line { display:grid; grid-template-columns:1fr auto; gap:8px; align-items:end; }
 .key-status { margin-top:6px; font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.key-status.warning { color:var(--warn); }
 .connection-test-status { margin-top:10px; padding:9px 10px; border:1px solid var(--line); border-radius:5px; background:var(--field); font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; }
 .connection-test-status.busy { color:var(--accent2); }
 .connection-test-status.success { color:var(--accent); border-color:color-mix(in srgb,var(--accent) 45%,var(--line)); }
@@ -941,6 +943,9 @@ body.sftp-task-center-resizing, body.sftp-task-center-resizing * { cursor:nesw-r
 .ssh-trust-record-main span { color:var(--muted); font-size:12px; }
 .ssh-trust-record-main code { grid-column:1/-1; overflow-wrap:anywhere; color:var(--text); font-size:11px; user-select:all; }
 .ssh-trust-record-side { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:11px; white-space:nowrap; }
+.ssh-trust-pager { display:flex; align-items:center; justify-content:center; gap:8px; margin-top:10px; color:var(--muted); font-size:11px; }
+.ssh-trust-pager .icon-button { width:30px; min-width:30px; height:30px; min-height:30px; padding:0; }
+.ssh-trust-pager .icon-button svg { width:14px; height:14px; }
 .settings-grid h3 { margin-top:0; }
 .check-row { display:flex; gap:8px; align-items:center; margin:10px 0; color:var(--text); }
 .about-product { display:flex; align-items:center; gap:12px; margin-bottom:14px; }

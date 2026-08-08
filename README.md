@@ -282,14 +282,32 @@ npm run dist -- --mac dmg zip --x64 --arm64 --publish never
 - 源码运行和 Windows 便携版默认使用项目内 `data/`；安装版默认使用系统用户数据目录，可在设置中迁移到其他位置。
 - SSH 密码、私钥路径、访问 Token 和数据库备份属于敏感数据，请保护运行数据目录并按需启用配置加密。
 - 配置 Web 密码或访问 Token 后，普通浏览器即使从本机访问也需要登录，登录页可输入其中任一种凭据；Electron 桌面端使用每次启动随机生成的独立凭据。
-- SSH 私钥只接受当前运行密钥目录或用户 `~/.ssh` 顶层的真实、独立普通私钥文件，拒绝目录、外部路径、软硬链接、公钥和配置文件；SSH 附加参数也不能另行指定私钥、配置文件或本机命令来绕过这一边界。
+- SSH 私钥只接受当前运行密钥目录或用户 `~/.ssh` 顶层的真实、独立普通私钥文件，拒绝目录、外部路径、软硬链接、公钥和配置文件；SSH 附加参数也不能另行指定私钥、配置文件或本机命令来绕过这一边界。升级前已保存的不合规私钥路径会在连接列表和编辑页明确提示重新导入，不会自动移动或修改原文件。
 - 已永久信任的 SSH 主机密钥保存在运行数据目录，可在“设置 > 安全”中查看或删除；删除后下次连接会重新确认指纹。
 - 服务默认只监听 `127.0.0.1`。局域网访问应设置 Web 密码；远程访问建议通过 Tailscale、ZeroTier、WireGuard 等私有网络。
-- 使用 Nginx、Caddy 等反向代理时，应在“设置 > 安全”中填写可信代理 IP 和允许的精确 Host，并继续使用 Terma Web 密码或 Token；反代到 `127.0.0.1` 不会获得本机免登录权限。
+- 使用 Nginx、Caddy 等反向代理时，应在“设置 > 安全”中填写直接连接 Terma 的可信代理 IP（同机部署通常为 `127.0.0.1`）和浏览器实际访问的精确 Host，并继续使用 Terma Web 密码或 Token；反代到 `127.0.0.1` 不会获得本机免登录权限。
 - 桌面文件、目录选择、X Server 和外部客户端等本机能力只接受当前 Electron 桌面进程的随机凭据，普通浏览器访问回环地址不会取得这些权限。
 - `stop.bat` 和 `stop.sh` 会使用当前实例启动时生成的临时 `shutdown.token` 请求优雅退出，令牌在退出时清理，正常停机失败后才使用进程级兜底。
 - 不建议将 Terma 直接暴露到公网。它可以操作终端、SFTP、隧道、密钥和备份，风险高于普通只读管理页面。
 - 不要提交 `data/`、`.ssh/`、日志或数据库备份。
+
+### 反向代理示例
+
+Nginx 应保留浏览器请求的 Host，并传递真实来源与外部协议；如果入口使用非标准端口，`$http_host` 会同时保留端口：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:8088;
+    proxy_http_version 1.1;
+    proxy_set_header Host $http_host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
+
+Caddy 可直接使用 `reverse_proxy 127.0.0.1:8088`；它默认保留 Host、设置 `X-Forwarded-For` / `X-Forwarded-Proto` 并代理 WebSocket。不要把上游 Host 改写为 `127.0.0.1`，并确保 Caddy 的直连地址已加入可信代理 IP、站点域名（含非标准端口时连同端口）已加入允许 Host。
 
 ## 许可
 

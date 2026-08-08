@@ -35,10 +35,28 @@ function structuredOpenSshArgs(connection) {
   ];
 }
 
+function validateSshUser(value) {
+  const user = String(value ?? "").trim();
+  if (!user || user.length > 255 || user.startsWith("-") || /[\0\r\n\t\s@,:/\\]/.test(user)) {
+    throw new Error("SSH 用户名无效：不能包含选项前缀、控制字符或目标分隔符");
+  }
+  return user;
+}
+
+function validateSshHost(value) {
+  let host = String(value ?? "").trim();
+  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+  if (!host || host.length > 255 || host.startsWith("-") || /[\0\r\n\t\s@/\\]/.test(host)) {
+    throw new Error("SSH 主机地址无效：不能包含选项前缀、控制字符或路径分隔符");
+  }
+  if (!/^[A-Za-z0-9._:-]+$/.test(host)) throw new Error("SSH 主机地址格式无效");
+  return host;
+}
+
 function sshTarget(connection) {
-  const host = String(connection?.ssh_host || "").trim();
+  const host = validateSshHost(connection?.ssh_host);
   const port = Number(connection?.ssh_port || 22);
-  const user = String(connection?.ssh_user || "").trim();
+  const user = validateSshUser(connection?.ssh_user);
   const formattedHost = host.includes(":") ? `[${host}]` : host;
   return {
     host,
@@ -49,6 +67,11 @@ function sshTarget(connection) {
   };
 }
 
+function sshDestinationArgs(connection) {
+  const target = sshTarget(connection);
+  return ["-l", target.user, target.host];
+}
+
 function proxyJumpArgument(connection) {
   const target = sshTarget(connection);
   return `${target.user}@${target.host.includes(":") ? `[${target.host}]` : target.host}:${target.port}`;
@@ -57,7 +80,10 @@ function proxyJumpArgument(connection) {
 module.exports = {
   connectionSettings,
   proxyJumpArgument,
+  sshDestinationArgs,
   ssh2TimingOptions,
   sshTarget,
-  structuredOpenSshArgs
+  structuredOpenSshArgs,
+  validateSshHost,
+  validateSshUser
 };

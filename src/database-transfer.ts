@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Readable, Transform, TransformCallback } from "node:stream";
 import { pipeline } from "node:stream/promises";
+const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 
 export const DATABASE_BUNDLE_MAGIC = Buffer.from("TERMA-BACKUP-V3\n", "ascii");
 export const LEGACY_DATABASE_BUNDLE_MAGIC = Buffer.from("TUNNELDESK-BACKUP-V2\n", "ascii");
@@ -104,7 +105,7 @@ export class DatabaseTransferStore {
     private readonly maximumBytes = 1024 * 1024 * 1024
   ) {
     this.directory = path.join(dataDirectory, "restore-staging");
-    fs.mkdirSync(this.directory, { recursive: true });
+    ensurePrivateDirectory(this.directory);
     this.cleanupExpired();
     this.timer = setInterval(() => this.cleanupExpired(), Math.max(1000, Math.min(this.ttlMs, 5 * 60 * 1000)));
     this.timer.unref?.();
@@ -116,7 +117,8 @@ export class DatabaseTransferStore {
     const upload = path.join(this.directory, `${token}.upload`);
     const database = path.join(this.directory, `${token}.db`);
     try {
-      await pipeline(input, new ByteLimit(this.maximumBytes), fs.createWriteStream(upload, { flags: "wx" }));
+      await pipeline(input, new ByteLimit(this.maximumBytes), fs.createWriteStream(upload, { flags: "wx", mode:0o600 }));
+      ensurePrivateFile(upload);
       const stat = fs.statSync(upload);
       if (stat.size < SQLITE_HEADER.length) throw new Error("数据库文件为空或无效");
       const parsed = await this.extract(upload, database, stat.size);
@@ -221,7 +223,8 @@ export class DatabaseTransferStore {
       const legacyBundle = magic.equals(LEGACY_DATABASE_BUNDLE_MAGIC);
       const expectedType = legacyBundle ? "tunneldesk-backup-v2" : "terma-backup-v3";
       if (metadata.type !== expectedType) throw new Error("不支持的迁移包版本");
-      await pipeline(fs.createReadStream(upload, { start: databaseOffset }), fs.createWriteStream(database, { flags: "wx" }));
+      await pipeline(fs.createReadStream(upload, { start: databaseOffset }), fs.createWriteStream(database, { flags: "wx", mode:0o600 }));
+      ensurePrivateFile(database);
       return {
         format: legacyBundle ? "bundle-v2" : "bundle-v3",
         security: normalizeSecurity(metadata.security),
@@ -248,14 +251,16 @@ export class DatabaseTransferStore {
         payload = JSON.parse(Buffer.from(parsed.payload_base64, "base64").toString("utf8")) as Record<string, unknown>;
       } catch {
         const raw = Buffer.from(parsed.payload_base64, "base64");
-        fs.writeFileSync(database, raw);
+        fs.writeFileSync(database, raw, { mode:0o600 });
+        ensurePrivateFile(database);
         return { format, security: null, identityBindings, credentialBindings };
       }
     }
     if (payload.type !== "tunneldesk-backup-v1" || typeof payload.database_base64 !== "string") {
       throw new Error("旧版迁移包格式无效");
     }
-    fs.writeFileSync(database, Buffer.from(payload.database_base64, "base64"));
+    fs.writeFileSync(database, Buffer.from(payload.database_base64, "base64"), { mode:0o600 });
+    ensurePrivateFile(database);
     return {
       format,
       security: normalizeSecurity(payload.security),

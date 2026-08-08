@@ -15,7 +15,7 @@ const {
   decodeSshOutput
 } = require("./ssh2-client");
 const { effectiveExtraArgs, splitArgs } = require("./ssh-command");
-const { proxyJumpArgument, structuredOpenSshArgs } = require("./ssh-connection");
+const { proxyJumpArgument, sshDestinationArgs, structuredOpenSshArgs } = require("./ssh-connection");
 const { diagnoseSshError } = require("./ssh-diagnostics");
 const { buildRemoteStartupCommand } = require("./terminal-startup");
 const { isHostTrustError, systemHostKeyArgs } = require("./ssh-host-trust");
@@ -275,7 +275,7 @@ function buildForwardCommand(connection, forward) {
   if (forward.mode === "local") args.push("-L", `${forward.bind_host}:${forward.bind_port}:${forward.target_host}:${forward.target_port}`);
   else if (forward.mode === "remote") args.push("-R", `${forward.bind_host}:${forward.bind_port}:${forward.target_host}:${forward.target_port}`);
   else args.push("-D", `${forward.bind_host}:${forward.bind_port}`);
-  args.push(`${connection.ssh_user}@${connection.ssh_host}`);
+  args.push(...sshDestinationArgs(connection));
   return args;
 }
 
@@ -293,7 +293,7 @@ function buildConnectionCommand(connection, forwards) {
   }
   args.push(...effectiveExtraArgs(connection.extra_args));
   for (const forward of forwards) appendForwardArgs(args, forward);
-  args.push(`${connection.ssh_user}@${connection.ssh_host}`);
+  args.push(...sshDestinationArgs(connection));
   return args;
 }
 
@@ -321,7 +321,7 @@ function buildTerminalCommand(connection) {
   const startupCommand = buildRemoteStartupCommand(connection);
   if (startupCommand) args.push("-o", "RemoteCommand=none");
   args.push(...effectiveExtraArgs(connection.extra_args));
-  args.push(`${connection.ssh_user}@${connection.ssh_host}`);
+  args.push(...sshDestinationArgs(connection));
   if (startupCommand) args.push(startupCommand);
   return args;
 }
@@ -541,7 +541,7 @@ async function inspectPortOwner(port, host = "127.0.0.1") {
       port:targetPort
     }));
   } else {
-    const lsof: any = await runProcess("lsof", ["-nP", "-FpcfnT", "-a", `-iTCP:${targetPort}`, "-sTCP:LISTEN"], 4000);
+    const lsof: any = await runProcess("lsof", ["-nP", "-FpcfntT", "-a", `-iTCP:${targetPort}`, "-sTCP:LISTEN"], 4000);
     if (lsof.status === 0 && lsof.stdout) {
       records = parseLsofListeners(lsof.stdout);
     }
@@ -1085,9 +1085,7 @@ function runSshTest(args, timeoutMs = 15000, encoding = "utf8") {
 }
 
 async function testSsh(data) {
-  const host = String(data.ssh_host || "").trim();
-  const user = String(data.ssh_user || "").trim();
-  if (!host || !user) throw new Error("缺少 SSH 主机或用户");
+  sshDestinationArgs(data);
   const marker = "__TERMA_SSH_OK__";
   const probe = `echo ${marker}`;
   if (shouldUseBuiltinSsh(data)) {
@@ -1105,7 +1103,7 @@ async function testSsh(data) {
     args.push("-i", data.identity_file);
   }
   args.push(...effectiveExtraArgs(data.extra_args));
-  args.push(`${user}@${host}`, probe);
+  args.push(...sshDestinationArgs(data), probe);
   const start = Date.now();
   const result: any = await runSshTest(args, 15000, data.terminal_encoding);
   const ok = result.status === 0;
@@ -1133,7 +1131,7 @@ async function runSshCommandForConnection(connection, command, timeoutMs = 60000
     args.push("-i", connection.identity_file);
   }
   args.push(...effectiveExtraArgs(connection.extra_args));
-  args.push(`${connection.ssh_user}@${connection.ssh_host}`, String(command || ""));
+  args.push(...sshDestinationArgs(connection), String(command || ""));
   return new Promise((resolve) => {
     const child = spawn(SSH_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
     const stdout = [];
@@ -1174,7 +1172,7 @@ async function runSshCommandForConnectionStreaming(connection, command, timeoutM
     args.push("-i", connection.identity_file);
   }
   args.push(...effectiveExtraArgs(connection.extra_args));
-  args.push(`${connection.ssh_user}@${connection.ssh_host}`, String(command || ""));
+  args.push(...sshDestinationArgs(connection), String(command || ""));
   return new Promise((resolve) => {
     const child = spawn(SSH_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
     const stdout = [];

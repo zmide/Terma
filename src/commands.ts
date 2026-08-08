@@ -9,7 +9,7 @@ const { appendBatchCommandLog, appendSystemLog, createBatchCommandLog } = requir
 const { notifyEvent } = require("./notifications");
 const { shouldUseBuiltinSsh, spawnPasswordCommand } = require("./ssh2-client");
 const { systemHostKeyArgs } = require("./ssh-host-trust");
-const { proxyJumpArgument, structuredOpenSshArgs } = require("./ssh-connection");
+const { proxyJumpArgument, sshDestinationArgs, structuredOpenSshArgs } = require("./ssh-connection");
 const { WebSocketFrameParser, closeWebSocket, sendWebSocketFrame, validateWebSocketUpgrade, websocketAccept } = require("./websocket");
 
 const TEMPLATE_FILE = path.join(DATA_DIR, "command-templates.json");
@@ -85,7 +85,7 @@ function buildCommandArgs(connection) {
     args.push("-i", connection.identity_file);
   }
   args.push(...effectiveExtraArgs(connection.extra_args));
-  args.push(`${connection.ssh_user}@${connection.ssh_host}`, "sh", "-s");
+  args.push(...sshDestinationArgs(connection), "sh", "-s");
   return args;
 }
 

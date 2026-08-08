@@ -3,19 +3,24 @@ const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { DATA_DIR, LOG_DIR, DB_PATH } = require("./config");
 const { decryptText, encryptText } = require("./crypto-store");
-const { assertAllowedIdentityPath } = require("./identity-path");
+const { allowedIdentityPath, assertAllowedIdentityPath } = require("./identity-path");
 const { assertSafeExtraArgs } = require("./ssh-command");
+const { validateSshHost, validateSshUser } = require("./ssh-connection");
+const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(LOG_DIR, { recursive: true });
+ensurePrivateDirectory(DATA_DIR);
+ensurePrivateDirectory(LOG_DIR);
+for (const file of [DB_PATH, `${DB_PATH}-wal`, `${DB_PATH}-shm`]) ensurePrivateFile(file);
 
 let db: any = null;
 
 function openDatabase() {
   if (db) return db;
   db = new DatabaseSync(DB_PATH);
+  ensurePrivateFile(DB_PATH);
   db.exec("PRAGMA journal_mode=WAL");
   db.exec("PRAGMA foreign_keys=ON");
+  for (const file of [`${DB_PATH}-wal`, `${DB_PATH}-shm`]) ensurePrivateFile(file);
 
   db.exec(`
 CREATE TABLE IF NOT EXISTS tunnels (
@@ -450,12 +455,14 @@ function cleanConnection(data, defaultExtraArgs, existing = null) {
     if (Number(existing?.id || data.id || 0) === jumpConnectionId) throw new Error("连接不能把自己设为跳板");
     if (jump.jump_connection_id) throw new Error("当前仅支持单级跳板，请选择不依赖其他跳板的连接");
   }
+  const sshHost = validateSshHost(data.ssh_host);
+  const sshUser = validateSshUser(data.ssh_user);
   return {
     name: String(data.name).trim(),
     group_name: String(data.group_name || "默认分组").trim() || "默认分组",
-    ssh_host: String(data.ssh_host).trim(),
+    ssh_host: sshHost,
     ssh_port: validatePort(data.ssh_port || 22, "SSH 端口"),
-    ssh_user: String(data.ssh_user).trim(),
+    ssh_user: sshUser,
     auth_type: authType,
     identity_file: authType === "key" && data.identity_file ? encryptText(String(data.identity_file).trim()) : null,
     ssh_password: password ? encryptText(password) : null,
@@ -507,6 +514,22 @@ function cleanForward(data) {
   return item;
 }
 
+const IDENTITY_FILE_UNSAFE_MESSAGE = "私钥已不在安全目录，请编辑连接并导入 Terma 密钥目录或用户 ~/.ssh 顶层。";
+
+function connectionIdentityFileState(authType, identityFile, cache = new Map()) {
+  if (String(authType || "key") !== "key" || !String(identityFile || "").trim()) {
+    return { identity_file_status:"none", identity_file_message:"" };
+  }
+  const resolved = path.resolve(String(identityFile));
+  const cacheKey = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  if (!cache.has(cacheKey)) {
+    cache.set(cacheKey, allowedIdentityPath(resolved)
+      ? { identity_file_status:"ready", identity_file_message:"" }
+      : { identity_file_status:"unsafe", identity_file_message:IDENTITY_FILE_UNSAFE_MESSAGE });
+  }
+  return cache.get(cacheKey);
+}
+
 function listConnections() {
   const rows = all(`SELECT connections.*, connection_groups.sort_order AS group_sort_order
     FROM connections LEFT JOIN connection_groups ON connection_groups.name=connections.group_name
@@ -532,19 +555,25 @@ function listConnections() {
     if (!forwardsByConnection.has(forward.connection_id)) forwardsByConnection.set(forward.connection_id, []);
     forwardsByConnection.get(forward.connection_id).push(item);
   }
-  return rows.map((conn) => ({
-    ...conn,
-    identity_file: decryptText(conn.identity_file),
-    ssh_password: undefined,
-    has_password: Boolean(conn.ssh_password),
-    private_key_passphrase: undefined,
-    has_private_key_passphrase: Boolean(conn.private_key_passphrase),
-    extra_args: decryptText(conn.extra_args),
-    terminal_program_path: decryptText(conn.terminal_program_path),
-    terminal_program_args: decryptText(conn.terminal_program_args),
-    terminal_working_directory: decryptText(conn.terminal_working_directory),
-    forwards: forwardsByConnection.get(conn.id) || []
-  }));
+  const identityStateCache = new Map();
+  return rows.map((conn) => {
+    const identityFile = decryptText(conn.identity_file);
+    const identityState = connectionIdentityFileState(conn.auth_type, identityFile, identityStateCache);
+    return {
+      ...conn,
+      identity_file: identityFile,
+      ...identityState,
+      ssh_password: undefined,
+      has_password: Boolean(conn.ssh_password),
+      private_key_passphrase: undefined,
+      has_private_key_passphrase: Boolean(conn.private_key_passphrase),
+      extra_args: decryptText(conn.extra_args),
+      terminal_program_path: decryptText(conn.terminal_program_path),
+      terminal_program_args: decryptText(conn.terminal_program_args),
+      terminal_working_directory: decryptText(conn.terminal_working_directory),
+      forwards: forwardsByConnection.get(conn.id) || []
+    };
+  });
 }
 
 const REMOTE_PROTOCOLS = new Set(["rdp", "vnc", "xdmcp", "ftp", "telnet", "serial"]);

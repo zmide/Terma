@@ -27,9 +27,12 @@ const {
 const {
   connectionSettings,
   proxyJumpArgument,
+  sshDestinationArgs,
   ssh2TimingOptions,
   sshTarget,
-  structuredOpenSshArgs
+  structuredOpenSshArgs,
+  validateSshHost,
+  validateSshUser
 } = require("../dist/ssh-connection");
 const { shouldUseBuiltinSsh, sshTransportForConnection } = require("../dist/ssh2-client");
 
@@ -82,6 +85,21 @@ try {
   ]);
   assert.equal(sshTarget({...target, ssh_host:"2001:db8::1"}).label, "tester@[2001:db8::1]:22");
   assert.equal(proxyJumpArgument({...getConnection(jumpId), ssh_host:"2001:db8::2"}), "tester@[2001:db8::2]:22");
+  assert.deepEqual(sshDestinationArgs(target), ["-l", "tester", "example.test"]);
+  for (const value of ["-oProxyCommand=echo injected", "user@host", "user name", "user\nname"]) {
+    assert.throws(() => validateSshUser(value), /SSH/);
+  }
+  for (const value of ["-oProxyCommand=echo injected", "host/name", "host name", "host\nname"]) {
+    assert.throws(() => validateSshHost(value), /SSH/);
+  }
+  assert.throws(
+    () => sshDestinationArgs({...target, ssh_user:"-oProxyCommand=echo injected"}),
+    /SSH/
+  );
+  assert.throws(
+    () => sshDestinationArgs({...target, ssh_host:"-oProxyCommand=echo injected"}),
+    /SSH/
+  );
   assert.equal(sshTransportForConnection({...target, auth_type:"password", extra_args:"-o ProxyCommand=custom"}), "unsupported");
   assert.throws(() => shouldUseBuiltinSsh({...target, auth_type:"password", extra_args:"-o ProxyCommand=custom"}), /不能安全回退/);
 

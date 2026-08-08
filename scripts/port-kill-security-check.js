@@ -12,25 +12,44 @@ const previousSsh = process.env.TERMA_SSH_DIR;
 process.env.TERMA_DATA_DIR = path.join(root, "data");
 process.env.TERMA_SSH_DIR = path.join(root, ".ssh");
 
-function availablePort() {
+function availablePort(host = "127.0.0.1") {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(0, host, () => {
       const port = server.address().port;
       server.close(error => error ? reject(error) : resolve(port));
     });
   });
 }
 
-async function stopChild(child) {
-  if (!child || child.exitCode !== null) return;
-  child.kill("SIGTERM");
+async function availableIpv6Port() {
+  try {
+    return await availablePort("::");
+  } catch (error) {
+    if (["EAFNOSUPPORT", "EADDRNOTAVAIL", "EPROTONOSUPPORT"].includes(error?.code)) return null;
+    throw error;
+  }
+}
+
+function childStopped(child) {
+  return !child || child.exitCode !== null || child.signalCode !== null;
+}
+
+async function waitForChildStop(child, timeoutMs = 3000) {
+  if (childStopped(child)) return true;
   await Promise.race([
     once(child, "close"),
-    new Promise(resolve => setTimeout(resolve, 2000))
+    new Promise(resolve => setTimeout(resolve, timeoutMs))
   ]);
-  if (child.exitCode === null) child.kill("SIGKILL");
+  return childStopped(child);
+}
+
+async function stopChild(child) {
+  if (childStopped(child)) return;
+  child.kill("SIGTERM");
+  await waitForChildStop(child, 2000);
+  if (!childStopped(child)) child.kill("SIGKILL");
 }
 
 async function startListenerChild(port, host = "127.0.0.1") {
@@ -82,7 +101,7 @@ async function main() {
       () => killPortOwner(child.pid, freePort, "127.0.0.1"),
       error => error?.statusCode === 409 && /(no longer the owner|占用状态|owner)/i.test(error.message)
     );
-    assert.equal(child.exitCode, null, "A non-owner PID must remain running");
+    assert.equal(childStopped(child), false, "A non-owner PID must remain running");
 
     const wildcardPort = await availablePort();
     listenerChild = await startListenerChild(wildcardPort, "0.0.0.0");
@@ -90,9 +109,28 @@ async function main() {
       () => killPortOwner(listenerChild.pid, wildcardPort, "192.0.2.1"),
       error => error?.statusCode === 409 && /(no longer the owner|占用状态|owner)/i.test(error.message)
     );
-    assert.equal(listenerChild.exitCode, null, "A non-local requested address must not match a wildcard listener");
+    assert.equal(childStopped(listenerChild), false, "A non-local requested address must not match a wildcard listener");
     await stopChild(listenerChild);
     listenerChild = null;
+
+    const ipv6Port = process.platform === "win32" ? null : await availableIpv6Port();
+    if (process.platform === "win32") {
+      console.log("IPv6 wildcard owner check skipped: Unix lsof listener detection is not used on Windows");
+    } else if (ipv6Port === null) {
+      console.log("IPv6 wildcard owner check skipped: IPv6 is unavailable on this system");
+    } else {
+      listenerChild = await startListenerChild(ipv6Port, "::");
+      const ipv6Diagnosis = await diagnosePortUsage("::1", ipv6Port);
+      const ipv6Owner = ipv6Diagnosis.processes.find(item => Number(item.pid) === listenerChild.pid);
+      assert.equal(ipv6Diagnosis.occupied, true, "An IPv6 wildcard listener should occupy the IPv6 loopback port");
+      assert.ok(ipv6Owner, "The IPv6 wildcard listener should resolve to the child owner");
+      assert.ok(
+        ipv6Owner.listeners.some(item => item.address === "::" && item.family === 6 && item.port === ipv6Port),
+        "Owner evidence should retain the IPv6 wildcard address, family, and port"
+      );
+      await stopChild(listenerChild);
+      listenerChild = null;
+    }
 
     const listenerPort = await availablePort();
     listenerChild = await startListenerChild(listenerPort);
@@ -106,12 +144,12 @@ async function main() {
       () => killPortOwner(listenerChild.pid, listenerPort, "192.0.2.1"),
       error => error?.statusCode === 409 && /(no longer the owner|占用状态|owner)/i.test(error.message)
     );
-    assert.equal(listenerChild.exitCode, null, "A PID listening on another address must not be terminated");
+    assert.equal(childStopped(listenerChild), false, "A PID listening on another address must not be terminated");
 
     const killed = await killPortOwner(listenerChild.pid, listenerPort, "127.0.0.1");
     assert.equal(killed.ok, true);
-    await Promise.race([once(listenerChild, "close"), new Promise(resolve => setTimeout(resolve, 3000))]);
-    assert.notEqual(listenerChild.exitCode, null, "The exact address and port owner should be terminated");
+    await waitForChildStop(listenerChild);
+    assert.equal(childStopped(listenerChild), true, "The exact address and port owner should be terminated");
     listenerChild = null;
 
     const frontend = fs.readFileSync(path.join(__dirname, "..", "public", "app-forwards.js"), "utf8");
