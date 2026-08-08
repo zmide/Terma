@@ -59,6 +59,7 @@ globalThis.__desktopStartupTestApi = {
   startDisplayClient,
   buildAppMenu,
   initializeDesktopSettingsFile,
+  ensureDesktopSettingsFile,
   isWindowsPortable,
   userRuntimeRoot,
   legacyPackagedRoot,
@@ -423,6 +424,15 @@ check("Desktop application menu is hidden without changing tray menu setup", () 
   const { api, state } = createHarness();
   api.buildAppMenu();
   assert.deepEqual(state.applicationMenus, [null]);
+});
+
+check("First desktop startup persists defaults so settings opens only once", () => {
+  const { api, state } = createHarness({ platform:"linux", isPackaged:false, persistSettings:false });
+  assert.equal(fs.existsSync(state.settingsFile), false);
+  assert.equal(api.ensureDesktopSettingsFile(), true);
+  assert.equal(fs.existsSync(state.settingsFile), true);
+  assert.equal(JSON.parse(fs.readFileSync(state.settingsFile, "utf8")).dataMode, "project");
+  assert.equal(api.ensureDesktopSettingsFile(), false);
 });
 
 check("Manual Windows launch remains visible even when login startup is configured for the tray", () => {

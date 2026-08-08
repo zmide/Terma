@@ -259,6 +259,51 @@ async function runMobileScenario(window) {
           explicitExplorerStaysVisible:importExplorerFirst
         }
       };
+      const filePickerInput=document.querySelector('#config_upload');
+      if (filePickerInput) {
+        const rootStyle=document.documentElement.style;
+        const previousAppHeight=rootStyle.getPropertyValue('--app-height');
+        const filePickerPane=filePickerInput.closest('.workspace-pane');
+        const filePickerWorkspace=filePickerInput.closest('.workspace');
+        const paneScrollDescriptor=filePickerPane?Object.getOwnPropertyDescriptor(filePickerPane,'scrollTop'):null;
+        const previousWorkspaceScroll=filePickerWorkspace?.scrollTop||0;
+        const filePickerScrollFixture=document.createElement('div');
+        filePickerScrollFixture.setAttribute('aria-hidden','true');
+        filePickerScrollFixture.style.cssText='height:1800px;flex:0 0 auto;width:1px;opacity:0;pointer-events:none;';
+        try {
+          filePickerWorkspace?.appendChild(filePickerScrollFixture);
+          rootStyle.setProperty('--app-height','320px');
+          if (filePickerPane) Object.defineProperty(filePickerPane,'scrollTop',{value:128,writable:true,configurable:true});
+          if (filePickerWorkspace) filePickerWorkspace.scrollTop=Math.min(120,Math.max(0,filePickerWorkspace.scrollHeight-filePickerWorkspace.clientHeight));
+          const preservedWorkspaceScroll=filePickerWorkspace?.scrollTop||0;
+          beginNativeFileDialogViewport();
+          syncViewportHeight();
+          const frozenHeight=rootStyle.getPropertyValue('--app-height');
+          settleNativeFileDialogViewport();
+          await new Promise(resolve=>setTimeout(resolve,30));
+          const recoveredHeight=Number.parseFloat(rootStyle.getPropertyValue('--app-height'))||0;
+          layout.filePickerViewport={
+            found:true,
+            freezesDuringDialog:frozenHeight==='320px',
+            restoresAfterDialog:recoveredHeight>=window.innerHeight-1,
+            clearsShellScroll:!filePickerPane||filePickerPane.scrollTop===0,
+            preservesWorkspaceScroll:!filePickerWorkspace||Math.abs(filePickerWorkspace.scrollTop-preservedWorkspaceScroll)<0.5,
+            recoveredHeight,
+            layoutHeight:window.innerHeight
+          };
+        } finally {
+          if (filePickerPane) {
+            if (paneScrollDescriptor) Object.defineProperty(filePickerPane,'scrollTop',paneScrollDescriptor);
+            else delete filePickerPane.scrollTop;
+          }
+          filePickerScrollFixture.remove();
+          if (filePickerWorkspace) filePickerWorkspace.scrollTop=previousWorkspaceScroll;
+          if (previousAppHeight) rootStyle.setProperty('--app-height',previousAppHeight);
+          else rootStyle.removeProperty('--app-height');
+        }
+      } else {
+        layout.filePickerViewport={found:false,freezesDuringDialog:false,restoresAfterDialog:false,clearsShellScroll:false,preservesWorkspaceScroll:false};
+      }
       const mobileTabs=document.querySelector('.mobile-tabs');
       const mobileTabItems=[...mobileTabs.querySelectorAll('button, a')];
       const mobileTabLabels=[...mobileTabs.querySelectorAll('.mobile-tab-label')];
@@ -346,14 +391,21 @@ async function runMobileScenario(window) {
       document.documentElement.dataset.uiSmokeStage='mobile-terminal-back';
       const terminalBackFixture=document.createElement('div');
       terminalBackFixture.className='terminal-toolbar';
-      terminalBackFixture.innerHTML='<div class="terminal-title-row"><button class="terminal-mobile-back" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="backToExplorer()">'+icon('arrow-left')+'<span>返回</span></button><span class="terminal-connection-dot"></span><span class="terminal-status">root@example.invalid:22 · 已连接</span><span class="terminal-latency good">延迟 5 ms</span></div><div class="actions terminal-actions"><button class="terminal-action-sftp">'+icon('folder-open')+'<span>SFTP</span></button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button class="terminal-action-reconnect">'+icon('refresh-cw')+'<span>重连</span></button><button class="terminal-action-forward-list">'+icon('route')+'<span>转发列表</span></button><button class="terminal-action-forward">'+icon('play')+'<span>转发</span></button><button class="terminal-global-settings-button">'+icon('settings')+'</button></div>';
+      terminalBackFixture.innerHTML='<div class="terminal-title-row"><span class="terminal-connection-dot"></span><span class="terminal-status">root@example.invalid:22 · 已连接</span><span class="terminal-latency good">延迟 5 ms</span></div><div class="actions terminal-actions"><button class="terminal-action-sftp">'+icon('folder-open')+'<span>SFTP</span></button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button class="terminal-action-reconnect">'+icon('refresh-cw')+'<span>重连</span></button><button class="terminal-action-forward-list">'+icon('route')+'<span>转发列表</span></button><button class="terminal-action-forward">'+icon('play')+'<span>转发</span></button><button class="terminal-global-settings-button">'+icon('settings')+'</button></div>';
       document.body.appendChild(terminalBackFixture);
       document.querySelector('.left-pane')?.classList.add('mobile-hide');
-      document.querySelector('#content')?.classList.add('mobile-show');
+      document.querySelector('#content')?.classList.add('mobile-show','terminal-content');
       document.body.classList.add('mobile-terminal-active');
-      const terminalBackButton=terminalBackFixture.querySelector('.terminal-mobile-back');
+      const terminalBackButton=document.querySelector('#mobileBack');
+      if (!(terminalBackButton instanceof HTMLElement)) throw new Error('Mobile workspace back button is missing');
       const terminalBackStyle=getComputedStyle(terminalBackButton);
       const terminalBackRect=terminalBackButton.getBoundingClientRect();
+      const terminalBackBar=terminalBackButton.closest('.mobile-back-bar');
+      const terminalBackBarStyle=terminalBackBar?getComputedStyle(terminalBackBar):null;
+      const terminalBackBarRect=terminalBackBar?.getBoundingClientRect();
+      const terminalBackShellOwned=terminalBackBar?.parentElement?.id==='content';
+      const terminalBackDisplay=terminalBackStyle.display;
+      const terminalBackReservedRow=Boolean(terminalBackBarStyle?.position==='relative'&&terminalBackBarRect?.height>=45);
       const terminalMobileToolbarRect=terminalBackFixture.getBoundingClientRect();
       const terminalMobileTitleRect=terminalBackFixture.querySelector('.terminal-title-row').getBoundingClientRect();
       const terminalMobileActionsRect=terminalBackFixture.querySelector('.terminal-actions').getBoundingClientRect();
@@ -510,7 +562,9 @@ async function runMobileScenario(window) {
       terminalBackButton.click();
       layout.terminalBack={
         visible:terminalBackVisible,
-        display:terminalBackStyle.display,
+        display:terminalBackDisplay,
+        shellOwned:terminalBackShellOwned,
+        reservedRow:terminalBackReservedRow,
         compactToolbar:terminalMobileTitleRect.height<=48&&terminalMobileToolbarRect.height<=96&&terminalMobileActionsRect.top>=terminalMobileTitleRect.bottom-0.5,
         titleHeight:terminalMobileTitleRect.height,
         toolbarHeight:terminalMobileToolbarRect.height,
@@ -519,6 +573,7 @@ async function runMobileScenario(window) {
         globalSettingsHidden:getComputedStyle(mobileGlobalSettingsButton).display==='none',
         returned:!document.querySelector('.left-pane')?.classList.contains('mobile-hide')&&!document.querySelector('#content')?.classList.contains('mobile-show')&&!document.body.classList.contains('mobile-terminal-active')
       };
+      document.querySelector('#content')?.classList.remove('terminal-content');
       terminalBackFixture.remove();
       document.documentElement.dataset.uiSmokeStage='mobile-complete';
       return layout

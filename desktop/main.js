@@ -601,6 +601,12 @@ function initializeDesktopSettingsFile() {
   return SETTINGS_FILE;
 }
 
+function ensureDesktopSettingsFile() {
+  const firstRun = !settingsExists();
+  if (firstRun) writeSettings(defaultDesktopSettings());
+  return firstRun;
+}
+
 function isWindowsPortable() {
   return app.isPackaged
     && process.platform === "win32"
@@ -1958,7 +1964,7 @@ app.whenReady().then(async () => {
   configureWindowsAppIdentity();
   removeLegacyElectronShortcut();
   initializeDesktopSettingsFile();
-  const firstRun = !settingsExists();
+  const firstRun = ensureDesktopSettingsFile();
   const startupDesktopSettings = prepareRuntimeSettings();
   const startupRuntime = resolveRuntimePaths(startupDesktopSettings);
   prepareLegacyBrandMigrationAtStartup(startupDesktopSettings, startupRuntime);

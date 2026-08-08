@@ -753,7 +753,7 @@ function setWorkspace(title, subtitle, viewName, key=viewName, updateTab=true, c
   syncWorkspaceDocumentTitle(title, subtitle, viewName, key, meta);
   if (typeof syncTerminalToolbarPlacement === "function") syncTerminalToolbarPlacement();
   if (typeof syncSftpToolbarPlacement === "function") syncSftpToolbarPlacement();
-  if (isMobileLayout() && viewName !== "welcome") showMobileWorkspace();
+  if (isMobileLayout() && viewName !== "welcome" && !window.restoringTabs) showMobileWorkspace();
 }
 
 function showPrimary(name, togglePane=false) {

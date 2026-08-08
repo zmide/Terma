@@ -338,11 +338,11 @@ function renderConnectionRow(c) {
   const bulkCheck = connectionBulkMode ? `<label class="connection-bulk-check" title="选择 ${escAttr(c.name)}"><input type="checkbox" ${selectedConnectionIds.has(c.id) ? "checked" : ""} onchange="setConnectionSelected(${c.id},this.checked)"><span class="sr-only">选择 ${esc(c.name)}</span></label>` : "";
   return `<div class="conn-row${active}${bulkClass}">
     ${bulkCheck}
-    <div class="conn-main"><span class="conn-name conn-name-open" title="双击打开终端" ondblclick="event.stopPropagation();openTerminal(${c.id})">${esc(c.name)}</span><span class="conn-state"><span class="status-dot${running}"></span>${running ? "运行中" : "已停止"}</span></div>
+    <div class="conn-main"><span class="conn-name conn-name-open" title="双击打开终端" ondblclick="event.stopPropagation();openTerminal(${c.id})">${esc(c.name)}</span><span class="conn-state"><span class="status-dot${running}"></span>${running ? "运行中" : "已停止"}<span class="health-badge${healthClass}" title="健康状态：${escAttr(healthText)}" aria-label="健康状态：${escAttr(healthText)}">${icon(health?.ok ? "circle-check" : health ? "circle-alert" : "circle-help")}</span></span></div>
     <div class="conn-meta">${esc(c.ssh_user)}@${esc(c.ssh_host)}:${c.ssh_port}</div>
     ${c.tags ? `<div class="forward-tags">${String(c.tags).split(",").filter(Boolean).map(tag=>`<span>${esc(tag)}</span>`).join("")}</div>` : ""}
     <div class="conn-footer">
-      <div class="conn-summary"><span title="${c.forwards.length} 条转发">${icon("route")} ${c.forwards.length}</span><span class="health-badge${healthClass}" title="健康状态：${escAttr(healthText)}" aria-label="健康状态：${escAttr(healthText)}">${icon(health?.ok ? "circle-check" : health ? "circle-alert" : "circle-help")}</span></div>
+      <div class="conn-summary"><span title="${c.forwards.length} 条转发">${icon("route")} ${c.forwards.length}</span></div>
       <div class="conn-actions" aria-label="${escAttr(c.name)} 快捷操作">
         <button class="icon-button conn-primary-action" onclick="openTerminal(${c.id})" title="打开终端" aria-label="打开终端">${icon("square-terminal")}</button>
         <button class="icon-button" onclick="openSftp(${c.id})" title="打开 SFTP" aria-label="打开 SFTP">${icon("folder-open")}</button>

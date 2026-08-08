@@ -222,7 +222,14 @@ async function main() {
   );
   ok("SFTP 回收站默认关闭，新写 Terma 且兼容旧 TunnelDesk 数据", sftpBackend.includes('SFTP_RECYCLE_DIRECTORY = ".terma-recycle-bin"') && sftpBackend.includes('LEGACY_SFTP_RECYCLE_DIRECTORY = ".tunneldesk-recycle-bin"') && sftpBackend.includes('for (const storage of ["terma", "tunneldesk"])') && sftpBackend.includes("buildRestoreRemoteRecycleCommand") && sftpBackend.includes("buildDeleteRemoteRecycleCommand") && sftpBackend.includes("buildClearRemoteRecycleCommand") && sftpFrontend.includes("openSftpRecycleBin") && sftpFrontend.includes("JSON.stringify({id, storage})") && read("src/runtime-settings.ts").includes("sftp_recycle_bin_enabled"));
   ok("SFTP 权限命令兼容 Linux 与 macOS", sftpBackend.includes("permissionPathOperand") && sftpBackend.includes("chgrp") && !sftpBackend.includes("chown ${recursiveFlag}${shellQuote(`${normalized.owner}:${normalized.group}`)} --") && !sftpBackend.includes("chmod ${recursiveFlag}${normalized.mode} --"));
-  ok("终端返回按钮仅在移动布局显示", sftpCss.includes(".terminal-title-row > .terminal-mobile-back { display:none") && sftpCss.includes(".terminal-title-row > .terminal-mobile-back { display:inline-flex"));
+  ok(
+    "移动端工作区返回入口由外壳统一提供",
+    /<main id="content" class="content">\s*<div class="mobile-back-bar"><button id="mobileBack"/.test(read("public/index.html"))
+      && sftpCss.includes(".mobile-back { display:none !important; }")
+      && sftpCss.includes(".content.mobile-show.terminal-content > .mobile-back-bar { position:relative;")
+      && !read("public/app-terminal.js").includes("terminal-mobile-back")
+      && !read("public/app-remote.js").includes("terminal-mobile-back")
+  );
   ok("终端原始字节使用二进制 WebSocket 帧", read("src/terminal.ts").includes("Buffer.isBuffer(data) ? 2 : 1") && read("src/terminal.ts").includes("sendWebSocketFrame") && read("public/app-terminal.js").includes('socket.binaryType = "arraybuffer"') && read("public/app-terminal.js").includes("new Uint8Array(event.data)"));
   ok("SFTP 文本读取保护并支持原字节备份", sftpEncodingSource.includes("new TextDecoder") && sftpBackend.includes("[ ! -f") && sftpBackend.includes("backup_path"));
   ok("密码 SSH 使用内置跨平台依赖", Boolean(packageJson.dependencies?.ssh2));
@@ -230,7 +237,7 @@ async function main() {
   const dependencyState = read("scripts/dependency-state.js");
   const detachedStarter = read("scripts/start-detached.js");
   ok("Windows 后台启动不保留控制台并透传桌面监听参数", startBat.includes("start-detached.js desktop %SERVER_ARGS%") && startBat.includes("start-detached.js web") && detachedStarter.includes("[root, ...process.argv.slice(3)]") && read("desktop/main.js").includes("...parseServerArgs()") && detachedStarter.includes("windowsHide: true") && detachedStarter.includes("child.unref()") && !startBat.includes("cmd /c npm run desktop:run") && !startBat.includes("timeout /t"));
-  ok("Linux/macOS 桌面启动透传监听参数", read("start.sh").includes('npm run desktop:run -- "$@"'));
+  ok("Linux/macOS 桌面启动透传监听参数并监控后台进程", read("start.sh").includes('start-detached.js desktop $DESKTOP_ARGS "$@"') && read("start.sh").includes('start-detached.js web "$@"') && detachedStarter.includes("TERMA_START_PRINT_PID"));
   ok("启动脚本在依赖清单变化后自动安装", startBat.includes("scripts\\dependency-state.js") && read("start.sh").includes("scripts/dependency-state.js") && dependencyState.includes("package-lock.json") && dependencyState.includes(".terma-dependencies.sha256") && dependencyState.includes(".tunneldesk-dependencies.sha256"));
   ok("关闭流程停止健康监控并退出桌面主进程", read("src/server.ts").includes("await stopForwardHealthMonitor()") && read("src/ssh.ts").includes("async function stopForwardHealthMonitor()") && read("desktop/main.js").includes("onShutdown: () =>"));
   ok("dist/server.js 存在", fs.existsSync(path.join(root, "dist/server.js")));
@@ -275,6 +282,21 @@ async function main() {
   ok("共享弹窗统一标题、关闭按钮和吸顶操作区", appCss.includes(".modal-title-row {") && appCss.includes("padding:var(--modal-card-padding)") && appCss.includes("margin-top:calc(-1 * var(--modal-card-padding))") && appCss.includes("margin-bottom:calc(-1 * var(--modal-card-padding))") && appCss.includes(".vnc-clipboard-helper-state .rdp-server-head"));
   ok("图标刷新不监听全部 DOM 变化", !frontend.includes("new MutationObserver(refreshIcons)"));
   ok("动态图标直接输出 SVG", frontend.includes('return `<svg class="lucide'));
+  ok(
+    "移动端文件选择返回后恢复完整视口高度",
+    utilsFrontend.includes("function beginNativeFileDialogViewport()")
+      && utilsFrontend.includes("function settleNativeFileDialogViewport()")
+      && utilsFrontend.includes("function resetMobileWorkspaceShellScroll()")
+      && utilsFrontend.includes("resetMobileWorkspaceShellScroll();")
+      && utilsFrontend.includes("preferLayout:true")
+      && utilsFrontend.includes("nativeFileDialogPending && options.force !== true")
+      && appEntry.includes("bindNativeFileDialogViewportRecovery()")
+  );
+  ok(
+    "SSH 健康状态图标不再与快捷操作争用底部宽度",
+    /<span class="conn-state">[\s\S]*?<span class="health-badge/.test(connectionsFrontend)
+      && !/<div class="conn-summary">[\s\S]*?<span class="health-badge/.test(connectionsFrontend)
+  );
   ok("转发入口包含局域网监听提示", frontend.includes("0.0.0.0") && frontend.includes("仅本机可访问"));
   ok("工作区标签菜单包含四种关闭方式", ["关闭当前标签", "关闭其他标签", "关闭右侧标签", "关闭所有标签"].every(text => frontend.includes(text)));
   const dockingContract = dockingFrontend.includes("function workspaceLeaves")
@@ -307,10 +329,17 @@ async function main() {
       && read("scripts/ui-smoke-electron.js").includes("remoteProtocolMonitorBadges")
   );
   ok("窄屏终端工具栏分行、左对齐并以图标保留全部操作", appCss.includes("container-name:terminal-view") && appCss.includes("container-name:terminal-toolbar") && appCss.includes("@container terminal-view (max-width:1080px)") && appCss.includes("@container terminal-toolbar (max-width:1080px)") && appCss.includes("@container terminal-toolbar (max-width:700px)") && appCss.includes(".terminal-title-row { flex:1 1 100%; width:100%; }") && appCss.includes(".terminal-actions { justify-content:flex-start; }") && appCss.includes(".terminal-actions > button:not(.terminal-dropdown-button) > span:not(.composite-icon) { display:none; }"));
-  ok("移动端终端标题行按内容收缩不留大块空白", appCss.includes(".terminal-title-row { flex:0 0 auto; width:100%; }") && appCss.includes(".terminal-toolbar { align-items:flex-start; flex-direction:column"));
+  ok("移动端终端标题行按内容收缩并为外壳返回按钮留位", appCss.includes(".terminal-title-row { flex:0 0 auto; width:100%; padding-left:0; }") && appCss.includes(".content.mobile-show.terminal-content > .mobile-back-bar { position:relative;") && appCss.includes(".terminal-toolbar { align-items:flex-start; flex-direction:column"));
   ok("移动端终端字体菜单限制高度并保持关闭入口可见", appCss.includes(".mobile-action-menu { position:fixed") && appCss.includes("max-height:min(68dvh") && appCss.includes("overflow-y:auto") && appCss.includes(".mobile-action-menu .action-menu-close { position:sticky"));
   ok("移动端工作区表单聚焦时不触发页面自动缩放", appCss.includes(".workspace input, .workspace select, .workspace textarea { font-size:16px; }"));
   ok("移动端软键盘改变视口时保持当前工作区或操作区", workspaceFrontend.includes('let mobilePaneView = "explorer"') && workspaceFrontend.includes('mobilePaneView = "workspace"') && workspaceFrontend.includes('responsiveLayoutMobile = true') && workspaceFrontend.includes('if (mobilePaneView === "workspace") showMobileWorkspace()') && appEntry.includes('window.addEventListener("resize", () => { syncViewportHeight(); syncResponsivePane(); })'));
+  ok(
+    "移动端启动恢复标签时先停留在连接列表",
+    workspaceFrontend.includes('viewName !== "welcome" && !window.restoringTabs')
+      && dockingFrontend.includes('resolvedPaneId === focusedPaneId && !window.restoringTabs')
+      && appEntry.includes("const restored = restoreTabsState();")
+      && appEntry.includes("syncResponsivePane();")
+  );
   ok("SSH 表单支持密钥和密码登录", indexHtml.includes("私钥登录") && indexHtml.includes("密码登录") && frontend.includes("toggleAuthFields"));
   ok("SSH 登录方式隔离认证字段", frontend.includes('identity_file:passwordAuth ? ""') && frontend.includes('ssh_password:passwordAuth ?') && frontend.includes('control.disabled = password') && frontend.includes('control.disabled = !password'));
   ok("通知首次加载只建立游标", frontend.includes("initializeNotificationCursor") && frontend.includes('api("/api/notifications?since=0")') && frontend.includes("notificationCursorInitialized = true"));

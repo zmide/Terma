@@ -198,9 +198,11 @@ function showActionMenu(event, actions) {
 
 function updateFilePicker(input) {
   const name = input.closest(".file-picker")?.querySelector(".file-picker-name");
-  if (!name) return;
-  const files = Array.from(input.files || []);
-  name.textContent = files.length > 1 ? `已选择 ${files.length} 个文件` : files[0]?.name || "未选择文件";
+  if (name) {
+    const files = Array.from(input.files || []);
+    name.textContent = files.length > 1 ? `已选择 ${files.length} 个文件` : files[0]?.name || "未选择文件";
+  }
+  settleNativeFileDialogViewport();
 }
 
 function currentPageHostForForward(bindHost) {
@@ -620,8 +622,67 @@ function keepTerminalKeyboardClosed(event) {
   event?.preventDefault?.();
 }
 
-function syncViewportHeight() {
-  const height = window.visualViewport?.height || window.innerHeight;
+let nativeFileDialogPending = false;
+let nativeFileDialogFallbackTimer = null;
+
+function beginNativeFileDialogViewport() {
+  nativeFileDialogPending = true;
+  clearTimeout(nativeFileDialogFallbackTimer);
+  nativeFileDialogFallbackTimer = setTimeout(settleNativeFileDialogViewport, 1400);
+}
+
+function resetMobileWorkspaceShellScroll() {
+  if (!isMobileLayout()) return;
+  const content = document.querySelector("#content.mobile-show");
+  if (!content) return;
+  const shells = [
+    content,
+    ...content.querySelectorAll(".workspace-dock, .workspace-split, .workspace-pane")
+  ];
+  for (const shell of shells) {
+    if (shell.scrollTop) shell.scrollTop = 0;
+    if (shell.scrollLeft) shell.scrollLeft = 0;
+  }
+}
+
+function settleNativeFileDialogViewport() {
+  nativeFileDialogPending = false;
+  clearTimeout(nativeFileDialogFallbackTimer);
+  nativeFileDialogFallbackTimer = null;
+  [0, 80, 240, 700].forEach(delay => {
+    setTimeout(() => {
+      syncViewportHeight({force:true, preferLayout:true});
+      if (typeof syncResponsivePane === "function") syncResponsivePane();
+      resetMobileWorkspaceShellScroll();
+    }, delay);
+  });
+}
+
+function bindNativeFileDialogViewportRecovery() {
+  document.addEventListener("click", event => {
+    const input = event.target?.matches?.('input[type="file"]')
+      ? event.target
+      : event.target?.closest?.(".file-picker, .ftp-upload-button, .sftp-upload-button")?.querySelector?.('input[type="file"]');
+    if (input) beginNativeFileDialogViewport();
+  }, true);
+  document.addEventListener("change", event => {
+    if (event.target?.matches?.('input[type="file"]')) settleNativeFileDialogViewport();
+  }, true);
+  window.addEventListener("focus", () => {
+    if (nativeFileDialogPending) setTimeout(settleNativeFileDialogViewport, 80);
+    else setTimeout(syncViewportHeight, 80);
+  });
+  window.addEventListener("pageshow", () => settleNativeFileDialogViewport());
+}
+
+function syncViewportHeight(options={}) {
+  if (nativeFileDialogPending && options.force !== true) return;
+  const visualHeight = Number(window.visualViewport?.height || 0);
+  const layoutHeight = Number(window.innerHeight || 0);
+  const height = options.preferLayout
+    ? Math.max(visualHeight, layoutHeight)
+    : visualHeight || layoutHeight;
+  if (!(height > 0)) return;
   document.documentElement.style.setProperty("--app-height", `${Math.round(height)}px`);
   scheduleTerminalFit();
 }

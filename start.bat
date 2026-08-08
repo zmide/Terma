@@ -6,6 +6,14 @@ for %%V in (LAN WEB_ONLY NO_BROWSER NO_PAUSE KEEP_WINDOW) do (
   if not defined TERMA_%%V if defined TUNNELDESK_%%V set "TERMA_%%V=!TUNNELDESK_%%V!"
 )
 
+where node >nul 2>nul
+if errorlevel 1 (
+  echo Terma requires Node.js 22 or newer, but node was not found.
+  goto failed
+)
+node --no-warnings scripts\node-runtime-check.js
+if errorlevel 1 goto failed
+
 node scripts\source-runtime-path.js --stop
 if errorlevel 1 goto failed
 call :set_runtime_files desktop
@@ -31,7 +39,7 @@ goto build_app
 
 :install_deps
 echo Installing dependencies...
-call npm install --include=dev
+call npm install --include=dev --no-audit --no-fund
 if errorlevel 1 goto failed
 node scripts\dependency-state.js --write
 if errorlevel 1 goto failed
@@ -40,7 +48,7 @@ goto build_app
 :install_deps_done
 if not "%TERMA_WEB_ONLY%"=="1" (
   echo Electron is not installed. Installing desktop dependencies...
-  call npm install --include=dev
+  call npm install --include=dev --no-audit --no-fund
   if errorlevel 1 goto failed
   node scripts\dependency-state.js --write
   if errorlevel 1 goto failed

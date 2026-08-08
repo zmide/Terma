@@ -124,6 +124,7 @@ renderExplorerTools();
 initOperationPaneBehavior();
 loadCachedUpdateStatus();
 syncViewportHeight();
+bindNativeFileDialogViewportRecovery();
 window.visualViewport?.addEventListener("resize", syncViewportHeight);
 window.visualViewport?.addEventListener("scroll", syncViewportHeight);
 window.addEventListener("resize", () => { syncViewportHeight(); syncResponsivePane(); });

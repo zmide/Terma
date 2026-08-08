@@ -1550,7 +1550,7 @@ setWorkspace = function(title, subtitle, viewName, key=viewName, updateTab=true,
   } finally {
     workspaceExecutionPaneId = previousExecutionPane;
   }
-  if (isMobileLayout() && viewName !== "welcome" && resolvedPaneId === focusedPaneId) showMobileWorkspace();
+  if (isMobileLayout() && viewName !== "welcome" && resolvedPaneId === focusedPaneId && !window.restoringTabs) showMobileWorkspace();
 };
 
 closeTab = function(event, key) {

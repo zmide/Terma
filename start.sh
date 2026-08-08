@@ -1,5 +1,6 @@
 #!/data/data/com.termux/files/usr/bin/sh
 cd "$(dirname "$0")"
+ROOT_DIR="$(pwd)"
 
 # Terma names its runtime toggles with TERMA_. Keep the old names as a
 # one-release compatibility input for existing launch scripts.
@@ -13,11 +14,57 @@ if [ "$(uname -o 2>/dev/null)" = "Android" ] && [ -n "$PREFIX" ]; then
   TERMUX_ANDROID_NDK_PATH="${npm_config_android_ndk_path:-$PREFIX}"
 fi
 
+node_runtime_ok() {
+  "$1" --no-warnings "$ROOT_DIR/scripts/node-runtime-check.js" >/dev/null 2>&1
+}
+
+select_node_runtime() {
+  CURRENT_NODE="$(command -v node 2>/dev/null || true)"
+  if [ -n "$CURRENT_NODE" ] && node_runtime_ok "$CURRENT_NODE"; then
+    return 0
+  fi
+
+  for NODE_DIR in \
+    "$HOME/.local/bin" \
+    "$HOME/.local/opt/node-current/bin" \
+    "/opt/terma-test-toolchain/current/bin" \
+    "$HOME/.volta/bin" \
+    "/opt/homebrew/bin" \
+    "/usr/local/bin" \
+    "$HOME"/.local/opt/node-v*/bin \
+    "$HOME"/.local/node-v*/bin \
+    "$HOME"/.nvm/versions/node/v*/bin \
+    /opt/node-v*/bin \
+    /usr/local/lib/nodejs/node-v*/bin
+  do
+    [ -x "$NODE_DIR/node" ] || continue
+    node_runtime_ok "$NODE_DIR/node" || continue
+    PATH="$NODE_DIR:$PATH"
+    export PATH
+    echo "Using $(node -v) from $NODE_DIR."
+    return 0
+  done
+
+  if [ -n "$CURRENT_NODE" ]; then
+    "$CURRENT_NODE" --no-warnings "$ROOT_DIR/scripts/node-runtime-check.js" 2>&1 || true
+  else
+    echo "Terma requires Node.js 22 or newer, but node was not found."
+  fi
+  case "$(uname -s 2>/dev/null)" in
+    Darwin) echo "Install Node.js 22+ with Homebrew or add an existing Node.js installation to PATH." ;;
+    Linux) echo "Install Node.js 22+ from nodejs.org or your distribution's current Node.js repository." ;;
+    *) echo "Install Node.js 22+ and run this script again." ;;
+  esac
+  return 1
+}
+
+select_node_runtime || exit 1
+
 npm_install() {
   if [ -n "$TERMUX_ANDROID_NDK_PATH" ]; then
-    npm_config_android_ndk_path="$TERMUX_ANDROID_NDK_PATH" npm install --include=dev
+    npm_config_android_ndk_path="$TERMUX_ANDROID_NDK_PATH" npm install --include=dev --no-audit --no-fund
   else
-    npm install --include=dev
+    npm install --include=dev --no-audit --no-fund
   fi
 }
 
@@ -33,54 +80,115 @@ is_windows_shell() {
 }
 
 pid_is_running() {
-  pid="$1"
+  PID_TO_CHECK="$1"
   if is_windows_shell && command -v powershell.exe >/dev/null 2>&1; then
-    powershell.exe -NoProfile -Command "try { Get-Process -Id $pid -ErrorAction Stop | Out-Null; exit 0 } catch { exit 1 }" >/dev/null 2>&1
+    powershell.exe -NoProfile -Command "try { Get-Process -Id $PID_TO_CHECK -ErrorAction Stop | Out-Null; exit 0 } catch { exit 1 }" >/dev/null 2>&1
   else
-    kill -0 "$pid" 2>/dev/null
+    kill -0 "$PID_TO_CHECK" 2>/dev/null
   fi
 }
 
 process_command() {
-  pid="$1"
+  PID_TO_CHECK="$1"
   if is_windows_shell && command -v powershell.exe >/dev/null 2>&1; then
-    powershell.exe -NoProfile -Command "try { \$p=Get-CimInstance Win32_Process -Filter 'ProcessId=$pid' -ErrorAction Stop; Write-Output ((\$p.Name + ' ' + \$p.CommandLine).Trim()) } catch {}" 2>/dev/null
+    powershell.exe -NoProfile -Command "try { \$p=Get-CimInstance Win32_Process -Filter 'ProcessId=$PID_TO_CHECK' -ErrorAction Stop; Write-Output ((\$p.Name + ' ' + \$p.CommandLine).Trim()) } catch {}" 2>/dev/null
   else
-    ps -p "$pid" -o command= 2>/dev/null || true
+    ps -p "$PID_TO_CHECK" -o command= 2>/dev/null || true
   fi
 }
 
-if [ -f data/web.pid ]; then
-  PID="$(cat data/web.pid 2>/dev/null || true)"
-  case "$PID" in
-    ''|*[!0-9]*) ;;
-    *)
-      if pid_is_running "$PID"; then
-        PROCESS_COMMAND="$(process_command "$PID")"
-        if [ -n "$PROCESS_COMMAND" ] && ! printf '%s' "$PROCESS_COMMAND" | grep -Eiq '(terma|tunneldesk|dist/server\.js|electron)'; then
-          echo "Ignoring stale Terma PID file that now belongs to pid=$PID."
-        else
-          WEB_URL="$(cat data/web.url 2>/dev/null || true)"
-          echo "Terma is already running, pid=$PID"
-          [ -n "$WEB_URL" ] && echo "Open $WEB_URL"
-          if [ -f data/web.json ] && command -v node >/dev/null 2>&1; then
-            node -e "try{const d=require('fs').readFileSync('data/web.json','utf8'); const j=JSON.parse(d); for(const u of (j.lan_urls||[])) console.log('  '+u)}catch{}"
-          fi
-          if [ "$TERMA_WEB_ONLY" != "1" ] && has_gui && printf '%s' "$PROCESS_COMMAND" | grep -Eiq '(electron|terma|tunneldesk)'; then
-            if [ -x node_modules/.bin/electron ]; then
-              npm run desktop:run >/dev/null 2>&1 &
-              echo "The existing desktop window has been brought to the foreground."
-            else
-              echo "The existing desktop process is active; Electron is not installed in this checkout."
-            fi
-          else
-            echo "The existing headless service remains active; no second process was started."
-          fi
-          exit 0
-        fi
+resolve_runtime_dir() {
+  MODE="$1"
+  if [ "$MODE" = "desktop" ]; then
+    RUNTIME_DIR="$(node scripts/source-runtime-path.js --desktop-data-dir 2>/dev/null || true)"
+  else
+    RUNTIME_DIR="$(node scripts/source-runtime-path.js --web-data-dir 2>/dev/null || true)"
+  fi
+  [ -n "$RUNTIME_DIR" ] || RUNTIME_DIR="$ROOT_DIR/data"
+  printf '%s' "$RUNTIME_DIR"
+}
+
+DESKTOP_DATA_DIR="$(resolve_runtime_dir desktop)"
+WEB_DATA_DIR="$(resolve_runtime_dir web)"
+PROJECT_DATA_DIR="$ROOT_DIR/data"
+
+set_runtime_files() {
+  RUNTIME_DATA_DIR="$1"
+  URL_FILE="$RUNTIME_DATA_DIR/web.url"
+  INFO_FILE="$RUNTIME_DATA_DIR/web.json"
+  PID_FILE="$RUNTIME_DATA_DIR/web.pid"
+  STATUS_FILE="$RUNTIME_DATA_DIR/startup-status.json"
+  mkdir -p "$RUNTIME_DATA_DIR" "$PROJECT_DATA_DIR"
+}
+
+print_runtime_urls() {
+  INFO_TO_PRINT="$1"
+  if [ -f "$INFO_TO_PRINT" ]; then
+    node -e "try{const data=require('fs').readFileSync(process.argv[1],'utf8'); const urls=JSON.parse(data).lan_urls||[]; if(urls.length){ console.log('LAN access:'); for(const url of urls) console.log('  '+url)}}catch{}" "$INFO_TO_PRINT"
+  fi
+}
+
+bring_existing_desktop_to_front() {
+  [ "$TERMA_WEB_ONLY" = "1" ] && return 1
+  has_gui || return 1
+  [ -x node_modules/.bin/electron ] || return 1
+  EXTRA_ARGS=""
+  if [ "$(uname -s 2>/dev/null)" = "Linux" ] && [ "$(id -u 2>/dev/null)" = "0" ]; then
+    EXTRA_ARGS="--no-sandbox"
+  fi
+  TERMA_DATA_DIR="$DESKTOP_DATA_DIR" node scripts/start-detached.js desktop $EXTRA_ARGS >/dev/null 2>&1
+}
+
+check_existing_instance() {
+  SEEN_DIRS=""
+  for DATA_CANDIDATE in "$@"; do
+    [ -n "$DATA_CANDIDATE" ] || continue
+    case "|$SEEN_DIRS|" in *"|$DATA_CANDIDATE|"*) continue ;; esac
+    SEEN_DIRS="$SEEN_DIRS|$DATA_CANDIDATE"
+    CANDIDATE_PID_FILE="$DATA_CANDIDATE/web.pid"
+    [ -f "$CANDIDATE_PID_FILE" ] || continue
+    EXISTING_PID="$(cat "$CANDIDATE_PID_FILE" 2>/dev/null || true)"
+    case "$EXISTING_PID" in ''|*[!0-9]*) rm -f "$CANDIDATE_PID_FILE" ;; *)
+      if ! pid_is_running "$EXISTING_PID"; then
+        rm -f "$DATA_CANDIDATE/web.pid" "$DATA_CANDIDATE/web.url" "$DATA_CANDIDATE/web.json"
+        continue
       fi
+      PROCESS_COMMAND="$(process_command "$EXISTING_PID")"
+      if [ -n "$PROCESS_COMMAND" ] && ! printf '%s' "$PROCESS_COMMAND" | grep -Fq "$ROOT_DIR"; then
+        if printf '%s' "$PROCESS_COMMAND" | grep -Eiq '(terma|tunneldesk|dist/server\.js|electron)'; then
+          echo "Another Terma installation is already using this runtime, pid=$EXISTING_PID."
+          EXISTING_URL="$(cat "$DATA_CANDIDATE/web.url" 2>/dev/null || true)"
+          [ -n "$EXISTING_URL" ] && echo "Open $EXISTING_URL"
+          return 0
+        fi
+        echo "Ignoring a stale Terma PID file that now belongs to pid=$EXISTING_PID."
+        rm -f "$DATA_CANDIDATE/web.pid" "$DATA_CANDIDATE/web.url" "$DATA_CANDIDATE/web.json"
+        continue
+      fi
+      echo "Terma is already running, pid=$EXISTING_PID"
+      EXISTING_URL="$(cat "$DATA_CANDIDATE/web.url" 2>/dev/null || true)"
+      [ -n "$EXISTING_URL" ] && echo "Open $EXISTING_URL"
+      print_runtime_urls "$DATA_CANDIDATE/web.json"
+      if printf '%s' "$PROCESS_COMMAND" | grep -Eiq '(electron|terma|tunneldesk)'; then
+        if bring_existing_desktop_to_front; then
+          echo "The existing desktop window has been brought to the foreground."
+        else
+          echo "The existing desktop process remains active; no second process was started."
+        fi
+      else
+        echo "The existing Web service remains active; no second process was started."
+      fi
+      return 0
       ;;
-  esac
+    esac
+  done
+  return 1
+}
+
+if [ "$TERMA_WEB_ONLY" = "1" ]; then
+  check_existing_instance "$WEB_DATA_DIR" "$PROJECT_DATA_DIR" && exit 0
+else
+  check_existing_instance "$DESKTOP_DATA_DIR" "$WEB_DATA_DIR" "$PROJECT_DATA_DIR" && exit 0
 fi
 
 if ! node scripts/dependency-state.js >/dev/null 2>&1; then
@@ -89,13 +197,15 @@ if ! node scripts/dependency-state.js >/dev/null 2>&1; then
   node scripts/dependency-state.js --write || exit 1
 fi
 if [ "$TERMA_WEB_ONLY" != "1" ] && [ ! -x node_modules/.bin/electron ]; then
+  echo "Electron is not installed. Installing desktop dependencies..."
   npm_install || exit 1
   node scripts/dependency-state.js --write || exit 1
 fi
+
+echo "Building Terma..."
 npm run build >/dev/null || exit 1
 
-mkdir -p data
-SERVER_ARGS="$@"
+SERVER_ARGS="$*"
 SHOW_LAN_URLS=""
 parse_server_args() {
   while [ "$#" -gt 0 ]; do
@@ -125,8 +235,6 @@ if [ "$TERMA_LAN" = "1" ]; then
   SHOW_LAN_URLS=1
 fi
 
-rm -f data/web.url data/web.json
-
 open_url() {
   [ "$TERMA_NO_BROWSER" = "1" ] && return 0
   if command -v termux-open-url >/dev/null 2>&1; then termux-open-url "$1" >/dev/null 2>&1 &
@@ -136,35 +244,50 @@ open_url() {
 }
 
 check_web_api() {
-  url="${1%/}/api/connections"
+  API_URL="${1%/}/api/connections"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsS --max-time 3 "$url" >/dev/null 2>&1 && { echo "Web API OK."; return 0; }
+    curl -fsS --max-time 3 "$API_URL" >/dev/null 2>&1 && { echo "Web API OK."; return 0; }
   elif command -v wget >/dev/null 2>&1; then
-    wget -q -T 3 -O /dev/null "$url" >/dev/null 2>&1 && { echo "Web API OK."; return 0; }
+    wget -q -T 3 -O /dev/null "$API_URL" >/dev/null 2>&1 && { echo "Web API OK."; return 0; }
   else
     return 0
   fi
-  echo "Web API health check warning: $url is not ready yet."
+  echo "Web API health check warning: $API_URL is not ready yet."
   return 0
 }
 
+print_startup_diagnostics() {
+  echo "Terma failed before the web URL became ready."
+  for LOG_FILE in "$PROJECT_DATA_DIR/desktop-error.log" "$PROJECT_DATA_DIR/web.log" "$STATUS_FILE"; do
+    [ -f "$LOG_FILE" ] || continue
+    echo "--- $LOG_FILE ---"
+    tail -n 80 "$LOG_FILE" 2>/dev/null || cat "$LOG_FILE"
+  done
+}
+
 wait_for_url() {
-  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60; do
-    if [ -f data/web.url ]; then
-      WEB_URL="$(cat data/web.url)"
+  OPEN_BROWSER="$1"
+  STARTED_PID="$2"
+  WAIT_COUNT=0
+  while [ "$WAIT_COUNT" -lt 60 ]; do
+    if [ -f "$URL_FILE" ]; then
+      WEB_URL="$(cat "$URL_FILE")"
       echo "Open $WEB_URL"
       check_web_api "$WEB_URL"
-      if [ -f data/web.json ] && command -v node >/dev/null 2>&1; then
-        node -e "try{const data=require('fs').readFileSync('data/web.json','utf8'); const urls=JSON.parse(data).lan_urls||[]; if(urls.length){ console.log('LAN access:'); for(const url of urls) console.log('  '+url)}}catch{}"
-      fi
-      [ "$1" = "open_browser" ] && open_url "$WEB_URL"
+      print_runtime_urls "$INFO_FILE"
+      [ "$OPEN_BROWSER" = "open_browser" ] && open_url "$WEB_URL"
       echo "Use ./stop.sh to stop Terma and SSH tunnels."
       return 0
     fi
+    if [ "$WAIT_COUNT" -ge 1 ] && [ -n "$STARTED_PID" ] && ! pid_is_running "$STARTED_PID"; then
+      print_startup_diagnostics
+      return 1
+    fi
+    WAIT_COUNT=$((WAIT_COUNT + 1))
     sleep 1
   done
   echo "Terma started, but the web URL file is not ready yet."
-  echo "Check data/web.log and data/startup-status.json for the startup error."
+  print_startup_diagnostics
   echo "The configured port may have moved automatically when it was occupied."
   echo "Use ./stop.sh to stop Terma and SSH tunnels."
   return 1
@@ -172,44 +295,64 @@ wait_for_url() {
 
 if [ "$1" = "--foreground" ]; then
   shift
-  node dist/server.js "$@"
+  set_runtime_files "$WEB_DATA_DIR"
+  rm -f "$URL_FILE" "$INFO_FILE"
+  TERMA_DATA_DIR="$WEB_DATA_DIR" node dist/server.js "$@"
   exit $?
 fi
 
+electron_ready() {
+  node -e "try{const fs=require('fs'); const electron=require('electron'); process.exit(typeof electron==='string' && fs.existsSync(electron) ? 0 : 1)}catch{process.exit(1)}" >/dev/null 2>&1
+}
+
 if [ "$TERMA_WEB_ONLY" != "1" ] && has_gui && [ -x node_modules/.bin/electron ]; then
-  if ! node -e "try{const fs=require('fs'); const electron=require('electron'); process.exit(typeof electron==='string' && fs.existsSync(electron) ? 0 : 1)}catch{process.exit(1)}" >/dev/null 2>&1; then
+  if ! electron_ready; then
     echo "Downloading Electron binary..."
-    npx install-electron --no >/dev/null 2>&1 || true
-    if ! node -e "try{const fs=require('fs'); const electron=require('electron'); process.exit(typeof electron==='string' && fs.existsSync(electron) ? 0 : 1)}catch{process.exit(1)}" >/dev/null 2>&1; then
+    npx install-electron --no || true
+    if ! electron_ready; then
       echo "Default Electron download failed. Trying mirror: https://npmmirror.com/mirrors/electron/"
-      ELECTRON_MIRROR="${ELECTRON_MIRROR:-https://npmmirror.com/mirrors/electron/}" npx install-electron --no >/dev/null 2>&1 || true
+      ELECTRON_MIRROR="${ELECTRON_MIRROR:-https://npmmirror.com/mirrors/electron/}" npx install-electron --no || true
     fi
   fi
-  if node -e "try{const fs=require('fs'); const electron=require('electron'); process.exit(typeof electron==='string' && fs.existsSync(electron) ? 0 : 1)}catch{process.exit(1)}" >/dev/null 2>&1; then
+  if electron_ready; then
     npm run native:build:if-needed || echo "Native SFTP drag build failed; desktop mode will use the available fallback."
-    npm run desktop:run -- "$@" >/dev/null 2>&1 &
-    echo "Terma desktop is starting."
-    echo "Mode: desktop. Web log: data/web.log"
-    echo "Set TERMA_WEB_ONLY=1 to force background Web mode."
-    wait_for_url
-    exit 0
+    set_runtime_files "$DESKTOP_DATA_DIR"
+    rm -f "$URL_FILE" "$INFO_FILE"
+    DESKTOP_ARGS=""
+    if [ "$(uname -s 2>/dev/null)" = "Linux" ] && [ "$(id -u 2>/dev/null)" = "0" ]; then
+      DESKTOP_ARGS="--no-sandbox $DESKTOP_ARGS"
+    fi
+    if [ -n "$DESKTOP_ARGS" ]; then
+      STARTED_PID="$(TERMA_DATA_DIR="$DESKTOP_DATA_DIR" TERMA_START_PRINT_PID=1 node scripts/start-detached.js desktop $DESKTOP_ARGS "$@")"
+    else
+      STARTED_PID="$(TERMA_DATA_DIR="$DESKTOP_DATA_DIR" TERMA_START_PRINT_PID=1 node scripts/start-detached.js desktop "$@")"
+    fi
+    if [ -n "$STARTED_PID" ]; then
+      echo "Terma desktop is starting, pid=$STARTED_PID."
+      echo "Mode: desktop. Logs: data/web.log and data/desktop-error.log"
+      echo "Set TERMA_WEB_ONLY=1 to force background Web mode."
+      wait_for_url "" "$STARTED_PID"
+      exit $?
+    fi
+    echo "Electron failed to launch. Started Web mode instead."
+  else
+    echo "Electron binary download failed. Started Web mode instead."
   fi
-  echo "Electron binary download failed. Started Web mode instead."
 fi
 
-if command -v setsid >/dev/null 2>&1; then
-  setsid node dist/server.js $SERVER_ARGS > data/web.log 2>&1 < /dev/null &
-elif command -v nohup >/dev/null 2>&1; then
-  nohup node dist/server.js $SERVER_ARGS > data/web.log 2>&1 < /dev/null &
-else
-  node dist/server.js $SERVER_ARGS > data/web.log 2>&1 < /dev/null &
+set_runtime_files "$WEB_DATA_DIR"
+rm -f "$URL_FILE" "$INFO_FILE"
+STARTED_PID="$(TERMA_DATA_DIR="$WEB_DATA_DIR" TERMA_START_PRINT_PID=1 node scripts/start-detached.js web "$@")"
+if [ -z "$STARTED_PID" ]; then
+  print_startup_diagnostics
+  exit 1
 fi
 
-echo "Terma is starting in the background."
+echo "Terma is starting in the background, pid=$STARTED_PID."
 if [ "$TERMA_WEB_ONLY" = "1" ]; then
   echo "Mode: Web-only requested by TERMA_WEB_ONLY=1."
 else
   echo "Mode: Web fallback or headless environment."
 fi
 echo "Web log: data/web.log"
-wait_for_url open_browser
+wait_for_url open_browser "$STARTED_PID"

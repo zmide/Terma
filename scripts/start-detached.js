@@ -25,6 +25,7 @@ function startDetached(command, args, stdoutName, stderrName = stdoutName) {
       env: process.env
     });
     child.unref();
+    if (process.env.TERMA_START_PRINT_PID === "1") process.stdout.write(String(child.pid));
     return child.pid;
   } finally {
     fs.closeSync(stdout);

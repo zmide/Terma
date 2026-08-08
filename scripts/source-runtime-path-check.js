@@ -51,6 +51,39 @@ async function check(name, callback) {
     assert.doesNotMatch(startScript, /call stop\.bat/i);
   });
 
+  await check("source launchers reject incompatible Node runtimes before dependency installation", () => {
+    const windowsStart = fs.readFileSync(path.resolve(__dirname, "..", "start.bat"), "utf8");
+    const posixStart = fs.readFileSync(path.resolve(__dirname, "..", "start.sh"), "utf8");
+    const runtimeCheck = fs.readFileSync(path.resolve(__dirname, "node-runtime-check.js"), "utf8");
+    assert.ok(windowsStart.indexOf("node-runtime-check.js") < windowsStart.indexOf("dependency-state.js"));
+    assert.ok(posixStart.indexOf("select_node_runtime || exit 1") < posixStart.indexOf("dependency-state.js"));
+    assert.match(runtimeCheck, /minimumMajor = 22/);
+    assert.match(runtimeCheck, /require\("node:sqlite"\)/);
+    assert.match(posixStart, /terma-test-toolchain\/current\/bin/);
+    assert.match(posixStart, /\.local\/opt\/node-current\/bin/);
+  });
+
+  await check("Linux and macOS source launchers wait in the selected runtime and surface early exits", () => {
+    const startScript = fs.readFileSync(path.resolve(__dirname, "..", "start.sh"), "utf8");
+    const stopScript = fs.readFileSync(path.resolve(__dirname, "..", "stop.sh"), "utf8");
+    assert.match(startScript, /source-runtime-path\.js --desktop-data-dir/);
+    assert.match(startScript, /source-runtime-path\.js --web-data-dir/);
+    assert.match(startScript, /TERMA_START_PRINT_PID=1 node scripts\/start-detached\.js desktop/);
+    assert.match(startScript, /TERMA_START_PRINT_PID=1 node scripts\/start-detached\.js web/);
+    assert.match(startScript, /! pid_is_running "\$STARTED_PID"/);
+    assert.match(startScript, /print_startup_diagnostics/);
+    assert.match(startScript, /DESKTOP_ARGS="--no-sandbox \$DESKTOP_ARGS"/);
+    assert.match(startScript, /Another Terma installation is already using this runtime/);
+    assert.match(startScript, /start-detached\.js web "\$@"/);
+    assert.match(startScript, /check_existing_instance "\$WEB_DATA_DIR" "\$PROJECT_DATA_DIR"/);
+    assert.doesNotMatch(startScript, /for DATA_CANDIDATE in "\$DESKTOP_DATA_DIR" "\$WEB_DATA_DIR" "\$PROJECT_DATA_DIR"; do\s+rm -f/);
+    assert.match(stopScript, /source-runtime-path\.js --desktop-data-dir/);
+    assert.match(stopScript, /source-runtime-path\.js --web-data-dir/);
+    assert.match(stopScript, /Skipped another Terma installation/);
+    assert.match(stopScript, /\$ROOT_DIR\/node_modules\/electron/);
+    assert.doesNotMatch(stopScript, /for pattern in .*"Terma".*"TunnelDesk"/);
+  });
+
   await check("desktop runtime follows project, user, and custom storage settings", () => {
     const projectRoot = temporaryRoot();
     const appData = path.join(temporaryRoot(), "roaming");

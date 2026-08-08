@@ -578,12 +578,25 @@ const macos = parseDetectionOutput([
 assert.equal(macos.builtin, true);
 assert.equal(macos.status, "stopped");
 assert.equal(macos.can_install, false);
+const reachableMacos = parseDetectionOutput([
+  "TERMA_VNC_PLATFORM=macos",
+  "TERMA_VNC_OS_ID=macos",
+  "TERMA_VNC_KERNEL=Darwin",
+  "TERMA_VNC_INSTALLED=1",
+  "TERMA_VNC_SERVICE_UNIT=com.apple.screensharing",
+  "TERMA_VNC_SERVICE_STATE=active",
+  "TERMA_VNC_LISTENING=1",
+  "TERMA_VNC_PORT=5900"
+].join("\n"));
+assert.equal(reachableMacos.status, "ready");
+assert.equal(reachableMacos.recommended_action, "connect");
 assert.match(manualGuide(macos, 5900).summary, /自带屏幕共享/);
 assert.match(manualGuide(macos, 5900).steps.join(" "), /系统设置/);
 assert.match(manualGuide({platform:"unknown"}, 5900).summary, /没有可用的 SSH 管理通道/);
 assert.equal(manualGuide({platform:"unknown"}, 5900).commands.length, 0);
 
 assert.match(DETECT_SCRIPT, /launchctl print system\/com\.apple\.screensharing/);
+assert.match(DETECT_SCRIPT, /nc -z -w 2 127\.0\.0\.1 5900/);
 assert.match(DETECT_SCRIPT, /x11vnc vncserver tigervncserver vncpasswd Xtigervnc Xvnc wayvnc/);
 assert.match(DETECT_SCRIPT, /td_vncserver_real=\$\(readlink -f "\$td_vncserver_path"/);
 assert.match(DETECT_SCRIPT, /td_vncserver_signature=\$\(head -n 120 "\$td_vncserver_real"/);

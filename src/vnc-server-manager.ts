@@ -197,6 +197,11 @@ td_runtime_dir="\${XDG_RUNTIME_DIR:-}"
   td_desktop_command=""
   td_vnc_process=""
   td_clipboard_tools=""
+td_listening=0
+td_listener_line=""
+td_listener_pid=""
+td_listener_process=""
+td_listener_component=""
 if [ "$td_platform" = linux ]; then
   for td_env in /proc/[0-9]*/environ; do
     [ -r "$td_env" ] || continue
@@ -281,11 +286,6 @@ if [ "$td_platform" = linux ]; then
   # Resolve the process which owns the configured TCP port before ranking
   # systemd units. A stale VNC process on another port must not win merely
   # because it appears first in ps output.
-  td_listening=0
-  td_listener_line=""
-  td_listener_pid=""
-  td_listener_process=""
-  td_listener_component=""
   if command -v ss >/dev/null 2>&1; then
     td_listener_line=$(ss -H -lntp 2>/dev/null | awk '$4 ~ /:'${targetPort}'$/ {print; exit}')
     [ -n "$td_listener_line" ] && td_listening=1
@@ -392,6 +392,19 @@ if [ "$td_platform" = linux ]; then
     command -v "$td_command" >/dev/null 2>&1 && td_clipboard_tools="\${td_clipboard_tools}\${td_clipboard_tools:+,}$td_command"
   done
 fi
+if [ "$td_platform" = macos ]; then
+  if command -v lsof >/dev/null 2>&1; then
+    td_listener_line=$(lsof -nP -iTCP:${targetPort} -sTCP:LISTEN 2>/dev/null | tail -n +2 | head -n 1)
+    if [ -n "$td_listener_line" ]; then
+      td_listening=1
+      td_listener_pid=$(printf '%s\n' "$td_listener_line" | awk '{print $2; exit}')
+      td_listener_process=$(printf '%s\n' "$td_listener_line" | awk '{print $1; exit}')
+    fi
+  fi
+  if [ "$td_listening" = 0 ] && command -v nc >/dev/null 2>&1; then
+    nc -z -w 2 127.0.0.1 ${targetPort} >/dev/null 2>&1 && td_listening=1
+  fi
+fi
 td_service_unit=""
 td_service_state=missing
 td_service_enabled=0
@@ -451,6 +464,9 @@ td_consider_service_unit() {
 if [ "$td_platform" = macos ]; then
   td_installed=1
   if launchctl print system/com.apple.screensharing >/dev/null 2>&1; then
+    td_service_unit=com.apple.screensharing
+    td_service_state=active
+  elif [ "$td_listening" = 1 ]; then
     td_service_unit=com.apple.screensharing
     td_service_state=active
   else
