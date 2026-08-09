@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readFrontendDomain } = require("./frontend-source");
 const {
   X11_APPLICATION_CATALOG,
   X11_DISCOVERY_SCRIPT,
@@ -89,10 +90,10 @@ async function main() {
   );
   assert.throws(() => parseX11ApplicationDiscovery("ordinary output"), /无法识别/);
 
-  const terminalFrontend = fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal.js"), "utf8");
-  const remoteFrontend = fs.readFileSync(path.join(__dirname, "..", "public", "app-remote.js"), "utf8");
+  const terminalFrontend = readFrontendDomain(path.join(__dirname, ".."), "terminal");
+  const remoteFrontend = readFrontendDomain(path.join(__dirname, ".."), "remote");
   const frontendCss = fs.readFileSync(path.join(__dirname, "..", "public", "app.css"), "utf8");
-  const connectionFrontend = fs.readFileSync(path.join(__dirname, "..", "public", "app-connections.js"), "utf8");
+  const connectionFrontend = readFrontendDomain(path.join(__dirname, ".."), "connections");
   const utilityFrontend = fs.readFileSync(path.join(__dirname, "..", "public", "app-utils.js"), "utf8");
   const ssh2Source = fs.readFileSync(path.join(__dirname, "..", "src", "ssh2-client.ts"), "utf8");
   const terminalSource = fs.readFileSync(path.join(__dirname, "..", "src", "terminal.ts"), "utf8");
@@ -108,7 +109,7 @@ async function main() {
   assert.match(remoteFrontend, /openSshX11ConfigureTerminal/);
   assert.match(remoteFrontend, /openXdmcpSetupGuide/);
   assert.match(remoteFrontend, /在终端执行/);
-  const productivityFrontend = fs.readFileSync(path.join(__dirname, "..", "public", "app-productivity.js"), "utf8");
+  const productivityFrontend = readFrontendDomain(path.join(__dirname, ".."), "productivity");
   assert.match(productivityFrontend, /xServerQuickButton/);
   assert.match(remoteFrontend, /已自动识别/);
   assert.match(remoteFrontend, /applications\.length \? "success" : "warning"/);

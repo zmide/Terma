@@ -2,14 +2,15 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "src", "local-files.ts"), "utf8");
 const server = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");
 const localUi = fs.readFileSync(path.join(root, "public", "app-local-files.js"), "utf8");
-const sftpUi = fs.readFileSync(path.join(root, "public", "app-sftp.js"), "utf8");
-const terminalUi = fs.readFileSync(path.join(root, "public", "app-terminal.js"), "utf8");
-const docking = fs.readFileSync(path.join(root, "public", "app-docking.js"), "utf8");
+const sftpUi = readFrontendDomain(root, "sftp");
+const terminalUi = readFrontendDomain(root, "terminal");
+const docking = readFrontendDomain(root, "docking");
 const index = fs.readFileSync(path.join(root, "public", "index.html"), "utf8");
 const css = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 
@@ -65,8 +66,10 @@ assert.match(localUi, /data-local-files-single-action/);
 assert.match(localUi, /button\.disabled = selected\.length !== 1/);
 assert.match(localUi, /deleteLocalFiles\(selectedPaths, tabKey\)/);
 assert.match(localUi, /copyText\(selectedPaths\.join\("\\n"\)\)/);
-assert.doesNotMatch(localUi, /local-files-page-size/);
-assert.match(localUi, /decodeURIComponent\('\$\{encodedPath\}'\)/);
+assert.match(localUi, /data-change-action="local-files-page-limit"/);
+assert.match(localUi, /data-action="local-files-entry-select"/);
+assert.match(localUi, /registerTermaAction\("local-files-entry-activate"/);
+assert.doesNotMatch(localUi, /\son(?:click|change|input|dblclick|contextmenu|drag\w*|drop)=/i);
 assert.match(localUi, /const sourceActiveTabKey = sourcePane\?\.activeTabKey \|\| activeTabKey/);
 assert.match(localUi, /sourceTabs\.scrollLeft = sourceScrollLeft/);
 assert.match(localUi, /noteSftpDragFeedbackActivity/);
@@ -96,11 +99,8 @@ assert.match(css, /\.workspace-pane\[data-active-view="local-files"\] > \.worksp
 assert.match(css, /#view-local-files:not\(\[hidden\]\) \{ display:flex; flex:1 1 auto; min-height:0; flex-direction:column; \}/);
 assert.match(css, /@container local-files-view \(max-width:760px\)[\s\S]*\.local-files-list \{ --local-grid-columns:28px minmax\(0,1fr\) minmax\(96px,118px\); \}/);
 assert.match(css, /@container local-files-view \(max-width:520px\)[\s\S]*\.local-files-list > \.sftp-pager-dock > \.sftp-pager/);
-const inlineArgSource = localUi.match(/function localFilesInlineArg\(value\) \{[\s\S]*?\n\}/)?.[0];
-assert.ok(inlineArgSource, "必须保留本地路径 inline 参数编码器");
-const localFilesInlineArg = Function(`${inlineArgSource}; return localFilesInlineArg;`)();
-const trickyWindowsPath = "C:\\Program Files\\O'Reilly\\测试 文件.txt";
-assert.equal(decodeURIComponent(localFilesInlineArg(trickyWindowsPath)), trickyWindowsPath);
+assert.doesNotMatch(localUi, /function localFilesInlineArg\(/, "事件委托后不应继续拼接 inline 参数");
+assert.match(localUi, /data-path="\$\{escAttr\(entry\.path\)\}"/);
 for (const viewport of [320, 392, 520]) {
   const contentWidth = viewport - 16;
   const fixedColumnsAndGaps = 28 + 96 + 16;

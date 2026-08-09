@@ -4,11 +4,14 @@ const os = require("node:os");
 const path = require("node:path");
 const {EventEmitter} = require("node:events");
 const {MAC_WINDOWS_APP_PACKAGE_URL, MAC_WINDOWS_APP_URL, createRemoteClientAdapter} = require("../desktop/remote-clients");
+const { readFrontendDomain } = require("./frontend-source");
 
+const root = path.join(__dirname, "..");
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "terma-remote-client-"));
-const mainSource = fs.readFileSync(path.join(__dirname, "..", "desktop", "main.js"), "utf8");
-const remoteUiSource = fs.readFileSync(path.join(__dirname, "..", "public", "app-remote.js"), "utf8");
-const serverSource = fs.readFileSync(path.join(__dirname, "..", "src", "server.ts"), "utf8");
+const mainSource = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
+const remoteUiSource = readFrontendDomain(root, "remote");
+const serverSource = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");
+const desktopIntegrationRoutesSource = fs.readFileSync(path.join(root, "src", "routes", "desktop-integration-routes.ts"), "utf8");
 const launches = [];
 const shellLaunches = [];
 
@@ -44,8 +47,8 @@ async function main() {
   });
   assert.equal(limitedClients.desktop, false);
   assert.equal(limitedClients.integration_available, false);
-  assert.equal(limitedClients.rdp.reason, "系统 RDP 客户端只能由本机桌面版调用");
-  assert.equal(limitedClients.vnc.reason, "系统 VNC 客户端只能由本机桌面版调用（内置 VNC 不受此限制）");
+  assert.match(limitedClients.rdp.reason, /系统 RDP 客户端只能由获得临时授权的本机浏览器或 Terma 桌面端调用/);
+  assert.match(limitedClients.vnc.reason, /系统 VNC 客户端只能由获得临时授权的本机浏览器或 Terma 桌面端调用/);
   assert.equal(limitedClients.xdmcp.available, false);
   assert.match(limitedClients.xdmcp.reason, /^本机 X Server 已就绪；当前请求无法调用 Terma 桌面集成$/);
   assert.doesNotMatch(limitedClients.message, /RDP、VNC 和 XDMCP/);
@@ -63,8 +66,23 @@ async function main() {
   assert.equal(limitedXServer.reason, "当前连接的是独立 Web/测试后端，无法读取运行 Terma 桌面设备上的 X Server");
   assert.equal(limitedXServer.server_side.available, true);
   assert.equal(limitedXServer.server_side.server, "vcxsrv.exe");
-  assert.match(serverSource, /remote-clients\/diagnostics[\s\S]*?remoteClientDiagnosticsWithoutDesktopIntegration\(x11\)/);
-  assert.match(serverSource, /pathname === "\/api\/xserver"[\s\S]*?xServerDiagnosticsWithoutDesktopIntegration\(\)/);
+  const browserLimitedXServer = __xServerDiagnosticsWithoutDesktopIntegration({
+    platform:"win32",
+    available:true,
+    running:true,
+    server:"vcxsrv.exe",
+    display:":0.0"
+  }, {
+    desktop_backend_available:true,
+    authorization_required:true,
+    can_request_authorization:true
+  }, "win32");
+  assert.equal(browserLimitedXServer.available, true);
+  assert.equal(browserLimitedXServer.authorization_required, true);
+  assert.equal(browserLimitedXServer.can_request_authorization, true);
+  assert.equal(browserLimitedXServer.reason, "当前浏览器会话没有桌面集成权限。X Server 正在运行，但启动、停止和本机程序调用只能在 Terma 桌面端执行。");
+  assert.match(desktopIntegrationRoutesSource, /remote-clients\/diagnostics[\s\S]*?remoteClientDiagnosticsWithoutDesktopIntegration\(x11, scopedIntegration, platform\)/);
+  assert.match(desktopIntegrationRoutesSource, /pathname === "\/api\/xserver"[\s\S]*?xServerDiagnosticsWithoutDesktopIntegration/);
 
   const windows = createRemoteClientAdapter({
     platform:"win32",

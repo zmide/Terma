@@ -1294,6 +1294,7 @@ app.whenReady().then(async () => {
     const previousRuntimeSettings = runtimeSettings;
     const previousRuntimeMessage = runtimeSettingsMessage;
     const previousRuntimeCheck = runtimeSettingsCheck;
+    const previousSecurity = securitySettings;
     const previousReadVersion = updateNoticeReadVersion;
     const previousStoredVersion = sessionStorage.getItem(UPDATE_NOTICE_SESSION_KEY);
     const previousLatencyVisible = terminalLatencyVisible;
@@ -1315,6 +1316,22 @@ app.whenReady().then(async () => {
       });
       runtimeSettingsMessage = null;
       runtimeSettingsCheck = null;
+      securitySettings = {
+        ...securitySettings,
+        trusted_proxy_enabled:false,
+        local_direct_desktop_integration_enabled:false,
+        local_direct_desktop_integration:{
+          enabled:false,
+          available:false,
+          authorized:false,
+          actual_listen_hosts:['127.0.0.1'],
+          listen_loopback_only:true,
+          direct_loopback_request:true,
+          web_session_authenticated:true,
+          web_access_authorized:true,
+          blocked_reason:'disabled'
+        }
+      };
       updateNoticeReadVersion = '';
       sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY);
       setWorkspace('设置', '通用设置', 'settings', 'settings-ui-smoke', false, true, {kind:'settings'});
@@ -1361,6 +1378,29 @@ app.whenReady().then(async () => {
         active:document.querySelector('#settings-basic')?.textContent.includes('当前活动会话'),
         save:Boolean([...document.querySelectorAll('#settings-basic button')].find(button=>button.textContent.includes('保存会话设置')))
       };
+      const authPolicyUi = {
+        redundantCheckboxRemoved:!document.querySelector('#securityLanAuth'),
+        localOnlyLabel:[...document.querySelectorAll('#securityAuthMode option')].some(option=>option.value==='lan'&&option.textContent.includes('仅非本机访问')),
+        alwaysLabel:[...document.querySelectorAll('#securityAuthMode option')].some(option=>option.value==='always'&&option.textContent.includes('所有浏览器访问')),
+        directDefinition:document.querySelector('#settings-basic')?.textContent.includes('来源和 Host 都是回环或当前机器地址')
+      };
+      const localDirectControl = document.querySelector('#securityLocalDirectDesktopIntegration');
+      const localDirectState = document.querySelector('#securityLocalDirectDesktopIntegrationState');
+      const localDirectDefaultOff = Boolean(localDirectControl && !localDirectControl.checked && localDirectState?.textContent.includes('默认关闭'));
+      if (localDirectControl) {
+        localDirectControl.checked = true;
+        localDirectControl.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+      const localDirectEnabled = Boolean(localDirectState?.classList.contains('success') && localDirectState.textContent.includes('当前已生效'));
+      const trustedProxyControl = document.querySelector('#securityTrustedProxyEnabled');
+      if (trustedProxyControl) {
+        trustedProxyControl.checked = true;
+        trustedProxyControl.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+      const localDirectProxyBlocked = Boolean(localDirectState?.classList.contains('warning')
+        && localDirectState.textContent.includes('已启用可信反向代理')
+        && localDirectState.textContent.includes('桌面集成继续使用临时授权'));
+      const localDirectUi = {control:Boolean(localDirectControl), defaultOff:localDirectDefaultOff, enabled:localDirectEnabled, proxyBlocked:localDirectProxyBlocked};
       updateSettings = {...updateSettings, latest_version:'1.0.10'};
       syncUpdateNoticeForCurrentSection();
       const newerVersionShowsAgain = shouldShowUpdateNotice() && updateDotIds.every(id => document.getElementById(id)?.hidden === false);
@@ -1423,6 +1463,8 @@ app.whenReady().then(async () => {
         newerAfterIgnoredShowsNotice,
         newerVersionShowsAgain,
         sessionUi,
+        authPolicyUi,
+        localDirectUi,
         runtimeUi,
         importLabels,
         importOwnSections:JSON.stringify(importLabels) === JSON.stringify(importExpected),
@@ -1437,6 +1479,7 @@ app.whenReady().then(async () => {
       runtimeSettings = previousRuntimeSettings;
       runtimeSettingsMessage = previousRuntimeMessage;
       runtimeSettingsCheck = previousRuntimeCheck;
+      securitySettings = previousSecurity;
       updateNoticeReadVersion = previousReadVersion;
       terminalLatencyVisible = previousLatencyVisible;
       activeSettingsSection = previousSettingsSection;
@@ -2141,6 +2184,42 @@ app.whenReady().then(async () => {
     }
     window.WebSocket = FakeWebSocket;
     const originalTerminalApi = api;
+    const fallbackKey = 'terminal-x11-fallback-smoke';
+    const fallbackMessages = [];
+    const fallbackTicketBodies = [];
+    tabs.push({key:fallbackKey,title:'X11 fallback',subtitle:'',viewName:'terminal',closable:true,kind:'terminal',id:first.id});
+    if (fixturePane) fixturePane.tabs.push(fallbackKey);
+    terminalSessions.set(fallbackKey,{
+      term:{cols:80,rows:24,writeln:value=>fallbackMessages.push(String(value||'')),onData:()=>({dispose(){}}),onResize:()=>({dispose(){}})},
+      id:first.id,
+      connectionAttempt:0
+    });
+    api = async (path, options={}) => {
+      if(path==='/api/ssh/preflight') return {ok:true};
+      if(path==='/api/terminal/startup-tickets') {
+        const body=JSON.parse(options.body||'{}');
+        fallbackTicketBodies.push(body.startup||{});
+        if(body.startup?.x11_mode!=='off') {
+          const error=new Error('当前浏览器没有 X11 桌面集成授权');
+          error.code='DESKTOP_INTEGRATION_AUTH_REQUIRED';
+          throw error;
+        }
+        return {token:'x11-fallback-ticket'};
+      }
+      return originalTerminalApi(path, options);
+    };
+    await connectTerminal({...first,x11_mode:'trusted'},fallbackKey);
+    const fallbackSocketUrl=fakeSocketUrl;
+    const x11DefaultFallsBack=fallbackTicketBodies.length===2
+      && !fallbackTicketBodies[0].x11_mode
+      && fallbackTicketBodies[1].x11_mode==='off'
+      && fallbackSocketUrl.includes('startup_token=x11-fallback-ticket')
+      && fallbackMessages.some(line=>line.includes('已自动降级为普通 SSH 终端'));
+    terminalSessions.get(fallbackKey)?.socket?.close?.();
+    terminalSessions.delete(fallbackKey);
+    tabs=tabs.filter(tab=>tab.key!==fallbackKey);
+    if(fixturePane) fixturePane.tabs=fixturePane.tabs.filter(tabKey=>tabKey!==fallbackKey);
+    fakeSocketUrl='';
     api = async (path, options={}) => path==='/api/ssh/preflight' ? {ok:true} : originalTerminalApi(path, options);
     await connectTerminal(first,key);
     api = originalTerminalApi;
@@ -2851,7 +2930,7 @@ app.whenReady().then(async () => {
     terminalLatencyVisible = previousLatencyVisible;
     if (previousLatencyStored === null) localStorage.removeItem('terminalLatencyVisible');
     else localStorage.setItem('terminalLatencyVisible', previousLatencyStored);
-    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,enterReconnect,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,terminalSettingsUi};
+    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,x11DefaultFallsBack,enterReconnect,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,terminalSettingsUi};
   })()`);
   const terminalStartupOriginalContentSize = window.getContentSize();
   window.setContentSize(1000, 600);
@@ -5935,6 +6014,24 @@ app.whenReady().then(async () => {
       && xServerQuickIconRect.left>=xServerQuickButtonRect.left-1
       && xServerQuickIconRect.right<=xServerQuickButtonRect.right+1
     );
+    const originalProductivityApi=api;
+    api=async (path,options={}) => String(path)==='/api/xserver'
+      ? {available:true,running:true,authorization_required:true,display:':0.0'}
+      : originalProductivityApi(path,options);
+    await refreshXServerQuickAction();
+    const xServerUnauthorizedWarning=xServerQuickButton.classList.contains('warning')
+      && !xServerQuickButton.classList.contains('ready')
+      && xServerQuickButton.title.includes('当前浏览器未授权')
+      && xServerQuickButton.title.includes('点击申请授权');
+    api=async (path,options={}) => String(path)==='/api/xserver'
+      ? {available:true,running:true,authorization_required:false,authorization_kind:'local-direct',display:':0.0'}
+      : originalProductivityApi(path,options);
+    await refreshXServerQuickAction();
+    const xServerLocalDirectReady=xServerQuickButton.classList.contains('ready')
+      && !xServerQuickButton.classList.contains('warning')
+      && xServerQuickButton.title.includes('本机直连自动授权');
+    api=originalProductivityApi;
+    await refreshXServerQuickAction();
     const previousBroadcastTargets=productivityState.broadcastTargets;
     const previousBroadcastPaused=productivityState.broadcastPaused;
     const broadcastKeys=['__smoke-broadcast-a','__smoke-broadcast-b'];
@@ -5983,7 +6080,7 @@ app.whenReady().then(async () => {
     const namedWorkspaceTools=typeof importNamedWorkspaceData==='function'&&typeof exportNamedWorkspace==='function'&&typeof repairNamedWorkspace==='function';
     const terminalTools=typeof toggleTabNotifications==='function'&&typeof openTerminalPathInSftp==='function';
     closeModal();
-    return {quickVisible,actionCount,quickConnectionActionsInline,workspaceSearchable,workspacePreviewOpens,quickButtonPlacement,quickButtonLightning,xServerQuickUsesX11,broadcastFromEither,broadcastTabMarked,broadcastHeaderGrouped,broadcastExitCompact,visibleSplitHasNoActivity,visibleSplitClearsPriorActivity,syncRows,conflictSafe,namedWorkspaceTools,terminalTools};
+    return {quickVisible,actionCount,quickConnectionActionsInline,workspaceSearchable,workspacePreviewOpens,quickButtonPlacement,quickButtonLightning,xServerQuickUsesX11,xServerUnauthorizedWarning,xServerLocalDirectReady,broadcastFromEither,broadcastTabMarked,broadcastHeaderGrouped,broadcastExitCompact,visibleSplitHasNoActivity,visibleSplitClearsPriorActivity,syncRows,conflictSafe,namedWorkspaceTools,terminalTools};
   })()`);
   const remoteAccessUi = await window.webContents.executeJavaScript(`(async () => {
     const previousProfiles=remoteProfiles;
@@ -6222,6 +6319,42 @@ app.whenReady().then(async () => {
       );
       await openRemoteDesktop(xdmcp.id,false);
       renderingUi.xdmcp=captureRenderingUi('xdmcp');
+      const xdmcpAuthorizationHost=document.getElementById('remoteDesktopAuthorization');
+      if(xdmcpAuthorizationHost){
+        xdmcpAuthorizationHost.innerHTML=desktopIntegrationAuthorizationMarkup({
+          desktop_backend_available:true,
+          can_request_authorization:true,
+          web_session_authenticated:true,
+          scopes:[]
+        },['remote-client','xserver'],{refreshTarget:'remote-profile',remoteProfileId:xdmcp.id});
+        refreshIcons();
+      }
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const xdmcpAuthorizationPanel=xdmcpAuthorizationHost?.querySelector('.desktop-integration-authorization');
+      const xdmcpState=document.getElementById('xdmcpServerState');
+      const xdmcpAuthorizationRect=xdmcpAuthorizationPanel?.getBoundingClientRect();
+      const xdmcpStateRect=xdmcpState?.getBoundingClientRect();
+      const xdmcpDurationSelect=xdmcpAuthorizationPanel?.querySelector('[data-role="desktop-integration-duration"]');
+      const xdmcpCustomDuration=xdmcpAuthorizationPanel?.querySelector('.desktop-integration-custom-duration');
+      if(xdmcpDurationSelect){
+        xdmcpDurationSelect.value='custom';
+        xdmcpDurationSelect.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+      const customDurationVisible=Boolean(xdmcpCustomDuration&&!xdmcpCustomDuration.hidden&&xdmcpCustomDuration.querySelector('input')?.max==='480');
+      if(xdmcpDurationSelect){
+        xdmcpDurationSelect.value='browser-session';
+        xdmcpDurationSelect.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+      const xdmcpAuthorizationLayout=Boolean(
+        xdmcpAuthorizationRect&&xdmcpStateRect
+        && Math.abs(xdmcpAuthorizationRect.left-xdmcpStateRect.left)<=1
+        && Math.abs(xdmcpAuthorizationRect.width-xdmcpStateRect.width)<=1
+        && xdmcpAuthorizationPanel.scrollWidth<=xdmcpAuthorizationPanel.clientWidth+1
+        && xdmcpDurationSelect?.querySelector('option[value="browser-session"]')
+        && xdmcpAuthorizationPanel.querySelector('[data-action="desktop-integration-authorize"]')?.textContent.includes('申请授权')
+        && customDurationVisible
+        && xdmcpCustomDuration.hidden
+      );
       const renderingCopyInteraction={success:false,failure:false};
       const renderingCopyButton=document.querySelector('#view-remote-desktop .remote-rendering-actions button');
       const previousWriteClipboardText=writeClipboardText;
@@ -6423,7 +6556,7 @@ app.whenReady().then(async () => {
       const xServerApi=api;
       try {
         api=async (path,options) => String(path)==='/api/xserver'
-          ? {integration_available:false,desktop:false,reason:'desktop integration unavailable',server_side:{platform:'win32',available:false,running:false,display:''},can_start:true,can_stop:true,can_install:true}
+          ? {integration_available:false,desktop:false,desktop_backend_available:false,authorization_required:false,reason:'当前连接的是独立 Web/测试后端，无法读取运行 Terma 桌面设备上的 X Server',server_side:{platform:'win32',available:false,running:false,display:''},can_start:false,can_stop:false,can_install:false}
           : xServerApi(path,options);
         await openXServerManager();
         const unavailableManager=document.querySelector('.xserver-manager');
@@ -6434,6 +6567,60 @@ app.whenReady().then(async () => {
           && unavailableText.includes('桌面集成不可用')
           && !unavailableText.includes('X Server 未启动')
           && !unavailableActions.some(label=>['启动','停止','安装 Linux 图形组件','安装 XQuartz'].includes(label))
+        );
+        closeXServerManager();
+        api=async (path,options) => String(path)==='/api/xserver'
+          ? {
+              integration_available:false,
+              desktop:false,
+              desktop_backend_available:true,
+              authorization_required:true,
+              can_request_authorization:true,
+              reason:'当前浏览器会话没有桌面集成权限。X Server 正在运行，但启动、停止和本机程序调用只能在 Terma 桌面端执行。',
+              server_side:{platform:'win32',available:true,running:true,display:':0.0'},
+              available:true,
+              running:true
+            }
+          : xServerApi(path,options);
+        await openXServerManager();
+        const browserAuthorizationManager=document.querySelector('.xserver-manager');
+        const browserAuthorizationText=browserAuthorizationManager?.textContent||'';
+        var xServerBrowserAuthorization=Boolean(
+          browserAuthorizationText.includes('等待桌面授权')
+          && browserAuthorizationText.includes('当前浏览器会话没有桌面集成权限。X Server 正在运行，但启动、停止和本机程序调用只能在 Terma 桌面端执行。')
+          && browserAuthorizationText.includes('申请授权')
+          && browserAuthorizationManager?.querySelector('[data-role="desktop-integration-duration"] option[value="browser-session"]')
+          && browserAuthorizationManager?.querySelector('[data-role="desktop-integration-custom-minutes"][max="480"]')
+          && browserAuthorizationManager?.querySelector('[data-action="desktop-integration-authorize"][data-scopes="xserver"]')
+          && !browserAuthorizationText.includes('独立 Web/测试后端')
+        );
+        closeXServerManager();
+        api=async (path,options) => String(path)==='/api/xserver'
+          ? {
+              integration_available:true,
+              desktop:true,
+              desktop_backend_available:true,
+              authorization_required:false,
+              authorization_kind:'local-direct',
+              platform:'win32',
+              available:true,
+              running:true,
+              managed:true,
+              mode:'bundled',
+              server:'VcXsrv',
+              display:':0.0',
+              can_start:false,
+              can_stop:true,
+              can_install:false
+            }
+          : xServerApi(path,options);
+        await openXServerManager();
+        const localDirectManager=document.querySelector('.xserver-manager');
+        const localDirectManagerText=localDirectManager?.textContent||'';
+        var xServerLocalDirectAuthorization=Boolean(
+          localDirectManagerText.includes('本机直连自动授权')
+          && localDirectManagerText.includes('浏览器权限')
+          && !localDirectManagerText.includes('申请授权')
         );
         closeXServerManager();
       } finally {
@@ -6515,7 +6702,7 @@ app.whenReady().then(async () => {
       const narrowAddSshButton=document.querySelector('#explorerTools .explorer-main-action');
       const narrowAddSshTextFits=Boolean(narrowAddSshButton?.textContent.includes('添加 SSH')
         && narrowAddSshButton.scrollWidth<=narrowAddSshButton.clientWidth+1);
-      return {rdpDisplayForm,vncModePersisted,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncNoPassword,vncServiceDiagnosisUi,vncServiceActionDebounced,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,graphicsRendering:renderingUi,renderingCopyInteraction,vncSourceSelection,vncSourceRefreshInPlace,remoteLayoutUi,vncFailureRecovery,vncComponentManagementUi,macVncBypassesLinuxDesktop,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,remoteNameDoubleClickOpens,remoteDesktopSwitchAvailable,remoteDesktopSingleDisabled,remoteDesktopSwitchMenuComplete,sshActivitySeparated,x11AppLauncher,xServerManager,xServerDesktopIntegrationUnavailable,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,healthIconOnly,narrowBrandActionsFit,expandedBrandNameVisible,defaultAddSshTextFits,narrowAddSshTextFits};
+      return {rdpDisplayForm,vncModePersisted,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncNoPassword,vncServiceDiagnosisUi,vncServiceActionDebounced,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,xdmcpAuthorizationLayout,graphicsRendering:renderingUi,renderingCopyInteraction,vncSourceSelection,vncSourceRefreshInPlace,remoteLayoutUi,vncFailureRecovery,vncComponentManagementUi,macVncBypassesLinuxDesktop,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,remoteNameDoubleClickOpens,remoteDesktopSwitchAvailable,remoteDesktopSingleDisabled,remoteDesktopSwitchMenuComplete,sshActivitySeparated,x11AppLauncher,xServerManager,xServerDesktopIntegrationUnavailable,xServerBrowserAuthorization,xServerLocalDirectAuthorization,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,healthIconOnly,narrowBrandActionsFit,expandedBrandNameVisible,defaultAddSshTextFits,narrowAddSshTextFits};
     } finally {
       applyOperationPaneWidth(previousOperationWidth,{fit:false});
       api=previousApi;
@@ -6646,10 +6833,12 @@ app.whenReady().then(async () => {
   const importSourceCheck = navigationUi.importChecks.find(item => item.requested === 'import-source');
   const runtimeUi = navigationUi.runtimeUi || {};
   const sessionUi = navigationUi.sessionUi || {};
+  const authPolicyUi = navigationUi.authPolicyUi || {};
+  const localDirectUi = navigationUi.localDirectUi || {};
   const runtimeUiFailed = !runtimeUi.found || runtimeUi.port !== '18100' || JSON.stringify(runtimeUi.selectedHosts) !== JSON.stringify(['0.0.0.0']) || !runtimeUi.sftpSettingsAbsent || !runtimeUi.terminalLatencySettingChecked || !runtimeUi.wildcardCollapsed || runtimeUi.urlLinks.length !== 2 || !runtimeUi.urlLinks.some(url=>url.includes('192.0.2.10:18100')) || !runtimeUi.restartNotice;
   const sessionUiFailed = sessionUi.ttl !== '720' || sessionUi.max !== '1000' || sessionUi.cleanup !== '10' || !sessionUi.active || !sessionUi.save;
   const activityUiFailed = result.activity.count !== 10 || !result.activity.iconCentered || !result.activity.centersAligned || !result.activity.insideColumn || !result.activity.resizable || !result.activityUtilities;
-  const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.newerVersionShowsAgain;
+  const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || !authPolicyUi.redundantCheckboxRemoved || !authPolicyUi.localOnlyLabel || !authPolicyUi.alwaysLabel || !authPolicyUi.directDefinition || !localDirectUi.control || !localDirectUi.defaultOff || !localDirectUi.enabled || !localDirectUi.proxyBlocked || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.newerVersionShowsAgain;
   const aboutUiFailed = Boolean(aboutUi.error) || !aboutUi.found || !aboutUi.aboutSelected || aboutUi.duplicateSettingsNav !== 0 || !aboutUi.versionMatches || !aboutUi.licenseMetadata || !aboutUi.sourceLink || !aboutUi.modalOpen || !aboutUi.accessible || !aboutUi.fullText || !aboutUi.textScrollable || !aboutUi.cardWithinViewport || !aboutUi.closeFocused || !aboutUi.backdropIgnored || !aboutUi.closedByEscape || !aboutUi.focusReturned || !aboutUi.followupBackdropClean || !aboutUi.followupResolved || !aboutUi.updateUi;
   const hostTrustUiFailed = !hostTrustUi.unknown?.open
     || !hostTrustUi.unknown?.fingerprint
@@ -6681,9 +6870,9 @@ app.whenReady().then(async () => {
   const terminalDropUi = terminalSettingsUi.drop || {};
   const mobileTerminalSettingsUi = mobile.terminalGlobalSettings || {};
   const terminalStartupUiFailed = !terminalStartupUi.found || !Object.values(terminalStartupUi).every(Boolean);
-  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.enterReconnect || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalFontChangeKeepsWheelContinuity || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
+  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.enterReconnect || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalFontChangeKeepsWheelContinuity || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
   const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || !logSettingsUi.days || !logSettingsUi.fileMb || !logSettingsUi.totalMb || !logSettingsUi.rotations || !logSettingsUi.cleanup || !logSettingsUi.save || !logSettingsUi.closed || !logSettingsUi.fullTerminalTime || !logSettingsUi.defaultsToLatest || !logSettingsUi.followsTheme;
-  const productivityUiFailed = !productivityUi.quickVisible || productivityUi.actionCount < 7 || !productivityUi.quickConnectionActionsInline || !productivityUi.workspaceSearchable || !productivityUi.workspacePreviewOpens || !productivityUi.quickButtonPlacement || !productivityUi.quickButtonLightning || !productivityUi.xServerQuickUsesX11 || !productivityUi.broadcastFromEither || !productivityUi.broadcastTabMarked || !productivityUi.broadcastHeaderGrouped || !productivityUi.broadcastExitCompact || !productivityUi.visibleSplitHasNoActivity || !productivityUi.visibleSplitClearsPriorActivity || productivityUi.syncRows !== 3 || !productivityUi.conflictSafe || !productivityUi.namedWorkspaceTools || !productivityUi.terminalTools;
+  const productivityUiFailed = !productivityUi.quickVisible || productivityUi.actionCount < 7 || !productivityUi.quickConnectionActionsInline || !productivityUi.workspaceSearchable || !productivityUi.workspacePreviewOpens || !productivityUi.quickButtonPlacement || !productivityUi.quickButtonLightning || !productivityUi.xServerQuickUsesX11 || !productivityUi.xServerUnauthorizedWarning || !productivityUi.xServerLocalDirectReady || !productivityUi.broadcastFromEither || !productivityUi.broadcastTabMarked || !productivityUi.broadcastHeaderGrouped || !productivityUi.broadcastExitCompact || !productivityUi.visibleSplitHasNoActivity || !productivityUi.visibleSplitClearsPriorActivity || productivityUi.syncRows !== 3 || !productivityUi.conflictSafe || !productivityUi.namedWorkspaceTools || !productivityUi.terminalTools;
   const remoteAdminUiFailed = Boolean(remoteAdminUi.desktop?.error)
     || !remoteAdminUi.desktop?.viewportFit
     || !remoteAdminUi.desktop?.noHorizontalOverflow
@@ -6729,7 +6918,7 @@ app.whenReady().then(async () => {
   const remoteRenderingProtocols = ['rdp','vnc','xdmcp'];
   const remoteRenderingUiFailed = remoteRenderingProtocols.some(protocol => !remoteAccessUi.graphicsRendering?.[protocol]?.warning || !remoteAccessUi.graphicsRendering?.[protocol]?.copyButtons || !remoteAccessUi.graphicsRendering?.[protocol]?.noHorizontalOverflow) || !remoteAccessUi.renderingCopyInteraction?.success || !remoteAccessUi.renderingCopyInteraction?.failure || !remoteAccessUi.narrowRendering?.ok;
   const remoteLayoutUiFailed = remoteRenderingProtocols.some(protocol => !remoteAccessUi.remoteLayoutUi?.[protocol]?.ok);
-  const remoteAccessUiFailed = !remoteAccessUi.rdpDisplayForm || !remoteAccessUi.vncModePersisted || !remoteAccessUi.vncPasswordForm || !remoteAccessUi.vncRetryPrompt || !remoteAccessUi.vncRetryValue || !remoteAccessUi.vncNoPassword || !remoteAccessUi.vncServiceDiagnosisUi || !remoteAccessUi.vncServiceActionDebounced || !remoteAccessUi.xdmcpForm || !remoteAccessUi.xdmcpMenuAvailable || !remoteAccessUi.xdmcpSessionSemantics || remoteRenderingUiFailed || remoteLayoutUiFailed || !remoteAccessUi.vncSourceSelection || !remoteAccessUi.vncSourceRefreshInPlace || !remoteAccessUi.vncFailureRecovery || !remoteAccessUi.vncComponentManagementUi || !remoteAccessUi.macVncBypassesLinuxDesktop || !remoteAccessUi.macVncSetupGuidance || !remoteAccessUi.remoteActivitySeparated || !remoteAccessUi.remoteHostStickyStyle || !remoteAccessUi.remoteHostStickyFollowsOuter || !remoteAccessUi.derivedSourcePresentation || !remoteAccessUi.remoteNameDoubleClickOpens || !remoteAccessUi.remoteDesktopSwitchAvailable || !remoteAccessUi.remoteDesktopSingleDisabled || !remoteAccessUi.remoteDesktopSwitchMenuComplete || !remoteAccessUi.sshActivitySeparated || !remoteAccessUi.x11AppLauncher || !remoteAccessUi.xServerManager || !remoteAccessUi.xServerDesktopIntegrationUnavailable || !remoteAccessUi.adaptiveModal || !remoteAccessUi.modalHeaderControlsAligned || !remoteAccessUi.modalBackdropLocked || !remoteAccessUi.healthIconOnly || !remoteAccessUi.narrowBrandActionsFit || !remoteAccessUi.expandedBrandNameVisible || !remoteAccessUi.defaultAddSshTextFits || !remoteAccessUi.narrowAddSshTextFits;
+  const remoteAccessUiFailed = !remoteAccessUi.rdpDisplayForm || !remoteAccessUi.vncModePersisted || !remoteAccessUi.vncPasswordForm || !remoteAccessUi.vncRetryPrompt || !remoteAccessUi.vncRetryValue || !remoteAccessUi.vncNoPassword || !remoteAccessUi.vncServiceDiagnosisUi || !remoteAccessUi.vncServiceActionDebounced || !remoteAccessUi.xdmcpForm || !remoteAccessUi.xdmcpMenuAvailable || !remoteAccessUi.xdmcpSessionSemantics || !remoteAccessUi.xdmcpAuthorizationLayout || remoteRenderingUiFailed || remoteLayoutUiFailed || !remoteAccessUi.vncSourceSelection || !remoteAccessUi.vncSourceRefreshInPlace || !remoteAccessUi.vncFailureRecovery || !remoteAccessUi.vncComponentManagementUi || !remoteAccessUi.macVncBypassesLinuxDesktop || !remoteAccessUi.macVncSetupGuidance || !remoteAccessUi.remoteActivitySeparated || !remoteAccessUi.remoteHostStickyStyle || !remoteAccessUi.remoteHostStickyFollowsOuter || !remoteAccessUi.derivedSourcePresentation || !remoteAccessUi.remoteNameDoubleClickOpens || !remoteAccessUi.remoteDesktopSwitchAvailable || !remoteAccessUi.remoteDesktopSingleDisabled || !remoteAccessUi.remoteDesktopSwitchMenuComplete || !remoteAccessUi.sshActivitySeparated || !remoteAccessUi.x11AppLauncher || !remoteAccessUi.xServerManager || !remoteAccessUi.xServerDesktopIntegrationUnavailable || !remoteAccessUi.xServerBrowserAuthorization || !remoteAccessUi.xServerLocalDirectAuthorization || !remoteAccessUi.adaptiveModal || !remoteAccessUi.modalHeaderControlsAligned || !remoteAccessUi.modalBackdropLocked || !remoteAccessUi.healthIconOnly || !remoteAccessUi.narrowBrandActionsFit || !remoteAccessUi.expandedBrandNameVisible || !remoteAccessUi.defaultAddSshTextFits || !remoteAccessUi.narrowAddSshTextFits;
   const expectedSftpToolActions = ['收藏当前目录','新建文件夹','新建文件','上传文件','SFTP 回收站','搜索当前目录','打开此连接的终端','刷新目录','SFTP 全局设置'];
   const directoryActionsUi = sftpUi.directoryActionsUi || {};
   const connectionSessionUi = sftpUi.connectionSessionUi || {};

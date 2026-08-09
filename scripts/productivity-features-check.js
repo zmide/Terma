@@ -1,12 +1,14 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readFrontendDomain } = require("./frontend-source");
 
-const read = file => fs.readFileSync(path.join(__dirname, "..", file), "utf8");
-const productivity = read("public/app-productivity.js");
-const docking = read("public/app-docking.js");
-const terminal = read("public/app-terminal.js");
-const sftp = read("public/app-sftp.js");
+const root = path.join(__dirname, "..");
+const read = file => fs.readFileSync(path.join(root, file), "utf8");
+const productivity = readFrontendDomain(root, "productivity");
+const docking = readFrontendDomain(root, "docking");
+const terminal = readFrontendDomain(root, "terminal");
+const sftp = readFrontendDomain(root, "sftp");
 const actions = read("public/app-actions.js");
 const index = read("public/index.html");
 const styles = read("public/app.css");

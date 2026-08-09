@@ -196,6 +196,21 @@ async function main() {
     assert.match(ticket.data.token, /^[0-9a-f-]{36}$/i);
     assert.ok(ticket.data.expires_at > Date.now());
 
+    const unauthorizedX11Ticket = await json(url, "/api/terminal/startup-tickets", {
+      method:"POST",
+      body:JSON.stringify({
+        connection_id:id,
+        startup:{
+          terminal_startup_mode:"default",
+          x11_mode:"untrusted"
+        }
+      })
+    });
+    assert.equal(unauthorizedX11Ticket.response.status, 403);
+    assert.match(unauthorizedX11Ticket.data.error, /X11 桌面集成授权/);
+    assert.equal(unauthorizedX11Ticket.data.code, "DESKTOP_INTEGRATION_AUTH_REQUIRED");
+    assert.deepEqual(unauthorizedX11Ticket.data.scopes, ["xserver"]);
+
     const invalid = await json(url, `/api/connections/${id}/terminal-startup`, {
       method:"POST",
       body:JSON.stringify({ ...startup, terminal_program_args:"-i\nbad" })

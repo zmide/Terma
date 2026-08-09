@@ -2,9 +2,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
-const remoteSource = fs.readFileSync(path.join(root, "public", "app-remote.js"), "utf8");
+const remoteSource = readFrontendDomain(root, "remote");
 const cssSource = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 const mainSource = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
 const preloadSource = fs.readFileSync(path.join(root, "desktop", "preload.js"), "utf8");

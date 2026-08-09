@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 const {
   __cacheDirectorySnapshot,
   __cachedDirectorySnapshot,
@@ -95,7 +96,7 @@ assert.equal(__cachedDirectorySnapshot(9003, "."), null, "过期快照不能继�
 
 const frontendContext = {};
 vm.createContext(frontendContext);
-vm.runInContext(fs.readFileSync(path.join(__dirname, "../public/app-sftp.js"), "utf8"), frontendContext);
+vm.runInContext(readFrontendDomain(path.join(__dirname, ".."), "sftp"), frontendContext);
 assert.equal(frontendContext.joinRemotePath("/", "Users"), "/Users");
 assert.equal(frontendContext.joinRemotePath("/Users", "demo"), "/Users/demo");
 assert.equal(frontendContext.parentRemotePath("/"), "/");

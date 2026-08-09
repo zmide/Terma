@@ -4,7 +4,9 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
+const repositoryRoot = path.resolve(__dirname, "..");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-identity-compatibility-"));
 const dataRoot = path.join(root, "data");
 const sshRoot = path.join(root, ".ssh");
@@ -53,8 +55,8 @@ function loadIdentityUi() {
     api:async pathname => pathname === "/api/identity-files" ? [] : Promise.reject(new Error(`Unexpected API request: ${pathname}`))
   };
   sandbox.globalThis = sandbox;
-  const filename = path.resolve(__dirname, "../public/app-connections.js");
-  const source = `${fs.readFileSync(filename, "utf8")}
+  const filename = "public/connections-domain";
+  const source = `${readFrontendDomain(repositoryRoot, "connections")}
     ;globalThis.__identityUi = {
       connectionLegacyIdentityOption,
       loadKeys,

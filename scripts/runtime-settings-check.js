@@ -4,6 +4,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { readFrontendDomain } = require("./frontend-source");
 const {
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,
@@ -83,7 +84,7 @@ async function request(base, pathname, options = {}) {
 }
 
 async function main() {
-  const settingsFrontend = fs.readFileSync(path.join(root, "public", "app-settings.js"), "utf8");
+  const settingsFrontend = readFrontendDomain(root, "settings");
   for (const controlId of [
     "toolbarPlacementUnsplitTerminal",
     "toolbarPlacementUnsplitSftp",

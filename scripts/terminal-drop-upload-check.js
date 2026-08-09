@@ -1,10 +1,11 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const assert = require("node:assert/strict");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
-const terminal = fs.readFileSync(path.join(root, "public", "app-terminal.js"), "utf8");
-const sftp = fs.readFileSync(path.join(root, "public", "app-sftp.js"), "utf8");
+const terminal = readFrontendDomain(root, "terminal");
+const sftp = readFrontendDomain(root, "sftp");
 const backend = fs.readFileSync(path.join(root, "src", "sftp.ts"), "utf8");
 const jobs = fs.readFileSync(path.join(root, "src", "sftp-jobs.ts"), "utf8");
 const server = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");

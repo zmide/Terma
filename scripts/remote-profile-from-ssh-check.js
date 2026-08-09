@@ -4,14 +4,15 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { readFrontendDomain } = require("./frontend-source");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-remote-from-ssh-"));
 process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
 process.env.TERMA_SSH_DIR = path.join(temporaryRoot, ".ssh");
 
 const database = require("../dist/db");
-const connectionUi = fs.readFileSync(path.join(__dirname, "..", "public", "app-connections.js"), "utf8");
-const remoteUi = fs.readFileSync(path.join(__dirname, "..", "public", "app-remote.js"), "utf8");
+const connectionUi = readFrontendDomain(path.join(__dirname, ".."), "connections");
+const remoteUi = readFrontendDomain(path.join(__dirname, ".."), "remote");
 const appCss = fs.readFileSync(path.join(__dirname, "..", "public", "app.css"), "utf8");
 
 assert.match(connectionUi, /function renderRemoteHostGroups\(profiles\)/);

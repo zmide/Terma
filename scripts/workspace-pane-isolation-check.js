@@ -2,21 +2,22 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const read = file => fs.readFileSync(path.join(root, file), "utf8");
 
 function checkSourceContracts() {
-  const docking = read("public/app-docking.js");
-  const terminal = read("public/app-terminal.js");
-  const logs = read("public/app-logs.js");
-  const settings = read("public/app-settings.js");
-  const connections = read("public/app-connections.js");
+  const docking = readFrontendDomain(root, "docking");
+  const terminal = readFrontendDomain(root, "terminal");
+  const logs = readFrontendDomain(root, "logs");
+  const settings = readFrontendDomain(root, "settings");
+  const connections = readFrontendDomain(root, "connections");
   const batch = read("public/app-batch.js");
   const forwards = read("public/app-forwards.js");
   const imports = read("public/app-import.js");
   const workspace = read("public/app-workspace.js");
-  const sftp = read("public/app-sftp.js");
+  const sftp = readFrontendDomain(root, "sftp");
 
   assert.match(docking, /function captureWorkspacePane\(\)/);
   assert.match(docking, /workspaceDockElement\(\) && !workspaceFindPane\(paneId\)/);
@@ -56,7 +57,7 @@ function checkSourceContracts() {
 }
 
 function checkTerminalElementIsolation() {
-  const terminal = read("public/app-terminal.js");
+  const terminal = readFrontendDomain(root, "terminal");
   const start = terminal.indexOf("function terminalElementForKey(");
   const end = terminal.indexOf("\nfunction updateTerminalStatusForLayout", start);
   assert.ok(start >= 0 && end > start, "terminalElementForKey source is available");

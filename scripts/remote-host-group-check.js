@@ -4,11 +4,14 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const utilsSource = fs.readFileSync(path.join(root, "public", "app-utils.js"), "utf8");
-const connectionsSource = fs.readFileSync(path.join(root, "public", "app-connections.js"), "utf8");
-const appSource = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
+const connectionsSource = readFrontendDomain(root, "connections");
+const appSource = ["app-state.js", "app.js"]
+  .map(file => fs.readFileSync(path.join(root, "public", file), "utf8"))
+  .join("\n");
 const css = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 
 function occurrenceCount(value, pattern) {

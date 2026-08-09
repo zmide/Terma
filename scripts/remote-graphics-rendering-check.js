@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readFrontendDomain } = require("./frontend-source");
 const {
   JAVA_GUI_COMPATIBILITY_COMMANDS,
   XRDP_RENDER_PROBE_SCRIPT,
@@ -80,7 +81,7 @@ assert.equal(xdmcp.java_gui_risk, true);
 assert.match(xdmcp.detail, /JavaFX/);
 assert.equal(createXdmcpRenderingDiagnostics({enabled:false, listening:false}).visible, false);
 
-const remoteUi = fs.readFileSync(path.join(__dirname, "..", "public", "app-remote.js"), "utf8");
+const remoteUi = readFrontendDomain(path.join(__dirname, ".."), "remote");
 assert.match(remoteUi, /remoteGraphicsRenderingMarkup/);
 assert.match(remoteUi, /copyRemoteGraphicsCommand/);
 const copyHandler = remoteUi.slice(remoteUi.indexOf("async function copyRemoteGraphicsCommand"), remoteUi.indexOf("function renderRdpServerState"));

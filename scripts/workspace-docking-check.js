@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 
@@ -94,8 +95,8 @@ function loadDockingModel() {
   sandbox.isMobileLayout = () => sandbox.__mobile === true;
   sandbox.globalThis = sandbox;
 
-  const filename = path.join(root, "public", "app-docking.js");
-  const source = fs.readFileSync(filename, "utf8")
+  const filename = "public/workspace-docking-domain";
+  const source = readFrontendDomain(root, "docking")
     .replace(/\r?\nif \(workspaceDockElement\(\)\) \{[\s\S]*?\}\s*else\s*\{[\s\S]*?\}\s*$/, "")
     + `\n;globalThis.__dockingModel = {
       workspaceLeaves,

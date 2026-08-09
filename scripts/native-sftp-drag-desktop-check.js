@@ -5,6 +5,7 @@ const Module = require("node:module");
 const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const adapterPath = path.join(root, "desktop", "native-sftp-drag.js");
@@ -608,7 +609,7 @@ function checkPreloadCapabilityFallback() {
 function checkNativeSessionRaceGuards() {
   const mainSource = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
   const adapterSource = fs.readFileSync(adapterPath, "utf8");
-  const rendererSource = fs.readFileSync(path.join(root, "public", "app-sftp.js"), "utf8");
+  const rendererSource = readFrontendDomain(root, "sftp");
   const jobsSource = fs.readFileSync(path.join(root, "src", "sftp-jobs.ts"), "utf8");
   const sessionSource = fs.readFileSync(path.join(root, "src", "sftp-session.ts"), "utf8");
 

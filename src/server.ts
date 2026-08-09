@@ -140,7 +140,12 @@ const { createRemotePrivilegeGrant, getRemotePrivilegeGrant, revokeRemotePrivile
 const { DESKTOP_IDS, DESKTOP_META, DETECT_SCRIPT: LINUX_DESKTOP_DETECT_SCRIPT, buildInstallScript: buildLinuxDesktopInstallScript, buildUninstallScript: buildLinuxDesktopUninstallScript, desktopInstallPlan, parseDetectionOutput: parseLinuxDesktopDetection } = require("./linux-desktop-manager");
 const { getPart } = require("./multipart");
 const { parseConfigText, batchTest, saveImported, exportConfig } = require("./importer");
-const { handleTerminalUpgrade, closeAllTerminals } = require("./terminal");
+const {
+  handleTerminalUpgrade,
+  closeAllTerminals,
+  closeDesktopBrowserGrantTerminals,
+  refreshDesktopBrowserGrantTerminals
+} = require("./terminal");
 const { closeAllRemoteTerminals, handleRemoteTerminalUpgrade, listSerialPorts, testRemoteTerminalProfile } = require("./remote-terminal");
 const { closeAllVncSessions, handleVncUpgrade, testVncProfile } = require("./vnc-proxy");
 const { buildVncStartCommand, detectVncServer, validateVncServerComponent, vncServerStartValidation, vncServerStopValidation } = require("./vnc-server-manager");
@@ -181,9 +186,15 @@ const { listNotifications, notifyEvent } = require("./notifications");
 const {
   AuthenticationError,
   authRequired,
+  createDesktopBrowserGrant,
   createSession,
+  desktopBrowserGrantCookie,
+  desktopBrowserGrantStatus,
+  hasAuthenticatedWebSession,
   hostAllowed,
   isAuthenticated,
+  isDesktopCapabilityRequest,
+  localDirectDesktopIntegrationStatus,
   isDirectLoopbackRequest,
   isDesktopRequest,
   isLocalRequest,
@@ -193,17 +204,19 @@ const {
   publicSecuritySettings,
   readSecuritySettings,
   resetWebAccessSecurity,
+  revokeDesktopBrowserGrant,
   sameOrigin,
   secureHeaders,
   sessionCookie,
   setDesktopAuthToken,
+  setDesktopCapabilityRuntimeListenHosts,
   setPassword,
   setToken,
   updateSecurityOptions,
   webSocketOriginAllowed,
   writeSecuritySettings
 } = require("./security");
-const { acceptHostTrust, hostTrustErrorResponse, listTrustedHosts, listTrustedHostsPage, removeTrustedHost } = require("./ssh-host-trust");
+const { acceptHostTrust, hostTrustErrorResponse, listTrustedHostsPage, removeTrustedHost } = require("./ssh-host-trust");
 const { closeJumpConnectionPool, ensureConnectionHostTrusted } = require("./ssh2-client");
 const {
   beginDisableEncryption,
@@ -228,6 +241,13 @@ const { UpdateInstaller } = require("./update-installer");
 const { createDatabaseBundleHeader, DatabaseTransferStore } = require("./database-transfer");
 const { handleLogRoutes } = require("./routes/log-routes");
 const { handlePublicAuthRoutes, handleSecurityRoutes } = require("./routes/security-routes");
+const {
+  handleDesktopIntegrationRoutes,
+  remoteClientDiagnosticsWithoutDesktopIntegration,
+  xServerDiagnosticsWithoutDesktopIntegration
+} = require("./routes/desktop-integration-routes");
+const { handleSshRoutes } = require("./routes/ssh-routes");
+const { handleStorageRoutes } = require("./routes/storage-routes");
 const { handleUpdateRoutes } = require("./routes/update-routes");
 const { createStorageRestoreHelpers } = require("./storage-restore");
 const {
@@ -1403,10 +1423,13 @@ function serveStatic(req, res, pathname) {
     res.end();
     return;
   }
-  if (pathname === "/login") return send(res, 200, loginPage(), {
-    "Content-Type": "text/html; charset=utf-8",
-    "Content-Security-Policy":"default-src 'self'; style-src 'self'; style-src-attr 'none'; script-src 'self'; script-src-attr 'none'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
-  });
+  if (pathname === "/login") {
+    if (isAuthenticated(req)) return send(res, 302, "", { Location:"/" });
+    return send(res, 200, loginPage(), {
+      "Content-Type": "text/html; charset=utf-8",
+      "Content-Security-Policy":"default-src 'self'; style-src 'self'; style-src-attr 'none'; script-src 'self'; script-src-attr 'none'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    });
+  }
   const loginAsset = pathname === "/login.css" || pathname === "/login.js";
   if (!loginAsset && !isAuthenticated(req)) {
     if (authRequired(req)) return send(res, 302, "", { Location: "/login" });
@@ -1453,58 +1476,6 @@ function serveStatic(req, res, pathname) {
   responseHeaders["Content-Length"] = body.length;
   res.writeHead(200, secureHeaders(responseHeaders));
   res.end(body);
-}
-
-function remoteClientDiagnosticsWithoutDesktopIntegration(x11: any = {}) {
-  const x11Reason = String(x11?.reason || "").trim();
-  const integrationReason = "当前请求无法调用 Terma 桌面集成";
-  return {
-    platform:process.platform,
-    desktop:false,
-    integration_available:false,
-    rdp:{
-      available:false,
-      client:"",
-      executable:"",
-      reason:"系统 RDP 客户端只能由本机桌面版调用"
-    },
-    vnc:{
-      available:false,
-      client:"",
-      executable:"",
-      reason:"系统 VNC 客户端只能由本机桌面版调用（内置 VNC 不受此限制）"
-    },
-    xdmcp:{
-      available:false,
-      client:"",
-      executable:"",
-      can_install:false,
-      install_label:process.platform === "darwin" ? "安装 XQuartz" : process.platform === "linux" ? "安装 Xephyr" : "",
-      reason:x11Reason ? `${x11Reason}；${integrationReason}` : `XDMCP 窗口只能由本机桌面版调用；${integrationReason}`
-    },
-    x11,
-    message:integrationReason
-  };
-}
-
-function xServerDiagnosticsWithoutDesktopIntegration(serverSide: any = x11RuntimeDiagnostics()) {
-  return {
-    platform:process.platform,
-    desktop:false,
-    integration_available:false,
-    available:false,
-    installed:false,
-    running:false,
-    managed:false,
-    can_start:false,
-    can_stop:false,
-    can_install:false,
-    mode:"unavailable",
-    server:"",
-    display:"",
-    reason:"当前连接的是独立 Web/测试后端，无法读取运行 Terma 桌面设备上的 X Server",
-    server_side:serverSide
-  };
 }
 
 function xdmcpTaskResourceKey(connection: any, request: any = {}, task: any = {}) {
@@ -1574,12 +1545,16 @@ async function handleApi(req, res, pathname) {
     }
     return sendJson(res, {ok:releaseNativeSftpDragTicket(nativeDragParts[3])});
   }
-  const securityRouteDependencies = {
+  const securityRouteDependencies: any = {
     AuthenticationError, beginDisableEncryption, clearConfigSnapshots, completeEncryptionEnable, createSession,
     decryptStoredConnectionSecrets, disableEncryption, enableEncryption,
     encryptStoredConnectionSecrets, login, logout, publicSecuritySettings, readJson, readSecuritySettings,
     prepareEncryptionUpgrade, publicAuthStatus, send, sendJson, sessionCookie, setPassword, setToken,
     unlockEncryption, updateSecurityOptions
+  };
+  securityRouteDependencies.beforeLogout = request => {
+    const grant = desktopBrowserGrantStatus(request);
+    if (grant.grant_id) closeDesktopBrowserGrantTerminals(grant.grant_id, "Web 会话已退出");
   };
   securityRouteDependencies.publicSecuritySettings = request => {
     const state = encryptionState();
@@ -1594,27 +1569,22 @@ async function handleApi(req, res, pathname) {
   if (await handlePublicAuthRoutes(req, res, pathname, securityRouteDependencies)) return;
   if (!isAuthenticated(req)) return sendJson(res, { error: "Unauthorized" }, 401);
   if (await handleSecurityRoutes(req, res, pathname, securityRouteDependencies)) return;
-  if (req.method === "GET" && pathname === "/api/ssh/trusted-hosts") {
-    const query = new URL(req.url || "/api/ssh/trusted-hosts", "http://terma.invalid").searchParams;
-    return sendJson(res, listTrustedHostsPage({
-      page: Number(query.get("page") || 1),
-      page_size: Number(query.get("page_size") || 20)
-    }));
-  }
-  if (req.method === "DELETE" && pathname === "/api/ssh/trusted-hosts") {
-    const data = await readJson(req);
-    return sendJson(res, removeTrustedHost(data.id));
-  }
-  if (req.method === "POST" && pathname === "/api/ssh/host-trust") {
-    const data = await readJson(req);
-    return sendJson(res, acceptHostTrust(data.token, data.mode));
-  }
-  if (req.method === "POST" && pathname === "/api/ssh/preflight") {
-    const data = await readJson(req);
-    const connection = data.connection_id ? getConnection(Number(data.connection_id)) : data.connection;
-    if (!connection) throw new Error("缺少 SSH 连接配置");
-    return sendJson(res, await ensureConnectionHostTrusted(connection));
-  }
+  if (await handleDesktopIntegrationRoutes(req, res, pathname, {
+    createDesktopBrowserGrant, desktopBrowserGrantCookie, desktopBrowserGrantStatus,
+    getDesktopIntegration:() => desktopIntegration, hasAuthenticatedWebSession,
+    isDesktopCapabilityRequest, isDesktopRequest, isDirectLoopbackRequest, localDirectDesktopIntegrationStatus,
+    readJson, revokeDesktopBrowserGrant, send, sendJson, x11RuntimeDiagnostics,
+    closeDesktopBrowserGrantSessions:closeDesktopBrowserGrantTerminals,
+    refreshDesktopBrowserGrantSessions:refreshDesktopBrowserGrantTerminals
+  })) return;
+  if (await handleSshRoutes(req, res, pathname, {
+    acceptHostTrust, allConnectionsHealth, appendSystemLog, configuredPortOwner, diagnosePortUsage,
+    ensureConnectionHostTrusted, generateSshKey, getConnection, getPart, identityPermissionStatus,
+    inspectExtraArgs, killPortOwner, listConnections, listIdentityFiles, listTrustedHostsPage,
+    parseConfigText, projectSshDir:PROJECT_SSH_DIR, readBody, readJson, recommendPort,
+    removeTrustedHost, repairIdentityFile, saveUploadedKey, sendJson, terminalCapabilitiesForConnection,
+    testSsh, userSshDir:USER_SSH_DIR
+  })) return;
   if (req.method === "GET" && pathname === "/api/about") return sendJson(res, aboutInfo());
   if (req.method === "GET" && pathname === "/api/legacy-brand-migration") {
     if (!isDesktopRequest(req) || !desktopIntegration?.getLegacyBrandMigration) {
@@ -1630,85 +1600,15 @@ async function handleApi(req, res, pathname) {
     const result = await Promise.resolve(desktopIntegration.migrateLegacyBrandData(data || {}));
     return sendJson(res, result, result?.ok ? 202 : 409);
   }
-  if (req.method === "GET" && pathname === "/api/desktop-settings") {
-    const desktopRequest = isDesktopRequest(req);
-    const storageManagementAvailable = desktopRequest
-      || (!desktopIntegration && (isDirectLoopbackRequest(req) || authRequired(req)));
-    if (!storageManagementAvailable) return sendJson(res, {available:false, storage_management_available:false});
-    if (!desktopIntegration?.getSettings) return sendJson(res, {
-      available:false,
-      storage_management_available:true,
-      settings:{
-        dataMode:process.env.TERMA_DATA_DIR || process.env.TERMA_SSH_DIR || process.env.TUNNELDESK_DATA_DIR || process.env.TUNNELDESK_SSH_DIR ? "environment" : "project",
-        customDataDir:String(process.env.TERMA_DATA_DIR || process.env.TUNNELDESK_DATA_DIR || "")
-      },
-      paths:{dataDir:DATA_DIR, sshDir:PROJECT_SSH_DIR},
-      project_mode_available:true,
-      project_mode_label:"项目所在文件夹",
-      base_dir:BASE_DIR,
-      storage:storageSettingsView()
-    });
-    return sendJson(res, { available:true, storage_management_available:true, ...(await Promise.resolve(desktopIntegration.getSettings())), storage:storageSettingsView() });
-  }
-  if (req.method === "PUT" && pathname === "/api/desktop-settings") {
-    if (!isDesktopRequest(req) && (desktopIntegration || (!isDirectLoopbackRequest(req) && !authRequired(req)))) {
-      return sendJson(res, { error:"远程修改数据路径需要启用 Web 密码并登录" }, 403);
-    }
-    const data = await readJson(req);
-    if (!desktopIntegration?.saveSettings) return sendJson(res, saveWebStorageSettings(data));
-    return sendJson(res, await Promise.resolve(desktopIntegration.saveSettings(data)));
-  }
-  if (req.method === "POST" && pathname === "/api/desktop-settings/choose-data-dir") {
-    if (!isDesktopRequest(req) || !desktopIntegration?.chooseDataDir) return sendJson(res, { error:"目录选择仅能在本机桌面版中使用" }, 403);
-    return sendJson(res, { path:await Promise.resolve(desktopIntegration.chooseDataDir()) });
-  }
-  if (req.method === "GET" && pathname === "/api/storage/directories") {
-    if (!isDesktopRequest(req) && (desktopIntegration || (!isDirectLoopbackRequest(req) && !authRequired(req)))) {
-      return sendJson(res, {error:"远程浏览目录需要启用 Web 密码并登录"}, 403);
-    }
-    const url = new URL(req.url, "http://terma.invalid");
-    return sendJson(res, listLocalDirectories(url.searchParams.get("path") || ""));
-  }
-  if (req.method === "GET" && pathname === "/api/runtime-settings") return sendJson(res, runtimeSettingsView());
-  if (req.method === "GET" && pathname === "/api/cache") return sendJson(res, programCacheView());
-  if (req.method === "DELETE" && pathname === "/api/cache") {
-    if (updateInstaller.cacheInfo().busy) return sendJson(res, {error:"更新正在下载，暂时不能清理缓存"}, 409);
-    clearSftpCache();
-    updateInstaller.clearCache();
-    return sendJson(res, {ok:true, ...programCacheView()});
-  }
-  if (req.method === "PUT" && pathname === "/api/runtime-settings") {
-    const current = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
-    const data = await readJson(req);
-    const next = normalizeRuntimeSettings({
-      listen_hosts: data.listen_hosts ?? current.listen_hosts,
-      listen_port: data.listen_port ?? current.listen_port,
-      sftp_recycle_bin_enabled: data.sftp_recycle_bin_enabled ?? current.sftp_recycle_bin_enabled,
-      sftp_floating_progress_enabled: data.sftp_floating_progress_enabled ?? current.sftp_floating_progress_enabled,
-      sftp_max_open_file_size_mb: data.sftp_max_open_file_size_mb ?? current.sftp_max_open_file_size_mb,
-      sftp_download_directory: data.sftp_download_directory ?? current.sftp_download_directory,
-      restore_workspace_tabs: data.restore_workspace_tabs ?? current.restore_workspace_tabs,
-      workspace_toolbar_placement: data.workspace_toolbar_placement ?? current.workspace_toolbar_placement,
-      terminal: data.terminal ?? current.terminal
-    });
-    if (data.sftp_download_directory !== undefined && desktopIntegration) {
-      if (!isDesktopRequest(req) || !desktopIntegration?.validateDownloadDirectory) return sendJson(res, { error:"下载目录只能在本机桌面端中修改" }, 403);
-      await Promise.resolve(desktopIntegration.validateDownloadDirectory(next.sftp_download_directory));
-    }
-    if (data.listen_hosts !== undefined || data.listen_port !== undefined) {
-      const availability = await checkRuntimeSettings(next);
-      if (!availability.available) return sendJson(res, {
-        error: availability.error || "监听地址或端口不可用",
-        ...availability
-      }, 409);
-    }
-    writeRuntimeSettings(RUNTIME_SETTINGS_FILE, next);
-    return sendJson(res, runtimeSettingsView());
-  }
-  if (req.method === "POST" && pathname === "/api/runtime-settings/check") {
-    const data = await readJson(req);
-    return sendJson(res, await checkRuntimeSettings(data), 200);
-  }
+  if (await handleStorageRoutes(req, res, pathname, {
+    authRequired, baseDir:BASE_DIR, checkRuntimeSettings, clearSftpCache,
+    clearUpdateCache:() => updateInstaller.clearCache(), dataDir:DATA_DIR,
+    getDesktopIntegration:() => desktopIntegration, isDesktopRequest, isDirectLoopbackRequest,
+    listLocalDirectories, normalizeRuntimeSettings, programCacheView, projectSshDir:PROJECT_SSH_DIR,
+    readJson, readRuntimeSettings, runtimeSettingsFile:RUNTIME_SETTINGS_FILE, runtimeSettingsView,
+    saveWebStorageSettings, sendJson, storageSettingsView,
+    updateCacheBusy:() => Boolean(updateInstaller.cacheInfo().busy), writeRuntimeSettings
+  })) return;
   if (await handleUpdateRoutes(req, res, pathname, {
     checker:updateChecker,
     installer:updateInstaller,
@@ -1719,16 +1619,6 @@ async function handleApi(req, res, pathname) {
     openPackage:(file)=>Promise.resolve(desktopIntegration.openUpdatePackage(file)),
     openDirectory:(file)=>Promise.resolve(desktopIntegration.openUpdateDirectory(file))
   })) return;
-  if (req.method === "GET" && pathname === "/api/identity-files") return sendJson(res, listIdentityFiles());
-  if (req.method === "GET" && pathname === "/api/identity-files/info") return sendJson(res, { items:listIdentityFiles(), upload_directory:PROJECT_SSH_DIR });
-  if (req.method === "POST" && pathname === "/api/identity-files/check") {
-    const data = await readJson(req);
-    return sendJson(res, identityPermissionStatus(data.path || ""));
-  }
-  if (req.method === "POST" && pathname === "/api/identity-files/repair") {
-    const data = await readJson(req);
-    return sendJson(res, repairIdentityFile(data.path || ""));
-  }
   if (await handleLogRoutes(req, res, pathname, {
     deleteLogs, enforceConfiguredLogRetention, getLogSettings, listLogs, readJson, readLog, readLogWindow,
     readRawLog, send, sendJson, updateLogSettings
@@ -1913,73 +1803,6 @@ async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/connections") return sendJson(res, listConnections());
   if (req.method === "GET" && pathname === "/api/remote-profiles") return sendJson(res, listRemoteProfiles());
   if (req.method === "GET" && pathname === "/api/serial/ports") return sendJson(res, await listSerialPorts());
-  if (req.method === "GET" && pathname === "/api/remote-clients/diagnostics") {
-    const integrationAvailable = Boolean(isDesktopRequest(req) && desktopIntegration?.remoteClientDiagnostics);
-    const x11 = isDesktopRequest(req) && desktopIntegration?.xServerDiagnostics
-      ? await Promise.resolve(desktopIntegration.xServerDiagnostics())
-      : x11RuntimeDiagnostics();
-    if (!integrationAvailable) return sendJson(res, remoteClientDiagnosticsWithoutDesktopIntegration(x11));
-    const xdmcp = {
-      available:Boolean(x11?.xdmcp_available),
-      client:x11?.xdmcp_available
-        ? x11.platform === "darwin"
-          ? "Terma 内置 XDMCP（XQuartz）"
-          : x11.mode === "bundled"
-            ? "Terma 内置 X Server"
-            : x11.platform === "linux"
-              ? "Terma XDMCP（Xephyr）"
-              : x11.server || "X Server"
-        : "",
-      executable:x11?.xdmcp_available ? x11.xdmcp_client || x11.executable || "" : "",
-      can_install:Boolean(x11?.can_install),
-      install_label:process.platform === "darwin" ? "安装 XQuartz" : process.platform === "linux" ? "安装 Xephyr" : "",
-      reason:x11?.xdmcp_available ? "" : String(x11?.reason || "未检测到可用的 XDMCP X Server")
-    };
-    return sendJson(res, {desktop:true, integration_available:true, ...await Promise.resolve(desktopIntegration.remoteClientDiagnostics()), xdmcp, x11});
-  }
-  if (req.method === "POST" && pathname === "/api/remote-clients/install") {
-    if (!isDesktopRequest(req) || !desktopIntegration?.installRemoteClient) return sendJson(res, {error:"客户端只能由本机桌面版安装"}, 403);
-    const body = await readJson(req);
-    const protocol = String(body.protocol || "").toLowerCase();
-    if (protocol !== "rdp") return sendJson(res, {error:"当前只支持安装 RDP 客户端"}, 400);
-    return sendJson(res, await Promise.resolve(desktopIntegration.installRemoteClient(protocol)));
-  }
-  if (req.method === "POST" && pathname === "/api/xserver/install") {
-    if (!isDesktopRequest(req)) return sendJson(res, {error:"图形组件只能由本机桌面版安装"}, 403);
-    if (process.platform === "darwin" && desktopIntegration?.installXQuartz) {
-      return sendJson(res, await Promise.resolve(desktopIntegration.installXQuartz()));
-    }
-    if (process.platform === "linux" && desktopIntegration?.installLinuxGraphicsComponents) {
-      return sendJson(res, await Promise.resolve(desktopIntegration.installLinuxGraphicsComponents()));
-    }
-    return sendJson(res, {error:"当前平台没有可自动安装的图形组件"}, 403);
-  }
-  if (pathname === "/api/xserver") {
-    if (req.method === "GET") {
-      if (isDesktopRequest(req) && desktopIntegration?.xServerDiagnostics) {
-        const diagnostics = await Promise.resolve(desktopIntegration.xServerDiagnostics());
-        return sendJson(res, {...diagnostics, desktop:true, integration_available:true});
-      }
-      return sendJson(res, xServerDiagnosticsWithoutDesktopIntegration());
-    }
-    if (req.method === "POST") {
-      if (!isDesktopRequest(req) || !desktopIntegration?.startXServer) return sendJson(res, {error:"X Server 只能由本机桌面端启动"}, 403);
-      return sendJson(res, await Promise.resolve(desktopIntegration.startXServer()));
-    }
-    if (req.method === "DELETE") {
-      if (!isDesktopRequest(req) || !desktopIntegration?.stopXServer) return sendJson(res, {error:"X Server 只能由本机桌面端停止"}, 403);
-      return sendJson(res, await Promise.resolve(desktopIntegration.stopXServer()));
-    }
-  }
-  if (req.method === "GET" && pathname === "/api/ssh/config/detect") {
-    const configPath = path.join(USER_SSH_DIR, "config");
-    if (!fs.existsSync(configPath)) return sendJson(res, {available:false, path:configPath, count:0, conflicts:[], text:""});
-    const text = fs.readFileSync(configPath, "utf8");
-    const parsed = parseConfigText(text);
-    const existing = new Set(listConnections().map(item => String(item.name).toLowerCase()));
-    const conflicts = parsed.tunnels.filter(item => existing.has(String(item.name).toLowerCase())).map(item => item.name);
-    return sendJson(res, {available:true, path:configPath, count:parsed.count, conflicts, text});
-  }
   if (req.method === "GET" && pathname === "/api/command-snippets") return sendJson(res, listCommandSnippets());
   if (req.method === "GET" && pathname === "/api/named-workspaces") return sendJson(res, listNamedWorkspaces());
   if (req.method === "GET" && pathname === "/api/command-templates") return sendJson(res, listCommandTemplates());
@@ -2096,11 +1919,6 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "GET" && pathname === "/api/export/config") return sendJson(res, { config: exportConfig() });
 
-  if (req.method === "POST" && pathname === "/api/identity-files") {
-    const body = await readBody(req);
-    const part = getPart(req.headers["content-type"], body, "key");
-    return sendJson(res, saveUploadedKey(part.filename, part.data), 201);
-  }
   if (req.method === "POST" && pathname === "/api/import/parse") {
     const body = await readBody(req);
     const part = getPart(req.headers["content-type"], body, "config");
@@ -2127,43 +1945,19 @@ async function handleApi(req, res, pathname) {
     const data = await readJson(req);
     return sendJson(res, { config: exportConfig(data.ids || []) });
   }
-  if (req.method === "POST" && pathname === "/api/ssh/extra-args/validate") {
-    const data = await readJson(req);
-    return sendJson(res, inspectExtraArgs(data.extra_args || "", {
-      connect_timeout_seconds:data.connect_timeout_seconds,
-      keepalive_interval_seconds:data.keepalive_interval_seconds,
-      keepalive_count_max:data.keepalive_count_max,
-      tcp_keepalive:data.tcp_keepalive
-    }));
-  }
-  if (req.method === "POST" && pathname === "/api/test-ssh") {
-    const data = await readJson(req);
-    if (data.id && data.auth_type === "password" && !data.ssh_password) {
-      try { data.ssh_password = getConnection(Number(data.id)).ssh_password || ""; } catch {}
-    }
-    const result: any = await testSsh(data);
-    if (result.ok && data.discover_terminal === true) {
-      try {
-        result.capabilities = await terminalCapabilitiesForConnection(data);
-      } catch (error) {
-        result.capabilities = {
-          platform:"unknown",
-          platform_label:"未知",
-          default_shell:null,
-          profiles:[],
-          tools:[],
-          warnings:[`SSH 已连接，但远端终端环境识别失败：${error.message}`]
-        };
-      }
-    }
-    return sendJson(res, result);
-  }
-  if (req.method === "POST" && pathname === "/api/ssh/keys/generate") {
-    return sendJson(res, generateSshKey(await readJson(req)), 201);
-  }
   if (req.method === "POST" && pathname === "/api/terminal/startup-tickets") {
     const data = await readJson(req);
-    getConnection(Number(data.connection_id));
+    const connection = getConnection(Number(data.connection_id));
+    const requestedX11Mode = ["trusted", "untrusted", "off"].includes(String(data.startup?.x11_mode || ""))
+      ? String(data.startup.x11_mode)
+      : String(connection.x11_mode || "off");
+    if (["trusted", "untrusted"].includes(requestedX11Mode) && !isDesktopCapabilityRequest(req, "xserver")) {
+      return sendJson(res, {
+        error:"当前浏览器没有 X11 桌面集成授权，请重新申请授权后再打开 X11 终端",
+        code:"DESKTOP_INTEGRATION_AUTH_REQUIRED",
+        scopes:["xserver"]
+      }, 403);
+    }
     return sendJson(res, createTerminalStartupTicket(data.connection_id, data.startup || {}), 201);
   }
   if (req.method === "POST" && pathname === "/api/command-templates") {
@@ -2177,35 +1971,8 @@ async function handleApi(req, res, pathname) {
     const data = await readJson(req);
     return sendJson(res, await batchRunCommands(data.ids || [], data.command || "", data));
   }
-  if (req.method === "GET" && pathname === "/api/health") {
-    const url = new URL(req.url, "http://terma.invalid");
-    return sendJson(res, await allConnectionsHealth({force:url.searchParams.get("refresh") === "1"}));
-  }
   if (req.method === "GET" && pathname === "/api/forwards/restore-state") return sendJson(res, restoreStateSummary());
   if (req.method === "POST" && pathname === "/api/forwards/restore") return sendJson(res, await restorePreviousForwards());
-  if (req.method === "POST" && pathname === "/api/ports/diagnose") {
-    const data = await readJson(req);
-    return sendJson(res, await diagnosePortUsage(data.host || "127.0.0.1", data.port));
-  }
-  if (req.method === "POST" && pathname === "/api/ports/recommend") {
-    const data = await readJson(req);
-    const start = data.port ? Number(data.port) : 6000;
-    return sendJson(res, await recommendPort(data.host || "127.0.0.1", start, data.exclude_id || 0));
-  }
-  if (req.method === "POST" && pathname === "/api/ports/check-forward") {
-    const data = await readJson(req);
-    const configured = configuredPortOwner(data.port, data.exclude_id || 0);
-    const usage = await diagnosePortUsage(data.host || "127.0.0.1", data.port);
-    const start = data.port ? Number(data.port) : 6000;
-    const recommended = await recommendPort(data.host || "127.0.0.1", start, data.exclude_id || 0).catch(() => null);
-    return sendJson(res, { configured, usage, recommended });
-  }
-  if (req.method === "POST" && pathname === "/api/ports/kill") {
-    const data = await readJson(req);
-    const result = await killPortOwner(data.pid, data.port, data.host);
-    appendSystemLog(`已尝试关闭端口占用进程：${result.process?.name || "未知程序"} PID ${data.pid}`);
-    return sendJson(res, result);
-  }
   if (req.method === "POST" && pathname === "/api/connections") {
     const id = insertConnection(await readJson(req), DEFAULT_EXTRA_ARGS);
     return sendJson(res, { id }, 201);
@@ -2412,7 +2179,7 @@ async function handleApi(req, res, pathname) {
       if (["telnet", "serial"].includes(profile.protocol)) return sendJson(res, await testRemoteTerminalProfile(id));
       if (profile.protocol === "vnc") return sendJson(res, await testVncProfile(id));
       if (profile.protocol === "xdmcp") {
-        if (!isDesktopRequest(req) || !desktopIntegration?.testXdmcp) return sendJson(res, {ok:false, protocol:"xdmcp", message:"XDMCP 只能由本机桌面版检测"});
+        if (!isDesktopCapabilityRequest(req, "remote-client") || !desktopIntegration?.testXdmcp) return sendJson(res, {ok:false, protocol:"xdmcp", message:"XDMCP 只能由获得临时授权的本机浏览器或 Terma 桌面端检测"});
         return sendJson(res, await Promise.resolve(desktopIntegration.testXdmcp({
           id:profile.id,
           protocol:profile.protocol,
@@ -2421,7 +2188,7 @@ async function handleApi(req, res, pathname) {
           options:profile.options
         })));
       }
-      const diagnostics = isDesktopRequest(req) && desktopIntegration?.remoteClientDiagnostics
+      const diagnostics = isDesktopCapabilityRequest(req, "remote-client") && desktopIntegration?.remoteClientDiagnostics
         ? await Promise.resolve(desktopIntegration.remoteClientDiagnostics())
         : {desktop:false, [profile.protocol]:{available:false}};
       return sendJson(res, {
@@ -2478,7 +2245,7 @@ async function handleApi(req, res, pathname) {
     }
     if (req.method === "POST" && parts.length === 4 && parts[3] === "launch") {
       const profile = getRemoteProfile(id);
-      if (!isDesktopRequest(req)) return sendJson(res, {error:"图形桌面只能在本机桌面版中打开"}, 403);
+      if (!isDesktopCapabilityRequest(req, "remote-client")) return sendJson(res, {error:"系统图形客户端只能由获得临时授权的本机浏览器或 Terma 桌面端打开"}, 403);
       if (!["rdp", "vnc", "xdmcp"].includes(profile.protocol)) throw new Error("该连接不是图形桌面配置");
       const launcher = profile.protocol === "xdmcp" ? desktopIntegration?.openXdmcp : desktopIntegration?.openRemoteClient;
       if (!launcher) return sendJson(res, {error:profile.protocol === "xdmcp" ? "当前桌面版不支持 XDMCP" : "当前桌面版不支持系统远程桌面客户端"}, 403);
@@ -3045,7 +2812,17 @@ function upgradeHandler(req, socket) {
   try {
     if (!hostAllowed(req) || !webSocketOriginAllowed(req) || !isAuthenticated(req)) return socket.destroy();
     const { pathname } = new URL(req.url, "http://terma.invalid");
-    if (pathname === "/ws/terminal") return handleTerminalUpgrade(req, socket);
+    if (pathname === "/ws/terminal") {
+      const nativeDesktop = isDesktopRequest(req);
+      const localDirectAuthorized = !nativeDesktop && localDirectDesktopIntegrationStatus(req, "xserver").authorized;
+      const grant = nativeDesktop || localDirectAuthorized ? null : desktopBrowserGrantStatus(req);
+      return handleTerminalUpgrade(req, socket, {
+        x11Authorized:isDesktopCapabilityRequest(req, "xserver"),
+        nativeDesktop,
+        grantId:String(grant?.grant_id || ""),
+        expiresAt:Number(grant?.expires_at || 0)
+      });
+    }
     if (pathname === "/ws/remote-terminal") return handleRemoteTerminalUpgrade(req, socket);
     if (pathname === "/ws/vnc") return handleVncUpgrade(req, socket);
     if (pathname === "/ws/batch-command") return handleBatchCommandUpgrade(req, socket);
@@ -3429,6 +3206,7 @@ function completeStartup(binding) {
   args.listen_port = actualPort;
   args.host = actualHosts.join(",");
   args.port = actualPort;
+  setDesktopCapabilityRuntimeListenHosts(actualHosts);
   const urls = urlsForHosts(actualHosts, actualPort);
   fs.writeFileSync(args.pidFile, String(process.pid));
   fs.writeFileSync(WEB_URL_FILE, urls.localUrl);

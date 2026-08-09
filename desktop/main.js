@@ -84,6 +84,7 @@ const remoteClientAdapter = displayClientMode ? null : createRemoteClientAdapter
 });
 
 let mainWindow = null;
+let desktopBrowserAuthorizationPrompt = null;
 let tray = null;
 let webUrl = "";
 let quitting = false;
@@ -966,6 +967,39 @@ function urlBelongsToDesktop(value) {
     return Boolean(webUrl) && new URL(String(value || "")).origin === new URL(webUrl).origin;
   } catch {
     return false;
+  }
+}
+
+async function confirmDesktopBrowserAuthorization(request = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  const scopes = Array.isArray(request.scopes) ? request.scopes : [];
+  const durationMode = request.duration_mode === "browser-session" ? "browser-session" : "timed";
+  const durationMinutes = Math.max(1, Math.min(480, Number(request.duration_minutes) || 10));
+  const durationLabel = durationMode === "browser-session" ? "本次浏览器会话" : `${durationMinutes} 分钟`;
+  const scopeKey = `${[...new Set(scopes.map(scope => String(scope || "").trim()).filter(Boolean))].sort().join(",")}|${durationMode}|${durationMinutes}`;
+  if (desktopBrowserAuthorizationPrompt) {
+    return desktopBrowserAuthorizationPrompt.scopeKey === scopeKey
+      ? desktopBrowserAuthorizationPrompt.promise
+      : false;
+  }
+  const labels = [];
+  if (scopes.includes("xserver")) labels.push("管理 X Server 与本机图形组件");
+  if (scopes.includes("remote-client")) labels.push("调用系统 RDP、VNC 与 XDMCP 客户端");
+  const prompt = dialog.showMessageBox(mainWindow, {
+    type:"question",
+    title:"浏览器请求桌面集成",
+    message:`是否允许当前本机浏览器在${durationLabel}内使用 Terma 桌面集成？`,
+    detail:`授权范围：\n${labels.length ? labels.map(label => `• ${label}`).join("\n") : "• 桌面图形集成"}\n\n撤销或授权到期会关闭由该授权开启的 X11 终端；不会开放本地文件、数据目录、更新包或迁移能力。`,
+    buttons:["拒绝", `允许${durationMode === "browser-session" ? "本次会话" : ` ${durationMinutes} 分钟`}`],
+    defaultId:0,
+    cancelId:0,
+    noLink:true
+  }).then(result => result.response === 1);
+  desktopBrowserAuthorizationPrompt = {scopeKey, promise:prompt};
+  try {
+    return await prompt;
+  } finally {
+    if (desktopBrowserAuthorizationPrompt?.promise === prompt) desktopBrowserAuthorizationPrompt = null;
   }
 }
 
@@ -2072,6 +2106,7 @@ app.whenReady().then(async () => {
         setTimeout(() => app.quit(), 0);
       },
       desktopIntegration: {
+        confirmDesktopBrowserAuthorization,
         getSettings: desktopSettingsView,
         saveSettings: saveDesktopSettings,
         getLegacyBrandMigration: inspectLegacyBrandMigration,

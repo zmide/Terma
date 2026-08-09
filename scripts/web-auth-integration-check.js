@@ -175,6 +175,45 @@ async function main() {
     assert.match(cookie, /Max-Age=5400/);
     const sessionCookie = cookie.split(";")[0];
     assert.equal((await fetch(`${url}/api/about`, { headers:{Cookie:sessionCookie} })).status, 200);
+    const authenticatedLoginPage = await fetch(`${url}/login`, {
+      headers:{Cookie:sessionCookie},
+      redirect:"manual"
+    });
+    assert.equal(authenticatedLoginPage.status, 302);
+    assert.equal(authenticatedLoginPage.headers.get("location"), "/");
+    const lanModeResponse = await fetch(`${url}/api/security`, {
+      method:"PUT",
+      headers:{Cookie:sessionCookie, "Content-Type":"application/json"},
+      body:JSON.stringify({
+        auth_mode:"lan",
+        trusted_proxy_enabled:false,
+        trusted_proxy_addresses:[]
+      })
+    });
+    assert.equal(lanModeResponse.status, 200);
+    const localLoginPage = await fetch(`${url}/login`, {redirect:"manual"});
+    assert.equal(localLoginPage.status, 302);
+    assert.equal(localLoginPage.headers.get("location"), "/");
+    const offModeResponse = await fetch(`${url}/api/security`, {
+      method:"PUT",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({auth_mode:"off", confirm_unsafe:true})
+    });
+    assert.equal(offModeResponse.status, 200);
+    const disabledLoginPage = await fetch(`${url}/login`, {redirect:"manual"});
+    assert.equal(disabledLoginPage.status, 302);
+    assert.equal(disabledLoginPage.headers.get("location"), "/");
+    const alwaysModeResponse = await fetch(`${url}/api/security`, {
+      method:"PUT",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        auth_mode:"always",
+        trusted_proxy_enabled:true,
+        trusted_proxy_addresses:["127.0.0.1"]
+      })
+    });
+    assert.equal(alwaysModeResponse.status, 200);
+    assert.equal((await fetch(`${url}/login`, {redirect:"manual"})).status, 200);
     const mainPageResponse = await fetch(`${url}/`, {headers:{Cookie:sessionCookie}});
     assert.equal(mainPageResponse.status, 200);
     const mainCsp = mainPageResponse.headers.get("content-security-policy") || "";

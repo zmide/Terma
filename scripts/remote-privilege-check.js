@@ -1,11 +1,12 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "src", "remote-privilege.ts"), "utf8");
 const serverSource = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");
-const remoteFrontend = fs.readFileSync(path.join(root, "public", "app-remote.js"), "utf8");
+const remoteFrontend = readFrontendDomain(root, "remote");
 assert.doesNotMatch(source, /localStorage|sessionStorage/);
 assert.doesNotMatch(source, /INSERT\s+INTO|UPDATE\s+|DELETE\s+FROM/);
 assert.match(source, /sudo -S -k -p '' -- \/bin\/sh -s/);

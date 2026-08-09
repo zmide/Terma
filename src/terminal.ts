@@ -20,8 +20,41 @@ try {
   ptyLoadError = error.message || String(error);
 }
 
-const sessions = new Set();
+const sessions = new Set<any>();
 const TERMINAL_ENCODINGS = new Set(["utf8", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "latin1"]);
+
+function releaseTerminalSession(session) {
+  sessions.delete(session);
+  if (session.desktopGrantExpiryTimer) clearTimeout(session.desktopGrantExpiryTimer);
+  session.desktopGrantExpiryTimer = null;
+}
+
+function scheduleDesktopGrantExpiry(session, expiresAtValue) {
+  if (session.desktopGrantExpiryTimer) clearTimeout(session.desktopGrantExpiryTimer);
+  session.desktopGrantExpiryTimer = null;
+  const expiresAt = Number(expiresAtValue || 0);
+  if (!expiresAt) return true;
+  const remaining = expiresAt - Date.now();
+  if (remaining <= 0) {
+    sendTerminalOutput(session, "\r\n[X11] 桌面集成授权已到期，本次 X11 终端已关闭。\r\n");
+    closeTerminalSession(session);
+    return false;
+  }
+  session.desktopGrantExpiryTimer = setTimeout(() => {
+    if (!sessions.has(session)) return;
+    sendTerminalOutput(session, "\r\n[X11] 桌面集成授权已到期，本次 X11 终端已关闭。\r\n");
+    closeTerminalSession(session);
+  }, remaining);
+  session.desktopGrantExpiryTimer.unref?.();
+  return true;
+}
+
+function bindDesktopBrowserGrant(session, authorization: any = {}) {
+  const grantId = String(authorization.grantId || "").trim();
+  if (!grantId || authorization.nativeDesktop || !["trusted", "untrusted"].includes(String(session.x11Mode || ""))) return;
+  session.desktopBrowserGrantId = grantId;
+  scheduleDesktopGrantExpiry(session, authorization.expiresAt);
+}
 
 function setSessionEncoding(session, value) {
   const encoding = String(value || "utf8").toLowerCase();
@@ -54,7 +87,7 @@ function resolveTerminalCwd() {
   return undefined;
 }
 
-function handleTerminalUpgrade(req, socket) {
+function handleTerminalUpgrade(req, socket, options: any = {}) {
   let upgraded = false;
   try {
     const key = validateWebSocketUpgrade(req);
@@ -65,6 +98,10 @@ function handleTerminalUpgrade(req, socket) {
     const startupToken = url.searchParams.get("startup_token") || "";
     const startupOverride = startupToken ? consumeTerminalStartupTicket(startupToken, id) : null;
     const connection = mergeTerminalStartup(storedConnection, startupOverride);
+    const x11Mode = String(connection.x11_mode || "off");
+    if (["trusted", "untrusted"].includes(x11Mode) && !options.x11Authorized) {
+      throw new Error("当前浏览器没有 X11 桌面集成授权，请重新申请授权后再打开 X11 终端");
+    }
     const requestedEncoding = String(url.searchParams.get("encoding") || "").toLowerCase();
     if (requestedEncoding) {
       if (!TERMINAL_ENCODINGS.has(requestedEncoding)) throw new Error("不支持的终端编码");
@@ -87,7 +124,9 @@ function handleTerminalUpgrade(req, socket) {
     const title = url.searchParams.get("title") || "";
     const logId = url.searchParams.get("log_id") || "";
     const session: any = startTerminalProcess(connection, socket, cols, rows, title, logId);
+    session.x11Mode = x11Mode;
     sessions.add(session);
+    bindDesktopBrowserGrant(session, options);
     const startupLabel = connection.terminal_startup_mode === "program"
       ? `，启动 ${connection.terminal_profile_name || connection.terminal_program_path}`
       : "";
@@ -167,7 +206,7 @@ function startPlainTerminal(session, connection, args, cwd, log) {
   });
   child.on("exit", (code, signal) => {
     sendTerminalOutput(session, `\r\nSSH 会话已结束${signal ? `，信号 ${signal}` : `，退出码 ${code ?? ""}`}\r\n`);
-    sessions.delete(session);
+    releaseTerminalSession(session);
     closeWebSocket(session.socket);
   });
   appendSystemLog(`终端已启动（普通）：${log.label}`);
@@ -201,7 +240,7 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
     stream.on("error", (error) => sendTerminalOutput(session, `\r\n终端错误：${normalizeSshTransportError(error, connection).message}\r\n`));
     stream.on("close", (code, signal) => {
       sendTerminalOutput(session, `\r\nSSH 会话已结束${signal ? `，信号 ${signal}` : `，退出码 ${code ?? ""}`}\r\n`);
-      sessions.delete(session);
+      releaseTerminalSession(session);
       try { client.end(); } catch {}
       closeWebSocket(socket);
     });
@@ -231,7 +270,7 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
       return;
     }
     sendTerminalOutput(session, `\r\n终端启动失败：${error.message}\r\n`);
-    sessions.delete(session);
+    releaseTerminalSession(session);
     closeWebSocket(socket);
   });
   return session;
@@ -261,7 +300,7 @@ function startTerminalProcess(connection, socket, cols, rows, title = "", logId 
       ptyProcess.onData((data) => sendTerminalOutput(session, data));
       ptyProcess.onExit(({ exitCode, signal }) => {
         sendTerminalOutput(session, `\r\nSSH 会话已结束${signal ? `，信号 ${signal}` : `，退出码 ${exitCode ?? ""}`}\r\n`);
-        sessions.delete(session);
+        releaseTerminalSession(session);
         closeWebSocket(socket);
       });
       appendSystemLog(`终端已启动（PTY）：${log.label}`);
@@ -311,7 +350,7 @@ function writeTerminalInput(session, payload) {
 
 function closeTerminalSession(session) {
   if (!sessions.has(session)) return;
-  sessions.delete(session);
+  releaseTerminalSession(session);
   flushSessionOutputDecoder(session);
   try { session.ptyProcess?.kill(); } catch {}
   try { session.child?.kill(); } catch {}
@@ -324,4 +363,33 @@ function closeAllTerminals() {
   for (const session of [...sessions]) closeTerminalSession(session);
 }
 
-module.exports = { handleTerminalUpgrade, closeAllTerminals };
+function closeDesktopBrowserGrantTerminals(grantId, reason = "桌面集成授权已撤销") {
+  const requestedGrantId = String(grantId || "").trim();
+  if (!requestedGrantId) return 0;
+  let closed = 0;
+  for (const session of [...sessions]) {
+    if (session.desktopBrowserGrantId !== requestedGrantId) continue;
+    sendTerminalOutput(session, `\r\n[X11] ${reason}，本次 X11 终端已关闭。\r\n`);
+    closeTerminalSession(session);
+    closed += 1;
+  }
+  return closed;
+}
+
+function refreshDesktopBrowserGrantTerminals(grantId, expiresAt) {
+  const requestedGrantId = String(grantId || "").trim();
+  if (!requestedGrantId) return 0;
+  let refreshed = 0;
+  for (const session of [...sessions]) {
+    if (session.desktopBrowserGrantId !== requestedGrantId) continue;
+    if (scheduleDesktopGrantExpiry(session, expiresAt)) refreshed += 1;
+  }
+  return refreshed;
+}
+
+module.exports = {
+  handleTerminalUpgrade,
+  closeAllTerminals,
+  closeDesktopBrowserGrantTerminals,
+  refreshDesktopBrowserGrantTerminals
+};

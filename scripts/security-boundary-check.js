@@ -98,7 +98,10 @@ async function main() {
   assert.equal(security.sameOrigin(mockRequest({origin:"https://localhost:8088"})), false);
   assert.equal(security.webSocketOriginAllowed(mockRequest()), true);
   security.setToken("security-boundary-test-token");
-  assert.equal(security.authRequired(directLoopback), true, "Configured Web credentials must protect loopback requests too");
+  assert.equal(security.authRequired(directLoopback), false, "LAN-only policy must keep genuine loopback access password-free");
+  assert.equal(security.isAuthenticated(directLoopback), true);
+  security.updateSecurityOptions({auth_mode:"always"});
+  assert.equal(security.authRequired(directLoopback), true, "Always-auth policy must protect loopback requests");
   assert.equal(security.isAuthenticated(directLoopback), false);
   const tokenSession = security.login("security-boundary-test-token", directLoopback);
   assert.equal(security.isAuthenticated(mockRequest({
@@ -115,6 +118,16 @@ async function main() {
     origin:"http://localhost:8088",
     headers:{cookie:`td_session=${rotatedTokenSession}`}
   })), true);
+  security.updateSecurityOptions({auth_mode:"lan"});
+  assert.equal(security.authRequired(directLoopback), false);
+  assert.equal(security.updateSecurityOptions({auth_mode:"off", confirm_unsafe:true}).auth_mode, "off");
+  assert.equal(security.authRequired(mockRequest({
+    remoteAddress:"192.168.31.50",
+    localAddress:"192.168.50.10",
+    host:"192.168.50.10:8088",
+    origin:"http://192.168.50.10:8088"
+  })), false, "Off policy must disable Web authentication for LAN requests");
+  security.updateSecurityOptions({auth_mode:"lan"});
   security.resetWebAccessSecurity();
   assert.throws(
     () => security.updateSecurityOptions({allowed_hosts:["https://terma.example.test/path"]}),

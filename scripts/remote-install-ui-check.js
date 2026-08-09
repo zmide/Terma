@@ -2,10 +2,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
-const remote = fs.readFileSync(path.join(root, "public", "app-remote.js"), "utf8");
-const app = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
+const remote = readFrontendDomain(root, "remote");
+const app = ["app-state.js", "app.js"]
+  .map(file => fs.readFileSync(path.join(root, "public", file), "utf8"))
+  .join("\n");
 const workspace = fs.readFileSync(path.join(root, "public", "app-workspace.js"), "utf8");
 const taskCenter = fs.readFileSync(path.join(root, "public", "app-sftp-tasks.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");

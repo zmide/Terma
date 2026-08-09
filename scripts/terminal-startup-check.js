@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { generateKeyPairSync } = require("node:crypto");
 const { Server } = require("ssh2");
+const { readFrontendDomain } = require("./frontend-source");
 
 const testRuntimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "terma-terminal-startup-runtime-"));
 process.env.TERMA_DATA_DIR = path.join(testRuntimeDir, "data");
@@ -185,7 +186,7 @@ function checkSystemSshCommand() {
 const legacyEncodingArgs = buildTerminalCommand({...connection, ...canonicalDefault, terminal_encoding:"gbk"});
   assert.ok(legacyEncodingArgs.includes("SendEnv=-*"), "GBK/GB18030 终端同样不得发送远端 locale");
 
-  const terminalUi = fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal.js"), "utf8");
+  const terminalUi = readFrontendDomain(path.join(__dirname, ".."), "terminal");
   assert.match(terminalUi, /socket\.send\(JSON\.stringify\(\{type:"terminal-encoding", encoding:settings\.terminal_encoding\}\)\)/, "切换终端编码必须在线通知当前会话转码器");
   assert.doesNotMatch(terminalUi, /previousEncoding !== settings\.terminal_encoding[\s\S]*?reconnectTerminal\(/, "切换终端编码不得断开或重连 SSH 会话");
   assert.match(terminalUi, /terminalSessions\.get\(key\)\?\.terminalEncoding/, "每个终端标签必须保留自己的运行时编码");

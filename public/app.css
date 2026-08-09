@@ -1770,6 +1770,8 @@ html[data-theme="dark"] .protocol-serial { color:#c4b5fd; }
 .remote-desktop-launch > #vncServerState,
 .remote-desktop-launch > #rdpServerState,
 .remote-desktop-launch > #xdmcpServerState { width:min(720px,100%); min-width:0; box-sizing:border-box; align-self:center; margin-inline:auto; }
+.remote-desktop-launch > #remoteDesktopAuthorization { width:min(720px,100%); min-width:0; box-sizing:border-box; align-self:center; margin-inline:auto; }
+.remote-desktop-launch > #remoteDesktopAuthorization > .connection-test-status { width:100%; box-sizing:border-box; margin:0; }
 .remote-desktop-launch > #vncServerState > .remote-service-state { width:100%; box-sizing:border-box; }
 .remote-component-task-host { width:min(720px,100%); min-width:0; box-sizing:border-box; align-self:center; margin-inline:auto; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; }
 .remote-component-task-host > .remote-component-progress { width:100%; box-sizing:border-box; }
@@ -1806,6 +1808,18 @@ html[data-theme="dark"] .protocol-serial { color:#c4b5fd; }
 .remote-rendering-actions svg { width:13px; height:13px; }
 .remote-service-actions { min-width:0; display:flex; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:7px; }
 .remote-service-actions button { display:inline-flex; align-items:center; gap:6px; min-height:32px; }
+.desktop-integration-authorization { min-width:0; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px 14px; text-align:left; white-space:normal; }
+.desktop-integration-authorization-copy { min-width:0; display:grid; gap:3px; }
+.desktop-integration-authorization-copy b,
+.desktop-integration-authorization-copy small { min-width:0; overflow-wrap:anywhere; }
+.desktop-integration-authorization-copy small { line-height:1.45; }
+.desktop-integration-authorization-actions { min-width:0; display:flex; align-items:end; justify-content:flex-end; flex-wrap:wrap; gap:7px; }
+.desktop-integration-authorization-actions button { min-height:34px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+.desktop-integration-duration,
+.desktop-integration-custom-duration { min-width:0; display:grid; gap:3px; margin:0; color:var(--muted); font-size:10px; }
+.desktop-integration-duration select { width:142px; min-height:34px; margin:0; }
+.desktop-integration-custom-duration input { width:76px; min-height:34px; margin:0; }
+.desktop-integration-custom-duration[hidden] { display:none; }
 .remote-component-progress { min-width:0; display:grid; gap:9px; padding:10px; border:1px solid color-mix(in srgb,var(--warn) 42%,var(--line)); border-radius:6px; background:color-mix(in srgb,var(--warn) 5%,var(--panel)); }
 .remote-component-progress.success { border-color:color-mix(in srgb,var(--accent) 42%,var(--line)); background:color-mix(in srgb,var(--accent) 5%,var(--panel)); }
 .remote-component-progress.error { border-color:color-mix(in srgb,var(--danger) 48%,var(--line)); background:color-mix(in srgb,var(--danger) 5%,var(--panel)); }
@@ -1958,6 +1972,10 @@ html[data-theme="dark"] .protocol-serial { color:#c4b5fd; }
 .remote-admin-note { margin-top:10px; line-height:1.5; }
 .remote-admin-modal .actions { flex-wrap:wrap; }
 @media (max-width:700px) {
+  .desktop-integration-authorization { grid-template-columns:minmax(0,1fr); }
+  .desktop-integration-authorization-actions { justify-content:flex-start; align-items:end; }
+  .desktop-integration-duration { flex:1 1 140px; }
+  .desktop-integration-duration select { width:100%; }
   .remote-admin-modal { width:100%; max-height:calc(100dvh - max(12px,env(safe-area-inset-top))); border-radius:8px 8px 0 0; }
   .remote-admin-grid { grid-template-columns:minmax(0,1fr); gap:0; }
   .remote-admin-modal .actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }

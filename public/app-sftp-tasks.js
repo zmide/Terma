@@ -60,7 +60,7 @@ function applySftpTaskCenterSize(drawer, width, height) {
   drawer.style.height = `${Math.round(nextHeight)}px`;
 }
 
-function startSftpTaskCenterResize(event) {
+function startSftpTaskCenterResize(event, handle=event.currentTarget) {
   if (event.button !== 0 || isMobileLayout()) return;
   const drawer = document.getElementById("sftpTaskCenterDrawer");
   if (!drawer || drawer.hidden) return;
@@ -70,14 +70,14 @@ function startSftpTaskCenterResize(event) {
   const rect = drawer.getBoundingClientRect();
   sftpTaskCenterResize = {
     drawer,
-    handle:event.currentTarget,
+    handle,
     pointerId:event.pointerId,
     startX:event.clientX,
     startY:event.clientY,
     startWidth:rect.width,
     startHeight:rect.height
   };
-  try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch {}
+  try { handle?.setPointerCapture?.(event.pointerId); } catch {}
   document.body.classList.add("sftp-task-center-resizing");
   window.addEventListener("pointermove", moveSftpTaskCenterResize, {passive:false});
   window.addEventListener("pointerup", finishSftpTaskCenterResize);

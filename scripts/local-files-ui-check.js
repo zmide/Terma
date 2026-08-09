@@ -4,11 +4,12 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const localUiSource = fs.readFileSync(path.join(root, "public", "app-local-files.js"), "utf8");
-const sftpUiSource = fs.readFileSync(path.join(root, "public", "app-sftp.js"), "utf8");
-const terminalUiSource = fs.readFileSync(path.join(root, "public", "app-terminal.js"), "utf8");
+const sftpUiSource = readFrontendDomain(root, "sftp");
+const terminalUiSource = readFrontendDomain(root, "terminal");
 const css = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 
 function createClassList(initial = []) {
@@ -250,8 +251,8 @@ async function main() {
   await model.createLocalEntryFromPrompt("local-main", "file");
   const createCalls = state.apiCalls.filter(call => call.url === "/api/local-files/create").map(call => JSON.parse(call.options.body));
   assert.deepEqual(createCalls.map(call => call.type), ["dir", "file"], "工具栏新建文件夹和文件必须复用本地创建接口");
-  assert.ok(localUiSource.includes('local-files-create-directory') && localUiSource.includes("createLocalEntryFromPrompt('${escAttr(key)}','dir')"), "本地文件工具栏必须提供新建文件夹按钮");
-  assert.ok(localUiSource.includes('local-files-create-file') && localUiSource.includes("createLocalEntryFromPrompt('${escAttr(key)}','file')"), "本地文件工具栏必须提供新建文件按钮");
+  assert.ok(localUiSource.includes('local-files-create-directory') && localUiSource.includes('data-entry-kind="dir"') && localUiSource.includes('registerTermaAction("local-files-create"'), "本地文件工具栏必须提供新建文件夹按钮");
+  assert.ok(localUiSource.includes('local-files-create-file') && localUiSource.includes('data-entry-kind="file"') && localUiSource.includes('createLocalEntryFromPrompt(element.dataset.tabKey, element.dataset.entryKind)'), "本地文件工具栏必须提供新建文件按钮");
 
   const dragData = new Map();
   const dataTransfer = {
@@ -329,10 +330,10 @@ async function main() {
   model.renderLocalFiles("local-main");
   assert.match(list.innerHTML, /class="sftp-pager-dock"/);
   assert.match(list.innerHTML, /class="pager sftp-pager"/);
-  assert.match(list.innerHTML, /<span class="pager-count">[\s\S]*?<select aria-label="每页数量" onchange="setLocalFilesPageSize/);
+  assert.match(list.innerHTML, /<span class="pager-count">[\s\S]*?<select aria-label="每页数量" data-change-action="local-files-page-limit"/);
   assert.match(list.innerHTML, /<option value="50" selected>50 项<\/option>/);
   assert.match(list.innerHTML, /class="sftp-scroll-cue"[^>]*title="下方还有文件"/);
-  assert.doesNotMatch(list.innerHTML, /local-files-page-size/, "本地分页应直接复用 SFTP 的原生 select 结构");
+  assert.doesNotMatch(list.innerHTML, /class="local-files-page-size"/, "本地分页应直接复用 SFTP 的原生 select 结构");
   assert.equal(list.classList.contains("has-scroll-below"), true);
   list.scrollTop = list.scrollHeight - list.clientHeight;
   model.syncLocalFilesScrollCue(list);
@@ -343,7 +344,8 @@ async function main() {
   assert.deepEqual(checks.map(input => input.checked), [false, false, false]);
 
   assert.match(localUiSource, /class="local-files-selection" hidden>[\s\S]*openSelectedLocalFiles[\s\S]*showLocalFilesUploadMenu[\s\S]*copySelectedLocalFilePaths[\s\S]*renameSelectedLocalFile[\s\S]*deleteSelectedLocalFiles[\s\S]*chmodSelectedLocalFile/);
-  assert.match(localUiSource, /ondragstart="beginLocalFileDrag[^"]+" ondragend="finishLocalFileDrag\(\)"/);
+  assert.match(localUiSource, /data-dragstart-action="local-files-entry-drag-start" data-dragend-action="local-files-entry-drag-end"/);
+  assert.match(localUiSource, /registerTermaAction\("local-files-entry-drag-start"[\s\S]*beginLocalFileDrag/);
   assert.match(sftpUiSource, /async function handleSftpDrop\([\s\S]*?readLocalFileDragPayload\(event\?\.dataTransfer\)[\s\S]*?uploadLocalFilesToSftp\(localPayload, target, tabKey\)/);
   assert.match(sftpUiSource, /async function dropSftpItemsOnTab\([\s\S]*?readLocalFileDragPayload\(event\?\.dataTransfer\)[\s\S]*?uploadLocalFilesToSftp\(localPayload, target, tabKey\)/);
   assert.match(sftpUiSource, /function handleSftpTabDragOver\([\s\S]*?workspaceTabByKey\(tabKey\)/, "分屏标签拖入必须通过工作区模型解析目标标签");

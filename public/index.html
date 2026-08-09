@@ -20,30 +20,30 @@
       <div class="brand">
         <h1 aria-label="Terma"><img class="brand-mark" src="/assets/terma-icon.png" alt="" aria-hidden="true"><span class="brand-name-full" aria-hidden="true">Terma</span></h1>
         <div class="side-actions">
-          <button id="operationPanePin" class="operation-pane-pin icon-button is-pinned" type="button" data-icon="pin" onclick="toggleOperationPanePinned()" title="操作区已固定；点击改为自动收起" aria-label="操作区已固定；点击改为自动收起" aria-pressed="true"><i data-lucide="pin"></i></button>
-          <button id="operationPaneCollapse" class="operation-pane-collapse icon-button" type="button" onclick="setOperationPaneCollapsed(true)" title="收起操作区" aria-label="收起操作区"><i data-lucide="panel-left-close"></i></button>
-          <button class="mobile-brand-action theme-toggle icon-button" onclick="toggleTheme()" title="切换主题" aria-label="切换主题"><i data-lucide="moon"></i></button>
-          <button class="mobile-brand-action icon-button" onclick="loadAll()" title="刷新数据" aria-label="刷新数据"><i data-lucide="refresh-cw"></i></button>
+          <button id="operationPanePin" class="operation-pane-pin icon-button is-pinned" type="button" data-icon="pin" data-action="static-operation-pin" title="操作区已固定；点击改为自动收起" aria-label="操作区已固定；点击改为自动收起" aria-pressed="true"><i data-lucide="pin"></i></button>
+          <button id="operationPaneCollapse" class="operation-pane-collapse icon-button" type="button" data-action="static-operation-collapse" title="收起操作区" aria-label="收起操作区"><i data-lucide="panel-left-close"></i></button>
+          <button class="mobile-brand-action theme-toggle icon-button" data-action="static-theme-toggle" title="切换主题" aria-label="切换主题"><i data-lucide="moon"></i></button>
+          <button class="mobile-brand-action icon-button" data-action="static-refresh" title="刷新数据" aria-label="刷新数据"><i data-lucide="refresh-cw"></i></button>
         </div>
         <div id="operationPanePinGuide" class="operation-pane-pin-guide" role="region" aria-label="操作区使用提示" aria-live="polite" hidden>
           <div><strong>固定操作区</strong><span>取消固定后，点击工作区会自动收起；每个操作区都可以单独设置。</span></div>
-          <button class="icon-button" type="button" onclick="dismissOperationPanePinGuide()" title="知道了" aria-label="关闭提示"><i data-lucide="x"></i></button>
+          <button class="icon-button" type="button" data-action="static-operation-guide-dismiss" title="知道了" aria-label="关闭提示"><i data-lucide="x"></i></button>
         </div>
       </div>
       <div class="left-body">
         <nav class="activity" aria-label="主导航">
           <div class="activity-top">
-            <button id="navConnections" class="active" onclick="showPrimary('connections', true)" title="连接列表" aria-label="连接列表"><i data-lucide="server"></i></button>
-            <button id="navRemote" onclick="showPrimary('remote', true)" title="其他连接" aria-label="其他连接"><i data-lucide="plug-zap"></i></button>
-            <button id="navRunning" onclick="showPrimary('running', true)" title="正在转发" aria-label="正在转发"><i data-lucide="route"></i></button>
-            <button id="navCommand" onclick="showPrimary('command', true)" title="批量命令" aria-label="批量命令"><i data-lucide="square-terminal"></i></button>
-            <button id="navImport" onclick="showPrimary('import', true)" title="导入导出" aria-label="导入导出"><i data-lucide="arrow-left-right"></i></button>
-            <button id="navLogs" onclick="showPrimary('logs', true)" title="日志" aria-label="日志"><i data-lucide="scroll-text"></i></button>
-            <button id="navSettings" onclick="showPrimary('settings', true)" title="设置" aria-label="设置"><i data-lucide="settings"></i><span id="navSettingsUpdateDot" class="nav-update-dot" hidden aria-label="发现新版本"></span></button>
+            <button id="navConnections" class="active" data-action="static-primary" data-primary="connections" data-explorer="true" title="连接列表" aria-label="连接列表"><i data-lucide="server"></i></button>
+            <button id="navRemote" data-action="static-primary" data-primary="remote" data-explorer="true" title="其他连接" aria-label="其他连接"><i data-lucide="plug-zap"></i></button>
+            <button id="navRunning" data-action="static-primary" data-primary="running" data-explorer="true" title="正在转发" aria-label="正在转发"><i data-lucide="route"></i></button>
+            <button id="navCommand" data-action="static-primary" data-primary="command" data-explorer="true" title="批量命令" aria-label="批量命令"><i data-lucide="square-terminal"></i></button>
+            <button id="navImport" data-action="static-primary" data-primary="import" data-explorer="true" title="导入导出" aria-label="导入导出"><i data-lucide="arrow-left-right"></i></button>
+            <button id="navLogs" data-action="static-primary" data-primary="logs" data-explorer="true" title="日志" aria-label="日志"><i data-lucide="scroll-text"></i></button>
+            <button id="navSettings" data-action="static-primary" data-primary="settings" data-explorer="true" title="设置" aria-label="设置"><i data-lucide="settings"></i><span id="navSettingsUpdateDot" class="nav-update-dot" hidden aria-label="发现新版本"></span></button>
           </div>
           <div class="activity-bottom">
-            <button id="themeToggle" class="theme-toggle" type="button" onclick="toggleTheme()" title="切换主题" aria-label="切换主题"><i data-lucide="moon"></i></button>
-            <button id="activityRefresh" type="button" onclick="loadAll()" title="刷新数据" aria-label="刷新数据"><i data-lucide="refresh-cw"></i></button>
+            <button id="themeToggle" class="theme-toggle" type="button" data-action="static-theme-toggle" title="切换主题" aria-label="切换主题"><i data-lucide="moon"></i></button>
+            <button id="activityRefresh" type="button" data-action="static-refresh" title="刷新数据" aria-label="刷新数据"><i data-lucide="refresh-cw"></i></button>
             <a class="github-link" href="https://github.com/zmide/Terma" target="_blank" rel="noopener" title="GitHub">
               <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.2.8-.6v-2c-3.3.7-4-1.4-4-1.4-.5-1.3-1.2-1.6-1.2-1.6-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 .1.6 2.1 3.4 1.5.1-.7.4-1.2.7-1.5-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>
             </a>
@@ -52,15 +52,15 @@
         </nav>
         <aside id="sidebar" class="sidebar">
           <div class="side-nav">
-            <button id="sideConnections" class="active" onclick="showPrimary('connections')">连接列表</button>
-            <button id="sideRemote" onclick="showPrimary('remote')">其他连接</button>
-            <button id="sideImport" onclick="showPrimary('import')">导入导出</button>
+            <button id="sideConnections" class="active" data-action="static-primary" data-primary="connections">连接列表</button>
+            <button id="sideRemote" data-action="static-primary" data-primary="remote">其他连接</button>
+            <button id="sideImport" data-action="static-primary" data-primary="import">导入导出</button>
           </div>
           <div id="explorerTools" class="explorer-tools">
-            <button onclick="addGroup()">添加分组</button>
-            <button class="primary" onclick="newConnection()">添加 SSH</button>
-            <button onclick="startAllForwards()">启动全部转发</button>
-            <button onclick="stopAllForwardsUi()">停止全部转发</button>
+            <button data-action="static-group-add">添加分组</button>
+            <button class="primary" data-action="static-connection-new">添加 SSH</button>
+            <button data-action="static-forwards-start-all">启动全部转发</button>
+            <button data-action="static-forwards-stop-all">停止全部转发</button>
           </div>
           <div id="connectionGroups" class="tree"></div>
         </aside>
@@ -69,7 +69,7 @@
     </div>
 
     <main id="content" class="content">
-      <div class="mobile-back-bar"><button id="mobileBack" class="mobile-back" type="button" onclick="backToExplorer()" title="返回连接列表" aria-label="返回连接列表"><i data-lucide="arrow-left"></i></button></div>
+      <div class="mobile-back-bar"><button id="mobileBack" class="mobile-back" type="button" data-action="static-explorer-back" title="返回连接列表" aria-label="返回连接列表"><i data-lucide="arrow-left"></i></button></div>
       <div class="topbar">
         <div class="workspace-heading">
           <strong id="workspaceTitle">工作区</strong>
@@ -78,7 +78,7 @@
         <div id="workspaceGlobalHeaderTools" class="workspace-header-tools workspace-global-header-tools" data-workspace-role="global-header-tools" hidden></div>
         <div id="workspaceQuickActions" class="workspace-quick-actions" aria-label="全局快捷操作"></div>
         <div id="sftpTaskCenter" class="sftp-task-center">
-          <button id="sftpTaskCenterButton" class="icon-button sftp-task-center-button" type="button" onclick="toggleSftpTaskCenter(event)" title="任务中心" aria-label="任务中心" aria-expanded="false" aria-controls="sftpTaskCenterDrawer">
+          <button id="sftpTaskCenterButton" class="icon-button sftp-task-center-button" type="button" data-action="static-task-center-toggle" title="任务中心" aria-label="任务中心" aria-expanded="false" aria-controls="sftpTaskCenterDrawer">
             <span id="sftpTaskCenterIcon" class="sftp-task-center-icon"><i data-lucide="list-checks"></i></span>
             <span id="sftpTaskCenterBadge" class="sftp-task-center-badge" hidden></span>
           </button>
@@ -86,21 +86,21 @@
           <aside id="sftpTaskCenterDrawer" class="sftp-task-center-drawer" aria-label="任务中心" hidden>
             <header class="sftp-task-center-head">
               <div><strong>任务中心</strong><span id="sftpTaskCenterSummary">暂无进行中的任务</span></div>
-              <button class="icon-button" type="button" onclick="closeSftpTaskCenter()" title="关闭任务中心" aria-label="关闭任务中心"><i data-lucide="x"></i></button>
+              <button class="icon-button" type="button" data-action="static-task-center-close" title="关闭任务中心" aria-label="关闭任务中心"><i data-lucide="x"></i></button>
             </header>
             <div class="sftp-task-center-tabs" role="tablist" aria-label="任务视图">
-              <button id="sftpTaskCenterCurrentTab" type="button" role="tab" aria-selected="true" onclick="setSftpTaskCenterView('current')"><span>进行中</span><small id="sftpTaskCenterCurrentCount">0</small></button>
-              <button id="sftpTaskCenterFailedTab" type="button" role="tab" aria-selected="false" onclick="setSftpTaskCenterView('failed')"><span>失败</span><small id="sftpTaskCenterFailedCount">0</small></button>
-              <button id="sftpTaskCenterHistoryTab" type="button" role="tab" aria-selected="false" onclick="setSftpTaskCenterView('history')"><span>历史记录</span><small id="sftpTaskCenterHistoryCount">0</small></button>
+              <button id="sftpTaskCenterCurrentTab" type="button" role="tab" aria-selected="true" data-action="static-task-center-view" data-task-view="current"><span>进行中</span><small id="sftpTaskCenterCurrentCount">0</small></button>
+              <button id="sftpTaskCenterFailedTab" type="button" role="tab" aria-selected="false" data-action="static-task-center-view" data-task-view="failed"><span>失败</span><small id="sftpTaskCenterFailedCount">0</small></button>
+              <button id="sftpTaskCenterHistoryTab" type="button" role="tab" aria-selected="false" data-action="static-task-center-view" data-task-view="history"><span>历史记录</span><small id="sftpTaskCenterHistoryCount">0</small></button>
             </div>
             <div id="sftpTaskCenterList" class="sftp-task-center-list" role="tabpanel"></div>
             <footer id="sftpTaskCenterFooter" class="sftp-task-center-footer" hidden>
-              <button class="danger" type="button" onclick="event.stopPropagation();clearFinishedSftpJobs(this)"><i data-lucide="trash-2"></i><span>清空历史</span></button>
+              <button class="danger" type="button" data-action="static-task-center-clear"><i data-lucide="trash-2"></i><span>清空历史</span></button>
             </footer>
-            <div id="sftpTaskCenterResize" class="sftp-task-center-resize-handle" role="button" tabindex="0" aria-label="调整任务中心大小" title="拖动调整任务中心大小，双击恢复默认" onpointerdown="startSftpTaskCenterResize(event)" ondblclick="resetSftpTaskCenterSize(event)" onkeydown="handleSftpTaskCenterResizeKey(event)"></div>
+            <div id="sftpTaskCenterResize" class="sftp-task-center-resize-handle" role="button" tabindex="0" aria-label="调整任务中心大小" title="拖动调整任务中心大小，双击恢复默认" data-pointerdown-action="static-task-resize-start" data-dblclick-action="static-task-resize-reset" data-keydown-action="static-task-resize-key"></div>
           </aside>
         </div>
-        <aside id="sftpTaskFloat" class="sftp-task-float" aria-label="任务悬浮进度" onclick="openSftpTaskList(event)" hidden></aside>
+        <aside id="sftpTaskFloat" class="sftp-task-float" aria-label="任务悬浮进度" data-action="static-task-list-open" hidden></aside>
         <div id="notice" class="notice"></div>
         <div id="workspaceHeaderResize" class="workspace-header-resizer" role="separator" aria-orientation="horizontal" aria-label="调整工作区标题栏高度" tabindex="0" title="拖动调整标题栏高度，双击恢复默认"></div>
       </div>
@@ -126,13 +126,13 @@
   </div>
 
   <nav class="mobile-tabs">
-    <button id="mobileConnections" class="active" onclick="showPrimary('connections')" title="连接列表" aria-label="连接列表"><i data-lucide="server"></i><span class="mobile-tab-label">连接</span></button>
-    <button id="mobileRemote" onclick="showPrimary('remote')" title="其他连接" aria-label="其他连接"><i data-lucide="plug-zap"></i><span class="mobile-tab-label">其他</span></button>
-    <button id="mobileRunning" onclick="showPrimary('running')" title="正在转发" aria-label="正在转发"><i data-lucide="route"></i><span class="mobile-tab-label">转发</span></button>
-    <button id="mobileCommand" onclick="showPrimary('command')" title="批量命令" aria-label="批量命令"><i data-lucide="square-terminal"></i><span class="mobile-tab-label">批量</span></button>
-    <button id="mobileImport" onclick="showPrimary('import')" title="导入导出" aria-label="导入导出"><i data-lucide="arrow-left-right"></i><span class="mobile-tab-label">导入</span></button>
-    <button id="mobileLogs" onclick="showPrimary('logs')" title="日志" aria-label="日志"><i data-lucide="scroll-text"></i><span class="mobile-tab-label">日志</span></button>
-    <button id="mobileSettings" onclick="showPrimary('settings')" title="设置" aria-label="设置"><i data-lucide="settings"></i><span class="mobile-tab-label">设置</span><span id="mobileSettingsUpdateDot" class="nav-update-dot" hidden aria-label="发现新版本"></span></button>
+    <button id="mobileConnections" class="active" data-action="static-primary" data-primary="connections" title="连接列表" aria-label="连接列表"><i data-lucide="server"></i><span class="mobile-tab-label">连接</span></button>
+    <button id="mobileRemote" data-action="static-primary" data-primary="remote" title="其他连接" aria-label="其他连接"><i data-lucide="plug-zap"></i><span class="mobile-tab-label">其他</span></button>
+    <button id="mobileRunning" data-action="static-primary" data-primary="running" title="正在转发" aria-label="正在转发"><i data-lucide="route"></i><span class="mobile-tab-label">转发</span></button>
+    <button id="mobileCommand" data-action="static-primary" data-primary="command" title="批量命令" aria-label="批量命令"><i data-lucide="square-terminal"></i><span class="mobile-tab-label">批量</span></button>
+    <button id="mobileImport" data-action="static-primary" data-primary="import" title="导入导出" aria-label="导入导出"><i data-lucide="arrow-left-right"></i><span class="mobile-tab-label">导入</span></button>
+    <button id="mobileLogs" data-action="static-primary" data-primary="logs" title="日志" aria-label="日志"><i data-lucide="scroll-text"></i><span class="mobile-tab-label">日志</span></button>
+    <button id="mobileSettings" data-action="static-primary" data-primary="settings" title="设置" aria-label="设置"><i data-lucide="settings"></i><span class="mobile-tab-label">设置</span><span id="mobileSettingsUpdateDot" class="nav-update-dot" hidden aria-label="发现新版本"></span></button>
     <a class="mobile-github-link" href="https://github.com/zmide/Terma" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub">
       <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.2.8-.6v-2c-3.3.7-4-1.4-4-1.4-.5-1.3-1.2-1.6-1.2-1.6-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 .1.6 2.1 3.4 1.5.1-.7.4-1.2.7-1.5-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>
     </a>
@@ -158,15 +158,15 @@
       <label>标签</label><input id="conn_tags" placeholder="例如：生产 数据库 海外">
       <div class="auth-switch">
         <label>登录方式</label>
-        <select id="conn_auth_type" onchange="toggleAuthFields()"><option value="key">私钥登录</option><option value="password">密码登录</option></select>
+        <select id="conn_auth_type" data-change-action="static-auth-fields"><option value="key">私钥登录</option><option value="password">密码登录</option></select>
       </div>
       <div id="keyAuthBox" class="grid">
         <div>
           <label>私钥</label>
-          <div class="key-picker"><select id="conn_key" onchange="renderKeyStatus()"><option value="">不使用私钥</option></select><button type="button" onclick="loadKeys()">刷新</button></div>
+          <div class="key-picker"><select id="conn_key" data-change-action="static-key-status"><option value="">不使用私钥</option></select><button type="button" data-action="static-key-refresh">刷新</button></div>
           <div id="keyStatus" class="key-status muted">未选择私钥</div>
-          <div class="upload-line"><label class="file-picker"><input id="key_upload" type="file" accept="*/*" onchange="updateFilePicker(this)"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button type="button" onclick="uploadKey()">上传到当前密钥目录</button></div>
-          <div class="actions"><button type="button" onclick="renderKeyStatus()">检查权限</button><button type="button" onclick="repairSelectedKey()">一键修复权限</button></div>
+          <div class="upload-line"><label class="file-picker"><input id="key_upload" type="file" accept="*/*" data-change-action="static-file-picker"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button type="button" data-action="static-key-upload">上传到当前密钥目录</button></div>
+          <div class="actions"><button type="button" data-action="static-key-status">检查权限</button><button type="button" data-action="static-key-repair">一键修复权限</button></div>
           <div class="grid connection-key-options">
             <div><label>私钥口令（可选）</label><input id="conn_key_passphrase" type="password" autocomplete="new-password" placeholder="留空表示无口令或保持原口令"></div>
             <div><label>SSH Agent</label><select id="conn_agent_mode"><option value="auto">自动优先使用</option><option value="off">不使用 Agent</option><option value="required">只使用 Agent</option></select></div>
@@ -191,14 +191,14 @@
         <div class="grid terminal-startup-selectors">
           <div>
             <label>启动方式</label>
-            <select id="conn_terminal_startup_mode" onchange="toggleConnectionTerminalStartup(this.form)">
+            <select id="conn_terminal_startup_mode" data-change-action="static-terminal-startup">
               <option value="default">自动（使用服务器默认登录 Shell）</option>
               <option value="program">指定程序或交互环境</option>
             </select>
           </div>
           <div>
             <label>快速选择</label>
-            <select id="conn_terminal_profile_select" onchange="applyConnectionTerminalProfile(this.value,this)">
+            <select id="conn_terminal_profile_select" data-change-action="static-terminal-profile">
               <option value="">测试 SSH 后显示可用选项</option>
               <option value="__custom__">自定义程序...</option>
             </select>
@@ -273,9 +273,9 @@
       </div>
       <div class="actions">
         <button class="primary" type="submit">保存连接</button>
-        <button id="connSaveAndClear" type="button" onclick="saveConnectionForm(true,this)">保存并清空</button>
-        <button id="connTestBtn" type="button" onclick="testConnectionForm(this)">测试 SSH</button>
-        <button type="button" onclick="resetConnectionForm()">清空</button>
+        <button id="connSaveAndClear" type="button" data-action="static-connection-save-clear">保存并清空</button>
+        <button id="connTestBtn" type="button" data-action="static-connection-test">测试 SSH</button>
+        <button type="button" data-action="static-connection-reset">清空</button>
       </div>
       <div id="connTestStatus" class="connection-test-status" hidden aria-live="polite"></div>
     </form>
@@ -287,7 +287,7 @@
     <form id="forwardForm">
       <input type="hidden" id="forward_conn_id">
       <div class="grid">
-        <div><label>转发类型</label><select id="forward_mode" onchange="toggleForwardLabels()"><option value="local">本地转发 -L</option><option value="remote">远程转发 -R</option><option value="socks">SOCKS5 -D</option></select></div>
+        <div><label>转发类型</label><select id="forward_mode" data-change-action="static-forward-labels"><option value="local">本地转发 -L</option><option value="remote">远程转发 -R</option><option value="socks">SOCKS5 -D</option></select></div>
         <div><label id="forward_bind_label">本地监听地址</label><input id="forward_bind_host" value="127.0.0.1"></div>
       </div>
       <div class="grid3">
@@ -302,9 +302,9 @@
       </div>
       <div class="grid">
         <div><label>访问协议</label><select id="forward_url_scheme"><option value="">自动</option><option value="http">http</option><option value="https">https</option></select></div>
-        <div><label>转发模板</label><select id="forward_template_select" onchange="applyForwardTemplate(this.value)"><option value="">选择模板</option></select></div>
+        <div><label>转发模板</label><select id="forward_template_select" data-change-action="static-forward-template-apply"><option value="">选择模板</option></select></div>
       </div>
-      <div class="actions"><button class="primary" id="forwardSubmitBtn" type="submit">添加转发</button><button type="button" onclick="saveForwardTemplate()">保存为模板</button><button type="button" onclick="showForwardTemplateManager()">管理模板</button><button type="button" onclick="recommendForwardPort()">推荐端口</button><button type="button" id="cancelForwardEditBtn" onclick="cancelForwardEdit()" hidden>取消编辑</button><button type="button" id="bulkDeleteForwardsBtn" class="danger" onclick="bulkDeleteForwards()" hidden>删除选中转发</button></div>
+      <div class="actions"><button class="primary" id="forwardSubmitBtn" type="submit">添加转发</button><button type="button" data-action="static-forward-template-save">保存为模板</button><button type="button" data-action="static-forward-template-manage">管理模板</button><button type="button" data-action="static-forward-port-recommend">推荐端口</button><button type="button" id="cancelForwardEditBtn" data-action="static-forward-edit-cancel" hidden>取消编辑</button><button type="button" id="bulkDeleteForwardsBtn" class="danger" data-action="static-forward-bulk-delete" hidden>删除选中转发</button></div>
     </form>
     <div id="forwardTemplateManager" class="template-list" hidden></div>
   </div>
@@ -326,24 +326,24 @@
       <section id="import-source" class="import-section">
         <h3><i data-lucide="file-input"></i>SSH config 导入导出</h3>
         <label>上传配置文件</label>
-        <div class="upload-line"><label class="file-picker"><input id="config_upload" type="file" accept="*/*" onchange="updateFilePicker(this)"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button onclick="parseImportConfig()">上传解析</button></div>
+        <div class="upload-line"><label class="file-picker"><input id="config_upload" type="file" accept="*/*" data-change-action="static-file-picker"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button data-action="static-import-config">上传解析</button></div>
         <label>或粘贴 config 内容</label><textarea id="config_text" placeholder="Host demo&#10;  HostName example.com&#10;  User root&#10;  LocalForward 6010 127.0.0.1:6868"></textarea>
-        <div class="actions"><button onclick="parseImportText()">粘贴解析</button></div>
+        <div class="actions"><button data-action="static-import-text">粘贴解析</button></div>
         <div id="import-results" class="import-results-block">
-          <div class="import-results-head"><h3><i data-lucide="list-checks"></i>导入结果</h3><div class="actions"><button id="bindImportKeysBtn" onclick="bindImportIdentities()" hidden>绑定私钥</button><button id="batchTestBtn" onclick="batchTestImport()">批量测试</button><button id="batchSaveBtn" class="primary" onclick="batchSaveImport()">批量保存</button></div></div>
+          <div class="import-results-head"><h3><i data-lucide="list-checks"></i>导入结果</h3><div class="actions"><button id="bindImportKeysBtn" data-action="static-import-bind-keys" hidden>绑定私钥</button><button id="batchTestBtn" data-action="static-import-test">批量测试</button><button id="batchSaveBtn" class="primary" data-action="static-import-save">批量保存</button></div></div>
           <div id="importResults"></div>
         </div>
         <div class="import-export-config">
           <h3><i data-lucide="file-output"></i>导出 SSH config</h3>
           <textarea id="export_text" readonly></textarea>
-          <div class="actions"><button onclick="exportConfig()">生成导出内容</button><button onclick="copyExport()">复制</button></div>
+          <div class="actions"><button data-action="static-export-config">生成导出内容</button><button data-action="static-export-copy">复制</button></div>
         </div>
       </section>
       <section id="import-export" class="import-section">
         <h3><i data-lucide="database-backup"></i>数据库导入导出</h3>
-        <div class="actions"><button onclick="downloadDatabaseBackup()">下载数据库备份</button><button id="backupBundleBtn" onclick="downloadBackupBundle()" hidden>下载加密迁移包</button></div>
+        <div class="actions"><button data-action="static-backup-database">下载数据库备份</button><button id="backupBundleBtn" data-action="static-backup-bundle" hidden>下载加密迁移包</button></div>
         <label>恢复数据库 / 加密迁移包</label>
-        <div class="upload-line"><label class="file-picker"><input id="db_restore_upload" type="file" accept=".db,.json,.termabackup,.tdbackup,.tdbackup.json,application/json,application/octet-stream,*/*" onchange="updateFilePicker(this)"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button class="danger" onclick="restoreDatabaseBackup()">上传恢复</button></div>
+        <div class="upload-line"><label class="file-picker"><input id="db_restore_upload" type="file" accept=".db,.json,.termabackup,.tdbackup,.tdbackup.json,application/json,application/octet-stream,*/*" data-change-action="static-file-picker"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button class="danger" data-action="static-backup-restore">上传恢复</button></div>
         <div id="backupBundleNote" class="muted">普通备份使用 .db 文件；启用配置加密后会显示 .termabackup 加密迁移包下载入口。</div>
         <div class="import-export-config legacy-brand-migration-block">
           <h3><i data-lucide="refresh-cw"></i>旧版数据迁移</h3>
@@ -358,22 +358,66 @@
 <script src="/vendor/ace/ace.js?v=1.3.4"></script>
 <script src="/app-api.js?v=1.3.4"></script>
 <script src="/app-utils.js?v=1.3.4"></script>
+<script src="/app-events.js?v=1.3.4"></script>
 <script src="/app-workspace.js?v=1.3.4"></script>
+<script src="/app-workspace-groups.js?v=1.3.4"></script>
 <script src="/app-docking.js?v=1.3.4"></script>
+<script src="/app-workspace-drag.js?v=1.3.4"></script>
+<script src="/app-workspace-persistence.js?v=1.3.4"></script>
+<script src="/app-settings-core.js?v=1.3.4"></script>
+<script src="/app-settings-storage.js?v=1.3.4"></script>
+<script src="/app-settings-runtime.js?v=1.3.4"></script>
+<script src="/app-settings-integrations.js?v=1.3.4"></script>
 <script src="/app-settings.js?v=1.3.4"></script>
+<script src="/app-settings-updates.js?v=1.3.4"></script>
+<script src="/app-settings-security.js?v=1.3.4"></script>
 <script src="/app-running.js?v=1.3.4"></script>
 <script src="/app-batch.js?v=1.3.4"></script>
 <script src="/app-logs.js?v=1.3.4"></script>
+<script src="/app-log-viewer.js?v=1.3.4"></script>
+<script src="/app-log-maintenance.js?v=1.3.4"></script>
+<script src="/app-connections-list.js?v=1.3.4"></script>
+<script src="/app-connection-terminal.js?v=1.3.4"></script>
+<script src="/app-connection-validation.js?v=1.3.4"></script>
+<script src="/app-connection-form.js?v=1.3.4"></script>
+<script src="/app-connection-health.js?v=1.3.4"></script>
 <script src="/app-connections.js?v=1.3.4"></script>
+<script src="/app-terminal-core.js?v=1.3.4"></script>
+<script src="/app-terminal-settings.js?v=1.3.4"></script>
+<script src="/app-terminal-startup.js?v=1.3.4"></script>
 <script src="/app-terminal.js?v=1.3.4"></script>
 <script src="/app-forwards.js?v=1.3.4"></script>
 <script src="/app-import.js?v=1.3.4"></script>
+<script src="/app-sftp-core.js?v=1.3.4"></script>
 <script src="/app-sftp.js?v=1.3.4"></script>
+<script src="/app-sftp-drag.js?v=1.3.4"></script>
+<script src="/app-sftp-operations.js?v=1.3.4"></script>
+<script src="/app-sftp-transfer.js?v=1.3.4"></script>
+<script src="/app-sftp-menus.js?v=1.3.4"></script>
 <script src="/app-sftp-tasks.js?v=1.3.4"></script>
 <script src="/app-local-files.js?v=1.3.4"></script>
 <script src="/app-actions.js?v=1.3.4"></script>
+<script src="/app-sftp-sync.js?v=1.3.4"></script>
+<script src="/app-external-tools.js?v=1.3.4"></script>
+<script src="/app-command-palette.js?v=1.3.4"></script>
+<script src="/app-command-snippets.js?v=1.3.4"></script>
+<script src="/app-named-workspaces.js?v=1.3.4"></script>
+<script src="/app-terminal-productivity.js?v=1.3.4"></script>
 <script src="/app-productivity.js?v=1.3.4"></script>
+<script src="/app-desktop-integration.js?v=1.3.4"></script>
 <script src="/app-remote.js?v=1.3.4"></script>
+<script src="/app-linux-desktop.js?v=1.3.4"></script>
+<script src="/app-remote-profiles.js?v=1.3.4"></script>
+<script src="/app-remote-rdp.js?v=1.3.4"></script>
+<script src="/app-remote-xdmcp.js?v=1.3.4"></script>
+<script src="/app-vnc-core.js?v=1.3.4"></script>
+<script src="/app-vnc-clipboard.js?v=1.3.4"></script>
+<script src="/app-vnc.js?v=1.3.4"></script>
+<script src="/app-remote-ftp.js?v=1.3.4"></script>
+<script src="/app-remote-terminal.js?v=1.3.4"></script>
+<script src="/app-x11.js?v=1.3.4"></script>
+<script src="/app-state.js?v=1.3.4"></script>
 <script src="/app.js?v=1.3.4"></script>
+<script src="/app-static-actions.js?v=1.3.4"></script>
 </body>
 </html>

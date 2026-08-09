@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { DATA_DIR } = require("./config");
 const { LOGIN_PROTECTION_LIMITS, LoginRateLimiter, SessionStore } = require("./auth-protection");
+const { localDirectDesktopIntegrationDecision, normalizeActualListenHosts } = require("./desktop-integration-policy");
 const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 
 const SECURITY_FILE = path.join(DATA_DIR, "security.json");
@@ -14,6 +15,11 @@ const DEFAULT_SESSION_TTL_MINUTES = 12 * 60;
 const DEFAULT_SESSION_MAX_SESSIONS = 1000;
 const DEFAULT_SESSION_CLEANUP_MINUTES = 10;
 const DESKTOP_TOKEN_COOKIE = "td_desktop";
+const DESKTOP_BROWSER_GRANT_COOKIE = "terma_desktop_grant";
+const DESKTOP_BROWSER_GRANT_DEFAULT_TTL_MS = 10 * 60 * 1000;
+const DESKTOP_BROWSER_GRANT_MIN_TTL_MS = 60 * 1000;
+const DESKTOP_BROWSER_GRANT_MAX_TTL_MS = 8 * 60 * 60 * 1000;
+const DESKTOP_BROWSER_GRANT_SCOPES = new Set(["xserver", "remote-client"]);
 const SESSION_LIMITS = {
   ttl_minutes: { min:5, max:30 * 24 * 60 },
   max_sessions: { min:1, max:10000 },
@@ -27,6 +33,15 @@ const loginLimiter = new LoginRateLimiter();
 let securityCleanupTimer: ReturnType<typeof setInterval> | null = null;
 let securityCleanupIntervalMs = 0;
 let desktopAuthToken = "";
+let desktopCapabilityRuntimeListenHosts: string[] = [];
+const desktopBrowserGrants = new Map<string, {
+  id:string;
+  createdAt:number;
+  expiresAt:number;
+  browserSession:boolean;
+  scopes:string[];
+  sessionDigest:string;
+}>();
 
 class AuthenticationError extends Error {
   statusCode: number;
@@ -61,6 +76,7 @@ function defaultSettings() {
     secure_cookie_mode: "auto",
     trusted_proxy_enabled: false,
     trusted_proxy_addresses: [],
+    local_direct_desktop_integration_enabled: false,
     allowed_hosts: [],
     session_ttl_minutes: DEFAULT_SESSION_TTL_MINUTES,
     session_max_sessions: DEFAULT_SESSION_MAX_SESSIONS,
@@ -165,14 +181,25 @@ function requireAllowedHosts(value) {
   return [...new Set(items.map(item => formatHostAuthority(parseHostAuthority(item))))];
 }
 
+function normalizeAuthMode(stored) {
+  const requested = String(stored?.auth_mode || "");
+  if (requested === "lan" && stored?.lan_auth_enabled === false) return "off";
+  if (!["lan", "always", "off"].includes(requested) && stored?.lan_auth_enabled === false) return "off";
+  return ["lan", "always", "off"].includes(requested) ? requested : "lan";
+}
+
 function readSecuritySettings() {
   try {
     const stored = JSON.parse(fs.readFileSync(SECURITY_FILE, "utf8"));
+    const authMode = normalizeAuthMode(stored);
     return {
       ...defaultSettings(),
       ...stored,
+      auth_mode:authMode,
+      lan_auth_enabled:authMode !== "off",
       ...normalizeEncryptionState(stored),
       secure_cookie_mode: ["auto", "always", "never"].includes(String(stored?.secure_cookie_mode)) ? String(stored.secure_cookie_mode) : "auto",
+      local_direct_desktop_integration_enabled: stored?.local_direct_desktop_integration_enabled === true,
       trusted_proxy_addresses: normalizeTrustedProxyAddresses(stored?.trusted_proxy_addresses),
       allowed_hosts: normalizeAllowedHosts(stored?.allowed_hosts),
       session_ttl_minutes: normalizeBoundedInteger(stored?.session_ttl_minutes, DEFAULT_SESSION_TTL_MINUTES, SESSION_LIMITS.ttl_minutes),
@@ -207,6 +234,8 @@ function publicSecuritySettings(req = null) {
     secure_cookie_mode: settings.secure_cookie_mode,
     trusted_proxy_enabled: Boolean(settings.trusted_proxy_enabled),
     trusted_proxy_addresses: settings.trusted_proxy_addresses,
+    local_direct_desktop_integration_enabled: Boolean(settings.local_direct_desktop_integration_enabled),
+    local_direct_desktop_integration: localDirectDesktopIntegrationStatus(req),
     allowed_hosts: settings.allowed_hosts,
     login_protection: {
       max_failures: loginLimiter.options.maxFailures,
@@ -293,13 +322,23 @@ function setToken(token = crypto.randomBytes(32).toString("base64url")) {
 
 function updateSecurityOptions(data) {
   const next: any = {};
-  if (["lan", "always", "off"].includes(String(data.auth_mode || ""))) next.auth_mode = String(data.auth_mode);
-  if (typeof data.lan_auth_enabled !== "undefined") next.lan_auth_enabled = Boolean(data.lan_auth_enabled);
+  const requestedAuthMode = String(data.auth_mode || "");
+  if (["lan", "always", "off"].includes(requestedAuthMode)) {
+    next.auth_mode = requestedAuthMode;
+    next.lan_auth_enabled = requestedAuthMode !== "off";
+  } else if (typeof data.lan_auth_enabled !== "undefined") {
+    next.lan_auth_enabled = Boolean(data.lan_auth_enabled);
+    if (!next.lan_auth_enabled) next.auth_mode = "off";
+    else if (readSecuritySettings().auth_mode === "off") next.auth_mode = "lan";
+  }
   if (typeof data.allow_disable_lan_auth !== "undefined") next.allow_disable_lan_auth = Boolean(data.allow_disable_lan_auth);
   if (["on", "muted", "off"].includes(String(data.notification_mode || ""))) next.notification_mode = String(data.notification_mode);
   if (["auto", "always", "never"].includes(String(data.secure_cookie_mode || ""))) next.secure_cookie_mode = String(data.secure_cookie_mode);
   if (typeof data.trusted_proxy_enabled !== "undefined") next.trusted_proxy_enabled = Boolean(data.trusted_proxy_enabled);
   if (typeof data.trusted_proxy_addresses !== "undefined") next.trusted_proxy_addresses = normalizeTrustedProxyAddresses(data.trusted_proxy_addresses);
+  if (typeof data.local_direct_desktop_integration_enabled !== "undefined") {
+    next.local_direct_desktop_integration_enabled = Boolean(data.local_direct_desktop_integration_enabled);
+  }
   if (typeof data.allowed_hosts !== "undefined") next.allowed_hosts = requireAllowedHosts(data.allowed_hosts);
   if (typeof data.session_ttl_minutes !== "undefined") {
     next.session_ttl_minutes = requireBoundedInteger(data.session_ttl_minutes, "会话有效期", SESSION_LIMITS.ttl_minutes);
@@ -340,6 +379,7 @@ function resetWebAccessSecurity() {
     secure_cookie_mode: "auto",
     trusted_proxy_enabled: false,
     trusted_proxy_addresses: [],
+    local_direct_desktop_integration_enabled: false,
     allowed_hosts: [],
     session_ttl_minutes: DEFAULT_SESSION_TTL_MINUTES,
     session_max_sessions: DEFAULT_SESSION_MAX_SESSIONS,
@@ -354,6 +394,7 @@ function resetWebAccessSecurity() {
   });
   sessions.clear();
   loginLimiter.clear();
+  desktopBrowserGrants.clear();
 }
 
 function normalizeSocketAddress(value) {
@@ -447,12 +488,10 @@ function isRequestSecure(req) {
 
 function authRequired(req) {
   const settings = readSecuritySettings();
-  if (settings.auth_mode === "off") return false;
+  if (settings.auth_mode === "off" || settings.lan_auth_enabled === false) return false;
   if (settings.auth_mode === "always") return true;
   if (isTrustedProxyRequest(req, settings)) return true;
-  if (isLocalRequest(req) && (hasProxyForwardingHeaders(req) || !isLocalHostAuthority(req))) return true;
-  if (isLocalRequest(req) && settings.lan_auth_enabled && hasConfiguredCredential(settings)) return true;
-  return Boolean(settings.lan_auth_enabled) && (isLanListening(req) || !isLocalRequest(req));
+  return !isDirectLoopbackRequest(req);
 }
 
 function parseCookies(header) {
@@ -492,6 +531,133 @@ function requestDesktopToken(req) {
 
 function hasDesktopToken(req) {
   return Boolean(desktopAuthToken) && constantTimeSecretEqual(requestDesktopToken(req), desktopAuthToken);
+}
+
+function desktopBrowserGrantDigest(token) {
+  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function authenticatedWebSessionToken(req) {
+  const token = String(parseCookies(req.headers.cookie || "").td_session || "").trim();
+  return token && sessions.get(token) ? token : "";
+}
+
+function cleanupDesktopBrowserGrants(now = Date.now()) {
+  for (const [digest, grant] of desktopBrowserGrants) {
+    if (grant.expiresAt > 0 && grant.expiresAt <= now) desktopBrowserGrants.delete(digest);
+  }
+}
+
+function desktopBrowserGrantFromRequest(req) {
+  if (!isDirectLoopbackRequest(req)) return null;
+  const sessionToken = authenticatedWebSessionToken(req);
+  if (!sessionToken) return null;
+  const token = String(parseCookies(req.headers.cookie || "")[DESKTOP_BROWSER_GRANT_COOKIE] || "").trim();
+  if (!token) return null;
+  cleanupDesktopBrowserGrants();
+  const digest = desktopBrowserGrantDigest(token);
+  const grant = desktopBrowserGrants.get(digest) || null;
+  if (!grant || (grant.expiresAt > 0 && grant.expiresAt <= Date.now())) {
+    desktopBrowserGrants.delete(digest);
+    return null;
+  }
+  if (grant.sessionDigest !== desktopBrowserGrantDigest(sessionToken)) return null;
+  return { digest, grant };
+}
+
+function hasAuthenticatedWebSession(req) {
+  return Boolean(authenticatedWebSessionToken(req));
+}
+
+function setDesktopCapabilityRuntimeListenHosts(hosts) {
+  desktopCapabilityRuntimeListenHosts = normalizeActualListenHosts(hosts);
+  return [...desktopCapabilityRuntimeListenHosts];
+}
+
+function localDirectDesktopIntegrationStatus(req = null, scope = "") {
+  const settings = readSecuritySettings();
+  const authenticatedWebSession = Boolean(req && hasAuthenticatedWebSession(req));
+  const webAccessAuthorized = Boolean(req && (authenticatedWebSession || !authRequired(req)));
+  return localDirectDesktopIntegrationDecision({
+    enabled:settings.local_direct_desktop_integration_enabled,
+    trustedProxyEnabled:settings.trusted_proxy_enabled,
+    actualListenHosts:desktopCapabilityRuntimeListenHosts,
+    directLoopbackRequest:Boolean(req && isDirectLoopbackRequest(req)),
+    authenticatedWebSession,
+    webAccessAuthorized,
+    scope
+  });
+}
+
+function isDesktopCapabilityRequest(req, scope = "") {
+  if (hasDesktopToken(req)) return true;
+  const record = desktopBrowserGrantFromRequest(req);
+  const requested = String(scope || "").trim().toLowerCase();
+  if (record && (!requested || record.grant.scopes.includes(requested))) return true;
+  return localDirectDesktopIntegrationStatus(req, requested).authorized;
+}
+
+function createDesktopBrowserGrant(req, scopes = ["xserver", "remote-client"], ttlOrOptions: any = DESKTOP_BROWSER_GRANT_DEFAULT_TTL_MS) {
+  if (!isDirectLoopbackRequest(req)) throw new AuthenticationError("桌面集成临时授权只允许本机浏览器申请", 403);
+  const sessionToken = authenticatedWebSessionToken(req);
+  if (!sessionToken) throw new AuthenticationError("请先使用 Web 密码或访问 Token 登录，再申请桌面集成授权", 401);
+  const normalizedScopes = [...new Set((Array.isArray(scopes) ? scopes : [])
+    .map(value => String(value || "").trim().toLowerCase())
+    .filter(value => DESKTOP_BROWSER_GRANT_SCOPES.has(value)))];
+  if (!normalizedScopes.length) throw new AuthenticationError("没有可授予的桌面集成能力", 400);
+  const existing = desktopBrowserGrantFromRequest(req);
+  const options = ttlOrOptions && typeof ttlOrOptions === "object" ? ttlOrOptions : {};
+  const browserSession = options.browserSession === true || options.mode === "browser-session";
+  const requestedDuration = typeof ttlOrOptions === "number"
+    ? ttlOrOptions
+    : Number(options.ttlMs ?? options.durationMs ?? DESKTOP_BROWSER_GRANT_DEFAULT_TTL_MS);
+  const token = existing
+    ? String(parseCookies(req.headers.cookie || "")[DESKTOP_BROWSER_GRANT_COOKIE] || "")
+    : crypto.randomBytes(32).toString("base64url");
+  const createdAt = Date.now();
+  const duration = Math.max(
+    DESKTOP_BROWSER_GRANT_MIN_TTL_MS,
+    Math.min(DESKTOP_BROWSER_GRANT_MAX_TTL_MS, requestedDuration || DESKTOP_BROWSER_GRANT_DEFAULT_TTL_MS)
+  );
+  const grant = {
+    id:existing?.grant.id || crypto.randomUUID(),
+    createdAt,
+    expiresAt:browserSession ? 0 : createdAt + duration,
+    browserSession,
+    scopes:normalizedScopes,
+    sessionDigest:desktopBrowserGrantDigest(sessionToken)
+  };
+  desktopBrowserGrants.set(existing?.digest || desktopBrowserGrantDigest(token), grant);
+  return { token, ...grant, maxAgeSeconds:browserSession ? null : Math.ceil(duration / 1000) };
+}
+
+function desktopBrowserGrantCookie(req, token, maxAgeSeconds: number | null = Math.ceil(DESKTOP_BROWSER_GRANT_DEFAULT_TTL_MS / 1000)) {
+  const secure = isRequestSecure(req) ? "; Secure" : "";
+  const maxAge = maxAgeSeconds === null
+    ? ""
+    : `; Max-Age=${Math.max(0, Math.min(Math.ceil(DESKTOP_BROWSER_GRANT_MAX_TTL_MS / 1000), Number(maxAgeSeconds) || 0))}`;
+  return `${DESKTOP_BROWSER_GRANT_COOKIE}=${encodeURIComponent(token || "")}; HttpOnly; SameSite=Strict; Path=/${maxAge}${secure}`;
+}
+
+function desktopBrowserGrantStatus(req) {
+  const record = desktopBrowserGrantFromRequest(req);
+  if (!record) return { authorized:false, grant_id:"", browser_session:false, scopes:[], expires_at:0, remaining_seconds:0 };
+  return {
+    authorized:true,
+    grant_id:record.grant.id,
+    browser_session:record.grant.browserSession,
+    scopes:[...record.grant.scopes],
+    expires_at:record.grant.expiresAt,
+    remaining_seconds:record.grant.expiresAt > 0
+      ? Math.max(0, Math.ceil((record.grant.expiresAt - Date.now()) / 1000))
+      : 0
+  };
+}
+
+function revokeDesktopBrowserGrant(req) {
+  const record = desktopBrowserGrantFromRequest(req);
+  if (!record) return false;
+  return desktopBrowserGrants.delete(record.digest);
 }
 
 function hasExplicitCredential(req) {
@@ -538,6 +704,7 @@ function createSession() {
 }
 
 function logout(req) {
+  revokeDesktopBrowserGrant(req);
   const token = parseCookies(req.headers.cookie || "").td_session;
   if (token) sessions.delete(token);
 }
@@ -551,7 +718,9 @@ function sessionCookie(req, token, maxAge = null) {
 }
 
 function setDesktopAuthToken(token = "") {
-  desktopAuthToken = String(token || "").trim();
+  const next = String(token || "").trim();
+  if (next !== desktopAuthToken) desktopBrowserGrants.clear();
+  desktopAuthToken = next;
   return desktopAuthToken;
 }
 
@@ -614,9 +783,11 @@ function secureHeaders(extra = {}) {
 }
 
 function securityDiagnostics() {
+  cleanupDesktopBrowserGrants();
   return {
     sessions: sessions.size(),
-    login_sources: loginLimiter.size()
+    login_sources: loginLimiter.size(),
+    desktop_browser_grants:desktopBrowserGrants.size
   };
 }
 
@@ -644,6 +815,7 @@ function applySessionManagementSettings(settings) {
   securityCleanupTimer = setInterval(() => {
     sessions.cleanup();
     loginLimiter.cleanup();
+    cleanupDesktopBrowserGrants();
   }, intervalMs);
   securityCleanupTimer.unref?.();
 }
@@ -654,8 +826,14 @@ module.exports = {
   AuthenticationError,
   authRequired,
   createSession,
+  createDesktopBrowserGrant,
+  desktopBrowserGrantCookie,
+  desktopBrowserGrantStatus,
   isAuthenticated,
   isDesktopRequest,
+  isDesktopCapabilityRequest,
+  localDirectDesktopIntegrationStatus,
+  hasAuthenticatedWebSession,
   isLocalRequest,
   isDirectLoopbackRequest,
   hostAllowed,
@@ -667,12 +845,14 @@ module.exports = {
   readSecuritySettings,
   requestSourceAddress,
   resetWebAccessSecurity,
+  revokeDesktopBrowserGrant,
   sameOrigin,
   webSocketOriginAllowed,
   secureHeaders,
   securityDiagnostics,
   sessionCookie,
   setDesktopAuthToken,
+  setDesktopCapabilityRuntimeListenHosts,
   setPassword,
   setToken,
   updateSecurityOptions,

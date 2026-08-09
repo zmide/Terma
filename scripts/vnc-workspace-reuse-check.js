@@ -2,8 +2,9 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
-const source = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-remote.js"), "utf8");
+const source = readFrontendDomain(path.resolve(__dirname, ".."), "remote");
 const utilsSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-utils.js"), "utf8");
 const apiSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-api.js"), "utf8");
 const openStart = source.indexOf("async function openRemoteDesktop(");

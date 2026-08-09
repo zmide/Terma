@@ -2,8 +2,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sync-check-"));
+const repositoryRoot = path.join(__dirname, "..");
 process.env.TERMA_DATA_DIR = path.join(root, "data");
 const workspace = path.join(root, "workspace");
 
@@ -22,8 +24,8 @@ try {
   assert.throws(() => syncTestHelpers.checkedLocalTarget(workspace, "../outside"), /越界/);
   assert.equal(syncTestHelpers.checkedLocalTarget(workspace, "src/main.js"), path.join(workspace, "src", "main.js"));
 
-  const frontend = fs.readFileSync(path.join(__dirname, "..", "public", "app-productivity.js"), "utf8");
-  const tasks = ["app-sftp.js", "app-sftp-tasks.js"].map(file => fs.readFileSync(path.join(__dirname, "..", "public", file), "utf8")).join("\n");
+  const frontend = readFrontendDomain(repositoryRoot, "productivity");
+  const tasks = readFrontendDomain(repositoryRoot, "sftp");
   assert.match(frontend, /生成变更清单/);
   assert.match(frontend, /上传本地版本/);
   assert.match(frontend, /selected_indexes/);

@@ -287,7 +287,7 @@ function renderTabs() {
     const fullTitle = [tab.title, tab.subtitle].filter(Boolean).join(" - ");
     const connectionStatus = ["terminal", "sftp", "remote-terminal"].includes(tab.kind) ? (tab.connectionStatus || "connecting") : "";
     const connectionDot = connectionStatus ? `<span class="tab-connection-dot ${connectionStatus}" title="${connectionStatus === "connected" ? "已连接" : connectionStatus === "disconnected" ? "已断开" : "连接中"}" aria-hidden="true"></span>` : "";
-    return `<button class="tab ${tab.key === activeTabKey ? "active" : ""}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(tab.title)}" onpointerdown="beginWorkspaceTabDrag(event,'${escAttr(tab.key)}')" onclick="activateWorkspaceTabFromClick(event,'${escAttr(tab.key)}')" oncontextmenu="showTabContextMenu(event,'${escAttr(tab.key)}')" ondragover="handleSftpTabDragOver(event,'${escAttr(tab.key)}')" ondragleave="handleSftpTabDragLeave(event,'${escAttr(tab.key)}')" ondrop="dropSftpItemsOnTab(event,'${escAttr(tab.key)}')">${connectionDot}${presentation.icon}<span class="tab-title">${esc(presentation.title)}</span>${tab.closable ? `<span class="tab-close" title="关闭标签" aria-label="关闭标签" onpointerdown="event.stopPropagation()" onclick="closeTab(event,'${escAttr(tab.key)}')">x</span>` : ""}</button>`;
+    return `<button class="tab ${tab.key === activeTabKey ? "active" : ""}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(tab.title)}" data-pointerdown-action="workspace-tab-drag-start" data-action="workspace-tab-activate" data-contextmenu-action="workspace-tab-menu" data-dragover-action="workspace-tab-sftp-drag-over" data-dragleave-action="workspace-tab-sftp-drag-leave" data-drop-action="workspace-tab-sftp-drop">${connectionDot}${presentation.icon}<span class="tab-title">${esc(presentation.title)}</span>${tab.closable ? `<span class="tab-close" title="关闭标签" aria-label="关闭标签" data-tab-key="${escAttr(tab.key)}" data-pointerdown-action="workspace-event-stop" data-action="workspace-tab-close">x</span>` : ""}</button>`;
   }).join("");
   container.scrollLeft = previousScrollLeft;
   requestAnimationFrame(updateWorkspaceTabScrollControls);
@@ -935,29 +935,29 @@ function renderExplorerTools() {
   if (primaryView === "logs") {
     tools.classList.add("compact-mode");
     tools.innerHTML = `
-      <div class="search-field">${icon("search")}<input id="logSearch" placeholder="搜索日志" value="${esc(logSearch)}" oninput="setLogSearch(this.value)"></div>
+      <div class="search-field">${icon("search")}<input id="logSearch" placeholder="搜索日志" value="${esc(logSearch)}" data-input-action="workspace-log-search"></div>
       <div class="explorer-action-strip three-actions">
-        <button class="primary explorer-main-action" onclick="openTodaySystemLog()">${icon("calendar-days")}<span>今日日志</span></button>
-        <button class="icon-button" onclick="showLogSettings()" title="日志设置" aria-label="日志设置">${icon("settings-2")}</button>
-        <button class="icon-button" onclick="showLogCleanupMenu(event)" title="清理日志" aria-label="清理日志">${icon("list-filter")}</button>
+        <button class="primary explorer-main-action" data-action="workspace-log-today">${icon("calendar-days")}<span>今日日志</span></button>
+        <button class="icon-button" data-action="workspace-log-settings" title="日志设置" aria-label="日志设置">${icon("settings-2")}</button>
+        <button class="icon-button" data-action="workspace-log-cleanup" title="清理日志" aria-label="清理日志">${icon("list-filter")}</button>
       </div>`;
     return;
   }
   if (primaryView === "running") {
     tools.classList.add("compact-mode");
-    tools.innerHTML = `<div class="explorer-action-strip two-actions"><button class="primary" onclick="loadAll().then(renderRunningForwards)">${icon("refresh-cw")}<span>刷新状态</span></button><button onclick="restoreForwards()">${icon("history")}<span>恢复转发</span></button></div>`;
+    tools.innerHTML = `<div class="explorer-action-strip two-actions"><button class="primary" data-action="workspace-running-refresh">${icon("refresh-cw")}<span>刷新状态</span></button><button data-action="workspace-forwards-restore">${icon("history")}<span>恢复转发</span></button></div>`;
     return;
   }
   if (primaryView === "command") {
     tools.classList.add("compact-mode");
-    tools.innerHTML = `<div class="explorer-action-strip three-actions"><button class="primary explorer-main-action" onclick="openBatchCommand()">${icon("play")}<span>批量执行</span></button><button class="icon-button" onclick="newCommandTemplate()" title="新增模板" aria-label="新增模板">${icon("plus")}</button><button class="icon-button" onclick="renderCommandTemplates()" title="刷新模板" aria-label="刷新模板">${icon("refresh-cw")}</button></div>`;
+    tools.innerHTML = `<div class="explorer-action-strip three-actions"><button class="primary explorer-main-action" data-action="workspace-batch-open">${icon("play")}<span>批量执行</span></button><button class="icon-button" data-action="workspace-command-template-new" title="新增模板" aria-label="新增模板">${icon("plus")}</button><button class="icon-button" data-action="workspace-command-template-refresh" title="刷新模板" aria-label="刷新模板">${icon("refresh-cw")}</button></div>`;
     return;
   }
   if (primaryView === "import") {
     const activeSection = typeof activeImportSection === "string" ? activeImportSection : "import-source";
     const sections = [["import-source", "file-input", "SSH config 导入导出"], ["import-export", "database-backup", "数据库导入导出"], ["configSnapshots", "history", "配置快照"]];
     tools.classList.add("section-mode");
-    tools.innerHTML = sections.map(([id, iconName, label]) => `<button class="${id === activeSection ? "active" : ""}" data-explorer-section="${id}" onclick="openImportSection('${id}')">${icon(iconName)}<span>${label}</span></button>`).join("");
+    tools.innerHTML = sections.map(([id, iconName, label]) => `<button class="${id === activeSection ? "active" : ""}" data-explorer-section="${id}" data-action="workspace-import-section">${icon(iconName)}<span>${label}</span></button>`).join("");
     return;
   }
   if (primaryView === "settings") {
@@ -965,32 +965,32 @@ function renderExplorerTools() {
     const sections = [["settings-general", "settings-2", "通用设置"], ["settings-basic", "shield-check", "安全设置"], ["settings-notifications", "bell", "通知设置"], ["settings-runtime", "activity", "启动与运行"], ["settings-about", "info", "关于"]];
     const updateDotHidden = typeof shouldShowUpdateNotice === "function" && shouldShowUpdateNotice() ? "" : "hidden";
     tools.classList.add("section-mode");
-    tools.innerHTML = sections.map(([id, iconName, label]) => `<button class="${id === activeSection ? "active" : ""}" data-explorer-section="${id}" onclick="openSettingsSection('${id}')">${icon(iconName)}<span>${label}</span>${id === "settings-about" ? `<i id="settingsExplorerUpdateDot" class="section-update-dot" ${updateDotHidden} aria-label="发现新版本"></i>` : ""}</button>`).join("");
+    tools.innerHTML = sections.map(([id, iconName, label]) => `<button class="${id === activeSection ? "active" : ""}" data-explorer-section="${id}" data-action="workspace-settings-section">${icon(iconName)}<span>${label}</span>${id === "settings-about" ? `<i id="settingsExplorerUpdateDot" class="section-update-dot" ${updateDotHidden} aria-label="发现新版本"></i>` : ""}</button>`).join("");
     return;
   }
   if (primaryView === "remote") {
     tools.classList.add("connection-mode", "remote-connection-mode");
-    const linuxDesktopManagerButton = `<button class="icon-button" onclick="openLinuxDesktopManager()" title="Linux 桌面管理" aria-label="Linux 桌面管理">${icon("monitor-cog")}</button>`;
-    const quickOpenButton = `<button class="icon-button${remoteDesktopQuickOpen ? " active" : ""}" onclick="toggleRemoteDesktopQuickOpen()" title="快捷打开：${remoteDesktopQuickOpen ? "已开启，探测通过后自动打开远程桌面" : "已关闭，只进入探测界面"}" aria-label="快捷打开远程桌面" aria-pressed="${remoteDesktopQuickOpen ? "true" : "false"}">${icon("zap")}</button>`;
+    const linuxDesktopManagerButton = `<button class="icon-button" data-action="workspace-linux-desktop" title="Linux 桌面管理" aria-label="Linux 桌面管理">${icon("monitor-cog")}</button>`;
+    const quickOpenButton = `<button class="icon-button${remoteDesktopQuickOpen ? " active" : ""}" data-action="workspace-remote-quick-open" title="快捷打开：${remoteDesktopQuickOpen ? "已开启，探测通过后自动打开远程桌面" : "已关闭，只进入探测界面"}" aria-label="快捷打开远程桌面" aria-pressed="${remoteDesktopQuickOpen ? "true" : "false"}">${icon("zap")}</button>`;
     tools.innerHTML = `
-      <div class="search-field">${icon("search")}<input id="remoteConnectionSearch" placeholder="搜索其他连接、协议、主机、分组" value="${esc(remoteConnectionSearch)}" oninput="setRemoteConnectionSearch(this.value)"></div>
+      <div class="search-field">${icon("search")}<input id="remoteConnectionSearch" placeholder="搜索其他连接、协议、主机、分组" value="${esc(remoteConnectionSearch)}" data-input-action="workspace-remote-search"></div>
       <div class="explorer-action-strip connection-action-strip">
-        <button class="primary explorer-main-action" onclick="openAddRemoteConnectionMenu(event)">${icon("plus")}<span>添加连接</span></button>
-        <button class="icon-button" onclick="addGroup()" title="添加分组" aria-label="添加分组">${icon("folder-plus")}</button>
+        <button class="primary explorer-main-action" data-action="workspace-remote-add">${icon("plus")}<span>添加连接</span></button>
+        <button class="icon-button" data-action="workspace-group-add" title="添加分组" aria-label="添加分组">${icon("folder-plus")}</button>
         ${quickOpenButton}
-        <button class="icon-button" onclick="showRemoteExplorerMenu(event)" title="其他连接操作" aria-label="其他连接操作">${icon("ellipsis")}</button>
+        <button class="icon-button" data-action="workspace-remote-menu" title="其他连接操作" aria-label="其他连接操作">${icon("ellipsis")}</button>
       </div>`;
     tools.querySelector(".connection-action-strip")?.insertAdjacentHTML("beforeend", linuxDesktopManagerButton);
     return;
   }
   tools.classList.add("connection-mode");
   tools.innerHTML = `
-    <div class="search-field">${icon("search")}<input id="connectionSearch" placeholder="搜索连接、主机、用户、分组" value="${esc(connectionSearch)}" oninput="setConnectionSearch(this.value)"></div>
+    <div class="search-field">${icon("search")}<input id="connectionSearch" placeholder="搜索连接、主机、用户、分组" value="${esc(connectionSearch)}" data-input-action="workspace-connection-search"></div>
     <div class="explorer-action-strip connection-action-strip">
-      <button class="primary explorer-main-action" onclick="newConnection()">${icon("plus")}<span>添加 SSH</span></button>
-      <button class="icon-button" onclick="addGroup()" title="添加分组" aria-label="添加分组">${icon("folder-plus")}</button>
-      <button class="icon-button${connectionBulkMode ? " active" : ""}" onclick="toggleConnectionBulkMode()" title="${connectionBulkMode ? "完成批量管理" : "批量管理"}" aria-label="${connectionBulkMode ? "完成批量管理" : "批量管理"}">${icon(connectionBulkMode ? "check-check" : "list-checks")}</button>
-      <button class="icon-button" onclick="showConnectionExplorerMenu(event)" title="连接列表操作" aria-label="连接列表操作">${icon("ellipsis")}</button>
+      <button class="primary explorer-main-action" data-action="workspace-connection-new">${icon("plus")}<span>添加 SSH</span></button>
+      <button class="icon-button" data-action="workspace-group-add" title="添加分组" aria-label="添加分组">${icon("folder-plus")}</button>
+      <button class="icon-button${connectionBulkMode ? " active" : ""}" data-action="workspace-connection-bulk" title="${connectionBulkMode ? "完成批量管理" : "批量管理"}" aria-label="${connectionBulkMode ? "完成批量管理" : "批量管理"}">${icon(connectionBulkMode ? "check-check" : "list-checks")}</button>
+      <button class="icon-button" data-action="workspace-connection-menu" title="连接列表操作" aria-label="连接列表操作">${icon("ellipsis")}</button>
     </div>`;
 }
 
@@ -1054,7 +1054,7 @@ function syncResponsivePane() {
 }
 
 function renderWelcome() {
-  $("view-welcome").innerHTML = `<div id="startupSummary"></div>${stateView("empty", "开始使用", "从左侧选择 SSH 资源、日志或导入导出；打开的内容会保留为工作区标签。", `<button class="primary" onclick="showPrimary('connections')">查看连接</button>`)}`;
+  $("view-welcome").innerHTML = `<div id="startupSummary"></div>${stateView("empty", "开始使用", "从左侧选择 SSH 资源、日志或导入导出；打开的内容会保留为工作区标签。", `<button class="primary" data-action="workspace-show-connections">查看连接</button>`)}`;
   setWorkspace("开始使用", "选择左侧项目后开始操作", "welcome", "welcome", true, false);
   loadStartupSummary();
 }
@@ -1071,8 +1071,8 @@ function renderStartupSummary(box=$("startupSummary")) {
   const starting = s.state === "starting";
   const warning = !starting && failed > 0;
   const title = starting ? "启动任务正在执行" : warning ? "Terma 已就绪，存在启动失败的转发" : "Terma 已就绪";
-  const logAction = latestFailed?.updated_at ? `openSystemLogAt(${Number(latestFailed.updated_at)})` : "openTodaySystemLog()";
-  box.innerHTML = `<div class="startup-summary ${warning ? "warning" : "ready"}"><div><strong>${title}</strong><span>${urls.map(esc).join(" · ")}</span></div><div class="startup-counts"><span>运行中 ${running}</span>${reconnecting ? `<span>重连中 ${reconnecting}</span>` : ""}${failed ? `<button class="startup-status-button bad" onclick="showPrimary('running',true)" title="查看启动失败的转发">启动失败 ${failed}</button>` : `<span>启动失败 0</span>`}<button onclick="${logAction}">${failed ? "失败日志" : "系统日志"}</button></div></div>`;
+  const logTimestamp = Number(latestFailed?.updated_at || 0);
+  box.innerHTML = `<div class="startup-summary ${warning ? "warning" : "ready"}"><div><strong>${title}</strong><span>${urls.map(esc).join(" · ")}</span></div><div class="startup-counts"><span>运行中 ${running}</span>${reconnecting ? `<span>重连中 ${reconnecting}</span>` : ""}${failed ? `<button class="startup-status-button bad" data-action="workspace-show-running" title="查看启动失败的转发">启动失败 ${failed}</button>` : `<span>启动失败 0</span>`}<button data-action="workspace-startup-log" data-log-timestamp="${logTimestamp}">${failed ? "失败日志" : "系统日志"}</button></div></div>`;
 }
 
 async function loadStartupSummary(box=$("startupSummary")) {
@@ -1083,6 +1083,44 @@ async function loadStartupSummary(box=$("startupSummary")) {
     renderStartupSummary(box);
     if (startupSummaryStatus.state === "starting") setTimeout(() => loadStartupSummary(box), 1200);
   } catch { box.innerHTML = ""; }
+}
+
+if (typeof registerTermaAction === "function") {
+registerTermaAction("workspace-event-stop", ({event}) => event.stopPropagation());
+registerTermaAction("workspace-tab-drag-start", ({event, element}) => beginWorkspaceTabDrag(event, element.dataset.tabKey, element));
+registerTermaAction("workspace-tab-activate", ({event, element}) => activateWorkspaceTabFromClick(event, element.dataset.tabKey));
+registerTermaAction("workspace-tab-menu", ({event, element}) => showTabContextMenu(event, element.dataset.tabKey));
+registerTermaAction("workspace-tab-sftp-drag-over", ({event, element}) => handleSftpTabDragOver(event, element.dataset.tabKey, element));
+registerTermaAction("workspace-tab-sftp-drag-leave", ({event, element}) => handleSftpTabDragLeave(event, element));
+registerTermaAction("workspace-tab-sftp-drop", ({event, element}) => dropSftpItemsOnTab(event, element.dataset.tabKey, element));
+registerTermaAction("workspace-tab-close", ({event, element}) => closeTab(event, element.dataset.tabKey));
+registerTermaAction("workspace-log-search", ({element}) => setLogSearch(element.value));
+registerTermaAction("workspace-log-today", () => openTodaySystemLog());
+registerTermaAction("workspace-log-settings", () => showLogSettings());
+registerTermaAction("workspace-log-cleanup", ({event}) => showLogCleanupMenu(event));
+registerTermaAction("workspace-running-refresh", () => loadAll().then(renderRunningForwards));
+registerTermaAction("workspace-forwards-restore", () => restoreForwards());
+registerTermaAction("workspace-batch-open", () => openBatchCommand());
+registerTermaAction("workspace-command-template-new", () => newCommandTemplate());
+registerTermaAction("workspace-command-template-refresh", () => renderCommandTemplates());
+registerTermaAction("workspace-import-section", ({element}) => openImportSection(element.dataset.explorerSection));
+registerTermaAction("workspace-settings-section", ({element}) => openSettingsSection(element.dataset.explorerSection));
+registerTermaAction("workspace-linux-desktop", () => openLinuxDesktopManager());
+registerTermaAction("workspace-remote-quick-open", () => toggleRemoteDesktopQuickOpen());
+registerTermaAction("workspace-remote-search", ({element}) => setRemoteConnectionSearch(element.value));
+registerTermaAction("workspace-remote-add", ({event}) => openAddRemoteConnectionMenu(event));
+registerTermaAction("workspace-group-add", () => addGroup());
+registerTermaAction("workspace-remote-menu", ({event}) => showRemoteExplorerMenu(event));
+registerTermaAction("workspace-connection-search", ({element}) => setConnectionSearch(element.value));
+registerTermaAction("workspace-connection-new", () => newConnection());
+registerTermaAction("workspace-connection-bulk", () => toggleConnectionBulkMode());
+registerTermaAction("workspace-connection-menu", ({event}) => showConnectionExplorerMenu(event));
+registerTermaAction("workspace-show-connections", () => showPrimary("connections"));
+registerTermaAction("workspace-show-running", () => showPrimary("running", true));
+registerTermaAction("workspace-startup-log", ({element}) => {
+  const timestamp = Number(element.dataset.logTimestamp || 0);
+  return timestamp ? openSystemLogAt(timestamp) : openTodaySystemLog();
+});
 }
 
 initActivityBarSizing();

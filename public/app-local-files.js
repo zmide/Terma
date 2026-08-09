@@ -7,10 +7,6 @@ let localFileInternalDrag = null;
 let localFileInternalDragHandoff = null;
 const LOCAL_FILES_DRAG_HANDOFF_TTL_MS = 4000;
 
-function localFilesInlineArg(value) {
-  return encodeURIComponent(String(value ?? "")).replace(/'/g, "%27");
-}
-
 function localFilesAvailable() {
   return Boolean(window.termaDesktop);
 }
@@ -57,7 +53,7 @@ function refreshLocalFilesForDeliveryJob(job) {
 
 function localFilesToolbarButtonHtml(tabKey="") {
   if (!localFilesAvailable()) return "";
-  return `<button type="button" class="icon-button local-files-open-button" title="新建本地文件标签" aria-label="新建本地文件标签" onclick="showNewLocalFilesMenu(event,'${escAttr(tabKey)}')">${icon("hard-drive")}</button>`;
+  return `<button type="button" class="icon-button local-files-open-button" title="新建本地文件标签" aria-label="新建本地文件标签" data-action="local-files-new-tab" data-tab-key="${escAttr(tabKey)}">${icon("hard-drive")}</button>`;
 }
 
 function showNewLocalFilesMenu(event) {
@@ -113,38 +109,38 @@ async function openLocalFiles(requestedPath="", updateTab=true, existingKey="") 
   runtime.location = computer ? "computer" : "directory";
   const view = $("view-local-files");
   view.dataset.workspaceTabKey = key;
-  view.innerHTML = `<div class="local-files-shell" data-local-files-tab-key="${escAttr(key)}" ondragover="handleLocalFilesDragOver(event,'${escAttr(key)}')" ondragleave="handleLocalFilesDragLeave(event,'${escAttr(key)}')" ondrop="handleLocalFilesDrop(event,'${escAttr(key)}')">
+  view.innerHTML = `<div class="local-files-shell" data-local-files-tab-key="${escAttr(key)}" data-tab-key="${escAttr(key)}" data-dragover-action="local-files-drag-over" data-dragleave-action="local-files-drag-leave" data-drop-action="local-files-drop">
     <div class="local-files-top">
       <div class="local-files-toolbar">
         <div class="local-files-toolbar-actions">
-          <button class="icon-button local-files-history-back" title="后退" aria-label="后退" onclick="navigateLocalFilesHistory(-1,'${escAttr(key)}')" disabled>${icon("arrow-left")}</button>
-          <button class="icon-button local-files-history-forward" title="前进" aria-label="前进" onclick="navigateLocalFilesHistory(1,'${escAttr(key)}')" disabled>${icon("arrow-right")}</button>
-          <button class="icon-button local-files-parent" title="上一级" aria-label="上一级" onclick="navigateLocalFilesParent('${escAttr(key)}')">${icon("corner-left-up")}</button>
+          <button class="icon-button local-files-history-back" title="后退" aria-label="后退" data-action="local-files-history" data-history-direction="-1" data-tab-key="${escAttr(key)}" disabled>${icon("arrow-left")}</button>
+          <button class="icon-button local-files-history-forward" title="前进" aria-label="前进" data-action="local-files-history" data-history-direction="1" data-tab-key="${escAttr(key)}" disabled>${icon("arrow-right")}</button>
+          <button class="icon-button local-files-parent" title="上一级" aria-label="上一级" data-action="local-files-parent" data-tab-key="${escAttr(key)}">${icon("corner-left-up")}</button>
           <span class="local-files-toolbar-separator" aria-hidden="true"></span>
-          <button class="icon-button" title="桌面" aria-label="桌面" onclick="navigateLocalFilesLocation('desktop','${escAttr(key)}')">${icon("monitor")}</button>
-          <button class="icon-button" title="下载目录" aria-label="下载目录" onclick="navigateLocalFilesLocation('downloads','${escAttr(key)}')">${icon("download")}</button>
-          <button class="icon-button" title="用户主目录" aria-label="用户主目录" onclick="navigateLocalFilesLocation('home','${escAttr(key)}')">${icon("home")}</button>
-          <button class="icon-button" title="刷新" aria-label="刷新" onclick="loadLocalFiles('${escAttr(key)}',{refresh:true})">${icon("refresh-cw")}</button>
+          <button class="icon-button" title="桌面" aria-label="桌面" data-action="local-files-location" data-location="desktop" data-tab-key="${escAttr(key)}">${icon("monitor")}</button>
+          <button class="icon-button" title="下载目录" aria-label="下载目录" data-action="local-files-location" data-location="downloads" data-tab-key="${escAttr(key)}">${icon("download")}</button>
+          <button class="icon-button" title="用户主目录" aria-label="用户主目录" data-action="local-files-location" data-location="home" data-tab-key="${escAttr(key)}">${icon("home")}</button>
+          <button class="icon-button" title="刷新" aria-label="刷新" data-action="local-files-refresh" data-tab-key="${escAttr(key)}">${icon("refresh-cw")}</button>
           <span class="local-files-toolbar-separator" aria-hidden="true"></span>
-          <button class="icon-button local-files-create-directory" title="新建文件夹" aria-label="新建文件夹" onclick="createLocalEntryFromPrompt('${escAttr(key)}','dir')" ${computer ? "disabled" : ""}>${icon("folder-plus")}</button>
-          <button class="icon-button local-files-create-file" title="新建文件" aria-label="新建文件" onclick="createLocalEntryFromPrompt('${escAttr(key)}','file')" ${computer ? "disabled" : ""}>${icon("file-plus-2")}</button>
+          <button class="icon-button local-files-create-directory" title="新建文件夹" aria-label="新建文件夹" data-action="local-files-create" data-entry-kind="dir" data-tab-key="${escAttr(key)}" ${computer ? "disabled" : ""}>${icon("folder-plus")}</button>
+          <button class="icon-button local-files-create-file" title="新建文件" aria-label="新建文件" data-action="local-files-create" data-entry-kind="file" data-tab-key="${escAttr(key)}" ${computer ? "disabled" : ""}>${icon("file-plus-2")}</button>
           <span class="local-files-toolbar-separator" aria-hidden="true"></span>
-          <button class="icon-button" title="新建本地文件标签" aria-label="新建本地文件标签" onclick="showNewLocalFilesMenu(event,'${escAttr(key)}')">${icon("plus")}</button>
+          <button class="icon-button" title="新建本地文件标签" aria-label="新建本地文件标签" data-action="local-files-new-tab" data-tab-key="${escAttr(key)}">${icon("plus")}</button>
         </div>
       </div>
       <div class="local-files-search-wrap">
-        <div class="local-files-search">${icon("search")}<input aria-label="搜索当前目录" placeholder="搜索当前目录" value="${esc(runtime.query)}" oninput="setLocalFilesSearch(this.value,'${escAttr(key)}')"><button type="button" class="icon-button" title="清除搜索" aria-label="清除搜索" onclick="clearLocalFilesSearch('${escAttr(key)}')">${icon("x")}</button></div>
+        <div class="local-files-search">${icon("search")}<input aria-label="搜索当前目录" placeholder="搜索当前目录" value="${esc(runtime.query)}" data-input-action="local-files-search" data-tab-key="${escAttr(key)}"><button type="button" class="icon-button" title="清除搜索" aria-label="清除搜索" data-action="local-files-search-clear" data-tab-key="${escAttr(key)}">${icon("x")}</button></div>
       </div>
       <div class="local-files-navigation-row">
         <div class="local-files-path-block">
-          <nav class="local-files-breadcrumb" aria-label="本地目录路径" ondblclick="showLocalFilesPathEditor('${escAttr(key)}')">${localFilesBreadcrumbHtml(runtime, key)}</nav>
-          <form class="local-files-path-editor" hidden onsubmit="submitLocalFilesPath(event,'${escAttr(key)}')"><input aria-label="本地目录路径" value="${esc(pathValue)}" placeholder="本地目录路径"><button class="icon-button" type="submit" title="转到路径" aria-label="转到路径">${icon("corner-down-left")}</button><button type="button" class="icon-button" title="取消" aria-label="取消" onclick="hideLocalFilesPathEditor('${escAttr(key)}')">${icon("x")}</button></form>
+          <nav class="local-files-breadcrumb" aria-label="本地目录路径" data-dblclick-action="local-files-path-edit" data-tab-key="${escAttr(key)}">${localFilesBreadcrumbHtml(runtime, key)}</nav>
+          <form class="local-files-path-editor" hidden data-submit-action="local-files-path-submit" data-tab-key="${escAttr(key)}"><input aria-label="本地目录路径" value="${esc(pathValue)}" placeholder="本地目录路径"><button class="icon-button" type="submit" title="转到路径" aria-label="转到路径">${icon("corner-down-left")}</button><button type="button" class="icon-button" title="取消" aria-label="取消" data-action="local-files-path-cancel" data-tab-key="${escAttr(key)}">${icon("x")}</button></form>
         </div>
-        <button class="icon-button local-files-path-edit-button" title="手动输入路径" aria-label="手动输入路径" onclick="showLocalFilesPathEditor('${escAttr(key)}')">${icon("pencil")}</button>
+        <button class="icon-button local-files-path-edit-button" title="手动输入路径" aria-label="手动输入路径" data-action="local-files-path-edit" data-tab-key="${escAttr(key)}">${icon("pencil")}</button>
       </div>
-      <div class="local-files-selection" hidden><strong>已选择 <span>0</span> 项</strong><div class="local-files-selection-actions"><button type="button" data-local-files-single-action title="打开" aria-label="打开" onclick="openSelectedLocalFiles('${escAttr(key)}')">${icon("folder-open")}<span>打开</span></button><button type="button" title="上传到 SFTP" aria-label="上传到 SFTP" onclick="showLocalFilesUploadMenu(event,'${escAttr(key)}')">${icon("upload")}<span>上传</span></button><button type="button" title="复制路径" aria-label="复制路径" onclick="copySelectedLocalFilePaths('${escAttr(key)}')">${icon("clipboard")}<span>路径</span></button><button type="button" data-local-files-single-action title="重命名" aria-label="重命名" onclick="renameSelectedLocalFile('${escAttr(key)}')">${icon("pencil")}<span>重命名</span></button><button type="button" title="删除" aria-label="删除" class="danger" onclick="deleteSelectedLocalFiles('${escAttr(key)}')">${icon("trash-2")}<span>删除</span></button><button type="button" data-local-files-single-action title="权限" aria-label="权限" onclick="chmodSelectedLocalFile('${escAttr(key)}')">${icon("key-round")}<span>权限</span></button><button class="icon-button" title="取消选择" aria-label="取消选择" onclick="clearLocalFilesSelection('${escAttr(key)}')">${icon("x")}</button></div></div>
+      <div class="local-files-selection" hidden><strong>已选择 <span>0</span> 项</strong><div class="local-files-selection-actions"><button type="button" data-local-files-single-action title="打开" aria-label="打开" data-action="local-files-selection-open" data-tab-key="${escAttr(key)}">${icon("folder-open")}<span>打开</span></button><button type="button" title="上传到 SFTP" aria-label="上传到 SFTP" data-action="local-files-selection-upload" data-tab-key="${escAttr(key)}">${icon("upload")}<span>上传</span></button><button type="button" title="复制路径" aria-label="复制路径" data-action="local-files-selection-copy" data-tab-key="${escAttr(key)}">${icon("clipboard")}<span>路径</span></button><button type="button" data-local-files-single-action title="重命名" aria-label="重命名" data-action="local-files-selection-rename" data-tab-key="${escAttr(key)}">${icon("pencil")}<span>重命名</span></button><button type="button" title="删除" aria-label="删除" class="danger" data-action="local-files-selection-delete" data-tab-key="${escAttr(key)}">${icon("trash-2")}<span>删除</span></button><button type="button" data-local-files-single-action title="权限" aria-label="权限" data-action="local-files-selection-chmod" data-tab-key="${escAttr(key)}">${icon("key-round")}<span>权限</span></button><button class="icon-button" title="取消选择" aria-label="取消选择" data-action="local-files-selection-clear" data-tab-key="${escAttr(key)}">${icon("x")}</button></div></div>
     </div>
-    <div class="local-files-list" oncontextmenu="showLocalFilesDirectoryMenu(event,'${escAttr(key)}')">${stateView("loading", "正在读取本地目录", computer ? "此电脑" : pathValue || "系统桌面")}</div>
+    <div class="local-files-list" data-contextmenu-action="local-files-directory-menu" data-tab-key="${escAttr(key)}">${stateView("loading", "正在读取本地目录", computer ? "此电脑" : pathValue || "系统桌面")}</div>
     <div class="local-files-drop-overlay" hidden>${icon("download")}<strong>松开保存到当前本地目录</strong></div>
   </div>`;
   setWorkspace("本地文件", computer ? "此电脑" : pathValue || "系统桌面", "local-files", key, updateTab, true, {kind:"local-files", path:computer ? LOCAL_FILES_COMPUTER_PATH : pathValue, localLocation:computer ? "computer" : "directory"});
@@ -212,26 +208,24 @@ function renderLocalFiles(tabKey) {
   const root = localFilesRoot(tabKey);
   const list = root?.querySelector(".local-files-list");
   if (!list) return;
-  const head = `<div class="local-files-head"><label><input type="checkbox" aria-label="选择当前页全部项目" onchange="toggleAllLocalFiles(this.checked,'${escAttr(tabKey)}')"></label><button onclick="setLocalFilesSort('name','${escAttr(tabKey)}')">名称</button><button onclick="setLocalFilesSort('size','${escAttr(tabKey)}')">大小</button><button onclick="setLocalFilesSort('mtime','${escAttr(tabKey)}')">修改时间</button></div>`;
+  const head = `<div class="local-files-head"><label><input type="checkbox" aria-label="选择当前页全部项目" data-change-action="local-files-select-all" data-tab-key="${escAttr(tabKey)}"></label><button data-action="local-files-sort" data-sort="name" data-tab-key="${escAttr(tabKey)}">名称</button><button data-action="local-files-sort" data-sort="size" data-tab-key="${escAttr(tabKey)}">大小</button><button data-action="local-files-sort" data-sort="mtime" data-tab-key="${escAttr(tabKey)}">修改时间</button></div>`;
   const rows = runtime.entries.map(entry => {
     const isDrive = entry.type === "drive";
     const isDir = isDrive || entry.type === "dir";
     const iconMarkup = isDrive ? icon("hard-drive") : sftpIcon(entry.name, isDir);
     const sizeText = isDrive && entry.size ? `${formatBytes(entry.free || 0)} 可用 / ${formatBytes(entry.size)}` : (isDir ? "--" : formatBytes(entry.size));
     const mobileMeta = isDrive ? sizeText : (isDir ? "目录" : sizeText);
-    const encodedPath = localFilesInlineArg(entry.path);
-    const encodedTabKey = localFilesInlineArg(tabKey);
     const active = String(runtime.activePath || "") === String(entry.path);
-    return `<div class="local-files-row ${isDrive ? "is-drive" : ""} ${active ? "active" : ""}" draggable="${isMobileLayout() || isDrive ? "false" : "true"}" data-path="${esc(entry.path)}" onclick="selectLocalFileEntry(event,decodeURIComponent('${encodedPath}'),decodeURIComponent('${encodedTabKey}'))" ondblclick="activateLocalFileEntry(event,decodeURIComponent('${encodedPath}'),'${escAttr(entry.type)}',decodeURIComponent('${encodedTabKey}'))" oncontextmenu="showLocalFileEntryMenu(event,decodeURIComponent('${encodedPath}'),'${escAttr(entry.type)}',decodeURIComponent('${encodedTabKey}'))" ondragstart="beginLocalFileDrag(event,decodeURIComponent('${encodedPath}'),decodeURIComponent('${encodedTabKey}'))" ondragend="finishLocalFileDrag()">
-      <input class="local-files-check" type="checkbox" value="${esc(entry.path)}" data-name="${esc(entry.name)}" data-type="${esc(entry.type)}" data-size="${Math.max(0, Number(entry.size || 0))}" aria-label="选择 ${esc(entry.name)}" ${isDrive ? "disabled" : ""} onclick="handleLocalFileCheckboxClick(event,decodeURIComponent('${encodedPath}'),decodeURIComponent('${encodedTabKey}'))">
-      <button class="local-files-name" onclick="event.stopPropagation();selectLocalFileEntry(event,decodeURIComponent('${encodedPath}'),decodeURIComponent('${encodedTabKey}'))"><span class="sftp-icon ${isDrive ? "drive" : entry.type}">${iconMarkup}</span><span class="local-files-name-copy"><span class="local-files-file-name">${esc(entry.name)}</span><span class="local-files-mobile-meta">${esc(mobileMeta)}</span></span></button>
+    return `<div class="local-files-row ${isDrive ? "is-drive" : ""} ${active ? "active" : ""}" draggable="${isMobileLayout() || isDrive ? "false" : "true"}" data-path="${escAttr(entry.path)}" data-entry-type="${escAttr(entry.type)}" data-tab-key="${escAttr(tabKey)}" data-action="local-files-entry-select" data-dblclick-action="local-files-entry-activate" data-contextmenu-action="local-files-entry-menu" data-dragstart-action="local-files-entry-drag-start" data-dragend-action="local-files-entry-drag-end">
+      <input class="local-files-check" type="checkbox" value="${escAttr(entry.path)}" data-name="${escAttr(entry.name)}" data-type="${escAttr(entry.type)}" data-size="${Math.max(0, Number(entry.size || 0))}" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}" data-action="local-files-entry-checkbox" aria-label="选择 ${escAttr(entry.name)}" ${isDrive ? "disabled" : ""}>
+      <button class="local-files-name" data-action="local-files-entry-select-stop" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}"><span class="sftp-icon ${isDrive ? "drive" : entry.type}">${iconMarkup}</span><span class="local-files-name-copy"><span class="local-files-file-name">${esc(entry.name)}</span><span class="local-files-mobile-meta">${esc(mobileMeta)}</span></span></button>
       <span class="local-files-size" title="${escAttr(sizeText)}">${esc(sizeText)}</span><span class="local-files-time">${entry.mtime ? formatSftpTime(entry.mtime) : "--"}</span>
     </div>`;
   }).join("");
   const page = Number(runtime.page || 1), totalPages = Number(runtime.totalPages || 1), total = Number(runtime.total || 0);
   const first = total ? (page - 1) * Number(runtime.pageSize || 50) + 1 : 0;
   const last = total ? Math.min(first + runtime.entries.length - 1, total) : 0;
-  const pager = `<div class="sftp-pager-dock"><div class="pager sftp-pager"><button onclick="setLocalFilesPage(${page - 1},'${escAttr(tabKey)}')" ${page <= 1 ? "disabled" : ""}>上一页</button><span class="pager-count"><span class="sftp-scroll-cue" title="下方还有文件" aria-hidden="true">${icon("chevron-down")}</span>第 ${page}/${totalPages} 页 · ${first}-${last} / ${total} · <select aria-label="每页数量" onchange="setLocalFilesPageSize(this.value,'${escAttr(tabKey)}')">${[25,50,100,200].map(size => `<option value="${size}" ${size === Number(runtime.pageSize) ? "selected" : ""}>${size} 项</option>`).join("")}</select></span><button onclick="setLocalFilesPage(${page + 1},'${escAttr(tabKey)}')" ${page >= totalPages ? "disabled" : ""}>下一页</button></div></div>`;
+  const pager = `<div class="sftp-pager-dock"><div class="pager sftp-pager"><button data-action="local-files-page" data-page="${page - 1}" data-tab-key="${escAttr(tabKey)}" ${page <= 1 ? "disabled" : ""}>上一页</button><span class="pager-count"><span class="sftp-scroll-cue" title="下方还有文件" aria-hidden="true">${icon("chevron-down")}</span>第 ${page}/${totalPages} 页 · ${first}-${last} / ${total} · <select aria-label="每页数量" data-change-action="local-files-page-limit" data-tab-key="${escAttr(tabKey)}">${[25,50,100,200].map(size => `<option value="${size}" ${size === Number(runtime.pageSize) ? "selected" : ""}>${size} 项</option>`).join("")}</select></span><button data-action="local-files-page" data-page="${page + 1}" data-tab-key="${escAttr(tabKey)}" ${page >= totalPages ? "disabled" : ""}>下一页</button></div></div>`;
   list.innerHTML = head + (rows || stateView("empty", runtime.query ? "没有匹配的本地文件" : "当前目录为空", runtime.path)) + pager;
   watchLocalFilesListLayout(list, tabKey);
   updateLocalFilesSelection(tabKey);
@@ -546,30 +540,30 @@ function syncLocalFilesCreateButtons(tabKey) {
 }
 
 function localFilesBreadcrumbHtml(runtime, tabKey) {
-  const key = localFilesInlineArg(tabKey);
-  if (runtime.location === "computer") return `<button class="crumb active" type="button" aria-current="page" onclick="navigateLocalFilesComputer(decodeURIComponent('${key}'))">${icon("monitor")}<span>此电脑</span></button>`;
+  const key = escAttr(tabKey);
+  if (runtime.location === "computer") return `<button class="crumb active" type="button" aria-current="page" data-action="local-files-computer" data-tab-key="${key}">${icon("monitor")}<span>此电脑</span></button>`;
   const value = String(runtime.path || "");
-  if (!value) return `<button class="crumb active" type="button" aria-current="page" onclick="navigateLocalFilesComputer(decodeURIComponent('${key}'))">${icon("monitor")}<span>本地文件</span></button>`;
+  if (!value) return `<button class="crumb active" type="button" aria-current="page" data-action="local-files-computer" data-tab-key="${key}">${icon("monitor")}<span>本地文件</span></button>`;
   const isWindows = /^[A-Za-z]:[\\/]/.test(value);
   const parts = isWindows ? value.replace(/[\\/]+$/, "").split(/[\\/]/) : value.split("/");
   const crumbs = [];
   if (isWindows) {
     const drive = `${parts.shift()}\\`;
-    crumbs.push(`<button class="crumb" type="button" onclick="navigateLocalFilesComputer(decodeURIComponent('${key}'))">${icon("monitor")}<span>此电脑</span></button><span class="crumb-sep">${icon("chevron-right")}</span>`);
+    crumbs.push(`<button class="crumb" type="button" data-action="local-files-computer" data-tab-key="${key}">${icon("monitor")}<span>此电脑</span></button><span class="crumb-sep">${icon("chevron-right")}</span>`);
     let current = drive;
-    crumbs.push(`<button class="crumb ${parts.length ? "" : "active"}" type="button" ${parts.length ? "" : "aria-current=\"page\""} onclick="navigateLocalFilesPath(decodeURIComponent('${localFilesInlineArg(current)}'),decodeURIComponent('${key}'))"><span>${esc(current.replace(/\\$/, ""))}</span></button>`);
+    crumbs.push(`<button class="crumb ${parts.length ? "" : "active"}" type="button" ${parts.length ? "" : "aria-current=\"page\""} data-action="local-files-path" data-path="${escAttr(current)}" data-tab-key="${key}"><span>${esc(current.replace(/\\$/, ""))}</span></button>`);
     for (let index = 0; index < parts.length; index += 1) {
       if (!parts[index]) continue;
       current += `${current.endsWith("\\") ? "" : "\\"}${parts[index]}`;
-      crumbs.push(`<span class="crumb-sep">${icon("chevron-right")}</span><button class="crumb ${index === parts.length - 1 ? "active" : ""}" type="button" ${index === parts.length - 1 ? "aria-current=\"page\"" : ""} onclick="navigateLocalFilesPath(decodeURIComponent('${localFilesInlineArg(current)}'),decodeURIComponent('${key}'))"><span>${esc(parts[index])}</span></button>`);
+      crumbs.push(`<span class="crumb-sep">${icon("chevron-right")}</span><button class="crumb ${index === parts.length - 1 ? "active" : ""}" type="button" ${index === parts.length - 1 ? "aria-current=\"page\"" : ""} data-action="local-files-path" data-path="${escAttr(current)}" data-tab-key="${key}"><span>${esc(parts[index])}</span></button>`);
     }
   } else {
-    crumbs.push(`<button class="crumb ${parts.length <= 1 ? "active" : ""}" type="button" onclick="navigateLocalFilesPath('/',decodeURIComponent('${key}'))"><span>/</span></button>`);
+    crumbs.push(`<button class="crumb ${parts.length <= 1 ? "active" : ""}" type="button" data-action="local-files-path" data-path="/" data-tab-key="${key}"><span>/</span></button>`);
     let current = "";
     for (let index = 0; index < parts.length; index += 1) {
       if (!parts[index]) continue;
       current += `/${parts[index]}`;
-      crumbs.push(`<span class="crumb-sep">${icon("chevron-right")}</span><button class="crumb ${index === parts.length - 1 ? "active" : ""}" type="button" ${index === parts.length - 1 ? "aria-current=\"page\"" : ""} onclick="navigateLocalFilesPath(decodeURIComponent('${localFilesInlineArg(current)}'),decodeURIComponent('${key}'))"><span>${esc(parts[index])}</span></button>`);
+      crumbs.push(`<span class="crumb-sep">${icon("chevron-right")}</span><button class="crumb ${index === parts.length - 1 ? "active" : ""}" type="button" ${index === parts.length - 1 ? "aria-current=\"page\"" : ""} data-action="local-files-path" data-path="${escAttr(current)}" data-tab-key="${key}"><span>${esc(parts[index])}</span></button>`);
     }
   }
   return crumbs.join("");
@@ -626,9 +620,9 @@ function activateLocalFileEntry(event, pathValue, type, tabKey) {
   return api("/api/local-files/open", {method:"POST", body:JSON.stringify({path:pathValue})}).catch(error => notify(error.message || "打开本地文件失败", "error"));
 }
 
-function submitLocalFilesPath(event, tabKey) {
+function submitLocalFilesPath(event, tabKey, form=event.currentTarget) {
   event.preventDefault();
-  const value = event.currentTarget.querySelector("input")?.value || "";
+  const value = form?.querySelector("input")?.value || "";
   hideLocalFilesPathEditor(tabKey);
   return navigateLocalFilesPath(value, tabKey).catch(error => notify(error.message || "打开本地目录失败", "error"));
 }
@@ -813,8 +807,8 @@ function handleLocalFilesDragOver(event, tabKey) {
   localFilesRoot(tabKey)?.querySelector(".local-files-drop-overlay")?.removeAttribute("hidden");
 }
 
-function handleLocalFilesDragLeave(event, tabKey) {
-  if (event.currentTarget?.contains(event.relatedTarget)) return;
+function handleLocalFilesDragLeave(event, tabKey, root=event.currentTarget) {
+  if (root?.contains(event.relatedTarget)) return;
   const overlay = localFilesRoot(tabKey)?.querySelector(".local-files-drop-overlay");
   if (overlay) overlay.hidden = true;
 }
@@ -855,3 +849,44 @@ closeTabsByKey = function(keys, anchorKey="") {
   for (const key of keys || []) localFileRuntimes.delete(String(key));
   return closeLocalFilesTabsBase(keys, anchorKey);
 };
+
+if (typeof registerTermaAction === "function") {
+registerTermaAction("local-files-new-tab", ({event}) => showNewLocalFilesMenu(event));
+registerTermaAction("local-files-drag-over", ({event, element}) => handleLocalFilesDragOver(event, element.dataset.tabKey));
+registerTermaAction("local-files-drag-leave", ({event, element}) => handleLocalFilesDragLeave(event, element.dataset.tabKey, element));
+registerTermaAction("local-files-drop", ({event, element}) => handleLocalFilesDrop(event, element.dataset.tabKey));
+registerTermaAction("local-files-history", ({element}) => navigateLocalFilesHistory(Number(element.dataset.historyDirection || 0), element.dataset.tabKey));
+registerTermaAction("local-files-parent", ({element}) => navigateLocalFilesParent(element.dataset.tabKey));
+registerTermaAction("local-files-location", ({element}) => navigateLocalFilesLocation(element.dataset.location, element.dataset.tabKey));
+registerTermaAction("local-files-refresh", ({element}) => loadLocalFiles(element.dataset.tabKey, {refresh:true}));
+registerTermaAction("local-files-create", ({element}) => createLocalEntryFromPrompt(element.dataset.tabKey, element.dataset.entryKind));
+registerTermaAction("local-files-search", ({element}) => setLocalFilesSearch(element.value, element.dataset.tabKey));
+registerTermaAction("local-files-search-clear", ({element}) => clearLocalFilesSearch(element.dataset.tabKey));
+registerTermaAction("local-files-path-edit", ({element}) => showLocalFilesPathEditor(element.dataset.tabKey));
+registerTermaAction("local-files-path-submit", ({event, element}) => submitLocalFilesPath(event, element.dataset.tabKey, element));
+registerTermaAction("local-files-path-cancel", ({element}) => hideLocalFilesPathEditor(element.dataset.tabKey));
+registerTermaAction("local-files-selection-open", ({element}) => openSelectedLocalFiles(element.dataset.tabKey));
+registerTermaAction("local-files-selection-upload", ({event, element}) => showLocalFilesUploadMenu(event, element.dataset.tabKey));
+registerTermaAction("local-files-selection-copy", ({element}) => copySelectedLocalFilePaths(element.dataset.tabKey));
+registerTermaAction("local-files-selection-rename", ({element}) => renameSelectedLocalFile(element.dataset.tabKey));
+registerTermaAction("local-files-selection-delete", ({element}) => deleteSelectedLocalFiles(element.dataset.tabKey));
+registerTermaAction("local-files-selection-chmod", ({element}) => chmodSelectedLocalFile(element.dataset.tabKey));
+registerTermaAction("local-files-selection-clear", ({element}) => clearLocalFilesSelection(element.dataset.tabKey));
+registerTermaAction("local-files-directory-menu", ({event, element}) => showLocalFilesDirectoryMenu(event, element.dataset.tabKey));
+registerTermaAction("local-files-select-all", ({element}) => toggleAllLocalFiles(element.checked, element.dataset.tabKey));
+registerTermaAction("local-files-sort", ({element}) => setLocalFilesSort(element.dataset.sort, element.dataset.tabKey));
+registerTermaAction("local-files-entry-select", ({event, element}) => selectLocalFileEntry(event, element.dataset.path, element.dataset.tabKey));
+registerTermaAction("local-files-entry-select-stop", ({event, element}) => {
+  event.stopPropagation();
+  return selectLocalFileEntry(event, element.dataset.path, element.dataset.tabKey);
+});
+registerTermaAction("local-files-entry-activate", ({event, element}) => activateLocalFileEntry(event, element.dataset.path, element.dataset.entryType, element.dataset.tabKey));
+registerTermaAction("local-files-entry-menu", ({event, element}) => showLocalFileEntryMenu(event, element.dataset.path, element.dataset.entryType, element.dataset.tabKey));
+registerTermaAction("local-files-entry-drag-start", ({event, element}) => beginLocalFileDrag(event, element.dataset.path, element.dataset.tabKey));
+registerTermaAction("local-files-entry-drag-end", () => finishLocalFileDrag());
+registerTermaAction("local-files-entry-checkbox", ({event, element}) => handleLocalFileCheckboxClick(event, element.dataset.path, element.dataset.tabKey));
+registerTermaAction("local-files-page", ({element}) => setLocalFilesPage(Number(element.dataset.page || 1), element.dataset.tabKey));
+registerTermaAction("local-files-page-limit", ({element}) => setLocalFilesPageSize(element.value, element.dataset.tabKey));
+registerTermaAction("local-files-computer", ({element}) => navigateLocalFilesComputer(element.dataset.tabKey));
+registerTermaAction("local-files-path", ({element}) => navigateLocalFilesPath(element.dataset.path, element.dataset.tabKey));
+}

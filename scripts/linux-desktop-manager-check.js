@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readFrontendDomain } = require("./frontend-source");
 const {
   DESKTOP_IDS,
   DETECT_SCRIPT,
@@ -167,7 +168,7 @@ assert.match(decodedUninstall, /apt-get purge/);
 assert.match(decodedUninstall, /dpkg-query/);
 assert.doesNotMatch(decodedUninstall, /autoremove/);
 assert.match(decodedUninstall, /terma_emit STAGE "verify"/);
-const remoteUi = fs.readFileSync(path.join(__dirname, "..", "public", "app-remote.js"), "utf8");
+const remoteUi = readFrontendDomain(path.join(__dirname, ".."), "remote");
 assert.match(remoteUi, /系统默认/);
 assert.match(remoteUi, /账号默认/);
 assert.match(remoteUi, /XDMCP 配置/);

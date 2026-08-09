@@ -9,6 +9,7 @@ interface SecurityRouteDependencies {
   publicSecuritySettings(request: IncomingMessage): unknown;
   login(password: string, request: IncomingMessage): string;
   logout(request: IncomingMessage): void;
+  beforeLogout?(request: IncomingMessage): void;
   sessionCookie(request: IncomingMessage, token: string, maxAgeSeconds?: number): string;
   updateSecurityOptions(value: unknown): unknown;
   setPassword(password: string): void;
@@ -59,6 +60,7 @@ export async function handleSecurityRoutes(
   dependencies: SecurityRouteDependencies
 ): Promise<boolean> {
   if (request.method === "POST" && pathname === "/api/auth/logout") {
+    dependencies.beforeLogout?.(request);
     dependencies.logout(request);
     dependencies.send(response, 200, { ok: true }, { "Set-Cookie": dependencies.sessionCookie(request, "", 0) });
     return true;
