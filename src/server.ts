@@ -204,7 +204,7 @@ const {
 } = require("./security");
 const { acceptHostTrust, hostTrustErrorResponse, listTrustedHosts, listTrustedHostsPage, removeTrustedHost } = require("./ssh-host-trust");
 const { closeJumpConnectionPool, ensureConnectionHostTrusted } = require("./ssh2-client");
-const { disableEncryption, enableEncryption, encryptionReady, encryptText, lockEncryption, unlockEncryption } = require("./crypto-store");
+const { disableEncryption, enableEncryption, encryptionReady, encryptText, decryptText, isEncryptedText, isLegacyEncryptedText, lockEncryption, unlockEncryption } = require("./crypto-store");
 const { createConfigSnapshot, deleteConfigSnapshot, listConfigSnapshots, restoreConfigSnapshotById } = require("./config-snapshots");
 const { ptyRuntimeStatus } = require("./pty-runtime");
 const { createUpdateChecker } = require("./update-checker");
@@ -3065,8 +3065,11 @@ const {
   PROJECT_SSH_DIR,
   RUNTIME_ROOT,
   STORAGE_SETTINGS_FILE,
+  decryptText,
   encryptionReady,
   encryptText,
+  isEncryptedText,
+  isLegacyEncryptedText,
   listIdentityFiles,
   readSecuritySettings,
   validateSortOrder,

@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
-const { fileHash, mergeLegacyRuntime } = require("../desktop/brand-data-migration");
+const { fileHash, mergeDatabaseFiles, mergeLegacyRuntime } = require("../desktop/brand-data-migration");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-brand-merge-check-"));
 const sourceRuntime = path.join(temporaryRoot, "TunnelDesk", "runtime");
@@ -239,6 +239,29 @@ try {
   assert.equal(sourceOnlyForward.last_error, null);
   assert.equal(sourceOnlyForward.started_at, null);
   sourceOnlyDb.close();
+
+  const encryptedSourceData = path.join(temporaryRoot, "encrypted-source", "data");
+  const encryptedTargetData = path.join(temporaryRoot, "encrypted-target", "data");
+  const encryptedSourceDatabase = path.join(encryptedSourceData, "tunnels.db");
+  const encryptedTargetDatabase = path.join(encryptedTargetData, "tunnels.db");
+  createSchema(encryptedSourceDatabase);
+  createSchema(encryptedTargetDatabase);
+  const encryptedSource = new DatabaseSync(encryptedSourceDatabase);
+  encryptedSource.prepare("INSERT INTO remote_profiles(id,name,group_name,protocol,host,port,username,password,options_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+    .run(1, "legacy-prefix", "Default", "vnc", "legacy.example", 5900, "tester", "tdenc:v1:legacy", "{}", 1, 1);
+  encryptedSource.prepare("INSERT INTO remote_profiles(id,name,group_name,protocol,host,port,username,password,options_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+    .run(2, "terma-prefix", "Default", "vnc", "terma.example", 5900, "tester", "termaenc:v1:current", "{}", 1, 1);
+  encryptedSource.close();
+  const securitySettings = JSON.stringify({ encryption_enabled:true, encryption_salt:"shared-salt", encryption_check:"shared-check" });
+  fs.writeFileSync(path.join(encryptedSourceData, "security.json"), securitySettings, "utf8");
+  fs.writeFileSync(path.join(encryptedTargetData, "security.json"), securitySettings, "utf8");
+  assert.doesNotThrow(() => mergeDatabaseFiles(encryptedSourceDatabase, encryptedTargetDatabase, {
+    sourceDataDir:encryptedSourceData,
+    targetDataDir:encryptedTargetData
+  }));
+  const encryptedMerged = readDatabase(encryptedTargetDatabase);
+  assert.equal(encryptedMerged.prepare("SELECT COUNT(*) AS count FROM remote_profiles").get().count, 2);
+  encryptedMerged.close();
 
   const rollbackRoot = path.join(temporaryRoot, "rollback-runtime");
   const rollbackData = path.join(rollbackRoot, "data");

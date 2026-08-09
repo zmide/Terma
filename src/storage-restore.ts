@@ -6,9 +6,15 @@ const { DatabaseSync } = require("node:sqlite");
 function createStorageRestoreHelpers(options: any = {}) {
   const {
     BASE_DIR, DATA_DIR, PROJECT_SSH_DIR, RUNTIME_ROOT, STORAGE_SETTINGS_FILE,
-    encryptionReady, encryptText, listIdentityFiles, readSecuritySettings,
+    decryptText, encryptionReady, encryptText, isEncryptedText, isLegacyEncryptedText, listIdentityFiles, readSecuritySettings,
     validateSortOrder, getDesktopIntegration, getArgs, requestShutdown
   } = options;
+  const encryptedValue = typeof isEncryptedText === "function"
+    ? isEncryptedText
+    : (value) => /^(?:tdenc|termaenc):v1:/.test(String(value || ""));
+  const legacyEncryptedValue = typeof isLegacyEncryptedText === "function"
+    ? isLegacyEncryptedText
+    : (value) => String(value || "").startsWith("tdenc:v1:");
 
   function connectionRowsFromBackup(tempDb) {
     const table = tempDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='connections'").get();
@@ -127,7 +133,7 @@ function createStorageRestoreHelpers(options: any = {}) {
     const encrypted = [];
     const missingByName = new Map();
     for (const row of rows) {
-      if (String(row.identity_file || "").startsWith("tdenc:v1:")) {
+      if (encryptedValue(row.identity_file)) {
         encrypted.push({ connection_id:row.id, connection_name:row.name });
         continue;
       }
@@ -218,10 +224,10 @@ function createStorageRestoreHelpers(options: any = {}) {
             sort_order: Number(row.sort_order || 1),
             auth_type: authType,
             original_auth_type: authType,
-            key_name: identityFile && !identityFile.startsWith("tdenc:v1:") ? path.posix.basename(identityFile.replace(/\\/g, "/")) : "",
-            identity_encrypted: identityFile.startsWith("tdenc:v1:"),
+            key_name: identityFile && !encryptedValue(identityFile) ? path.posix.basename(identityFile.replace(/\\/g, "/")) : "",
+            identity_encrypted: encryptedValue(identityFile),
             has_password: Boolean(password),
-            password_encrypted: password.startsWith("tdenc:v1:"),
+            password_encrypted: encryptedValue(password),
             extra_args: row.extra_args || ""
           };
         }),
@@ -308,7 +314,11 @@ function createStorageRestoreHelpers(options: any = {}) {
         const values = selected.map(column => {
           const value = row[column];
           if (value == null || value === "") return value;
-          if (String(value).startsWith("tdenc:v1:")) return value;
+          if (encryptedValue(value)) {
+            if (!legacyEncryptedValue(value)) return value;
+            changed += 1;
+            return encryptText(decryptText(value));
+          }
           changed += 1;
           return encryptText(value);
         });

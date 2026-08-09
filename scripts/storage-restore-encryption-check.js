@@ -18,7 +18,11 @@ const keyPath = path.join(process.env.TERMA_SSH_DIR, "id_test");
 fs.writeFileSync(keyPath, "fixture-private-key", { encoding:"utf8", mode:0o600 });
 
 function encrypted(value) {
-  return typeof value === "string" && value.startsWith("tdenc:v1:");
+  return typeof value === "string" && /^(?:tdenc|termaenc):v1:/.test(value);
+}
+
+function legacyEncrypted(value) {
+  return cryptoStore.encryptText(value).replace(/^termaenc:v1:/, "tdenc:v1:");
 }
 
 try {
@@ -52,7 +56,7 @@ try {
     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     1, "key fixture", "key.example", 22, "tester", "key", "/old/id_test", null,
-    "key-passphrase", "-o Compression=yes", "/bin/bash", "-lc", "/tmp"
+    legacyEncrypted("key-passphrase"), "-o Compression=yes", "/bin/bash", "-lc", "/tmp"
   );
   database.prepare(`
     INSERT INTO connections(
@@ -72,8 +76,11 @@ try {
     PROJECT_SSH_DIR:process.env.TERMA_SSH_DIR,
     RUNTIME_ROOT:root,
     STORAGE_SETTINGS_FILE:path.join(root, "storage.json"),
+    decryptText:cryptoStore.decryptText,
     encryptionReady:cryptoStore.encryptionReady,
     encryptText:cryptoStore.encryptText,
+    isEncryptedText:cryptoStore.isEncryptedText,
+    isLegacyEncryptedText:cryptoStore.isLegacyEncryptedText,
     listIdentityFiles:() => [{path:keyPath}],
     readSecuritySettings:security.readSecuritySettings,
     validateSortOrder:value => Math.max(1, Number(value) || 1),
@@ -100,12 +107,14 @@ try {
   const restored = new DatabaseSync(fixture);
   const keyRow = restored.prepare("SELECT * FROM connections WHERE id=1").get();
   const passwordRow = restored.prepare("SELECT * FROM connections WHERE id=2").get();
+  assert.match(keyRow.private_key_passphrase, /^termaenc:v1:/);
+  assert.match(passwordRow.ssh_password, /^termaenc:v1:/);
   for (const field of ["identity_file", "private_key_passphrase", "extra_args", "terminal_program_path", "terminal_program_args", "terminal_working_directory"]) {
     assert.equal(encrypted(keyRow[field]), true, `恢复后的 ${field} 必须加密`);
   }
   assert.equal(encrypted(passwordRow.ssh_password), true, "恢复后的 SSH 密码必须加密");
   restored.close();
-  console.log("配置加密恢复回归通过：未解锁拒绝恢复，解锁后原始 SQLite 敏感字段全部使用 tdenc:v1");
+  console.log("配置加密恢复回归通过：未解锁拒绝恢复，解锁后原始 SQLite 敏感字段全部使用 termaenc:v1");
 } finally {
   try { cryptoStore.lockEncryption(); } catch {}
   fs.rmSync(root, { recursive:true, force:true });

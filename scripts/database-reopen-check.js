@@ -94,10 +94,18 @@ try {
   cryptoStore.enableEncryption("reopen-check-secret");
   assert.ok(database.encryptStoredConnectionSecrets() >= 1);
   const storedStartup = database.get("SELECT terminal_program_path,terminal_program_args,terminal_working_directory FROM connections WHERE id=?", [id]);
-  assert.match(storedStartup.terminal_program_path, /^tdenc:v1:/);
-  assert.match(storedStartup.terminal_program_args, /^tdenc:v1:/);
-  assert.match(storedStartup.terminal_working_directory, /^tdenc:v1:/);
+  assert.match(storedStartup.terminal_program_path, /^termaenc:v1:/);
+  assert.match(storedStartup.terminal_program_args, /^termaenc:v1:/);
+  assert.match(storedStartup.terminal_working_directory, /^termaenc:v1:/);
   assertStartup(database.getConnection(id), startup);
+  database.run(
+    "UPDATE connections SET terminal_program_path=? WHERE id=?",
+    [storedStartup.terminal_program_path.replace(/^termaenc:v1:/, "tdenc:v1:"), id]
+  );
+  assert.equal(database.getConnection(id).terminal_program_path, startup.terminal_program_path);
+  assert.ok(database.encryptStoredConnectionSecrets() >= 1);
+  const migratedStartup = database.get("SELECT terminal_program_path FROM connections WHERE id=?", [id]);
+  assert.match(migratedStartup.terminal_program_path, /^termaenc:v1:/);
   assert.throws(
     () => database.updateTerminalStartup(id, { terminal_startup_mode: "program", terminal_program_path: "" }),
     /程序路径/

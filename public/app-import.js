@@ -388,7 +388,7 @@ function showIdentityBindingModal(items, options={}) {
       try {
         const {candidate, selected} = requireSelection();
         setStatus(`正在测试 ${selected.length} 个连接...`, "busy");
-        const tunnels = selected.map(row => ({...row, identity_file:candidate.path, missing_identity:false, extra_args:String(row.extra_args || "").startsWith("tdenc:v1:") ? "" : row.extra_args || ""}));
+        const tunnels = selected.map(row => ({...row, identity_file:candidate.path, missing_identity:false, extra_args:/^(?:tdenc|termaenc):v1:/.test(String(row.extra_args || "")) ? "" : row.extra_args || ""}));
         const response = await api("/api/import/test", {method:"POST", body:JSON.stringify({tunnels})});
         response.results.forEach((result, index) => {
           const target = modal.querySelector(`[data-binding-result="${CSS.escape(selected[index].binding_id)}"]`);

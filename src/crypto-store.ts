@@ -2,6 +2,17 @@ const crypto = require("node:crypto");
 const { readSecuritySettings, verifySecret, writeSecuritySettings } = require("./security");
 
 let activeKey = null;
+const ENCRYPTED_PREFIX = "termaenc:v1:";
+const LEGACY_ENCRYPTED_PREFIX = "tdenc:v1:";
+
+function isEncryptedText(value) {
+  const text = String(value || "");
+  return text.startsWith(ENCRYPTED_PREFIX) || text.startsWith(LEGACY_ENCRYPTED_PREFIX);
+}
+
+function isLegacyEncryptedText(value) {
+  return String(value || "").startsWith(LEGACY_ENCRYPTED_PREFIX);
+}
 
 function deriveKey(password, salt) {
   return crypto.scryptSync(String(password || ""), salt, 32);
@@ -51,12 +62,12 @@ function encryptText(value) {
   const cipher = crypto.createCipheriv("aes-256-gcm", activeKey, iv);
   const data = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return `tdenc:v1:${iv.toString("base64url")}:${tag.toString("base64url")}:${data.toString("base64url")}`;
+  return `${ENCRYPTED_PREFIX}${iv.toString("base64url")}:${tag.toString("base64url")}:${data.toString("base64url")}`;
 }
 
 function decryptText(value) {
   const text = String(value || "");
-  if (!text.startsWith("tdenc:v1:")) return value;
+  if (!isEncryptedText(text)) return value;
   if (!activeKey) return "";
   const [, , ivText, tagText, dataText] = text.split(":");
   const decipher = crypto.createDecipheriv("aes-256-gcm", activeKey, Buffer.from(ivText, "base64url"));
@@ -70,6 +81,8 @@ module.exports = {
   enableEncryption,
   encryptionReady,
   encryptText,
+  isEncryptedText,
+  isLegacyEncryptedText,
   lockEncryption,
   unlockEncryption
 };

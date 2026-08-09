@@ -227,7 +227,7 @@ function encryptedSecretCount(db) {
     const columns = new Set(tableColumns(db, table));
     for (const column of ["ssh_password", "private_key_passphrase", "password"]) {
       if (!columns.has(column)) continue;
-      total += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${quoteIdentifier(column)} LIKE 'tdenc:v1:%'`).get().count || 0);
+      total += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${quoteIdentifier(column)} LIKE 'tdenc:v1:%' OR ${quoteIdentifier(column)} LIKE 'termaenc:v1:%'`).get().count || 0);
     }
   }
   return total;
@@ -240,7 +240,7 @@ function plainSecretCount(db) {
     const columns = new Set(tableColumns(db, table));
     for (const column of ["ssh_password", "private_key_passphrase", "password"]) {
       if (!columns.has(column)) continue;
-      total += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${quoteIdentifier(column)} IS NOT NULL AND ${quoteIdentifier(column)}<>'' AND ${quoteIdentifier(column)} NOT LIKE 'tdenc:v1:%'`).get().count || 0);
+      total += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${quoteIdentifier(column)} IS NOT NULL AND ${quoteIdentifier(column)}<>'' AND ${quoteIdentifier(column)} NOT LIKE 'tdenc:v1:%' AND ${quoteIdentifier(column)} NOT LIKE 'termaenc:v1:%'`).get().count || 0);
     }
   }
   return total;

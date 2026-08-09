@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { DATA_DIR, LOG_DIR, DB_PATH } = require("./config");
-const { decryptText, encryptText } = require("./crypto-store");
+const { decryptText, encryptText, isEncryptedText, isLegacyEncryptedText } = require("./crypto-store");
 const { allowedIdentityPath, assertAllowedIdentityPath } = require("./identity-path");
 const { assertSafeExtraArgs } = require("./ssh-command");
 const { validateSshHost, validateSshUser } = require("./ssh-connection");
@@ -1084,10 +1084,6 @@ function reorderConnectionGroups(names) {
   return { ok: true, groups: requested.length };
 }
 
-function isEncryptedText(value) {
-  return String(value || "").startsWith("tdenc:v1:");
-}
-
 function rewriteConnectionSecrets(transform) {
   const rows = all("SELECT id, identity_file, ssh_password, private_key_passphrase, extra_args, terminal_program_path, terminal_program_args, terminal_working_directory FROM connections");
   const update = db.prepare("UPDATE connections SET identity_file=?, ssh_password=?, private_key_passphrase=?, extra_args=?, terminal_program_path=?, terminal_program_args=?, terminal_working_directory=?, updated_at=? WHERE id=?");
@@ -1126,7 +1122,10 @@ function rewriteConnectionSecrets(transform) {
 }
 
 function encryptStoredConnectionSecrets() {
-  return rewriteConnectionSecrets((value) => isEncryptedText(value) ? value : encryptText(value));
+  return rewriteConnectionSecrets((value) => {
+    if (isLegacyEncryptedText(value)) return encryptText(decryptText(value));
+    return isEncryptedText(value) ? value : encryptText(value);
+  });
 }
 
 function decryptStoredConnectionSecrets() {
