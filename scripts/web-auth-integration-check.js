@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
 const { spawn } = require("node:child_process");
+const appVersion = require("../package.json").version;
 
 function availablePort() {
   return new Promise((resolve, reject) => {
@@ -183,7 +184,7 @@ async function main() {
     assert.ok(mainCsp.includes(`style-src 'self' 'nonce-${nonce}'`));
     assert.match(mainCsp, /script-src 'self'/);
     assert.doesNotMatch(mainCsp, /script-src 'self' 'unsafe-inline'/);
-    assert.match(mainHtml, /<script src="\/csp-bootstrap\.js\?v=1\.3\.3"><\/script>/);
+    assert.ok(mainHtml.includes(`<script src="/csp-bootstrap.js?v=${appVersion}"></script>`));
     assert.equal((await fetch(`${url}/csp-bootstrap.js`, {headers:{Cookie:sessionCookie}})).status, 200);
     const sessionSettingsResponse = await fetch(`${url}/api/security`, {
       method:"PUT",
