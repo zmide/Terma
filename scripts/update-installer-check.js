@@ -20,16 +20,22 @@ function sleep(milliseconds) {
 
 function response(body, options = {}) {
   const contentType = options.contentType || "application/octet-stream";
+  const responseHeaders = {
+    ...(options.headers || {}),
+    "content-type": contentType
+  };
   return {
     ok: options.ok !== false,
     status: options.status || (options.ok === false ? 500 : 200),
     body: body === null ? null : Readable.from([Buffer.from(body || "")]),
     headers: {
-      get(name) {
-        return String(name || "").toLowerCase() === "content-type" ? contentType : null;
-      }
+      get(name) { return responseHeaders[String(name || "").toLowerCase()] || null; }
     }
   };
+}
+
+function redirectResponse(location, status = 302) {
+  return response(null, {status, body:null, headers:{location}});
 }
 
 function hangingResponse(onCancel) {
@@ -213,6 +219,69 @@ async function main() {
     await assert.rejects(() => untrusted.download(release({...asset, url:"https://token:secret@github.com/zmide/Terma/releases/download/v1.2.0/Terma.exe"})), /不是受信任/);
     await assert.rejects(() => untrusted.download(release({...asset, url:"https://github.com/zmide/Terma/archive/refs/tags/v1.2.0.zip"})), /不是有效的 GitHub Release/);
     await assert.rejects(() => untrusted.download(release({...asset, url:"https://github.com/zmide/Terma/releases/download/v1.2.0/Terma.exe?token=private"})), /不是受信任/);
+
+    const redirectBody = Buffer.alloc(64 * 1024, 0x52);
+    const redirectAsset = {
+      ...asset,
+      size:redirectBody.length,
+      digest:digest(redirectBody)
+    };
+    for (const redirectStatus of [302, 307]) {
+      const seen = [];
+      const redirectInstaller = new UpdateInstaller(path.join(root, `redirect-${redirectStatus}`), {
+        platform:"win32",
+        arch:"x64",
+        probeBytes:64 * 1024,
+        fetch: async url => {
+          const current = String(url);
+          if (current.startsWith("https://objects.githubusercontent.com/")) return response(redirectBody);
+          seen.push(current);
+          return redirectResponse("https://objects.githubusercontent.com/terma/redirect-fixture.exe", redirectStatus);
+        }
+      });
+      const redirected = await redirectInstaller.download(release(redirectAsset));
+      assert.equal(redirected.state, "downloaded");
+      assert.ok(seen.length > 0, `应跟随 ${redirectStatus} 重定向`);
+      assert.equal(fs.readFileSync(redirected.file).equals(redirectBody), true);
+    }
+
+    const invalidRedirectInstaller = new UpdateInstaller(path.join(root, "redirect-invalid-host"), {
+      platform:"win32",
+      arch:"x64",
+      probeBytes:64 * 1024,
+      fetch: async () => redirectResponse("https://evil.example.invalid/update.exe")
+    });
+    await assert.rejects(
+      () => invalidRedirectInstaller.download(release(redirectAsset)),
+      /所有下载线路均失败/
+    );
+
+    const httpRedirectInstaller = new UpdateInstaller(path.join(root, "redirect-http"), {
+      platform:"win32",
+      arch:"x64",
+      probeBytes:64 * 1024,
+      fetch: async () => redirectResponse("http://github.com/zmide/Terma/releases/download/v1.2.0/Terma.exe")
+    });
+    await assert.rejects(
+      () => httpRedirectInstaller.download(release(redirectAsset)),
+      /所有下载线路均失败/
+    );
+
+    const tooManyRedirectInstaller = new UpdateInstaller(path.join(root, "redirect-too-many"), {
+      platform:"win32",
+      arch:"x64",
+      probeBytes:64 * 1024,
+      fetch: async url => {
+        const current = String(url);
+        const match = current.match(/redirect-hop-(\d+)/);
+        const next = match ? Number(match[1]) + 1 : 1;
+        return redirectResponse(`https://github.com/zmide/Terma/releases/download/v1.2.0/redirect-hop-${next}`);
+      }
+    });
+    await assert.rejects(
+      () => tooManyRedirectInstaller.download(release(redirectAsset)),
+      /重定向次数过多/
+    );
 
     const staleRoot = path.join(root, "stale-failure");
     fs.mkdirSync(path.join(staleRoot, "updates"), { recursive: true });

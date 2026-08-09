@@ -117,10 +117,15 @@ async function check(name, callback) {
     const homeDirectory = temporaryRoot();
     const termaUserData = path.join(temporaryRoot(), "terma-user-data");
     const legacyOverride = path.join(temporaryRoot(), "legacy-user-data-override");
-    const base = { platform:"linux", homeDirectory };
+    const base = { platform:"linux", homeDirectory, env:{} };
 
     assert.equal(desktopUserDataRoot(base), path.join(homeDirectory, ".config", "Terma"));
     assert.equal(legacyDesktopUserDataRoot(base), path.join(homeDirectory, ".config", "TunnelDesk"));
+    const xdgConfigHome = temporaryRoot();
+    assert.equal(
+      desktopUserDataRoot({ ...base, env:{ XDG_CONFIG_HOME:xdgConfigHome } }),
+      path.join(xdgConfigHome, "Terma")
+    );
     assert.equal(desktopUserDataRoot({ ...base, env:{TUNNELDESK_USER_DATA_DIR:legacyOverride} }), legacyOverride);
     assert.equal(desktopUserDataRoot({
       ...base,

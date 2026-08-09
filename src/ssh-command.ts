@@ -12,9 +12,14 @@ const BLOCKED_OPENSSH_OPTIONS = new Set([
   "permitlocalcommand",
   "pkcs11provider",
   "proxycommand",
-  "securitykeyprovider"
+  "securitykeyprovider",
+  "controlmaster",
+  "controlpath",
+  "controlpersist",
+  "globalknownhostsfile",
+  "userknownhostsfile"
 ]);
-const BLOCKED_OPENSSH_SHORT_OPTIONS = new Set(["i", "F", "I", "A"]);
+const BLOCKED_OPENSSH_SHORT_OPTIONS = new Set(["i", "F", "I", "A", "E", "S", "O"]);
 const OPENSSH_SHORT_OPTIONS_WITH_ARGUMENT = new Set([
   "B", "b", "c", "D", "E", "e", "F", "I", "i", "J", "L", "l", "m", "O", "o", "P", "p", "Q", "R", "S", "W", "w"
 ]);

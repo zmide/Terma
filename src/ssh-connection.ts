@@ -37,7 +37,7 @@ function structuredOpenSshArgs(connection) {
 
 function validateSshUser(value) {
   const user = String(value ?? "").trim();
-  if (!user || user.length > 255 || user.startsWith("-") || /[\0\r\n\t\s@,:/\\]/.test(user)) {
+  if (!user || user.length > 255 || user.startsWith("-") || /[\0\r\n\t\s,:/\\]/.test(user)) {
     throw new Error("SSH 用户名无效：不能包含选项前缀、控制字符或目标分隔符");
   }
   return user;
