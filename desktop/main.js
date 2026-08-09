@@ -623,6 +623,48 @@ function isWindowsPortable() {
     && Boolean(String(process.env.PORTABLE_EXECUTABLE_DIR || "").trim());
 }
 
+function desktopStartupFailurePresentation(error, context = {}) {
+  const rawMessage = String(error?.message || error || "Terma 启动失败");
+  const platform = String(context.platform || process.platform);
+  if (error?.code !== "INSECURE_STORAGE_PERMISSIONS" || platform !== "win32") {
+    return {title:`${PRODUCT_NAME} 启动失败`, message:rawMessage};
+  }
+  const portable = Object.prototype.hasOwnProperty.call(context, "portable")
+    ? Boolean(context.portable)
+    : isWindowsPortable();
+  const dataDirectory = String(context.dataDir || dataPath || error?.path || "").trim();
+  const failedPath = String(error?.path || "").trim();
+  const detail = String(error?.detail || rawMessage).trim();
+  const unsupportedAcl = error?.failure_kind === "unsupported-acl"
+    || /does not support|not supported|unsupported|incorrect function|文件系统.*不支持|不支持.*(?:ACL|访问控制)|功能不受支持/i.test(detail);
+  const mode = portable ? "Windows 便携版" : "Windows 桌面版";
+  const reason = unsupportedAcl
+    ? "当前磁盘或文件系统不支持 Windows ACL（访问控制列表）。"
+    : error?.failure_kind === "access-denied"
+      ? "当前 Windows 账户没有权限收紧该目录的访问控制。"
+      : "Windows 无法为该目录建立并验证仅当前用户可访问的 ACL。";
+  const action = portable
+    ? "请将 Terma 便携版整个文件夹移动到本机 NTFS 磁盘后重试。"
+    : "请改用当前用户目录下的本机 NTFS 路径；如果使用了自定义数据目录，请将它迁移到受支持的位置。";
+  const lines = [
+    "Terma 无法安全使用当前数据目录，因此已停止启动，避免 SSH 密码、私钥信息和远程连接凭据被其他本机用户读取。",
+    "",
+    `运行模式：${mode}`,
+    dataDirectory ? `数据目录：${dataDirectory}` : "",
+    failedPath && path.resolve(failedPath) !== path.resolve(dataDirectory || failedPath) ? `失败路径：${failedPath}` : "",
+    `检测结果：${reason}`,
+    `原始原因：${detail}`,
+    "",
+    "处理方法：",
+    `1. ${action}`,
+    "2. 不要把 data 和 .ssh 放在 FAT32、exFAT、部分网络共享或不支持 Windows ACL 的兼容文件系统中。",
+    "3. 如果该位置本应支持 ACL，请确认当前 Windows 账户对目录拥有完全控制权限。",
+    "",
+    "Terma 没有修改或删除现有连接数据，也不会自动降低安全要求。"
+  ].filter((line, index, values) => line || values[index - 1] !== "");
+  return {title:`${PRODUCT_NAME} 数据目录权限不受支持`, message:lines.join("\n")};
+}
+
 function sourceProjectRoot() {
   return path.resolve(__dirname, "..");
 }
@@ -2063,10 +2105,10 @@ app.whenReady().then(async () => {
     flushPendingDisplayClients();
   } catch (error) {
     const alreadyRunning = error?.code === "TERMA_ALREADY_RUNNING" || error?.code === "TUNNELDESK_ALREADY_RUNNING";
-    const message = alreadyRunning
-      ? `${error.message}\n\n请使用已经打开的 ${PRODUCT_NAME} 窗口，或先停止已有无界面服务。`
-      : (error?.message || String(error));
-    dialog.showErrorBox(`${PRODUCT_NAME} 启动失败`, message);
+    const presentation = alreadyRunning
+      ? {title:`${PRODUCT_NAME} 启动失败`, message:`${error.message}\n\n请使用已经打开的 ${PRODUCT_NAME} 窗口，或先停止已有无界面服务。`}
+      : desktopStartupFailurePresentation(error, {dataDir:dataPath});
+    dialog.showErrorBox(presentation.title, presentation.message);
     quitting = true;
     app.exit(1);
     return;

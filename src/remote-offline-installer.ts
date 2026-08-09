@@ -37,6 +37,21 @@ function buildAptPrintUrisCommand(packages) {
   return `LC_ALL=C apt-get --print-uris --yes --download-only install ${normalized.map(shellQuote).join(" ")}`;
 }
 
+function aptPrintUrisUsesOnlyCachedPackages(output) {
+  const text = String(output || "");
+  return /Need to get 0\s+B(?:\/[^\n]+)? of archives\./i.test(text)
+    && !/unable to locate package|no installation candidate|failed to fetch|could not download|cannot download/i.test(text);
+}
+
+function buildAptCachedInstallCommand(packages) {
+  const normalized = normalizeAptPackages(packages);
+  return [
+    "set -eu",
+    `LC_ALL=C DEBIAN_FRONTEND=noninteractive apt-get --no-download install -y ${normalized.map(shellQuote).join(" ")}`,
+    `dpkg-query -W -f='\${Package} \${Status}\\n' ${normalized.map(shellQuote).join(" ")}`
+  ].join("\n");
+}
+
 function buildAptPlatformProbeCommand() {
   return [
     "set +e",
@@ -378,8 +393,10 @@ function buildAptOfflinePreflightCommand(remoteDirectory) {
 }
 
 module.exports = {
+  aptPrintUrisUsesOnlyCachedPackages,
   aptOutputNeedsLocalResolution,
   blockedDownloadHost,
+  buildAptCachedInstallCommand,
   buildAptOfflineInstallCommand,
   buildAptOfflinePreflightCommand,
   buildAptPlatformProbeCommand,

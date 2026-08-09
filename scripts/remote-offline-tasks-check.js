@@ -5,6 +5,11 @@ const os = require("os");
 const path = require("path");
 const { createRemoteOfflineTaskManager } = require("../dist/remote-offline-tasks");
 
+function decodeRemoteShellPayload(command) {
+  const match = String(command || "").match(/\btd_payload=([A-Za-z0-9+/=]+);/);
+  return match ? Buffer.from(match[1], "base64").toString("utf8") : String(command || "");
+}
+
 (async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-offline-task-check-"));
   const packageFile = path.join(root, "xclip_1_amd64.deb");
@@ -188,6 +193,49 @@ const { createRemoteOfflineTaskManager } = require("../dist/remote-offline-tasks
   assert.deepEqual(fallbackCandidates, [["xclip"], ["xsel"]], "本机离线索引应继续尝试可用的候选包");
   assert.ok(fallbackTask.logs.some(item => item.text.includes("本机刷新")));
   assert.equal(fallbackManager.remove(fallbackTask.id), true);
+
+  let cachedResolverCalls = 0;
+  let cachedDownloads = 0;
+  let cachedUploads = 0;
+  let cachedInstallCommand = "";
+  const cachedManager = createRemoteOfflineTaskManager({
+    data_dir:root,
+    async run_ssh_command() {
+      return {status:0, stdout:[
+        "The following NEW packages will be installed:",
+        "  xfce4 xfce4-goodies",
+        "Need to get 0 B/987 kB of archives."
+      ].join("\n")};
+    },
+    async resolve_apt_packages() { cachedResolverCalls += 1; throw new Error("cached install must not resolve repositories"); },
+    async download_apt_bundle() { cachedDownloads += 1; throw new Error("cached install must not download"); },
+    start_upload() { cachedUploads += 1; throw new Error("cached install must not upload"); },
+    async run_ssh_stream(_connection, command) {
+      cachedInstallCommand = command;
+      return {status:0, stdout:"installed from cache\n"};
+    }
+  });
+  const cachedStarted = cachedManager.startAptInstall({
+    connection:{id:73, name:"cached-xfce", ssh_host:"cached-xfce.test"},
+    component:"linux-desktop-xfce", component_label:"Linux 桌面 · XFCE", packages:["xfce4", "xfce4-goodies"],
+    direct_root:true,
+    async verify() { return {desktops:[{id:"xfce"}]}; },
+    validate(after) { return after.desktops.some(item => item.id === "xfce"); }
+  });
+  const cachedDeadline = Date.now() + 3000;
+  let cachedTask;
+  while (Date.now() < cachedDeadline) {
+    cachedTask = cachedManager.list().find(item => item.id === cachedStarted.id);
+    if (cachedTask?.status !== "running") break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(cachedTask.status, "done");
+  assert.equal(cachedResolverCalls, 0);
+  assert.equal(cachedDownloads, 0);
+  assert.equal(cachedUploads, 0);
+  assert.match(decodeRemoteShellPayload(cachedInstallCommand), /apt-get --no-download install -y/);
+  assert.ok(cachedTask.logs.some(item => item.text.includes("远端 APT 缓存已包含")));
+  assert.equal(cachedManager.remove(cachedTask.id), true);
 
   let satisfiedProbeCalls = 0;
   let satisfiedResolverCalls = 0;

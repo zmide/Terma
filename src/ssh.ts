@@ -913,21 +913,6 @@ function connectionRunning(connectionId) {
   return connectionForwards(connectionId).some((forward) => ssh2Forwards.has(Number(forward.id)) || (forward.pid && pidRunning(forward.pid)));
 }
 
-function checkLocalPort(host, port) {
-  return new Promise((resolve) => {
-    const socket = net.connect({ host, port: Number(port), timeout: 1200 });
-    socket.once("connect", () => {
-      socket.destroy();
-      resolve(true);
-    });
-    socket.once("timeout", () => {
-      socket.destroy();
-      resolve(false);
-    });
-    socket.once("error", () => resolve(false));
-  });
-}
-
 const connectionHealthCache = new Map();
 const CONNECTION_HEALTH_TTL_MS = 30000;
 
@@ -942,24 +927,57 @@ async function connectionHealth(connectionId, options: any = {}) {
   if (!options.force && cached && Date.now() - cached.checked_at < CONNECTION_HEALTH_TTL_MS) return {...cached, cached:true, cache_age_ms:Date.now() - cached.checked_at};
   const connection = getConnection(connectionId);
   const forwards = connectionForwards(connectionId);
-  const ssh = await testSsh(connection);
+  let ssh;
+  try {
+    ssh = await testSsh(connection);
+  } catch (error) {
+    const message = String(error?.message || "SSH 健康检查无法完成");
+    const issues = Array.isArray(error?.details?.issues)
+      ? error.details.issues
+      : Array.isArray(error?.issues)
+        ? error.issues
+        : [];
+    ssh = {
+      ok:false,
+      elapsed_ms:0,
+      output:message,
+      raw_output:"",
+      diagnosis:diagnoseSshError(message),
+      issues
+    };
+  }
   const forwardChecks = [];
   for (const forward of forwards) {
     const running = Boolean(ssh2Forwards.has(Number(forward.id)) || (forward.pid && pidRunning(forward.pid)));
     let reachable: any = null;
     let port_usage: any = null;
-    if (running && ["local", "socks"].includes(forward.mode)) {
-      const host = normalizeListenHost(forward.bind_host);
-      reachable = await checkLocalPort(host, forward.bind_port);
-    } else if (!running && ["local", "socks"].includes(forward.mode)) {
-      port_usage = await diagnosePortUsage(forward.bind_host, forward.bind_port);
+    if (["local", "socks"].includes(forward.mode)) {
+      const usage = await diagnosePortUsage(forward.bind_host, forward.bind_port);
+      if (running) reachable = usage.occupied;
+      else port_usage = usage;
     }
-    forwardChecks.push({ id: forward.id, mode: forward.mode, running, reachable, status: running ? "running" : (forward.status || "stopped"), port_usage, last_error: forward.last_error || "" });
+    forwardChecks.push({
+      id:forward.id,
+      mode:forward.mode,
+      bind_host:forward.bind_host,
+      bind_port:Number(forward.bind_port || 0),
+      target_host:forward.target_host,
+      target_port:Number(forward.target_port || 0),
+      running,
+      reachable,
+      status:running ? "running" : (forward.status || "stopped"),
+      port_usage,
+      last_error:forward.last_error || ""
+    });
   }
   const ok = ssh.ok && forwardChecks.every((item) => item.reachable !== false);
   const result = {
     id: Number(connectionId),
     name: connection.name,
+    group_name:connection.group_name,
+    ssh_user:connection.ssh_user,
+    ssh_host:connection.ssh_host,
+    ssh_port:Number(connection.ssh_port || 22),
     ok,
     status: ok ? "正常" : "异常",
     ssh,

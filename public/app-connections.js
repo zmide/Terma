@@ -937,9 +937,39 @@ function connectionExtraArgsValidationPayload(form=$("connectionForm")) {
   };
 }
 
+function connectionAdvancedOptions(form=$("connectionForm")) {
+  return connectionFormField(form, "connAdvancedOptions");
+}
+
+function openConnectionAdvancedOptions(form=$("connectionForm")) {
+  const details = connectionAdvancedOptions(form);
+  if (details) details.open = true;
+  return details;
+}
+
+function updateConnectionAdvancedStatus(form=$("connectionForm"), openForIssues=true) {
+  const status = connectionFormField(form, "connAdvancedStatus");
+  if (!status) return;
+  const issues = Array.isArray(form?._extraArgsIssues) ? form._extraArgsIssues : [];
+  const errors = issues.filter(item => item?.severity === "error").length;
+  const warnings = issues.filter(item => item?.severity === "warning").length;
+  const terminalStatus = connectionFormField(form, "connTerminalDetectionStatus");
+  const terminalError = terminalStatus?.classList.contains("error");
+  const terminalWarning = terminalStatus?.classList.contains("warning");
+  const parts = [];
+  if (errors) parts.push(`${errors} 处参数错误`);
+  if (warnings) parts.push(`${warnings} 条参数提醒`);
+  if (terminalError) parts.push("终端检测失败");
+  else if (terminalWarning) parts.push("终端检测有提醒");
+  status.textContent = parts.join(" · ") || "终端、跳板与连接调优";
+  status.className = `connection-form-advanced-status${errors || terminalError ? " error" : warnings || terminalWarning ? " warning" : ""}`;
+  if (openForIssues && parts.length) openConnectionAdvancedOptions(form);
+}
+
 function focusConnectionExtraArgsIssue(form, issue) {
   const editor = connectionFormField(form, "conn_extra");
   if (!editor) return;
+  openConnectionAdvancedOptions(form);
   editor.focus({preventScroll:true});
   const start = Math.max(0, Math.min(editor.value.length, Number(issue?.start || 0)));
   const end = Math.max(start, Math.min(editor.value.length, Number(issue?.end ?? start)));
@@ -960,6 +990,7 @@ function renderConnectionExtraArgsDiagnostics(form=$("connectionForm"), issues=[
     box.hidden = true;
     box.className = "ssh-extra-diagnostics";
     box.replaceChildren();
+    updateConnectionAdvancedStatus(form);
     return;
   }
   box.hidden = false;
@@ -977,6 +1008,7 @@ function renderConnectionExtraArgsDiagnostics(form=$("connectionForm"), issues=[
     button.addEventListener("click", () => focusConnectionExtraArgsIssue(form, item));
     box.appendChild(button);
   }
+  updateConnectionAdvancedStatus(form);
 }
 
 async function validateConnectionExtraArgs(form=$("connectionForm")) {
@@ -1026,6 +1058,10 @@ function connPayload(form=$("connectionForm"), validateStartup=false) {
   }
   const startup = connectionTerminalFormConfig(form);
   if (validateStartup && startup.terminal_startup_mode === "program" && !startup.terminal_program_path) {
+    openConnectionAdvancedOptions(form);
+    const programPath = field("conn_terminal_program_path");
+    programPath?.focus({preventScroll:true});
+    programPath?.scrollIntoView({block:"center", behavior:"smooth"});
     throw new Error("请填写要在远端启动的程序完整路径");
   }
   return {
@@ -1174,6 +1210,9 @@ function resetConnectionForm(){
   $("conn_extra").value="";
   renderConnectionExtraArgsDiagnostics($("connectionForm"), []);
   resetConnectionTerminalStartup($("connectionForm"));
+  updateConnectionAdvancedStatus($("connectionForm"), false);
+  const advanced = connectionAdvancedOptions($("connectionForm"));
+  if (advanced) advanced.open = false;
   toggleAuthFields();
 }
 
@@ -1183,6 +1222,9 @@ function wireConnectionForm() {
     e.preventDefault();
     await saveConnectionForm(false, e.submitter);
   });
+  form.addEventListener("invalid", event => {
+    if (event.target?.closest?.("#connAdvancedOptions")) openConnectionAdvancedOptions(form);
+  }, true);
   form._terminalCredentialRevision = Number(form._terminalCredentialRevision || 0);
   form.addEventListener("input", event => {
     if (!event.target.matches("#conn_host,#conn_port,#conn_user,#conn_password,#conn_key_passphrase,#conn_extra,#conn_connect_timeout,#conn_keepalive_interval,#conn_keepalive_count")) return;
@@ -1394,7 +1436,10 @@ async function testConnectionForm(button=null){
     }
     notify(message,"error");
   }
-  finally { setButtonBusy(button, false); }
+  finally {
+    updateConnectionAdvancedStatus(form);
+    setButtonBusy(button, false);
+  }
 }
 
 async function checkConnectionHealth(id, button=null) {
@@ -1406,21 +1451,59 @@ async function checkConnectionHealth(id, button=null) {
     renderConnections();
     notify(formatHealthMessage(c, result), result.ok ? "success" : "error");
   } catch (error) {
-    notify(error.message, "error");
+    notify(`${healthConnectionIdentity(c, {id})} 健康检查失败\n${error.message}`, "error");
   } finally {
     setButtonBusy(button, false);
   }
 }
 
 function formatHealthMessage(connection, result) {
-  const lines = [`${connection?.name || result.id} 健康检查：${result.status}${result.cached ? `（缓存 ${Math.round((result.cache_age_ms || 0)/1000)} 秒）` : ""}`];
-  if (!result.ssh?.ok) lines.push(result.ssh?.output || "SSH 连接异常");
+  const identity = healthConnectionIdentity(connection, result);
+  const lines = [`${identity} 健康检查：${result.status}${result.cached ? `（缓存 ${Math.round((result.cache_age_ms || 0)/1000)} 秒）` : ""}`];
+  lines.push(...healthFailureDetails(result));
+  return lines.join("\n");
+}
+
+function healthConnectionIdentity(connection, result={}) {
+  const name = connection?.name || result.name || result.id || "未知连接";
+  const user = connection?.ssh_user || result.ssh_user || "";
+  const host = connection?.ssh_host || result.ssh_host || "";
+  const port = Number(connection?.ssh_port || result.ssh_port || 22);
+  return user && host ? `${name} · ${user}@${host}:${port}` : String(name);
+}
+
+function healthForwardLabel(forward) {
+  const modes = {local:"本地", remote:"远程", socks:"SOCKS5"};
+  const mode = modes[forward?.mode] || forward?.mode || "转发";
+  const bind = `${forward?.bind_host || "127.0.0.1"}:${Number(forward?.bind_port || 0)}`;
+  if (forward?.mode === "socks") return `${mode} #${forward.id}（${bind}）`;
+  const target = `${forward?.target_host || "127.0.0.1"}:${Number(forward?.target_port || 0)}`;
+  return `${mode} #${forward.id}（${bind} → ${target}）`;
+}
+
+function healthFailureDetails(result) {
+  const lines = [];
+  if (!result.ssh?.ok) lines.push(`SSH：${result.ssh?.output || "连接异常"}`);
   for (const forward of result.forwards || []) {
-    if (forward.reachable === false) lines.push(`转发 ${forward.id} 本地端口不可达`);
+    const label = healthForwardLabel(forward);
+    if (forward.reachable === false) lines.push(`${label}：监听端口未就绪`);
     if (forward.port_usage?.occupied) {
       const owners = (forward.port_usage.processes || []).map(p => `${p.name || "未知程序"}(${p.pid})`).join("、") || "未知程序";
-      lines.push(`转发 ${forward.id} 端口被占用：${owners}`);
+      lines.push(`${label}：监听端口被占用，${owners}`);
     }
+    if (!forward.running && forward.last_error && !forward.port_usage?.occupied) lines.push(`${label}：${forward.last_error}`);
+  }
+  return lines;
+}
+
+function formatAllHealthMessage(results) {
+  const failed = results.filter(item => !item.ok);
+  const lines = [`健康检查完成：正常 ${results.length - failed.length} 个，异常 ${failed.length} 个`];
+  for (const result of failed) {
+    const connection = connections.find(item => Number(item.id) === Number(result.id));
+    const details = healthFailureDetails(result);
+    lines.push(`${healthConnectionIdentity(connection, result)}：${details[0] || result.status || "异常"}`);
+    for (const detail of details.slice(1)) lines.push(`  ${detail}`);
   }
   return lines.join("\n");
 }
@@ -1433,7 +1516,7 @@ async function checkAllHealth(button=null) {
     for (const item of results) healthResults.set(item.id, item);
     renderConnections();
     const failed = results.filter(item => !item.ok);
-    notify(`健康检查完成：正常 ${results.length - failed.length} 个，异常 ${failed.length} 个`, failed.length ? "error" : "success");
+    notify(formatAllHealthMessage(results), failed.length ? "error" : "success");
   } catch (error) {
     notify(error.message, "error");
   } finally {

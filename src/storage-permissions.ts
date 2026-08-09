@@ -5,6 +5,17 @@ const { spawnSync } = require("node:child_process");
 const securedWindowsPaths = new Set();
 const permissionFailures = new Map();
 
+function storagePermissionFailureKind(detail, platform = process.platform) {
+  const text = String(detail || "").trim();
+  if (platform !== "win32") return "permission-error";
+  if (/does not support|not supported|unsupported|incorrect function|access control lists?.*not|file system.*acl|文件系统.*不支持.*(?:ACL|访问控制)|不支持.*(?:ACL|访问控制)|功能不受支持/i.test(text)) {
+    return "unsupported-acl";
+  }
+  if (/access is denied|access denied|permission denied|eacces|拒绝访问|权限不足/i.test(text)) return "access-denied";
+  if (/无法识别当前 Windows 用户|cannot identify.*windows user/i.test(text)) return "unknown-account";
+  return "acl-error";
+}
+
 function windowsAccount() {
   const username = String(process.env.USERNAME || "").trim();
   const domain = String(process.env.USERDOMAIN || "").trim();
@@ -29,11 +40,22 @@ function windowsAclPrincipals(output, target) {
 
 function permissionError(target, detail, options: any = {}) {
   const resolved = path.resolve(String(target || "."));
-  const message = `无法收紧 Terma 数据权限：${resolved}（${detail}）`;
-  permissionFailures.set(resolved.toLowerCase(), { path:resolved, message, platform:process.platform });
+  const detailText = String(detail || "未知权限错误").trim();
+  const failureKind = storagePermissionFailureKind(detailText);
+  const message = `无法收紧 Terma 数据权限：${resolved}（${detailText}）`;
+  permissionFailures.set(resolved.toLowerCase(), {
+    path:resolved,
+    message,
+    detail:detailText,
+    failure_kind:failureKind,
+    platform:process.platform
+  });
   if (options.required) {
     const error: any = new Error(message);
     error.code = "INSECURE_STORAGE_PERMISSIONS";
+    error.path = resolved;
+    error.detail = detailText;
+    error.failure_kind = failureKind;
     throw error;
   }
   return false;
@@ -130,5 +152,6 @@ module.exports = {
   assertPrivateStorage,
   ensurePrivateDirectory,
   ensurePrivateFile,
+  storagePermissionFailureKind,
   storagePermissionDiagnostics
 };

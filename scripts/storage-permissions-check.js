@@ -3,7 +3,7 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { ensurePrivateDirectory, ensurePrivateFile } = require("../dist/storage-permissions");
+const { ensurePrivateDirectory, ensurePrivateFile, storagePermissionFailureKind } = require("../dist/storage-permissions");
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-storage-permissions-"));
 const directory = path.join(root, "data");
@@ -27,6 +27,9 @@ function windowsAclSids(target) {
 }
 
 try {
+  assert.equal(storagePermissionFailureKind("The file system does not support ACLs.", "win32"), "unsupported-acl");
+  assert.equal(storagePermissionFailureKind("Access is denied.", "win32"), "access-denied");
+  assert.equal(storagePermissionFailureKind("无法识别当前 Windows 用户", "win32"), "unknown-account");
   fs.mkdirSync(directory, {recursive:true});
   fs.writeFileSync(file, "{}\n", "utf8");
   if (process.platform === "win32") {

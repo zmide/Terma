@@ -11,6 +11,7 @@ const { trustTestHost } = require("./ssh-host-trust-test-helper");
 
 let normalizeSshTransportError;
 let runPasswordCommand;
+let startPasswordForward;
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -131,7 +132,7 @@ async function main() {
   const previousSshDir = process.env.TERMA_SSH_DIR;
   fs.mkdirSync(fixtureSshRoot, { recursive: true });
   process.env.TERMA_SSH_DIR = fixtureSshRoot;
-  ({ normalizeSshTransportError, runPasswordCommand } = require("../dist/ssh2-client"));
+  ({ normalizeSshTransportError, runPasswordCommand, startPasswordForward } = require("../dist/ssh2-client"));
   assert.equal(
     normalizeSshTransportError(new Error("Timed out while waiting for handshake"), {ssh_host:"example.com", ssh_port:22}).message,
     "SSH 握手超时，请检查主机地址、端口和 SSH 服务"
@@ -176,6 +177,7 @@ async function main() {
       else context.reject();
     });
     client.on("ready", () => {
+      client.on("tcpip", (_accept, reject) => reject());
       client.on("session", (accept) => {
         const session = accept();
         session.on("exec", (acceptExec) => {
@@ -191,6 +193,33 @@ async function main() {
   const encodedConnection = {...connection(sshPort), terminal_encoding:"gbk"};
   await trustTestHost(encodedConnection, "once");
   const succeeded = await runPasswordCommand(encodedConnection, "true", null, 3000);
+  await trustTestHost(encodedConnection, "once");
+  let forwardErrors = 0;
+  let requestErrors = 0;
+  const managedForward = await startPasswordForward(encodedConnection, {
+    mode:"local",
+    bind_host:"127.0.0.1",
+    bind_port:0,
+    target_host:"127.0.0.1",
+    target_port:9999
+  }, {
+    onError() { forwardErrors += 1; },
+    onConnectionError() { requestErrors += 1; }
+  });
+  const refusedSocket = net.connect(managedForward.listener.address().port, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("等待 SSH 转发拒绝结果超时")), 3000);
+    const finish = () => { clearTimeout(timer); resolve(); };
+    refusedSocket.once("error", finish);
+    refusedSocket.once("close", finish);
+  });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(requestErrors, 1, "远端目标拒绝应作为单次转发请求错误上报");
+  assert.equal(forwardErrors, 0, "远端目标拒绝不应把整个转发监听器标记为故障");
+  assert.equal(managedForward.listener.listening, true, "单次目标拒绝后本地转发监听器应继续工作");
+  assert.equal(uncaught, null, `转发目标拒绝不应触发未捕获异常：${uncaught?.message || ""}`);
+  assert.equal(unhandled, null, `转发目标拒绝不应触发未处理拒绝：${unhandled?.message || ""}`);
+  await managedForward.close();
   await close(sshServer);
 
   const encryptedKeyPath = path.join(fixtureSshRoot, "id_rsa_fixture");
@@ -243,7 +272,7 @@ async function main() {
   assert.equal(keySucceeded.status, 0, keySucceeded.error?.message || keySucceeded.stderr || "加密私钥口令连接应成功");
   assert.equal(uncaught, null);
   assert.equal(unhandled, null);
-  console.log("SSH2 认证检查通过：握手失败可隔离，密码和加密私钥口令连接均可建立");
+  console.log("SSH2 认证检查通过：握手和转发通道拒绝可隔离，密码和加密私钥口令连接均可建立");
 }
 
 main().catch((error) => {

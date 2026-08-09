@@ -6,6 +6,8 @@ const path = require("path");
 const zlib = require("zlib");
 const {
   blockedDownloadHost,
+  aptPrintUrisUsesOnlyCachedPackages,
+  buildAptCachedInstallCommand,
   aptOutputNeedsLocalResolution,
   buildAptOfflineInstallCommand,
   buildAptOfflinePreflightCommand,
@@ -37,6 +39,11 @@ assert.throws(() => normalizeAptPackages(["xclip;id"]), /软件包名称无效/)
 assert.match(buildAptPrintUrisCommand(["xclip", "x11vnc"]), /--print-uris/);
 assert.match(buildAptPrintUrisCommand(["xclip", "x11vnc"]), /'xclip' 'x11vnc'/);
 assert.doesNotMatch(buildAptPrintUrisCommand(["xclip", "x11vnc"]), /--reinstall/);
+assert.equal(aptPrintUrisUsesOnlyCachedPackages("Need to get 0 B/987 kB of archives."), true);
+assert.equal(aptPrintUrisUsesOnlyCachedPackages("Need to get 120 kB of archives."), false);
+const cachedInstall = buildAptCachedInstallCommand(["xfce4", "xfce4-goodies"]);
+assert.match(cachedInstall, /apt-get --no-download install -y 'xfce4' 'xfce4-goodies'/);
+assert.doesNotMatch(cachedInstall, /apt-get update|--print-uris/);
 assert.match(buildAptPlatformProbeCommand(), /TERMA_APT_INSTALLED=\$\{binary:Package\}/);
 assert.equal(buildAptPlatformProbeCommand().includes(`${legacyPrefix}_APT_`), false);
 assert.equal(shouldUseAptRepositoryFallback("E: Package 'xclip' has no installation candidate"), true);

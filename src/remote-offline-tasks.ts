@@ -4,7 +4,9 @@ const crypto = require("crypto");
 const iconv = require("iconv-lite");
 const { buildRemotePosixCommand } = require("./remote-posix");
 const {
+  aptPrintUrisUsesOnlyCachedPackages,
   aptOutputNeedsLocalResolution,
+  buildAptCachedInstallCommand,
   buildAptPrintUrisCommand,
   buildAptOfflineInstallCommand,
   buildAptOfflinePreflightCommand,
@@ -378,6 +380,19 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
         if (probe?.status === 0) {
           try { items = parseAptPrintUris(probeOutput); }
           catch (error) { parseError = error; }
+        }
+        if (!items?.length && probe?.status === 0 && aptPrintUrisUsesOnlyCachedPackages(probeOutput)) {
+          append(task, "远端 APT 缓存已包含本次安装所需的全部软件包，将直接使用缓存继续，不再联网解析或重复上传", "warning");
+          update(task, "install", 86, "正在使用远端 APT 缓存安装");
+          const cachedInstallCommand = buildAptCachedInstallCommand(packages);
+          const usePrivilege = Boolean(options.grant || (options.elevate && !options.direct_root));
+          const cachedResult = usePrivilege
+            ? await dependencies.run_privileged_stream(connection, cachedInstallCommand, {grant_id:options.grant?.id, scope:options.scope || `remote-component.${task.component}`, timeout_ms:20 * 60 * 1000}, onChunk)
+            : await dependencies.run_ssh_stream(connection, buildRemotePosixCommand(cachedInstallCommand), 20 * 60 * 1000, onChunk);
+          flushTaskLogs(task);
+          if (cachedResult?.status !== 0) throw new Error(`${cachedResult?.stderr || cachedResult?.stdout || cachedResult?.error?.message || "远端缓存安装失败"}`.trim());
+          await completeAfterVerification("远端缓存软件包安装命令已完成", "远端缓存安装完成");
+          return;
         }
         if (!items?.length && (parseError || shouldUseAptRepositoryFallback(probeOutput))) {
           const reason = parseError

@@ -62,6 +62,7 @@ globalThis.__desktopStartupTestApi = {
   initializeDesktopSettingsFile,
   ensureDesktopSettingsFile,
   isWindowsPortable,
+  desktopStartupFailurePresentation,
   userRuntimeRoot,
   legacyPackagedRoot,
   resolveRuntimePaths,
@@ -993,6 +994,30 @@ check("Windows portable uses PORTABLE_EXECUTABLE_DIR instead of its temporary ex
   assert.equal(paths.sshDir, path.join(portableRoot, ".ssh"));
   assert.notEqual(path.dirname(state.execPath), portableRoot);
   assert.equal(api.desktopSettingsView().project_mode_available, true);
+});
+
+check("Windows portable explains unsupported ACL storage without hiding the safety stop", () => {
+  const portableRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-portable-acl-check-"));
+  temporaryRoots.push(portableRoot);
+  const { api } = createHarness({
+    platform:"win32",
+    env:{PORTABLE_EXECUTABLE_DIR:portableRoot},
+    settings:{dataMode:"project"}
+  });
+  const dataDir = path.join(portableRoot, "data");
+  const presentation = api.desktopStartupFailurePresentation({
+    code:"INSECURE_STORAGE_PERMISSIONS",
+    path:dataDir,
+    detail:"The file system does not support ACLs.",
+    failure_kind:"unsupported-acl",
+    message:`无法收紧 Terma 数据权限：${dataDir}`
+  }, {dataDir});
+  assert.match(presentation.title, /数据目录权限不受支持/);
+  assert.match(presentation.message, /Windows 便携版/);
+  assert.match(presentation.message, /NTFS/);
+  assert.match(presentation.message, /FAT32、exFAT/);
+  assert.match(presentation.message, /没有修改或删除现有连接数据/);
+  assert.match(presentation.message, new RegExp(dataDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
 check("macOS migrates legacy app data before selecting the user runtime", () => {

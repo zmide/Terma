@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, session } = require("electron");
+const { app, BrowserWindow, clipboard, ipcMain, session } = require("electron");
 const os = require("node:os");
 const path = require("node:path");
 const { runMobileScenario } = require("./ui-smoke-mobile-scenario");
@@ -6,11 +6,17 @@ const { runVisualRegression } = require("./ui-visual-regression");
 
 const url = process.env.TERMA_CHECK_URL || process.env.TUNNELDESK_CHECK_URL || "http://127.0.0.1:8099";
 const errors = [];
+const cspViolations = [];
 let smokeWindow = null;
 let rendererFailure = null;
 const smokeUserData = process.env.TERMA_UI_USER_DATA || process.env.TUNNELDESK_UI_USER_DATA || path.join(os.tmpdir(), `terma-ui-smoke-${process.pid}`);
 const screenshotEnabled = (process.env.TERMA_UI_SCREENSHOT || process.env.TUNNELDESK_UI_SCREENSHOT) === "1";
 const notificationScreenshotEnabled = (process.env.TERMA_UI_NOTIFICATION_SCREENSHOT || process.env.TUNNELDESK_UI_NOTIFICATION_SCREENSHOT) === "1";
+ipcMain.on("terma-ui-smoke:csp-violation", (_event, violation) => {
+  const item = violation && typeof violation === "object" ? violation : {};
+  cspViolations.push(item);
+  errors.push(`CSP violation: ${item.effectiveDirective || item.violatedDirective || "unknown"} blocked ${item.blockedURI || "unknown"}${item.sourceFile ? ` (${item.sourceFile}:${item.lineNumber || 0})` : ""}`);
+});
 app.disableHardwareAcceleration();
 app.setPath("userData", smokeUserData);
 const smokeWatchdog = setTimeout(async () => {
@@ -24,7 +30,15 @@ const smokeWatchdog = setTimeout(async () => {
 
 app.whenReady().then(async () => {
   await session.defaultSession.clearCache();
-  const window = new BrowserWindow({ show:false, width:1200, height:800, webPreferences:{ contextIsolation:true } });
+  const window = new BrowserWindow({
+    show:false,
+    width:1200,
+    height:800,
+    webPreferences:{
+      contextIsolation:true,
+      preload:path.join(__dirname, "ui-smoke-preload.js")
+    }
+  });
   smokeWindow = window;
   window.webContents.on("console-message", details => {
     if (["warning", "error"].includes(details.level)) {
@@ -39,6 +53,15 @@ app.whenReady().then(async () => {
   await window.loadURL(url);
   await new Promise(resolve => setTimeout(resolve, 1200));
   console.log("[ui-smoke] page loaded");
+  console.log("[ui-smoke] noVNC module");
+  const noVncModuleUi = await window.webContents.executeJavaScript(`(async () => {
+    const RFB = await noVncRfbClass();
+    return {
+      loaded:typeof RFB === 'function',
+      named:Boolean(RFB?.name),
+      prototype:Boolean(RFB?.prototype)
+    };
+  })()`);
   await window.webContents.executeJavaScript(`(() => {
     window.__uiSmokeRealLoadAll = loadAll;
     // Keep background polling from crossing the temporary API fixtures below.
@@ -1799,6 +1822,8 @@ app.whenReady().then(async () => {
     field('conn_name').value='startup-smoke';
     field('conn_user').value='root';
     field('conn_host').value='example.test';
+    const advanced=field('connAdvancedOptions');
+    const defaultAdvancedCollapsed=advanced?.open===false;
     field('conn_terminal_startup_mode').value='program';
     field('conn_terminal_profile_name').value='My shell';
     field('conn_terminal_profile_kind').value='custom';
@@ -1817,6 +1842,26 @@ app.whenReady().then(async () => {
       && field('conn_terminal_program_platform').value==='posix';
     field('conn_host').value='changed.example';
     field('conn_host').dispatchEvent(new Event('input',{bubbles:true}));
+    const stale=form._terminalProbeStale===true
+      && field('connTerminalDetectionStatus')?.textContent.includes('已变化');
+    renderConnectionExtraArgsDiagnostics(form,[{
+      severity:'error',
+      line:1,
+      start:0,
+      end:18,
+      option:'StrictHostKeyChecking',
+      message:'SSH 主机信任由 Terma 统一管理。',
+      suggestion:'请删除该参数。'
+    }]);
+    const parameterIssueExpanded=advanced?.open===true
+      && field('connAdvancedStatus')?.textContent.includes('参数错误')
+      && field('connExtraDiagnostics')?.hidden===false;
+    advanced.open=false;
+    field('connTerminalDetectionStatus').className='terminal-startup-detection error';
+    field('connTerminalDetectionStatus').textContent='无法检测远端启动环境。';
+    updateConnectionAdvancedStatus(form);
+    const terminalIssueExpanded=advanced?.open===true
+      && field('connAdvancedStatus')?.textContent.includes('终端检测失败');
     const card=form.querySelector('.terminal-startup-card');
     const formRect=form.getBoundingClientRect();
     const cardRect=card?.getBoundingClientRect();
@@ -1828,9 +1873,22 @@ app.whenReady().then(async () => {
       categories:[...select.querySelectorAll('optgroup')].map(group=>group.label),
       toolShown:field('connTerminalCapabilities')?.textContent.includes('Git'),
       detectedApplied,
-      stale:form._terminalProbeStale===true&&field('connTerminalDetectionStatus')?.textContent.includes('已变化'),
+      stale,
+      defaultAdvancedCollapsed,
+      parameterIssueExpanded,
+      terminalIssueExpanded,
       noOverflow:Boolean(cardRect&&cardRect.left>=formRect.left-0.5&&cardRect.right<=formRect.right+0.5),
-      pathRequired:field('conn_terminal_program_path').required===true
+      pathRequired:field('conn_terminal_program_path').required===true,
+      batchHealthIdentifiesServers:(()=>{
+        const text=formatAllHealthMessage([
+          {id:901,name:'生产机 A',ssh_user:'root',ssh_host:'prod-a.test',ssh_port:22,ok:false,status:'异常',ssh:{ok:false,output:'参数错误 A'},forwards:[]},
+          {id:902,name:'生产机 B',ssh_user:'deploy',ssh_host:'prod-b.test',ssh_port:2202,ok:false,status:'异常',ssh:{ok:false,output:'参数错误 B'},forwards:[]}
+        ]);
+        return text.includes('生产机 A · root@prod-a.test:22')
+          && text.includes('参数错误 A')
+          && text.includes('生产机 B · deploy@prod-b.test:2202')
+          && text.includes('参数错误 B');
+      })()
     };
     api=originalApi;
     notify=originalNotify;
@@ -6508,7 +6566,7 @@ app.whenReady().then(async () => {
     const image = await window.webContents.capturePage();
     require("node:fs").writeFileSync(path.join(process.cwd(), "data", "ui-smoke-mobile.png"), image.toPNG());
   }
-  console.log(JSON.stringify({ ...result, refreshStateUi, workspaceTabDragUi, workspaceDockingUi, workspaceTabVisibilityUi, workspaceHeaderResizeUi, pages, navigationUi, aboutUi, desktopMenu, runningActions, authUi, connectionStartupUi, saveAndClearUi, notificationUi, restoreKeyUi, restoreCredentialUi, terminalUi, terminalStartupUi, logSettingsUi, sftpUi, productivityUi, remoteAdminUi, linuxDesktopToolbarUi, remoteAccessUi, clipboardUi, dark, visual, mobile, errors }, null, 2));
+  console.log(JSON.stringify({ ...result, noVncModuleUi, cspViolations, refreshStateUi, workspaceTabDragUi, workspaceDockingUi, workspaceTabVisibilityUi, workspaceHeaderResizeUi, pages, navigationUi, aboutUi, desktopMenu, runningActions, authUi, connectionStartupUi, saveAndClearUi, notificationUi, restoreKeyUi, restoreCredentialUi, terminalUi, terminalStartupUi, logSettingsUi, sftpUi, productivityUi, remoteAdminUi, linuxDesktopToolbarUi, remoteAccessUi, clipboardUi, dark, visual, mobile, errors }, null, 2));
   const operationPagesFailed = pages.some(page => page.scrollWidth > page.width || !page.toolFits || !page.layoutMode || !page.compactHeight);
   const overflow = pages.some(page => page.scrollWidth > page.width) || mobile.scrollWidth > mobile.width || mobile.bodyWidth > mobile.width;
   const darkFailed = dark.theme !== "dark" || dark.buttonBackground === "rgb(255, 255, 255)";
@@ -6688,7 +6746,7 @@ app.whenReady().then(async () => {
     || !directoryActionsUi.duplicateDirectoryStateIsolated
     || !directoryActionsUi.duplicateHistoryIsolated
     || !directoryActionsUi.duplicateShellMatchesTab;
-  const code = errors.length || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
+  const code = errors.length || cspViolations.length || !noVncModuleUi.loaded || !noVncModuleUi.prototype || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
   clearTimeout(smokeWatchdog);
   window.destroy();
   app.exit(code);

@@ -47,9 +47,10 @@ for (const token of ["Document.prototype.createElement", "Document.prototype.cre
   if (!cspBootstrap.includes(token)) throw new Error(`CSP 引导脚本缺少动态样式 nonce：${token}`);
 }
 if (!html.includes('id="connExtraDiagnostics"')) throw new Error("SSH 编辑页缺少附加参数诊断视图");
+if (!html.includes('id="connAdvancedOptions"')) throw new Error("SSH 编辑页缺少可折叠的高级选项");
 
 const connections = fs.readFileSync(path.resolve("public/app-connections.js"), "utf8");
-for (const token of ["validateConnectionExtraArgs", "/api/ssh/extra-args/validate", "focusConnectionExtraArgsIssue"]) {
+for (const token of ["validateConnectionExtraArgs", "/api/ssh/extra-args/validate", "focusConnectionExtraArgsIssue", "updateConnectionAdvancedStatus", "formatAllHealthMessage"]) {
   if (!connections.includes(token)) throw new Error(`SSH 附加参数诊断前端缺少：${token}`);
 }
 

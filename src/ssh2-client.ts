@@ -76,7 +76,11 @@ function builtinSshCompatibility(connection) {
   try {
     extra = builtinSshExtraOptions(connection?.extra_args, connection);
   } catch (error) {
-    return { supported:false, reason:error.message || "SSH 附加参数无效" };
+    return {
+      supported:false,
+      reason:error.message || "SSH 附加参数无效",
+      issues:Array.isArray(error?.issues) ? error.issues : []
+    };
   }
   if (!extra.supported) {
     return { supported: false, reason: `使用了 OpenSSH 专用参数：${extra.unsupported}` };
@@ -113,10 +117,16 @@ function shouldUseBuiltinSsh(connection) {
   const transport = sshTransportForConnection(connection);
   if (transport === "unsupported") {
     const direct = builtinSshCompatibility(connection);
-    if (!direct.supported) throw new Error(`密码认证不能安全回退到系统 OpenSSH：${direct.reason}。请改用结构化连接设置或移除该兼容参数`);
+    if (!direct.supported) {
+      const error:any = new Error(`密码认证不能安全回退到系统 OpenSSH：${direct.reason}。请改用结构化连接设置或移除该兼容参数`);
+      error.issues = Array.isArray(direct.issues) ? direct.issues : [];
+      throw error;
+    }
     const jump = Number(connection?.jump_connection_id || 0) ? storedConnection(connection.jump_connection_id) : null;
     const jumpCompatibility = jump ? builtinSshCompatibility(jump) : {supported:true, reason:""};
-    throw new Error(`跳板连接不能安全回退到系统 OpenSSH：${jumpCompatibility.reason}。请调整跳板认证或兼容参数`);
+    const error:any = new Error(`跳板连接不能安全回退到系统 OpenSSH：${jumpCompatibility.reason}。请调整跳板认证或兼容参数`);
+    error.issues = Array.isArray(jumpCompatibility.issues) ? jumpCompatibility.issues : [];
+    throw error;
   }
   return transport === "builtin";
 }
@@ -623,7 +633,11 @@ function openSshShell(connection, options: any = {}) {
   return openPasswordShell(connection, options);
 }
 
-function pipeForwardSocket(client, source, host, port, onError: any = () => {}) {
+function reportForwardError(callback, error) {
+  try { callback?.(error); } catch {}
+}
+
+function pipeForwardSocket(client, source, host, port, onConnectionError: any = () => {}) {
   client.forwardOut(
     source.remoteAddress || "127.0.0.1",
     Number(source.remotePort || 0),
@@ -631,20 +645,26 @@ function pipeForwardSocket(client, source, host, port, onError: any = () => {}) 
     Number(port),
     (error, channel) => {
       if (error) {
-        onError(error);
-        try { source.destroy(error); } catch {}
+        reportForwardError(onConnectionError, error);
+        // A refused direct-tcpip channel is a normal per-request failure.  Do
+        // not re-emit the ssh2 Error on the local socket: the requester may
+        // already have closed after connecting to the listening port.
+        try { source.destroy(); } catch {}
         return;
       }
       source.pipe(channel).pipe(source);
       channel.on("error", () => source.destroy());
-      source.on("error", () => channel.close());
+      source.on("error", () => {
+        try { channel.close?.(); } catch {}
+        try { channel.destroy?.(); } catch {}
+      });
     }
   );
 }
 
-async function startLocalForward(client, forward, onError) {
+async function startLocalForward(client, forward, onError, onConnectionError = onError) {
   const server = net.createServer((socket) => {
-    pipeForwardSocket(client, socket, forward.target_host, forward.target_port, onError);
+    pipeForwardSocket(client, socket, forward.target_host, forward.target_port, onConnectionError);
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -657,7 +677,7 @@ async function startLocalForward(client, forward, onError) {
   return server;
 }
 
-async function startSocksForward(client, forward, onError) {
+async function startSocksForward(client, forward, onError, onConnectionError = onError) {
   const server = socks.createServer();
   server.setConnectionHandler((connection, sendStatus) => {
     client.forwardOut(
@@ -667,8 +687,8 @@ async function startSocksForward(client, forward, onError) {
       connection.destPort,
       (error, channel) => {
       if (error) {
-        onError(error);
-        sendStatus("HOST_UNREACHABLE");
+        reportForwardError(onConnectionError, error);
+        try { sendStatus("HOST_UNREACHABLE"); } catch {}
         return;
       }
       const socket = connection.socket;
@@ -701,7 +721,7 @@ async function startSocksForward(client, forward, onError) {
   return server;
 }
 
-async function startRemoteForward(client, forward, onError) {
+async function startRemoteForward(client, forward, onError, onConnectionError = onError) {
   const bindHost = String(forward.bind_host || "127.0.0.1");
   const bindPort = Number(forward.bind_port);
   client.on("tcp connection", (_info, accept, reject) => {
@@ -709,7 +729,7 @@ async function startRemoteForward(client, forward, onError) {
     const socket = net.connect(Number(forward.target_port), String(forward.target_host || "127.0.0.1"));
     socket.once("connect", () => socket.pipe(channel).pipe(socket));
     socket.once("error", (error) => {
-      onError(error);
+      reportForwardError(onConnectionError, error);
       try { channel.close(); } catch {}
       try { reject(); } catch {}
     });
@@ -728,16 +748,17 @@ async function startRemoteForward(client, forward, onError) {
 async function startPasswordForward(connection, forward, callbacks: any = {}) {
   const client: any = await connectPassword(connection);
   let closing = false;
-  const onError = (error) => callbacks.onError?.(normalizeSshTransportError(error, connection));
+  const onError = (error) => reportForwardError(callbacks.onError, normalizeSshTransportError(error, connection));
+  const onConnectionError = (error) => reportForwardError(callbacks.onConnectionError, normalizeSshTransportError(error, connection));
   client.on("error", onError);
   client.on("close", () => {
     if (!closing) callbacks.onClose?.();
   });
   let listener;
   try {
-    if (forward.mode === "local") listener = await startLocalForward(client, forward, onError);
-    else if (forward.mode === "remote") listener = await startRemoteForward(client, forward, onError);
-    else listener = await startSocksForward(client, forward, onError);
+    if (forward.mode === "local") listener = await startLocalForward(client, forward, onError, onConnectionError);
+    else if (forward.mode === "remote") listener = await startRemoteForward(client, forward, onError, onConnectionError);
+    else listener = await startSocksForward(client, forward, onError, onConnectionError);
   } catch (error) {
     try { client.end(); } catch {}
     throw normalizeSshTransportError(error, connection);

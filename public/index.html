@@ -178,8 +178,15 @@
         <label>SSH 密码</label><input id="conn_password" type="password" autocomplete="new-password" placeholder="输入 SSH 登录密码">
         <div class="muted">编辑已有密码连接时留空表示保持原密码。</div>
       </div>
-      <fieldset class="terminal-startup-card">
-        <legend>终端配置</legend>
+      <details id="connAdvancedOptions" class="connection-form-advanced">
+        <summary>
+          <span class="connection-form-advanced-title"><i data-lucide="sliders-horizontal"></i><b>高级选项</b></span>
+          <span id="connAdvancedStatus" class="connection-form-advanced-status">终端、跳板与连接调优</span>
+          <i class="connection-form-advanced-chevron" data-lucide="chevron-down"></i>
+        </summary>
+        <div class="connection-form-advanced-body">
+        <fieldset class="terminal-startup-card">
+          <legend>终端配置</legend>
         <div class="terminal-startup-intro">默认使用服务器的登录 Shell。测试 SSH 后可快速选择检测到的 Bash、Zsh、PowerShell、Python、Node、tmux 等程序，也可以填写自定义命令。</div>
         <div class="grid terminal-startup-selectors">
           <div>
@@ -229,9 +236,9 @@
           <div class="terminal-startup-warning">参数会在远端启动程序时使用，请不要在这里填写密码或访问令牌。</div>
         </div>
         <div id="connTerminalCapabilities" class="terminal-startup-capabilities" hidden></div>
-      </fieldset>
-      <fieldset class="connection-advanced-card">
-        <legend>连接与跳板</legend>
+        </fieldset>
+        <fieldset class="connection-advanced-card">
+          <legend>连接与跳板</legend>
         <div class="grid3">
           <div><label>经由跳板连接</label><select id="conn_jump"><option value="">直接连接</option></select></div>
           <div><label>TCP KeepAlive</label><select id="conn_tcp_keepalive"><option value="1">开启</option><option value="0">关闭</option></select></div>
@@ -242,9 +249,13 @@
           <div><label>保活间隔（秒）</label><input id="conn_keepalive_interval" type="number" min="0" max="300" value="60" title="0 表示关闭保活" aria-describedby="conn_keepalive_interval_help"><small id="conn_keepalive_interval_help" class="field-help">0 表示关闭</small></div>
           <div><label>连续无响应次数</label><input id="conn_keepalive_count" type="number" min="1" max="20" value="3"></div>
         </div>
-      </fieldset>
-      <label for="conn_extra">OpenSSH 连接调优参数（可选）</label><textarea id="conn_extra" aria-describedby="connExtraDiagnostics" placeholder="可分行填写算法、压缩等安全调优参数，例如 -o Compression=yes"></textarea>
-      <div id="connExtraDiagnostics" class="ssh-extra-diagnostics" role="status" aria-live="polite" hidden></div>
+        </fieldset>
+        <div class="connection-extra-options">
+          <label for="conn_extra">OpenSSH 连接调优参数（可选）</label><textarea id="conn_extra" aria-describedby="connExtraDiagnostics" placeholder="可分行填写算法、压缩等安全调优参数，例如 -o Compression=yes"></textarea>
+          <div id="connExtraDiagnostics" class="ssh-extra-diagnostics" role="status" aria-live="polite" hidden></div>
+        </div>
+        </div>
+      </details>
       <div id="connRemoteGenerationLine" class="grid connection-derived-options">
         <div>
           <label>同时生成其他连接</label>

@@ -30,3 +30,40 @@ jobs:
 
       - name: Run regression checks
         run: npm run regression
+
+  ui-smoke:
+    name: Ubuntu / Electron UI smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install virtual display
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Run Electron UI smoke checks
+        env:
+          TERMA_UI_SCREENSHOT: "1"
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" npm run ui:smoke
+
+      - name: Upload UI diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ui-smoke-diagnostics
+          if-no-files-found: ignore
+          path: |
+            data/ui-smoke-*.png
+            data/ui-visual-current/*.png
