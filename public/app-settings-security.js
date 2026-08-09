@@ -127,7 +127,7 @@ function localDirectDesktopIntegrationPresentation(settings=securitySettings || 
   const hosts = Array.isArray(status.actual_listen_hosts) ? status.actual_listen_hosts : [];
   if (!enabled) return {
     className:"",
-    text:"默认关闭。启用后，只在 Terma 实际仅监听本机回环地址、当前浏览器直连本机且已登录时自动开放 X Server 和系统远程客户端。"
+    text:"默认关闭。启用后，只在 Terma 实际仅监听本机回环地址、当前浏览器直连本机且已通过当前 Web 访问策略时，自动开放 X Server 和系统远程客户端。"
   };
   if (trustedProxyEnabled) return {
     className:"warning",

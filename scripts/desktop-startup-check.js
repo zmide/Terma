@@ -352,6 +352,7 @@ function createHarness({
           return {status:1, stdout:"", stderr:""};
         }
       };
+      if (id === "./browser-authorization-prompt") return require(path.join(root, "desktop", "browser-authorization-prompt.js"));
       if (id === "./native-sftp-drag") return {
         createNativeSftpDrag: () => ({
           probe: {available:false},

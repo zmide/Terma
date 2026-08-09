@@ -8,7 +8,7 @@ function normalizeDesktopIntegrationScopes(scopes) {
 }
 
 function desktopIntegrationExpiryText(status) {
-  if (status?.authorization_browser_session) return "授权在本次浏览器会话结束时失效";
+  if (status?.authorization_browser_session) return "授权在本次浏览器会话结束或达到 12 小时时失效";
   const expiresAt = Number(status?.authorization_expires_at || 0);
   if (!expiresAt) return "";
   const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 60000));
@@ -73,7 +73,7 @@ async function requestDesktopIntegrationAuthorization(scopes=["xserver", "remote
     return null;
   }
   if (!options.silent) notify(duration.authorizationMode === "browser-session"
-    ? "已获得本次浏览器会话的桌面集成授权"
+    ? "已获得本次浏览器会话的桌面集成授权，最长 12 小时"
     : `已获得 ${duration.durationMinutes} 分钟桌面集成临时授权`, "success");
   return result;
 }
@@ -106,7 +106,7 @@ function desktopIntegrationAuthorizationMarkup(status, scopes, options={}) {
     : status.web_session_authenticated
       ? "此授权只能从运行 Terma 的同一台设备上的浏览器申请。"
       : "请先使用 Web 密码或访问 Token 登录，再申请临时授权。";
-  const controls = canRequest ? `<div class="desktop-integration-authorization-actions"><label class="desktop-integration-duration"><span>授权时长</span><select data-role="desktop-integration-duration" data-change-action="desktop-integration-duration"><option value="5">5 分钟</option><option value="10" selected>10 分钟</option><option value="30">30 分钟</option><option value="60">1 小时</option><option value="custom">自定义</option><option value="browser-session">本次浏览器会话</option></select></label><label class="desktop-integration-custom-duration" hidden><span>分钟</span><input type="number" min="1" max="480" step="1" value="120" inputmode="numeric" data-role="desktop-integration-custom-minutes"></label><button class="primary" type="button" data-action="desktop-integration-authorize" data-scopes="${escAttr(normalizedScopes.join(","))}" data-refresh-target="${escAttr(options.refreshTarget || "")}" data-remote-profile-id="${Number(options.remoteProfileId || 0)}">${icon("shield-check")}<span>申请授权</span></button></div>` : "";
+  const controls = canRequest ? `<div class="desktop-integration-authorization-actions"><label class="desktop-integration-duration"><span>授权时长</span><select data-role="desktop-integration-duration" data-change-action="desktop-integration-duration"><option value="5">5 分钟</option><option value="10" selected>10 分钟</option><option value="30">30 分钟</option><option value="60">1 小时</option><option value="custom">自定义</option><option value="browser-session">本次浏览器会话（最长 12 小时）</option></select></label><label class="desktop-integration-custom-duration" hidden><span>分钟</span><input type="number" min="1" max="480" step="1" value="120" inputmode="numeric" data-role="desktop-integration-custom-minutes"></label><button class="primary" type="button" data-action="desktop-integration-authorize" data-scopes="${escAttr(normalizedScopes.join(","))}" data-refresh-target="${escAttr(options.refreshTarget || "")}" data-remote-profile-id="${Number(options.remoteProfileId || 0)}">${icon("shield-check")}<span>申请授权</span></button></div>` : "";
   return `<div class="connection-test-status warning desktop-integration-authorization"><div class="desktop-integration-authorization-copy"><b>等待桌面授权</b><small>${esc(detail)}</small></div>${controls}</div>`;
 }
 

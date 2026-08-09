@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, screen, shell } = require("electron");
+const { createDesktopBrowserAuthorizationPromptGate } = require("./browser-authorization-prompt");
 const { createNativeSftpDrag } = require("./native-sftp-drag");
 const { createRemoteClientAdapter } = require("./remote-clients");
 const { createXServerRuntime } = require("./xserver-runtime");
@@ -84,7 +85,7 @@ const remoteClientAdapter = displayClientMode ? null : createRemoteClientAdapter
 });
 
 let mainWindow = null;
-let desktopBrowserAuthorizationPrompt = null;
+const desktopBrowserAuthorizationPromptGate = createDesktopBrowserAuthorizationPromptGate();
 let tray = null;
 let webUrl = "";
 let quitting = false;
@@ -975,17 +976,11 @@ async function confirmDesktopBrowserAuthorization(request = {}) {
   const scopes = Array.isArray(request.scopes) ? request.scopes : [];
   const durationMode = request.duration_mode === "browser-session" ? "browser-session" : "timed";
   const durationMinutes = Math.max(1, Math.min(480, Number(request.duration_minutes) || 10));
-  const durationLabel = durationMode === "browser-session" ? "本次浏览器会话" : `${durationMinutes} 分钟`;
-  const scopeKey = `${[...new Set(scopes.map(scope => String(scope || "").trim()).filter(Boolean))].sort().join(",")}|${durationMode}|${durationMinutes}`;
-  if (desktopBrowserAuthorizationPrompt) {
-    return desktopBrowserAuthorizationPrompt.scopeKey === scopeKey
-      ? desktopBrowserAuthorizationPrompt.promise
-      : false;
-  }
+  const durationLabel = durationMode === "browser-session" ? "本次浏览器会话（最长 12 小时）" : `${durationMinutes} 分钟`;
   const labels = [];
   if (scopes.includes("xserver")) labels.push("管理 X Server 与本机图形组件");
   if (scopes.includes("remote-client")) labels.push("调用系统 RDP、VNC 与 XDMCP 客户端");
-  const prompt = dialog.showMessageBox(mainWindow, {
+  return desktopBrowserAuthorizationPromptGate.request(() => dialog.showMessageBox(mainWindow, {
     type:"question",
     title:"浏览器请求桌面集成",
     message:`是否允许当前本机浏览器在${durationLabel}内使用 Terma 桌面集成？`,
@@ -994,13 +989,7 @@ async function confirmDesktopBrowserAuthorization(request = {}) {
     defaultId:0,
     cancelId:0,
     noLink:true
-  }).then(result => result.response === 1);
-  desktopBrowserAuthorizationPrompt = {scopeKey, promise:prompt};
-  try {
-    return await prompt;
-  } finally {
-    if (desktopBrowserAuthorizationPrompt?.promise === prompt) desktopBrowserAuthorizationPrompt = null;
-  }
+  }).then(result => result.response === 1));
 }
 
 async function loadWindowWithDesktopCookie(window) {

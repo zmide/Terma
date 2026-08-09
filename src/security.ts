@@ -19,6 +19,7 @@ const DESKTOP_BROWSER_GRANT_COOKIE = "terma_desktop_grant";
 const DESKTOP_BROWSER_GRANT_DEFAULT_TTL_MS = 10 * 60 * 1000;
 const DESKTOP_BROWSER_GRANT_MIN_TTL_MS = 60 * 1000;
 const DESKTOP_BROWSER_GRANT_MAX_TTL_MS = 8 * 60 * 60 * 1000;
+const DESKTOP_BROWSER_GRANT_SESSION_HARD_TTL_MS = 12 * 60 * 60 * 1000;
 const DESKTOP_BROWSER_GRANT_SCOPES = new Set(["xserver", "remote-client"]);
 const SESSION_LIMITS = {
   ttl_minutes: { min:5, max:30 * 24 * 60 },
@@ -542,6 +543,12 @@ function authenticatedWebSessionToken(req) {
   return token && sessions.get(token) ? token : "";
 }
 
+function authenticatedWebSession(req) {
+  const token = String(parseCookies(req.headers.cookie || "").td_session || "").trim();
+  const record = token ? sessions.get(token) : null;
+  return record ? { token, record } : null;
+}
+
 function cleanupDesktopBrowserGrants(now = Date.now()) {
   for (const [digest, grant] of desktopBrowserGrants) {
     if (grant.expiresAt > 0 && grant.expiresAt <= now) desktopBrowserGrants.delete(digest);
@@ -599,8 +606,8 @@ function isDesktopCapabilityRequest(req, scope = "") {
 
 function createDesktopBrowserGrant(req, scopes = ["xserver", "remote-client"], ttlOrOptions: any = DESKTOP_BROWSER_GRANT_DEFAULT_TTL_MS) {
   if (!isDirectLoopbackRequest(req)) throw new AuthenticationError("桌面集成临时授权只允许本机浏览器申请", 403);
-  const sessionToken = authenticatedWebSessionToken(req);
-  if (!sessionToken) throw new AuthenticationError("请先使用 Web 密码或访问 Token 登录，再申请桌面集成授权", 401);
+  const session = authenticatedWebSession(req);
+  if (!session) throw new AuthenticationError("请先使用 Web 密码或访问 Token 登录，再申请桌面集成授权", 401);
   const normalizedScopes = [...new Set((Array.isArray(scopes) ? scopes : [])
     .map(value => String(value || "").trim().toLowerCase())
     .filter(value => DESKTOP_BROWSER_GRANT_SCOPES.has(value)))];
@@ -622,10 +629,12 @@ function createDesktopBrowserGrant(req, scopes = ["xserver", "remote-client"], t
   const grant = {
     id:existing?.grant.id || crypto.randomUUID(),
     createdAt,
-    expiresAt:browserSession ? 0 : createdAt + duration,
+    expiresAt:browserSession
+      ? Math.min(session.record.expiresAt, createdAt + DESKTOP_BROWSER_GRANT_SESSION_HARD_TTL_MS)
+      : createdAt + duration,
     browserSession,
     scopes:normalizedScopes,
-    sessionDigest:desktopBrowserGrantDigest(sessionToken)
+    sessionDigest:desktopBrowserGrantDigest(session.token)
   };
   desktopBrowserGrants.set(existing?.digest || desktopBrowserGrantDigest(token), grant);
   return { token, ...grant, maxAgeSeconds:browserSession ? null : Math.ceil(duration / 1000) };

@@ -1387,6 +1387,7 @@ app.whenReady().then(async () => {
       const localDirectControl = document.querySelector('#securityLocalDirectDesktopIntegration');
       const localDirectState = document.querySelector('#securityLocalDirectDesktopIntegrationState');
       const localDirectDefaultOff = Boolean(localDirectControl && !localDirectControl.checked && localDirectState?.textContent.includes('默认关闭'));
+      const localDirectPolicyCopy = Boolean(localDirectState?.textContent.includes('已通过当前 Web 访问策略') && !localDirectState?.textContent.includes('且已登录时'));
       if (localDirectControl) {
         localDirectControl.checked = true;
         localDirectControl.dispatchEvent(new Event('change',{bubbles:true}));
@@ -1400,7 +1401,7 @@ app.whenReady().then(async () => {
       const localDirectProxyBlocked = Boolean(localDirectState?.classList.contains('warning')
         && localDirectState.textContent.includes('已启用可信反向代理')
         && localDirectState.textContent.includes('桌面集成继续使用临时授权'));
-      const localDirectUi = {control:Boolean(localDirectControl), defaultOff:localDirectDefaultOff, enabled:localDirectEnabled, proxyBlocked:localDirectProxyBlocked};
+      const localDirectUi = {control:Boolean(localDirectControl), defaultOff:localDirectDefaultOff, policyCopy:localDirectPolicyCopy, enabled:localDirectEnabled, proxyBlocked:localDirectProxyBlocked};
       updateSettings = {...updateSettings, latest_version:'1.0.10'};
       syncUpdateNoticeForCurrentSection();
       const newerVersionShowsAgain = shouldShowUpdateNotice() && updateDotIds.every(id => document.getElementById(id)?.hidden === false);
@@ -6350,7 +6351,7 @@ app.whenReady().then(async () => {
         && Math.abs(xdmcpAuthorizationRect.left-xdmcpStateRect.left)<=1
         && Math.abs(xdmcpAuthorizationRect.width-xdmcpStateRect.width)<=1
         && xdmcpAuthorizationPanel.scrollWidth<=xdmcpAuthorizationPanel.clientWidth+1
-        && xdmcpDurationSelect?.querySelector('option[value="browser-session"]')
+        && xdmcpDurationSelect?.querySelector('option[value="browser-session"]')?.textContent.includes('最长 12 小时')
         && xdmcpAuthorizationPanel.querySelector('[data-action="desktop-integration-authorize"]')?.textContent.includes('申请授权')
         && customDurationVisible
         && xdmcpCustomDuration.hidden
@@ -6589,7 +6590,7 @@ app.whenReady().then(async () => {
           browserAuthorizationText.includes('等待桌面授权')
           && browserAuthorizationText.includes('当前浏览器会话没有桌面集成权限。X Server 正在运行，但启动、停止和本机程序调用只能在 Terma 桌面端执行。')
           && browserAuthorizationText.includes('申请授权')
-          && browserAuthorizationManager?.querySelector('[data-role="desktop-integration-duration"] option[value="browser-session"]')
+          && browserAuthorizationManager?.querySelector('[data-role="desktop-integration-duration"] option[value="browser-session"]')?.textContent.includes('最长 12 小时')
           && browserAuthorizationManager?.querySelector('[data-role="desktop-integration-custom-minutes"][max="480"]')
           && browserAuthorizationManager?.querySelector('[data-action="desktop-integration-authorize"][data-scopes="xserver"]')
           && !browserAuthorizationText.includes('独立 Web/测试后端')
@@ -6838,7 +6839,7 @@ app.whenReady().then(async () => {
   const runtimeUiFailed = !runtimeUi.found || runtimeUi.port !== '18100' || JSON.stringify(runtimeUi.selectedHosts) !== JSON.stringify(['0.0.0.0']) || !runtimeUi.sftpSettingsAbsent || !runtimeUi.terminalLatencySettingChecked || !runtimeUi.wildcardCollapsed || runtimeUi.urlLinks.length !== 2 || !runtimeUi.urlLinks.some(url=>url.includes('192.0.2.10:18100')) || !runtimeUi.restartNotice;
   const sessionUiFailed = sessionUi.ttl !== '720' || sessionUi.max !== '1000' || sessionUi.cleanup !== '10' || !sessionUi.active || !sessionUi.save;
   const activityUiFailed = result.activity.count !== 10 || !result.activity.iconCentered || !result.activity.centersAligned || !result.activity.insideColumn || !result.activity.resizable || !result.activityUtilities;
-  const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || !authPolicyUi.redundantCheckboxRemoved || !authPolicyUi.localOnlyLabel || !authPolicyUi.alwaysLabel || !authPolicyUi.directDefinition || !localDirectUi.control || !localDirectUi.defaultOff || !localDirectUi.enabled || !localDirectUi.proxyBlocked || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.newerVersionShowsAgain;
+  const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || !authPolicyUi.redundantCheckboxRemoved || !authPolicyUi.localOnlyLabel || !authPolicyUi.alwaysLabel || !authPolicyUi.directDefinition || !localDirectUi.control || !localDirectUi.defaultOff || !localDirectUi.policyCopy || !localDirectUi.enabled || !localDirectUi.proxyBlocked || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.newerVersionShowsAgain;
   const aboutUiFailed = Boolean(aboutUi.error) || !aboutUi.found || !aboutUi.aboutSelected || aboutUi.duplicateSettingsNav !== 0 || !aboutUi.versionMatches || !aboutUi.licenseMetadata || !aboutUi.sourceLink || !aboutUi.modalOpen || !aboutUi.accessible || !aboutUi.fullText || !aboutUi.textScrollable || !aboutUi.cardWithinViewport || !aboutUi.closeFocused || !aboutUi.backdropIgnored || !aboutUi.closedByEscape || !aboutUi.focusReturned || !aboutUi.followupBackdropClean || !aboutUi.followupResolved || !aboutUi.updateUi;
   const hostTrustUiFailed = !hostTrustUi.unknown?.open
     || !hostTrustUi.unknown?.fingerprint
