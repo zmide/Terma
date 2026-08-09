@@ -53,7 +53,7 @@ function createConfigSnapshot(reason="手动快照") {
     created_at:Date.now(),
     encryption_enabled:Boolean(security.encryption_enabled),
     encryption_state:security.encryption_state || (security.encryption_enabled ? "enabled" : "disabled"),
-    encryption_version:Number(security.encryption_version || (security.encryption_enabled ? 1 : 2)),
+    encryption_version:Number(security.encryption_version || (security.encryption_enabled ? 1 : 3)),
     counts:{connections:snapshot.connections.length,forwards:snapshot.forwards.length,templates:snapshot.forward_templates.length},
     snapshot
   };

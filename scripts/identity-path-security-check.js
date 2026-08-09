@@ -119,6 +119,7 @@ try {
   assert.equal(fs.existsSync(path.join(sshRoot, "uploaded.PUB")), false);
   const puttyUpload = ssh.saveUploadedKey("uploaded.ppk", Buffer.from("PuTTY-User-Key-File-3: ssh-rsa\nEncryption: none\n"));
   assert.equal(pathKey(identity.allowedIdentityPath(puttyUpload.path)), pathKey(puttyUpload.path));
+  assert.equal(ssh.identityPermissionStatus(puttyUpload.path).ok, true);
 
   const outsideLink = path.join(sshRoot, "id_outside_link");
   let symlinkSupported = true;

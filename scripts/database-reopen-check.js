@@ -95,13 +95,13 @@ try {
   assert.ok(database.encryptStoredConnectionSecrets() >= 1);
   cryptoStore.completeEncryptionEnable();
   const storedStartup = database.get("SELECT terminal_program_path,terminal_program_args,terminal_working_directory FROM connections WHERE id=?", [id]);
-  assert.match(storedStartup.terminal_program_path, /^termaenc:v2:/);
-  assert.match(storedStartup.terminal_program_args, /^termaenc:v2:/);
-  assert.match(storedStartup.terminal_working_directory, /^termaenc:v2:/);
+  assert.match(storedStartup.terminal_program_path, /^termaenc:v3:/);
+  assert.match(storedStartup.terminal_program_args, /^termaenc:v3:/);
+  assert.match(storedStartup.terminal_working_directory, /^termaenc:v3:/);
   assertStartup(database.getConnection(id), startup);
   assert.equal(database.encryptStoredConnectionSecrets(), 0);
   const migratedStartup = database.get("SELECT terminal_program_path FROM connections WHERE id=?", [id]);
-  assert.match(migratedStartup.terminal_program_path, /^termaenc:v2:/);
+  assert.match(migratedStartup.terminal_program_path, /^termaenc:v3:/);
   assert.throws(
     () => database.updateTerminalStartup(id, { terminal_startup_mode: "program", terminal_program_path: "" }),
     /程序路径/

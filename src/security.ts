@@ -51,9 +51,11 @@ function defaultSettings() {
     token_salt: "",
     encryption_enabled: false,
     encryption_state: "disabled",
-    encryption_version: 2,
+    encryption_version: 3,
     encryption_salt: "",
     encryption_check: "",
+    encryption_legacy_version: 0,
+    encryption_legacy_salt: "",
     encryption_legacy_check: "",
     notification_mode: "on",
     secure_cookie_mode: "auto",
@@ -85,12 +87,17 @@ function normalizeEncryptionState(stored) {
   const state = ["disabled", "enabling", "enabled", "disabling"].includes(requested)
     ? requested
     : (enabled ? "enabled" : "disabled");
+  const requestedVersion = Number(stored?.encryption_version || 1);
+  const version = [1, 2, 3].includes(requestedVersion) ? requestedVersion : 1;
+  const requestedLegacyVersion = Number(stored?.encryption_legacy_version || 0);
   return {
     encryption_enabled:state !== "disabled",
     encryption_state:state,
-    encryption_version:state === "disabled" ? 2 : (Number(stored?.encryption_version || 1) === 2 ? 2 : 1),
+    encryption_version:state === "disabled" ? 3 : version,
     encryption_salt:String(stored?.encryption_salt || ""),
     encryption_check:String(stored?.encryption_check || ""),
+    encryption_legacy_version:[1, 2].includes(requestedLegacyVersion) ? requestedLegacyVersion : 0,
+    encryption_legacy_salt:String(stored?.encryption_legacy_salt || ""),
     encryption_legacy_check:String(stored?.encryption_legacy_check || "")
   };
 }

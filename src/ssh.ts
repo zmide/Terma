@@ -20,16 +20,26 @@ const { diagnoseSshError } = require("./ssh-diagnostics");
 const { buildRemoteStartupCommand } = require("./terminal-startup");
 const { isHostTrustError, systemHostKeyArgs } = require("./ssh-host-trust");
 const { allowedIdentityPath, assertAllowedIdentityPath, looksLikePrivateKeyData } = require("./identity-path");
+const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 
 const RESTORE_STATE_FILE = path.join(DATA_DIR, "forward-state.json");
 let healthMonitorTimer: any = null;
 let healthMonitorBusy = false;
 let healthMonitorTask: Promise<any> | null = null;
-const securedKeyCache = new Map();
 const ssh2Forwards = new Map();
 
 function ensureSshDirs() {
-  fs.mkdirSync(SSH_DIR, { recursive: true, mode: 0o700 });
+  ensurePrivateDirectory(SSH_DIR, { required:true });
+}
+
+function samePath(left, right) {
+  const a = path.resolve(String(left || ""));
+  const b = path.resolve(String(right || ""));
+  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+function projectManagedIdentity(file) {
+  return samePath(path.dirname(path.resolve(String(file || ""))), SSH_DIR);
 }
 
 function windowsAclPrincipals(output, file) {
@@ -64,48 +74,21 @@ function unexpectedWindowsAclPrincipals(principals) {
   return principals.filter(principal => !allowed.has(principal.toLowerCase()));
 }
 
-function identityFileSignature(file) {
-  try {
-    const stat = fs.statSync(file);
-    return [stat.dev, stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs, stat.mode, stat.nlink].join(":");
-  } catch {
-    return "";
-  }
-}
-
 function securePrivateKeyPermissions(file) {
   const allowed = assertAllowedIdentityPath(String(file || ""));
   file = allowed;
-  const cacheKey = String(file || "");
-  const signature = identityFileSignature(file);
-  if (process.platform !== "win32" && cacheKey && signature && securedKeyCache.get(cacheKey) === signature) return;
-  let chmodSucceeded = false;
-  try {
-    fs.chmodSync(file, 0o600);
-    chmodSucceeded = true;
-  } catch {}
-  if (process.platform !== "win32") {
-    const currentSignature = identityFileSignature(file);
-    if (cacheKey && chmodSucceeded && currentSignature) securedKeyCache.set(cacheKey, currentSignature);
-    else if (cacheKey) securedKeyCache.delete(cacheKey);
-    return;
+  if (!projectManagedIdentity(file)) return identityPermissionStatus(file);
+  ensurePrivateDirectory(SSH_DIR, { required:true });
+  ensurePrivateFile(file, { required:true });
+  const status = identityPermissionStatus(file);
+  if (!status.ok) {
+    const error: any = new Error(`Terma 管理的 SSH 私钥权限不安全：${status.details || file}`);
+    error.code = "INSECURE_IDENTITY_PERMISSIONS";
+    error.path = file;
+    error.status = status;
+    throw error;
   }
-  const username = process.env.USERNAME;
-  const domain = process.env.USERDOMAIN;
-  const account = username ? (domain ? `${domain}\\${username}` : username) : null;
-  try {
-    spawnSync("icacls", [file, "/inheritance:r"], { encoding: "utf8" });
-    const listing = spawnSync("icacls", [file], { encoding: "utf8" }).stdout || "";
-    const allowed = windowsAllowedAclPrincipals();
-    for (const principal of windowsAclPrincipals(listing, file)) {
-      if (principal && !allowed.has(principal.toLowerCase())) {
-        spawnSync("icacls", [file, "/remove:g", principal], { encoding: "utf8" });
-      }
-    }
-    if (account) spawnSync("icacls", [file, "/grant:r", `${account}:F`], { encoding: "utf8" });
-    spawnSync("icacls", [file, "/remove:g", "*S-1-5-11", "*S-1-5-32-545", "*S-1-1-0"], { encoding: "utf8" });
-  } catch {}
-  if (cacheKey) securedKeyCache.delete(cacheKey);
+  return status;
 }
 
 function identityPermissionStatus(file) {
@@ -167,8 +150,11 @@ function identityPermissionStatus(file) {
 function repairIdentityFile(file) {
   file = assertAllowedIdentityPath(String(file || ""));
   if (!file || !fs.existsSync(file)) throw new Error("私钥文件不存在");
-  securePrivateKeyPermissions(file);
-  return identityPermissionStatus(file);
+  if (projectManagedIdentity(file)) return securePrivateKeyPermissions(file);
+  ensurePrivateFile(file, { required:true });
+  const status = identityPermissionStatus(file);
+  if (!status.ok) throw new Error(`SSH 私钥权限修复后仍不安全：${status.details || file}`);
+  return status;
 }
 
 function listIdentityFiles() {

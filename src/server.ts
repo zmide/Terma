@@ -216,7 +216,7 @@ const {
   encryptText,
   isEncryptedText,
   lockEncryption,
-  prepareAutomaticEncryptionUpgrade,
+  prepareEncryptionUpgrade,
   requireEncryptionUnlocked,
   unlockEncryption
 } = require("./crypto-store");
@@ -1578,7 +1578,7 @@ async function handleApi(req, res, pathname) {
     AuthenticationError, beginDisableEncryption, clearConfigSnapshots, completeEncryptionEnable, createSession,
     decryptStoredConnectionSecrets, disableEncryption, enableEncryption,
     encryptStoredConnectionSecrets, login, logout, publicSecuritySettings, readJson, readSecuritySettings,
-    prepareAutomaticEncryptionUpgrade, publicAuthStatus, send, sendJson, sessionCookie, setPassword, setToken,
+    prepareEncryptionUpgrade, publicAuthStatus, send, sendJson, sessionCookie, setPassword, setToken,
     unlockEncryption, updateSecurityOptions
   };
   securityRouteDependencies.publicSecuritySettings = request => {
@@ -1587,6 +1587,7 @@ async function handleApi(req, res, pathname) {
       ...publicSecuritySettings(request),
       encryption_unlocked:state.unlocked,
       encryption_ready:state.ready,
+      encryption_upgrade_required:state.upgrade_required,
       encryption_transition_pending:state.transition_pending
     };
   };
@@ -1783,7 +1784,7 @@ async function handleApi(req, res, pathname) {
       security: {
         encryption_enabled: Boolean(security.encryption_enabled),
         encryption_state: security.encryption_state || (security.encryption_enabled ? "enabled" : "disabled"),
-        encryption_version: Number(security.encryption_version || (security.encryption_enabled ? 1 : 2)),
+        encryption_version: Number(security.encryption_version || (security.encryption_enabled ? 1 : 3)),
         encryption_salt: security.encryption_salt || "",
         encryption_check: security.encryption_check || ""
       }
@@ -1867,9 +1868,11 @@ async function handleApi(req, res, pathname) {
           writeSecuritySettings({
             encryption_enabled: Boolean(stage.security.encryption_enabled),
             encryption_state: stage.security.encryption_state || (stage.security.encryption_enabled ? "enabled" : "disabled"),
-            encryption_version: Number(stage.security.encryption_version || (stage.security.encryption_enabled ? 1 : 2)),
+            encryption_version: Number(stage.security.encryption_version || (stage.security.encryption_enabled ? 1 : 3)),
             encryption_salt: stage.security.encryption_salt || "",
             encryption_check: stage.security.encryption_check || "",
+            encryption_legacy_version: 0,
+            encryption_legacy_salt: "",
             encryption_legacy_check: ""
           });
           lockEncryption();
@@ -3522,22 +3525,13 @@ async function shutdown() {
 }
 
 function reconcileEncryptionStateAtStartup(options: any = {}) {
-  const before = encryptionState();
-  if (!before.enabled) return { upgraded:false, state:before.state };
-  try {
-    if (!prepareAutomaticEncryptionUpgrade()) return { upgraded:false, state:before.state };
-    const encryptedRows = encryptStoredConnectionSecrets();
-    completeEncryptionEnable();
-    const removedSnapshots = clearConfigSnapshots();
-    lockEncryption();
-    appendSystemLog(`配置加密已自动升级到 v2：重写 ${encryptedRows} 行，清理 ${removedSnapshots} 个旧快照`);
-    return { upgraded:true, encrypted_rows:encryptedRows, removed_snapshots:removedSnapshots };
-  } catch (error) {
-    lockEncryption();
-    appendSystemLog(`配置加密自动修复未完成：${error.message || error}`);
-    if (options.required) throw error;
-    return { upgraded:false, state:encryptionState().state, error:error.message || String(error) };
-  }
+  lockEncryption();
+  const state = encryptionState();
+  return {
+    upgraded:false,
+    state:state.state,
+    requires_unlock:Boolean(state.enabled && (state.version < 3 || state.transition_pending))
+  };
 }
 
 function startServer(customArgs: any = parseArgs(), options: any = {}) {
@@ -3553,6 +3547,7 @@ function startServer(customArgs: any = parseArgs(), options: any = {}) {
   ensurePrivateDirectory(path.join(DATA_DIR, "restore-staging"));
   assertPrivateStorage([
     {path:DATA_DIR, directory:true},
+    {path:PROJECT_SSH_DIR, directory:true},
     {path:path.join(DATA_DIR, "snapshots"), directory:true},
     {path:path.join(DATA_DIR, "restore-staging"), directory:true},
     {path:DB_PATH, directory:false},

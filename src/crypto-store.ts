@@ -3,20 +3,26 @@ const { readSecuritySettings, writeSecuritySettings } = require("./security");
 
 let activeKey = null;
 let activeLegacyKey = null;
+let activeLegacyVersion = 0;
 
-const CURRENT_ENCRYPTION_VERSION = 2;
-const CURRENT_ENCRYPTED_PREFIX = "termaenc:v2:";
+const CURRENT_ENCRYPTION_VERSION = 3;
+const CURRENT_ENCRYPTED_PREFIX = "termaenc:v3:";
+const V2_ENCRYPTED_PREFIX = "termaenc:v2:";
 const V1_ENCRYPTED_PREFIX = "termaenc:v1:";
 const LEGACY_ENCRYPTED_PREFIX = "tdenc:v1:";
 const V2_ENCRYPTION_INFO = Buffer.from("terma-config-encryption-v2", "utf8");
 const V2_VERIFIER_INFO = Buffer.from("terma-config-verifier-v2", "utf8");
 const V2_VERIFIER_MESSAGE = Buffer.from("Terma configuration encryption v2", "utf8");
 const V2_CIPHERTEXT_AAD = Buffer.from("Terma configuration secret v2", "utf8");
+const V3_ENCRYPTION_INFO = Buffer.from("terma-config-encryption-v3", "utf8");
+const V3_VERIFIER_INFO = Buffer.from("terma-config-verifier-v3", "utf8");
+const V3_VERIFIER_MESSAGE = Buffer.from("Terma configuration encryption v3", "utf8");
+const V3_CIPHERTEXT_AAD = Buffer.from("Terma configuration secret v3", "utf8");
 
 function encryptionVersion(settings = readSecuritySettings()) {
   if (!settings.encryption_enabled) return CURRENT_ENCRYPTION_VERSION;
   const version = Number(settings.encryption_version || 1);
-  return version === CURRENT_ENCRYPTION_VERSION ? CURRENT_ENCRYPTION_VERSION : 1;
+  return [1, 2, CURRENT_ENCRYPTION_VERSION].includes(version) ? version : 1;
 }
 
 function encryptionStatus(settings = readSecuritySettings()) {
@@ -28,6 +34,7 @@ function encryptionStatus(settings = readSecuritySettings()) {
 function isEncryptedText(value) {
   const text = String(value || "");
   return text.startsWith(CURRENT_ENCRYPTED_PREFIX)
+    || text.startsWith(V2_ENCRYPTED_PREFIX)
     || text.startsWith(V1_ENCRYPTED_PREFIX)
     || text.startsWith(LEGACY_ENCRYPTED_PREFIX);
 }
@@ -36,9 +43,12 @@ function isCurrentEncryptedText(value) {
   return String(value || "").startsWith(CURRENT_ENCRYPTED_PREFIX);
 }
 
-function isLegacyEncryptedText(value) {
+function encryptedTextVersion(value) {
   const text = String(value || "");
-  return text.startsWith(V1_ENCRYPTED_PREFIX) || text.startsWith(LEGACY_ENCRYPTED_PREFIX);
+  if (text.startsWith(CURRENT_ENCRYPTED_PREFIX)) return CURRENT_ENCRYPTION_VERSION;
+  if (text.startsWith(V2_ENCRYPTED_PREFIX)) return 2;
+  if (text.startsWith(V1_ENCRYPTED_PREFIX) || text.startsWith(LEGACY_ENCRYPTED_PREFIX)) return 1;
+  return 0;
 }
 
 function deriveRootKey(password, salt) {
@@ -49,11 +59,14 @@ function deriveSubkey(rootKey, info) {
   return Buffer.from(crypto.hkdfSync("sha256", rootKey, Buffer.alloc(0), info, 32));
 }
 
-function v2KeyMaterial(rootKey) {
-  const verifyKey = deriveSubkey(rootKey, V2_VERIFIER_INFO);
+function keyMaterial(rootKey, version) {
+  const encryptionInfo = version === 2 ? V2_ENCRYPTION_INFO : V3_ENCRYPTION_INFO;
+  const verifierInfo = version === 2 ? V2_VERIFIER_INFO : V3_VERIFIER_INFO;
+  const verifierMessage = version === 2 ? V2_VERIFIER_MESSAGE : V3_VERIFIER_MESSAGE;
+  const verifyKey = deriveSubkey(rootKey, verifierInfo);
   return {
-    encryptionKey: deriveSubkey(rootKey, V2_ENCRYPTION_INFO),
-    verifier: crypto.createHmac("sha256", verifyKey).update(V2_VERIFIER_MESSAGE).digest("base64url")
+    encryptionKey: deriveSubkey(rootKey, encryptionInfo),
+    verifier: crypto.createHmac("sha256", verifyKey).update(verifierMessage).digest("base64url")
   };
 }
 
@@ -63,28 +76,58 @@ function safeEqualText(actual, expected) {
   return left.length === right.length && left.length > 0 && crypto.timingSafeEqual(left, right);
 }
 
-function legacyRootKeyFromCheck(value) {
-  const text = String(value || "");
-  if (!/^[0-9a-f]{64}$/i.test(text)) throw new Error("旧版配置加密校验值无效，无法自动升级");
-  return Buffer.from(text, "hex");
+function unlockDescriptor(password, descriptor) {
+  const version = Number(descriptor.version || 1);
+  const rootKey = deriveRootKey(password, descriptor.salt);
+  if (version === 1) {
+    if (!safeEqualText(rootKey.toString("hex"), descriptor.check)) throw new Error("主密码不正确");
+    return { version, rootKey, encryptionKey:rootKey };
+  }
+  if (![2, CURRENT_ENCRYPTION_VERSION].includes(version)) throw new Error("配置加密版本不受支持");
+  const material = keyMaterial(rootKey, version);
+  if (!safeEqualText(material.verifier, descriptor.check)) throw new Error("主密码不正确");
+  return { version, rootKey, encryptionKey:material.encryptionKey };
+}
+
+function currentDescriptor(settings) {
+  return {
+    version:encryptionVersion(settings),
+    salt:String(settings.encryption_salt || ""),
+    check:String(settings.encryption_check || "")
+  };
+}
+
+function legacyDescriptor(settings) {
+  const version = Number(settings.encryption_legacy_version || 0);
+  if (![1, 2].includes(version)) return null;
+  return {
+    version,
+    salt:String(settings.encryption_legacy_salt || ""),
+    check:String(settings.encryption_legacy_check || "")
+  };
 }
 
 function unlockEncryption(password) {
   const settings = readSecuritySettings();
   if (!settings.encryption_enabled) return { ok: true, enabled: false, state: "disabled", version:CURRENT_ENCRYPTION_VERSION };
-  const rootKey = deriveRootKey(password, settings.encryption_salt);
-  const version = encryptionVersion(settings);
-  if (version === 1) {
-    if (!safeEqualText(rootKey.toString("hex"), settings.encryption_check)) throw new Error("主密码不正确");
-    activeLegacyKey = rootKey;
-    activeKey = null;
+  const unlocked = unlockDescriptor(password, currentDescriptor(settings));
+  if (unlocked.version === CURRENT_ENCRYPTION_VERSION) {
+    activeKey = unlocked.encryptionKey;
+    const legacy = legacyDescriptor(settings);
+    if (legacy) {
+      const legacyUnlocked = unlockDescriptor(password, legacy);
+      activeLegacyKey = legacyUnlocked.encryptionKey;
+      activeLegacyVersion = legacyUnlocked.version;
+    } else {
+      activeLegacyKey = null;
+      activeLegacyVersion = 0;
+    }
   } else {
-    const material = v2KeyMaterial(rootKey);
-    if (!safeEqualText(material.verifier, settings.encryption_check)) throw new Error("主密码不正确");
-    activeKey = material.encryptionKey;
-    activeLegacyKey = rootKey;
+    activeKey = null;
+    activeLegacyKey = unlocked.encryptionKey;
+    activeLegacyVersion = unlocked.version;
   }
-  return { ok: true, enabled: true, state:encryptionStatus(settings), version };
+  return { ok: true, enabled: true, state:encryptionStatus(settings), version:unlocked.version };
 }
 
 function enableEncryption(password) {
@@ -92,19 +135,22 @@ function enableEncryption(password) {
   if (settings.encryption_enabled || encryptionStatus(settings) !== "disabled") {
     throw new Error("配置加密已启用或正在切换，请先完成当前操作");
   }
-  if (String(password || "").length < 8) throw new Error("主密码至少 8 位");
+  if (String(password || "").length < 12) throw new Error("主密码至少 12 位");
   const salt = crypto.randomBytes(16).toString("hex");
   const rootKey = deriveRootKey(password, salt);
-  const material = v2KeyMaterial(rootKey);
+  const material = keyMaterial(rootKey, CURRENT_ENCRYPTION_VERSION);
   activeKey = material.encryptionKey;
   activeLegacyKey = null;
+  activeLegacyVersion = 0;
   writeSecuritySettings({
     encryption_enabled: true,
     encryption_state: "enabling",
     encryption_version: CURRENT_ENCRYPTION_VERSION,
     encryption_salt: salt,
     encryption_check: material.verifier,
-    encryption_legacy_check: ""
+    encryption_legacy_version:0,
+    encryption_legacy_salt:"",
+    encryption_legacy_check:""
   });
   return { ok: true, state:"enabling", version:CURRENT_ENCRYPTION_VERSION };
 }
@@ -126,72 +172,61 @@ function completeEncryptionEnable() {
     encryption_enabled:true,
     encryption_state:"enabled",
     encryption_version:CURRENT_ENCRYPTION_VERSION,
+    encryption_legacy_version:0,
+    encryption_legacy_salt:"",
     encryption_legacy_check:""
   });
   activeLegacyKey = null;
+  activeLegacyVersion = 0;
   return { ok:true, state:"enabled", version:CURRENT_ENCRYPTION_VERSION };
 }
 
 function disableEncryption() {
   activeKey = null;
   activeLegacyKey = null;
+  activeLegacyVersion = 0;
   writeSecuritySettings({
     encryption_enabled:false,
     encryption_state:"disabled",
     encryption_version:CURRENT_ENCRYPTION_VERSION,
     encryption_salt:"",
     encryption_check:"",
+    encryption_legacy_version:0,
+    encryption_legacy_salt:"",
     encryption_legacy_check:""
   });
   return { ok:true, state:"disabled", version:CURRENT_ENCRYPTION_VERSION };
 }
 
-function beginLegacyEncryptionUpgrade() {
+function prepareEncryptionUpgrade(password) {
   const settings = readSecuritySettings();
-  if (!settings.encryption_enabled || encryptionVersion(settings) !== 1) return false;
-  const rootKey = legacyRootKeyFromCheck(settings.encryption_check);
-  const material = v2KeyMaterial(rootKey);
-  activeLegacyKey = rootKey;
+  if (!settings.encryption_enabled) return false;
+  const state = encryptionStatus(settings);
+  const version = encryptionVersion(settings);
+  if (version === CURRENT_ENCRYPTION_VERSION) return state === "enabling";
+  if (state !== "enabled") return false;
+  if (!activeLegacyKey || activeLegacyVersion !== version) throw new Error("配置加密尚未解锁，无法轮换密钥");
+  const salt = crypto.randomBytes(16).toString("hex");
+  const rootKey = deriveRootKey(password, salt);
+  const material = keyMaterial(rootKey, CURRENT_ENCRYPTION_VERSION);
   activeKey = material.encryptionKey;
   writeSecuritySettings({
     encryption_enabled:true,
     encryption_state:"enabling",
     encryption_version:CURRENT_ENCRYPTION_VERSION,
-    encryption_salt:String(settings.encryption_salt || ""),
+    encryption_salt:salt,
     encryption_check:material.verifier,
+    encryption_legacy_version:version,
+    encryption_legacy_salt:String(settings.encryption_salt || ""),
     encryption_legacy_check:String(settings.encryption_check || "")
   });
   return true;
 }
 
-function resumeAutomaticLegacyUpgrade() {
-  const settings = readSecuritySettings();
-  if (
-    !settings.encryption_enabled
-    || encryptionStatus(settings) !== "enabling"
-    || encryptionVersion(settings) !== CURRENT_ENCRYPTION_VERSION
-    || !settings.encryption_legacy_check
-  ) return false;
-  const rootKey = legacyRootKeyFromCheck(settings.encryption_legacy_check);
-  const material = v2KeyMaterial(rootKey);
-  if (!safeEqualText(material.verifier, settings.encryption_check)) {
-    throw new Error("配置加密升级校验不一致，已停止自动修复");
-  }
-  activeLegacyKey = rootKey;
-  activeKey = material.encryptionKey;
-  return true;
-}
-
-function prepareAutomaticEncryptionUpgrade() {
-  const settings = readSecuritySettings();
-  if (!settings.encryption_enabled) return false;
-  if (encryptionVersion(settings) === 1) return beginLegacyEncryptionUpgrade();
-  return resumeAutomaticLegacyUpgrade();
-}
-
 function lockEncryption() {
   activeKey = null;
   activeLegacyKey = null;
+  activeLegacyVersion = 0;
 }
 
 function encryptionReady() {
@@ -210,6 +245,7 @@ function encryptionState() {
     ready:encryptionReady(),
     state,
     version:encryptionVersion(settings),
+    upgrade_required:Boolean(settings.encryption_enabled && encryptionVersion(settings) < CURRENT_ENCRYPTION_VERSION),
     transition_pending:state === "enabling" || state === "disabling"
   };
 }
@@ -233,7 +269,7 @@ function encryptText(value) {
   if (!activeKey) throw new Error("配置加密尚未解锁或升级未完成");
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", activeKey, iv);
-  cipher.setAAD(V2_CIPHERTEXT_AAD);
+  cipher.setAAD(V3_CIPHERTEXT_AAD);
   const data = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return `${CURRENT_ENCRYPTED_PREFIX}${iv.toString("base64url")}:${tag.toString("base64url")}:${data.toString("base64url")}`;
@@ -265,17 +301,17 @@ function decryptText(value) {
   }
   if (isCurrentEncryptedText(text)) {
     if (!activeKey) return "";
-    return decryptWithKey(text, activeKey, V2_CIPHERTEXT_AAD);
+    return decryptWithKey(text, activeKey, V3_CIPHERTEXT_AAD);
   }
-  if (!activeLegacyKey) return "";
-  return decryptWithKey(text, activeLegacyKey);
+  const version = encryptedTextVersion(text);
+  if (!activeLegacyKey || activeLegacyVersion !== version) return "";
+  return decryptWithKey(text, activeLegacyKey, version === 2 ? V2_CIPHERTEXT_AAD : null);
 }
 
 module.exports = {
   CURRENT_ENCRYPTED_PREFIX,
   CURRENT_ENCRYPTION_VERSION,
   beginDisableEncryption,
-  beginLegacyEncryptionUpgrade,
   completeEncryptionEnable,
   decryptText,
   disableEncryption,
@@ -285,9 +321,8 @@ module.exports = {
   encryptText,
   isCurrentEncryptedText,
   isEncryptedText,
-  isLegacyEncryptedText,
   lockEncryption,
-  prepareAutomaticEncryptionUpgrade,
+  prepareEncryptionUpgrade,
   requireEncryptionUnlocked,
   unlockEncryption
 };

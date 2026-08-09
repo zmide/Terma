@@ -21,7 +21,7 @@ const securityStore = require("../dist/security");
 const snapshots = require("../dist/config-snapshots");
 
 function encrypted(value) {
-  return typeof value === "string" && value.startsWith("termaenc:v2:");
+  return typeof value === "string" && value.startsWith("termaenc:v3:");
 }
 
 function legacyEncrypt(value, key) {
@@ -38,7 +38,38 @@ function assertVerifierCannotDecrypt(ciphertext, verifier) {
   assert.equal(candidate.length, 32);
   assert.throws(() => {
     const decipher = crypto.createDecipheriv("aes-256-gcm", candidate, Buffer.from(ivText, "base64url"));
-    decipher.setAAD(Buffer.from("Terma configuration secret v2", "utf8"));
+    decipher.setAAD(Buffer.from("Terma configuration secret v3", "utf8"));
+    decipher.setAuthTag(Buffer.from(tagText, "base64url"));
+    Buffer.concat([decipher.update(Buffer.from(dataText, "base64url")), decipher.final()]);
+  });
+}
+
+function deriveSubkey(rootKey, info) {
+  return Buffer.from(crypto.hkdfSync("sha256", rootKey, Buffer.alloc(0), Buffer.from(info, "utf8"), 32));
+}
+
+function v2KeyMaterial(rootKey) {
+  const verifyKey = deriveSubkey(rootKey, "terma-config-verifier-v2");
+  return {
+    encryptionKey:deriveSubkey(rootKey, "terma-config-encryption-v2"),
+    verifier:crypto.createHmac("sha256", verifyKey).update("Terma configuration encryption v2").digest("base64url")
+  };
+}
+
+function encryptAead(prefix, value, key, aad = null) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  if (aad) cipher.setAAD(Buffer.from(aad, "utf8"));
+  const data = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${prefix}${iv.toString("base64url")}:${tag.toString("base64url")}:${data.toString("base64url")}`;
+}
+
+function assertKeyCannotDecrypt(ciphertext, key, aad) {
+  const [, , ivText, tagText, dataText] = String(ciphertext).split(":");
+  assert.throws(() => {
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(ivText, "base64url"));
+    decipher.setAAD(Buffer.from(aad, "utf8"));
     decipher.setAuthTag(Buffer.from(tagText, "base64url"));
     Buffer.concat([decipher.update(Buffer.from(dataText, "base64url")), decipher.final()]);
   });
@@ -113,10 +144,10 @@ try {
   const rawRemote = database.get("SELECT password FROM remote_profiles WHERE id=?", [remoteId]);
   const rawTunnel = database.get("SELECT identity_file,extra_args FROM tunnels WHERE name='legacy'");
   for (const value of [...Object.values(rawPassword), ...Object.values(rawKey), ...Object.values(rawRemote), ...Object.values(rawTunnel)]) {
-    assert.equal(encrypted(value), true, "every stored secret must use termaenc:v2");
+    assert.equal(encrypted(value), true, "every stored secret must use termaenc:v3");
   }
   const security = securityStore.readSecuritySettings();
-  assert.equal(security.encryption_version, 2);
+  assert.equal(security.encryption_version, 3);
   assert.notEqual(security.encryption_check, crypto.scryptSync("boundary-password", security.encryption_salt, 32).toString("hex"));
   assertVerifierCannotDecrypt(rawPassword.ssh_password, security.encryption_check);
   assert.equal(snapshots.pruneConfigSnapshotsForCurrentEncryption(), 1);
@@ -176,19 +207,65 @@ try {
     encryption_version:1,
     encryption_salt:legacySalt,
     encryption_check:legacyKey.toString("hex"),
+    encryption_legacy_version:0,
+    encryption_legacy_salt:"",
     encryption_legacy_check:""
   });
   cryptoStore.lockEncryption();
-  assert.equal(cryptoStore.prepareAutomaticEncryptionUpgrade(), true);
+  assert.equal(cryptoStore.encryptionState().upgrade_required, true);
+  assert.throws(() => cryptoStore.prepareEncryptionUpgrade(legacyPassword), /解锁/);
+  cryptoStore.unlockEncryption(legacyPassword);
+  assert.equal(cryptoStore.prepareEncryptionUpgrade(legacyPassword), true);
+  const rotatingV1 = securityStore.readSecuritySettings();
+  assert.equal(rotatingV1.encryption_version, 3);
+  assert.equal(rotatingV1.encryption_state, "enabling");
+  assert.notEqual(rotatingV1.encryption_salt, legacySalt);
+  assert.equal(rotatingV1.encryption_legacy_version, 1);
+  assert.equal(rotatingV1.encryption_legacy_salt, legacySalt);
+  cryptoStore.lockEncryption();
+  cryptoStore.unlockEncryption(legacyPassword);
+  assert.equal(cryptoStore.prepareEncryptionUpgrade(legacyPassword), true);
   assert.ok(database.encryptStoredConnectionSecrets() >= 1);
   cryptoStore.completeEncryptionEnable();
   const upgraded = database.get("SELECT ssh_password FROM connections WHERE id=?", [passwordId]).ssh_password;
-  assert.match(upgraded, /^termaenc:v2:/);
+  assert.match(upgraded, /^termaenc:v3:/);
   assert.equal(cryptoStore.decryptText(upgraded), "legacy-secret");
+  assertKeyCannotDecrypt(upgraded, deriveSubkey(legacyKey, "terma-config-encryption-v3"), "Terma configuration secret v3");
   cryptoStore.beginDisableEncryption();
   database.decryptStoredConnectionSecrets();
   cryptoStore.disableEncryption();
-  console.log("配置加密边界检查通过：v2 verifier 不等于密钥，切换状态可恢复，旧 v1 数据自动升级");
+
+  const v2Password = "existing-v2-boundary-password";
+  const v2Salt = crypto.randomBytes(16).toString("hex");
+  const v2RootKey = crypto.scryptSync(v2Password, v2Salt, 32);
+  const v2Material = v2KeyMaterial(v2RootKey);
+  database.run("UPDATE connections SET ssh_password=? WHERE id=?", [encryptAead("termaenc:v2:", "v2-secret", v2Material.encryptionKey, "Terma configuration secret v2"), passwordId]);
+  securityStore.writeSecuritySettings({
+    encryption_enabled:true,
+    encryption_state:"enabled",
+    encryption_version:2,
+    encryption_salt:v2Salt,
+    encryption_check:v2Material.verifier,
+    encryption_legacy_version:0,
+    encryption_legacy_salt:"",
+    encryption_legacy_check:""
+  });
+  cryptoStore.lockEncryption();
+  cryptoStore.unlockEncryption(v2Password);
+  assert.equal(cryptoStore.prepareEncryptionUpgrade(v2Password), true);
+  const rotatingV2 = securityStore.readSecuritySettings();
+  assert.notEqual(rotatingV2.encryption_salt, v2Salt);
+  assert.equal(rotatingV2.encryption_legacy_version, 2);
+  assert.ok(database.encryptStoredConnectionSecrets() >= 1);
+  cryptoStore.completeEncryptionEnable();
+  const upgradedV2 = database.get("SELECT ssh_password FROM connections WHERE id=?", [passwordId]).ssh_password;
+  assert.match(upgradedV2, /^termaenc:v3:/);
+  assert.equal(cryptoStore.decryptText(upgradedV2), "v2-secret");
+  assertKeyCannotDecrypt(upgradedV2, deriveSubkey(v2RootKey, "terma-config-encryption-v3"), "Terma configuration secret v3");
+  cryptoStore.beginDisableEncryption();
+  database.decryptStoredConnectionSecrets();
+  cryptoStore.disableEncryption();
+  console.log("配置加密边界检查通过：v3 verifier 与密钥分离，v1/v2 必须输入主密码并使用新 salt 完成密钥轮换");
 } finally {
   try { database.closeDatabase(); } catch {}
   try { cryptoStore.disableEncryption(); } catch {}

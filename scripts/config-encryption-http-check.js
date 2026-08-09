@@ -5,6 +5,33 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { DatabaseSync } = require("node:sqlite");
+
+function deriveSubkey(rootKey, info) {
+  return Buffer.from(crypto.hkdfSync("sha256", rootKey, Buffer.alloc(0), Buffer.from(info, "utf8"), 32));
+}
+
+function v2Descriptor(password) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const rootKey = crypto.scryptSync(password, salt, 32);
+  const encryptionKey = deriveSubkey(rootKey, "terma-config-encryption-v2");
+  const verifyKey = deriveSubkey(rootKey, "terma-config-verifier-v2");
+  return {
+    salt,
+    rootKey,
+    encryptionKey,
+    verifier:crypto.createHmac("sha256", verifyKey).update("Terma configuration encryption v2").digest("base64url")
+  };
+}
+
+function encryptV2(value, key) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  cipher.setAAD(Buffer.from("Terma configuration secret v2", "utf8"));
+  const data = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `termaenc:v2:${iv.toString("base64url")}:${tag.toString("base64url")}:${data.toString("base64url")}`;
+}
 
 function availablePort() {
   return new Promise((resolve, reject) => {
@@ -52,9 +79,19 @@ async function main() {
     auth_type:"password",
     ssh_password:"http-secret"
   }, "");
-  cryptoStore.enableEncryption(masterPassword);
-  database.encryptStoredConnectionSecrets();
-  cryptoStore.completeEncryptionEnable();
+  const v2 = v2Descriptor(masterPassword);
+  const v2Ciphertext = encryptV2("http-secret", v2.encryptionKey);
+  database.run("UPDATE connections SET ssh_password=? WHERE name=?", [v2Ciphertext, "encrypted-http"]);
+  security.writeSecuritySettings({
+    encryption_enabled:true,
+    encryption_state:"enabled",
+    encryption_version:2,
+    encryption_salt:v2.salt,
+    encryption_check:v2.verifier,
+    encryption_legacy_version:0,
+    encryption_legacy_salt:"",
+    encryption_legacy_check:""
+  });
   cryptoStore.lockEncryption();
   database.closeDatabase();
 
@@ -80,7 +117,12 @@ async function main() {
     const cookie = login.headers.get("set-cookie").split(";")[0];
     const lockedSettings = await (await fetch(`${url}/api/security`, {headers:{Cookie:cookie}})).json();
     assert.equal(lockedSettings.encryption_enabled, true);
+    assert.equal(lockedSettings.encryption_version, 2);
+    assert.equal(lockedSettings.encryption_upgrade_required, true);
     assert.equal(lockedSettings.encryption_ready, false);
+    const beforeUnlock = new DatabaseSync(path.join(process.env.TERMA_DATA_DIR, "tunnels.db"), {readOnly:true});
+    assert.equal(beforeUnlock.prepare("SELECT ssh_password FROM connections WHERE name=?").get("encrypted-http").ssh_password, v2Ciphertext, "server startup must not automatically reuse the v2 key");
+    beforeUnlock.close();
     assert.equal((await fetch(`${url}/api/backup/bundle`, {headers:{Cookie:cookie}})).status, 423);
 
     const unlocked = await fetch(`${url}/api/security/encryption/unlock`, {
@@ -89,6 +131,12 @@ async function main() {
       body:JSON.stringify({password:masterPassword})
     });
     assert.equal(unlocked.status, 200);
+    const unlockResult = await unlocked.json();
+    assert.equal(unlockResult.key_rotated, true);
+    assert.equal(unlockResult.version, 3);
+    const afterUnlock = new DatabaseSync(path.join(process.env.TERMA_DATA_DIR, "tunnels.db"), {readOnly:true});
+    assert.match(afterUnlock.prepare("SELECT ssh_password FROM connections WHERE name=?").get("encrypted-http").ssh_password, /^termaenc:v3:/);
+    afterUnlock.close();
     const bundleResponse = await fetch(`${url}/api/backup/bundle`, {headers:{Cookie:cookie}});
     assert.equal(bundleResponse.status, 200);
     const bundle = Buffer.from(await bundleResponse.arrayBuffer());
@@ -96,10 +144,10 @@ async function main() {
     assert.equal(bundle.subarray(0, magic.length).equals(magic), true);
     const metadataLength = bundle.readUInt32BE(magic.length);
     const metadata = JSON.parse(bundle.subarray(magic.length + 4, magic.length + 4 + metadataLength).toString("utf8"));
-    assert.equal(metadata.security.encryption_version, 2);
+    assert.equal(metadata.security.encryption_version, 3);
     assert.equal(metadata.security.encryption_state, "enabled");
     assert.notEqual(metadata.security.encryption_check, crypto.scryptSync(masterPassword, metadata.security.encryption_salt, 32).toString("hex"));
-    console.log("配置加密 HTTP 边界检查通过：锁定状态拒绝完整迁移包，解锁后仅导出 v2 verifier");
+    console.log("配置加密 HTTP 边界检查通过：锁定状态拒绝完整迁移包，解锁后仅导出 v3 verifier");
   } catch (error) {
     if (output.length) console.error(output.join("").slice(-12000));
     throw error;

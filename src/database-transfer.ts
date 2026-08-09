@@ -14,7 +14,7 @@ const MAX_LEGACY_BYTES = 100 * 1024 * 1024;
 export interface BundleSecurity {
   encryption_enabled: boolean;
   encryption_state: "disabled" | "enabled";
-  encryption_version: 1 | 2;
+  encryption_version: 1 | 2 | 3;
   encryption_salt: string;
   encryption_check: string;
 }
@@ -83,17 +83,17 @@ function normalizeSecurity(value: unknown): BundleSecurity | null {
   const record = value as Record<string, unknown>;
   const enabled = Boolean(record.encryption_enabled);
   const state = String(record.encryption_state || (enabled ? "enabled" : "disabled"));
-  const version = Number(record.encryption_version || (enabled ? 1 : 2));
+  const version = Number(record.encryption_version || (enabled ? 1 : 3));
   if (enabled && state !== "enabled") throw new Error("迁移包中的配置加密仍处于切换状态，不能恢复");
   if (!enabled && state !== "disabled") throw new Error("迁移包中的配置加密状态无效");
-  if (enabled && ![1, 2].includes(version)) throw new Error("迁移包中的配置加密版本不受支持");
+  if (enabled && ![1, 2, 3].includes(version)) throw new Error("迁移包中的配置加密版本不受支持");
   const salt = String(record.encryption_salt || "");
   const check = String(record.encryption_check || "");
   if (enabled && (!salt || !check)) throw new Error("迁移包缺少配置加密校验信息");
   return {
     encryption_enabled:enabled,
     encryption_state:enabled ? "enabled" : "disabled",
-    encryption_version:(version === 1 ? 1 : 2),
+    encryption_version:([1, 2, 3].includes(version) ? version : 3) as 1 | 2 | 3,
     encryption_salt:salt,
     encryption_check:check
   };

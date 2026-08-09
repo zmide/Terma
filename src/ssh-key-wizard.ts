@@ -3,8 +3,9 @@ const path = require("node:path");
 const { utils } = require("ssh2");
 const { PROJECT_SSH_DIR } = require("./config");
 const { getConnection } = require("./db");
-const { runSshCommandForConnection } = require("./ssh");
+const { runSshCommandForConnection, securePrivateKeyPermissions } = require("./ssh");
 const { buildRemotePosixCommand } = require("./remote-posix");
+const { ensurePrivateDirectory } = require("./storage-permissions");
 
 function cleanKeyName(value) {
   const name = String(value || "id_ed25519_terma").trim();
@@ -15,7 +16,7 @@ function cleanKeyName(value) {
 }
 
 function uniqueKeyPath(name) {
-  fs.mkdirSync(PROJECT_SSH_DIR, {recursive:true});
+  ensurePrivateDirectory(PROJECT_SSH_DIR, {required:true});
   const clean = cleanKeyName(name);
   let target = path.join(PROJECT_SSH_DIR, clean);
   let index = 1;
@@ -45,17 +46,24 @@ function generateSshKey(data: any = {}) {
   const passphrase = String(data.passphrase || "");
   const comment = String(data.comment || "Terma").trim().slice(0, 120);
   const keys = generateUsableEd25519Key(comment, passphrase);
-  fs.writeFileSync(target, keys.private, {encoding:"utf8", mode:0o600, flag:"wx"});
-  fs.writeFileSync(`${target}.pub`, `${String(keys.public).trim()}\n`, {encoding:"utf8", mode:0o644, flag:"wx"});
-  try { fs.chmodSync(target, 0o600); } catch {}
-  try { fs.chmodSync(`${target}.pub`, 0o644); } catch {}
-  return {
-    ok:true,
-    private_path:target,
-    public_path:`${target}.pub`,
-    public_key:String(keys.public).trim(),
-    has_passphrase:Boolean(passphrase)
-  };
+  const publicPath = `${target}.pub`;
+  try {
+    fs.writeFileSync(target, keys.private, {encoding:"utf8", mode:0o600, flag:"wx"});
+    fs.writeFileSync(publicPath, `${String(keys.public).trim()}\n`, {encoding:"utf8", mode:0o644, flag:"wx"});
+    securePrivateKeyPermissions(target);
+    try { fs.chmodSync(publicPath, 0o644); } catch {}
+    return {
+      ok:true,
+      private_path:target,
+      public_path:publicPath,
+      public_key:String(keys.public).trim(),
+      has_passphrase:Boolean(passphrase)
+    };
+  } catch (error) {
+    try { fs.rmSync(target, {force:true}); } catch {}
+    try { fs.rmSync(publicPath, {force:true}); } catch {}
+    throw error;
+  }
 }
 
 function shellQuote(value) {

@@ -10,6 +10,7 @@ process.env.TERMA_SSH_DIR = path.join(root, ".ssh");
 
 try {
   const { cleanKeyName, generateSshKey } = require("../dist/ssh-key-wizard");
+  const { identityPermissionStatus } = require("../dist/ssh");
   assert.throws(() => cleanKeyName("../bad"), /只能包含/);
   const first = generateSshKey({name:"id_ed25519_check", comment:"Terma regression", passphrase:"test-passphrase"});
   const second = generateSshKey({name:"id_ed25519_check", comment:"Terma regression"});
@@ -18,6 +19,8 @@ try {
   assert.match(first.public_key, /^ssh-ed25519\s+/);
   assert.ok(!(utils.parseKey(fs.readFileSync(first.private_path), "test-passphrase") instanceof Error));
   assert.ok(!(utils.parseKey(fs.readFileSync(second.private_path)) instanceof Error));
+  assert.equal(identityPermissionStatus(first.private_path).ok, true);
+  assert.equal(identityPermissionStatus(second.private_path).ok, true);
   for (let index = 0; index < 32; index += 1) {
     const generated = generateSshKey({name:"id_ed25519_stress", comment:`Terma stress ${index}`, passphrase:"test-passphrase"});
     assert.ok(!(utils.parseKey(fs.readFileSync(generated.private_path), "test-passphrase") instanceof Error));

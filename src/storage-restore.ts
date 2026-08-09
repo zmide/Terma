@@ -11,7 +11,7 @@ function createStorageRestoreHelpers(options: any = {}) {
   } = options;
   const encryptedValue = typeof isEncryptedText === "function"
     ? isEncryptedText
-    : (value) => /^(?:tdenc:v1|termaenc:v[12]):/.test(String(value || ""));
+    : (value) => /^(?:tdenc:v1|termaenc:v[123]):/.test(String(value || ""));
   const secretColumnsByTable = {
     connections: ["identity_file", "ssh_password", "private_key_passphrase", "extra_args", "terminal_program_path", "terminal_program_args", "terminal_working_directory"],
     remote_profiles: ["password"],
@@ -313,6 +313,7 @@ function createStorageRestoreHelpers(options: any = {}) {
 
   function encryptedSecretVersion(value) {
     const text = String(value || "");
+    if (text.startsWith("termaenc:v3:")) return 3;
     if (text.startsWith("termaenc:v2:")) return 2;
     if (text.startsWith("termaenc:v1:") || text.startsWith("tdenc:v1:")) return 1;
     return 0;
@@ -321,7 +322,7 @@ function createStorageRestoreHelpers(options: any = {}) {
   function assertDatabaseMatchesBundleSecurity(restoredDb, security) {
     if (!security) return;
     const enabled = Boolean(security.encryption_enabled);
-    const version = Number(security.encryption_version || (enabled ? 1 : 2));
+    const version = Number(security.encryption_version || (enabled ? 1 : 3));
     if (enabled && String(security.encryption_state || "enabled") !== "enabled") {
       throw new Error("迁移包中的配置加密仍处于切换状态，不能恢复");
     }

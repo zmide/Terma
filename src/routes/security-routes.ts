@@ -17,7 +17,7 @@ interface SecurityRouteDependencies {
   enableEncryption(password: string): unknown;
   beginDisableEncryption(): unknown;
   completeEncryptionEnable(): unknown;
-  prepareAutomaticEncryptionUpgrade(): boolean;
+  prepareEncryptionUpgrade(password: string): boolean;
   unlockEncryption(password: string): unknown;
   disableEncryption(): unknown;
   readSecuritySettings(): any;
@@ -109,8 +109,9 @@ export async function handleSecurityRoutes(
     return true;
   }
   if (request.method === "POST" && pathname === "/api/security/encryption/unlock") {
-    const result = dependencies.unlockEncryption(String((await dependencies.readJson(request)).password || ""));
-    dependencies.prepareAutomaticEncryptionUpgrade();
+    const password = String((await dependencies.readJson(request)).password || "");
+    const result = dependencies.unlockEncryption(password);
+    dependencies.prepareEncryptionUpgrade(password);
     const settings = dependencies.readSecuritySettings();
     let transition_rows = 0;
     let removed_snapshots = 0;
@@ -131,6 +132,7 @@ export async function handleSecurityRoutes(
       ...(result as object),
       state:finalSettings.encryption_state,
       version:finalSettings.encryption_version,
+      key_rotated:Number((result as any)?.version || finalSettings.encryption_version) < Number(finalSettings.encryption_version || 0),
       transition_rows,
       removed_snapshots
     });
