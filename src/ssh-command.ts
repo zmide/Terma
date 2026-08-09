@@ -49,6 +49,7 @@ function assertSafeOpenSshOption(value: unknown) {
   if (!ALLOWED_OPENSSH_OPTIONS.has(name)) {
     throw new Error(`SSH 附加参数只允许连接调优选项，不能使用：${name}`);
   }
+  return { name, value:optionValue };
 }
 
 function requireArgument(args: string[], index: number, option: string) {
@@ -99,4 +100,78 @@ export function effectiveExtraArgs(text: unknown): string[] {
     }
   }
   return args;
+}
+
+function simpleAlgorithmList(value: string) {
+  const text = String(value || "").trim();
+  if (!text || /^[+^-]/.test(text) || /[*?!]/.test(text)) return null;
+  const items = text.split(",").map(item => item.trim()).filter(Boolean);
+  return items.length && items.every(item => /^[A-Za-z0-9@._+-]+$/.test(item)) ? items : null;
+}
+
+export function builtinSshExtraOptions(text: unknown) {
+  const args = assertSafeExtraArgs(text);
+  const options: any = {};
+  let unsupported = "";
+  const applyOption = (nameValue: unknown, optionValue: unknown, source: string) => {
+    const name = String(nameValue || "").toLowerCase();
+    const value = String(optionValue || "").trim();
+    if (["connecttimeout", "loglevel", "serveralivecountmax", "serveraliveinterval", "tcpkeepalive"].includes(name)) return;
+    if (name === "compression") {
+      if (/^(?:yes|true|on|1)$/i.test(value)) options.algorithms = { ...(options.algorithms || {}), compress:["zlib@openssh.com", "zlib", "none"] };
+      else if (/^(?:no|false|off|0)$/i.test(value)) options.algorithms = { ...(options.algorithms || {}), compress:["none"] };
+      else unsupported ||= source;
+      return;
+    }
+    if (name === "addressfamily") {
+      if (value.toLowerCase() === "inet") Object.assign(options, {forceIPv4:true, forceIPv6:false});
+      else if (value.toLowerCase() === "inet6") Object.assign(options, {forceIPv4:false, forceIPv6:true});
+      else if (value.toLowerCase() === "any") Object.assign(options, {forceIPv4:false, forceIPv6:false});
+      else unsupported ||= source;
+      return;
+    }
+    const algorithmKey = {
+      ciphers:"cipher",
+      macs:"hmac",
+      kexalgorithms:"kex",
+      hostkeyalgorithms:"serverHostKey"
+    }[name];
+    if (algorithmKey) {
+      const algorithms = simpleAlgorithmList(value);
+      if (!algorithms) unsupported ||= source;
+      else options.algorithms = { ...(options.algorithms || {}), [algorithmKey]:algorithms };
+      return;
+    }
+    unsupported ||= source;
+  };
+  for (let index = 0; index < args.length; index += 1) {
+    const token = String(args[index] || "");
+    if (token === "-o") {
+      const option = assertSafeOpenSshOption(args[index + 1]);
+      applyOption(option.name, option.value, String(args[index + 1] || token));
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-o")) {
+      const option = assertSafeOpenSshOption(token.slice(2));
+      applyOption(option.name, option.value, token);
+      continue;
+    }
+    const short = token.slice(1);
+    for (let offset = 0; offset < short.length; offset += 1) {
+      const option = short[offset];
+      if (option === "4") Object.assign(options, {forceIPv4:true, forceIPv6:false});
+      else if (option === "6") Object.assign(options, {forceIPv4:false, forceIPv6:true});
+      else if (option === "C") options.algorithms = { ...(options.algorithms || {}), compress:["zlib@openssh.com", "zlib", "none"] };
+      else if (["q", "v"].includes(option)) continue;
+      else if (["c", "m"].includes(option)) {
+        const attached = short.slice(offset + 1);
+        const argument = attached || String(args[index + 1] || "");
+        applyOption(option === "c" ? "ciphers" : "macs", argument, token);
+        if (!attached) index += 1;
+        break;
+      }
+    }
+  }
+  return { supported:!unsupported, unsupported, options };
 }

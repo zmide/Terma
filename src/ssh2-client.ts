@@ -8,26 +8,13 @@ const socks = require("@pondwader/socks5-server");
 const iconv = require("iconv-lite");
 const { buildRemoteStartupCommand } = require("./terminal-startup");
 const { ensureHostTrusted, verifyHostKey } = require("./ssh-host-trust");
-const { splitArgs } = require("./ssh-command");
+const { builtinSshExtraOptions } = require("./ssh-command");
 const { connectionSettings, ssh2TimingOptions } = require("./ssh-connection");
 const { assertAllowedIdentityPath } = require("./identity-path");
 const { localX11Authorization } = require("./x11");
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { remoteProbeValue } = require("./remote-probe-protocol");
 
-const BUILTIN_OPENSSH_OPTIONS = new Set([
-  "batchmode",
-  "checkhostip",
-  "connecttimeout",
-  "globalknownhostsfile",
-  "hashknownhosts",
-  "serveralivecountmax",
-  "serveraliveinterval",
-  "stricthostkeychecking",
-  "tcpkeepalive",
-  "updatehostkeys",
-  "userknownhostsfile"
-]);
 const keyCompatibilityCache = new Map();
 const jumpConnectionPool = new Map();
 const JUMP_IDLE_TIMEOUT_MS = 30 * 1000;
@@ -63,27 +50,6 @@ function isPasswordConnection(connection) {
   return String(connection?.auth_type || "key") === "password";
 }
 
-function unsupportedOpenSshArgument(text) {
-  const args = splitArgs(text);
-  for (let index = 0; index < args.length; index += 1) {
-    const value = String(args[index] || "");
-    if (value === "-o") {
-      const option = String(args[index + 1] || "");
-      const name = option.split("=", 1)[0].trim().toLowerCase();
-      if (!name || !BUILTIN_OPENSSH_OPTIONS.has(name)) return option || value;
-      index += 1;
-      continue;
-    }
-    if (value.startsWith("-o") && value.length > 2) {
-      const name = value.slice(2).split("=", 1)[0].trim().toLowerCase();
-      if (!BUILTIN_OPENSSH_OPTIONS.has(name)) return value;
-      continue;
-    }
-    return value;
-  }
-  return "";
-}
-
 function privateKeyCompatibility(file, passphrase = "") {
   try {
     const identityFile = assertAllowedIdentityPath(String(file || ""));
@@ -106,9 +72,14 @@ function privateKeyCompatibility(file, passphrase = "") {
 }
 
 function builtinSshCompatibility(connection) {
-  const unsupportedArgument = unsupportedOpenSshArgument(connection?.extra_args);
-  if (unsupportedArgument) {
-    return { supported: false, reason: `使用了 OpenSSH 专用参数：${unsupportedArgument}` };
+  let extra;
+  try {
+    extra = builtinSshExtraOptions(connection?.extra_args);
+  } catch (error) {
+    return { supported:false, reason:error.message || "SSH 附加参数无效" };
+  }
+  if (!extra.supported) {
+    return { supported: false, reason: `使用了 OpenSSH 专用参数：${extra.unsupported}` };
   }
   if (isPasswordConnection(connection)) {
     return { supported: true, reason:["untrusted", "trusted"].includes(String(connection?.x11_mode || "off")) ? "密码认证和 X11 转发由内置 SSH 处理" : "密码认证由内置 SSH 处理" };
@@ -189,6 +160,9 @@ function keyConnectOptions(connection) {
 
 function connectionOptions(connection, onHostTrustError: any = () => {}, socket = null, trustOptions: any = {}) {
   const options: any = isPasswordConnection(connection) ? passwordConnectOptions(connection) : keyConnectOptions(connection);
+  const extra = builtinSshExtraOptions(connection?.extra_args);
+  if (!extra.supported) throw new Error(`内置 SSH 不支持附加参数：${extra.unsupported}`);
+  Object.assign(options, extra.options);
   if (socket) options.sock = socket;
   options.hostVerifier = (rawKey) => {
     try {

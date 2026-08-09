@@ -2,6 +2,17 @@ function isLoopbackHost(host) {
   return ["127.0.0.1", "localhost", "::1", "[::1]", ""].includes(String(host || "").toLowerCase());
 }
 
+function configEncryptionLocked() {
+  return Boolean(securitySettings?.encryption_enabled && securitySettings?.encryption_unlocked === false);
+}
+
+function requireConfigEncryptionUnlocked(action="修改加密配置") {
+  if (!configEncryptionLocked()) return true;
+  notify(`配置加密已锁定，解锁后才能${action}`, "error");
+  if (typeof openSettingsSection === "function") void openSettingsSection("settings-basic");
+  return false;
+}
+
 function icon(name, label="") {
   if (name === "x11") return x11Icon(label);
   const key = String(name || "").split("-").map(part => part ? part[0].toUpperCase() + part.slice(1) : "").join("");

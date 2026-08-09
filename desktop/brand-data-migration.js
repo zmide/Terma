@@ -12,6 +12,20 @@ const { DatabaseSync } = require("node:sqlite");
 const SQLITE_HEADER = Buffer.from("SQLite format 3\u0000", "utf8");
 const TRANSIENT_DATA_FILES = new Set(["web.pid", "web.url", "web.json", "shutdown.token"]);
 const DATABASE_FILES = new Set(["tunnels.db", "tunnels.db-wal", "tunnels.db-shm"]);
+const SECURITY_FILE = "security.json";
+const SECRET_COLUMNS_BY_TABLE = {
+  connections: [
+    "identity_file",
+    "ssh_password",
+    "private_key_passphrase",
+    "extra_args",
+    "terminal_program_path",
+    "terminal_program_args",
+    "terminal_working_directory"
+  ],
+  remote_profiles: ["password"],
+  tunnels: ["identity_file", "extra_args"]
+};
 const KNOWN_TABLES = new Set([
   "app_meta",
   "command_snippets",
@@ -220,37 +234,34 @@ function securityDescriptor(dataDir) {
   }
 }
 
-function encryptedSecretCount(db) {
-  let total = 0;
-  for (const table of ["connections", "remote_profiles"]) {
+function secretCounts(db) {
+  const result = { encrypted:0, plain:0 };
+  for (const [table, requestedColumns] of Object.entries(SECRET_COLUMNS_BY_TABLE)) {
     if (!tableExists(db, table)) continue;
     const columns = new Set(tableColumns(db, table));
-    for (const column of ["ssh_password", "private_key_passphrase", "password"]) {
+    for (const column of requestedColumns) {
       if (!columns.has(column)) continue;
-      total += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${quoteIdentifier(column)} LIKE 'tdenc:v1:%' OR ${quoteIdentifier(column)} LIKE 'termaenc:v1:%'`).get().count || 0);
+      const field = quoteIdentifier(column);
+      result.encrypted += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${field} LIKE 'tdenc:v1:%' OR ${field} LIKE 'termaenc:v1:%'`).get().count || 0);
+      result.plain += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${field} IS NOT NULL AND ${field}<>'' AND ${field} NOT LIKE 'tdenc:v1:%' AND ${field} NOT LIKE 'termaenc:v1:%'`).get().count || 0);
     }
   }
-  return total;
+  return result;
 }
 
-function plainSecretCount(db) {
-  let total = 0;
-  for (const table of ["connections", "remote_profiles"]) {
-    if (!tableExists(db, table)) continue;
-    const columns = new Set(tableColumns(db, table));
-    for (const column of ["ssh_password", "private_key_passphrase", "password"]) {
-      if (!columns.has(column)) continue;
-      total += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${quoteIdentifier(column)} IS NOT NULL AND ${quoteIdentifier(column)}<>'' AND ${quoteIdentifier(column)} NOT LIKE 'tdenc:v1:%' AND ${quoteIdentifier(column)} NOT LIKE 'termaenc:v1:%'`).get().count || 0);
-    }
+function assertSecretCompatibility(sourceDb, targetDb, sourceDataDir, targetDataDir, descriptors = {}) {
+  const sourceSecurity = descriptors.source || securityDescriptor(sourceDataDir);
+  const targetSecurity = descriptors.target || securityDescriptor(targetDataDir);
+  const sourceSecrets = secretCounts(sourceDb);
+  const targetSecrets = targetDb ? secretCounts(targetDb) : { encrypted:0, plain:0 };
+  const sourceEncrypted = sourceSecrets.encrypted;
+  const sourcePlain = sourceSecrets.plain;
+  if (targetDb && targetSecurity.enabled && targetSecrets.plain) {
+    throw new Error("当前 Terma 的数据库包含未加密敏感字段，不能继续品牌迁移；请先解锁并重新启用配置加密完成修复");
   }
-  return total;
-}
-
-function assertSecretCompatibility(sourceDb, targetDb, sourceDataDir, targetDataDir) {
-  const sourceSecurity = securityDescriptor(sourceDataDir);
-  const targetSecurity = securityDescriptor(targetDataDir);
-  const sourceEncrypted = encryptedSecretCount(sourceDb);
-  const sourcePlain = plainSecretCount(sourceDb);
+  if (targetDb && !targetSecurity.enabled && targetSecrets.encrypted) {
+    throw new Error("当前 Terma 未启用配置加密，但数据库包含加密字段，不能继续品牌迁移");
+  }
   if (sourceEncrypted && targetDb) {
     const sameKey = sourceSecurity.enabled && targetSecurity.enabled
       && sourceSecurity.salt === targetSecurity.salt
@@ -535,7 +546,13 @@ function mergeDatabaseFiles(sourceFile, targetFile, options = {}) {
     targetDb.exec("PRAGMA foreign_keys=ON");
     summary.before = counts(targetDb);
     assertKnownTables(sourceDb, targetDb);
-    assertSecretCompatibility(sourceDb, targetDb, options.sourceDataDir || path.dirname(sourceFile), options.targetDataDir || path.dirname(targetFile));
+    assertSecretCompatibility(
+      sourceDb,
+      targetDb,
+      options.sourceDataDir || path.dirname(sourceFile),
+      options.targetDataDir || path.dirname(targetFile),
+      { source:options.sourceSecurity, target:options.targetSecurity }
+    );
     targetDb.exec("BEGIN IMMEDIATE");
     try {
       const groups = mergeConnectionGroups(targetDb, sourceDb, summary);
@@ -646,7 +663,7 @@ function mergeSshDirectories(sourceSshDir, targetSshDir, options = {}) {
 
 function dataFileFilter(file, entry) {
   const relative = String(file).split(path.sep).at(-1) || "";
-  return !TRANSIENT_DATA_FILES.has(relative) && !DATABASE_FILES.has(relative) && !/^tunnels\.db\.bak/i.test(relative) && !/^offline-(task|install)/i.test(relative);
+  return relative !== SECURITY_FILE && !TRANSIENT_DATA_FILES.has(relative) && !DATABASE_FILES.has(relative) && !/^tunnels\.db\.bak/i.test(relative) && !/^offline-(task|install)/i.test(relative);
 }
 
 function mergeLegacyRuntime(options = {}) {
@@ -657,6 +674,11 @@ function mergeLegacyRuntime(options = {}) {
   const sourceDb = path.join(sourceDataDir, "tunnels.db");
   const targetDb = path.join(targetDataDir, "tunnels.db");
   if (!sqliteFile(sourceDb)) throw new Error(`未发现有效的旧版数据库：${sourceDb}`);
+  const targetExists = fs.existsSync(targetDb);
+  const sourceSecurity = securityDescriptor(sourceDataDir);
+  const targetSecurity = securityDescriptor(targetDataDir);
+  const sourceSecurityFile = path.join(sourceDataDir, SECURITY_FILE);
+  const targetSecurityFile = path.join(targetDataDir, SECURITY_FILE);
   const runtimeRoot = path.dirname(targetDataDir);
   if (path.dirname(targetSshDir) !== runtimeRoot) throw new Error("数据目录和密钥目录必须属于同一个运行目录");
   fs.mkdirSync(runtimeRoot, { recursive:true });
@@ -666,6 +688,7 @@ function mergeLegacyRuntime(options = {}) {
   const createdTargetEntries = [];
   const movedDatabaseFiles = [];
   let promotedDatabase = false;
+  let securityPromotion = null;
   try {
     fs.mkdirSync(staging, { recursive:true });
     const stageData = path.join(staging, "data");
@@ -674,14 +697,17 @@ function mergeLegacyRuntime(options = {}) {
     if (fs.existsSync(targetSshDir)) copyDirectory(targetSshDir, stageSsh);
     copyMissingDirectory(sourceDataDir, stageData, dataFileFilter);
     const stagedDb = path.join(stageData, "tunnels.db");
-    const targetExists = fs.existsSync(targetDb);
     let mergeResult;
     if (targetExists) {
       if (!sqliteFile(targetDb)) throw new Error(`当前数据库不是有效 SQLite 文件：${targetDb}`);
       cloneSqlite(targetDb, stagedDb);
       const sshMerge = mergeSshDirectories(sourceSshDir, stageSsh, { finalTargetDir:targetSshDir });
       const identityMapper = value => sourceIdentityPath(value, sourceSshDir, sshMerge.identityMap);
-      mergeResult = mergeDatabaseFiles(sourceDb, stagedDb, { identityMapper });
+      mergeResult = mergeDatabaseFiles(sourceDb, stagedDb, {
+        identityMapper,
+        sourceSecurity,
+        targetSecurity
+      });
       mergeResult.ssh = sshMerge.summary;
     } else {
       cloneSqlite(sourceDb, stagedDb);
@@ -741,6 +767,13 @@ function mergeLegacyRuntime(options = {}) {
     for (const file of mergeResult.ssh?.files || []) {
       if (!fs.existsSync(file.destination) || fileHash(file.destination) !== file.hash) throw new Error(`迁移后的密钥校验失败：${path.basename(file.destination)}`);
     }
+    if (!targetExists) {
+      securityPromotion = fs.existsSync(targetSecurityFile)
+        ? { existed:true, content:fs.readFileSync(targetSecurityFile), mode:fs.statSync(targetSecurityFile).mode & 0o777 }
+        : { existed:false, content:null, mode:0o600 };
+      if (fs.existsSync(sourceSecurityFile)) copyFilePreservingMode(sourceSecurityFile, targetSecurityFile);
+      else if (fs.existsSync(targetSecurityFile)) fs.rmSync(targetSecurityFile, {force:true});
+    }
     const cleanupPending = [];
     if (!removeDirectoryBestEffort(swap)) cleanupPending.push(swap);
     if (!removeDirectoryBestEffort(staging)) cleanupPending.push(staging);
@@ -751,6 +784,12 @@ function mergeLegacyRuntime(options = {}) {
     // directories can contain open log files, so removing or renaming the
     // whole directory is unsafe on Windows and can destroy unrelated files.
     try {
+      if (securityPromotion) {
+        if (securityPromotion.existed) {
+          fs.writeFileSync(targetSecurityFile, securityPromotion.content, {mode:securityPromotion.mode});
+          try { fs.chmodSync(targetSecurityFile, securityPromotion.mode); } catch {}
+        } else fs.rmSync(targetSecurityFile, {force:true});
+      }
       if (promotedDatabase) fs.rmSync(targetDb, { force:true });
       for (const item of movedDatabaseFiles.slice().reverse()) {
         if (!fs.existsSync(item.previous)) continue;

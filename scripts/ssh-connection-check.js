@@ -34,7 +34,7 @@ const {
   validateSshHost,
   validateSshUser
 } = require("../dist/ssh-connection");
-const { assertSafeExtraArgs } = require("../dist/ssh-command");
+const { assertSafeExtraArgs, builtinSshExtraOptions } = require("../dist/ssh-command");
 const { shouldUseBuiltinSsh, sshTransportForConnection } = require("../dist/ssh2-client");
 
 function connection(name, overrides={}) {
@@ -129,6 +129,27 @@ try {
   assert.deepEqual(assertSafeExtraArgs("-4Cv -c aes256-gcm@openssh.com -m hmac-sha2-256 -o Compression=yes -o LogLevel=ERROR"), [
     "-4Cv", "-c", "aes256-gcm@openssh.com", "-m", "hmac-sha2-256", "-o", "Compression=yes", "-o", "LogLevel=ERROR"
   ]);
+  assert.deepEqual(builtinSshExtraOptions("-4Cv -c aes256-gcm@openssh.com -m hmac-sha2-256 -o Compression=yes -o LogLevel=ERROR"), {
+    supported:true,
+    unsupported:"",
+    options:{
+      forceIPv4:true,
+      forceIPv6:false,
+      algorithms:{
+        compress:["zlib@openssh.com", "zlib", "none"],
+        cipher:["aes256-gcm@openssh.com"],
+        hmac:["hmac-sha2-256"]
+      }
+    }
+  });
+  assert.equal(sshTransportForConnection({...target, auth_type:"password", extra_args:"-o Compression=yes -c aes256-gcm@openssh.com"}), "builtin");
+  assert.throws(() => insertConnection(connection("password-system-only", {
+    auth_type:"password",
+    identity_file:"",
+    private_key_passphrase:"",
+    ssh_password:"secret",
+    extra_args:"-o IPQoS=throughput"
+  }), ""), /系统 OpenSSH/);
   assert.equal(sshTransportForConnection({...target, auth_type:"password", extra_args:"-o ProxyCommand=custom"}), "unsupported");
   assert.throws(() => shouldUseBuiltinSsh({...target, auth_type:"password", extra_args:"-o ProxyCommand=custom"}), /不能安全回退/);
 

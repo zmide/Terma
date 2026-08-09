@@ -53,6 +53,23 @@ function encryptionReady() {
   return !settings.encryption_enabled || Boolean(activeKey);
 }
 
+function encryptionState() {
+  const settings = readSecuritySettings();
+  return {
+    enabled: Boolean(settings.encryption_enabled),
+    unlocked: !settings.encryption_enabled || Boolean(activeKey)
+  };
+}
+
+function requireEncryptionUnlocked() {
+  const state = encryptionState();
+  if (state.unlocked) return state;
+  const error: any = new Error("配置加密已锁定，请先在设置 > 安全中输入主密码解锁");
+  error.code = "ENCRYPTION_LOCKED";
+  error.statusCode = 423;
+  throw error;
+}
+
 function encryptText(value) {
   if (value == null || value === "") return value;
   const settings = readSecuritySettings();
@@ -80,9 +97,11 @@ module.exports = {
   disableEncryption,
   enableEncryption,
   encryptionReady,
+  encryptionState,
   encryptText,
   isEncryptedText,
   isLegacyEncryptedText,
   lockEncryption,
+  requireEncryptionUnlocked,
   unlockEncryption
 };

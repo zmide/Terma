@@ -8,6 +8,8 @@ const { LOGIN_PROTECTION_LIMITS, LoginRateLimiter, SessionStore } = require("./a
 const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 
 const SECURITY_FILE = path.join(DATA_DIR, "security.json");
+ensurePrivateDirectory(DATA_DIR);
+ensurePrivateFile(SECURITY_FILE);
 const DEFAULT_SESSION_TTL_MINUTES = 12 * 60;
 const DEFAULT_SESSION_MAX_SESSIONS = 1000;
 const DEFAULT_SESSION_CLEANUP_MINUTES = 10;

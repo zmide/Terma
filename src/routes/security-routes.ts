@@ -20,6 +20,7 @@ interface SecurityRouteDependencies {
   readSecuritySettings(): any;
   encryptStoredConnectionSecrets(): number;
   decryptStoredConnectionSecrets(): number;
+  clearConfigSnapshots(): number;
 }
 
 export async function handlePublicAuthRoutes(
@@ -64,7 +65,8 @@ export async function handleSecurityRoutes(
     return true;
   }
   if (request.method === "PUT" && pathname === "/api/security") {
-    dependencies.sendJson(response, dependencies.updateSecurityOptions(await dependencies.readJson(request)));
+    dependencies.updateSecurityOptions(await dependencies.readJson(request));
+    dependencies.sendJson(response, dependencies.publicSecuritySettings(request));
     return true;
   }
   if (request.method === "POST" && pathname === "/api/security/password") {
@@ -90,8 +92,15 @@ export async function handleSecurityRoutes(
   if (request.method === "POST" && pathname === "/api/security/encryption/enable") {
     const data = await dependencies.readJson(request);
     const result = dependencies.enableEncryption(String(data.password || ""));
-    const encrypted_rows = dependencies.encryptStoredConnectionSecrets();
-    dependencies.sendJson(response, { ...(result as object), encrypted_rows });
+    let encrypted_rows = 0;
+    try {
+      encrypted_rows = dependencies.encryptStoredConnectionSecrets();
+    } catch (error) {
+      dependencies.disableEncryption();
+      throw error;
+    }
+    const removed_snapshots = dependencies.clearConfigSnapshots();
+    dependencies.sendJson(response, { ...(result as object), encrypted_rows, removed_snapshots });
     return true;
   }
   if (request.method === "POST" && pathname === "/api/security/encryption/unlock") {
@@ -104,7 +113,8 @@ export async function handleSecurityRoutes(
     if (settings.encryption_enabled) dependencies.unlockEncryption(String(data.password || ""));
     const decrypted_rows = settings.encryption_enabled ? dependencies.decryptStoredConnectionSecrets() : 0;
     const result = dependencies.disableEncryption();
-    dependencies.sendJson(response, { ...(result as object), decrypted_rows });
+    const removed_snapshots = dependencies.clearConfigSnapshots();
+    dependencies.sendJson(response, { ...(result as object), decrypted_rows, removed_snapshots });
     return true;
   }
   return false;

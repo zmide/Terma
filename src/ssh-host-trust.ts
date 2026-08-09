@@ -3,11 +3,14 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { Client } = require("ssh2");
 const { DATA_DIR } = require("./config");
-const { ensurePrivateDirectory } = require("./storage-permissions");
+const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 
 const TRUST_STORE_FILE = path.join(DATA_DIR, "ssh-host-trust.json");
 const KNOWN_HOSTS_FILE = path.join(DATA_DIR, "ssh-known-hosts");
 const ONCE_DIRECTORY = path.join(DATA_DIR, "ssh-host-trust-once");
+ensurePrivateDirectory(DATA_DIR);
+ensurePrivateFile(TRUST_STORE_FILE);
+ensurePrivateFile(KNOWN_HOSTS_FILE);
 const CHALLENGE_TTL_MS = 2 * 60 * 1000;
 const ONCE_TTL_MS = 5 * 60 * 1000;
 const pendingChallenges = new Map();
@@ -136,7 +139,7 @@ function writeKnownHosts(records, file = KNOWN_HOSTS_FILE) {
   ensurePrivateDirectory(path.dirname(file));
   const body = records.map(knownHostsLine).join("\n");
   fs.writeFileSync(file, body ? `${body}\n` : "", { encoding: "utf8", mode: 0o600 });
-  try { fs.chmodSync(file, 0o600); } catch {}
+  ensurePrivateFile(file);
 }
 
 function writeStore(store) {
@@ -150,7 +153,7 @@ function writeStore(store) {
     fs.copyFileSync(temporary, TRUST_STORE_FILE);
     fs.rmSync(temporary, { force: true });
   }
-  try { fs.chmodSync(TRUST_STORE_FILE, 0o600); } catch {}
+  ensurePrivateFile(TRUST_STORE_FILE);
   writeKnownHosts(normalized.hosts);
 }
 

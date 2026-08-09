@@ -1551,6 +1551,7 @@ function handleRemoteGroupSelectChange(select) {
 }
 
 function newRemoteProfile(protocol="rdp", groupName="") {
+  if (!requireConfigEncryptionUnlocked("新增远程连接")) return;
   selectedRemoteProfileId = null;
   const value = REMOTE_PROTOCOL_META[protocol] ? protocol : "rdp";
   setWorkspace(`添加 ${REMOTE_PROTOCOL_META[value].label}`, groupName ? `分组：${groupName}` : "新建远程连接", "edit", `remote-new-${value}`, true, true, {kind:"remote-edit", id:0, protocol:value});
@@ -1558,6 +1559,7 @@ function newRemoteProfile(protocol="rdp", groupName="") {
 }
 
 function editRemoteProfile(id, updateTab=true) {
+  if (!requireConfigEncryptionUnlocked("编辑远程连接")) return;
   const profile = remoteProfileById(id);
   if (!profile) return;
   selectedRemoteProfileId = profile.id;
@@ -1603,6 +1605,7 @@ function remoteProfileFormOptions(protocol) {
 
 async function saveRemoteProfileForm(event) {
   event.preventDefault();
+  if (!requireConfigEncryptionUnlocked("保存远程连接")) return;
   const form = event.currentTarget;
   const clearAfterSave = event.submitter?.dataset.clearAfterSave === "1";
   const protocol = $("remote_protocol").value;
@@ -4150,6 +4153,7 @@ async function connectEmbeddedVnc(profile, key) {
 }
 
 async function saveVncCredential(profile, password) {
+  if (!requireConfigEncryptionUnlocked("保存 VNC 密码")) throw new Error("配置加密已锁定");
   const result = await api(`/api/remote-profiles/${profile.id}/vnc-credential`, {method:"PUT", body:JSON.stringify({password})});
   profile.has_password = Boolean(result.has_password);
   return result;

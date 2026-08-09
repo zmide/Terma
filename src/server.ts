@@ -204,8 +204,9 @@ const {
 } = require("./security");
 const { acceptHostTrust, hostTrustErrorResponse, listTrustedHosts, listTrustedHostsPage, removeTrustedHost } = require("./ssh-host-trust");
 const { closeJumpConnectionPool, ensureConnectionHostTrusted } = require("./ssh2-client");
-const { disableEncryption, enableEncryption, encryptionReady, encryptText, decryptText, isEncryptedText, lockEncryption, unlockEncryption } = require("./crypto-store");
-const { createConfigSnapshot, deleteConfigSnapshot, listConfigSnapshots, restoreConfigSnapshotById } = require("./config-snapshots");
+const { disableEncryption, enableEncryption, encryptionReady, encryptText, decryptText, isEncryptedText, lockEncryption, requireEncryptionUnlocked, unlockEncryption } = require("./crypto-store");
+const { clearConfigSnapshots, createConfigSnapshot, deleteConfigSnapshot, listConfigSnapshots, pruneConfigSnapshotsForCurrentEncryption, restoreConfigSnapshotById } = require("./config-snapshots");
+const { ensurePrivateFile } = require("./storage-permissions");
 const { ptyRuntimeStatus } = require("./pty-runtime");
 const { createUpdateChecker } = require("./update-checker");
 const { UpdateInstaller } = require("./update-installer");
@@ -227,6 +228,8 @@ const {
 
 const PACKAGE_ROOT = path.resolve(PUBLIC_DIR, "..");
 const PACKAGE_VERSION = String(JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf8")).version || "");
+const prunedConfigSnapshots = pruneConfigSnapshotsForCurrentEncryption();
+if (prunedConfigSnapshots) appendSystemLog(`配置加密状态已变化，已安全清理 ${prunedConfigSnapshots} 个不兼容的旧快照`);
 const STARTUP_STATUS_FILE = path.join(DATA_DIR, "startup-status.json");
 let startupStatus: any = { state:"starting", started_at:Date.now(), local_url:"", lan_urls:[], autostart:{ok:0,failed:0,errors:[]}, restore:{ok:0,failed:0,errors:[]} };
 const databaseTransferStore = new DatabaseTransferStore(DATA_DIR);
@@ -1549,10 +1552,14 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, {ok:releaseNativeSftpDragTicket(nativeDragParts[3])});
   }
   const securityRouteDependencies = {
-    AuthenticationError, createSession, decryptStoredConnectionSecrets, disableEncryption, enableEncryption,
+    AuthenticationError, clearConfigSnapshots, createSession, decryptStoredConnectionSecrets, disableEncryption, enableEncryption,
     encryptStoredConnectionSecrets, login, logout, publicSecuritySettings, readJson, readSecuritySettings,
     publicAuthStatus, send, sendJson, sessionCookie, setPassword, setToken, unlockEncryption, updateSecurityOptions
   };
+  securityRouteDependencies.publicSecuritySettings = request => ({
+    ...publicSecuritySettings(request),
+    encryption_unlocked: encryptionReady()
+  });
   if (await handlePublicAuthRoutes(req, res, pathname, securityRouteDependencies)) return;
   if (!isAuthenticated(req)) return sendJson(res, { error: "Unauthorized" }, 401);
   if (await handleSecurityRoutes(req, res, pathname, securityRouteDependencies)) return;
@@ -1704,6 +1711,7 @@ async function handleApi(req, res, pathname) {
   }
   const snapshotRestore = pathname.match(/^\/api\/config-snapshots\/([A-Za-z0-9-]+)\/restore$/);
   if (req.method === "POST" && snapshotRestore) {
+    requireEncryptionUnlocked();
     createConfigSnapshot("回滚前自动快照");
     stopAllForwards();
     const result = restoreConfigSnapshotById(snapshotRestore[1]);
@@ -1788,6 +1796,7 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, { ok: true });
   }
   if (req.method === "POST" && pathname === "/api/restore/database") {
+    requireEncryptionUnlocked();
     const data = await readJson(req);
     const stage = databaseTransferStore.take(String(data.restore_token || ""));
     const credentialBindings = Array.isArray(data.credential_bindings) && data.credential_bindings.length
@@ -1814,7 +1823,10 @@ async function handleApi(req, res, pathname) {
           try { if (fs.existsSync(file)) fs.unlinkSync(file); } catch {}
         }
       };
-      if (fs.existsSync(DB_PATH)) fs.copyFileSync(DB_PATH, backup);
+      if (fs.existsSync(DB_PATH)) {
+        fs.copyFileSync(DB_PATH, backup);
+        ensurePrivateFile(backup);
+      }
       try {
         clearDatabaseSidecars();
         fs.copyFileSync(stage.database_path, DB_PATH);
@@ -3084,7 +3096,7 @@ let shutdownPromise: Promise<any> | null = null;
 
 function writeShutdownTokenFile(token) {
   fs.writeFileSync(SHUTDOWN_TOKEN_FILE, `${token}\n`, {encoding:"utf8", mode:0o600});
-  try { fs.chmodSync(SHUTDOWN_TOKEN_FILE, 0o600); } catch {}
+  ensurePrivateFile(SHUTDOWN_TOKEN_FILE);
 }
 
 function removeShutdownTokenFile(token = shutdownAuthToken) {

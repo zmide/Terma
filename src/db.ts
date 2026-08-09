@@ -2,9 +2,16 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 const { DATA_DIR, LOG_DIR, DB_PATH } = require("./config");
-const { decryptText, encryptText, isEncryptedText, isLegacyEncryptedText } = require("./crypto-store");
+const {
+  decryptText,
+  encryptionState,
+  encryptText,
+  isEncryptedText,
+  isLegacyEncryptedText,
+  requireEncryptionUnlocked
+} = require("./crypto-store");
 const { allowedIdentityPath, assertAllowedIdentityPath } = require("./identity-path");
-const { assertSafeExtraArgs } = require("./ssh-command");
+const { assertSafeExtraArgs, builtinSshExtraOptions } = require("./ssh-command");
 const { validateSshHost, validateSshUser } = require("./ssh-connection");
 const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 
@@ -420,6 +427,7 @@ function pidRunning(pid) {
 }
 
 function cleanConnection(data, defaultExtraArgs, existing = null) {
+  requireEncryptionUnlocked();
   for (const key of ["name", "ssh_host", "ssh_user"]) {
     if (!data[key]) throw new Error(`缺少字段: ${key}`);
   }
@@ -438,6 +446,10 @@ function cleanConnection(data, defaultExtraArgs, existing = null) {
   if (authType === "password" && !password) throw new Error("密码登录需要填写 SSH 密码");
   const extraArgs = String(data.extra_args || defaultExtraArgs).trim();
   assertSafeExtraArgs(extraArgs);
+  const builtinExtra = builtinSshExtraOptions(extraArgs);
+  if (authType === "password" && !builtinExtra.supported) {
+    throw new Error(`密码 SSH 不能使用仅由系统 OpenSSH 支持的附加参数：${builtinExtra.unsupported}`);
+  }
   const submittedPassphrase = String(data.private_key_passphrase || "");
   const keepExistingPassphrase = !data.clear_private_key_passphrase && existing?.private_key_passphrase;
   const privateKeyPassphrase = authType === "key"
@@ -690,6 +702,7 @@ function cleanRemoteOptions(protocol, source = {}) {
 }
 
 function cleanRemoteProfile(data, existing = null) {
+  requireEncryptionUnlocked();
   const protocol = String(data.protocol || existing?.protocol || "").trim().toLowerCase();
   if (!REMOTE_PROTOCOLS.has(protocol)) throw new Error("不支持的远程连接协议");
   const name = String(data.name || existing?.name || "").trim();
@@ -820,6 +833,7 @@ function getVncProfileCredential(id) {
 }
 
 function updateVncProfileCredential(id, value) {
+  requireEncryptionUnlocked();
   const profile = getRemoteProfile(id);
   if (profile.protocol !== "vnc") throw new Error("该连接不是 VNC 配置");
   const password = String(value || "");
@@ -952,6 +966,7 @@ function updateTerminalPreferences(id, data) {
 }
 
 function updateTerminalStartup(id, data) {
+  requireEncryptionUnlocked();
   const existing = get("SELECT * FROM connections WHERE id=?", [Number(id)]);
   if (!existing) throw new Error("连接不存在");
   const item = cleanTerminalStartup(data, existing);
@@ -1014,6 +1029,7 @@ function bulkUpdateConnections(connectionIds, changes: any = {}) {
     values.push(validatePort(changes.ssh_port, "SSH 端口"));
   }
   if (changes.auth) {
+    requireEncryptionUnlocked();
     const authType = String(changes.auth.type || "");
     if (authType === "password") {
       const password = String(changes.auth.password || "");
@@ -1085,40 +1101,57 @@ function reorderConnectionGroups(names) {
 }
 
 function rewriteConnectionSecrets(transform) {
-  const rows = all("SELECT id, identity_file, ssh_password, private_key_passphrase, extra_args, terminal_program_path, terminal_program_args, terminal_working_directory FROM connections");
-  const update = db.prepare("UPDATE connections SET identity_file=?, ssh_password=?, private_key_passphrase=?, extra_args=?, terminal_program_path=?, terminal_program_args=?, terminal_working_directory=?, updated_at=? WHERE id=?");
-  let changed = 0;
-  for (const row of rows) {
-    const identityFile = row.identity_file ? transform(row.identity_file) : row.identity_file;
-    const sshPassword = row.ssh_password ? transform(row.ssh_password) : row.ssh_password;
-    const privateKeyPassphrase = row.private_key_passphrase ? transform(row.private_key_passphrase) : row.private_key_passphrase;
-    const extraArgs = row.extra_args ? transform(row.extra_args) : row.extra_args;
-    const terminalProgramPath = row.terminal_program_path ? transform(row.terminal_program_path) : row.terminal_program_path;
-    const terminalProgramArgs = row.terminal_program_args ? transform(row.terminal_program_args) : row.terminal_program_args;
-    const terminalWorkingDirectory = row.terminal_working_directory ? transform(row.terminal_working_directory) : row.terminal_working_directory;
-    if (
-      identityFile !== row.identity_file
-      || sshPassword !== row.ssh_password
-      || privateKeyPassphrase !== row.private_key_passphrase
-      || extraArgs !== row.extra_args
-      || terminalProgramPath !== row.terminal_program_path
-      || terminalProgramArgs !== row.terminal_program_args
-      || terminalWorkingDirectory !== row.terminal_working_directory
-    ) {
-      update.run(identityFile, sshPassword, privateKeyPassphrase, extraArgs, terminalProgramPath, terminalProgramArgs, terminalWorkingDirectory, now(), row.id);
-      changed += 1;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const rows = all("SELECT id, identity_file, ssh_password, private_key_passphrase, extra_args, terminal_program_path, terminal_program_args, terminal_working_directory FROM connections");
+    const update = db.prepare("UPDATE connections SET identity_file=?, ssh_password=?, private_key_passphrase=?, extra_args=?, terminal_program_path=?, terminal_program_args=?, terminal_working_directory=?, updated_at=? WHERE id=?");
+    let changed = 0;
+    for (const row of rows) {
+      const identityFile = row.identity_file ? transform(row.identity_file) : row.identity_file;
+      const sshPassword = row.ssh_password ? transform(row.ssh_password) : row.ssh_password;
+      const privateKeyPassphrase = row.private_key_passphrase ? transform(row.private_key_passphrase) : row.private_key_passphrase;
+      const extraArgs = row.extra_args ? transform(row.extra_args) : row.extra_args;
+      const terminalProgramPath = row.terminal_program_path ? transform(row.terminal_program_path) : row.terminal_program_path;
+      const terminalProgramArgs = row.terminal_program_args ? transform(row.terminal_program_args) : row.terminal_program_args;
+      const terminalWorkingDirectory = row.terminal_working_directory ? transform(row.terminal_working_directory) : row.terminal_working_directory;
+      if (
+        identityFile !== row.identity_file
+        || sshPassword !== row.ssh_password
+        || privateKeyPassphrase !== row.private_key_passphrase
+        || extraArgs !== row.extra_args
+        || terminalProgramPath !== row.terminal_program_path
+        || terminalProgramArgs !== row.terminal_program_args
+        || terminalWorkingDirectory !== row.terminal_working_directory
+      ) {
+        update.run(identityFile, sshPassword, privateKeyPassphrase, extraArgs, terminalProgramPath, terminalProgramArgs, terminalWorkingDirectory, now(), row.id);
+        changed += 1;
+      }
     }
-  }
-  const remoteRows = all("SELECT id,password FROM remote_profiles");
-  const updateRemote = db.prepare("UPDATE remote_profiles SET password=?,updated_at=? WHERE id=?");
-  for (const row of remoteRows) {
-    const password = row.password ? transform(row.password) : row.password;
-    if (password !== row.password) {
-      updateRemote.run(password, now(), row.id);
-      changed += 1;
+    const remoteRows = all("SELECT id,password FROM remote_profiles");
+    const updateRemote = db.prepare("UPDATE remote_profiles SET password=?,updated_at=? WHERE id=?");
+    for (const row of remoteRows) {
+      const password = row.password ? transform(row.password) : row.password;
+      if (password !== row.password) {
+        updateRemote.run(password, now(), row.id);
+        changed += 1;
+      }
     }
+    const tunnelRows = all("SELECT id,identity_file,extra_args FROM tunnels");
+    const updateTunnel = db.prepare("UPDATE tunnels SET identity_file=?,extra_args=?,updated_at=? WHERE id=?");
+    for (const row of tunnelRows) {
+      const identityFile = row.identity_file ? transform(row.identity_file) : row.identity_file;
+      const extraArgs = row.extra_args ? transform(row.extra_args) : row.extra_args;
+      if (identityFile !== row.identity_file || extraArgs !== row.extra_args) {
+        updateTunnel.run(identityFile, extraArgs, now(), row.id);
+        changed += 1;
+      }
+    }
+    db.exec("COMMIT");
+    return changed;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
   }
-  return changed;
 }
 
 function encryptStoredConnectionSecrets() {
@@ -1394,8 +1427,48 @@ function exportConfigSnapshot() {
   };
 }
 
+const SNAPSHOT_CONNECTION_SECRET_COLUMNS = [
+  "identity_file",
+  "ssh_password",
+  "private_key_passphrase",
+  "extra_args",
+  "terminal_program_path",
+  "terminal_program_args",
+  "terminal_working_directory"
+];
+
+function normalizeSnapshotSecret(value, label, state) {
+  if (value == null || value === "") return value;
+  if (!state.enabled) {
+    if (isEncryptedText(value)) throw new Error(`配置快照包含当前实例无法解密的字段：${label}`);
+    return value;
+  }
+  let plain = value;
+  if (isEncryptedText(value)) {
+    try {
+      plain = decryptText(value);
+    } catch {
+      throw new Error(`配置快照包含无法使用当前主密钥验证的字段：${label}`);
+    }
+  }
+  return encryptText(plain);
+}
+
 function restoreConfigSnapshot(snapshot) {
   if (!snapshot || snapshot.version !== 1 || !Array.isArray(snapshot.connections) || !Array.isArray(snapshot.forwards) || !Array.isArray(snapshot.forward_templates)) throw new Error("配置快照格式无效");
+  const state = encryptionState();
+  if (state.enabled) requireEncryptionUnlocked();
+  const restoredConnections = snapshot.connections.map((source) => {
+    const row = { ...source };
+    for (const column of SNAPSHOT_CONNECTION_SECRET_COLUMNS) {
+      row[column] = normalizeSnapshotSecret(row[column], `connections.${column}`, state);
+    }
+    return row;
+  });
+  const restoredRemoteProfiles = (snapshot.remote_profiles || []).map((source) => ({
+    ...source,
+    password:normalizeSnapshotSecret(source.password, "remote_profiles.password", state)
+  }));
   db.exec("BEGIN IMMEDIATE");
   try {
     run("DELETE FROM connection_forwards");
@@ -1405,9 +1478,9 @@ function restoreConfigSnapshot(snapshot) {
     run("DELETE FROM forward_templates");
     run("DELETE FROM command_snippets");
     run("DELETE FROM named_workspaces");
-    const groups = Array.isArray(snapshot.connection_groups) ? snapshot.connection_groups : [...new Set(snapshot.connections.map((row) => row.group_name))].map((name,index) => ({name,sort_order:index+1,created_at:now(),updated_at:now()}));
+    const groups = Array.isArray(snapshot.connection_groups) ? snapshot.connection_groups : [...new Set(restoredConnections.map((row) => row.group_name))].map((name,index) => ({name,sort_order:index+1,created_at:now(),updated_at:now()}));
     for (const row of groups) run("INSERT INTO connection_groups(name,sort_order,created_at,updated_at) VALUES(?,?,?,?)", [row.name,row.sort_order,row.created_at,row.updated_at]);
-    for (const row of snapshot.connections) {
+    for (const row of restoredConnections) {
       const startupMode = TERMINAL_STARTUP_MODES.has(String(row.terminal_startup_mode || ""))
         ? String(row.terminal_startup_mode)
         : "default";
@@ -1464,7 +1537,7 @@ function restoreConfigSnapshot(snapshot) {
         ]
       );
     }
-    for (const row of snapshot.remote_profiles || []) {
+    for (const row of restoredRemoteProfiles) {
       const item = cleanRemoteProfile({
         ...row,
         password:row.password ? decryptText(row.password) : "",
@@ -1483,7 +1556,7 @@ function restoreConfigSnapshot(snapshot) {
     db.exec("ROLLBACK");
     throw error;
   }
-  return { ok:true, connections:snapshot.connections.length, remote_profiles:(snapshot.remote_profiles || []).length, forwards:snapshot.forwards.length, templates:snapshot.forward_templates.length, snippets:(snapshot.command_snippets || []).length, workspaces:(snapshot.named_workspaces || []).length };
+  return { ok:true, connections:restoredConnections.length, remote_profiles:restoredRemoteProfiles.length, forwards:snapshot.forwards.length, templates:snapshot.forward_templates.length, snippets:(snapshot.command_snippets || []).length, workspaces:(snapshot.named_workspaces || []).length };
 }
 
 ensureBuiltinForwardTemplates();

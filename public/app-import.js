@@ -78,6 +78,7 @@ async function createConfigSnapshotUi() {
 }
 
 async function restoreConfigSnapshotUi(id) {
+  if (!requireConfigEncryptionUnlocked("回滚配置快照")) return;
   const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   if (!await confirmModal("回滚会停止当前转发并覆盖连接、转发和模板配置。继续？", "回滚配置快照", "确认回滚", "取消", true)) return;
   await api(`/api/config-snapshots/${id}/restore`, {method:"POST"});
@@ -607,6 +608,7 @@ async function inspectDatabaseBackup(file) {
 }
 
 async function restoreDatabaseBackup() {
+  if (!requireConfigEncryptionUnlocked("恢复数据库")) return;
   const file = $("db_restore_upload")?.files?.[0];
   if (!file) return notify("请选择数据库备份文件", "error");
   let credentialBindings = [];

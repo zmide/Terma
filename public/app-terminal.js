@@ -1529,6 +1529,7 @@ function restoreSavedTerminalStartup(key, connectionId) {
 }
 
 function showTerminalStartupSettings(key, connectionId) {
+  if (!requireConfigEncryptionUnlocked("修改终端启动配置")) return;
   const connection = connections.find(item => item.id === connectionId);
   if (!connection) return;
   const current = effectiveTerminalStartupConfig(connection, key);

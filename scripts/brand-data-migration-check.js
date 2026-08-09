@@ -34,6 +34,10 @@ CREATE TABLE connections (
   identity_file TEXT,
   ssh_password TEXT,
   private_key_passphrase TEXT,
+  extra_args TEXT,
+  terminal_program_path TEXT,
+  terminal_program_args TEXT,
+  terminal_working_directory TEXT,
   jump_connection_id INTEGER,
   tags TEXT,
   created_at INTEGER NOT NULL,
@@ -78,7 +82,7 @@ CREATE TABLE remote_profiles (
 CREATE TABLE forward_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, mode TEXT NOT NULL, bind_host TEXT, bind_port INTEGER, target_host TEXT, target_port INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE command_snippets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, group_name TEXT NOT NULL, command TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE named_workspaces (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', layout_json TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
-CREATE TABLE tunnels (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, mode TEXT NOT NULL, ssh_host TEXT NOT NULL, ssh_port INTEGER NOT NULL, ssh_user TEXT NOT NULL, identity_file TEXT, bind_host TEXT NOT NULL, bind_port INTEGER NOT NULL, target_host TEXT, target_port INTEGER, pid INTEGER, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE tunnels (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, mode TEXT NOT NULL, ssh_host TEXT NOT NULL, ssh_port INTEGER NOT NULL, ssh_user TEXT NOT NULL, identity_file TEXT, extra_args TEXT, bind_host TEXT NOT NULL, bind_port INTEGER NOT NULL, target_host TEXT, target_port INTEGER, pid INTEGER, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `);
   db.close();
@@ -262,6 +266,75 @@ try {
   const encryptedMerged = readDatabase(encryptedTargetDatabase);
   assert.equal(encryptedMerged.prepare("SELECT COUNT(*) AS count FROM remote_profiles").get().count, 2);
   encryptedMerged.close();
+
+  const plainFieldsSourceData = path.join(temporaryRoot, "plain-fields-source", "data");
+  const plainFieldsTargetData = path.join(temporaryRoot, "plain-fields-target", "data");
+  const plainFieldsSourceDatabase = path.join(plainFieldsSourceData, "tunnels.db");
+  const plainFieldsTargetDatabase = path.join(plainFieldsTargetData, "tunnels.db");
+  createSchema(plainFieldsSourceDatabase);
+  createSchema(plainFieldsTargetDatabase);
+  const plainFieldsSource = new DatabaseSync(plainFieldsSourceDatabase);
+  plainFieldsSource.prepare("INSERT INTO connections(name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,extra_args,terminal_program_args,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+    .run("plain-paths", "Default", "plain.example", 22, "tester", "key", "/tmp/plain-key", "-o Compression=yes", "--plain", 1, 1);
+  plainFieldsSource.close();
+  fs.writeFileSync(path.join(plainFieldsTargetData, "security.json"), securitySettings, "utf8");
+  assert.throws(() => mergeDatabaseFiles(plainFieldsSourceDatabase, plainFieldsTargetDatabase, {
+    sourceDataDir:plainFieldsSourceData,
+    targetDataDir:plainFieldsTargetData
+  }), /明文凭据/);
+
+  const contaminatedSourceRoot = path.join(temporaryRoot, "contaminated-source");
+  const contaminatedTargetRoot = path.join(temporaryRoot, "contaminated-target");
+  const contaminatedSourceData = path.join(contaminatedSourceRoot, "data");
+  const contaminatedTargetData = path.join(contaminatedTargetRoot, "data");
+  const contaminatedSourceSsh = path.join(contaminatedSourceRoot, ".ssh");
+  const contaminatedTargetSsh = path.join(contaminatedTargetRoot, ".ssh");
+  const contaminatedSourceDatabase = path.join(contaminatedSourceData, "tunnels.db");
+  const contaminatedTargetDatabase = path.join(contaminatedTargetData, "tunnels.db");
+  createSchema(contaminatedSourceDatabase);
+  createSchema(contaminatedTargetDatabase);
+  fs.mkdirSync(contaminatedSourceSsh, {recursive:true});
+  fs.mkdirSync(contaminatedTargetSsh, {recursive:true});
+  const contaminatedSource = new DatabaseSync(contaminatedSourceDatabase);
+  contaminatedSource.prepare("INSERT INTO remote_profiles(name,group_name,protocol,host,port,username,password,options_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+    .run("encrypted-source", "Default", "vnc", "source.example", 5900, "tester", "termaenc:v1:source", "{}", 1, 1);
+  contaminatedSource.close();
+  const contaminatedTarget = new DatabaseSync(contaminatedTargetDatabase);
+  contaminatedTarget.prepare("INSERT INTO remote_profiles(name,group_name,protocol,host,port,username,password,options_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+    .run("plain-target", "Default", "vnc", "target.example", 5900, "tester", "plain-target-password", "{}", 1, 1);
+  contaminatedTarget.close();
+  fs.writeFileSync(path.join(contaminatedSourceData, "security.json"), securitySettings, "utf8");
+  assert.throws(() => mergeLegacyRuntime({
+    sourceDataDir:contaminatedSourceData,
+    sourceSshDir:contaminatedSourceSsh,
+    targetDataDir:contaminatedTargetData,
+    targetSshDir:contaminatedTargetSsh,
+    backupParent
+  }), /不能直接合并/);
+  assert.equal(fs.existsSync(path.join(contaminatedTargetData, "security.json")), false, "source security.json must not become target authority during a merge");
+  const contaminationCheck = readDatabase(contaminatedTargetDatabase);
+  assert.equal(contaminationCheck.prepare("SELECT password FROM remote_profiles WHERE name='plain-target'").get().password, "plain-target-password");
+  contaminationCheck.close();
+
+  const sourceOnlyEncryptedRoot = path.join(temporaryRoot, "source-only-encrypted");
+  const sourceOnlyEncryptedTarget = path.join(temporaryRoot, "source-only-encrypted-target");
+  const sourceOnlyEncryptedData = path.join(sourceOnlyEncryptedRoot, "data");
+  const sourceOnlyEncryptedSsh = path.join(sourceOnlyEncryptedRoot, ".ssh");
+  createSchema(path.join(sourceOnlyEncryptedData, "tunnels.db"));
+  fs.mkdirSync(sourceOnlyEncryptedSsh, {recursive:true});
+  fs.writeFileSync(path.join(sourceOnlyEncryptedData, "security.json"), securitySettings, "utf8");
+  mergeLegacyRuntime({
+    sourceDataDir:sourceOnlyEncryptedData,
+    sourceSshDir:sourceOnlyEncryptedSsh,
+    targetDataDir:path.join(sourceOnlyEncryptedTarget, "data"),
+    targetSshDir:path.join(sourceOnlyEncryptedTarget, ".ssh"),
+    backupParent
+  });
+  assert.equal(
+    fs.readFileSync(path.join(sourceOnlyEncryptedTarget, "data", "security.json"), "utf8"),
+    securitySettings,
+    "source-only migration must inherit the source security descriptor"
+  );
 
   const rollbackRoot = path.join(temporaryRoot, "rollback-runtime");
   const rollbackData = path.join(rollbackRoot, "data");

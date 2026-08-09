@@ -1018,7 +1018,7 @@ function renderSettings() {
       <section class="security-encryption-section">
         <h3>配置加密</h3>
         <details id="securityAdvancedDetails" class="advanced-settings" open>
-          <summary>配置加密 ${s.encryption_enabled ? "（已启用）" : "（可选）"}</summary>
+          <summary>配置加密 ${s.encryption_enabled ? (s.encryption_unlocked ? "（已解锁）" : "（已锁定）") : "（可选）"}</summary>
           <div class="muted">配置加密不是普通使用必需项。启用时会自动加密现有和以后保存的私钥路径、额外 SSH 参数；不会加密私钥文件本身。个人或局域网自用场景通常保持关闭即可。</div>
           <div class="warning">启用后，SSH 连接、SFTP、终端、转发和批量命令在使用加密字段前需要先解锁。重启 Terma 后如果没有解锁，依赖私钥或额外 SSH 参数的连接可能无法正常启动。关闭加密会要求主密码，并把已加密字段解密回普通数据库字段。</div>
           <label>主密码</label>
@@ -1684,12 +1684,16 @@ async function enableConfigEncryption() {
   const result = await api("/api/security/encryption/enable", {method:"POST", body:JSON.stringify({password})});
   await loadSecuritySettings();
   inPane(renderSettings);
-  notify(`配置加密已启用，已处理 ${result.encrypted_rows || 0} 个连接`, "success");
+  const snapshotText = result.removed_snapshots ? `，并清理 ${result.removed_snapshots} 个旧快照` : "";
+  notify(`配置加密已启用，已处理 ${result.encrypted_rows || 0} 行敏感配置${snapshotText}`, "success");
 }
 
 async function unlockConfigEncryption() {
+  const inPane = captureSettingsPane();
   const password = $("securityMasterPassword").value;
   await api("/api/security/encryption/unlock", {method:"POST", body:JSON.stringify({password})});
+  await loadSecuritySettings();
+  inPane(renderSettings);
   notify("配置加密已解锁", "success");
 }
 
@@ -1701,7 +1705,8 @@ async function disableConfigEncryption() {
   const result = await api("/api/security/encryption/disable", {method:"POST", body:JSON.stringify({password})});
   await loadSecuritySettings();
   inPane(renderSettings);
-  notify(`配置加密已关闭，已解密 ${result.decrypted_rows || 0} 个连接`, "success");
+  const snapshotText = result.removed_snapshots ? `，并清理 ${result.removed_snapshots} 个旧快照` : "";
+  notify(`配置加密已关闭，已解密 ${result.decrypted_rows || 0} 行敏感配置${snapshotText}`, "success");
 }
 
 async function logout() {

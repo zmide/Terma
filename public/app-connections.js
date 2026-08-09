@@ -561,6 +561,7 @@ function addGroup() {
 }
 
 function newConnection(groupName="") {
+  if (!requireConfigEncryptionUnlocked("新增 SSH 连接")) return;
   selectedId = null;
   $("view-edit").innerHTML = $("connectionFormTpl").innerHTML;
   refreshIcons();
@@ -1105,6 +1106,7 @@ function wireConnectionForm() {
 }
 
 async function saveConnectionForm(clearAfterSave=false, trigger=null) {
+  if (!requireConfigEncryptionUnlocked("保存 SSH 连接")) return;
   const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   const form = $("connectionForm");
   if (!form || form.dataset.saving === "1") return;
@@ -1413,6 +1415,7 @@ function selectConnection(id) {
 }
 
 function editConnection(id, updateTab=true){
+  if (!requireConfigEncryptionUnlocked("编辑 SSH 连接")) return;
   const c = selectConnection(id);
   if(!c) return;
   $("view-edit").innerHTML = $("connectionFormTpl").innerHTML;

@@ -173,6 +173,8 @@ async function main() {
     });
     assert.equal(sessionSettingsResponse.status, 200);
     const sessionSettings = await sessionSettingsResponse.json();
+    assert.equal(sessionSettings.encryption_enabled, false);
+    assert.equal(sessionSettings.encryption_unlocked, true);
     assert.deepEqual(sessionSettings.session_management, {
       ttl_minutes:60,
       max_sessions:6,
