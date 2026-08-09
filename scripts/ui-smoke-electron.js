@@ -1,4 +1,5 @@
 const { app, BrowserWindow, clipboard, ipcMain, session } = require("electron");
+const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { runMobileScenario } = require("./ui-smoke-mobile-scenario");
@@ -12,6 +13,10 @@ let rendererFailure = null;
 const smokeUserData = process.env.TERMA_UI_USER_DATA || process.env.TUNNELDESK_UI_USER_DATA || path.join(os.tmpdir(), `terma-ui-smoke-${process.pid}`);
 const screenshotEnabled = (process.env.TERMA_UI_SCREENSHOT || process.env.TUNNELDESK_UI_SCREENSHOT) === "1";
 const notificationScreenshotEnabled = (process.env.TERMA_UI_NOTIFICATION_SCREENSHOT || process.env.TUNNELDESK_UI_NOTIFICATION_SCREENSHOT) === "1";
+const diagnosticsDirectory = path.join(process.cwd(), "data");
+if (screenshotEnabled || notificationScreenshotEnabled) {
+  fs.mkdirSync(diagnosticsDirectory, { recursive: true });
+}
 ipcMain.on("terma-ui-smoke:csp-violation", (_event, violation) => {
   const item = violation && typeof violation === "object" ? violation : {};
   cspViolations.push(item);
@@ -5884,7 +5889,7 @@ app.whenReady().then(async () => {
     })()`);
     await new Promise(resolve => setTimeout(resolve, 160));
     const notificationImage = await window.webContents.capturePage();
-    require("node:fs").writeFileSync(path.join(process.cwd(), "data", "ui-smoke-notifications.png"), notificationImage.toPNG());
+    fs.writeFileSync(path.join(diagnosticsDirectory, "ui-smoke-notifications.png"), notificationImage.toPNG());
     await window.webContents.executeJavaScript("dismissToast(); updateSftpTaskCenter([]); closeSftpTaskCenter()");
   }
   const productivityUi = await window.webContents.executeJavaScript(`(async () => {
@@ -6542,7 +6547,7 @@ app.whenReady().then(async () => {
   const visual = await runVisualRegression(window);
   if (screenshotEnabled) {
     const image = await window.webContents.capturePage();
-    require("node:fs").writeFileSync(path.join(process.cwd(), "data", "ui-smoke-desktop.png"), image.toPNG());
+    fs.writeFileSync(path.join(diagnosticsDirectory, "ui-smoke-desktop.png"), image.toPNG());
   }
   console.log("[ui-smoke] mobile layout");
   window.setContentSize(390, 844);
@@ -6564,7 +6569,7 @@ app.whenReady().then(async () => {
   if (!screenshotEnabled) window.hide();
   if (screenshotEnabled) {
     const image = await window.webContents.capturePage();
-    require("node:fs").writeFileSync(path.join(process.cwd(), "data", "ui-smoke-mobile.png"), image.toPNG());
+    fs.writeFileSync(path.join(diagnosticsDirectory, "ui-smoke-mobile.png"), image.toPNG());
   }
   console.log(JSON.stringify({ ...result, noVncModuleUi, cspViolations, refreshStateUi, workspaceTabDragUi, workspaceDockingUi, workspaceTabVisibilityUi, workspaceHeaderResizeUi, pages, navigationUi, aboutUi, desktopMenu, runningActions, authUi, connectionStartupUi, saveAndClearUi, notificationUi, restoreKeyUi, restoreCredentialUi, terminalUi, terminalStartupUi, logSettingsUi, sftpUi, productivityUi, remoteAdminUi, linuxDesktopToolbarUi, remoteAccessUi, clipboardUi, dark, visual, mobile, errors }, null, 2));
   const operationPagesFailed = pages.some(page => page.scrollWidth > page.width || !page.toolFits || !page.layoutMode || !page.compactHeight);

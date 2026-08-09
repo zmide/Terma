@@ -30,7 +30,12 @@ async function waitForServer(url, child) {
 function runElectron(environment) {
   return new Promise((resolve, reject) => {
     const executable = require("electron");
-    const child = spawn(executable, [path.join(__dirname, "ui-smoke-electron.js")], {
+    const args = [];
+    if (process.platform === "linux" && environment.TERMA_UI_NO_SANDBOX === "1") {
+      args.push("--no-sandbox");
+    }
+    args.push(path.join(__dirname, "ui-smoke-electron.js"));
+    const child = spawn(executable, args, {
       cwd: path.resolve(__dirname, ".."),
       env: environment,
       stdio: "inherit",
