@@ -38,13 +38,22 @@ function listConfigSnapshots() {
 
 function createConfigSnapshot(reason="手动快照") {
   ensurePrivateDirectory(SNAPSHOT_DIR);
+  const security = readSecuritySettings();
+  if (["enabling", "disabling"].includes(String(security.encryption_state || ""))) {
+    const error: any = new Error("配置加密切换尚未完成，暂时不能创建配置快照");
+    error.code = "ENCRYPTION_TRANSITION_PENDING";
+    error.statusCode = 423;
+    throw error;
+  }
   const snapshot = exportConfigSnapshot();
   const id = crypto.randomUUID();
   const payload = {
     id,
     reason:String(reason || "手动快照").slice(0,120),
     created_at:Date.now(),
-    encryption_enabled:Boolean(readSecuritySettings().encryption_enabled),
+    encryption_enabled:Boolean(security.encryption_enabled),
+    encryption_state:security.encryption_state || (security.encryption_enabled ? "enabled" : "disabled"),
+    encryption_version:Number(security.encryption_version || (security.encryption_enabled ? 1 : 2)),
     counts:{connections:snapshot.connections.length,forwards:snapshot.forwards.length,templates:snapshot.forward_templates.length},
     snapshot
   };
@@ -56,8 +65,13 @@ function createConfigSnapshot(reason="手动快照") {
 }
 
 function snapshotCompatibleWithCurrentEncryption(payload) {
-  const enabled = Boolean(readSecuritySettings().encryption_enabled);
-  if (enabled) return payload?.encryption_enabled === true;
+  const settings = readSecuritySettings();
+  const enabled = Boolean(settings.encryption_enabled);
+  if (enabled) {
+    return payload?.encryption_enabled === true
+      && String(payload?.encryption_state || "enabled") === "enabled"
+      && Number(payload?.encryption_version || 1) === Number(settings.encryption_version || 1);
+  }
   return payload?.encryption_enabled !== true;
 }
 

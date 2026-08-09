@@ -264,7 +264,7 @@ function runCommandWithInput(connection: any, command, input, timeoutMs, onChunk
       securePrivateKeyPermissions(connection.identity_file);
       args.push("-i", connection.identity_file);
     }
-    args.push(...effectiveExtraArgs(connection.extra_args));
+    args.push(...effectiveExtraArgs(connection.extra_args, connection));
     args.push(...sshDestinationArgs(connection), String(command || ""));
     const child = spawn(SSH_BIN, args, { stdio:["pipe", "pipe", "pipe"] });
     const stdout = [];

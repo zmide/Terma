@@ -6,8 +6,8 @@ const {
   decryptText,
   encryptionState,
   encryptText,
+  isCurrentEncryptedText,
   isEncryptedText,
-  isLegacyEncryptedText,
   requireEncryptionUnlocked
 } = require("./crypto-store");
 const { allowedIdentityPath, assertAllowedIdentityPath } = require("./identity-path");
@@ -445,8 +445,14 @@ function cleanConnection(data, defaultExtraArgs, existing = null) {
     : "";
   if (authType === "password" && !password) throw new Error("密码登录需要填写 SSH 密码");
   const extraArgs = String(data.extra_args || defaultExtraArgs).trim();
-  assertSafeExtraArgs(extraArgs);
-  const builtinExtra = builtinSshExtraOptions(extraArgs);
+  const extraArgsContext = {
+    connect_timeout_seconds:data.connect_timeout_seconds ?? existing?.connect_timeout_seconds ?? 10,
+    keepalive_interval_seconds:data.keepalive_interval_seconds ?? existing?.keepalive_interval_seconds ?? 60,
+    keepalive_count_max:data.keepalive_count_max ?? existing?.keepalive_count_max ?? 3,
+    tcp_keepalive:data.tcp_keepalive ?? existing?.tcp_keepalive ?? 1
+  };
+  assertSafeExtraArgs(extraArgs, extraArgsContext);
+  const builtinExtra = builtinSshExtraOptions(extraArgs, extraArgsContext);
   if (authType === "password" && !builtinExtra.supported) {
     throw new Error(`密码 SSH 不能使用仅由系统 OpenSSH 支持的附加参数：${builtinExtra.unsupported}`);
   }
@@ -1156,8 +1162,8 @@ function rewriteConnectionSecrets(transform) {
 
 function encryptStoredConnectionSecrets() {
   return rewriteConnectionSecrets((value) => {
-    if (isLegacyEncryptedText(value)) return encryptText(decryptText(value));
-    return isEncryptedText(value) ? value : encryptText(value);
+    if (isCurrentEncryptedText(value)) return value;
+    return isEncryptedText(value) ? encryptText(decryptText(value)) : encryptText(value);
   });
 }
 

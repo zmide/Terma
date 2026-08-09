@@ -34,7 +34,7 @@ const {
   validateSshHost,
   validateSshUser
 } = require("../dist/ssh-connection");
-const { assertSafeExtraArgs, builtinSshExtraOptions } = require("../dist/ssh-command");
+const { assertSafeExtraArgs, builtinSshExtraOptions, inspectExtraArgs } = require("../dist/ssh-command");
 const { shouldUseBuiltinSsh, sshTransportForConnection } = require("../dist/ssh2-client");
 
 function connection(name, overrides={}) {
@@ -129,6 +129,39 @@ try {
   assert.deepEqual(assertSafeExtraArgs("-4Cv -c aes256-gcm@openssh.com -m hmac-sha2-256 -o Compression=yes -o LogLevel=ERROR"), [
     "-4Cv", "-c", "aes256-gcm@openssh.com", "-m", "hmac-sha2-256", "-o", "Compression=yes", "-o", "LogLevel=ERROR"
   ]);
+  assert.deepEqual(assertSafeExtraArgs("-o Compression=yes\n-o LogLevel=ERROR"), [
+    "-o", "Compression=yes", "-o", "LogLevel=ERROR"
+  ]);
+  const diagnosed = inspectExtraArgs([
+    "-o StrictHostKeyChecking=accept-new",
+    "-o ServerAliveInterval=60",
+    "-o ServerAliveCountMax=3",
+    "-o TCPKeepAlive=yes"
+  ].join("\n"), {
+    keepalive_interval_seconds:60,
+    keepalive_count_max:3,
+    tcp_keepalive:1
+  });
+  assert.equal(diagnosed.ok, false);
+  assert.deepEqual(diagnosed.issues.map(item => [item.severity, item.line, item.code]), [
+    ["error", 1, "SSH_EXTRA_ARGS_HOST_TRUST_MANAGED"],
+    ["warning", 2, "SSH_EXTRA_ARGS_DUPLICATES_STRUCTURED_FIELD"],
+    ["warning", 3, "SSH_EXTRA_ARGS_DUPLICATES_STRUCTURED_FIELD"],
+    ["warning", 4, "SSH_EXTRA_ARGS_DUPLICATES_STRUCTURED_FIELD"]
+  ]);
+  assert.match(diagnosed.issues[0].suggestion, /指纹确认/);
+  assert.match(diagnosed.issues[1].message, /当前：60/);
+  const laterDanger = inspectExtraArgs("-o Compression=yes\n-o ProxyCommand=helper");
+  assert.equal(laterDanger.issues.find(item => item.severity === "error")?.line, 2);
+  assert.throws(() => assertSafeExtraArgs("-o Compression=yes\u0007"), error => {
+    assert.equal(error.code, "SSH_EXTRA_ARGS_INVALID");
+    assert.equal(error.issues[0].code, "SSH_EXTRA_ARGS_CONTROL_CHARACTER");
+    return true;
+  });
+  assert.throws(() => assertSafeExtraArgs("-o Compression='yes"), error => {
+    assert.equal(error.issues[0].code, "SSH_EXTRA_ARGS_UNCLOSED_QUOTE");
+    return true;
+  });
   assert.deepEqual(builtinSshExtraOptions("-4Cv -c aes256-gcm@openssh.com -m hmac-sha2-256 -o Compression=yes -o LogLevel=ERROR"), {
     supported:true,
     unsupported:"",
@@ -162,7 +195,7 @@ try {
     /不能.*自己.*跳板/
   );
 
-  console.log("SSH 连接构建检查通过：结构化参数、加密私钥口令、Agent 与单级跳板约束正常");
+  console.log("SSH 连接构建检查通过：逐行附加参数诊断、结构化参数、加密私钥口令、Agent 与单级跳板约束正常");
 } finally {
   closeDatabase();
   fs.rmSync(temporaryRoot, {recursive:true, force:true});

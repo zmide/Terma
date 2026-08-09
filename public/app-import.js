@@ -100,6 +100,8 @@ function renderBackupControls() {
   if (!bundleBtn || !bundleNote) return;
   const enabled = Boolean(securitySettings?.encryption_enabled);
   bundleBtn.hidden = !enabled;
+  bundleBtn.disabled = enabled && !securitySettings?.encryption_ready;
+  bundleBtn.title = bundleBtn.disabled ? "先解锁配置加密后再下载迁移包" : "";
   bundleNote.textContent = enabled
     ? "已启用配置加密：建议下载 .termabackup 加密迁移包。迁移包包含完整数据库和配置加密元数据，不包含 SSH 私钥文件、Web 密码或访问 Token。旧版 .tdbackup 文件仍可导入。"
     : "未启用配置加密：通常下载普通 .db 数据库备份即可。启用配置加密后才会显示加密迁移包下载入口。";
@@ -279,6 +281,7 @@ function setImportSortOrder(index, value) {
 }
 
 async function downloadBackupBundle() {
+  if (!requireConfigEncryptionUnlocked("下载加密迁移包")) return;
   if (!await confirmModal("加密迁移包会包含数据库中的加密 SSH 凭据和解锁元数据，请妥善保管。继续下载？", "下载加密迁移包", "继续下载", "取消")) return;
   const res = await fetch("/api/backup/bundle");
   if (!res.ok) return notify(await res.text(), "error");

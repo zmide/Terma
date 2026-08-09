@@ -336,6 +336,43 @@ try {
     "source-only migration must inherit the source security descriptor"
   );
 
+  const inconsistentEncryptedRoot = path.join(temporaryRoot, "source-only-missing-security");
+  const inconsistentEncryptedData = path.join(inconsistentEncryptedRoot, "data");
+  const inconsistentEncryptedSsh = path.join(inconsistentEncryptedRoot, ".ssh");
+  const inconsistentEncryptedDb = path.join(inconsistentEncryptedData, "tunnels.db");
+  createSchema(inconsistentEncryptedDb);
+  fs.mkdirSync(inconsistentEncryptedSsh, {recursive:true});
+  const inconsistentEncrypted = new DatabaseSync(inconsistentEncryptedDb);
+  inconsistentEncrypted.prepare("INSERT INTO remote_profiles(name,group_name,protocol,host,port,username,password,options_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+    .run("missing-security", "Default", "vnc", "missing.example", 5900, "tester", "termaenc:v1:missing", "{}", 1, 1);
+  inconsistentEncrypted.close();
+  assert.throws(() => mergeLegacyRuntime({
+    sourceDataDir:inconsistentEncryptedData,
+    sourceSshDir:inconsistentEncryptedSsh,
+    targetDataDir:path.join(temporaryRoot, "source-only-missing-security-target", "data"),
+    targetSshDir:path.join(temporaryRoot, "source-only-missing-security-target", ".ssh"),
+    backupParent
+  }), /未启用配置加密/);
+
+  const inconsistentPlainRoot = path.join(temporaryRoot, "source-only-plain-encrypted");
+  const inconsistentPlainData = path.join(inconsistentPlainRoot, "data");
+  const inconsistentPlainSsh = path.join(inconsistentPlainRoot, ".ssh");
+  const inconsistentPlainDb = path.join(inconsistentPlainData, "tunnels.db");
+  createSchema(inconsistentPlainDb);
+  fs.mkdirSync(inconsistentPlainSsh, {recursive:true});
+  const inconsistentPlain = new DatabaseSync(inconsistentPlainDb);
+  inconsistentPlain.prepare("INSERT INTO remote_profiles(name,group_name,protocol,host,port,username,password,options_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+    .run("plain-secret", "Default", "vnc", "plain.example", 5900, "tester", "plain-password", "{}", 1, 1);
+  inconsistentPlain.close();
+  fs.writeFileSync(path.join(inconsistentPlainData, "security.json"), securitySettings, "utf8");
+  assert.throws(() => mergeLegacyRuntime({
+    sourceDataDir:inconsistentPlainData,
+    sourceSshDir:inconsistentPlainSsh,
+    targetDataDir:path.join(temporaryRoot, "source-only-plain-encrypted-target", "data"),
+    targetSshDir:path.join(temporaryRoot, "source-only-plain-encrypted-target", ".ssh"),
+    backupParent
+  }), /明文敏感字段/);
+
   const rollbackRoot = path.join(temporaryRoot, "rollback-runtime");
   const rollbackData = path.join(rollbackRoot, "data");
   const rollbackSsh = path.join(rollbackRoot, ".ssh");

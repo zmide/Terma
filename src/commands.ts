@@ -84,7 +84,7 @@ function buildCommandArgs(connection) {
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
   }
-  args.push(...effectiveExtraArgs(connection.extra_args));
+  args.push(...effectiveExtraArgs(connection.extra_args, connection));
   args.push(...sshDestinationArgs(connection), "sh", "-s");
   return args;
 }

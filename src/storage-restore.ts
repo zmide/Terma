@@ -11,7 +11,7 @@ function createStorageRestoreHelpers(options: any = {}) {
   } = options;
   const encryptedValue = typeof isEncryptedText === "function"
     ? isEncryptedText
-    : (value) => /^(?:tdenc|termaenc):v1:/.test(String(value || ""));
+    : (value) => /^(?:tdenc:v1|termaenc:v[12]):/.test(String(value || ""));
   const secretColumnsByTable = {
     connections: ["identity_file", "ssh_password", "private_key_passphrase", "extra_args", "terminal_program_path", "terminal_program_args", "terminal_working_directory"],
     remote_profiles: ["password"],
@@ -200,6 +200,7 @@ function createStorageRestoreHelpers(options: any = {}) {
   function inspectRestoreDatabaseFile(databasePath, security = null, credentialBindings = [], identityBindings = []) {
     const tempDb = new DatabaseSync(databasePath);
     try {
+      assertDatabaseMatchesBundleSecurity(tempDb, security);
       const rows = connectionRowsFromBackup(tempDb);
       const requestedCredentials = normalizeCredentialBindings(credentialBindings);
       const keyRows = rows.filter((row) => {
@@ -310,6 +311,40 @@ function createStorageRestoreHelpers(options: any = {}) {
     }
   }
 
+  function encryptedSecretVersion(value) {
+    const text = String(value || "");
+    if (text.startsWith("termaenc:v2:")) return 2;
+    if (text.startsWith("termaenc:v1:") || text.startsWith("tdenc:v1:")) return 1;
+    return 0;
+  }
+
+  function assertDatabaseMatchesBundleSecurity(restoredDb, security) {
+    if (!security) return;
+    const enabled = Boolean(security.encryption_enabled);
+    const version = Number(security.encryption_version || (enabled ? 1 : 2));
+    if (enabled && String(security.encryption_state || "enabled") !== "enabled") {
+      throw new Error("迁移包中的配置加密仍处于切换状态，不能恢复");
+    }
+    restoredSecretRows(restoredDb, (table, columns, rows) => {
+      for (const row of rows) {
+        for (const column of columns) {
+          const value = row[column];
+          if (value == null || value === "") continue;
+          const encryptedVersion = encryptedSecretVersion(value);
+          if (!enabled && encryptedVersion) {
+            throw new Error(`未加密迁移包包含加密字段：${table}.${column}`);
+          }
+          if (enabled && !encryptedVersion) {
+            throw new Error(`加密迁移包包含明文敏感字段：${table}.${column}`);
+          }
+          if (enabled && encryptedVersion !== version) {
+            throw new Error(`迁移包的配置加密版本与数据库字段不一致：${table}.${column}`);
+          }
+        }
+      }
+    });
+  }
+
   function assertNoEncryptedRestoredSecrets(restoredDb) {
     restoredSecretRows(restoredDb, (table, columns, rows) => {
       for (const row of rows) {
@@ -348,7 +383,7 @@ function createStorageRestoreHelpers(options: any = {}) {
     return changed;
   }
 
-  return {connectionRowsFromBackup, storageSettingsView, pathInside, copyRuntimeDirectory, saveWebStorageSettings, listLocalDirectories, normalizeIdentityBindings, identityTargetMap, normalizeCredentialBindings, inspectRestoreDatabaseFile, normalizeRestoredCredentials, assertNoEncryptedRestoredSecrets, encryptRestoredSecrets};
+  return {connectionRowsFromBackup, storageSettingsView, pathInside, copyRuntimeDirectory, saveWebStorageSettings, listLocalDirectories, normalizeIdentityBindings, identityTargetMap, normalizeCredentialBindings, inspectRestoreDatabaseFile, normalizeRestoredCredentials, assertDatabaseMatchesBundleSecurity, assertNoEncryptedRestoredSecrets, encryptRestoredSecrets};
 }
 
 module.exports = { createStorageRestoreHelpers };

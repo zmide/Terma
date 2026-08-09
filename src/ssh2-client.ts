@@ -74,7 +74,7 @@ function privateKeyCompatibility(file, passphrase = "") {
 function builtinSshCompatibility(connection) {
   let extra;
   try {
-    extra = builtinSshExtraOptions(connection?.extra_args);
+    extra = builtinSshExtraOptions(connection?.extra_args, connection);
   } catch (error) {
     return { supported:false, reason:error.message || "SSH 附加参数无效" };
   }
@@ -160,7 +160,7 @@ function keyConnectOptions(connection) {
 
 function connectionOptions(connection, onHostTrustError: any = () => {}, socket = null, trustOptions: any = {}) {
   const options: any = isPasswordConnection(connection) ? passwordConnectOptions(connection) : keyConnectOptions(connection);
-  const extra = builtinSshExtraOptions(connection?.extra_args);
+  const extra = builtinSshExtraOptions(connection?.extra_args, connection);
   if (!extra.supported) throw new Error(`内置 SSH 不支持附加参数：${extra.unsupported}`);
   Object.assign(options, extra.options);
   if (socket) options.sock = socket;

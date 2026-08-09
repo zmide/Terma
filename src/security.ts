@@ -50,8 +50,11 @@ function defaultSettings() {
     token_hash: "",
     token_salt: "",
     encryption_enabled: false,
+    encryption_state: "disabled",
+    encryption_version: 2,
     encryption_salt: "",
     encryption_check: "",
+    encryption_legacy_check: "",
     notification_mode: "on",
     secure_cookie_mode: "auto",
     trusted_proxy_enabled: false,
@@ -74,6 +77,22 @@ function defaultSettings() {
 function normalizeBoundedInteger(value, fallback, limits) {
   const number = Number(value);
   return Number.isInteger(number) && number >= limits.min && number <= limits.max ? number : fallback;
+}
+
+function normalizeEncryptionState(stored) {
+  const enabled = Boolean(stored?.encryption_enabled);
+  const requested = String(stored?.encryption_state || "");
+  const state = ["disabled", "enabling", "enabled", "disabling"].includes(requested)
+    ? requested
+    : (enabled ? "enabled" : "disabled");
+  return {
+    encryption_enabled:state !== "disabled",
+    encryption_state:state,
+    encryption_version:state === "disabled" ? 2 : (Number(stored?.encryption_version || 1) === 2 ? 2 : 1),
+    encryption_salt:String(stored?.encryption_salt || ""),
+    encryption_check:String(stored?.encryption_check || ""),
+    encryption_legacy_check:String(stored?.encryption_legacy_check || "")
+  };
 }
 
 function requireBoundedInteger(value, label, limits) {
@@ -145,6 +164,7 @@ function readSecuritySettings() {
     return {
       ...defaultSettings(),
       ...stored,
+      ...normalizeEncryptionState(stored),
       secure_cookie_mode: ["auto", "always", "never"].includes(String(stored?.secure_cookie_mode)) ? String(stored.secure_cookie_mode) : "auto",
       trusted_proxy_addresses: normalizeTrustedProxyAddresses(stored?.trusted_proxy_addresses),
       allowed_hosts: normalizeAllowedHosts(stored?.allowed_hosts),
@@ -174,6 +194,8 @@ function publicSecuritySettings(req = null) {
     password_set: Boolean(settings.password_hash),
     token_set: Boolean(settings.token_hash),
     encryption_enabled: Boolean(settings.encryption_enabled),
+    encryption_state: settings.encryption_state,
+    encryption_version: settings.encryption_version,
     notification_mode: ["on", "muted", "off"].includes(String(settings.notification_mode)) ? settings.notification_mode : "on",
     secure_cookie_mode: settings.secure_cookie_mode,
     trusted_proxy_enabled: Boolean(settings.trusted_proxy_enabled),
@@ -214,8 +236,22 @@ function publicAuthStatus(req = null) {
 function writeSecuritySettings(next) {
   ensurePrivateDirectory(DATA_DIR);
   const merged = { ...readSecuritySettings(), ...next, updated_at: Date.now() };
-  fs.writeFileSync(SECURITY_FILE, JSON.stringify(merged, null, 2), { encoding:"utf8", mode:0o600 });
-  ensurePrivateFile(SECURITY_FILE);
+  const temporary = `${SECURITY_FILE}.tmp-${process.pid}-${crypto.randomBytes(6).toString("hex")}`;
+  let handle = null;
+  try {
+    handle = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(handle, JSON.stringify(merged, null, 2), "utf8");
+    fs.fsyncSync(handle);
+    fs.closeSync(handle);
+    handle = null;
+    ensurePrivateFile(temporary);
+    fs.renameSync(temporary, SECURITY_FILE);
+    ensurePrivateFile(SECURITY_FILE);
+  } catch (error) {
+    if (handle !== null) try { fs.closeSync(handle); } catch {}
+    try { fs.rmSync(temporary, { force:true }); } catch {}
+    throw error;
+  }
   applySessionManagementSettings(merged);
 }
 
@@ -565,7 +601,7 @@ function secureHeaders(extra = {}) {
   return {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
-    "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; worker-src 'self' blob:; img-src 'self' data: blob:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+    "Content-Security-Policy": "default-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; script-src 'self'; script-src-attr 'unsafe-inline'; worker-src 'self' blob:; img-src 'self' data: blob:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
     ...extra
   };
 }

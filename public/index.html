@@ -3,8 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="terma-csp-nonce" content="__TERMA_CSP_NONCE__">
   <title>Terma</title>
+  <script src="/csp-bootstrap.js?v=1.3.3"></script>
   <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=1.3.3">
+  <link rel="stylesheet" href="/vendor/ace/ace.css?v=1.3.3">
+  <link rel="stylesheet" href="/vendor/ace/theme-textmate.css?v=1.3.3">
+  <link rel="stylesheet" href="/vendor/ace/theme-tomorrow_night.css?v=1.3.3">
   <link rel="stylesheet" href="/app.css?v=1.3.3">
 </head>
 <body>
@@ -238,7 +243,8 @@
           <div><label>连续无响应次数</label><input id="conn_keepalive_count" type="number" min="1" max="20" value="3"></div>
         </div>
       </fieldset>
-      <label>OpenSSH 连接调优参数（可选）</label><textarea id="conn_extra" placeholder="仅支持算法、压缩、超时等安全调优参数，例如 -o Compression=yes"></textarea>
+      <label for="conn_extra">OpenSSH 连接调优参数（可选）</label><textarea id="conn_extra" aria-describedby="connExtraDiagnostics" placeholder="可分行填写算法、压缩等安全调优参数，例如 -o Compression=yes"></textarea>
+      <div id="connExtraDiagnostics" class="ssh-extra-diagnostics" role="status" aria-live="polite" hidden></div>
       <div id="connRemoteGenerationLine" class="grid connection-derived-options">
         <div>
           <label>同时生成其他连接</label>

@@ -34,13 +34,17 @@ async function waitForServer(url, child) {
 function assertLoginPagePasswordToggle(html) {
   assert.equal((html.match(/id="passwordToggle"/g) || []).length, 1);
   assert.match(html, /<button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false">/);
+  assert.match(html, /<link rel="stylesheet" href="\/login\.css">/);
+  assert.match(html, /<script src="\/login\.js" defer><\/script>/);
+  assert.doesNotMatch(html, /\sonclick=/);
+  assert.doesNotMatch(html, /<script>([\s\S]*?)<\/script>/);
   assert.equal((html.match(/class="password-toggle"/g) || []).length, 1);
   assert.match(html, /id="passwordHideIcon"[^>]*hidden/);
-  assert.match(html, /\.card\{[^}]*width:min\(360px,100%\)[^}]*box-sizing:border-box/);
-  assert.match(html, /body\{[^}]*padding:16px[^}]*overflow-x:hidden/);
+  const css = fs.readFileSync(path.resolve(__dirname, "../public/login.css"), "utf8");
+  assert.match(css, /\.card\{[^}]*width:min\(360px,100%\)[^}]*box-sizing:border-box/);
+  assert.match(css, /body\{[^}]*padding:16px[^}]*overflow-x:hidden/);
 
-  const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1];
-  assert.ok(script, "登录页应包含密码切换脚本");
+  const script = fs.readFileSync(path.resolve(__dirname, "../public/login.js"), "utf8");
   const makeElement = (properties = {}) => ({
     ...properties,
     attributes: new Map(),
@@ -57,11 +61,13 @@ function assertLoginPagePasswordToggle(html) {
   toggle.setAttribute("aria-pressed", "false");
   const showIcon = makeElement({ hidden: false });
   const hideIcon = makeElement({ hidden: true });
+  const loginButton = makeElement();
   const elements = {
     password,
     passwordToggle: toggle,
     passwordShowIcon: showIcon,
     passwordHideIcon: hideIcon,
+    loginButton,
     err: makeElement()
   };
   const context = {
@@ -130,7 +136,13 @@ async function main() {
     await waitForServer(url, server);
     const loginPageResponse = await fetch(url + "/login");
     assert.equal(loginPageResponse.status, 200);
+    const loginCsp = loginPageResponse.headers.get("content-security-policy") || "";
+    assert.match(loginCsp, /script-src 'self'/);
+    assert.match(loginCsp, /script-src-attr 'none'/);
+    assert.doesNotMatch(loginCsp, /unsafe-inline/);
     assertLoginPagePasswordToggle(await loginPageResponse.text());
+    assert.equal((await fetch(url + "/login.js")).status, 200);
+    assert.equal((await fetch(url + "/login.css")).status, 200);
     assert.equal((await fetch(`${url}/api/about`)).status, 401);
     for (let index = 0; index < 4; index += 1) {
       const response = await fetch(`${url}/api/auth/login`, {
@@ -162,6 +174,17 @@ async function main() {
     assert.match(cookie, /Max-Age=5400/);
     const sessionCookie = cookie.split(";")[0];
     assert.equal((await fetch(`${url}/api/about`, { headers:{Cookie:sessionCookie} })).status, 200);
+    const mainPageResponse = await fetch(`${url}/`, {headers:{Cookie:sessionCookie}});
+    assert.equal(mainPageResponse.status, 200);
+    const mainCsp = mainPageResponse.headers.get("content-security-policy") || "";
+    const mainHtml = await mainPageResponse.text();
+    const nonce = mainHtml.match(/name="terma-csp-nonce" content="([^"]+)"/)?.[1] || "";
+    assert.equal(nonce.length, 24);
+    assert.ok(mainCsp.includes(`style-src 'self' 'nonce-${nonce}'`));
+    assert.match(mainCsp, /script-src 'self'/);
+    assert.doesNotMatch(mainCsp, /script-src 'self' 'unsafe-inline'/);
+    assert.match(mainHtml, /<script src="\/csp-bootstrap\.js\?v=1\.3\.3"><\/script>/);
+    assert.equal((await fetch(`${url}/csp-bootstrap.js`, {headers:{Cookie:sessionCookie}})).status, 200);
     const sessionSettingsResponse = await fetch(`${url}/api/security`, {
       method:"PUT",
       headers:{Cookie:sessionCookie, "Content-Type":"application/json"},

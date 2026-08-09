@@ -3,12 +3,20 @@ function isLoopbackHost(host) {
 }
 
 function configEncryptionLocked() {
-  return Boolean(securitySettings?.encryption_enabled && securitySettings?.encryption_unlocked === false);
+  return Boolean(
+    securitySettings?.encryption_enabled
+    && (securitySettings?.encryption_ready === false || securitySettings?.encryption_transition_pending)
+  );
 }
 
 function requireConfigEncryptionUnlocked(action="修改加密配置") {
   if (!configEncryptionLocked()) return true;
-  notify(`配置加密已锁定，解锁后才能${action}`, "error");
+  notify(
+    securitySettings?.encryption_transition_pending
+      ? `配置加密切换尚未完成，输入主密码继续修复后才能${action}`
+      : `配置加密已锁定，解锁后才能${action}`,
+    "error"
+  );
   if (typeof openSettingsSection === "function") void openSettingsSection("settings-basic");
   return false;
 }

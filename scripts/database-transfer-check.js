@@ -44,7 +44,7 @@ async function main() {
     assert.throws(() => store.get(raw.token), /已过期或已使用/);
     store.discard(taken);
 
-    const security = { encryption_enabled: true, encryption_salt: "salt", encryption_check: "check" };
+    const security = { encryption_enabled: true, encryption_state:"enabled", encryption_version:1, encryption_salt: "salt", encryption_check: "check" };
     const header = createDatabaseBundleHeader({
       type: "terma-backup-v3",
       created_at: new Date().toISOString(),

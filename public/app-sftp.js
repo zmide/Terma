@@ -1708,20 +1708,31 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     const host = $("sftpTextEditor");
     let aceEditor = null;
     let fallbackEditor = null;
+    const useFallbackEditor = () => {
+      fallbackEditor = document.createElement("textarea");
+      fallbackEditor.className = "text-editor code-editor";
+      fallbackEditor.spellcheck = false;
+      fallbackEditor.value = content;
+      host.replaceWith(fallbackEditor);
+    };
     if (window.ace?.edit) {
       ace.config.set("basePath", "/vendor/ace");
+      ace.config.set("useStrictCSP", true);
       aceEditor = ace.edit(host);
       aceEditor.setTheme(document.documentElement.dataset.theme === "dark" ? "ace/theme/tomorrow_night" : "ace/theme/textmate");
       aceEditor.session.setMode(`ace/mode/${detectedLanguage}`);
       aceEditor.session.setUseWrapMode(wrapEnabled);
       aceEditor.setValue(content, -1);
       aceEditor.setOptions({fontSize:"14px", showPrintMargin:false, useSoftTabs:true, tabSize:2, wrapBehavioursEnabled:true});
+      const scroller = host.querySelector(".ace_scroller");
+      const stylesReady = getComputedStyle(host).position === "relative" && scroller && getComputedStyle(scroller).position === "absolute";
+      if (!stylesReady) {
+        try { aceEditor.destroy(); } catch {}
+        aceEditor = null;
+        useFallbackEditor();
+      } else requestAnimationFrame(() => aceEditor?.resize(true));
     } else {
-      fallbackEditor = document.createElement("textarea");
-      fallbackEditor.className = "text-editor code-editor";
-      fallbackEditor.spellcheck = false;
-      fallbackEditor.value = content;
-      host.replaceWith(fallbackEditor);
+      useFallbackEditor();
     }
     const getValue = () => aceEditor ? aceEditor.getValue() : fallbackEditor.value;
     const setValue = value => aceEditor ? aceEditor.setValue(value, -1) : (fallbackEditor.value = value);

@@ -224,36 +224,57 @@ function parseObject(value) {
 function securityDescriptor(dataDir) {
   try {
     const value = JSON.parse(fs.readFileSync(path.join(dataDir, "security.json"), "utf8"));
+    const enabled = Boolean(value?.encryption_enabled);
     return {
-      enabled:Boolean(value?.encryption_enabled),
+      enabled,
+      state:String(value?.encryption_state || (enabled ? "enabled" : "disabled")),
+      version:Number(value?.encryption_version || (enabled ? 1 : 2)) === 2 ? 2 : 1,
       salt:String(value?.encryption_salt || ""),
       check:String(value?.encryption_check || "")
     };
   } catch {
-    return { enabled:false, salt:"", check:"" };
+    return { enabled:false, state:"disabled", version:2, salt:"", check:"" };
   }
 }
 
 function secretCounts(db) {
-  const result = { encrypted:0, plain:0 };
+  const result = { encrypted:0, v1:0, v2:0, plain:0 };
   for (const [table, requestedColumns] of Object.entries(SECRET_COLUMNS_BY_TABLE)) {
     if (!tableExists(db, table)) continue;
     const columns = new Set(tableColumns(db, table));
     for (const column of requestedColumns) {
       if (!columns.has(column)) continue;
       const field = quoteIdentifier(column);
-      result.encrypted += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${field} LIKE 'tdenc:v1:%' OR ${field} LIKE 'termaenc:v1:%'`).get().count || 0);
-      result.plain += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${field} IS NOT NULL AND ${field}<>'' AND ${field} NOT LIKE 'tdenc:v1:%' AND ${field} NOT LIKE 'termaenc:v1:%'`).get().count || 0);
+      result.v1 += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${field} LIKE 'tdenc:v1:%' OR ${field} LIKE 'termaenc:v1:%'`).get().count || 0);
+      result.v2 += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${field} LIKE 'termaenc:v2:%'`).get().count || 0);
+      result.plain += Number(db.prepare(`SELECT COUNT(*) AS count FROM ${quoteIdentifier(table)} WHERE ${field} IS NOT NULL AND ${field}<>'' AND ${field} NOT LIKE 'tdenc:v1:%' AND ${field} NOT LIKE 'termaenc:v1:%' AND ${field} NOT LIKE 'termaenc:v2:%'`).get().count || 0);
     }
   }
+  result.encrypted = result.v1 + result.v2;
   return result;
+}
+
+function assertDatabaseMatchesSecurityDescriptor(db, descriptor, label) {
+  const secrets = secretCounts(db);
+  if (descriptor.enabled) {
+    if (descriptor.state !== "enabled") throw new Error(`${label}的配置加密仍处于切换状态，不能迁移`);
+    if (!descriptor.salt || !descriptor.check) throw new Error(`${label}缺少配置加密校验信息，不能迁移`);
+    if (secrets.plain) throw new Error(`${label}启用了配置加密，但数据库仍包含明文敏感字段`);
+    if (descriptor.version === 1 && secrets.v2) throw new Error(`${label}的配置加密版本与数据库字段不一致`);
+    if (descriptor.version === 2 && secrets.v1) throw new Error(`${label}的配置加密版本与数据库字段不一致`);
+  } else if (secrets.encrypted) {
+    throw new Error(`${label}未启用配置加密，但数据库包含加密敏感字段`);
+  }
+  return secrets;
 }
 
 function assertSecretCompatibility(sourceDb, targetDb, sourceDataDir, targetDataDir, descriptors = {}) {
   const sourceSecurity = descriptors.source || securityDescriptor(sourceDataDir);
   const targetSecurity = descriptors.target || securityDescriptor(targetDataDir);
-  const sourceSecrets = secretCounts(sourceDb);
-  const targetSecrets = targetDb ? secretCounts(targetDb) : { encrypted:0, plain:0 };
+  const sourceSecrets = assertDatabaseMatchesSecurityDescriptor(sourceDb, sourceSecurity, "旧版数据");
+  const targetSecrets = targetDb
+    ? assertDatabaseMatchesSecurityDescriptor(targetDb, targetSecurity, "当前 Terma 数据")
+    : { encrypted:0, v1:0, v2:0, plain:0 };
   const sourceEncrypted = sourceSecrets.encrypted;
   const sourcePlain = sourceSecrets.plain;
   if (targetDb && targetSecurity.enabled && targetSecrets.plain) {
@@ -264,6 +285,7 @@ function assertSecretCompatibility(sourceDb, targetDb, sourceDataDir, targetData
   }
   if (sourceEncrypted && targetDb) {
     const sameKey = sourceSecurity.enabled && targetSecurity.enabled
+      && sourceSecurity.version === targetSecurity.version
       && sourceSecurity.salt === targetSecurity.salt
       && sourceSecurity.check === targetSecurity.check;
     if (!sameKey) throw new Error("旧版数据库中的凭据使用另一套配置加密，不能直接合并；请先在旧版解锁后导出迁移包");
@@ -710,6 +732,12 @@ function mergeLegacyRuntime(options = {}) {
       });
       mergeResult.ssh = sshMerge.summary;
     } else {
+      const sourceValidationDb = openReadOnly(sourceDb);
+      try {
+        assertDatabaseMatchesSecurityDescriptor(sourceValidationDb, sourceSecurity, "旧版数据");
+      } finally {
+        sourceValidationDb.close();
+      }
       cloneSqlite(sourceDb, stagedDb);
       const sshMerge = mergeSshDirectories(sourceSshDir, stageSsh, { finalTargetDir:targetSshDir });
       const identityMapper = value => sourceIdentityPath(value, sourceSshDir, sshMerge.identityMap);

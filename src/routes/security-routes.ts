@@ -15,6 +15,9 @@ interface SecurityRouteDependencies {
   createSession(): string;
   setToken(): string;
   enableEncryption(password: string): unknown;
+  beginDisableEncryption(): unknown;
+  completeEncryptionEnable(): unknown;
+  prepareAutomaticEncryptionUpgrade(): boolean;
   unlockEncryption(password: string): unknown;
   disableEncryption(): unknown;
   readSecuritySettings(): any;
@@ -92,25 +95,52 @@ export async function handleSecurityRoutes(
   if (request.method === "POST" && pathname === "/api/security/encryption/enable") {
     const data = await dependencies.readJson(request);
     const result = dependencies.enableEncryption(String(data.password || ""));
-    let encrypted_rows = 0;
-    try {
-      encrypted_rows = dependencies.encryptStoredConnectionSecrets();
-    } catch (error) {
-      dependencies.disableEncryption();
-      throw error;
-    }
+    const encrypted_rows = dependencies.encryptStoredConnectionSecrets();
+    dependencies.completeEncryptionEnable();
     const removed_snapshots = dependencies.clearConfigSnapshots();
-    dependencies.sendJson(response, { ...(result as object), encrypted_rows, removed_snapshots });
+    const settings = dependencies.readSecuritySettings();
+    dependencies.sendJson(response, {
+      ...(result as object),
+      state:settings.encryption_state,
+      version:settings.encryption_version,
+      encrypted_rows,
+      removed_snapshots
+    });
     return true;
   }
   if (request.method === "POST" && pathname === "/api/security/encryption/unlock") {
-    dependencies.sendJson(response, dependencies.unlockEncryption(String((await dependencies.readJson(request)).password || "")));
+    const result = dependencies.unlockEncryption(String((await dependencies.readJson(request)).password || ""));
+    dependencies.prepareAutomaticEncryptionUpgrade();
+    const settings = dependencies.readSecuritySettings();
+    let transition_rows = 0;
+    let removed_snapshots = 0;
+    if (settings.encryption_state === "enabling") {
+      transition_rows = dependencies.encryptStoredConnectionSecrets();
+      dependencies.completeEncryptionEnable();
+      removed_snapshots = dependencies.clearConfigSnapshots();
+    } else if (settings.encryption_state === "disabling") {
+      transition_rows = dependencies.decryptStoredConnectionSecrets();
+      dependencies.disableEncryption();
+      removed_snapshots = dependencies.clearConfigSnapshots();
+    } else if (settings.encryption_state === "enabled") {
+      transition_rows = dependencies.encryptStoredConnectionSecrets();
+      if (transition_rows) removed_snapshots = dependencies.clearConfigSnapshots();
+    }
+    const finalSettings = dependencies.readSecuritySettings();
+    dependencies.sendJson(response, {
+      ...(result as object),
+      state:finalSettings.encryption_state,
+      version:finalSettings.encryption_version,
+      transition_rows,
+      removed_snapshots
+    });
     return true;
   }
   if (request.method === "POST" && pathname === "/api/security/encryption/disable") {
     const data = await dependencies.readJson(request);
     const settings = dependencies.readSecuritySettings();
     if (settings.encryption_enabled) dependencies.unlockEncryption(String(data.password || ""));
+    if (settings.encryption_enabled) dependencies.beginDisableEncryption();
     const decrypted_rows = settings.encryption_enabled ? dependencies.decryptStoredConnectionSecrets() : 0;
     const result = dependencies.disableEncryption();
     const removed_snapshots = dependencies.clearConfigSnapshots();

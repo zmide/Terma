@@ -128,6 +128,7 @@ const {
 } = require("./ssh");
 const { discoverRemoteTerminalCapabilities } = require("./ssh-capabilities");
 const { diagnoseSshError } = require("./ssh-diagnostics");
+const { inspectExtraArgs } = require("./ssh-command");
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { deployGeneratedPublicKey, generateSshKey } = require("./ssh-key-wizard");
 const { createTerminalStartupTicket } = require("./terminal-startup");
@@ -204,9 +205,23 @@ const {
 } = require("./security");
 const { acceptHostTrust, hostTrustErrorResponse, listTrustedHosts, listTrustedHostsPage, removeTrustedHost } = require("./ssh-host-trust");
 const { closeJumpConnectionPool, ensureConnectionHostTrusted } = require("./ssh2-client");
-const { disableEncryption, enableEncryption, encryptionReady, encryptText, decryptText, isEncryptedText, lockEncryption, requireEncryptionUnlocked, unlockEncryption } = require("./crypto-store");
+const {
+  beginDisableEncryption,
+  completeEncryptionEnable,
+  decryptText,
+  disableEncryption,
+  enableEncryption,
+  encryptionReady,
+  encryptionState,
+  encryptText,
+  isEncryptedText,
+  lockEncryption,
+  prepareAutomaticEncryptionUpgrade,
+  requireEncryptionUnlocked,
+  unlockEncryption
+} = require("./crypto-store");
 const { clearConfigSnapshots, createConfigSnapshot, deleteConfigSnapshot, listConfigSnapshots, pruneConfigSnapshotsForCurrentEncryption, restoreConfigSnapshotById } = require("./config-snapshots");
-const { ensurePrivateFile } = require("./storage-permissions");
+const { assertPrivateStorage, ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 const { ptyRuntimeStatus } = require("./pty-runtime");
 const { createUpdateChecker } = require("./update-checker");
 const { UpdateInstaller } = require("./update-installer");
@@ -300,6 +315,9 @@ const VENDOR_FILES = new Map([
   ["/vendor/xterm/addon-fit.mjs", vendorFile("@xterm/addon-fit", "lib/addon-fit.mjs")]
 ]);
 const ACE_VENDOR_DIR = vendorFile("ace-builds", "src-min-noconflict");
+VENDOR_FILES.set("/vendor/ace/ace.css", vendorFile("ace-builds", "css/ace.css"));
+VENDOR_FILES.set("/vendor/ace/theme-textmate.css", vendorFile("ace-builds", "css/theme/textmate.css"));
+VENDOR_FILES.set("/vendor/ace/theme-tomorrow_night.css", vendorFile("ace-builds", "css/theme/tomorrow_night.css"));
 const NOVNC_VENDOR_DIR = vendorFile("@novnc/novnc", "core/..");
 
 function readBody(req, maxBytes = 100 * 1024 * 1024): Promise<Buffer> {
@@ -1372,17 +1390,11 @@ function startLinuxDesktopInstall(connectionId, desktopId, action = "install", g
 
 
 function loginPage() {
-  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Terma 登录</title><style>
-body{margin:0;min-height:100vh;min-height:100dvh;padding:16px;box-sizing:border-box;display:grid;place-items:center;font:14px system-ui,-apple-system,"Segoe UI",sans-serif;background:#f4f6f8;color:#1f2933;overflow-x:hidden}.card{width:min(360px,100%);box-sizing:border-box;background:#fff;border:1px solid #d6dde3;border-radius:6px;padding:22px;box-shadow:0 12px 32px rgba(15,23,42,.12)}h1{font-size:22px;margin:0 0 8px}.muted{color:#687782;margin-bottom:18px}label{display:block;font-size:12px;color:#687782;margin-bottom:6px}.password-field{position:relative;min-width:0}.password-field input{width:100%;min-width:0;box-sizing:border-box;padding:10px 44px 10px 10px;border:1px solid #ccd4dc;border-radius:4px;font:inherit}.password-toggle{position:absolute;inset:1px 1px 1px auto;width:40px;min-width:40px;margin:0;padding:0;display:grid;place-items:center;border:0;border-radius:3px;background:transparent;color:#52616b;cursor:pointer}.password-toggle:hover{background:#eef2f6;color:#1f2933}.password-toggle:focus-visible{outline:2px solid #2563eb;outline-offset:-3px}.password-toggle svg{width:18px;height:18px;display:block;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.password-toggle svg[hidden]{display:none}.login-button{width:100%;margin-top:14px;padding:10px;border:0;border-radius:4px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}.err{color:#b42318;min-height:20px;margin-top:10px}</style><div class="card"><h1>Terma</h1><div class="muted">请输入 Web 访问密码；仅配置 Token 时也可直接输入 Token。</div><label for="password">密码或 Token</label><div class="password-field"><input id="password" type="password" autocomplete="current-password" autofocus><button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false"><svg id="passwordShowIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg><svg id="passwordHideIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 3l18 18"></path><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c6.5 0 10 8 10 8a18.3 18.3 0 0 1-2.3 3.5"></path><path d="M6.6 6.6C3.7 8.5 2 12 2 12s3.5 8 10 8a10.8 10.8 0 0 0 5.4-1.4"></path></svg></button></div><button class="login-button" type="button" onclick="login()">登录</button><div id="err" class="err"></div></div><script>
-const passwordInput=document.getElementById('password');
-const passwordToggle=document.getElementById('passwordToggle');
-const passwordShowIcon=document.getElementById('passwordShowIcon');
-const passwordHideIcon=document.getElementById('passwordHideIcon');
-function setPasswordVisible(visible){const selectionStart=passwordInput.selectionStart;const selectionEnd=passwordInput.selectionEnd;passwordInput.type=visible?'text':'password';const actionLabel=visible?'隐藏密码':'显示密码';passwordToggle.title=actionLabel;passwordToggle.setAttribute('aria-label',actionLabel);passwordToggle.setAttribute('aria-pressed',String(visible));passwordShowIcon.hidden=visible;passwordHideIcon.hidden=!visible;passwordInput.focus({preventScroll:true});if(selectionStart!==null&&selectionEnd!==null){try{passwordInput.setSelectionRange(selectionStart,selectionEnd)}catch{}}}
-passwordToggle.addEventListener('click',()=>setPasswordVisible(passwordInput.type==='password'));
-async function login(){const password=document.getElementById('password').value;const res=await fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});if(res.ok){location.href='/';return;}let text='登录失败';try{text=(await res.json()).error||text}catch{}document.getElementById('err').textContent=text}
-passwordInput.addEventListener('keydown',e=>{if(e.key==='Enter')login()});
-</script></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Terma 登录</title><link rel="stylesheet" href="/login.css"><script src="/login.js" defer></script></head><body><div class="card"><h1>Terma</h1><div class="muted">请输入 Web 访问密码；仅配置 Token 时也可直接输入 Token。</div><label for="password">密码或 Token</label><div class="password-field"><input id="password" type="password" autocomplete="current-password" autofocus><button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false"><svg id="passwordShowIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg><svg id="passwordHideIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 3l18 18"></path><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c6.5 0 10 8 10 8a18.3 18.3 0 0 1-2.3 3.5"></path><path d="M6.6 6.6C3.7 8.5 2 12 2 12s3.5 8 10 8a10.8 10.8 0 0 0 5.4-1.4"></path></svg></button></div><button id="loginButton" class="login-button" type="button">登录</button><div id="err" class="err"></div></div></body></html>`;
+}
+
+function mainAppContentSecurityPolicy(nonce) {
+  return `default-src 'self'; style-src 'self' 'nonce-${nonce}'; style-src-attr 'unsafe-inline'; script-src 'self'; script-src-attr 'unsafe-inline'; worker-src 'self' blob:; img-src 'self' data: blob:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'`;
 }
 
 function serveStatic(req, res, pathname) {
@@ -1391,8 +1403,12 @@ function serveStatic(req, res, pathname) {
     res.end();
     return;
   }
-  if (pathname === "/login") return send(res, 200, loginPage(), { "Content-Type": "text/html; charset=utf-8" });
-  if (!isAuthenticated(req)) {
+  if (pathname === "/login") return send(res, 200, loginPage(), {
+    "Content-Type": "text/html; charset=utf-8",
+    "Content-Security-Policy":"default-src 'self'; style-src 'self'; style-src-attr 'none'; script-src 'self'; script-src-attr 'none'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+  });
+  const loginAsset = pathname === "/login.css" || pathname === "/login.js";
+  if (!loginAsset && !isAuthenticated(req)) {
     if (authRequired(req)) return send(res, 302, "", { Location: "/login" });
   }
   let file;
@@ -1427,8 +1443,15 @@ function serveStatic(req, res, pathname) {
   }
   const ext = path.extname(file).toLowerCase();
   const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8" };
-  const body = fs.readFileSync(file);
-  res.writeHead(200, secureHeaders({ "Content-Type": types[ext] || "application/octet-stream", "Content-Length": body.length, "Cache-Control":"no-cache" }));
+  let body = fs.readFileSync(file);
+  const responseHeaders = { "Content-Type": types[ext] || "application/octet-stream", "Cache-Control":"no-cache" };
+  if (ext === ".html" && path.basename(file) === "index.html") {
+    const nonce = crypto.randomBytes(18).toString("base64");
+    body = Buffer.from(body.toString("utf8").replaceAll("__TERMA_CSP_NONCE__", nonce), "utf8");
+    responseHeaders["Content-Security-Policy"] = mainAppContentSecurityPolicy(nonce);
+  }
+  responseHeaders["Content-Length"] = body.length;
+  res.writeHead(200, secureHeaders(responseHeaders));
   res.end(body);
 }
 
@@ -1552,14 +1575,21 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, {ok:releaseNativeSftpDragTicket(nativeDragParts[3])});
   }
   const securityRouteDependencies = {
-    AuthenticationError, clearConfigSnapshots, createSession, decryptStoredConnectionSecrets, disableEncryption, enableEncryption,
+    AuthenticationError, beginDisableEncryption, clearConfigSnapshots, completeEncryptionEnable, createSession,
+    decryptStoredConnectionSecrets, disableEncryption, enableEncryption,
     encryptStoredConnectionSecrets, login, logout, publicSecuritySettings, readJson, readSecuritySettings,
-    publicAuthStatus, send, sendJson, sessionCookie, setPassword, setToken, unlockEncryption, updateSecurityOptions
+    prepareAutomaticEncryptionUpgrade, publicAuthStatus, send, sendJson, sessionCookie, setPassword, setToken,
+    unlockEncryption, updateSecurityOptions
   };
-  securityRouteDependencies.publicSecuritySettings = request => ({
-    ...publicSecuritySettings(request),
-    encryption_unlocked: encryptionReady()
-  });
+  securityRouteDependencies.publicSecuritySettings = request => {
+    const state = encryptionState();
+    return {
+      ...publicSecuritySettings(request),
+      encryption_unlocked:state.unlocked,
+      encryption_ready:state.ready,
+      encryption_transition_pending:state.transition_pending
+    };
+  };
   if (await handlePublicAuthRoutes(req, res, pathname, securityRouteDependencies)) return;
   if (!isAuthenticated(req)) return sendJson(res, { error: "Unauthorized" }, 401);
   if (await handleSecurityRoutes(req, res, pathname, securityRouteDependencies)) return;
@@ -1744,6 +1774,7 @@ async function handleApi(req, res, pathname) {
     return;
   }
   if (req.method === "GET" && pathname === "/api/backup/bundle") {
+    requireEncryptionUnlocked();
     const security = readSecuritySettings();
     const exported = exportDatabaseFile(true);
     const header = createDatabaseBundleHeader({
@@ -1751,6 +1782,8 @@ async function handleApi(req, res, pathname) {
       created_at: new Date().toISOString(),
       security: {
         encryption_enabled: Boolean(security.encryption_enabled),
+        encryption_state: security.encryption_state || (security.encryption_enabled ? "enabled" : "disabled"),
+        encryption_version: Number(security.encryption_version || (security.encryption_enabled ? 1 : 2)),
         encryption_salt: security.encryption_salt || "",
         encryption_check: security.encryption_check || ""
       }
@@ -1833,12 +1866,16 @@ async function handleApi(req, res, pathname) {
         if (stage.security) {
           writeSecuritySettings({
             encryption_enabled: Boolean(stage.security.encryption_enabled),
+            encryption_state: stage.security.encryption_state || (stage.security.encryption_enabled ? "enabled" : "disabled"),
+            encryption_version: Number(stage.security.encryption_version || (stage.security.encryption_enabled ? 1 : 2)),
             encryption_salt: stage.security.encryption_salt || "",
-            encryption_check: stage.security.encryption_check || ""
+            encryption_check: stage.security.encryption_check || "",
+            encryption_legacy_check: ""
           });
           lockEncryption();
         }
         reopenDatabase();
+        reconcileEncryptionStateAtStartup({required:true});
         clearConnectionHealthCache();
         return sendJson(res, {
           ok: true,
@@ -2086,6 +2123,15 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && pathname === "/api/export/config") {
     const data = await readJson(req);
     return sendJson(res, { config: exportConfig(data.ids || []) });
+  }
+  if (req.method === "POST" && pathname === "/api/ssh/extra-args/validate") {
+    const data = await readJson(req);
+    return sendJson(res, inspectExtraArgs(data.extra_args || "", {
+      connect_timeout_seconds:data.connect_timeout_seconds,
+      keepalive_interval_seconds:data.keepalive_interval_seconds,
+      keepalive_count_max:data.keepalive_count_max,
+      tcp_keepalive:data.tcp_keepalive
+    }));
   }
   if (req.method === "POST" && pathname === "/api/test-ssh") {
     const data = await readJson(req);
@@ -2985,6 +3031,7 @@ function requestHandler(req, res) {
       const body: any = {error:error.message || String(error)};
       if (error?.code) body.code = String(error.code);
       if (error?.task) body.task = error.task;
+      if (Array.isArray(error?.issues)) body.issues = error.issues;
       sendJson(res, body, status >= 400 && status <= 599 ? status : 400);
     }
     else res.destroy();
@@ -3474,6 +3521,25 @@ async function shutdown() {
   return shutdownPromise;
 }
 
+function reconcileEncryptionStateAtStartup(options: any = {}) {
+  const before = encryptionState();
+  if (!before.enabled) return { upgraded:false, state:before.state };
+  try {
+    if (!prepareAutomaticEncryptionUpgrade()) return { upgraded:false, state:before.state };
+    const encryptedRows = encryptStoredConnectionSecrets();
+    completeEncryptionEnable();
+    const removedSnapshots = clearConfigSnapshots();
+    lockEncryption();
+    appendSystemLog(`配置加密已自动升级到 v2：重写 ${encryptedRows} 行，清理 ${removedSnapshots} 个旧快照`);
+    return { upgraded:true, encrypted_rows:encryptedRows, removed_snapshots:removedSnapshots };
+  } catch (error) {
+    lockEncryption();
+    appendSystemLog(`配置加密自动修复未完成：${error.message || error}`);
+    if (options.required) throw error;
+    return { upgraded:false, state:encryptionState().state, error:error.message || String(error) };
+  }
+}
+
 function startServer(customArgs: any = parseArgs(), options: any = {}) {
   args = normalizeStartArgs(customArgs);
   exitOnShutdown = options.exitOnShutdown !== false;
@@ -3483,6 +3549,17 @@ function startServer(customArgs: any = parseArgs(), options: any = {}) {
   startupEffectsStarted = false;
   shutdownPromise = null;
   fs.mkdirSync(DATA_DIR, { recursive: true });
+  ensurePrivateDirectory(path.join(DATA_DIR, "snapshots"));
+  ensurePrivateDirectory(path.join(DATA_DIR, "restore-staging"));
+  assertPrivateStorage([
+    {path:DATA_DIR, directory:true},
+    {path:path.join(DATA_DIR, "snapshots"), directory:true},
+    {path:path.join(DATA_DIR, "restore-staging"), directory:true},
+    {path:DB_PATH, directory:false},
+    {path:path.join(DATA_DIR, "security.json"), directory:false},
+    {path:path.join(DATA_DIR, "ssh-host-trust.json"), directory:false}
+  ]);
+  reconcileEncryptionStateAtStartup();
   cleanupFtpTemp();
   scheduleInstalledUpdateCleanup();
   if (process.env.TERMA_RESET_WEB_ACCESS === "1" || process.env.TUNNELDESK_RESET_WEB_ACCESS === "1") {

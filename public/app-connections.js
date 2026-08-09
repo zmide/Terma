@@ -926,6 +926,96 @@ function markConnectionTerminalDetectionStale(form=$("connectionForm")) {
   connectionFormField(form, "connTerminalCapabilities")?.classList.add("is-stale");
 }
 
+function connectionExtraArgsValidationPayload(form=$("connectionForm")) {
+  const field = id => connectionFormField(form, id);
+  return {
+    extra_args:field("conn_extra")?.value || "",
+    connect_timeout_seconds:Number(field("conn_connect_timeout")?.value || 10),
+    keepalive_interval_seconds:Number(field("conn_keepalive_interval")?.value ?? 60),
+    keepalive_count_max:Number(field("conn_keepalive_count")?.value || 3),
+    tcp_keepalive:Number(field("conn_tcp_keepalive")?.value ?? 1)
+  };
+}
+
+function focusConnectionExtraArgsIssue(form, issue) {
+  const editor = connectionFormField(form, "conn_extra");
+  if (!editor) return;
+  editor.focus({preventScroll:true});
+  const start = Math.max(0, Math.min(editor.value.length, Number(issue?.start || 0)));
+  const end = Math.max(start, Math.min(editor.value.length, Number(issue?.end ?? start)));
+  try { editor.setSelectionRange(start, end); } catch {}
+  editor.scrollIntoView({block:"center", behavior:"smooth"});
+}
+
+function renderConnectionExtraArgsDiagnostics(form=$("connectionForm"), issues=[]) {
+  const editor = connectionFormField(form, "conn_extra");
+  const box = connectionFormField(form, "connExtraDiagnostics");
+  if (!editor || !box) return;
+  const items = Array.isArray(issues) ? issues : [];
+  const errors = items.filter(item => item?.severity === "error");
+  form._extraArgsIssues = items;
+  editor.setAttribute("aria-invalid", errors.length ? "true" : "false");
+  editor.classList.toggle("has-validation-error", Boolean(errors.length));
+  if (!items.length) {
+    box.hidden = true;
+    box.className = "ssh-extra-diagnostics";
+    box.replaceChildren();
+    return;
+  }
+  box.hidden = false;
+  box.className = `ssh-extra-diagnostics ${errors.length ? "has-errors" : "has-warnings"}`;
+  const heading = document.createElement("div");
+  heading.className = "ssh-extra-diagnostics-head";
+  heading.innerHTML = `<strong>${errors.length ? `${errors.length} 处需要修正` : `${items.length} 条参数提醒`}</strong><span>点击下面条目可定位到对应行</span>`;
+  box.replaceChildren(heading);
+  for (const item of items) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `ssh-extra-issue ${item.severity === "warning" ? "warning" : "error"}`;
+    const label = item.option || item.token || "附加参数";
+    button.innerHTML = `<span class="ssh-extra-issue-title">${icon(item.severity === "warning" ? "triangle-alert" : "circle-alert")}<b>第 ${Number(item.line || 1)} 行 · ${esc(label)}</b></span><span>${esc(item.message || "参数无效")}</span>${item.suggestion ? `<small>${esc(item.suggestion)}</small>` : ""}`;
+    button.addEventListener("click", () => focusConnectionExtraArgsIssue(form, item));
+    box.appendChild(button);
+  }
+}
+
+async function validateConnectionExtraArgs(form=$("connectionForm")) {
+  if (!form?.isConnected) return {ok:true, args:[], issues:[]};
+  clearTimeout(form._extraArgsValidationTimer);
+  const requestId = Number(form._extraArgsValidationRequestId || 0) + 1;
+  form._extraArgsValidationRequestId = requestId;
+  const payload = connectionExtraArgsValidationPayload(form);
+  if (!String(payload.extra_args || "").trim()) {
+    const result = {ok:true, args:[], issues:[]};
+    renderConnectionExtraArgsDiagnostics(form, result.issues);
+    return result;
+  }
+  try {
+    const result = await api("/api/ssh/extra-args/validate", {method:"POST", body:JSON.stringify(payload)});
+    if (!form.isConnected || form._extraArgsValidationRequestId !== requestId) return result;
+    renderConnectionExtraArgsDiagnostics(form, result.issues);
+    return result;
+  } catch (error) {
+    if (Array.isArray(error?.details?.issues)) renderConnectionExtraArgsDiagnostics(form, error.details.issues);
+    throw error;
+  }
+}
+
+function scheduleConnectionExtraArgsValidation(form=$("connectionForm"), delay=180) {
+  if (!form) return;
+  clearTimeout(form._extraArgsValidationTimer);
+  form._extraArgsValidationTimer = setTimeout(() => validateConnectionExtraArgs(form).catch(() => {}), delay);
+}
+
+async function ensureConnectionExtraArgsValid(form=$("connectionForm")) {
+  const result = await validateConnectionExtraArgs(form);
+  const firstError = result?.issues?.find(item => item?.severity === "error");
+  if (!firstError) return true;
+  focusConnectionExtraArgsIssue(form, firstError);
+  notify(`SSH 附加参数第 ${firstError.line || 1} 行需要修正`, "error");
+  return false;
+}
+
 function connPayload(form=$("connectionForm"), validateStartup=false) {
   const field = id => connectionFormField(form, id);
   const groupValue = field("conn_group").value;
@@ -1082,6 +1172,7 @@ function resetConnectionForm(){
     $("connTestStatus").className = "connection-test-status";
   }
   $("conn_extra").value="";
+  renderConnectionExtraArgsDiagnostics($("connectionForm"), []);
   resetConnectionTerminalStartup($("connectionForm"));
   toggleAuthFields();
 }
@@ -1097,11 +1188,13 @@ function wireConnectionForm() {
     if (!event.target.matches("#conn_host,#conn_port,#conn_user,#conn_password,#conn_key_passphrase,#conn_extra,#conn_connect_timeout,#conn_keepalive_interval,#conn_keepalive_count")) return;
     form._terminalCredentialRevision += 1;
     markConnectionTerminalDetectionStale(form);
+    if (event.target.matches("#conn_extra,#conn_connect_timeout,#conn_keepalive_interval,#conn_keepalive_count")) scheduleConnectionExtraArgsValidation(form);
   });
   form.addEventListener("change", event => {
-    if (!event.target.matches("#conn_host,#conn_port,#conn_user,#conn_auth_type,#conn_key,#conn_agent_mode,#conn_jump,#conn_extra")) return;
+    if (!event.target.matches("#conn_host,#conn_port,#conn_user,#conn_auth_type,#conn_key,#conn_agent_mode,#conn_jump,#conn_extra,#conn_tcp_keepalive")) return;
     form._terminalCredentialRevision += 1;
     markConnectionTerminalDetectionStale(form);
+    if (event.target.matches("#conn_extra,#conn_tcp_keepalive")) scheduleConnectionExtraArgsValidation(form, 0);
   });
 }
 
@@ -1113,6 +1206,7 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null) {
   form.dataset.saving = "1";
   if (trigger) setButtonBusy(trigger, true, "保存中...");
   try {
+    if (!await ensureConnectionExtraArgsValid(form)) return;
     const p=connPayload(form, true);
     const generation = !p.id ? String($("conn_remote_generation")?.value || "") : "";
     let generated = null;
@@ -1148,7 +1242,10 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null) {
       const generatedCount = generation === "all" ? Number(generated?.created_count || 0) : generated ? 1 : 0;
       notify(`连接已保存${generatedCount ? `，并生成 ${generatedCount} 个其他连接` : ""}`,"success");
     }
-  } catch(err){notify(err.message,"error");}
+  } catch(err){
+    if (Array.isArray(err?.details?.issues)) renderConnectionExtraArgsDiagnostics(form, err.details.issues);
+    notify(err.message,"error");
+  }
   finally {
     delete form.dataset.saving;
     if (trigger) setButtonBusy(trigger, false);
@@ -1233,6 +1330,7 @@ async function repairSelectedKey() {
 async function testConnectionForm(button=null){
   button = button || $("connTestBtn");
   const form = button?.closest?.("form") || $("connectionForm");
+  if (!await ensureConnectionExtraArgsValid(form)) return;
   const status = connectionFormField(form, "connTestStatus");
   const detectionStatus = connectionFormField(form, "connTerminalDetectionStatus");
   const startRevision = Number(form?._terminalCredentialRevision || 0);
@@ -1287,6 +1385,7 @@ async function testConnectionForm(button=null){
     }
     notify(message, r.ok?"success":"error");
   } catch(e){
+    if (Array.isArray(e?.details?.issues)) renderConnectionExtraArgsDiagnostics(form, e.details.issues);
     const message = `SSH 测试无法完成：${e.message}`;
     if (status) { status.className = "connection-test-status error"; status.textContent = message; }
     if (detectionStatus) {
@@ -1451,6 +1550,7 @@ function editConnection(id, updateTab=true){
   toggleAuthFields();
   loadKeys(c.identity_file);
   wireConnectionForm();
+  scheduleConnectionExtraArgsValidation(form, 0);
   setWorkspace(`${c.name} · 编辑`, `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`, "edit", `edit-${c.id}`, updateTab, true, {kind:"edit", id:c.id});
 }
 

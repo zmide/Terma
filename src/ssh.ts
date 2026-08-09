@@ -271,7 +271,7 @@ function buildForwardCommand(connection, forward) {
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
   }
-  args.push(...effectiveExtraArgs(connection.extra_args));
+  args.push(...effectiveExtraArgs(connection.extra_args, connection));
   if (forward.mode === "local") args.push("-L", `${forward.bind_host}:${forward.bind_port}:${forward.target_host}:${forward.target_port}`);
   else if (forward.mode === "remote") args.push("-R", `${forward.bind_host}:${forward.bind_port}:${forward.target_host}:${forward.target_port}`);
   else args.push("-D", `${forward.bind_host}:${forward.bind_port}`);
@@ -291,7 +291,7 @@ function buildConnectionCommand(connection, forwards) {
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
   }
-  args.push(...effectiveExtraArgs(connection.extra_args));
+  args.push(...effectiveExtraArgs(connection.extra_args, connection));
   for (const forward of forwards) appendForwardArgs(args, forward);
   args.push(...sshDestinationArgs(connection));
   return args;
@@ -320,7 +320,7 @@ function buildTerminalCommand(connection) {
   }
   const startupCommand = buildRemoteStartupCommand(connection);
   if (startupCommand) args.push("-o", "RemoteCommand=none");
-  args.push(...effectiveExtraArgs(connection.extra_args));
+  args.push(...effectiveExtraArgs(connection.extra_args, connection));
   args.push(...sshDestinationArgs(connection));
   if (startupCommand) args.push(startupCommand);
   return args;
@@ -1102,7 +1102,7 @@ async function testSsh(data) {
     securePrivateKeyPermissions(data.identity_file);
     args.push("-i", data.identity_file);
   }
-  args.push(...effectiveExtraArgs(data.extra_args));
+  args.push(...effectiveExtraArgs(data.extra_args, data));
   args.push(...sshDestinationArgs(data), probe);
   const start = Date.now();
   const result: any = await runSshTest(args, 15000, data.terminal_encoding);
@@ -1130,7 +1130,7 @@ async function runSshCommandForConnection(connection, command, timeoutMs = 60000
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
   }
-  args.push(...effectiveExtraArgs(connection.extra_args));
+  args.push(...effectiveExtraArgs(connection.extra_args, connection));
   args.push(...sshDestinationArgs(connection), String(command || ""));
   return new Promise((resolve) => {
     const child = spawn(SSH_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -1171,7 +1171,7 @@ async function runSshCommandForConnectionStreaming(connection, command, timeoutM
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
   }
-  args.push(...effectiveExtraArgs(connection.extra_args));
+  args.push(...effectiveExtraArgs(connection.extra_args, connection));
   args.push(...sshDestinationArgs(connection), String(command || ""));
   return new Promise((resolve) => {
     const child = spawn(SSH_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
