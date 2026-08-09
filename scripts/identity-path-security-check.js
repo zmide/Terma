@@ -103,10 +103,13 @@ try {
   assert.throws(() => sshCommand.assertSafeExtraArgs("-voLocalCommand=helper"));
   assert.throws(() => sshCommand.assertSafeExtraArgs("-voKnownHostsCommand=helper"));
   assert.throws(() => sshCommand.assertSafeExtraArgs("-o ForwardAgent=yes"));
-  assert.deepEqual(sshCommand.assertSafeExtraArgs("-Jadmin@bastion"), ["-Jadmin@bastion"]);
-  assert.deepEqual(sshCommand.assertSafeExtraArgs("-L8080:internal.example:80"), ["-L8080:internal.example:80"]);
-  assert.deepEqual(sshCommand.assertSafeExtraArgs("-lbuilduser"), ["-lbuilduser"]);
-  assert.deepEqual(sshCommand.assertSafeExtraArgs("-vJ admin@bastion"), ["-vJ", "admin@bastion"]);
+  assert.throws(() => sshCommand.assertSafeExtraArgs("-Jadmin@bastion"));
+  assert.throws(() => sshCommand.assertSafeExtraArgs("-L8080:internal.example:80"));
+  assert.throws(() => sshCommand.assertSafeExtraArgs("-lbuilduser"));
+  assert.throws(() => sshCommand.assertSafeExtraArgs("-vJ admin@bastion"));
+  assert.deepEqual(sshCommand.assertSafeExtraArgs("-4Cv -c aes256-gcm@openssh.com -m hmac-sha2-256 -o Compression=yes"), [
+    "-4Cv", "-c", "aes256-gcm@openssh.com", "-m", "hmac-sha2-256", "-o", "Compression=yes"
+  ]);
 
   const configBeforeUpload = fs.readFileSync(configFile, "utf8");
   assert.throws(() => ssh.saveUploadedKey("CONFIG", Buffer.from(keyBody)));

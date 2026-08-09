@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -23,6 +24,15 @@ function encrypted(value) {
 
 function legacyEncrypted(value) {
   return cryptoStore.encryptText(value).replace(/^termaenc:v1:/, "tdenc:v1:");
+}
+
+function foreignEncrypted(value) {
+  const key = crypto.randomBytes(32);
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const data = Buffer.concat([cipher.update(String(value), "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `termaenc:v1:${iv.toString("base64url")}:${tag.toString("base64url")}:${data.toString("base64url")}`;
 }
 
 try {
@@ -80,7 +90,6 @@ try {
     encryptionReady:cryptoStore.encryptionReady,
     encryptText:cryptoStore.encryptText,
     isEncryptedText:cryptoStore.isEncryptedText,
-    isLegacyEncryptedText:cryptoStore.isLegacyEncryptedText,
     listIdentityFiles:() => [{path:keyPath}],
     readSecuritySettings:security.readSecuritySettings,
     validateSortOrder:value => Math.max(1, Number(value) || 1),
@@ -114,6 +123,34 @@ try {
   }
   assert.equal(encrypted(passwordRow.ssh_password), true, "恢复后的 SSH 密码必须加密");
   restored.close();
+
+  const validationBefore = new DatabaseSync(fixture, {readOnly:true});
+  const beforeValidation = validationBefore.prepare("SELECT ssh_password FROM connections WHERE id=2").get().ssh_password;
+  validationBefore.close();
+  helpers.normalizeRestoredCredentials(fixture, [{connection_id:1, identity_path:keyPath}], [], false, true);
+  const validationAfter = new DatabaseSync(fixture, {readOnly:true});
+  const afterValidation = validationAfter.prepare("SELECT ssh_password FROM connections WHERE id=2").get().ssh_password;
+  validationAfter.close();
+  assert.match(afterValidation, /^termaenc:v1:/);
+  assert.notEqual(afterValidation, beforeValidation, "普通数据库中的现有密文必须验证并重新加密");
+
+  const foreignFixture = path.join(root, "foreign.db");
+  fs.copyFileSync(fixture, foreignFixture);
+  const foreignDatabase = new DatabaseSync(foreignFixture);
+  foreignDatabase.prepare("UPDATE connections SET ssh_password=? WHERE id=2").run(foreignEncrypted("foreign-password"));
+  foreignDatabase.close();
+  assert.throws(
+    () => helpers.normalizeRestoredCredentials(foreignFixture, [{connection_id:1, identity_path:keyPath}], [], false, true),
+    /无法使用当前主密钥验证/
+  );
+
+  const disabledFixture = path.join(root, "disabled.db");
+  fs.copyFileSync(fixture, disabledFixture);
+  cryptoStore.disableEncryption();
+  assert.throws(
+    () => helpers.normalizeRestoredCredentials(disabledFixture, [{connection_id:1, identity_path:keyPath}], [], false, false),
+    /当前未加密实例/
+  );
   console.log("配置加密恢复回归通过：未解锁拒绝恢复，解锁后原始 SQLite 敏感字段全部使用 termaenc:v1");
 } finally {
   try { cryptoStore.lockEncryption(); } catch {}

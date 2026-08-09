@@ -238,7 +238,7 @@
           <div><label>连续无响应次数</label><input id="conn_keepalive_count" type="number" min="1" max="20" value="3"></div>
         </div>
       </fieldset>
-      <label>OpenSSH 兼容参数（可选）</label><textarea id="conn_extra" placeholder="仅填写尚未提供结构化选项的 OpenSSH 参数，例如 -o Compression=yes"></textarea>
+      <label>OpenSSH 连接调优参数（可选）</label><textarea id="conn_extra" placeholder="仅支持算法、压缩、超时等安全调优参数，例如 -o Compression=yes"></textarea>
       <div id="connRemoteGenerationLine" class="grid connection-derived-options">
         <div>
           <label>同时生成其他连接</label>

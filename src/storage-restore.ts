@@ -6,15 +6,17 @@ const { DatabaseSync } = require("node:sqlite");
 function createStorageRestoreHelpers(options: any = {}) {
   const {
     BASE_DIR, DATA_DIR, PROJECT_SSH_DIR, RUNTIME_ROOT, STORAGE_SETTINGS_FILE,
-    decryptText, encryptionReady, encryptText, isEncryptedText, isLegacyEncryptedText, listIdentityFiles, readSecuritySettings,
+    decryptText, encryptionReady, encryptText, isEncryptedText, listIdentityFiles, readSecuritySettings,
     validateSortOrder, getDesktopIntegration, getArgs, requestShutdown
   } = options;
   const encryptedValue = typeof isEncryptedText === "function"
     ? isEncryptedText
     : (value) => /^(?:tdenc|termaenc):v1:/.test(String(value || ""));
-  const legacyEncryptedValue = typeof isLegacyEncryptedText === "function"
-    ? isLegacyEncryptedText
-    : (value) => String(value || "").startsWith("tdenc:v1:");
+  const secretColumnsByTable = {
+    connections: ["identity_file", "ssh_password", "private_key_passphrase", "extra_args", "terminal_program_path", "terminal_program_args", "terminal_working_directory"],
+    remote_profiles: ["password"],
+    tunnels: ["identity_file", "extra_args"]
+  };
 
   function connectionRowsFromBackup(tempDb) {
     const table = tempDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='connections'").get();
@@ -285,6 +287,7 @@ function createStorageRestoreHelpers(options: any = {}) {
       }
       let encrypted_fields = 0;
       if (encryptionEnabled && !encryptedBundle) encrypted_fields = encryptRestoredSecrets(restoredDb);
+      else if (!encryptedBundle) assertNoEncryptedRestoredSecrets(restoredDb);
       return {
         ...identities,
         encrypted_fields,
@@ -295,40 +298,57 @@ function createStorageRestoreHelpers(options: any = {}) {
     }
   }
 
-  function encryptRestoredSecrets(restoredDb) {
-    const columnsByTable = {
-      connections: ["identity_file", "ssh_password", "private_key_passphrase", "extra_args", "terminal_program_path", "terminal_program_args", "terminal_working_directory"],
-      remote_profiles: ["password"],
-      tunnels: ["identity_file", "extra_args"]
-    };
-    let changed = 0;
-    for (const [table, columns] of Object.entries(columnsByTable)) {
+  function restoredSecretRows(restoredDb, callback) {
+    for (const [table, columns] of Object.entries(secretColumnsByTable)) {
       const exists = restoredDb.prepare("SELECT 1 AS found FROM sqlite_master WHERE type='table' AND name=?").get(table);
       if (!exists) continue;
       const available = new Set(restoredDb.prepare(`PRAGMA table_info(${table})`).all().map((item:any) => item.name));
       const selected = columns.filter(column => available.has(column));
       if (!selected.length) continue;
       const rows = restoredDb.prepare(`SELECT id, ${selected.join(", ")} FROM ${table}`).all();
+      callback(table, selected, rows);
+    }
+  }
+
+  function assertNoEncryptedRestoredSecrets(restoredDb) {
+    restoredSecretRows(restoredDb, (table, columns, rows) => {
+      for (const row of rows) {
+        const column = columns.find(item => encryptedValue(row[item]));
+        if (column) {
+          throw new Error(`普通数据库包含无法在当前未加密实例中使用的 Terma 加密字段：${table}.${column}`);
+        }
+      }
+    });
+  }
+
+  function encryptRestoredSecrets(restoredDb) {
+    let changed = 0;
+    restoredSecretRows(restoredDb, (table, selected, rows) => {
       const update = restoredDb.prepare(`UPDATE ${table} SET ${selected.map(column => `${column}=?`).join(", ")} WHERE id=?`);
       for (const row of rows) {
         const values = selected.map(column => {
           const value = row[column];
           if (value == null || value === "") return value;
           if (encryptedValue(value)) {
-            if (!legacyEncryptedValue(value)) return value;
-            changed += 1;
-            return encryptText(decryptText(value));
+            try {
+              const decrypted = decryptText(value);
+              if (decrypted === "") throw new Error("decrypted secret is empty");
+              changed += 1;
+              return encryptText(decrypted);
+            } catch {
+              throw new Error(`普通数据库包含无法使用当前主密钥验证的 Terma 加密字段：${table}.${column}`);
+            }
           }
           changed += 1;
           return encryptText(value);
         });
         if (values.some((value, index) => value !== row[selected[index]])) update.run(...values, row.id);
       }
-    }
+    });
     return changed;
   }
 
-  return {connectionRowsFromBackup, storageSettingsView, pathInside, copyRuntimeDirectory, saveWebStorageSettings, listLocalDirectories, normalizeIdentityBindings, identityTargetMap, normalizeCredentialBindings, inspectRestoreDatabaseFile, normalizeRestoredCredentials, encryptRestoredSecrets};
+  return {connectionRowsFromBackup, storageSettingsView, pathInside, copyRuntimeDirectory, saveWebStorageSettings, listLocalDirectories, normalizeIdentityBindings, identityTargetMap, normalizeCredentialBindings, inspectRestoreDatabaseFile, normalizeRestoredCredentials, assertNoEncryptedRestoredSecrets, encryptRestoredSecrets};
 }
 
 module.exports = { createStorageRestoreHelpers };

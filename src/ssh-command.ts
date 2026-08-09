@@ -1,28 +1,29 @@
 const { DEFAULT_EXTRA_ARGS }: { DEFAULT_EXTRA_ARGS: string } = require("./config");
 
-const BLOCKED_OPENSSH_OPTIONS = new Set([
-  "addkeystoagent",
-  "certificatefile",
-  "forwardagent",
-  "identityagent",
-  "identityfile",
-  "include",
-  "knownhostscommand",
-  "localcommand",
-  "permitlocalcommand",
-  "pkcs11provider",
-  "proxycommand",
-  "securitykeyprovider",
-  "controlmaster",
-  "controlpath",
-  "controlpersist",
-  "globalknownhostsfile",
-  "userknownhostsfile"
+const ALLOWED_OPENSSH_OPTIONS = new Set([
+  "addressfamily",
+  "ciphers",
+  "compression",
+  "connecttimeout",
+  "hostkeyalgorithms",
+  "ipqos",
+  "kexalgorithms",
+  "loglevel",
+  "macs",
+  "obscurekeystroketiming",
+  "passwordauthentication",
+  "preferredauthentications",
+  "pubkeyacceptedalgorithms",
+  "pubkeyauthentication",
+  "rekeylimit",
+  "requiredrsasize",
+  "serveralivecountmax",
+  "serveraliveinterval",
+  "tcpkeepalive",
+  "warnweakcrypto"
 ]);
-const BLOCKED_OPENSSH_SHORT_OPTIONS = new Set(["i", "F", "I", "A", "E", "S", "O"]);
-const OPENSSH_SHORT_OPTIONS_WITH_ARGUMENT = new Set([
-  "B", "b", "c", "D", "E", "e", "F", "I", "i", "J", "L", "l", "m", "O", "o", "P", "p", "Q", "R", "S", "W", "w"
-]);
+const ALLOWED_OPENSSH_SHORT_FLAGS = new Set(["4", "6", "C", "q", "v"]);
+const ALLOWED_OPENSSH_SHORT_OPTIONS_WITH_ARGUMENT = new Set(["c", "m"]);
 
 export function splitArgs(text: unknown): string[] {
   if (!text) return [];
@@ -39,42 +40,50 @@ function openSshOptionName(value: unknown): string {
   return String(value || "").trim().split(/[=\s]/, 1)[0].toLowerCase();
 }
 
-function inspectShortOptions(value: string) {
-  const result: any = { blocked: "", openSshOption: null, consumesNext: false };
-  if (!value.startsWith("-") || value.startsWith("--") || value === "-") return result;
-  const options = value.slice(1);
-  for (let offset = 0; offset < options.length; offset += 1) {
-    const option = options[offset];
-    if (BLOCKED_OPENSSH_SHORT_OPTIONS.has(option)) {
-      result.blocked = option;
-      return result;
-    }
-    if (!OPENSSH_SHORT_OPTIONS_WITH_ARGUMENT.has(option)) continue;
-    const attached = options.slice(offset + 1);
-    if (option === "o") result.openSshOption = attached;
-    result.consumesNext = !attached;
-    return result;
+function assertSafeOpenSshOption(value: unknown) {
+  const option = String(value || "").trim();
+  const name = openSshOptionName(option);
+  const remainder = option.slice(name.length).trim();
+  const optionValue = remainder.startsWith("=") ? remainder.slice(1).trim() : remainder;
+  if (!name || !optionValue) throw new Error("SSH 附加参数中的 -o 缺少选项值");
+  if (!ALLOWED_OPENSSH_OPTIONS.has(name)) {
+    throw new Error(`SSH 附加参数只允许连接调优选项，不能使用：${name}`);
   }
-  return result;
+}
+
+function requireArgument(args: string[], index: number, option: string) {
+  const argument = String(args[index + 1] || "");
+  if (!argument) throw new Error(`SSH 附加参数中的 -${option} 缺少参数值`);
+  return argument;
 }
 
 export function assertSafeExtraArgs(text: unknown): string[] {
+  if (/[\0\r\n]/.test(String(text || ""))) throw new Error("SSH 附加参数不能包含控制字符或换行");
   const args = splitArgs(text);
   for (let index = 0; index < args.length; index += 1) {
     const value = String(args[index] || "");
-    const short = inspectShortOptions(value);
-    if (short.blocked) {
-      throw new Error(`SSH 附加参数不能使用本机敏感短选项 -${short.blocked}：${value}`);
+    if (!value.startsWith("-") || value === "-" || value === "--" || value.startsWith("--")) {
+      throw new Error(`SSH 附加参数不能包含主机、命令或其他位置参数：${value || "(空)"}`);
     }
-    if (short.openSshOption !== null) {
-      const option = short.openSshOption || String(args[index + 1] || "");
-      if (!option) throw new Error("SSH 附加参数中的 -o 缺少选项");
-      const name = openSshOptionName(option);
-      if (BLOCKED_OPENSSH_OPTIONS.has(name)) throw new Error(`SSH 附加参数不允许使用本机敏感选项：${name}`);
-      if (short.consumesNext) index += 1;
+    if (value === "-o") {
+      assertSafeOpenSshOption(requireArgument(args, index, "o"));
+      index += 1;
       continue;
     }
-    if (short.consumesNext) index += 1;
+    if (value.startsWith("-o")) {
+      assertSafeOpenSshOption(value.slice(2));
+      continue;
+    }
+    const option = value.slice(1, 2);
+    if (ALLOWED_OPENSSH_SHORT_OPTIONS_WITH_ARGUMENT.has(option)) {
+      if (value.length === 2) {
+        requireArgument(args, index, option);
+        index += 1;
+      }
+      continue;
+    }
+    if ([...value.slice(1)].every(item => ALLOWED_OPENSSH_SHORT_FLAGS.has(item))) continue;
+    throw new Error(`SSH 附加参数不允许使用短选项：${value}`);
   }
   return args;
 }

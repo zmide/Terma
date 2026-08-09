@@ -148,7 +148,7 @@ async function main() {
         ssh_user:"tester",
         auth_type:"key",
         identity_file:keyFile,
-        extra_args:"-o StrictHostKeyChecking=accept-new",
+        extra_args:"-o Compression=yes",
         terminal_startup_mode:"default"
       })
     });

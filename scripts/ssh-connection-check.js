@@ -86,7 +86,7 @@ try {
   ]);
   assert.equal(sshTarget({...target, ssh_host:"2001:db8::1"}).label, "tester@[2001:db8::1]:22");
   assert.equal(proxyJumpArgument({...getConnection(jumpId), ssh_host:"2001:db8::2"}), "tester@[2001:db8::2]:22");
-  assert.deepEqual(sshDestinationArgs(target), ["-l", "tester", "example.test"]);
+  assert.deepEqual(sshDestinationArgs(target), ["-l", "tester", "--", "example.test"]);
   assert.equal(validateSshUser("alice@example.com"), "alice@example.com");
   for (const value of ["-oProxyCommand=echo injected", "user name", "user\nname"]) assert.throws(() => validateSshUser(value), /SSH/);
   for (const value of ["-oProxyCommand=echo injected", "host/name", "host name", "host\nname"]) {
@@ -100,9 +100,35 @@ try {
     () => sshDestinationArgs({...target, ssh_host:"-oProxyCommand=echo injected"}),
     /SSH/
   );
-  for (const value of ["-E /tmp/ssh.log", "-S /tmp/ssh.sock", "-O check", "-o ControlPath=/tmp/ssh.sock", "-o UserKnownHostsFile=/tmp/known_hosts"]) {
+  for (const value of [
+    "-E /tmp/ssh.log",
+    "-S /tmp/ssh.sock",
+    "-O check",
+    "-M",
+    "-K",
+    "-o ControlPath=/tmp/ssh.sock",
+    "-o UserKnownHostsFile=/tmp/known_hosts",
+    "-o IdentityFile2=/tmp/id_test",
+    "-o SmartcardDevice=/tmp/provider.so",
+    "-o XAuthLocation=/tmp/xauth",
+    "-o GSSAPIDelegateCredentials=yes",
+    "-o GSSAPIAuthentication=yes",
+    "-o Hostname=other.example",
+    "-o User=other-user",
+    "-o HostbasedAuthentication=yes",
+    "-o EnableSSHKeysign=yes",
+    "-L 127.0.0.1:9000:127.0.0.1:80",
+    "-R 0.0.0.0:9000:127.0.0.1:80",
+    "-D 0.0.0.0:1080",
+    "-W internal.example:22",
+    "other-host.example",
+    "-- other-host.example"
+  ]) {
     assert.throws(() => assertSafeExtraArgs(value), /SSH/);
   }
+  assert.deepEqual(assertSafeExtraArgs("-4Cv -c aes256-gcm@openssh.com -m hmac-sha2-256 -o Compression=yes -o LogLevel=ERROR"), [
+    "-4Cv", "-c", "aes256-gcm@openssh.com", "-m", "hmac-sha2-256", "-o", "Compression=yes", "-o", "LogLevel=ERROR"
+  ]);
   assert.equal(sshTransportForConnection({...target, auth_type:"password", extra_args:"-o ProxyCommand=custom"}), "unsupported");
   assert.throws(() => shouldUseBuiltinSsh({...target, auth_type:"password", extra_args:"-o ProxyCommand=custom"}), /不能安全回退/);
 

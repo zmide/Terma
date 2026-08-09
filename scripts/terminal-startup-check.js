@@ -178,7 +178,7 @@ function checkSystemSshCommand() {
     auth_type: "password"
   };
   const defaultArgs = buildTerminalCommand({ ...connection, ...canonicalDefault });
-  assert.deepEqual(defaultArgs.slice(-3), ["-l", "tester", "example.test"]);
+  assert.deepEqual(defaultArgs.slice(-4), ["-l", "tester", "--", "example.test"]);
   assert.ok(!defaultArgs.includes(""), "默认模式不得追加空启动命令");
   assert.ok(defaultArgs.includes("SendEnv=-*"), "终端编码只控制客户端转码，必须清除 OpenSSH 配置继承的 locale 转发");
 
@@ -196,18 +196,14 @@ const legacyEncodingArgs = buildTerminalCommand({...connection, ...canonicalDefa
   assert.equal(programArgs.length, defaultArgs.length + 3);
   const remoteCommandIndex = programArgs.indexOf("RemoteCommand=none");
   assert.ok(remoteCommandIndex > 0, "program 模式必须禁用用户 SSH 配置中已有的 RemoteCommand");
-  assert.deepEqual(programArgs.slice(-4, -1), ["-l", "tester", "example.test"]);
+  assert.deepEqual(programArgs.slice(-5, -1), ["-l", "tester", "--", "example.test"]);
   assert.equal(programArgs.at(-1), expectedStartup, "program 模式必须在 SSH 目标之后追加且只追加一条远端命令");
 
-  const conflictingArgs = buildTerminalCommand({
+  assert.throws(() => buildTerminalCommand({
     ...connection,
     ...programConfig,
     extra_args: "-o RemoteCommand=/usr/bin/old-command"
-  });
-  assert.ok(
-    conflictingArgs.indexOf("RemoteCommand=none") < conflictingArgs.indexOf("RemoteCommand=/usr/bin/old-command"),
-    "命令行禁用值必须先于连接额外参数，确保 OpenSSH 使用 Terma 当前选择的启动程序"
-  );
+  }), /SSH/);
 }
 
 function listen(server) {

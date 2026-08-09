@@ -69,7 +69,7 @@ function sshTarget(connection) {
 
 function sshDestinationArgs(connection) {
   const target = sshTarget(connection);
-  return ["-l", target.user, target.host];
+  return ["-l", target.user, "--", target.host];
 }
 
 function proxyJumpArgument(connection) {
