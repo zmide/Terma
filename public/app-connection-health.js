@@ -1,13 +1,20 @@
 async function checkConnectionHealth(id, button=null) {
   const c = currentConnection(id) || connections.find(item => item.id === id);
+  const progress = createProgressToast({
+    title:`正在检查 ${c?.name || "SSH 连接"}`,
+    detail:healthConnectionIdentity(c, {id}),
+    icon:"activity"
+  });
   setButtonBusy(button, true, "检查中...");
   try {
     const result = await api(`/api/connections/${id}/health`, {method:"POST"});
     healthResults.set(id, result);
     renderConnections();
-    notify(formatHealthMessage(c, result), result.ok ? "success" : "error");
+    const message = formatHealthMessage(c, result);
+    if (result.ok) progress.finish(message, 3500);
+    else progress.fail(message);
   } catch (error) {
-    notify(`${healthConnectionIdentity(c, {id})} 健康检查失败\n${error.message}`, "error");
+    progress.fail(`${healthConnectionIdentity(c, {id})} 健康检查失败\n${error.message}`);
   } finally {
     setButtonBusy(button, false);
   }
@@ -64,18 +71,75 @@ function formatAllHealthMessage(results) {
   return lines.join("\n");
 }
 
+let healthBatchRunning = false;
+
 async function checkAllHealth(button=null) {
+  if (healthBatchRunning) return notify("全部连接健康检查正在执行", "info");
+  const targets = [...connections];
+  if (!targets.length) return notify("暂无 SSH 连接可检查", "info");
+  healthBatchRunning = true;
+  let completed = 0;
+  let failed = 0;
+  let cursor = 0;
+  let renderFrame = 0;
+  const results = new Array(targets.length);
+  const progress = createProgressToast({
+    title:"正在检查全部连接",
+    detail:`0 / ${targets.length} · 最多同时检查 4 台`,
+    icon:"activity",
+    progress:0
+  });
+  const scheduleRender = () => {
+    if (renderFrame) return;
+    renderFrame = requestAnimationFrame(() => {
+      renderFrame = 0;
+      renderConnections();
+    });
+  };
+  const worker = async () => {
+    while (cursor < targets.length) {
+      const index = cursor++;
+      const connection = targets[index];
+      let result;
+      try {
+        result = await api(`/api/connections/${connection.id}/health`, {method:"POST"});
+      } catch (error) {
+        result = {
+          id:connection.id,
+          name:connection.name,
+          ssh_user:connection.ssh_user,
+          ssh_host:connection.ssh_host,
+          ssh_port:connection.ssh_port,
+          ok:false,
+          status:"检查失败",
+          ssh:{ok:false, output:error.message || "健康检查请求失败"},
+          forwards:[]
+        };
+      }
+      results[index] = result;
+      healthResults.set(connection.id, result);
+      completed += 1;
+      if (!result.ok) failed += 1;
+      progress.update({
+        progress:completed / targets.length * 100,
+        detail:`${completed} / ${targets.length} · 正常 ${completed - failed} · 异常 ${failed} · 刚完成 ${connection.name}`
+      });
+      scheduleRender();
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  };
   setButtonBusy(button, true, "检查中...");
   try {
-    notify("正在执行健康检查...", "info");
-    const results = await api("/api/health?refresh=1");
-    for (const item of results) healthResults.set(item.id, item);
+    await Promise.all(Array.from({length:Math.min(4, targets.length)}, () => worker()));
+    if (renderFrame) cancelAnimationFrame(renderFrame);
     renderConnections();
-    const failed = results.filter(item => !item.ok);
-    notify(formatAllHealthMessage(results), failed.length ? "error" : "success");
+    const message = formatAllHealthMessage(results);
+    if (failed) progress.fail(message);
+    else progress.finish(message, 4500);
   } catch (error) {
-    notify(error.message, "error");
+    progress.fail(error.message || "全部连接健康检查失败");
   } finally {
+    healthBatchRunning = false;
     setButtonBusy(button, false);
   }
 }

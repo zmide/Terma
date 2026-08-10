@@ -197,6 +197,12 @@ function openTerminal(id, updateTab=true, existingKey="", existingTitle="") {
   const forwardListButton = `<button class="terminal-action-forward-list" type="button" title="转发列表" aria-label="转发列表" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="openForwards(${c.id})">${icon("route")}<span>转发列表</span></button>`;
   const terminalView = $("view-terminal");
   terminalView.innerHTML = `<div class="terminal-toolbar"><div class="terminal-title-row"><span class="terminal-connection-dot"></span><div class="terminal-status" id="terminalStatus" title="${esc(connectionAddress)}">${esc(connectionAddress)}</div>${terminalLatencyHtml(key)}</div><div class="actions terminal-actions"><button class="icon-button terminal-action-sftp" title="打开此连接的 SFTP" aria-label="打开此连接的 SFTP" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="openSftp(${c.id})">${icon("folder-open")}<span>SFTP</span></button><button class="icon-button terminal-action-font" title="减小字体（Ctrl+滚轮）" aria-label="减小字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',-1)">${icon("minus")}</button><output class="terminal-font-size-readout" title="当前终端字号">${terminalFontSizeForCurrentLayout(c)}px</output><button class="icon-button terminal-action-font" title="增大字体（Ctrl+滚轮）" aria-label="增大字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="changeTerminalFont('${key}',1)">${icon("plus")}</button><button class="terminal-dropdown-button terminal-action-display terminal-action-encoding" title="切换终端编码：${escAttr(terminalEncodingLabel(c, key))}" aria-label="切换终端编码" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalEncodingMenu(event,'${key}',${c.id})">${icon("earth")}<span>${esc(terminalEncodingLabel(c, key))}</span>${icon("chevron-down")}</button><button class="terminal-dropdown-button terminal-action-display" title="切换终端字体" aria-label="切换终端字体" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalFontMenu(event,'${key}',${c.id})">${icon("type")}<span>字体</span>${icon("chevron-down")}</button><button class="icon-button terminal-startup-button" title="终端配置" aria-label="终端配置" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalStartupSettings('${key}',${c.id})">${icon("command")}<span>配置</span></button><button class="icon-button terminal-global-settings-button" title="全局终端设置" aria-label="全局终端设置" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalGlobalSettings('${key}')">${icon("settings")}</button><button class="terminal-action-keys" title="${terminalKeysVisible ? "隐藏快捷键" : "显示快捷键"}" aria-label="${terminalKeysVisible ? "隐藏快捷键" : "显示快捷键"}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalKeys('${key}')">${icon("keyboard")}<span>${terminalKeysVisible ? "隐藏快捷键" : "快捷键"}</span></button><button class="terminal-action-recent" title="最近命令" aria-label="最近命令" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showRecentTerminalCommands('${key}')">${icon("history")}<span>最近命令</span></button><button class="terminal-action-reconnect" title="重新连接终端" aria-label="重新连接终端" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleTerminalConnection(${c.id}, '${key}')">${icon("link-2")}<span>重连</span></button>${forwardListButton}${forwardButton}</div></div>${renderTerminalKeys(key)}<div id="terminalMount" class="terminal-box"></div><div class="terminal-mobile-composer"><input id="terminalMobileInput" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入命令" onkeydown="handleMobileTerminalInput(event,'${key}')"><button class="primary icon-button" title="发送命令" onclick="sendMobileTerminalInput('${key}')">${icon("send")}</button></div>`;
+  const sftpToolbarButton = terminalView.querySelector(".terminal-action-sftp");
+  if (sftpToolbarButton) {
+    sftpToolbarButton.innerHTML = `${icon("folder-sync")}<span>SFTP</span>`;
+    sftpToolbarButton.title = "打开此连接的 SFTP 文件管理";
+    sftpToolbarButton.setAttribute("aria-label", sftpToolbarButton.title);
+  }
   terminalView.querySelector(".terminal-startup-button")?.insertAdjacentHTML("afterend", `<button class="icon-button terminal-x11-button${c.x11_mode && c.x11_mode !== "off" ? " active" : ""}" title="X11 图形转发" aria-label="X11 图形转发" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showX11LaunchMenu(event,${c.id})">${icon("x11")}</button>`);
   if (typeof remoteDesktopJumpButtonHtml === "function") {
     terminalView.querySelector(".terminal-action-sftp")?.insertAdjacentHTML("afterend", remoteDesktopJumpButtonHtml(c.id));
@@ -960,7 +966,7 @@ async function connectTerminal(c, key) {
     if (session.socket !== socket) return;
     finishTerminalLatencySample(session, key);
     const terminalOutput = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data;
-    session.term.write(terminalOutput);
+    queueTerminalOutput(session, terminalOutput);
     if (typeof updateTerminalSmartState === "function") updateTerminalSmartState(key, typeof event.data === "string" ? event.data : "");
     if (isMobileLayout()) scheduleTerminalFit();
   });
@@ -969,11 +975,11 @@ async function connectTerminal(c, key) {
     session.connected = false;
     session.latencyPendingAt = 0;
     clearTimeout(session.latencyPendingTimer);
-    session.term.writeln("\r\n[连接已关闭，按 Enter 重新连接]");
+    queueTerminalOutput(session, "\r\n[连接已关闭，按 Enter 重新连接]\r\n");
     updateTerminalConnectionStatus(c, key, "已断开");
   });
   socket.addEventListener("error", () => {
-    if (session.socket === socket) session.term.writeln("\r\n[WebSocket 连接失败]");
+    if (session.socket === socket) queueTerminalOutput(session, "\r\n[WebSocket 连接失败]\r\n");
   });
   session.inputDisposable = session.term.onData(data => {
     const beforeCtrl = terminalCtrlArmed || terminalCtrlLocked;

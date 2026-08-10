@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="terma-csp-nonce" content="__TERMA_CSP_NONCE__">
   <title>Terma</title>
-  <script src="/csp-bootstrap.js?v=1.3.5"></script>
-  <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=1.3.5">
-  <link rel="stylesheet" href="/vendor/ace/ace.css?v=1.3.5">
-  <link rel="stylesheet" href="/vendor/ace/theme-textmate.css?v=1.3.5">
-  <link rel="stylesheet" href="/vendor/ace/theme-tomorrow_night.css?v=1.3.5">
-  <link rel="stylesheet" href="/app.css?v=1.3.5">
+  <script src="/csp-bootstrap.js?v=1.4.0"></script>
+  <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=1.4.0">
+  <link rel="stylesheet" href="/vendor/ace/ace.css?v=1.4.0">
+  <link rel="stylesheet" href="/vendor/ace/theme-textmate.css?v=1.4.0">
+  <link rel="stylesheet" href="/vendor/ace/theme-tomorrow_night.css?v=1.4.0">
+  <link rel="stylesheet" href="/app.css?v=1.4.0">
 </head>
 <body>
   <div id="toast" class="notification-stack" aria-live="polite" aria-label="通知"></div>
@@ -72,7 +72,7 @@
       <div class="mobile-back-bar"><button id="mobileBack" class="mobile-back" type="button" data-action="static-explorer-back" title="返回连接列表" aria-label="返回连接列表"><i data-lucide="arrow-left"></i></button></div>
       <div class="topbar">
         <div class="workspace-heading">
-          <strong id="workspaceTitle">工作区</strong>
+          <div class="workspace-heading-title"><strong id="workspaceTitle">工作区</strong><button class="icon-button workspace-quick-connect-button" type="button" data-action="quick-connect-open" title="快速打开 SSH / SFTP" aria-label="快速打开 SSH / SFTP"><i data-lucide="server"></i></button></div>
           <div id="workspaceSubtitle" class="cmd">选择左侧 SSH 后开始操作</div>
         </div>
         <div id="workspaceGlobalHeaderTools" class="workspace-header-tools workspace-global-header-tools" data-workspace-role="global-header-tools" hidden></div>
@@ -354,70 +354,73 @@
   </div>
 </template>
 
-<script src="/vendor/lucide/lucide.min.js?v=1.3.5"></script>
-<script src="/vendor/ace/ace.js?v=1.3.5"></script>
-<script src="/app-api.js?v=1.3.5"></script>
-<script src="/app-utils.js?v=1.3.5"></script>
-<script src="/app-events.js?v=1.3.5"></script>
-<script src="/app-workspace.js?v=1.3.5"></script>
-<script src="/app-workspace-groups.js?v=1.3.5"></script>
-<script src="/app-docking.js?v=1.3.5"></script>
-<script src="/app-workspace-drag.js?v=1.3.5"></script>
-<script src="/app-workspace-persistence.js?v=1.3.5"></script>
-<script src="/app-settings-core.js?v=1.3.5"></script>
-<script src="/app-settings-storage.js?v=1.3.5"></script>
-<script src="/app-settings-runtime.js?v=1.3.5"></script>
-<script src="/app-settings-integrations.js?v=1.3.5"></script>
-<script src="/app-settings.js?v=1.3.5"></script>
-<script src="/app-settings-updates.js?v=1.3.5"></script>
-<script src="/app-settings-security.js?v=1.3.5"></script>
-<script src="/app-running.js?v=1.3.5"></script>
-<script src="/app-batch.js?v=1.3.5"></script>
-<script src="/app-logs.js?v=1.3.5"></script>
-<script src="/app-log-viewer.js?v=1.3.5"></script>
-<script src="/app-log-maintenance.js?v=1.3.5"></script>
-<script src="/app-connections-list.js?v=1.3.5"></script>
-<script src="/app-connection-terminal.js?v=1.3.5"></script>
-<script src="/app-connection-validation.js?v=1.3.5"></script>
-<script src="/app-connection-form.js?v=1.3.5"></script>
-<script src="/app-connection-health.js?v=1.3.5"></script>
-<script src="/app-connections.js?v=1.3.5"></script>
-<script src="/app-terminal-core.js?v=1.3.5"></script>
-<script src="/app-terminal-settings.js?v=1.3.5"></script>
-<script src="/app-terminal-startup.js?v=1.3.5"></script>
-<script src="/app-terminal.js?v=1.3.5"></script>
-<script src="/app-forwards.js?v=1.3.5"></script>
-<script src="/app-import.js?v=1.3.5"></script>
-<script src="/app-sftp-core.js?v=1.3.5"></script>
-<script src="/app-sftp.js?v=1.3.5"></script>
-<script src="/app-sftp-drag.js?v=1.3.5"></script>
-<script src="/app-sftp-operations.js?v=1.3.5"></script>
-<script src="/app-sftp-transfer.js?v=1.3.5"></script>
-<script src="/app-sftp-menus.js?v=1.3.5"></script>
-<script src="/app-sftp-tasks.js?v=1.3.5"></script>
-<script src="/app-local-files.js?v=1.3.5"></script>
-<script src="/app-actions.js?v=1.3.5"></script>
-<script src="/app-sftp-sync.js?v=1.3.5"></script>
-<script src="/app-external-tools.js?v=1.3.5"></script>
-<script src="/app-command-palette.js?v=1.3.5"></script>
-<script src="/app-command-snippets.js?v=1.3.5"></script>
-<script src="/app-named-workspaces.js?v=1.3.5"></script>
-<script src="/app-terminal-productivity.js?v=1.3.5"></script>
-<script src="/app-productivity.js?v=1.3.5"></script>
-<script src="/app-desktop-integration.js?v=1.3.5"></script>
-<script src="/app-remote.js?v=1.3.5"></script>
-<script src="/app-linux-desktop.js?v=1.3.5"></script>
-<script src="/app-remote-profiles.js?v=1.3.5"></script>
-<script src="/app-remote-rdp.js?v=1.3.5"></script>
-<script src="/app-remote-xdmcp.js?v=1.3.5"></script>
-<script src="/app-vnc-core.js?v=1.3.5"></script>
-<script src="/app-vnc-clipboard.js?v=1.3.5"></script>
-<script src="/app-vnc.js?v=1.3.5"></script>
-<script src="/app-remote-ftp.js?v=1.3.5"></script>
-<script src="/app-remote-terminal.js?v=1.3.5"></script>
-<script src="/app-x11.js?v=1.3.5"></script>
-<script src="/app-state.js?v=1.3.5"></script>
-<script src="/app.js?v=1.3.5"></script>
-<script src="/app-static-actions.js?v=1.3.5"></script>
+<script src="/vendor/lucide/lucide.min.js?v=1.4.0"></script>
+<script src="/vendor/ace/ace.js?v=1.4.0"></script>
+<script src="/app-api.js?v=1.4.0"></script>
+<script src="/app-utils.js?v=1.4.0"></script>
+<script src="/app-events.js?v=1.4.0"></script>
+<script src="/app-workspace.js?v=1.4.0"></script>
+<script src="/app-workspace-groups.js?v=1.4.0"></script>
+<script src="/app-docking.js?v=1.4.0"></script>
+<script src="/app-workspace-drag.js?v=1.4.0"></script>
+<script src="/app-workspace-persistence.js?v=1.4.0"></script>
+<script src="/app-settings-core.js?v=1.4.0"></script>
+<script src="/app-settings-storage.js?v=1.4.0"></script>
+<script src="/app-settings-runtime.js?v=1.4.0"></script>
+<script src="/app-settings-integrations.js?v=1.4.0"></script>
+<script src="/app-settings.js?v=1.4.0"></script>
+<script src="/app-settings-updates.js?v=1.4.0"></script>
+<script src="/app-settings-security.js?v=1.4.0"></script>
+<script src="/app-running.js?v=1.4.0"></script>
+<script src="/app-batch.js?v=1.4.0"></script>
+<script src="/app-logs.js?v=1.4.0"></script>
+<script src="/app-log-viewer.js?v=1.4.0"></script>
+<script src="/app-log-maintenance.js?v=1.4.0"></script>
+<script src="/app-connections-list.js?v=1.4.0"></script>
+<script src="/app-connection-terminal.js?v=1.4.0"></script>
+<script src="/app-connection-validation.js?v=1.4.0"></script>
+<script src="/app-connection-form.js?v=1.4.0"></script>
+<script src="/app-connection-health.js?v=1.4.0"></script>
+<script src="/app-connections.js?v=1.4.0"></script>
+<script src="/app-quick-connect.js?v=1.4.0"></script>
+<script src="/app-terminal-core.js?v=1.4.0"></script>
+<script src="/app-terminal-output.js?v=1.4.0"></script>
+<script src="/app-terminal-settings.js?v=1.4.0"></script>
+<script src="/app-terminal-startup.js?v=1.4.0"></script>
+<script src="/app-terminal.js?v=1.4.0"></script>
+<script src="/app-forwards.js?v=1.4.0"></script>
+<script src="/app-import.js?v=1.4.0"></script>
+<script src="/app-sftp-core.js?v=1.4.0"></script>
+<script src="/app-sftp-open.js?v=1.4.0"></script>
+<script src="/app-sftp.js?v=1.4.0"></script>
+<script src="/app-sftp-drag.js?v=1.4.0"></script>
+<script src="/app-sftp-operations.js?v=1.4.0"></script>
+<script src="/app-sftp-transfer.js?v=1.4.0"></script>
+<script src="/app-sftp-menus.js?v=1.4.0"></script>
+<script src="/app-sftp-tasks.js?v=1.4.0"></script>
+<script src="/app-local-files.js?v=1.4.0"></script>
+<script src="/app-actions.js?v=1.4.0"></script>
+<script src="/app-sftp-sync.js?v=1.4.0"></script>
+<script src="/app-external-tools.js?v=1.4.0"></script>
+<script src="/app-command-palette.js?v=1.4.0"></script>
+<script src="/app-command-snippets.js?v=1.4.0"></script>
+<script src="/app-named-workspaces.js?v=1.4.0"></script>
+<script src="/app-terminal-productivity.js?v=1.4.0"></script>
+<script src="/app-productivity.js?v=1.4.0"></script>
+<script src="/app-desktop-integration.js?v=1.4.0"></script>
+<script src="/app-remote.js?v=1.4.0"></script>
+<script src="/app-linux-desktop.js?v=1.4.0"></script>
+<script src="/app-remote-profiles.js?v=1.4.0"></script>
+<script src="/app-remote-rdp.js?v=1.4.0"></script>
+<script src="/app-remote-xdmcp.js?v=1.4.0"></script>
+<script src="/app-vnc-core.js?v=1.4.0"></script>
+<script src="/app-vnc-clipboard.js?v=1.4.0"></script>
+<script src="/app-vnc.js?v=1.4.0"></script>
+<script src="/app-remote-ftp.js?v=1.4.0"></script>
+<script src="/app-remote-terminal.js?v=1.4.0"></script>
+<script src="/app-x11.js?v=1.4.0"></script>
+<script src="/app-state.js?v=1.4.0"></script>
+<script src="/app.js?v=1.4.0"></script>
+<script src="/app-static-actions.js?v=1.4.0"></script>
 </body>
 </html>

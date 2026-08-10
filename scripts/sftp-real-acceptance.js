@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { PassThrough } = require("node:stream");
+const { EventEmitter } = require("node:events");
 const { DatabaseSync } = require("node:sqlite");
 
 const CONFIRMATION_FLAG = "--confirm-real-sftp";
@@ -108,6 +109,27 @@ function readAll(stream) {
   });
 }
 
+async function readOpenStream(connectionId, remotePath, maximumBytes) {
+  const request = new EventEmitter();
+  const response = new PassThrough();
+  response.headersSent = false;
+  response.statusCode = 0;
+  response.responseHeaders = {};
+  response.writeHead = (statusCode, headers) => {
+    response.statusCode = statusCode;
+    response.responseHeaders = {...headers};
+    response.headersSent = true;
+    return response;
+  };
+  const body = readAll(response);
+  sftp.streamRemoteOpenFile(connectionId, remotePath, maximumBytes, response, request, headers => headers);
+  const content = await body;
+  assert.equal(response.statusCode, 200);
+  assert.equal(Number(response.responseHeaders["Content-Length"]), content.length);
+  assert.equal(Number(response.responseHeaders["X-Terma-File-Size"]), content.length);
+  return content;
+}
+
 function remoteJoin(...parts) {
   return path.posix.join(...parts);
 }
@@ -205,6 +227,9 @@ async function verifyPerHost(connection) {
   const largeRead = await sftp.readRemoteTextFile(connection.id, largePath, "utf8", 2 * 1024 * 1024);
   assert.equal(largeRead.content, largeText);
   record(name, "大于 512 KB 的文本写入、读取和内容校验", "passed", `${Buffer.byteLength(largeText)} bytes`);
+  const streamedLargeRead = await readOpenStream(connection.id, largePath, 2 * 1024 * 1024);
+  assert.equal(streamedLargeRead.toString("utf8"), largeText);
+  record(name, "在线打开使用带大小元数据的流式读取", "passed", `${streamedLargeRead.length} bytes`);
 
   const imageBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
   const imagePath = remoteJoin(remoteRoot, "pixel.png");

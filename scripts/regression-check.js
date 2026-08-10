@@ -375,7 +375,7 @@ async function main() {
   ok("全局终端设置独立持久化并应用到当前和未来会话",
     runtimeSettingsSource.includes("DEFAULT_TERMINAL_SETTINGS")
       && runtimeSettingsSource.includes("normalizeTerminalSettings")
-      && runtimeSettingsSource.includes("schema_version: 7")
+      && runtimeSettingsSource.includes("schema_version: 8")
       && runtimeSettingsSource.includes('background_mode: "theme"')
       && runtimeSettingsSource.includes('background_color: "#0f1720"')
       && runtimeSettingsSource.includes("TERMINAL_BACKGROUND_MODES")

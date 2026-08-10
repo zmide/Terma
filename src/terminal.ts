@@ -64,13 +64,17 @@ function setSessionEncoding(session, value) {
   session.outputDecoder = encoding === "utf8" ? null : iconv.getDecoder(encoding);
 }
 
+let resolvedTerminalBin = "";
+
 function resolveTerminalBin() {
+  if (resolvedTerminalBin) return resolvedTerminalBin;
   if (path.isAbsolute(SSH_BIN)) return SSH_BIN;
   const command = process.platform === "win32" ? "where" : "which";
   const args = [SSH_BIN];
   const result = spawnSync(command, args, { encoding: "utf8" });
   const found = String(result.stdout || "").split(/\r?\n/).map((line) => line.trim()).find(Boolean);
-  return found || SSH_BIN;
+  resolvedTerminalBin = found || SSH_BIN;
+  return resolvedTerminalBin;
 }
 
 function resolveTerminalCwd() {

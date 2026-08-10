@@ -438,6 +438,108 @@ function notify(text, type="info") {
   }
 }
 
+function createProgressToast(options={}) {
+  const stack = $("toast");
+  if (!stack) return {
+    update:() => {},
+    finish:() => {},
+    fail:() => {},
+    dismiss:() => {},
+    setPaused:() => {}
+  };
+  const toastId = `toast-progress-${Date.now()}-${++toastSequence}`;
+  const toast = document.createElement("div");
+  toast.className = "toast info toast-progress";
+  toast.dataset.toastId = toastId;
+  toast.setAttribute("role", "status");
+  toast.setAttribute("aria-atomic", "true");
+  toast.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(options.icon || "loader-circle")}</span><div class="toast-copy"><strong></strong><span></span></div><button type="button" class="icon-button toast-progress-close" title="关闭提示" aria-label="关闭提示">${icon("x")}</button></div><div class="toast-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><div class="toast-progress-actions" hidden><button type="button" class="toast-progress-pause">${icon("pause")}<span>暂停</span></button></div>`;
+  const title = toast.querySelector(".toast-copy strong");
+  const detail = toast.querySelector(".toast-copy span");
+  const track = toast.querySelector(".toast-progress-track");
+  const bar = track.querySelector("i");
+  const actions = toast.querySelector(".toast-progress-actions");
+  const pauseButton = toast.querySelector(".toast-progress-pause");
+  let settled = false;
+  let paused = false;
+
+  const controller = {
+    update(next={}) {
+      if (settled) return;
+      if (next.title !== undefined) title.textContent = String(next.title || "Terma");
+      if (next.detail !== undefined) {
+        detail.textContent = String(next.detail || "");
+        detail.hidden = !detail.textContent;
+      }
+      const progress = Number(next.progress);
+      const determinate = Number.isFinite(progress);
+      track.classList.toggle("indeterminate", !determinate);
+      if (determinate) {
+        const percent = Math.max(0, Math.min(100, progress));
+        bar.style.width = `${percent}%`;
+        track.setAttribute("aria-valuenow", String(Math.round(percent)));
+      } else {
+        bar.style.width = "";
+        track.removeAttribute("aria-valuenow");
+      }
+      if (next.paused !== undefined) controller.setPaused(Boolean(next.paused));
+      if (next.pausable !== undefined) actions.hidden = !next.pausable;
+    },
+    setPaused(value) {
+      paused = Boolean(value);
+      toast.classList.toggle("paused", paused);
+      pauseButton.innerHTML = paused ? `${icon("play")}<span>继续</span>` : `${icon("pause")}<span>暂停</span>`;
+      pauseButton.setAttribute("aria-label", paused ? "继续" : "暂停");
+    },
+    finish(message="已完成", linger=2200) {
+      if (settled) return;
+      settled = true;
+      toast.classList.remove("info", "error", "paused");
+      toast.classList.add("success");
+      toast.querySelector(".toast-icon").innerHTML = icon("circle-check");
+      detail.textContent = String(message || "已完成");
+      detail.hidden = false;
+      actions.hidden = true;
+      track.classList.remove("indeterminate");
+      track.setAttribute("aria-valuenow", "100");
+      bar.style.width = "100%";
+      toastTimers.set(toastId, setTimeout(() => dismissToast(toast), linger));
+    },
+    fail(message="操作失败") {
+      if (settled) return;
+      settled = true;
+      toast.classList.remove("info", "success", "paused");
+      toast.classList.add("error");
+      toast.querySelector(".toast-icon").innerHTML = icon("circle-alert");
+      detail.textContent = String(message || "操作失败");
+      detail.hidden = false;
+      actions.hidden = true;
+      track.hidden = true;
+      toastTimers.set(toastId, setTimeout(() => dismissToast(toast), 8000));
+    },
+    dismiss() {
+      if (!settled && typeof options.onCancel === "function") options.onCancel();
+      settled = true;
+      dismissToast(toast);
+    }
+  };
+
+  title.textContent = String(options.title || "正在处理");
+  detail.textContent = String(options.detail || "");
+  detail.hidden = !detail.textContent;
+  actions.hidden = typeof options.onPauseChange !== "function";
+  pauseButton.addEventListener("click", () => {
+    const next = !paused;
+    controller.setPaused(next);
+    options.onPauseChange?.(next);
+  });
+  toast.querySelector(".toast-progress-close").addEventListener("click", () => controller.dismiss());
+  stack.appendChild(toast);
+  controller.update({progress:options.progress});
+  syncToastStackLayout();
+  return controller;
+}
+
 function desktopNotificationEnabled() {
   return typeof Notification !== "undefined" && Notification.permission === "granted";
 }

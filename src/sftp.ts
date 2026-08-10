@@ -11,7 +11,7 @@ const {
   remotePathOperand,
   shellQuote
 } = require("./sftp-encoding");
-const DEFAULT_MAX_OPEN_FILE_SIZE = 5 * 1024 * 1024;
+const DEFAULT_MAX_OPEN_FILE_SIZE = 50 * 1024 * 1024;
 const DEFAULT_DIRECTORY_PAGE_SIZE = 50;
 const MAX_DIRECTORY_PAGE_SIZE = 200;
 const DIRECTORY_CACHE_TTL_MS = 15 * 1000;
@@ -573,6 +573,27 @@ function normalizeOpenFileLimit(value) {
   return limit;
 }
 
+function formatOpenFileSize(value) {
+  const bytes = Math.max(0, Number(value) || 0);
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2).replace(/\.00$/, "")} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(2).replace(/\.00$/, "")} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1).replace(/\.0$/, "")} KB`;
+  return `${bytes} B`;
+}
+
+function humanizeOpenFileError(value, maximumBytes) {
+  const message = String(value?.message || value || "远程文件读取失败").trim();
+  const linked = /符号链接本身为\s+(\d+)\s+B，目标文件实际为\s+(\d+)\s+B/.exec(message);
+  if (linked) {
+    return `符号链接本身为 ${formatOpenFileSize(linked[1])}，目标文件实际为 ${formatOpenFileSize(linked[2])}，超过 ${formatOpenFileSize(maximumBytes)}，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限`;
+  }
+  const regular = /文件实际为\s+(\d+)\s+B/.exec(message);
+  if (regular) {
+    return `文件实际为 ${formatOpenFileSize(regular[1])}，超过 ${formatOpenFileSize(maximumBytes)}，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限`;
+  }
+  return message;
+}
+
 function normalizeRemoteUploadName(value) {
   const name = String(value || "").trim();
   if (!name || name === "." || name === ".." || /[\\/\\\\\0]/.test(name)) {
@@ -666,9 +687,140 @@ function buildReadRemoteBinaryExecCommand(remotePath, maximumBytes, connection =
 async function readRemoteBinaryFile(connectionId, remotePath, maximumBytes = DEFAULT_MAX_OPEN_FILE_SIZE) {
   const connection = getConnection(connectionId);
   const limit = normalizeOpenFileLimit(maximumBytes);
-  const body = await runRemoteCommand(connection, buildReadRemoteBinaryExecCommand(remotePath, limit, connection), null, 60000);
+  let body;
+  try {
+    body = await runRemoteCommand(connection, buildReadRemoteBinaryExecCommand(remotePath, limit, connection), null, 60000);
+  } catch (error) {
+    throw new Error(humanizeOpenFileError(error, limit));
+  }
   if (body.length > limit) throw new Error(`文件超过 ${Math.round(limit / 1024 / 1024)} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限`);
   return {content:body, size:body.length, limit};
+}
+
+function buildStreamRemoteOpenCommand(remotePath, maximumBytes, connection = null) {
+  const limit = normalizeOpenFileLimit(maximumBytes);
+  const limitMb = Math.max(1, Math.round(limit / 1024 / 1024));
+  return [
+    `TERMA_TARGET=${remotePathOperand(connection, remotePath)}`,
+    `TERMA_LIMIT=${limit}`,
+    `if [ -L "$TERMA_TARGET" ]; then TERMA_IS_LINK=1; else TERMA_IS_LINK=0; fi`,
+    `if [ "$TERMA_IS_LINK" = 1 ] && [ ! -e "$TERMA_TARGET" ]; then printf "%s\\n" "符号链接指向的目标不存在" >&2; exit 1; fi`,
+    `if [ ! -f "$TERMA_TARGET" ]; then printf "%s\\n" "目标不是普通文件" >&2; exit 1; fi`,
+    `if stat -L -c "%s" "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_SIZE=$(stat -L -c "%s" "$TERMA_TARGET"); if [ "$TERMA_IS_LINK" = 1 ]; then TERMA_LINK_SIZE=$(stat -c "%s" "$TERMA_TARGET"); fi`,
+    `elif stat -L -f "%z" "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_SIZE=$(stat -L -f "%z" "$TERMA_TARGET"); if [ "$TERMA_IS_LINK" = 1 ]; then TERMA_LINK_SIZE=$(stat -f "%z" "$TERMA_TARGET"); fi`,
+    `else printf "%s\\n" "远程系统缺少兼容的 stat 命令" >&2; exit 1; fi`,
+    `case "$TERMA_SIZE" in ""|*[!0-9]*) printf "%s\\n" "远程文件大小返回格式无效" >&2; exit 1;; esac`,
+    `if [ "$TERMA_SIZE" -gt "$TERMA_LIMIT" ]; then if [ "$TERMA_IS_LINK" = 1 ]; then printf "符号链接本身为 %s B，目标文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "\${TERMA_LINK_SIZE:-0}" "$TERMA_SIZE" >&2; else printf "文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "$TERMA_SIZE" >&2; fi; exit 1; fi`,
+    `printf "TERMA_OPEN_READY:%s:%s:%s\\n" "$TERMA_SIZE" "$TERMA_IS_LINK" "\${TERMA_LINK_SIZE:-0}"`,
+    `cat -- "$TERMA_TARGET"`
+  ].join("; ");
+}
+
+function streamRemoteOpenFile(connectionId, remotePath, maximumBytes, res, req, secureResponseHeaders = headers => headers) {
+  const connection = getConnection(connectionId);
+  const limit = normalizeOpenFileLimit(maximumBytes);
+  const child = spawnRemote(connection, buildStreamRemoteOpenCommand(remotePath, limit, connection));
+  let headerBuffer = Buffer.alloc(0);
+  let headersSent = false;
+  let completed = false;
+  let expectedSize = -1;
+  let writtenSize = 0;
+  let stderrSize = 0;
+  const stderr = [];
+  const cleanup = () => {
+    req?.removeListener("aborted", abort);
+    res?.removeListener("close", onResponseClose);
+  };
+  const abort = () => {
+    if (completed) return;
+    completed = true;
+    cleanup();
+    try { child.kill("SIGKILL"); } catch {}
+  };
+  const onResponseClose = () => {
+    if (!res.writableEnded) abort();
+  };
+  const sendError = value => {
+    if (completed) return;
+    completed = true;
+    cleanup();
+    const message = humanizeOpenFileError(value, limit);
+    if (headersSent || res.headersSent) {
+      try { res.destroy(new Error(message)); } catch {}
+      return;
+    }
+    const body = Buffer.from(JSON.stringify({error:message}), "utf8");
+    res.writeHead(500, secureResponseHeaders({
+      "Content-Type":"application/json; charset=utf-8",
+      "Content-Length":body.length,
+      "Cache-Control":"no-store"
+    }));
+    res.end(body);
+  };
+  const writeBody = chunk => {
+    if (!chunk.length || completed) return;
+    if (expectedSize < 0 || writtenSize + chunk.length > expectedSize) {
+      sendError("远程文件内容超过声明大小");
+      try { child.kill("SIGKILL"); } catch {}
+      return;
+    }
+    writtenSize += chunk.length;
+    if (!res.write(chunk)) {
+      child.stdout.pause();
+      res.once("drain", () => {
+        if (!completed) child.stdout.resume();
+      });
+    }
+  };
+  req?.once("aborted", abort);
+  res?.once("close", onResponseClose);
+  child.stdout.on("data", chunk => {
+    if (completed) return;
+    if (headersSent) return writeBody(chunk);
+    headerBuffer = Buffer.concat([headerBuffer, chunk]);
+    const newline = headerBuffer.indexOf(0x0a);
+    if (newline < 0 && headerBuffer.length > 1024) return sendError("远程文件流响应头无效");
+    if (newline < 0) return;
+    if (newline > 1024) return sendError("远程文件流响应头无效");
+    const marker = headerBuffer.subarray(0, newline).toString("utf8").trim();
+    const match = /^TERMA_OPEN_READY:(\d+):([01]):(\d+)$/.exec(marker);
+    if (!match) return sendError("远程文件流响应头无效");
+    const size = Number(match[1]);
+    if (!Number.isSafeInteger(size) || size < 0 || size > limit) return sendError("远程文件大小超出允许范围");
+    expectedSize = size;
+    headersSent = true;
+    res.writeHead(200, secureResponseHeaders({
+      "Content-Type":"application/octet-stream",
+      "Content-Length":size,
+      "Cache-Control":"no-store",
+      "X-Terma-File-Size":size,
+      "X-Terma-File-Limit":limit,
+      "X-Terma-File-Link":match[2]
+    }));
+    writeBody(headerBuffer.subarray(newline + 1));
+    headerBuffer = Buffer.alloc(0);
+  });
+  child.stderr.on("data", chunk => {
+    if (stderrSize >= 64 * 1024) return;
+    const bounded = chunk.subarray(0, 64 * 1024 - stderrSize);
+    stderr.push(bounded);
+    stderrSize += bounded.length;
+  });
+  child.on("error", error => sendError(error));
+  child.on("close", code => {
+    if (completed) return;
+    if (!headersSent || code !== 0 || writtenSize !== expectedSize) {
+      const sizeMismatch = headersSent && code === 0 && writtenSize !== expectedSize
+        ? `远程文件读取不完整：${formatOpenFileSize(writtenSize)} / ${formatOpenFileSize(expectedSize)}`
+        : "";
+      sendError(Buffer.concat(stderr).toString("utf8").trim() || sizeMismatch || `远程文件读取失败（退出码 ${code ?? "?"}）`);
+      return;
+    }
+    completed = true;
+    cleanup();
+    res.end();
+  });
+  child.stdin.end();
 }
 
 async function readRemoteTextFile(connectionId, remotePath, requestedEncoding = "", maximumBytes = DEFAULT_MAX_OPEN_FILE_SIZE) {
@@ -790,6 +942,8 @@ module.exports = {
   renameRemotePath,
   readRemoteTextFile,
   readRemoteBinaryFile,
+  streamRemoteOpenFile,
+  __buildStreamRemoteOpenCommand:buildStreamRemoteOpenCommand,
   __buildReadRemoteBinaryCommand:buildReadRemoteBinaryCommand,
   __buildReadRemoteBinaryExecCommand:buildReadRemoteBinaryExecCommand,
   decodeRemoteText,

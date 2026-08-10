@@ -69,7 +69,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
     ...source,
     sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
     sftp_floating_progress_enabled: savedSource.sftp_floating_progress_enabled !== false,
-    sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 5,
+    sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 50,
     restore_workspace_tabs: savedSource.restore_workspace_tabs !== false,
     workspace_toolbar_placement: normalizeWorkspaceToolbarPlacement(savedSource.workspace_toolbar_placement),
     saved: {
@@ -78,7 +78,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
       listen_port: runtimePortValue(savedSource.listen_port ?? savedSource.port),
       sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
       sftp_floating_progress_enabled: savedSource.sftp_floating_progress_enabled !== false,
-      sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 5,
+      sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 50,
       sftp_download_directory: String(savedSource.sftp_download_directory || ""),
       restore_workspace_tabs: savedSource.restore_workspace_tabs !== false,
       workspace_toolbar_placement: normalizeWorkspaceToolbarPlacement(savedSource.workspace_toolbar_placement)

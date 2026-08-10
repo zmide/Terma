@@ -85,7 +85,7 @@ async function saveSftpGlobalSettings() {
     notify("SFTP 全局设置已保存", "success");
   } catch (error) {
     recycle.checked = runtimeSettings?.saved?.sftp_recycle_bin_enabled === true;
-    sizeInput.value = runtimeSettings?.saved?.sftp_max_open_file_size_mb || 5;
+    sizeInput.value = runtimeSettings?.saved?.sftp_max_open_file_size_mb || 50;
     notify(error.message || "SFTP 全局设置保存失败", "error");
   } finally {
     setButtonBusy(button, false);
@@ -103,7 +103,7 @@ async function showSftpGlobalSettings() {
     <label class="check-row"><input id="sftpRecycleBinEnabled" type="checkbox" ${saved.sftp_recycle_bin_enabled ? "checked" : ""}> 删除远程文件时先移入回收站</label>
     <div class="muted">默认关闭。开启后，每台远端服务器会在当前 SSH 用户主目录创建 Terma 专用隐藏目录；关闭只影响之后的删除，不会自动清空已有内容。</div>
     <label>可在程序中打开的最大文件（MB）</label>
-    <input id="sftpMaxOpenFileSizeMb" type="number" min="1" max="100" step="1" value="${Number(saved.sftp_max_open_file_size_mb || 5)}">
+    <input id="sftpMaxOpenFileSizeMb" type="number" min="1" max="100" step="1" value="${Number(saved.sftp_max_open_file_size_mb || 50)}">
     <div class="muted">适用于在线文本编辑和图片预览，范围 1-100 MB。更大的文件仍可正常下载。</div>
     ${sftpDownloadSettings.delivery_mode === "desktop" ? `<label>SFTP 自动保存目录</label>
     <div class="upload-line"><input id="sftpDownloadDirectory" value="${escAttr(sftpDownloadSettings.configured_directory || "")}" placeholder="留空时使用系统下载目录"><button type="button" onclick="chooseSftpDownloadDirectory()">${icon("folder-open")}<span>选择目录</span></button></div>

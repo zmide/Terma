@@ -706,6 +706,7 @@ function closeTerminalSession(key) {
   try { session.resizeObserver?.disconnect(); } catch {}
   try { session.globalLinkDisposable?.dispose(); } catch {}
   try { session.globalSelectionDisposable?.dispose(); } catch {}
+  if (typeof cancelTerminalOutputQueue === "function") cancelTerminalOutputQueue(session);
   try { session.term?.dispose(); } catch {}
   clearTimeout(session.latencyPendingTimer);
   clearTimeout(session.autoCopyTimer);

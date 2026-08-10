@@ -729,14 +729,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
 async function previewSftpImage(id, path) {
   try {
     const blob = await withSftpFileOpenFeedback(id, path, async () => {
-      await ensureSftpConnection(id);
-      const response = await fetch(`/api/connections/${id}/sftp/preview-image?path=${encodeURIComponent(path)}`);
-      if (!response.ok) {
-        let message = "图片预览失败";
-        try { message = (await response.json()).error || message; } catch {}
-        throw new Error(message);
-      }
-      return response.blob();
+      return readSftpImageWithProgress(id, path);
     });
     if (!blob) return;
     const objectUrl = URL.createObjectURL(blob);
@@ -763,12 +756,11 @@ async function previewSftpText(id, path) {
   try {
     let requestedEncoding = "";
     while (true) {
-      const suffix = requestedEncoding ? `&encoding=${encodeURIComponent(requestedEncoding)}` : "";
-      const data = await withSftpFileOpenFeedback(id, path, () => api(`/api/connections/${id}/sftp/read?path=${encodeURIComponent(path)}${suffix}`));
+      const data = await withSftpFileOpenFeedback(id, path, () => readSftpTextWithProgress(id, path, requestedEncoding));
       if (!data) return;
       const baselineKey = sftpFileOpenKey(id, path);
       const comparisonContent = sftpEditorDiffBaselines.has(baselineKey) ? sftpEditorDiffBaselines.get(baselineKey) : (data.content || "");
-      const next = await sftpTextModal(path, data.content || "", data.size || 0, data.limit || 5*1024*1024, data.encoding || "utf8", data.preferred_encoding || "auto", comparisonContent);
+      const next = await sftpTextModal(path, data.content || "", data.size || 0, data.limit || 50*1024*1024, data.encoding || "utf8", data.preferred_encoding || "auto", comparisonContent);
       if (next === null) return;
       if (next.action === "encoding") {
         requestedEncoding = next.encoding;

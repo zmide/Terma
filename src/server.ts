@@ -247,6 +247,8 @@ const {
   xServerDiagnosticsWithoutDesktopIntegration
 } = require("./routes/desktop-integration-routes");
 const { handleSshRoutes } = require("./routes/ssh-routes");
+const { handleSftpOpenRoutes } = require("./routes/sftp-open-routes");
+const { streamRemoteOpenFile } = require("./sftp");
 const { handleStorageRoutes } = require("./routes/storage-routes");
 const { handleUpdateRoutes } = require("./routes/update-routes");
 const { createStorageRestoreHelpers } = require("./storage-restore");
@@ -1584,6 +1586,12 @@ async function handleApi(req, res, pathname) {
     parseConfigText, projectSshDir:PROJECT_SSH_DIR, readBody, readJson, recommendPort,
     removeTrustedHost, repairIdentityFile, saveUploadedKey, sendJson, terminalCapabilitiesForConnection,
     testSsh, userSshDir:USER_SSH_DIR
+  })) return;
+  if (handleSftpOpenRoutes(req, res, pathname, {
+    readRuntimeSettings,
+    runtimeSettingsFile:RUNTIME_SETTINGS_FILE,
+    secureHeaders,
+    streamRemoteOpenFile
   })) return;
   if (req.method === "GET" && pathname === "/api/about") return sendJson(res, aboutInfo());
   if (req.method === "GET" && pathname === "/api/legacy-brand-migration") {

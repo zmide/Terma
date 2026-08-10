@@ -5,6 +5,7 @@ const { indexScriptFiles, readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const files = indexScriptFiles(root, { includeBootstrap:true });
+files.push(path.join("public", "sftp-open-worker.js"));
 
 for (const file of files) {
   const result = spawnSync(process.execPath, ["--check", path.join(root, file)], { stdio: "inherit" });
@@ -31,7 +32,7 @@ if (!html.includes('id="connExtraDiagnostics"')) throw new Error("SSH 编辑页�
 if (!html.includes('id="connAdvancedOptions"')) throw new Error("SSH 编辑页缺少可折叠的高级选项");
 
 const connections = readFrontendDomain(root, "connections");
-for (const token of ["validateConnectionExtraArgs", "/api/ssh/extra-args/validate", "focusConnectionExtraArgsIssue", "updateConnectionAdvancedStatus", "formatAllHealthMessage"]) {
+for (const token of ["validateConnectionExtraArgs", "/api/ssh/extra-args/validate", "focusConnectionExtraArgsIssue", "updateConnectionAdvancedStatus", "formatAllHealthMessage", "openQuickConnectionLauncher", "createProgressToast"]) {
   if (!connections.includes(token)) throw new Error(`SSH 附加参数诊断前端缺少：${token}`);
 }
 if (/\son(?:click|change|input|dblclick|contextmenu|keydown|submit|drag\w*|drop)=/i.test(connections)) {
@@ -56,8 +57,14 @@ for (const token of ["static-primary", "static-task-center-toggle", "static-conn
 const sftp = readFrontendDomain(root, "sftp");
 if (!sftp.includes('ace.config.set("useStrictCSP", true)')) throw new Error("Ace 编辑器必须启用严格 CSP 模式");
 if (!sftp.includes("stylesReady")) throw new Error("Ace 样式失效时必须回退普通文本编辑器");
+for (const token of ["/sftp/open?path=", "response.body.getReader()", "onPauseChange", "/sftp-open-worker.js", "50 * 1024 * 1024"]) {
+  if (!sftp.includes(token)) throw new Error(`SFTP 流式打开边界缺少：${token}`);
+}
 
 const terminal = readFrontendDomain(root, "terminal");
 if (!terminal.includes("terminal-font-size-readout")) throw new Error("终端工具栏缺少当前字号显示");
+for (const token of ["queueTerminalOutput", "TERMINAL_OUTPUT_FRAME_BUDGET", "terminalOutputWriting", "terminal-action-encoding", 'icon("folder-sync")']) {
+  if (!terminal.includes(token)) throw new Error(`终端响应性或工具栏边界缺少：${token}`);
+}
 
 console.log(`前端语法检查通过：${files.length} 个脚本`);

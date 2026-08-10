@@ -363,7 +363,7 @@ function renderConnectionRow(c) {
       <div class="conn-summary"><span title="${c.forwards.length} 条转发">${icon("route")} ${c.forwards.length}</span>${identityWarning ? `<span class="connection-identity-warning" title="${escAttr(identityWarning)}" aria-label="${escAttr(identityWarning)}">${icon("triangle-alert")} 私钥需重新导入</span>` : ""}</div>
       <div class="conn-actions" aria-label="${escAttr(c.name)} 快捷操作">
         <button class="icon-button conn-primary-action" data-action="connection-open-terminal" data-connection-id="${c.id}" title="打开终端" aria-label="打开终端">${icon("square-terminal")}</button>
-        <button class="icon-button" data-action="connection-open-sftp" data-connection-id="${c.id}" title="打开 SFTP" aria-label="打开 SFTP">${icon("folder-open")}</button>
+        <button class="icon-button" data-action="connection-open-sftp" data-connection-id="${c.id}" title="打开 SFTP 文件管理" aria-label="打开 SFTP 文件管理">${icon("folder-sync")}</button>
         <button class="icon-button" data-action="connection-open-forwards" data-connection-id="${c.id}" title="管理转发" aria-label="管理转发">${icon("route")}</button>
         ${connectionCompactToggleButton(c)}
         <button class="icon-button connection-favorite${c.favorite ? " active" : ""}" data-action="connection-favorite" data-connection-id="${c.id}" data-favorite="${c.favorite ? 0 : 1}" title="${c.favorite ? "取消收藏" : "收藏连接"}" aria-label="${c.favorite ? "取消收藏" : "收藏连接"}" aria-pressed="${c.favorite ? "true" : "false"}">${icon("star")}</button>

@@ -163,7 +163,19 @@ app.whenReady().then(async () => {
     const connectionFooter = document.querySelector('.conn-footer');
     const connectionFooterRect = connectionFooter?.getBoundingClientRect();
     const connectionActionButtons = [...document.querySelectorAll('.conn-actions > button')];
-    const connectionHasSftpAction = Boolean(document.querySelector('.conn-actions button[title="打开 SFTP"]'));
+    const connectionHasSftpAction = Boolean(document.querySelector('.conn-actions button[title="打开 SFTP 文件管理"]'));
+    const quickConnectButton = document.querySelector('.workspace-quick-connect-button');
+    openQuickConnectionLauncher();
+    const quickConnectRow = document.querySelector('.quick-connection-row');
+    const quickConnectCells = quickConnectRow ? [...quickConnectRow.children].map(item=>item.getBoundingClientRect()) : [];
+    const quickConnectionLauncher = Boolean(
+      quickConnectButton
+      && quickConnectRow
+      && document.querySelectorAll('.quick-connection-actions button').length === 3
+      && quickConnectCells.length === 5
+      && quickConnectCells.every(rect=>Math.abs((rect.top+rect.bottom)-(quickConnectCells[0].top+quickConnectCells[0].bottom))<4)
+    );
+    closeQuickConnectionLauncher();
     const originalOpenTerminalForDoubleClick = openTerminal;
     let doubleClickedConnectionId = 0;
     openTerminal = id => { doubleClickedConnectionId = Number(id); };
@@ -351,6 +363,7 @@ app.whenReady().then(async () => {
       compactConnectionTools,
       compactConnectionRows,
       connectionHasSftpAction,
+      quickConnectionLauncher,
       connectionNameDoubleClickOpens,
       operationPaneHorizontalScrollHidden:Boolean(explorerTree&&getComputedStyle(explorerTree).overflowX==='hidden'),
       operationPaneResizable,
@@ -2672,7 +2685,14 @@ app.whenReady().then(async () => {
     );
     const desktopKeysHidden=getComputedStyle(toolbarFixture.querySelector('.terminal-action-keys')).display==='none';
     const visibleToolbarButtons=toolbarButtons.filter(button=>getComputedStyle(button).display!=='none');
-    const compactLabelsHidden=toolbarButtons
+    const encodingButton=toolbarFixture.querySelector('.terminal-action-encoding');
+    const encodingLabelVisible=Boolean(
+      encodingButton
+      && encodingButton.querySelector('span')?.textContent==='UTF-8'
+      && getComputedStyle(encodingButton.querySelector('span')).display!=='none'
+      && encodingButton.getBoundingClientRect().width>=92
+    );
+    const compactLabelsHidden=toolbarButtons.filter(button=>button!==encodingButton)
       .flatMap(button=>[...button.querySelectorAll(':scope > span:not(.composite-icon)')])
       .every(span=>getComputedStyle(span).display==='none');
     const compactActionsLeftAligned=Math.abs(toolbarButtons[0].getBoundingClientRect().left-toolbarRect.left)<1;
@@ -2691,9 +2711,10 @@ app.whenReady().then(async () => {
     const widerToolbarRect=widerToolbar.getBoundingClientRect();
     const widerActionsLeftAligned=Math.abs(widerToolbar.querySelector('button').getBoundingClientRect().left-widerToolbarRect.left)<1;
     const widerVisibleButtons=[...widerToolbar.querySelectorAll('button')].filter(button=>getComputedStyle(button).display!=='none');
-    const widerActionsIconOnly=widerVisibleButtons.every(button=>Math.abs(button.getBoundingClientRect().width-30)<=0.5)
-      && widerVisibleButtons.flatMap(button=>[...button.querySelectorAll(':scope > span:not(.composite-icon)')]).every(span=>getComputedStyle(span).display==='none')
-      && widerVisibleButtons.filter(button=>button.classList.contains('terminal-dropdown-button')).every(button=>getComputedStyle(button.querySelector(':scope > svg:last-child')).display==='none');
+    const widerIconButtons=widerVisibleButtons.filter(button=>!button.classList.contains('terminal-action-encoding'));
+    const widerActionsIconOnly=widerIconButtons.every(button=>Math.abs(button.getBoundingClientRect().width-30)<=0.5)
+      && widerIconButtons.flatMap(button=>[...button.querySelectorAll(':scope > span:not(.composite-icon)')]).every(span=>getComputedStyle(span).display==='none')
+      && widerIconButtons.filter(button=>button.classList.contains('terminal-dropdown-button')).every(button=>getComputedStyle(button.querySelector(':scope > svg:last-child')).display==='none');
     const headerStartupFixture=document.createElement('div');
     headerStartupFixture.className='topbar';
     headerStartupFixture.style.cssText='position:fixed;left:-10000px;top:0;width:760px;';
@@ -2712,7 +2733,7 @@ app.whenReady().then(async () => {
     });
     applyWorkspaceHeaderHeight(headerHeightBefore,{fit:false});
     headerStartupFixture.remove();
-    const desktopActionsIconOnly=compactLabelsHidden&&widerActionsIconOnly&&headerStartupFits;
+    const desktopActionsIconOnly=encodingLabelVisible&&compactLabelsHidden&&widerActionsIconOnly&&headerStartupFits;
     const narrowToolbarLeftAligned=compactActionsLeftAligned&&widerActionsLeftAligned;
     toolbarViewFixture.style.width='540px';
     const responsiveView=document.querySelector('#view-terminal');
@@ -4762,7 +4783,7 @@ app.whenReady().then(async () => {
         floatingProgressDefaultOn:Boolean(taskCenterSetting?.checked),
         floatingProgressCanRestore:Boolean(taskCenterSettingsSection?.textContent.includes('任务中心') && taskCenterSettingsSection.textContent.includes('悬浮任务进度卡')),
         downloadBehavior:Boolean(globalSettingsCard?.textContent.includes('SFTP 自动保存目录') || globalSettingsCard?.textContent.includes('当前设备的浏览器下载目录')),
-        defaultLimit:document.querySelector('#sftpMaxOpenFileSizeMb')?.value === '5',
+        defaultLimit:document.querySelector('#sftpMaxOpenFileSizeMb')?.value === '50',
         backdropIgnored:Boolean(globalSettingsCard?.isConnected && !globalSettingsModal?.hidden),
         withinViewport:Boolean(globalSettingsRect && globalSettingsRect.left >= -0.5 && globalSettingsRect.right <= innerWidth + 0.5 && globalSettingsRect.top >= -0.5 && globalSettingsRect.bottom <= innerHeight + 0.5)
       };
@@ -4891,10 +4912,26 @@ app.whenReady().then(async () => {
     await withSftpFileOpenFeedback(1, feedbackPath, async () => { duplicateFeedbackRequestRan = true; });
     finishFeedbackRequest?.({ok:true});
     await feedbackRequest;
+    const pauseEvents = [];
+    const openProgress = createProgressToast({
+      title:'正在打开 smoke.txt',
+      detail:'正在读取 · 1 MB / 2 MB',
+      progress:50,
+      onPauseChange:value=>pauseEvents.push(value)
+    });
+    const openProgressToast = document.querySelector('.toast-progress');
+    const openProgressInTaskCenter = Boolean(openProgressToast?.closest('#sftpTaskCenter'));
+    openProgressToast?.querySelector('.toast-progress-pause')?.click();
+    const openProgressPaused = Boolean(openProgressToast?.classList.contains('paused') && openProgressToast?.textContent.includes('继续'));
+    openProgressToast?.querySelector('.toast-progress-pause')?.click();
+    const openProgressResumed = Boolean(!openProgressToast?.classList.contains('paused') && pauseEvents.join(',') === 'true,false');
+    openProgress.dismiss();
     const fileOpenFeedback = {
       busy:feedbackBusy,
       duplicateBlocked:!duplicateFeedbackRequestRan,
-      restored:Boolean(feedbackButton && !feedbackButton.disabled && feedbackButton.getAttribute('aria-busy') === 'false' && feedbackButton.textContent.includes('打开'))
+      restored:Boolean(feedbackButton && !feedbackButton.disabled && feedbackButton.getAttribute('aria-busy') === 'false' && feedbackButton.textContent.includes('打开')) && !openProgressInTaskCenter && openProgressPaused && openProgressResumed,
+      progressOutsideTaskCenter:!openProgressInTaskCenter,
+      pausable:openProgressPaused&&openProgressResumed
     };
     const idleDirectorySizeButton = rows[0]?.querySelector('.sftp-directory-size-button');
     const previousDirectorySizeApi = api;
@@ -6941,7 +6978,7 @@ app.whenReady().then(async () => {
     || !directoryActionsUi.duplicateDirectoryStateIsolated
     || !directoryActionsUi.duplicateHistoryIsolated
     || !directoryActionsUi.duplicateShellMatchesTab;
-  const code = errors.length || cspViolations.length || !noVncModuleUi.loaded || !noVncModuleUi.prototype || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
+  const code = errors.length || cspViolations.length || !noVncModuleUi.loaded || !noVncModuleUi.prototype || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.quickConnectionLauncher || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
   clearTimeout(smokeWatchdog);
   window.destroy();
   app.exit(code);

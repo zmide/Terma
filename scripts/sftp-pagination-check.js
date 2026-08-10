@@ -15,6 +15,7 @@ const {
   __buildRemoteDirectoryEntriesCommand,
   __buildReadRemoteBinaryCommand,
   __buildReadRemoteBinaryExecCommand,
+  __buildStreamRemoteOpenCommand,
   buildRemoteDirectorySizeCommand,
   buildRemotePermissionCommand,
   invalidateRemoteDirectoryCache,
@@ -180,6 +181,12 @@ assert.doesNotMatch(readLinkedFileExecCommand, /!/, "登录 Shell 可见的读�
 const readPayload = /^\/bin\/sh -lc 'td_payload=([A-Za-z0-9+/=]+);/.exec(readLinkedFileExecCommand);
 assert.ok(readPayload, "远端文件读取封装必须包含 Base64 脚本载荷");
 assert.equal(Buffer.from(readPayload[1], "base64").toString("utf8"), readLinkedFileCommand, "POSIX 封装不能改变远端文件读取脚本");
+
+const streamedOpenCommand = __buildStreamRemoteOpenCommand("/srv/data/report.txt", 50 * 1024 * 1024);
+assert.match(streamedOpenCommand, /TERMA_OPEN_READY:%s:%s:%s/, "stream open must return bounded size metadata first");
+assert.match(streamedOpenCommand, /TERMA_LIMIT=52428800/, "stream open must enforce the configured limit remotely");
+assert.match(streamedOpenCommand, /cat -- "\$TERMA_TARGET"/, "stream open must read only the safely quoted target");
+assert.match(streamedOpenCommand, /\[ ! -f "\$TERMA_TARGET" \]/, "stream open must reject directories and device files");
 
 const recycleId = "m1abcd23-0123456789abcdef";
 const recycleDeletedAt = 1784567890123;

@@ -24,16 +24,19 @@ const FRONTEND_DOMAINS = Object.freeze({
     "app-connection-validation.js",
     "app-connection-form.js",
     "app-connection-health.js",
-    "app-connections.js"
+    "app-connections.js",
+    "app-quick-connect.js"
   ],
   terminal: [
     "app-terminal-core.js",
+    "app-terminal-output.js",
     "app-terminal-settings.js",
     "app-terminal-startup.js",
     "app-terminal.js"
   ],
   sftp: [
     "app-sftp-core.js",
+    "app-sftp-open.js",
     "app-sftp.js",
     "app-sftp-drag.js",
     "app-sftp-operations.js",

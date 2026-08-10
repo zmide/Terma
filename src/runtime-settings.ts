@@ -6,7 +6,7 @@ const path = require("node:path");
 const DEFAULT_LISTEN_HOSTS = ["127.0.0.1"];
 const DEFAULT_LISTEN_PORT = 8088;
 const MAX_PORT_FALLBACKS = 20;
-const DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB = 5;
+const DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB = 50;
 const DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT = Object.freeze({
   unsplit: Object.freeze({ terminal: "header", sftp: "header" }),
   split: Object.freeze({ terminal: "header", sftp: "header" })
@@ -129,7 +129,7 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 7,
+    schema_version: 8,
     listen_hosts: normalizeListenHosts(hostsValue, hostsValue === undefined ? (fallback.listen_hosts ?? DEFAULT_LISTEN_HOSTS) : null),
     listen_port: normalizeListenPort(portValue, portValue === undefined ? (fallback.listen_port ?? DEFAULT_LISTEN_PORT) : null),
     sftp_recycle_bin_enabled: value.sftp_recycle_bin_enabled === undefined
@@ -173,6 +173,9 @@ function normalizeSftpMaxOpenFileSize(value, fallback = DEFAULT_SFTP_MAX_OPEN_FI
 function readRuntimeSettings(filePath) {
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (Number(parsed.schema_version || 0) < 8 && Number(parsed.sftp_max_open_file_size_mb) === 5) {
+      parsed.sftp_max_open_file_size_mb = DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB;
+    }
     return normalizeRuntimeSettings(parsed);
   } catch {
     return normalizeRuntimeSettings();

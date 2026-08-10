@@ -11,6 +11,7 @@ const {
   normalizeListenHosts,
   normalizeListenPort,
   normalizeRuntimeSettings,
+  readRuntimeSettings,
   normalizeTerminalSettings,
   normalizeWorkspaceToolbarPlacement
 } = require("../dist/runtime-settings");
@@ -99,12 +100,12 @@ async function main() {
   assert.equal(DEFAULT_TERMINAL_SETTINGS.background_color, "#0f1720");
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 7,
+    schema_version: 8,
     listen_hosts: ["127.0.0.1", "127.0.0.2"],
     listen_port: 8123,
     sftp_recycle_bin_enabled: false,
     sftp_floating_progress_enabled: true,
-    sftp_max_open_file_size_mb: 5,
+    sftp_max_open_file_size_mb: 50,
     sftp_download_directory: "",
     restore_workspace_tabs: true,
     workspace_toolbar_placement: {
@@ -162,6 +163,13 @@ async function main() {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.mkdirSync(sshDir, { recursive: true });
 
+  const legacyRuntimeFile = path.join(temporaryRoot, "runtime-settings-v7.json");
+  fs.writeFileSync(legacyRuntimeFile, JSON.stringify({schema_version:7, sftp_max_open_file_size_mb:5}), "utf8");
+  assert.equal(readRuntimeSettings(legacyRuntimeFile).sftp_max_open_file_size_mb, 50);
+  fs.writeFileSync(legacyRuntimeFile, JSON.stringify({schema_version:8, sftp_max_open_file_size_mb:5}), "utf8");
+  assert.equal(readRuntimeSettings(legacyRuntimeFile).sftp_max_open_file_size_mb, 5);
+  console.log("PASS legacy default SFTP open limit migrates to 50 MB without overriding v8 choices");
+
   let child = null;
   let startupBlocker = null;
   let checkBlocker = null;
@@ -203,7 +211,7 @@ async function main() {
     assert.equal(persistedAfterFallback.listen_port, info.actual_port);
     assert.equal(persistedAfterFallback.sftp_recycle_bin_enabled, true);
     assert.equal(persistedAfterFallback.sftp_floating_progress_enabled, true);
-    assert.equal(persistedAfterFallback.sftp_max_open_file_size_mb, 5);
+    assert.equal(persistedAfterFallback.sftp_max_open_file_size_mb, 50);
     assert.equal(persistedAfterFallback.sftp_download_directory, "");
     assert.equal(persistedAfterFallback.restore_workspace_tabs, true);
     assert.deepEqual(persistedAfterFallback.workspace_toolbar_placement, DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT);
@@ -226,7 +234,7 @@ async function main() {
     assert.equal(settings.body.saved.listen_port, info.actual_port);
     assert.equal(settings.body.saved.sftp_recycle_bin_enabled, true);
     assert.equal(settings.body.saved.sftp_floating_progress_enabled, true);
-    assert.equal(settings.body.saved.sftp_max_open_file_size_mb, 5);
+    assert.equal(settings.body.saved.sftp_max_open_file_size_mb, 50);
     assert.equal(settings.body.saved.sftp_download_directory, "");
     assert.equal(settings.body.saved.restore_workspace_tabs, true);
     assert.deepEqual(settings.body.saved.workspace_toolbar_placement, DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT);
