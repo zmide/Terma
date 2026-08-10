@@ -2,8 +2,8 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { DATA_DIR } = require("./config");
-const { getConnection } = require("./db");
 const { invalidateRemoteDirectoryCache, listRemoteDir, readRemoteBinaryFile, writeRemoteFile } = require("./sftp");
+const { getSftpConnection } = require("./sftp-session");
 
 const ROOT = path.join(DATA_DIR, "external-edit");
 const sessions = new Map();
@@ -93,7 +93,7 @@ function watchSession(session) {
 }
 
 async function startExternalEdit(connectionId, remotePathValue, options: any = {}) {
-  const connection = getConnection(Number(connectionId));
+  const connection = getSftpConnection(Number(connectionId));
   const remotePath = normalizeRemotePath(remotePathValue);
   const [{content}, metadata] = await Promise.all([
     readRemoteBinaryFile(connection.id, remotePath, 100 * 1024 * 1024),

@@ -353,7 +353,8 @@ function workspaceToolbarDestination(kind, tabKey, mount=null) {
   const pane = workspaceFindPaneForTab(tabKey);
   const tab = tabs.find(item => item.key === tabKey);
   const ownerMount = mount || workspaceToolbarMountElement(kind, tabKey);
-  if (!pane || !tab || tab.kind !== kind || pane.activeTabKey !== tabKey) {
+  const tabOwnsToolbar = Boolean(tab) && (tab.kind === kind || (kind === "terminal" && tab.kind === "quick-terminal"));
+  if (!pane || !tabOwnsToolbar || pane.activeTabKey !== tabKey) {
     return {host:ownerMount, visible:false, header:false};
   }
   if (isMobileLayout()) {
@@ -383,7 +384,31 @@ function returnWorkspaceToolbarToMount(toolbar, hidden=true) {
   toolbar.hidden = hidden;
 }
 
+function bindWorkspaceToolbarHorizontalScroll(toolbar) {
+  const actions = toolbar?.querySelector?.(".terminal-actions, .sftp-toolbar-actions");
+  if (!actions || actions.dataset.workspaceHorizontalScroll === "1") return;
+  actions.dataset.workspaceHorizontalScroll = "1";
+  actions.tabIndex = 0;
+  actions.addEventListener("wheel", event => {
+    if (actions.scrollWidth <= actions.clientWidth + 1) return;
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (!delta) return;
+    const previous = actions.scrollLeft;
+    actions.scrollLeft += delta;
+    if (Math.abs(actions.scrollLeft - previous) > 0.5) event.preventDefault();
+  }, {passive:false});
+  actions.addEventListener("keydown", event => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key) || actions.scrollWidth <= actions.clientWidth + 1) return;
+    const previous = actions.scrollLeft;
+    if (event.key === "Home") actions.scrollLeft = 0;
+    else if (event.key === "End") actions.scrollLeft = actions.scrollWidth;
+    else actions.scrollLeft += event.key === "ArrowLeft" ? -120 : 120;
+    if (Math.abs(actions.scrollLeft - previous) > 0.5) event.preventDefault();
+  });
+}
+
 function placeWorkspaceToolbar(kind, tabKey, toolbar, mount=null) {
+  bindWorkspaceToolbarHorizontalScroll(toolbar);
   registerWorkspaceToolbar(kind, tabKey, toolbar, mount);
   const ownerMount = mount || workspaceToolbarMountElement(kind, tabKey);
   if (ownerMount) registerWorkspaceToolbar(kind, tabKey, toolbar, ownerMount);
@@ -451,7 +476,7 @@ function syncWorkspaceToolbarPlacements() {
   syncWorkspaceToolbarHostVisibility();
   for (const pane of workspaceVisiblePanes()) {
     const tab = tabs.find(item => item.key === pane.activeTabKey);
-    if (tab?.kind === "terminal" && typeof updateTerminalStatusForLayout === "function") updateTerminalStatusForLayout(tab.key);
+    if (["terminal", "quick-terminal"].includes(tab?.kind) && typeof updateTerminalStatusForLayout === "function") updateTerminalStatusForLayout(tab.key);
     if (tab?.kind === "sftp" && typeof syncSftpMobileToolbarState === "function") syncSftpMobileToolbarState(tab.key);
   }
   if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
@@ -955,6 +980,7 @@ setWorkspaceTabConnectionStatus = function(key, status) {
 
 renderTabContent = function(tab) {
   if (tab.kind === "terminal") return openTerminal(tab.id, false, tab.key, tab.title);
+  if (tab.kind === "quick-terminal") return restoreQuickTerminalTab(tab);
   if (tab.kind === "forwards") return openForwards(tab.id, false);
   if (tab.kind === "edit") return editConnection(tab.id, false);
   if (tab.kind === "import") return showImport(false);

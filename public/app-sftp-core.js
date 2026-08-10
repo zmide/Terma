@@ -984,6 +984,33 @@ async function disconnectSftpConnection(connectionId, tabKey=activeTabKey) {
   } catch { return false; }
 }
 
+async function openTemporarySftpCredentialSession(connectionId, tabKey, temporaryConnection) {
+  const runtime = sftpTabRuntimes.get(String(tabKey || ""));
+  const remotePath = runtime?.state?.path || tabs.find(tab => tab.key === tabKey)?.path || ".";
+  await api(`/api/connections/${Number(connectionId)}/sftp/session?forget=1`, {
+    method:"DELETE",
+    skipSftpConnect:true
+  }).catch(() => {});
+  await openSftp(temporaryConnection.id, remotePath, true, tabKey);
+}
+
+async function repairSftpCredentials(connectionId, tabKey) {
+  if (typeof repairSshCredentials !== "function") return false;
+  return repairSshCredentials(connectionId, {
+    context:"SFTP 认证失败",
+    onSaved:async () => ensureSftpConnection(connectionId, {
+      force:true,
+      tabKey,
+      skipCredentialRepair:true
+    }),
+    onTemporary:async temporaryConnection => openTemporarySftpCredentialSession(
+      connectionId,
+      tabKey,
+      temporaryConnection
+    )
+  });
+}
+
 async function ensureSftpConnection(connectionId, options={}) {
   const id = Number(connectionId);
   const tabKey = String(options.tabKey || activeTabKey || sftpTabKeysForConnection(id)[0] || "");
@@ -1014,6 +1041,21 @@ async function ensureSftpConnection(connectionId, options={}) {
         const message = error?.name === "AbortError" ? "SFTP 连接超时，请重试" : (error.message || "SFTP 自动重连失败");
         updateSftpConnectionUi(id, "disconnected", message);
       }
+      if (
+        id > 0
+        && !options.skipCredentialRepair
+        && typeof sshAuthenticationFailure === "function"
+        && sshAuthenticationFailure(error)
+      ) {
+        if (sftpConnectionRequests.get(id)?.promise === request) sftpConnectionRequests.delete(id);
+        const repaired = await repairSftpCredentials(id, tabKey);
+        if (repaired?.saved) return true;
+        if (repaired) {
+          const redirected = new Error("已改用临时 SFTP 凭据");
+          redirected.code = "SSH_CREDENTIAL_REPAIR_REDIRECTED";
+          throw redirected;
+        }
+      }
       throw error;
     } finally {
       clearTimeout(timeout);
@@ -1038,6 +1080,7 @@ async function reconnectSftpConnection(connectionId, options={}) {
     }
     return true;
   } catch (error) {
+    if (error?.code === "SSH_CREDENTIAL_REPAIR_REDIRECTED") return true;
     updateSftpConnectionUi(id, "disconnected", error.message);
     if (!options.silent) notify(error.message || "SFTP 重连失败", "error");
     return false;
@@ -1077,6 +1120,9 @@ function closeSftpSession(tabKey) {
   const id = Number(sftpTabRuntimes.get(key)?.connectionId || tab?.id || 0);
   if (!id) return;
   disposeSftpRuntime(key);
+  if (id < 0 && typeof releaseQuickConnectionIfUnused === "function") {
+    queueMicrotask(() => releaseQuickConnectionIfUnused(id));
+  }
   if (sftpSessionCloseChecks.has(id)) return;
   sftpSessionCloseChecks.add(id);
   queueMicrotask(() => {

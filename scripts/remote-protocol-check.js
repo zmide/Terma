@@ -47,10 +47,10 @@ try {
       name:`${protocol}-test`,
       group_name:"协议测试",
       protocol,
-      host:protocol === "serial" ? "" : "127.0.0.1",
-      username:protocol === "ftp" ? "ftp-user" : "",
-      password:protocol === "ftp" ? "ftp-secret" : "",
-      options
+      host:protocol === "serial" ? "" : protocol === "rdp" ? "[2001:db8::21]" : "127.0.0.1",
+      username:protocol === "ftp" ? "ftp-user" : protocol === "rdp" ? "desktop-user" : "",
+      password:protocol === "ftp" ? "ftp-secret" : protocol === "rdp" ? "rdp-secret" : "",
+      options:protocol === "rdp" ? {...options, allow_password_transfer:true} : options
     });
     ids.set(protocol, id);
     assert.equal(db.getRemoteProfile(id).protocol, protocol);
@@ -66,13 +66,25 @@ try {
   assert.equal(db.getRemoteProfile(ids.get("vnc")).options.display_mode, "scale");
   assert.deepEqual(db.getRemoteProfile(ids.get("xdmcp")).options, {mode:"indirect", window_mode:"fixed", width:1600, height:900, local_address:"192.168.31.111", ssh_connection_id:0});
   const defaultRdp = db.getRemoteProfile(ids.get("rdp")).options;
+  assert.equal(db.getRemoteProfile(ids.get("rdp")).host, "2001:db8::21");
+  assert.equal(db.getRemoteProfile(ids.get("rdp")).username, "desktop-user");
+  assert.equal(db.getRemoteProfile(ids.get("rdp")).password, "rdp-secret");
+  assert.equal(db.listRemoteProfiles().find(item => item.id === ids.get("rdp")).password, undefined);
+  assert.equal(db.listRemoteProfiles().find(item => item.id === ids.get("rdp")).has_password, true);
+  assert.equal(defaultRdp.allow_password_transfer, true);
   assert.equal(defaultRdp.display_mode, "dynamic");
   assert.equal(defaultRdp.fullscreen, false);
+  assert.throws(() => db.insertRemoteProfile({name:"rdp-transfer-no-user",protocol:"rdp",host:"127.0.0.1",username:"",password:"secret",options:{allow_password_transfer:true}}), /必须填写用户名/);
   db.updateRemoteProfile(ids.get("rdp"), {options:{fullscreen:true,width:1920,height:1080}});
   assert.equal(db.getRemoteProfile(ids.get("rdp")).options.display_mode, "fullscreen");
   db.updateRemoteProfile(ids.get("rdp"), {options:{display_mode:"fixed",width:7680,height:4320}});
   assert.equal(db.getRemoteProfile(ids.get("rdp")).options.display_mode, "fixed");
   assert.equal(db.getRemoteProfile(ids.get("rdp")).options.width, 7680);
+  const emptyRdpId = db.insertRemoteProfile({name:"rdp-empty",protocol:"rdp",host:"2001:db8::22",username:"",password:"",options:{}});
+  assert.equal(db.getRemoteProfile(emptyRdpId).username, "");
+  assert.equal(db.getRemoteProfile(emptyRdpId).password || "", "");
+  assert.equal(db.getRemoteProfile(emptyRdpId).has_password, false);
+  db.deleteRemoteProfile(emptyRdpId);
   const listedFtp = db.listRemoteProfiles().find(item => item.id === ids.get("ftp"));
   assert.equal(listedFtp.password, undefined);
   assert.equal(listedFtp.has_password, true);
@@ -110,6 +122,10 @@ try {
 
   const { serialRuntime } = require("../dist/remote-terminal");
   assert.equal(typeof serialRuntime().available, "boolean");
+  const remoteHost = require("../dist/remote-host");
+  assert.equal(remoteHost.normalizeRemoteHost("[2001:db8::1]"), "2001:db8::1");
+  assert.equal(remoteHost.formatRemoteEndpoint("2001:db8::1", 3389), "[2001:db8::1]:3389");
+  assert.throws(() => remoteHost.validateRemoteHost("[not-an-ipv6]"), /IPv6/);
   console.log("多协议回归检查通过：远程配置、加密凭据、快照、X11、FTP 路径和串口运行时");
 } finally {
   try { db?.closeDatabase(); } catch {}

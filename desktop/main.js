@@ -9,6 +9,13 @@ const { createRemoteClientAdapter } = require("./remote-clients");
 const { createXServerRuntime } = require("./xserver-runtime");
 const { copyLegacyProfileMissing, mergeLegacyRuntime, removeCreatedFiles } = require("./brand-data-migration");
 const { legacyBrandWindowsAppRunning } = require("./windows-brand-process");
+const {
+  runtimeRoot:desktopStorageRuntimeRoot,
+  createDesktopStorageTransition,
+  completeDesktopStorageTransition,
+  finalizeDesktopStorageTransition,
+  rollbackDesktopStorageTransition
+} = require("./storage-migration");
 
 const PRODUCT_NAME = "Terma";
 const LEGACY_PRODUCT_NAME = "TunnelDesk";
@@ -792,8 +799,77 @@ function migrateLegacyPackagedRuntime(settings) {
   return migratedSettings;
 }
 
+function validateDesktopStorageTransition(transition) {
+  const sourceRoot = desktopStorageRuntimeRoot(resolveRuntimePaths(transition?.source_settings || {}));
+  const targetRoot = desktopStorageRuntimeRoot(resolveRuntimePaths(transition?.target_settings || {}));
+  if (path.relative(sourceRoot, path.resolve(String(transition?.source_root || ""))) !== ""
+    || path.relative(targetRoot, path.resolve(String(transition?.target_root || ""))) !== "") {
+    throw new Error("数据迁移状态与桌面路径设置不一致");
+  }
+  return transition;
+}
+
+function completedDesktopStorageSettings(transition) {
+  const completedAt = new Date().toISOString();
+  const settings = {
+    ...transition.target_settings,
+    lastStorageMigration:{
+      status:"migrated",
+      migratedAt:completedAt,
+      sourceRoot:transition.source_root,
+      targetRoot:transition.target_root,
+      sourcePreserved:true
+    }
+  };
+  delete settings.pendingStorageMigration;
+  return settings;
+}
+
+function failedDesktopStorageSettings(transition, error) {
+  const settings = {
+    ...transition.source_settings,
+    lastStorageMigration:{
+      status:"failed",
+      failedAt:new Date().toISOString(),
+      sourceRoot:transition.source_root,
+      targetRoot:transition.target_root,
+      error:String(error?.message || error || "数据迁移失败").slice(0, 500)
+    }
+  };
+  delete settings.pendingStorageMigration;
+  return settings;
+}
+
+function finishDesktopStorageTransition(transition) {
+  validateDesktopStorageTransition(transition);
+  completeDesktopStorageTransition(transition, {
+    copyRuntimeDirectory,
+    ignoredDataEntries:[...TRANSIENT_DATA_FILES]
+  });
+  const settings = completedDesktopStorageSettings(transition);
+  writeSettings(settings);
+  finalizeDesktopStorageTransition(transition);
+  return settings;
+}
+
+function recoverPendingDesktopStorageMigration(settings) {
+  const transition = settings?.pendingStorageMigration;
+  if (!transition) return settings;
+  try {
+    const completed = finishDesktopStorageTransition(transition);
+    pendingStorageMigrationNotice = `数据已迁移到新路径：${transition.target_root}。原目录仍保留，可用于回退。`;
+    return completed;
+  } catch (error) {
+    try { rollbackDesktopStorageTransition(transition); } catch {}
+    const rolledBack = failedDesktopStorageSettings(transition, error);
+    writeSettings(rolledBack);
+    pendingStorageMigrationNotice = `数据路径迁移未完成，Terma 已继续使用原目录：${transition.source_root}。原因：${error.message || error}`;
+    return rolledBack;
+  }
+}
+
 function prepareRuntimeSettings() {
-  return migrateLegacyPackagedRuntime(readSettings());
+  return migrateLegacyPackagedRuntime(recoverPendingDesktopStorageMigration(readSettings()));
 }
 
 function applyLoginSetting(settings) {
@@ -1819,16 +1895,44 @@ function normalizeDesktopSettings(value) {
 }
 
 function saveDesktopSettings(value) {
+  const current = readSettings();
   const settings = normalizeDesktopSettings(value);
-  writeSettings(settings);
-  applyLoginSetting(settings);
+  const currentPaths = resolveRuntimePaths(current);
+  const targetPaths = resolveRuntimePaths(settings);
+  const pathChanged = path.relative(currentPaths.dataDir, targetPaths.dataDir) !== ""
+    || path.relative(currentPaths.sshDir, targetPaths.sshDir) !== "";
+  const transition = pathChanged && Boolean(value?.migrateData)
+    ? createDesktopStorageTransition(current, settings, currentPaths, targetPaths)
+    : null;
+  if (transition) writeSettings({...current, pendingStorageMigration:transition});
+  else writeSettings(settings);
+  if (!transition) applyLoginSetting(settings);
   setTimeout(async () => {
     quitting = true;
-    try { await Promise.resolve(shutdown()); } catch (error) { console.error(error); }
+    try {
+      await Promise.resolve(shutdown());
+      if (transition) applyLoginSetting(finishDesktopStorageTransition(transition));
+    } catch (error) {
+      if (transition) {
+        try { rollbackDesktopStorageTransition(transition); } catch {}
+        const rolledBack = failedDesktopStorageSettings(transition, error);
+        writeSettings(rolledBack);
+        applyLoginSetting(rolledBack);
+        dialog.showErrorBox("Terma 数据迁移失败", `数据没有切换到新路径，原目录仍然保留并会继续使用。\n\n${error.message || error}`);
+      } else {
+        console.error(error);
+      }
+    }
     relaunchInForeground();
     app.exit(0);
   }, 500);
-  return { ok:true, restart_required:true };
+  return {
+    ok:true,
+    restart_required:true,
+    migration_requested:Boolean(transition),
+    data_dir:targetPaths.dataDir,
+    ssh_dir:targetPaths.sshDir
+  };
 }
 
 async function chooseDesktopDataDir() {
@@ -1935,7 +2039,13 @@ function remoteClientDiagnostics() {
 async function openRemoteClient(profile={}) {
   if (process.platform === "darwin" && profile.protocol === "rdp") {
     const current = remoteClientAdapter.diagnostics().rdp;
-    if (current.mode === "freerdp" && !current.available) await xServerRuntime.start();
+    const passwordTransferNeedsXServer = Boolean(
+      profile.password
+      && profile.options?.allow_password_transfer
+      && current.password_transfer_mode === "freerdp"
+      && current.password_transfer_requires_xserver
+    );
+    if ((current.mode === "freerdp" && !current.available) || passwordTransferNeedsXServer) await xServerRuntime.start();
   }
   return remoteClientAdapter.open(profile);
 }
@@ -1967,6 +2077,28 @@ async function installXQuartz() {
 
 async function installLinuxGraphicsComponents() {
   return xServerRuntime.installLinuxGraphicsComponents();
+}
+
+function desktopProgramCacheInfo() {
+  const remoteClient = remoteClientAdapter?.cacheInfo?.() || {};
+  const xserver = xServerRuntime?.cacheInfo?.() || {};
+  return {
+    local_installers:{
+      bytes:Number(remoteClient.bytes || 0) + Number(xserver.bytes || 0),
+      files:Number(remoteClient.files || 0) + Number(xserver.files || 0),
+      reclaimable_bytes:Number(remoteClient.reclaimable_bytes || 0) + Number(xserver.reclaimable_bytes || 0),
+      reclaimable_files:Number(remoteClient.reclaimable_files || 0) + Number(xserver.reclaimable_files || 0),
+      busy:Boolean(remoteClient.busy || xserver.busy),
+      sources:{remote_client:remoteClient, xserver}
+    }
+  };
+}
+
+function clearDesktopProgramCache(category="") {
+  if (String(category || "") !== "local_installers") throw new Error("未知的桌面缓存分类");
+  remoteClientAdapter?.clearCache?.();
+  xServerRuntime?.clearCache?.();
+  return desktopProgramCacheInfo();
 }
 
 async function openXdmcp(profile={}) {
@@ -2118,6 +2250,8 @@ app.whenReady().then(async () => {
         stopXServer,
         installXQuartz,
         installLinuxGraphicsComponents,
+        programCacheInfo:desktopProgramCacheInfo,
+        clearProgramCache:clearDesktopProgramCache,
         openXdmcp,
         testXdmcp,
         openUpdatePackage,

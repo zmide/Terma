@@ -10,6 +10,7 @@ const FRONTEND_DOMAINS = Object.freeze({
   ],
   settings: [
     "app-settings-core.js",
+    "app-settings-cache.js",
     "app-settings-storage.js",
     "app-settings-runtime.js",
     "app-settings-integrations.js",
@@ -32,7 +33,8 @@ const FRONTEND_DOMAINS = Object.freeze({
     "app-terminal-output.js",
     "app-terminal-settings.js",
     "app-terminal-startup.js",
-    "app-terminal.js"
+    "app-terminal.js",
+    "app-ssh-credentials.js"
   ],
   sftp: [
     "app-sftp-core.js",
@@ -63,6 +65,7 @@ const FRONTEND_DOMAINS = Object.freeze({
     "app-vnc-core.js",
     "app-vnc-clipboard.js",
     "app-vnc.js",
+    "app-remote-credentials.js",
     "app-remote-ftp.js",
     "app-remote-terminal.js",
     "app-x11.js"

@@ -1,4 +1,6 @@
 const defaultTerminalGlobalSettings = Object.freeze({
+  font_family:"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  font_size:13,
   background_mode:"theme",
   background_color:"#0f1720",
   middle_mouse_action:"paste_clipboard",
@@ -30,9 +32,15 @@ function normalizeTerminalGlobalSettings(value={}) {
   const mouseActions = new Set(terminalMouseActionOptions.map(([item]) => item));
   const backgroundModes = new Set(["theme", "black", "white", "custom"]);
   const backgroundColorValue = String(source.background_color || defaultTerminalGlobalSettings.background_color).trim();
+  const fontFamily = String(source.font_family || defaultTerminalGlobalSettings.font_family).trim();
+  const fontSize = Number(source.font_size ?? defaultTerminalGlobalSettings.font_size);
+  if (!fontFamily || fontFamily.length > 300 || /[\0\r\n]/.test(fontFamily)) throw new Error("默认终端字体无效");
+  if (!Number.isInteger(fontSize) || fontSize < 10 || fontSize > 32) throw new Error("默认终端字号必须是 10-32 之间的整数");
   const prefixes = (Array.isArray(source.url_prefixes) ? source.url_prefixes : String(source.url_prefixes || "").split(/[|,\s]+/))
     .map(item => String(item || "").trim()).filter(Boolean).slice(0, 10);
   return {
+    font_family:fontFamily,
+    font_size:fontSize,
     background_mode:backgroundModes.has(source.background_mode) ? source.background_mode : defaultTerminalGlobalSettings.background_mode,
     background_color:/^#[0-9a-f]{6}$/i.test(backgroundColorValue) ? backgroundColorValue.toLowerCase() : defaultTerminalGlobalSettings.background_color,
     middle_mouse_action:mouseActions.has(source.middle_mouse_action) ? source.middle_mouse_action : defaultTerminalGlobalSettings.middle_mouse_action,
@@ -151,6 +159,14 @@ function terminalWordSeparator(settings=currentTerminalGlobalSettings()) {
 
 function applyTerminalGlobalSettingsToSession(session) {
   if (!session?.term) return;
+  const connection = session.connection || null;
+  if (connection?.quick_connection || Number(connection?.terminal_font_family_inherit || 0) === 1) {
+    session.term.options.fontFamily = currentTerminalGlobalSettings().font_family;
+  }
+  const sizeInheritKey = isMobileLayout() ? "terminal_mobile_font_size_inherit" : "terminal_font_size_inherit";
+  if (connection?.quick_connection || Number(connection?.[sizeInheritKey] || 0) === 1) {
+    session.term.options.fontSize = currentTerminalGlobalSettings().font_size;
+  }
   session.term.options.wordSeparator = terminalWordSeparator();
   session.term.options.minimumContrastRatio = 4.5;
   const theme = terminalThemeForSettings();
@@ -174,7 +190,13 @@ function applyTerminalGlobalSettingsToSession(session) {
 }
 
 function applyTerminalGlobalSettingsToSessions() {
-  for (const session of terminalSessions.values()) applyTerminalGlobalSettingsToSession(session);
+  for (const session of terminalSessions.values()) {
+    const viewport = typeof captureTerminalViewport === "function" ? captureTerminalViewport(session) : null;
+    applyTerminalGlobalSettingsToSession(session);
+    if (viewport && typeof fitTerminalPreservingViewport === "function") fitTerminalPreservingViewport(session, viewport);
+    const readout = terminalElementForKey(session.key, ".terminal-font-size-readout");
+    if (readout) readout.textContent = (Number(session.term?.options?.fontSize) || currentTerminalGlobalSettings().font_size) + "px";
+  }
 }
 
 function formatTerminalCopiedText(text, settings=currentTerminalGlobalSettings()) {
@@ -607,7 +629,7 @@ async function showTerminalGlobalSettings(key=activeTabKey) {
   const modal = $("modal");
   modal.onclick = null;
   modal.innerHTML = `<div class="modal-card terminal-settings-modal" role="dialog" aria-modal="true" aria-labelledby="terminalSettingsTitle">
-    <div class="terminal-settings-head"><div><h2 id="terminalSettingsTitle">全局终端设置</h2><span>应用到全部连接和终端会话</span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" onclick="closeTerminalGlobalSettings('${escAttr(key)}')">${icon("x")}</button></div>
+    <div class="terminal-settings-head"><div><h2 id="terminalSettingsTitle">全局终端设置</h2><span>应用到继承默认值的连接；连接独立设置优先</span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" onclick="closeTerminalGlobalSettings('${escAttr(key)}')">${icon("x")}</button></div>
     <div class="terminal-settings-tabs" role="tablist" aria-label="终端设置分类">
       <button id="terminalSettingsTabAppearance" class="active" type="button" role="tab" aria-selected="true" aria-controls="terminalSettingsPanelAppearance" onclick="selectTerminalSettingsTab('appearance')">${icon("palette")}<span>外观</span></button>
       <button id="terminalSettingsTabInteraction" type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanelInteraction" onclick="selectTerminalSettingsTab('interaction')">${icon("mouse-pointer-2")}<span>鼠标与链接</span></button>
@@ -616,6 +638,14 @@ async function showTerminalGlobalSettings(key=activeTabKey) {
     <div class="terminal-settings-panels">
       <section id="terminalSettingsPanelAppearance" class="terminal-settings-panel" role="tabpanel" aria-labelledby="terminalSettingsTabAppearance">
         <div class="terminal-settings-background-layout">
+          <div class="terminal-settings-section terminal-settings-font-section">
+            <h3>${icon("type")}默认字体</h3>
+            <div class="terminal-settings-field-grid">
+              <div><label for="terminalSettingFontFamily">字体或字体栈</label><input id="terminalSettingFontFamily" list="terminalSettingFontOptions" value="${escAttr(settings.font_family)}"><datalist id="terminalSettingFontOptions">${terminalFontOptions.map(([value,label]) => `<option value="${escAttr(value)}">${esc(label)}</option>`).join("")}</datalist></div>
+              <div><label for="terminalSettingFontSize">默认字号</label><input id="terminalSettingFontSize" type="number" min="10" max="32" step="1" value="${settings.font_size}"></div>
+            </div>
+            <div class="muted">连接中单独设置的字体和字号优先于这里的默认值。</div>
+          </div>
           <div class="terminal-settings-section terminal-settings-background-section">
             <h3>${icon("monitor-cog")}终端背景</h3>
             <div class="terminal-background-choices" role="radiogroup" aria-label="终端背景颜色">
@@ -684,6 +714,8 @@ async function showTerminalGlobalSettings(key=activeTabKey) {
       if (event.key === "Escape") closeTerminalGlobalSettings(key);
   };
   syncTerminalBackgroundForm();
+  $("terminalSettingFontFamily")?.addEventListener("input", syncTerminalBackgroundForm);
+  $("terminalSettingFontSize")?.addEventListener("input", syncTerminalBackgroundForm);
   $("terminalSettingsTabAppearance")?.focus();
 }
 
@@ -726,6 +758,8 @@ function syncTerminalBackgroundForm() {
   const theme = terminalThemeForSettings(settings);
   preview.style.background = theme.background;
   preview.style.color = theme.foreground;
+  preview.style.fontFamily = $("terminalSettingFontFamily")?.value.trim() || currentTerminalGlobalSettings().font_family;
+  preview.style.fontSize = (Number($("terminalSettingFontSize")?.value) || currentTerminalGlobalSettings().font_size) + "px";
   preview.querySelector(".terminal-preview-green")?.style.setProperty("color", theme.green);
   preview.querySelector(".terminal-preview-blue")?.style.setProperty("color", theme.blue);
   preview.querySelector(".terminal-preview-cyan")?.style.setProperty("color", theme.cyan);
@@ -749,6 +783,8 @@ function fillTerminalGlobalSettingsForm(settings) {
   const backgroundMode = document.querySelector(`input[name="terminalSettingBackgroundMode"][value="${values.background_mode}"]`);
   if (backgroundMode) backgroundMode.checked = true;
   $("terminalSettingBackgroundColor").value = values.background_color;
+  $("terminalSettingFontFamily").value = values.font_family;
+  $("terminalSettingFontSize").value = String(values.font_size);
   $("terminalSettingMiddleMouse").value = values.middle_mouse_action;
   $("terminalSettingRightMouse").value = values.right_mouse_action;
   $("terminalSettingCtrlClick").checked = values.ctrl_left_click_moves_cursor;
@@ -773,6 +809,8 @@ function resetTerminalGlobalSettingsForm() {
 
 function terminalGlobalSettingsFormValue() {
   return {
+    font_family:$("terminalSettingFontFamily").value.trim(),
+    font_size:Number($("terminalSettingFontSize").value),
     background_mode:selectedTerminalBackgroundMode(),
     background_color:$("terminalSettingBackgroundColor").value,
     middle_mouse_action:$("terminalSettingMiddleMouse").value,

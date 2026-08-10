@@ -185,7 +185,7 @@ assert.equal(Buffer.from(readPayload[1], "base64").toString("utf8"), readLinkedF
 const streamedOpenCommand = __buildStreamRemoteOpenCommand("/srv/data/report.txt", 50 * 1024 * 1024);
 assert.match(streamedOpenCommand, /TERMA_OPEN_READY:%s:%s:%s/, "stream open must return bounded size metadata first");
 assert.match(streamedOpenCommand, /TERMA_LIMIT=52428800/, "stream open must enforce the configured limit remotely");
-assert.match(streamedOpenCommand, /cat -- "\$TERMA_TARGET"/, "stream open must read only the safely quoted target");
+assert.match(streamedOpenCommand, /head -c "\$TERMA_SIZE" < "\$TERMA_TARGET"/, "stream open must stop at the initial size when a live file keeps growing");
 assert.match(streamedOpenCommand, /\[ ! -f "\$TERMA_TARGET" \]/, "stream open must reject directories and device files");
 
 const recycleId = "m1abcd23-0123456789abcdef";

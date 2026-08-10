@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="terma-csp-nonce" content="__TERMA_CSP_NONCE__">
   <title>Terma</title>
-  <script src="/csp-bootstrap.js?v=1.4.0"></script>
-  <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=1.4.0">
-  <link rel="stylesheet" href="/vendor/ace/ace.css?v=1.4.0">
-  <link rel="stylesheet" href="/vendor/ace/theme-textmate.css?v=1.4.0">
-  <link rel="stylesheet" href="/vendor/ace/theme-tomorrow_night.css?v=1.4.0">
-  <link rel="stylesheet" href="/app.css?v=1.4.0">
+  <script src="/csp-bootstrap.js?v=__TERMA_VERSION__"></script>
+  <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=__TERMA_VERSION__">
+  <link rel="stylesheet" href="/vendor/ace/ace.css?v=__TERMA_VERSION__">
+  <link rel="stylesheet" href="/vendor/ace/theme-textmate.css?v=__TERMA_VERSION__">
+  <link rel="stylesheet" href="/vendor/ace/theme-tomorrow_night.css?v=__TERMA_VERSION__">
+  <link rel="stylesheet" href="/app.css?v=__TERMA_VERSION__">
 </head>
 <body>
   <div id="toast" class="notification-stack" aria-live="polite" aria-label="通知"></div>
@@ -19,6 +19,7 @@
     <div class="left-pane">
       <div class="brand">
         <h1 aria-label="Terma"><img class="brand-mark" src="/assets/terma-icon.png" alt="" aria-hidden="true"><span class="brand-name-full" aria-hidden="true">Terma</span></h1>
+        <button id="operationPaneExpand" class="operation-pane-expand icon-button" type="button" data-action="static-operation-expand" title="展开操作区" aria-label="展开操作区"><img class="brand-mark" src="/assets/terma-icon.png" alt="" aria-hidden="true"></button>
         <div class="side-actions">
           <button id="operationPanePin" class="operation-pane-pin icon-button is-pinned" type="button" data-icon="pin" data-action="static-operation-pin" title="操作区已固定；点击改为自动收起" aria-label="操作区已固定；点击改为自动收起" aria-pressed="true"><i data-lucide="pin"></i></button>
           <button id="operationPaneCollapse" class="operation-pane-collapse icon-button" type="button" data-action="static-operation-collapse" title="收起操作区" aria-label="收起操作区"><i data-lucide="panel-left-close"></i></button>
@@ -354,73 +355,77 @@
   </div>
 </template>
 
-<script src="/vendor/lucide/lucide.min.js?v=1.4.0"></script>
-<script src="/vendor/ace/ace.js?v=1.4.0"></script>
-<script src="/app-api.js?v=1.4.0"></script>
-<script src="/app-utils.js?v=1.4.0"></script>
-<script src="/app-events.js?v=1.4.0"></script>
-<script src="/app-workspace.js?v=1.4.0"></script>
-<script src="/app-workspace-groups.js?v=1.4.0"></script>
-<script src="/app-docking.js?v=1.4.0"></script>
-<script src="/app-workspace-drag.js?v=1.4.0"></script>
-<script src="/app-workspace-persistence.js?v=1.4.0"></script>
-<script src="/app-settings-core.js?v=1.4.0"></script>
-<script src="/app-settings-storage.js?v=1.4.0"></script>
-<script src="/app-settings-runtime.js?v=1.4.0"></script>
-<script src="/app-settings-integrations.js?v=1.4.0"></script>
-<script src="/app-settings.js?v=1.4.0"></script>
-<script src="/app-settings-updates.js?v=1.4.0"></script>
-<script src="/app-settings-security.js?v=1.4.0"></script>
-<script src="/app-running.js?v=1.4.0"></script>
-<script src="/app-batch.js?v=1.4.0"></script>
-<script src="/app-logs.js?v=1.4.0"></script>
-<script src="/app-log-viewer.js?v=1.4.0"></script>
-<script src="/app-log-maintenance.js?v=1.4.0"></script>
-<script src="/app-connections-list.js?v=1.4.0"></script>
-<script src="/app-connection-terminal.js?v=1.4.0"></script>
-<script src="/app-connection-validation.js?v=1.4.0"></script>
-<script src="/app-connection-form.js?v=1.4.0"></script>
-<script src="/app-connection-health.js?v=1.4.0"></script>
-<script src="/app-connections.js?v=1.4.0"></script>
-<script src="/app-quick-connect.js?v=1.4.0"></script>
-<script src="/app-terminal-core.js?v=1.4.0"></script>
-<script src="/app-terminal-output.js?v=1.4.0"></script>
-<script src="/app-terminal-settings.js?v=1.4.0"></script>
-<script src="/app-terminal-startup.js?v=1.4.0"></script>
-<script src="/app-terminal.js?v=1.4.0"></script>
-<script src="/app-forwards.js?v=1.4.0"></script>
-<script src="/app-import.js?v=1.4.0"></script>
-<script src="/app-sftp-core.js?v=1.4.0"></script>
-<script src="/app-sftp-open.js?v=1.4.0"></script>
-<script src="/app-sftp.js?v=1.4.0"></script>
-<script src="/app-sftp-drag.js?v=1.4.0"></script>
-<script src="/app-sftp-operations.js?v=1.4.0"></script>
-<script src="/app-sftp-transfer.js?v=1.4.0"></script>
-<script src="/app-sftp-menus.js?v=1.4.0"></script>
-<script src="/app-sftp-tasks.js?v=1.4.0"></script>
-<script src="/app-local-files.js?v=1.4.0"></script>
-<script src="/app-actions.js?v=1.4.0"></script>
-<script src="/app-sftp-sync.js?v=1.4.0"></script>
-<script src="/app-external-tools.js?v=1.4.0"></script>
-<script src="/app-command-palette.js?v=1.4.0"></script>
-<script src="/app-command-snippets.js?v=1.4.0"></script>
-<script src="/app-named-workspaces.js?v=1.4.0"></script>
-<script src="/app-terminal-productivity.js?v=1.4.0"></script>
-<script src="/app-productivity.js?v=1.4.0"></script>
-<script src="/app-desktop-integration.js?v=1.4.0"></script>
-<script src="/app-remote.js?v=1.4.0"></script>
-<script src="/app-linux-desktop.js?v=1.4.0"></script>
-<script src="/app-remote-profiles.js?v=1.4.0"></script>
-<script src="/app-remote-rdp.js?v=1.4.0"></script>
-<script src="/app-remote-xdmcp.js?v=1.4.0"></script>
-<script src="/app-vnc-core.js?v=1.4.0"></script>
-<script src="/app-vnc-clipboard.js?v=1.4.0"></script>
-<script src="/app-vnc.js?v=1.4.0"></script>
-<script src="/app-remote-ftp.js?v=1.4.0"></script>
-<script src="/app-remote-terminal.js?v=1.4.0"></script>
-<script src="/app-x11.js?v=1.4.0"></script>
-<script src="/app-state.js?v=1.4.0"></script>
-<script src="/app.js?v=1.4.0"></script>
-<script src="/app-static-actions.js?v=1.4.0"></script>
+<script src="/vendor/lucide/lucide.min.js?v=__TERMA_VERSION__"></script>
+<script src="/vendor/ace/ace.js?v=__TERMA_VERSION__"></script>
+<script src="/app-api.js?v=__TERMA_VERSION__"></script>
+<script src="/app-utils.js?v=__TERMA_VERSION__"></script>
+<script src="/app-events.js?v=__TERMA_VERSION__"></script>
+<script src="/app-workspace.js?v=__TERMA_VERSION__"></script>
+<script src="/app-workspace-groups.js?v=__TERMA_VERSION__"></script>
+<script src="/app-docking.js?v=__TERMA_VERSION__"></script>
+<script src="/app-workspace-drag.js?v=__TERMA_VERSION__"></script>
+<script src="/app-workspace-persistence.js?v=__TERMA_VERSION__"></script>
+<script src="/app-settings-core.js?v=__TERMA_VERSION__"></script>
+<script src="/app-settings-cache.js?v=__TERMA_VERSION__"></script>
+<script src="/app-settings-storage.js?v=__TERMA_VERSION__"></script>
+<script src="/app-settings-runtime.js?v=__TERMA_VERSION__"></script>
+<script src="/app-settings-integrations.js?v=__TERMA_VERSION__"></script>
+<script src="/app-settings.js?v=__TERMA_VERSION__"></script>
+<script src="/app-settings-updates.js?v=__TERMA_VERSION__"></script>
+<script src="/app-settings-security.js?v=__TERMA_VERSION__"></script>
+<script src="/app-running.js?v=__TERMA_VERSION__"></script>
+<script src="/app-batch.js?v=__TERMA_VERSION__"></script>
+<script src="/app-logs.js?v=__TERMA_VERSION__"></script>
+<script src="/app-log-viewer.js?v=__TERMA_VERSION__"></script>
+<script src="/app-log-maintenance.js?v=__TERMA_VERSION__"></script>
+<script src="/app-quick-ssh.js?v=__TERMA_VERSION__"></script>
+<script src="/app-connections-list.js?v=__TERMA_VERSION__"></script>
+<script src="/app-connection-terminal.js?v=__TERMA_VERSION__"></script>
+<script src="/app-connection-validation.js?v=__TERMA_VERSION__"></script>
+<script src="/app-connection-form.js?v=__TERMA_VERSION__"></script>
+<script src="/app-connection-health.js?v=__TERMA_VERSION__"></script>
+<script src="/app-connections.js?v=__TERMA_VERSION__"></script>
+<script src="/app-quick-connect.js?v=__TERMA_VERSION__"></script>
+<script src="/app-terminal-core.js?v=__TERMA_VERSION__"></script>
+<script src="/app-terminal-output.js?v=__TERMA_VERSION__"></script>
+<script src="/app-terminal-settings.js?v=__TERMA_VERSION__"></script>
+<script src="/app-terminal-startup.js?v=__TERMA_VERSION__"></script>
+<script src="/app-terminal.js?v=__TERMA_VERSION__"></script>
+<script src="/app-ssh-credentials.js?v=__TERMA_VERSION__"></script>
+<script src="/app-forwards.js?v=__TERMA_VERSION__"></script>
+<script src="/app-import.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp-core.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp-open.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp-drag.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp-operations.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp-transfer.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp-menus.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp-tasks.js?v=__TERMA_VERSION__"></script>
+<script src="/app-local-files.js?v=__TERMA_VERSION__"></script>
+<script src="/app-actions.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp-sync.js?v=__TERMA_VERSION__"></script>
+<script src="/app-external-tools.js?v=__TERMA_VERSION__"></script>
+<script src="/app-command-palette.js?v=__TERMA_VERSION__"></script>
+<script src="/app-command-snippets.js?v=__TERMA_VERSION__"></script>
+<script src="/app-named-workspaces.js?v=__TERMA_VERSION__"></script>
+<script src="/app-terminal-productivity.js?v=__TERMA_VERSION__"></script>
+<script src="/app-productivity.js?v=__TERMA_VERSION__"></script>
+<script src="/app-desktop-integration.js?v=__TERMA_VERSION__"></script>
+<script src="/app-remote.js?v=__TERMA_VERSION__"></script>
+<script src="/app-linux-desktop.js?v=__TERMA_VERSION__"></script>
+<script src="/app-remote-profiles.js?v=__TERMA_VERSION__"></script>
+<script src="/app-remote-rdp.js?v=__TERMA_VERSION__"></script>
+<script src="/app-remote-xdmcp.js?v=__TERMA_VERSION__"></script>
+<script src="/app-vnc-core.js?v=__TERMA_VERSION__"></script>
+<script src="/app-vnc-clipboard.js?v=__TERMA_VERSION__"></script>
+<script src="/app-vnc.js?v=__TERMA_VERSION__"></script>
+<script src="/app-remote-credentials.js?v=__TERMA_VERSION__"></script>
+<script src="/app-remote-ftp.js?v=__TERMA_VERSION__"></script>
+<script src="/app-remote-terminal.js?v=__TERMA_VERSION__"></script>
+<script src="/app-x11.js?v=__TERMA_VERSION__"></script>
+<script src="/app-state.js?v=__TERMA_VERSION__"></script>
+<script src="/app.js?v=__TERMA_VERSION__"></script>
+<script src="/app-static-actions.js?v=__TERMA_VERSION__"></script>
 </body>
 </html>

@@ -18,6 +18,7 @@ const SETTINGS_SECTION_META = {
   "settings-basic": "安全设置",
   "settings-notifications": "通知设置",
   "settings-runtime": "启动与运行",
+  "settings-cache": "缓存管理",
   "settings-about": "关于"
 };
 let activeSettingsSection = "settings-general";

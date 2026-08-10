@@ -17,9 +17,7 @@ interface StorageRouteDependencies {
   listLocalDirectories(path: string): unknown;
   runtimeSettingsView(): unknown;
   programCacheView(): any;
-  updateCacheBusy(): boolean;
-  clearSftpCache(): void;
-  clearUpdateCache(): void;
+  clearProgramCache(category?: string): any;
   readRuntimeSettings(file: string): any;
   normalizeRuntimeSettings(data: unknown): any;
   checkRuntimeSettings(data: unknown): Promise<any>;
@@ -114,13 +112,9 @@ export async function handleStorageRoutes(
   }
 
   if (method === "DELETE" && pathname === "/api/cache") {
-    if (dependencies.updateCacheBusy()) {
-      dependencies.sendJson(response, { error:"更新正在下载，暂时不能清理缓存" }, 409);
-      return true;
-    }
-    dependencies.clearSftpCache();
-    dependencies.clearUpdateCache();
-    dependencies.sendJson(response, { ok:true, ...dependencies.programCacheView() });
+    const url = new URL(request.url || pathname, "http://terma.invalid");
+    const category = String(url.searchParams.get("category") || "").trim();
+    dependencies.sendJson(response, { ok:true, ...dependencies.clearProgramCache(category) });
     return true;
   }
 

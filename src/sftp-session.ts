@@ -5,6 +5,7 @@ const path = require("node:path");
 const { PassThrough } = require("node:stream");
 const { DATA_DIR } = require("./config");
 const { getConnection } = require("./db");
+const { resolveQuickConnectionById } = require("./quick-terminal");
 const { connectSsh, normalizeSshTransportError } = require("./ssh2-client");
 
 const sessions = new Map();
@@ -18,6 +19,16 @@ const SFTP_NATIVE_DRAG_MAX_TICKETS = 64;
 const SFTP_NATIVE_DRAG_MAX_TICKETS_PER_CONNECTION = 8;
 const activeSftpDragStaging = new Map();
 const nativeSftpDragTickets = new Map();
+
+function getSftpConnection(connectionId) {
+  const id = Number(connectionId);
+  if (Number.isSafeInteger(id) && id < 0) {
+    const connection = resolveQuickConnectionById(id);
+    if (!connection) throw new Error("临时连接已失效，请重新建立快速连接");
+    return connection;
+  }
+  return getConnection(id);
+}
 
 function connectionFingerprint(connection) {
   return JSON.stringify([
@@ -59,7 +70,7 @@ function endSessionRecord(record) {
 
 async function connectSftpSession(connectionId, options: any = {}) {
   const id = Number(connectionId);
-  const connection = getConnection(id);
+  const connection = getSftpConnection(id);
   const fingerprint = connectionFingerprint(connection);
   let record = sessions.get(id);
 
@@ -111,7 +122,7 @@ function disconnectSftpSession(connectionId, options: any = {}) {
   let record = sessions.get(id);
   if (!record) {
     if (!options.remember) return { status: "disconnected", connected: false, error: "" };
-    const connection = getConnection(id);
+    const connection = getSftpConnection(id);
     record = {
       id,
       fingerprint: connectionFingerprint(connection),
@@ -820,7 +831,7 @@ function clearSftpDragCache(now = Date.now()) {
 
 async function openSftpChannel(connectionId) {
   const id = Number(connectionId);
-  const connection = getConnection(id);
+  const connection = getSftpConnection(id);
   let lastError = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
@@ -970,12 +981,16 @@ function spawnSftpSessionCommand(connection, command) {
   let closed = false;
 
   child.on("error", () => {});
-  const close = (code = null, signal = null) => {
+  child.stdout.on("data", () => {});
+  child.stderr.on("data", () => {});
+  const close = (code = null, signal = null, endOutput = true) => {
     if (closed) return;
     closed = true;
     try { child.stdin.unpipe(); } catch {}
-    try { child.stdout.end(); } catch {}
-    try { child.stderr.end(); } catch {}
+    if (endOutput) {
+      try { child.stdout.end(); } catch {}
+      try { child.stderr.end(); } catch {}
+    }
     child.emit("close", code, signal);
   };
   const reportError = (error) => {
@@ -1009,7 +1024,32 @@ function spawnSftpSessionCommand(connection, command) {
         channel.pipe(child.stdout);
         channel.stderr?.pipe(child.stderr);
         channel.on("error", reportError);
-        channel.once("close", (code, signal) => close(code, signal));
+        let channelClosed = false;
+        let stdoutEnded = false;
+        let stderrEnded = false;
+        let closeCode = null;
+        let closeSignal = null;
+        const closeAfterOutput = () => {
+          if (channelClosed && stdoutEnded && stderrEnded) close(closeCode, closeSignal, false);
+        };
+        child.stdout.once("end", () => {
+          stdoutEnded = true;
+          closeAfterOutput();
+        });
+        child.stderr.once("end", () => {
+          stderrEnded = true;
+          closeAfterOutput();
+        });
+        channel.once("close", (code, signal) => {
+          channelClosed = true;
+          closeCode = code;
+          closeSignal = signal;
+          setImmediate(() => {
+            if (!child.stdout.writableEnded) child.stdout.end();
+            if (!child.stderr.writableEnded) child.stderr.end();
+            closeAfterOutput();
+          });
+        });
         return;
       } catch (error) {
         lastError = error;
@@ -1042,6 +1082,7 @@ module.exports = {
   deliverNativeSftpDragTicket,
   deliverNativeSftpDragTicketItem,
   deliverSftpPaths,
+  getSftpConnection,
   getNativeSftpDragTicket,
   openNativeSftpDragTicketFile,
   releaseNativeSftpDragTicket,

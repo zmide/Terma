@@ -5,6 +5,7 @@ function staticActionValue(element, key, fallback = "") {
 if (typeof registerTermaAction === "function") {
 registerTermaAction("static-operation-pin", () => toggleOperationPanePinned());
 registerTermaAction("static-operation-collapse", () => setOperationPaneCollapsed(true));
+registerTermaAction("static-operation-expand", () => setOperationPaneCollapsed(false));
 registerTermaAction("static-theme-toggle", () => toggleTheme());
 registerTermaAction("static-refresh", () => loadAll());
 registerTermaAction("static-operation-guide-dismiss", () => dismissOperationPanePinGuide());
@@ -53,4 +54,7 @@ registerTermaAction("static-export-copy", () => copyExport());
 registerTermaAction("static-backup-database", () => downloadDatabaseBackup());
 registerTermaAction("static-backup-bundle", () => downloadBackupBundle());
 registerTermaAction("static-backup-restore", () => restoreDatabaseBackup());
+registerTermaAction("cache-refresh", () => refreshProgramCacheSettings());
+registerTermaAction("cache-clear-all", ({element}) => clearProgramCache("", element));
+registerTermaAction("cache-clear-category", ({element}) => clearProgramCache(staticActionValue(element, "cacheCategory"), element));
 }

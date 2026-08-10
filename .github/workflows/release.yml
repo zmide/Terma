@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   windows:
@@ -35,24 +35,11 @@ jobs:
       - name: Verify Windows artifact names
         run: node scripts/release-artifacts-check.js windows
 
-      - name: Create release notes
-        run: node scripts/release-notes.js
-
-
-      - name: Upload Windows artifacts
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          body_path: release-notes.md
-
-          files: |
-            release/*.exe
-            release/*.blockmap
-
       - name: Upload Windows workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Terma-windows-x64
+          retention-days: 7
           path: |
             release/*.exe
             release/*.blockmap
@@ -95,26 +82,11 @@ jobs:
       - name: Verify Linux artifact names
         run: node scripts/release-artifacts-check.js linux
 
-      - name: Create release notes
-        run: node scripts/release-notes.js
-
-
-      - name: Upload Linux artifacts
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          body_path: release-notes.md
-
-          files: |
-            release/*.AppImage
-            release/*.deb
-            release/*.rpm
-            release/*.blockmap
-
       - name: Upload Linux workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Terma-linux-x64
+          retention-days: 7
           path: |
             release/*.AppImage
             release/*.deb
@@ -173,25 +145,11 @@ jobs:
             node scripts/mac-icon-padding-check.js "$iconset_dir/icon_512x512@2x.png"
           done < <(find release -path "*/${PRODUCT_FILENAME}.app/Contents/Info.plist" -type f -print)
           test "$app_count" -eq 2
-      - name: Create release notes
-        run: node scripts/release-notes.js
-
-
-      - name: Upload macOS artifacts
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          body_path: release-notes.md
-
-          files: |
-            release/*.dmg
-            release/*.zip
-            release/*.blockmap
-
       - name: Upload macOS workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Terma-macos-x64-arm64
+          retention-days: 7
           path: |
             release/*.dmg
             release/*.zip
@@ -244,20 +202,88 @@ jobs:
           test -n "$archive"
           tar -tzf "$archive" | grep "^${PRODUCT_SLUG}/" > /dev/null
 
-      - name: Create release notes
-        run: node scripts/release-notes.js
-
-
-      - name: Upload Linux/source artifact
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        if: startsWith(github.ref, 'refs/tags/')
-        with:
-          body_path: release-notes.md
-
-          files: release-source/*.tar.gz
-
       - name: Upload Linux/source workflow artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Terma-linux-source-noarch
+          retention-days: 7
           path: release-source/*.tar.gz
+
+  publish-release:
+    name: Publish Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - windows
+      - linux
+      - macos
+      - linux-source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: Terma-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Refuse to replace a published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if state="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            if [ "$state" != "true" ]; then
+              echo "Release $GITHUB_REF_NAME is already public; refusing to replace it." >&2
+              exit 1
+            fi
+          fi
+
+      - name: Generate CycloneDX SBOM
+        shell: bash
+        run: |
+          VERSION="$(node -p 'require("./package.json").version')"
+          npm sbom \
+            --package-lock-only \
+            --omit=dev \
+            --sbom-format=cyclonedx \
+            --sbom-type=application \
+            > "release-assets/Terma-${VERSION}-sbom.cdx.json"
+
+      - name: Verify release set and generate SHA256SUMS
+        run: node scripts/release-publish-assets.js prepare release-assets
+
+      - name: Create release notes
+        run: node scripts/release-notes.js
+
+      - name: Upload complete draft release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          draft: true
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          body_path: release-notes.md
+          files: release-assets/*
+
+      - name: Verify uploaded release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' > uploaded-assets.txt
+          node scripts/release-publish-assets.js verify-remote release-assets uploaded-assets.txt
+
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest

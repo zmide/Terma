@@ -10,6 +10,8 @@ const { normalizeSshTransportError, openSshShell, shouldUseBuiltinSsh } = requir
 const { loadNodePty } = require("./pty-runtime");
 const { WebSocketFrameParser, closeWebSocket, sendWebSocketFrame, validateWebSocketUpgrade, websocketAccept } = require("./websocket");
 const { consumeTerminalStartupTicket, mergeTerminalStartup } = require("./terminal-startup");
+const { consumeQuickTerminalTicket } = require("./quick-terminal");
+const { requireEncryptionUnlocked } = require("./crypto-store");
 const { terminalX11Environment } = require("./x11");
 
 let pty = null;
@@ -97,9 +99,21 @@ function handleTerminalUpgrade(req, socket, options: any = {}) {
     const key = validateWebSocketUpgrade(req);
     const url = new URL(req.url, "http://terma.invalid");
     const id = Number(url.searchParams.get("id"));
-    if (!id) throw new Error("缺少连接 ID");
-    const storedConnection = getConnection(id);
+    const quickToken = url.searchParams.get("quick_token") || "";
+    if (!id && !quickToken) throw new Error("缺少连接 ID 或快速连接凭据");
+    const storedConnection = quickToken
+      ? consumeQuickTerminalTicket(quickToken, options.requestBinding)
+      : getConnection(id);
+    if (quickToken && storedConnection.auth_type === "key") requireEncryptionUnlocked();
+    const quickX11Mode = String(url.searchParams.get("x11_mode") || "off");
+    if (quickToken) {
+      if (!["off", "trusted", "untrusted"].includes(quickX11Mode)) throw new Error("快速连接的 X11 模式无效");
+      storedConnection.x11_mode = quickX11Mode;
+    } else if (url.searchParams.has("x11_mode")) {
+      throw new Error("保存的连接不能通过快速连接参数覆盖 X11 模式");
+    }
     const startupToken = url.searchParams.get("startup_token") || "";
+    if (quickToken && startupToken) throw new Error("快速连接不能使用已保存的终端启动配置");
     const startupOverride = startupToken ? consumeTerminalStartupTicket(startupToken, id) : null;
     const connection = mergeTerminalStartup(storedConnection, startupOverride);
     const x11Mode = String(connection.x11_mode || "off");
@@ -128,6 +142,8 @@ function handleTerminalUpgrade(req, socket, options: any = {}) {
     const title = url.searchParams.get("title") || "";
     const logId = url.searchParams.get("log_id") || "";
     const session: any = startTerminalProcess(connection, socket, cols, rows, title, logId);
+    session.connectionId = Number(connection.id || 0);
+    session.quickConnection = Boolean(quickToken);
     session.x11Mode = x11Mode;
     sessions.add(session);
     bindDesktopBrowserGrant(session, options);
@@ -380,6 +396,15 @@ function closeDesktopBrowserGrantTerminals(grantId, reason = "桌面集成授权
   return closed;
 }
 
+function closeQuickConnectionTerminals(connectionId, reason = "临时连接已撤销") {
+  const id = Number(connectionId);
+  for (const session of [...sessions]) {
+    if (!session.quickConnection || Number(session.connectionId) !== id) continue;
+    try { sendTerminalOutput(session, `\r\n[${reason}]\r\n`); } catch {}
+    closeTerminalSession(session);
+  }
+}
+
 function refreshDesktopBrowserGrantTerminals(grantId, expiresAt) {
   const requestedGrantId = String(grantId || "").trim();
   if (!requestedGrantId) return 0;
@@ -395,5 +420,6 @@ module.exports = {
   handleTerminalUpgrade,
   closeAllTerminals,
   closeDesktopBrowserGrantTerminals,
+  closeQuickConnectionTerminals,
   refreshDesktopBrowserGrantTerminals
 };

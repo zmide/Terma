@@ -16,16 +16,17 @@ const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 }
 const hostKey = privateKey.export({ type:"pkcs1", format:"pem" });
 let connections = 0;
 let commands = 0;
+const largeOutput = Buffer.alloc(2 * 1024 * 1024 + 16004, 0x61);
 
 const server = new Server({hostKeys:[hostKey]}, client => {
   connections += 1;
   client.on("authentication", context => context.accept());
   client.on("ready", () => client.on("session", accept => {
     const session = accept();
-    session.on("exec", acceptExec => {
+    session.on("exec", (acceptExec, _rejectExec, info) => {
       commands += 1;
       const stream = acceptExec();
-      stream.write(`command-${commands}`);
+      stream.write(info.command === "large" ? largeOutput : `command-${commands}`);
       stream.exit(0);
       stream.end();
     });
@@ -49,6 +50,23 @@ function runCommand(spawn, connection, command) {
   });
 }
 
+function runLargeCommand(spawn, connection) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(connection, "large");
+    const chunks = [];
+    child.stdout.on("data", chunk => {
+      chunks.push(chunk);
+      child.stdout.pause();
+      setTimeout(() => child.stdout.resume(), 2);
+    });
+    child.once("error", reject);
+    child.once("close", code => code === 0
+      ? resolve(Buffer.concat(chunks))
+      : reject(new Error(`remote command exited with ${code}`)));
+    child.stdin.end();
+  });
+}
+
 async function main() {
   await waitForServer();
   const connection = {
@@ -67,12 +85,15 @@ async function main() {
   try {
     assert.equal(await runCommand(session.spawnSftpSessionCommand, connection, "first"), "command-1");
     assert.equal(await runCommand(session.spawnSftpSessionCommand, connection, "second"), "command-2");
+    assert.deepEqual(await runLargeCommand(session.spawnSftpSessionCommand, connection), largeOutput);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.deepEqual(await runLargeCommand(session.spawnSftpSessionCommand, connection), largeOutput);
     assert.equal(connections, 1, "commands in one SFTP workspace should reuse the SSH2 transport");
     assert.equal(session.sftpSessionStatus(connection.id).connected, true);
 
     session.disconnectSftpSession(connection.id, {remember:true});
     assert.equal(session.sftpSessionStatus(connection.id).connected, false);
-    assert.equal(await runCommand(session.spawnSftpSessionCommand, connection, "after-drop"), "command-3");
+    assert.equal(await runCommand(session.spawnSftpSessionCommand, connection, "after-drop"), "command-5");
     assert.equal(connections, 2, "the next SFTP operation should transparently reconnect after a manual disconnect");
     assert.equal(session.sftpSessionStatus(connection.id).connected, true);
     console.log("Persistent SFTP session check passed.");

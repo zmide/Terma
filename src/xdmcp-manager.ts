@@ -238,14 +238,23 @@ function normalizeHost(value) {
 }
 
 function resolveManagementConnection(profile, dependencies) {
-  const requested = Number(profile?.options?.ssh_connection_id || 0);
+  const requested = Number(profile?.options?.source_ssh_connection_id || profile?.options?.ssh_connection_id || 0);
   if (requested) return dependencies.getConnection(requested);
   const host = normalizeHost(profile?.host);
   const matches = dependencies.listConnections()
     .filter(item => normalizeHost(item.ssh_host) === host)
     .sort((a, b) => Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || Number(a.id) - Number(b.id));
-  if (!matches.length) throw new Error("没有找到同主机的 SSH 连接，请先在 XDMCP 设置中选择 SSH 管理连接");
-  if (matches.length > 1) throw new Error("找到多个同主机 SSH 连接，请在 XDMCP 设置中明确选择用于管理的连接");
+  const protocol = String(profile?.protocol || "远程").toUpperCase();
+  if (!matches.length) {
+    const error: any = new Error(`没有找到同主机的 SSH 管理连接；${protocol} 仍可按协议能力连接，Linux 服务管理和深度诊断需要另行关联 SSH`);
+    error.code = "REMOTE_MANAGEMENT_SSH_REQUIRED";
+    throw error;
+  }
+  if (matches.length > 1) {
+    const error: any = new Error(`找到多个同主机 SSH 连接，请在 ${protocol} 连接设置中明确选择 SSH 管理连接`);
+    error.code = "REMOTE_MANAGEMENT_SSH_AMBIGUOUS";
+    throw error;
+  }
   return dependencies.getConnection(Number(matches[0].id));
 }
 

@@ -1,6 +1,14 @@
-function currentConnection(id=selectedId){ return connections.find(x=>x.id===id); }
+function currentConnection(id=selectedId){
+  const connectionId = Number(id);
+  if (typeof quickConnectionsById !== "undefined" && quickConnectionsById.has(connectionId)) {
+    return quickConnectionsById.get(connectionId);
+  }
+  return connections.find(x=>x.id===connectionId);
+}
 
 function selectConnection(id) {
+  const quick = typeof quickConnectionsById !== "undefined" ? quickConnectionsById.get(Number(id)) : null;
+  if (quick) return quick;
   selectedId = id;
   const c = currentConnection();
   if (c) {

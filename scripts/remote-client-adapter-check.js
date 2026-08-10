@@ -2,8 +2,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const dgram = require("node:dgram");
 const {EventEmitter} = require("node:events");
 const {MAC_WINDOWS_APP_PACKAGE_URL, MAC_WINDOWS_APP_URL, createRemoteClientAdapter} = require("../desktop/remote-clients");
+const {launchWindowsRdpWithCredential, windowsRdpCredentialTarget, windowsRdpCredentialTargets} = require("../desktop/windows-rdp-credentials");
 const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.join(__dirname, "..");
@@ -11,13 +13,24 @@ const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "terma-remote-client-"))
 const mainSource = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
 const remoteUiSource = readFrontendDomain(root, "remote");
 const serverSource = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");
+const connectivitySource = fs.readFileSync(path.join(root, "src", "remote-connectivity.ts"), "utf8");
+const xserverSource = fs.readFileSync(path.join(root, "desktop", "xserver-runtime.js"), "utf8");
 const desktopIntegrationRoutesSource = fs.readFileSync(path.join(root, "src", "routes", "desktop-integration-routes.ts"), "utf8");
+const windowsCredentialScriptSource = fs.readFileSync(path.join(root, "desktop", "windows-rdp-credential.ps1"), "utf8");
 const launches = [];
 const shellLaunches = [];
+const windowsCredentialLaunches = [];
 
 function fakeSpawn(executable, args, options) {
   launches.push({executable,args,options});
   const child = new EventEmitter();
+  child.stdin = {
+    once() { return this; },
+    end(value, callback) {
+      launches.at(-1).stdin = Buffer.from(value || "");
+      callback?.();
+    }
+  };
   child.unref = () => {};
   queueMicrotask(() => child.emit("spawn"));
   return child;
@@ -33,6 +46,21 @@ async function main() {
     __xServerDiagnosticsWithoutDesktopIntegration,
     __xdmcpTaskResourceKey
   } = require("../dist/server");
+  const {probeXdmcpEndpoint, xdmcpQueryPacket} = require("../dist/remote-connectivity");
+  const xdmcpResponder = dgram.createSocket("udp4");
+  let receivedXdmcpQuery = null;
+  xdmcpResponder.on("message", (message, remote) => {
+    receivedXdmcpQuery = Buffer.from(message);
+    xdmcpResponder.send(Buffer.from([0, 1, 0, 5, 0, 0]), remote.port, remote.address);
+  });
+  await new Promise((resolve, reject) => {
+    xdmcpResponder.once("error", reject);
+    xdmcpResponder.bind(0, "127.0.0.1", resolve);
+  });
+  const xdmcpProbe = await probeXdmcpEndpoint("127.0.0.1", xdmcpResponder.address().port, 500);
+  xdmcpResponder.close();
+  assert.deepEqual(receivedXdmcpQuery, xdmcpQueryPacket(), "XDMCP 降级探测必须发送标准 Query 数据包");
+  assert.deepEqual(xdmcpProbe, {ok:true, responded:true, response:"willing", error:""});
   const resourceConnection = {id:42};
   assert.equal(__xdmcpTaskResourceKey(resourceConnection,{action:"enable"}), "xdmcp-server:42");
   assert.equal(__xdmcpTaskResourceKey(resourceConnection,{action:"repair-xrdp"}), "rdp-server:42");
@@ -83,6 +111,40 @@ async function main() {
   assert.equal(browserLimitedXServer.reason, "当前浏览器会话没有桌面集成权限。X Server 正在运行，但启动、停止和本机程序调用只能在 Terma 桌面端执行。");
   assert.match(desktopIntegrationRoutesSource, /remote-clients\/diagnostics[\s\S]*?remoteClientDiagnosticsWithoutDesktopIntegration\(x11, scopedIntegration, platform\)/);
   assert.match(desktopIntegrationRoutesSource, /pathname === "\/api\/xserver"[\s\S]*?xServerDiagnosticsWithoutDesktopIntegration/);
+  assert.match(windowsCredentialScriptSource, /CredWriteW/);
+  assert.match(windowsCredentialScriptSource, /CredentialPersistSession/);
+  assert.match(windowsCredentialScriptSource, /finally \{[\s\S]*?TermaWindowsCredential\]::Delete[\s\S]*?TermaWindowsCredential\]::Restore/);
+
+  let credentialHelperLaunch = null;
+  const helperResult = await launchWindowsRdpWithCredential({
+    environment:{SystemRoot:"C:\\Windows"},
+    executable:"C:\\Windows\\System32\\mstsc.exe",
+    rdpFile:"C:\\Terma\\temporary.rdp",
+    endpoint:"rdp.example:3389",
+    username:"alice",
+    password:"stdin-only-secret",
+    cleanupSeconds:1,
+    spawn:(executable,args,options) => {
+      credentialHelperLaunch = {executable,args,options};
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = {
+        once() { return this; },
+        end(value, callback) {
+          credentialHelperLaunch.stdin = Buffer.from(value || "");
+          callback?.();
+          queueMicrotask(() => child.stdout.emit("data", Buffer.from("TERMA_RDP_CREDENTIAL_READY\r\n")));
+        }
+      };
+      queueMicrotask(() => child.emit("spawn"));
+      return child;
+    }
+  });
+  assert.deepEqual(helperResult.credential_targets, ["TERMSRV/rdp.example:3389", "TERMSRV/rdp.example"]);
+  assert.doesNotMatch(JSON.stringify({executable:credentialHelperLaunch.executable,args:credentialHelperLaunch.args,options:credentialHelperLaunch.options}), /stdin-only-secret/);
+  assert.equal(JSON.parse(credentialHelperLaunch.stdin.toString("utf8")).password, "stdin-only-secret");
+  assert.equal(credentialHelperLaunch.options.windowsHide, true);
 
   const windows = createRemoteClientAdapter({
     platform:"win32",
@@ -91,18 +153,28 @@ async function main() {
     existsSync:file => file.endsWith("mstsc.exe") || file.endsWith("TigerVNC\\vncviewer.exe"),
     spawn:fakeSpawn,
     spawnSync:unavailableCommand,
+    launchWindowsRdpWithCredential:async options => {
+      windowsCredentialLaunches.push(options);
+      return {credential_targets:windowsRdpCredentialTargets(options.endpoint)};
+    },
     shell:{openExternal:async uri => shellLaunches.push(uri)}
   });
   const windowsDiagnostics = windows.diagnostics();
   assert.equal(windowsDiagnostics.rdp.available, true);
   assert.equal(windowsDiagnostics.vnc.available, true);
-  assert.match(windowsDiagnostics.password_policy, /不会把密码放入命令行/);
+  assert.equal(windowsDiagnostics.rdp.password_transfer_mode, "windows-credential-manager");
+  assert.match(windowsDiagnostics.password_policy, /临时凭据存储.*不会进入命令行/);
 
-  await windows.open({id:1,protocol:"rdp",host:"rdp.example",port:3389,username:"alice",password:"must-not-leak",options:{fullscreen:false,width:1280,height:720,clipboard:true}});
-  const rdpLaunch = launches.at(-1);
-  assert.match(rdpLaunch.executable, /mstsc\.exe$/i);
-  assert.equal(rdpLaunch.args.length, 1);
-  const rdpBytes = fs.readFileSync(rdpLaunch.args[0]);
+  const windowsRdpResult = await windows.open({id:1,protocol:"rdp",host:"rdp.example",port:3389,username:"alice",password:"must-not-leak",options:{fullscreen:false,width:1280,height:720,clipboard:true,allow_password_transfer:true}});
+  const windowsCredentialLaunch = windowsCredentialLaunches.at(-1);
+  assert.match(windowsCredentialLaunch.executable, /mstsc\.exe$/i);
+  assert.equal(windowsCredentialLaunch.endpoint, "rdp.example:3389");
+  assert.equal(windowsCredentialLaunch.username, "alice");
+  assert.equal(windowsCredentialLaunch.password, "must-not-leak");
+  assert.equal(windowsRdpCredentialTarget(windowsCredentialLaunch.endpoint), "TERMSRV/rdp.example:3389");
+  assert.deepEqual(windowsRdpCredentialTargets(windowsCredentialLaunch.endpoint), ["TERMSRV/rdp.example:3389", "TERMSRV/rdp.example"]);
+  assert.deepEqual(windowsRdpCredentialTargets("[2001:db8::11]:3389"), ["TERMSRV/[2001:db8::11]:3389", "TERMSRV/2001:db8::11"]);
+  const rdpBytes = fs.readFileSync(windowsCredentialLaunch.rdpFile);
   assert.equal(rdpBytes[0], 0xff);
   assert.equal(rdpBytes[1], 0xfe);
   const rdpText = rdpBytes.toString("utf16le");
@@ -111,10 +183,18 @@ async function main() {
   assert.match(rdpText, /desktopwidth:i:1280/);
   assert.match(rdpText, /desktopheight:i:720/);
   assert.match(rdpText, /dynamic resolution:i:0/);
-  assert.match(rdpText, /prompt for credentials:i:1/);
+  assert.match(rdpText, /prompt for credentials:i:0/);
   assert.doesNotMatch(rdpText, /must-not-leak/);
+  assert.equal(windowsRdpResult.credentials, "windows-credential-manager");
+  assert.equal(windowsRdpResult.password_transfer_requested, true);
+  assert.equal(windowsRdpResult.password_transfer_supported, true);
 
-  await windows.open({id:2,protocol:"rdp",host:"generated.example",port:3389,username:"ssh-user",options:{source_ssh_connection_id:42}});
+  await windows.open({id:11,protocol:"rdp",host:"[2001:db8::11]",port:3389,username:"",password:"",options:{}});
+  const ipv6RdpLaunch = launches.at(-1);
+  const ipv6RdpText = fs.readFileSync(ipv6RdpLaunch.args[0]).toString("utf16le");
+  assert.match(ipv6RdpText, /full address:s:\[2001:db8::11\]:3389/);
+
+  await windows.open({id:2,protocol:"rdp",host:"generated.example",port:3389,username:"",options:{source_ssh_connection_id:42}});
   const generatedRdpLaunch = launches.at(-1);
   assert.match(generatedRdpLaunch.executable, /mstsc\.exe$/i);
   assert.notEqual(generatedRdpLaunch.options?.windowsHide, true, "mstsc 窗口不能被隐藏启动");
@@ -131,6 +211,9 @@ async function main() {
   assert.match(vncLaunch.executable, /vncviewer\.exe$/i);
   assert.deepEqual(vncLaunch.args, ["vnc.example::5901","-QualityLevel=7","-Shared","-ViewOnly"]);
   assert.doesNotMatch(JSON.stringify(vncLaunch), /must-not-leak/);
+
+  await windows.open({id:12,protocol:"vnc",host:"2001:db8::12",port:5901,password:"",options:{quality:7}});
+  assert.deepEqual(launches.at(-1).args, ["[2001:db8::12]::5901", "-QualityLevel=7"]);
 
   const mac = createRemoteClientAdapter({
     platform:"darwin",
@@ -149,8 +232,30 @@ async function main() {
   const macRdpText = fs.readFileSync(macRdpLaunch.args[2]).toString("utf16le");
   assert.match(macRdpText, /dynamic resolution:i:1/);
   assert.match(macRdpText, /desktopwidth:i:1920/);
+  await assert.rejects(
+    mac.open({id:32,protocol:"rdp",host:"mac-rdp.example",port:3389,username:"desktop-user",password:"mac-secret",options:{allow_password_transfer:true}}),
+    /Windows App.*FreeRDP/
+  );
   await mac.open({id:3,protocol:"vnc",host:"mac.example",port:5900,options:{}});
   assert.equal(shellLaunches.at(-1), "vnc://mac.example:5900");
+
+  const macWithPasswordFreeRdp = createRemoteClientAdapter({
+    platform:"darwin",
+    environment:{HOME:"/Users/tester",DISPLAY:":0"},
+    dataDir:temporary,
+    existsSync:file => String(file).replace(/\\/g,"/") === "/Applications/Windows App.app",
+    spawn:fakeSpawn,
+    spawnSync:(command,args) => args[0] === "xfreerdp"
+      ? {status:0,stdout:"/opt/homebrew/bin/xfreerdp\n",stderr:""}
+      : unavailableCommand(),
+    shell:{openExternal:async uri => shellLaunches.push(uri)}
+  });
+  const macPasswordResult = await macWithPasswordFreeRdp.open({id:33,protocol:"rdp",host:"mac-rdp.example",port:3389,username:"desktop-user",password:"mac-secret",options:{allow_password_transfer:true}});
+  const macPasswordLaunch = launches.at(-1);
+  assert.equal(macPasswordLaunch.executable, "/opt/homebrew/bin/xfreerdp");
+  assert.ok(macPasswordLaunch.args.includes("/from-stdin"));
+  assert.equal(macPasswordLaunch.stdin.toString("utf8"), "mac-secret\n");
+  assert.equal(macPasswordResult.credentials, "stdin");
 
   const macWithoutRdp = createRemoteClientAdapter({
     platform:"darwin",
@@ -239,13 +344,19 @@ async function main() {
   assert.equal(macFreeRdpWithoutXQuartz.requires_xserver, true);
   assert.equal(macFreeRdpWithoutXQuartz.can_install, true);
   assert.match(macFreeRdpWithoutXQuartz.reason, /安装 XQuartz.*Windows App/);
-  assert.match(mainSource, /current\.mode === "freerdp" && !current\.available\) await xServerRuntime\.start\(\)/);
+  assert.match(mainSource, /passwordTransferNeedsXServer/);
+  assert.match(mainSource, /current\.mode === "freerdp" && !current\.available\) \|\| passwordTransferNeedsXServer/);
   assert.match(remoteUiSource, /const clientLaunchable = Boolean\(item\.available \|\| item\.launchable\)/);
   assert.match(remoteUiSource, /remoteDesktopXServerButton/);
   assert.match(remoteUiSource, /item\.xserver_installed \? "启动 XQuartz" : "安装 XQuartz"/);
-  assert.match(serverSource, /function probeTcpEndpoint\(host, port, timeoutMs=2200\)/);
-  assert.match(serverSource, /profile\.protocol === "rdp"[\s\S]*?await probeTcpEndpoint\(profile\.host, profile\.port \|\| 3389\)/, "RDP 启动前必须从本机探测目标端口");
+  assert.match(connectivitySource, /function probeTcpEndpoint\(host: unknown, port: unknown, timeoutMs = 2200\)/);
+  assert.match(connectivitySource, /function probeXdmcpEndpoint\(host: unknown, port: unknown, timeoutMs = 2200\)/);
+  assert.match(connectivitySource, /method:"xdmcp-query"/);
+  assert.match(xserverSource, /family === 6 \? "udp6" : "udp4"/);
+  assert.match(xserverSource, /dns\.lookup\(host/);
+  assert.match(serverSource, /profile\.protocol === "rdp"[\s\S]*?await probeTcpEndpoint\(profile\.host, profile\.port \|\| 3389\)/, "RDP 启动前必须从保存的远程连接探测目标端口");
   assert.match(serverSource, /无法从本机连接 RDP 服务/, "RDP 端口不可达时必须阻止启动并给出明确提示");
+  assert.match(serverSource, /password:profile\.password/, "RDP 启动必须把已解密密码限定在桌面适配器边界内");
 
   const linux = createRemoteClientAdapter({
     platform:"linux",
@@ -267,6 +378,15 @@ async function main() {
   assert.ok(linuxLaunch.args.includes("/audio-mode:2"));
   assert.ok(linuxLaunch.args.includes("/cert:tofu"));
   assert.doesNotMatch(JSON.stringify(linuxLaunch), /must-not-leak/);
+  const linuxIpv6Result = await linux.open({id:44,protocol:"rdp",host:"[2001:db8::44]",port:3389,username:"root",password:"stdin-secret",options:{allow_password_transfer:true}});
+  const linuxIpv6Launch = launches.at(-1);
+  assert.ok(linuxIpv6Launch.args.includes("/v:[2001:db8::44]:3389"));
+  assert.ok(linuxIpv6Launch.args.includes("/from-stdin"));
+  assert.equal(linuxIpv6Launch.stdin.toString("utf8"), "stdin-secret\n");
+  assert.doesNotMatch(JSON.stringify(linuxIpv6Launch), /stdin-secret/);
+  assert.equal(linuxIpv6Result.credentials, "stdin");
+  assert.equal(linuxIpv6Result.password_transfer_requested, true);
+  assert.equal(linuxIpv6Result.password_transfer_supported, true);
   await linux.open({id:41,protocol:"rdp",host:"dynamic.example",port:3389,username:"root",options:{display_mode:"dynamic",width:2560,height:1440}});
   const dynamicLinuxLaunch = launches.at(-1);
   assert.ok(dynamicLinuxLaunch.args.includes("/size:2560x1440"));

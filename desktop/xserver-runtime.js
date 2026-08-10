@@ -2,6 +2,7 @@
 
 const crypto = require("node:crypto");
 const dgram = require("node:dgram");
+const dns = require("node:dns");
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
@@ -305,6 +306,37 @@ function createXServerRuntime(options = {}) {
   let lastError = "";
   let macStartedByTerma = false;
   let windowsWindowGuard = null;
+  let xQuartzInstallerBusy = false;
+
+  function xQuartzInstallerPath() {
+    return path.join(runtimeDataDir, `XQuartz-${XQUARTZ_VERSION}.pkg`);
+  }
+
+  function cacheInfo() {
+    if (platform !== "darwin") return {bytes:0, files:0, reclaimable_bytes:0, reclaimable_files:0, busy:false};
+    try {
+      const stat = fs.lstatSync(xQuartzInstallerPath());
+      if (!stat.isFile() || stat.isSymbolicLink()) return {bytes:0, files:0, reclaimable_bytes:0, reclaimable_files:0, busy:xQuartzInstallerBusy};
+      return {
+        bytes:stat.size,
+        files:1,
+        reclaimable_bytes:xQuartzInstallerBusy ? 0 : stat.size,
+        reclaimable_files:xQuartzInstallerBusy ? 0 : 1,
+        busy:xQuartzInstallerBusy
+      };
+    } catch {
+      return {bytes:0, files:0, reclaimable_bytes:0, reclaimable_files:0, busy:xQuartzInstallerBusy};
+    }
+  }
+
+  function clearCache() {
+    if (platform !== "darwin" || xQuartzInstallerBusy) return cacheInfo();
+    try {
+      const stat = fs.lstatSync(xQuartzInstallerPath());
+      if (stat.isFile() && !stat.isSymbolicLink()) fs.rmSync(xQuartzInstallerPath(), {force:true});
+    } catch {}
+    return cacheInfo();
+  }
 
   function bundledWindowsExecutable() {
     return existingFile([
@@ -803,7 +835,7 @@ function createXServerRuntime(options = {}) {
 
   async function downloadXQuartzPackage() {
     fs.mkdirSync(runtimeDataDir, {recursive:true});
-    const file = path.join(runtimeDataDir, `XQuartz-${XQUARTZ_VERSION}.pkg`);
+    const file = xQuartzInstallerPath();
     try {
       verifyXQuartzPackage(file);
       return file;
@@ -827,26 +859,31 @@ function createXServerRuntime(options = {}) {
     if (platform !== "darwin") throw new Error("XQuartz 安装仅适用于 macOS 桌面版");
     const current = diagnostics();
     if (current.installed && current.xdmcp_client) return {ok:true, already_installed:true, diagnostics:current};
-    const installer = await downloadXQuartzPackage();
-    verifyXQuartzPackage(installer);
-    const command = `/usr/sbin/installer -pkg ${JSON.stringify(installer)} -target /`;
-    await new Promise((resolve, reject) => {
-      const processHandle = spawn("/usr/bin/osascript", ["-e", `do shell script ${JSON.stringify(command)} with administrator privileges`], {
-        stdio:["ignore", "pipe", "pipe"],
-        windowsHide:true
+    xQuartzInstallerBusy = true;
+    try {
+      const installer = await downloadXQuartzPackage();
+      verifyXQuartzPackage(installer);
+      const command = `/usr/sbin/installer -pkg ${JSON.stringify(installer)} -target /`;
+      await new Promise((resolve, reject) => {
+        const processHandle = spawn("/usr/bin/osascript", ["-e", `do shell script ${JSON.stringify(command)} with administrator privileges`], {
+          stdio:["ignore", "pipe", "pipe"],
+          windowsHide:true
+        });
+        let stderr = "";
+        processHandle.stderr?.on("data", chunk => { stderr = (stderr + chunk.toString()).slice(-12000); });
+        processHandle.once("error", reject);
+        processHandle.once("close", code => {
+          if (code === 0) resolve(null);
+          else reject(new Error(stderr.trim() || "XQuartz 安装被取消或失败"));
+        });
       });
-      let stderr = "";
-      processHandle.stderr?.on("data", chunk => { stderr = (stderr + chunk.toString()).slice(-12000); });
-      processHandle.once("error", reject);
-      processHandle.once("close", code => {
-        if (code === 0) resolve(null);
-        else reject(new Error(stderr.trim() || "XQuartz 安装被取消或失败"));
-      });
-    });
-    const installed = diagnostics();
-    if (!installed.installed) throw new Error("安装命令已完成，但没有检测到 XQuartz");
-    try { fs.rmSync(installer, {force:true}); } catch {}
-    return {ok:true, version:XQUARTZ_VERSION, restart_required:true, diagnostics:installed};
+      const installed = diagnostics();
+      if (!installed.installed) throw new Error("安装命令已完成，但没有检测到 XQuartz");
+      try { fs.rmSync(installer, {force:true}); } catch {}
+      return {ok:true, version:XQUARTZ_VERSION, restart_required:true, diagnostics:installed};
+    } finally {
+      xQuartzInstallerBusy = false;
+    }
   }
 
   async function start() {
@@ -1109,50 +1146,57 @@ function createXServerRuntime(options = {}) {
     const mode = new Set(["query", "indirect", "broadcast"]).has(String(profile.options?.mode))
       ? String(profile.options.mode)
       : "query";
-    const host = mode === "broadcast" ? "255.255.255.255" : String(profile.host || "").trim();
+    const host = mode === "broadcast" ? "255.255.255.255" : String(profile.host || "").trim().replace(/^\[(.*)\]$/, "$1");
     const port = Number(profile.port || 177);
     if (!host || !Number.isInteger(port) || port < 1 || port > 65535) return {ok:false, protocol:"xdmcp", message:"XDMCP 目标地址无效"};
     return new Promise(resolve => {
-      const socket = dgram.createSocket("udp4");
-      let settled = false;
-      const finish = result => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        try { socket.close(); } catch {}
-        resolve(result);
+      const resolveAddress = callback => {
+        if (mode === "broadcast") return callback(null, host, 4);
+        dns.lookup(host, (error, address, family) => callback(error, address, family));
       };
-      const timer = setTimeout(() => finish({ok:false, protocol:"xdmcp", message:"XDMCP 服务未响应，请确认显示管理器已启用 XDMCP/UDP 177"}), 2500);
-      socket.once("error", error => finish({ok:false, protocol:"xdmcp", message:error.message}));
-      socket.on("message", message => {
-        if (message.length < 6 || message.readUInt16BE(0) !== 1) return;
-        const opcode = message.readUInt16BE(2);
-        if (![5, 6].includes(opcode)) return;
-        let offset = 6;
-        if (opcode === 5) offset = readXdmcpText(message, offset).offset;
-        const hostname = readXdmcpText(message, offset);
-        const status = readXdmcpText(message, hostname.offset);
-        finish({
-          ok:opcode === 5,
-          protocol:"xdmcp",
-          client:platform === "win32" && bundledWindowsExecutable()
-            ? "Terma 内置 X Server"
-            : platform === "darwin"
-              ? "Terma 内置 XDMCP（XQuartz）"
-              : path.basename(executable),
-          hostname:hostname.value,
-          message:status.value || (opcode === 5 ? "XDMCP 服务可用" : "XDMCP 服务拒绝连接")
+      resolveAddress((lookupError, address, family) => {
+        if (lookupError || !address) return resolve({ok:false, protocol:"xdmcp", message:lookupError?.message || "XDMCP 目标主机解析失败"});
+        const socket = dgram.createSocket(family === 6 ? "udp6" : "udp4");
+        let settled = false;
+        const finish = result => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          try { socket.close(); } catch {}
+          resolve(result);
+        };
+        const timer = setTimeout(() => finish({ok:false, protocol:"xdmcp", message:"XDMCP 服务未响应，请确认显示管理器已启用 XDMCP/UDP 177"}), 2500);
+        socket.once("error", error => finish({ok:false, protocol:"xdmcp", message:error.message}));
+        socket.on("message", message => {
+          if (message.length < 6 || message.readUInt16BE(0) !== 1) return;
+          const opcode = message.readUInt16BE(2);
+          if (![5, 6].includes(opcode)) return;
+          let offset = 6;
+          if (opcode === 5) offset = readXdmcpText(message, offset).offset;
+          const hostname = readXdmcpText(message, offset);
+          const status = readXdmcpText(message, hostname.offset);
+          finish({
+            ok:opcode === 5,
+            protocol:"xdmcp",
+            client:platform === "win32" && bundledWindowsExecutable()
+              ? "Terma 内置 X Server"
+              : platform === "darwin"
+                ? "Terma 内置 XDMCP（XQuartz）"
+                : path.basename(executable),
+            hostname:hostname.value,
+            message:status.value || (opcode === 5 ? "XDMCP 服务可用" : "XDMCP 服务拒绝连接")
+          });
         });
-      });
-      socket.bind(0, "0.0.0.0", () => {
-        if (mode === "broadcast") socket.setBroadcast(true);
-        const packet = Buffer.alloc(7);
-        packet.writeUInt16BE(1, 0);
-        packet.writeUInt16BE(mode === "broadcast" ? 1 : mode === "indirect" ? 3 : 2, 2);
-        packet.writeUInt16BE(1, 4);
-        packet[6] = 0;
-        socket.send(packet, port, host, error => {
-          if (error) finish({ok:false, protocol:"xdmcp", message:error.message});
+        socket.bind(0, family === 6 ? "::" : "0.0.0.0", () => {
+          if (mode === "broadcast") socket.setBroadcast(true);
+          const packet = Buffer.alloc(7);
+          packet.writeUInt16BE(1, 0);
+          packet.writeUInt16BE(mode === "broadcast" ? 1 : mode === "indirect" ? 3 : 2, 2);
+          packet.writeUInt16BE(1, 4);
+          packet[6] = 0;
+          socket.send(packet, port, address, error => {
+            if (error) finish({ok:false, protocol:"xdmcp", message:error.message});
+          });
         });
       });
     });
@@ -1163,7 +1207,7 @@ function createXServerRuntime(options = {}) {
     await terminateTrackedXdmcpChildren(xdmcpChildren, reservedDisplayNumbers, {platform});
   }
 
-  return { diagnostics, start, stop, installXQuartz, installLinuxGraphicsComponents, openXdmcp, testXdmcp, dispose };
+  return { cacheInfo, clearCache, diagnostics, start, stop, installXQuartz, installLinuxGraphicsComponents, openXdmcp, testXdmcp, dispose };
 }
 
 module.exports = {

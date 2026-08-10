@@ -222,7 +222,12 @@ function normalizeSshTransportError(error, connection: any = {}) {
   }
   const normalized: any = new Error(message);
   normalized.name = "SshTransportError";
-  normalized.code = String(error.code || "SSH_TRANSPORT_FAILED");
+  normalized.code = message.startsWith("SSH 认证失败")
+    ? "SSH_AUTHENTICATION_FAILED"
+    : String(error.code || "SSH_TRANSPORT_FAILED");
+  const connectionId = Number(connection?.id || 0);
+  if (Number.isSafeInteger(connectionId) && connectionId !== 0) normalized.connectionId = connectionId;
+  if (connection?.name) normalized.connectionName = String(connection.name);
   Object.defineProperty(normalized, "cause", {value:error, enumerable:false, configurable:true});
   normalized.host = String(connection?.ssh_host || "").trim();
   normalized.port = Number(connection?.ssh_port || 22);

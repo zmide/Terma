@@ -13,6 +13,8 @@ interface RemoteProfileRepositoryDependencies {
   boundedInteger(value: unknown, fallback: number, minimum: number, maximum: number, label: string): number;
 }
 
+const { normalizeRemoteHost, validateRemoteHost } = require("../remote-host");
+
 const REMOTE_PROTOCOLS = new Set(["rdp", "vnc", "xdmcp", "ftp", "telnet", "serial"]);
 const REMOTE_DEFAULT_PORTS: Record<string, number> = { rdp:3389, vnc:5900, xdmcp:177, ftp:21, telnet:23 };
 const REMOTE_TERMINAL_ENCODINGS = new Set(["utf8", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "latin1"]);
@@ -60,7 +62,8 @@ export function createRemoteProfileRepository(dependencies: RemoteProfileReposit
         height:integer("height", 900, 480, 8192),
         admin_session:bool("admin_session"),
         clipboard:bool("clipboard", true),
-        audio:new Set(["local", "remote", "off"]).has(String(value.audio)) ? String(value.audio) : "local"
+        audio:new Set(["local", "remote", "off"]).has(String(value.audio)) ? String(value.audio) : "local",
+        allow_password_transfer:bool("allow_password_transfer")
       });
     }
     if (protocol === "vnc") {
@@ -136,12 +139,21 @@ export function createRemoteProfileRepository(dependencies: RemoteProfileReposit
     if (!name || name.length > 120) throw new Error("连接名称长度必须在 1-120 个字符之间");
     const options = cleanRemoteOptions(protocol, data.options ?? existing?.options_json);
     const requiresHost = protocol !== "serial" && !(protocol === "xdmcp" && options.mode === "broadcast");
-    const host = protocol === "serial" ? "" : String(data.host ?? existing?.host ?? "").trim();
-    if ((requiresHost && !host) || host.length > 255 || /[\0\r\n]/.test(host)) throw new Error("请填写有效的目标主机");
+    const host = protocol === "serial"
+      ? ""
+      : validateRemoteHost(data.host ?? existing?.host ?? "", {required:requiresHost});
     const submittedPassword = Object.prototype.hasOwnProperty.call(data, "password") ? String(data.password || "") : "";
     const keepExistingPassword = !data.clear_password && existing?.password;
     const password = submittedPassword || (keepExistingPassword ? dependencies.decryptText(existing.password) : "");
     if (password.length > 4096) throw new Error("密码长度不能超过 4096 个字符");
+    const username = (() => {
+      const value = String(data.username ?? existing?.username ?? "").trim();
+      if (/[\0\r\n]/.test(value)) throw new Error("用户名无效");
+      return value.slice(0, 255);
+    })();
+    if (protocol === "rdp" && options.allow_password_transfer && password && !username) {
+      throw new Error("允许传递 RDP 密码时必须填写用户名");
+    }
     if (protocol === "serial" && !options.path) throw new Error("请选择串口设备");
     return {
       name,
@@ -149,7 +161,7 @@ export function createRemoteProfileRepository(dependencies: RemoteProfileReposit
       protocol,
       host,
       port:protocol === "serial" ? null : dependencies.validatePort(data.port || existing?.port || REMOTE_DEFAULT_PORTS[protocol], `${protocol.toUpperCase()} 端口`),
-      username:String(data.username ?? existing?.username ?? "").trim().slice(0, 255),
+      username,
       password:password ? dependencies.encryptText(password) : null,
       favorite:Number(data.favorite ?? existing?.favorite ?? 0) ? 1 : 0,
       tags:String(data.tags ?? existing?.tags ?? "").split(/[,，\s]+/).map(item => item.trim()).filter(Boolean).join(","),
@@ -159,9 +171,14 @@ export function createRemoteProfileRepository(dependencies: RemoteProfileReposit
 
   function remoteProfileView(row: any, includeSecret = false) {
     const options = cleanRemoteOptions(String(row.protocol), row.options_json);
+    let host = String(row.host || "").trim();
+    if (String(row.protocol) !== "serial") {
+      try { host = normalizeRemoteHost(host); } catch {}
+    } else host = "";
     return {
       ...row,
       kind:"remote",
+      host,
       options,
       options_json:undefined,
       password:includeSecret ? dependencies.decryptText(row.password) : undefined,

@@ -3,10 +3,9 @@ const fs = require("node:fs");
 const iconv = require("iconv-lite");
 const path = require("node:path");
 const { DATA_DIR } = require("./config");
-const { getConnection } = require("./db");
 const { notifyEvent } = require("./notifications");
 const { buildDeleteRemotePathCommand, buildRecycleRemotePathCommand, invalidateRemoteDirectoryCache, readRemoteDirectorySize } = require("./sftp");
-const { clearSftpDragCache, deliverSftpPaths, releaseNativeSftpDragTicket, sftpDragCacheInfo, spawnSftpSessionCommand } = require("./sftp-session");
+const { clearSftpDragCache, deliverSftpPaths, getSftpConnection, releaseNativeSftpDragTicket, sftpDragCacheInfo, spawnSftpSessionCommand } = require("./sftp-session");
 const { readSftpJobHistory, writeSftpJobHistoryAtomic } = require("./sftp-job-store");
 
 const jobs = new Map();
@@ -259,7 +258,7 @@ process.once("beforeExit", () => {
 });
 
 function startSftpJob(connectionId, type, command, label, options: any = {}) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const id = crypto.randomUUID();
   const itemCount = Math.max(0, Number(options.itemCount || 0));
   const job: any = {
@@ -406,7 +405,7 @@ function consumeDeleteJobOutput(job, markerPrefix, state, chunk = "", flush = fa
 }
 
 function deletePathsJob(connectionId, paths, recycleEnabled = false) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const request = buildDeleteJobRequest(connection, paths, recycleEnabled);
   const id = crypto.randomUUID();
   const singleName = request.item_count === 1 ? path.posix.basename(request.paths[0]) : "";
@@ -539,7 +538,7 @@ function beginNativeSftpDragJob(token, ticket) {
   const existingId = nativeDragJobIds.get(key);
   if (existingId && jobs.has(existingId)) return { id:existingId, status:jobs.get(existingId).status };
   const connectionId = Number(ticket?.connection_id || 0);
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const topLevel = Array.isArray(ticket?.top_level) ? ticket.top_level : [];
   const entries = Array.isArray(ticket?.entries) ? ticket.entries : [];
   const names = topLevel.map(item => String(item?.name || "")).filter(Boolean);
@@ -729,7 +728,7 @@ function uploadJobResult(job) {
 }
 
 function createUploadJob(connectionId, localPath, remotePath, size = 0, phase = "uploading", options: any = {}) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const id = crypto.randomUUID();
   const normalizedRemotePath = String(remotePath || "").replace(/\\/g, "/");
   const remoteParent = path.posix.dirname(normalizedRemotePath);
@@ -796,7 +795,7 @@ function uploadRemoteCommitCommand(connection, job) {
 function cleanupRemoteUploadArtifact(job) {
   if (!job?.remote_temp_path || !job?.connection_id) return;
   try {
-    const connection = getConnection(job.connection_id);
+    const connection = getSftpConnection(job.connection_id);
     const child = spawnRemote(connection, `rm -f -- ${remotePathOperand(connection, job.remote_temp_path)}`);
     child.on("error", () => {});
     child.stdout.resume();
@@ -835,7 +834,7 @@ function finishUploadTransfer(job, status, error = "") {
 
 function commitUploadTransfer(job, generation) {
   if (!job || job.status !== "running" || Number(job.upload_generation || 0) !== Number(generation)) return;
-  const connection = getConnection(job.connection_id);
+  const connection = getSftpConnection(job.connection_id);
   const child = spawnRemote(connection, uploadRemoteCommitCommand(connection, job));
   job.child = child;
   job.stream = null;
@@ -869,7 +868,7 @@ function finishUploadReceiveFailure(job, error) {
 }
 
 function startUploadTransfer(job, offset = 0, generation = 0) {
-  const connection = getConnection(job.connection_id);
+  const connection = getSftpConnection(job.connection_id);
   if (!job.size && job.local_path && fs.existsSync(job.local_path)) job.size = fs.statSync(job.local_path).size;
   const transferred = Math.max(0, Number(offset || 0));
   const runGeneration = generation || Math.max(0, Number(job.upload_generation || 0)) + 1;
@@ -1200,7 +1199,7 @@ function autoSaveDownloadedFile(job) {
 }
 
 function startLocalDeliveryJob(connectionId, remotePaths, targetDirectory, conflictMode = "rename", options: any = {}) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const paths = Array.isArray(remotePaths) ? remotePaths.map(item => String(item || "")).filter(Boolean) : [];
   const id = crypto.randomUUID();
   const names = paths.map(item => path.posix.basename(item.replace(/\\/g, "/").replace(/\/+$/, "")) || "download");
@@ -1328,7 +1327,7 @@ function startLocalDeliveryJob(connectionId, remotePaths, targetDirectory, confl
 }
 
 function startDownloadJob(connectionId, remotePath, options: any = {}) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const id = crypto.randomUUID();
   const basename = path.posix.basename(String(remotePath || "").replace(/\\/g, "/")) || "download";
   fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
@@ -1367,7 +1366,7 @@ function startDownloadJob(connectionId, remotePath, options: any = {}) {
 function runDownloadJob(id, fetchSize) {
   const job = jobs.get(id);
   if (!job) return;
-  const connection = getConnection(job.connection_id);
+  const connection = getSftpConnection(job.connection_id);
   (async () => {
     try {
       if (fetchSize || !job.size_known) {
@@ -1563,7 +1562,7 @@ function resumeSftpJob(id) {
 function resumeUploadJob(id) {
   const job = jobs.get(id);
   if (!job) return;
-  const connection = getConnection(job.connection_id);
+  const connection = getSftpConnection(job.connection_id);
   if (!job.staged_complete || !job.local_path || !fs.existsSync(job.local_path)) throw new Error("上传暂存文件不存在，无法继续");
   job.status = "pending";
   job.phase = "resuming";
@@ -1608,7 +1607,7 @@ function getSftpJobFile(id) {
 }
 
 function startArchiveDownloadJob(connectionId, remotePaths, options: any = {}) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const paths = [...new Set((Array.isArray(remotePaths) ? remotePaths : []).map(item => String(item || "").replace(/\\/g, "/")).filter(Boolean))];
   if (!paths.length || paths.length > 200) throw new Error("一次最多打包下载 200 个项目");
   const parents = new Set(paths.map(item => path.posix.dirname(item.replace(/\/+$/, "")) || "."));
@@ -1747,18 +1746,28 @@ function sftpCacheInfo() {
   };
 }
 
-function clearSftpCache() {
+function clearSftpCache(category = "") {
+  const requested = String(category || "");
+  const clearDownloads = !requested || requested === "sftp_downloads";
+  const clearUploads = !requested || requested === "sftp_uploads";
+  const clearDrag = !requested || requested === "sftp_drag";
   readHistory();
   const protectedPaths = new Set();
   for (const job of jobs.values()) {
     if (!["running", "pending", "paused", "failed"].includes(job.status)) continue;
     for (const key of ["temp_path", "local_path"]) if (job[key]) protectedPaths.add(path.resolve(job[key]));
   }
-  for (const job of [...jobs.values(), ...readHistory()]) {
-    if (job.type !== "download" || !["done", "cancelled"].includes(job.status)) continue;
-    if (removeDownloadCacheFile(job) && !["saved", "delivered"].includes(job.delivery_status)) job.delivery_status = "cache_cleared";
+  if (clearDownloads) {
+    for (const job of [...jobs.values(), ...readHistory()]) {
+      if (job.type !== "download" || !["done", "cancelled"].includes(job.status)) continue;
+      if (removeDownloadCacheFile(job) && !["saved", "delivered"].includes(job.delivery_status)) job.delivery_status = "cache_cleared";
+    }
   }
-  for (const directory of [DOWNLOADS_DIR, path.join(DATA_DIR, "uploads")]) {
+  const directories = [
+    ...(clearDownloads ? [DOWNLOADS_DIR] : []),
+    ...(clearUploads ? [path.join(DATA_DIR, "uploads")] : [])
+  ];
+  for (const directory of directories) {
     try {
       for (const entry of fs.readdirSync(directory, {withFileTypes:true})) {
         if (!entry.isFile()) continue;
@@ -1767,7 +1776,7 @@ function clearSftpCache() {
       }
     } catch {}
   }
-  clearSftpDragCache();
+  if (clearDrag) clearSftpDragCache();
   persistJobs(true);
   return sftpCacheInfo();
 }
@@ -1848,8 +1857,8 @@ async function resolveCrossCopyProgressSize(job, sourceConnection, entries) {
 }
 
 function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir = ".", conflictMode = "error", entries: any[] = []) {
-  const sourceConnection = getConnection(sourceConnectionId);
-  const targetConnection = getConnection(targetConnectionId);
+  const sourceConnection = getSftpConnection(sourceConnectionId);
+  const targetConnection = getSftpConnection(targetConnectionId);
   const sameConnection = Number(sourceConnectionId) === Number(targetConnectionId);
   if (filenameEncoding(sourceConnection) !== filenameEncoding(targetConnection)) {
     throw new Error("源主机和目标主机的 SFTP 文件名编码必须一致，避免复制后文件名乱码");
@@ -1995,7 +2004,7 @@ function buildItemProgressJobCommand(connection, action, paths, targetDir) {
 }
 
 function copyJob(connectionId, paths, targetDir) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const request = buildItemProgressJobCommand(connection, "copy", paths, targetDir);
   return startSftpJob(connectionId, "copy", request.command, `复制 ${request.itemCount} 项`, {
     itemCount:request.itemCount,
@@ -2004,7 +2013,7 @@ function copyJob(connectionId, paths, targetDir) {
 }
 
 function moveJob(connectionId, paths, targetDir) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const request = buildItemProgressJobCommand(connection, "move", paths, targetDir);
   return startSftpJob(connectionId, "move", request.command, `移动 ${request.itemCount} 项`, {
     itemCount:request.itemCount,
@@ -2013,7 +2022,7 @@ function moveJob(connectionId, paths, targetDir) {
 }
 
 function extractJob(connectionId, remotePath, targetDir) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const lower = String(remotePath || "").toLowerCase();
   let command;
   if (lower.endsWith(".zip")) command = `cd ${remotePathOperand(connection, targetDir)} && unzip -o ${remotePathOperand(connection, remotePath)}`;
@@ -2048,7 +2057,7 @@ function normalizeCompressionRequest(paths, targetDir = ".", archiveName = "", c
 }
 
 function compressJob(connectionId, paths, targetDir = ".", archiveName = "") {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const request = normalizeCompressionRequest(paths, targetDir, archiveName, connection);
   return { ...startSftpJob(connectionId, "compress", request.command, `压缩 ${request.paths.length} 项为 ${request.name}`), output:request.output };
 }

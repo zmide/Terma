@@ -202,9 +202,11 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null) {
     const p=connPayload(form, true);
     const generation = !p.id ? String($("conn_remote_generation")?.value || "") : "";
     let generated = null;
+    let savedConnectionId = Number(p.id || 0);
     if(p.id) await api(`/api/connections/${p.id}`,{method:"PUT",body:JSON.stringify(p)});
     else {
       const saved = await api("/api/connections",{method:"POST",body:JSON.stringify(p)});
+      savedConnectionId = Number(saved?.id || 0);
       if (generation && saved?.id) {
         try {
           generated = await api(`/api/connections/${saved.id}/remote-profiles`, {
@@ -214,6 +216,14 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null) {
         } catch (generationError) {
           notify(`SSH 已保存，但其他连接生成失败：${generationError.message}`, "error");
         }
+      }
+    }
+    const remoteProfileLinkId = Number(form.dataset.remoteProfileLinkId || 0);
+    if (!p.id && remoteProfileLinkId && savedConnectionId && typeof linkRemoteProfileSshManagement === "function") {
+      try {
+        await linkRemoteProfileSshManagement(remoteProfileLinkId, savedConnectionId);
+      } catch (linkError) {
+        notify(`SSH 已保存，但自动关联远程连接失败：${linkError.message}`, "error");
       }
     }
     pendingGroup = "";

@@ -58,6 +58,13 @@ const TERMINAL_PROGRAM_PLATFORMS = new Set(["auto", "posix", "windows"]);
 const DEFAULT_TERMINAL_FONT = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
 function cleanTerminalPreferences(data, existing = null) {
+  const supplied = key => Object.prototype.hasOwnProperty.call(data || {}, key);
+  const inheritFlag = (key, valueKey) => {
+    if (supplied(key)) return Number(data[key]) ? 1 : 0;
+    if (supplied(valueKey)) return 0;
+    if (existing) return Number(existing[key] ?? 1) ? 1 : 0;
+    return 1;
+  };
   const terminalEncoding = String(data.terminal_encoding ?? existing?.terminal_encoding ?? "utf8").toLowerCase();
   if (!TERMINAL_ENCODINGS.has(terminalEncoding)) throw new Error("不支持的终端编码");
   const terminalFontFamily = String(data.terminal_font_family ?? existing?.terminal_font_family ?? DEFAULT_TERMINAL_FONT).trim();
@@ -73,8 +80,11 @@ function cleanTerminalPreferences(data, existing = null) {
   return {
     terminal_encoding: terminalEncoding,
     terminal_font_family: terminalFontFamily,
+    terminal_font_family_inherit: inheritFlag("terminal_font_family_inherit", "terminal_font_family"),
     terminal_font_size: terminalFontSize,
+    terminal_font_size_inherit: inheritFlag("terminal_font_size_inherit", "terminal_font_size"),
     terminal_mobile_font_size: terminalMobileFontSize,
+    terminal_mobile_font_size_inherit: inheritFlag("terminal_mobile_font_size_inherit", "terminal_mobile_font_size"),
     terminal_line_height: Math.round(terminalLineHeight * 10) / 10,
     terminal_font_weight: terminalFontWeight
   };
@@ -489,7 +499,7 @@ function restoreConfigSnapshot(snapshot) {
         ? String(row.terminal_program_platform)
         : "auto";
       run(
-        "INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,ssh_password,private_key_passphrase,ssh_agent_mode,jump_connection_id,connect_timeout_seconds,keepalive_interval_seconds,keepalive_count_max,tcp_keepalive,x11_mode,favorite,last_used_at,notifications_muted,tags,extra_args,autostart_forwards,sort_order,terminal_encoding,terminal_font_family,terminal_font_size,terminal_mobile_font_size,terminal_line_height,terminal_font_weight,terminal_startup_mode,terminal_profile_name,terminal_profile_kind,terminal_program_path,terminal_program_args,terminal_working_directory,terminal_program_platform,sftp_text_encoding,sftp_filename_encoding,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,ssh_password,private_key_passphrase,ssh_agent_mode,jump_connection_id,connect_timeout_seconds,keepalive_interval_seconds,keepalive_count_max,tcp_keepalive,x11_mode,favorite,last_used_at,notifications_muted,tags,extra_args,autostart_forwards,sort_order,terminal_encoding,terminal_font_family,terminal_font_family_inherit,terminal_font_size,terminal_font_size_inherit,terminal_mobile_font_size,terminal_mobile_font_size_inherit,terminal_line_height,terminal_font_weight,terminal_startup_mode,terminal_profile_name,terminal_profile_kind,terminal_program_path,terminal_program_args,terminal_working_directory,terminal_program_platform,sftp_text_encoding,sftp_filename_encoding,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           row.id,
           row.name,
@@ -517,8 +527,11 @@ function restoreConfigSnapshot(snapshot) {
           Number.isInteger(Number(row.sort_order)) && Number(row.sort_order) > 0 ? Number(row.sort_order) : 1,
           row.terminal_encoding || "utf8",
           row.terminal_font_family || DEFAULT_TERMINAL_FONT,
+          Number(row.terminal_font_family_inherit ?? (row.terminal_font_family && row.terminal_font_family !== DEFAULT_TERMINAL_FONT ? 0 : 1)) ? 1 : 0,
           Number(row.terminal_font_size) || 13,
+          Number(row.terminal_font_size_inherit ?? (Number(row.terminal_font_size || 13) === 13 ? 1 : 0)) ? 1 : 0,
           Number(row.terminal_mobile_font_size) || 13,
+          Number(row.terminal_mobile_font_size_inherit ?? (Number(row.terminal_mobile_font_size || 13) === 13 ? 1 : 0)) ? 1 : 0,
           Number(row.terminal_line_height) || 1,
           row.terminal_font_weight || "normal",
           startupMode,

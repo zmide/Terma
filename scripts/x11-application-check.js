@@ -107,6 +107,8 @@ async function main() {
   assert.match(remoteFrontend, /不会继承其他终端中的 sudo -i/);
   assert.match(remoteFrontend, /macOS 不安装 Linux 桌面环境/);
   assert.match(remoteFrontend, /openSshX11ConfigureTerminal/);
+  assert.match(remoteFrontend, /x11\.sshd-config/, "SSH X11 管理授权必须绑定后端使用的精确 scope");
+  assert.match(remoteFrontend, /快速连接的管理员授权只用于这一次操作/, "临时连接管理员授权不得复用");
   assert.match(remoteFrontend, /openXdmcpSetupGuide/);
   assert.match(remoteFrontend, /在终端执行/);
   const productivityFrontend = readFrontendDomain(path.join(__dirname, ".."), "productivity");
@@ -115,6 +117,12 @@ async function main() {
   assert.match(remoteFrontend, /applications\.length \? "success" : "warning"/);
   assert.doesNotMatch(remoteFrontend, /请在终端中输入 SSH 密码/);
   assert.match(connectionFrontend, /children:\(\)=>x11LaunchActions\(id\)/, "连接菜单应把 X11 操作声明为原位子菜单");
+  assert.match(remoteFrontend, /children:\(\)=>x11ModeScopeActions\(connectionId,"untrusted",terminalKey\)/, "受限 X11 默认动作必须提供作用范围子菜单");
+  assert.match(remoteFrontend, /children:\(\)=>x11ModeScopeActions\(connectionId,"trusted",terminalKey\)/, "可信 X11 默认动作必须提供作用范围子菜单");
+  assert.match(remoteFrontend, /children:\(\)=>x11ModeScopeActions\(connectionId,"off",terminalKey\)/, "关闭 X11 默认动作必须提供作用范围子菜单");
+  assert.match(remoteFrontend, /当前终端生效[\s\S]*新建终端[\s\S]*下次生效/, "X11 模式作用范围必须完整且顺序稳定");
+  assert.match(remoteFrontend, /saveAndApplyX11ModeToCurrentTerminal[\s\S]*persistConnectionX11Mode\(connectionId, normalizedMode\)[\s\S]*terminalStartupOverrides\.set\(key,[\s\S]*x11_mode:normalizedMode[\s\S]*reconnectTerminal\(connectionId, key\)/, "当前终端模式必须先保存默认值，再通过标签启动配置重连生效");
+  assert.match(remoteFrontend, /saveAndOpenX11ModeTerminal[\s\S]*persistConnectionX11Mode\(connectionId, normalizedMode\)[\s\S]*openTerminalWithX11Mode\(connectionId, normalizedMode/, "新建终端必须先保存默认值，再使用独立标签模式");
   assert.match(utilityFrontend, /showActionSubMenu\(button, children\)/, "桌面动作菜单应保留父菜单并展开子菜单");
   assert.match(utilityFrontend, /\$\("actionSubMenu"\)\?\.remove\(\)/, "关闭动作菜单时应同时清理子菜单");
   assert.match(ssh2Source, /openBuiltinX11Channel/);

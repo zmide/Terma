@@ -85,6 +85,7 @@ async function waitForCondition(predicate, message, timeoutMs = 1000) {
 async function main() {
   const security = require("../dist/security");
   const terminalSource = fs.readFileSync(path.join(__dirname, "..", "src", "terminal.ts"), "utf8");
+  const terminalRoutesSource = fs.readFileSync(path.join(__dirname, "..", "src", "routes", "terminal-routes.ts"), "utf8");
   const terminalUiSource = fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal.js"), "utf8");
   const serverSource = fs.readFileSync(path.join(__dirname, "..", "src", "server.ts"), "utf8");
   const desktopMainSource = fs.readFileSync(path.join(__dirname, "..", "desktop", "main.js"), "utf8");
@@ -93,12 +94,12 @@ async function main() {
   assert.match(serverSource, /closeDesktopBrowserGrantSessions:closeDesktopBrowserGrantTerminals/);
   assert.match(serverSource, /isDesktopCapabilityRequest\(req, "xserver"\)/, "X11 启动票据和 WebSocket 必须在后端复核桌面授权");
   assert.match(serverSource, /localDirectDesktopIntegrationStatus\(req, "xserver"\)\.authorized[\s\S]*grant = nativeDesktop \|\| localDirectAuthorized \? null/, "自动授权的 X11 终端不能继续绑定旧临时 grant");
-  assert.match(serverSource, /DESKTOP_INTEGRATION_AUTH_REQUIRED/);
+  assert.match(terminalRoutesSource, /DESKTOP_INTEGRATION_AUTH_REQUIRED/);
   assert.match(desktopMainSource, /desktopBrowserAuthorizationPromptGate\.request\(/, "Electron 桌面授权确认必须使用独占门控");
   assert.match(terminalUiSource, /\["trusted", "untrusted"\]\.includes\(effectiveX11Mode\)/, "默认启用 X11 的连接必须在 WebSocket 前申请启动票据");
   assert.match(terminalUiSource, /startup:\{\.\.\.\(startupOverride \|\| \{\}\), x11_mode:"off"\}/, "默认 X11 未授权时必须通过一次性启动票据降级为普通 SSH");
   assert.match(terminalUiSource, /已自动降级为普通 SSH 终端/, "默认 X11 降级必须在终端中明确提示");
-  assert.match(terminalUiSource, /error\.code === "DESKTOP_INTEGRATION_AUTH_REQUIRED"[\s\S]*openXServerManager\(\)/, "X11 授权失败必须显示原因并打开可选择时长的授权界面");
+  assert.match(terminalUiSource, /error\.code === "DESKTOP_INTEGRATION_AUTH_REQUIRED"[\s\S]*openXServerManager\(c\.id, key\)/, "X11 授权失败必须显示原因，并把当前连接上下文传给可选择时长的授权界面");
   security.resetWebAccessSecurity();
   const session = security.createSession();
   const sessionCookie = `td_session=${session}`;

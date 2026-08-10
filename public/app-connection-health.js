@@ -1,4 +1,17 @@
-async function checkConnectionHealth(id, button=null) {
+function connectionHealthAuthenticationFailure(result) {
+  return Boolean(result && result.ssh?.ok === false && typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure(result.ssh));
+}
+
+async function repairConnectionHealthCredentials(id, options={}) {
+  if (typeof repairSshCredentials !== "function") return false;
+  return repairSshCredentials(id, {
+    context:options.context || "健康检查认证失败",
+    error:options.error,
+    onSaved:async () => checkConnectionHealth(id, options.button || null, {skipCredentialRepair:true})
+  });
+}
+
+async function checkConnectionHealth(id, button=null, options={}) {
   const c = currentConnection(id) || connections.find(item => item.id === id);
   const progress = createProgressToast({
     title:`正在检查 ${c?.name || "SSH 连接"}`,
@@ -12,9 +25,17 @@ async function checkConnectionHealth(id, button=null) {
     renderConnections();
     const message = formatHealthMessage(c, result);
     if (result.ok) progress.finish(message, 3500);
-    else progress.fail(message);
+    else {
+      progress.fail(message);
+      if (!options.skipCredentialRepair && connectionHealthAuthenticationFailure(result)) {
+        await repairConnectionHealthCredentials(id, {button});
+      }
+    }
   } catch (error) {
     progress.fail(`${healthConnectionIdentity(c, {id})} 健康检查失败\n${error.message}`);
+    if (!options.skipCredentialRepair && typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure(error)) {
+      await repairConnectionHealthCredentials(id, {button, error});
+    }
   } finally {
     setButtonBusy(button, false);
   }
@@ -32,7 +53,8 @@ function healthConnectionIdentity(connection, result={}) {
   const user = connection?.ssh_user || result.ssh_user || "";
   const host = connection?.ssh_host || result.ssh_host || "";
   const port = Number(connection?.ssh_port || result.ssh_port || 22);
-  return user && host ? `${name} · ${user}@${host}:${port}` : String(name);
+  const displayHost = String(host).includes(":") && !String(host).startsWith("[") ? `[${host}]` : host;
+  return user && host ? `${name} · ${user}@${displayHost}:${port}` : String(name);
 }
 
 function healthForwardLabel(forward) {
@@ -46,7 +68,10 @@ function healthForwardLabel(forward) {
 
 function healthFailureDetails(result) {
   const lines = [];
-  if (!result.ssh?.ok) lines.push(`SSH：${result.ssh?.output || "连接异常"}`);
+  if (!result.ssh?.ok) {
+    const authFailed = connectionHealthAuthenticationFailure(result);
+    lines.push(`SSH：${result.ssh?.output || "连接异常"}${authFailed ? "；可单独检查此连接并修复凭据" : ""}`);
+  }
   for (const forward of result.forwards || []) {
     const label = healthForwardLabel(forward);
     if (forward.reachable === false) lines.push(`${label}：监听端口未就绪`);
@@ -144,7 +169,15 @@ async function checkAllHealth(button=null) {
   }
 }
 
-async function openServerDashboard(id, updateTab=true) {
+async function repairServerDashboardCredentials(id) {
+  if (typeof repairSshCredentials !== "function") return false;
+  return repairSshCredentials(id, {
+    context:"服务器巡检认证失败",
+    onSaved:async () => openServerDashboard(id, false, {skipCredentialRepair:true})
+  });
+}
+
+async function openServerDashboard(id, updateTab=true, options={}) {
   const paneId = typeof currentWorkspacePaneId === "function" ? currentWorkspacePaneId() : "";
   const inPane = action => typeof runInWorkspacePane === "function" ? runInWorkspacePane(paneId, action) : action();
   const c = selectConnection(id);
@@ -170,8 +203,14 @@ async function openServerDashboard(id, updateTab=true) {
     const result = await api(`/api/connections/${c.id}/inspect`, {method:"POST"});
     if (body?.isConnected) body.innerHTML = renderServerInspection(result);
   } catch (error) {
-    if (body?.isConnected) body.innerHTML = `<div class="dashboard-card bad"><strong>巡检失败</strong><span>${esc(error.message)}</span></div>`;
+    const authFailed = typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure(error);
+    if (body?.isConnected) body.innerHTML = `<div class="dashboard-card bad"><strong>巡检失败</strong><span>${esc(error.message)}</span>${authFailed ? `<button type="button" data-action="connection-dashboard-credential-repair" data-connection-id="${Number(c.id)}">${icon("key-round")}<span>修复 SSH 凭据</span></button>` : ""}</div>`;
+    if (authFailed && !options.skipCredentialRepair) await repairServerDashboardCredentials(c.id);
   }
+}
+
+if (typeof registerTermaAction === "function") {
+  registerTermaAction("connection-dashboard-credential-repair", ({element}) => repairServerDashboardCredentials(Number(element.dataset.connectionId || 0)));
 }
 
 function renderServerInspection(result) {

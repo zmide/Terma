@@ -561,7 +561,7 @@ function addGroup() {
 }
 
 function newConnection(groupName="") {
-  if (!requireConfigEncryptionUnlocked("新增 SSH 连接")) return;
+  if (!requireConfigEncryptionUnlocked("新增 SSH 连接")) return false;
   selectedId = null;
   $("view-edit").innerHTML = $("connectionFormTpl").innerHTML;
   refreshIcons();
@@ -570,6 +570,7 @@ function newConnection(groupName="") {
   renderGroupOptions(groupName || pendingGroup);
   loadKeys().catch(()=>{});
   wireConnectionForm();
+  return true;
 }
 
 async function toggleConnectionFavorite(event, id, favorite) {

@@ -66,8 +66,11 @@ CREATE TABLE IF NOT EXISTS connections (
   sort_order INTEGER NOT NULL DEFAULT 1,
   terminal_encoding TEXT NOT NULL DEFAULT 'utf8',
   terminal_font_family TEXT NOT NULL DEFAULT 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+  terminal_font_family_inherit INTEGER NOT NULL DEFAULT 1,
   terminal_font_size INTEGER NOT NULL DEFAULT 13,
+  terminal_font_size_inherit INTEGER NOT NULL DEFAULT 1,
   terminal_mobile_font_size INTEGER NOT NULL DEFAULT 13,
+  terminal_mobile_font_size_inherit INTEGER NOT NULL DEFAULT 1,
   terminal_line_height REAL NOT NULL DEFAULT 1,
   terminal_font_weight TEXT NOT NULL DEFAULT 'normal',
   terminal_startup_mode TEXT NOT NULL DEFAULT 'default',
@@ -216,8 +219,20 @@ COMMIT;
   if (!connectionColumns.has("sort_order")) run("ALTER TABLE connections ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 1");
   if (!connectionColumns.has("terminal_encoding")) run("ALTER TABLE connections ADD COLUMN terminal_encoding TEXT NOT NULL DEFAULT 'utf8'");
   if (!connectionColumns.has("terminal_font_family")) run("ALTER TABLE connections ADD COLUMN terminal_font_family TEXT NOT NULL DEFAULT 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'");
+  if (!connectionColumns.has("terminal_font_family_inherit")) {
+    run("ALTER TABLE connections ADD COLUMN terminal_font_family_inherit INTEGER NOT NULL DEFAULT 1");
+    run("UPDATE connections SET terminal_font_family_inherit=0 WHERE terminal_font_family<>'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace'");
+  }
   if (!connectionColumns.has("terminal_font_size")) run("ALTER TABLE connections ADD COLUMN terminal_font_size INTEGER NOT NULL DEFAULT 13");
+  if (!connectionColumns.has("terminal_font_size_inherit")) {
+    run("ALTER TABLE connections ADD COLUMN terminal_font_size_inherit INTEGER NOT NULL DEFAULT 1");
+    run("UPDATE connections SET terminal_font_size_inherit=0 WHERE terminal_font_size<>13");
+  }
   if (!connectionColumns.has("terminal_mobile_font_size")) run("ALTER TABLE connections ADD COLUMN terminal_mobile_font_size INTEGER NOT NULL DEFAULT 13");
+  if (!connectionColumns.has("terminal_mobile_font_size_inherit")) {
+    run("ALTER TABLE connections ADD COLUMN terminal_mobile_font_size_inherit INTEGER NOT NULL DEFAULT 1");
+    run("UPDATE connections SET terminal_mobile_font_size_inherit=0 WHERE terminal_mobile_font_size<>13");
+  }
   if (!connectionColumns.has("terminal_line_height")) run("ALTER TABLE connections ADD COLUMN terminal_line_height REAL NOT NULL DEFAULT 1");
   if (!connectionColumns.has("terminal_font_weight")) run("ALTER TABLE connections ADD COLUMN terminal_font_weight TEXT NOT NULL DEFAULT 'normal'");
   if (!connectionColumns.has("terminal_startup_mode")) run("ALTER TABLE connections ADD COLUMN terminal_startup_mode TEXT NOT NULL DEFAULT 'default'");

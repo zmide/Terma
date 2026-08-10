@@ -5,13 +5,21 @@ async function api(path, opts = {}) {
     hostTrustAttempt = 0,
     ...fetchOptions
   } = opts;
-  const sftpMatch = String(path || "").match(/^\/api\/connections\/(\d+)\/sftp(?:[/?]|$)/);
-  if (sftpMatch && !String(path).includes("/sftp/session") && !skipSftpConnect && typeof ensureSftpConnection === "function") {
-    await ensureSftpConnection(Number(sftpMatch[1]));
+  const connectionResourceMatch = String(path || "").match(/^\/api\/connections\/(-?\d+)\/(sftp|x11-forwarding|x11-applications)(?:[/?]|$)/);
+  const connectionResourceId = Number(connectionResourceMatch?.[1] || 0);
+  const connectionResource = String(connectionResourceMatch?.[2] || "");
+  const quickHeaders = connectionResourceId < 0 && typeof quickConnectionRequestHeaders === "function"
+    ? quickConnectionRequestHeaders(connectionResourceId, fetchOptions.headers || {})
+    : (fetchOptions.headers || {});
+  if (connectionResourceId < 0 && !quickHeaders["X-Terma-Quick-Connection"]) {
+    throw new Error("临时连接凭据已失效，请重新建立快速连接");
+  }
+  if (connectionResource === "sftp" && !String(path).includes("/sftp/session") && !skipSftpConnect && typeof ensureSftpConnection === "function") {
+    await ensureSftpConnection(connectionResourceId);
   }
   const res = await fetch(path, {
     ...fetchOptions,
-    headers: { "Content-Type": "application/json", ...(fetchOptions.headers || {}) }
+    headers: { "Content-Type": "application/json", ...quickHeaders }
   });
   const text = await res.text();
   let data = {};
@@ -73,6 +81,10 @@ async function api(path, opts = {}) {
     error.code = data.code || "";
     error.status = res.status;
     error.details = data;
+    error.connectionId = Number(data.connection_id || connectionResourceId || 0);
+    error.connectionName = String(data.connection_name || "");
+    error.remoteProfileId = Number(data.remote_profile_id || 0);
+    error.remoteProfileName = String(data.remote_profile_name || "");
     throw error;
   }
   return data;

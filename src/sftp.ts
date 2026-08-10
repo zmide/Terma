@@ -1,8 +1,7 @@
 const { randomBytes } = require("node:crypto");
 const path = require("node:path");
-const { getConnection } = require("./db");
 const { buildRemotePosixCommand } = require("./remote-posix");
-const { spawnSftpSessionCommand } = require("./sftp-session");
+const { getSftpConnection, spawnSftpSessionCommand } = require("./sftp-session");
 const {
   decodeRemoteFilenameOutput,
   decodeRemoteText,
@@ -197,7 +196,7 @@ function buildRemoteDirectoryEntriesCommand() {
 }
 
 async function enumerateRemoteDir(connectionId, remotePath = ".") {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const dir = remotePath || ".";
   const listEntries = buildRemoteDirectoryEntriesCommand();
   const command = [
@@ -260,7 +259,7 @@ function buildRemoteDirectorySizeCommand(remotePath, connection = null, token = 
 }
 
 async function readRemoteDirectorySize(connectionId, remotePath) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const command = buildRemoteDirectorySizeCommand(remotePath, connection);
   const output = (await runRemote(connection, command, null, 5 * 60 * 1000)).toString("utf8").trim();
   const sizeBytes = output.split(/\r?\n/).filter(Boolean).pop() || "";
@@ -275,7 +274,7 @@ async function readRemoteDirectorySize(connectionId, remotePath) {
 }
 
 async function makeRemoteDir(connectionId, remotePath) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   await runRemote(connection, `mkdir -p ${remotePathOperand(connection, remotePath)}`);
   return { ok: true };
 }
@@ -301,7 +300,7 @@ function buildRemoteCreateFileCommand(remotePath, connection = null) {
 }
 
 async function createRemoteFile(connectionId, remotePath) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const { path: normalizedPath, command } = buildRemoteCreateFileCommand(remotePath, connection);
   await runRemote(connection, command, null, 60000);
   return { ok: true, path: normalizedPath };
@@ -326,7 +325,7 @@ function buildDeleteRemotePathCommand(remotePath, connection = null) {
 }
 
 async function deleteRemotePath(connectionId, remotePath) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const request = buildDeleteRemotePathCommand(remotePath, connection);
   await runRemote(connection, request.command);
   return { ok: true };
@@ -444,7 +443,7 @@ async function readRemoteRecycleItem(connection, itemId, storage = "terma") {
 }
 
 async function recycleRemotePath(connectionId, remotePath) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const id = `${Date.now().toString(36)}-${randomBytes(8).toString("hex")}`;
   const deletedAt = Date.now();
   const originalPath = normalizeRemoteRecyclePath(remotePath);
@@ -453,31 +452,31 @@ async function recycleRemotePath(connectionId, remotePath) {
 }
 
 async function listRemoteRecycleItems(connectionId) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   return parseRemoteRecycleItems((await runRemote(connection, buildListRemoteRecycleCommand())).toString("utf8"));
 }
 
 async function restoreRemoteRecycleItem(connectionId, itemId, storage = "terma") {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const originalPath = await readRemoteRecycleItem(connection, itemId, storage);
   await runRemote(connection, buildRestoreRemoteRecycleCommand(itemId, originalPath, connection, storage), null, 60000);
   return { ok: true, original_path: originalPath };
 }
 
 async function deleteRemoteRecycleItem(connectionId, itemId, storage = "terma") {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   await runRemote(connection, buildDeleteRemoteRecycleCommand(itemId, storage), null, 60000);
   return { ok: true };
 }
 
 async function clearRemoteRecycleItems(connectionId) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   await runRemote(connection, buildClearRemoteRecycleCommand(), null, 60000);
   return { ok: true };
 }
 
 async function renameRemotePath(connectionId, from, to) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   await runRemote(connection, `mv -- ${remotePathOperand(connection, from)} ${remotePathOperand(connection, to)}`);
   return { ok: true };
 }
@@ -532,7 +531,7 @@ function buildRemotePermissionCommand(request, connection = null) {
 }
 
 async function setRemotePermissions(connectionId, paths, mode, recursive = false, owner = "", group = "") {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const request = normalizeRemotePermissionRequest(paths, mode, recursive, owner, group);
   await runRemote(connection, buildRemotePermissionCommand(request, connection), null, 120000);
   invalidateRemoteDirectoryCache(connectionId);
@@ -540,7 +539,7 @@ async function setRemotePermissions(connectionId, paths, mode, recursive = false
 }
 
 async function copyRemotePaths(connectionId, paths, targetDir) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const quoted = (paths || []).map((item) => remotePathOperand(connection, item)).join(" ");
   if (!quoted) throw new Error("请选择要复制的文件");
   await runRemote(connection, `cp -a -- ${quoted} ${remotePathOperand(connection, targetDir)}`, null, 120000);
@@ -548,7 +547,7 @@ async function copyRemotePaths(connectionId, paths, targetDir) {
 }
 
 async function moveRemotePaths(connectionId, paths, targetDir) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const quoted = (paths || []).map((item) => remotePathOperand(connection, item)).join(" ");
   if (!quoted) throw new Error("请选择要移动的文件");
   await runRemote(connection, `mv -- ${quoted} ${remotePathOperand(connection, targetDir)}`, null, 120000);
@@ -556,7 +555,7 @@ async function moveRemotePaths(connectionId, paths, targetDir) {
 }
 
 async function extractRemoteArchive(connectionId, remotePath, targetDir) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const lower = String(remotePath || "").toLowerCase();
   let command;
   if (lower.endsWith(".zip")) command = `cd ${remotePathOperand(connection, targetDir)} && unzip -o ${remotePathOperand(connection, remotePath)}`;
@@ -629,7 +628,7 @@ function suffixedRemoteUploadName(name, index) {
 }
 
 async function resolveRemoteUploadTarget(connectionId, directory, filename, conflict = "error") {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const dir = normalizeRemoteUploadDirectory(directory);
   const name = normalizeRemoteUploadName(filename);
   const requestedPath = joinRemoteUploadPath(dir, name);
@@ -685,7 +684,7 @@ function buildReadRemoteBinaryExecCommand(remotePath, maximumBytes, connection =
 }
 
 async function readRemoteBinaryFile(connectionId, remotePath, maximumBytes = DEFAULT_MAX_OPEN_FILE_SIZE) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const limit = normalizeOpenFileLimit(maximumBytes);
   let body;
   try {
@@ -712,12 +711,12 @@ function buildStreamRemoteOpenCommand(remotePath, maximumBytes, connection = nul
     `case "$TERMA_SIZE" in ""|*[!0-9]*) printf "%s\\n" "远程文件大小返回格式无效" >&2; exit 1;; esac`,
     `if [ "$TERMA_SIZE" -gt "$TERMA_LIMIT" ]; then if [ "$TERMA_IS_LINK" = 1 ]; then printf "符号链接本身为 %s B，目标文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "\${TERMA_LINK_SIZE:-0}" "$TERMA_SIZE" >&2; else printf "文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "$TERMA_SIZE" >&2; fi; exit 1; fi`,
     `printf "TERMA_OPEN_READY:%s:%s:%s\\n" "$TERMA_SIZE" "$TERMA_IS_LINK" "\${TERMA_LINK_SIZE:-0}"`,
-    `cat -- "$TERMA_TARGET"`
+    `head -c "$TERMA_SIZE" < "$TERMA_TARGET"`
   ].join("; ");
 }
 
 function streamRemoteOpenFile(connectionId, remotePath, maximumBytes, res, req, secureResponseHeaders = headers => headers) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const limit = normalizeOpenFileLimit(maximumBytes);
   const child = spawnRemote(connection, buildStreamRemoteOpenCommand(remotePath, limit, connection));
   let headerBuffer = Buffer.alloc(0);
@@ -824,7 +823,7 @@ function streamRemoteOpenFile(connectionId, remotePath, maximumBytes, res, req, 
 }
 
 async function readRemoteTextFile(connectionId, remotePath, requestedEncoding = "", maximumBytes = DEFAULT_MAX_OPEN_FILE_SIZE) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const {content:body, size, limit} = await readRemoteBinaryFile(connectionId, remotePath, maximumBytes);
   if (body.includes(0)) throw new Error("该文件包含二进制内容，无法安全地以文本编辑");
   const preferred = normalizeTextEncoding(requestedEncoding || connection.sftp_text_encoding || "auto");
@@ -832,7 +831,7 @@ async function readRemoteTextFile(connectionId, remotePath, requestedEncoding = 
   return { ...decoded, preferred_encoding: connection.sftp_text_encoding || "auto", size, limit };
 }
 function streamRemoteFile(connectionId, remotePath, res, req) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const basename = String(remotePath || "").split("/").pop() || "download";
   const child = spawnRemote(connection, `cat -- ${remotePathOperand(connection, remotePath)}`);
   let headersSent = false;
@@ -883,7 +882,7 @@ function streamRemoteFile(connectionId, remotePath, res, req) {
 }
 
 async function writeRemoteFile(connectionId, remotePath, data, options: { backup?: boolean } = {}) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const quotedPath = remotePathOperand(connection, remotePath);
   let backupPath = null;
   let command = "";
@@ -897,7 +896,7 @@ async function writeRemoteFile(connectionId, remotePath, data, options: { backup
 }
 
 async function setRemoteFileMtime(connectionId, remotePath, mtimeSeconds) {
-  const connection = getConnection(connectionId);
+  const connection = getSftpConnection(connectionId);
   const epoch = Math.max(0, Math.floor(Number(mtimeSeconds || 0)));
   if (!epoch) return {ok:true};
   const target = remotePathOperand(connection, remotePath);

@@ -6,21 +6,6 @@ const os = require("node:os");
 const path = require("node:path");
 const { URL } = require("node:url");
 
-function probeTcpEndpoint(host, port, timeoutMs=2200) {
-  return new Promise<{ok:boolean, error:string}>(resolve => {
-    let settled = false;
-    const socket = net.createConnection({host:String(host || ""), port:Number(port || 0)});
-    const finish = (ok, error="") => {
-      if (settled) return;
-      settled = true;
-      socket.destroy();
-      resolve({ok, error:String(error || "")});
-    };
-    socket.setTimeout(timeoutMs, () => finish(false, "连接超时"));
-    socket.once("connect", () => finish(true));
-    socket.once("error", error => finish(false, error?.message || "连接失败"));
-  });
-}
 const {
   DATA_DIR,
   BASE_DIR,
@@ -131,6 +116,7 @@ const { diagnoseSshError } = require("./ssh-diagnostics");
 const { inspectExtraArgs } = require("./ssh-command");
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { deployGeneratedPublicKey, generateSshKey } = require("./ssh-key-wizard");
+const { authorizeQuickConnectionId, createQuickTerminalTicket, revokeQuickTerminalTicket } = require("./quick-terminal");
 const { createTerminalStartupTicket } = require("./terminal-startup");
 const { buildRemoteX11InstallPlan, discoverRemoteX11Applications, verifyRemoteX11Application, x11RuntimeDiagnostics } = require("./x11");
 const { DETECT_SCRIPT: SSH_X11_DETECT_SCRIPT, buildConfigureScript: buildSshX11ConfigureScript, buildInteractiveConfigureCommand: buildInteractiveSshX11ConfigureCommand, parseDetectionOutput: parseSshX11Detection } = require("./x11-sshd-config");
@@ -144,6 +130,7 @@ const {
   handleTerminalUpgrade,
   closeAllTerminals,
   closeDesktopBrowserGrantTerminals,
+  closeQuickConnectionTerminals,
   refreshDesktopBrowserGrantTerminals
 } = require("./terminal");
 const { closeAllRemoteTerminals, handleRemoteTerminalUpgrade, listSerialPorts, testRemoteTerminalProfile } = require("./remote-terminal");
@@ -152,7 +139,7 @@ const { buildVncStartCommand, detectVncServer, validateVncServerComponent, vncSe
 const { componentInstallCommand } = require("./remote-component-installer");
 const { createRemoteOfflineTaskManager } = require("./remote-offline-tasks");
 const { clearVncClipboardCapabilityCache, inspectVncClipboardHelper, readVncRemoteClipboard, vncClipboardHelperGuideResult, writeVncRemoteClipboard } = require("./vnc-clipboard");
-const { cleanupFtpTemp, deleteFtpPath, downloadFtpFile, listFtpDirectory, makeFtpDirectory, renameFtpPath, testFtpProfile, uploadFtpFile } = require("./ftp");
+const { cleanupFtpTemp, deleteFtpPath, downloadFtpFile, listFtpDirectory, makeFtpDirectory, renameFtpPath, testFtpCredentials, testFtpProfile, uploadFtpFile } = require("./ftp");
 const { chmodLocalPath, createLocalEntry, deleteLocalPaths, listLocalDirectory, renameLocalPath, uploadLocalPaths } = require("./local-files");
 const {
   closeAllSftpSessions,
@@ -202,6 +189,7 @@ const {
   logout,
   publicAuthStatus,
   publicSecuritySettings,
+  requestAuthenticationBinding,
   readSecuritySettings,
   resetWebAccessSecurity,
   revokeDesktopBrowserGrant,
@@ -247,10 +235,18 @@ const {
   xServerDiagnosticsWithoutDesktopIntegration
 } = require("./routes/desktop-integration-routes");
 const { handleSshRoutes } = require("./routes/ssh-routes");
+const { handleTerminalRoutes } = require("./routes/terminal-routes");
+const { handleRemoteCredentialRoutes } = require("./routes/remote-credential-routes");
+const { handleRemoteConnectivityRoutes } = require("./routes/remote-connectivity-routes");
 const { handleSftpOpenRoutes } = require("./routes/sftp-open-routes");
+const { handleX11ApplicationRoutes } = require("./routes/x11-application-routes");
+const { handleX11ForwardingRoutes } = require("./routes/x11-forwarding-routes");
 const { streamRemoteOpenFile } = require("./sftp");
+const { inspectRemoteProfileConnectivity, probeTcpEndpoint } = require("./remote-connectivity");
+const { formatRemoteEndpoint } = require("./remote-host");
 const { handleStorageRoutes } = require("./routes/storage-routes");
 const { handleUpdateRoutes } = require("./routes/update-routes");
+const { createProgramCacheManager } = require("./program-cache");
 const { createStorageRestoreHelpers } = require("./storage-restore");
 const {
   MAX_PORT_FALLBACKS,
@@ -449,17 +445,7 @@ function prepareSftpWriteContent(content, encoding = "utf8") {
 }
 
 function programCacheView() {
-  const sftp = sftpCacheInfo();
-  const updates = updateInstaller.cacheInfo();
-  const bytes = Number(sftp.bytes || 0) + Number(updates.bytes || 0);
-  const reclaimableBytes = Number(sftp.reclaimable_bytes || 0) + (updates.busy ? 0 : Number(updates.bytes || 0));
-  return {
-    bytes,
-    files:Number(sftp.files || 0) + Number(updates.files || 0),
-    reclaimable_bytes:reclaimableBytes,
-    retained_bytes:Math.max(0, bytes - reclaimableBytes),
-    categories:{sftp_downloads:sftp.downloads, sftp_uploads:sftp.uploads, sftp_drag:sftp.drag, updates}
-  };
+  return programCacheManager.view();
 }
 
 function forwardLogLabel(id) {
@@ -1106,6 +1092,16 @@ const remoteOfflineTasks = createRemoteOfflineTaskManager({
   list_sftp_jobs:listSftpJobs,
   release_grant:releaseRemoteAdminGrant
 });
+const programCacheManager = createProgramCacheManager({
+  sftpCacheInfo,
+  clearSftpCache,
+  updateCacheInfo:() => updateInstaller.cacheInfo(),
+  clearUpdateCache:() => updateInstaller.clearCache(),
+  remoteComponentCacheInfo:() => remoteOfflineTasks.cacheInfo(),
+  clearRemoteComponentCache:() => remoteOfflineTasks.clearCache(),
+  desktopCacheInfo:() => desktopIntegration?.programCacheInfo?.() || null,
+  clearDesktopCache:(category) => desktopIntegration?.clearProgramCache?.(category)
+});
 
 function linuxDesktopTaskView(task) {
   return {
@@ -1472,7 +1468,9 @@ function serveStatic(req, res, pathname) {
   const responseHeaders = { "Content-Type": types[ext] || "application/octet-stream", "Cache-Control":"no-cache" };
   if (ext === ".html" && path.basename(file) === "index.html") {
     const nonce = crypto.randomBytes(18).toString("base64");
-    body = Buffer.from(body.toString("utf8").replaceAll("__TERMA_CSP_NONCE__", nonce), "utf8");
+    body = Buffer.from(body.toString("utf8")
+      .replaceAll("__TERMA_CSP_NONCE__", nonce)
+      .replaceAll("__TERMA_VERSION__", encodeURIComponent(PACKAGE_VERSION)), "utf8");
     responseHeaders["Content-Security-Policy"] = mainAppContentSecurityPolicy(nonce);
   }
   responseHeaders["Content-Length"] = body.length;
@@ -1499,6 +1497,29 @@ function hasShutdownToken(req) {
   const actual = Buffer.from(provided);
   const expected = Buffer.from(shutdownAuthToken);
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function authorizedConnectionForRequest(req, value) {
+  const connectionId = Number(value);
+  if (!Number.isSafeInteger(connectionId) || connectionId === 0) {
+    throw new Error("SSH 连接 ID 无效");
+  }
+  if (connectionId > 0) return getConnection(connectionId);
+  const token = String(req.headers["x-terma-quick-connection"] || "").trim();
+  try {
+    const connection = authorizeQuickConnectionId(connectionId, token, requestAuthenticationBinding(req));
+    if (connection.auth_type === "key") requireEncryptionUnlocked();
+    return connection;
+  } catch (cause) {
+    const error: any = new Error(cause?.message || "临时连接已失效，请重新建立快速连接");
+    error.statusCode = 403;
+    error.code = "QUICK_CONNECTION_AUTH_REQUIRED";
+    throw error;
+  }
+}
+
+function authorizedSftpConnectionId(req, value) {
+  return Number(authorizedConnectionForRequest(req, value).id);
 }
 
 async function handleApi(req, res, pathname) {
@@ -1587,7 +1608,42 @@ async function handleApi(req, res, pathname) {
     removeTrustedHost, repairIdentityFile, saveUploadedKey, sendJson, terminalCapabilitiesForConnection,
     testSsh, userSshDir:USER_SSH_DIR
   })) return;
+  if (await handleTerminalRoutes(req, res, pathname, {
+    createQuickTerminalTicket, createTerminalStartupTicket, getConnection,
+    closeQuickConnectionTerminals, disconnectSftpSession, isDesktopCapabilityRequest, readJson, requestAuthenticationBinding,
+    requireEncryptionUnlocked, revokeQuickTerminalTicket, sendJson
+  })) return;
+  if (await handleRemoteCredentialRoutes(req, res, pathname, {
+    getRemoteProfile,
+    readJson,
+    sendJson,
+    testFtpCredentials
+  })) return;
+  if (await handleRemoteConnectivityRoutes(req, res, pathname, {
+    getRemoteProfile,
+    inspectRemoteProfileConnectivity,
+    sendJson
+  })) return;
+  if (await handleX11ForwardingRoutes(req, res, pathname, {
+    authorizeConnection:authorizedConnectionForRequest,
+    createRemoteAdminGrant,
+    detectSshX11ForConnection,
+    readJson,
+    releaseRemoteAdminGrant,
+    sendJson,
+    startSshX11ConfigurationTask
+  })) return;
+  if (await handleX11ApplicationRoutes(req, res, pathname, {
+    authorizeConnection:authorizedConnectionForRequest,
+    installForConnection:installX11ApplicationsForConnection,
+    installPlanForConnection:x11InstallPlanForConnection,
+    listForConnection:x11ApplicationsForConnection,
+    readJson,
+    sendJson,
+    verifyForConnection:verifyX11ApplicationForConnection
+  })) return;
   if (handleSftpOpenRoutes(req, res, pathname, {
+    authorizeConnectionId:authorizedSftpConnectionId,
     readRuntimeSettings,
     runtimeSettingsFile:RUNTIME_SETTINGS_FILE,
     secureHeaders,
@@ -1609,13 +1665,12 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, result, result?.ok ? 202 : 409);
   }
   if (await handleStorageRoutes(req, res, pathname, {
-    authRequired, baseDir:BASE_DIR, checkRuntimeSettings, clearSftpCache,
-    clearUpdateCache:() => updateInstaller.clearCache(), dataDir:DATA_DIR,
+    authRequired, baseDir:BASE_DIR, checkRuntimeSettings,
+    clearProgramCache:(category) => programCacheManager.clear(category), dataDir:DATA_DIR,
     getDesktopIntegration:() => desktopIntegration, isDesktopRequest, isDirectLoopbackRequest,
     listLocalDirectories, normalizeRuntimeSettings, programCacheView, projectSshDir:PROJECT_SSH_DIR,
     readJson, readRuntimeSettings, runtimeSettingsFile:RUNTIME_SETTINGS_FILE, runtimeSettingsView,
-    saveWebStorageSettings, sendJson, storageSettingsView,
-    updateCacheBusy:() => Boolean(updateInstaller.cacheInfo().busy), writeRuntimeSettings
+    saveWebStorageSettings, sendJson, storageSettingsView, writeRuntimeSettings
   })) return;
   if (await handleUpdateRoutes(req, res, pathname, {
     checker:updateChecker,
@@ -1889,8 +1944,7 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && pathname === "/api/admin-grants") {
     const data = await readJson(req);
     const connectionId = Number(data.connection_id || data.id || 0);
-    if (!Number.isInteger(connectionId) || connectionId < 1) throw new Error("SSH 连接 ID 无效");
-    const connection = getConnection(connectionId);
+    const connection = authorizedConnectionForRequest(req, connectionId);
     return sendJson(res, await issueRemoteAdminGrant(connection, data), 201);
   }
   if (req.method === "GET" && pathname === "/api/remote-component/tasks") return sendJson(res, remoteOfflineTasks.list());
@@ -1952,21 +2006,6 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && pathname === "/api/export/config") {
     const data = await readJson(req);
     return sendJson(res, { config: exportConfig(data.ids || []) });
-  }
-  if (req.method === "POST" && pathname === "/api/terminal/startup-tickets") {
-    const data = await readJson(req);
-    const connection = getConnection(Number(data.connection_id));
-    const requestedX11Mode = ["trusted", "untrusted", "off"].includes(String(data.startup?.x11_mode || ""))
-      ? String(data.startup.x11_mode)
-      : String(connection.x11_mode || "off");
-    if (["trusted", "untrusted"].includes(requestedX11Mode) && !isDesktopCapabilityRequest(req, "xserver")) {
-      return sendJson(res, {
-        error:"当前浏览器没有 X11 桌面集成授权，请重新申请授权后再打开 X11 终端",
-        code:"DESKTOP_INTEGRATION_AUTH_REQUIRED",
-        scopes:["xserver"]
-      }, 403);
-    }
-    return sendJson(res, createTerminalStartupTicket(data.connection_id, data.startup || {}), 201);
   }
   if (req.method === "POST" && pathname === "/api/command-templates") {
     return sendJson(res, saveCommandTemplate(await readJson(req)), 201);
@@ -2116,23 +2155,6 @@ async function handleApi(req, res, pathname) {
     if (req.method === "GET") return sendJson(res, task);
     if (req.method === "DELETE") return sendJson(res, {removed:remoteOfflineTasks.remove(parts[3])});
   }
-  if (parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "x11-forwarding") {
-    const connectionId = Number(parts[2]);
-    if (!Number.isInteger(connectionId) || connectionId < 1) throw new Error("SSH 连接 ID 无效");
-    const connection = getConnection(connectionId);
-    if (req.method === "GET") return sendJson(res, await detectSshX11ForConnection(connection));
-    if (req.method === "POST") {
-      const data = await readJson(req);
-      const grant = createRemoteAdminGrant(connection, data, "x11.sshd-config");
-      try {
-        const result = await startSshX11ConfigurationTask(connection, data.action, grant);
-        return sendJson(res, result, result?.task ? 202 : 200);
-      } catch (error) {
-        releaseRemoteAdminGrant(grant);
-        throw error;
-      }
-    }
-  }
   if (parts.length >= 3 && parts[0] === "api" && parts[1] === "remote-profiles") {
     const id = Number(parts[2]);
     if (!Number.isInteger(id) || id < 1) throw new Error("远程连接 ID 无效");
@@ -2259,7 +2281,7 @@ async function handleApi(req, res, pathname) {
       if (!launcher) return sendJson(res, {error:profile.protocol === "xdmcp" ? "当前桌面版不支持 XDMCP" : "当前桌面版不支持系统远程桌面客户端"}, 403);
       if (profile.protocol === "rdp") {
         const endpoint = await probeTcpEndpoint(profile.host, profile.port || 3389);
-        if (!endpoint.ok) throw new Error(`无法从本机连接 RDP 服务 ${profile.host}:${profile.port || 3389}（${endpoint.error || "端口不可达"}）。请检查远端服务、防火墙和网络路由。`);
+        if (!endpoint.ok) throw new Error(`无法从本机连接 RDP 服务 ${formatRemoteEndpoint(profile.host, profile.port || 3389)}（${endpoint.error || "端口不可达"}）。请检查远端服务、防火墙和网络路由。`);
       }
       const result = await Promise.resolve(launcher({
         id:profile.id,
@@ -2267,6 +2289,7 @@ async function handleApi(req, res, pathname) {
         host:profile.host,
         port:profile.port,
         username:profile.username,
+        password:profile.password,
         options:profile.options
       }));
       updateRemoteProfileUsage(id);
@@ -2379,23 +2402,6 @@ async function handleApi(req, res, pathname) {
     if (result.created) appendSystemLog(`已从 SSH 连接生成 ${result.protocol.toUpperCase()} 连接：${result.name}`);
     return sendJson(res, result, result.created ? 201 : 200);
   }
-  if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "x11-applications") {
-    const connection = getConnection(Number(parts[2]));
-    return sendJson(res, {discovery:await x11ApplicationsForConnection(connection)});
-  }
-  if (req.method === "POST" && parts.length === 5 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "x11-applications" && parts[4] === "install-plan") {
-    const connection = getConnection(Number(parts[2]));
-    return sendJson(res, await x11InstallPlanForConnection(connection));
-  }
-  if (req.method === "POST" && parts.length === 5 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "x11-applications" && parts[4] === "install") {
-    const connection = getConnection(Number(parts[2]));
-    return sendJson(res, await installX11ApplicationsForConnection(connection, await readJson(req)));
-  }
-  if (req.method === "POST" && parts.length === 5 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "x11-applications" && parts[4] === "verify") {
-    const connection = getConnection(Number(parts[2]));
-    const data = await readJson(req);
-    return sendJson(res, {application:await verifyX11ApplicationForConnection(connection, data.command)});
-  }
   if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "terminal-capabilities") {
     const connection = getConnection(Number(parts[2]));
     return sendJson(res, { capabilities:await terminalCapabilitiesForConnection(connection) });
@@ -2481,7 +2487,7 @@ async function handleApi(req, res, pathname) {
     return sendJson(res, { id }, 201);
   }
   if (parts.length >= 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "sftp") {
-    const connectionId = Number(parts[2]);
+    const connectionId = authorizedSftpConnectionId(req, parts[2]);
     if (req.method === "POST" && parts.length === 5 && parts[4] === "external-edit") {
       if (!isDesktopRequest(req) || !desktopIntegration?.openExternalFile) return sendJson(res, {error:"外部编辑器只能在本机桌面端中使用"}, 403);
       const data = await readJson(req);
@@ -2679,6 +2685,9 @@ async function handleApi(req, res, pathname) {
     }
     if (req.method === "POST" && parts[4] === "cross-copy") {
       const targetConnectionId = Number(data.target_connection_id);
+      if (targetConnectionId < 0 && targetConnectionId !== connectionId) {
+        return sendJson(res, {error:"不能把文件跨会话复制到另一个临时连接"}, 403);
+      }
       const result = crossCopyJob(connectionId, targetConnectionId, data.paths || [], data.target || ".", data.conflict || "error", data.entries || []);
       invalidateRemoteDirectoryCache(targetConnectionId);
       return sendJson(res, result, 202);
@@ -2807,7 +2816,16 @@ function requestHandler(req, res) {
     else if (!res.headersSent) {
       const status = Number(error?.statusCode || error?.status_code || 400);
       const body: any = {error:error.message || String(error)};
-      if (error?.code) body.code = String(error.code);
+      const diagnosis = diagnoseSshError(body.error);
+      const authenticationFailure = diagnosis.reason === "SSH 认证失败";
+      if (authenticationFailure) body.code = "SSH_AUTHENTICATION_FAILED";
+      else if (error?.code) body.code = String(error.code);
+      const connectionId = Number(error?.connectionId || error?.connection_id || 0);
+      if (Number.isSafeInteger(connectionId) && connectionId !== 0) body.connection_id = connectionId;
+      if (error?.connectionName) body.connection_name = String(error.connectionName);
+      const remoteProfileId = Number(error?.remoteProfileId || error?.remote_profile_id || 0);
+      if (Number.isSafeInteger(remoteProfileId) && remoteProfileId > 0) body.remote_profile_id = remoteProfileId;
+      if (error?.remoteProfileName) body.remote_profile_name = String(error.remoteProfileName);
       if (error?.task) body.task = error.task;
       if (Array.isArray(error?.issues)) body.issues = error.issues;
       sendJson(res, body, status >= 400 && status <= 599 ? status : 400);
@@ -2828,7 +2846,8 @@ function upgradeHandler(req, socket) {
         x11Authorized:isDesktopCapabilityRequest(req, "xserver"),
         nativeDesktop,
         grantId:String(grant?.grant_id || ""),
-        expiresAt:Number(grant?.expires_at || 0)
+        expiresAt:Number(grant?.expires_at || 0),
+        requestBinding:requestAuthenticationBinding(req)
       });
     }
     if (pathname === "/ws/remote-terminal") return handleRemoteTerminalUpgrade(req, socket);

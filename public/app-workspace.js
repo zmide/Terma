@@ -267,14 +267,14 @@ function workspaceTabPresentation(tab) {
   }
   const remoteIcons = {"remote-terminal":"square-terminal", "remote-desktop":"monitor", ftp:"folder-sync", "local-files":"hard-drive"};
   if (remoteIcons[tab?.kind]) return {title, icon:`<span class="tab-kind-icon ${escAttr(tab.kind)}" aria-hidden="true">${icon(remoteIcons[tab.kind])}</span>`};
-  if (!["terminal", "sftp"].includes(tab?.kind)) return {title, icon:""};
-  const terminal = tab.kind === "terminal";
+  if (!["terminal", "quick-terminal", "sftp"].includes(tab?.kind)) return {title, icon:""};
+  const terminal = ["terminal", "quick-terminal"].includes(tab.kind);
   const marker = terminal
     ? /\s*·\s*终端(?=\s*(?:#\d+|·|$))/
     : /\s*·\s*SFTP(?=\s*(?:#\d+|·|$))/i;
   return {
     title:title.replace(marker, "").trim(),
-    icon:`<span class="tab-kind-icon ${tab.kind}" aria-hidden="true">${icon(terminal ? "square-terminal" : "folder-open")}</span>`
+    icon:`<span class="tab-kind-icon ${tab.kind}${terminal ? " terminal" : ""}" aria-hidden="true">${icon(terminal ? "square-terminal" : "folder-open")}</span>`
   };
 }
 
@@ -552,6 +552,7 @@ function setWorkspaceTabConnectionStatus(key, status) {
 
 function renderTabContent(tab) {
   if (tab.kind === "terminal") return openTerminal(tab.id, false, tab.key, tab.title);
+  if (tab.kind === "quick-terminal") return restoreQuickTerminalTab(tab);
   if (tab.kind === "forwards") return openForwards(tab.id, false);
   if (tab.kind === "edit") return editConnection(tab.id, false);
   if (tab.kind === "import") return showImport(false);
@@ -664,7 +665,7 @@ function showTabContextMenu(event, key) {
 }
 
 function persistableTabs() {
-  return tabs.filter(tab => tab.kind).map(({key,title,subtitle,viewName,closable,kind,id,path,protocol}) => ({key,title,subtitle,viewName,closable,kind,id,path,protocol}));
+  return tabs.filter(tab => tab.kind && !tab.transient && tab.kind !== "quick-terminal").map(({key,title,subtitle,viewName,closable,kind,id,path,protocol}) => ({key,title,subtitle,viewName,closable,kind,id,path,protocol}));
 }
 
 function saveTabsState() {
@@ -699,6 +700,7 @@ function restoreTabsState() {
 function closeTerminalSession(key) {
   const session = terminalSessions.get(key);
   if (!session) return;
+  const quickConnectionId = session.connection?.quick_connection ? Number(session.connection.id || 0) : 0;
   session.connectionAttempt = Number(session.connectionAttempt || 0) + 1;
   if (typeof cancelTerminalCursorCopy === "function") cancelTerminalCursorCopy(session, key);
   try { session.socket?.close(); } catch {}
@@ -711,7 +713,11 @@ function closeTerminalSession(key) {
   clearTimeout(session.latencyPendingTimer);
   clearTimeout(session.autoCopyTimer);
   terminalSessions.delete(key);
+  if (typeof quickTerminalConnections !== "undefined") quickTerminalConnections.delete(key);
   if (typeof terminalStartupOverrides !== "undefined") terminalStartupOverrides.delete(key);
+  if (quickConnectionId < 0 && typeof releaseQuickConnectionIfUnused === "function") {
+    queueMicrotask(() => releaseQuickConnectionIfUnused(quickConnectionId));
+  }
 }
 
 function workspaceDocumentEndpoint(subtitle="") {
@@ -963,7 +969,7 @@ function renderExplorerTools() {
   }
   if (primaryView === "settings") {
     const activeSection = typeof activeSettingsSection === "string" ? normalizeSettingsSection(activeSettingsSection) : "settings-general";
-    const sections = [["settings-general", "settings-2", "通用设置"], ["settings-basic", "shield-check", "安全设置"], ["settings-notifications", "bell", "通知设置"], ["settings-runtime", "activity", "启动与运行"], ["settings-about", "info", "关于"]];
+    const sections = [["settings-general", "settings-2", "通用设置"], ["settings-basic", "shield-check", "安全设置"], ["settings-notifications", "bell", "通知设置"], ["settings-runtime", "activity", "启动与运行"], ["settings-cache", "hard-drive", "缓存管理"], ["settings-about", "info", "关于"]];
     const updateDotHidden = typeof shouldShowUpdateNotice === "function" && shouldShowUpdateNotice() ? "" : "hidden";
     tools.classList.add("section-mode");
     tools.innerHTML = sections.map(([id, iconName, label]) => `<button class="${id === activeSection ? "active" : ""}" data-explorer-section="${id}" data-action="workspace-settings-section">${icon(iconName)}<span>${label}</span>${id === "settings-about" ? `<i id="settingsExplorerUpdateDot" class="section-update-dot" ${updateDotHidden} aria-label="发现新版本"></i>` : ""}</button>`).join("");

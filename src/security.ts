@@ -549,6 +549,21 @@ function authenticatedWebSession(req) {
   return record ? { token, record } : null;
 }
 
+function requestAuthenticationBinding(req) {
+  const desktopToken = requestDesktopToken(req);
+  if (desktopToken && hasDesktopToken(req)) {
+    return "desktop:" + crypto.createHash("sha256").update(desktopToken).digest("hex");
+  }
+  const sessionToken = authenticatedWebSessionToken(req);
+  if (sessionToken) {
+    return "session:" + crypto.createHash("sha256").update(sessionToken).digest("hex");
+  }
+  if (!isAuthenticated(req)) return "";
+  const source = requestSourceAddress(req);
+  const host = String(req.headers.host || "").trim().toLowerCase();
+  return "request:" + crypto.createHash("sha256").update(source + "\n" + host).digest("hex");
+}
+
 function cleanupDesktopBrowserGrants(now = Date.now()) {
   for (const [digest, grant] of desktopBrowserGrants) {
     if (grant.expiresAt > 0 && grant.expiresAt <= now) desktopBrowserGrants.delete(digest);
@@ -851,6 +866,7 @@ module.exports = {
   logout,
   publicSecuritySettings,
   publicAuthStatus,
+  requestAuthenticationBinding,
   readSecuritySettings,
   requestSourceAddress,
   resetWebAccessSecurity,

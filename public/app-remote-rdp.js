@@ -44,8 +44,23 @@ function renderRdpServerState(diagnostics, profileId=selectedRemoteProfileId, ke
   const actionKey = rdpServerActionKey(profileId);
   setRemoteComponentTaskHost(container, false);
   container._rdpDiagnostics = diagnostics || {};
-  if (diagnostics?.error) {
-    container.innerHTML = `<div class="connection-test-status warning">${icon("circle-alert")}<span>${esc(diagnostics.error)}</span></div>`;
+  const profile = remoteProfileById(profileId);
+  const endpointProbe = diagnostics?.endpoint_probe || {};
+  if (diagnostics?.error || diagnostics?.management_available === false) {
+    const authFailed = typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure(diagnostics);
+    const repair = authFailed ? remoteManagementCredentialRepairMarkup(profileId, diagnostics, "rdp") : "";
+    const management = diagnostics?.management_available === false
+      ? remoteManagementUnavailableMarkup(profile, diagnostics.error)
+      : remoteDiagnosticStatusMarkup(diagnostics.error || "SSH 深度探测不可用", {
+        tone:"warning",
+        icon:"server-off",
+        title:"SSH 深度探测不可用",
+        actions:repair
+      });
+    container.innerHTML = `${remoteEndpointProbeMarkup(profile, endpointProbe)}${management}`;
+    const launchButton = remoteWorkspaceQuery(container, "#remoteDesktopLaunchButton", "remoteDesktopLaunchButton");
+    const view = remoteWorkspaceQuery(container, "#view-remote-desktop", "view-remote-desktop");
+    if (launchButton) launchButton.disabled = view?.dataset.remoteClientAvailable !== "1" || (endpointProbe.supported && !endpointProbe.ok);
     refreshIcons();
     return;
   }
@@ -55,7 +70,6 @@ function renderRdpServerState(diagnostics, profileId=selectedRemoteProfileId, ke
   const listening = Boolean(diagnostics?.xrdp_listening);
   const ready = installed && active && listening;
   const plan = rdpInstallPlanFromDiagnostics(diagnostics);
-  const profile = remoteProfileById(profileId);
   const managerConnection = diagnostics?.connection?.name || currentConnection(linuxDesktopManagerConnectionIdForProfile(profile))?.name || "SSH 管理连接";
   const title = !linux ? "当前主机不使用 Linux xrdp 管理" : installed ? "远端 xrdp 已安装" : "远端未安装 xrdp";
   const detail = !linux
@@ -64,10 +78,10 @@ function renderRdpServerState(diagnostics, profileId=selectedRemoteProfileId, ke
       ? `${active ? "服务运行中" : "服务未运行"} · ${listening ? "TCP 3389 已监听" : "TCP 3389 未监听"} · ${diagnostics.has_desktop ? "桌面会话可用" : "尚未检测到可用桌面会话"}`
       : "请选择下方显示为可用的安装方式；本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统。";
   const serviceActions = linux && installed ? `<div class="remote-service-actions"><button type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="runRdpServerAction(${Number(profileId)},'${escAttr(key)}','${active ? "stop" : "start"}',this)">${icon(active ? "circle-stop" : "circle-play")}<span>${active ? "停止服务" : "启动服务"}</span></button><button class="danger" type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="runRdpServerAction(${Number(profileId)},'${escAttr(key)}','uninstall',this)">${icon("package-minus")}<span>卸载服务</span></button></div>` : "";
-  container.innerHTML = `<div class="remote-service-head rdp-server-head"><span class="remote-service-icon xdmcp-server-icon ${!linux || ready ? "ready" : "warning"}">${icon(!linux ? "info" : ready ? "circle-check" : installed ? "circle-alert" : "package-x")}</span><div><b>${esc(title)}</b><small>${esc(managerConnection)} · ${esc(detail)}</small></div></div>${linux && !installed ? remoteInstallModesMarkup(plan || {}, mode => `installRdpServer(${Number(profileId)},'${escAttr(key)}',this,'${mode}')`, `openRdpSetupGuide(${Number(profileId)})`, actionKey) : ""}${linux && installed ? `<div class="remote-service-meta rdp-server-meta"><span>${icon("package-check")} xrdp 已安装</span><span>${icon(active ? "circle-play" : "circle-stop")} ${active ? "服务运行中" : "服务未运行"}</span><span>${icon(listening ? "radio-tower" : "unplug")} ${listening ? "3389 已监听" : "3389 未监听"}</span><span>${icon("monitor")} ${diagnostics.has_desktop ? "桌面会话可用" : "需要安装桌面会话"}</span></div>` : ""}${remoteDesktopProtocolGuideMarkup("rdp", diagnostics, profile)}${remoteGraphicsRenderingMarkup(diagnostics)}${serviceActions}`;
+  container.innerHTML = `${remoteEndpointProbeMarkup(profile, endpointProbe)}<div class="remote-service-head rdp-server-head"><span class="remote-service-icon xdmcp-server-icon ${!linux || ready ? "ready" : "warning"}">${icon(!linux ? "info" : ready ? "circle-check" : installed ? "circle-alert" : "package-x")}</span><div><b>${esc(title)}</b><small>${esc(managerConnection)} · ${esc(detail)}</small></div></div>${linux && !installed ? remoteInstallModesMarkup(plan || {}, mode => `installRdpServer(${Number(profileId)},'${escAttr(key)}',this,'${mode}')`, `openRdpSetupGuide(${Number(profileId)})`, actionKey) : ""}${linux && installed ? `<div class="remote-service-meta rdp-server-meta"><span>${icon("package-check")} xrdp 已安装</span><span>${icon(active ? "circle-play" : "circle-stop")} ${active ? "服务运行中" : "服务未运行"}</span><span>${icon(listening ? "radio-tower" : "unplug")} ${listening ? "3389 已监听" : "3389 未监听"}</span><span>${icon("monitor")} ${diagnostics.has_desktop ? "桌面会话可用" : "需要安装桌面会话"}</span></div>` : ""}${remoteDesktopProtocolGuideMarkup("rdp", diagnostics, profile)}${remoteGraphicsRenderingMarkup(diagnostics)}${serviceActions}`;
   const launchButton = remoteWorkspaceQuery(container, "#remoteDesktopLaunchButton", "remoteDesktopLaunchButton");
   const view = remoteWorkspaceQuery(container, "#view-remote-desktop", "view-remote-desktop");
-  if (launchButton) launchButton.disabled = view?.dataset.remoteClientAvailable !== "1" || (linux && !ready);
+  if (launchButton) launchButton.disabled = view?.dataset.remoteClientAvailable !== "1" || (endpointProbe.supported ? !endpointProbe.ok : linux && !ready);
   refreshIcons();
   syncUiActionControls(actionKey, isUiActionInFlight(actionKey));
 }
@@ -77,12 +91,27 @@ async function inspectRdpServer(profileId, button=null, targetContainer=null) {
   if (button) setButtonBusy(button, true, "探测中...");
   if (container) container.innerHTML = `<div class="xdmcp-server-loading">${icon("loader-circle")}<span>正在探测远端 RDP 服务</span></div>`;
   try {
-    const diagnostics = await api(`/api/remote-profiles/${Number(profileId)}/rdp/server`);
+    const profile = remoteProfileById(profileId);
+    const managementConnectionId = linuxDesktopManagerConnectionIdForProfile(profile);
+    const connectivityPromise = api(`/api/remote-profiles/${Number(profileId)}/connectivity`).catch(error => ({supported:true, ok:false, error:error.message || "端口探测失败"}));
+    let diagnostics;
+    if (!managementConnectionId) {
+      diagnostics = {
+        management_available:false,
+        code:"REMOTE_MANAGEMENT_SSH_REQUIRED",
+        error:"RDP 可以直接使用系统服务；如需管理 Linux xrdp、桌面和安装状态，可新建并关联 SSH 管理连接。"
+      };
+    } else {
+      try {
+        diagnostics = await api(`/api/remote-profiles/${Number(profileId)}/rdp/server`);
+        diagnostics.management_available = true;
+      } catch (error) {
+        diagnostics = {management_available:true, error:error.message || "RDP SSH 深度探测失败", code:error.code || "", connectionId:Number(error.connectionId || managementConnectionId)};
+      }
+    }
+    diagnostics.endpoint_probe = await connectivityPromise;
     renderRdpServerState(diagnostics, profileId, `remote-desktop-${profileId}`, container);
     return diagnostics;
-  } catch (error) {
-    if (container) renderRdpServerState({error:error.message || "RDP 服务探测失败"}, profileId, `remote-desktop-${profileId}`, container);
-    throw error;
   } finally {
     if (button) setButtonBusy(button, false);
   }
@@ -94,10 +123,23 @@ function closeRdpSetupGuide() {
 
 async function openRdpSetupGuide(profileId) {
   const modal = $("modal");
+  const profile = remoteProfileById(profileId);
+  if (!linuxDesktopManagerConnectionIdForProfile(profile)) {
+    modal.innerHTML = `<div class="modal-card wide x11-install-guide remote-install-dialog" role="dialog" aria-modal="true" aria-labelledby="rdpSetupGuideTitle">
+      <div class="modal-title-row"><div><h2 id="rdpSetupGuideTitle">RDP 配置说明</h2><span class="muted">${esc(profile?.name || "RDP")} · ${esc(remoteProfileEndpoint(profile || {}))}</span></div><button class="icon-button" type="button" onclick="closeRdpSetupGuide()" title="关闭" aria-label="关闭">${icon("x")}</button></div>
+      ${remoteDiagnosticStatusMarkup("Windows 主机请在系统设置中开启远程桌面并允许 TCP 3389（或当前自定义端口）。Terma 会直接探测端口并启动本机 RDP 客户端，不要求 SSH。", {tone:"success", icon:"monitor-up", title:"Windows / 独立 RDP 服务"})}
+      ${remoteManagementUnavailableMarkup(profile, "如果目标是 Linux 且希望由 Terma 安装或管理 xrdp、桌面环境和服务状态，可以新建 SSH 管理连接；这不会影响当前 RDP 配置。")}
+      ${remoteDesktopProtocolGuideMarkup("rdp", {}, profile)}
+      <div class="actions"><button type="button" onclick="closeRdpSetupGuide()">关闭</button></div>
+    </div>`;
+    modal.hidden = false;
+    modal.onclick = null;
+    refreshIcons();
+    return;
+  }
   try {
     const diagnostics = await api(`/api/remote-profiles/${Number(profileId)}/rdp/server`);
     const plan = rdpInstallPlanFromDiagnostics(diagnostics) || {};
-    const profile = remoteProfileById(profileId);
     const sourceId = Number(diagnostics.connection?.id || linuxDesktopManagerConnectionIdForProfile(profile) || 0);
     const installed = Boolean(diagnostics.xrdp_installed);
     const active = Boolean(diagnostics.xrdp_active);
@@ -126,6 +168,10 @@ async function openRdpSetupGuide(profileId) {
     syncUiActionControls(actionKey, isUiActionInFlight(actionKey));
   } catch (error) {
     notify(error.message || "RDP 安装说明读取失败", "error");
+    if (typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure(error)) {
+      return repairRemoteManagementCredentials(profileId, "rdp");
+    }
+    return null;
   }
 }
 

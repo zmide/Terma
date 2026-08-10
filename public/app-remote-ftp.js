@@ -19,6 +19,28 @@ function openFtpProfile(id, path="", updateTab=true, existingKey="") {
   loadFtpDirectory(key, state.path).catch(error => notify(error.message, "error"));
 }
 
+async function ftpRequestWithCredentialRepair(key, context, operation, options={}) {
+  const state = ftpProfileStates.get(key);
+  try {
+    return await operation();
+  } catch (error) {
+    const profile = state ? remoteProfileById(state.profileId) : null;
+    if (
+      !options.skipCredentialRepair
+      && profile
+      && typeof remoteProfileAuthenticationFailure === "function"
+      && remoteProfileAuthenticationFailure(error, "ftp")
+    ) {
+      const repaired = await repairRemoteProfileCredentials(profile.id, {
+        context,
+        error
+      });
+      if (repaired?.saved) return operation();
+    }
+    throw error;
+  }
+}
+
 async function loadFtpDirectory(key, pathValue=null, refresh=false) {
   const state = ftpProfileStates.get(key);
   if (!state || state.loading) return;
@@ -27,7 +49,7 @@ async function loadFtpDirectory(key, pathValue=null, refresh=false) {
   if (list) list.innerHTML = stateView("loading", "正在读取 FTP 目录", "正在与服务器交换目录列表。", "");
   try {
     const target = pathValue === null ? state.path : String(pathValue || "/");
-    const result = await api(`/api/remote-profiles/${state.profileId}/ftp?path=${encodeURIComponent(target)}${refresh ? "&refresh=1" : ""}`);
+    const result = await ftpRequestWithCredentialRepair(key, "FTP 目录认证失败", () => api(`/api/remote-profiles/${state.profileId}/ftp?path=${encodeURIComponent(target)}${refresh ? "&refresh=1" : ""}`));
     state.path = result.path || target;
     state.entries = result.entries || [];
     const input = $("ftpPathInput");
@@ -36,6 +58,7 @@ async function loadFtpDirectory(key, pathValue=null, refresh=false) {
     if (tab) tab.path = state.path;
     renderFtpEntries(key);
     saveTabsState();
+    return true;
   } finally {
     state.loading = false;
   }
@@ -62,7 +85,7 @@ async function createFtpDirectory(key) {
   const state = ftpProfileStates.get(key);
   const name = await inputModal("新建 FTP 文件夹", "文件夹名称", "");
   if (!state || !name) return;
-  await api(`/api/remote-profiles/${state.profileId}/ftp/mkdir`, {method:"POST", body:JSON.stringify({path:state.path,name})});
+  await ftpRequestWithCredentialRepair(key, "新建 FTP 文件夹时认证失败", () => api(`/api/remote-profiles/${state.profileId}/ftp/mkdir`, {method:"POST", body:JSON.stringify({path:state.path,name})}));
   await loadFtpDirectory(key, null, true);
 }
 
@@ -70,14 +93,14 @@ async function renameFtpEntry(key, name) {
   const state = ftpProfileStates.get(key);
   const newName = await inputModal("重命名 FTP 项目", "新名称", name);
   if (!state || !newName || newName === name) return;
-  await api(`/api/remote-profiles/${state.profileId}/ftp/rename`, {method:"POST", body:JSON.stringify({path:state.path,name,new_name:newName})});
+  await ftpRequestWithCredentialRepair(key, "重命名 FTP 项目时认证失败", () => api(`/api/remote-profiles/${state.profileId}/ftp/rename`, {method:"POST", body:JSON.stringify({path:state.path,name,new_name:newName})}));
   await loadFtpDirectory(key, null, true);
 }
 
 async function deleteFtpEntry(key, name, type) {
   const state = ftpProfileStates.get(key);
   if (!state || !await confirmModal(`确定删除 ${name}${type === "directory" ? " 及其内容" : ""}？FTP 不支持 Terma 回收站。`, "删除 FTP 项目", "删除", "取消", true)) return;
-  await api(`/api/remote-profiles/${state.profileId}/ftp/delete`, {method:"POST", body:JSON.stringify({path:state.path,name,type})});
+  await ftpRequestWithCredentialRepair(key, "删除 FTP 项目时认证失败", () => api(`/api/remote-profiles/${state.profileId}/ftp/delete`, {method:"POST", body:JSON.stringify({path:state.path,name,type})}));
   await loadFtpDirectory(key, null, true);
 }
 
@@ -85,21 +108,35 @@ async function uploadFtpFiles(key, files) {
   const state = ftpProfileStates.get(key);
   if (!state || !files?.length) return;
   for (const file of files) {
-    const body = new FormData();
-    body.append("path", state.path);
-    body.append("file", file, file.name);
-    const response = await fetch(`/api/remote-profiles/${state.profileId}/ftp/upload`, {method:"POST", body});
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || `上传 ${file.name} 失败`);
+    await ftpRequestWithCredentialRepair(key, `上传 ${file.name} 时认证失败`, async () => {
+      const body = new FormData();
+      body.append("path", state.path);
+      body.append("file", file, file.name);
+      const response = await fetch(`/api/remote-profiles/${state.profileId}/ftp/upload`, {method:"POST", body});
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(result.error || `上传 ${file.name} 失败`);
+        error.code = result.code || "";
+        error.remoteProfileId = Number(result.remote_profile_id || state.profileId);
+        throw error;
+      }
+      return result;
+    });
   }
   $("ftpUploadInput").value = "";
   await loadFtpDirectory(key, null, true);
   notify(`已上传 ${files.length} 个文件`, "success");
 }
 
-function downloadFtpEntry(key, name) {
+async function downloadFtpEntry(key, name) {
   const state = ftpProfileStates.get(key);
   if (!state) return;
+  try {
+    await ftpRequestWithCredentialRepair(key, `下载 ${name} 时认证失败`, () => api(`/api/remote-profiles/${state.profileId}/ftp?path=${encodeURIComponent(state.path)}`));
+  } catch (error) {
+    notify(error.message || `下载 ${name} 失败`, "error");
+    return;
+  }
   const link = document.createElement("a");
   link.href = `/api/remote-profiles/${state.profileId}/ftp/download?path=${encodeURIComponent(state.path)}&name=${encodeURIComponent(name)}`;
   link.download = name;

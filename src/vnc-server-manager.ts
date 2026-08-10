@@ -8,6 +8,7 @@ const { componentInstallCommand, componentInstallPlan } = require("./remote-comp
 const { connectVncSocket } = require("./vnc-handshake");
 const { XRDP_RENDER_PROBE_SCRIPT, createVncRenderingDiagnostics } = require("./remote-graphics-rendering");
 const { selectRemoteProbeLines } = require("./remote-probe-protocol");
+const { formatRemoteEndpoint } = require("./remote-host");
 
 const VNC_SSH_DIAGNOSTIC_TIMEOUT_MS = 8000;
 const TERMA_VNC_PREFIX = "terma";
@@ -1960,6 +1961,8 @@ async function detectVncServer(profile: any, dependencies: any = {}) {
       recommended_action:"guide",
       can_install:false,
       ssh_error:String(error?.message || error),
+      code:String(error?.code || ""),
+      connection_id:Number(connection.id || 0),
       ssh_connection:{id:connection.id, name:connection.name, host:connection.ssh_host, user:connection.ssh_user},
       guide:manualGuide({platform:"unknown"}, port)
     };
@@ -1974,6 +1977,8 @@ async function detectVncServer(profile: any, dependencies: any = {}) {
       recommended_action:"guide",
       can_install:false,
       ssh_error:output,
+      code:String(result?.error?.code || ""),
+      connection_id:Number(connection.id || 0),
       ssh_connection:{id:connection.id, name:connection.name, host:connection.ssh_host, user:connection.ssh_user},
       guide:manualGuide({platform:"unknown"}, port)
     };
@@ -2047,7 +2052,7 @@ async function testVncProfile(id: number, dependencies: any = {}) {
   const profile = dependencies.getRemoteProfile ? dependencies.getRemoteProfile(id) : null;
   if (!profile) throw new Error("VNC 连接不存在");
   const port = numericPort(profile.port);
-  const endpoint = `${profile.host}:${port}`;
+  const endpoint = formatRemoteEndpoint(profile.host, port);
   const diagnosticsPromise = detectVncServer(profile, dependencies).catch(error => ({
     diagnostics_available:false,
     platform:"unknown",

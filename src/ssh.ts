@@ -21,6 +21,7 @@ const { buildRemoteStartupCommand } = require("./terminal-startup");
 const { isHostTrustError, systemHostKeyArgs } = require("./ssh-host-trust");
 const { allowedIdentityPath, assertAllowedIdentityPath, looksLikePrivateKeyData } = require("./identity-path");
 const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
+const { formatRemoteEndpoint } = require("./remote-host");
 
 const RESTORE_STATE_FILE = path.join(DATA_DIR, "forward-state.json");
 let healthMonitorTimer: any = null;
@@ -565,7 +566,7 @@ async function inspectPortOwner(port, host = "127.0.0.1") {
 async function diagnosePortUsage(host, port) {
   const occupied = !(await portAvailable(host, port));
   const processes = occupied ? await inspectPortOwner(port, host) : [];
-  const label = `${host}:${port}`;
+  const label = formatRemoteEndpoint(host, port);
   return {
     host,
     port: Number(port),

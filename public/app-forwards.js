@@ -46,6 +46,18 @@ async function connectionForwardAction(id, action, button=null){
   } catch (error) {
     await loadAll().catch(()=>{});
     notify(error.message || "转发操作失败", "error");
+    if (
+      action === "start"
+      && typeof sshAuthenticationFailure === "function"
+      && sshAuthenticationFailure(error)
+      && typeof repairSshCredentials === "function"
+    ) {
+      await repairSshCredentials(id, {
+        context:"启动端口转发时认证失败",
+        error,
+        onSaved:async () => workspace.refresh()
+      });
+    }
   } finally {
     setButtonBusy(button, false);
     if (workspace.tab?.kind === "terminal") focusTerminalSession(workspace.tab.key);
@@ -428,9 +440,10 @@ function forwardDisplayName(f) {
 }
 
 function forwardText(f){
-  if(f.mode==="socks") return `${esc(f.bind_host)}:${f.bind_port}`;
+  const endpoint = (host, port) => `${String(host || "").includes(":") && !String(host).startsWith("[") ? `[${host}]` : host}:${port}`;
+  if(f.mode==="socks") return `${esc(endpoint(f.bind_host, f.bind_port))}`;
   const arrow = f.mode === "remote" ? "远程监听" : "本地监听";
-  return `${arrow} ${esc(f.bind_host)}:${f.bind_port} → 目标 ${esc(f.target_host)}:${f.target_port}`;
+  return `${arrow} ${esc(endpoint(f.bind_host, f.bind_port))} → 目标 ${esc(endpoint(f.target_host, f.target_port))}`;
 }
 
 function forwardAccessInfo(f) {
@@ -440,7 +453,8 @@ function forwardAccessInfo(f) {
   const bindHost = wildcard ? "0.0.0.0" : rawBindHost;
   const host = currentPageHostForForward(bindHost);
   const scheme = f.url_scheme || (f.service_type === "web" ? "http" : "http");
-  const url = `${scheme}://${host}:${f.bind_port}`;
+  const urlHost = String(host).includes(":") && !String(host).startsWith("[") ? `[${host}]` : host;
+  const url = `${scheme}://${urlHost}:${f.bind_port}`;
   const lanPage = !isLoopbackHost(location.hostname);
   let note = "";
   if (lanPage && isLoopbackHost(bindHost)) note = "该转发只监听本机，局域网设备无法直接打开；需要把监听地址改为 0.0.0.0 后重新启动转发。";

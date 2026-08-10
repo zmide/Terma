@@ -66,8 +66,11 @@ try {
   assert.deepEqual(display, {
     terminal_encoding: "gb18030",
     terminal_font_family: "Cascadia Mono, monospace",
+    terminal_font_family_inherit: 0,
     terminal_font_size: 16,
+    terminal_font_size_inherit: 0,
     terminal_mobile_font_size: 18,
+    terminal_mobile_font_size_inherit: 0,
     terminal_line_height: 1.4,
     terminal_font_weight: "600"
   });

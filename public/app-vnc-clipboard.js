@@ -257,10 +257,31 @@ async function inspectVncClipboardHelper(session, container) {
     renderVncClipboardHelperState(session, diagnostics, container);
     return diagnostics;
   } catch (error) {
-    container.innerHTML = `<div class="connection-test-status error">${icon("circle-alert")}<span>${esc(error.message || "剪贴板辅助探测失败")}</span></div>`;
+    const connectionId = Number($("modal")?.querySelector("#vncClipboardSshConnection")?.value || session.profile.options?.source_ssh_connection_id || 0);
+    const repair = connectionId > 0 && typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure(error)
+      ? `<button type="button" data-action="vnc-clipboard-credential-repair" data-vnc-key="${escAttr(session.key)}" data-connection-id="${connectionId}">${icon("key-round")}<span>修复 SSH 凭据</span></button>`
+      : "";
+    container.innerHTML = remoteDiagnosticStatusMarkup(error.message || "剪贴板辅助探测失败", {tone:"error", icon:"circle-alert", title:"SSH 剪贴板辅助不可用", actions:repair});
     refreshIcons();
     return null;
   }
+}
+
+async function repairVncClipboardCredentials(key, connectionId) {
+  const session = vncSessions.get(String(key || ""));
+  const id = Number(connectionId || 0);
+  if (!session || id < 1 || typeof repairSshCredentials !== "function") return false;
+  return repairSshCredentials(id, {
+    context:"VNC 剪贴板辅助认证失败",
+    onSaved:async () => configureVncClipboardSsh(session.key)
+  });
+}
+
+if (typeof registerTermaAction === "function") {
+  registerTermaAction("vnc-clipboard-credential-repair", ({element}) => repairVncClipboardCredentials(
+    element.dataset.vncKey || "",
+    Number(element.dataset.connectionId || 0)
+  ));
 }
 
 function resetVncClipboardTransportState(session) {

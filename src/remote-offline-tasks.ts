@@ -120,8 +120,67 @@ function taskView(task) {
 
 function createRemoteOfflineTaskManager(dependencies: any = {}) {
   const tasks = new Map();
+  const activeLocalDirectories = new Set();
   let sequence = 0;
   const dataDir = String(dependencies.data_dir || process.cwd());
+
+  function cacheEntryPaths() {
+    const root = path.resolve(dataDir);
+    try {
+      return fs.readdirSync(root, {withFileTypes:true})
+        .filter(entry => /^remote-component-\d+-\d+-\d+$/.test(entry.name))
+        .map(entry => path.resolve(root, entry.name))
+        .filter(target => path.dirname(target) === root);
+    } catch {
+      return [];
+    }
+  }
+
+  function treeStats(target) {
+    try {
+      const stat = fs.lstatSync(target);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) return {bytes:stat.size, files:1};
+      return fs.readdirSync(target).reduce((total, name) => {
+        const child = treeStats(path.join(target, name));
+        total.bytes += child.bytes;
+        total.files += child.files;
+        return total;
+      }, {bytes:0, files:0});
+    } catch {
+      return {bytes:0, files:0};
+    }
+  }
+
+  function cacheInfo() {
+    let bytes = 0;
+    let files = 0;
+    let reclaimableBytes = 0;
+    let reclaimableFiles = 0;
+    for (const target of cacheEntryPaths()) {
+      const stats = treeStats(target);
+      bytes += stats.bytes;
+      files += stats.files;
+      if (!activeLocalDirectories.has(target)) {
+        reclaimableBytes += stats.bytes;
+        reclaimableFiles += stats.files;
+      }
+    }
+    return {
+      bytes,
+      files,
+      reclaimable_bytes:reclaimableBytes,
+      reclaimable_files:reclaimableFiles,
+      busy:activeLocalDirectories.size > 0
+    };
+  }
+
+  function clearCache() {
+    for (const target of cacheEntryPaths()) {
+      if (activeLocalDirectories.has(target)) continue;
+      fs.rmSync(target, {recursive:true, force:true});
+    }
+    return cacheInfo();
+  }
 
   function append(task, text, stream = "system") {
     const value = String(text || "").trim();
@@ -411,8 +470,12 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
           update(task, "download", 12, attempt > 1 ? "正在重新下载完整软件包依赖" : "正在本机下载软件包和依赖");
           // The caller passes the component cache root (already named
           // `remote-components`); keep each attempt directly below it.
-          if (localDirectory) fs.rmSync(localDirectory, {recursive:true, force:true});
+          if (localDirectory) {
+            activeLocalDirectories.delete(localDirectory);
+            fs.rmSync(localDirectory, {recursive:true, force:true});
+          }
           localDirectory = path.resolve(path.join(dataDir, `${task.id}-${attempt}`));
+          activeLocalDirectories.add(localDirectory);
           const progressByFile = new Map();
           const bundle = await (dependencies.download_apt_bundle || downloadAptBundle)(resolvedItems, {
             directory:localDirectory,
@@ -491,6 +554,7 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
           if (remoteDirectory) await dependencies.run_ssh_command(connection, buildRemotePosixCommand(`rm -rf -- ${shellQuote(remoteDirectory)}`), 30000);
         } catch (error) { append(task, `远端临时目录清理失败：${error.message}`, "warning"); }
         try { if (localDirectory) fs.rmSync(localDirectory, {recursive:true, force:true}); } catch (error) { append(task, `本机临时包清理失败：${error.message}`, "warning"); }
+        if (localDirectory) activeLocalDirectories.delete(localDirectory);
         if (options.release_grant) options.release_grant(options.grant);
         task.finished_at = now();
         task.updated_at = task.finished_at;
@@ -588,7 +652,7 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
     return taskView(task);
   }
 
-  return { clearFinished, list, remove, startAptInstall, startCommand, taskView };
+  return { cacheInfo, clearCache, clearFinished, list, remove, startAptInstall, startCommand, taskView };
 }
 
 module.exports = { createRemoteOfflineTaskManager };

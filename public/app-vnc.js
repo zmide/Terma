@@ -43,13 +43,34 @@ function renderVncServerState(diagnostics, profileId=selectedRemoteProfileId, ke
   setRemoteComponentTaskHost(container, false);
   container._vncDiagnostics = effectiveDiagnostics;
   if (effectiveDiagnostics?.error && !effectiveDiagnostics?.status) {
-    container.innerHTML = `<div class="connection-test-status warning">${icon("circle-alert")}<span>${esc(effectiveDiagnostics.error)}</span></div>`;
+    const repair = remoteManagementCredentialRepairMarkup(profileId, effectiveDiagnostics, "vnc");
+    container.innerHTML = `${remoteEndpointProbeMarkup(profile, effectiveDiagnostics.endpoint_probe || {})}${remoteDiagnosticStatusMarkup(effectiveDiagnostics.error, {tone:"warning", icon:"server-off", title:"SSH 深度探测不可用", actions:repair})}`;
   } else {
-    container.innerHTML = vncConnectionHelpMarkup(profile, effectiveDiagnostics?.platform || "", vncServerReady(effectiveDiagnostics), "", effectiveDiagnostics, key, {preflight:true, showConnect:false});
+    const sshProbeFailed = ["ssh-unreachable", "probe-failed"].includes(String(effectiveDiagnostics?.status || "").toLowerCase());
+    const sshAuthFailed = sshProbeFailed && typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure({
+      code:effectiveDiagnostics?.code || "",
+      message:effectiveDiagnostics?.ssh_error || ""
+    });
+    const repair = sshAuthFailed ? remoteManagementCredentialRepairMarkup(profileId, {
+      code:effectiveDiagnostics?.code || "SSH_AUTHENTICATION_FAILED",
+      message:effectiveDiagnostics?.ssh_error || "SSH 认证失败",
+      connectionId:Number(effectiveDiagnostics?.connection_id || effectiveDiagnostics?.ssh_connection?.id || 0)
+    }, "vnc") : "";
+    const managementNotice = effectiveDiagnostics?.diagnostics_available === false && !effectiveDiagnostics?.ssh_connection
+      ? remoteManagementUnavailableMarkup(profile, "VNC 会先按端口与 RFB 协议连接；关联 SSH 后可管理 Linux VNC 服务和图形会话。")
+      : sshAuthFailed
+        ? remoteDiagnosticStatusMarkup(effectiveDiagnostics.ssh_error || "SSH 认证失败", {tone:"warning", icon:"key-round", title:"SSH 深度探测认证失败", actions:repair})
+        : "";
+    const unmanaged = effectiveDiagnostics?.diagnostics_available === false && !effectiveDiagnostics?.ssh_connection;
+    const connectionHelp = unmanaged
+      ? ""
+      : vncConnectionHelpMarkup(profile, effectiveDiagnostics?.platform || "", vncServerReady(effectiveDiagnostics), "", effectiveDiagnostics, key, {preflight:true, showConnect:false});
+    container.innerHTML = `${remoteEndpointProbeMarkup(profile, effectiveDiagnostics.endpoint_probe || {})}${managementNotice}${connectionHelp}`;
   }
   const status = String(effectiveDiagnostics?.status || "").toLowerCase();
   const selectedManagementBlocked = effectiveDiagnostics?.server_session_configurable === true && !vncServerReady(effectiveDiagnostics);
-  const blocked = effectiveDiagnostics?.diagnostics_available !== false && (selectedManagementBlocked || ["not-installed", "stopped", "not-listening", "blocked"].includes(status));
+  const endpointBlocked = effectiveDiagnostics?.endpoint_probe?.supported && !effectiveDiagnostics.endpoint_probe.ok;
+  const blocked = endpointBlocked || (effectiveDiagnostics?.diagnostics_available !== false && (selectedManagementBlocked || ["not-installed", "stopped", "not-listening", "blocked"].includes(status)));
   const launchButton = remoteWorkspaceQuery(container, "#remoteDesktopLaunchButton", "remoteDesktopLaunchButton");
   const view = remoteWorkspaceQuery(container, "#view-remote-desktop", "view-remote-desktop");
   if (launchButton) launchButton.disabled = view?.dataset.remoteClientAvailable !== "1" || blocked;
@@ -62,12 +83,22 @@ async function inspectVncServer(profileId, button=null, targetContainer=null) {
   if (button) setButtonBusy(button, true, "探测中...");
   if (container) container.innerHTML = `<div class="xdmcp-server-loading">${icon("loader-circle")}<span>正在探测远端 VNC 服务</span></div>`;
   try {
-    const diagnostics = await api(`/api/remote-profiles/${Number(profileId)}/vnc/server`);
+    const profile = remoteProfileById(profileId);
+    const managementConnectionId = linuxDesktopManagerConnectionIdForProfile(profile);
+    const [diagnostics, endpointProbe] = await Promise.all([
+      managementConnectionId
+        ? api(`/api/remote-profiles/${Number(profileId)}/vnc/server`).catch(error => ({error:error.message || "VNC SSH 深度探测失败", code:error.code || "", connectionId:Number(error.connectionId || managementConnectionId)}))
+        : Promise.resolve({
+          diagnostics_available:false,
+          management_available:false,
+          status:"unmanaged",
+          error:""
+        }),
+      api(`/api/remote-profiles/${Number(profileId)}/connectivity`).catch(error => ({supported:true, ok:false, error:error.message || "端口探测失败"}))
+    ]);
+    diagnostics.endpoint_probe = endpointProbe;
     renderVncServerState(diagnostics, profileId, `remote-desktop-${profileId}`, container);
     return diagnostics;
-  } catch (error) {
-    if (container) renderVncServerState({error:error.message || "VNC 服务探测失败"}, profileId, `remote-desktop-${profileId}`, container);
-    throw error;
   } finally {
     if (button && document.contains(button)) setButtonBusy(button, false);
   }
@@ -355,6 +386,20 @@ async function copyVncSetupCommands() {
 
 async function openVncSetupGuide(profileId) {
   const modal = $("modal");
+  const profile = remoteProfileById(profileId);
+  if (!linuxDesktopManagerConnectionIdForProfile(profile)) {
+    modal.innerHTML = `<div class="modal-card wide x11-install-guide vnc-setup-guide" role="dialog" aria-modal="true" aria-labelledby="vncSetupGuideTitle">
+      <div class="modal-title-row"><div><h2 id="vncSetupGuideTitle">VNC 配置说明</h2><span class="muted">${esc(profile?.name || "VNC")} · ${esc(remoteProfileEndpoint(profile || {}))}</span></div><button class="icon-button" type="button" onclick="closeVncSetupGuide()" title="关闭" aria-label="关闭">${icon("x")}</button></div>
+      ${remoteDiagnosticStatusMarkup("请在目标系统中开启屏幕共享、远程管理或独立 VNC Server，并确认当前 TCP 端口允许访问。Terma 会直接按 VNC/RFB 协议连接，不要求 SSH。", {tone:"success", icon:"monitor-up", title:"独立 VNC 服务"})}
+      ${remoteManagementUnavailableMarkup(profile, "如需由 Terma 识别、安装或启停 Linux VNC 服务，并选择物理桌面、XRDP 会话或虚拟桌面，可新建并关联 SSH 管理连接。")}
+      ${remoteDesktopProtocolGuideMarkup("vnc", {}, profile)}
+      <div class="actions"><button type="button" onclick="closeVncSetupGuide()">关闭</button></div>
+    </div>`;
+    modal.hidden = false;
+    modal.onclick = null;
+    refreshIcons();
+    return null;
+  }
   try {
     const diagnostics = await api(`/api/remote-profiles/${Number(profileId)}/vnc/server`);
     const guide = diagnostics.guide || {};
@@ -398,6 +443,9 @@ async function openVncSetupGuide(profileId) {
     return diagnostics;
   } catch (error) {
     notify(error.message || "VNC 安装说明读取失败", "error");
+    if (typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure(error)) {
+      return repairRemoteManagementCredentials(profileId, "vnc");
+    }
     return null;
   }
 }
@@ -1101,23 +1149,15 @@ async function launchRemoteDesktop(id, key="", button=null) {
     const scopes = profile?.protocol === "xdmcp" ? ["remote-client", "xserver"] : ["remote-client"];
     if (!await ensureDesktopIntegrationAuthorized(scopes)) return null;
     if (profile?.protocol === "rdp") {
-      let serverState = null;
-      try {
-        serverState = await inspectRdpServer(id);
-      } catch (error) {
-        // Standalone RDP profiles may not have an SSH management connection.
-        // The native RDP client can still connect directly in that case.
-        if (!/没有找到同主机的 SSH 连接|明确选择用于管理的连接/.test(String(error?.message || ""))) throw error;
-      }
-      if (serverState?.platform_supported !== false) {
-        if (!serverState?.has_desktop) throw new Error("远端未检测到可用桌面会话，请先前往 Linux 桌面管理安装或修复桌面");
-        if (!serverState?.xrdp_installed) throw new Error("远端未安装 xrdp，请先安装 RDP 服务");
-        if (!serverState?.xrdp_active) throw new Error("远端 xrdp 服务未运行，请先启动或修复 RDP 服务");
-        if (!serverState?.xrdp_listening) throw new Error("远端 TCP 3389 未监听，请检查 xrdp 服务与端口配置");
-      }
+      // The launch API performs a fresh TCP preflight. SSH/Linux diagnostics are
+      // optional management information and must never block a reachable RDP service.
     }
     if (profile?.protocol === "xdmcp") {
-      let serverState = await inspectXdmcpServer(id);
+      const managementConnectionId = linuxDesktopManagerConnectionIdForProfile(profile);
+      let serverState = managementConnectionId
+        ? await api(`/api/remote-profiles/${Number(id)}/xdmcp/server`).catch(() => null)
+        : null;
+      if (!serverState) serverState = {};
       if (serverState.session_conflict) {
         if (!serverState.can_cleanup_remote_sessions) {
           throw new Error(serverState.local_graphical_sessions?.length
@@ -1134,7 +1174,15 @@ async function launchRemoteDesktop(id, key="", button=null) {
     const status = $("remoteDesktopStatus");
     if (status) {
       status.className = "connection-test-status success";
-      status.textContent = result.protocol === "xdmcp" ? `已在 ${result.client || "X Server"} 打开` : `已交给 ${result.client || "系统客户端"} 打开，凭据由客户端提示`;
+      status.textContent = result.protocol === "xdmcp"
+        ? `已在 ${result.client || "X Server"} 打开`
+        : result.protocol === "rdp" && result.credentials === "stdin"
+          ? `已交给 ${result.client || "FreeRDP"} 打开，已通过标准输入传递保存的密码`
+          : result.protocol === "rdp" && result.credentials === "windows-credential-manager"
+            ? `已交给 ${result.client || "Windows 远程桌面"} 打开，已通过当前 Windows 用户的临时凭据传递密码`
+          : result.protocol === "rdp" && result.password_transfer_requested && !result.password_transfer_supported
+            ? `已交给 ${result.client || "系统客户端"} 打开；该客户端不支持安全预填充，仍会显示凭据窗口`
+            : `已交给 ${result.client || "系统客户端"} 打开，凭据由客户端提示`;
     }
     notify(result.protocol === "xdmcp" ? "已启动 XDMCP 图形桌面" : "已打开系统远程桌面客户端", "success");
   } catch (error) {

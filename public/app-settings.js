@@ -43,7 +43,6 @@ function renderSettings() {
         <div class="settings-grid single">
           ${storageSettingsPanelHtml()}
           ${desktopBehaviorPanelHtml()}
-          ${cacheManagementPanelHtml()}
           <section>
             <h3>终端显示</h3>
             <label class="check-row"><input id="terminalLatencyVisible" type="checkbox" ${terminalLatencyVisible ? "checked" : ""} onchange="setTerminalLatencyVisible(this.checked)"> 显示终端交互响应延迟</label>
@@ -199,6 +198,12 @@ function renderSettings() {
             <div id="runtimeDiagnostics" class="diagnostics-box muted">尚未加载</div>
             <div class="actions"><button type="button" onclick="loadRuntimeDiagnostics()">${icon("refresh-cw")}<span>刷新诊断</span></button></div>
           </section>
+        </div>
+      </div>
+      <div class="settings-group" id="settings-cache">
+        <div class="settings-group-head"><h3>缓存管理</h3><span>查看各类程序缓存占用，并按需释放可安全清理的内容。</span></div>
+        <div class="settings-grid single">
+          ${cacheManagementPanelHtml()}
         </div>
       </div>
       <div class="settings-group" id="settings-about">

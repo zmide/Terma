@@ -7,6 +7,8 @@ function openLinuxDesktopManager(connectionId=0, updateTab=true) {
       connectionId:normalizedConnectionId,
       diagnostics:null,
       sshX11:null,
+      error:null,
+      loading:Boolean(normalizedConnectionId),
       taskId:String(monitoredTask?.id || ""),
       task:monitoredTask,
       logs:monitoredTask?.logs || []
@@ -125,6 +127,9 @@ function renderLinuxDesktopManager() {
   if (state.task) captureLinuxDesktopTaskLogView();
   const selected = Number(state.connectionId || 0);
   const diagnostics = state.diagnostics;
+  const diagnosticsError = state.error;
+  const diagnosticsAuthFailed = Boolean(diagnosticsError && typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure(diagnosticsError));
+  const loading = Boolean(state.loading);
   const connection = currentConnection(selected);
   const catalog = diagnostics?.desktop_catalog || ["xfce", "gnome", "plasma", "mate", "cinnamon", "lxqt"].map(id => ({id}));
   const installed = new Set((diagnostics?.desktops || []).map(item => item.id));
@@ -137,11 +142,11 @@ function renderLinuxDesktopManager() {
     <div class="remote-desktop-icon">${icon("monitor-cog")}</div>
     <h2>${macos ? "macOS X11 管理" : "Linux 桌面管理"}</h2>
     <div class="muted">${macos ? "探测远端 XQuartz、xauth 和 SSH X11 转发，并提供交互式安装与配置入口。" : "选择 SSH 主机后，探测并安装可用于 RDP、VNC 和 XDMCP 的图形桌面。"}</div>
-    <div class="linux-desktop-manager-toolbar"><label>SSH 管理连接<select id="linuxDesktopConnection" onchange="selectLinuxDesktopManagerConnection(this.value)"><option value="0">请选择 SSH 主机</option>${linuxDesktopManagerConnectionOptions(selected)}</select></label><button type="button" onclick="loadLinuxDesktopManager()" ${selected ? "" : "disabled"}>${icon("refresh-cw")}<span>重新探测</span></button></div>
+    <div class="linux-desktop-manager-toolbar"><label>SSH 管理连接<select id="linuxDesktopConnection" onchange="selectLinuxDesktopManagerConnection(this.value)" ${loading ? "disabled" : ""}><option value="0">请选择 SSH 主机</option>${linuxDesktopManagerConnectionOptions(selected)}</select></label><button type="button" onclick="loadLinuxDesktopManager()" ${selected && !loading ? "" : "disabled"}>${icon(loading ? "loader-circle" : "refresh-cw")}<span>${loading ? "探测中..." : "重新探测"}</span></button></div>
     ${selected && diagnostics ? `<div class="linux-desktop-diagnostics ${macos ? state.sshX11?.ready ? "ready" : "warning" : diagnostics.has_desktop ? "ready" : "warning"}"><div><strong>${esc(diagnostics.connection?.name || "SSH 主机")}</strong><span>${macos ? "macOS · SSH X11 图形环境" : `${esc(diagnostics.os_id || "Linux")} · ${esc(diagnostics.package_manager || "未识别包管理器")} · ${esc(diagnostics.display_manager || "未识别显示管理器")}`}</span></div><span class="status-pill">${macos ? state.sshX11?.ready ? "X11 已就绪" : state.sshX11?.xquartz_installed ? "XQuartz 已安装，配置未完成" : "未安装 XQuartz" : diagnostics.has_desktop ? `已发现 ${diagnostics.desktops.length} 个桌面` : "未检测到图形桌面"}</span></div>
       ${platformSupported ? `${renderLinuxDesktopSelectionSummary(diagnostics)}<div class="linux-desktop-grid">${catalog.map(item => { const id = item.id; const available = installable.has(id); const isInstalled = installed.has(id); const enabled = (isInstalled || available) && !taskRunning; return `<article class="linux-desktop-card ${isInstalled ? "installed" : ""}" data-desktop-id="${escAttr(id)}"><div class="linux-desktop-card-icon">${icon(item.icon || "monitor")}</div><div><strong>${esc(item.label || linuxDesktopLabel(id))}</strong><span>${isInstalled ? "已安装，可用于图形会话" : available ? "可自动安装" : "当前包管理器未提供自动方案"}</span>${isInstalled ? renderLinuxDesktopUsageBadges(diagnostics, id) : ""}</div><button type="button" data-ui-action-key="${escAttr(actionKey)}" class="${enabled && !isInstalled ? "primary" : ""}" onclick="${isInstalled ? `uninstallLinuxDesktop('${escAttr(id)}',this)` : `installLinuxDesktop('${escAttr(id)}')`}" ${enabled ? "" : "disabled"}>${icon(isInstalled ? "trash-2" : "package-plus")}<span>${isInstalled ? "卸载" : "安装"}</span></button></article>`; }).join("")}</div>` : ""}
       ${renderSshX11ForwardingPanel(connection, state.sshX11, "linux-desktop")}
-      <div class="linux-desktop-hint">${platformSupported ? "远程桌面不要求服务器连接物理显示器。RDP、XDMCP 和虚拟 VNC 需要远端能启动桌面会话；x11vnc/wayvnc 共享已有会话；SSH X11 单程序不需要完整桌面。配置标记不等于正在运行，只有“当前会话”或“VNC 会话”标记代表已探测到活动会话。" : macos ? "macOS 不安装 Linux 桌面环境。请使用上方的“安装远端 XQuartz”和“在终端开启 X11 转发”；出现 sudo 提示时输入远端 macOS 账号密码。" : "当前 SSH 主机不是 Linux，不能在此主机上安装 Linux 桌面环境。"}</div>` : `<div class="connection-test-status">请选择一个 SSH 主机开始探测。</div>`}
+      <div class="linux-desktop-hint">${platformSupported ? "远程桌面不要求服务器连接物理显示器。RDP、XDMCP 和虚拟 VNC 需要远端能启动桌面会话；x11vnc/wayvnc 共享已有会话；SSH X11 单程序不需要完整桌面。配置标记不等于正在运行，只有“当前会话”或“VNC 会话”标记代表已探测到活动会话。" : macos ? "macOS 不安装 Linux 桌面环境。请使用上方的“安装远端 XQuartz”和“在终端开启 X11 转发”；出现 sudo 提示时输入远端 macOS 账号密码。" : "当前 SSH 主机不是 Linux，不能在此主机上安装 Linux 桌面环境。"}</div>` : selected && diagnosticsError ? `<div class="connection-test-status remote-diagnostic-status error"><span class="remote-diagnostic-icon">${icon("circle-alert")}</span><span class="remote-diagnostic-copy">${esc(diagnosticsError.message || "Linux 桌面探测失败")}</span>${diagnosticsAuthFailed ? `<span class="remote-diagnostic-actions"><button type="button" data-action="linux-desktop-credential-repair" data-connection-id="${selected}">${icon("key-round")}<span>修复 SSH 凭据</span></button></span>` : ""}</div>` : `<div class="connection-test-status ${loading ? "busy remote-probe-loading" : ""}">${loading ? `${icon("loader-circle")}<span>正在探测 ${esc(connection?.name || "SSH 主机")} 的系统、桌面与 X11 状态...</span>` : selected ? "正在准备探测..." : "请选择一个 SSH 主机开始探测。"}</div>`}
     ${state.task ? `<div id="linuxDesktopInstallTask" class="linux-desktop-install-task"></div>` : ""}
   </div>`;
   refreshIcons();
@@ -160,6 +165,8 @@ function selectLinuxDesktopManagerConnection(value) {
   }
   linuxDesktopManagerState.diagnostics = null;
   linuxDesktopManagerState.sshX11 = null;
+  linuxDesktopManagerState.error = null;
+  linuxDesktopManagerState.loading = Boolean(linuxDesktopManagerState.connectionId);
   linuxDesktopManagerState.taskId = "";
   linuxDesktopManagerState.task = null;
   linuxDesktopManagerState.logs = [];
@@ -181,21 +188,49 @@ function selectLinuxDesktopManagerConnection(value) {
 async function loadLinuxDesktopManager() {
   const id = Number(linuxDesktopManagerState.connectionId || 0);
   if (!id) return;
+  linuxDesktopManagerState.error = null;
+  linuxDesktopManagerState.loading = true;
+  renderLinuxDesktopManager();
   try {
     const [diagnostics, sshX11] = await Promise.all([
       api(`/api/connections/${id}/linux-desktop`),
-      api(`/api/connections/${id}/x11-forwarding`).catch(error => ({error:error.message || "SSH X11 配置探测失败"}))
+      api(`/api/connections/${id}/x11-forwarding`).catch(error => ({
+        error:error.message || "SSH X11 配置探测失败",
+        code:error.code || "",
+        connectionId:Number(error.connectionId || id)
+      }))
     ]);
     if (Number(linuxDesktopManagerState.connectionId || 0) !== id) return;
     linuxDesktopManagerState.diagnostics = diagnostics;
     linuxDesktopManagerState.sshX11 = sshX11;
+    linuxDesktopManagerState.error = null;
+    linuxDesktopManagerState.loading = false;
     renderLinuxDesktopManager();
   } catch (error) {
     if (Number(linuxDesktopManagerState.connectionId || 0) !== id) return;
     linuxDesktopManagerState.diagnostics = null;
+    linuxDesktopManagerState.error = {
+      message:error.message || "Linux 桌面探测失败",
+      code:error.code || "",
+      connectionId:Number(error.connectionId || id)
+    };
+    linuxDesktopManagerState.loading = false;
     renderLinuxDesktopManager();
     notify(error.message || "Linux 桌面探测失败", "error");
   }
+}
+
+async function repairLinuxDesktopCredentials(connectionId) {
+  const id = Number(connectionId || linuxDesktopManagerState.connectionId || 0);
+  if (typeof repairSshCredentials !== "function" || id < 1) return false;
+  return repairSshCredentials(id, {
+    context:"Linux 桌面探测认证失败",
+    onSaved:async () => loadLinuxDesktopManager()
+  });
+}
+
+if (typeof registerTermaAction === "function") {
+  registerTermaAction("linux-desktop-credential-repair", ({element}) => repairLinuxDesktopCredentials(Number(element.dataset.connectionId || 0)));
 }
 
 function resetLinuxDesktopTaskLogView(taskId="") {

@@ -32,6 +32,21 @@ function renderXdmcpServerState(diagnostics, profileId=selectedRemoteProfileId, 
   if (!container) return;
   const actionKey = xdmcpServerActionKey(profileId);
   setRemoteComponentTaskHost(container, false);
+  if (diagnostics?.error) {
+    const profile = remoteProfileById(profileId);
+    const management = diagnostics.management_available === false
+      ? remoteManagementUnavailableMarkup(profile, diagnostics.error)
+      : remoteDiagnosticStatusMarkup(diagnostics.error, {tone:"warning", icon:"server-off", title:"SSH 深度探测不可用", actions:remoteManagementCredentialRepairMarkup(profileId, diagnostics, "xdmcp")});
+    container.innerHTML = `${remoteEndpointProbeMarkup(profile, diagnostics.endpoint_probe || {})}${management}`;
+    const launchButton = remoteWorkspaceQuery(container, "#remoteDesktopLaunchButton", "remoteDesktopLaunchButton");
+    const clientAvailable = remoteWorkspaceQuery(container, "#view-remote-desktop", "view-remote-desktop")?.dataset.remoteClientAvailable === "1";
+    if (launchButton) {
+      launchButton.disabled = !clientAvailable;
+      launchButton.title = clientAvailable ? "SSH 深度探测不可用，仍可直接尝试 XDMCP 图形登录" : "请先安装或授权本机 XDMCP 客户端";
+    }
+    refreshIcons();
+    return;
+  }
   container.dataset.adminRequired = diagnostics.privileged ? "0" : "1";
   container.dataset.adminConnectionId = String(diagnostics.ssh_connection?.id || 0);
   const action = xdmcpServerAction(diagnostics);
@@ -83,12 +98,26 @@ async function inspectXdmcpServer(id, button=null, targetContainer=null) {
   const container = targetContainer || $("xdmcpServerState");
   if (container) container.innerHTML = `<div class="xdmcp-server-loading">${icon("loader-circle")}<span>正在探测远端图形登录服务</span></div>`;
   try {
-    const diagnostics = await api(`/api/remote-profiles/${id}/xdmcp/server`);
+    const profile = remoteProfileById(id);
+    const connectivityPromise = api(`/api/remote-profiles/${Number(id)}/connectivity`).catch(error => ({supported:true, method:"xdmcp-query", ok:false, responded:false, response:"", error:error.message || "XDMCP Query 探测失败"}));
+    let diagnostics;
+    if (!linuxDesktopManagerConnectionIdForProfile(profile)) {
+      diagnostics = {
+        management_available:false,
+        code:"REMOTE_MANAGEMENT_SSH_REQUIRED",
+        error:"XDMCP 可以直接尝试图形登录；关联 SSH 后可探测和管理显示管理器、桌面会话与 UDP 177 服务。"
+      };
+    } else {
+      try {
+        diagnostics = await api(`/api/remote-profiles/${id}/xdmcp/server`);
+        diagnostics.management_available = true;
+      } catch (error) {
+        diagnostics = {management_available:true, error:error.message || "XDMCP SSH 深度探测失败", code:error.code || "", connectionId:Number(error.connectionId || linuxDesktopManagerConnectionIdForProfile(profile))};
+      }
+    }
+    diagnostics.endpoint_probe = await connectivityPromise;
     renderXdmcpServerState(diagnostics, id, container);
     return diagnostics;
-  } catch (error) {
-    if (container) container.innerHTML = `<div class="connection-test-status error">${esc(error.message || "XDMCP 服务器探测失败")}</div>`;
-    throw error;
   } finally {
     if (button) setButtonBusy(button, false);
   }
@@ -155,6 +184,20 @@ async function copyXdmcpSetupCommand() {
 
 async function openXdmcpSetupGuide(profileId, requestedAction="") {
   const modal = $("modal");
+  const profile = remoteProfileById(profileId);
+  if (!linuxDesktopManagerConnectionIdForProfile(profile)) {
+    modal.innerHTML = `<div class="modal-card wide x11-install-guide remote-install-dialog" role="dialog" aria-modal="true" aria-labelledby="xdmcpSetupGuideTitle">
+      <div class="modal-title-row"><div><h2 id="xdmcpSetupGuideTitle">XDMCP 配置说明</h2><span class="muted">${esc(profile?.name || "XDMCP")} · ${esc(remoteProfileEndpoint(profile || {}))}</span></div><button class="icon-button" type="button" onclick="closeXdmcpSetupGuide()" title="关闭" aria-label="关闭">${icon("x")}</button></div>
+      ${remoteDiagnosticStatusMarkup("目标 Linux 主机需要启用支持 XDMCP 的显示管理器并开放 UDP 177。XDMCP 不加密，只应在可信局域网使用；Terma 可以在没有 SSH 的情况下直接尝试图形登录。", {tone:"warning", icon:"panels-top-left", title:"独立 XDMCP 服务"})}
+      ${remoteManagementUnavailableMarkup(profile, "关联 SSH 后，Terma 才能识别显示管理器和桌面会话，并提供安装、启用、修复与防火墙配置。")}
+      ${remoteDesktopProtocolGuideMarkup("xdmcp", {}, profile)}
+      <div class="actions"><button type="button" onclick="closeXdmcpSetupGuide()">关闭</button></div>
+    </div>`;
+    modal.hidden = false;
+    modal.onclick = null;
+    refreshIcons();
+    return null;
+  }
   try {
     const diagnostics = await api(`/api/remote-profiles/${Number(profileId)}/xdmcp/server`);
     const connectionId = Number(diagnostics.ssh_connection?.id || 0);
@@ -218,6 +261,10 @@ async function openXdmcpSetupGuide(profileId, requestedAction="") {
     syncUiActionControls(actionKey, isUiActionInFlight(actionKey));
   } catch (error) {
     notify(error.message || "XDMCP 安装说明读取失败", "error");
+    if (typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure(error)) {
+      return repairRemoteManagementCredentials(profileId, "xdmcp");
+    }
+    return null;
   }
 }
 

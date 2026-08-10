@@ -3,6 +3,7 @@ const iconv = require("iconv-lite");
 const { getRemoteProfile, updateRemoteProfileUsage } = require("./db");
 const { appendSystemLog, appendTerminalLog, createTerminalLog } = require("./logs");
 const { WebSocketFrameParser, closeWebSocket, sendWebSocketFrame, validateWebSocketUpgrade, websocketAccept } = require("./websocket");
+const { formatRemoteEndpoint } = require("./remote-host");
 
 const sessions = new Set();
 const IAC = 255;
@@ -62,7 +63,7 @@ async function testRemoteTerminalProfile(id) {
       });
     });
     updateRemoteProfileUsage(id);
-    return {ok:true, protocol:"telnet", endpoint:`${profile.host}:${profile.port}`};
+    return {ok:true, protocol:"telnet", endpoint:formatRemoteEndpoint(profile.host, profile.port)};
   }
   const runtime = serialRuntime();
   if (!runtime.available) throw new Error(`串口组件不可用：${runtime.error || "serialport 未安装"}`);
@@ -219,7 +220,7 @@ function connectTelnet(session) {
   socket.once("connect", () => {
     socket.setTimeout(0);
     updateRemoteProfileUsage(profile.id);
-    emitOutput(session, `已连接到 ${profile.host}:${profile.port}\r\n`);
+    emitOutput(session, `已连接到 ${formatRemoteEndpoint(profile.host, profile.port)}\r\n`);
   });
   socket.on("data", chunk => consumeTelnetData(session, chunk));
   socket.on("error", error => emitOutput(session, `\r\nTelnet 错误：${error.message}\r\n`));

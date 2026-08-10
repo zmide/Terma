@@ -17,7 +17,7 @@ const VNC_CLIPBOARD_ECHO_GUARD_MS = 3000;
 const remoteAdminGrantCache = new Map();
 let noVncRfbPromise = null;
 let xdmcpProgressTimer = null;
-let linuxDesktopManagerState = {connectionId:0, diagnostics:null, sshX11:null, taskId:"", task:null, logs:[]};
+let linuxDesktopManagerState = {connectionId:0, diagnostics:null, sshX11:null, error:null, taskId:"", task:null, logs:[]};
 let linuxDesktopTaskLogView = {taskId:"", expanded:false, follow:true, scrollTop:0};
 const linuxDesktopTaskMonitors = new Map();
 let pendingRemoteGroupSelectValue = "默认分组";
@@ -198,7 +198,10 @@ function remoteProfileEndpoint(profile) {
   if (profile.protocol === "serial") return profile.options?.path || "未选择串口";
   if (profile.protocol === "xdmcp" && profile.options?.mode === "broadcast") return `局域网广播:${profile.port || 177}`;
   const user = profile.username ? `${profile.username}@` : "";
-  return `${user}${profile.host}:${profile.port}`;
+  const rawHost = String(profile.host || "").trim();
+  const host = rawHost.startsWith("[") && rawHost.endsWith("]") ? rawHost.slice(1, -1) : rawHost;
+  const displayHost = host.includes(":") ? `[${host}]` : host;
+  return `${user}${displayHost}:${profile.port}`;
 }
 
 async function inspectLinuxDesktopForRemoteProfile(profile) {
@@ -212,9 +215,47 @@ async function inspectLinuxDesktopForRemoteProfile(profile) {
 }
 
 function linuxDesktopMissingNotice(profile, diagnostics) {
-  if (!diagnostics || diagnostics.platform_supported === false || diagnostics.has_desktop || !["rdp", "vnc", "xdmcp"].includes(profile?.protocol)) return "";
+  const positivelyLinux = diagnostics?.platform === "linux" || diagnostics?.os_id === "linux" || (diagnostics?.platform_supported === true && Boolean(diagnostics?.connection || diagnostics?.ssh_connection));
+  if (!diagnostics || !positivelyLinux || diagnostics.has_desktop || !["rdp", "vnc", "xdmcp"].includes(profile?.protocol)) return "";
   const id = Number(profile.id || 0);
   return `<div class="connection-test-status warning linux-desktop-missing-notice">${icon("monitor-off")}<span>未检测到可用的 Linux 图形桌面，${profile.protocol.toUpperCase()} 可能无法登录。</span><button type="button" onclick="openLinuxDesktopManagerForProfile(${id})">${icon("monitor-cog")}<span>前往 Linux 桌面管理</span></button></div>`;
+}
+
+function remoteDiagnosticStatusMarkup(message, options={}) {
+  const tone = options.tone || "warning";
+  const statusIcon = options.icon || (tone === "error" ? "circle-alert" : tone === "success" ? "circle-check" : "info");
+  const title = String(options.title || "").trim();
+  const actions = String(options.actions || "").trim();
+  return `<div class="connection-test-status remote-diagnostic-status ${escAttr(tone)}"><span class="remote-diagnostic-icon">${icon(statusIcon)}</span><span class="remote-diagnostic-copy">${title ? `<b>${esc(title)}</b>` : ""}<span>${esc(message || "")}</span></span>${actions ? `<span class="remote-diagnostic-actions">${actions}</span>` : ""}</div>`;
+}
+
+function remoteEndpointProbeMarkup(profile, probe={}) {
+  if (!probe?.supported) return "";
+  const endpoint = remoteProfileEndpoint({
+    protocol:profile?.protocol || probe.protocol,
+    host:profile?.host || probe.host || "",
+    port:profile?.port || probe.port || "",
+    username:"",
+    options:profile?.options || {}
+  });
+  if (probe.method === "xdmcp-query") {
+    const willing = probe.ok && probe.response === "willing";
+    const responded = Boolean(probe.responded);
+    return remoteDiagnosticStatusMarkup(
+      willing
+        ? `已从 Terma 主机收到 ${endpoint} 的 XDMCP WILLING 响应，可新建图形登录。`
+        : responded
+          ? `${endpoint} 已返回 XDMCP 响应，但当前不接受图形登录（${probe.error || probe.response || "服务拒绝"}）。`
+          : `${endpoint} 未返回 XDMCP Query 响应（${probe.error || "UDP 无响应"}）。UDP 防火墙或服务策略可能丢弃探测包，仍可直接尝试图形登录。`,
+      {tone:willing ? "success" : responded ? "error" : "warning", icon:willing ? "radio-tower" : responded ? "circle-x" : "circle-help", title:willing ? "XDMCP 服务已响应" : responded ? "XDMCP 服务拒绝登录" : "未收到 XDMCP 响应"}
+    );
+  }
+  return remoteDiagnosticStatusMarkup(
+    probe.ok
+      ? `已从 Terma 主机直连 ${endpoint}；可按协议启动客户端，SSH 仅用于 Linux 服务管理和深度诊断。`
+      : `无法从 Terma 主机连接 ${endpoint}（${probe.error || "端口不可达"}）。请检查服务、防火墙和网络路由。`,
+    {tone:probe.ok ? "success" : "error", icon:probe.ok ? "radio-tower" : "unplug", title:probe.ok ? `${String(profile?.protocol || "").toUpperCase()} 端口可达` : `${String(profile?.protocol || "").toUpperCase()} 端口不可达`}
+  );
 }
 
 function renderLinuxDesktopMissingWorkspace(profile, key, diagnostics) {
@@ -252,6 +293,92 @@ function linuxDesktopManagerConnectionIdForProfile(profile) {
   if (sourceId && currentConnection(sourceId)) return sourceId;
   const host = String(profile?.host || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
   return Number(connections.find(item => String(item.ssh_host || "").trim().toLowerCase().replace(/^\[|\]$/g, "") === host)?.id || 0);
+}
+
+function remoteManagementCredentialRepairMarkup(profileId, error, surface) {
+  if (typeof sshAuthenticationFailure !== "function" || !sshAuthenticationFailure(error)) return "";
+  const profile = remoteProfileById(profileId);
+  const connectionId = linuxDesktopManagerConnectionIdForProfile(profile);
+  if (!connectionId) return "";
+  return `<button type="button" data-action="remote-management-credential-repair" data-remote-profile-id="${Number(profileId)}" data-surface="${escAttr(surface || "")}">${icon("key-round")}<span>修复 SSH 管理凭据</span></button>`;
+}
+
+function remoteManagementSetupActionMarkup(profileId) {
+  return `<button type="button" data-action="remote-management-new-ssh" data-remote-profile-id="${Number(profileId)}">${icon("server-cog")}<span>新建 SSH 管理连接</span></button>`;
+}
+
+function remoteManagementUnavailableMarkup(profile, message="") {
+  const protocol = String(profile?.protocol || "远程").toUpperCase();
+  const detail = message || `${protocol} 连接本身不依赖 SSH；关联 SSH 后可增加 Linux 服务安装、状态识别和凭据修复能力。`;
+  return remoteDiagnosticStatusMarkup(detail, {
+    tone:"warning",
+    icon:"server-off",
+    title:"未关联 SSH 管理连接",
+    actions:remoteManagementSetupActionMarkup(profile?.id)
+  });
+}
+
+function newRemoteManagementSshConnection(profileId) {
+  const profile = remoteProfileById(profileId);
+  if (!profile || newConnection(profile.group_name || "默认分组") === false) return false;
+  const form = $("connectionForm");
+  if (!form) return false;
+  form.dataset.remoteProfileLinkId = String(profile.id);
+  form.insertAdjacentHTML("afterbegin", `<div class="connection-test-status remote-management-link-notice">保存后会自动关联到“${esc(profile.name)}”，用于 Linux 服务管理和深度诊断；远程桌面密码不会复制到 SSH。</div>`);
+  if ($("conn_name")) $("conn_name").value = `${profile.name} · SSH 管理`.slice(0, 120);
+  if ($("conn_host")) $("conn_host").value = profile.host || "";
+  if ($("conn_port")) $("conn_port").value = 22;
+  if ($("conn_user")) $("conn_user").value = profile.protocol === "rdp" ? "" : profile.username || "";
+  setTimeout(() => $("conn_user")?.focus({preventScroll:true}), 0);
+  return true;
+}
+
+async function linkRemoteProfileSshManagement(profileId, connectionId) {
+  const profile = remoteProfileById(profileId);
+  const id = Number(connectionId || 0);
+  if (!profile || id < 1) return false;
+  const options = {...(profile.options || {}), source_ssh_connection_id:id};
+  if (profile.protocol === "xdmcp") options.ssh_connection_id = id;
+  await api(`/api/remote-profiles/${profile.id}`, {method:"PUT", body:JSON.stringify({
+    protocol:profile.protocol,
+    name:profile.name,
+    group_name:profile.group_name,
+    host:profile.host,
+    port:profile.port,
+    username:profile.username || "",
+    tags:profile.tags || "",
+    options
+  })});
+  notify(`已把 SSH 管理连接关联到 ${profile.name}`, "success");
+  return true;
+}
+
+async function repairRemoteManagementCredentials(profileId, surface="") {
+  const profile = remoteProfileById(profileId);
+  const connectionId = linuxDesktopManagerConnectionIdForProfile(profile);
+  if (!profile || !connectionId || typeof repairSshCredentials !== "function") {
+    notify("没有找到此远程连接使用的 SSH 管理连接", "error");
+    return false;
+  }
+  const retry = async () => {
+    if (surface === "rdp") await inspectRdpServer(profile.id);
+    else if (surface === "vnc") await inspectVncServer(profile.id);
+    else if (surface === "xdmcp") await inspectXdmcpServer(profile.id);
+  };
+  return repairSshCredentials(connectionId, {
+    context:`${String(surface || profile.protocol).toUpperCase()} 服务探测认证失败`,
+    onSaved:retry
+  });
+}
+
+if (typeof registerTermaAction === "function") {
+  registerTermaAction("remote-management-credential-repair", ({element}) => repairRemoteManagementCredentials(
+    Number(element.dataset.remoteProfileId || 0),
+    element.dataset.surface || ""
+  ));
+  registerTermaAction("remote-management-new-ssh", ({element}) => newRemoteManagementSshConnection(
+    Number(element.dataset.remoteProfileId || 0)
+  ));
 }
 
 function openLinuxDesktopManagerForProfile(profileId) {
@@ -640,26 +767,27 @@ function rememberRemoteAdminGrant(connectionId, grant={}) {
   });
 }
 
-async function requestRemoteAdminAuthorization(connectionId, scope="远端管理") {
+async function requestRemoteAdminAuthorization(connectionId, scopeLabel="远端管理", grantScope=scopeLabel) {
   const normalizedConnectionId = Number(connectionId || 0);
   const connection = currentConnection(normalizedConnectionId);
   if (!connection) throw new Error("SSH 连接不存在");
-  const cachedGrant = reusableRemoteAdminGrant(normalizedConnectionId, scope);
+  const quickConnection = Boolean(connection.quick_connection || normalizedConnectionId < 0);
+  const cachedGrant = quickConnection ? null : reusableRemoteAdminGrant(normalizedConnectionId, grantScope);
   if (cachedGrant) return {admin_grant_id:cachedGrant.id};
   let identities = [];
   try { identities = await api("/api/identity-files"); } catch {}
   return new Promise(resolve => {
     const modal = $("modal");
-    const defaultMethod = connection.has_password ? "password" : identities.length ? "key" : "agent";
+    const defaultMethod = connection.auth_type === "password" || connection.has_password ? "password" : identities.length ? "key" : "agent";
     const defaultKey = identities.find(item => item.permission_ok)?.path || identities[0]?.path || "";
     modal.innerHTML = `<form class="modal-card remote-admin-modal" role="dialog" aria-modal="true" aria-labelledby="remoteAdminTitle">
-      <div class="modal-title-row"><div><h2 id="remoteAdminTitle">临时管理员授权</h2><span class="muted">${esc(scope)} · ${esc(connection.name || connection.ssh_host)}</span></div><button class="icon-button" type="button" data-admin-cancel title="关闭" aria-label="关闭">${icon("x")}</button></div>
+      <div class="modal-title-row"><div><h2 id="remoteAdminTitle">临时管理员授权</h2><span class="muted">${esc(scopeLabel)} · ${esc(connection.name || connection.ssh_host)}</span></div><button class="icon-button" type="button" data-admin-cancel title="关闭" aria-label="关闭">${icon("x")}</button></div>
       <div class="connection-test-status warning">账号、密码和私钥口令不会保存到连接、配置、日志或任务中心。选择免密复用时，程序内存中只保留临时授权标识。</div>
       <div class="grid remote-admin-grid"><div><label>管理员 SSH 账号</label><input id="remoteAdminUser" autocomplete="username" value="${escAttr(connection.ssh_user || "root")}" required></div><div><label>SSH 认证方式</label><select id="remoteAdminMethod"><option value="password" ${defaultMethod === "password" ? "selected" : ""}>密码</option><option value="key" ${defaultMethod === "key" ? "selected" : ""}>已有私钥</option><option value="agent">SSH Agent</option></select></div></div>
       <div id="remoteAdminPasswordBox"><label>SSH 密码</label><input id="remoteAdminPassword" type="password" autocomplete="current-password" placeholder="只在本次操作中使用"></div>
       <div id="remoteAdminKeyBox" hidden><label>私钥</label><select id="remoteAdminKey"><option value="">请选择 Terma 已识别的私钥</option>${identities.map(item => `<option value="${escAttr(item.path)}" ${item.path === defaultKey ? "selected" : ""}>${esc(item.label || item.name || item.path)}${item.permission_ok ? "" : "（权限需修复）"}</option>`).join("")}</select><label>私钥口令（可选）</label><input id="remoteAdminPassphrase" type="password" autocomplete="new-password" placeholder="没有口令可留空"></div>
       <div class="grid remote-admin-grid"><div><label>sudo 密码</label><select id="remoteAdminSudoMode"><option value="none" selected>不提供（仅 root/免密 sudo）</option><option value="same">与 SSH 密码相同</option><option value="separate">单独输入</option></select></div><div id="remoteAdminSudoPasswordBox" hidden><label>sudo 密码</label><input id="remoteAdminSudoPassword" type="password" autocomplete="current-password" placeholder="可留空尝试免密 sudo"></div></div>
-      <div><label>再次使用时免密</label><select id="remoteAdminReusePolicy"><option value="once" selected>仅本次操作</option><option value="10m">10分钟内</option><option value="30m">30分钟内</option><option value="session">本次程序运行时</option></select></div>
+      ${quickConnection ? `<div class="muted remote-admin-note">快速连接的管理员授权只用于这一次操作，不会复用或写入连接库。</div><input id="remoteAdminReusePolicy" type="hidden" value="once">` : `<div><label>再次使用时免密</label><select id="remoteAdminReusePolicy"><option value="once" selected>仅本次操作</option><option value="10m">10分钟内</option><option value="30m">30分钟内</option><option value="session">本次程序运行时</option></select></div>`}
       <div class="muted remote-admin-note">Terma 会先验证 SSH 登录和 root/sudo 能力，再执行限定的管理脚本。关闭程序后，所有临时授权都会失效。</div>
       <div class="actions"><button type="button" data-admin-cancel>取消</button><button class="primary" type="submit">授权并继续</button></div>
     </form>`;
@@ -740,9 +868,10 @@ async function requestRemoteAdminAuthorization(connectionId, scope="远端管理
       try {
         const result = await api("/api/admin-grants", {
           method:"POST",
+          headers:quickConnection && typeof quickConnectionRequestHeaders === "function" ? quickConnectionRequestHeaders(normalizedConnectionId) : {},
           body:JSON.stringify({
             connection_id:normalizedConnectionId,
-            scope,
+            scope:grantScope,
             admin_auth:{
               ssh_user:user,
               auth_method:authMethod,
@@ -773,7 +902,16 @@ async function requestRemoteAdminAuthorization(connectionId, scope="远端管理
 
 function renderSshX11ForwardingPanel(connection, sshX11, source="xserver") {
   if (!connection) return "";
-  if (sshX11?.error) return `<div class="x11-forwarding-panel warning"><div class="x11-forwarding-head"><span>${icon("circle-alert")}</span><div><b>SSH X11 转发</b><small>${esc(sshX11.error)}</small></div></div></div>`;
+  const quickConnection = Boolean(connection.quick_connection || Number(connection.id) < 0);
+  const connectionLabel = `${connection.name}${quickConnection ? "（临时）" : ""}`;
+  const sourceArg = escAttr(source);
+  if (sshX11?.error) {
+    const authenticationFailed = typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure(sshX11);
+    const repairAction = !authenticationFailed ? "" : quickConnection
+      ? `<button type="button" data-action="x11-quick-credential-repair" data-terminal-key="${escAttr(xServerManagerTerminalKey || "")}">${icon("key-round")}<span>修复临时 SSH 凭据</span></button>`
+      : `<button type="button" data-action="x11-credential-repair" data-connection-id="${Number(connection.id)}" data-source="${sourceArg}">${icon("key-round")}<span>修复 SSH 凭据</span></button>`;
+    return `<div class="x11-forwarding-panel warning"><div class="x11-forwarding-head"><span>${icon("circle-alert")}</span><div><b>SSH X11 转发 · ${esc(connectionLabel)}</b><small>${esc(sshX11.error)}</small></div></div>${repairAction ? `<div class="actions">${repairAction}</div>` : ""}</div>`;
+  }
   const enabled = sshX11?.x11_forwarding === "yes";
   const macos = sshX11?.platform === "macos";
   const ready = Boolean(sshX11?.ready ?? (enabled && sshX11?.xauth_path));
@@ -788,15 +926,22 @@ function renderSshX11ForwardingPanel(connection, sshX11, source="xserver") {
     : sshX11?.x11_forwarding === "no" ? "已关闭" : "未能确定";
   const action = enabled ? "disable" : "enable";
   const actionKey = x11ForwardingActionKey(connection.id);
-  const sourceArg = escAttr(source);
   const automaticAction = sshX11.can_manage
     ? `<button class="${action === "enable" ? "primary" : "danger"}" type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="changeSshX11Forwarding('${action}',this,${Number(connection.id)},'${sourceArg}')">${icon(action === "enable" ? "shield-check" : "shield-off")}<span>${action === "enable" ? "开启 X11 转发" : "关闭 X11 转发"}</span></button>`
     : `<button class="${action === "enable" ? "primary" : "danger"}" type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="changeSshX11Forwarding('${action}',this,${Number(connection.id)},'${sourceArg}')">${icon("key-round")}<span>临时授权后${action === "enable" ? "开启" : "关闭"}</span></button>${sshX11.can_terminal_manage && sshX11.terminal_commands?.[action] ? `<button type="button" onclick="openSshX11ConfigureTerminal(${Number(connection.id)},'${action}','${sourceArg}')">${icon("square-terminal")}<span>在终端手动${action === "enable" ? "开启" : "关闭"}</span></button>` : ""}`;
-  const installXQuartz = macos && !sshX11?.xquartz_installed
-    ? `<button type="button" onclick="openRemoteXQuartzInstall(${Number(connection.id)})">${icon("package-plus")}<span>安装远端 XQuartz</span></button>`
+  const installX11Components = macos && !sshX11?.xquartz_installed
+    ? `<button type="button" onclick="openRemoteX11ComponentsInstall(${Number(connection.id)})">${icon("package-plus")}<span>安装远端 XQuartz</span></button>`
+    : !macos && !sshX11?.xauth_path
+      ? `<button type="button" onclick="openRemoteX11ComponentsInstall(${Number(connection.id)})">${icon("package-plus")}<span>安装 xauth / X11 组件</span></button>`
+      : "";
+  const uninstallX11Components = !macos && sshX11?.xauth_path
+    ? `<button class="danger" type="button" data-ui-action-key="${escAttr(x11ComponentsActionKey(connection.id))}" onclick="uninstallRemoteX11Components(${Number(connection.id)},this,'xserver')">${icon("package-minus")}<span>卸载 X11 组件</span></button>`
     : "";
   const privilegeHint = !sshX11.can_manage && sshX11.can_terminal_manage
-    ? `<div class="x11-forwarding-hint">后台探测会使用保存的 SSH 账号建立独立连接，不会继承其他终端中的 sudo -i。通过终端操作时可正常输入 sudo 密码。</div>`
+    ? `<div class="x11-forwarding-hint">${quickConnection ? "后台探测使用当前临时凭据，不会保存连接或继承终端中的 sudo -i；管理员授权只用于这一次操作。" : "后台探测会使用保存的 SSH 账号建立独立连接，不会继承其他终端中的 sudo -i。通过终端操作时可正常输入 sudo 密码。"}</div>`
     : "";
-  return `<div class="x11-forwarding-panel ${ready ? "ready" : enabled ? "warning" : ""}"><div class="x11-forwarding-head"><span>${icon(ready ? "circle-check" : enabled ? "circle-alert" : "circle-off")}</span><div><b>SSH X11 转发 · ${esc(connection.name)}</b><small>${esc(status)} · ${esc(sshX11.config_file || "/etc/ssh/sshd_config")}</small></div></div><div class="x11-forwarding-meta"><span>平台：${macos ? "macOS" : "Linux"}</span><span>sshd：${sshX11.sshd_present ? "已检测" : "未检测到"}</span><span>${macos ? "XQuartz" : "xauth"}：${macos ? (sshX11.xquartz_installed ? "已安装" : "未安装") : esc(sshX11.xauth_path || "未检测到")}</span><span>XAuthLocation：${esc(sshX11.xauth_location || "未设置")}</span><span>DISPLAY 偏移：${esc(sshX11.x11_display_offset || "未知")}</span></div><div class="actions"><button type="button" onclick="inspectSshX11Forwarding(${Number(connection.id)},'${sourceArg}')">${icon("refresh-cw")}<span>重新检测</span></button>${installXQuartz}${automaticAction}</div>${privilegeHint}</div>`;
+  const missingXauthHint = enabled && !ready
+    ? `<div class="x11-forwarding-hint warning">${macos ? "远端缺少可用的 XQuartz/xauth，SSH 可以连接，但图形窗口无法转发。" : "远端未检测到 xauth，sshd 无法为 X11 会话创建授权 Cookie；请安装后重新建立 X11 终端。"}</div>`
+    : "";
+  return `<div class="x11-forwarding-panel ${ready ? "ready" : enabled ? "warning" : ""}"><div class="x11-forwarding-head"><span>${icon(ready ? "circle-check" : enabled ? "circle-alert" : "circle-off")}</span><div><b>SSH X11 转发 · ${esc(connectionLabel)}</b><small>${esc(status)} · ${esc(sshX11.config_file || "/etc/ssh/sshd_config")}</small></div></div><div class="x11-forwarding-meta"><span>平台：${macos ? "macOS" : "Linux"}</span><span>sshd：${sshX11.sshd_present ? "已检测" : "未检测到"}</span><span>${macos ? "XQuartz" : "xauth"}：${macos ? (sshX11.xquartz_installed ? "已安装" : "未安装") : esc(sshX11.xauth_path || "未检测到")}</span><span>XAuthLocation：${esc(sshX11.xauth_location || "未设置")}</span><span>DISPLAY 偏移：${esc(sshX11.x11_display_offset || "未知")}</span></div>${missingXauthHint}<div class="actions"><button type="button" onclick="inspectSshX11Forwarding(${Number(connection.id)},'${sourceArg}')">${icon("refresh-cw")}<span>重新检测</span></button>${installX11Components}${uninstallX11Components}${automaticAction}</div>${privilegeHint}</div>`;
 }

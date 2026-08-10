@@ -147,7 +147,7 @@ function workspaceGroupName() {
 }
 
 function workspaceGroupPersistableTab(tab) {
-  if (!tab?.kind) return null;
+  if (!tab?.kind || tab.transient || tab.kind === "quick-terminal") return null;
   const {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned} = tab;
   return {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned:Boolean(pinned)};
 }

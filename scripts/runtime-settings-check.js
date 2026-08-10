@@ -98,9 +98,11 @@ async function main() {
   assert.equal(DEFAULT_TERMINAL_SETTINGS.copy_include_trailing_newline, false);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.background_mode, "theme");
   assert.equal(DEFAULT_TERMINAL_SETTINGS.background_color, "#0f1720");
+  assert.equal(DEFAULT_TERMINAL_SETTINGS.font_size, 13);
+  assert.match(DEFAULT_TERMINAL_SETTINGS.font_family, /monospace/);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 8,
+    schema_version: 9,
     listen_hosts: ["127.0.0.1", "127.0.0.2"],
     listen_port: 8123,
     sftp_recycle_bin_enabled: false,
@@ -145,6 +147,10 @@ async function main() {
     multiline_paste_mode: "single_line"
   });
   assert.deepEqual(normalizeTerminalSettings({background_mode:"invalid", background_color:"not-a-color"}), DEFAULT_TERMINAL_SETTINGS);
+  assert.equal(normalizeTerminalSettings({font_family:"Cascadia Mono", font_size:16}).font_family, "Cascadia Mono");
+  assert.equal(normalizeTerminalSettings({font_family:"Cascadia Mono", font_size:16}).font_size, 16);
+  assert.throws(() => normalizeTerminalSettings({font_family:"bad\nfont"}), /终端字体/);
+  assert.throws(() => normalizeTerminalSettings({font_size:33}), /10-32/);
   const invalidCustomBackground = normalizeTerminalSettings({background_mode:"custom", background_color:"not-a-color"});
   assert.equal(invalidCustomBackground.background_mode, "custom");
   assert.equal(invalidCustomBackground.background_color, DEFAULT_TERMINAL_SETTINGS.background_color);

@@ -17,7 +17,8 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
     existingKey = "";
   }
   const connectionId = Number(id);
-  if (updateTab && typeof noteConnectionUsage === "function") noteConnectionUsage(connectionId, "sftp");
+  const quickConnection = currentConnection(connectionId)?.quick_connection === true;
+  if (!quickConnection && updateTab && typeof noteConnectionUsage === "function") noteConnectionUsage(connectionId, "sftp");
   const fallbackExistingKey = !updateTab && tabs.find(tab => tab.key === activeTabKey)?.kind === "sftp"
     ? activeTabKey
     : "";
@@ -69,7 +70,7 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
   const title = `${c.name} · SFTP${tabIndex > 1 ? ` #${tabIndex}` : ""}`;
   if (mounted) {
     runtime.root = view;
-    setWorkspace(title, sftpConnectionAddress(c), "sftp", tabKey, updateTab, true, {kind:"sftp", id:c.id, path:runtime.state.path, connectionStatus:preserveManualDisconnect && !updateTab ? "disconnected" : "connecting"});
+    setWorkspace(title, sftpConnectionAddress(c), "sftp", tabKey, updateTab, true, {kind:"sftp", id:c.id, path:runtime.state.path, connectionStatus:preserveManualDisconnect && !updateTab ? "disconnected" : "connecting", transient:quickConnection, quick_connection:quickConnection});
     syncSftpToolbarPlacement(tabKey);
     if (cached?.viewState) restoreSftpViewState(cached.viewState, tabKey);
     refreshSftpDirectoryActions(tabKey);
@@ -103,7 +104,8 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
     <div class="sftp-top">
       <div id="sftpToolbarMount"><div class="sftp-toolbar">
         <div class="sftp-toolbar-actions">
-          <button class="icon-button" title="收藏当前目录" aria-label="收藏当前目录" id="sftpFavoriteToggle" onclick="toggleSftpFavorite('${escAttr(tabKey)}')">${icon("star")}</button>
+          <button class="icon-button sftp-action-terminal" title="打开此连接的终端" aria-label="打开此连接的终端" onclick="openTerminal(${id})">${icon("square-terminal")}</button>
+          ${quickConnection ? "" : `<button class="icon-button" title="收藏当前目录" aria-label="收藏当前目录" id="sftpFavoriteToggle" onclick="toggleSftpFavorite('${escAttr(tabKey)}')">${icon("star")}</button>`}
           <button class="icon-button" title="新建文件夹" aria-label="新建文件夹" onclick="mkdirSftp('${escAttr(tabKey)}')">${icon("folder-plus")}</button>
           <button class="icon-button" title="新建文件" aria-label="新建文件" onclick="createSftpFile('${escAttr(tabKey)}')">${icon("file-plus-2")}</button>
           <button type="button" class="icon-button" title="上传文件" aria-label="上传文件" onclick="sftpElement('sftpUpload','${escAttr(tabKey)}')?.click()">${icon("upload")}</button>
@@ -112,8 +114,7 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
           <span id="sftpClipboardActions" class="sftp-clipboard-actions">${renderSftpClipboardActions(tabKey)}</span>
           <span class="sftp-toolbar-separator" aria-hidden="true"></span>
           <button class="icon-button" title="搜索当前目录" aria-label="搜索当前目录" onclick="toggleSftpSearch('${escAttr(tabKey)}')">${icon("search")}</button>
-          <button id="sftpFilenameEncodingButton" class="sftp-encoding-button" title="切换 SFTP 文件名编码" aria-label="切换 SFTP 文件名编码" onclick="showSftpFilenameEncodingMenu(event,${id})">${icon("earth")}<span>${esc(sftpFilenameEncodingLabel(c))}</span>${icon("chevron-down")}</button>
-          <button class="icon-button" title="打开此连接的终端" aria-label="打开此连接的终端" onclick="openTerminal(${id})">${icon("square-terminal")}</button>
+          ${quickConnection ? `<span id="sftpFilenameEncodingButton" class="sftp-encoding-button" title="临时连接使用 UTF-8 文件名编码">${icon("earth")}<span>UTF-8</span></span>` : `<button id="sftpFilenameEncodingButton" class="sftp-encoding-button" title="切换 SFTP 文件名编码" aria-label="切换 SFTP 文件名编码" onclick="showSftpFilenameEncodingMenu(event,${id})">${icon("earth")}<span>${esc(sftpFilenameEncodingLabel(c))}</span>${icon("chevron-down")}</button>`}
           <button id="sftpConnectionToggle" class="icon-button sftp-connection-toggle" data-status="connecting" title="正在连接 SFTP" aria-label="正在连接 SFTP" onclick="toggleSftpConnection(${id},'${escAttr(tabKey)}')">${icon("loader-circle")}</button>
           <button class="icon-button" title="刷新目录" aria-label="刷新目录" onclick="refreshSftp({tabKey:'${escAttr(tabKey)}'})">${icon("refresh-cw")}</button>
           <button id="sftpGlobalSettingsButton" class="icon-button" title="SFTP 全局设置" aria-label="SFTP 全局设置" onclick="showSftpGlobalSettings()">${icon("settings")}</button>
@@ -158,10 +159,10 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
     <div id="sftpDropOverlay" class="sftp-drop-overlay" data-mode="upload" aria-hidden="true" hidden></div>
     <div id="sftpFloatingSearch" class="sftp-floating-search" hidden>${icon("search")}<input id="sftpSearch" placeholder="搜索当前目录" value="${esc(runtime.state.query)}" oninput="setSftpSearch(this.value,'${escAttr(tabKey)}')"><button class="icon-button" title="清除搜索" aria-label="清除搜索" onclick="clearSftpSearch('${escAttr(tabKey)}')">${icon("x")}</button></div>
   </div>`;
-  if (typeof remoteDesktopJumpButtonHtml === "function") {
+  if (!quickConnection && typeof remoteDesktopJumpButtonHtml === "function") {
     view.querySelector("#sftpFilenameEncodingButton")?.insertAdjacentHTML("afterend", remoteDesktopJumpButtonHtml(id));
   }
-  if (typeof localFilesToolbarButtonHtml === "function") {
+  if (!quickConnection && typeof localFilesToolbarButtonHtml === "function") {
     view.querySelector(".sftp-toolbar-actions")?.insertAdjacentHTML("beforeend", localFilesToolbarButtonHtml(tabKey));
   }
   view.dataset.workspaceTabKey = tabKey;
@@ -170,7 +171,7 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
   const toolbar = toolbarMount?.querySelector(":scope > .sftp-toolbar");
   if (typeof registerWorkspaceToolbar === "function") registerWorkspaceToolbar("sftp", tabKey, toolbar, toolbarMount);
   runtime.root = view;
-  setWorkspace(title, sftpConnectionAddress(c), "sftp", tabKey, updateTab, true, {kind:"sftp", id:c.id, path:displayPath, connectionStatus:preserveManualDisconnect && !updateTab ? "disconnected" : "connecting"});
+  setWorkspace(title, sftpConnectionAddress(c), "sftp", tabKey, updateTab, true, {kind:"sftp", id:c.id, path:displayPath, connectionStatus:preserveManualDisconnect && !updateTab ? "disconnected" : "connecting", transient:quickConnection, quick_connection:quickConnection});
   syncSftpToolbarPlacement(tabKey);
   restoreSftpDropFeedbackAfterRender(tabKey);
   rememberSftpNavigation(tabKey, displayPath);
@@ -293,6 +294,7 @@ async function loadSftpPage(options={}) {
     return true;
   } catch (error) {
     if (error?.name === "AbortError" || requestSeq !== runtime.state.requestSeq) return false;
+    if (error?.code === "SSH_CREDENTIAL_REPAIR_REDIRECTED") return false;
     updateSftpConnectionUi(id, "disconnected", error.message || "SFTP 连接已断开");
     const mountedList = sftpElement("sftpList", tabKey);
     if (mountedList && runtime.root?.dataset.sftpTabKey === tabKey) {

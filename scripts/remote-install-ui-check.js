@@ -49,9 +49,11 @@ for (const action of ["install", "install-offline", "install-local-offline"]) {
   assert.ok(remote.includes(`"${action}"`), `RDP action ${action} must be mapped in the UI`);
 }
 assert.match(remote, /rdp_install_plan/);
-assert.match(remote, /async function launchRemoteDesktop[\s\S]*?profile\?\.protocol === "rdp"[\s\S]*?await inspectRdpServer\(id\)/, "RDP must recheck the remote service immediately before launch");
-assert.match(remote, /远端 xrdp 服务未运行/);
-assert.match(remote, /远端 TCP 3389 未监听/);
+const launchRemoteDesktopSource = remote.slice(remote.indexOf("async function launchRemoteDesktop"), remote.indexOf("async function installRemoteDesktopClient"));
+assert.doesNotMatch(launchRemoteDesktopSource, /profile\?\.protocol === "rdp"[\s\S]*?inspectRdpServer\(id\)/, "RDP launch must not rerun optional Linux/SSH diagnostics");
+assert.match(server, /profile\.protocol === "rdp"[\s\S]*?await probeTcpEndpoint\(profile\.host, profile\.port \|\| 3389\)/, "RDP launch must keep the saved-target TCP preflight");
+assert.match(remote, /远端 xrdp 已安装/);
+assert.match(remote, /3389 未监听/);
 assert.match(remote, /remoteDesktopProtocolGuideMarkup\("rdp", diagnostics, profile\)/, "RDP status must explain the desktop login account and preferred backend");
 assert.match(remote, /xrdp 使用 Xorg\/xorgxrdp/);
 assert.match(remote, /临时管理员授权(?:的 root )?密码、VNC 密码(?:或|和) Windows 当前账号/);
@@ -97,6 +99,10 @@ for (const action of ["start", "stop", "uninstall"]) {
 }
 assert.match(remote, /configureXdmcpHost\([^\n]+['\"]uninstall-lightdm['\"]/, "XDMCP UI must expose safe LightDM removal when a backup is available");
 assert.match(remote, /uninstallRemoteX11Components/, "X11 component management must expose uninstall");
+assert.match(remote, /uninstallRemoteX11Components\([^\n]+['"]xserver['"]\)/, "X Server manager must expose direct remote X11 component removal");
+assert.match(remote, /const uninstallX11Components = !macos && sshX11\?\.xauth_path/, "quick X11 connections must expose component removal when xauth is installed");
+assert.match(remote, /远端已识别 xauth 和 \$\{applicationCount\} 个常用 X11 程序，组件安装完成。/, "X11 install dialog must render refreshed installed state");
+assert.match(remote, /method === "xdmcp-query"/, "XDMCP fallback must render protocol-level UDP Query diagnostics");
 assert.match(remote, /remote-service-state vnc-connection-help-panel/, "VNC diagnostics must use the shared in-workspace service state card");
 assert.match(remote, /共享来源用 x11vnc，独立来源用 TigerVNC/);
 assert.match(remote, /Xtigervnc\/Xvnc 是底层进程名/);

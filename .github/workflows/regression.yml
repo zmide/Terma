@@ -69,3 +69,55 @@ jobs:
           path: |
             data/ui-smoke-*.png
             data/ui-visual-current/*.png
+
+  windows-source:
+    name: Windows / Node.js 22
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and type-check
+        run: |
+          npm run build
+          npm run check:strict
+
+      - name: Verify Windows native source contracts
+        run: |
+          node native/win-sftp-drag/tests/source-contract-check.js
+          node scripts/native-sftp-drag-desktop-check.js
+
+  macos-source:
+    name: macOS / Node.js 22
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and type-check
+        run: |
+          npm run build
+          npm run check:strict
+
+      - name: Verify macOS desktop source contracts
+        run: |
+          node scripts/mac-icon-padding-check.js desktop/assets/icon-macos.png
+          node scripts/native-sftp-drag-desktop-check.js

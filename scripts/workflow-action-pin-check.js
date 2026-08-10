@@ -19,4 +19,7 @@ const regressionWorkflow = fs.readFileSync(path.join(workflowDirectory, "regress
 assert.match(regressionWorkflow, /xvfb-run[^\n]*npm run ui:smoke/, "Regression workflow 必须在虚拟显示器中运行 Electron UI smoke");
 assert.match(regressionWorkflow, /TERMA_UI_NO_SANDBOX:\s*["']?1["']?/, "Linux CI 的 Electron UI smoke 必须显式关闭不可用的 SUID sandbox");
 assert.match(regressionWorkflow, /TERMA_UI_VISUAL_DIR:\s*data\/ui-visual-current/, "Electron UI smoke 必须把视觉诊断写入 artifact 目录");
+assert.match(regressionWorkflow, /name:\s*Windows \/ Node\.js 22[\s\S]*runs-on:\s*windows-latest/, "Regression workflow 缺少 Windows 轻量检查");
+assert.match(regressionWorkflow, /name:\s*macOS \/ Node\.js 22[\s\S]*runs-on:\s*macos-latest/, "Regression workflow 缺少 macOS 轻量检查");
+assert.ok(fs.existsSync(path.resolve(__dirname, "../.github/dependabot.yml")), "仓库缺少 Dependabot 配置");
 console.log("GitHub Actions 引用检查通过：所有 workflow action 均固定到完整 commit SHA");

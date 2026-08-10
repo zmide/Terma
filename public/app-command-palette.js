@@ -22,9 +22,43 @@ function ensureTermaActions() {
   registerAppAction({id:"connection.forwards", quick:false, run:context=>openForwards(Number(context.connectionId))});
 }
 
+function quickPanelConnectionItem(connection) {
+  return {
+    kind:"connection",
+    icon:connection.favorite ? "star" : "server",
+    title:connection.name,
+    detail:`${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}`,
+    search:productivitySearchText(connection.group_name, connection.tags),
+    connection,
+    run:()=>runAppAction("connection.terminal", {connectionId:connection.id})
+  };
+}
+
 function quickPanelItems(query="") {
   const needle = String(query || "").trim().toLowerCase();
   const matches = item => !needle || productivitySearchText(item.title, item.detail, item.search).includes(needle);
+  const directTarget = parseQuickSshTarget(query);
+  const exactConnections = quickSshExactConnections(directTarget);
+  const exactIds = new Set(exactConnections.map(connection => Number(connection.id)));
+  const directItems = directTarget ? [
+    ...exactConnections.map(quickPanelConnectionItem),
+    ...(!exactConnections.length ? [{
+      kind:"quick-ssh",
+      icon:"zap",
+      title:"快速连接",
+      detail:`${quickSshEndpointText(directTarget)} · 凭据仅用于本次终端`,
+      search:"ssh quick connect 快速连接",
+      run:()=>startQuickSshConnection(directTarget)
+    }] : []),
+    {
+      kind:"quick-ssh-new",
+      icon:"plus",
+      title:"新建 SSH 连接",
+      detail:`使用 ${quickSshEndpointText(directTarget)} 填充连接表单`,
+      search:"ssh new create 新建连接",
+      run:()=>prefillNewSshConnection(directTarget)
+    }
+  ] : [];
   const items = [];
   if (typeof listWorkspaceGroups === "function") {
     for (const group of listWorkspaceGroups()) {
@@ -53,15 +87,7 @@ function quickPanelItems(query="") {
     || Number(right.last_used_at || 0) - Number(left.last_used_at || 0)
     || Number(left.sort_order || 0) - Number(right.sort_order || 0)
   )) {
-    items.push({
-      kind:"connection",
-      icon:connection.favorite ? "star" : "server",
-      title:connection.name,
-      detail:`${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}`,
-      search:productivitySearchText(connection.group_name, connection.tags),
-      connection,
-      run:()=>runAppAction("connection.terminal", {connectionId:connection.id})
-    });
+    if (!exactIds.has(Number(connection.id))) items.push(quickPanelConnectionItem(connection));
   }
   for (const profile of [...remoteProfiles].sort((left, right) =>
     Number(right.favorite || 0) - Number(left.favorite || 0)
@@ -102,7 +128,13 @@ function quickPanelItems(query="") {
     });
   }
   items.push(...quickPanelCommands());
-  return items.filter(matches).slice(0, 120);
+  const matchedItems = items.filter(matches);
+  const directText = String(query || "");
+  const explicitDirectTarget = ["@", ".", ":", "[", "]"].some(character => directText.includes(character));
+  return (explicitDirectTarget || exactConnections.length
+    ? [...directItems, ...matchedItems]
+    : [...matchedItems, ...directItems]
+  ).slice(0, 120);
 }
 
 function ensureQuickPanel() {
@@ -113,7 +145,7 @@ function ensureQuickPanel() {
   panel.className = "quick-panel";
   panel.hidden = true;
   panel.innerHTML = `<div class="quick-panel-dialog" role="dialog" aria-modal="true" aria-label="快速打开">
-    <div class="quick-panel-search">${icon("search")}<input id="quickPanelInput" autocomplete="off" spellcheck="false" placeholder="搜索连接、标签、工作区、命令片段或功能"></div>
+    <div class="quick-panel-search">${icon("search")}<input id="quickPanelInput" autocomplete="off" spellcheck="false" placeholder="搜索内容，或输入 用户名@主机:端口"></div>
     <div id="quickPanelResults" class="quick-panel-results" role="listbox"></div>
   </div>`;
   document.body.appendChild(panel);

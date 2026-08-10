@@ -17,32 +17,37 @@ function storageSettingsPanelHtml() {
   const paths = desktopSettings?.paths || {};
   const storage = desktopSettings?.storage || {};
   const configurable = Boolean(desktopSettings?.available);
+  const saveAction = `<button class="primary storage-settings-save" type="button" onclick="${configurable ? "saveDesktopSettings(this)" : "saveWebStorageSettings(this)"}">${icon("save")}<span>保存数据路径并重启</span></button>`;
   if (desktopSettings?.storage_management_available === false) return `<section class="desktop-settings-section storage-settings-section">
     <h3>数据存储</h3>
     <div class="warning">远程管理数据路径需要启用 Web 密码并登录。关闭局域网密码时，只能在运行 Terma 的本机修改。</div>
   </section>`;
   return `<section class="desktop-settings-section storage-settings-section">
     <h3>数据存储</h3>
-    <div class="desktop-settings-grid">
-      <div>${configurable ? `
+    <div class="storage-settings-layout">
+      ${configurable ? `
         <label for="desktopDataMode">数据路径模式</label>
-        <select id="desktopDataMode" onchange="syncDesktopCustomDataMode()">
-          ${desktopSettings.project_mode_available ? `<option value="project" ${settings.dataMode === "project" ? "selected" : ""}>${esc(desktopSettings.project_mode_label || "项目所在文件夹")}</option>` : ""}
-          <option value="user" ${settings.dataMode === "user" ? "selected" : ""}>用户数据路径（推荐）</option>
-          <option value="custom" ${settings.dataMode === "custom" ? "selected" : ""}>自定义路径</option>
-        </select>
+        <div class="storage-settings-primary-row">
+          <select id="desktopDataMode" onchange="syncDesktopCustomDataMode()">
+            ${desktopSettings.project_mode_available ? `<option value="project" ${settings.dataMode === "project" ? "selected" : ""}>${esc(desktopSettings.project_mode_label || "项目所在文件夹")}</option>` : ""}
+            <option value="user" ${settings.dataMode === "user" ? "selected" : ""}>用户数据路径（推荐）</option>
+            <option value="custom" ${settings.dataMode === "custom" ? "selected" : ""}>自定义路径</option>
+          </select>
+          ${saveAction}
+        </div>
         <div id="desktopCustomDataBox" class="desktop-custom-path">
           <label for="desktopCustomDataDir">自定义数据根目录</label>
           <div class="upload-line"><input id="desktopCustomDataDir" value="${escAttr(settings.customDataDir || "")}" placeholder="选择或输入绝对路径"><button type="button" onclick="chooseDesktopDataDirectory()">${icon("folder-open")}<span>选择</span></button></div>
         </div>
         <div class="muted">保存数据路径后桌面端会重启，当前 SSH 转发会按已有恢复策略重新连接。</div>` : `
         <label for="webStorageRoot">运行根目录</label>
-        <div class="upload-line"><input id="webStorageRoot" value="${escAttr(storage.root || desktopSettings?.base_dir || "")}" placeholder="选择或输入绝对路径"><button type="button" onclick="openStorageDirectoryBrowser()">${icon("folder-open")}<span>浏览</span></button></div>
+        <div class="storage-settings-primary-row">
+          <div class="upload-line"><input id="webStorageRoot" value="${escAttr(storage.root || desktopSettings?.base_dir || "")}" placeholder="选择或输入绝对路径"><button type="button" onclick="openStorageDirectoryBrowser()">${icon("folder-open")}<span>浏览</span></button></div>
+          ${saveAction}
+        </div>
         <label class="check-row"><input id="webStorageMigrate" type="checkbox" checked> 复制当前数据库、设置和密钥到新目录</label>
         <div class="muted">保存后 Terma 会自动重启。目标已有数据库时不会覆盖；也可在启动前使用 TERMA_DATA_DIR 和 TERMA_SSH_DIR 分别覆盖目录，旧版 TUNNELDESK_* 变量仍可兼容读取。</div>`}
-        <div class="desktop-current-paths"><code>数据：${esc(paths.dataDir || "")}</code><code>密钥：${esc(paths.sshDir || "")}</code></div>
-      </div>
-      <div class="actions"><button class="primary" type="button" onclick="${configurable ? "saveDesktopSettings(this)" : "saveWebStorageSettings(this)"}">${icon("save")}<span>保存数据路径并重启</span></button></div>
+      <div class="desktop-current-paths"><code>数据：${esc(paths.dataDir || "")}</code><code>密钥：${esc(paths.sshDir || "")}</code></div>
     </div>
   </section>`;
 }
@@ -152,19 +157,43 @@ async function chooseDesktopDataDirectory() {
   } catch (error) { notify(error.message || "目录选择失败", "error"); }
 }
 
+function desktopStoragePathChanged() {
+  const current = desktopSettings?.settings || {};
+  const requestedMode = $("desktopDataMode")?.value || current.dataMode || "user";
+  const requestedCustom = $("desktopCustomDataDir")?.value.trim() || "";
+  return requestedMode !== String(current.dataMode || "")
+    || (requestedMode === "custom" && requestedCustom !== String(current.customDataDir || "").trim());
+}
+
+async function chooseDesktopStorageMigration() {
+  if (!desktopStoragePathChanged()) return "unchanged";
+  return chooseModal(
+    "更改数据路径",
+    "是否立即把当前连接、设置、日志和 Terma 管理的 SSH 密钥复制到新路径？迁移完成后会重启，原目录仍会保留用于回退。仅切换路径不会删除旧数据，但新位置可能显示为空。",
+    [
+      {label:"迁移并重启", value:"migrate", className:"primary"},
+      {label:"仅切换并重启", value:"switch"},
+      {label:"取消", value:"cancel"}
+    ]
+  );
+}
+
 async function saveDesktopSettings(button=$("desktopSettingsSaveBtn")) {
+  const migrationChoice = await chooseDesktopStorageMigration();
+  if (migrationChoice === "cancel") return;
   try {
     setButtonBusy(button, true, "正在保存");
-    await api("/api/desktop-settings", {method:"PUT", body:JSON.stringify({
+    const result = await api("/api/desktop-settings", {method:"PUT", body:JSON.stringify({
       dataMode:$("desktopDataMode").value,
       customDataDir:$("desktopCustomDataDir").value.trim(),
+      migrateData:migrationChoice === "migrate",
       openAtLogin:$("desktopOpenAtLogin").checked,
       minimizeToTray:$("desktopMinimizeToTray").checked,
       startMinimizedToTray:$("desktopStartMinimized").checked,
       showStartupNotification:$("desktopStartupNotification").checked,
       xServerAutoStart:$("desktopXServerAutoStart").checked
     })});
-    notify("桌面设置已保存，Terma 正在重启", "success");
+    notify(result.migration_requested ? "正在迁移数据，完成后 Terma 会自动重启" : "桌面设置已保存，Terma 正在重启", "success");
   } catch (error) {
     setButtonBusy(button, false);
     notify(error.message || "桌面设置保存失败", "error");

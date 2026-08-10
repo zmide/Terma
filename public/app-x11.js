@@ -1,10 +1,47 @@
-function showX11LaunchMenu(event, connectionId) {
+function showX11LaunchMenu(event, connectionId, terminalKey="") {
   const connection = currentConnection(connectionId);
   if (!connection) return;
-  showActionMenu(event, x11LaunchActions(connectionId));
+  showActionMenu(event, x11LaunchActions(connectionId, terminalKey));
 }
 
-function x11LaunchActions(connectionId) {
+function showQuickX11LaunchMenu(event, terminalKey) {
+  const session = terminalSessions.get(String(terminalKey || ""));
+  if (!session?.connection?.quick_connection) return;
+  const connectionId = Number(session.connection.id || 0);
+  showActionMenu(event, [
+    {label:"临时启动 X11（受限）", icon:"x11", run:()=>openQuickX11Terminal(terminalKey, "untrusted")},
+    {label:"临时启动可信 X11", icon:"badge-check", run:()=>openQuickX11Terminal(terminalKey, "trusted")},
+    {separator:true},
+    {label:"X Server 管理", icon:"x11", run:()=>openXServerManager(connectionId, terminalKey)}
+  ]);
+}
+
+async function openQuickX11Terminal(terminalKey, mode="untrusted") {
+  const session = terminalSessions.get(String(terminalKey || ""));
+  const connection = session?.connection;
+  const token = String(session?.quickToken || connection?.quick_token || "");
+  if (!connection?.quick_connection || !token) return notify("临时连接凭据已失效，请先重新连接", "error");
+  if (!await ensureXServerReady()) return false;
+  const x11Mode = mode === "trusted" ? "trusted" : "untrusted";
+  openQuickTerminal(
+    {...connection, x11_mode:x11Mode},
+    token,
+    true,
+    "",
+    `${connection.name} · ${x11Mode === "trusted" ? "可信 X11" : "X11"}`
+  );
+  return true;
+}
+
+function x11ModeScopeActions(connectionId, mode, terminalKey="") {
+  return [
+    {label:"当前终端生效", icon:"refresh-cw", run:()=>saveAndApplyX11ModeToCurrentTerminal(connectionId, mode, terminalKey)},
+    {label:"新建终端", icon:"square-terminal", run:()=>saveAndOpenX11ModeTerminal(connectionId, mode)},
+    {label:"下次生效", icon:"save", run:()=>saveConnectionX11Mode(connectionId, mode)}
+  ];
+}
+
+function x11LaunchActions(connectionId, terminalKey="") {
   const connection = currentConnection(connectionId);
   if (!connection) return [];
   return [
@@ -15,10 +52,54 @@ function x11LaunchActions(connectionId) {
     {separator:true},
     {label:"X Server 管理", icon:"x11", run:()=>openXServerManager(connectionId)},
     {separator:true},
-    {label:"默认使用受限 X11（-X）", icon:"shield-check", run:()=>saveConnectionX11Mode(connectionId,"untrusted")},
-    {label:"默认使用可信 X11（-Y）", icon:"badge-check", run:()=>saveConnectionX11Mode(connectionId,"trusted")},
-    ...(connection.x11_mode !== "off" ? [{label:"关闭默认 X11 转发", icon:"x", run:()=>saveConnectionX11Mode(connectionId,"off")}] : [])
+    {label:"默认使用受限 X11（-X）", icon:"shield-check", children:()=>x11ModeScopeActions(connectionId,"untrusted",terminalKey)},
+    {label:"默认使用可信 X11（-Y）", icon:"badge-check", children:()=>x11ModeScopeActions(connectionId,"trusted",terminalKey)},
+    ...(connection.x11_mode !== "off" ? [{label:"关闭默认 X11 转发", icon:"x", children:()=>x11ModeScopeActions(connectionId,"off",terminalKey)}] : [])
   ];
+}
+
+function terminalKeyForX11Scope(connectionId, preferredKey="") {
+  const candidates = [String(preferredKey || ""), String(activeTabKey || "")];
+  return candidates.find(key => {
+    const session = terminalSessions.get(key);
+    return session && !session.connection?.quick_connection && Number(session.id) === Number(connectionId);
+  }) || "";
+}
+
+function updateTerminalX11ScopeButton(key, mode) {
+  const button = terminalElementForKey(key, ".terminal-x11-button");
+  if (!button) return;
+  const enabled = mode === "trusted" || mode === "untrusted";
+  const label = enabled ? (mode === "trusted" ? "可信 X11" : "受限 X11") : "关闭 X11";
+  button.classList.toggle("active", enabled);
+  button.title = `X11 图形转发：当前终端${label}`;
+  button.setAttribute("aria-label", button.title);
+}
+
+async function saveAndApplyX11ModeToCurrentTerminal(connectionId, mode, preferredKey="") {
+  const key = terminalKeyForX11Scope(connectionId, preferredKey);
+  if (!currentConnection(connectionId) || !key) throw new Error("当前没有这台服务器的终端，请选择“新建终端”");
+  const normalizedMode = ["trusted", "untrusted"].includes(mode) ? mode : "off";
+  if (normalizedMode !== "off" && !await ensureXServerReady()) return false;
+  await persistConnectionX11Mode(connectionId, normalizedMode);
+  const connection = currentConnection(connectionId);
+  if (!connection) throw new Error("SSH 连接不存在");
+  terminalStartupOverrides.set(key, {
+    ...effectiveTerminalStartupConfig(connection, key),
+    x11_mode:normalizedMode
+  });
+  updateTerminalStartupButton(key, connection);
+  updateTerminalX11ScopeButton(key, normalizedMode);
+  reconnectTerminal(connectionId, key);
+  notify(`当前终端正在重连并${normalizedMode === "off" ? "关闭 X11" : `启用${normalizedMode === "trusted" ? "可信" : "受限"} X11`}，原有内容已保留`, "success");
+  return true;
+}
+
+async function saveAndOpenX11ModeTerminal(connectionId, mode) {
+  const normalizedMode = ["trusted", "untrusted"].includes(mode) ? mode : "off";
+  if (normalizedMode !== "off" && !await ensureXServerReady()) return false;
+  await persistConnectionX11Mode(connectionId, normalizedMode);
+  return openTerminalWithX11Mode(connectionId, normalizedMode, {xServerReady:true, savedDefault:true});
 }
 
 let x11AppModalKeyHandler = null;
@@ -143,12 +224,23 @@ async function openX11InstallGuide(connectionId) {
     const optional = Array.isArray(plan.optional_commands) ? plan.optional_commands : [];
     const macos = discovery.platform === "macos";
     const installed = macos ? Boolean(discovery.xquartz_installed && discovery.xauth_available) : Boolean(discovery.xauth_available);
+    const applicationCount = Array.isArray(discovery.applications) ? discovery.applications.length : 0;
+    const installStateClass = installed ? "success" : plan.supported ? "warning" : "error";
+    const installStateText = installed
+      ? macos
+        ? "远端 XQuartz 与 xauth 已识别，X11 组件已经可用。"
+        : applicationCount
+          ? `远端已识别 xauth 和 ${applicationCount} 个常用 X11 程序，组件安装完成。`
+          : "远端 xauth 已安装；尚未识别到常用 X11 程序，可继续安装工具或直接填写程序路径。"
+      : plan.supported
+        ? (macos ? "远端 macOS 未安装完整的 XQuartz 组件，请选择安装方式。" : "远端没有完整识别到 xauth 或常用 X11 程序，请选择安装方式。")
+        : (macos && discovery.xquartz_installed ? "远端 XQuartz 已安装；请重新检测 SSH X11 转发配置和图形程序。" : "当前远端没有识别到可自动执行的包管理器，请打开手动安装说明。");
     const title = macos ? "安装远端 XQuartz" : "安装/配置 X11 图形程序";
     const steps = Array.isArray(plan.instructions) ? plan.instructions : [];
     const actionKey = x11ComponentsActionKey(connectionId);
     modal.innerHTML = `<div class="modal-card wide x11-install-guide remote-install-dialog" role="dialog" aria-modal="true" aria-labelledby="x11InstallGuideTitle">
       <div class="modal-title-row"><div><h2 id="x11InstallGuideTitle">${title}</h2><span class="muted">${esc(discovery.platform || "远端主机")} · ${esc(plan.package_manager || "未识别包管理器")}</span></div><button class="icon-button" type="button" onclick="closeX11InstallGuide()" title="关闭" aria-label="关闭">${icon("x")}</button></div>
-      <div class="connection-test-status ${plan.supported ? "warning" : "error"}">${esc(plan.supported ? (macos ? "远端 macOS 未安装完整的 XQuartz 组件，请选择安装方式。" : "远端没有完整识别到 xauth 或常用 X11 程序，请选择安装方式。") : (macos && discovery.xquartz_installed ? "远端 XQuartz 已安装；请重新检测 SSH X11 转发配置和图形程序。" : "当前远端没有识别到可自动执行的包管理器，请打开手动安装说明。"))}</div>
+      <div class="connection-test-status ${installStateClass}">${esc(installStateText)}</div>
       ${remoteInstallModesMarkup(plan, mode => `installRemoteX11Components(${Number(connectionId)},this,${plan.requires_password ? "true" : "false"},'${mode}')`, "revealRemoteInstallManual(this)", actionKey)}
       ${remoteInstallManualMarkup(plan, {steps, commands:optional, note:macos ? "XQuartz 安装完成后通常需要退出并重新登录 macOS，再重新建立 SSH X11 会话。" : "如果服务器和本机都不能联网，请在另一台同发行版、同架构设备上下载 xauth、x11-apps、xterm 及完整依赖后上传安装。"})}
       ${optional.length ? `<details class="x11-install-optional"><summary>可选：安装 Firefox 等大型程序</summary><div>${optional.map(item => `<pre class="x11-install-command">${esc(item)}</pre>`).join("")}</div></details>` : ""}
@@ -184,7 +276,14 @@ async function installRemoteX11Components(connectionId, button=null, needsAuthor
       : "将通过远端软件源在线安装 X11 组件。是否继续？";
   try {
     if (!await confirmModal(message, `${modeLabel}安装 X11 组件`, "安装", "取消", true)) return null;
-    const auth = needsAuthorization ? await requestRemoteAdminAuthorization(connectionId, `${modeLabel}安装远端 X11 组件`) : null;
+    const grantScope = normalizedMode === "local-offline"
+      ? "x11.remote-install-local-offline"
+      : normalizedMode === "offline"
+        ? "x11.remote-install-offline"
+        : "x11.remote-install";
+    const auth = needsAuthorization
+      ? await requestRemoteAdminAuthorization(connectionId, `${modeLabel}安装远端 X11 组件`, grantScope)
+      : null;
     if (needsAuthorization && !auth) return null;
     if (button && document.contains(button)) setButtonBusy(button, true, "安装中...");
     const action = normalizedMode === "local-offline" ? "install-local-offline" : normalizedMode === "offline" ? "install-offline" : "install";
@@ -209,7 +308,7 @@ async function installRemoteX11Components(connectionId, button=null, needsAuthor
   }
 }
 
-async function uninstallRemoteX11Components(connectionId, button=null) {
+async function uninstallRemoteX11Components(connectionId, button=null, source="install-guide") {
   const connection = currentConnection(Number(connectionId));
   if (!connection) return notify("SSH 连接不存在", "error");
   const actionKey = x11ComponentsActionKey(connectionId);
@@ -219,21 +318,24 @@ async function uninstallRemoteX11Components(connectionId, button=null) {
   }
   try {
     if (!await confirmModal("将卸载远端 xauth、常用 X11 工具和终端组件。正在使用这些组件的 SSH X11 会话可能中断；不会卸载 Linux 桌面环境。是否继续？", "卸载远端 X11 组件", "卸载", "取消", true)) return null;
-    const auth = await requestRemoteAdminAuthorization(connectionId, "卸载远端 X11 组件");
+    const auth = await requestRemoteAdminAuthorization(connectionId, "卸载远端 X11 组件", "x11.remote-uninstall");
     if (!auth) return null;
     if (button && document.contains(button)) setButtonBusy(button, true, "卸载中...");
     const result = await api(`/api/connections/${Number(connectionId)}/x11-applications/install`, {method:"POST", body:JSON.stringify({action:"uninstall", admin_auth:auth})});
     if (result.task) {
       const taskCompletion = watchRemoteComponentTask(result.task, {
-        container:() => Number($("modal")?._x11ConnectionId || 0) === Number(connectionId) ? $("x11InstallTaskState") : null,
+        container:() => source === "install-guide" && Number($("modal")?._x11ConnectionId || 0) === Number(connectionId) ? $("x11InstallTaskState") : null,
         title:"卸载远端 X11 组件",
-        onDone:() => Number($("modal")?._x11ConnectionId || 0) === Number(connectionId) ? openX11InstallGuide(connectionId) : null
+        onDone:() => source === "xserver"
+          ? renderXServerManager()
+          : Number($("modal")?._x11ConnectionId || 0) === Number(connectionId) ? openX11InstallGuide(connectionId) : null
       });
       const requestAccepted = notifyRemoteComponentTaskRequest(result, "卸载远端 X11 组件", "X11 组件卸载已加入任务中心");
       await taskCompletion;
       return requestAccepted ? result : null;
     }
-    closeX11InstallGuide();
+    if (source === "xserver") await renderXServerManager();
+    else closeX11InstallGuide();
     notify("远端 X11 组件卸载完成", "success");
     return result;
   } catch (error) {
@@ -260,6 +362,16 @@ function openX11InstallTerminal(connectionId, commandOverride="", remoteXQuartz=
   if (!connection) return notify("SSH 连接不存在", "error");
   const command = String(commandOverride || $("modal")?._x11InstallCommand || "").trim();
   if (!command) return openX11InstallManualTerminal(connectionId);
+  if (connection.quick_connection) {
+    const terminalKey = xServerManagerTerminalKey || [...terminalSessions.entries()].find(([, session]) => Number(session?.connection?.id) === Number(connectionId))?.[0] || "";
+    const session = terminalSessions.get(terminalKey);
+    if (!session?.connected) return notify("当前临时终端尚未连接，无法放入安装命令", "error");
+    closeX11InstallGuide();
+    if (typeof activateTab === "function") activateTab(terminalKey);
+    if (!sendTerminalData(terminalKey, command, {focus:true})) return notify("无法写入当前临时终端", "error");
+    notify("安装命令已放入当前临时终端，请确认内容后按 Enter 执行", "info");
+    return terminalKey;
+  }
   const next = nextTerminalTabIndex(connection.id);
   const key = `terminal-${connection.id}-${next}`;
   const startupCommand = `${command}; printf '\\n\\nTerma 安装命令已结束，请按回车返回 Shell。\\n'; exec "${'${SHELL:-/bin/sh}'}"`;
@@ -280,6 +392,15 @@ function openX11InstallTerminal(connectionId, commandOverride="", remoteXQuartz=
 async function openX11InstallManualTerminal(connectionId) {
   const connection = currentConnection(Number(connectionId));
   if (!connection) return notify("SSH 连接不存在", "error");
+  if (connection.quick_connection) {
+    const terminalKey = xServerManagerTerminalKey || [...terminalSessions.entries()].find(([, session]) => Number(session?.connection?.id) === Number(connectionId))?.[0] || "";
+    if (!terminalSessions.get(terminalKey)?.connected) return notify("当前临时终端尚未连接，无法执行手动安装", "error");
+    closeX11InstallGuide();
+    if (typeof activateTab === "function") activateTab(terminalKey);
+    notify("已返回当前临时终端，请按照安装说明输入适合远端系统的命令", "info");
+    focusTerminalSession(terminalKey);
+    return terminalKey;
+  }
   const next = nextTerminalTabIndex(connection.id);
   const key = `terminal-${connection.id}-${next}`;
   terminalStartupOverrides.set(key, {
@@ -395,39 +516,97 @@ async function launchX11App(connectionId, values) {
   return true;
 }
 
-async function openX11Terminal(connectionId, mode="untrusted") {
+async function openTerminalWithX11Mode(connectionId, mode="untrusted", options={}) {
   const connection = currentConnection(connectionId);
   if (!connection) return;
-  if (!await ensureXServerReady()) return;
+  const normalizedMode = ["trusted", "untrusted"].includes(mode) ? mode : "off";
+  if (normalizedMode !== "off" && !options.xServerReady && !await ensureXServerReady()) return;
   const next = nextTerminalTabIndex(connection.id);
   const key = `terminal-${connection.id}-${next}`;
-  terminalStartupOverrides.set(key, {...terminalStartupConfigForConnection(connection), x11_mode:mode});
-  const openedKey = openTerminal(connection.id, true, key, `${connection.name} · X11${mode === "trusted" ? "（可信）" : ""}`);
-  if (openedKey) notify("已打开 X11 图形终端", "success");
+  terminalStartupOverrides.set(key, {...terminalStartupConfigForConnection(connection), x11_mode:normalizedMode});
+  const title = normalizedMode === "off"
+    ? `${connection.name} · 普通终端`
+    : `${connection.name} · X11${normalizedMode === "trusted" ? "（可信）" : ""}`;
+  const openedKey = openTerminal(connection.id, true, key, title);
+  if (openedKey) notify(options.savedDefault
+    ? `已保存默认设置，并打开${normalizedMode === "off" ? "普通终端" : `${normalizedMode === "trusted" ? "可信" : "受限"} X11 终端`}`
+    : normalizedMode === "off" ? "已打开不启用 X11 的普通终端" : "已打开 X11 图形终端", "success");
   return openedKey;
+}
+
+async function openX11Terminal(connectionId, mode="untrusted") {
+  return openTerminalWithX11Mode(connectionId, mode);
 }
 
 let xServerModalKeyHandler = null;
 let xServerManagerConnectionId = 0;
+let xServerManagerTerminalKey = "";
+let xServerManagerRequestId = 0;
+let xServerManagerOpening = false;
+
+function activeXServerManagerContext() {
+  const tabKey = String(typeof activeTabKey === "undefined" ? "" : activeTabKey || "");
+  const session = typeof terminalSessions === "undefined" ? null : terminalSessions.get(tabKey);
+  const sessionConnection = session?.connection;
+  if (sessionConnection) {
+    return {connectionId:Number(sessionConnection.id || 0), terminalKey:tabKey};
+  }
+  const tab = typeof workspaceTabByKey === "function"
+    ? workspaceTabByKey(tabKey)
+    : (typeof tabs === "undefined" ? null : tabs.find(item => item.key === tabKey));
+  if (tab?.kind === "remote-desktop") {
+    const profile = typeof remoteProfileById === "function" ? remoteProfileById(Number(tab.id || 0)) : null;
+    const managementId = typeof linuxDesktopManagerConnectionIdForProfile === "function" ? linuxDesktopManagerConnectionIdForProfile(profile) : 0;
+    return managementId ? {connectionId:Number(managementId), terminalKey:""} : {connectionId:0, terminalKey:""};
+  }
+  const connectionId = Number(tab?.id || 0);
+  const sshOwnedTab = ["terminal", "quick-terminal", "sftp", "edit", "linux-desktop"].includes(String(tab?.kind || ""));
+  return sshOwnedTab && currentConnection(connectionId)
+    ? {connectionId, terminalKey:""}
+    : {connectionId:0, terminalKey:""};
+}
 
 function closeXServerManager() {
+  xServerManagerRequestId += 1;
+  xServerManagerOpening = false;
   if (xServerModalKeyHandler) document.removeEventListener("keydown", xServerModalKeyHandler);
   xServerModalKeyHandler = null;
   const modal = $("modal");
   modal.onclick = null;
+  modal.dataset.xServerManager = "";
   modal.hidden = true;
   modal.innerHTML = "";
+}
+
+function showXServerManagerLoading() {
+  const modal = $("modal");
+  modal.dataset.xServerManager = "1";
+  modal.innerHTML = `<div class="modal-card xserver-manager" role="dialog" aria-modal="true" aria-labelledby="xServerManagerTitle">
+    <div class="modal-title-row"><div><h2 id="xServerManagerTitle">X Server</h2><span class="muted">正在读取本机与当前 SSH 上下文</span></div><button class="icon-button" type="button" onclick="closeXServerManager()" title="关闭" aria-label="关闭">${icon("x")}</button></div>
+    <div class="xserver-state loading"><span>${icon("loader-circle")}</span><div><b>正在打开 X Server 管理</b><small>正在检查桌面授权、DISPLAY 和 SSH X11 转发状态...</small></div></div>
+  </div>`;
+  modal.hidden = false;
+  modal.onclick = null;
+  refreshIcons();
 }
 
 function xServerModeLabel(value) {
   return {bundled:"Terma 内置", system:"系统组件", native:"桌面会话", missing:"未安装"}[value] || value || "未知";
 }
 
-async function renderXServerManager() {
-  const diagnostics = await api("/api/xserver");
+async function renderXServerManager(requestId=0) {
+  const diagnosticsPromise = api("/api/xserver");
   const modal = $("modal");
-  const connection = currentConnection(xServerManagerConnectionId) || currentConnection();
-  const sshX11 = connection ? await api(`/api/connections/${Number(connection.id)}/x11-forwarding`).catch(error => ({error:error.message || "SSH X11 配置探测失败"})) : null;
+  const connection = xServerManagerConnectionId ? currentConnection(xServerManagerConnectionId) : null;
+  const quickConnection = Boolean(connection?.quick_connection);
+  const sshX11Promise = connection ? api(`/api/connections/${Number(connection.id)}/x11-forwarding`).catch(error => ({
+    error:error.message || "SSH X11 配置探测失败",
+    code:error.code || "",
+    connectionId:Number(error.connectionId || connection.id)
+  })) : Promise.resolve(null);
+  const [diagnostics, sshX11] = await Promise.all([diagnosticsPromise, sshX11Promise]);
+  if (requestId && requestId !== xServerManagerRequestId) return false;
+  if (requestId && modal.dataset.xServerManager !== "1") return false;
   const authorizationRequired = Boolean(diagnostics.authorization_required);
   const localDirectAuthorized = diagnostics.authorization_kind === "local-direct";
   const standaloneBackend = diagnostics.integration_available === false && !diagnostics.desktop_backend_available;
@@ -439,10 +618,10 @@ async function renderXServerManager() {
   const installLabel = diagnostics.platform === "linux" ? "安装 Linux 图形组件" : "安装 XQuartz";
   const defaultX11Mode = connection?.x11_mode === "trusted" ? "trusted" : connection?.x11_mode === "untrusted" ? "untrusted" : "off";
   const linuxX11Action = !integrationUnavailable && diagnostics.platform === "linux" && connection
-    ? `<button class="primary" type="button" onclick="openX11TerminalFromManager(${Number(connection.id)})">${icon("square-terminal")}<span>临时打开 X11 终端</span></button><button type="button" onclick="changeConnectionDefaultX11(${Number(connection.id)},'${defaultX11Mode === "off" ? "trusted" : "off"}',this)">${icon(defaultX11Mode === "off" ? "badge-check" : "circle-off")}<span>${defaultX11Mode === "off" ? "普通终端默认启用" : "关闭普通终端默认 X11"}</span></button>`
+    ? `<button class="primary" type="button" onclick="openX11TerminalFromManager(${Number(connection.id)})">${icon("square-terminal")}<span>临时打开 X11 终端</span></button>${quickConnection ? "" : `<button type="button" onclick="changeConnectionDefaultX11(${Number(connection.id)},'${defaultX11Mode === "off" ? "trusted" : "off"}',this)">${icon(defaultX11Mode === "off" ? "badge-check" : "circle-off")}<span>${defaultX11Mode === "off" ? "普通终端默认启用" : "关闭普通终端默认 X11"}</span></button>`}`
     : "";
   const linuxHint = !integrationUnavailable && diagnostics.platform === "linux"
-    ? `<div class="connection-test-status">${connection ? defaultX11Mode === "off" ? `本机 DISPLAY 已就绪；“${esc(connection.name)}”的普通终端尚未默认请求 X11，可临时打开或保存为默认。` : `“${esc(connection.name)}”的普通终端已默认使用${defaultX11Mode === "trusted" ? "可信" : "受限"} X11，可直接运行 Java GUI 等图形程序。` : "本机 DISPLAY 已就绪；SSH 普通终端是否转发图形窗口取决于对应连接保存的 X11 模式。"}</div>`
+    ? `<div class="connection-test-status">${quickConnection ? `本机 DISPLAY 已就绪；“${esc(connection.name)}”是临时连接，可临时打开 X11 终端，但不会保存默认 X11 配置。` : connection ? defaultX11Mode === "off" ? `本机 DISPLAY 已就绪；“${esc(connection.name)}”的普通终端尚未默认请求 X11，可临时打开或保存为默认。` : `“${esc(connection.name)}”的普通终端已默认使用${defaultX11Mode === "trusted" ? "可信" : "受限"} X11，可直接运行 Java GUI 等图形程序。` : "本机 DISPLAY 已就绪；SSH 普通终端是否转发图形窗口取决于对应连接保存的 X11 模式。"}</div>`
     : "";
   const sshX11Block = renderSshX11ForwardingPanel(connection, sshX11);
   const stateTitle = authorizationRequired ? "等待桌面授权" : standaloneBackend ? "桌面集成不可用" : diagnostics.available ? "已就绪" : diagnostics.running ? "正在运行" : "未启动";
@@ -464,11 +643,15 @@ async function renderXServerManager() {
     <div class="actions"><button type="button" onclick="renderXServerManager()">${icon("refresh-cw")}<span>刷新</span></button>${!integrationUnavailable && diagnostics.can_stop ? `<button type="button" onclick="changeXServerState('stop',this)">${icon("square")}<span>停止</span></button>` : ""}${!integrationUnavailable && diagnostics.can_install ? `<button class="primary" type="button" onclick="installXServerComponentsFromManager(this,'${escAttr(diagnostics.platform || "")}')">${icon("download")}<span>${esc(installLabel)}</span></button>` : ""}${!integrationUnavailable && diagnostics.can_start ? `<button class="primary" type="button" onclick="changeXServerState('start',this)">${icon("play")}<span>启动</span></button>` : ""}${linuxX11Action}</div>
   </div>`;
   modal.hidden = false;
+  modal.dataset.xServerManager = "1";
   refreshIcons();
   if (connection) {
     const actionKey = x11ForwardingActionKey(connection.id);
     syncUiActionControls(actionKey, isUiActionInFlight(actionKey));
+    const componentsActionKey = x11ComponentsActionKey(connection.id);
+    syncUiActionControls(componentsActionKey, isUiActionInFlight(componentsActionKey));
   }
+  return true;
 }
 
 async function inspectSshX11Forwarding(connectionId, source="xserver") {
@@ -477,6 +660,37 @@ async function inspectSshX11Forwarding(connectionId, source="xserver") {
     if (source === "linux-desktop") await loadLinuxDesktopManager();
     else await renderXServerManager();
   } catch (error) { notify(error.message || "SSH X11 配置探测失败", "error"); }
+}
+
+async function repairX11ManagerCredentials(connectionId, source="xserver") {
+  const id = Number(connectionId || 0);
+  if (typeof repairSshCredentials !== "function" || id < 1) return false;
+  const render = async () => {
+    if (source === "linux-desktop") await loadLinuxDesktopManager();
+    else {
+      xServerManagerConnectionId = id;
+      await renderXServerManager();
+    }
+  };
+  const repaired = await repairSshCredentials(id, {
+    context:"X11 管理认证失败",
+    onSaved:render
+  });
+  if (!repaired) await render().catch(() => {});
+  return repaired;
+}
+
+if (typeof registerTermaAction === "function") {
+  registerTermaAction("x11-credential-repair", ({element}) => repairX11ManagerCredentials(
+    Number(element.dataset.connectionId || 0),
+    element.dataset.source || "xserver"
+  ));
+  registerTermaAction("x11-quick-credential-repair", ({element}) => {
+    const key = element.dataset.terminalKey || xServerManagerTerminalKey || "";
+    const session = terminalSessions.get(key);
+    closeXServerManager();
+    return session?.connection ? repairTerminalCredentials(session.connection, key) : false;
+  });
 }
 
 async function changeSshX11Forwarding(action, button, connectionId, source="xserver") {
@@ -495,7 +709,7 @@ async function changeSshX11Forwarding(action, button, connectionId, source="xser
     setButtonBusy(button, true, enabled ? "开启中..." : "关闭中...");
     const diagnostics = await api(`/api/connections/${Number(connectionId)}/x11-forwarding`);
     if (!diagnostics.can_manage) {
-      adminAuth = await requestRemoteAdminAuthorization(Number(connectionId), enabled ? "开启 SSH X11 转发" : "关闭 SSH X11 转发");
+      adminAuth = await requestRemoteAdminAuthorization(Number(connectionId), enabled ? "开启 SSH X11 转发" : "关闭 SSH X11 转发", "x11.sshd-config");
       if (!adminAuth) return;
     }
     const result = await api(`/api/connections/${Number(connectionId)}/x11-forwarding`, {method:"POST", body:JSON.stringify({action, ...(adminAuth ? {admin_auth:adminAuth} : {})})});
@@ -529,10 +743,20 @@ async function openSshX11ConfigureTerminal(connectionId, action, source="xserver
     const diagnostics = await api(`/api/connections/${Number(connectionId)}/x11-forwarding`);
     const command = String(diagnostics.terminal_commands?.[action] || "").trim();
     if (!command) throw new Error("当前主机没有可用的交互式 X11 配置命令");
+    if (connection.quick_connection) {
+      const terminalKey = xServerManagerTerminalKey || [...terminalSessions.entries()].find(([, session]) => Number(session?.connection?.id) === Number(connectionId))?.[0] || "";
+      const session = terminalSessions.get(terminalKey);
+      if (!session?.connected) throw new Error("当前临时终端尚未连接，无法放入配置命令");
+      if (source === "xserver" && !$("modal")?.hidden) closeXServerManager();
+      if (typeof activateTab === "function") activateTab(terminalKey);
+      if (!sendTerminalData(terminalKey, command, {focus:true})) throw new Error("无法写入当前临时终端");
+      notify("配置命令已放入当前临时终端，请确认内容后按 Enter 执行", "info");
+      return;
+    }
     const next = nextTerminalTabIndex(connection.id);
     const key = `terminal-${connection.id}-${next}`;
     const label = action === "enable" ? "开启 X11 转发" : "关闭 X11 转发";
-    const startupCommand = `${command}; td_status=$?; printf '\n\nTerma：${label}命令已结束（退出码 %s）。\n' "$td_status"; exec "${'${SHELL:-/bin/sh}'}"`;
+    const startupCommand = `${command}; terma_status=$?; printf '\n\nTerma：${label}命令已结束（退出码 %s）。\n' "$terma_status"; exec "${'${SHELL:-/bin/sh}'}"`;
     terminalStartupOverrides.set(key, {
       terminal_startup_mode:"program",
       terminal_profile_name:label,
@@ -556,6 +780,11 @@ async function openRemoteXQuartzInstall(connectionId) {
   await openX11InstallGuide(Number(connectionId));
 }
 
+async function openRemoteX11ComponentsInstall(connectionId) {
+  if (!$('modal')?.hidden) closeXServerManager();
+  await openX11InstallGuide(Number(connectionId));
+}
+
 async function installXServerComponentsFromManager(button, platform) {
   const linux = platform === "linux";
   const message = linux
@@ -574,22 +803,47 @@ async function installXServerComponentsFromManager(button, platform) {
   }
 }
 
-async function openXServerManager(connectionId=0) {
+async function openXServerManager(connectionId=0, terminalKey="") {
+  if (xServerManagerOpening || ($("modal")?.dataset.xServerManager === "1" && !$('modal')?.hidden)) return false;
+  const requestId = ++xServerManagerRequestId;
+  xServerManagerOpening = true;
   try {
-    xServerManagerConnectionId = Number(connectionId || 0);
-    await renderXServerManager();
+    const explicitConnectionId = Number(connectionId || 0);
+    const context = explicitConnectionId
+      ? {connectionId:explicitConnectionId, terminalKey:String(terminalKey || "")}
+      : activeXServerManagerContext();
+    xServerManagerConnectionId = Number(context.connectionId || 0);
+    xServerManagerTerminalKey = String(context.terminalKey || "");
+    showXServerManagerLoading();
     const modal = $("modal");
     modal.onclick = null;
     if (xServerModalKeyHandler) document.removeEventListener("keydown", xServerModalKeyHandler);
     xServerModalKeyHandler = event => { if (event.key === "Escape") closeXServerManager(); };
     document.addEventListener("keydown", xServerModalKeyHandler);
+    await renderXServerManager(requestId);
+    return true;
   } catch (error) {
+    if (requestId !== xServerManagerRequestId) return false;
+    const modal = $("modal");
+    modal.dataset.xServerManager = "1";
+    modal.innerHTML = `<div class="modal-card xserver-manager" role="dialog" aria-modal="true"><div class="modal-title-row"><div><h2>X Server</h2><span class="muted">状态读取失败</span></div><button class="icon-button" type="button" onclick="closeXServerManager()" title="关闭" aria-label="关闭">${icon("x")}</button></div><div class="connection-test-status remote-diagnostic-status error"><span class="remote-diagnostic-icon">${icon("circle-alert")}</span><span class="remote-diagnostic-copy">${esc(error.message || "X Server 状态读取失败")}</span><span class="remote-diagnostic-actions"><button type="button" onclick="closeXServerManager();openXServerManager(${Number(xServerManagerConnectionId)},'${escAttr(xServerManagerTerminalKey)}')">${icon("refresh-cw")}<span>重试</span></button></span></div></div>`;
+    modal.hidden = false;
+    refreshIcons();
     notify(error.message || "X Server 状态读取失败", "error");
+    return false;
+  } finally {
+    if (requestId === xServerManagerRequestId) xServerManagerOpening = false;
   }
 }
 
 async function openX11TerminalFromManager(connectionId) {
+  const connection = currentConnection(Number(connectionId));
+  const quickTerminalKey = xServerManagerTerminalKey;
   closeXServerManager();
+  if (connection?.quick_connection) {
+    const terminalKey = quickTerminalKey || [...terminalSessions.entries()].find(([, session]) => Number(session?.connection?.id) === Number(connectionId))?.[0] || "";
+    return openQuickX11Terminal(terminalKey, "untrusted");
+  }
   await openX11Terminal(connectionId, "untrusted");
 }
 
@@ -619,7 +873,11 @@ async function changeXServerState(action, button) {
 }
 
 async function saveConnectionX11Mode(connectionId, mode) {
+  await persistConnectionX11Mode(connectionId, mode);
+  notify(mode === "off" ? "已关闭默认 X11 转发，下次连接生效" : `已保存默认 X11 模式：${mode === "trusted" ? "可信" : "受限"}，下次连接生效`, "success");
+}
+
+async function persistConnectionX11Mode(connectionId, mode) {
   await api(`/api/connections/${connectionId}/x11-mode`, {method:"POST", body:JSON.stringify({mode})});
   await loadAll();
-  notify(mode === "off" ? "已关闭默认 X11 转发" : `已保存默认 X11 模式：${mode === "trusted" ? "可信" : "受限"}`, "success");
 }

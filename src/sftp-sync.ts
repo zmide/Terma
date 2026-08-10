@@ -1,8 +1,8 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { getConnection } = require("./db");
 const { invalidateRemoteDirectoryCache, listRemoteDir, readRemoteBinaryFile, setRemoteFileMtime, writeRemoteFile } = require("./sftp");
+const { getSftpConnection } = require("./sftp-session");
 
 const plans = new Map();
 const jobs = new Map();
@@ -111,7 +111,7 @@ async function compareEntry(connectionId, local, remote, useHash) {
 }
 
 async function createSyncPlan(connectionId, data: any = {}, control: any = {}) {
-  getConnection(Number(connectionId));
+  getSftpConnection(Number(connectionId));
   const localRoot = normalizeLocalRoot(data.local_path);
   const remoteRoot = normalizeRemoteRoot(data.remote_path);
   const mode = new Set(["upload", "download", "bidirectional"]).has(data.mode) ? data.mode : "bidirectional";
@@ -190,7 +190,7 @@ function jobView(job) {
 }
 
 function startSyncPlanningJob(connectionId, data: any = {}) {
-  getConnection(Number(connectionId));
+  getSftpConnection(Number(connectionId));
   const id = crypto.randomUUID();
   const job: any = {
     id,

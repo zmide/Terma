@@ -14,6 +14,16 @@ function waitForSftpOpenResume(state) {
   return new Promise(resolve => state.resume = resolve);
 }
 
+function sftpOpenTransportInterrupted(error) {
+  const message = String(error?.message || error || "").trim();
+  return error?.name === "TypeError"
+    || /network error|failed to fetch|load failed|terminated|远程文件读取不完整/i.test(message);
+}
+
+function sftpOpenTransportError() {
+  return new Error("远程文件传输被中断。Terma 已自动重试一次；文件可能正在被改写，或当前浏览器到 Terma 的网络连接不稳定，请稍后重试");
+}
+
 async function readSftpOpenBytes(connectionId, remotePath) {
   const state = {paused:false, cancelled:false, resume:null};
   const controller = new AbortController();
@@ -44,43 +54,62 @@ async function readSftpOpenBytes(connectionId, remotePath) {
     }
   });
   try {
-    await ensureSftpConnection(connectionId);
-    if (state.cancelled) return null;
-    const response = await fetch(`/api/connections/${connectionId}/sftp/open?path=${encodeURIComponent(remotePath)}`, {
-      signal:controller.signal,
-      cache:"no-store"
-    });
-    if (!response.ok) throw new Error(await sftpOpenResponseError(response));
-    total = Number(response.headers.get("X-Terma-File-Size") || response.headers.get("Content-Length") || 0);
-    limit = Number(response.headers.get("X-Terma-File-Limit") || limit);
-    if (!Number.isSafeInteger(total) || total < 0 || total > limit) throw new Error("远程文件大小响应无效");
-    if (!response.body) throw new Error("当前浏览器不支持流式读取远程文件");
-    const bytes = new Uint8Array(total);
-    const reader = response.body.getReader();
-    while (true) {
-      await waitForSftpOpenResume(state);
-      if (state.cancelled) {
-        await reader.cancel();
-        return null;
-      }
-      const {done, value} = await reader.read();
-      if (done) break;
-      if (received + value.byteLength > total) throw new Error("远程文件内容超过声明大小");
-      bytes.set(value, received);
-      received += value.byteLength;
-      const now = performance.now();
-      if (now - lastProgressAt >= 80 || received === total) {
-        lastProgressAt = now;
-        progress.update({
-          progress:total ? received / total * 100 : 100,
-          detail:`正在读取 · ${formatBytes(received)} / ${formatBytes(total)}`
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        received = 0;
+        total = 0;
+        await waitForSftpOpenResume(state);
+        await ensureSftpConnection(connectionId);
+        if (state.cancelled) return null;
+        const response = await fetch(`/api/connections/${connectionId}/sftp/open?path=${encodeURIComponent(remotePath)}`, {
+          signal:controller.signal,
+          cache:"no-store",
+          headers:typeof quickConnectionRequestHeaders === "function"
+            ? quickConnectionRequestHeaders(connectionId)
+            : {}
         });
+        if (!response.ok) throw new Error(await sftpOpenResponseError(response));
+        total = Number(response.headers.get("X-Terma-File-Size") || response.headers.get("Content-Length") || 0);
+        limit = Number(response.headers.get("X-Terma-File-Limit") || limit);
+        if (!Number.isSafeInteger(total) || total < 0 || total > limit) throw new Error("远程文件大小响应无效");
+        if (!response.body) throw new Error("当前浏览器不支持流式读取远程文件");
+        const bytes = new Uint8Array(total);
+        const reader = response.body.getReader();
+        while (true) {
+          await waitForSftpOpenResume(state);
+          if (state.cancelled) {
+            await reader.cancel();
+            return null;
+          }
+          const {done, value} = await reader.read();
+          if (done) break;
+          if (received + value.byteLength > total) throw new Error("远程文件内容超过声明大小");
+          bytes.set(value, received);
+          received += value.byteLength;
+          const now = performance.now();
+          if (now - lastProgressAt >= 80 || received === total) {
+            lastProgressAt = now;
+            progress.update({
+              progress:total ? received / total * 100 : 100,
+              detail:`正在读取 · ${formatBytes(received)} / ${formatBytes(total)}`
+            });
+          }
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        if (received !== total) throw new Error(`远程文件读取不完整：${formatBytes(received)} / ${formatBytes(total)}`);
+        progress.update({progress:100, detail:`读取完成 · ${formatBytes(total)}`});
+        return {bytes, size:total, limit, progress};
+      } catch (error) {
+        if (state.cancelled || error?.name === "AbortError") return null;
+        if (attempt === 0 && sftpOpenTransportInterrupted(error)) {
+          progress.update({progress:Number.NaN, detail:"传输中断，正在自动重试（1/1）...", pausable:true});
+          await new Promise(resolve => setTimeout(resolve, 350));
+          continue;
+        }
+        throw sftpOpenTransportInterrupted(error) ? sftpOpenTransportError() : error;
       }
-      await new Promise(resolve => setTimeout(resolve, 0));
     }
-    if (received !== total) throw new Error(`远程文件读取不完整：${formatBytes(received)} / ${formatBytes(total)}`);
-    progress.update({progress:100, detail:`读取完成 · ${formatBytes(total)}`});
-    return {bytes, size:total, limit, progress};
+    throw sftpOpenTransportError();
   } catch (error) {
     if (state.cancelled || error?.name === "AbortError") return null;
     progress.fail(error?.message || "远程文件读取失败");

@@ -37,19 +37,36 @@ function ftpProfile(id) {
   return profile;
 }
 
+function normalizeFtpTransportError(error, profile) {
+  const raw = String(error?.message || error || "");
+  const code = String(error?.code || "");
+  if (code !== "530" && !/\b530\b|not logged in|login incorrect|authentication failed/i.test(raw)) return error;
+  const normalized: any = new Error("FTP 认证失败，请检查用户名和密码");
+  normalized.name = "FtpAuthenticationError";
+  normalized.code = "FTP_AUTHENTICATION_FAILED";
+  normalized.remoteProfileId = Number(profile?.id || 0);
+  normalized.remoteProfileName = String(profile?.name || "");
+  Object.defineProperty(normalized, "cause", {value:error, enumerable:false, configurable:true});
+  return normalized;
+}
+
 async function withFtpClient(profile, callback) {
   const client = new Client(30000);
   client.ftp.verbose = false;
   const secure = profile.options.secure === "implicit" ? "implicit" : profile.options.secure === "explicit";
   try {
-    await client.access({
-      host:profile.host,
-      port:Number(profile.port || (profile.options.secure === "implicit" ? 990 : 21)),
-      user:profile.username || "anonymous",
-      password:profile.password || "anonymous@",
-      secure,
-      secureOptions:secure ? {rejectUnauthorized:profile.options.reject_unauthorized !== false} : undefined
-    });
+    try {
+      await client.access({
+        host:profile.host,
+        port:Number(profile.port || (profile.options.secure === "implicit" ? 990 : 21)),
+        user:profile.username || "anonymous",
+        password:profile.password || "anonymous@",
+        secure,
+        secureOptions:secure ? {rejectUnauthorized:profile.options.reject_unauthorized !== false} : undefined
+      });
+    } catch (error) {
+      throw normalizeFtpTransportError(error, profile);
+    }
     return await callback(client);
   } finally {
     client.close();
@@ -68,11 +85,15 @@ function ftpEntryView(item) {
 
 async function testFtpProfile(id) {
   const profile = ftpProfile(id);
+  return testFtpCredentials(profile);
+}
+
+async function testFtpCredentials(profile) {
   return withFtpClient(profile, async client => {
     const directory = ftpPath(profile.options.base_path || "/");
     await client.cd(directory);
     const list = await client.list();
-    updateRemoteProfileUsage(id);
+    if (Number(profile.id) > 0) updateRemoteProfileUsage(profile.id);
     return {ok:true, path:await client.pwd(), entries:list.length, secure:profile.options.secure || "none"};
   });
 }
@@ -158,7 +179,9 @@ module.exports = {
   ftpName,
   listFtpDirectory,
   makeFtpDirectory,
+  normalizeFtpTransportError,
   renameFtpPath,
+  testFtpCredentials,
   testFtpProfile,
   uploadFtpFile
 };

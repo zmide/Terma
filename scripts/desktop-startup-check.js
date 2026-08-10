@@ -5,6 +5,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { DatabaseSync } = require("node:sqlite");
 const { isLegacyBrandWindowsProcess } = require("../desktop/windows-brand-process");
+const { createDesktopStorageTransition } = require("../desktop/storage-migration");
 
 const root = path.resolve(__dirname, "..");
 const desktopMainPath = path.join(root, "desktop", "main.js");
@@ -69,6 +70,8 @@ globalThis.__desktopStartupTestApi = {
   prepareRuntimeSettings,
   desktopSettingsView,
   normalizeDesktopSettings,
+  saveDesktopSettings,
+  recoverPendingDesktopStorageMigration,
   setWebUrl: value => { webUrl = String(value || ""); },
   getWebUrl: () => webUrl,
   getPendingDisplayClientKeys: () => [...pendingDisplayClientSessions.keys()],
@@ -381,6 +384,7 @@ function createHarness({
         }
       };
       if (id === "./brand-data-migration") return require(path.join(root, "desktop", "brand-data-migration.js"));
+      if (id === "./storage-migration") return require(path.join(root, "desktop", "storage-migration.js"));
       if (id === "./windows-brand-process") return require(path.join(root, "desktop", "windows-brand-process.js"));
       throw new Error(`unexpected require in desktop startup check: ${id}`);
     }
@@ -978,6 +982,37 @@ check("Packaged desktop preserves an explicitly configured custom runtime direct
   assert.equal(settings.customDataDir, customRoot);
   assert.equal(paths.dataDir, path.join(customRoot, "data"));
   assert.equal(paths.sshDir, path.join(customRoot, ".ssh"));
+});
+
+check("Desktop startup completes an interrupted data path migration before opening the database", () => {
+  const { api, state } = createHarness({platform:"win32", settings:{dataMode:"custom", customDataDir:"C:\\placeholder"}});
+  const sourceRoot = path.join(state.temporaryRoot, "source-runtime");
+  const targetRoot = path.join(state.temporaryRoot, "target-runtime");
+  const sourceSettings = {dataMode:"custom", customDataDir:sourceRoot, minimizeToTray:true};
+  const targetSettings = {dataMode:"custom", customDataDir:targetRoot, minimizeToTray:true};
+  fs.mkdirSync(path.join(sourceRoot, "data"), {recursive:true});
+  fs.mkdirSync(path.join(sourceRoot, ".ssh"), {recursive:true});
+  fs.writeFileSync(path.join(sourceRoot, "data", "tunnels.db"), "active database", "utf8");
+  fs.writeFileSync(path.join(sourceRoot, ".ssh", "id_ed25519"), "active key", "utf8");
+  const transition = createDesktopStorageTransition(
+    sourceSettings,
+    targetSettings,
+    api.resolveRuntimePaths(sourceSettings),
+    api.resolveRuntimePaths(targetSettings)
+  );
+  fs.writeFileSync(state.settingsFile, JSON.stringify({...sourceSettings, pendingStorageMigration:transition}, null, 2), "utf8");
+
+  const recovered = api.prepareRuntimeSettings();
+  const persisted = JSON.parse(fs.readFileSync(state.settingsFile, "utf8"));
+  assert.equal(recovered.dataMode, "custom");
+  assert.equal(recovered.customDataDir, targetRoot);
+  assert.equal(recovered.lastStorageMigration.status, "migrated");
+  assert.equal(Object.hasOwn(recovered, "pendingStorageMigration"), false);
+  assert.equal(Object.hasOwn(persisted, "pendingStorageMigration"), false);
+  assert.equal(fs.readFileSync(path.join(targetRoot, "data", "tunnels.db"), "utf8"), "active database");
+  assert.equal(fs.readFileSync(path.join(targetRoot, ".ssh", "id_ed25519"), "utf8"), "active key");
+  assert.equal(fs.readFileSync(path.join(sourceRoot, "data", "tunnels.db"), "utf8"), "active database");
+  assert.match(api.getPendingStorageMigrationNotice(), /原目录仍保留/);
 });
 
 check("Windows portable uses PORTABLE_EXECUTABLE_DIR instead of its temporary executable", () => {

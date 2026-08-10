@@ -14,7 +14,8 @@ const database = require("../dist/db");
 const connectionFields = [
   "group_name", "ssh_host", "ssh_port", "ssh_user", "auth_type", "identity_file", "ssh_password",
   "tags", "extra_args", "autostart_forwards", "sort_order", "terminal_encoding", "terminal_font_family",
-  "terminal_font_size", "terminal_mobile_font_size", "terminal_line_height", "terminal_font_weight",
+  "terminal_font_family_inherit", "terminal_font_size", "terminal_font_size_inherit", "terminal_mobile_font_size",
+  "terminal_mobile_font_size_inherit", "terminal_line_height", "terminal_font_weight",
   "terminal_startup_mode", "terminal_profile_name", "terminal_profile_kind", "terminal_program_path",
   "terminal_program_args", "terminal_working_directory", "terminal_program_platform", "sftp_text_encoding",
   "sftp_filename_encoding"

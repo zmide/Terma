@@ -12,6 +12,8 @@ const DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT = Object.freeze({
   split: Object.freeze({ terminal: "header", sftp: "header" })
 });
 const DEFAULT_TERMINAL_SETTINGS = Object.freeze({
+  font_family: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+  font_size: 13,
   background_mode: "theme",
   background_color: "#0f1720",
   middle_mouse_action: "paste_clipboard",
@@ -85,7 +87,17 @@ function normalizeTerminalSettings(value: any = {}, fallback: any = DEFAULT_TERM
     ? backgroundColorValue.toLowerCase()
     : DEFAULT_TERMINAL_SETTINGS.background_color;
   const wordSeparators = String(source.word_separators ?? base.word_separators ?? DEFAULT_TERMINAL_SETTINGS.word_separators).slice(0, 128);
+  const fontFamily = String(source.font_family ?? base.font_family ?? DEFAULT_TERMINAL_SETTINGS.font_family).trim();
+  const fontSize = Number(source.font_size ?? base.font_size ?? DEFAULT_TERMINAL_SETTINGS.font_size);
+  if (!fontFamily || fontFamily.length > 300 || /[\0\r\n]/.test(fontFamily)) {
+    throw new Error("默认终端字体长度必须在 1-300 个字符之间，且不能包含换行");
+  }
+  if (!Number.isInteger(fontSize) || fontSize < 10 || fontSize > 32) {
+    throw new Error("默认终端字号必须是 10-32 之间的整数");
+  }
   return {
+    font_family:fontFamily,
+    font_size:fontSize,
     background_mode: TERMINAL_BACKGROUND_MODES.has(backgroundMode) ? backgroundMode : DEFAULT_TERMINAL_SETTINGS.background_mode,
     background_color: backgroundColor,
     middle_mouse_action: TERMINAL_MOUSE_ACTIONS.has(middleMouseAction) ? middleMouseAction : DEFAULT_TERMINAL_SETTINGS.middle_mouse_action,
@@ -129,7 +141,7 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 8,
+    schema_version: 9,
     listen_hosts: normalizeListenHosts(hostsValue, hostsValue === undefined ? (fallback.listen_hosts ?? DEFAULT_LISTEN_HOSTS) : null),
     listen_port: normalizeListenPort(portValue, portValue === undefined ? (fallback.listen_port ?? DEFAULT_LISTEN_PORT) : null),
     sftp_recycle_bin_enabled: value.sftp_recycle_bin_enabled === undefined

@@ -132,12 +132,27 @@ async function deleteRemoteProfile(id) {
   notify("已删除连接", "success");
 }
 
-async function testRemoteProfile(id, button=null) {
+async function testRemoteProfile(id, button=null, options={}) {
   if (button) setButtonBusy(button, true, "测试中...");
   try {
     const result = await api(`/api/remote-profiles/${id}/test`, {method:"POST", body:"{}"});
     notify(result.ok ? (result.message || "连接测试通过") : (result.message || "连接测试失败"), result.ok ? "success" : "error");
     return result;
+  } catch (error) {
+    const profile = remoteProfileById(id);
+    if (
+      !options.skipCredentialRepair
+      && profile?.protocol === "ftp"
+      && typeof remoteProfileAuthenticationFailure === "function"
+      && remoteProfileAuthenticationFailure(error, "ftp")
+    ) {
+      return repairRemoteProfileCredentials(id, {
+        context:"FTP 连接测试认证失败",
+        error,
+        onSaved:async () => testRemoteProfile(id, button, {skipCredentialRepair:true})
+      });
+    }
+    throw error;
   } finally {
     if (button) setButtonBusy(button, false);
   }
@@ -293,8 +308,8 @@ function renderRemoteProfileForm(profile={}) {
     <div class="workspace-head"><div><h2>${profile.id ? `编辑 ${esc(meta.label)} 连接` : `添加 ${esc(meta.label)} 连接`}</h2><div class="subtitle">协议配置只显示实际需要的字段。</div></div><span class="protocol-badge protocol-${protocol}">${icon(meta.icon)} ${esc(meta.label)}</span></div>
     <div class="grid3"><div><label>协议</label><select id="remote_protocol" onchange="changeRemoteProfileProtocol()">${Object.entries(REMOTE_PROTOCOL_META).map(([value,item]) => `<option value="${value}" ${protocol === value ? "selected" : ""}>${item.label}</option>`).join("")}</select></div><div><label>名称</label><input id="remote_name" required value="${escAttr(profile.name || "")}" placeholder="${meta.label} 连接"></div><div><label>分组</label><select id="remote_group" onchange="handleRemoteGroupSelectChange(this)">${groupNames(profile.group_name || "默认分组", "remote").map(name => `<option value="${escAttr(name)}" ${name === (profile.group_name || "默认分组") ? "selected" : ""}>${esc(name)}</option>`).join("")}<option value="__new_group__">新增分组...</option></select></div></div>
     <div id="remoteNetworkFields" class="grid" ${protocol === "serial" ? "hidden" : ""}><div><label>目标主机</label><input id="remote_host" value="${escAttr(profile.host || "")}" placeholder="example.com"></div><div><label>端口</label><input id="remote_port" type="number" min="1" max="65535" value="${Number(profile.port || meta.port || 0) || ""}"></div></div>
-    <div id="remoteCredentialFields" class="grid" ${["telnet","serial","xdmcp"].includes(protocol) ? "hidden" : ""}><div><label>用户名</label><input id="remote_username" value="${escAttr(profile.username || (protocol === "ftp" ? "anonymous" : ""))}" autocomplete="username"></div><div id="remotePasswordField" ${protocol === "rdp" ? "hidden" : ""}><label>密码</label><input id="remote_password" type="password" autocomplete="new-password" placeholder="${escAttr(passwordHint)}"><label class="checkline" ${profile.has_password ? "" : "hidden"}><input id="remote_clear_password" type="checkbox">清除已保存密码</label></div></div>
-    <div id="remoteDesktopCredentialNote" class="connection-test-status" ${["rdp","vnc"].includes(protocol) ? "" : "hidden"}>${protocol === "vnc" ? "VNC 密码可选保存并加密存储；留空时会在连接时询问。" : "RDP 凭据由系统客户端提示或保存，不会放入启动命令。"}</div>
+    <div id="remoteCredentialFields" class="grid" ${["telnet","serial","xdmcp"].includes(protocol) ? "hidden" : ""}><div><label>用户名（可选）</label><input id="remote_username" value="${escAttr(profile.username || (protocol === "ftp" ? "anonymous" : ""))}" autocomplete="username"></div><div id="remotePasswordField"><label>密码（可选）</label><input id="remote_password" type="password" autocomplete="new-password" placeholder="${escAttr(passwordHint)}"><label class="checkline" ${profile.has_password ? "" : "hidden"}><input id="remote_clear_password" type="checkbox">清除已保存密码</label><label id="remoteRdpPasswordTransferField" class="checkline remote-password-transfer-warning" ${protocol === "rdp" ? "" : "hidden"}><input id="remote_rdp_password_transfer" type="checkbox" ${profile.options?.allow_password_transfer ? "checked" : ""}><span>我了解风险，允许 Terma 把已保存密码交给 RDP 客户端</span></label></div></div>
+    <div id="remoteDesktopCredentialNote" class="connection-test-status" ${["rdp","vnc"].includes(protocol) ? "" : "hidden"}>${protocol === "vnc" ? "VNC 密码可选保存并加密存储；留空时会在连接时询问。" : "RDP 用户名和密码都可留空。默认由客户端询问；勾选警告后，Windows 使用临时凭据、FreeRDP 使用标准输入。macOS Windows App 不提供密码接口，Terma 会改用已安装的 FreeRDP。"}</div>
     <label>标签</label><input id="remote_tags" value="${escAttr(profile.tags || "")}" placeholder="例如：办公 内网 图形桌面">
     <fieldset><legend>${esc(meta.label)} 选项</legend><div id="remoteProtocolOptions">${remoteProtocolOptionsMarkup(protocol, profile.options || {})}</div></fieldset>
     <div class="actions"><button class="primary" type="submit">${icon("save")}<span>保存连接</span></button>${profile.id ? "" : `<button type="submit" data-clear-after-save="1">${icon("save-all")}<span>保存并清空</span></button>`}${profile.id ? `<button type="button" onclick="testRemoteProfile(${profile.id},this)">${icon("activity")}<span>测试连接</span></button>` : ""}<button type="button" onclick="closeTabsByKey([activeTabKey],activeTabKey)">关闭</button></div>
@@ -345,9 +360,9 @@ function changeRemoteProfileProtocol() {
   const meta = REMOTE_PROTOCOL_META[protocol];
   $("remoteNetworkFields").hidden = protocol === "serial";
   $("remoteCredentialFields").hidden = ["telnet","serial","xdmcp"].includes(protocol);
-  $("remotePasswordField").hidden = protocol === "rdp";
+  $("remotePasswordField").hidden = ["telnet","serial","xdmcp"].includes(protocol);
   $("remoteDesktopCredentialNote").hidden = !["rdp","vnc"].includes(protocol);
-  if (["rdp","vnc"].includes(protocol)) $("remoteDesktopCredentialNote").textContent = protocol === "vnc" ? "VNC 密码可选保存并加密存储；留空时会在连接时询问。" : "RDP 凭据由系统客户端提示或保存，不会放入启动命令。";
+  if (["rdp","vnc"].includes(protocol)) $("remoteDesktopCredentialNote").textContent = protocol === "vnc" ? "VNC 密码可选保存并加密存储；留空时会在连接时询问。" : "RDP 用户名和密码都可留空。默认由客户端询问；勾选警告后，Windows 使用临时凭据、FreeRDP 使用标准输入。macOS Windows App 不提供密码接口，Terma 会改用已安装的 FreeRDP。";
   if (protocol !== "serial") $("remote_port").value = meta.port;
   if (protocol === "ftp" && !$("remote_username").value) $("remote_username").value = "anonymous";
   $("remoteProtocolOptions").innerHTML = remoteProtocolOptionsMarkup(protocol, {});
@@ -360,7 +375,7 @@ function remoteProfileFormOptions(protocol) {
   const withSource = options => sourceSshId ? {...options, source_ssh_connection_id:sourceSshId} : options;
   if (protocol === "rdp") {
     const displayMode = $("remote_rdp_display_mode").value;
-    return withSource({domain:$("remote_domain").value.trim(), display_mode:displayMode, fullscreen:displayMode === "fullscreen", width:Number($("remote_rdp_width").value), height:Number($("remote_rdp_height").value), admin_session:$("remote_admin_session").checked, clipboard:$("remote_clipboard").checked, audio:$("remote_audio").value});
+    return withSource({domain:$("remote_domain").value.trim(), display_mode:displayMode, fullscreen:displayMode === "fullscreen", width:Number($("remote_rdp_width").value), height:Number($("remote_rdp_height").value), admin_session:$("remote_admin_session").checked, clipboard:$("remote_clipboard").checked, audio:$("remote_audio").value, allow_password_transfer:Boolean($("remote_rdp_password_transfer")?.checked)});
   }
   if (protocol === "vnc") {
     const vncSourceId = Number($("remote_vnc_ssh_connection")?.value || 0);
@@ -388,11 +403,16 @@ async function saveRemoteProfileForm(event) {
     host:protocol === "serial" ? "" : $("remote_host").value.trim(),
     port:protocol === "serial" ? null : Number($("remote_port").value),
     username:["telnet","serial","xdmcp"].includes(protocol) ? "" : $("remote_username").value.trim(),
-    password:["ftp","vnc"].includes(protocol) ? $("remote_password").value : "",
+    password:["rdp","ftp","vnc"].includes(protocol) ? $("remote_password").value : "",
     clear_password:Boolean($("remote_clear_password")?.checked),
     tags:$("remote_tags").value.trim(),
     options:remoteProfileFormOptions(protocol)
   };
+  if (protocol === "rdp" && payload.options.allow_password_transfer && !$("remote_clear_password")?.checked && !payload.username && (payload.password || remoteProfileById(id)?.has_password)) {
+    $("remote_username")?.focus();
+    notify("允许传递 RDP 密码时必须填写用户名", "error");
+    return;
+  }
   form.dataset.saving = "1";
   try {
     if (id) await api(`/api/remote-profiles/${id}`, {method:"PUT", body:JSON.stringify(payload)});
@@ -442,6 +462,7 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
   const embeddedXdmcp = profile.protocol === "xdmcp";
   const managedRdp = profile.protocol === "rdp";
   const managedVnc = profile.protocol === "vnc";
+  const managementConnectionId = linuxDesktopManagerConnectionIdForProfile(profile);
   const sharedVnc = embeddedXdmcp ? matchingRemoteProfile(profile, "vnc") : null;
   view.dataset.remoteClientAvailable = "0";
   const launchHandler = embeddedVnc
@@ -460,10 +481,10 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
       ? `<button onclick="inspectRdpServer(${profile.id},this)">${icon("scan-search")}<span>重新探测</span></button><button onclick="openRdpSetupGuide(${profile.id})">${icon("book-open-check")}<span>远端配置说明</span></button>`
       : `<button onclick="inspectVncServer(${profile.id},this)">${icon("scan-search")}<span>重新探测</span></button><button onclick="openVncSetupGuide(${profile.id})">${icon("book-open-check")}<span>远端配置说明</span></button>`;
   const helpText = embeddedXdmcp
-    ? "Terma 负责启动本机 XDMCP 窗口；XDMCP 每次都会新建图形登录，不能接入已经打开的桌面，也不依赖 SSH X11 转发。需要共享当前桌面时请使用 VNC。"
+    ? "Terma 负责启动本机 XDMCP 窗口；XDMCP 本身不依赖 SSH，关联 SSH 只用于探测和管理远端显示服务。需要共享当前桌面时请使用 VNC。"
     : managedRdp
-      ? "Terma 会先探测远端 xrdp、桌面会话和本机客户端；默认停留在本页，由你确认后再打开远程桌面。"
-      : `Terma 会先探测远端 VNC 服务和桌面环境；默认停留在本页，由你确认后再打开${embeddedVnc ? "内置" : "系统"}客户端。`;
+      ? "Terma 会先检查本机客户端和目标 TCP 端口；SSH 只用于 Linux xrdp、桌面会话和安装管理，不会阻止 Windows 或独立 RDP 服务。"
+      : `Terma 会先检查目标端口和 VNC 服务；SSH 只用于 Linux 服务与桌面管理，不会阻止独立${embeddedVnc ? "内置" : "系统"} VNC 连接。`;
   view.innerHTML = `<div class="remote-desktop-launch"><div class="remote-desktop-icon">${icon(meta.icon)}</div><h2>${esc(profile.name)}</h2><div class="cmd">${esc(remoteProfileEndpoint(profile))}</div><div id="remoteDesktopStatus" class="connection-test-status">正在检查本机 ${embeddedVnc ? "内置 VNC" : embeddedXdmcp ? "XDMCP" : `${meta.label}`} 客户端...</div><div id="remoteDesktopAuthorization"></div>${serverStateMarkup}<div class="actions"><button id="remoteDesktopLaunchButton" class="primary" disabled onclick="${launchHandler}">${icon(launchIcon)}<span>${launchLabel}</span></button>${embeddedVnc ? `<button id="remoteDesktopCloseButton" hidden onclick="closeEmbeddedVncDesktop(${profile.id},'${escAttr(key)}',this)" title="断开并关闭内置 VNC 桌面">${icon("monitor-off")}<span>关闭桌面</span></button>` : ""}<button id="remoteDesktopInstallButton" hidden onclick="installRemoteDesktopClient(${profile.id},'${profile.protocol}',this)">${icon("download")}<span>安装客户端</span></button><button id="remoteDesktopXServerButton" hidden onclick="openXServerManager()">${icon("monitor-up")}<span>安装 XQuartz</span></button>${sharedVnc ? `<button onclick="openRemoteDesktop(${sharedVnc.id})">${icon("monitor")}<span>共享当前桌面（VNC）</span></button>` : ""}${inspectActions}<button onclick="editRemoteProfile(${profile.id})">${icon("settings-2")}<span>连接设置</span></button></div><div class="muted">${esc(helpText)}</div></div>`;
   if (embeddedVnc && existingVncSession) {
     existingVncSession.managementNodes = Array.from(view.childNodes);
@@ -479,18 +500,18 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
     const [diagnostics, serverState, desktopDiagnostics] = await Promise.all([
       embeddedVnc ? Promise.resolve({vnc:{available:true, launchable:true, client:"Terma 内置 VNC"}}) : api("/api/remote-clients/diagnostics"),
       embeddedXdmcp
-        ? inspectXdmcpServer(profile.id).catch(error => ({error:error.message || "XDMCP 服务探测失败"}))
+        ? inspectXdmcpServer(profile.id).catch(error => ({management_available:Boolean(managementConnectionId), error:error.message || "XDMCP 服务探测失败", code:error.code || "", connectionId:Number(error.connectionId || managementConnectionId)}))
         : managedRdp
-          ? inspectRdpServer(profile.id).catch(error => ({error:error.message || "RDP 服务探测失败"}))
-          : inspectVncServer(profile.id).catch(error => ({error:error.message || "VNC 服务探测失败"})),
-      managedVnc ? inspectLinuxDesktopForRemoteProfile(profile) : Promise.resolve(null)
+          ? inspectRdpServer(profile.id).catch(error => ({error:error.message || "RDP 服务探测失败", code:error.code || "", connectionId:Number(error.connectionId || 0)}))
+          : inspectVncServer(profile.id).catch(error => ({error:error.message || "VNC 服务探测失败", code:error.code || "", connectionId:Number(error.connectionId || 0)})),
+      managedVnc && managementConnectionId ? inspectLinuxDesktopForRemoteProfile(profile) : Promise.resolve(null)
     ]);
     const item = diagnostics[profile.protocol] || {};
     const clientLaunchable = Boolean(item.available || item.launchable);
     const vncStatus = String(serverState?.status || "").toLowerCase();
-    const vncServiceBlocked = managedVnc && serverState?.diagnostics_available !== false && !vncServerReady(serverState) && (serverState?.server_session_configurable === true || ["not-installed", "stopped", "not-listening", "blocked"].includes(vncStatus));
-    const effectiveDesktopDiagnostics = managedRdp ? serverState : desktopDiagnostics;
-    const rdpServerReady = !managedRdp || serverState?.error || serverState?.platform_supported === false || (serverState?.xrdp_installed && serverState?.xrdp_active && serverState?.xrdp_listening);
+    const vncEndpointBlocked = managedVnc && serverState?.endpoint_probe?.supported && !serverState.endpoint_probe.ok;
+    const vncServiceBlocked = vncEndpointBlocked || (managedVnc && serverState?.diagnostics_available !== false && !vncServerReady(serverState) && (serverState?.server_session_configurable === true || ["not-installed", "stopped", "not-listening", "blocked"].includes(vncStatus)));
+    const rdpEndpointReady = !managedRdp || !serverState?.endpoint_probe?.supported || Boolean(serverState.endpoint_probe.ok);
     const vncReadyForLaunch = !managedVnc || serverState?.diagnostics_available === false || !vncServiceBlocked;
     await withRemoteDesktopRenderScope(renderScope, async activeView => {
       const status = activeView.querySelector("#remoteDesktopStatus");
@@ -519,17 +540,19 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
         const label = xServerButton.querySelector("span");
         if (label) label.textContent = item.xserver_installed ? "启动 XQuartz" : "安装 XQuartz";
       }
-      if (!embeddedXdmcp && launchButton) launchButton.disabled = !clientLaunchable
-        || (managedRdp && serverState?.platform_supported !== false && (!serverState?.xrdp_installed || !serverState?.xrdp_active || !serverState?.xrdp_listening))
-        || vncServiceBlocked
-        || (managedVnc && desktopDiagnostics?.platform_supported !== false && desktopDiagnostics && !desktopDiagnostics.has_desktop);
-      if (embeddedXdmcp && serverState) renderXdmcpServerState(serverState, profile.id, activeView.querySelector("#xdmcpServerState"));
+      if (!embeddedXdmcp && launchButton) launchButton.disabled = !clientLaunchable || !rdpEndpointReady || vncServiceBlocked;
+      if (embeddedXdmcp && serverState) {
+        renderXdmcpServerState(serverState, profile.id, activeView.querySelector("#xdmcpServerState"));
+        if ((serverState.management_available === false || serverState.error) && launchButton) {
+          launchButton.disabled = !clientLaunchable;
+          launchButton.title = clientLaunchable ? "未完成 SSH 深度探测，仍可直接尝试 XDMCP 图形登录" : "请先安装或授权本机 XDMCP 客户端";
+        }
+      }
       if (managedRdp && serverState) renderRdpServerState(serverState, profile.id, key, activeView.querySelector("#rdpServerState"));
       if (managedVnc && serverState) renderVncServerState(serverState, profile.id, key, activeView.querySelector("#vncServerState"));
       if (embeddedVnc && existingVncSession?.presentation === "management") syncEmbeddedVncManagementControls(existingVncSession, activeView);
-      const missingNotice = linuxDesktopMissingNotice(profile, effectiveDesktopDiagnostics);
-      if (missingNotice) status.insertAdjacentHTML("afterend", missingNotice);
-      if (updateTab && remoteDesktopQuickOpen && clientLaunchable && (!effectiveDesktopDiagnostics || effectiveDesktopDiagnostics.platform_supported === false || effectiveDesktopDiagnostics.has_desktop) && (!embeddedXdmcp || serverState?.ready_for_login) && rdpServerReady && vncReadyForLaunch) {
+      const xdmcpDirectReady = !embeddedXdmcp || serverState?.ready_for_login || serverState?.management_available === false || Boolean(serverState?.error) || Boolean(serverState?.endpoint_probe?.ok);
+      if (updateTab && remoteDesktopQuickOpen && clientLaunchable && xdmcpDirectReady && rdpEndpointReady && vncReadyForLaunch) {
         if (embeddedVnc) await openEmbeddedVncDesktop(profile.id, key);
         else await launchRemoteDesktop(profile.id, key);
       }
