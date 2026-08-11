@@ -10,8 +10,28 @@ permissions:
   contents: read
 
 jobs:
+  regression:
+    name: Regression Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run regression checks
+        run: npm run regression
+
   windows:
     name: Windows
+    needs: regression
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -46,6 +66,7 @@ jobs:
 
   linux:
     name: Linux
+    needs: regression
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -95,6 +116,7 @@ jobs:
 
   macos:
     name: macOS
+    needs: regression
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -157,6 +179,7 @@ jobs:
 
   linux-source:
     name: Linux Source
+    needs: regression
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

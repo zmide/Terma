@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
+const { decodeRemotePosixCommand } = require("./remote-posix-test-helper");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-job-lifecycle-check-"));
 process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
@@ -15,7 +16,7 @@ const children = [];
 
 function fakeRemoteChild(command) {
   const child = new EventEmitter();
-  child.command = String(command || "");
+  child.command = decodeRemotePosixCommand(command);
   child.stdin = new PassThrough({ highWaterMark:1024 });
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();

@@ -5,6 +5,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { Server } = require("ssh2");
+const { decodeRemotePosixCommand } = require("./remote-posix-test-helper");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-delete-job-check-"));
 process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
@@ -22,7 +23,7 @@ const sshServer = new Server({ hostKeys:[hostKey] }, client => {
     const session = accept();
     session.on("exec", (acceptExec, _reject, info) => {
       const stream = acceptExec();
-      const command = String(info?.command || "");
+      const command = decodeRemotePosixCommand(info?.command);
       const markers = [...new Set(command.match(/__TERMA_DELETE_[0-9a-f]{24}__:\d+/g) || [])];
       commands.push(command);
       let index = 0;

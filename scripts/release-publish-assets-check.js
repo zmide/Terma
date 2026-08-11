@@ -18,6 +18,18 @@ for (const token of [
   "npm sbom",
   "SHA256SUMS"
 ]) assert.ok(workflow.includes(token), `release workflow missing ${token}`);
+assert.match(
+  workflow,
+  /\n  regression:\n[\s\S]*?\n      - name: Run regression checks\n        run: npm run regression\n/,
+  "release workflow must run the complete regression suite before packaging"
+);
+for (const job of ["windows", "linux", "macos", "linux-source"]) {
+  assert.match(
+    workflow,
+    new RegExp(`\\n  ${job}:\\n    name:[^\\n]+\\n    needs: regression\\n`),
+    `${job} release packaging must depend on the regression gate`
+  );
+}
 
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "terma-release-assets-"));
 try {

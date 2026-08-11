@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { Server } = require("ssh2");
+const { decodeRemotePosixCommand } = require("./remote-posix-test-helper");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-download-check-"));
 process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
@@ -22,12 +23,13 @@ const sshServer = new Server({ hostKeys:[hostKey] }, client => {
     const session = accept();
     session.on("exec", (acceptExec, _reject, info) => {
       const stream = acceptExec();
-      const command = String(info?.command || "");
+      const command = decodeRemotePosixCommand(info?.command);
+      const supported = command.includes("wc -c") || command.includes("cat --") || command.includes("tar -C");
       if (command.includes("wc -c")) stream.write(String(payload.length));
       else if (command.includes("cat --")) stream.write(payload);
       else if (command.includes("tar -C")) stream.write(payload);
       else stream.stderr.write("unsupported test command");
-      stream.exit(command.includes("wc -c") || command.includes("cat --") || command.includes("tar -C") ? 0 : 1);
+      stream.exit(supported ? 0 : 1);
       stream.end();
     });
   }));
