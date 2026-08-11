@@ -72,8 +72,13 @@ const LINUX_DISPLAY_SESSION_KEYS = [
 ];
 const displayClientMode = process.platform === "linux" && (process.argv.includes(DISPLAY_CLIENT_ARG) || process.argv.includes(LEGACY_DISPLAY_CLIENT_ARG));
 let desktopAuthToken = displayClientMode
-  ? String(process.env[DESKTOP_TOKEN_ENV] || process.env[LEGACY_DESKTOP_TOKEN_ENV] || "").trim()
+  ? ""  // Token delivered securely via IPC channel, not env var
   : crypto.randomBytes(32).toString("base64url");
+if (displayClientMode && process.send !== undefined) {
+  process.once("message", (msg) => {
+    if (msg && msg.type === "desktop-auth-token") desktopAuthToken = msg.token;
+  });
+}
 delete process.env[DESKTOP_TOKEN_ENV];
 delete process.env[LEGACY_DESKTOP_TOKEN_ENV];
 const localLinuxDisplaySession = captureLinuxDisplaySession();
@@ -187,7 +192,7 @@ function displayClientEnvironment(session, url) {
   for (const key of LINUX_DISPLAY_SESSION_KEYS) delete environment[key];
   Object.assign(environment, normalizeLinuxDisplaySession(session));
   environment[DISPLAY_CLIENT_URL_ENV] = url;
-  environment[DESKTOP_TOKEN_ENV] = desktopAuthToken;
+  // Token is sent via IPC after spawn to avoid exposure in /proc/<pid>/environ
   delete environment[LEGACY_DISPLAY_CLIENT_URL_ENV];
   delete environment[LEGACY_DESKTOP_TOKEN_ENV];
   return environment;
@@ -230,6 +235,7 @@ function launchDisplayClient(session) {
     return false;
   }
   displayClientProcesses.set(key, child);
+  child.send({ type: "desktop-auth-token", token: desktopAuthToken });
   const forget = () => {
     if (displayClientProcesses.get(key) === child) displayClientProcesses.delete(key);
   };
