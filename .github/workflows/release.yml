@@ -1,4 +1,4 @@
-﻿name: Build Releases
+name: Build Releases
 
 on:
   push:
@@ -56,7 +56,7 @@ jobs:
         run: node scripts/release-artifacts-check.js windows
 
       - name: Upload Windows workflow artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Terma-windows-x64
           retention-days: 7
@@ -104,7 +104,7 @@ jobs:
         run: node scripts/release-artifacts-check.js linux
 
       - name: Upload Linux workflow artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Terma-linux-x64
           retention-days: 7
@@ -168,7 +168,7 @@ jobs:
           done < <(find release -path "*/${PRODUCT_FILENAME}.app/Contents/Info.plist" -type f -print)
           test "$app_count" -eq 2
       - name: Upload macOS workflow artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Terma-macos-x64-arm64
           retention-days: 7
@@ -226,7 +226,7 @@ jobs:
           tar -tzf "$archive" | grep "^${PRODUCT_SLUG}/" > /dev/null
 
       - name: Upload Linux/source workflow artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Terma-linux-source-noarch
           retention-days: 7
