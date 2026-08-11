@@ -4,6 +4,7 @@ const iconv = require("iconv-lite");
 const path = require("node:path");
 const { DATA_DIR } = require("./config");
 const { notifyEvent } = require("./notifications");
+const { buildRemotePosixCommand } = require("./remote-posix");
 const { buildDeleteRemotePathCommand, buildRecycleRemotePathCommand, invalidateRemoteDirectoryCache, readRemoteDirectorySize } = require("./sftp");
 const { clearSftpDragCache, deliverSftpPaths, getSftpConnection, releaseNativeSftpDragTicket, sftpDragCacheInfo, spawnSftpSessionCommand } = require("./sftp-session");
 const { readSftpJobHistory, writeSftpJobHistoryAtomic } = require("./sftp-job-store");
@@ -168,8 +169,7 @@ function remotePathOperand(connection, value) {
 }
 
 function spawnRemote(connection, command) {
-  const portableCommand = `sh -c ${shellQuote(command)}`;
-  return spawnSftpSessionCommand(connection, portableCommand);
+  return spawnSftpSessionCommand(connection, buildRemotePosixCommand(command));
 }
 
 function listSftpJobs() {
