@@ -8,6 +8,7 @@ const { expectedReleaseFiles, prepare, verifyRemote } = require("./release-publi
 
 const root = path.resolve(__dirname, "..");
 const workflow = fs.readFileSync(path.join(root, ".github", "workflows", "release.yml"), "utf8");
+const normalizedWorkflow = workflow.replace(/\r\n?/g, "\n");
 assert.equal((workflow.match(/softprops\/action-gh-release@/g) || []).length, 1);
 for (const token of [
   "publish-release:",
@@ -19,13 +20,13 @@ for (const token of [
   "SHA256SUMS"
 ]) assert.ok(workflow.includes(token), `release workflow missing ${token}`);
 assert.match(
-  workflow,
+  normalizedWorkflow,
   /\n  regression:\n[\s\S]*?\n      - name: Run regression checks\n        run: npm run regression\n/,
   "release workflow must run the complete regression suite before packaging"
 );
 for (const job of ["windows", "linux", "macos", "linux-source"]) {
   assert.match(
-    workflow,
+    normalizedWorkflow,
     new RegExp(`\\n  ${job}:\\n    name:[^\\n]+\\n    needs: regression\\n`),
     `${job} release packaging must depend on the regression gate`
   );

@@ -23,8 +23,8 @@ assert.match(DETECT_SCRIPT, /awk 'tolower\(\$1\) == "match"/);
 assert.doesNotMatch(DETECT_SCRIPT, /\\\+/);
 assert.match(BUILTIN_X11_PROBE_COMMAND, /command -v xauth/);
 assert.match(BUILTIN_X11_PROBE_COMMAND, /\/opt\/X11\/bin\/xauth/);
-assert.match(BUILTIN_X11_PROBE_EXEC_COMMAND, /^\/bin\/sh -lc '/);
-const builtinProbePayload = /td_payload=([A-Za-z0-9+/=]+);/.exec(BUILTIN_X11_PROBE_EXEC_COMMAND)?.[1] || "";
+assert.match(BUILTIN_X11_PROBE_EXEC_COMMAND, /^\/bin\/sh -c '/);
+const builtinProbePayload = /terma_payload=([A-Za-z0-9+/=]+);/.exec(BUILTIN_X11_PROBE_EXEC_COMMAND)?.[1] || "";
 assert.equal(Buffer.from(builtinProbePayload, "base64").toString("utf8"), BUILTIN_X11_PROBE_COMMAND);
 
 const macosSession = parseBuiltinX11ProbeOutput([

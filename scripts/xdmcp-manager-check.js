@@ -22,7 +22,7 @@ function unwrapRootScript(command) {
 }
 
 function unwrapRemotePosixCommand(command) {
-  const match = /^\/bin\/sh -lc 'td_payload=([A-Za-z0-9+/=]+);/.exec(String(command || ""));
+  const match = /^\/bin\/sh -c 'terma_payload=([A-Za-z0-9+/=]+);/.exec(String(command || ""));
   assert.ok(match, "remote XDMCP command must use the login-shell-safe POSIX wrapper");
   return Buffer.from(match[1], "base64").toString("utf8");
 }

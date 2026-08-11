@@ -22,7 +22,7 @@ assert.equal(detectionScript.includes(`${legacyPrefix}_VNC_CLIPBOARD_`), false);
 assert.equal(parseClipboardDetection(`${legacyPrefix}_VNC_CLIPBOARD_MODE=macos\n${legacyPrefix}_VNC_CLIPBOARD_OS=Darwin`, 73).available, true);
 
 function decodeRemotePosixPayload(command) {
-  const encoded = /td_payload=([A-Za-z0-9+/=]+);/.exec(String(command || ""))?.[1] || "";
+  const encoded = /terma_payload=([A-Za-z0-9+/=]+);/.exec(String(command || ""))?.[1] || "";
   return Buffer.from(encoded, "base64").toString("utf8");
 }
 

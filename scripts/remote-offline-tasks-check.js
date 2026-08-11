@@ -6,7 +6,7 @@ const path = require("path");
 const { createRemoteOfflineTaskManager } = require("../dist/remote-offline-tasks");
 
 function decodeRemoteShellPayload(command) {
-  const match = String(command || "").match(/\btd_payload=([A-Za-z0-9+/=]+);/);
+  const match = String(command || "").match(/\bterma_payload=([A-Za-z0-9+/=]+);/);
   return match ? Buffer.from(match[1], "base64").toString("utf8") : String(command || "");
 }
 

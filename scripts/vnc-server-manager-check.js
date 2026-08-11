@@ -708,9 +708,9 @@ Promise.all([missingProbe, virtualProbe]).then(([result, virtualResult]) => {
   assert.equal(virtualResult.uninstall_plan.target_component, "tigervnc");
   assert.doesNotMatch(virtualResult.uninstall_plan.command, /tunneldesk-x11vnc|x11vnc/);
   assert.doesNotMatch(virtualResult.guide.commands.join(" "), /x11vnc -display/);
-  assert.match(receivedProbeCommand, /^\/bin\/sh -lc 'td_payload=[A-Za-z0-9+/=]+;/);
-  assert.match(Buffer.from(/^\/bin\/sh -lc 'td_payload=([A-Za-z0-9+/=]+);/.exec(receivedProbeCommand)[1], "base64").toString("utf8"), /terma_emit PLATFORM/);
-  assert.match(virtualProbeCommand, /^\/bin\/sh -lc 'td_payload=[A-Za-z0-9+/=]+;/);
+  assert.match(receivedProbeCommand, /^\/bin\/sh -c 'terma_payload=[A-Za-z0-9+/=]+;/);
+  assert.match(Buffer.from(/^\/bin\/sh -c 'terma_payload=([A-Za-z0-9+/=]+);/.exec(receivedProbeCommand)[1], "base64").toString("utf8"), /terma_emit PLATFORM/);
+  assert.match(virtualProbeCommand, /^\/bin\/sh -c 'terma_payload=[A-Za-z0-9+/=]+;/);
   console.log("VNC 服务管理检查通过：Linux/macOS 探测、未安装/停止/防火墙分层、授权安装方案与手动说明有效");
 }).catch(error => {
   console.error(error.stack || error);

@@ -176,9 +176,9 @@ assert.match(readLinkedFileCommand, /head -c 5242881 "\$TERMA_TARGET"/, "通过�
 
 const readLinkedFileExecCommand = __buildReadRemoteBinaryExecCommand("/vmlinuz", 5 * 1024 * 1024);
 assert.match(readLinkedFileCommand, /\*\[!0-9\]\*/, "读取脚本包含会触发 csh\/tcsh 历史展开的数字校验表达式");
-assert.match(readLinkedFileExecCommand, /^\/bin\/sh -lc 'td_payload=[A-Za-z0-9+/=]+;/, "远端文件读取必须使用登录 Shell 安全的 POSIX 封装");
+assert.match(readLinkedFileExecCommand, /^\/bin\/sh -c 'terma_payload=[A-Za-z0-9+/=]+;/, "远端文件读取必须使用登录 Shell 安全的 POSIX 封装");
 assert.doesNotMatch(readLinkedFileExecCommand, /!/, "登录 Shell 可见的读取命令不能暴露历史展开字符");
-const readPayload = /^\/bin\/sh -lc 'td_payload=([A-Za-z0-9+/=]+);/.exec(readLinkedFileExecCommand);
+const readPayload = /^\/bin\/sh -c 'terma_payload=([A-Za-z0-9+/=]+);/.exec(readLinkedFileExecCommand);
 assert.ok(readPayload, "远端文件读取封装必须包含 Base64 脚本载荷");
 assert.equal(Buffer.from(readPayload[1], "base64").toString("utf8"), readLinkedFileCommand, "POSIX 封装不能改变远端文件读取脚本");
 
