@@ -29,8 +29,7 @@ function permissionPathOperand(value) {
 }
 
 function spawnRemote(connection, command) {
-  const portableCommand = `sh -c ${shellQuote(command)}`;
-  return spawnSftpSessionCommand(connection, portableCommand);
+  return spawnSftpSessionCommand(connection, buildRemotePosixCommand(command));
 }
 
 function runRemoteCommand(connection, command, input = null, timeoutMs = 30000): Promise<Buffer> {
@@ -63,7 +62,7 @@ function runRemoteCommand(connection, command, input = null, timeoutMs = 30000):
 }
 
 function runRemote(connection, command, input = null, timeoutMs = 30000): Promise<Buffer> {
-  return runRemoteCommand(connection, `sh -c ${shellQuote(command)}`, input, timeoutMs);
+  return runRemoteCommand(connection, buildRemotePosixCommand(command), input, timeoutMs);
 }
 
 function positiveInteger(value, fallback, label) {

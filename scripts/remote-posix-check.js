@@ -18,4 +18,8 @@ assert.ok(match);
 assert.equal(Buffer.from(match[1], "base64").toString("utf8"), source);
 assert.throws(() => buildRemotePosixCommand(""), /empty or too large/);
 
+const sftpSource = require('node:fs').readFileSync(require('node:path').resolve(__dirname, '../src/sftp.ts'), 'utf8');
+assert.match(sftpSource, /spawnSftpSessionCommand\(connection, buildRemotePosixCommand\(command\)\)/);
+assert.doesNotMatch(sftpSource, /sh -c \$\{shellQuote\(command\)\}/);
+
 console.log("远端 POSIX 脚本封装检查通过：固定 Base64 载荷、无嵌套单引号并显式交给 /bin/sh");
