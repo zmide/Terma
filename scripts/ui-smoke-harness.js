@@ -20,7 +20,7 @@ async function waitForServer(url, child) {
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`UI 验证服务器提前退出，退出码 ${child.exitCode}`);
     try {
-      if ((await fetch(`${url}/api/about`)).ok) return;
+      if ((await fetch(`${url}/api/about`, {signal:AbortSignal.timeout(2000)})).ok) return;
     } catch {}
     await new Promise(resolve => setTimeout(resolve, 100));
   }
@@ -41,8 +41,21 @@ function runElectron(environment) {
       stdio: "inherit",
       windowsHide: true
     });
-    child.once("error", reject);
-    child.once("close", code => code === 0 ? resolve() : reject(new Error(`UI 冒烟退出码 ${code}`)));
+    let settled = false;
+    const finish = callback => value => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback(value);
+    };
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { child.kill("SIGKILL"); } catch {}
+      reject(new Error("UI 冒烟超过 4 分钟仍未结束，已终止 Electron 测试进程"));
+    }, 240000);
+    child.once("error", finish(reject));
+    child.once("close", finish(code => code === 0 ? resolve() : reject(new Error(`UI 冒烟退出码 ${code}`))));
   });
 }
 
@@ -65,11 +78,12 @@ async function main() {
   server.stderr.on("data", chunk => serverOutput.push(chunk.toString()));
   try {
     await waitForServer(url, server);
-    await runElectron({
+    const environment = {
       ...process.env,
       TERMA_CHECK_URL:url,
       TERMA_UI_USER_DATA:path.join(root, "electron-user-data")
-    });
+    };
+    await runElectron(environment);
   } catch (error) {
     if (serverOutput.length) console.error(serverOutput.join("").slice(-12000));
     throw error;

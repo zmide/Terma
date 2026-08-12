@@ -487,6 +487,7 @@ function checkSftpDragFeedbackWatchdog() {
   // Browsers do not always dispatch dragleave/dragend when the pointer is
   // released outside the window. Clear only renderer feedback here; any
   // native request or upload job remains owned by its normal completion path.
+  restoreSftpDragSourceTab(sftpInternalDrag);
   clearSftpDragFeedback();
 }
 
@@ -494,18 +495,44 @@ function bindSftpDragFeedbackLifecycle() {
   if (typeof window === "undefined" || typeof document === "undefined") return;
   if (window.__termaSftpDragFeedbackLifecycleBound) return;
   window.__termaSftpDragFeedbackLifecycleBound = true;
-  const clearAfterEvent = () => setTimeout(() => clearSftpDragFeedback(), 0);
-  document.addEventListener("dragend", clearAfterEvent, true);
-  document.addEventListener("drop", clearAfterEvent, true);
+  const finishBrowserDrag = event => {
+    const drag = sftpInternalDrag;
+    if (drag && !drag.nativeStarted) {
+      if (!drag.dropAccepted) restoreSftpDragSourceTab(drag);
+      resetSftpItemDrag(event?.target || drag.row);
+    } else {
+      restoreSftpDragSourceTab();
+    }
+    setTimeout(() => clearSftpDragFeedback(), 0);
+  };
+  const clearAfterDrop = () => setTimeout(() => {
+    const drag = sftpInternalDrag;
+    if (drag && !drag.nativeStarted && !drag.dropAccepted) {
+      restoreSftpDragSourceTab(drag);
+      resetSftpItemDrag(drag.row);
+    } else if (!drag) {
+      restoreSftpDragSourceTab();
+    }
+    clearSftpDragFeedback();
+  }, 0);
+  document.addEventListener("dragend", finishBrowserDrag, true);
+  window.addEventListener("dragend", finishBrowserDrag, true);
+  document.addEventListener("drop", clearAfterDrop, true);
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) clearSftpDragFeedback();
+    if (document.hidden) {
+      restoreSftpDragSourceTab(sftpInternalDrag);
+      clearSftpDragFeedback();
+    }
   });
   window.addEventListener("blur", () => {
     // A native SFTP drag can briefly change focus while the OS owns it. Keep
     // its live feedback until motion stops; ordinary browser drags can clear.
     const nativeActive = [...sftpNativeDragRequests.values()].some(request => sftpNativeDragRequestIsActive(request));
     if (nativeActive) noteSftpDragFeedbackActivity();
-    else clearSftpDragFeedback();
+    else {
+      restoreSftpDragSourceTab(sftpInternalDrag);
+      clearSftpDragFeedback();
+    }
   });
   window.addEventListener("resize", () => {
     // Fixed SFTP overlays otherwise retain their old screen coordinates.
@@ -521,31 +548,125 @@ function clearSftpTabDragPreview() {
   sftpTabDragPreviewKey = "";
 }
 
-function scheduleSftpTabDragPreview(tabKey) {
+function beginSftpTabDragPreviewSession(drag, tabKey) {
+  if (!drag) return null;
+  const sourceTabKey = String(drag.sourceTabKey || "");
+  if (!sourceTabKey) return null;
+  if (!sftpTabDragPreviewSession || sftpTabDragPreviewSession.drag !== drag || sftpTabDragPreviewSession.sourceTabKey !== sourceTabKey) {
+    sftpTabDragPreviewSession = {
+      drag,
+      sourceTabKey,
+      previewTabKey:String(tabKey || ""),
+      accepted:false,
+      acceptedTabKey:"",
+      invalidTargetTimer:0,
+      lastValidTargetAt:Date.now(),
+      startedAt:Date.now()
+    };
+  } else {
+    sftpTabDragPreviewSession.previewTabKey = String(tabKey || "");
+  }
+  return sftpTabDragPreviewSession;
+}
+
+function sftpDragTargetNode(target) {
+  if (!target) return null;
+  if (target.nodeType === 1) return target;
+  return target.parentElement || null;
+}
+
+function isValidSftpInternalDragTarget(target) {
+  const node = sftpDragTargetNode(target);
+  if (!node) return false;
+  const tabNode = node.closest?.(".tab[data-tab-key]");
+  if (tabNode) {
+    if (sftpTabDragPreviewSession && String(tabNode.dataset.tabKey || "") === String(sftpTabDragPreviewSession.sourceTabKey || "")) return false;
+    const tab = typeof workspaceTabByKey === "function"
+      ? workspaceTabByKey(tabNode.dataset.tabKey)
+      : tabs.find(item => item.key === tabNode.dataset.tabKey);
+    return Boolean(tab && ["sftp", "terminal", "local-files"].includes(tab.kind));
+  }
+  return Boolean(node.closest?.(".sftp-shell, .terminal-box, .terminal-drop-overlay, .sftp-drop-overlay, .local-files-shell, .local-files-drop-overlay"));
+}
+
+function scheduleSftpInvalidPreviewRestore() {
+  const session = sftpTabDragPreviewSession;
+  if (!session || session.accepted) return;
+  if (session.invalidTargetTimer) clearTimeout(session.invalidTargetTimer);
+  session.invalidTargetTimer = setTimeout(() => {
+    session.invalidTargetTimer = 0;
+    if (sftpTabDragPreviewSession !== session || session.accepted) return;
+    const elapsed = Date.now() - Number(session.lastValidTargetAt || 0);
+    if (elapsed < 35) {
+      scheduleSftpInvalidPreviewRestore();
+      return;
+    }
+    restoreSftpDragSourceTab(session.drag);
+  }, 45);
+}
+
+function clearSftpTabDragPreviewSession(drag=null) {
+  const session = sftpTabDragPreviewSession;
+  if (!session) return;
+  if (session.invalidTargetTimer) clearTimeout(session.invalidTargetTimer);
+  if (!drag || session.drag === drag || session.sourceTabKey === String(drag.sourceTabKey || "")) sftpTabDragPreviewSession = null;
+}
+
+function markSftpDragDropAccepted(drag, targetTabKey="") {
+  if (!drag) return;
+  drag.dropAccepted = true;
+  drag.acceptedTabKey = String(targetTabKey || "");
+  const session = sftpTabDragPreviewSession;
+  if (session && (session.drag === drag || session.sourceTabKey === String(drag.sourceTabKey || ""))) {
+    session.accepted = true;
+    session.acceptedTabKey = String(targetTabKey || "");
+    sftpTabDragPreviewSession = null;
+  }
+}
+
+function restoreSftpDragSourceTab(drag) {
+  const session = sftpTabDragPreviewSession;
+  if (drag?.dropAccepted || session?.accepted) return;
+  if (!drag?.previewActivated && !session) return;
+  const sourceTabKey = String(drag?.sourceTabKey || session?.sourceTabKey || "");
+  if (sourceTabKey && activeTabKey !== sourceTabKey && tabs.some(tab => tab.key === sourceTabKey)) activateTab(sourceTabKey);
+  clearSftpTabDragPreviewSession(drag);
+}
+
+function scheduleSftpTabDragPreview(tabKey, options={}) {
   if (activeTabKey === tabKey || (sftpTabDragPreviewKey === tabKey && sftpTabDragPreviewTimer)) return;
   clearSftpTabDragPreview();
   sftpTabDragPreviewKey = tabKey;
-  sftpTabDragPreviewTimer = setTimeout(() => {
+  const preview = () => {
     sftpTabDragPreviewTimer = 0;
     const drag = activeSftpDragPayload();
     const target = tabs.find(tab => tab.key === tabKey);
-    if (!drag || target?.kind !== "sftp" || String(target.key || "") === String(drag.sourceTabKey || "")) return clearSftpTabDragPreview();
+    if (!drag || !["sftp", "terminal"].includes(target?.kind) || String(target.key || "") === String(drag.sourceTabKey || "")) return clearSftpTabDragPreview();
+    beginSftpTabDragPreviewSession(drag, tabKey);
+    drag.previewActivated = true;
+    drag.previewTabKey = tabKey;
     activateTab(tabKey);
     requestAnimationFrame(() => {
       const activeDrag = activeSftpDragPayload();
       const currentTarget = tabs.find(tab => tab.key === tabKey);
-      if (!activeDrag || activeTabKey !== tabKey || currentTarget?.kind !== "sftp" || String(currentTarget.key || "") === String(activeDrag.sourceTabKey || "")) {
+      if (!activeDrag || activeTabKey !== tabKey || !["sftp", "terminal"].includes(currentTarget?.kind) || String(currentTarget.key || "") === String(activeDrag.sourceTabKey || "")) {
         clearSftpTabDragPreview();
         return;
       }
       const node = [...document.querySelectorAll(".tab[data-tab-key]")].find(tab => tab.dataset.tabKey === tabKey);
       node?.classList.add("sftp-drop-target");
-      showSftpDragHint(`松开复制到 ${currentTarget.title}`, true, "copy", tabKey);
+      showSftpDragHint(`松开复制到 ${currentTarget.kind === "terminal" ? "终端当前目录" : currentTarget.title}`, true, "copy", tabKey);
     });
-  }, 160);
+  };
+  if (options.immediate) {
+    preview();
+    return;
+  }
+  sftpTabDragPreviewTimer = setTimeout(preview, 120);
 }
 
 function resetSftpItemDrag(row) {
+  document.removeEventListener("dragenter", handleSftpDocumentDragOver, true);
   document.removeEventListener("dragleave", handleSftpDocumentDragLeave, true);
   document.removeEventListener("dragover", handleSftpDocumentDragOver, true);
   if (sftpInternalDrag?.leaveWindowTimer) clearTimeout(sftpInternalDrag.leaveWindowTimer);
@@ -562,8 +683,21 @@ function markSftpDragInsideWindow() {
   drag.leftWindow = false;
 }
 
-function handleSftpDocumentDragOver() {
+function handleSftpDocumentDragOver(event) {
   markSftpDragInsideWindow();
+  const session = sftpTabDragPreviewSession;
+  if (!session || session.accepted) return;
+  if (isValidSftpInternalDragTarget(event?.target)) {
+    session.lastTargetKind = "valid";
+    session.lastValidTargetAt = Date.now();
+    if (session.invalidTargetTimer) {
+      clearTimeout(session.invalidTargetTimer);
+      session.invalidTargetTimer = 0;
+    }
+    return;
+  }
+  session.lastTargetKind = "invalid";
+  restoreSftpDragSourceTab(session.drag);
 }
 
 function finishSftpDragPayload(drag) {
@@ -610,6 +744,7 @@ function handleSftpDocumentDragLeave(event) {
 function beginSftpItemDrag(event, connectionId, path, name, type, tabKey=sftpTabKeyFromNode(event?.currentTarget)) {
   if (isMobileLayout()) return event.preventDefault();
   clearSftpInternalDragHandoff();
+  clearSftpTabDragPreviewSession();
   const pointerArmedRequest = sftpNativeDragPointer?.row === event.currentTarget
     ? sftpNativeDragPointer.nativeRequestId
     : "";
@@ -636,7 +771,14 @@ function beginSftpItemDrag(event, connectionId, path, name, type, tabKey=sftpTab
     startSftpNativeDrag(event.currentTarget, connectionId, entries, cached, "staged", {sourceTabKey:tabKey});
     return;
   }
-  sftpInternalDrag = {connectionId:Number(connectionId), entries, sourceTabKey:String(tabKey || ""), row:event.currentTarget, browserDragEnded:false, leftWindow:false, leaveWindowTimer:0, nativeFiles:cached?.files || null, nativeStarted:false};
+  const drag = {connectionId:Number(connectionId), entries, sourceTabKey:String(tabKey || ""), row:event.currentTarget, browserDragEnded:false, leftWindow:false, leaveWindowTimer:0, nativeFiles:cached?.files || null, nativeStarted:false, previewActivated:false, previewTabKey:"", dropAccepted:false, acceptedTabKey:""};
+  sftpInternalDrag = drag;
+  event.currentTarget?.addEventListener("dragend", () => {
+    if (sftpInternalDrag !== drag || drag.nativeStarted) return;
+    if (!drag.dropAccepted) restoreSftpDragSourceTab(drag);
+    resetSftpItemDrag(drag.row);
+  }, {once:true});
+  document.addEventListener("dragenter", handleSftpDocumentDragOver, true);
   document.addEventListener("dragleave", handleSftpDocumentDragLeave, true);
   document.addEventListener("dragover", handleSftpDocumentDragOver, true);
   event.dataTransfer.effectAllowed = "copy";
@@ -1009,6 +1151,7 @@ function finishSftpItemDrag(event) {
     clearSftpDragVisuals(event?.currentTarget);
     return;
   }
+  restoreSftpDragSourceTab(drag);
   resetSftpItemDrag(event?.currentTarget);
 }
 
@@ -1020,22 +1163,30 @@ function handleSftpTabDragOver(event, tabKey, tabElement=event.currentTarget) {
     event.dataTransfer.dropEffect = "copy";
     tabElement?.classList.add("sftp-drop-target");
     showSftpDragHint(`松开上传到 ${target.kind === "terminal" ? "终端当前目录" : target.title}`, true, "upload", tabKey);
-    scheduleSftpTabDragPreview(tabKey);
+    scheduleSftpTabDragPreview(tabKey, {immediate:target.kind === "terminal"});
     return;
   }
   const drag = activeSftpDragPayload(event?.dataTransfer);
-  if (!drag || !["sftp", "local-files"].includes(target?.kind) || String(target.key || "") === String(drag.sourceTabKey || "")) return;
+  if (!drag || !["sftp", "terminal", "local-files"].includes(target?.kind) || String(target.key || "") === String(drag.sourceTabKey || "")) return;
   markSftpDragInsideWindow();
   event.preventDefault();
   event.dataTransfer.dropEffect = "copy";
   tabElement?.classList.add("sftp-drop-target");
-  showSftpDragHint(`松开复制到 ${target.title}`, true, "copy", tabKey);
-  scheduleSftpTabDragPreview(tabKey);
+  showSftpDragHint(`松开复制到 ${target.kind === "terminal" ? "终端当前目录" : target.title}`, true, "copy", tabKey);
+  scheduleSftpTabDragPreview(tabKey, {immediate:target.kind === "terminal"});
 }
 
 function handleSftpTabDragLeave(event, tabElement=event.currentTarget) {
   if (!tabElement?.contains(event.relatedTarget)) {
     tabElement?.classList.remove("sftp-drop-target");
+    const session = sftpTabDragPreviewSession;
+    if (session
+      && String(session.previewTabKey || "") === String(tabElement?.dataset?.tabKey || "")
+      && event.relatedTarget
+      && !isValidSftpInternalDragTarget(event.relatedTarget)) {
+      restoreSftpDragSourceTab(session.drag);
+      return;
+    }
     if (activeTabKey !== tabElement?.dataset?.tabKey) clearSftpTabDragPreview();
   }
 }
@@ -1070,15 +1221,34 @@ async function dropSftpItemsOnTab(event, tabKey, tabElement=event.currentTarget)
     catch (error) { notify(error.message || "上传本地文件失败", "error"); }
     return;
   }
-  if (!drag || !["sftp", "local-files"].includes(target?.kind) || String(target.key || "") === String(drag.sourceTabKey || "")) return;
+  if (!drag || !["sftp", "terminal", "local-files"].includes(target?.kind) || String(target.key || "") === String(drag.sourceTabKey || "")) return;
   event.preventDefault();
   event.stopPropagation();
+  markSftpDragDropAccepted(drag, tabKey);
+  if (activeTabKey !== tabKey) activateTab(tabKey);
+  if (target.kind === "terminal") {
+    try { await copySftpDraggedItemsToTerminalTab(drag, target); }
+    catch (error) { notify(error.message || "复制远程文件到终端失败", "error"); }
+    return;
+  }
   if (target.kind === "local-files") {
     try { await copySftpDraggedItemsToLocalTab(drag, target); }
     catch (error) { notify(error.message || "保存远程文件失败", "error"); }
     return;
   }
   await copySftpDraggedItemsToTarget(drag, target);
+}
+
+async function copySftpDraggedItemsToTerminalTab(drag, tab) {
+  const key = String(tab?.key || "");
+  const connection = currentConnection(Number(tab?.id || 0));
+  const session = terminalSessions.get(key);
+  if (!connection || !session?.connected) throw new Error("终端尚未连接，无法接收文件");
+  const directory = session.currentDirectoryKnown
+    ? session.currentDirectory
+    : await initializeTerminalDirectory(session, connection, key);
+  if (!directory) throw new Error("无法确认终端当前目录，请先重连终端");
+  return copySftpDraggedItemsToDirectory(drag, connection.id, directory, {title:`终端：${directory}`, tabKey:key});
 }
 
 async function copySftpDraggedItemsToTarget(drag, target) {
@@ -1101,6 +1271,7 @@ async function copySftpDraggedItemsToTarget(drag, target) {
 
 async function copySftpDraggedItemsToDirectory(drag, targetConnectionId, directory, options={}) {
   if (!drag?.entries?.length || !Number.isInteger(Number(targetConnectionId)) || Number(targetConnectionId) <= 0) return;
+  markSftpDragDropAccepted(drag, options.tabKey || "");
   sftpExternalDragPreparing = null;
   finishSftpDragPayload(drag);
   const title = String(options.title || "目标目录");

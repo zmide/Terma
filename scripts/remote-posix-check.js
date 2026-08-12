@@ -14,11 +14,12 @@ const source = [
 const command = buildRemotePosixCommand(source);
 assert.match(command, /^\/bin\/sh -c '/);
 assert.match(command, /terma_script=\$\(terma_decode\) \|\| exit \$\?;/);
-assert.match(command, /printf %s \"\$terma_script\" \| \/bin\/sh'$/);
+assert.match(command, /exec \/bin\/sh -c \"\$terma_script\"'$/);
 const body = command.slice("/bin/sh -c '".length, -1);
 assert.doesNotMatch(body, /'/, "outer command body must not expose nested single quotes to csh/tcsh");
 assert.doesNotMatch(body, /!/, "outer command body must not expose history expansion to csh/tcsh");
 assert.doesNotMatch(body, /\btd_/, "new remote wrapper variables must use the Terma prefix");
+assert.doesNotMatch(body, /printf %s \"\$terma_script\" \| \/bin\/sh/, "the decoded script must not replace the SSH input stream");
 const match = /^terma_payload=([A-Za-z0-9+/=]+);/.exec(body);
 assert.ok(match);
 assert.equal(Buffer.from(match[1], "base64").toString("utf8"), source);
@@ -28,6 +29,13 @@ if (process.platform !== "win32") {
   const executed = spawnSync("/bin/sh", ["-c", command], { encoding:"utf8" });
   assert.equal(executed.status, 0);
   assert.equal(executed.stdout, "TERMA_REMOTE_POSIX=quoted value\n");
+
+  const streamed = spawnSync("/bin/sh", ["-c", buildRemotePosixCommand("cat")], {
+    input:"TERMA_STREAM_INPUT\n",
+    encoding:"utf8"
+  });
+  assert.equal(streamed.status, 0);
+  assert.equal(streamed.stdout, "TERMA_STREAM_INPUT\n", "remote POSIX scripts must inherit the original SSH input stream");
 
   const missingDecoder = spawnSync("/bin/sh", ["-c", command], {
     encoding:"utf8",

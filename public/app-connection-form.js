@@ -190,11 +190,12 @@ function wireConnectionForm() {
   });
 }
 
-async function saveConnectionForm(clearAfterSave=false, trigger=null) {
+async function saveConnectionForm(clearAfterSave=false, trigger=null, connectAfterSave=false) {
   if (!requireConfigEncryptionUnlocked("保存 SSH 连接")) return;
   const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   const form = $("connectionForm");
   if (!form || form.dataset.saving === "1") return;
+  const sourceTabKey = String(activeTabKey || "");
   form.dataset.saving = "1";
   if (trigger) setButtonBusy(trigger, true, "保存中...");
   try {
@@ -230,7 +231,11 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null) {
     groupOpen.add(p.group_name);
     saveGroupState();
     await loadAll();
-    if (clearAfterSave && !p.id) {
+    if (connectAfterSave && savedConnectionId) {
+      if (sourceTabKey && tabs.some(tab => tab.key === sourceTabKey)) closeTabsByKey([sourceTabKey], sourceTabKey);
+      openTerminal(savedConnectionId);
+      notify("连接已保存，正在打开终端", "success");
+    } else if (clearAfterSave && !p.id) {
       let keyLoad = Promise.resolve();
       inPane(() => {
         resetConnectionForm();

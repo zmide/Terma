@@ -13,6 +13,7 @@ for (const file of files) {
 }
 
 const css = fs.readFileSync(path.resolve("public/app.css"), "utf8");
+const themeGlassCss = fs.readFileSync(path.resolve("public/app-theme-glass.css"), "utf8");
 if (!/\[hidden\]\s*\{\s*display\s*:\s*none\s*!important\s*;?\s*\}/.test(css)) {
   throw new Error("public/app.css 必须保证 hidden 元素不会被组件 display 样式重新显示");
 }
@@ -21,8 +22,12 @@ const html = fs.readFileSync(path.resolve("public/index.html"), "utf8");
 if (!html.includes('name="terma-csp-nonce" content="__TERMA_CSP_NONCE__"')) throw new Error("主页面缺少 CSP nonce 占位符");
 if (!html.includes("?v=__TERMA_VERSION__") || /[?&]v=\d+\.\d+\.\d+/.test(html)) throw new Error("主页面静态资源必须统一使用版本占位符");
 if (!html.includes('/csp-bootstrap.js')) throw new Error("主页面必须在组件脚本之前加载 CSP 引导脚本");
-for (const asset of ["/vendor/ace/ace.css", "/vendor/ace/theme-textmate.css", "/vendor/ace/theme-tomorrow_night.css"]) {
+for (const asset of ["/vendor/ace/ace.css", "/vendor/ace/theme-textmate.css", "/vendor/ace/theme-tomorrow_night.css", "/vendor/diff/diff.min.js"]) {
   if (!html.includes(asset)) throw new Error(`SFTP 编辑器缺少严格 CSP 外部样式：${asset}`);
+}
+if (!html.includes('/app-theme-glass.css?v=__TERMA_VERSION__')) throw new Error("主页面缺少主题玻璃样式模块");
+for (const token of [".terma-liquid-lens", "data-liquid-moving", ".modal-scroll-body", "--terma-modal-surface-opacity"]) {
+  if (!themeGlassCss.includes(token)) throw new Error(`主题玻璃样式边界缺少：${token}`);
 }
 
 const cspBootstrap = fs.readFileSync(path.resolve("public/csp-bootstrap.js"), "utf8");
@@ -51,7 +56,7 @@ for (const [label, source] of [
   if (/\son[a-z]+=/i.test(source)) throw new Error(`${label} 必须使用 app-events.js 事件委托，不能重新加入内联事件`);
 }
 const staticActions = fs.readFileSync(path.resolve("public/app-static-actions.js"), "utf8");
-for (const token of ["static-primary", "static-operation-expand", "static-task-center-toggle", "static-connection-save-clear"]) {
+for (const token of ["static-primary", "static-operation-expand", "static-task-center-toggle", "static-connection-save-clear", "static-connection-save-connect"]) {
   if (!staticActions.includes(token)) throw new Error(`静态控件事件边界缺少：${token}`);
 }
 const docking = fs.readFileSync(path.resolve("public/app-docking.js"), "utf8");
@@ -66,7 +71,7 @@ for (const token of ["storage-settings-primary-row", "storage-settings-save", "c
 const sftp = readFrontendDomain(root, "sftp");
 if (!sftp.includes('ace.config.set("useStrictCSP", true)')) throw new Error("Ace 编辑器必须启用严格 CSP 模式");
 if (!sftp.includes("stylesReady")) throw new Error("Ace 样式失效时必须回退普通文本编辑器");
-for (const token of ["/sftp/open?path=", "response.body.getReader()", "onPauseChange", "/sftp-open-worker.js", "50 * 1024 * 1024", "sftp-action-terminal", "sftpOpenTransportInterrupted", "正在自动重试（1/1）"]) {
+for (const token of ["/sftp/open?path=", "response.body.getReader()", "onPauseChange", "/sftp-open-worker.js", "50 * 1024 * 1024", "sftp-action-terminal", "sftpOpenTransportInterrupted", "正在自动重试（1/1）", "sftpDiffViewerHtml", "openSftpExternalComparison", "/sftp/versions?path="]) {
   if (!sftp.includes(token)) throw new Error(`SFTP 流式打开边界缺少：${token}`);
 }
 for (const token of [".modal-card.quick-connection-modal", ".quick-connection-table", ".quick-connection-actions-heading", "position:sticky", "right:0"]) {

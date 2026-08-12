@@ -18,6 +18,7 @@ const SETTINGS_SECTION_META = {
   "settings-basic": "安全设置",
   "settings-notifications": "通知设置",
   "settings-runtime": "启动与运行",
+  "settings-theme": "主题配置",
   "settings-cache": "缓存管理",
   "settings-about": "关于"
 };
@@ -87,8 +88,7 @@ async function loadCachedUpdateStatus() {
     if (status && typeof status === "object") updateSettings = status;
     if (updateSettings && download) updateSettings.download_status = download;
     inPane(() => {
-      const area = $("updateCheckArea");
-      if (area) area.innerHTML = updateStatusHtml();
+      renderUpdateStatus();
       syncUpdateNoticeForCurrentSection();
     });
     if (download?.state === "downloading") startUpdateDownloadPolling(inPane);

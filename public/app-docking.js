@@ -744,7 +744,7 @@ function workspaceTabHtml(tab, pane) {
   const visibleInPane = tab.key === pane.activeTabKey;
   if (visibleInPane && tab.activityState) tab.activityState = "";
   const fullTitle = [tab.title, tab.subtitle, broadcastSelected ? "终端同步中" : "", multiSelected ? "已选中，可组成工作区" : ""].filter(Boolean).join(" - ");
-  const connectionStatus = ["terminal", "sftp"].includes(tab.kind) ? (tab.connectionStatus || "connecting") : "";
+  const connectionStatus = ["terminal", "quick-terminal", "sftp", "remote-terminal", "remote-desktop"].includes(tab.kind) ? (tab.connectionStatus || "connecting") : "";
   const connectionDot = connectionStatus
     ? `<span class="tab-connection-dot ${connectionStatus}" title="${connectionStatus === "connected" ? "已连接" : connectionStatus === "disconnected" ? "已断开" : "连接中"}" aria-hidden="true"></span>`
     : "";
@@ -1087,7 +1087,65 @@ setWorkspace = function(title, subtitle, viewName, key=viewName, updateTab=true,
 
 closeTab = function(event, key) {
   event.stopPropagation();
-  closeTabsByKey([key], key);
+  void requestCloseTabsByKey([key], key);
+};
+
+function workspaceTabNeedsCloseConfirmation(tab) {
+  if (!tab) return false;
+  if (["connected", "connecting"].includes(tab.connectionStatus)) return true;
+  if (tab.connectionStatus === "disconnected") return false;
+  const socketIsActive = socket => socket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(socket.readyState);
+  if (socketIsActive(terminalSessions.get(tab.key)?.socket)) return true;
+  if (typeof remoteTerminalSessions !== "undefined" && socketIsActive(remoteTerminalSessions.get(tab.key)?.socket)) return true;
+  if (typeof vncSessions !== "undefined") {
+    const session = vncSessions.get(tab.key);
+    if (session?.connected || session?.connecting || ["connected", "connecting"].includes(session?.statusState)) return true;
+  }
+  return false;
+}
+
+function confirmWorkspaceConnectedTabClose(tabsToClose) {
+  return new Promise(resolve => {
+    const modal = $("modal");
+    const multiple = tabsToClose.length > 1;
+    const message = multiple
+      ? `以下 ${tabsToClose.length} 个标签仍在连接或连接中。关闭后会断开对应会话，确定继续吗？`
+      : `“${tabsToClose[0].title || "当前标签"}”仍处于${tabsToClose[0].connectionStatus === "connecting" ? "连接中" : "已连接"}状态。关闭后会断开该会话，确定继续吗？`;
+    const items = multiple
+      ? `<ul class="workspace-close-tabs-list">${tabsToClose.map(tab => `<li><strong>${esc(tab.title || "未命名标签")}</strong><span>${tab.connectionStatus === "connecting" ? "连接中" : "已连接"}</span></li>`).join("")}</ul>`
+      : "";
+    const finish = value => {
+      modal.onclick = null;
+      modal.onkeydown = null;
+      modal.hidden = true;
+      modal.innerHTML = "";
+      resolve(value);
+    };
+    modal.onclick = null;
+    modal.innerHTML = `<div class="modal-card workspace-close-tabs-modal" role="alertdialog" aria-modal="true" aria-labelledby="workspaceCloseTabsTitle" aria-describedby="workspaceCloseTabsMessage">
+      <h2 id="workspaceCloseTabsTitle">关闭仍在连接的标签？</h2>
+      <div id="workspaceCloseTabsMessage" class="modal-message">${esc(message)}</div>
+      ${items}
+      <div class="actions"><button id="workspaceCloseTabsCancel" type="button">取消</button><button id="workspaceCloseTabsConfirm" class="danger" type="button">${icon("link-2-off")}<span>断开并关闭</span></button></div>
+    </div>`;
+    modal.hidden = false;
+    $("workspaceCloseTabsCancel").onclick = () => finish(false);
+    $("workspaceCloseTabsConfirm").onclick = () => finish(true);
+    modal.onkeydown = event => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      finish(false);
+    };
+    $("workspaceCloseTabsCancel").focus();
+  });
+}
+
+requestCloseTabsByKey = async function(keys, anchorKey="") {
+  const activeTabs = [...new Set(keys)]
+    .map(key => tabs.find(tab => tab.key === key))
+    .filter(tab => tab?.closable && !tab.pinned && workspaceTabNeedsCloseConfirmation(tab));
+  if (activeTabs.length && !await confirmWorkspaceConnectedTabClose(activeTabs)) return;
+  closeTabsByKey(keys, anchorKey);
 };
 
 closeTabsByKey = function(keys, anchorKey="") {
@@ -1145,7 +1203,7 @@ closeTabsByMode = function(mode, key) {
   if (mode === "right") targets = paneTabs.slice(index + 1).filter(tab => tab.closable);
   if (mode === "all") targets = closable;
   hideTabContextMenu();
-  if (targets.length) closeTabsByKey(targets.map(tab => tab.key), key);
+  if (targets.length) void requestCloseTabsByKey(targets.map(tab => tab.key), key);
 };
 
 moveWorkspaceTab = function(key, offset) {

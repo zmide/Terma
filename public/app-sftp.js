@@ -80,16 +80,16 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
       updateSftpConnectionUi(id, "disconnected");
       return true;
     }
-    void loadSftpPage({
-      path:runtime.state.path,
-      page:runtime.state.page || 1,
-      tabKey,
-      refresh:true,
-      keepContents:true,
-      preserveView:true,
-      silent:true,
-      renderIfChangedOnly:true
-    });
+    if (updateTab) {
+      return loadSftpPage({
+        path:runtime.state.path,
+        page:runtime.state.page,
+        tabKey,
+        silent:true,
+        renderIfChangedOnly:true
+      });
+    }
+    void refreshActiveSftpSessionStatus(tabKey);
     return true;
   }
 
@@ -157,7 +157,7 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
     </div>
     <div id="sftpList" class="sftp-list" oncontextmenu="showSftpDirectoryMenu(event,'${escAttr(tabKey)}')">${restored ? "" : stateView("loading", "正在读取目录", displayPath)}</div>
     <div id="sftpDropOverlay" class="sftp-drop-overlay" data-mode="upload" aria-hidden="true" hidden></div>
-    <div id="sftpFloatingSearch" class="sftp-floating-search" hidden>${icon("search")}<input id="sftpSearch" placeholder="搜索当前目录" value="${esc(runtime.state.query)}" oninput="setSftpSearch(this.value,'${escAttr(tabKey)}')"><button class="icon-button" title="清除搜索" aria-label="清除搜索" onclick="clearSftpSearch('${escAttr(tabKey)}')">${icon("x")}</button></div>
+    <div id="sftpFloatingSearch" class="sftp-floating-search" hidden aria-busy="false"><span class="sftp-search-status-icon" title="搜索">${icon("search")}${icon("loader-circle")}</span><input id="sftpSearch" placeholder="搜索当前目录" value="${esc(runtime.state.query)}" oninput="setSftpSearch(this.value,'${escAttr(tabKey)}')"><button class="icon-button" title="清除搜索" aria-label="清除搜索" onclick="clearSftpSearch('${escAttr(tabKey)}')">${icon("x")}</button><label class="sftp-search-recursive"><input type="checkbox" ${runtime.state.recursiveSearch ? "checked" : ""} onchange="setSftpRecursiveSearch(this.checked,'${escAttr(tabKey)}')"><span>搜索子目录</span></label></div>
   </div>`;
   if (!quickConnection && typeof remoteDesktopJumpButtonHtml === "function") {
     view.querySelector("#sftpFilenameEncodingButton")?.insertAdjacentHTML("afterend", remoteDesktopJumpButtonHtml(id));
@@ -191,16 +191,7 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
     refreshSftpDirectoryActions(tabKey);
     renderSftpEntries(tabKey);
     restoreSftpViewState(cached.viewState, tabKey);
-    void loadSftpPage({
-      path:displayPath,
-      page:runtime.state.page || 1,
-      tabKey,
-      refresh:true,
-      keepContents:true,
-      preserveView:true,
-      silent:true,
-      renderIfChangedOnly:true
-    });
+    void refreshActiveSftpSessionStatus(tabKey);
     return true;
   }
   return loadSftpPage({path:remotePath, page:1, tabKey});
@@ -217,6 +208,7 @@ async function loadSftpPage(options={}) {
   const remotePath = options.path || currentState.path || ".";
   const requestedPage = Math.max(1, Number(options.page || currentState.page || 1));
   const query = String(currentState.query || "");
+  const recursiveSearch = Boolean(currentState.recursiveSearch && query.trim());
   const sort = ["name","size","mtime"].includes(currentState.sort) ? currentState.sort : "name";
   const dir = currentState.dir === "desc" ? "desc" : "asc";
   const pageSize = [25,50,100,200].includes(Number(currentState.pageSize)) ? Number(currentState.pageSize) : 50;
@@ -242,6 +234,7 @@ async function loadSftpPage(options={}) {
       if (!keepContents) list.innerHTML = stateView("loading", "正在读取目录", remotePath);
     }
   }
+  if (query) syncSftpSearchFeedback(tabKey, true);
 
   const params = new URLSearchParams({
     path: remotePath,
@@ -251,6 +244,7 @@ async function loadSftpPage(options={}) {
     sort,
     dir
   });
+  if (recursiveSearch) params.set("recursive", "1");
   if (options.refresh) params.set("refresh", "1");
   try {
     const data = await api(`/api/connections/${id}/sftp?${params.toString()}`, controller ? {signal:controller.signal} : {});
@@ -269,6 +263,8 @@ async function loadSftpPage(options={}) {
       total:Number(data.total || 0),
       totalPages:Number(data.total_pages || 1),
       unfilteredTotal:Number(data.unfiltered_total || 0),
+      recursiveSearch:Boolean(currentState.recursiveSearch),
+      recursiveSearchTruncated:Boolean(data.truncated),
       loading:false,
       requestSeq
     };
@@ -316,6 +312,7 @@ async function loadSftpPage(options={}) {
       list.classList.remove("is-refreshing");
       list.setAttribute("aria-busy", "false");
     }
+    if (requestSeq === runtime.state.requestSeq) syncSftpSearchFeedback(tabKey, false);
     if (requestSeq === runtime.state.requestSeq) queueMicrotask(() => flushPendingSftpDirectoryRefresh(tabKey));
   }
 }
@@ -357,12 +354,13 @@ function setSftpSearch(value, tabKey=activeTabKey) {
   const runtime = restoreSftpRuntimeForTab(tabKey);
   if (!runtime) return;
   runtime.state.query = value || "";
+  syncSftpSearchFeedback(tabKey, true);
   clearTimeout(runtime.searchTimer);
   runtime.searchTimer = setTimeout(() => {
     if (!sftpTabRuntimes.has(tabKey)) return;
     runtime.state.page = 1;
     loadSftpPage({page:1, tabKey});
-  }, 280);
+  }, 420);
   if (sftpActiveRuntimeKey === tabKey) {
     sftpState = runtime.state;
     sftpSearchTimer = runtime.searchTimer;
@@ -415,6 +413,7 @@ function syncSftpListLayout(list=sftpElement("sftpList"), measuredWidth) {
   list.classList.toggle("sftp-actions-compact", width > 0 && width <= 1000);
   list.classList.toggle("sftp-actions-minimal", width > 0 && width <= 620);
   list.classList.toggle("sftp-actions-more-only", width > 0 && (width <= 520 || mobile));
+  if (typeof applySftpColumnLayout === "function") applySftpColumnLayout(list);
 }
 
 function syncSftpListScrollCue(list=sftpElement("sftpList")) {
@@ -461,10 +460,18 @@ function renderSftpEntries(tabKey=activeTabKey) {
   if (!list) return;
   const entries = state.entries || [];
   const id = state.connectionId;
-  const head = `<div class="sftp-head"><label><input id="sftpSelectAll" type="checkbox" aria-label="选择当前页全部项目" onchange="toggleSftpAll(this.checked,'${escAttr(tabKey)}')"></label><button onclick="setSftpSort('name','${escAttr(tabKey)}')">名称 ${sortMark("name", tabKey)}</button><button class="sftp-size" onclick="setSftpSort('size','${escAttr(tabKey)}')">大小 ${sortMark("size", tabKey)}</button><button class="sftp-time" onclick="setSftpSort('mtime','${escAttr(tabKey)}')">修改时间 ${sortMark("mtime", tabKey)}</button><span class="sftp-access">权限 / 所有者</span><span class="sftp-head-actions">操作</span></div>`;
+  const syncIndicator = `<div class="sftp-refresh-indicator" role="status">${icon("loader-circle")}<span>正在同步</span></div>`;
+  const headColumns = sftpOrderedColumnHtml({
+    name:sftpHeaderColumnHtml("name", tabKey, sortMark("name", tabKey)),
+    size:sftpHeaderColumnHtml("size", tabKey, sortMark("size", tabKey)),
+    mtime:sftpHeaderColumnHtml("mtime", tabKey, sortMark("mtime", tabKey)),
+    access:sftpHeaderColumnHtml("access", tabKey)
+  });
+  const head = `<div class="sftp-head"><label class="sftp-head-check"><input id="sftpSelectAll" type="checkbox" aria-label="选择当前页全部项目" onchange="toggleSftpAll(this.checked,'${escAttr(tabKey)}')"></label>${headColumns}<span class="sftp-head-actions">操作</span>${syncIndicator}</div>`;
   const rows = entries.map(entry => {
     const fullPath = joinRemotePath(state.path, entry.name);
     const isDir = entry.type === "dir";
+    const metadataKnown = entry.metadata_known !== false;
     const isLink = Boolean(entry.is_symlink);
     const linkDescription = !isLink
       ? entry.name
@@ -475,12 +482,15 @@ function renderSftpEntries(tabKey=activeTabKey) {
           : `${entry.name} · 符号链接目标 ${formatBytes(entry.size)}（链接本身 ${formatBytes(entry.link_size || 0)}）`;
     const mobileType = isLink ? (isDir ? "链接目录" : "链接文件") : (isDir ? "目录" : "");
     const active = state.selected?.path === fullPath;
+    const columns = sftpOrderedColumnHtml({
+      name:`<button class="sftp-name sftp-column-name" title="${esc(linkDescription)}" onclick="event.stopPropagation(); selectSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')"><span class="sftp-icon ${entry.type} ${sftpFileKind(entry.name)} ${isLink ? "symlink" : ""}">${sftpIcon(entry.name, isDir)}</span><span class="sftp-name-copy"><span class="sftp-file-name">${esc(entry.name)}</span><span class="sftp-mobile-meta">${mobileType ? `${mobileType} · ` : ""}${isDir ? "" : `${formatBytes(entry.size)} · `}${entry.mtime ? formatSftpTime(entry.mtime) : "--"}</span></span></button>`,
+      size:`<span class="sftp-size sftp-column-size">${!metadataKnown ? "--" : isDir ? sftpDirectorySizeButtonHtml(id, fullPath) : formatBytes(entry.size)}</span>`,
+      mtime:`<span class="sftp-time sftp-column-mtime">${metadataKnown && entry.mtime ? formatSftpTime(entry.mtime) : "--"}</span>`,
+      access:`<span class="sftp-access sftp-column-access" title="${metadataKnown ? `权限 ${escAttr(entry.mode || "未知")}；所有者 ${escAttr(entry.owner || "未知")}；用户组 ${escAttr(entry.group || "未知")}` : "递归搜索结果未读取详细元数据"}"><code>${metadataKnown ? esc(entry.mode || "---") : "--"}</code><span>${metadataKnown ? esc(entry.owner || "未知") : "路径索引"}</span></span>`
+    });
     return `<div class="sftp-row ${active ? "active" : ""}" draggable="${isMobileLayout() ? "false" : "true"}" onclick="selectSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" ondblclick="activateSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" oncontextmenu="showSftpEntryMenu(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" onpointerdown="primeSftpNativeDrag(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" ondragstart="beginSftpItemDrag(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" ondragend="finishSftpItemDrag(event)">
-      <input class="sftp-check" type="checkbox" value="${esc(fullPath)}" data-name="${esc(entry.name)}" data-type="${esc(entry.type)}" data-size="${Math.max(0, Number(entry.size || 0))}" data-mtime="${Math.max(0, Number(entry.mtime || 0))}" data-metadata-known="1" data-mode="${esc(entry.mode || "")}" data-owner="${esc(entry.owner || "")}" data-group="${esc(entry.group || "")}" aria-label="选择 ${esc(entry.name)}" onclick="handleSftpCheckboxSelection(event,'${escAttr(fullPath)}','${escAttr(tabKey)}')">
-      <button class="sftp-name" title="${esc(linkDescription)}" onclick="event.stopPropagation(); selectSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')"><span class="sftp-icon ${entry.type} ${sftpFileKind(entry.name)} ${isLink ? "symlink" : ""}">${sftpIcon(entry.name, isDir)}</span><span class="sftp-name-copy"><span class="sftp-file-name">${esc(entry.name)}</span><span class="sftp-mobile-meta">${mobileType ? `${mobileType} · ` : ""}${isDir ? "" : `${formatBytes(entry.size)} · `}${entry.mtime ? formatSftpTime(entry.mtime) : "--"}</span></span></button>
-      <span class="sftp-size">${isDir ? sftpDirectorySizeButtonHtml(id, fullPath) : formatBytes(entry.size)}</span>
-      <span class="sftp-time">${entry.mtime ? formatSftpTime(entry.mtime) : "--"}</span>
-      <span class="sftp-access" title="权限 ${esc(entry.mode || "未知")}；所有者 ${esc(entry.owner || "未知")}；用户组 ${esc(entry.group || "未知")}"><code>${esc(entry.mode || "---")}</code><span>${esc(entry.owner || "未知")}</span></span>
+      <input class="sftp-check" type="checkbox" value="${esc(fullPath)}" data-name="${esc(entry.name)}" data-type="${esc(entry.type)}" data-size="${Math.max(0, Number(entry.size || 0))}" data-mtime="${Math.max(0, Number(entry.mtime || 0))}" data-metadata-known="${metadataKnown ? "1" : "0"}" data-mode="${esc(entry.mode || "")}" data-owner="${esc(entry.owner || "")}" data-group="${esc(entry.group || "")}" aria-label="选择 ${esc(entry.name)}" onclick="handleSftpCheckboxSelection(event,'${escAttr(fullPath)}','${escAttr(tabKey)}')">
+      ${columns}
       <div class="sftp-row-actions">${sftpRowActionsHtml(id, fullPath, entry.name, entry.type, tabKey)}</div>
     </div>`;
   }).join("");
@@ -490,9 +500,12 @@ function renderSftpEntries(tabKey=activeTabKey) {
   const first = total ? (page - 1) * Number(state.pageSize || 50) + 1 : 0;
   const last = total ? Math.min(first + entries.length - 1, total) : 0;
   const pageSizes = [25,50,100,200].map(size => `<option value="${size}" ${size === Number(state.pageSize) ? "selected" : ""}>${size} 项</option>`).join("");
-  const filterSummary = state.query && Number(state.unfilteredTotal || 0) !== total ? ` · 目录共 ${Number(state.unfilteredTotal || 0)} 项` : "";
+  const recursiveSummary = state.query && state.recursiveSearch ? ` · 子目录${state.recursiveSearchTruncated ? "（结果已截断）" : ""}` : "";
+  const filterSummary = state.query && Number(state.unfilteredTotal || 0) !== total ? ` · 范围共 ${Number(state.unfilteredTotal || 0)} 项${recursiveSummary}` : recursiveSummary;
   const pager = `<div class="sftp-pager-dock"><div class="pager sftp-pager"><button onclick="setSftpPage(${page - 1},'${escAttr(tabKey)}')" ${page <= 1 ? "disabled" : ""}>上一页</button><span class="pager-count"><span class="sftp-scroll-cue" title="下方还有文件" aria-hidden="true">${icon("chevron-down")}</span>第 ${page}/${totalPages} 页 · ${first}-${last} / ${total}${filterSummary} · <select aria-label="每页数量" onchange="setSftpPageSize(this.value,'${escAttr(tabKey)}')">${pageSizes}</select></span><button onclick="setSftpPage(${page + 1},'${escAttr(tabKey)}')" ${page >= totalPages ? "disabled" : ""}>下一页</button></div></div>`;
   list.innerHTML = head + (rows || stateView("empty", state.query ? "没有匹配的文件" : "当前目录为空", state.query ? "换一个关键词试试。" : "可以上传文件或新建目录。")) + pager;
+  list.dataset.sftpTabKey = String(tabKey || "");
+  if (typeof bindSftpColumnControls === "function") bindSftpColumnControls(list);
   watchSftpListLayout(list, tabKey);
   updateSftpSelection(tabKey);
 }
@@ -530,20 +543,7 @@ function formatSftpTime(value) {
 }
 
 function sftpDiffHtml(oldText, newText) {
-  const oldLines = String(oldText || "").split("\n");
-  const newLines = String(newText || "").split("\n");
-  const max = Math.max(oldLines.length, newLines.length);
-  const rows = [];
-  for (let i = 0; i < max; i++) {
-    if (oldLines[i] === newLines[i]) continue;
-    if (typeof oldLines[i] !== "undefined") rows.push(`<div class="diff-line removed"><b>-</b><code>${esc(oldLines[i]) || " "}</code></div>`);
-    if (typeof newLines[i] !== "undefined") rows.push(`<div class="diff-line added"><b>+</b><code>${esc(newLines[i]) || " "}</code></div>`);
-    if (rows.length > 180) {
-      rows.push(`<div class="diff-line"><b>...</b><code>差异较多，仅显示前 180 行变化</code></div>`);
-      break;
-    }
-  }
-  return rows.length ? rows.join("") : `<div class="muted">没有内容变化。</div>`;
+  return sftpDiffViewerHtml(oldText, newText);
 }
 
 const sftpTextEncodingOptions = [
@@ -605,16 +605,24 @@ function isSftpImageName(name) {
   return ["png","jpg","jpeg","gif","webp","bmp","ico","svg"].includes(String(name || "").toLowerCase().split(".").pop());
 }
 
-function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8", preferredEncoding="auto", comparisonContent=content) {
+function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8", preferredEncoding="auto", diffOptions={}) {
   return new Promise((resolve) => {
     const modal = $("modal");
     const detectedLanguage = sftpEditorLanguageForFile(title);
     const wrapEnabled = localStorage.getItem("sftpEditorWordWrap") !== "0";
-    modal.innerHTML = `<div class="modal-card wide sftp-editor-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(title)}</h2><span>${esc(formatBytes(size))} · 上限 ${esc(formatBytes(limit))}</span></div><div class="sftp-editor-controls"><label>文本编码<select id="sftpTextEncoding">${sftpTextEncodingOptions.map(([value,label]) => `<option value="${value}" ${value === encoding ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>语言<select id="sftpEditorLanguage"><option value="auto">自动（${esc(sftpEditorLanguageLabel(detectedLanguage))}）</option>${sftpEditorLanguageOptions.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></label><label class="check-row compact"><input id="sftpEditorWordWrap" type="checkbox" ${wrapEnabled ? "checked" : ""}> 自动换行</label><span id="sftpEditorStats"></span></div></div><div id="sftpTextEditor" class="sftp-code-editor" aria-label="SFTP 文本编辑器"></div><div id="sftpDiffPreview" class="diff-preview" hidden></div><div class="sftp-editor-options"><label class="check-row"><input id="sftpBackupBeforeSave" type="checkbox" checked> 保存前备份远程文件</label><label class="check-row"><input id="sftpPersistEncoding" type="checkbox" ${preferredEncoding === encoding ? "checked" : ""}> 设为此连接默认文本编码</label></div><div class="actions"><button id="sftpTextFormatJson" hidden>${icon("braces")}<span>格式化 JSON</span></button><button id="sftpTextDiff">预览差异</button><button class="primary" id="sftpTextSave">保存 <span class="shortcut-hint">Ctrl+S</span></button><button id="sftpTextClose">关闭</button></div></div>`;
+    const versions = Array.isArray(diffOptions.versions) ? diffOptions.versions.slice(0, 10) : [];
+    const historyOptions = versions.length
+      ? versions.map((version, index) => `<option value="${index}">${esc(sftpDiffDisplayTime(version.changed_at || Number(version.mtime || 0) * 1000))} · ${esc(formatBytes(version.size || 0))}</option>`).join("")
+      : `<option value="">没有可比较的备份</option>`;
+    modal.innerHTML = `<div class="modal-card wide sftp-editor-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(title)}</h2><span>${esc(formatBytes(size))} · 上限 ${esc(formatBytes(limit))}</span></div><div class="sftp-editor-controls"><label>文本编码<select id="sftpTextEncoding">${sftpTextEncodingOptions.map(([value,label]) => `<option value="${value}" ${value === encoding ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>语言<select id="sftpEditorLanguage"><option value="auto">自动（${esc(sftpEditorLanguageLabel(detectedLanguage))}）</option>${sftpEditorLanguageOptions.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></label><label class="check-row compact"><input id="sftpEditorWordWrap" type="checkbox" ${wrapEnabled ? "checked" : ""}> 自动换行</label><span id="sftpEditorStats"></span></div></div><div id="sftpEditorWorkspace" class="sftp-editor-workspace"><div id="sftpTextEditor" class="sftp-code-editor" aria-label="SFTP 文本编辑器"></div><div id="sftpEditorSplit" class="sftp-editor-splitter" role="separator" aria-orientation="horizontal" aria-label="调整编辑与差异区域比例" tabindex="0" hidden></div><div id="sftpDiffPreview" class="sftp-diff-preview" hidden></div></div><div class="sftp-editor-options"><label class="check-row"><input id="sftpBackupBeforeSave" type="checkbox" checked> 保存前备份远程文件</label><label class="check-row"><input id="sftpPersistEncoding" type="checkbox" ${preferredEncoding === encoding ? "checked" : ""}> 设为此连接默认文本编码</label><label class="sftp-diff-history-control"><span>比较版本</span><select id="sftpDiffHistory" ${versions.length ? "" : "disabled"}>${historyOptions}</select><small>最近 ${versions.length} / 10 个备份</small></label></div><div class="actions"><button id="sftpTextFormatJson" hidden>${icon("braces")}<span>格式化 JSON</span></button><button id="sftpTextDiff" ${versions.length ? "" : "disabled"}>预览差异</button><button class="primary" id="sftpTextSave">保存 <span class="shortcut-hint">Ctrl+S</span></button><button id="sftpTextClose">关闭</button></div></div>`;
     modal.hidden = false;
     modal.onclick = null;
     let finished = false;
     const host = $("sftpTextEditor");
+    const card = modal.querySelector(".sftp-editor-modal");
+    const editorWorkspace = $("sftpEditorWorkspace");
+    const diffSplitter = $("sftpEditorSplit");
+    const diffPreview = $("sftpDiffPreview");
     let aceEditor = null;
     let fallbackEditor = null;
     const useFallbackEditor = () => {
@@ -646,10 +654,12 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     const getValue = () => aceEditor ? aceEditor.getValue() : fallbackEditor.value;
     const setValue = value => aceEditor ? aceEditor.setValue(value, -1) : (fallbackEditor.value = value);
     const focusEditor = () => aceEditor ? aceEditor.focus() : fallbackEditor.focus();
+    let releaseEditorLayout = () => {};
     const finish = (value) => {
       if (finished) return;
       finished = true;
       document.removeEventListener("keydown", onModalKeyDown, true);
+      releaseEditorLayout();
       try { aceEditor?.destroy(); } catch {}
       modal.hidden = true;
       resolve(value);
@@ -675,10 +685,35 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       aceEditor.session.on("change", updateStats);
       aceEditor.commands.addCommand({name:"saveSftpFile", bindKey:{win:"Ctrl-S",mac:"Command-S"}, exec:()=>saveButton.click()});
     } else fallbackEditor.addEventListener("input", updateStats);
-    $("sftpTextDiff").onclick = () => {
-      const box = $("sftpDiffPreview");
-      box.hidden = false;
-      box.innerHTML = sftpDiffHtml(comparisonContent, getValue());
+    releaseEditorLayout = bindSftpEditorLayout(card, editorWorkspace, diffSplitter, () => aceEditor?.resize(true));
+    $("sftpTextDiff").onclick = async () => {
+      if (!versions.length) return notify("没有可比较的历史备份", "info");
+      const box = diffPreview;
+      setSftpEditorDiffVisible(editorWorkspace, diffSplitter, box, true);
+      requestAnimationFrame(() => aceEditor?.resize(true));
+      const button = $("sftpTextDiff");
+      const selected = Number($("sftpDiffHistory")?.value || 0);
+      let comparisonContent = "";
+      let oldLabel = "上一次备份";
+      if (versions[selected] && typeof diffOptions.loadVersion === "function") {
+        button.disabled = true;
+        button.classList.add("busy");
+        box.innerHTML = `<div class="sftp-diff-unavailable">${icon("loader-circle")} 正在读取历史版本...</div>`;
+        refreshIcons();
+        try {
+          const version = versions[selected];
+          const loaded = await diffOptions.loadVersion(version, encoding);
+          comparisonContent = loaded?.content || "";
+          oldLabel = `备份 ${sftpDiffDisplayTime(version.changed_at || Number(version.mtime || 0) * 1000)}`;
+        } catch (error) {
+          box.innerHTML = `<div class="sftp-diff-unavailable error">${esc(error.message || "历史版本读取失败")}</div>`;
+          return;
+        } finally {
+          button.disabled = false;
+          button.classList.remove("busy");
+        }
+      }
+      box.innerHTML = sftpDiffViewerHtml(comparisonContent, getValue(), {oldLabel, newLabel:"当前编辑内容"});
     };
     $("sftpTextEncoding").onchange = event => {
       const nextEncoding = event.target.value;
@@ -760,9 +795,11 @@ async function previewSftpText(id, path) {
     while (true) {
       const data = await withSftpFileOpenFeedback(id, path, () => readSftpTextWithProgress(id, path, requestedEncoding));
       if (!data) return;
-      const baselineKey = sftpFileOpenKey(id, path);
-      const comparisonContent = sftpEditorDiffBaselines.has(baselineKey) ? sftpEditorDiffBaselines.get(baselineKey) : (data.content || "");
-      const next = await sftpTextModal(path, data.content || "", data.size || 0, data.limit || 50*1024*1024, data.encoding || "utf8", data.preferred_encoding || "auto", comparisonContent);
+      const history = await api(`/api/connections/${id}/sftp/versions?path=${encodeURIComponent(path)}&limit=10`).catch(() => ({versions:[]}));
+      const next = await sftpTextModal(path, data.content || "", data.size || 0, data.limit || 50*1024*1024, data.encoding || "utf8", data.preferred_encoding || "auto", {
+        versions:history.versions || [],
+        loadVersion:(version, versionEncoding) => readSftpTextWithProgress(id, version.path, versionEncoding)
+      });
       if (next === null) return;
       if (next.action === "encoding") {
         requestedEncoding = next.encoding;
@@ -770,7 +807,6 @@ async function previewSftpText(id, path) {
       }
       if (next.content === (data.content || "") && !(next.persist_default && data.preferred_encoding !== next.encoding)) return notify("文件内容没有变化", "info");
       await api(`/api/connections/${id}/sftp/write`, {method:"POST", body:JSON.stringify({path, content:next.content, backup:next.backup, encoding:next.encoding, persist_default:next.persist_default})});
-      sftpEditorDiffBaselines.set(baselineKey, data.content || "");
       const connection = connections.find(item => item.id === id);
       if (connection && next.persist_default) connection.sftp_text_encoding = next.encoding;
       notify(`文件已按 ${sftpTextEncodingLabel(next.encoding)} 保存`, "success");
@@ -828,4 +864,52 @@ function selectedSftpEntries(tabKey=activeTabKey) {
     owner: input.dataset.owner || "",
     group: input.dataset.group || ""
   }));
+}
+
+function installSftpKeyboardShortcuts() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  if (window.__termaSftpKeyboardShortcutsInstalled) return;
+  window.__termaSftpKeyboardShortcutsInstalled = true;
+  document.addEventListener("keydown", event => {
+    const tab = tabs.find(item => item.key === activeTabKey);
+    const taskDrawer = document.getElementById("sftpTaskCenterDrawer");
+    if (tab?.kind !== "sftp" || !$("modal")?.hidden || (taskDrawer && !taskDrawer.hidden)) return;
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+      event.preventDefault();
+      event.stopPropagation();
+      const panel = sftpElement("sftpFloatingSearch", activeTabKey);
+      if (panel?.hidden) toggleSftpSearch(activeTabKey);
+      else {
+        const input = sftpElement("sftpSearch", activeTabKey);
+        input?.focus();
+        input?.select();
+      }
+      return;
+    }
+    if (event.key === "Escape") {
+      const panel = sftpElement("sftpFloatingSearch", activeTabKey);
+      if (!panel?.hidden) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeSftpSearch(activeTabKey);
+        sftpRuntimeRoot(activeTabKey)?.focus?.({preventScroll:true});
+      }
+    }
+  }, true);
+}
+
+installSftpKeyboardShortcuts();
+
+function setSftpRecursiveSearch(enabled, tabKey=activeTabKey) {
+  const runtime = restoreSftpRuntimeForTab(tabKey);
+  if (!runtime) return;
+  runtime.state.recursiveSearch = Boolean(enabled);
+  runtime.state.page = 1;
+  clearTimeout(runtime.searchTimer);
+  syncSftpSearchFeedback(tabKey, Boolean(runtime.state.query));
+  runtime.searchTimer = setTimeout(() => loadSftpPage({page:1, tabKey}), 0);
+  if (sftpActiveRuntimeKey === tabKey) {
+    sftpState = runtime.state;
+    sftpSearchTimer = runtime.searchTimer;
+  }
 }

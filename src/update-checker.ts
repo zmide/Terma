@@ -4,7 +4,7 @@ const path = require("node:path");
 const DEFAULT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 10 * 1000;
 const CACHE_FILENAME = "update-check.json";
-const CACHE_SCHEMA_VERSION = 3;
+const CACHE_SCHEMA_VERSION = 4;
 
 function parseVersion(value) {
   const text = String(value || "").trim().replace(/^v(?=\d)/i, "");
@@ -112,7 +112,7 @@ function releaseResult(packageInfo, releaseInput, checkedAt, fromCache) {
     name: String(release.name || release.tag_name || latest.normalized),
     published_at: release.published_at || "",
     notes: String(release.body || ""),
-    release_notes: releases.slice(0, 2).map(item => ({
+    release_notes: releases.slice(0, 10).map(item => ({
       version: item.version.normalized,
       name: String(item.release.name || item.release.tag_name || item.version.normalized),
       release_url: String(item.release.html_url),

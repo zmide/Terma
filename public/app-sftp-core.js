@@ -35,7 +35,6 @@ const sftpPendingBrowserDownloads = new Set();
 const sftpDownloadNoticeRequests = new Map();
 const sftpUploadRequests = new Map();
 const sftpOpeningFiles = new Set();
-const sftpEditorDiffBaselines = new Map();
 const sftpNavigationHistories = new Map();
 const sftpConnectionRequests = new Map();
 const sftpConnectionVersions = new Map();
@@ -58,6 +57,7 @@ let sftpNativeDragPointer = null;
 let sftpNativeDragFallbackNoticeShown = false;
 let sftpTabDragPreviewKey = "";
 let sftpTabDragPreviewTimer = 0;
+let sftpTabDragPreviewSession = null;
 const sftpTabRuntimes = new Map();
 const sftpTabCounts = new Map();
 let sftpActiveRuntimeKey = "";
@@ -67,6 +67,8 @@ function defaultSftpState(connectionId=0, remotePath=".") {
     path:remotePath || ".",
     entries:[],
     query:"",
+    recursiveSearch:false,
+    recursiveSearchTruncated:false,
     sort:"name",
     dir:"asc",
     connectionId:Number(connectionId || 0),
@@ -576,6 +578,8 @@ function sftpDirectoryContentSignature(state) {
   return JSON.stringify({
     path:normalizeSftpDirectoryCachePath(state?.path),
     query:String(state?.query || ""),
+    recursiveSearch:Boolean(state?.recursiveSearch),
+    recursiveSearchTruncated:Boolean(state?.recursiveSearchTruncated),
     sort:String(state?.sort || "name"),
     dir:String(state?.dir || "asc"),
     page:Number(state?.page || 1),
@@ -586,7 +590,7 @@ function sftpDirectoryContentSignature(state) {
     entries:(state?.entries || []).map(entry => [
       entry.name, entry.type, Number(entry.size || 0), Number(entry.mtime || 0),
       entry.mode || "", entry.owner || "", entry.group || "",
-      Boolean(entry.is_symlink), Number(entry.link_size || 0), Boolean(entry.link_target_missing)
+      Boolean(entry.is_symlink), Number(entry.link_size || 0), Boolean(entry.link_target_missing), entry.metadata_known !== false
     ])
   });
 }
@@ -982,6 +986,15 @@ async function disconnectSftpConnection(connectionId, tabKey=activeTabKey) {
   try {
     return await request;
   } catch { return false; }
+}
+
+function syncSftpSearchFeedback(tabKey=activeTabKey, searching=false) {
+  const panel = sftpElement("sftpFloatingSearch", tabKey);
+  if (!panel) return;
+  panel.classList.toggle("is-searching", Boolean(searching));
+  panel.setAttribute("aria-busy", searching ? "true" : "false");
+  const status = panel.querySelector(".sftp-search-status-icon");
+  if (status) status.title = searching ? "正在搜索" : "搜索";
 }
 
 async function openTemporarySftpCredentialSession(connectionId, tabKey, temporaryConnection) {

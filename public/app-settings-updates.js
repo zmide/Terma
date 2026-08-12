@@ -201,7 +201,7 @@ function updateMarkdownHtml(value, displayedVersion = "") {
 
 function updateReleaseNotesHtml(update) {
   const history = Array.isArray(update?.release_notes) && update.release_notes.length
-    ? update.release_notes.slice(0, 2)
+    ? update.release_notes.slice(0, 10)
     : update?.notes
       ? [{version:update.latest_version, published_at:update.published_at, notes:update.notes}]
       : [];
@@ -211,6 +211,23 @@ function updateReleaseNotesHtml(update) {
     const published = item?.published_at ? new Date(item.published_at).toLocaleDateString("zh-CN") : "";
     return `<section class="update-release-entry"><div class="update-release-head"><b>${version ? `v${esc(version)}` : index === 0 ? "最新版本" : "上一版本"}</b>${index === 0 ? `<span class="status-pill running">最新</span>` : ""}${published ? `<small>${esc(published)}</small>` : ""}</div><div class="update-release-markdown">${updateMarkdownHtml(item?.notes, version)}</div></section>`;
   }).join("")}</div></div>`;
+}
+
+let updateNotesScrollTop = 0;
+
+function renderUpdateStatus(options={}) {
+  const area = $("updateCheckArea");
+  if (!area) return;
+  const currentNotes = area.querySelector(".update-notes");
+  if (currentNotes) updateNotesScrollTop = Math.max(0, currentNotes.scrollTop);
+  area.innerHTML = updateStatusHtml();
+  const nextNotes = area.querySelector(".update-notes");
+  if (nextNotes) {
+    nextNotes.scrollTop = Math.min(updateNotesScrollTop, Math.max(0, nextNotes.scrollHeight - nextNotes.clientHeight));
+  } else {
+    updateNotesScrollTop = 0;
+  }
+  if (options.icons) refreshIcons();
 }
 
 function formatUpdateBytes(value) {
@@ -240,16 +257,14 @@ async function refreshUpdateStatus(force=false) {
     updateSettings = status;
     if (download) updateSettings.download_status = download;
     inPane(() => {
-      const area = $("updateCheckArea");
-      if (area) area.innerHTML = updateStatusHtml();
+      renderUpdateStatus();
       syncUpdateNoticeForCurrentSection();
     });
     if (force && !updateSettings.update_ignored) notify(updateSettings.update_available ? `发现新版本 v${String(updateSettings.latest_version || "").replace(/^v/i, "")}` : "当前已经是最新版本", updateSettings.update_available ? "info" : "success");
   } catch (error) {
     updateSettings = { error:error.message || "连接 GitHub 失败" };
     inPane(() => {
-      const area = $("updateCheckArea");
-      if (area) area.innerHTML = updateStatusHtml();
+      renderUpdateStatus();
       syncUpdateNoticeForCurrentSection();
     });
     if (force) notify(updateSettings.error, "error");
@@ -275,11 +290,7 @@ async function setUpdateVersionIgnored(input) {
       } catch {}
     }
     inPane(() => {
-      const area = $("updateCheckArea");
-      if (area) {
-        area.innerHTML = updateStatusHtml();
-        refreshIcons();
-      }
+      renderUpdateStatus({icons:true});
     });
     syncUpdateNoticeDots();
     notify(enabled ? `已忽略 v${currentUpdateNoticeVersion()} 的更新提示` : `已恢复 v${currentUpdateNoticeVersion()} 的更新提示`, "success");
@@ -305,11 +316,7 @@ async function refreshUpdateDownloadProgress(inPane=captureSettingsPane()) {
     if (!updateSettings) return;
     updateSettings.download_status = download;
     inPane(() => {
-      const area = $("updateCheckArea");
-      if (area) {
-        area.innerHTML = updateStatusHtml();
-        refreshIcons();
-      }
+      renderUpdateStatus({icons:true});
     });
     if (download.state !== "downloading") stopUpdateDownloadPolling();
   } catch {}
@@ -341,9 +348,7 @@ async function downloadUpdatePackage(redownload=false) {
     const result = await request;
     updateSettings.download_status = result;
     inPane(() => {
-      const area = $("updateCheckArea");
-      if (area) area.innerHTML = updateStatusHtml();
-      refreshIcons();
+      renderUpdateStatus({icons:true});
     });
     notify("更新安装包已下载并通过 SHA-256 校验", "success");
   } catch (error) {
@@ -354,9 +359,7 @@ async function downloadUpdatePackage(redownload=false) {
       error:error.message
     };
     inPane(() => {
-      const area = $("updateCheckArea");
-      if (area) area.innerHTML = updateStatusHtml();
-      refreshIcons();
+      renderUpdateStatus({icons:true});
     });
     notify(error.message, "error");
   } finally {

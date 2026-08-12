@@ -44,15 +44,163 @@ async function capture(window, name) {
   return stats;
 }
 
+async function rememberVisualTheme(window) {
+  await window.webContents.executeJavaScript(`(() => {
+    window.__termaVisualRegressionTheme = {
+      theme:document.documentElement.dataset.theme || preferredTheme(),
+      storedTheme:localStorage.getItem('theme'),
+      appearance:normalizeTermaAppearanceSettings(termaAppearanceSettings),
+      storedAppearance:localStorage.getItem('termaAppearanceV1')
+    };
+  })()`);
+}
+
+async function applyLuminousVisualTheme(window, theme) {
+  const result = await window.webContents.executeJavaScript(`(async () => {
+    applyTheme(${JSON.stringify(theme)});
+    applyTermaAppearanceSettings(TERMA_APPEARANCE_PRESETS.luminous);
+    showPrimary('connections');
+    syncTermaLiquidNavigation();
+    const started = performance.now();
+    let tracks = [];
+    let lensReady = [];
+    do {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      tracks = [...document.querySelectorAll('.activity-top,.side-nav,.mobile-tabs')]
+        .filter(track => {
+          const style = getComputedStyle(track);
+          const rect = track.getBoundingClientRect();
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && rect.width > 0
+            && rect.height > 0
+            && track.querySelector('button.active:not([hidden])');
+        });
+      tracks.forEach(scheduleTermaLiquidTrack);
+      lensReady = tracks.map(track => {
+        const lenses = track.querySelectorAll(':scope > .terma-liquid-lens');
+        const rect = lenses[0]?.getBoundingClientRect();
+        return lenses.length === 1 && Boolean(rect && rect.width > 0 && rect.height > 0);
+      });
+    } while ((tracks.length === 0 || !lensReady.every(Boolean)) && performance.now() - started < 800);
+    const rootStyle = getComputedStyle(document.documentElement);
+    return {
+      theme:document.documentElement.dataset.theme,
+      appearancePreset:document.documentElement.dataset.appearancePreset,
+      frostedEnabled:!document.documentElement.classList.contains('terma-frosted-disabled'),
+      liquidEnabled:document.documentElement.classList.contains('terma-liquid-enabled'),
+      frostedBlur:rootStyle.getPropertyValue('--terma-frosted-backdrop-blur').trim(),
+      visibleTracks:tracks.length,
+      sharedLensesReady:tracks.length > 0 && lensReady.every(Boolean)
+    };
+  })()`);
+  if (result.theme !== theme || result.appearancePreset !== "luminous" || !result.frostedEnabled || !result.liquidEnabled || !result.sharedLensesReady) {
+    throw new Error(`流光玻璃视觉状态未就绪：${JSON.stringify(result)}`);
+  }
+  return result;
+}
+
+async function openVisualModal(window) {
+  return window.webContents.executeJavaScript(`(async () => {
+    const modal = document.getElementById('modal');
+    if (!modal?.hidden || modal?.innerHTML.trim()) return {ready:false, reason:'modal-not-clean'};
+    openGroupModal(() => {});
+    modal.dataset.visualRegressionModal = '1';
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const card = modal.querySelector(':scope > .modal-card');
+    const nodes = [modal, card, ...(card ? card.querySelectorAll('*') : [])].filter(Boolean);
+    const blurNodes = nodes.filter(node => {
+      const style = getComputedStyle(node);
+      const filter = String(style.backdropFilter || '') + ' ' + String(style.getPropertyValue('-webkit-backdrop-filter') || '');
+      return filter.includes('blur(') && !filter.includes('blur(0px)');
+    });
+    const rect = card?.getBoundingClientRect();
+    return {
+      ready:Boolean(card && !modal.hidden),
+      productionModal:Boolean(card?.querySelector('#modalGroupName') && card?.querySelector('[data-action="connection-group-save"]')),
+      singleGlassSurface:blurNodes.length === 1 && blurNodes[0] === card,
+      overlayDoesNotBlur:!blurNodes.includes(modal),
+      cardWithinViewport:Boolean(rect && rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1),
+      blurNodeCount:blurNodes.length
+    };
+  })()`);
+}
+
+async function closeVisualModal(window) {
+  await window.webContents.executeJavaScript(`(() => {
+    const modal = document.getElementById('modal');
+    if (modal?.dataset.visualRegressionModal === '1') {
+      delete modal.dataset.visualRegressionModal;
+      closeModal();
+    }
+  })()`);
+}
+
+async function captureVisualModal(window, name) {
+  const modalState = await openVisualModal(window);
+  let stats;
+  try {
+    stats = await capture(window, name);
+  } finally {
+    await closeVisualModal(window);
+  }
+  if (!modalState.ready || !modalState.productionModal || !modalState.singleGlassSurface || !modalState.overlayDoesNotBlur || !modalState.cardWithinViewport) {
+    throw new Error(`弹窗单层玻璃视觉回归失败：${JSON.stringify(modalState)}`);
+  }
+  return {...stats, ...modalState};
+}
+
+async function restoreVisualRegressionState(window, previous) {
+  try {
+    await window.webContents.executeJavaScript(`(() => {
+      const modal = document.getElementById('modal');
+      if (modal?.dataset.visualRegressionModal === '1') {
+        delete modal.dataset.visualRegressionModal;
+        try { closeModal(); } catch {}
+      }
+      try {
+        if (typeof cancelWorkspaceGroupSelection === 'function') cancelWorkspaceGroupSelection();
+      } catch {}
+      document.getElementById('visualRegressionSplit')?.remove();
+      if (window.__visualRegressionOriginalApi) {
+        try { closeTabsByKey(['visual-local-files'], 'visual-local-files'); } catch {}
+        api = window.__visualRegressionOriginalApi;
+        if (window.__visualRegressionHadDesktopBridge) window.termaDesktop = window.__visualRegressionDesktopBridge;
+        else delete window.termaDesktop;
+        delete window.__visualRegressionOriginalApi;
+        delete window.__visualRegressionHadDesktopBridge;
+        delete window.__visualRegressionDesktopBridge;
+      }
+      const saved = window.__termaVisualRegressionTheme;
+      if (saved) {
+        try { applyTheme(saved.theme); } catch {}
+        try { applyTermaAppearanceSettings(saved.appearance); } catch {}
+        if (saved.storedTheme === null) localStorage.removeItem('theme');
+        else localStorage.setItem('theme', saved.storedTheme);
+        if (saved.storedAppearance === null) localStorage.removeItem('termaAppearanceV1');
+        else localStorage.setItem('termaAppearanceV1', saved.storedAppearance);
+        delete window.__termaVisualRegressionTheme;
+      }
+    })()`);
+  } finally {
+    window.setContentSize(previous[0], previous[1]);
+    await waitForViewport(window, previous[0]);
+  }
+}
+
 async function runVisualRegression(window) {
   const previous = window.getContentSize();
   const states = {};
+  await rememberVisualTheme(window);
+  try {
   window.setContentSize(1180, 760);
   await waitForViewport(window, 1180);
-  await window.webContents.executeJavaScript("applyTheme('light')");
-  states.light = await capture(window, "light-desktop");
-  await window.webContents.executeJavaScript("applyTheme('dark')");
-  states.dark = await capture(window, "dark-desktop");
+  const lightTheme = await applyLuminousVisualTheme(window, "light");
+  states.light = {...await capture(window, "light-desktop"), ...lightTheme};
+  states.lightModal = await captureVisualModal(window, "light-desktop-modal");
+  const darkTheme = await applyLuminousVisualTheme(window, "dark");
+  states.dark = {...await capture(window, "dark-desktop"), ...darkTheme};
+  states.darkModal = await captureVisualModal(window, "dark-desktop-modal");
   const localFilesFixture = await window.webContents.executeJavaScript(`(async () => {
     try {
     window.__visualRegressionOriginalApi = api;
@@ -163,16 +311,21 @@ async function runVisualRegression(window) {
     document.body.appendChild(fixture);
   })()`);
   states.split = await capture(window, "recursive-split");
-  await window.webContents.executeJavaScript("document.getElementById('visualRegressionSplit')?.remove();applyTheme('light')");
+  await window.webContents.executeJavaScript("document.getElementById('visualRegressionSplit')?.remove()");
+  await applyLuminousVisualTheme(window, "light");
   window.setContentSize(720, 720);
   await waitForViewport(window, 720);
-  states.narrow = await capture(window, "narrow-window");
+  const narrowTheme = await applyLuminousVisualTheme(window, "light");
+  states.narrow = {...await capture(window, "narrow-window"), ...narrowTheme};
   window.setContentSize(390, 844);
   await waitForViewport(window, 390);
-  states.mobile = await capture(window, "mobile");
-  window.setContentSize(previous[0], previous[1]);
-  await waitForViewport(window, previous[0]);
+  const mobileTheme = await applyLuminousVisualTheme(window, "light");
+  states.mobile = {...await capture(window, "mobile"), ...mobileTheme};
+  states.mobileModal = await captureVisualModal(window, "mobile-modal");
   return states;
+  } finally {
+    await restoreVisualRegressionState(window, previous);
+  }
 }
 
 module.exports = { runVisualRegression };

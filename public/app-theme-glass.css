@@ -1,0 +1,762 @@
+:root {
+  --terma-modal-surface-opacity:100%;
+  --terma-modal-band-opacity:100%;
+  --terma-modal-backdrop-blur:0px;
+  --terma-liquid-lens-opacity:0%;
+  --terma-liquid-compact-opacity:0%;
+  --terma-liquid-wide-opacity:0%;
+  --terma-liquid-refraction-alpha:0;
+  --terma-liquid-lens-x:0px;
+  --terma-liquid-lens-y:0px;
+  --terma-liquid-lens-width:0px;
+  --terma-liquid-lens-height:0px;
+  --terma-liquid-lens-visibility:0;
+  --terma-liquid-motion-duration:460ms;
+  --terma-liquid-travel:0;
+  --terma-liquid-radius-a:50%;
+  --terma-liquid-radius-b:50%;
+  --terma-liquid-radius-c:50%;
+  --terma-liquid-radius-d:50%;
+  --terma-liquid-flow-from-x:-46%;
+  --terma-liquid-flow-from-y:0%;
+  --terma-liquid-flow-to-x:46%;
+  --terma-liquid-flow-to-y:0%;
+}
+
+/* Dialogs use one stable frosted shell. The dimmer never samples the page, so
+   every dialog gets exactly one blur pass even when liquid highlights are off. */
+html:not(.terma-frosted-disabled) .modal {
+  background:rgba(10,16,22,.3);
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html[data-theme="dark"]:not(.terma-frosted-disabled) .modal {
+  background:rgba(0,0,0,.48);
+}
+html:not(.terma-frosted-disabled) .modal-card {
+  isolation:isolate;
+  color:var(--text);
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.08),transparent 76px),
+    color-mix(in srgb,var(--panel) var(--terma-modal-surface-opacity),transparent) !important;
+  border-color:color-mix(in srgb,white 46%,var(--line)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.48),
+    inset 0 -1px 0 rgba(255,255,255,.12),
+    0 24px 72px rgba(8,15,24,.32) !important;
+  backdrop-filter:blur(var(--terma-modal-backdrop-blur)) saturate(var(--terma-frosted-saturation)) !important;
+  -webkit-backdrop-filter:blur(var(--terma-modal-backdrop-blur)) saturate(var(--terma-frosted-saturation)) !important;
+}
+html:not(.terma-frosted-disabled) .modal-card * {
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html[data-theme="dark"]:not(.terma-frosted-disabled) .modal-card {
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.035),transparent 76px),
+    color-mix(in srgb,var(--panel) var(--terma-modal-surface-opacity),transparent) !important;
+  border-color:color-mix(in srgb,white 18%,var(--line)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.16),
+    inset 0 -1px 0 rgba(255,255,255,.04),
+    0 28px 78px rgba(0,0,0,.52) !important;
+}
+html:not(.terma-frosted-disabled) .modal-card:is(.sftp-editor-modal,.sftp-comparison-modal,.sftp-image-modal) {
+  background:color-mix(in srgb,var(--panel) var(--terma-modal-surface-opacity),transparent) !important;
+}
+.modal-card { scrollbar-gutter:auto; }
+.modal-card.sftp-global-settings-modal,
+.modal-card.sftp-comparison-modal {
+  overflow:hidden;
+  scrollbar-gutter:auto;
+}
+.modal-card.sftp-global-settings-modal {
+  display:grid;
+  grid-template-rows:auto minmax(0,1fr) auto;
+  padding:0;
+}
+.modal-card.sftp-comparison-modal { padding:0; }
+.sftp-global-settings-modal > .sftp-modal-head {
+  position:relative !important;
+  top:auto !important;
+  z-index:2;
+  margin:0 !important;
+  padding:20px 20px 12px !important;
+}
+.sftp-global-settings-modal > .modal-scroll-body {
+  min-height:0;
+  padding:4px 20px 16px;
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+}
+.sftp-global-settings-modal > .actions:last-child {
+  position:relative !important;
+  bottom:auto !important;
+  z-index:2;
+  margin:0 !important;
+  padding:12px 20px 20px !important;
+}
+.sftp-comparison-modal > .sftp-comparison-head,
+.sftp-comparison-modal > .actions:last-child {
+  position:relative !important;
+  top:auto !important;
+  bottom:auto !important;
+  z-index:2;
+  margin:0 !important;
+}
+html:not(.terma-frosted-disabled) .modal-card > :is(
+  h2,
+  .modal-title-row,
+  .restore-key-head,
+  .productivity-manager-head,
+  .sftp-modal-head,
+  .sftp-permission-head,
+  .ssh-host-trust-head,
+  .license-modal-head,
+  .quick-connection-head,
+  .quick-ssh-auth-head,
+  .terminal-settings-head,
+  .sftp-editor-head,
+  .sftp-comparison-head
+) {
+  background:transparent !important;
+  border-color:color-mix(in srgb,var(--line) 86%,transparent);
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html:not(.terma-frosted-disabled) .modal-card > .actions:last-child,
+html:not(.terma-frosted-disabled) .sftp-editor-modal > .actions,
+html:not(.terma-frosted-disabled) .sftp-comparison-modal > .actions {
+  background:transparent !important;
+  border-color:color-mix(in srgb,var(--line) 86%,transparent);
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+.terma-liquid-enabled .modal-card > :is(
+  .sftp-editor-options,
+  .sftp-comparison-meta,
+  .terminal-settings-actions,
+  .terminal-startup-actions
+) {
+  background:color-mix(in srgb,var(--field) var(--terma-modal-band-opacity),transparent) !important;
+  border-color:color-mix(in srgb,var(--line) 78%,transparent) !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+.terma-liquid-enabled .modal-card :is(input,select,textarea) {
+  color:var(--text);
+  background:var(--field) !important;
+  border-color:color-mix(in srgb,var(--line) 92%,transparent);
+  box-shadow:inset 0 1px 2px rgba(7,15,24,.035);
+}
+html[data-theme="dark"].terma-liquid-enabled .modal-card :is(input,select,textarea) {
+  background:var(--field) !important;
+  border-color:color-mix(in srgb,var(--line) 88%,white 12%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.055);
+}
+.terma-liquid-enabled .modal-card > :is(.checkline,.check-row),
+.terma-liquid-enabled .modal-card > .modal-scroll-body > :is(.checkline,.check-row):not(.compact),
+.terma-liquid-enabled .modal-card > .terminal-startup-scroll > :is(.checkline,.check-row):not(.compact) {
+  background:color-mix(in srgb,var(--field) 42%,transparent);
+  border:1px solid color-mix(in srgb,var(--line) 32%,transparent);
+}
+.terma-liquid-enabled .modal-card .warning {
+  color:var(--danger);
+  border-color:color-mix(in srgb,var(--danger) 42%,var(--line));
+  background:color-mix(in srgb,var(--danger) 8%,var(--panel));
+}
+.terma-liquid-enabled .modal-card :is(.actions,.modal-actions) > button:not(.primary,.danger,.ghost,.icon-button) {
+  color:var(--text);
+  background-color:color-mix(in srgb,var(--panel) calc(var(--terma-liquid-icon-surface-opacity) + 18%),transparent);
+  background-image:
+    linear-gradient(108deg,transparent 0 38%,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .08)) 50%,transparent 62%),
+    radial-gradient(120% 90% at 24% 0%,rgba(255,255,255,var(--terma-liquid-refraction-alpha)),transparent 54%);
+  background-position:-170% 0,0 0;
+  background-repeat:no-repeat;
+  background-size:250% 100%,100% 100%;
+  border-color:color-mix(in srgb,white var(--terma-liquid-border-opacity),var(--line));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,var(--terma-liquid-highlight-alpha));
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+  transition:background-position .42s ease,background-color .2s ease,border-color .2s ease,box-shadow .2s ease,transform .14s ease;
+}
+.terma-liquid-enabled .modal-card :is(.actions,.modal-actions) > button:not(.primary,.danger,.ghost,.icon-button):hover,
+.terma-liquid-enabled .modal-card :is(.actions,.modal-actions) > button:not(.primary,.danger,.ghost,.icon-button):focus-visible {
+  background-color:color-mix(in srgb,var(--accent2) var(--terma-liquid-active-opacity),transparent);
+  background-position:170% 0,0 0;
+  border-color:color-mix(in srgb,var(--accent2) 36%,var(--line));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .16)),0 5px 14px rgba(0,0,0,calc(var(--terma-liquid-shadow-alpha) * .66));
+}
+.terma-liquid-enabled .modal-card :is(.actions,.modal-actions) > button:not(.primary,.danger,.ghost,.icon-button):active {
+  transform:scale(.96);
+}
+
+/* A dialog owns the only backdrop sampler. Tables, sticky bands and status
+   regions remain translucent, but never blur the already-frosted dialog. */
+html:not(.terma-frosted-disabled) .modal-card :is(
+  .sftp-sync-plan-list,
+  .quick-connection-table,
+  .quick-connection-columns,
+  .quick-connection-actions,
+  .quick-connection-actions-heading,
+  .quick-connection-target-row,
+  .terminal-startup-detection,
+  .terminal-startup-capabilities,
+  .terminal-startup-saved,
+  .terminal-startup-fields,
+  .terminal-startup-capability,
+  .terminal-startup-save-default,
+  .terminal-startup-actions,
+  .remote-install-modes,
+  .remote-install-mode,
+  .linux-desktop-diagnostics,
+  .linux-desktop-card,
+  .linux-desktop-install-task,
+  .xserver-state,
+  .x11-forwarding-panel,
+  .x11-install-guide > .actions
+) {
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html:not(.terma-frosted-disabled) .modal-card :is(.sftp-sync-plan-list,.quick-connection-table) {
+  background:color-mix(in srgb,var(--panel) 42%,transparent) !important;
+}
+html:not(.terma-frosted-disabled) .modal-card :is(
+  .quick-connection-columns,
+  .quick-connection-actions,
+  .quick-connection-actions-heading,
+  .quick-connection-target-row,
+  .terminal-startup-detection,
+  .terminal-startup-capabilities,
+  .terminal-startup-saved,
+  .terminal-startup-fields,
+  .terminal-startup-capability,
+  .terminal-startup-save-default,
+  .terminal-startup-actions,
+  .remote-install-mode,
+  .linux-desktop-diagnostics,
+  .linux-desktop-card,
+  .linux-desktop-install-task,
+  .xserver-state,
+  .x11-forwarding-panel,
+  .x11-install-guide > .actions
+) {
+  background:color-mix(in srgb,var(--field) var(--terma-modal-band-opacity),transparent) !important;
+}
+html:not(.terma-frosted-disabled) .modal-card .remote-install-modes {
+  background:color-mix(in srgb,var(--line) 62%,transparent) !important;
+}
+html:not(.terma-frosted-disabled) .modal-card .quick-connection-row:is(:hover,:focus-visible) .quick-connection-actions,
+html:not(.terma-frosted-disabled) .modal-card .quick-connection-target-row:is(:hover,:focus-visible) {
+  background:color-mix(in srgb,var(--accent2) 10%,color-mix(in srgb,var(--field) var(--terma-modal-band-opacity),transparent)) !important;
+}
+@media (max-width:760px) {
+  html:not(.terma-frosted-disabled) .x11-install-guide .modal-title-row {
+    background:color-mix(in srgb,var(--field) var(--terma-modal-band-opacity),transparent) !important;
+    backdrop-filter:none !important;
+    -webkit-backdrop-filter:none !important;
+  }
+}
+
+/* A navigation group owns one shared lens. Moving the lens between active
+   controls creates continuity; individual buttons no longer become blue tiles. */
+.terma-liquid-track {
+  isolation:isolate;
+}
+.activity-top.terma-liquid-track,
+#explorerTools.terma-liquid-track,
+.side-nav.terma-liquid-track {
+  position:relative;
+}
+.terma-liquid-lens {
+  display:none;
+  position:absolute;
+  z-index:0;
+  left:0;
+  top:0;
+  width:var(--terma-liquid-lens-width);
+  height:var(--terma-liquid-lens-height);
+  pointer-events:none;
+  opacity:var(--terma-liquid-lens-visibility);
+  overflow:hidden;
+  border:1px solid color-mix(in srgb,white 42%,var(--line));
+  border-radius:10px;
+  background:
+    radial-gradient(118% 94% at 22% -2%,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .18)),transparent 54%),
+    radial-gradient(96% 112% at 84% 104%,color-mix(in srgb,var(--accent2) 12%,transparent),transparent 58%),
+    linear-gradient(145deg,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) * .66)),rgba(255,255,255,.015) 48%,color-mix(in srgb,var(--accent2) 8%,transparent)),
+    color-mix(in srgb,var(--panel) calc(var(--terma-liquid-lens-opacity) - 4%),transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .14)),
+    inset 0 -1px 0 rgba(255,255,255,.07),
+    0 4px 12px rgba(8,18,28,calc(var(--terma-liquid-shadow-alpha) * .48));
+  backdrop-filter:blur(calc(var(--terma-frosted-toolbar-blur) * .72)) saturate(calc(var(--terma-frosted-saturation) + .12));
+  -webkit-backdrop-filter:blur(calc(var(--terma-frosted-toolbar-blur) * .72)) saturate(calc(var(--terma-frosted-saturation) + .12));
+  transform:translate3d(var(--terma-liquid-lens-x),var(--terma-liquid-lens-y),0);
+  transition:
+    transform var(--terma-liquid-motion-duration) cubic-bezier(.22,1,.36,1),
+    width var(--terma-liquid-motion-duration) cubic-bezier(.22,1,.36,1),
+    height var(--terma-liquid-motion-duration) cubic-bezier(.22,1,.36,1),
+    border-radius var(--terma-liquid-motion-duration) cubic-bezier(.22,1,.36,1),
+    opacity .18s ease;
+  will-change:transform,width,height;
+  flex:none;
+}
+.terma-liquid-enabled .terma-liquid-lens { display:block; }
+.terma-liquid-track > .terma-liquid-lens {
+  position:absolute;
+  z-index:0;
+  left:0;
+  top:0;
+  pointer-events:none;
+  flex:none;
+}
+html:not(.terma-liquid-enabled) .terma-liquid-lens {
+  display:none !important;
+}
+.terma-liquid-enabled .activity-top.terma-liquid-track > .terma-liquid-lens {
+  border-radius:999px;
+  border-color:color-mix(in srgb,white 46%,var(--line));
+  background:
+    radial-gradient(108% 84% at 26% 2%,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .24)),transparent 52%),
+    radial-gradient(92% 108% at 82% 102%,color-mix(in srgb,var(--accent2) 9%,transparent),transparent 58%),
+    linear-gradient(145deg,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) * .72)),rgba(255,255,255,.012) 52%,color-mix(in srgb,var(--accent2) 6%,transparent)),
+    color-mix(in srgb,var(--panel) calc(var(--terma-liquid-lens-opacity) - 5%),transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .16)),
+    inset 0 -1px 0 rgba(255,255,255,.08),
+    0 3px 8px rgba(8,18,28,calc(var(--terma-liquid-shadow-alpha) * .38));
+}
+html:not([data-theme="dark"]).terma-liquid-enabled .activity-top.terma-liquid-track > .terma-liquid-lens {
+  border-color:color-mix(in srgb,var(--text) 18%,var(--line));
+  background:
+    radial-gradient(108% 84% at 26% 2%,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .30)),transparent 50%),
+    radial-gradient(92% 108% at 82% 102%,rgba(255,255,255,.14),transparent 58%),
+    linear-gradient(145deg,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) * .76)),rgba(255,255,255,.025) 52%,color-mix(in srgb,var(--text) 4%,transparent)),
+    color-mix(in srgb,var(--panel) 72%,transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .24)),
+    inset 0 -1px 0 color-mix(in srgb,var(--text) 8%,transparent),
+    0 3px 9px rgba(31,41,51,calc(var(--terma-liquid-shadow-alpha) * .44));
+}
+html[data-theme="dark"].terma-liquid-enabled .terma-liquid-track > .terma-liquid-lens {
+  border-color:color-mix(in srgb,white 22%,var(--line));
+  background:
+    radial-gradient(118% 94% at 22% -2%,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) * .82)),transparent 54%),
+    radial-gradient(96% 112% at 84% 104%,color-mix(in srgb,var(--accent2) 18%,transparent),transparent 58%),
+    linear-gradient(145deg,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) * .44)),rgba(255,255,255,.01) 48%,color-mix(in srgb,var(--accent2) 12%,transparent)),
+    color-mix(in srgb,var(--panel) var(--terma-liquid-lens-opacity),transparent);
+}
+.terma-liquid-enabled #explorerTools.section-mode.terma-liquid-track > .terma-liquid-lens,
+.terma-liquid-enabled .side-nav.terma-liquid-track > .terma-liquid-lens {
+  border-radius:10px;
+  border-color:color-mix(in srgb,white 40%,var(--line));
+  background:
+    radial-gradient(126% 92% at 24% -12%,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .22)),transparent 50%),
+    radial-gradient(108% 108% at 88% 112%,color-mix(in srgb,var(--accent2) 10%,transparent),transparent 60%),
+    linear-gradient(146deg,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) * .72)),rgba(255,255,255,.012) 52%,color-mix(in srgb,var(--accent2) 7%,transparent)),
+    color-mix(in srgb,var(--panel) calc(var(--terma-liquid-wide-opacity) - 3%),transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .18)),
+    inset 0 -1px 0 rgba(255,255,255,.07),
+    0 4px 11px rgba(8,18,28,calc(var(--terma-liquid-shadow-alpha) * .34));
+}
+.terma-liquid-enabled .mobile-tabs.terma-liquid-track > .terma-liquid-lens {
+  border-radius:9px;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .20)),
+    0 2px 8px rgba(8,18,28,calc(var(--terma-liquid-shadow-alpha) * .48));
+}
+.terma-liquid-lens::before {
+  content:"";
+  position:absolute;
+  inset:1px 9% auto;
+  height:30%;
+  border-radius:999px;
+  background:linear-gradient(180deg,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .14)),transparent);
+  filter:blur(1px);
+  opacity:.54;
+}
+.terma-liquid-lens::after {
+  content:"";
+  position:absolute;
+  inset:-28%;
+  border-radius:50%;
+  background:radial-gradient(ellipse at center,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .18)) 0 13%,rgba(255,255,255,.045) 28%,transparent 58%);
+  filter:blur(1.5px);
+  opacity:0;
+  transform:translate3d(var(--terma-liquid-flow-from-x),var(--terma-liquid-flow-from-y),0) scale(.78);
+}
+.terma-liquid-enabled #explorerTools.section-mode.terma-liquid-track > .terma-liquid-lens::before,
+.terma-liquid-enabled .side-nav.terma-liquid-track > .terma-liquid-lens::before {
+  inset:1px 10% auto;
+  height:28%;
+  filter:blur(1px);
+  opacity:.64;
+}
+.terma-liquid-lens.is-positioning { transition:none; }
+html.terma-liquid-enabled .terma-liquid-track[data-liquid-moving="1"] > .terma-liquid-lens {
+  border-radius:
+    var(--terma-liquid-radius-a)
+    var(--terma-liquid-radius-b)
+    var(--terma-liquid-radius-c)
+    var(--terma-liquid-radius-d) /
+    var(--terma-liquid-radius-b)
+    var(--terma-liquid-radius-c)
+    var(--terma-liquid-radius-d)
+    var(--terma-liquid-radius-a);
+}
+.terma-liquid-track[data-liquid-moving="1"] .terma-liquid-lens::after {
+  animation:terma-liquid-lens-flow var(--terma-liquid-motion-duration) cubic-bezier(.22,1,.36,1);
+}
+.terma-liquid-enabled :is(.activity,#explorerTools.section-mode)::after {
+  display:none;
+}
+.terma-liquid-track > :is(button,a) {
+  position:relative;
+  z-index:1;
+}
+.terma-liquid-enabled .activity-top > button,
+.terma-liquid-enabled .side-nav > button,
+.terma-liquid-enabled .mobile-tabs > button,
+.terma-liquid-enabled #explorerTools.section-mode > button {
+  background:transparent !important;
+  border-color:transparent !important;
+  box-shadow:none !important;
+}
+.terma-liquid-enabled :where(.activity-top,#explorerTools.section-mode,.side-nav,.mobile-tabs) > :is(button,a)::before,
+.terma-liquid-enabled :where(.activity-top,#explorerTools.section-mode,.side-nav,.mobile-tabs) > :is(button,a)::after {
+  content:none !important;
+  display:none !important;
+}
+.terma-liquid-enabled :where(.activity-top,#explorerTools.section-mode,.side-nav,.mobile-tabs) > :is(button,a),
+.terma-liquid-enabled :where(.activity-top,#explorerTools.section-mode,.side-nav,.mobile-tabs) > :is(button,a):hover,
+.terma-liquid-enabled :where(.activity-top,#explorerTools.section-mode,.side-nav,.mobile-tabs) > :is(button,a):focus-visible,
+.terma-liquid-enabled :where(.activity-top,#explorerTools.section-mode,.side-nav,.mobile-tabs) > :is(button,a).active {
+  background-color:transparent !important;
+  background-image:none !important;
+  border-color:transparent !important;
+  box-shadow:none !important;
+}
+.terma-liquid-enabled :is(.activity-top,#explorerTools.section-mode,.side-nav,.mobile-tabs) > :is(button,a).active {
+  color:var(--text);
+}
+.terma-liquid-enabled #explorerTools.section-mode > button {
+  transition:color .24s ease,transform .16s ease,filter .24s ease;
+}
+.terma-liquid-enabled #explorerTools.section-mode > button:active {
+  transform:scale(.985);
+}
+.terma-liquid-enabled .activity-top > button,
+.terma-liquid-enabled #explorerTools.section-mode > button,
+.terma-liquid-enabled .mobile-tabs > button {
+  transition:color .24s ease,transform .16s ease,filter .24s ease;
+}
+.terma-liquid-enabled :is(.activity-top,#explorerTools.section-mode,.mobile-tabs) > button:hover {
+  color:var(--text);
+}
+.terma-liquid-enabled :is(.activity-top,.mobile-tabs) > button:hover {
+  filter:drop-shadow(0 1px 3px rgba(0,0,0,.12));
+}
+.terma-liquid-enabled :is(.activity-top,#explorerTools.section-mode,.mobile-tabs) > button.active {
+  color:var(--text);
+}
+html:not([data-theme="dark"]).terma-liquid-enabled .activity-top > button.active {
+  color:color-mix(in srgb,var(--accent2) 88%,var(--text));
+}
+.terma-liquid-enabled :is(.activity-top,#explorerTools.section-mode,.mobile-tabs) > button:active {
+  transform:scale(.94);
+}
+.terma-liquid-enabled #explorerTools.section-mode > button.active {
+  box-shadow:none !important;
+}
+
+/* The shared lens is the complete selected affordance. These base rules are
+   intentionally repeated after the legacy explorer styles so a blue tile or
+   inset accent edge can never reappear underneath the moving lens. */
+html.terma-liquid-enabled .explorer-tools.section-mode > button.active,
+html.terma-liquid-enabled .side-nav > button.active,
+html.terma-liquid-enabled .activity-top > button.active,
+html.terma-liquid-enabled .mobile-tabs > button.active {
+  color:var(--text) !important;
+  background:transparent !important;
+  background-image:none !important;
+  border-color:transparent !important;
+  box-shadow:none !important;
+}
+html.terma-liquid-enabled .mobile-tabs > button.active::before {
+  content:none !important;
+  display:none !important;
+}
+html.terma-liquid-enabled .activity-top > button.active::before {
+  content:"" !important;
+  display:block !important;
+  position:absolute;
+  left:2px;
+  top:14px;
+  bottom:14px;
+  width:2px;
+  border-radius:999px;
+  background:var(--accent2);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--accent2) 12%,transparent);
+}
+
+.terma-liquid-enabled .activity-bottom > :is(button,a) {
+  color:var(--muted);
+  background:transparent !important;
+  box-shadow:none !important;
+  transition:color .2s ease,transform .14s ease;
+}
+.terma-liquid-enabled .activity-bottom > :is(button,a)::after {
+  content:"";
+  position:absolute;
+  z-index:0;
+  left:50%;
+  top:50%;
+  width:30px;
+  height:30px;
+  pointer-events:none;
+  border:1px solid color-mix(in srgb,white var(--terma-liquid-border-opacity),var(--line));
+  border-radius:999px;
+  background:
+    radial-gradient(110% 90% at 28% 0%,rgba(255,255,255,var(--terma-liquid-refraction-alpha)),transparent 54%),
+    color-mix(in srgb,var(--panel) calc(var(--terma-liquid-icon-surface-opacity) + 18%),transparent);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,var(--terma-liquid-highlight-alpha)),0 3px 9px rgba(8,18,28,.08);
+  backdrop-filter:blur(calc(var(--terma-frosted-toolbar-blur) * .56));
+  -webkit-backdrop-filter:blur(calc(var(--terma-frosted-toolbar-blur) * .56));
+  opacity:0;
+  transform:translate(-50%,-50%) scale(.78);
+  transition:opacity .18s ease,transform .28s cubic-bezier(.22,1,.36,1);
+}
+.terma-liquid-enabled .activity-bottom > :is(button,a):hover,
+.terma-liquid-enabled .activity-bottom > :is(button,a):focus-visible { color:var(--text); }
+.terma-liquid-enabled .activity-bottom > :is(button,a):hover::after,
+.terma-liquid-enabled .activity-bottom > :is(button,a):focus-visible::after {
+  opacity:1;
+  transform:translate(-50%,-50%) scale(1);
+}
+.terma-liquid-enabled .activity-bottom > :is(button,a):active {
+  transform:scale(.94);
+}
+.terma-liquid-enabled .activity-bottom > :is(button,a) > * {
+  position:relative;
+  z-index:1;
+}
+
+/* Quick open is also a dialog, but it intentionally has its own compact DOM. */
+html:not(.terma-frosted-disabled) .quick-panel {
+  background:rgba(10,16,22,.3);
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+html[data-theme="dark"]:not(.terma-frosted-disabled) .quick-panel { background:rgba(0,0,0,.48); }
+html:not(.terma-frosted-disabled) .quick-panel-dialog {
+  isolation:isolate;
+  border-color:color-mix(in srgb,white 42%,var(--line));
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.08),transparent 64px),
+    color-mix(in srgb,var(--panel) var(--terma-modal-surface-opacity),transparent);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 24px 72px rgba(8,15,24,.32);
+  backdrop-filter:blur(var(--terma-frosted-backdrop-blur)) saturate(var(--terma-frosted-saturation));
+  -webkit-backdrop-filter:blur(var(--terma-frosted-backdrop-blur)) saturate(var(--terma-frosted-saturation));
+}
+html[data-theme="dark"]:not(.terma-frosted-disabled) .quick-panel-dialog {
+  border-color:color-mix(in srgb,white 18%,var(--line));
+  background:
+    linear-gradient(180deg,rgba(255,255,255,.035),transparent 64px),
+    color-mix(in srgb,var(--panel) var(--terma-modal-surface-opacity),transparent);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.14),0 28px 78px rgba(0,0,0,.52);
+}
+html:not(.terma-frosted-disabled) .quick-panel-search {
+  background:transparent;
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+html[data-theme="dark"] .quick-panel-dialog .quick-result {
+  background-color:transparent !important;
+}
+html[data-theme="dark"]:not(.terma-liquid-enabled) .quick-panel-dialog .quick-result:is(:hover,.active) {
+  background-color:var(--hover) !important;
+}
+html.terma-liquid-enabled .quick-panel-dialog .quick-result:is(:hover,.active) {
+  background-color:color-mix(in srgb,var(--accent2) 9%,transparent) !important;
+}
+
+/* Small floating affordances receive a local glass surface; full drop targets
+   stay as translucent colour overlays so they never obscure their content. */
+.terma-liquid-enabled :is(
+  .operation-pane-pin-guide,
+  .sftp-floating-search,
+  .sftp-drag-hint,
+  .sftp-drag-preview,
+  .workspace-tab-drag-ghost,
+  .terminal-drop-hint,
+  .workspace-pane-drop-indicator > span
+) {
+  border-color:color-mix(in srgb,white var(--terma-liquid-border-opacity),var(--line));
+  background:color-mix(in srgb,var(--panel) calc(var(--terma-liquid-surface-opacity) + 10%),transparent);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,var(--terma-liquid-highlight-alpha)),0 12px 30px rgba(8,15,24,.2);
+  backdrop-filter:blur(var(--terma-frosted-toolbar-blur)) saturate(calc(var(--terma-frosted-saturation) + .04));
+  -webkit-backdrop-filter:blur(var(--terma-frosted-toolbar-blur)) saturate(calc(var(--terma-frosted-saturation) + .04));
+}
+.terma-liquid-enabled .operation-pane-pin-guide::before {
+  background:color-mix(in srgb,var(--panel) calc(var(--terma-liquid-surface-opacity) + 10%),transparent);
+}
+
+/* A backdrop only dims. Menus and the task drawer each own one sampling layer. */
+.action-menu-backdrop,
+.terma-liquid-enabled .action-menu-backdrop {
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+.sftp-task-center-drawer,
+.terma-liquid-enabled .sftp-task-center-drawer {
+  background:transparent !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+html[data-theme="dark"] :is(.context-menu,.action-menu) button {
+  background-color:transparent;
+}
+html[data-theme="dark"] :is(.context-menu,.action-menu) button:hover {
+  background-color:var(--hover);
+}
+html:not(.terma-frosted-disabled) .mobile-action-menu .action-menu-close {
+  background:color-mix(in srgb,var(--panel) 72%,transparent);
+  box-shadow:0 -6px 12px color-mix(in srgb,var(--panel) 48%,transparent);
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+
+/* Shared-lens navigation owns its selected surface; independent pressed action
+   controls keep a restrained local glass state instead of an accent tile. */
+.terma-liquid-enabled :is(.brand,.workspace-header-tools,.workspace-quick-actions,.explorer-action-strip) button[aria-pressed="true"]:not(.connection-favorite,.productivity-favorite,[data-vnc-clipboard-sync],[data-vnc-cursor-mode],.vnc-clipboard-helper-button),
+.terma-liquid-enabled .explorer-tools:not(.section-mode) .explorer-action-strip button.active:not(.connection-favorite,.productivity-favorite,[data-vnc-clipboard-sync],[data-vnc-cursor-mode],.vnc-clipboard-helper-button) {
+  background-image:none !important;
+  background-color:color-mix(in srgb,var(--panel) calc(var(--terma-liquid-icon-surface-opacity) + 18%),transparent) !important;
+  border-color:color-mix(in srgb,white calc(var(--terma-liquid-border-opacity) + 8%),var(--line)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,calc(var(--terma-liquid-highlight-alpha) + .08)),
+    inset 0 -1px 0 rgba(255,255,255,.035) !important;
+  color:var(--text) !important;
+}
+
+/* Action controls receive a restrained local glass response. The selected
+   navigation state is still represented only by the shared moving lens. */
+.terma-liquid-enabled :is(
+  .explorer-tools:not(.section-mode) .explorer-action-strip button,
+  .brand .icon-button,
+  .workspace-header-tools button,
+  .workspace-quick-actions button,
+  .sftp-task-center-button
+) {
+  overflow:hidden;
+  border-color:color-mix(in srgb,white var(--terma-liquid-border-opacity),var(--line));
+  border-radius:7px;
+  background-color:color-mix(in srgb,var(--panel) calc(var(--terma-liquid-icon-surface-opacity) + 18%),transparent);
+  background-image:
+    linear-gradient(108deg,transparent 0 37%,rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .10)) 50%,transparent 63%),
+    radial-gradient(120% 90% at 25% 0%,rgba(255,255,255,var(--terma-liquid-refraction-alpha)),transparent 52%);
+  background-position:-180% 0,0 0;
+  background-repeat:no-repeat;
+  background-size:260% 100%,100% 100%;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,var(--terma-liquid-highlight-alpha));
+  backdrop-filter:blur(calc(var(--terma-frosted-toolbar-blur) * .56)) saturate(calc(var(--terma-frosted-saturation) + .08));
+  -webkit-backdrop-filter:blur(calc(var(--terma-frosted-toolbar-blur) * .56)) saturate(calc(var(--terma-frosted-saturation) + .08));
+  transition:background-position .5s ease,background-color .22s ease,border-color .22s ease,box-shadow .22s ease,transform .18s ease;
+}
+.terma-liquid-enabled :is(
+  .explorer-tools:not(.section-mode) .explorer-action-strip button,
+  .brand .icon-button,
+  .workspace-header-tools button,
+  .workspace-quick-actions button,
+  .sftp-task-center-button
+):hover,
+.terma-liquid-enabled :is(
+  .explorer-tools:not(.section-mode) .explorer-action-strip button,
+  .brand .icon-button,
+  .workspace-header-tools button,
+  .workspace-quick-actions button,
+  .sftp-task-center-button
+):focus-visible {
+  border-color:color-mix(in srgb,var(--accent2) 38%,var(--line));
+  background-color:color-mix(in srgb,var(--accent2) var(--terma-liquid-active-opacity),transparent);
+  background-position:180% 0,0 0;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,calc(var(--terma-liquid-refraction-alpha) + .20)),0 6px 16px rgba(0,0,0,var(--terma-liquid-shadow-alpha));
+  transform:translateY(-1px);
+}
+.terma-liquid-enabled :is(
+  .explorer-tools:not(.section-mode) .explorer-action-strip button,
+  .brand .icon-button,
+  .workspace-header-tools button,
+  .workspace-quick-actions button,
+  .sftp-task-center-button
+):active {
+  transform:translateY(0) scale(.94);
+  transition-duration:.08s;
+}
+.terma-liquid-enabled .workspace-header-tools button.terminal-action-quick-commands[aria-pressed="true"] {
+  color:var(--accent2) !important;
+  border-color:color-mix(in srgb,var(--accent2) 48%,var(--line)) !important;
+  background-image:none !important;
+  background-color:color-mix(in srgb,var(--accent2) 9%,color-mix(in srgb,var(--panel) 72%,transparent)) !important;
+  box-shadow:
+    inset 0 -2px 0 var(--accent2),
+    inset 0 1px 0 rgba(255,255,255,calc(var(--terma-liquid-highlight-alpha) + .08)) !important;
+}
+.terma-liquid-enabled :is(
+  .explorer-tools:not(.section-mode) .explorer-action-strip button,
+  .brand .icon-button,
+  .workspace-header-tools button,
+  .workspace-quick-actions button,
+  .sftp-task-center-button
+).primary {
+  color:#fff;
+  border-color:var(--accent);
+  background:var(--accent);
+  box-shadow:none;
+  backdrop-filter:none;
+  -webkit-backdrop-filter:none;
+}
+.terma-liquid-enabled .explorer-tools :is(.search-field,input,select) {
+  border-color:color-mix(in srgb,white var(--terma-liquid-border-opacity),var(--line));
+}
+.terma-liquid-enabled .explorer-tools .search-field {
+  background:color-mix(in srgb,var(--panel) calc(var(--terma-liquid-icon-surface-opacity) + 22%),transparent);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,var(--terma-liquid-highlight-alpha));
+  backdrop-filter:blur(calc(var(--terma-frosted-toolbar-blur) * .48));
+  -webkit-backdrop-filter:blur(calc(var(--terma-frosted-toolbar-blur) * .48));
+}
+
+@keyframes terma-liquid-lens-flow {
+  0% { opacity:0; transform:translate3d(var(--terma-liquid-flow-from-x),var(--terma-liquid-flow-from-y),0) scale(.78); }
+  38% { opacity:.92; }
+  100% { opacity:0; transform:translate3d(var(--terma-liquid-flow-to-x),var(--terma-liquid-flow-to-y),0) scale(1.08); }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  .terma-liquid-track[data-liquid-moving="1"] .terma-liquid-lens::after,
+  .terma-liquid-enabled :is(.activity-top,#explorerTools.section-mode,.mobile-tabs) > button,
+  .terma-liquid-enabled .activity-bottom > :is(button,a),
+  .terma-liquid-enabled .activity-bottom > :is(button,a)::after,
+  .terma-liquid-enabled :is(.explorer-tools:not(.section-mode) .explorer-action-strip button,.brand .icon-button,.workspace-header-tools button,.workspace-quick-actions button,.sftp-task-center-button) {
+    animation:none;
+    transition:none;
+    transform:none;
+  }
+  .terma-liquid-lens {
+    animation:none;
+    transition:none;
+    transform:translate3d(var(--terma-liquid-lens-x),var(--terma-liquid-lens-y),0);
+  }
+  .terma-liquid-lens::after { animation:none; opacity:0; }
+}
+
+@media (max-width:760px) {
+  .sftp-global-settings-modal > .actions:last-child {
+    padding-bottom:max(16px,env(safe-area-inset-bottom)) !important;
+  }
+}

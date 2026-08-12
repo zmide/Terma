@@ -7,6 +7,9 @@ interface ProductivityRepositoryDependencies {
 
 export function createProductivityRepository(dependencies: ProductivityRepositoryDependencies) {
   const { all, get, run, now } = dependencies;
+  const quickActions = new Set(["execute", "insert"]);
+  const quickBadges = new Set(["", "令", "查", "服", "网", "库", "文", "启", "停"]);
+  const quickColors = new Set(["blue", "green", "amber", "red", "cyan", "gray", "purple"]);
 
   function cleanCommandSnippet(data: any = {}, existing: any = null) {
     const name = String(data.name ?? existing?.name ?? "").trim();
@@ -21,7 +24,12 @@ export function createProductivityRepository(dependencies: ProductivityRepositor
       command,
       description:String(data.description ?? existing?.description ?? "").trim().slice(0, 1000),
       tags:String(data.tags ?? existing?.tags ?? "").split(/[,，\s]+/).map((item: string) => item.trim()).filter(Boolean).join(","),
-      favorite:Number(data.favorite ?? existing?.favorite ?? 0) ? 1 : 0
+      favorite:Number(data.favorite ?? existing?.favorite ?? 0) ? 1 : 0,
+      quick_visible:Number(data.quick_visible ?? existing?.quick_visible ?? 0) ? 1 : 0,
+      quick_action:quickActions.has(String(data.quick_action ?? existing?.quick_action ?? "execute")) ? String(data.quick_action ?? existing?.quick_action ?? "execute") : "execute",
+      quick_badge:quickBadges.has(String(data.quick_badge ?? existing?.quick_badge ?? "")) ? String(data.quick_badge ?? existing?.quick_badge ?? "") : "",
+      quick_color:quickColors.has(String(data.quick_color ?? existing?.quick_color ?? "blue")) ? String(data.quick_color ?? existing?.quick_color ?? "blue") : "blue",
+      quick_sort_order:Math.max(0, Math.min(1000000, Math.trunc(Number(data.quick_sort_order ?? existing?.quick_sort_order ?? 0) || 0)))
     };
   }
 
@@ -34,8 +42,8 @@ export function createProductivityRepository(dependencies: ProductivityRepositor
     const item = cleanCommandSnippet(data);
     const timestamp = now();
     const result = run(
-      "INSERT INTO command_snippets(name,group_name,command,description,tags,favorite,last_used_at,created_at,updated_at) VALUES(?,?,?,?,?,?,NULL,?,?)",
-      [item.name,item.group_name,item.command,item.description,item.tags,item.favorite,timestamp,timestamp]
+      "INSERT INTO command_snippets(name,group_name,command,description,tags,favorite,quick_visible,quick_action,quick_badge,quick_color,quick_sort_order,last_used_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)",
+      [item.name,item.group_name,item.command,item.description,item.tags,item.favorite,item.quick_visible,item.quick_action,item.quick_badge,item.quick_color,item.quick_sort_order,timestamp,timestamp]
     );
     return { id:Number(result.lastInsertRowid), ...item, last_used_at:null, created_at:timestamp, updated_at:timestamp };
   }
@@ -45,8 +53,8 @@ export function createProductivityRepository(dependencies: ProductivityRepositor
     if (!existing) throw new Error("命令片段不存在");
     const item = cleanCommandSnippet(data, existing);
     const updatedAt = now();
-    run("UPDATE command_snippets SET name=?,group_name=?,command=?,description=?,tags=?,favorite=?,updated_at=? WHERE id=?",
-      [item.name,item.group_name,item.command,item.description,item.tags,item.favorite,updatedAt,Number(id)]);
+    run("UPDATE command_snippets SET name=?,group_name=?,command=?,description=?,tags=?,favorite=?,quick_visible=?,quick_action=?,quick_badge=?,quick_color=?,quick_sort_order=?,updated_at=? WHERE id=?",
+      [item.name,item.group_name,item.command,item.description,item.tags,item.favorite,item.quick_visible,item.quick_action,item.quick_badge,item.quick_color,item.quick_sort_order,updatedAt,Number(id)]);
     return { ...existing, ...item, id:Number(id), updated_at:updatedAt };
   }
 

@@ -21,7 +21,7 @@ function buildRemotePosixCommand(script: unknown): string {
     "fi;",
     "};",
     "terma_script=$(terma_decode) || exit $?;",
-    "printf %s \"$terma_script\" | /bin/sh"
+    "exec /bin/sh -c \"$terma_script\""
   ].join(" ");
   return `/bin/sh -c '${runner}'`;
 }

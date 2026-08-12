@@ -703,6 +703,7 @@ function closeTerminalSession(key) {
   const quickConnectionId = session.connection?.quick_connection ? Number(session.connection.id || 0) : 0;
   session.connectionAttempt = Number(session.connectionAttempt || 0) + 1;
   if (typeof cancelTerminalCursorCopy === "function") cancelTerminalCursorCopy(session, key);
+  if (typeof closeTerminalZmodem === "function") closeTerminalZmodem(session);
   try { session.socket?.close(); } catch {}
   try { session.resizeDisposable?.dispose(); } catch {}
   try { session.resizeObserver?.disconnect(); } catch {}
@@ -786,6 +787,7 @@ function showPrimary(name, togglePane=false) {
   $("mobileCommand").classList.toggle("active", name === "command");
   $("mobileLogs").classList.toggle("active", name === "logs");
   $("mobileSettings")?.classList.toggle("active", name === "settings");
+  if (typeof syncTermaLiquidNavigation === "function") syncTermaLiquidNavigation();
   if (shouldTogglePane) setOperationPaneCollapsed(nextPaneCollapsed);
   renderExplorerTools();
   if (name === "import") {
@@ -817,6 +819,7 @@ function setExplorerSectionActive(sectionId) {
   document.querySelectorAll("#explorerTools [data-explorer-section]").forEach(button => {
     button.classList.toggle("active", button.dataset.explorerSection === sectionId);
   });
+  if (typeof syncTermaLiquidNavigation === "function") syncTermaLiquidNavigation();
 }
 
 function loadOperationPanePinnedState() {
@@ -969,7 +972,7 @@ function renderExplorerTools() {
   }
   if (primaryView === "settings") {
     const activeSection = typeof activeSettingsSection === "string" ? normalizeSettingsSection(activeSettingsSection) : "settings-general";
-    const sections = [["settings-general", "settings-2", "通用设置"], ["settings-basic", "shield-check", "安全设置"], ["settings-notifications", "bell", "通知设置"], ["settings-runtime", "activity", "启动与运行"], ["settings-cache", "hard-drive", "缓存管理"], ["settings-about", "info", "关于"]];
+    const sections = [["settings-general", "settings-2", "通用设置"], ["settings-basic", "shield-check", "安全设置"], ["settings-notifications", "bell", "通知设置"], ["settings-runtime", "activity", "启动与运行"], ["settings-theme", "palette", "主题配置"], ["settings-cache", "hard-drive", "缓存管理"], ["settings-about", "info", "关于"]];
     const updateDotHidden = typeof shouldShowUpdateNotice === "function" && shouldShowUpdateNotice() ? "" : "hidden";
     tools.classList.add("section-mode");
     tools.innerHTML = sections.map(([id, iconName, label]) => `<button class="${id === activeSection ? "active" : ""}" data-explorer-section="${id}" data-action="workspace-settings-section">${icon(iconName)}<span>${label}</span>${id === "settings-about" ? `<i id="settingsExplorerUpdateDot" class="section-update-dot" ${updateDotHidden} aria-label="发现新版本"></i>` : ""}</button>`).join("");

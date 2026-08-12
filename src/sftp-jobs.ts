@@ -24,6 +24,14 @@ let persistTimer: any = null;
 let downloadCacheMaintained = false;
 let nativeDragCancelHandler: any = null;
 
+function formatSftpTransferSize(value) {
+  const bytes = Math.max(0, Number(value || 0));
+  if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${Math.round(bytes)} B`;
+}
+
 function setNativeSftpDragCancelHandler(handler) {
   nativeDragCancelHandler = typeof handler === "function" ? handler : null;
 }
@@ -782,7 +790,7 @@ function uploadRemoteCommitCommand(connection, job) {
   return [
     `if [ ! -f ${temporary} ]; then echo "远端上传暂存文件不存在" >&2; exit 1; fi`,
     expectedSize
-      ? `td_upload_size=$(wc -c < ${temporary} | tr -d '[:space:]'); if [ "$td_upload_size" != ${shellQuote(String(expectedSize))} ]; then echo "远端上传内容不完整" >&2; exit 1; fi`
+      ? `terma_upload_size=$(wc -c < ${temporary} | tr -d '[:space:]'); if [ "$terma_upload_size" != ${shellQuote(String(expectedSize))} ]; then echo "远端上传内容不完整" >&2; exit 1; fi`
       : "",
     `if [ -d ${target} ]; then echo "目标路径是目录，无法覆盖" >&2; exit 1; fi`,
     job.conflict_mode === "overwrite"
@@ -1369,8 +1377,14 @@ function runDownloadJob(id, fetchSize) {
   const connection = getSftpConnection(job.connection_id);
   (async () => {
     try {
+      if (fetchSize) {
+        job.source_changed = false;
+        job.warning = "";
+        delete job.final_remote_size;
+      }
       if (fetchSize || !job.size_known) {
         job.size = await getRemoteSize(connection, job.remote_path);
+        if (fetchSize || !Number.isFinite(Number(job.initial_remote_size))) job.initial_remote_size = job.size;
         job.size_known = true;
         job.progress_known = true;
         updateTransferProgress(job);
@@ -1385,8 +1399,20 @@ function runDownloadJob(id, fetchSize) {
       job.transferred = offset;
       updateTransferProgress(job);
       if (job.size_known && offset === job.size) {
-        finishDownloadJob(id, true);
-        return;
+        const latestSize = await getRemoteSize(connection, job.remote_path);
+        if (latestSize === job.size) {
+          finishDownloadJob(id, true);
+          return;
+        }
+        job.size = latestSize;
+        job.source_changed = true;
+        if (offset > latestSize) {
+          fs.truncateSync(job.temp_path, 0);
+          offset = 0;
+          job.transferred = 0;
+        }
+        updateTransferProgress(job);
+        persistJobs();
       }
       const command = offset > 0 ? `tail -c +${offset + 1} ${remotePathOperand(connection, job.remote_path)}` : `cat -- ${remotePathOperand(connection, job.remote_path)}`;
       const child = spawnRemote(connection, command);
@@ -1425,7 +1451,7 @@ function runDownloadJob(id, fetchSize) {
             type: "sftp",
             level: status === "done" ? "success" : "error",
             title: status === "done" ? "SFTP 下载已完成" : "SFTP 下载失败",
-            message: `${job.connection_name} · ${job.label}${job.saved_path ? `\n已保存到 ${job.saved_path}` : ""}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}${job.error ? `\n${job.error}` : ""}`,
+            message: `${job.connection_name} · ${job.label}${job.saved_path ? `\n已保存到 ${job.saved_path}` : ""}${job.warning ? `\n${job.warning}` : ""}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}${job.error ? `\n${job.error}` : ""}`,
             action: { view: "sftp", connection_id: job.connection_id }
           }, { cooldown_ms: 0 });
         }
@@ -1433,10 +1459,29 @@ function runDownloadJob(id, fetchSize) {
       const completeAfterStreams = () => {
         if (!childClosed || !stdoutEnded || outputEnding || paused || job.status === "cancelled") return;
         outputEnding = true;
-        out.end(() => {
+        out.end(() => void (async () => {
           if (paused || job.status === "cancelled") return;
           const realSize = fs.existsSync(job.temp_path) ? fs.statSync(job.temp_path).size : 0;
           job.transferred = realSize;
+          const initialRemoteSize = Math.max(0, Number(job.initial_remote_size ?? job.size ?? 0));
+          let finalRemoteSize = Math.max(0, Number(job.size || 0));
+          let finalSizeKnown = false;
+          try {
+            finalRemoteSize = Math.max(0, Number(await getRemoteSize(connection, job.remote_path) || 0));
+            finalSizeKnown = true;
+          } catch {}
+          const sourceChanged = realSize !== initialRemoteSize || (finalSizeKnown && finalRemoteSize !== initialRemoteSize);
+          if (sourceChanged) {
+            job.source_changed = true;
+            if (finalSizeKnown) job.final_remote_size = finalRemoteSize;
+            job.warning = `远端文件在下载期间发生变化；已保存本次读取到的 ${formatSftpTransferSize(realSize)} 快照（开始 ${formatSftpTransferSize(initialRemoteSize)}${finalSizeKnown ? `，结束 ${formatSftpTransferSize(finalRemoteSize)}` : ""}）`;
+            if (closeCode === 0) {
+              job.size = realSize;
+              job.size_known = true;
+              finish("done");
+              return;
+            }
+          }
           const sizeMatches = !job.size_known || realSize === Number(job.size || 0);
           if ((closeCode === 0 && sizeMatches) || (closeCode !== 0 && job.size > 0 && sizeMatches)) {
             finish("done");
@@ -1447,7 +1492,7 @@ function runDownloadJob(id, fetchSize) {
             return;
           }
           finish("failed", job.stderr || `退出码 ${closeCode ?? ""}${closeSignal ? `，信号 ${closeSignal}` : ""}`);
-        });
+        })().catch(error => finish("failed", error.message || "下载完整性校验失败")));
       };
       child.stdout.on("data", (chunk) => {
         if (paused) return;

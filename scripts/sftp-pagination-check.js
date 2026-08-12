@@ -6,6 +6,7 @@ const { readFrontendDomain } = require("./frontend-source");
 const {
   __cacheDirectorySnapshot,
   __cachedDirectorySnapshot,
+  __remoteBackupVersionTimestamp,
   buildClearRemoteRecycleCommand,
   buildDeleteRemoteRecycleCommand,
   buildListRemoteRecycleCommand,
@@ -13,6 +14,7 @@ const {
   buildRestoreRemoteRecycleCommand,
   buildRemoteCreateFileCommand,
   __buildRemoteDirectoryEntriesCommand,
+  __buildRemoteRecursiveDirectoryEntriesCommand,
   __buildReadRemoteBinaryCommand,
   __buildReadRemoteBinaryExecCommand,
   __buildStreamRemoteOpenCommand,
@@ -39,9 +41,12 @@ const fixtures = [
 ];
 
 const defaults = normalizeRemoteDirectoryListOptions();
-assert.deepEqual(defaults, { page:1, page_size:50, query:"", sort:"name", dir:"asc", refresh:false });
+assert.equal(__remoteBackupVersionTimestamp("test.txt.bak-20260811204633706-f0f1abcd", "test.txt.bak-"), Date.UTC(2026, 7, 11, 20, 46, 33, 706));
+assert.equal(__remoteBackupVersionTimestamp("test.txt.bak-legacy", "test.txt.bak-", 1234), 1234);
+assert.deepEqual(defaults, { page:1, page_size:50, query:"", sort:"name", dir:"asc", refresh:false, recursive:false });
 assert.equal(normalizeRemoteDirectoryListOptions({page_size:999}).page_size, 200);
 assert.equal(normalizeRemoteDirectoryListOptions({refresh:"1"}).refresh, true);
+assert.equal(normalizeRemoteDirectoryListOptions({recursive:"1"}).recursive, true);
 assert.throws(() => normalizeRemoteDirectoryListOptions({page:0}), /页码必须是正整数/);
 assert.throws(() => normalizeRemoteDirectoryListOptions({sort:"owner"}), /目录排序字段无效/);
 assert.throws(() => normalizeRemoteDirectoryListOptions({dir:"sideways"}), /目录排序方向无效/);
@@ -80,6 +85,11 @@ assert.equal(clampedPage.entries[0].name, "item-201");
 
 const empty = paginateRemoteEntries([], {page:8, page_size:25});
 assert.deepEqual(empty, {entries:[], page:1, page_size:25, total:0, total_pages:1, unfiltered_total:0});
+
+const recursiveCommand = __buildRemoteRecursiveDirectoryEntriesCommand();
+assert.match(recursiveCommand, /find \. ! -name \./);
+assert.match(recursiveCommand, /\.terma-recycle-bin/);
+assert.match(recursiveCommand, /\.terma-upload-\*\.part/);
 
 const cacheExpiry = Date.now() + 60 * 1000;
 __cacheDirectorySnapshot(9001, ".", {path:"/home/test", entries:fixtures, expires_at:cacheExpiry});

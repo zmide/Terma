@@ -376,11 +376,12 @@ function bindTerminalDropUpload(session, connection, key, mount) {
       return;
     }
     if (drag) {
+      if (typeof markSftpDragDropAccepted === "function") markSftpDragDropAccepted(drag, key);
       if (typeof copySftpDraggedItemsToDirectory !== "function") {
         if (typeof finishSftpDragPayload === "function") finishSftpDragPayload(drag);
         return notify("当前版本不支持 SFTP 项目拖入终端", "error");
       }
-      return copySftpDraggedItemsToDirectory(drag, connection.id, directory, {title:`终端：${directory}`});
+      return copySftpDraggedItemsToDirectory(drag, connection.id, directory, {title:`终端：${directory}`, tabKey:key});
     }
     if (typeof collectDroppedFiles !== "function" || typeof uploadSftpFilesToDirectory !== "function") {
       return notify("当前版本不支持终端文件上传", "error");

@@ -29,6 +29,7 @@ function editConnection(id, updateTab=true){
   form.dataset.identityFileStatus = String(c.identity_file_status || "none");
   form.dataset.identityFileMessage = connectionIdentityWarningMessage(c);
   $("conn_id").value=c.id;
+  if ($("connSaveAndConnect")) $("connSaveAndConnect").hidden = true;
   if ($("connSaveAndClear")) $("connSaveAndClear").hidden = true;
   if ($("connRemoteGenerationLine")) $("connRemoteGenerationLine").hidden = true;
   $("conn_name").value=c.name;

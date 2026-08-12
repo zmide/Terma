@@ -267,12 +267,10 @@ async function sendTerminalPasteText(key, text) {
   const lineCount = normalized.split("\n").length;
   const mode = currentTerminalGlobalSettings().multiline_paste_mode;
   if (lineCount <= 1 || mode === "paste") {
-    sendTerminalData(key, value);
-    return true;
+    return sendTerminalData(key, value, {trackCommand:true});
   }
   if (mode === "single_line") {
-    sendTerminalData(key, terminalSingleLinePaste(value));
-    return true;
+    return sendTerminalData(key, terminalSingleLinePaste(value), {trackCommand:true});
   }
   const edited = await editTerminalMultilinePaste(normalized);
   if (edited === null) {
@@ -284,8 +282,7 @@ async function sendTerminalPasteText(key, text) {
     focusTerminalSession(key);
     return false;
   }
-  sendTerminalData(key, edited);
-  return true;
+  return sendTerminalData(key, edited, {trackCommand:true});
 }
 
 function terminalOpenLink(text) {

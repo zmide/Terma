@@ -8,6 +8,7 @@ const productivityState = {
   broadcastPaused:false,
   externalEditTimers:new Map(),
   externalEditPrompts:new Set(),
+  externalEditPromptSignatures:new Map(),
   externalEditObserved:new Map()
 };
 
@@ -24,7 +25,7 @@ async function openSftpExternalEdit(connectionId, remotePath) {
     method:"POST",
     body:JSON.stringify({path:remotePath, editor:externalEditorSettings()})
   });
-  notify("外部编辑器已打开；保存后会自动检查并上传", "success");
+  notify("外部编辑器已打开；内容变化后会询问是否保存到远端", "success");
   const timer = setInterval(() => pollSftpExternalEdit(session.id), 1200);
   productivityState.externalEditTimers.set(session.id, timer);
 }
@@ -46,14 +47,43 @@ async function pollSftpExternalEdit(id) {
       if (tab && typeof refreshSftp === "function") refreshSftp({refresh:true, tabKey:tab.key}).catch(() => {});
     }
   }
-  if (session.status !== "conflict" || productivityState.externalEditPrompts.has(id)) return;
+  if (!new Set(["modified", "conflict"]).has(session.status)) return;
+  await promptSftpExternalEdit(session);
+}
+
+async function promptSftpExternalEdit(session, force=false) {
+  const id = String(session?.id || "");
+  if (!id || !new Set(["modified", "conflict"]).has(session.status) || productivityState.externalEditPrompts.has(id)) return;
+  const signature = `${session.status}:${session.updated_at || ""}`;
+  if (!force && productivityState.externalEditPromptSignatures.get(id) === signature) return;
+  productivityState.externalEditPromptSignatures.set(id, signature);
   productivityState.externalEditPrompts.add(id);
   try {
-    const choice = await chooseModal("远程文件已变化", `${session.connection_name}\n${session.remote_path}\n\n请选择如何处理本地编辑内容。`, [
-      {label:"覆盖远程并保留备份", value:"overwrite", className:"danger"},
-      {label:"另存为远程文件", value:"save_as", className:"primary"},
-      {label:"取消本次上传", value:"cancel"}
-    ]);
+    const conflict = session.status === "conflict";
+    let choice = await chooseModal(
+      conflict ? "远程文件已变化" : "内容已由外部编辑器更改",
+      `${session.connection_name}\n${session.remote_path}\n\n${conflict ? "远端内容也发生了变化，请选择如何处理本地编辑内容。" : "是否将外部编辑器中的更改保存到远端？"}`,
+      conflict ? [
+        ...(session.can_compare ? [{label:"对比内容", value:"compare"}] : []),
+        {label:"覆盖远程并保留备份", value:"overwrite", className:"danger"},
+        {label:"另存为远程文件", value:"save_as", className:"primary"},
+        {label:"暂不保存", value:"cancel"}
+      ] : [
+        ...(session.can_compare ? [{label:"对比内容", value:"compare"}] : []),
+        {label:"保存到远端", value:"save", className:"primary"},
+        {label:"另存为远程文件", value:"save_as"},
+        {label:"暂不保存", value:"cancel"}
+      ]
+    );
+    if (choice === "compare") {
+      try {
+        const comparison = await api(`/api/sftp/external-edits/${encodeURIComponent(id)}/comparison`);
+        choice = await openSftpExternalComparison(session, comparison);
+      } catch (error) {
+        notify(error.message || "无法生成文本对比", "error");
+        return;
+      }
+    }
     const payload = {action:choice};
     if (choice === "save_as") {
       const remotePath = await inputModal("另存为远程文件", "远程路径", `${session.remote_path}.local`);
@@ -62,17 +92,24 @@ async function pollSftpExternalEdit(id) {
     }
     if (!choice) return;
     const resolved = await api(`/api/sftp/external-edits/${id}/resolve`, {method:"POST", body:JSON.stringify(payload)});
-    notify(resolved.message, choice === "cancel" ? "info" : "success");
+    if (resolved.status === "conflict") notify(resolved.message, "info");
+    else notify(resolved.message, choice === "cancel" ? "info" : "success");
   } finally {
     productivityState.externalEditPrompts.delete(id);
   }
+}
+
+async function promptSftpExternalEditById(id) {
+  const session = await api(`/api/sftp/external-edits/${encodeURIComponent(id)}`);
+  closeModal();
+  return promptSftpExternalEdit(session, true);
 }
 
 async function openSftpExternalEditManager() {
   const sessions = await api("/api/sftp/external-edits").catch(() => []);
   const modal = $("modal");
   modal.hidden = false;
-  modal.innerHTML = `<div class="modal-card wide productivity-manager"><div class="productivity-manager-head"><div><h2>外部编辑会话</h2><span>${sessions.length} 个</span></div><button class="icon-button" title="刷新" aria-label="刷新" onclick="openSftpExternalEditManager()">${icon("refresh-cw")}</button></div><div class="productivity-list">${sessions.length ? sessions.map(session => `<div class="productivity-row"><span class="quick-result-icon">${icon(session.status === "conflict" ? "triangle-alert" : "file-pen-line")}</span><div><strong>${esc(session.remote_path)}</strong><small>${esc(session.connection_name)} · ${esc(session.message || session.status)}</small><code>${esc(session.local_path)}</code></div><div class="actions tight"><button class="danger" onclick="stopSftpExternalEdit('${escAttr(session.id)}')">停止并清理</button></div></div>`).join("") : stateView("empty", "暂无外部编辑会话", "从 SFTP 文件右键菜单使用外部编辑器打开后会显示在这里。")}</div><div class="actions"><button onclick="closeModal()">关闭</button></div></div>`;
+  modal.innerHTML = `<div class="modal-card wide productivity-manager"><div class="productivity-manager-head"><div><h2>外部编辑会话</h2><span>${sessions.length} 个</span></div><button class="icon-button" title="刷新" aria-label="刷新" onclick="openSftpExternalEditManager()">${icon("refresh-cw")}</button></div><div class="productivity-list">${sessions.length ? sessions.map(session => `<div class="productivity-row"><span class="quick-result-icon">${icon(session.status === "conflict" ? "triangle-alert" : "file-pen-line")}</span><div><strong>${esc(session.remote_path)}</strong><small>${esc(session.connection_name)} · ${esc(session.message || session.status)}</small><code>${esc(session.local_path)}</code></div><div class="actions tight">${new Set(["modified", "conflict"]).has(session.status) ? `<button class="primary" onclick="promptSftpExternalEditById('${escAttr(session.id)}')">处理更改</button>` : ""}<button class="danger" onclick="stopSftpExternalEdit('${escAttr(session.id)}')">停止并清理</button></div></div>`).join("") : stateView("empty", "暂无外部编辑会话", "从 SFTP 文件右键菜单使用外部编辑器打开后会显示在这里。")}</div><div class="actions"><button onclick="closeModal()">关闭</button></div></div>`;
   refreshIcons();
 }
 
@@ -80,6 +117,7 @@ async function stopSftpExternalEdit(id) {
   await api(`/api/sftp/external-edits/${encodeURIComponent(id)}`, {method:"DELETE"});
   clearInterval(productivityState.externalEditTimers.get(id));
   productivityState.externalEditTimers.delete(id);
+  productivityState.externalEditPromptSignatures.delete(id);
   productivityState.externalEditObserved.delete(id);
   await openSftpExternalEditManager();
 }

@@ -86,7 +86,9 @@ async function check(name, callback) {
       now: () => now,
       fetch: async (url, options) => {
         requests.push({ url, options });
-        return response(200, [release(), release("v1.0.7", { body:"Previous release notes" })], { etag: '"release-1.0.8"' });
+        const tags = ["v1.0.8", "v1.0.7", "v1.0.6", "v1.0.5", "v1.0.4", "v1.0.3", "v1.0.2", "v1.0.1", "v1.0.0", "v0.9.2", "v0.9.1", "v0.9.0"];
+        const releases = tags.map((tag, index) => release(tag, { body:index ? `Previous release notes ${index}` : "Release notes" }));
+        return response(200, releases, { etag: '"release-1.0.8"' });
       }
     });
     const first = await checker.check();
@@ -95,8 +97,9 @@ async function check(name, callback) {
     assert.equal(first.update_available, true);
     assert.equal(first.from_cache, false);
     assert.equal(first.assets[0].name, "Terma-v1.0.8.dmg");
-    assert.deepEqual(first.release_notes.map(item => item.version), ["1.0.8", "1.0.7"]);
-    assert.equal(first.release_notes[1].notes, "Previous release notes");
+    assert.deepEqual(first.release_notes.map(item => item.version), ["1.0.8", "1.0.7", "1.0.6", "1.0.5", "1.0.4", "1.0.3", "1.0.2", "1.0.1", "1.0.0", "0.9.2"]);
+    assert.equal(first.release_notes.length, 10);
+    assert.equal(first.release_notes[1].notes, "Previous release notes 1");
     assert.equal(requests.length, 1);
     assert.match(requests[0].url, /repos\/zmide\/Terma\/releases\?per_page=10$/);
     assert.equal(requests[0].options.headers.Accept, "application/vnd.github+json");
@@ -108,7 +111,7 @@ async function check(name, callback) {
     assert.equal(requests.length, 1);
     assert.equal(fs.existsSync(path.join(project.dataDir, "update-check.json")), true);
     const cache = JSON.parse(fs.readFileSync(path.join(project.dataDir, "update-check.json"), "utf8"));
-    assert.equal(cache.schema_version, 3);
+    assert.equal(cache.schema_version, 4);
     assert.equal(cache.repository_key, "zmide/terma");
   });
 

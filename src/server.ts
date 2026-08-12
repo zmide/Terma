@@ -154,9 +154,9 @@ const {
   stageSftpPaths
 } = require("./sftp-session");
 const { deleteCommandTemplate, handleBatchCommandUpgrade, listCommandTemplates, saveCommandTemplate, updateCommandTemplate } = require("./commands");
-const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemoteRecycleItem, encodeRemoteText, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, renameRemotePath, resolveRemoteUploadTarget, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
+const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemoteRecycleItem, encodeRemoteText, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteFileVersions, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, renameRemotePath, resolveRemoteUploadTarget, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
 const { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, pauseSftpJob, receiveUploadJobContent, resumeSftpJob, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream } = require("./sftp-jobs");
-const { getExternalEdit, listExternalEdits, resolveExternalEdit, startExternalEdit, stopAllExternalEdits, stopExternalEdit, stopExternalEditsForConnection } = require("./sftp-external-edit");
+const { getExternalEdit, getExternalEditComparison, listExternalEdits, resolveExternalEdit, startExternalEdit, stopAllExternalEdits, stopExternalEdit, stopExternalEditsForConnection } = require("./sftp-external-edit");
 const { cancelSyncJob, clearFinishedSyncJobs, deleteSyncJob, getSyncJob, listSyncJobs, retrySyncJob, startSyncJob, startSyncPlanningJob } = require("./sftp-sync");
 const {
   appendSystemLog,
@@ -281,6 +281,7 @@ const updateChecker = createUpdateChecker({
   }
 });
 const updateInstaller = new UpdateInstaller(DATA_DIR);
+const { listThirdPartyComponents } = require("./third-party-components");
 
 function aboutInfo() {
   const packageJson = JSON.parse(fs.readFileSync(path.join(PACKAGE_ROOT, "package.json"), "utf8"));
@@ -290,6 +291,11 @@ function aboutInfo() {
     path.join(PACKAGE_ROOT, "LICENSE")
   ].filter(Boolean);
   const licensePath = licenseCandidates.find(candidate => fs.existsSync(candidate));
+  const noticesCandidates = [
+    resourcesPath ? path.join(resourcesPath, "THIRD_PARTY_NOTICES.md") : "",
+    path.join(PACKAGE_ROOT, "THIRD_PARTY_NOTICES.md")
+  ].filter(Boolean);
+  const noticesPath = noticesCandidates.find(candidate => fs.existsSync(candidate));
   const repository = typeof packageJson.repository === "string" ? packageJson.repository : packageJson.repository?.url;
   const author = typeof packageJson.author === "string"
     ? packageJson.author.replace(/\s*<[^>]+>\s*$/, "").trim()
@@ -303,7 +309,10 @@ function aboutInfo() {
     repository_url: String(packageJson.homepage || repository || "").replace(/^git\+/, "").replace(/\.git$/, ""),
     license_available: Boolean(licensePath),
     license_error: licensePath ? "" : "未找到随程序提供的开源许可正文",
-    license_text: licensePath ? fs.readFileSync(licensePath, "utf8") : ""
+    license_text: licensePath ? fs.readFileSync(licensePath, "utf8") : "",
+    third_party_components: listThirdPartyComponents(),
+    third_party_notices_available: Boolean(noticesPath),
+    third_party_notices_error: noticesPath ? "" : "未找到随程序提供的第三方组件声明"
   };
 }
 
@@ -326,6 +335,7 @@ function vendorFile(packageName, relativePath) {
 
 const VENDOR_FILES = new Map([
   ["/vendor/lucide/lucide.min.js", vendorFile("lucide", "dist/umd/lucide.min.js")],
+  ["/vendor/diff/diff.min.js", vendorFile("diff", "dist/diff.min.js")],
   ["/vendor/xterm/xterm.css", vendorFile("@xterm/xterm", "css/xterm.css")],
   ["/vendor/xterm/xterm.js", vendorFile("@xterm/xterm", "lib/xterm.js")],
   ["/vendor/xterm/xterm.mjs", vendorFile("@xterm/xterm", "lib/xterm.mjs")],
@@ -1949,7 +1959,10 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "GET" && pathname === "/api/remote-component/tasks") return sendJson(res, remoteOfflineTasks.list());
   if (req.method === "POST" && pathname === "/api/remote-component/tasks/clear-finished") return sendJson(res, remoteOfflineTasks.clearFinished());
-  if (req.method === "GET" && pathname === "/api/sftp/external-edits") return sendJson(res, listExternalEdits());
+  if (req.method === "GET" && pathname === "/api/sftp/external-edits") {
+    if (!isDesktopRequest(req)) return sendJson(res, {error:"外部编辑会话只能在本机桌面端中查看"}, 403);
+    return sendJson(res, listExternalEdits());
+  }
   if (req.method === "GET" && pathname === "/api/sftp/sync/jobs") return sendJson(res, listSyncJobs());
   if (req.method === "POST" && pathname === "/api/sftp/sync/jobs/clear-finished") return sendJson(res, clearFinishedSyncJobs());
   if (req.method === "POST" && pathname === "/api/sftp/sync/choose-directory") {
@@ -2452,7 +2465,9 @@ async function handleApi(req, res, pathname) {
     }
   }
   if (parts.length >= 3 && parts[0] === "api" && parts[1] === "sftp" && parts[2] === "external-edits") {
+    if (!isDesktopRequest(req)) return sendJson(res, {error:"外部编辑会话只能在本机桌面端中处理"}, 403);
     if (req.method === "GET" && parts.length === 4) return sendJson(res, getExternalEdit(parts[3]));
+    if (req.method === "GET" && parts.length === 5 && parts[4] === "comparison") return sendJson(res, await getExternalEditComparison(parts[3]));
     if (req.method === "DELETE" && parts.length === 4) return sendJson(res, stopExternalEdit(parts[3]));
     if (req.method === "POST" && parts.length === 5 && parts[4] === "resolve") {
       const data = await readJson(req);
@@ -2514,6 +2529,10 @@ async function handleApi(req, res, pathname) {
         return sendJson(res, disconnectSftpSession(connectionId, { remember: url.searchParams.get("forget") !== "1" }));
       }
     }
+    if (req.method === "GET" && parts.length === 5 && parts[4] === "versions") {
+      const url = new URL(req.url, "http://terma.invalid");
+      return sendJson(res, await listRemoteFileVersions(connectionId, url.searchParams.get("path") || "", Number(url.searchParams.get("limit") || 10)));
+    }
     if (req.method === "GET" && parts.length === 4) {
       const url = new URL(req.url, "http://terma.invalid");
       const result = await listRemoteDir(connectionId, url.searchParams.get("path") || ".", {
@@ -2522,6 +2541,7 @@ async function handleApi(req, res, pathname) {
         query: url.searchParams.get("query"),
         sort: url.searchParams.get("sort"),
         dir: url.searchParams.get("dir"),
+        recursive: url.searchParams.get("recursive"),
         refresh: url.searchParams.get("refresh")
       });
       return send(res, 200, result, { "Cache-Control": "no-store" });

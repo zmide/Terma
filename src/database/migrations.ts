@@ -152,6 +152,11 @@ CREATE TABLE IF NOT EXISTS command_snippets (
   description TEXT NOT NULL DEFAULT '',
   tags TEXT NOT NULL DEFAULT '',
   favorite INTEGER NOT NULL DEFAULT 0,
+  quick_visible INTEGER NOT NULL DEFAULT 0,
+  quick_action TEXT NOT NULL DEFAULT 'execute',
+  quick_badge TEXT NOT NULL DEFAULT '',
+  quick_color TEXT NOT NULL DEFAULT 'blue',
+  quick_sort_order INTEGER NOT NULL DEFAULT 0,
   last_used_at INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -245,6 +250,13 @@ COMMIT;
   if (!connectionColumns.has("sftp_text_encoding")) run("ALTER TABLE connections ADD COLUMN sftp_text_encoding TEXT NOT NULL DEFAULT 'auto'");
   if (!connectionColumns.has("sftp_filename_encoding")) run("ALTER TABLE connections ADD COLUMN sftp_filename_encoding TEXT NOT NULL DEFAULT 'utf8'");
 
+  const commandSnippetColumns = new Set(all("PRAGMA table_info(command_snippets)").map((row: any) => row.name));
+  if (!commandSnippetColumns.has("quick_visible")) run("ALTER TABLE command_snippets ADD COLUMN quick_visible INTEGER NOT NULL DEFAULT 0");
+  if (!commandSnippetColumns.has("quick_action")) run("ALTER TABLE command_snippets ADD COLUMN quick_action TEXT NOT NULL DEFAULT 'execute'");
+  if (!commandSnippetColumns.has("quick_badge")) run("ALTER TABLE command_snippets ADD COLUMN quick_badge TEXT NOT NULL DEFAULT ''");
+  if (!commandSnippetColumns.has("quick_color")) run("ALTER TABLE command_snippets ADD COLUMN quick_color TEXT NOT NULL DEFAULT 'blue'");
+  if (!commandSnippetColumns.has("quick_sort_order")) run("ALTER TABLE command_snippets ADD COLUMN quick_sort_order INTEGER NOT NULL DEFAULT 0");
+
   const existingGroups = all("SELECT DISTINCT group_name FROM connections ORDER BY group_name COLLATE NOCASE");
   existingGroups.forEach((row: any, index: number) => run(
     "INSERT OR IGNORE INTO connection_groups(name,sort_order,created_at,updated_at) VALUES(?,?,?,?)",
@@ -267,5 +279,6 @@ COMMIT;
   run("CREATE INDEX IF NOT EXISTS idx_remote_profiles_group_sort ON remote_profiles(group_name,name,id)");
   run("CREATE INDEX IF NOT EXISTS idx_remote_profiles_recent ON remote_profiles(favorite,last_used_at)");
   run("CREATE INDEX IF NOT EXISTS idx_command_snippets_sort ON command_snippets(favorite,last_used_at,updated_at)");
+  run("CREATE INDEX IF NOT EXISTS idx_command_snippets_quick_sort ON command_snippets(quick_visible,quick_sort_order,created_at,id)");
   run("CREATE INDEX IF NOT EXISTS idx_named_workspaces_recent ON named_workspaces(last_used_at,updated_at)");
 }

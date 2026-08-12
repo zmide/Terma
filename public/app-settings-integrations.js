@@ -46,6 +46,7 @@ async function showSftpGlobalSettings() {
   modal.onclick = null;
   modal.innerHTML = `<div class="modal-card sftp-global-settings-modal" role="dialog" aria-modal="true" aria-labelledby="sftpGlobalSettingsTitle">
     <div class="sftp-modal-head"><div><h2 id="sftpGlobalSettingsTitle">SFTP 全局设置</h2><span>应用到所有 SFTP 标签和连接</span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" onclick="closeSftpGlobalSettings()">${icon("x")}</button></div>
+    <div class="modal-scroll-body">
     <label class="check-row"><input id="sftpRecycleBinEnabled" type="checkbox" ${saved.sftp_recycle_bin_enabled ? "checked" : ""}> 删除远程文件时先移入回收站</label>
     <div class="muted">默认关闭。开启后，每台远端服务器会在当前 SSH 用户主目录创建 Terma 专用隐藏目录；关闭只影响之后的删除，不会自动清空已有内容。</div>
     <label>可在程序中打开的最大文件（MB）</label>
@@ -59,6 +60,7 @@ async function showSftpGlobalSettings() {
     <div id="sftpExternalEditorCustom"><label>程序路径</label><input id="sftpExternalEditorPath" value="${escAttr(localStorage.getItem("sftpExternalEditorPath") || "")}" placeholder="编辑器可执行文件绝对路径"><label>启动参数</label><input id="sftpExternalEditorArgs" value="${escAttr(localStorage.getItem("sftpExternalEditorArgs") || "")}" placeholder="可选；用 ${"${file}"} 表示临时文件"></div>` : `<label>下载位置</label>
     <div class="muted">通过局域网或浏览器访问时，文件会直接下载到当前设备的浏览器下载目录，不会保存到运行 Terma 的服务器目录。具体位置由当前设备的浏览器设置决定。</div>`}
     <div class="warning">回收站仍占用远端磁盘空间。永久删除和清空回收站无法撤销。</div>
+    </div>
     <div class="actions"><button type="button" onclick="closeSftpGlobalSettings()">取消</button><button id="sftpGlobalSettingsSave" class="primary" type="button" onclick="saveSftpGlobalSettings()">${icon("save")}<span>保存 SFTP 设置</span></button></div>
   </div>`;
   modal.hidden = false;

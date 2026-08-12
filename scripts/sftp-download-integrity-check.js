@@ -15,6 +15,9 @@ const { trustTestHost } = require("./ssh-host-trust-test-helper");
 
 const payload = Buffer.alloc(640 * 1024);
 for (let index = 0; index < payload.length; index += 1) payload[index] = (index * 31 + 7) & 0xff;
+const growingPayload = Buffer.alloc(768 * 1024, 0x5a);
+const growingInitialSize = 256 * 1024;
+let growingSizeChecks = 0;
 const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength:2048 });
 const hostKey = privateKey.export({ type:"pkcs1", format:"pem" });
 const sshServer = new Server({ hostKeys:[hostKey] }, client => {
@@ -25,7 +28,12 @@ const sshServer = new Server({ hostKeys:[hostKey] }, client => {
       const stream = acceptExec();
       const command = decodeRemotePosixCommand(info?.command);
       const supported = command.includes("wc -c") || command.includes("cat --") || command.includes("tar -C");
-      if (command.includes("wc -c")) stream.write(String(payload.length));
+      const growing = command.includes("growing.log");
+      if (command.includes("wc -c") && growing) {
+        growingSizeChecks += 1;
+        stream.write(String(growingSizeChecks === 1 ? growingInitialSize : growingPayload.length));
+      } else if (command.includes("wc -c")) stream.write(String(payload.length));
+      else if (command.includes("cat --") && growing) stream.write(growingPayload);
       else if (command.includes("cat --")) stream.write(payload);
       else if (command.includes("tar -C")) stream.write(payload);
       else stream.stderr.write("unsupported test command");
@@ -54,6 +62,16 @@ async function waitForJob(jobs, id) {
   throw new Error("download integrity job timed out");
 }
 
+async function waitForStatus(jobs, id, statuses) {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const job = jobs.listSftpJobs().find(item => item.id === id);
+    if (job && statuses.includes(job.status)) return job;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error("download status check timed out");
+}
+
 async function main() {
   await waitForServer();
   const db = require("../dist/db");
@@ -74,6 +92,7 @@ async function main() {
   const sessions = require("../dist/sftp-session");
   const jobs = require("../dist/sftp-jobs");
   let jobId = "";
+  let growingJobId = "";
   let archiveJobId = "";
   try {
     const started = jobs.startDownloadJob(connection.id, "/fixture/download.bin", { deliveryMode:"browser" });
@@ -85,6 +104,15 @@ async function main() {
     assert.equal(completed.transferred, payload.length, "completed transfer count must equal the remote size");
     assert.equal(downloaded.length, payload.length, "a completed download must not be truncated");
     assert.equal(hash(downloaded), hash(payload), "a completed download must preserve every byte");
+    const growing = jobs.startDownloadJob(connection.id, "/fixture/growing.log", { deliveryMode:"browser" });
+    growingJobId = growing.id;
+    const changed = await waitForStatus(jobs, growingJobId, ["done"]);
+    assert.match(changed.warning, /远端文件在下载期间发生变化/);
+    assert.match(changed.warning, /256\.0 KB/);
+    assert.match(changed.warning, /768\.0 KB/);
+    assert.equal(changed.source_changed, true);
+    const growingResult = jobs.getSftpJobFile(growingJobId);
+    assert.equal(hash(fs.readFileSync(growingResult.path)), hash(growingPayload), "an actively written file must preserve the snapshot received before EOF");
     const archived = jobs.startArchiveDownloadJob(connection.id, ["/fixture/folder"], { deliveryMode:"browser" });
     archiveJobId = archived.id;
     await waitForJob(jobs, archiveJobId);
@@ -98,10 +126,15 @@ async function main() {
       if (current && ["running", "pending", "paused"].includes(current.status)) jobs.cancelSftpJob(jobId);
     } catch {}
     try {
+      const current = growingJobId && jobs.listSftpJobs().find(item => item.id === growingJobId);
+      if (current && ["running", "pending", "paused"].includes(current.status)) jobs.cancelSftpJob(growingJobId);
+    } catch {}
+    try {
       const current = archiveJobId && jobs.listSftpJobs().find(item => item.id === archiveJobId);
       if (current && ["running", "pending", "paused"].includes(current.status)) jobs.cancelSftpJob(archiveJobId);
     } catch {}
     try { if (jobId) jobs.deleteSftpJob(jobId); } catch {}
+    try { if (growingJobId) jobs.deleteSftpJob(growingJobId); } catch {}
     try { if (archiveJobId) jobs.deleteSftpJob(archiveJobId); } catch {}
     sessions.closeAllSftpSessions();
     try { db.closeDatabase(); } catch {}

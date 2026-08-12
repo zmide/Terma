@@ -35,6 +35,7 @@ registerTermaAction("static-key-repair", () => repairSelectedKey());
 registerTermaAction("static-terminal-startup", ({element}) => toggleConnectionTerminalStartup(element.form));
 registerTermaAction("static-terminal-profile", ({element}) => applyConnectionTerminalProfile(element.value, element));
 registerTermaAction("static-connection-save-clear", ({element}) => saveConnectionForm(true, element));
+registerTermaAction("static-connection-save-connect", ({element}) => saveConnectionForm(false, element, true));
 registerTermaAction("static-connection-test", ({element}) => testConnectionForm(element));
 registerTermaAction("static-connection-reset", () => resetConnectionForm());
 registerTermaAction("static-forward-labels", () => toggleForwardLabels());

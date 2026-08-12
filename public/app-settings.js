@@ -33,6 +33,17 @@ async function openSettings(updateTab=true) {
 function renderSettings() {
   const s = securitySettings || {};
   const about = aboutSettings || {};
+  const thirdPartyComponents = Array.isArray(about.third_party_components) ? about.third_party_components : [];
+  const thirdPartyRows = thirdPartyComponents.map(item => {
+    const name = String(item?.name || "未知组件");
+    const version = String(item?.version || "未知");
+    const license = String(item?.license || "未知");
+    const projectUrl = String(item?.project_url || "");
+    const nameHtml = /^https:\/\//i.test(projectUrl)
+      ? `<a href="${escAttr(projectUrl)}" target="_blank" rel="noopener" title="打开 ${escAttr(name)} 项目主页">${esc(name)}</a>`
+      : esc(name);
+    return `<div class="about-third-party-row" role="row"><span role="cell">${nameHtml}</span><code role="cell">${esc(version)}</code><span role="cell">${esc(license)}</span></div>`;
+  }).join("");
   const toolbarPlacement = normalizeWorkspaceToolbarPlacement(runtimeSettings?.saved?.workspace_toolbar_placement);
   const uiState = captureUiState($("view-settings") || document);
   $("view-settings").innerHTML = `<div class="panel settings-panel">
@@ -200,6 +211,12 @@ function renderSettings() {
           </section>
         </div>
       </div>
+      <div class="settings-group" id="settings-theme">
+        <div class="settings-group-head"><h3>主题配置</h3><span>选择界面预设，并分别调整毛玻璃与流光玻璃强度。</span></div>
+        <div class="settings-grid single">
+          ${themeAppearancePanelHtml()}
+        </div>
+      </div>
       <div class="settings-group" id="settings-cache">
         <div class="settings-group-head"><h3>缓存管理</h3><span>查看各类程序缓存占用，并按需释放可安全清理的内容。</span></div>
         <div class="settings-grid single">
@@ -220,12 +237,18 @@ function renderSettings() {
             <div id="updateCheckArea">${updateStatusHtml()}</div>
             <div class="muted">本软件按现状提供，不附带任何担保。使用、修改和再分发须遵守 GNU GPL v3.0 条款。</div>
             <div class="actions about-actions"><a class="button-link" href="${escAttr(about.repository_url || "https://github.com/zmide/Terma")}" target="_blank" rel="noopener">${icon("github")}<span>GitHub 源码</span></a><button id="openLicenseBtn" onclick="showLicenseModal()">${icon("scroll-text")}<span>查看开源许可正文</span></button></div>
+            <section class="about-third-party" aria-labelledby="aboutThirdPartyTitle">
+              <div class="about-third-party-head"><div><h4 id="aboutThirdPartyTitle">随附组件</h4><span>程序内置组件的版本与许可证</span></div><span class="status-pill">${thirdPartyComponents.length} 项</span></div>
+              ${thirdPartyRows ? `<div class="about-third-party-list" role="table" aria-label="第三方组件清单"><div class="about-third-party-row about-third-party-head-row" role="row"><span role="columnheader">组件</span><span role="columnheader">版本</span><span role="columnheader">许可证</span></div>${thirdPartyRows}</div>` : `<div class="warning">未找到随程序提供的第三方组件清单。</div>`}
+              <div class="muted about-third-party-notice">${about.third_party_notices_available ? "详细组件来源与许可证说明随程序提供于 THIRD_PARTY_NOTICES.md。" : esc(about.third_party_notices_error || "未找到第三方组件声明")}</div>
+            </section>
           </section>
         </div>
       </div>
     </div></div>
   </div>`;
   restoreUiState(uiState);
+  bindThemeAppearancePanel();
   showSettingsSection(activeSettingsSection, {moveToWorkspace:false});
   syncRuntimeHostOptions();
   syncDesktopCustomDataMode();

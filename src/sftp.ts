@@ -13,13 +13,17 @@ const {
 const DEFAULT_MAX_OPEN_FILE_SIZE = 50 * 1024 * 1024;
 const DEFAULT_DIRECTORY_PAGE_SIZE = 50;
 const MAX_DIRECTORY_PAGE_SIZE = 200;
-const DIRECTORY_CACHE_TTL_MS = 15 * 1000;
-const DIRECTORY_CACHE_MAX_SNAPSHOTS = 20;
+const DIRECTORY_CACHE_TTL_MS = 2 * 60 * 1000;
+const DIRECTORY_CACHE_MAX_SNAPSHOTS = 24;
+const DIRECTORY_CACHE_MAX_ENTRIES = 100000;
+const MAX_RECURSIVE_SEARCH_ENTRIES = 20000;
 const SFTP_RECYCLE_DIRECTORY = ".terma-recycle-bin";
 const LEGACY_SFTP_RECYCLE_DIRECTORY = ".tunneldesk-recycle-bin";
 const SFTP_RECYCLE_DIRECTORIES = [SFTP_RECYCLE_DIRECTORY, LEGACY_SFTP_RECYCLE_DIRECTORY];
 const directorySnapshots = new Map();
 const directoryAliases = new Map();
+const directorySnapshotRequests = new Map();
+const directoryCacheVersions = new Map();
 const directoryNameCollator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
 
 function permissionPathOperand(value) {
@@ -45,7 +49,7 @@ function runRemoteCommand(connection, command, input = null, timeoutMs = 30000):
       const stdout = Buffer.concat(chunks);
       const stderr = Buffer.concat(errors).toString("utf8");
       if (error) reject(error);
-      else if (code !== 0) reject(new Error(stderr || `远程命令退出码 ${code}`));
+      else if (code !== 0) reject(new Error(stderr || (code === null ? "远程目录命令被连接中断，请重试" : `远程命令退出码 ${code}`)));
       else resolve(stdout);
     };
     const timer = setTimeout(() => {
@@ -83,7 +87,8 @@ function normalizeRemoteDirectoryListOptions(options: any = {}) {
     query: String(options.query || "").trim().slice(0, 256),
     sort,
     dir,
-    refresh: options.refresh === true || String(options.refresh || "") === "1"
+    refresh: options.refresh === true || String(options.refresh || "") === "1",
+    recursive: options.recursive === true || String(options.recursive || "") === "1"
   };
 }
 
@@ -129,8 +134,8 @@ function normalizedRemotePath(value) {
   return remotePath.replace(/\/+$/, "") || ".";
 }
 
-function directoryCacheKey(connectionId, remotePath) {
-  return `${Number(connectionId)}\0${normalizedRemotePath(remotePath)}`;
+function directoryCacheKey(connectionId, remotePath, recursive = false) {
+  return `${Number(connectionId)}\0${recursive ? "recursive\0" : "directory\0"}${normalizedRemotePath(remotePath)}`;
 }
 
 function removeDirectorySnapshot(key) {
@@ -144,16 +149,18 @@ function pruneDirectorySnapshots(now = Date.now()) {
   for (const [key, snapshot] of directorySnapshots) {
     if (snapshot.expires_at <= now) removeDirectorySnapshot(key);
   }
-  while (directorySnapshots.size > DIRECTORY_CACHE_MAX_SNAPSHOTS) {
+  let totalEntries = [...directorySnapshots.values()].reduce((total, snapshot) => total + Number(snapshot.entries?.length || 0), 0);
+  while (directorySnapshots.size > DIRECTORY_CACHE_MAX_SNAPSHOTS || totalEntries > DIRECTORY_CACHE_MAX_ENTRIES) {
     const oldest = directorySnapshots.keys().next().value;
     if (oldest === undefined) break;
+    totalEntries -= Number(directorySnapshots.get(oldest)?.entries?.length || 0);
     removeDirectorySnapshot(oldest);
   }
 }
 
-function cachedDirectorySnapshot(connectionId, remotePath) {
+function cachedDirectorySnapshot(connectionId, remotePath, recursive = false) {
   pruneDirectorySnapshots();
-  const requestedKey = directoryCacheKey(connectionId, remotePath);
+  const requestedKey = directoryCacheKey(connectionId, remotePath, recursive);
   const canonicalKey = directoryAliases.get(requestedKey) || requestedKey;
   const snapshot = directorySnapshots.get(canonicalKey);
   if (!snapshot) return null;
@@ -162,10 +169,10 @@ function cachedDirectorySnapshot(connectionId, remotePath) {
   return snapshot;
 }
 
-function cacheDirectorySnapshot(connectionId, remotePath, snapshot) {
+function cacheDirectorySnapshot(connectionId, remotePath, snapshot, recursive = false) {
   pruneDirectorySnapshots();
-  const requestedKey = directoryCacheKey(connectionId, remotePath);
-  const canonicalKey = directoryCacheKey(connectionId, snapshot.path);
+  const requestedKey = directoryCacheKey(connectionId, remotePath, recursive);
+  const canonicalKey = directoryCacheKey(connectionId, snapshot.path, recursive);
   directorySnapshots.delete(canonicalKey);
   directorySnapshots.set(canonicalKey, snapshot);
   directoryAliases.set(requestedKey, canonicalKey);
@@ -174,13 +181,28 @@ function cacheDirectorySnapshot(connectionId, remotePath, snapshot) {
 }
 
 function invalidateRemoteDirectoryCache(connectionId) {
-  const prefix = `${Number(connectionId)}\0`;
+  const id = Number(connectionId);
+  const prefix = `${id}\0`;
+  directoryCacheVersions.set(id, Number(directoryCacheVersions.get(id) || 0) + 1);
   for (const key of [...directorySnapshots.keys()]) {
     if (key.startsWith(prefix)) removeDirectorySnapshot(key);
   }
   for (const key of [...directoryAliases.keys()]) {
     if (key.startsWith(prefix)) directoryAliases.delete(key);
   }
+  for (const key of [...directorySnapshotRequests.keys()]) {
+    if (key.startsWith(prefix)) directorySnapshotRequests.delete(key);
+  }
+}
+
+function buildRemoteRecursiveDirectoryEntriesCommand() {
+  const excluded = [
+    `-name ${shellQuote(SFTP_RECYCLE_DIRECTORY)}`,
+    `-name ${shellQuote(LEGACY_SFTP_RECYCLE_DIRECTORY)}`,
+    `-name ${shellQuote(".terma-upload-*.part")}`,
+    `-name ${shellQuote(".tunneldesk-upload-*.part")}`
+  ].join(" -o ");
+  return `find . ! -name . \\( \\( ${excluded} \\) -prune -o -exec sh -c 'for entry in "$@"; do if [ -d "$entry" ]; then type=d; else type=f; fi; name=\${entry#./}; printf "%s\\t%s\\n" "$name" "$type"; done' sh {} + \\)`;
 }
 
 function buildRemoteDirectoryEntriesCommand() {
@@ -226,18 +248,117 @@ async function enumerateRemoteDir(connectionId, remotePath = ".") {
   };
 }
 
+async function enumerateRemoteTree(connectionId, remotePath = ".") {
+  const connection = getSftpConnection(connectionId);
+  const dir = remotePath || ".";
+  const command = [
+    `cd ${remotePathOperand(connection, dir)}`,
+    `{ pwd; ${buildRemoteRecursiveDirectoryEntriesCommand()}; } | sed -n '1,${MAX_RECURSIVE_SEARCH_ENTRIES + 2}p;${MAX_RECURSIVE_SEARCH_ENTRIES + 3}q'`
+  ].join(" && ");
+  const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command, null, 30000));
+  const [cwdLine, ...allRows] = output.split(/\r?\n/).filter(Boolean);
+  const truncated = allRows.length > MAX_RECURSIVE_SEARCH_ENTRIES;
+  const rows = allRows.slice(0, MAX_RECURSIVE_SEARCH_ENTRIES);
+  return {
+    path: cwdLine || dir,
+    truncated,
+    entries: rows.map((line) => {
+      const separator = line.lastIndexOf("\t");
+      const name = separator >= 0 ? line.slice(0, separator) : line;
+      const type = separator >= 0 ? line.slice(separator + 1) : "f";
+      return {
+        name,
+        type: type === "d" ? "dir" : "file",
+        size: 0,
+        mtime: 0,
+        mode: "",
+        owner: "",
+        group: "",
+        metadata_known: false
+      };
+    })
+  };
+}
+
+async function loadDirectorySnapshot(connectionId, remotePath, recursive, refresh) {
+  if (!refresh) {
+    const cached = cachedDirectorySnapshot(connectionId, remotePath, recursive);
+    if (cached) return cached;
+  }
+  const requestKey = directoryCacheKey(connectionId, remotePath, recursive);
+  let request = directorySnapshotRequests.get(requestKey);
+  if (!request) {
+    const cacheVersion = Number(directoryCacheVersions.get(Number(connectionId)) || 0);
+    request = (recursive ? enumerateRemoteTree(connectionId, remotePath) : enumerateRemoteDir(connectionId, remotePath))
+      .then((result) => {
+        const snapshot = {...result, expires_at:Date.now() + DIRECTORY_CACHE_TTL_MS};
+        if (Number(directoryCacheVersions.get(Number(connectionId)) || 0) === cacheVersion) {
+          cacheDirectorySnapshot(connectionId, remotePath, snapshot, recursive);
+        }
+        return snapshot;
+      })
+      .finally(() => {
+        if (directorySnapshotRequests.get(requestKey) === request) directorySnapshotRequests.delete(requestKey);
+      });
+    directorySnapshotRequests.set(requestKey, request);
+  }
+  return request;
+}
+
 async function listRemoteDir(connectionId, remotePath = ".", options: any = {}) {
   const normalized = normalizeRemoteDirectoryListOptions(options);
-  let snapshot = normalized.refresh ? null : cachedDirectorySnapshot(connectionId, remotePath);
-  if (!snapshot) {
-    const result = await enumerateRemoteDir(connectionId, remotePath);
-    snapshot = { ...result, expires_at: Date.now() + DIRECTORY_CACHE_TTL_MS };
-    cacheDirectorySnapshot(connectionId, remotePath, snapshot);
-  }
+  const recursive = normalized.recursive && Boolean(normalized.query);
+  const snapshot = await loadDirectorySnapshot(connectionId, remotePath, recursive, normalized.refresh);
   return {
     path: snapshot.path,
+    recursive,
+    truncated:Boolean(snapshot.truncated),
     ...paginateRemoteEntries(snapshot.entries, normalized)
   };
+}
+
+function remoteBackupVersionTimestamp(name, prefix, fallback = 0) {
+  const stamp = String(name || "").slice(String(prefix || "").length).match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{3})-/);
+  return stamp
+    ? Date.UTC(Number(stamp[1]), Number(stamp[2]) - 1, Number(stamp[3]), Number(stamp[4]), Number(stamp[5]), Number(stamp[6]), Number(stamp[7]))
+    : Math.max(0, Number(fallback || 0));
+}
+
+async function listRemoteFileVersions(connectionId, remotePathValue, maximum = 10) {
+  const remotePath = path.posix.normalize(String(remotePathValue || "").replace(/\\/g, "/"));
+  if (!remotePath || remotePath === "." || remotePath === "/" || remotePath.includes("\0") || remotePath.startsWith("../")) {
+    throw new Error("远程文件路径无效");
+  }
+  const directory = path.posix.dirname(remotePath);
+  const filename = path.posix.basename(remotePath);
+  const prefix = `${filename}.bak-`;
+  const limit = Math.max(1, Math.min(10, Math.trunc(Number(maximum) || 10)));
+  const listing = await listRemoteDir(connectionId, directory, {
+    page:1,
+    page_size:200,
+    query:prefix,
+    // Backups use cp -p, so mtime belongs to the overwritten source. The
+    // timestamp embedded in the backup name is the reliable version order.
+    sort:"name",
+    dir:"desc",
+    refresh:true
+  });
+  const versions = (listing.entries || [])
+    .filter(entry => entry.type === "file" && String(entry.name || "").startsWith(prefix))
+    .sort((left, right) => String(right.name || "").localeCompare(String(left.name || "")))
+    .slice(0, limit)
+    .map(entry => {
+      const name = String(entry.name || "");
+      const changedAt = remoteBackupVersionTimestamp(name, prefix, Math.max(0, Number(entry.mtime || 0)) * 1000);
+      return {
+        name,
+        path:directory === "/" ? `/${name}` : directory === "." ? name : `${directory}/${name}`,
+        size:Math.max(0, Number(entry.size || 0)),
+        mtime:Math.max(0, Number(entry.mtime || 0)),
+        changed_at:changedAt
+      };
+    });
+  return {path:remotePath, limit, versions};
 }
 
 function buildRemoteDirectorySizeCommand(remotePath, connection = null, token = "") {
@@ -907,7 +1028,10 @@ async function setRemoteFileMtime(connectionId, remotePath, mtimeSeconds) {
 
 module.exports = {
   listRemoteDir,
+  listRemoteFileVersions,
+  __remoteBackupVersionTimestamp:remoteBackupVersionTimestamp,
   __buildRemoteDirectoryEntriesCommand:buildRemoteDirectoryEntriesCommand,
+  __buildRemoteRecursiveDirectoryEntriesCommand:buildRemoteRecursiveDirectoryEntriesCommand,
   buildRemoteDirectorySizeCommand,
   readRemoteDirectorySize,
   normalizeRemoteDirectoryListOptions,

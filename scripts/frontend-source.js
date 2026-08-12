@@ -10,6 +10,7 @@ const FRONTEND_DOMAINS = Object.freeze({
   ],
   settings: [
     "app-settings-core.js",
+    "app-theme-settings.js",
     "app-settings-cache.js",
     "app-settings-storage.js",
     "app-settings-runtime.js",
@@ -31,6 +32,7 @@ const FRONTEND_DOMAINS = Object.freeze({
   terminal: [
     "app-terminal-core.js",
     "app-terminal-output.js",
+    "app-terminal-zmodem.js",
     "app-terminal-settings.js",
     "app-terminal-startup.js",
     "app-terminal.js",
@@ -38,6 +40,8 @@ const FRONTEND_DOMAINS = Object.freeze({
   ],
   sftp: [
     "app-sftp-core.js",
+    "app-sftp-columns.js",
+    "app-sftp-diff.js",
     "app-sftp-open.js",
     "app-sftp.js",
     "app-sftp-drag.js",
@@ -51,6 +55,7 @@ const FRONTEND_DOMAINS = Object.freeze({
     "app-external-tools.js",
     "app-command-palette.js",
     "app-command-snippets.js",
+    "app-terminal-quick-commands.js",
     "app-named-workspaces.js",
     "app-terminal-productivity.js",
     "app-productivity.js"

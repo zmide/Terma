@@ -63,7 +63,22 @@ function setSessionEncoding(session, value) {
   if (!TERMINAL_ENCODINGS.has(encoding)) throw new Error("不支持的终端编码");
   flushSessionOutputDecoder(session);
   session.terminalEncoding = encoding;
-  session.outputDecoder = encoding === "utf8" ? null : iconv.getDecoder(encoding);
+  session.outputDecoder = session.binaryMode || encoding === "utf8" ? null : iconv.getDecoder(encoding);
+}
+
+function setSessionBinaryMode(session, enabled) {
+  const next = Boolean(enabled);
+  if (session.binaryMode === next) return;
+  if (next) {
+    flushSessionOutputDecoder(session);
+    session.binaryMode = true;
+    session.outputDecoder = null;
+    return;
+  }
+  session.binaryMode = false;
+  session.outputDecoder = session.terminalEncoding === "utf8"
+    ? null
+    : iconv.getDecoder(session.terminalEncoding);
 }
 
 let resolvedTerminalBin = "";
@@ -192,7 +207,7 @@ function terminalEnv() {
 }
 
 function emitTerminalOutput(session, data, opcode = 1) {
-  appendTerminalLog(session.logFile, data);
+  if (!session.binaryMode) appendTerminalLog(session.logFile, data);
   sendWebSocketFrame(session.socket, data, opcode);
 }
 
@@ -357,9 +372,13 @@ function writeTerminalInput(session, payload) {
         setSessionEncoding(session, message.encoding);
         return;
       }
+      if (message?.type === "terminal-binary-mode") {
+        setSessionBinaryMode(session, message.enabled);
+        return;
+      }
     } catch {}
   }
-  const outgoing = session.terminalEncoding && session.terminalEncoding !== "utf8"
+  const outgoing = !session.binaryMode && session.terminalEncoding && session.terminalEncoding !== "utf8"
     ? iconv.encode(text, session.terminalEncoding)
     : payload;
   if (session.ptyProcess) session.ptyProcess.write(outgoing);

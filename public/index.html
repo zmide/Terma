@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/vendor/ace/theme-textmate.css?v=__TERMA_VERSION__">
   <link rel="stylesheet" href="/vendor/ace/theme-tomorrow_night.css?v=__TERMA_VERSION__">
   <link rel="stylesheet" href="/app.css?v=__TERMA_VERSION__">
+  <link rel="stylesheet" href="/app-theme-glass.css?v=__TERMA_VERSION__">
 </head>
 <body>
   <div id="toast" class="notification-stack" aria-live="polite" aria-label="通知"></div>
@@ -274,6 +275,7 @@
       </div>
       <div class="actions">
         <button class="primary" type="submit">保存连接</button>
+        <button id="connSaveAndConnect" type="button" data-action="static-connection-save-connect">保存并连接</button>
         <button id="connSaveAndClear" type="button" data-action="static-connection-save-clear">保存并清空</button>
         <button id="connTestBtn" type="button" data-action="static-connection-test">测试 SSH</button>
         <button type="button" data-action="static-connection-reset">清空</button>
@@ -357,6 +359,7 @@
 
 <script src="/vendor/lucide/lucide.min.js?v=__TERMA_VERSION__"></script>
 <script src="/vendor/ace/ace.js?v=__TERMA_VERSION__"></script>
+<script src="/vendor/diff/diff.min.js?v=__TERMA_VERSION__"></script>
 <script src="/app-api.js?v=__TERMA_VERSION__"></script>
 <script src="/app-utils.js?v=__TERMA_VERSION__"></script>
 <script src="/app-events.js?v=__TERMA_VERSION__"></script>
@@ -366,6 +369,7 @@
 <script src="/app-workspace-drag.js?v=__TERMA_VERSION__"></script>
 <script src="/app-workspace-persistence.js?v=__TERMA_VERSION__"></script>
 <script src="/app-settings-core.js?v=__TERMA_VERSION__"></script>
+<script src="/app-theme-settings.js?v=__TERMA_VERSION__"></script>
 <script src="/app-settings-cache.js?v=__TERMA_VERSION__"></script>
 <script src="/app-settings-storage.js?v=__TERMA_VERSION__"></script>
 <script src="/app-settings-runtime.js?v=__TERMA_VERSION__"></script>
@@ -388,6 +392,7 @@
 <script src="/app-quick-connect.js?v=__TERMA_VERSION__"></script>
 <script src="/app-terminal-core.js?v=__TERMA_VERSION__"></script>
 <script src="/app-terminal-output.js?v=__TERMA_VERSION__"></script>
+<script src="/app-terminal-zmodem.js?v=__TERMA_VERSION__"></script>
 <script src="/app-terminal-settings.js?v=__TERMA_VERSION__"></script>
 <script src="/app-terminal-startup.js?v=__TERMA_VERSION__"></script>
 <script src="/app-terminal.js?v=__TERMA_VERSION__"></script>
@@ -395,6 +400,8 @@
 <script src="/app-forwards.js?v=__TERMA_VERSION__"></script>
 <script src="/app-import.js?v=__TERMA_VERSION__"></script>
 <script src="/app-sftp-core.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp-columns.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp-diff.js?v=__TERMA_VERSION__"></script>
 <script src="/app-sftp-open.js?v=__TERMA_VERSION__"></script>
 <script src="/app-sftp.js?v=__TERMA_VERSION__"></script>
 <script src="/app-sftp-drag.js?v=__TERMA_VERSION__"></script>
@@ -408,6 +415,7 @@
 <script src="/app-external-tools.js?v=__TERMA_VERSION__"></script>
 <script src="/app-command-palette.js?v=__TERMA_VERSION__"></script>
 <script src="/app-command-snippets.js?v=__TERMA_VERSION__"></script>
+<script src="/app-terminal-quick-commands.js?v=__TERMA_VERSION__"></script>
 <script src="/app-named-workspaces.js?v=__TERMA_VERSION__"></script>
 <script src="/app-terminal-productivity.js?v=__TERMA_VERSION__"></script>
 <script src="/app-productivity.js?v=__TERMA_VERSION__"></script>
