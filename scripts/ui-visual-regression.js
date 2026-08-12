@@ -55,47 +55,27 @@ async function rememberVisualTheme(window) {
   })()`);
 }
 
-async function applyLuminousVisualTheme(window, theme) {
+async function applyClassicVisualTheme(window, theme) {
   const result = await window.webContents.executeJavaScript(`(async () => {
     applyTheme(${JSON.stringify(theme)});
+    localStorage.setItem(TERMA_APPEARANCE_STORAGE_KEY, JSON.stringify({preset:'luminous',frosted_strength:53,liquid_strength:39}));
     applyTermaAppearanceSettings(TERMA_APPEARANCE_PRESETS.luminous);
     showPrimary('connections');
     syncTermaLiquidNavigation();
-    const started = performance.now();
-    let tracks = [];
-    let lensReady = [];
-    do {
-      await new Promise(resolve => requestAnimationFrame(resolve));
-      tracks = [...document.querySelectorAll('.activity-top,.side-nav,.mobile-tabs')]
-        .filter(track => {
-          const style = getComputedStyle(track);
-          const rect = track.getBoundingClientRect();
-          return style.display !== 'none'
-            && style.visibility !== 'hidden'
-            && rect.width > 0
-            && rect.height > 0
-            && track.querySelector('button.active:not([hidden])');
-        });
-      tracks.forEach(scheduleTermaLiquidTrack);
-      lensReady = tracks.map(track => {
-        const lenses = track.querySelectorAll(':scope > .terma-liquid-lens');
-        const rect = lenses[0]?.getBoundingClientRect();
-        return lenses.length === 1 && Boolean(rect && rect.width > 0 && rect.height > 0);
-      });
-    } while ((tracks.length === 0 || !lensReady.every(Boolean)) && performance.now() - started < 800);
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const rootStyle = getComputedStyle(document.documentElement);
     return {
       theme:document.documentElement.dataset.theme,
       appearancePreset:document.documentElement.dataset.appearancePreset,
-      frostedEnabled:!document.documentElement.classList.contains('terma-frosted-disabled'),
-      liquidEnabled:document.documentElement.classList.contains('terma-liquid-enabled'),
+      frostedDisabled:document.documentElement.classList.contains('terma-frosted-disabled'),
+      liquidDisabled:!document.documentElement.classList.contains('terma-liquid-enabled'),
       frostedBlur:rootStyle.getPropertyValue('--terma-frosted-backdrop-blur').trim(),
-      visibleTracks:tracks.length,
-      sharedLensesReady:tracks.length > 0 && lensReady.every(Boolean)
+      storageCleared:localStorage.getItem(TERMA_APPEARANCE_STORAGE_KEY) === null,
+      noLiquidNodes:document.querySelectorAll('.terma-liquid-lens,.terma-liquid-track').length === 0
     };
   })()`);
-  if (result.theme !== theme || result.appearancePreset !== "luminous" || !result.frostedEnabled || !result.liquidEnabled || !result.sharedLensesReady) {
-    throw new Error(`流光玻璃视觉状态未就绪：${JSON.stringify(result)}`);
+  if (result.theme !== theme || result.appearancePreset !== "clear" || !result.frostedDisabled || !result.liquidDisabled || result.frostedBlur !== "0px" || !result.storageCleared || !result.noLiquidNodes) {
+    throw new Error(`经典实色视觉状态未就绪：${JSON.stringify(result)}`);
   }
   return result;
 }
@@ -118,7 +98,7 @@ async function openVisualModal(window) {
     return {
       ready:Boolean(card && !modal.hidden),
       productionModal:Boolean(card?.querySelector('#modalGroupName') && card?.querySelector('[data-action="connection-group-save"]')),
-      singleGlassSurface:blurNodes.length === 1 && blurNodes[0] === card,
+      classicSurface:blurNodes.length === 0,
       overlayDoesNotBlur:!blurNodes.includes(modal),
       cardWithinViewport:Boolean(rect && rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1),
       blurNodeCount:blurNodes.length
@@ -144,8 +124,8 @@ async function captureVisualModal(window, name) {
   } finally {
     await closeVisualModal(window);
   }
-  if (!modalState.ready || !modalState.productionModal || !modalState.singleGlassSurface || !modalState.overlayDoesNotBlur || !modalState.cardWithinViewport) {
-    throw new Error(`弹窗单层玻璃视觉回归失败：${JSON.stringify(modalState)}`);
+  if (!modalState.ready || !modalState.productionModal || !modalState.classicSurface || !modalState.overlayDoesNotBlur || !modalState.cardWithinViewport) {
+    throw new Error(`弹窗经典实色视觉回归失败：${JSON.stringify(modalState)}`);
   }
   return {...stats, ...modalState};
 }
@@ -177,8 +157,8 @@ async function restoreVisualRegressionState(window, previous) {
         try { applyTermaAppearanceSettings(saved.appearance); } catch {}
         if (saved.storedTheme === null) localStorage.removeItem('theme');
         else localStorage.setItem('theme', saved.storedTheme);
-        if (saved.storedAppearance === null) localStorage.removeItem('termaAppearanceV1');
-        else localStorage.setItem('termaAppearanceV1', saved.storedAppearance);
+        if (TERMA_APPEARANCE_EFFECTS_ENABLED && saved.storedAppearance !== null) localStorage.setItem('termaAppearanceV1', saved.storedAppearance);
+        else localStorage.removeItem('termaAppearanceV1');
         delete window.__termaVisualRegressionTheme;
       }
     })()`);
@@ -195,10 +175,10 @@ async function runVisualRegression(window) {
   try {
   window.setContentSize(1180, 760);
   await waitForViewport(window, 1180);
-  const lightTheme = await applyLuminousVisualTheme(window, "light");
+  const lightTheme = await applyClassicVisualTheme(window, "light");
   states.light = {...await capture(window, "light-desktop"), ...lightTheme};
   states.lightModal = await captureVisualModal(window, "light-desktop-modal");
-  const darkTheme = await applyLuminousVisualTheme(window, "dark");
+  const darkTheme = await applyClassicVisualTheme(window, "dark");
   states.dark = {...await capture(window, "dark-desktop"), ...darkTheme};
   states.darkModal = await captureVisualModal(window, "dark-desktop-modal");
   const localFilesFixture = await window.webContents.executeJavaScript(`(async () => {
@@ -312,14 +292,14 @@ async function runVisualRegression(window) {
   })()`);
   states.split = await capture(window, "recursive-split");
   await window.webContents.executeJavaScript("document.getElementById('visualRegressionSplit')?.remove()");
-  await applyLuminousVisualTheme(window, "light");
+  await applyClassicVisualTheme(window, "light");
   window.setContentSize(720, 720);
   await waitForViewport(window, 720);
-  const narrowTheme = await applyLuminousVisualTheme(window, "light");
+  const narrowTheme = await applyClassicVisualTheme(window, "light");
   states.narrow = {...await capture(window, "narrow-window"), ...narrowTheme};
   window.setContentSize(390, 844);
   await waitForViewport(window, 390);
-  const mobileTheme = await applyLuminousVisualTheme(window, "light");
+  const mobileTheme = await applyClassicVisualTheme(window, "light");
   states.mobile = {...await capture(window, "mobile"), ...mobileTheme};
   states.mobileModal = await captureVisualModal(window, "mobile-modal");
   return states;

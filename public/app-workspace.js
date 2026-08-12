@@ -285,7 +285,9 @@ function renderTabs() {
   container.innerHTML = tabs.map(tab => {
     const presentation = workspaceTabPresentation(tab);
     const fullTitle = [tab.title, tab.subtitle].filter(Boolean).join(" - ");
-    const connectionStatus = ["terminal", "sftp", "remote-terminal"].includes(tab.kind) ? (tab.connectionStatus || "connecting") : "";
+    const showsConnectionStatus = ["terminal", "quick-terminal", "sftp", "remote-terminal"].includes(tab.kind)
+      || (tab.kind === "remote-desktop" && tab.protocol === "vnc");
+    const connectionStatus = showsConnectionStatus ? (tab.connectionStatus || "connecting") : "";
     const connectionDot = connectionStatus ? `<span class="tab-connection-dot ${connectionStatus}" title="${connectionStatus === "connected" ? "已连接" : connectionStatus === "disconnected" ? "已断开" : "连接中"}" aria-hidden="true"></span>` : "";
     return `<button class="tab ${tab.key === activeTabKey ? "active" : ""}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(tab.title)}" data-pointerdown-action="workspace-tab-drag-start" data-action="workspace-tab-activate" data-contextmenu-action="workspace-tab-menu" data-dragover-action="workspace-tab-sftp-drag-over" data-dragleave-action="workspace-tab-sftp-drag-leave" data-drop-action="workspace-tab-sftp-drop">${connectionDot}${presentation.icon}<span class="tab-title">${esc(presentation.title)}</span>${tab.closable ? `<span class="tab-close" title="关闭标签" aria-label="关闭标签" data-tab-key="${escAttr(tab.key)}" data-pointerdown-action="workspace-event-stop" data-action="workspace-tab-close">x</span>` : ""}</button>`;
   }).join("");
@@ -972,7 +974,7 @@ function renderExplorerTools() {
   }
   if (primaryView === "settings") {
     const activeSection = typeof activeSettingsSection === "string" ? normalizeSettingsSection(activeSettingsSection) : "settings-general";
-    const sections = [["settings-general", "settings-2", "通用设置"], ["settings-basic", "shield-check", "安全设置"], ["settings-notifications", "bell", "通知设置"], ["settings-runtime", "activity", "启动与运行"], ["settings-theme", "palette", "主题配置"], ["settings-cache", "hard-drive", "缓存管理"], ["settings-about", "info", "关于"]];
+    const sections = [["settings-general", "settings-2", "通用设置"], ["settings-basic", "shield-check", "安全设置"], ["settings-notifications", "bell", "通知设置"], ["settings-runtime", "activity", "启动与运行"], ["settings-cache", "hard-drive", "缓存管理"], ["settings-about", "info", "关于"]];
     const updateDotHidden = typeof shouldShowUpdateNotice === "function" && shouldShowUpdateNotice() ? "" : "hidden";
     tools.classList.add("section-mode");
     tools.innerHTML = sections.map(([id, iconName, label]) => `<button class="${id === activeSection ? "active" : ""}" data-explorer-section="${id}" data-action="workspace-settings-section">${icon(iconName)}<span>${label}</span>${id === "settings-about" ? `<i id="settingsExplorerUpdateDot" class="section-update-dot" ${updateDotHidden} aria-label="发现新版本"></i>` : ""}</button>`).join("");
