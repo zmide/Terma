@@ -456,7 +456,13 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
     : existingVncSession?.connecting || existingVncSession?.statusState === "connecting"
       ? "connecting"
       : "disconnected";
-  setWorkspace(profile.name, remoteProfileEndpoint(profile), "remote-desktop", key, updateTab, true, {kind:"remote-desktop", id:profile.id, protocol:profile.protocol, connectionStatus});
+  const tabMeta = {
+    kind:"remote-desktop",
+    id:profile.id,
+    protocol:profile.protocol,
+    connectionStatus:profile.protocol === "vnc" ? connectionStatus : undefined
+  };
+  setWorkspace(profile.name, remoteProfileEndpoint(profile), "remote-desktop", key, updateTab, true, tabMeta);
   if (!showManagement && existingVncSession?.workspace && (existingVncSession.connected || existingVncSession.connecting)) {
     if (existingVncSession.presentation === "management") return showVncManagement(profile.id, key, false);
     return renderEmbeddedVnc(profile, key);
