@@ -36,6 +36,8 @@ globalThis.__desktopStartupTestApi = {
   DISPLAY_CLIENT_ARG,
   DISPLAY_CLIENT_URL_ENV,
   DESKTOP_TOKEN_ENV,
+  DISPLAY_CLIENT_AUTH_MESSAGE,
+  DISPLAY_CLIENT_AUTH_TIMEOUT_MS,
   displayClientMode,
   PRODUCT_NAME,
   PRODUCT_ID,
@@ -76,6 +78,8 @@ globalThis.__desktopStartupTestApi = {
   getWebUrl: () => webUrl,
   getPendingDisplayClientKeys: () => [...pendingDisplayClientSessions.keys()],
   getDisplayClientProcessKeys: () => [...displayClientProcesses.keys()],
+  getDesktopAuthToken: () => desktopAuthToken,
+  getPendingDisplayClientUrl: () => pendingDisplayClientUrl,
   getPendingStorageMigrationNotice: () => pendingStorageMigrationNotice
 };`;
 
@@ -121,6 +125,7 @@ function createHarness({
     singleInstanceRequests: [],
     appExitCalls: [],
     appQuitCount: 0,
+    errorBoxes: [],
     appPathOverrides: new Map(),
     spawnCalls: [],
     scheduledTimeouts: [],
@@ -285,7 +290,9 @@ function createHarness({
     },
     Notification: { isSupported: () => false },
     Tray: class {},
-    dialog: {},
+    dialog: {
+      showErrorBox: (title, message) => state.errorBoxes.push({title, message})
+    },
     ipcMain: {
       handle() {},
       on: (event, handler) => state.ipcListeners.set(event, handler)
@@ -330,9 +337,17 @@ function createHarness({
           const child = {
             exitCode: null,
             killed: false,
+            killCount: 0,
             messages: [],
             once(event, handler) { handlers.set(event, handler); },
-            send(message) { this.messages.push(message); },
+            send(message, callback) {
+              this.messages.push(message);
+              if (typeof callback === "function") callback(null);
+            },
+            kill() {
+              this.killed = true;
+              this.killCount += 1;
+            },
             emit(event, value) {
               const handler = handlers.get(event);
               if (handler) handler(value);
@@ -587,12 +602,16 @@ check("A second launch on another Linux DISPLAY queues one isolated display clie
   assert.equal(spawned.options.env.XAUTHORITY, "/run/user/1000/xauth-xdmcp");
   assert.equal(spawned.options.env.DBUS_SESSION_BUS_ADDRESS, "unix:path=/run/user/1000/xdmcp-bus");
   assert.equal(spawned.options.env[api.DISPLAY_CLIENT_URL_ENV], "http://127.0.0.1:8088/");
-  assert.ok(spawned.options.env[api.DESKTOP_TOKEN_ENV]);
+  assert.equal(spawned.options.env[api.DESKTOP_TOKEN_ENV], undefined);
+  assert.equal(spawned.options.env.TUNNELDESK_DESKTOP_AUTH_TOKEN, undefined);
+  assert.equal(spawned.child.messages.length, 1);
+  assert.equal(spawned.child.messages[0].type, api.DISPLAY_CLIENT_AUTH_MESSAGE);
+  assert.equal(spawned.child.messages[0].token, api.getDesktopAuthToken());
 
   secondInstance(null, [], "", {termaDisplaySession:targetSession});
   assert.equal(state.spawnCalls.length, 1);
-  assert.equal(state.spawnCalls[0].child.messages.length, 1);
-  assert.equal(state.spawnCalls[0].child.messages[0].type, "show");
+  assert.equal(state.spawnCalls[0].child.messages.length, 2);
+  assert.equal(state.spawnCalls[0].child.messages[1].type, "show");
   assert.deepEqual(Array.from(api.getDisplayClientProcessKeys()), ["x11::3"]);
 });
 
@@ -602,7 +621,8 @@ check("Linux display-client mode skips the backend profile and handles an early 
     argv:["terma", "--terma-display-client"],
     env:{
       DISPLAY:":3",
-      TERMA_DISPLAY_CLIENT_URL:"http://127.0.0.1:8088"
+      TERMA_DISPLAY_CLIENT_URL:"http://127.0.0.1:8088",
+      TERMA_DESKTOP_AUTH_TOKEN:"must-not-be-used"
     },
     persistSettings:false
   });
@@ -618,6 +638,11 @@ check("Linux display-client mode skips the backend profile and handles an early 
   message({type:"show"});
   assert.equal(state.windows.length, 0);
   assert.equal(api.startDisplayClient(), true);
+  assert.equal(api.getWebUrl(), "");
+  assert.equal(api.getDesktopAuthToken(), "");
+  assert.equal(api.getPendingDisplayClientUrl(), "http://127.0.0.1:8088/");
+  assert.equal(state.windows.length, 0);
+  message({type:api.DISPLAY_CLIENT_AUTH_MESSAGE, token:"a".repeat(43)});
   assert.equal(api.getWebUrl(), "http://127.0.0.1:8088/");
   assert.equal(state.windows.length, 1);
   assert.equal(state.ipcListeners.has("terma:capabilities"), true);
@@ -638,14 +663,48 @@ check("Linux display-client mode still accepts legacy TunnelDesk arguments and e
     argv:["tunneldesk", "--tunneldesk-display-client"],
     env:{
       DISPLAY:":4",
-      TUNNELDESK_DISPLAY_CLIENT_URL:"http://127.0.0.1:8090"
+      TUNNELDESK_DISPLAY_CLIENT_URL:"http://127.0.0.1:8090",
+      TUNNELDESK_DESKTOP_AUTH_TOKEN:"legacy-token-must-not-be-used"
     },
     persistSettings:false
   });
   assert.equal(api.displayClientMode, true);
   assert.equal(api.startDisplayClient(), true);
+  assert.equal(state.windows.length, 0);
+  state.processEvents.get("message")({type:api.DISPLAY_CLIENT_AUTH_MESSAGE, token:"b".repeat(43)});
   assert.equal(api.getWebUrl(), "http://127.0.0.1:8090/");
+  assert.equal(state.windows.length, 1);
   assert.equal(state.xServerRuntimeCreateCount, 0);
+});
+
+check("Linux display-client mode rejects an invalid IPC token before opening a window", () => {
+  const { api, state } = createHarness({
+    platform:"linux",
+    argv:["terma", "--terma-display-client"],
+    env:{TERMA_DISPLAY_CLIENT_URL:"http://127.0.0.1:8088"},
+    persistSettings:false
+  });
+  assert.equal(api.startDisplayClient(), true);
+  state.processEvents.get("message")({type:api.DISPLAY_CLIENT_AUTH_MESSAGE, token:"short"});
+  assert.equal(state.windows.length, 0);
+  assert.deepEqual(state.appExitCalls, [1]);
+  assert.match(state.errorBoxes[0].message, /认证令牌无效/);
+});
+
+check("Linux display-client mode exits when the IPC token does not arrive", () => {
+  const { api, state } = createHarness({
+    platform:"linux",
+    argv:["terma", "--terma-display-client"],
+    env:{TERMA_DISPLAY_CLIENT_URL:"http://127.0.0.1:8088"},
+    persistSettings:false
+  });
+  assert.equal(api.startDisplayClient(), true);
+  const timeout = state.scheduledTimeouts.find(timer => timer.delay === api.DISPLAY_CLIENT_AUTH_TIMEOUT_MS && !timer.cancelled);
+  assert.ok(timeout, "display client must fail closed when the IPC token never arrives");
+  timeout.handler();
+  assert.equal(state.windows.length, 0);
+  assert.deepEqual(state.appExitCalls, [1]);
+  assert.match(state.errorBoxes[0].message, /等待桌面认证令牌超时/);
 });
 
 check("Second launch before the first window exists waits for ready-to-show", () => {

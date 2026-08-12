@@ -56,6 +56,8 @@ const DISPLAY_CLIENT_URL_ENV = "TERMA_DISPLAY_CLIENT_URL";
 const LEGACY_DISPLAY_CLIENT_URL_ENV = "TUNNELDESK_DISPLAY_CLIENT_URL";
 const DESKTOP_TOKEN_ENV = "TERMA_DESKTOP_AUTH_TOKEN";
 const LEGACY_DESKTOP_TOKEN_ENV = "TUNNELDESK_DESKTOP_AUTH_TOKEN";
+const DISPLAY_CLIENT_AUTH_MESSAGE = "desktop-auth-token";
+const DISPLAY_CLIENT_AUTH_TIMEOUT_MS = 10 * 1000;
 const LINUX_DISPLAY_SESSION_KEYS = [
   "DISPLAY",
   "WAYLAND_DISPLAY",
@@ -71,9 +73,7 @@ const LINUX_DISPLAY_SESSION_KEYS = [
   "SESSION_MANAGER"
 ];
 const displayClientMode = process.platform === "linux" && (process.argv.includes(DISPLAY_CLIENT_ARG) || process.argv.includes(LEGACY_DISPLAY_CLIENT_ARG));
-let desktopAuthToken = displayClientMode
-  ? String(process.env[DESKTOP_TOKEN_ENV] || process.env[LEGACY_DESKTOP_TOKEN_ENV] || "").trim()
-  : crypto.randomBytes(32).toString("base64url");
+let desktopAuthToken = displayClientMode ? "" : crypto.randomBytes(32).toString("base64url");
 delete process.env[DESKTOP_TOKEN_ENV];
 delete process.env[LEGACY_DESKTOP_TOKEN_ENV];
 const localLinuxDisplaySession = captureLinuxDisplaySession();
@@ -99,6 +99,9 @@ let quitting = false;
 let pendingWindowReveal = false;
 let startupRevealScheduled = false;
 let desktopStartupInProgress = true;
+let pendingDisplayClientUrl = "";
+let displayClientAuthRejected = false;
+let displayClientAuthTimer = null;
 let trayStateTimer = null;
 let trayState = { runningConnections: 0, runningForwards: 0, failedForwards: 0, totalForwards: 0, online: false };
 let pendingStorageMigrationNotice = "";
@@ -187,10 +190,32 @@ function displayClientEnvironment(session, url) {
   for (const key of LINUX_DISPLAY_SESSION_KEYS) delete environment[key];
   Object.assign(environment, normalizeLinuxDisplaySession(session));
   environment[DISPLAY_CLIENT_URL_ENV] = url;
-  environment[DESKTOP_TOKEN_ENV] = desktopAuthToken;
+  delete environment[DESKTOP_TOKEN_ENV];
   delete environment[LEGACY_DISPLAY_CLIENT_URL_ENV];
   delete environment[LEGACY_DESKTOP_TOKEN_ENV];
   return environment;
+}
+
+function normalizeDesktopAuthToken(value) {
+  const token = typeof value === "string" ? value.trim() : "";
+  return /^[A-Za-z0-9_-]{43}$/.test(token) ? token : "";
+}
+
+function deliverDisplayClientAuthToken(child, key = "") {
+  const token = normalizeDesktopAuthToken(desktopAuthToken);
+  if (!child || child.exitCode !== null || child.killed || typeof child.send !== "function" || !token) return false;
+  try {
+    child.send({ type:DISPLAY_CLIENT_AUTH_MESSAGE, token }, error => {
+      if (!error) return;
+      console.error(`${PRODUCT_NAME} display client ${key || "IPC"} authentication failed: ${error.message}`);
+      try { child.kill?.(); } catch {}
+    });
+    return true;
+  } catch (error) {
+    console.error(`${PRODUCT_NAME} display client ${key || "IPC"} authentication failed: ${error.message}`);
+    try { child.kill?.(); } catch {}
+    return false;
+  }
 }
 
 function focusDisplayClientProcess(child) {
@@ -229,6 +254,7 @@ function launchDisplayClient(session) {
     console.error(`failed to open ${PRODUCT_NAME} on ${key}: ${error.message}`);
     return false;
   }
+  if (!deliverDisplayClientAuthToken(child, key)) return false;
   displayClientProcesses.set(key, child);
   const forget = () => {
     if (displayClientProcesses.get(key) === child) displayClientProcesses.delete(key);
@@ -273,6 +299,18 @@ function handleSecondInstance(_event, _commandLine, _workingDirectory, additiona
 
 function handleDisplayClientControlMessage(message) {
   if (!message || typeof message !== "object") return;
+  if (message.type === DISPLAY_CLIENT_AUTH_MESSAGE) {
+    if (!displayClientMode || desktopAuthToken || displayClientAuthRejected) return;
+    const token = normalizeDesktopAuthToken(message.token);
+    if (!token) {
+      displayClientAuthRejected = true;
+      if (pendingDisplayClientUrl) failDisplayClientStartup("显示客户端收到的桌面认证令牌无效，请在当前图形会话中重新启动 Terma。");
+      return;
+    }
+    desktopAuthToken = token;
+    if (pendingDisplayClientUrl) completeDisplayClientStartup();
+    return;
+  }
   if (message.type === "show") {
     showWindow();
     return;
@@ -2170,20 +2208,51 @@ function registerDesktopClipboardHandlers() {
   });
 }
 
-function startDisplayClient() {
-  const targetUrl = displayClientUrl();
-  if (!targetUrl) {
-    dialog.showErrorBox(PRODUCT_NAME, `无法连接已经运行的 ${PRODUCT_NAME} 后端，请在当前图形会话中重新启动。`);
-    quitting = true;
-    app.exit(1);
-    return false;
+function failDisplayClientStartup(message) {
+  if (displayClientAuthTimer) clearTimeout(displayClientAuthTimer);
+  displayClientAuthTimer = null;
+  pendingDisplayClientUrl = "";
+  dialog.showErrorBox(PRODUCT_NAME, message);
+  quitting = true;
+  app.exit(1);
+  return false;
+}
+
+function completeDisplayClientStartup() {
+  const targetUrl = pendingDisplayClientUrl;
+  if (!targetUrl || !normalizeDesktopAuthToken(desktopAuthToken)) {
+    return failDisplayClientStartup(`无法验证已经运行的 ${PRODUCT_NAME} 后端，请在当前图形会话中重新启动。`);
   }
+  if (displayClientAuthTimer) clearTimeout(displayClientAuthTimer);
+  displayClientAuthTimer = null;
+  pendingDisplayClientUrl = "";
   webUrl = targetUrl;
   Menu.setApplicationMenu(null);
   ipcMain.on("terma:capabilities", handleDesktopCapabilities);
   ipcMain.on("terma:set-theme", handleDesktopTheme);
   createWindow({ displayClient:true });
   desktopStartupInProgress = false;
+  return true;
+}
+
+function startDisplayClient() {
+  const targetUrl = displayClientUrl();
+  if (!targetUrl) {
+    return failDisplayClientStartup(`无法连接已经运行的 ${PRODUCT_NAME} 后端，请在当前图形会话中重新启动。`);
+  }
+  pendingDisplayClientUrl = targetUrl;
+  if (displayClientAuthRejected) {
+    return failDisplayClientStartup("显示客户端收到的桌面认证令牌无效，请在当前图形会话中重新启动 Terma。");
+  }
+  if (normalizeDesktopAuthToken(desktopAuthToken)) return completeDisplayClientStartup();
+  if (!displayClientAuthTimer) {
+    displayClientAuthTimer = setTimeout(() => {
+      displayClientAuthTimer = null;
+      if (pendingDisplayClientUrl && !desktopAuthToken) {
+        failDisplayClientStartup("等待桌面认证令牌超时，请在当前图形会话中重新启动 Terma。");
+      }
+    }, DISPLAY_CLIENT_AUTH_TIMEOUT_MS);
+  }
   return true;
 }
 

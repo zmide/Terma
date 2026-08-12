@@ -1,4 +1,5 @@
 const TERMA_APPEARANCE_STORAGE_KEY = "termaAppearanceV1";
+const TERMA_APPEARANCE_EFFECTS_ENABLED = false;
 const TERMA_APPEARANCE_PRESETS = Object.freeze({
   clear:Object.freeze({preset:"clear", frosted_strength:0, liquid_strength:0}),
   luminous:Object.freeze({preset:"luminous", frosted_strength:53, liquid_strength:39})
@@ -50,12 +51,22 @@ function normalizeTermaAppearanceSettings(value={}) {
 }
 
 function readTermaAppearanceSettings() {
+  if (!TERMA_APPEARANCE_EFFECTS_ENABLED) {
+    try { localStorage.removeItem(TERMA_APPEARANCE_STORAGE_KEY); } catch {}
+    return {...TERMA_APPEARANCE_DEFAULTS};
+  }
   try { return normalizeTermaAppearanceSettings(JSON.parse(localStorage.getItem(TERMA_APPEARANCE_STORAGE_KEY) || "{}")); }
   catch { return {...TERMA_APPEARANCE_DEFAULTS}; }
 }
 
 function applyTermaAppearanceSettings(settings=termaAppearanceSettings) {
-  const value = normalizeTermaAppearanceSettings(settings);
+  const value = TERMA_APPEARANCE_EFFECTS_ENABLED
+    ? normalizeTermaAppearanceSettings(settings)
+    : {...TERMA_APPEARANCE_DEFAULTS};
+  termaAppearanceSettings = value;
+  if (!TERMA_APPEARANCE_EFFECTS_ENABLED) {
+    try { localStorage.removeItem(TERMA_APPEARANCE_STORAGE_KEY); } catch {}
+  }
   const root = document.documentElement;
   const frosted = value.frosted_strength;
   const liquid = value.liquid_strength;
@@ -417,7 +428,7 @@ function termaLiquidMutationAffectsTrack(track, records) {
 }
 
 function bindTermaLiquidTrack(track) {
-  if (!track || termaLiquidTrackObservers.has(track)) return;
+  if (!TERMA_APPEARANCE_EFFECTS_ENABLED || !track || termaLiquidTrackObservers.has(track)) return;
   track.classList.add("terma-liquid-track");
   track.dataset.liquidKind = track.classList.contains("activity-top")
     ? "activity"
@@ -431,7 +442,29 @@ function bindTermaLiquidTrack(track) {
   scheduleTermaLiquidTrack(track);
 }
 
+function clearTermaLiquidTrack(track) {
+  if (!track) return;
+  const frame = termaLiquidTrackFrames.get(track);
+  if (frame) cancelAnimationFrame(frame);
+  termaLiquidTrackFrames.delete(track);
+  termaLiquidTrackObservers.get(track)?.disconnect();
+  termaLiquidTrackObservers.delete(track);
+  termaLiquidResizeObserver?.unobserve(track);
+  resetTermaLiquidTrackMotion(track);
+  termaLiquidTrackMotions.delete(track);
+  track.querySelectorAll(":scope > .terma-liquid-lens").forEach(lens => lens.remove());
+  track.classList.remove("terma-liquid-track", "has-liquid-selection");
+  for (const key of ["liquidKind", "liquidAxis", "liquidMoving", "liquidDirection", "liquidGeometry", "liquidReady"]) delete track.dataset[key];
+  for (const property of ["--terma-liquid-lens-x", "--terma-liquid-lens-y", "--terma-liquid-lens-width", "--terma-liquid-lens-height", "--terma-liquid-lens-visibility"]) {
+    track.style.removeProperty(property);
+  }
+}
+
 function syncTermaLiquidNavigation() {
+  if (!TERMA_APPEARANCE_EFFECTS_ENABLED) {
+    document.querySelectorAll(".terma-liquid-track, :has(> .terma-liquid-lens)").forEach(clearTermaLiquidTrack);
+    return;
+  }
   [document.querySelector(".activity-top"), document.getElementById("explorerTools"), document.querySelector(".side-nav"), document.querySelector(".mobile-tabs")]
     .filter(Boolean)
     .forEach(bindTermaLiquidTrack);
