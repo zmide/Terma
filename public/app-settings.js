@@ -211,12 +211,6 @@ function renderSettings() {
           </section>
         </div>
       </div>
-      <div class="settings-group" id="settings-theme">
-        <div class="settings-group-head"><h3>主题配置</h3><span>选择界面预设，并分别调整毛玻璃与流光玻璃强度。</span></div>
-        <div class="settings-grid single">
-          ${themeAppearancePanelHtml()}
-        </div>
-      </div>
       <div class="settings-group" id="settings-cache">
         <div class="settings-group-head"><h3>缓存管理</h3><span>查看各类程序缓存占用，并按需释放可安全清理的内容。</span></div>
         <div class="settings-grid single">
@@ -248,7 +242,6 @@ function renderSettings() {
     </div></div>
   </div>`;
   restoreUiState(uiState);
-  bindThemeAppearancePanel();
   showSettingsSection(activeSettingsSection, {moveToWorkspace:false});
   syncRuntimeHostOptions();
   syncDesktopCustomDataMode();
