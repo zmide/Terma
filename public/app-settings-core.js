@@ -18,7 +18,6 @@ const SETTINGS_SECTION_META = {
   "settings-basic": "安全设置",
   "settings-notifications": "通知设置",
   "settings-runtime": "启动与运行",
-  "settings-theme": "主题配置",
   "settings-cache": "缓存管理",
   "settings-about": "关于"
 };
