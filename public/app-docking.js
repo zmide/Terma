@@ -744,7 +744,9 @@ function workspaceTabHtml(tab, pane) {
   const visibleInPane = tab.key === pane.activeTabKey;
   if (visibleInPane && tab.activityState) tab.activityState = "";
   const fullTitle = [tab.title, tab.subtitle, broadcastSelected ? "终端同步中" : "", multiSelected ? "已选中，可组成工作区" : ""].filter(Boolean).join(" - ");
-  const connectionStatus = ["terminal", "quick-terminal", "sftp", "remote-terminal", "remote-desktop"].includes(tab.kind) ? (tab.connectionStatus || "connecting") : "";
+  const showsConnectionStatus = ["terminal", "quick-terminal", "sftp", "remote-terminal"].includes(tab.kind)
+    || (tab.kind === "remote-desktop" && tab.protocol === "vnc");
+  const connectionStatus = showsConnectionStatus ? (tab.connectionStatus || "connecting") : "";
   const connectionDot = connectionStatus
     ? `<span class="tab-connection-dot ${connectionStatus}" title="${connectionStatus === "connected" ? "已连接" : connectionStatus === "disconnected" ? "已断开" : "连接中"}" aria-hidden="true"></span>`
     : "";
@@ -1092,6 +1094,7 @@ closeTab = function(event, key) {
 
 function workspaceTabNeedsCloseConfirmation(tab) {
   if (!tab) return false;
+  if (tab.kind === "remote-desktop" && tab.protocol !== "vnc") return false;
   if (["connected", "connecting"].includes(tab.connectionStatus)) return true;
   if (tab.connectionStatus === "disconnected") return false;
   const socketIsActive = socket => socket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(socket.readyState);
