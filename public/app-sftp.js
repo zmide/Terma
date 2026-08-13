@@ -265,6 +265,9 @@ async function loadSftpPage(options={}) {
       unfilteredTotal:Number(data.unfiltered_total || 0),
       recursiveSearch:Boolean(currentState.recursiveSearch),
       recursiveSearchTruncated:Boolean(data.truncated),
+      paged:Boolean(data.paged),
+      sort:["name","size","mtime"].includes(data.sort) ? data.sort : sort,
+      dir:data.dir === "desc" ? "desc" : dir,
       loading:false,
       requestSeq
     };
@@ -408,6 +411,8 @@ function sortMark(key, tabKey=activeTabKey) {
 function syncSftpListLayout(list=sftpElement("sftpList"), measuredWidth) {
   if (!list) return;
   const width = Number(measuredWidth) || list.getBoundingClientRect().width;
+  const lockedWidth = Number(list.dataset.sftpPixelColumnsWidth || 0);
+  if (lockedWidth > 0 && Math.abs(width - lockedWidth) > 1 && typeof releaseSftpPixelColumnLayout === "function") releaseSftpPixelColumnLayout(list);
   const mobile = isMobileLayout();
   list.classList.toggle("sftp-actions-medium", width > 0 && width <= 1200);
   list.classList.toggle("sftp-actions-compact", width > 0 && width <= 1000);
@@ -481,12 +486,20 @@ function renderSftpEntries(tabKey=activeTabKey) {
           ? `${entry.name} · 符号链接到目录`
           : `${entry.name} · 符号链接目标 ${formatBytes(entry.size)}（链接本身 ${formatBytes(entry.link_size || 0)}）`;
     const mobileType = isLink ? (isDir ? "链接目录" : "链接文件") : (isDir ? "目录" : "");
+    const mobileMeta = metadataKnown
+      ? [
+        mobileType || (!isDir ? formatBytes(entry.size) : ""),
+        entry.mtime ? formatSftpTime(entry.mtime) : "",
+        entry.mode || "---",
+        [entry.owner, entry.group].filter(Boolean).join(":")
+      ].filter(Boolean).join(" · ")
+      : mobileType || "路径索引";
     const active = state.selected?.path === fullPath;
     const columns = sftpOrderedColumnHtml({
-      name:`<button class="sftp-name sftp-column-name" title="${esc(linkDescription)}" onclick="event.stopPropagation(); selectSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')"><span class="sftp-icon ${entry.type} ${sftpFileKind(entry.name)} ${isLink ? "symlink" : ""}">${sftpIcon(entry.name, isDir)}</span><span class="sftp-name-copy"><span class="sftp-file-name">${esc(entry.name)}</span><span class="sftp-mobile-meta">${mobileType ? `${mobileType} · ` : ""}${isDir ? "" : `${formatBytes(entry.size)} · `}${entry.mtime ? formatSftpTime(entry.mtime) : "--"}</span></span></button>`,
+      name:`<button class="sftp-name sftp-column-name" title="${esc(linkDescription)}" onclick="event.stopPropagation(); selectSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')"><span class="sftp-icon ${entry.type} ${sftpFileKind(entry.name)} ${isLink ? "symlink" : ""}">${sftpIcon(entry.name, isDir)}</span><span class="sftp-name-copy"><span class="sftp-file-name">${esc(entry.name)}</span><span class="sftp-mobile-meta">${esc(mobileMeta)}</span></span></button>`,
       size:`<span class="sftp-size sftp-column-size">${!metadataKnown ? "--" : isDir ? sftpDirectorySizeButtonHtml(id, fullPath) : formatBytes(entry.size)}</span>`,
       mtime:`<span class="sftp-time sftp-column-mtime">${metadataKnown && entry.mtime ? formatSftpTime(entry.mtime) : "--"}</span>`,
-      access:`<span class="sftp-access sftp-column-access" title="${metadataKnown ? `权限 ${escAttr(entry.mode || "未知")}；所有者 ${escAttr(entry.owner || "未知")}；用户组 ${escAttr(entry.group || "未知")}` : "递归搜索结果未读取详细元数据"}"><code>${metadataKnown ? esc(entry.mode || "---") : "--"}</code><span>${metadataKnown ? esc(entry.owner || "未知") : "路径索引"}</span></span>`
+      access:`<span class="sftp-access sftp-column-access" title="${metadataKnown ? `权限 ${escAttr(entry.mode || "未知")}；所有者 ${escAttr(entry.owner || "未知")}；用户组 ${escAttr(entry.group || "未知")}` : "当前列表未读取详细元数据"}"><code>${metadataKnown ? esc(entry.mode || "---") : "--"}</code><span>${metadataKnown ? esc(entry.owner || "未知") : "路径索引"}</span></span>`
     });
     return `<div class="sftp-row ${active ? "active" : ""}" draggable="${isMobileLayout() ? "false" : "true"}" onclick="selectSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" ondblclick="activateSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" oncontextmenu="showSftpEntryMenu(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" onpointerdown="primeSftpNativeDrag(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" ondragstart="beginSftpItemDrag(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" ondragend="finishSftpItemDrag(event)">
       <input class="sftp-check" type="checkbox" value="${esc(fullPath)}" data-name="${esc(entry.name)}" data-type="${esc(entry.type)}" data-size="${Math.max(0, Number(entry.size || 0))}" data-mtime="${Math.max(0, Number(entry.mtime || 0))}" data-metadata-known="${metadataKnown ? "1" : "0"}" data-mode="${esc(entry.mode || "")}" data-owner="${esc(entry.owner || "")}" data-group="${esc(entry.group || "")}" aria-label="选择 ${esc(entry.name)}" onclick="handleSftpCheckboxSelection(event,'${escAttr(fullPath)}','${escAttr(tabKey)}')">
@@ -959,12 +972,19 @@ async function previewSftpText(id, path) {
 }
 
 function toggleSftpAll(checked, tabKey=activeTabKey) {
-  sftpElements(".sftp-check", tabKey).forEach(input => { input.checked = checked; });
+  const inputs = sftpElements(".sftp-check", tabKey);
+  inputs.forEach(input => { input.checked = checked; });
+  if (checked) {
+    const runtime = restoreSftpRuntimeForTab(tabKey);
+    if (runtime) runtime.state.selectionAnchorPath = inputs[0]?.value || "";
+  }
   updateSftpSelection(tabKey);
 }
 
 function updateSftpSelection(tabKey=activeTabKey) {
   const inputs = sftpElements(".sftp-check", tabKey);
+  const runtime = restoreSftpRuntimeForTab(tabKey);
+  const selectedPaths = new Set(inputs.filter(input => input.checked).map(input => String(input.value)));
   const count = inputs.filter(input => input.checked).length;
   const box = sftpElement("sftpSelectedInfo", tabKey);
   const bar = sftpElement("sftpSelectionBar", tabKey);
@@ -973,7 +993,7 @@ function updateSftpSelection(tabKey=activeTabKey) {
   const compress = sftpElement("sftpSelectionCompress", tabKey);
   const permissions = sftpElement("sftpSelectionPermissions", tabKey);
   if (box) box.innerHTML = `<strong>已选择 ${count} 项</strong><span>可批量操作当前页项目</span>`;
-  if (bar) bar.hidden = count === 0;
+  if (bar) bar.hidden = count < 2;
   if (selectAll) {
     selectAll.checked = inputs.length > 0 && count === inputs.length;
     selectAll.indeterminate = count > 0 && count < inputs.length;
@@ -981,7 +1001,13 @@ function updateSftpSelection(tabKey=activeTabKey) {
   if (extract) extract.hidden = !(count === 1 && isArchiveName(inputs.find(input => input.checked)?.value));
   if (compress) compress.hidden = count === 0;
   if (permissions) permissions.hidden = count === 0;
-  inputs.forEach(input => input.closest(".sftp-row")?.classList.toggle("is-selected", input.checked));
+  if (runtime?.state.selected?.path && !selectedPaths.has(String(runtime.state.selected.path))) runtime.state.selected = null;
+  inputs.forEach(input => {
+    const row = input.closest(".sftp-row");
+    row?.classList.toggle("is-selected", input.checked);
+    row?.classList.toggle("active", Boolean(runtime?.state.selected?.path) && String(input.value) === String(runtime.state.selected.path));
+  });
+  if (sftpActiveRuntimeKey === tabKey && runtime) sftpState = runtime.state;
 }
 
 function clearSftpSelection(tabKey=activeTabKey) {
@@ -1025,6 +1051,13 @@ function installSftpKeyboardShortcuts() {
         input?.focus();
         input?.select();
       }
+      return;
+    }
+    const editable = event.target?.closest?.("input, textarea, select, [contenteditable='true']");
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "a" && !editable) {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleSftpAll(true, activeTabKey);
       return;
     }
     if (event.key === "Escape") {

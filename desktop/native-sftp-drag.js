@@ -117,6 +117,13 @@ function nativeWindowHandle(browserWindow) {
     : BigInt(handle.readUInt32LE(0));
 }
 
+function normalizedUnixTimeMilliseconds(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  const milliseconds = numeric < 100_000_000_000 ? numeric * 1000 : numeric;
+  return Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.round(milliseconds)));
+}
+
 function createWindowsAdapter(options) {
   let module = null;
   try {
@@ -150,7 +157,7 @@ function createWindowsAdapter(options) {
         relativePath:String(item.name || "download"),
         isDirectory:false,
         size:Math.max(0, Number(item.size || 0)),
-        mtimeMs:Math.max(0, Number(item.modified_at || 0)) * 1000
+        mtimeMs:normalizedUnixTimeMilliseconds(item.modified_at)
       })) : null;
       const nativeSpec = {
         token: spec.token,
