@@ -52,6 +52,13 @@ function createLocalFilesUiModel() {
     innerHTML:"",
     addEventListener() {}
   };
+  const view = {
+    dataset:{workspaceTabKey:""},
+    innerHTML:"",
+    querySelector(selector) {
+      return selector === ".local-files-shell" && this.innerHTML ? {} : null;
+    }
+  };
   const rootElement = {
     querySelector(selector) {
       if (selector === ".local-files-list") return list;
@@ -69,6 +76,7 @@ function createLocalFilesUiModel() {
   const conflictCalls = [];
   const trackedJobs = [];
   const notifications = [];
+  const workspaceCalls = [];
   let capturedMenu = [];
   let conflictChoice = "rename";
   let localReceiveChoice = "rename";
@@ -94,8 +102,8 @@ function createLocalFilesUiModel() {
     renderTabContent() {},
     closeTabsByKey() {},
     workspaceElementForTab:() => rootElement,
-    workspaceTabByKey:() => null,
-    $:() => null,
+    workspaceTabByKey:key => sandbox.tabs.find(tab => tab.key === key) || null,
+    $:id => id === "view-local-files" ? view : null,
     icon:name => `<i data-icon="${name}"></i>`,
     esc:value => String(value ?? ""),
     escAttr:value => String(value ?? ""),
@@ -107,7 +115,7 @@ function createLocalFilesUiModel() {
     formatBytes:value => `${value} B`,
     formatSftpTime:value => String(value),
     requestAnimationFrame(callback) { callback(); return 1; },
-    setWorkspace() {},
+    setWorkspace(...args) { workspaceCalls.push(args); },
     saveTabsState() {},
     copyText() {},
     inputModal:async () => "",
@@ -130,7 +138,8 @@ function createLocalFilesUiModel() {
   sandbox.globalThis = sandbox;
 
   const exposed = `${localUiSource}\n;globalThis.__localFilesUiModel = {
-    localFilesRuntime,
+  localFilesRuntime,
+    openLocalFiles,
     updateLocalFilesSelection,
     applyLocalFileRangeSelection,
     selectLocalFileEntry,
@@ -144,6 +153,9 @@ function createLocalFilesUiModel() {
     uploadLocalFilesToSftp,
     localFilesReceiveConflictChoice,
     copySftpDraggedItemsToLocalTab,
+    captureLocalFilesScrollPosition,
+    restoreLocalFilesScrollPosition,
+    setLocalFilesPageSize,
     renderLocalFiles,
     syncLocalFilesScrollCue
   };`;
@@ -163,6 +175,8 @@ function createLocalFilesUiModel() {
     conflictCalls,
     trackedJobs,
     notifications,
+    view,
+    workspaceCalls,
     getMenu:() => capturedMenu,
     setConflictChoice:value => { conflictChoice = value; },
     setLocalReceiveChoice:value => { localReceiveChoice = value; }
@@ -182,7 +196,7 @@ function menuEvent({blank = false} = {}) {
 async function main() {
   assert.match(sftpUiSource, /function selectSftpEntry[\s\S]*?if \(event\?\.shiftKey \|\| event\?\.ctrlKey \|\| event\?\.metaKey\) applySftpRangeSelection/, "SFTP 普通单击只能设置当前项，Ctrl/Cmd 或 Shift 才进入批量选择");
   const state = createLocalFilesUiModel();
-  const {model, sandbox, checks, rows, selectionBar, selectionCount, singleActionButtons, selectAll, list} = state;
+  const {model, sandbox, checks, rows, selectionBar, selectionCount, singleActionButtons, selectAll, list, view, workspaceCalls} = state;
   const runtime = model.localFilesRuntime("local-main");
   runtime.entries = checks.map((input, index) => ({
     path:input.value,
@@ -191,6 +205,18 @@ async function main() {
     size:index + 1,
     mtime:0
   }));
+
+  runtime.path = "C:\\work";
+  runtime.location = "directory";
+  runtime.displayPath = "C:\\work";
+  runtime.loaded = true;
+  view.dataset.workspaceTabKey = "local-main";
+  view.innerHTML = '<div class="local-files-shell"></div>';
+  const apiCallsBeforeReuse = state.apiCalls.length;
+  await model.openLocalFiles("C:\\work", false, "local-main");
+  assert.equal(state.apiCalls.length, apiCallsBeforeReuse, "分屏重新挂载同一本地文件标签不得重复读取目录");
+  assert.equal(view.innerHTML, '<div class="local-files-shell"></div>', "分屏重新挂载同一本地文件标签不得重建现有视图");
+  assert.ok(workspaceCalls.length > 0, "分屏重新挂载同一本地文件标签仍必须同步工作区活动视图");
 
   model.selectLocalFileEntry({shiftKey:false, ctrlKey:false, metaKey:false, target:{closest:() => null}}, checks[0].value, "local-main");
   assert.deepEqual(checks.map(input => input.checked), [false, false, false], "普通单击文件名不得勾选批量复选框");
@@ -266,6 +292,15 @@ async function main() {
   const dragPayload = model.readLocalFileDragPayload(dataTransfer);
   assert.deepEqual(Array.from(dragPayload.paths), [checks[1].value, checks[2].value], "拖拽必须携带当前多选集合");
   assert.equal(dragData.get("text/plain"), `${checks[1].value}\n${checks[2].value}`);
+  runtime.entries = checks.map((input, index) => ({
+    path:input.value,
+    name:input.dataset.name,
+    type:"file",
+    size:index + 1,
+    mtime:0
+  }));
+  model.renderLocalFiles("local-main");
+  assert.match(list.innerHTML, /class="local-files-name" draggable="true"[^>]*data-dragstart-action="local-files-entry-drag-start"/, "从文件名区域开始拖动时也必须触发本地文件拖拽");
 
   const protectedDataTransfer = {
     types:["text/plain", "application/x-terma-local-files"],
@@ -338,6 +373,26 @@ async function main() {
   list.scrollTop = list.scrollHeight - list.clientHeight;
   model.syncLocalFilesScrollCue(list);
   assert.equal(list.classList.contains("has-scroll-below"), false, "滚动到底部后下方文件提示必须消失");
+
+  runtime.page = 2;
+  runtime.pageSize = 50;
+  runtime.total = 160;
+  runtime.totalPages = 4;
+  list.scrollHeight = 540;
+  list.clientHeight = 120;
+  list.scrollTop = 420;
+  let requestedPageSize = 0;
+  let requestedPage = 0;
+  sandbox.api = async url => {
+    const query = new URL(url, "http://localhost").searchParams;
+    requestedPageSize = Number(query.get("page_size") || 0);
+    requestedPage = Number(query.get("page") || 0);
+    return {kind:"directory", path:runtime.path, display_path:runtime.path, parent:"C:\\", parent_kind:"directory", entries:runtime.entries, page:requestedPage, page_size:requestedPageSize, total:160, total_pages:Math.ceil(160 / requestedPageSize)};
+  };
+  await model.setLocalFilesPageSize(100, "local-main");
+  assert.equal(requestedPageSize, 100, "修改每页数量必须使用新的分页大小重新读取目录");
+  assert.equal(requestedPage, 1, "修改每页数量后必须让原页首项目仍落在新的页码范围内");
+  assert.equal(list.scrollTop, list.scrollHeight - list.clientHeight, "在列表底部修改每页数量后必须继续停留在底部");
 
   model.clearLocalFilesSelection("local-main");
   assert.equal(selectionBar.hidden, true);

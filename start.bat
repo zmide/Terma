@@ -63,6 +63,8 @@ if not "%TERMA_WEB_ONLY%"=="1" (
   if exist "node_modules\.bin\electron.cmd" (
     call :ensure_electron
     if errorlevel 1 goto start_web
+    call npm run xserver:prepare
+    if errorlevel 1 goto failed
     call npm run native:build:if-needed
     if errorlevel 1 goto failed
     call :start_desktop_detached

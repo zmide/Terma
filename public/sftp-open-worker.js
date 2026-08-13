@@ -29,7 +29,11 @@ self.addEventListener("message", event => {
       const labels = {utf8:"utf-8", utf8bom:"utf-8"};
       content = new TextDecoder(labels[encoding] || encoding).decode(source);
     }
-    self.postMessage({ok:true, content, encoding, bom:encoding === "utf8bom" && hasBom});
+    let lineCount = 1;
+    for (let index = 0; index < content.length; index += 1) {
+      if (content.charCodeAt(index) === 10) lineCount += 1;
+    }
+    self.postMessage({ok:true, content, encoding, bom:encoding === "utf8bom" && hasBom, line_count:lineCount});
   } catch (error) {
     self.postMessage({ok:false, error:error?.message || "文本解码失败"});
   }

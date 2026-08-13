@@ -22,7 +22,6 @@
   --terma-liquid-flow-to-x:46%;
   --terma-liquid-flow-to-y:0%;
 }
-
 /* Dialogs use one stable frosted shell. The dimmer never samples the page, so
    every dialog gets exactly one blur pass even when liquid highlights are off. */
 html:not(.terma-frosted-disabled) .modal {
@@ -65,39 +64,11 @@ html:not(.terma-frosted-disabled) .modal-card:is(.sftp-editor-modal,.sftp-compar
   background:color-mix(in srgb,var(--panel) var(--terma-modal-surface-opacity),transparent) !important;
 }
 .modal-card { scrollbar-gutter:auto; }
-.modal-card.sftp-global-settings-modal,
 .modal-card.sftp-comparison-modal {
   overflow:hidden;
   scrollbar-gutter:auto;
 }
-.modal-card.sftp-global-settings-modal {
-  display:grid;
-  grid-template-rows:auto minmax(0,1fr) auto;
-  padding:0;
-}
 .modal-card.sftp-comparison-modal { padding:0; }
-.sftp-global-settings-modal > .sftp-modal-head {
-  position:relative !important;
-  top:auto !important;
-  z-index:2;
-  margin:0 !important;
-  padding:20px 20px 12px !important;
-}
-.sftp-global-settings-modal > .modal-scroll-body {
-  min-height:0;
-  padding:4px 20px 16px;
-  overflow-x:hidden;
-  overflow-y:auto;
-  overscroll-behavior:contain;
-  scrollbar-gutter:stable;
-}
-.sftp-global-settings-modal > .actions:last-child {
-  position:relative !important;
-  bottom:auto !important;
-  z-index:2;
-  margin:0 !important;
-  padding:12px 20px 20px !important;
-}
 .sftp-comparison-modal > .sftp-comparison-head,
 .sftp-comparison-modal > .actions:last-child {
   position:relative !important;
@@ -125,6 +96,11 @@ html:not(.terma-frosted-disabled) .modal-card > :is(
   border-color:color-mix(in srgb,var(--line) 86%,transparent);
   backdrop-filter:none !important;
   -webkit-backdrop-filter:none !important;
+}
+.modal-card .terminal-settings-head h2 {
+  margin:0 0 3px;
+  padding:0;
+  border:0;
 }
 html:not(.terma-frosted-disabled) .modal-card > .actions:last-child,
 html:not(.terma-frosted-disabled) .sftp-editor-modal > .actions,
@@ -753,10 +729,4 @@ html:not(.terma-frosted-disabled) .mobile-action-menu .action-menu-close {
     transform:translate3d(var(--terma-liquid-lens-x),var(--terma-liquid-lens-y),0);
   }
   .terma-liquid-lens::after { animation:none; opacity:0; }
-}
-
-@media (max-width:760px) {
-  .sftp-global-settings-modal > .actions:last-child {
-    padding-bottom:max(16px,env(safe-area-inset-bottom)) !important;
-  }
 }

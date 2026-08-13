@@ -7,6 +7,10 @@ const DEFAULT_LISTEN_HOSTS = ["127.0.0.1"];
 const DEFAULT_LISTEN_PORT = 8088;
 const MAX_PORT_FALLBACKS = 20;
 const DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB = 50;
+const DEFAULT_SFTP_LIGHT_EDITOR_THRESHOLD_MB = 10;
+const DEFAULT_SFTP_TRANSFER_CONCURRENCY = 3;
+const SFTP_TEXT_EDITOR_MODES = new Set(["ace", "auto", "light"]);
+const SFTP_EXTERNAL_EDIT_SAVE_RULES = new Set(["prompt", "overwrite"]);
 const DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT = Object.freeze({
   unsplit: Object.freeze({ terminal: "header", sftp: "header" }),
   split: Object.freeze({ terminal: "header", sftp: "header" })
@@ -141,7 +145,7 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 9,
+    schema_version: 11,
     listen_hosts: normalizeListenHosts(hostsValue, hostsValue === undefined ? (fallback.listen_hosts ?? DEFAULT_LISTEN_HOSTS) : null),
     listen_port: normalizeListenPort(portValue, portValue === undefined ? (fallback.listen_port ?? DEFAULT_LISTEN_PORT) : null),
     sftp_recycle_bin_enabled: value.sftp_recycle_bin_enabled === undefined
@@ -153,6 +157,29 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     sftp_max_open_file_size_mb: normalizeSftpMaxOpenFileSize(
       value.sftp_max_open_file_size_mb,
       fallback.sftp_max_open_file_size_mb
+    ),
+    sftp_text_editor_mode: normalizeSftpTextEditorMode(
+      value.sftp_text_editor_mode,
+      fallback.sftp_text_editor_mode
+    ),
+    sftp_light_editor_threshold_mb: normalizeSftpLightEditorThreshold(
+      value.sftp_light_editor_threshold_mb,
+      fallback.sftp_light_editor_threshold_mb
+    ),
+    sftp_external_edit_save_rule: normalizeSftpExternalEditSaveRule(
+      value.sftp_external_edit_save_rule,
+      fallback.sftp_external_edit_save_rule
+    ),
+    sftp_external_edit_backup_enabled: value.sftp_external_edit_backup_enabled === undefined
+      ? fallback.sftp_external_edit_backup_enabled !== false
+      : value.sftp_external_edit_backup_enabled !== false,
+    sftp_download_concurrency: normalizeSftpTransferConcurrency(
+      value.sftp_download_concurrency,
+      fallback.sftp_download_concurrency
+    ),
+    sftp_upload_concurrency: normalizeSftpTransferConcurrency(
+      value.sftp_upload_concurrency,
+      fallback.sftp_upload_concurrency
     ),
     sftp_download_directory: normalizeSftpDownloadDirectory(
       value.sftp_download_directory,
@@ -180,6 +207,30 @@ function normalizeSftpMaxOpenFileSize(value, fallback = DEFAULT_SFTP_MAX_OPEN_FI
   const size = Number(candidate);
   if (!Number.isInteger(size) || size < 1 || size > 100) throw new Error("SFTP 文件打开上限必须是 1-100 MB 的整数");
   return size;
+}
+
+function normalizeSftpTextEditorMode(value, fallback = "ace") {
+  const mode = String(value === undefined || value === null ? (fallback || "ace") : value).trim().toLowerCase();
+  return SFTP_TEXT_EDITOR_MODES.has(mode) ? mode : "ace";
+}
+
+function normalizeSftpLightEditorThreshold(value, fallback = DEFAULT_SFTP_LIGHT_EDITOR_THRESHOLD_MB) {
+  const candidate = value === undefined || value === null || String(value).trim() === "" ? fallback : value;
+  const size = Number(candidate);
+  if (!Number.isInteger(size) || size < 1 || size > 100) throw new Error("SFTP 轻量编辑器阈值必须是 1-100 MB 的整数");
+  return size;
+}
+
+function normalizeSftpExternalEditSaveRule(value, fallback = "prompt") {
+  const rule = String(value === undefined || value === null ? (fallback || "prompt") : value).trim().toLowerCase();
+  return SFTP_EXTERNAL_EDIT_SAVE_RULES.has(rule) ? rule : "prompt";
+}
+
+function normalizeSftpTransferConcurrency(value, fallback = DEFAULT_SFTP_TRANSFER_CONCURRENCY) {
+  const candidate = value === undefined || value === null || String(value).trim() === "" ? fallback : value;
+  const concurrency = Number(candidate);
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 8) throw new Error("SFTP 传输并发数必须是 1-8 的整数");
+  return concurrency;
 }
 
 function readRuntimeSettings(filePath) {
@@ -256,6 +307,8 @@ module.exports = {
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,
   DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB,
+  DEFAULT_SFTP_LIGHT_EDITOR_THRESHOLD_MB,
+  DEFAULT_SFTP_TRANSFER_CONCURRENCY,
   DEFAULT_LISTEN_HOSTS,
   DEFAULT_LISTEN_PORT,
   MAX_PORT_FALLBACKS,
@@ -265,7 +318,10 @@ module.exports = {
   normalizeListenPort,
   normalizeRuntimeSettings,
   normalizeSftpDownloadDirectory,
+  normalizeSftpExternalEditSaveRule,
+  normalizeSftpLightEditorThreshold,
   normalizeSftpMaxOpenFileSize,
+  normalizeSftpTextEditorMode,
   normalizeTerminalSettings,
   normalizeWorkspaceToolbarPlacement,
   readRuntimeSettings,

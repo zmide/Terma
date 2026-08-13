@@ -316,6 +316,7 @@ if [ "$TERMA_WEB_ONLY" != "1" ] && has_gui && [ -x node_modules/.bin/electron ];
     fi
   fi
   if electron_ready; then
+    npm run xserver:prepare || exit 1
     npm run native:build:if-needed || echo "Native SFTP drag build failed; desktop mode will use the available fallback."
     set_runtime_files "$DESKTOP_DATA_DIR"
     rm -f "$URL_FILE" "$INFO_FILE" "$TOKEN_FILE"

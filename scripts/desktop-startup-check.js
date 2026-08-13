@@ -19,6 +19,8 @@ assert.match(desktopMainSource, /desktopNotificationsAvailable\(\)/, "desktop no
 assert.match(desktopMainSource, /termaDisplaySession:\s*localLinuxDisplaySession/, "Linux second launches must report their graphical session with the Terma field");
 assert.match(desktopMainSource, /additionalData\?\.termaDisplaySession\s*\|\|\s*additionalData\?\.tunneldeskDisplaySession/, "Linux second launches must still accept the legacy TunnelDesk field");
 assert.match(desktopMainSource, /stdio:\s*\["ignore",\s*"ignore",\s*"ignore",\s*"ipc"\]/, "display clients must keep an IPC focus channel");
+assert.match(desktopMainSource, /function createStartupWindow\(/, "packaged startup must provide an immediate startup window");
+assert.match(desktopMainSource, /if \(!app\.isPackaged \|\| shouldStartInTray\(settings\)/, "the startup window must stay limited to packaged foreground launches");
 assert.doesNotMatch(
   desktopMainSource.slice(0, readyIndex),
   /migrateLegacyBrandUserData\(\);/,
@@ -49,6 +51,8 @@ globalThis.__desktopStartupTestApi = {
   applyLoginSetting,
   shouldStartInTray,
   relaunchInForeground,
+  createStartupWindow,
+  closeStartupWindow,
   createWindow,
   bringMainWindowToFront,
   showWindow,

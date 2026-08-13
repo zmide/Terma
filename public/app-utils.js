@@ -453,15 +453,24 @@ function createProgressToast(options={}) {
   toast.dataset.toastId = toastId;
   toast.setAttribute("role", "status");
   toast.setAttribute("aria-atomic", "true");
-  toast.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(options.icon || "loader-circle")}</span><div class="toast-copy"><strong></strong><span></span></div><button type="button" class="icon-button toast-progress-close" title="关闭提示" aria-label="关闭提示">${icon("x")}</button></div><div class="toast-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><div class="toast-progress-actions" hidden><button type="button" class="toast-progress-pause">${icon("pause")}<span>暂停</span></button></div>`;
+  toast.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(options.icon || "loader-circle")}</span><div class="toast-copy"><strong></strong><span></span></div><button type="button" class="icon-button toast-progress-close" title="关闭提示" aria-label="关闭提示">${icon("x")}</button></div><div class="toast-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><div class="toast-progress-actions" hidden><button type="button" class="toast-progress-pause">${icon("pause")}<span>暂停</span></button><button type="button" class="toast-progress-cancel">${icon("square")}<span>终止</span></button></div>`;
   const title = toast.querySelector(".toast-copy strong");
   const detail = toast.querySelector(".toast-copy span");
   const track = toast.querySelector(".toast-progress-track");
   const bar = track.querySelector("i");
   const actions = toast.querySelector(".toast-progress-actions");
   const pauseButton = toast.querySelector(".toast-progress-pause");
+  const cancelButton = toast.querySelector(".toast-progress-cancel");
   let settled = false;
   let paused = false;
+  let pausable = typeof options.onPauseChange === "function";
+  let cancellable = typeof options.onCancel === "function";
+
+  const syncActions = () => {
+    pauseButton.hidden = !pausable;
+    cancelButton.hidden = !cancellable;
+    actions.hidden = !pausable && !cancellable;
+  };
 
   const controller = {
     update(next={}) {
@@ -483,7 +492,9 @@ function createProgressToast(options={}) {
         track.removeAttribute("aria-valuenow");
       }
       if (next.paused !== undefined) controller.setPaused(Boolean(next.paused));
-      if (next.pausable !== undefined) actions.hidden = !next.pausable;
+      if (next.pausable !== undefined) pausable = Boolean(next.pausable) && typeof options.onPauseChange === "function";
+      if (next.cancellable !== undefined) cancellable = Boolean(next.cancellable) && typeof options.onCancel === "function";
+      syncActions();
     },
     setPaused(value) {
       paused = Boolean(value);
@@ -527,12 +538,13 @@ function createProgressToast(options={}) {
   title.textContent = String(options.title || "正在处理");
   detail.textContent = String(options.detail || "");
   detail.hidden = !detail.textContent;
-  actions.hidden = typeof options.onPauseChange !== "function";
+  syncActions();
   pauseButton.addEventListener("click", () => {
     const next = !paused;
     controller.setPaused(next);
     options.onPauseChange?.(next);
   });
+  cancelButton.addEventListener("click", () => controller.dismiss());
   toast.querySelector(".toast-progress-close").addEventListener("click", () => controller.dismiss());
   stack.appendChild(toast);
   controller.update({progress:options.progress});

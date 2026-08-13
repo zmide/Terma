@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const Module = require("node:module");
 const os = require("node:os");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-external-edit-"));
 process.env.TERMA_DATA_DIR = path.join(root, "data");
@@ -17,18 +18,20 @@ const sftpMock = {
     return {content:Buffer.from(buffer).toString("utf8"), encoding:"UTF-8"};
   },
   invalidateRemoteDirectoryCache() {},
-  async listRemoteDir(_connectionId, _parent, options={}) {
-    const name = String(options.query || "fixture.txt");
-    return {entries:[{name, type:"file", size:remoteContent.length, mtime:remoteMtime}]};
+  async listRemoteDir() {
+    throw new Error("external edit metadata must not scan the whole remote directory");
   },
   async readRemoteBinaryFile() {
     return {content:Buffer.from(remoteContent)};
   },
-  async writeRemoteFile(_connectionId, _remotePath, content) {
+  async readRemoteFileMetadata() {
+    return {size:remoteContent.length, mtime:remoteMtime};
+  },
+  async writeRemoteFile(_connectionId, _remotePath, content, options={}) {
     writes += 1;
     remoteContent = Buffer.from(content);
     remoteMtime += 1;
-    return {ok:true, backup_path:`/tmp/fixture.txt.bak-${writes}`};
+    return {ok:true, backup_path:options.backup ? `/tmp/fixture.txt.bak-${writes}` : null};
   }
 };
 
@@ -90,7 +93,71 @@ async function main() {
   } finally {
     service.stopAllExternalEdits();
   }
+  remoteContent = Buffer.from("auto original\n");
+  remoteMtime += 1;
+  const automatic = await service.startExternalEdit(connection.id, "/tmp/automatic.txt", {
+    open:async () => {},
+    saveRule:"overwrite",
+    backupOnAutoSave:false
+  });
+  try {
+    fs.writeFileSync(automatic.local_path, "automatic local change\n");
+    const synced = await waitForStatus(service, automatic.id, "synced");
+    assert.equal(synced.last_backup_path, "");
+    assert.equal(remoteContent.toString("utf8"), "automatic local change\n");
+    assert.match(synced.message, /自动覆盖远程文件/);
+  } finally {
+    service.stopAllExternalEdits();
+  }
+  await checkFrontendPromptQueue();
   console.log("SFTP external edit confirmation check passed.");
+}
+
+async function checkFrontendPromptQueue() {
+  const promptMessages = [];
+  const promptResolvers = [];
+  const resolvedSessionIds = [];
+  const source = fs.readFileSync(path.join(__dirname, "..", "public", "app-sftp-sync.js"), "utf8");
+  const context = {
+    api:async url => {
+      const match = String(url).match(/\/api\/sftp\/external-edits\/([^/]+)\/resolve$/);
+      if (!match) throw new Error(`unexpected frontend queue request: ${url}`);
+      resolvedSessionIds.push(match[1]);
+      return {id:match[1], status:"synced", message:"fixture saved", connection_id:0, remote_path:`/tmp/${match[1]}.txt`};
+    },
+    chooseModal:(_title, message) => new Promise(resolve => {
+      promptMessages.push(message);
+      promptResolvers.push(resolve);
+    }),
+    notify() {},
+    inputModal:async () => "",
+    queueSftpDirectoryRefresh() {},
+    flushPendingSftpDirectoryRefresh() {},
+    setInterval,
+    clearInterval,
+    setTimeout,
+    clearTimeout,
+    console
+  };
+  context.globalThis = context;
+  vm.runInNewContext(`${source}\n;globalThis.__externalEditQueueTest={productivityState,promptSftpExternalEdit};`, context, {filename:"app-sftp-sync.js"});
+  const {productivityState, promptSftpExternalEdit} = context.__externalEditQueueTest;
+  const firstPrompt = promptSftpExternalEdit({id:"queue-one", status:"modified", updated_at:1, connection_name:"fixture", remote_path:"/tmp/one.txt", can_compare:false});
+  await promptSftpExternalEdit({id:"queue-two", status:"modified", updated_at:2, connection_name:"fixture", remote_path:"/tmp/two.txt", can_compare:false});
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(promptMessages.length, 1, "the second external edit must wait for the first prompt");
+  assert.equal(productivityState.externalEditPromptQueue.length, 1);
+  promptResolvers.shift()("save");
+  for (let attempt = 0; attempt < 20 && promptResolvers.length === 0; attempt += 1) await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(promptMessages.length, 2, "the second prompt must open after the first resolves");
+  assert.deepEqual(resolvedSessionIds, ["queue-one"]);
+  promptResolvers.shift()("save");
+  await firstPrompt;
+  assert.match(promptMessages[0], /\/tmp\/one\.txt/);
+  assert.match(promptMessages[1], /\/tmp\/two\.txt/);
+  assert.deepEqual(resolvedSessionIds, ["queue-one", "queue-two"]);
+  assert.equal(productivityState.externalEditPromptQueue.length, 0);
+  assert.equal(productivityState.externalEditPrompts.size, 0);
 }
 
 main().catch(error => {
