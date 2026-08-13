@@ -155,7 +155,7 @@ const {
 } = require("./sftp-session");
 const { deleteCommandTemplate, handleBatchCommandUpgrade, listCommandTemplates, saveCommandTemplate, updateCommandTemplate } = require("./commands");
 const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemoteRecycleItem, encodeRemoteText, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteFileVersions, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, renameRemotePath, resolveRemoteUploadTarget, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
-const { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, pauseSftpJob, receiveUploadJobContent, resumeSftpJob, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream } = require("./sftp-jobs");
+const { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, pauseSftpJob, receiveUploadJobContent, resumeSftpJob, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream, waitForSftpTransferStart } = require("./sftp-jobs");
 const { getExternalEdit, getExternalEditComparison, listExternalEdits, resolveExternalEdit, startExternalEdit, stopAllExternalEdits, stopExternalEdit, stopExternalEditsForConnection } = require("./sftp-external-edit");
 const { cancelSyncJob, clearFinishedSyncJobs, deleteSyncJob, getSyncJob, listSyncJobs, retrySyncJob, startSyncJob, startSyncPlanningJob } = require("./sftp-sync");
 const {
@@ -415,12 +415,16 @@ async function streamNativeSftpDragContent(req, res, token, index) {
     "Accept-Ranges":"bytes",
     "Cache-Control":"no-store"
   });
-  const opened = await openNativeSftpDragTicketFile(token, index, range);
   const task = beginNativeSftpDragJob(token, ticket);
   if (task.status === "discarded") {
-    try { opened.stream.destroy(); } catch {}
     return sendJson(res, {error:"拖出已转为跨主机复制"}, 410);
   }
+  try {
+    await waitForSftpTransferStart(task.id);
+  } catch (error) {
+    return sendJson(res, {error:error?.message || "拖出下载已取消"}, 409);
+  }
+  const opened = await openNativeSftpDragTicketFile(token, index, range);
   trackNativeSftpDragStream(token, index, opened);
   const headers: any = {
     "Content-Type":"application/octet-stream",
@@ -1988,9 +1992,20 @@ async function handleApi(req, res, pathname) {
   }
   if (req.method === "POST" && pathname === "/api/sftp/download-settings/open") {
     if (!isDesktopRequest(req) || !desktopIntegration?.openDownloadDirectory) return sendJson(res, { error:"打开目录仅能在本机桌面端中使用" }, 403);
+    const data = await readJson(req);
+    const job = data.job_id ? listSftpJobs().find(item => String(item.id) === String(data.job_id)) : null;
     const saved = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
-    const directory = saved.sftp_download_directory || await Promise.resolve(desktopIntegration.getDownloadDirectory());
+    const directory = job?.delivery_status === "saved" && job.saved_path
+      ? path.dirname(job.saved_path)
+      : saved.sftp_download_directory || await Promise.resolve(desktopIntegration.getDownloadDirectory());
     return sendJson(res, await Promise.resolve(desktopIntegration.openDownloadDirectory(directory)));
+  }
+  if (req.method === "POST" && pathname === "/api/sftp/download-settings/open-file") {
+    if (!isDesktopRequest(req) || !desktopIntegration?.openLocalPath) return sendJson(res, { error:"打开文件仅能在本机桌面端中使用" }, 403);
+    const data = await readJson(req);
+    const job = listSftpJobs().find(item => String(item.id) === String(data.job_id || ""));
+    if (!job || job.type !== "download" || job.delivery_status !== "saved" || !job.saved_path) return sendJson(res, {error:"下载文件不存在或已被清理"}, 404);
+    return sendJson(res, await Promise.resolve(desktopIntegration.openLocalPath(job.saved_path)));
   }
   if (req.method === "GET" && pathname === "/api/export/config") return sendJson(res, { config: exportConfig() });
 
@@ -2506,8 +2521,13 @@ async function handleApi(req, res, pathname) {
     if (req.method === "POST" && parts.length === 5 && parts[4] === "external-edit") {
       if (!isDesktopRequest(req) || !desktopIntegration?.openExternalFile) return sendJson(res, {error:"外部编辑器只能在本机桌面端中使用"}, 403);
       const data = await readJson(req);
+      const externalEditSettings = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
       return sendJson(res, await startExternalEdit(connectionId, data.path, {
         editor:data.editor || {},
+        saveRule:data.save_rule || externalEditSettings.sftp_external_edit_save_rule,
+        backupOnAutoSave:data.backup_on_auto_save === undefined
+          ? externalEditSettings.sftp_external_edit_backup_enabled
+          : data.backup_on_auto_save !== false,
         open:(file, editor) => desktopIntegration.openExternalFile(file, editor)
       }), 201);
     }

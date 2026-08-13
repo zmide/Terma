@@ -95,6 +95,7 @@ function checkTerminalElementIsolation() {
 function loadDockingModel() {
   const filename = path.join(root, "scripts", "workspace-docking-check.js");
   const source = fs.readFileSync(filename, "utf8")
+    .replace(/\r\n?/g, "\n")
     .replace(
       "setWorkspaceSplitRatio,\n      focusWorkspacePane,\n      duplicateWorkspaceTab,",
       "setWorkspaceSplitRatio,\n      focusWorkspacePane,\n      captureWorkspacePane,\n      captureWorkspaceTab,\n      currentWorkspacePaneId,\n      duplicateWorkspaceTab,"

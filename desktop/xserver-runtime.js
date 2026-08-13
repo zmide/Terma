@@ -512,7 +512,7 @@ function createXServerRuntime(options = {}) {
       xdmcp_client:xdmcpClient,
       rdp_client:freeRdpClient,
       package_manager:packageManager,
-      mode:display ? "native" : "missing",
+      mode:"native",
       server:display ? "X.Org/Xwayland" : "",
       executable:xauth,
       display,

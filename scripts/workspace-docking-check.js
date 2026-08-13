@@ -544,8 +544,8 @@ function runWorkspaceDockingChecks({silent=false}={}) {
     assert.equal(new Set(keys).size, 2);
     assert.equal(terminalCall.id, 7);
     assert.equal(terminalCall.updateTab, true);
-    assert.match(terminalCall.existingKey, /^terminal-7-1-copy-\d+$/);
-    assert.match(terminalCall.title, /副本/);
+    assert.equal(terminalCall.existingKey, "terminal-7-2");
+    assert.equal(terminalCall.title, "Host #2");
   });
 
   check("ordinary workspace tabs also duplicate with independent keys", () => {

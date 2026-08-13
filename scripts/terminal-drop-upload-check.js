@@ -25,6 +25,7 @@ function frontendFunction(name) {
 }
 
 const trackedDirectoryCommands = [];
+const recordedCommands = [];
 const terminalCommandHarness = new Function(
   "saveRecentTerminalCommand",
   "currentConnection",
@@ -32,47 +33,70 @@ const terminalCommandHarness = new Function(
   "activeTabKey",
   `"use strict";
 ${frontendFunction("cleanTerminalCommandText")}
+${frontendFunction("terminalPromptStateAtRow")}
 ${frontendFunction("currentTerminalPromptCommand")}
+${frontendFunction("recordTerminalCommand")}
+${frontendFunction("markTerminalCommandScreenSync")}
+${frontendFunction("refreshTerminalCommandBufferFromScreen")}
+${frontendFunction("captureTerminalCommandSubmission")}
+${frontendFunction("finalizePendingTerminalCommand")}
 ${frontendFunction("trackTerminalCommand")}
-return {currentTerminalPromptCommand, trackTerminalCommand};`
+return {currentTerminalPromptCommand, finalizePendingTerminalCommand, trackTerminalCommand};`
 )(
-  () => {},
+  command => recordedCommands.push(command),
   id => ({id}),
   (_session, _connection, _key, command) => trackedDirectoryCommands.push(command),
   "terminal-active"
 );
 
-function promptSession(line) {
-  return {
+function promptSession(line, cursorX=String(line).length) {
+  const session = {
     id:1,
     key:"terminal-1",
+    promptLine:String(line),
     term:{
       buffer:{
         active:{
           baseY:0,
           cursorY:0,
-          getLine:() => ({translateToString:() => line})
+          cursorX,
+          getLine:() => ({translateToString:() => session.promptLine})
         }
       }
     }
   };
+  return session;
 }
 
 for (const line of [
   "root@linux:/tmp# cd Downloads",
   "user@linux:~$ cd Downloads",
   "tester@fixture-mac ~ % cd Downloads",
-  "PS C:\\\\Users\\\\tester> cd Downloads"
+  "PS C:\\\\Users\\\\tester> cd Downloads",
+  "hx1-tcm1{ha2}[3]: cd Downloads"
 ]) {
   assert.equal(terminalCommandHarness.currentTerminalPromptCommand(promptSession(line)), "cd Downloads");
 }
 
-const zshTabCompletionSession = promptSession("tester@fixture-mac ~ % cd Downloads");
+const zshTabCompletionSession = promptSession("tester@fixture-mac ~ % cd Down");
 terminalCommandHarness.trackTerminalCommand(zshTabCompletionSession, "cd Down");
 terminalCommandHarness.trackTerminalCommand(zshTabCompletionSession, "\t");
-assert.equal(zshTabCompletionSession.commandBuffer, "", "Tab 补全后命令缓冲应清空并改从当前终端行读取");
+zshTabCompletionSession.promptLine = "tester@fixture-mac ~ % cd Downloads";
+zshTabCompletionSession.term.buffer.active.cursorX = zshTabCompletionSession.promptLine.length;
 terminalCommandHarness.trackTerminalCommand(zshTabCompletionSession, "\r");
+assert.equal(zshTabCompletionSession.commandBuffer, "", "Tab 补全提交后命令缓冲应清空");
 assert.deepEqual(trackedDirectoryCommands, ["cd Downloads"]);
+assert.deepEqual(recordedCommands, ["cd Downloads"]);
+
+const historyEditSession = promptSession("hx1-tcm1{ha2}[3]: ");
+terminalCommandHarness.trackTerminalCommand(historyEditSession, "\x1b[A");
+historyEditSession.promptLine = "hx1-tcm1{ha2}[3]: tail -F | grep 45-03-37";
+historyEditSession.term.buffer.active.cursorX = historyEditSession.promptLine.length;
+terminalCommandHarness.trackTerminalCommand(historyEditSession, "\x1b[D");
+historyEditSession.term.buffer.active.cursorX = historyEditSession.promptLine.indexOf("| grep");
+terminalCommandHarness.trackTerminalCommand(historyEditSession, "cchmsg45 ");
+terminalCommandHarness.trackTerminalCommand(historyEditSession, "\r");
+assert.equal(recordedCommands.at(-1), "tail -F cchmsg45 | grep 45-03-37", "方向键召回并在中间插入文本后应记录完整命令");
 
 const probedDirectories = [];
 const directoryTrackingHarness = new Function(

@@ -20,7 +20,7 @@ function localFilesRoot(tabKey) {
 function localFilesRuntime(tabKey) {
   const key = String(tabKey || "");
   if (!localFileRuntimes.has(key)) {
-    localFileRuntimes.set(key, {path:"", location:"directory", displayPath:"", parent:"", parentKind:"none", entries:[], page:1, pageSize:50, total:0, totalPages:1, query:"", sort:"name", dir:"asc", activePath:"", anchorPath:"", navigation:{paths:[], index:-1}});
+    localFileRuntimes.set(key, {path:"", location:"directory", displayPath:"", parent:"", parentKind:"none", entries:[], page:1, pageSize:50, total:0, totalPages:1, query:"", sort:"name", dir:"asc", activePath:"", anchorPath:"", loaded:false, scrollTop:0, scrollAtBottom:false, navigation:{paths:[], index:-1}});
   }
   return localFileRuntimes.get(key);
 }
@@ -106,8 +106,22 @@ async function openLocalFiles(requestedPath="", updateTab=true, existingKey="") 
   const storedPath = requestedPath || tab?.path || runtime.path || "";
   const computer = storedPath === LOCAL_FILES_COMPUTER_PATH || tab?.localLocation === "computer" || runtime.location === "computer";
   const pathValue = computer ? "" : storedPath;
-  runtime.location = computer ? "computer" : "directory";
   const view = $("view-local-files");
+  const mountedShell = view?.dataset.workspaceTabKey === key && view.querySelector(".local-files-shell");
+  const mountedPathMatches = computer
+    ? runtime.location === "computer"
+    : runtime.location === "directory" && localDeliveryPathKey(runtime.path) === localDeliveryPathKey(pathValue);
+  if (mountedShell && runtime.loaded && mountedPathMatches) {
+    setWorkspace("本地文件", runtime.displayPath || (computer ? "此电脑" : pathValue || "系统桌面"), "local-files", key, updateTab, true, {
+      kind:"local-files",
+      path:computer ? LOCAL_FILES_COMPUTER_PATH : pathValue,
+      localLocation:computer ? "computer" : "directory"
+    });
+    syncLocalFilesNavigationButtons(key);
+    syncLocalFilesCreateButtons(key);
+    return key;
+  }
+  runtime.location = computer ? "computer" : "directory";
   view.dataset.workspaceTabKey = key;
   view.innerHTML = `<div class="local-files-shell" data-local-files-tab-key="${escAttr(key)}" data-tab-key="${escAttr(key)}" data-dragover-action="local-files-drag-over" data-dragleave-action="local-files-drag-leave" data-drop-action="local-files-drop">
     <div class="local-files-top">
@@ -160,6 +174,9 @@ async function loadLocalFiles(tabKey, options={}) {
   if (!root || !list) return;
   const requestedPath = options.path !== undefined ? options.path : runtime.path;
   const location = options.location || (requestedPath === LOCAL_FILES_COMPUTER_PATH ? "computer" : runtime.location);
+  const sameLocation = location === runtime.location && (location === "computer" || localDeliveryPathKey(requestedPath) === localDeliveryPathKey(runtime.path));
+  const preserveScroll = options.preserveScroll === true || (options.refresh === true && sameLocation);
+  const scrollPosition = options.scrollPosition || (preserveScroll ? captureLocalFilesScrollPosition(tabKey, list) : null);
   const displayRequest = location === "computer" ? "此电脑" : requestedPath || "系统桌面";
   const params = new URLSearchParams({
     page:String(options.page || runtime.page || 1),
@@ -182,7 +199,8 @@ async function loadLocalFiles(tabKey, options={}) {
     total:Number(data.total || 0),
     totalPages:Number(data.total_pages || 1),
     parent:data.parent || "",
-    parentKind:data.parent_kind || "none"
+    parentKind:data.parent_kind || "none",
+    loaded:true
   });
   if (!runtime.entries.some(entry => String(entry.path) === String(runtime.activePath || ""))) runtime.activePath = "";
   if (!options.historyNavigation) rememberLocalFilesNavigation(tabKey);
@@ -199,11 +217,30 @@ async function loadLocalFiles(tabKey, options={}) {
   if (tabKey === activeTabKey) $("workspaceSubtitle").textContent = runtime.displayPath || (runtime.location === "computer" ? "此电脑" : runtime.path);
   syncLocalFilesNavigationButtons(tabKey);
   syncLocalFilesCreateButtons(tabKey);
-  renderLocalFiles(tabKey);
+  renderLocalFiles(tabKey, {scrollPosition});
   saveTabsState();
 }
 
-function renderLocalFiles(tabKey) {
+function captureLocalFilesScrollPosition(tabKey, list=localFilesRoot(tabKey)?.querySelector(".local-files-list")) {
+  const runtime = localFilesRuntime(tabKey);
+  if (!list) return {top:Number(runtime.scrollTop || 0), atBottom:Boolean(runtime.scrollAtBottom)};
+  const maximum = Math.max(0, Number(list.scrollHeight || 0) - Number(list.clientHeight || 0));
+  const top = Math.max(0, Math.min(maximum, Number(list.scrollTop || 0)));
+  const position = {top, atBottom:maximum - top <= 2};
+  runtime.scrollTop = position.top;
+  runtime.scrollAtBottom = position.atBottom;
+  return position;
+}
+
+function restoreLocalFilesScrollPosition(tabKey, position, list=localFilesRoot(tabKey)?.querySelector(".local-files-list")) {
+  if (!list || !position) return;
+  const maximum = Math.max(0, Number(list.scrollHeight || 0) - Number(list.clientHeight || 0));
+  list.scrollTop = position.atBottom ? maximum : Math.max(0, Math.min(maximum, Number(position.top || 0)));
+  captureLocalFilesScrollPosition(tabKey, list);
+  syncLocalFilesScrollCue(list);
+}
+
+function renderLocalFiles(tabKey, options={}) {
   const runtime = localFilesRuntime(tabKey);
   const root = localFilesRoot(tabKey);
   const list = root?.querySelector(".local-files-list");
@@ -218,7 +255,7 @@ function renderLocalFiles(tabKey) {
     const active = String(runtime.activePath || "") === String(entry.path);
     return `<div class="local-files-row ${isDrive ? "is-drive" : ""} ${active ? "active" : ""}" draggable="${isMobileLayout() || isDrive ? "false" : "true"}" data-path="${escAttr(entry.path)}" data-entry-type="${escAttr(entry.type)}" data-tab-key="${escAttr(tabKey)}" data-action="local-files-entry-select" data-dblclick-action="local-files-entry-activate" data-contextmenu-action="local-files-entry-menu" data-dragstart-action="local-files-entry-drag-start" data-dragend-action="local-files-entry-drag-end">
       <input class="local-files-check" type="checkbox" value="${escAttr(entry.path)}" data-name="${escAttr(entry.name)}" data-type="${escAttr(entry.type)}" data-size="${Math.max(0, Number(entry.size || 0))}" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}" data-action="local-files-entry-checkbox" aria-label="选择 ${escAttr(entry.name)}" ${isDrive ? "disabled" : ""}>
-      <button class="local-files-name" data-action="local-files-entry-select-stop" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}"><span class="sftp-icon ${isDrive ? "drive" : entry.type}">${iconMarkup}</span><span class="local-files-name-copy"><span class="local-files-file-name">${esc(entry.name)}</span><span class="local-files-mobile-meta">${esc(mobileMeta)}</span></span></button>
+      <button class="local-files-name" draggable="${isMobileLayout() || isDrive ? "false" : "true"}" data-action="local-files-entry-select-stop" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}" data-dragstart-action="local-files-entry-drag-start" data-dragend-action="local-files-entry-drag-end"><span class="sftp-icon ${isDrive ? "drive" : entry.type}">${iconMarkup}</span><span class="local-files-name-copy"><span class="local-files-file-name">${esc(entry.name)}</span><span class="local-files-mobile-meta">${esc(mobileMeta)}</span></span></button>
       <span class="local-files-size" title="${escAttr(sizeText)}">${esc(sizeText)}</span><span class="local-files-time">${entry.mtime ? formatSftpTime(entry.mtime) : "--"}</span>
     </div>`;
   }).join("");
@@ -229,6 +266,7 @@ function renderLocalFiles(tabKey) {
   list.innerHTML = head + (rows || stateView("empty", runtime.query ? "没有匹配的本地文件" : "当前目录为空", runtime.path)) + pager;
   watchLocalFilesListLayout(list, tabKey);
   updateLocalFilesSelection(tabKey);
+  restoreLocalFilesScrollPosition(tabKey, options.scrollPosition, list);
 }
 
 function localFileChecks(tabKey) {
@@ -424,7 +462,10 @@ function watchLocalFilesListLayout(list, tabKey) {
   if (!list) return;
   if (list.dataset.localScrollCueBound !== "1") {
     list.dataset.localScrollCueBound = "1";
-    list.addEventListener("scroll", () => syncLocalFilesScrollCue(list), {passive:true});
+    list.addEventListener("scroll", () => {
+      captureLocalFilesScrollPosition(tabKey, list);
+      syncLocalFilesScrollCue(list);
+    }, {passive:true});
   }
   syncLocalFilesScrollCue(list);
   requestAnimationFrame(() => syncLocalFilesScrollCue(list));
@@ -645,8 +686,14 @@ function toggleAllLocalFiles(checked, tabKey) {
 
 function setLocalFilesPageSize(value, tabKey) {
   const runtime = localFilesRuntime(tabKey);
+  const scrollPosition = captureLocalFilesScrollPosition(tabKey);
+  const firstItemIndex = Math.max(0, Number(runtime.page || 1) - 1) * Number(runtime.pageSize || 50);
   runtime.pageSize = Math.max(25, Math.min(200, Number(value || 50)));
-  return loadLocalFiles(tabKey, {page:1});
+  return loadLocalFiles(tabKey, {
+    page:Math.floor(firstItemIndex / runtime.pageSize) + 1,
+    preserveScroll:true,
+    scrollPosition
+  });
 }
 
 function setLocalFilesSearch(value, tabKey) {
