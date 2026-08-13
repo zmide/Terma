@@ -152,6 +152,8 @@ function watchSession(session) {
     clearTimeout(session.timer);
     session.timer = setTimeout(() => syncLocalChange(session), 350);
   });
+  clearTimeout(session.timer);
+  session.timer = setTimeout(() => syncLocalChange(session), 1050);
 }
 
 async function startExternalEdit(connectionId, remotePathValue, options: any = {}) {
