@@ -140,7 +140,7 @@ const { componentInstallCommand } = require("./remote-component-installer");
 const { createRemoteOfflineTaskManager } = require("./remote-offline-tasks");
 const { clearVncClipboardCapabilityCache, inspectVncClipboardHelper, readVncRemoteClipboard, vncClipboardHelperGuideResult, writeVncRemoteClipboard } = require("./vnc-clipboard");
 const { cleanupFtpTemp, deleteFtpPath, downloadFtpFile, listFtpDirectory, makeFtpDirectory, renameFtpPath, testFtpCredentials, testFtpProfile, uploadFtpFile } = require("./ftp");
-const { chmodLocalPath, createLocalEntry, deleteLocalPaths, listLocalDirectory, renameLocalPath, uploadLocalPaths } = require("./local-files");
+const { chmodLocalPath, copyLocalPaths, createLocalEntry, deleteLocalPaths, listLocalDirectory, planLocalPathCopy, renameLocalPath, uploadLocalPaths } = require("./local-files");
 const {
   closeAllSftpSessions,
   connectSftpSession,
@@ -1935,6 +1935,14 @@ async function handleApi(req, res, pathname) {
       const data = await readJson(req);
       const result = await uploadLocalPaths(Number(data.connection_id), data.paths || [], data.target || ".", data.conflict || "error");
       return sendJson(res, result, 202);
+    }
+    if (req.method === "POST" && pathname === "/api/local-files/copy-plan") {
+      const data = await readJson(req);
+      return sendJson(res, planLocalPathCopy(data.paths || [], data.target || ""));
+    }
+    if (req.method === "POST" && pathname === "/api/local-files/copy") {
+      const data = await readJson(req);
+      return sendJson(res, copyLocalPaths(data.paths || [], data.target || "", data.conflict || "error"));
     }
     if (req.method === "POST" && pathname === "/api/local-files/receive-plan") {
       const data = await readJson(req);

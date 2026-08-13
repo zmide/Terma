@@ -232,6 +232,83 @@ function chmodLocalPath(value, modeValue) {
   return {ok:true, path:target, mode};
 }
 
+function localCopyTargetPath(directoryValue, nameValue, conflict = "error", reservedTargets = new Set<string>()) {
+  const directory = normalizeLocalDirectory(directoryValue);
+  const name = validateLocalName(nameValue);
+  const initial = path.join(directory, name);
+  const reserved = candidate => reservedTargets.has(path.resolve(candidate));
+  const initialExists = fs.existsSync(initial);
+  if (!initialExists && !reserved(initial)) return {path:initial, exists:false, name};
+  if (conflict === "overwrite") return {path:initial, exists:initialExists, name};
+  if (conflict !== "rename") return {path:initial, exists:initialExists, name};
+  const extension = path.extname(name);
+  const base = extension ? name.slice(0, -extension.length) : name;
+  for (let index = 2; index <= 10000; index += 1) {
+    const renamed = `${base} (${index})${extension}`;
+    const candidate = path.join(directory, renamed);
+    if (!fs.existsSync(candidate) && !reserved(candidate)) return {path:candidate, exists:false, name:renamed};
+  }
+  throw new Error(`无法为本地项目生成可用名称：${name}`);
+}
+
+function planLocalPathCopy(values, targetDirectory, conflict = "error") {
+  const sources = normalizeLocalTransferPaths(values);
+  const target = normalizeLocalDirectory(targetDirectory);
+  const mode = ["overwrite", "rename"].includes(String(conflict || "")) ? String(conflict) : "error";
+  const sourcePaths = new Set(sources.map(item => path.resolve(item.path)));
+  const plannedTargets = new Set<string>();
+  return {
+    items:sources.map(item => {
+      const source = path.resolve(item.path);
+      if (path.resolve(path.dirname(source)) === target) throw new Error(`来源与目标目录相同：${path.basename(source)}`);
+      if (item.stat.isDirectory()) {
+        // Validate before any target is removed so a nested symbolic link can
+        // never leave a partially overwritten destination behind.
+        collectLocalTree(source);
+        if (target === source || target.startsWith(`${source}${path.sep}`)) {
+          throw new Error(`不能将目录复制到自身或其子目录：${path.basename(source)}`);
+        }
+      }
+      const destination = localCopyTargetPath(target, path.basename(source), mode, plannedTargets);
+      const destinationKey = path.resolve(destination.path);
+      if (plannedTargets.has(destinationKey)) throw new Error(`本次传输存在同名目标项目：${destination.name}`);
+      plannedTargets.add(destinationKey);
+      if (destination.exists && sourcePaths.has(destinationKey)) throw new Error(`不能覆盖本次传输的来源项目：${destination.name}`);
+      if (destination.exists) {
+        const existing = fs.lstatSync(destination.path);
+        if (existing.isSymbolicLink()) throw new Error(`目标目录中的同名项目是符号链接：${destination.name}`);
+      }
+      return {path:source, name:destination.name, exists:destination.exists, target:destination.path};
+    })
+  };
+}
+
+function copyLocalPaths(values, targetDirectory, conflict = "error") {
+  const sources = normalizeLocalTransferPaths(values);
+  const target = normalizeLocalDirectory(targetDirectory);
+  const sourcePaths = new Set(sources.map(item => path.resolve(item.path)));
+  const mode = ["overwrite", "rename"].includes(String(conflict || "")) ? String(conflict) : "error";
+  const plan = planLocalPathCopy(values, target, mode);
+  if (mode === "error" && plan.items.some(item => item.exists)) {
+    const conflictItem = plan.items.find(item => item.exists);
+    throw new Error(`目标目录已存在同名项目：${conflictItem.name}`);
+  }
+  const copied = [];
+  for (const [index, item] of sources.entries()) {
+    const source = path.resolve(item.path);
+    const planned = plan.items[index];
+    const destinationPath = planned.target;
+    if (planned.exists && sourcePaths.has(path.resolve(destinationPath))) throw new Error(`不能覆盖本次传输的来源项目：${planned.name}`);
+    if (planned.exists) {
+      const existing = fs.lstatSync(destinationPath);
+      fs.rmSync(destinationPath, {recursive:existing.isDirectory(), force:false});
+    }
+    fs.cpSync(source, destinationPath, {recursive:item.stat.isDirectory(), dereference:false, errorOnExist:false, force:false});
+    copied.push({path:destinationPath, name:planned.name});
+  }
+  return {ok:true, count:copied.length, items:copied};
+}
+
 function collectLocalTree(root, relative = "", result: any[] = []) {
   if (result.length >= LOCAL_TRANSFER_ENTRY_LIMIT) throw new Error(`单次本地传输最多包含 ${LOCAL_TRANSFER_ENTRY_LIMIT} 个文件和目录`);
   const current = relative ? path.join(root, relative) : root;
@@ -294,5 +371,7 @@ module.exports = {
   deleteLocalPaths,
   createLocalEntry,
   chmodLocalPath,
+  planLocalPathCopy,
+  copyLocalPaths,
   uploadLocalPaths
 };

@@ -3,7 +3,8 @@ function hideSftpContextMenu() {
 }
 
 function showSftpEntryMenu(event, id, path, name, type, tabKey=sftpTabKeyFromNode(event?.currentTarget)) {
-  selectSftpEntry({shiftKey:false, ctrlKey:false, metaKey:false}, id, path, name, type, tabKey);
+  const alreadySelected = selectedSftpPaths(tabKey).includes(path);
+  selectSftpEntry({shiftKey:false, ctrlKey:false, metaKey:false, preserveSelection:alreadySelected, forceSingle:true}, id, path, name, type, tabKey);
   const isDir = type === "dir";
   const rect = event.currentTarget?.getBoundingClientRect?.();
   const menuEvent = {
@@ -12,6 +13,9 @@ function showSftpEntryMenu(event, id, path, name, type, tabKey=sftpTabKeyFromNod
     clientX: event.clientX || rect?.right || 8,
     clientY: event.clientY || rect?.bottom || 8
   };
+  const peerTransferActions = typeof workspaceSftpPathTransferActions === "function"
+    ? workspaceSftpPathTransferActions(tabKey, id, path, name, type)
+    : [];
   showActionMenu(menuEvent, [
     isDir
       ? {label:"打开", icon:"folder-open", run:()=>navigateSftpPath(path, tabKey)}
@@ -22,6 +26,7 @@ function showSftpEntryMenu(event, id, path, name, type, tabKey=sftpTabKeyFromNod
     ...(isDir && window.termaDesktop ? [{label:"与本地目录比较同步", icon:"refresh-cw", run:()=>openSftpDirectorySync(id, path, tabKey)}] : []),
     {label:"下载", icon:"download", run:()=>downloadSftp(id, path, isDir ? "dir" : "file")},
     ...(window.termaDesktop && typeof sendSftpPathsToDesktop === "function" ? [{label:"发送到桌面", icon:"monitor-down", run:()=>sendSftpPathsToDesktop(id, [path])}] : []),
+    ...(peerTransferActions.length ? [{label:"发送到对端", icon:"send", children:peerTransferActions}] : []),
     ...(!isDir && isArchiveName(name) ? [{label:"解压", icon:"archive-restore", run:()=>extractSingleSftp(id, path, tabKey)}] : []),
     {label:"压缩", icon:"archive", run:()=>compressSingleSftp(id, path, tabKey)},
     {separator:true},

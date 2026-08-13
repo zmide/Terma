@@ -5626,11 +5626,24 @@ app.whenReady().then(async () => {
     checks[0].checked = true;
     checks[1].checked = true;
     updateSftpSelection(fixtureTabKey);
+    selectSftpEntry({shiftKey:false,ctrlKey:false,metaKey:false},1,checks[2].value,checks[2].dataset.name,checks[2].dataset.type,fixtureTabKey);
+    const multiNameAddsSelection = checks.slice(0,3).every(input => input.checked);
+    selectSftpEntry({shiftKey:false,ctrlKey:false,metaKey:false},1,checks[2].value,checks[2].dataset.name,checks[2].dataset.type,fixtureTabKey);
+    const multiNameCancelsSelection = checks[0].checked && checks[1].checked && !checks[2].checked;
+    selectSftpEntry({shiftKey:false,ctrlKey:false,metaKey:false},1,checks[1].value,checks[1].dataset.name,checks[1].dataset.type,fixtureTabKey);
+    selectSftpEntry({shiftKey:false,ctrlKey:false,metaKey:false},1,checks[2].value,checks[2].dataset.name,checks[2].dataset.type,fixtureTabKey);
+    const singleNameReplacesSelection = !checks[0].checked && !checks[1].checked && checks[2].checked;
+    checks.forEach((input,index) => { input.checked = index < 2; });
+    updateSftpSelection(fixtureTabKey);
     const selectionBar = view.querySelector('#sftpSelectionBar');
     const selectionShown = !selectionBar.hidden && selectionBar.textContent.includes('已选择 2 项');
     const selectionActionsShown = getComputedStyle(document.querySelector('#sftpSelectionCompress')).display !== 'none' && getComputedStyle(document.querySelector('#sftpSelectionPermissions')).display !== 'none';
     const specialSelectionExact = selectedSftpPaths(fixtureTabKey).includes('/fixture/' + specialName);
     const selectedRows = view.querySelectorAll('.sftp-row.is-selected').length;
+    selectSftpDragSource(checks[2].value, checks[2].dataset.name, checks[2].dataset.type, fixtureTabKey);
+    const dragSelectionSynchronized = checks.every((input,index) => input.checked === (index === 2))
+      && rows.every((row,index) => row.classList.contains('is-selected') === (index === 2))
+      && rows.every((row,index) => row.classList.contains('active') === (index === 2));
     clearSftpSelection(fixtureTabKey);
     const selectionCleared = selectionBar.hidden;
     const moreButton = rows[1]?.querySelector('.sftp-row-action-more');
@@ -5695,10 +5708,111 @@ app.whenReady().then(async () => {
     const narrowMetaVisible = getComputedStyle(rows[1].querySelector('.sftp-mobile-meta')).display !== 'none' && rows[1].querySelector('.sftp-mobile-meta')?.textContent.includes('12 B');
     const narrowAccessHidden = getComputedStyle(rows[1].querySelector(':scope > .sftp-access')).display === 'none';
     const narrowLayoutClass = sftpList.classList.contains('sftp-actions-more-only');
+    const narrowHeaderNameVisible = getComputedStyle(sftpList.querySelector('.sftp-head-cell.sftp-column-name')).display !== 'none';
+    const narrowHeaderSummaryVisible = getComputedStyle(sftpList.querySelector('.sftp-compact-column-labels')).display !== 'none'
+      && sftpList.querySelector('.sftp-compact-column-labels')?.textContent.includes('大小');
+    const narrowCompactActions = Math.round((rows[0]?.querySelector('.sftp-row-actions')?.getBoundingClientRect().width || 0)) <= 60;
+    const previousColumnLayout = localStorage.getItem(SFTP_COLUMN_LAYOUT_STORAGE_KEY);
+    writeSftpColumnLayout({order:['name','size','mtime','access'],weights:{name:2.45,size:.72,mtime:1.28,access:1.34},actionWeight:3.6});
+    sftpList.style.width = '760px';
+    syncSftpListLayout(sftpList, 760);
+    renderSftpEntries(fixtureTabKey);
+    const compactColumnList = document.querySelector('#view-sftp #sftpList');
+    const compactAccessHeader = compactColumnList.querySelector('.sftp-head [data-sftp-column="access"]');
+    const compactActionsHeader = compactColumnList.querySelector('.sftp-head-actions');
+    const compactAccessHandle = compactColumnList.querySelector('[data-sftp-column-resize="access"]');
+    const compactNameHeader = compactColumnList.querySelector('.sftp-head [data-sftp-column="name"]');
+    const compactNameHandle = compactColumnList.querySelector('[data-sftp-column-resize="name"]');
+    const compactFollowingBoundariesBefore = ['size','mtime','access'].map(key => compactColumnList.querySelector('[data-sftp-column="' + key + '"]')?.getBoundingClientRect().right || 0);
+    const compactOpenButtonBefore = compactColumnList.querySelector('.sftp-row .sftp-file-open-button')?.getBoundingClientRect().left || 0;
+    const compactNameBoundaryBefore = compactNameHeader?.getBoundingClientRect().right || 0;
+    const compactNameHandleRect = compactNameHandle?.getBoundingClientRect();
+    const compactNameStartX = compactNameHandleRect ? compactNameHandleRect.left + compactNameHandleRect.width / 2 : compactNameBoundaryBefore;
+    compactNameHandle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:540,pointerType:'mouse',button:0,buttons:1,clientX:compactNameStartX,clientY:(compactNameHandleRect?.top || 0) + 8}));
+    document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:540,pointerType:'mouse',button:0,buttons:1,clientX:compactNameStartX-20,clientY:(compactNameHandleRect?.top || 0) + 8}));
+    document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:540,pointerType:'mouse',button:0,buttons:0,clientX:compactNameStartX-20,clientY:(compactNameHandleRect?.top || 0) + 8}));
+    const compactFollowingBoundariesAfter = ['size','mtime','access'].map(key => compactColumnList.querySelector('[data-sftp-column="' + key + '"]')?.getBoundingClientRect().right || 0);
+    const compactOpenButtonAfter = compactColumnList.querySelector('.sftp-row .sftp-file-open-button')?.getBoundingClientRect().left || 0;
+    const compactAdjacentResizeStable = Math.abs((compactNameHeader?.getBoundingClientRect().right || 0) - (compactNameBoundaryBefore - 20)) <= 2
+      && compactFollowingBoundariesBefore.every((boundary,index) => Math.abs(compactFollowingBoundariesAfter[index] - boundary) <= 1)
+      && Math.abs(compactOpenButtonAfter - compactOpenButtonBefore) <= 1;
+    const compactStableWidthsBefore = ['name','size','mtime'].map(key => compactColumnList.querySelector('[data-sftp-column="' + key + '"]')?.getBoundingClientRect().width || 0);
+    const compactBoundaryBefore = compactAccessHeader?.getBoundingClientRect().right || 0;
+    const compactHandleRect = compactAccessHandle?.getBoundingClientRect();
+    const compactStartX = compactHandleRect ? compactHandleRect.left + compactHandleRect.width / 2 : compactBoundaryBefore;
+    compactAccessHandle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:541,pointerType:'mouse',button:0,buttons:1,clientX:compactStartX,clientY:(compactHandleRect?.top || 0) + 8}));
+    document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:541,pointerType:'mouse',button:0,buttons:1,clientX:compactStartX-20,clientY:(compactHandleRect?.top || 0) + 8}));
+    const compactBoundaryAfterFirstMove = compactAccessHeader?.getBoundingClientRect().right || 0;
+    document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:541,pointerType:'mouse',button:0,buttons:1,clientX:compactStartX-20,clientY:(compactHandleRect?.top || 0) + 8}));
+    const compactBoundaryAfterSecondMove = compactAccessHeader?.getBoundingClientRect().right || 0;
+    document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:541,pointerType:'mouse',button:0,buttons:0,clientX:compactStartX-20,clientY:(compactHandleRect?.top || 0) + 8}));
+    const compactStableWidthsAfter = ['name','size','mtime'].map(key => compactColumnList.querySelector('[data-sftp-column="' + key + '"]')?.getBoundingClientRect().width || 0);
+    const compactPointerStable = Math.abs(compactBoundaryAfterFirstMove - (compactBoundaryBefore - 20)) <= 2
+      && Math.abs(compactBoundaryAfterSecondMove - compactBoundaryAfterFirstMove) <= 1;
+    const compactPairOnly = compactStableWidthsBefore.every((width,index) => Math.abs(compactStableWidthsAfter[index] - width) <= 1);
+    const compactDividerUniform = Boolean(compactAccessHandle
+      && compactActionsHeader
+      && Math.abs(compactAccessHeader.getBoundingClientRect().right - compactActionsHeader.getBoundingClientRect().left) <= 1
+      && getComputedStyle(compactAccessHeader).borderRightWidth === '0px'
+      && getComputedStyle(compactAccessHandle,'::before').backgroundColor === getComputedStyle(compactColumnList.querySelector('[data-sftp-column-resize="name"]'),'::before').backgroundColor);
+
+    const previousLocalColumnLayout = localStorage.getItem(LOCAL_FILES_COLUMN_LAYOUT_STORAGE_KEY);
+    writeLocalFilesColumnLayout({weights:{name:2.45,size:.98,mtime:1.28}});
+    const localColumnFixture = document.createElement('div');
+    localColumnFixture.style.cssText = 'position:fixed;left:8px;top:8px;width:420px;height:180px;container-type:inline-size;container-name:local-files-view;z-index:-1';
+    localColumnFixture.innerHTML = '<div class="local-files-list" style="width:420px;height:160px"><div class="local-files-head"><label><input type="checkbox"></label>'
+      + ['name','size','mtime'].map(key => localFilesHeaderColumnHtml(key,'ui-smoke-local')).join('')
+      + '</div><div class="local-files-row"><input type="checkbox"><button class="local-files-name">fixture.txt</button><span class="local-files-size">12 B</span><span class="local-files-time">2026-08-13</span></div></div>';
+    document.body.appendChild(localColumnFixture);
+    const localColumnList = localColumnFixture.querySelector('.local-files-list');
+    bindLocalFilesColumnControls(localColumnList);
+    const localNameHeader = localColumnList.querySelector('[data-local-files-column="name"]');
+    const localNameHandle = localColumnList.querySelector('[data-local-files-column-resize="name"]');
+    const localSizeHandle = localColumnList.querySelector('[data-local-files-column-resize="size"]');
+    const localHandleRect = localNameHandle?.getBoundingClientRect();
+    const localStartX = localHandleRect ? localHandleRect.left + localHandleRect.width / 2 : 0;
+    const localBoundaryBefore = localNameHeader?.getBoundingClientRect().right || 0;
+    localNameHandle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:542,pointerType:'mouse',button:0,buttons:1,clientX:localStartX,clientY:(localHandleRect?.top || 0) + 8}));
+    document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:542,pointerType:'mouse',button:0,buttons:1,clientX:localStartX+24,clientY:(localHandleRect?.top || 0) + 8}));
+    const localBoundaryAfterFirstMove = localNameHeader?.getBoundingClientRect().right || 0;
+    document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:542,pointerType:'mouse',button:0,buttons:1,clientX:localStartX+24,clientY:(localHandleRect?.top || 0) + 8}));
+    const localBoundaryAfterSecondMove = localNameHeader?.getBoundingClientRect().right || 0;
+    document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:542,pointerType:'mouse',button:0,buttons:0,clientX:localStartX+24,clientY:(localHandleRect?.top || 0) + 8}));
+    const localNarrowResizable = Boolean(localNameHandle
+      && !localNameHandle.hidden
+      && localSizeHandle?.hidden
+      && getComputedStyle(localColumnList.querySelector('[data-local-files-column="mtime"]')).display === 'none'
+      && Math.abs(localBoundaryAfterFirstMove - (localBoundaryBefore + 24)) <= 2
+      && Math.abs(localBoundaryAfterSecondMove - localBoundaryAfterFirstMove) <= 1
+      && localColumnList.scrollWidth <= localColumnList.clientWidth + 1);
+    const selectionToolbarFixture = document.createElement('div');
+    selectionToolbarFixture.style.cssText = 'position:fixed;left:12px;top:12px;width:330px;z-index:2147483640';
+    selectionToolbarFixture.innerHTML = '<div class="local-files-selection"><strong>已选择 <span>2</span> 项</strong><div class="local-files-selection-actions">'
+      + '<button>打开</button><button>上传</button><button>路径</button><button>重命名</button><button>删除</button><button>权限</button><button class="icon-button" data-smoke-close aria-label="取消选择">×</button></div></div>';
+    document.body.appendChild(selectionToolbarFixture);
+    const selectionActions = selectionToolbarFixture.querySelector('.local-files-selection-actions');
+    const selectionClose = selectionToolbarFixture.querySelector('[data-smoke-close]');
+    selectionActions.scrollLeft = selectionActions.scrollWidth;
+    const closeRect = selectionClose.getBoundingClientRect();
+    const closeHit = document.elementFromPoint(closeRect.right - 2, closeRect.top + closeRect.height / 2);
+    const selectionToolbarStable = getComputedStyle(selectionActions).overflowY === 'hidden'
+      && selectionActions.scrollHeight <= selectionActions.clientHeight + 1
+      && getComputedStyle(selectionClose).flexShrink === '0'
+      && Boolean(closeHit === selectionClose || selectionClose.contains(closeHit));
+    const scrollbarProbe = document.querySelector('.tree');
+    const scrollbarStyles = [compactColumnList, localColumnList, scrollbarProbe]
+      .filter(Boolean)
+      .map(node => getComputedStyle(node).scrollbarColor);
+    const scrollbarUnified = scrollbarStyles.length === 3
+      && scrollbarStyles.every(value => value && value !== 'auto' && value === scrollbarStyles[0]);
+    selectionToolbarFixture.remove();
+    localColumnFixture.remove();
+    if (previousLocalColumnLayout === null) localStorage.removeItem(LOCAL_FILES_COLUMN_LAYOUT_STORAGE_KEY);
+    else localStorage.setItem(LOCAL_FILES_COLUMN_LAYOUT_STORAGE_KEY, previousLocalColumnLayout);
+
     sftpList.style.width = '1280px';
     syncSftpListLayout(sftpList, 1280);
-    const previousColumnLayout = localStorage.getItem(SFTP_COLUMN_LAYOUT_STORAGE_KEY);
-    writeSftpColumnLayout({order:['name','size','mtime','access'],weights:{name:2.45,size:.72,mtime:1.28,access:1.34}});
+    writeSftpColumnLayout({order:['name','size','mtime','access'],weights:{name:2,size:1.2,mtime:1.28,access:1.34},actionWeight:3.6});
     renderSftpEntries(fixtureTabKey);
     persistSftpColumnOrder('mtime','name',false);
     const columnList = document.querySelector('#view-sftp #sftpList');
@@ -5713,11 +5827,19 @@ app.whenReady().then(async () => {
     const actionsHeader = columnList.querySelector('.sftp-head-actions');
     const accessWeightBeforeActionResize = storedColumnLayout.weights.access;
     const actionWeightBeforeResize = storedColumnLayout.actionWeight;
+    const actionBoundaryBeforeResize = accessHeader?.getBoundingClientRect().right || 0;
+    const actionWidthBeforeResize = actionsHeader?.getBoundingClientRect().width || 0;
+    const stableWidthsBeforeActionResize = ['name','size','mtime'].map(key => columnList.querySelector('[data-sftp-column="' + key + '"]')?.getBoundingClientRect().width || 0);
     columnList.querySelector('[data-sftp-column-resize="access"]')?.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true,cancelable:true}));
     const actionResizeLayout = readSftpColumnLayout();
+    const actionBoundaryAfterResize = accessHeader?.getBoundingClientRect().right || 0;
+    const actionWidthAfterResize = actionsHeader?.getBoundingClientRect().width || 0;
+    const stableWidthsAfterActionResize = ['name','size','mtime'].map(key => columnList.querySelector('[data-sftp-column="' + key + '"]')?.getBoundingClientRect().width || 0);
     const actionResizable = actionResizeLayout.weights.access < accessWeightBeforeActionResize
       && actionResizeLayout.actionWeight > actionWeightBeforeResize
-      && Math.abs(actionResizeLayout.weights.access + actionResizeLayout.actionWeight - accessWeightBeforeActionResize - actionWeightBeforeResize) < .01;
+      && Math.abs(actionBoundaryAfterResize - (actionBoundaryBeforeResize - 16)) <= 2
+      && Math.abs(actionWidthAfterResize - (actionWidthBeforeResize + 16)) <= 2
+      && stableWidthsBeforeActionResize.every((width,index) => Math.abs(stableWidthsAfterActionResize[index] - width) <= 1);
     const columnLayoutUi = {
       order:JSON.stringify(headerOrder) === JSON.stringify(['mtime','name','size','access']) && JSON.stringify(rowOrder) === JSON.stringify(headerOrder),
       persisted:JSON.stringify(storedColumnLayout.order) === JSON.stringify(headerOrder),
@@ -5725,7 +5847,15 @@ app.whenReady().then(async () => {
         && Math.abs(storedColumnLayout.weights.size - nextWeightBeforeKeyboard) > .001
         && Math.abs(storedColumnLayout.weights.name + storedColumnLayout.weights.size - pairWeightBeforeKeyboard) < .01
         && actionResizable,
-      globalCss:columnList.style.getPropertyValue('--sftp-grid-columns').includes('minmax(0,' + storedColumnLayout.weights.name + 'fr)')
+      pointerStable:compactPointerStable,
+      pairOnly:compactPairOnly,
+      adjacentResizeStable:compactAdjacentResizeStable,
+      dividerUniform:compactDividerUniform,
+      localNarrowResizable,
+      openButtonStable:Math.abs(compactOpenButtonAfter - compactOpenButtonBefore) <= 1,
+      selectionToolbarStable,
+      scrollbarUnified,
+      globalCss:Boolean(columnList.style.getPropertyValue('--sftp-grid-columns'))
         && columnList.scrollWidth <= columnList.clientWidth + 1
         && !['auto','scroll'].includes(getComputedStyle(columnList).overflowX)
         && Boolean(accessHeader && actionsHeader && Math.abs(accessHeader.getBoundingClientRect().right - actionsHeader.getBoundingClientRect().left) <= 1)
@@ -6439,8 +6569,12 @@ app.whenReady().then(async () => {
       singlePathPresentation: !document.querySelector('#view-sftp #sftpPath'),
       selectionShown,
       selectionActionsShown,
+      multiNameAddsSelection,
+      multiNameCancelsSelection,
+      singleNameReplacesSelection,
       specialSelectionExact,
       selectedRows,
+      dragSelectionSynchronized,
       selectionCleared,
       fileHasCompression,
       fileHasPermissions,
@@ -6472,6 +6606,9 @@ app.whenReady().then(async () => {
       narrowMoreVisible,
       narrowMetaVisible,
       narrowAccessHidden,
+      narrowHeaderNameVisible,
+      narrowHeaderSummaryVisible,
+      narrowCompactActions,
       completedMutationDetected,
       textEncodingUi,
       jobUi,
@@ -8271,7 +8408,7 @@ app.whenReady().then(async () => {
   const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.drawerDefaultCompact || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.failedOnly || !jobUi.failedActions || !jobUi.currentProgress || !jobUi.drawerResizable || !jobUi.drawerResizeAdaptive || !jobUi.drawerResizePersists || !jobUi.drawerResizeReset || !jobUi.deleteDuplicateBlocked || !jobUi.deleteKeepsDrawerOpen || !jobUi.taskLogInitialOpen || !jobUi.taskLogInitialBottom || !jobUi.taskLogRefreshKeepsOpen || !jobUi.taskLogRefreshShowsLatest || !jobUi.taskLogRefreshFollowsBottom || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned || !jobUi.toastOrderPreserved || !jobUi.toastStackedDown || !jobUi.toastAvoidsFloatingTask || !jobUi.toastExitAnimated || !jobUi.toastReflowAnimated || !jobUi.toastMovedUp;
   const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.lightPaged || !textEncodingUi.lightNextPage || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
   const nativeDragUiFailed = !nativeDragUi.found || !nativeDragUi.webExternalDragBlocked || !nativeDragUi.linuxFallbackNoticeOnce || !nativeDragUi.linuxFallbackUsesCompatibilityMode || !nativeDragUi.streamingPreparesOnPointerDown || !nativeDragUi.streamingThresholdActivatesOnce || !nativeDragUi.streamingCaptureCancelSurvives || !nativeDragUi.pointerUpCancelsPending || !nativeDragUi.streamingSkipsStage || !nativeDragUi.streamingNativeBlocksParallelBrowserDrag || !nativeDragUi.nativeIdleHintStable || !nativeDragUi.nativeOutsideHintStaysStable || !nativeDragUi.nativeMotionTargetsSftp || !nativeDragUi.nativeTransientMissKeepsTarget || !nativeDragUi.nativeFinalTransientMissKeepsTarget || !nativeDragUi.nativeReleasedClearsStaleTarget || !nativeDragUi.nativeResultCopiesOnce || !nativeDragUi.firstDragOnlyStages || !nativeDragUi.firstDragReset || !nativeDragUi.cacheReused || !nativeDragUi.cachedUnarmedStaysInternal || !nativeDragUi.sameWindowDropDoesNotArm || !nativeDragUi.armedDragStartsSynchronously || !nativeDragUi.failureRearmed || !nativeDragUi.successClearsState || !nativeDragUi.finderRenameNoticeShown;
-  const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedTabSwitchDoesNotReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.terminalTabPreviewActivated || !connectionSessionUi.invalidTerminalDropRestoresSource || !connectionSessionUi.invalidSftpDropRestoresSource || !connectionSessionUi.acceptedTerminalDropStays || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !globalSettingsUi.classicSurface || !globalSettingsUi.themedField || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !sftpUi.fileOpenFeedback?.interruptedRetry || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !sftpUi.searchKeyboardUi?.opened || !sftpUi.searchKeyboardUi?.closed || !sftpUi.searchKeyboardUi?.recursive || !sftpUi.searchKeyboardUi?.feedback || !sftpUi.syncIndicatorFollowsScroll || !sftpUi.diffComparisonUi || !sftpUi.columnLayoutUi?.order || !sftpUi.columnLayoutUi?.persisted || !sftpUi.columnLayoutUi?.resized || !sftpUi.columnLayoutUi?.globalCss || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithoutDirectoryReload || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.pathEditorReplacesBreadcrumb || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.emptyFavoritesCompact || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !directoryActionsUi.terminalJumpFirst || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/demo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactHorizontalScroll || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.completedMutationDetected || !sftpUi.desktopPagerSingleRow || !sftpUi.pagerFloatsAtWorkspaceBottom || !sftpUi.pagerOpaqueAndElevated || !sftpUi.pagerDockSealsBottom || !sftpUi.pagerPinnedToViewport || !sftpUi.scrollCueVisibleAboveContent || !sftpUi.scrollCueHidesAtEnd || !sftpUi.narrowPagerWraps || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
+  const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedTabSwitchDoesNotReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.terminalTabPreviewActivated || !connectionSessionUi.invalidTerminalDropRestoresSource || !connectionSessionUi.invalidSftpDropRestoresSource || !connectionSessionUi.acceptedTerminalDropStays || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !globalSettingsUi.classicSurface || !globalSettingsUi.themedField || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !sftpUi.fileOpenFeedback?.interruptedRetry || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !sftpUi.searchKeyboardUi?.opened || !sftpUi.searchKeyboardUi?.closed || !sftpUi.searchKeyboardUi?.recursive || !sftpUi.searchKeyboardUi?.feedback || !sftpUi.syncIndicatorFollowsScroll || !sftpUi.diffComparisonUi || !sftpUi.columnLayoutUi?.order || !sftpUi.columnLayoutUi?.persisted || !sftpUi.columnLayoutUi?.resized || !sftpUi.columnLayoutUi?.pointerStable || !sftpUi.columnLayoutUi?.pairOnly || !sftpUi.columnLayoutUi?.adjacentResizeStable || !sftpUi.columnLayoutUi?.dividerUniform || !sftpUi.columnLayoutUi?.localNarrowResizable || !sftpUi.columnLayoutUi?.openButtonStable || !sftpUi.columnLayoutUi?.selectionToolbarStable || !sftpUi.columnLayoutUi?.scrollbarUnified || !sftpUi.columnLayoutUi?.globalCss || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithoutDirectoryReload || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.emptyFavoritesCompact || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !directoryActionsUi.terminalJumpFirst || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/demo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.multiNameAddsSelection || !sftpUi.multiNameCancelsSelection || !sftpUi.singleNameReplacesSelection || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.dragSelectionSynchronized || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactHorizontalScroll || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.narrowHeaderNameVisible || !sftpUi.narrowHeaderSummaryVisible || !sftpUi.narrowCompactActions || !sftpUi.completedMutationDetected || !sftpUi.desktopPagerSingleRow || !sftpUi.pagerFloatsAtWorkspaceBottom || !sftpUi.pagerOpaqueAndElevated || !sftpUi.pagerDockSealsBottom || !sftpUi.pagerPinnedToViewport || !sftpUi.scrollCueVisibleAboveContent || !sftpUi.scrollCueHidesAtEnd || !sftpUi.narrowPagerWraps || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
   const sftpToolbarRecoveryFailed = !directoryActionsUi.recoveredMissingToolbar || !directoryActionsUi.duplicateSftpToolbarsFollowActiveTab;
   const sftpTabIsolationFailed = !directoryActionsUi.sftpVisibleNumberingStable
     || !directoryActionsUi.activeShellMatchesTab
