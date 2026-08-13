@@ -115,6 +115,8 @@ async function main() {
   ok("Linux desktop filename uses package metadata accepted by electron-builder", packageJson.desktopName === "terma.desktop" && !Object.prototype.hasOwnProperty.call(packageJson.build?.linux || {}, "desktopName"));
   ok("GNU GPL v3 license is declared and packaged", packageJson.license === "GPL-3.0-only" && licenseText.includes("GNU GENERAL PUBLIC LICENSE") && packageJson.build?.extraResources?.includes("LICENSE"));
   ok("第三方组件声明随桌面安装包提供", packageJson.build?.extraResources?.includes("THIRD_PARTY_NOTICES.md") && thirdPartySource.includes("listThirdPartyComponents") && ["xterm.js","Ace Editor","jsdiff","noVNC","ZMODEM.js","ssh2","Lucide","node-pty","VcXsrv"].every(name => thirdPartySource.includes(`name:\"${name}\"`)) && ["xterm.js","Ace Editor","jsdiff","noVNC","zmodem.js","ssh2","Lucide","node-pty","VcXsrv"].every(name => thirdPartyNotices.includes(`## ${name}`)));
+  const lucideVersion = String(packageJson.dependencies?.lucide || "").match(/(\d+\.\d+\.\d+)/)?.[1] || "";
+  ok("Lucide 运行时版本与随附组件声明一致", Boolean(lucideVersion) && thirdPartySource.includes(`name:\"Lucide\", version:\"${lucideVersion}\"`) && thirdPartyNotices.includes(`## Lucide\n\n- Project: https://github.com/lucide-icons/lucide\n- Version: ${lucideVersion}`));
   ok("Electron unpacks node-pty", Array.isArray(packageJson.build?.asarUnpack) && packageJson.build.asarUnpack.includes("node_modules/node-pty/**/*"));
   ok("Electron afterPack hook exists", typeof packageJson.build?.afterPack === "string" && fs.existsSync(path.join(root, packageJson.build.afterPack)));
   ok("macOS package verifies PTY helper", read(".github/workflows/release.yml").includes("Verify packaged PTY helper") && read("scripts/after-pack.js").includes("chmodSync(helper, 0o755)"));
