@@ -34,6 +34,14 @@ Terma includes or integrates the following third-party components in addition to
 - Use: interface icons
 - Copyright: Copyright (c) 2026 Lucide Icons and Contributors; Feather-derived icons Copyright (c) 2013-present Cole Bemis
 
+## Electron
+
+- Project: https://github.com/electron/electron
+- Version: 43.3.0
+- License: MIT License
+- Use: desktop application runtime
+- Copyright: Copyright (c) Electron contributors
+
 ## node-pty
 
 - Project: https://github.com/microsoft/node-pty
