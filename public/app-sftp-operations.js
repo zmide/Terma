@@ -23,6 +23,8 @@ function applySftpRangeSelection(event, path, tabKey, options={}) {
     // The browser has already toggled the checkbox before the click handler runs.
   } else if (event?.ctrlKey || event?.metaKey) {
     input.checked = !input.checked;
+  } else if (!options.forceSingle && inputs.filter(item => item.checked).length >= 2) {
+    input.checked = !input.checked;
   } else {
     inputs.forEach(item => { item.checked = item === input; });
   }
@@ -43,7 +45,7 @@ function selectSftpEntry(event, id, path, name, type, tabKey=activeTabKey) {
   sftpElements(".sftp-row", tabKey).forEach(row => row.classList.remove("active"));
   const input = sftpElements(".sftp-check", tabKey).find(item => item.value === path);
   if (input) input.closest(".sftp-row")?.classList.add("active");
-  if (event?.shiftKey || event?.ctrlKey || event?.metaKey) applySftpRangeSelection(event, path, tabKey);
+  if (!event?.preserveSelection) applySftpRangeSelection(event, path, tabKey, {forceSingle:Boolean(event?.forceSingle)});
 }
 
 function activateSftpEntry(event, id, path, name, type, tabKey=sftpTabKeyFromNode(event?.currentTarget)) {

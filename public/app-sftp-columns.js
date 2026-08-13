@@ -1,6 +1,7 @@
 const SFTP_COLUMN_LAYOUT_STORAGE_KEY = "termaSftpColumnLayoutV1";
 const SFTP_COLUMN_KEYS = Object.freeze(["name", "size", "mtime", "access"]);
 const SFTP_ACTION_COLUMN_KEY = "actions";
+const SFTP_ACTION_COLUMN_DEFAULT_WEIGHT = 3.6;
 const SFTP_COLUMN_DEFAULTS = Object.freeze({
   name:{weight:2.45,min:160},
   size:{weight:.72,min:64},
@@ -14,7 +15,7 @@ function defaultSftpColumnLayout() {
   return {
     order:[...SFTP_COLUMN_KEYS],
     weights:Object.fromEntries(SFTP_COLUMN_KEYS.map(key => [key, SFTP_COLUMN_DEFAULTS[key].weight])),
-    actionWeight:3.6
+    actionWeight:SFTP_ACTION_COLUMN_DEFAULT_WEIGHT
   };
 }
 
@@ -61,7 +62,7 @@ function sftpHeaderColumnHtml(key, tabKey, mark="") {
   const label = `${sftpColumnLabel(key)}${mark ? ` ${mark}` : ""}`;
   const compatibilityClass = {size:"sftp-size",mtime:"sftp-time",access:"sftp-access"}[key] || "";
   return `<div class="sftp-head-cell sftp-column-${key} ${compatibilityClass}" data-sftp-column="${key}" draggable="true">${sortable
-    ? `<button type="button" data-sftp-column-sort="${key}" data-sftp-tab-key="${escAttr(tabKey)}">${esc(label)}</button>`
+    ? `<button type="button" data-sftp-column-sort="${key}" data-sftp-tab-key="${escAttr(tabKey)}"><span>${esc(label)}</span>${key === "name" ? `<small class="sftp-compact-column-labels">大小 · 修改时间 · 权限</small>` : ""}</button>`
     : `<span>${esc(label)}</span>`}<i class="sftp-column-resize" data-sftp-column-resize="${key}" role="separator" aria-orientation="vertical" aria-label="调整${esc(sftpColumnLabel(key))}与下一列的比例" tabindex="0"></i></div>`;
 }
 
@@ -76,24 +77,62 @@ function sftpLayoutTrackKeys(list) {
   return [...visibleSftpColumnKeys(list), SFTP_ACTION_COLUMN_KEY];
 }
 
-function sftpActionsColumnWidth(list) {
+function sftpActionsColumnWidth(list, actionWeight=readSftpColumnLayout().actionWeight) {
   const width = Math.max(0, Number(list?.clientWidth || list?.getBoundingClientRect?.().width || 0));
   if (list?.classList.contains("sftp-actions-more-only")) return 54;
-  if (list?.classList.contains("sftp-actions-compact")) return 132;
-  if (list?.classList.contains("sftp-actions-medium")) return Math.min(400, Math.max(250, Math.round(width * .4)));
+  const ratio = Math.max(.2, Number(actionWeight || 0)) / SFTP_ACTION_COLUMN_DEFAULT_WEIGHT;
+  if (list?.classList.contains("sftp-actions-compact")) return Math.min(200, Math.max(116, Math.round(132 * ratio)));
+  if (list?.classList.contains("sftp-actions-medium")) {
+    const base = Math.min(400, Math.max(250, Math.round(width * .4)));
+    return Math.min(480, Math.max(220, Math.round(base * ratio)));
+  }
   return Math.min(560, Math.max(420, Math.round(width * .31)));
+}
+
+function sftpUsesFixedActionTrack(list) {
+  return list?.classList.contains("sftp-actions-medium")
+    || list?.classList.contains("sftp-actions-compact")
+    || list?.classList.contains("sftp-actions-more-only");
+}
+
+function sftpActionColumnBaseWidth(list) {
+  return sftpActionsColumnWidth(list, SFTP_ACTION_COLUMN_DEFAULT_WEIGHT);
 }
 
 function applySftpColumnLayout(list) {
   if (!list) return;
+  if (list.dataset.sftpPixelColumns === "1") return;
   const layout = readSftpColumnLayout();
-  const columns = sftpLayoutTrackKeys(list).map(key => `minmax(0,${key === SFTP_ACTION_COLUMN_KEY ? layout.actionWeight : layout.weights[key]}fr)`);
+  const fixedActions = sftpUsesFixedActionTrack(list);
+  const columns = sftpLayoutTrackKeys(list).map(key => {
+    if (key !== SFTP_ACTION_COLUMN_KEY) return `minmax(0,${layout.weights[key]}fr)`;
+    return fixedActions ? `${sftpActionsColumnWidth(list, layout.actionWeight)}px` : `minmax(0,${layout.actionWeight}fr)`;
+  });
   list.style.setProperty("--sftp-grid-columns", ["36px", ...columns].join(" "));
   list.style.removeProperty("--sftp-grid-min-width");
 }
 
+function releaseSftpPixelColumnLayout(list) {
+  if (!list || list.dataset.sftpPixelColumns !== "1") return;
+  delete list.dataset.sftpPixelColumns;
+  delete list.dataset.sftpPixelColumnsWidth;
+  list.style.removeProperty("--sftp-grid-columns");
+}
+
+function sftpMeasuredTrackWidths(list, tracks=sftpLayoutTrackKeys(list)) {
+  return new Map(tracks.map(key => [key, Math.max(0, Number(sftpTrackElement(list, key)?.getBoundingClientRect?.().width || 0))]));
+}
+
+function lockSftpPixelColumnLayout(list, tracks, widths) {
+  if (!list) return;
+  list.dataset.sftpPixelColumns = "1";
+  list.dataset.sftpPixelColumnsWidth = String(Math.max(0, Number(list.getBoundingClientRect?.().width || list.clientWidth || 0)));
+  list.style.setProperty("--sftp-grid-columns", ["36px", ...tracks.map(key => `${Math.max(0, Number(widths.get(key) || 0))}px`)].join(" "));
+}
+
 function refreshSftpColumnLayouts() {
   document.querySelectorAll(".sftp-list").forEach(list => {
+    releaseSftpPixelColumnLayout(list);
     applySftpColumnLayout(list);
     const tabKey = String(list.dataset.sftpTabKey || activeTabKey || "");
     if (sftpTabRuntimes.has(tabKey) && typeof renderSftpEntries === "function") renderSftpEntries(tabKey);
@@ -108,16 +147,19 @@ function persistSftpColumnOrder(sourceKey, targetKey, after=false) {
   layout.order.splice(Math.max(0, targetIndex + (after ? 1 : 0)), 0, sourceKey);
   writeSftpColumnLayout(layout);
   document.querySelectorAll(".sftp-list").forEach(list => {
+    releaseSftpPixelColumnLayout(list);
     const tabKey = String(list.dataset.sftpTabKey || activeTabKey || "");
     if (sftpTabRuntimes.has(tabKey)) renderSftpEntries(tabKey);
   });
 }
 
 function sftpResizePair(list, key) {
+  const layout = readSftpColumnLayout();
   const tracks = sftpLayoutTrackKeys(list);
   const index = tracks.indexOf(key);
   if (index < 0 || index >= tracks.length - 1) return null;
   const nextKey = tracks[index + 1];
+  if (nextKey === SFTP_ACTION_COLUMN_KEY && list?.classList.contains("sftp-actions-more-only")) return null;
   const currentCell = list.querySelector(`.sftp-head-cell[data-sftp-column="${key}"]`);
   const nextCell = nextKey === SFTP_ACTION_COLUMN_KEY
     ? list.querySelector(".sftp-head-actions")
@@ -132,58 +174,138 @@ function sftpResizePair(list, key) {
     ? (list?.classList.contains("sftp-actions-more-only") ? 44 : list?.classList.contains("sftp-actions-compact") ? 116 : list?.classList.contains("sftp-actions-medium") ? 220 : 330)
     : SFTP_COLUMN_DEFAULTS[nextKey].min;
   const nextMin = Math.min(nextMinimum, Math.max(28, total - currentMin));
-  return {key, nextKey, currentWidth, nextWidth, total, currentMin, nextMin};
+  const currentWeight = Number(layoutValueForSftpColumn(layout, key) || 0);
+  const nextWeight = Number(layoutValueForSftpColumn(layout, nextKey) || 0);
+  return {
+    key,
+    nextKey,
+    currentWidth,
+    nextWidth,
+    total,
+    currentMin,
+    nextMin,
+    currentWeight,
+    nextWeight,
+    totalWeight:Math.max(.4, currentWeight + nextWeight),
+    actionWidthBase:nextKey === SFTP_ACTION_COLUMN_KEY && sftpUsesFixedActionTrack(list) ? sftpActionColumnBaseWidth(list) : 0,
+    dataPixelsPerWeight:currentWeight > 0 ? currentWidth / currentWeight : 0
+  };
+}
+
+function layoutValueForSftpColumn(layout, key) {
+  return key === SFTP_ACTION_COLUMN_KEY ? layout.actionWeight : layout.weights[key];
+}
+
+function sftpTrackElement(list, key) {
+  return key === SFTP_ACTION_COLUMN_KEY
+    ? list.querySelector(".sftp-head-actions")
+    : list.querySelector(`.sftp-head-cell[data-sftp-column="${key}"]`);
+}
+
+function rebaseSftpColumnLayout(list, source=readSftpColumnLayout()) {
+  const layout = normalizeSftpColumnLayout(source);
+  const tracks = sftpLayoutTrackKeys(list);
+  const fixedActions = sftpUsesFixedActionTrack(list);
+  const weightedKeys = fixedActions ? tracks.filter(key => key !== SFTP_ACTION_COLUMN_KEY) : tracks;
+  const widths = new Map(weightedKeys.map(key => [key, Math.max(0, Number(sftpTrackElement(list, key)?.getBoundingClientRect?.().width || 0))]));
+  const totalWidth = [...widths.values()].reduce((total, width) => total + width, 0);
+  const totalWeight = weightedKeys.reduce((total, key) => total + Math.max(.2, Number(layoutValueForSftpColumn(layout, key) || 0)), 0);
+  if (totalWidth > 0 && totalWeight > 0) {
+    for (const key of weightedKeys) {
+      const value = Math.max(.2, widths.get(key) / totalWidth * totalWeight);
+      if (key === SFTP_ACTION_COLUMN_KEY) layout.actionWeight = value;
+      else layout.weights[key] = value;
+    }
+  }
+  if (fixedActions && tracks.includes(SFTP_ACTION_COLUMN_KEY)) {
+    const actionWidth = Math.max(0, Number(sftpTrackElement(list, SFTP_ACTION_COLUMN_KEY)?.getBoundingClientRect?.().width || 0));
+    const baseWidth = sftpActionColumnBaseWidth(list);
+    if (actionWidth > 0 && baseWidth > 0) layout.actionWeight = actionWidth / baseWidth * SFTP_ACTION_COLUMN_DEFAULT_WEIGHT;
+  }
+  return layout;
+}
+
+function prepareSftpColumnResize(list, key) {
+  const pair = sftpResizePair(list, key);
+  if (!pair) return null;
+  const tracks = sftpLayoutTrackKeys(list);
+  const widths = sftpMeasuredTrackWidths(list, tracks);
+  const layout = rebaseSftpColumnLayout(list);
+  pair.currentWeight = Number(layoutValueForSftpColumn(layout, pair.key) || 0);
+  pair.nextWeight = Number(layoutValueForSftpColumn(layout, pair.nextKey) || 0);
+  pair.totalWeight = Math.max(.4, pair.currentWeight + pair.nextWeight);
+  pair.dataPixelsPerWeight = pair.currentWeight > 0 ? pair.currentWidth / pair.currentWeight : 0;
+  lockSftpPixelColumnLayout(list, tracks, widths);
+  return {pair, layout, tracks, widths};
 }
 
 function setSftpColumnPairWidth(layout, pair, currentWidth) {
   const minimum = Math.min(pair.currentMin, Math.max(28, pair.total - pair.nextMin));
   const maximum = Math.max(minimum, pair.total - pair.nextMin);
   const bounded = Math.max(minimum, Math.min(maximum, currentWidth));
-  const currentWeight = pair.key === SFTP_ACTION_COLUMN_KEY ? layout.actionWeight : layout.weights[pair.key];
-  const nextWeight = pair.nextKey === SFTP_ACTION_COLUMN_KEY ? layout.actionWeight : layout.weights[pair.nextKey];
-  const totalWeight = Math.max(.4, Number(currentWeight || 0) + Number(nextWeight || 0));
-  layout.weights[pair.key] = Math.round((bounded / pair.total) * totalWeight * 1000) / 1000;
-  const updatedNextWeight = Math.round((totalWeight - layout.weights[pair.key]) * 1000) / 1000;
+  if (pair.nextKey === SFTP_ACTION_COLUMN_KEY && pair.actionWidthBase > 0) {
+    const nextWidth = pair.total - bounded;
+    if (pair.dataPixelsPerWeight > 0) layout.weights[pair.key] = Math.round((bounded / pair.dataPixelsPerWeight) * 1000) / 1000;
+    layout.actionWeight = Math.round((nextWidth / pair.actionWidthBase) * SFTP_ACTION_COLUMN_DEFAULT_WEIGHT * 1000) / 1000;
+    return {currentWidth:bounded, nextWidth};
+  }
+  const updatedCurrentWeight = Math.round((bounded / pair.total) * pair.totalWeight * 1000) / 1000;
+  const updatedNextWeight = Math.round((pair.totalWeight - updatedCurrentWeight) * 1000) / 1000;
+  if (pair.key === SFTP_ACTION_COLUMN_KEY) layout.actionWeight = updatedCurrentWeight;
+  else layout.weights[pair.key] = updatedCurrentWeight;
   if (pair.nextKey === SFTP_ACTION_COLUMN_KEY) layout.actionWeight = updatedNextWeight;
   else layout.weights[pair.nextKey] = updatedNextWeight;
+  return {currentWidth:bounded, nextWidth:pair.total - bounded};
+}
+
+function applySftpColumnResize(list, prepared, currentWidth) {
+  const result = setSftpColumnPairWidth(prepared.layout, prepared.pair, currentWidth);
+  if (!result) return;
+  prepared.widths.set(prepared.pair.key, result.currentWidth);
+  prepared.widths.set(prepared.pair.nextKey, result.nextWidth);
+  lockSftpPixelColumnLayout(list, prepared.tracks, prepared.widths);
+  writeSftpColumnLayout(prepared.layout);
+  document.querySelectorAll(".sftp-list").forEach(other => {
+    if (other !== list) applySftpColumnLayout(other);
+  });
 }
 
 function beginSftpColumnResize(event, list, key) {
   if (event.button !== 0 || !SFTP_COLUMN_KEYS.includes(key)) return;
-  const pair = sftpResizePair(list, key);
-  if (!pair) return;
+  const prepared = prepareSftpColumnResize(list, key);
+  if (!prepared) return;
+  const {pair} = prepared;
   event.preventDefault();
   event.stopPropagation();
-  const layout = readSftpColumnLayout();
   const startX = event.clientX;
   const handle = event.currentTarget;
+  const pointerId = event.pointerId;
   list.classList.add("sftp-column-resizing");
   try { handle.setPointerCapture?.(event.pointerId); } catch {}
   const move = moveEvent => {
-    setSftpColumnPairWidth(layout, pair, pair.currentWidth + moveEvent.clientX - startX);
-    writeSftpColumnLayout(layout);
-    document.querySelectorAll(".sftp-list").forEach(applySftpColumnLayout);
+    if (pointerId != null && moveEvent.pointerId != null && moveEvent.pointerId !== pointerId) return;
+    applySftpColumnResize(list, prepared, pair.currentWidth + moveEvent.clientX - startX);
   };
-  const finish = () => {
+  const finish = finishEvent => {
+    if (pointerId != null && finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
     list.classList.remove("sftp-column-resizing");
-    handle.removeEventListener("pointermove", move);
-    handle.removeEventListener("pointerup", finish);
-    handle.removeEventListener("pointercancel", finish);
+    document.removeEventListener("pointermove", move);
+    document.removeEventListener("pointerup", finish);
+    document.removeEventListener("pointercancel", finish);
+    try { handle.releasePointerCapture?.(pointerId); } catch {}
   };
-  handle.addEventListener("pointermove", move);
-  handle.addEventListener("pointerup", finish);
-  handle.addEventListener("pointercancel", finish);
+  document.addEventListener("pointermove", move);
+  document.addEventListener("pointerup", finish);
+  document.addEventListener("pointercancel", finish);
 }
 
 function resizeSftpColumnByKeyboard(event, list, key) {
   if (!["ArrowLeft", "ArrowRight"].includes(event.key) || !SFTP_COLUMN_KEYS.includes(key)) return;
-  const pair = sftpResizePair(list, key);
-  if (!pair) return;
+  const prepared = prepareSftpColumnResize(list, key);
+  if (!prepared) return;
+  const {pair} = prepared;
   event.preventDefault();
-  const layout = readSftpColumnLayout();
-  setSftpColumnPairWidth(layout, pair, pair.currentWidth + (event.key === "ArrowLeft" ? -16 : 16));
-  writeSftpColumnLayout(layout);
-  document.querySelectorAll(".sftp-list").forEach(applySftpColumnLayout);
+  applySftpColumnResize(list, prepared, pair.currentWidth + (event.key === "ArrowLeft" ? -16 : 16));
 }
 
 function bindSftpColumnControls(list) {

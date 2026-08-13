@@ -17,6 +17,8 @@ const DIRECTORY_CACHE_TTL_MS = 2 * 60 * 1000;
 const DIRECTORY_CACHE_MAX_SNAPSHOTS = 24;
 const DIRECTORY_CACHE_MAX_ENTRIES = 100000;
 const MAX_RECURSIVE_SEARCH_ENTRIES = 20000;
+const DETAILED_DIRECTORY_ENTRY_LIMIT = 5000;
+const LARGE_DIRECTORY_METADATA_TIMEOUT_MS = 5 * 60 * 1000;
 const SFTP_RECYCLE_DIRECTORY = ".terma-recycle-bin";
 const LEGACY_SFTP_RECYCLE_DIRECTORY = ".tunneldesk-recycle-bin";
 const SFTP_RECYCLE_DIRECTORIES = [SFTP_RECYCLE_DIRECTORY, LEGACY_SFTP_RECYCLE_DIRECTORY];
@@ -207,6 +209,8 @@ function buildRemoteRecursiveDirectoryEntriesCommand() {
 
 function buildRemoteDirectoryEntriesCommand() {
   return [
+    `terma_probe=$(find . ${remoteDirectoryFindFilter()} -print | sed -n '1,${DETAILED_DIRECTORY_ENTRY_LIMIT + 1}p;${DETAILED_DIRECTORY_ENTRY_LIMIT + 1}q' | wc -l | tr -d '[:space:]')`,
+    `if [ "$terma_probe" -gt ${DETAILED_DIRECTORY_ENTRY_LIMIT} ]; then printf '%s\\n' '__TERMA_PAGED_DIRECTORY__' >&2; exit 75; fi`,
     `if stat -c "%s" . >/dev/null 2>&1; then TERMA_STAT_STYLE=gnu`,
     `elif stat -f "%z" . >/dev/null 2>&1; then TERMA_STAT_STYLE=bsd`,
     `else echo "远程系统缺少兼容的 stat 命令" >&2; exit 1`,
@@ -245,6 +249,96 @@ async function enumerateRemoteDir(connectionId, remotePath = ".") {
         link_target_missing:link === "1" && linkMissing === "1"
       };
     })
+  };
+}
+
+function shouldFallbackToPagedDirectoryRead(error) {
+  const message = String(error?.message || error || "");
+  return /__TERMA_PAGED_DIRECTORY__|远程目录命令被连接中断|远程文件操作超时/i.test(message);
+}
+
+function remoteDirectoryFindFilter() {
+  return `! -name . ! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(LEGACY_SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(".terma-upload-*.part")} ! -name ${shellQuote(".tunneldesk-upload-*.part")} -prune`;
+}
+
+function buildRemotePagedDirectoryEntriesCommand(options: any = {}) {
+  const page = Math.max(1, Number(options.page || 1));
+  const pageSize = Math.max(1, Number(options.page_size || DEFAULT_DIRECTORY_PAGE_SIZE));
+  const start = (page - 1) * pageSize + 1;
+  const end = start + pageSize - 1;
+  const query = String(options.query || "");
+  const sort = ["name", "size", "mtime"].includes(String(options.sort || "")) ? String(options.sort) : "name";
+  const descending = String(options.dir || "asc") === "desc";
+  const filter = remoteDirectoryFindFilter();
+  const escapedQuery = shellQuote(query);
+  const listedEntries = `find . ${filter} -print`;
+  const pageSlice = `sed -n '${start},${end}p;${end}q'`;
+  const directoryOrder = descending ? `LC_ALL=C sort -t "$TERMA_TAB" -k1,1n -k2,2r` : `LC_ALL=C sort -t "$TERMA_TAB" -k1,1n -k2,2`;
+  const metadataOrder = descending
+    ? `LC_ALL=C sort -t "$TERMA_TAB" -k1,1n -k2,2nr -k3,3r`
+    : `LC_ALL=C sort -t "$TERMA_TAB" -k1,1n -k2,2n -k3,3`;
+  const metadataEmitter = `terma_emit_metadata() { entry=$1; terma_link=0; terma_link_size=0; terma_link_missing=0; if [ -L "$entry" ]; then terma_link=1; fi; if [ -d "$entry" ]; then type=d; else type=f; fi; if [ "$TERMA_STAT_STYLE" = gnu ]; then if [ "$terma_link" = 1 ]; then own_meta=$(stat -c "%s %Y %a %U %G" "$entry") || return 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -c "%s %Y %a %U %G" "$entry") || return 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -c "%s %Y %a %U %G" "$entry") || return 1; fi; else if [ "$terma_link" = 1 ]; then own_meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || return 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -f "%z %m %Lp %Su %Sg" "$entry") || return 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || return 1; fi; fi; set -- $meta; name=\${entry#./}; printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$name" "$type" "$1" "$2" "$3" "$4" "$5" "$terma_link" "$terma_link_size" "$terma_link_missing"; }`;
+  const fastMetadataEmitter = `terma_emit_all_metadata() { if [ "$TERMA_FIND_STYLE" = gnu ]; then find . -mindepth 1 -maxdepth 1 ! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(LEGACY_SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(".terma-upload-*.part")} ! -name ${shellQuote(".tunneldesk-upload-*.part")} -printf '%f\\t%y\\t%s\\t%T@\\t%m\\t%u\\t%g\\n' | awk -F "$TERMA_TAB" -v q="$TERMA_QUERY" 'q == "" || index(tolower($1),tolower(q)) > 0' | while IFS="$TERMA_TAB" read -r name type size mtime mode owner group; do entry=./$name; if [ "$type" = l ]; then terma_emit_metadata "$entry" || exit 1; else if [ "$type" = d ]; then type=d; else type=f; fi; printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t0\\t0\\t0\\n' "$name" "$type" "$size" "$mtime" "$mode" "$owner" "$group"; fi; done; else terma_entries | while IFS= read -r entry; do terma_emit_metadata "$entry" || exit 1; done; fi; }`;
+  const selectedNamePage = `terma_entries | while IFS= read -r entry; do if [ -d "$entry" ]; then printf '0\\t%s\\n' "$entry"; else printf '1\\t%s\\n' "$entry"; fi; done | ${directoryOrder} | ${pageSlice} | cut -f2- | while IFS= read -r entry; do terma_emit_metadata "$entry" || exit 1; done`;
+  const selectedMetadataPage = `terma_emit_all_metadata | awk -F '\\t' -v key=${shellQuote(sort)} '{ tier=($2 == "d" ? 0 : 1); value=(key == "size" ? $3 : $4); print tier "\\t" value "\\t" $1 "\\t" $0; }' | ${metadataOrder} | ${pageSlice} | cut -f4-`;
+  return [
+    `TERMA_QUERY=${escapedQuery}`,
+    `TERMA_TAB=$(printf '\\t')`,
+    `if stat -c "%s" . >/dev/null 2>&1; then TERMA_STAT_STYLE=gnu; elif stat -f "%z" . >/dev/null 2>&1; then TERMA_STAT_STYLE=bsd; else printf '%s\\n' '远程系统缺少兼容的 stat 命令' >&2; exit 1; fi`,
+    `if find . -maxdepth 0 -printf '' >/dev/null 2>&1; then TERMA_FIND_STYLE=gnu; else TERMA_FIND_STYLE=portable; fi`,
+    metadataEmitter,
+    `terma_entries() { if [ -n "$TERMA_QUERY" ]; then ${listedEntries} | grep -F -i -- "$TERMA_QUERY"; else ${listedEntries}; fi; }`,
+    fastMetadataEmitter,
+    `terma_unfiltered_total=$(${listedEntries} | wc -l | tr -d '[:space:]')`,
+    `terma_total=$(terma_entries | wc -l | tr -d '[:space:]')`,
+    `printf '%s\\n%s\\n%s\\n' "$(pwd)" "$terma_total" "$terma_unfiltered_total"`,
+    sort === "name" ? selectedNamePage : selectedMetadataPage
+  ].join("; ");
+}
+
+async function listRemoteDirPaged(connectionId, remotePath, options: any = {}) {
+  const connection = getSftpConnection(connectionId);
+  const dir = remotePath || ".";
+  const command = [
+    `cd ${remotePathOperand(connection, dir)}`,
+    buildRemotePagedDirectoryEntriesCommand(options)
+  ].join(" && ");
+  const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command, null, LARGE_DIRECTORY_METADATA_TIMEOUT_MS));
+  const [resolvedPath = dir, rawTotal = "0", rawUnfilteredTotal = "0", ...rows] = output.split(/\r?\n/).filter(Boolean);
+  const total = Math.max(0, Number(rawTotal || 0));
+  const unfilteredTotal = Math.max(total, Number(rawUnfilteredTotal || 0));
+  const pageSize = Number(options.page_size || DEFAULT_DIRECTORY_PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, Number(options.page || 1)), totalPages);
+  const sort = ["name", "size", "mtime"].includes(String(options.sort || "")) ? String(options.sort) : "name";
+  const sortDir = String(options.dir || "asc") === "desc" ? "desc" : "asc";
+  return {
+    path:resolvedPath,
+    recursive:false,
+    truncated:false,
+    paged:true,
+    sort,
+    dir:sortDir,
+    entries:rows.map(line => {
+      const [name, type, size = "0", mtime = "0", mode = "", owner = "", group = "", link = "0", linkSize = "0", linkMissing = "0"] = line.split("\t");
+      return {
+        name,
+        type:type === "d" ? "dir" : "file",
+        size:Number(size || 0),
+        mtime:Number(mtime || 0),
+        mode:String(mode || ""),
+        owner:String(owner || ""),
+        group:String(group || ""),
+        is_symlink:link === "1",
+        link_size:link === "1" ? Number(linkSize || 0) : 0,
+        link_target_missing:link === "1" && linkMissing === "1"
+      };
+    }),
+    page,
+    page_size:pageSize,
+    total,
+    total_pages:totalPages,
+    unfiltered_total:unfilteredTotal
   };
 }
 
@@ -308,7 +402,13 @@ async function loadDirectorySnapshot(connectionId, remotePath, recursive, refres
 async function listRemoteDir(connectionId, remotePath = ".", options: any = {}) {
   const normalized = normalizeRemoteDirectoryListOptions(options);
   const recursive = normalized.recursive && Boolean(normalized.query);
-  const snapshot = await loadDirectorySnapshot(connectionId, remotePath, recursive, normalized.refresh);
+  let snapshot;
+  try {
+    snapshot = await loadDirectorySnapshot(connectionId, remotePath, recursive, normalized.refresh);
+  } catch (error) {
+    if (!recursive && shouldFallbackToPagedDirectoryRead(error)) return listRemoteDirPaged(connectionId, remotePath, normalized);
+    throw error;
+  }
   return {
     path: snapshot.path,
     recursive,
@@ -1047,6 +1147,7 @@ module.exports = {
   listRemoteFileVersions,
   __remoteBackupVersionTimestamp:remoteBackupVersionTimestamp,
   __buildRemoteDirectoryEntriesCommand:buildRemoteDirectoryEntriesCommand,
+  __buildRemotePagedDirectoryEntriesCommand:buildRemotePagedDirectoryEntriesCommand,
   __buildRemoteRecursiveDirectoryEntriesCommand:buildRemoteRecursiveDirectoryEntriesCommand,
   buildRemoteDirectorySizeCommand,
   readRemoteDirectorySize,

@@ -232,10 +232,32 @@ function captureLocalFilesScrollPosition(tabKey, list=localFilesRoot(tabKey)?.qu
   return position;
 }
 
+function captureLocalFilesScrollAnchor(tabKey, list=localFilesRoot(tabKey)?.querySelector(".local-files-list")) {
+  const position = captureLocalFilesScrollPosition(tabKey, list);
+  if (!list?.querySelectorAll) return position;
+  const listTop = Number(list.getBoundingClientRect?.().top || 0);
+  const row = [...list.querySelectorAll(".local-files-row[data-path]")]
+    .find(item => Number(item.getBoundingClientRect?.().bottom || 0) > listTop + 1);
+  if (!row) return position;
+  return {
+    ...position,
+    anchorPath:String(row.dataset.path || ""),
+    anchorOffset:Number(row.getBoundingClientRect?.().top || listTop) - listTop
+  };
+}
+
 function restoreLocalFilesScrollPosition(tabKey, position, list=localFilesRoot(tabKey)?.querySelector(".local-files-list")) {
   if (!list || !position) return;
-  const maximum = Math.max(0, Number(list.scrollHeight || 0) - Number(list.clientHeight || 0));
-  list.scrollTop = position.atBottom ? maximum : Math.max(0, Math.min(maximum, Number(position.top || 0)));
+  const anchor = position.anchorPath && list.querySelector
+    ? list.querySelector(`.local-files-row[data-path="${CSS.escape(String(position.anchorPath))}"]`)
+    : null;
+  if (anchor) {
+    const listTop = Number(list.getBoundingClientRect?.().top || 0);
+    list.scrollTop = Math.max(0, Number(list.scrollTop || 0) + Number(anchor.getBoundingClientRect?.().top || listTop) - listTop - Number(position.anchorOffset || 0));
+  } else {
+    const maximum = Math.max(0, Number(list.scrollHeight || 0) - Number(list.clientHeight || 0));
+    list.scrollTop = Math.max(0, Math.min(maximum, Number(position.top || 0)));
+  }
   captureLocalFilesScrollPosition(tabKey, list);
   syncLocalFilesScrollCue(list);
 }
@@ -245,17 +267,24 @@ function renderLocalFiles(tabKey, options={}) {
   const root = localFilesRoot(tabKey);
   const list = root?.querySelector(".local-files-list");
   if (!list) return;
-  const head = `<div class="local-files-head"><label><input type="checkbox" aria-label="选择当前页全部项目" data-change-action="local-files-select-all" data-tab-key="${escAttr(tabKey)}"></label><button data-action="local-files-sort" data-sort="name" data-tab-key="${escAttr(tabKey)}">名称</button><button data-action="local-files-sort" data-sort="size" data-tab-key="${escAttr(tabKey)}">大小</button><button data-action="local-files-sort" data-sort="mtime" data-tab-key="${escAttr(tabKey)}">修改时间</button></div>`;
+  const sortMark = key => runtime.sort === key ? (runtime.dir === "asc" ? "↑" : "↓") : "";
+  const columns = ["name", "size", "mtime"];
+  const headColumns = typeof localFilesHeaderColumnHtml === "function"
+    ? columns.map(key => localFilesHeaderColumnHtml(key, tabKey, sortMark(key))).join("")
+    : columns.map(key => `<button data-action="local-files-sort" data-sort="${key}" data-tab-key="${escAttr(tabKey)}">${key === "name" ? "名称" : key === "size" ? "大小" : "修改时间"}${sortMark(key) ? ` ${sortMark(key)}` : ""}</button>`).join("");
+  const head = `<div class="local-files-head"><label><input type="checkbox" aria-label="选择当前页全部项目" data-change-action="local-files-select-all" data-tab-key="${escAttr(tabKey)}"></label>${headColumns}</div>`;
   const rows = runtime.entries.map(entry => {
     const isDrive = entry.type === "drive";
     const isDir = isDrive || entry.type === "dir";
     const iconMarkup = isDrive ? icon("hard-drive") : sftpIcon(entry.name, isDir);
     const sizeText = isDrive && entry.size ? `${formatBytes(entry.free || 0)} 可用 / ${formatBytes(entry.size)}` : (isDir ? "--" : formatBytes(entry.size));
-    const mobileMeta = isDrive ? sizeText : (isDir ? "目录" : sizeText);
+    const mobileMeta = isDrive
+      ? sizeText
+      : [isDir ? "目录" : sizeText, entry.mtime ? formatSftpTime(entry.mtime) : ""].filter(Boolean).join(" · ");
     const active = String(runtime.activePath || "") === String(entry.path);
     return `<div class="local-files-row ${isDrive ? "is-drive" : ""} ${active ? "active" : ""}" draggable="${isMobileLayout() || isDrive ? "false" : "true"}" data-path="${escAttr(entry.path)}" data-entry-type="${escAttr(entry.type)}" data-tab-key="${escAttr(tabKey)}" data-action="local-files-entry-select" data-dblclick-action="local-files-entry-activate" data-contextmenu-action="local-files-entry-menu" data-dragstart-action="local-files-entry-drag-start" data-dragend-action="local-files-entry-drag-end">
       <input class="local-files-check" type="checkbox" value="${escAttr(entry.path)}" data-name="${escAttr(entry.name)}" data-type="${escAttr(entry.type)}" data-size="${Math.max(0, Number(entry.size || 0))}" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}" data-action="local-files-entry-checkbox" aria-label="选择 ${escAttr(entry.name)}" ${isDrive ? "disabled" : ""}>
-      <button class="local-files-name" draggable="${isMobileLayout() || isDrive ? "false" : "true"}" data-action="local-files-entry-select-stop" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}" data-dragstart-action="local-files-entry-drag-start" data-dragend-action="local-files-entry-drag-end"><span class="sftp-icon ${isDrive ? "drive" : entry.type}">${iconMarkup}</span><span class="local-files-name-copy"><span class="local-files-file-name">${esc(entry.name)}</span><span class="local-files-mobile-meta">${esc(mobileMeta)}</span></span></button>
+      <button class="local-files-name" data-action="local-files-entry-select-stop" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}"><span class="sftp-icon ${isDrive ? "drive" : entry.type}">${iconMarkup}</span><span class="local-files-name-copy"><span class="local-files-file-name">${esc(entry.name)}</span><span class="local-files-mobile-meta">${esc(mobileMeta)}</span></span></button>
       <span class="local-files-size" title="${escAttr(sizeText)}">${esc(sizeText)}</span><span class="local-files-time">${entry.mtime ? formatSftpTime(entry.mtime) : "--"}</span>
     </div>`;
   }).join("");
@@ -264,6 +293,7 @@ function renderLocalFiles(tabKey, options={}) {
   const last = total ? Math.min(first + runtime.entries.length - 1, total) : 0;
   const pager = `<div class="sftp-pager-dock"><div class="pager sftp-pager"><button data-action="local-files-page" data-page="${page - 1}" data-tab-key="${escAttr(tabKey)}" ${page <= 1 ? "disabled" : ""}>上一页</button><span class="pager-count"><span class="sftp-scroll-cue" title="下方还有文件" aria-hidden="true">${icon("chevron-down")}</span>第 ${page}/${totalPages} 页 · ${first}-${last} / ${total} · <select aria-label="每页数量" data-change-action="local-files-page-limit" data-tab-key="${escAttr(tabKey)}">${[25,50,100,200].map(size => `<option value="${size}" ${size === Number(runtime.pageSize) ? "selected" : ""}>${size} 项</option>`).join("")}</select></span><button data-action="local-files-page" data-page="${page + 1}" data-tab-key="${escAttr(tabKey)}" ${page >= totalPages ? "disabled" : ""}>下一页</button></div></div>`;
   list.innerHTML = head + (rows || stateView("empty", runtime.query ? "没有匹配的本地文件" : "当前目录为空", runtime.path)) + pager;
+  if (typeof bindLocalFilesColumnControls === "function") bindLocalFilesColumnControls(list);
   watchLocalFilesListLayout(list, tabKey);
   updateLocalFilesSelection(tabKey);
   restoreLocalFilesScrollPosition(tabKey, options.scrollPosition, list);
@@ -284,9 +314,16 @@ function selectedLocalFiles(tabKey) {
 
 function updateLocalFilesSelection(tabKey) {
   const root = localFilesRoot(tabKey);
+  const runtime = localFilesRuntime(tabKey);
   const selected = selectedLocalFiles(tabKey);
+  const selectedPaths = new Set(selected.map(item => String(item.path)));
   const selectable = localFileChecks(tabKey).filter(input => !input.disabled);
-  root?.querySelectorAll(".local-files-row").forEach(row => row.classList.toggle("is-selected", selected.some(item => item.path === row.dataset.path)));
+  if (runtime.activePath && !selectedPaths.has(String(runtime.activePath))) runtime.activePath = "";
+  root?.querySelectorAll(".local-files-row").forEach(row => {
+    const pathValue = String(row.dataset.path || "");
+    row.classList.toggle("is-selected", selectedPaths.has(pathValue));
+    row.classList.toggle("active", Boolean(runtime.activePath) && pathValue === runtime.activePath);
+  });
   const selectAll = root?.querySelector(".local-files-head input[type='checkbox']");
   if (selectAll) {
     selectAll.checked = selectable.length > 0 && selected.length === selectable.length;
@@ -295,7 +332,9 @@ function updateLocalFilesSelection(tabKey) {
   }
   const bar = root?.querySelector(".local-files-selection");
   if (bar) {
-    bar.hidden = selected.length === 0;
+    // Keep one checked item as the focused selection; show bulk controls only
+    // after the user has selected at least two entries.
+    bar.hidden = selected.length < 2;
     const count = bar.querySelector("span");
     if (count) count.textContent = String(selected.length);
     bar.querySelectorAll("[data-local-files-single-action]").forEach(button => {
@@ -322,10 +361,13 @@ function showLocalFileEntryMenu(event, pathValue, type, tabKey) {
   setLocalFileActivePath(pathValue, tabKey);
   const isDir = type === "dir" || type === "drive";
   const isDrive = type === "drive";
+  const wasSelected = selectedLocalFiles(tabKey).some(item => item.path === pathValue);
+  if (!isDrive && !wasSelected) applyLocalFileRangeSelection({shiftKey:false, ctrlKey:false, metaKey:false, forceSingle:true}, pathValue, tabKey);
   const selected = selectedLocalFiles(tabKey);
   const useSelection = !isDrive && selected.some(item => item.path === pathValue);
   const canMutate = !isDrive;
   const selectedPaths = useSelection ? selected.map(item => item.path) : [pathValue];
+  const transferEntries = useSelection ? selected : [localFilesEntry(tabKey, pathValue)].filter(Boolean);
   const selectionCount = selectedPaths.length;
   const actions = [
     isDir
@@ -337,6 +379,7 @@ function showLocalFileEntryMenu(event, pathValue, type, tabKey) {
     ...(canMutate && selectionCount === 1 ? [{label:"重命名", icon:"pencil", run:() => renameLocalPath(pathValue, tabKey)}] : []),
     ...(canMutate ? [{label:selectionCount > 1 ? `删除已选 ${selectionCount} 项` : "删除", icon:"trash-2", danger:true, run:() => deleteLocalFiles(selectedPaths, tabKey)}] : []),
     ...(window.termaDesktop && canMutate ? [{label:"上传到 SFTP", icon:"upload", children:() => localFilesUploadActions(tabKey)}] : []),
+    ...(canMutate && localFilesWorkspaceTransferActions(tabKey, transferEntries).length ? [{label:"发送到对端", icon:"send", children:() => localFilesWorkspaceTransferActions(tabKey, transferEntries)}] : []),
     ...(canMutate && selectionCount === 1 ? [{label:"设置权限", icon:"key-round", run:() => chmodLocalPath(pathValue, tabKey)}] : [])
   ];
   showActionMenu(event, actions);
@@ -446,6 +489,13 @@ function localFilesUploadActions(tabKey) {
   return targets;
 }
 
+function localFilesWorkspaceTransferActions(tabKey, entries=localFilesSelectedPayload(tabKey)) {
+  const payload = {paths:entries.map(item => item.path), entries};
+  return typeof workspaceLocalFilesTransferActions === "function"
+    ? workspaceLocalFilesTransferActions(tabKey, payload)
+    : [];
+}
+
 function showLocalFilesUploadMenu(event, tabKey) {
   const targets = localFilesUploadActions(tabKey);
   if (!selectedLocalFiles(tabKey).length) return notify("请选择要上传的文件或目录", "info");
@@ -472,7 +522,10 @@ function watchLocalFilesListLayout(list, tabKey) {
   const runtime = localFilesRuntime(tabKey);
   runtime.resizeObserver?.disconnect?.();
   if (typeof ResizeObserver === "function") {
-    runtime.resizeObserver = new ResizeObserver(() => syncLocalFilesScrollCue(list));
+    runtime.resizeObserver = new ResizeObserver(() => {
+      if (typeof syncLocalFilesColumnControls === "function") syncLocalFilesColumnControls(list);
+      syncLocalFilesScrollCue(list);
+    });
     runtime.resizeObserver.observe(list);
   }
 }
@@ -495,6 +548,7 @@ function applyLocalFileRangeSelection(event, pathValue, tabKey, toggleOnly=false
   const input = checks[currentIndex];
   if (input.disabled) return;
   if (toggleOnly || event.ctrlKey || event.metaKey) input.checked = !input.checked;
+  else if (!event.forceSingle && checks.filter(item => item.checked).length >= 2) input.checked = !input.checked;
   else {
     checks.forEach(item => { item.checked = item === input; });
   }
@@ -513,7 +567,7 @@ function setLocalFileActivePath(pathValue, tabKey) {
 function selectLocalFileEntry(event, pathValue, tabKey) {
   if (event.target?.closest?.(".local-files-check")) return;
   setLocalFileActivePath(pathValue, tabKey);
-  if (event.shiftKey || event.ctrlKey || event.metaKey) applyLocalFileRangeSelection(event, pathValue, tabKey);
+  applyLocalFileRangeSelection(event, pathValue, tabKey);
 }
 
 function handleLocalFileCheckboxClick(event, pathValue, tabKey) {
@@ -538,6 +592,24 @@ function clearLocalFilesSelection(tabKey) {
   localFileChecks(tabKey).forEach(input => { input.checked = false; });
   updateLocalFilesSelection(tabKey);
 }
+
+function installLocalFilesKeyboardShortcuts() {
+  if (typeof window === "undefined" || typeof document === "undefined" || typeof document.addEventListener !== "function" || window.__termaLocalFilesKeyboardShortcutsInstalled) return;
+  window.__termaLocalFilesKeyboardShortcutsInstalled = true;
+  document.addEventListener("keydown", event => {
+    const tab = typeof workspaceTabByKey === "function" ? workspaceTabByKey(activeTabKey) : tabs.find(item => item.key === activeTabKey);
+    const modal = document.getElementById("modal");
+    const editable = event.target?.closest?.("input, textarea, select, [contenteditable='true']");
+    if (tab?.kind !== "local-files" || editable || (modal && !modal.hidden)) return;
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleAllLocalFiles(true, activeTabKey);
+    }
+  }, true);
+}
+
+installLocalFilesKeyboardShortcuts();
 
 function localFilesNavigationState(tabKey) {
   const runtime = localFilesRuntime(tabKey);
@@ -680,13 +752,15 @@ function navigateLocalFilesParent(tabKey) {
 }
 
 function toggleAllLocalFiles(checked, tabKey) {
-  localFileChecks(tabKey).forEach(input => { if (!input.disabled) input.checked = Boolean(checked); });
+  const checks = localFileChecks(tabKey);
+  checks.forEach(input => { if (!input.disabled) input.checked = Boolean(checked); });
+  if (checked) localFilesRuntime(tabKey).anchorPath = checks.find(input => !input.disabled)?.value || "";
   updateLocalFilesSelection(tabKey);
 }
 
 function setLocalFilesPageSize(value, tabKey) {
   const runtime = localFilesRuntime(tabKey);
-  const scrollPosition = captureLocalFilesScrollPosition(tabKey);
+  const scrollPosition = captureLocalFilesScrollAnchor(tabKey);
   const firstItemIndex = Math.max(0, Number(runtime.page || 1) - 1) * Number(runtime.pageSize || 50);
   runtime.pageSize = Math.max(25, Math.min(200, Number(value || 50)));
   return loadLocalFiles(tabKey, {
@@ -724,11 +798,12 @@ function setLocalFilesPage(page, tabKey) {
   return loadLocalFiles(tabKey, {page:next});
 }
 
-function beginLocalFileDrag(event, pathValue, tabKey) {
+function beginLocalFileDrag(event, pathValue, tabKey, sourceRow=null) {
+  setLocalFileActivePath(pathValue, tabKey);
   let entries = selectedLocalFiles(tabKey);
   if (!entries.some(item => item.path === pathValue)) {
-    const runtimeEntry = localFilesRuntime(tabKey).entries.find(item => item.path === pathValue);
-    entries = runtimeEntry ? [runtimeEntry] : [];
+    applyLocalFileRangeSelection({shiftKey:false, ctrlKey:false, metaKey:false, forceSingle:true}, pathValue, tabKey);
+    entries = selectedLocalFiles(tabKey);
   }
   if (!entries.length) return event.preventDefault();
   const payload = {sourceTabKey:String(tabKey || ""), paths:entries.map(item => String(item.path)), entries};
@@ -737,6 +812,10 @@ function beginLocalFileDrag(event, pathValue, tabKey) {
   event.dataTransfer.effectAllowed = "copy";
   event.dataTransfer.setData(LOCAL_FILES_DRAG_MIME, JSON.stringify(payload));
   event.dataTransfer.setData("text/plain", entries.map(item => item.path).join("\n"));
+  const row = sourceRow || event.currentTarget?.closest?.(".local-files-row") || event.currentTarget || event.target?.closest?.(".local-files-row");
+  row?.classList?.add("is-dragging");
+  document.body?.classList.add("local-files-item-drag-active");
+  if (typeof showSftpDragPreview === "function") showSftpDragPreview(entries, event.clientX, event.clientY);
 }
 
 function localFileDataTransferHasPayload(dataTransfer) {
@@ -787,11 +866,18 @@ function finishLocalFileDrag(eventOrOptions={}) {
   }
   localFileInternalDrag = null;
   if (immediate) localFileInternalDragHandoff = null;
+  document.body?.classList.remove("local-files-item-drag-active");
+  document.querySelectorAll?.(".local-files-row.is-dragging").forEach(row => row.classList.remove("is-dragging"));
+  document.getElementById?.("sftpDragPreview")?.remove();
 }
 
 function bindLocalFileDragLifecycle() {
   if (typeof document === "undefined" || typeof document.addEventListener !== "function" || document.__termaLocalFileDragLifecycleBound) return;
   document.__termaLocalFileDragLifecycleBound = true;
+  document.addEventListener("dragover", event => {
+    if (!localFileInternalDrag) return;
+    if (typeof moveSftpDragPreview === "function") moveSftpDragPreview(event.clientX, event.clientY);
+  }, true);
   document.addEventListener("dragend", event => finishLocalFileDrag(event), true);
   document.addEventListener("drop", () => setTimeout(() => finishLocalFileDrag({immediate:true}), 0), true);
 }
@@ -929,7 +1015,7 @@ registerTermaAction("local-files-entry-select-stop", ({event, element}) => {
 });
 registerTermaAction("local-files-entry-activate", ({event, element}) => activateLocalFileEntry(event, element.dataset.path, element.dataset.entryType, element.dataset.tabKey));
 registerTermaAction("local-files-entry-menu", ({event, element}) => showLocalFileEntryMenu(event, element.dataset.path, element.dataset.entryType, element.dataset.tabKey));
-registerTermaAction("local-files-entry-drag-start", ({event, element}) => beginLocalFileDrag(event, element.dataset.path, element.dataset.tabKey));
+registerTermaAction("local-files-entry-drag-start", ({event, element}) => beginLocalFileDrag(event, element.dataset.path, element.dataset.tabKey, element));
 registerTermaAction("local-files-entry-drag-end", () => finishLocalFileDrag());
 registerTermaAction("local-files-entry-checkbox", ({event, element}) => handleLocalFileCheckboxClick(event, element.dataset.path, element.dataset.tabKey));
 registerTermaAction("local-files-page", ({element}) => setLocalFilesPage(Number(element.dataset.page || 1), element.dataset.tabKey));

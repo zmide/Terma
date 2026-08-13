@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { readFrontendDomain } = require("./frontend-source");
+const root = path.resolve(__dirname, "..");
 const {
   __cacheDirectorySnapshot,
   __cachedDirectorySnapshot,
@@ -14,6 +15,7 @@ const {
   buildRestoreRemoteRecycleCommand,
   buildRemoteCreateFileCommand,
   __buildRemoteDirectoryEntriesCommand,
+  __buildRemotePagedDirectoryEntriesCommand,
   __buildRemoteRecursiveDirectoryEntriesCommand,
   __buildReadRemoteBinaryCommand,
   __buildReadRemoteBinaryExecCommand,
@@ -177,6 +179,15 @@ assert.match(directoryEntriesCommand, /\.terma-recycle-bin/);
 assert.match(directoryEntriesCommand, /\.tunneldesk-recycle-bin/);
 assert.match(directoryEntriesCommand, /\.terma-upload-\*\.part/);
 assert.match(directoryEntriesCommand, /\.tunneldesk-upload-\*\.part/);
+assert.match(directoryEntriesCommand, /__TERMA_PAGED_DIRECTORY__/, "大型目录必须在逐项 stat 前切换到分页读取");
+const sftpSource = fs.readFileSync(path.join(root, "src", "sftp.ts"), "utf8");
+assert.match(sftpSource, /listRemoteDirPaged/, "大型目录应在目录命令超时后使用分页目录读取");
+assert.match(sftpSource, /buildRemotePagedDirectoryEntriesCommand/, "大型目录读取必须在远端限制返回行数");
+const largeDirectoryMetadataCommand = __buildRemotePagedDirectoryEntriesCommand({page:2, page_size:50, sort:"mtime", dir:"desc"});
+assert.match(largeDirectoryMetadataCommand, /-printf '%f\\t%y\\t%s\\t%T@\\t%m\\t%u\\t%g/, "GNU find 应批量读取大型目录元数据，避免逐项启动 stat");
+assert.match(largeDirectoryMetadataCommand, /terma_emit_all_metadata/, "大小和时间排序必须保留完整元数据");
+assert.match(largeDirectoryMetadataCommand, /-k2,2nr/, "大型目录按大小或时间降序时必须在远端完成数值排序");
+assert.doesNotMatch(sftpSource, /metadata_fallback:true/, "大型目录不能通过丢弃大小、时间和权限来提速");
 
 const readLinkedFileCommand = __buildReadRemoteBinaryCommand("/vmlinuz", 5 * 1024 * 1024);
 assert.match(readLinkedFileCommand, /stat -L -c "%s"/, "打开前必须读取 GNU 链接目标真实大小");

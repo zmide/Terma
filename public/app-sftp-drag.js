@@ -13,6 +13,16 @@ function sftpDragEntriesForPath(path, name, type, tabKey=activeTabKey) {
   }];
 }
 
+function selectSftpDragSource(path, name, type, tabKey=activeTabKey) {
+  const runtime = restoreSftpRuntimeForTab(tabKey);
+  const id = Number(runtime?.state.connectionId || 0);
+  const selected = selectedSftpEntries(tabKey);
+  if (typeof selectSftpEntry === "function") {
+    selectSftpEntry(selected.some(item => item.path === path) ? {preserveSelection:true} : {forceSingle:true}, id, path, name, type, tabKey);
+  }
+  return sftpDragEntriesForPath(path, name, type, tabKey);
+}
+
 function sftpNativeDragKey(connectionId, entries) {
   const paths = [...new Set(entries.map(item => String(item.path || "")).filter(Boolean))].sort((left, right) => left.localeCompare(right));
   return `${Number(connectionId)}\0${paths.join("\0")}`;
@@ -284,6 +294,7 @@ function handleSftpNativeDragPointerCancel(event) {
 function activateSftpNativeDragPointer(pointer) {
   if (!pointer?.nativeRequestId || pointer.activated) return;
   pointer.activated = true;
+  pointer.entries = selectSftpDragSource(pointer.path, pointer.name, pointer.type, pointer.sourceTabKey);
   const request = sftpNativeDragRequests.get(pointer.nativeRequestId);
   if (request) request.activated = true;
   pointer.row?.classList.remove("is-preparing-drag");
@@ -321,6 +332,9 @@ function primeSftpNativeDrag(event, connectionId, path, name, type, tabKey=sftpT
     row,
     sourceTabKey:String(tabKey || ""),
     connectionId:Number(connectionId),
+    path:String(path || ""),
+    name:String(name || ""),
+    type:String(type || "file"),
     entries,
     originalDraggable:row?.getAttribute?.("draggable") ?? null,
     timer:null,
@@ -761,7 +775,7 @@ function beginSftpItemDrag(event, connectionId, path, name, type, tabKey=sftpTab
     return;
   }
   clearSftpNativeDragPointer();
-  const entries = sftpDragEntriesForPath(path, name, type, tabKey);
+  const entries = selectSftpDragSource(path, name, type, tabKey);
   const externalDragMode = sftpExternalDragMode();
   if (externalDragMode === "staged") showSftpNativeDragFallbackNotice();
   const cached = externalDragMode === "staged" ? cachedSftpNativeDrag(connectionId, entries) : null;
