@@ -591,7 +591,7 @@ function showXServerManagerLoading() {
 }
 
 function xServerModeLabel(value) {
-  return {bundled:"Terma 内置", system:"系统组件", native:"桌面会话", missing:"未安装"}[value] || value || "未知";
+  return {bundled:"Terma 内置", system:"系统组件", native:"本机桌面会话", missing:"未安装"}[value] || value || "未知";
 }
 
 async function renderXServerManager(requestId=0) {
@@ -624,7 +624,7 @@ async function renderXServerManager(requestId=0) {
     ? `<div class="connection-test-status">${quickConnection ? `本机 DISPLAY 已就绪；“${esc(connection.name)}”是临时连接，可临时打开 X11 终端，但不会保存默认 X11 配置。` : connection ? defaultX11Mode === "off" ? `本机 DISPLAY 已就绪；“${esc(connection.name)}”的普通终端尚未默认请求 X11，可临时打开或保存为默认。` : `“${esc(connection.name)}”的普通终端已默认使用${defaultX11Mode === "trusted" ? "可信" : "受限"} X11，可直接运行 Java GUI 等图形程序。` : "本机 DISPLAY 已就绪；SSH 普通终端是否转发图形窗口取决于对应连接保存的 X11 模式。"}</div>`
     : "";
   const sshX11Block = renderSshX11ForwardingPanel(connection, sshX11);
-  const stateTitle = authorizationRequired ? "等待桌面授权" : standaloneBackend ? "桌面集成不可用" : diagnostics.available ? "已就绪" : diagnostics.running ? "正在运行" : "未启动";
+  const stateTitle = authorizationRequired ? "等待桌面授权" : standaloneBackend ? "桌面集成不可用" : diagnostics.available ? "已就绪" : diagnostics.platform === "linux" && !diagnostics.display ? "未检测到桌面显示会话" : diagnostics.running ? "正在运行" : diagnostics.installed ? "未启动" : "未安装";
   const stateReason = integrationUnavailable ? integrationUnavailableReason : diagnostics.reason || "";
   const stateIcon = authorizationRequired ? "shield-alert" : integrationUnavailable ? "monitor-x" : diagnostics.available ? "circle-check" : diagnostics.running ? "circle-pause" : "circle-alert";
   const stateClass = integrationUnavailable ? "warning" : diagnostics.available ? "ready" : diagnostics.running ? "warning" : "";
@@ -634,10 +634,11 @@ async function renderXServerManager(requestId=0) {
       : `<dl class="xserver-details"><div><dt>当前后端</dt><dd>独立 Web/测试后端</dd></div><div><dt>桌面设备</dt><dd>无法探测 X Server</dd></div>${serverSide.display ? `<div><dt>后端 DISPLAY</dt><dd>${esc(serverSide.display)}</dd></div>` : ""}<div><dt>管理范围</dt><dd>仅运行 Terma 的桌面设备</dd></div></dl>`
     : `<dl class="xserver-details"><div><dt>运行方式</dt><dd>${esc(xServerModeLabel(diagnostics.mode))}</dd></div><div><dt>DISPLAY</dt><dd>${esc(diagnostics.display || "-")}</dd></div>${localDirectAuthorized ? `<div><dt>浏览器权限</dt><dd>本机直连自动授权</dd></div>` : ""}<div><dt>管理范围</dt><dd>${esc(diagnostics.managed ? "Terma 当前会话" : "系统或桌面会话")}</dd></div>${["win32","darwin"].includes(diagnostics.platform) ? `<div><dt>下次启动</dt><dd>${diagnostics.auto_start === false ? "保持关闭" : "自动启动"}</dd></div>` : ""}</dl>`;
   modal.innerHTML = `<div class="modal-card xserver-manager" role="dialog" aria-modal="true" aria-labelledby="xServerManagerTitle">
-    <div class="modal-title-row"><div><h2 id="xServerManagerTitle">X Server</h2><span class="muted">${esc(authorizationRequired ? "当前浏览器尚未授权" : standaloneBackend ? "独立 Web/测试后端" : localDirectAuthorized ? "本机直连自动授权" : diagnostics.server || xServerModeLabel(diagnostics.mode))}</span></div><button class="icon-button" type="button" onclick="closeXServerManager()" title="关闭" aria-label="关闭">${icon("x")}</button></div>
+    <div class="modal-title-row"><div><h2 id="xServerManagerTitle">本机 X Server</h2><span class="muted">${esc(authorizationRequired ? "当前浏览器尚未授权" : standaloneBackend ? "独立 Web/测试后端" : localDirectAuthorized ? "本机直连自动授权" : diagnostics.server || xServerModeLabel(diagnostics.mode))}</span></div><button class="icon-button" type="button" onclick="closeXServerManager()" title="关闭" aria-label="关闭">${icon("x")}</button></div>
     <div class="xserver-state ${stateClass}"><span>${icon(stateIcon)}</span><div><b>${esc(stateTitle)}</b><small>${esc(stateReason)}</small></div></div>
     ${details}
     ${desktopIntegrationAuthorizationMarkup(diagnostics, ["xserver"], {refreshTarget:"xserver"})}
+    ${!integrationUnavailable ? `<div class="connection-test-status">自动启动只会启动已经存在的本机 X Server。Windows 源码启动会准备 Terma 内置运行时；Linux 和 macOS 的系统组件需要在此单独确认安装。</div>` : ""}
     ${linuxHint}
     ${sshX11Block}
     <div class="actions"><button type="button" onclick="renderXServerManager()">${icon("refresh-cw")}<span>刷新</span></button>${!integrationUnavailable && diagnostics.can_stop ? `<button type="button" onclick="changeXServerState('stop',this)">${icon("square")}<span>停止</span></button>` : ""}${!integrationUnavailable && diagnostics.can_install ? `<button class="primary" type="button" onclick="installXServerComponentsFromManager(this,'${escAttr(diagnostics.platform || "")}')">${icon("download")}<span>${esc(installLabel)}</span></button>` : ""}${!integrationUnavailable && diagnostics.can_start ? `<button class="primary" type="button" onclick="changeXServerState('start',this)">${icon("play")}<span>启动</span></button>` : ""}${linuxX11Action}</div>

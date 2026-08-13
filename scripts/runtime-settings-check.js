@@ -102,12 +102,18 @@ async function main() {
   assert.match(DEFAULT_TERMINAL_SETTINGS.font_family, /monospace/);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 9,
+    schema_version: 11,
     listen_hosts: ["127.0.0.1", "127.0.0.2"],
     listen_port: 8123,
     sftp_recycle_bin_enabled: false,
     sftp_floating_progress_enabled: true,
     sftp_max_open_file_size_mb: 50,
+    sftp_text_editor_mode: "ace",
+    sftp_light_editor_threshold_mb: 10,
+    sftp_external_edit_save_rule: "prompt",
+    sftp_external_edit_backup_enabled: true,
+    sftp_download_concurrency: 3,
+    sftp_upload_concurrency: 3,
     sftp_download_directory: "",
     restore_workspace_tabs: true,
     workspace_toolbar_placement: {
@@ -121,6 +127,13 @@ async function main() {
   assert.equal(normalizeRuntimeSettings({ sftp_floating_progress_enabled: false }).sftp_floating_progress_enabled, false);
   assert.equal(normalizeRuntimeSettings({}, { sftp_floating_progress_enabled: false }).sftp_floating_progress_enabled, false);
   assert.equal(normalizeRuntimeSettings({ sftp_max_open_file_size_mb: 12 }).sftp_max_open_file_size_mb, 12);
+  assert.equal(normalizeRuntimeSettings({ sftp_text_editor_mode: "light" }).sftp_text_editor_mode, "light");
+  assert.equal(normalizeRuntimeSettings({ sftp_light_editor_threshold_mb: 24 }).sftp_light_editor_threshold_mb, 24);
+  assert.equal(normalizeRuntimeSettings({ sftp_external_edit_save_rule: "overwrite" }).sftp_external_edit_save_rule, "overwrite");
+  assert.equal(normalizeRuntimeSettings({ sftp_external_edit_backup_enabled: false }).sftp_external_edit_backup_enabled, false);
+  assert.equal(normalizeRuntimeSettings({ sftp_download_concurrency: 6 }).sftp_download_concurrency, 6);
+  assert.equal(normalizeRuntimeSettings({ sftp_upload_concurrency: 2 }).sftp_upload_concurrency, 2);
+  assert.throws(() => normalizeRuntimeSettings({sftp_download_concurrency:9}), /并发数/);
   assert.equal(normalizeRuntimeSettings({ restore_workspace_tabs: false }).restore_workspace_tabs, false);
   assert.deepEqual(normalizeRuntimeSettings({}).workspace_toolbar_placement, DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT);
   assert.deepEqual(normalizeWorkspaceToolbarPlacement({
@@ -218,6 +231,12 @@ async function main() {
     assert.equal(persistedAfterFallback.sftp_recycle_bin_enabled, true);
     assert.equal(persistedAfterFallback.sftp_floating_progress_enabled, true);
     assert.equal(persistedAfterFallback.sftp_max_open_file_size_mb, 50);
+    assert.equal(persistedAfterFallback.sftp_text_editor_mode, "ace");
+    assert.equal(persistedAfterFallback.sftp_light_editor_threshold_mb, 10);
+    assert.equal(persistedAfterFallback.sftp_external_edit_save_rule, "prompt");
+    assert.equal(persistedAfterFallback.sftp_external_edit_backup_enabled, true);
+    assert.equal(persistedAfterFallback.sftp_download_concurrency, 3);
+    assert.equal(persistedAfterFallback.sftp_upload_concurrency, 3);
     assert.equal(persistedAfterFallback.sftp_download_directory, "");
     assert.equal(persistedAfterFallback.restore_workspace_tabs, true);
     assert.deepEqual(persistedAfterFallback.workspace_toolbar_placement, DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT);
@@ -241,6 +260,12 @@ async function main() {
     assert.equal(settings.body.saved.sftp_recycle_bin_enabled, true);
     assert.equal(settings.body.saved.sftp_floating_progress_enabled, true);
     assert.equal(settings.body.saved.sftp_max_open_file_size_mb, 50);
+    assert.equal(settings.body.saved.sftp_text_editor_mode, "ace");
+    assert.equal(settings.body.saved.sftp_light_editor_threshold_mb, 10);
+    assert.equal(settings.body.saved.sftp_external_edit_save_rule, "prompt");
+    assert.equal(settings.body.saved.sftp_external_edit_backup_enabled, true);
+    assert.equal(settings.body.saved.sftp_download_concurrency, 3);
+    assert.equal(settings.body.saved.sftp_upload_concurrency, 3);
     assert.equal(settings.body.saved.sftp_download_directory, "");
     assert.equal(settings.body.saved.restore_workspace_tabs, true);
     assert.deepEqual(settings.body.saved.workspace_toolbar_placement, DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT);
@@ -299,6 +324,27 @@ async function main() {
     assert.equal(floatingProgressDisabled.body.saved.sftp_recycle_bin_enabled, false);
     assert.equal(floatingProgressDisabled.body.saved.terminal.background_mode, "custom");
     console.log("PASS SFTP floating progress preference saves independently and defaults on");
+
+    const editorPolicySaved = await request(base, "/api/runtime-settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        sftp_text_editor_mode: "auto",
+        sftp_light_editor_threshold_mb: 18,
+        sftp_external_edit_save_rule: "overwrite",
+        sftp_external_edit_backup_enabled: false,
+        sftp_download_concurrency: 5,
+        sftp_upload_concurrency: 2
+      })
+    });
+    assert.equal(editorPolicySaved.response.ok, true);
+    assert.equal(editorPolicySaved.body.saved.sftp_text_editor_mode, "auto");
+    assert.equal(editorPolicySaved.body.saved.sftp_light_editor_threshold_mb, 18);
+    assert.equal(editorPolicySaved.body.saved.sftp_external_edit_save_rule, "overwrite");
+    assert.equal(editorPolicySaved.body.saved.sftp_external_edit_backup_enabled, false);
+    assert.equal(editorPolicySaved.body.saved.sftp_download_concurrency, 5);
+    assert.equal(editorPolicySaved.body.saved.sftp_upload_concurrency, 2);
+    assert.equal(editorPolicySaved.body.saved.sftp_floating_progress_enabled, false);
+    console.log("PASS SFTP editor and external-save policies persist independently");
 
     const generalSaved = await request(base, "/api/runtime-settings", {
       method: "PUT",
@@ -362,6 +408,12 @@ async function main() {
     assert.equal(saved.body.saved.sftp_recycle_bin_enabled, false);
     assert.equal(saved.body.saved.sftp_floating_progress_enabled, false);
     assert.equal(saved.body.saved.sftp_max_open_file_size_mb, 12);
+    assert.equal(saved.body.saved.sftp_text_editor_mode, "auto");
+    assert.equal(saved.body.saved.sftp_light_editor_threshold_mb, 18);
+    assert.equal(saved.body.saved.sftp_external_edit_save_rule, "overwrite");
+    assert.equal(saved.body.saved.sftp_external_edit_backup_enabled, false);
+    assert.equal(saved.body.saved.sftp_download_concurrency, 5);
+    assert.equal(saved.body.saved.sftp_upload_concurrency, 2);
     assert.equal(saved.body.saved.sftp_download_directory, path.join(temporaryRoot, "downloads"));
     assert.equal(saved.body.saved.restore_workspace_tabs, false);
     assert.deepEqual(saved.body.saved.workspace_toolbar_placement, {

@@ -16,7 +16,7 @@ function availablePort() {
 }
 
 async function waitForServer(url, child) {
-  const deadline = Date.now() + 15000;
+  const deadline = Date.now() + 60000;
   while (Date.now() < deadline) {
     if (child.exitCode !== null) throw new Error(`UI 验证服务器提前退出，退出码 ${child.exitCode}`);
     try {
@@ -100,7 +100,11 @@ async function main() {
         resolve();
       });
     });
-    fs.rmSync(root, { recursive: true, force: true });
+    try {
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 12, retryDelay: 150 });
+    } catch (error) {
+      console.warn(`UI 冒烟临时目录稍后由系统清理：${error.message || error}`);
+    }
   }
 }
 

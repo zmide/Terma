@@ -46,6 +46,7 @@ let recordNativeSftpDragBytes = null;
 let finishNativeSftpDragJob = null;
 let discardNativeSftpDragJob = null;
 let setNativeSftpDragCancelHandler = null;
+let waitForSftpTransferStart = null;
 let SETTINGS_FILE = "";
 let BOOT_SETTINGS_FILE = "";
 let dataPath = "";
@@ -92,6 +93,7 @@ const remoteClientAdapter = displayClientMode ? null : createRemoteClientAdapter
 });
 
 let mainWindow = null;
+let startupWindow = null;
 const desktopBrowserAuthorizationPromptGate = createDesktopBrowserAuthorizationPromptGate();
 let tray = null;
 let webUrl = "";
@@ -605,7 +607,8 @@ function loadBackend(settings = prepareRuntimeSettings()) {
     discardNativeSftpDragJob,
     finishNativeSftpDragJob,
     recordNativeSftpDragBytes,
-    setNativeSftpDragCancelHandler
+    setNativeSftpDragCancelHandler,
+    waitForSftpTransferStart
   } = require("../dist/sftp-jobs"));
 }
 
@@ -955,6 +958,38 @@ async function waitForWebUrl(timeoutMs = 10000) {
   throw new Error(`Web 服务已经启动，但 ${WEB_URL_FILE} 未在 ${Math.round(timeoutMs / 1000)} 秒内生成`);
 }
 
+function closeStartupWindow() {
+  if (!startupWindow || startupWindow.isDestroyed?.()) return;
+  try { startupWindow.destroy?.(); } catch {}
+  startupWindow = null;
+}
+
+function createStartupWindow(settings = readSettings()) {
+  if (!app.isPackaged || shouldStartInTray(settings) || startupWindow) return null;
+  startupWindow = new BrowserWindow({
+    width:360,
+    height:156,
+    minWidth:360,
+    minHeight:156,
+    maxWidth:360,
+    maxHeight:156,
+    frame:false,
+    resizable:false,
+    show:true,
+    alwaysOnTop:true,
+    skipTaskbar:false,
+    center:true,
+    title:`${PRODUCT_NAME} 正在启动`,
+    icon:iconPath(),
+    backgroundColor:"#f4f6f8",
+    webPreferences:{contextIsolation:true, nodeIntegration:false}
+  });
+  const html = `<!doctype html><meta charset="utf-8"><title>${PRODUCT_NAME} 正在启动</title><style>html,body{width:100%;height:100%;margin:0}body{box-sizing:border-box;display:grid;grid-template-columns:48px 1fr;align-items:center;gap:16px;padding:28px 30px;color:#18212b;background:#f4f6f8;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.mark{width:44px;height:44px;display:grid;place-items:center;border-radius:8px;color:#fff;background:#111827;font-size:20px;font-weight:700}.copy{display:grid;gap:7px}.copy strong{font-size:18px;letter-spacing:0}.copy span{color:#5f6b78;font-size:12px;letter-spacing:0}.line{height:3px;overflow:hidden;border-radius:2px;background:#d8dee6}.line i{display:block;width:42%;height:100%;background:#16825f;animation:load 1.1s ease-in-out infinite}@keyframes load{from{transform:translateX(-110%)}to{transform:translateX(250%)}}@media(prefers-color-scheme:dark){body{color:#eef2f6;background:#17202a}.mark{background:#0b1016}.copy span{color:#a6b0bb}.line{background:#34404c}}</style><div class="mark">T</div><div class="copy"><strong>Terma 正在启动</strong><span>正在准备服务与工作区...</span><div class="line"><i></i></div></div>`;
+  startupWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  startupWindow.once("closed", () => { startupWindow = null; });
+  return startupWindow;
+}
+
 function createWindow(options = {}) {
   mainWindow = new BrowserWindow({
     width: 1180,
@@ -985,6 +1020,7 @@ function createWindow(options = {}) {
     });
   }
   mainWindow.once("ready-to-show", () => {
+    closeStartupWindow();
     if (options.displayClient) {
       pendingWindowReveal = false;
       startupRevealScheduled = false;
@@ -1002,6 +1038,7 @@ function createWindow(options = {}) {
     else bringMainWindowToFront();
   });
   mainWindow.webContents.once?.("did-finish-load", () => {
+    closeStartupWindow();
     if (options.displayClient) {
       if (startupRevealScheduled) return;
       startupRevealScheduled = true;
@@ -1321,11 +1358,16 @@ async function handleNativeSftpWriteRequest(session, nativeEvent) {
     try {
       const task = beginNativeSftpDragJob?.(session.token, session.ticket);
       session.nativeJobStarted = Boolean(task?.id);
-      if (session.nativeJobStarted) sendSftpDragEvent(session, {type:"transferStarted"});
+      if (session.nativeJobStarted) {
+        session.nativeJobStartPromise = Promise.resolve(waitForSftpTransferStart?.(task.id)).then(() => {
+          sendSftpDragEvent(session, {type:"transferStarted"});
+        });
+      }
     } catch (error) {
       console.warn("Failed to start macOS SFTP native drag task:", error);
     }
   }
+  if (session.nativeJobStartPromise) await session.nativeJobStartPromise;
   const itemId = String(nativeEvent.itemId || "");
   const targetPath = String(nativeEvent.targetPath || "");
   const deliveryKey = `${itemId}\0${targetPath}`;
@@ -1634,6 +1676,7 @@ function handleStreamingSftpStartDrag(event, payload, requestId) {
       nativeOwnsTicket:false,
       nativeStarted:false,
       nativeJobStarted:false,
+      nativeJobStartPromise:null,
       uiReleased:false,
       consuming:false,
       contentComplete:false,
@@ -2267,6 +2310,7 @@ app.whenReady().then(async () => {
   initializeDesktopSettingsFile();
   const firstRun = ensureDesktopSettingsFile();
   const startupDesktopSettings = prepareRuntimeSettings();
+  createStartupWindow(startupDesktopSettings);
   const startupRuntime = resolveRuntimePaths(startupDesktopSettings);
   prepareLegacyBrandMigrationAtStartup(startupDesktopSettings, startupRuntime);
   loadBackend(startupDesktopSettings);
@@ -2331,6 +2375,7 @@ app.whenReady().then(async () => {
     webUrl = await waitForWebUrl();
     flushPendingDisplayClients();
   } catch (error) {
+    closeStartupWindow();
     const alreadyRunning = error?.code === "TERMA_ALREADY_RUNNING" || error?.code === "TUNNELDESK_ALREADY_RUNNING";
     const presentation = alreadyRunning
       ? {title:`${PRODUCT_NAME} 启动失败`, message:`${error.message}\n\n请使用已经打开的 ${PRODUCT_NAME} 窗口，或先停止已有无界面服务。`}

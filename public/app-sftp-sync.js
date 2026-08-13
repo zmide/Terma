@@ -8,6 +8,8 @@ const productivityState = {
   broadcastPaused:false,
   externalEditTimers:new Map(),
   externalEditPrompts:new Set(),
+  externalEditPromptQueue:[],
+  externalEditPromptActive:false,
   externalEditPromptSignatures:new Map(),
   externalEditObserved:new Map()
 };
@@ -20,12 +22,31 @@ function externalEditorSettings() {
   };
 }
 
+function externalEditSavePolicy() {
+  const saved = runtimeSettings?.saved || runtimeSettings || {};
+  return {
+    save_rule:saved.sftp_external_edit_save_rule === "overwrite" ? "overwrite" : "prompt",
+    backup_on_auto_save:saved.sftp_external_edit_backup_enabled !== false
+  };
+}
+
 async function openSftpExternalEdit(connectionId, remotePath) {
-  const session = await api(`/api/connections/${Number(connectionId)}/sftp/external-edit`, {
-    method:"POST",
-    body:JSON.stringify({path:remotePath, editor:externalEditorSettings()})
+  const progress = createProgressToast({
+    title:`正在用外部编辑器打开 ${sftpOpenFilename(remotePath)}`,
+    detail:"正在读取远程文件并准备本地副本...",
+    icon:"external-link"
   });
-  notify("外部编辑器已打开；内容变化后会询问是否保存到远端", "success");
+  let session;
+  try {
+    session = await api(`/api/connections/${Number(connectionId)}/sftp/external-edit`, {
+      method:"POST",
+      body:JSON.stringify({path:remotePath, editor:externalEditorSettings(), ...externalEditSavePolicy()})
+    });
+  } catch (error) {
+    progress.fail(error.message || "外部编辑器打开失败");
+    return;
+  }
+  progress.finish(externalEditSavePolicy().save_rule === "overwrite" ? "外部编辑器已打开；保存后会自动覆盖远端" : "外部编辑器已打开；保存后会询问是否上传到远端", 3500);
   const timer = setInterval(() => pollSftpExternalEdit(session.id), 1200);
   productivityState.externalEditTimers.set(session.id, timer);
 }
@@ -43,8 +64,10 @@ async function pollSftpExternalEdit(id) {
     if (productivityState.externalEditObserved.get(id) !== signature) {
       productivityState.externalEditObserved.set(id, signature);
       notify(`已上传：${session.remote_path}`, "success");
-      const tab = tabs.find(item => item.kind === "sftp" && Number(item.id) === Number(session.connection_id));
-      if (tab && typeof refreshSftp === "function") refreshSftp({refresh:true, tabKey:tab.key}).catch(() => {});
+      if (typeof queueSftpDirectoryRefresh === "function") {
+        queueSftpDirectoryRefresh(session.connection_id);
+        flushPendingSftpDirectoryRefresh();
+      }
     }
   }
   if (!new Set(["modified", "conflict"]).has(session.status)) return;
@@ -58,44 +81,63 @@ async function promptSftpExternalEdit(session, force=false) {
   if (!force && productivityState.externalEditPromptSignatures.get(id) === signature) return;
   productivityState.externalEditPromptSignatures.set(id, signature);
   productivityState.externalEditPrompts.add(id);
+  productivityState.externalEditPromptQueue.push(session);
+  return drainSftpExternalEditPrompts();
+}
+
+async function drainSftpExternalEditPrompts() {
+  if (productivityState.externalEditPromptActive) return;
+  productivityState.externalEditPromptActive = true;
   try {
-    const conflict = session.status === "conflict";
-    let choice = await chooseModal(
-      conflict ? "远程文件已变化" : "内容已由外部编辑器更改",
-      `${session.connection_name}\n${session.remote_path}\n\n${conflict ? "远端内容也发生了变化，请选择如何处理本地编辑内容。" : "是否将外部编辑器中的更改保存到远端？"}`,
-      conflict ? [
-        ...(session.can_compare ? [{label:"对比内容", value:"compare"}] : []),
-        {label:"覆盖远程并保留备份", value:"overwrite", className:"danger"},
-        {label:"另存为远程文件", value:"save_as", className:"primary"},
-        {label:"暂不保存", value:"cancel"}
-      ] : [
-        ...(session.can_compare ? [{label:"对比内容", value:"compare"}] : []),
-        {label:"保存到远端", value:"save", className:"primary"},
-        {label:"另存为远程文件", value:"save_as"},
-        {label:"暂不保存", value:"cancel"}
-      ]
-    );
-    if (choice === "compare") {
+    while (productivityState.externalEditPromptQueue.length) {
+      const session = productivityState.externalEditPromptQueue.shift();
+      const id = String(session?.id || "");
       try {
-        const comparison = await api(`/api/sftp/external-edits/${encodeURIComponent(id)}/comparison`);
-        choice = await openSftpExternalComparison(session, comparison);
-      } catch (error) {
-        notify(error.message || "无法生成文本对比", "error");
-        return;
+        const conflict = session.status === "conflict";
+        let choice = await chooseModal(
+          conflict ? "远程文件已变化" : "内容已由外部编辑器更改",
+          `${session.connection_name}\n${session.remote_path}\n\n${conflict ? "远端内容也发生了变化，请选择如何处理本地编辑内容。" : "是否将外部编辑器中的更改保存到远端？"}`,
+          conflict ? [
+            ...(session.can_compare ? [{label:"对比内容", value:"compare"}] : []),
+            {label:"覆盖远程并保留备份", value:"overwrite", className:"danger"},
+            {label:"另存为远程文件", value:"save_as", className:"primary"},
+            {label:"暂不保存", value:"cancel"}
+          ] : [
+            ...(session.can_compare ? [{label:"对比内容", value:"compare"}] : []),
+            {label:"保存到远端", value:"save", className:"primary"},
+            {label:"另存为远程文件", value:"save_as"},
+            {label:"暂不保存", value:"cancel"}
+          ]
+        );
+        if (choice === "compare") {
+          try {
+            const comparison = await api(`/api/sftp/external-edits/${encodeURIComponent(id)}/comparison`);
+            choice = await openSftpExternalComparison(session, comparison);
+          } catch (error) {
+            notify(error.message || "无法生成文本对比", "error");
+            continue;
+          }
+        }
+        const payload = {action:choice};
+        if (choice === "save_as") {
+          const remotePath = await inputModal("另存为远程文件", "远程路径", `${session.remote_path}.local`);
+          if (!remotePath) continue;
+          payload.remote_path = remotePath;
+        }
+        if (!choice) continue;
+        const resolved = await api(`/api/sftp/external-edits/${id}/resolve`, {method:"POST", body:JSON.stringify(payload)});
+        if (resolved.status === "conflict") notify(resolved.message, "info");
+        else notify(resolved.message, choice === "cancel" ? "info" : "success");
+        if (resolved.status === "synced" && typeof queueSftpDirectoryRefresh === "function") {
+          queueSftpDirectoryRefresh(resolved.connection_id);
+          flushPendingSftpDirectoryRefresh();
+        }
+      } finally {
+        productivityState.externalEditPrompts.delete(id);
       }
     }
-    const payload = {action:choice};
-    if (choice === "save_as") {
-      const remotePath = await inputModal("另存为远程文件", "远程路径", `${session.remote_path}.local`);
-      if (!remotePath) return;
-      payload.remote_path = remotePath;
-    }
-    if (!choice) return;
-    const resolved = await api(`/api/sftp/external-edits/${id}/resolve`, {method:"POST", body:JSON.stringify(payload)});
-    if (resolved.status === "conflict") notify(resolved.message, "info");
-    else notify(resolved.message, choice === "cancel" ? "info" : "success");
   } finally {
-    productivityState.externalEditPrompts.delete(id);
+    productivityState.externalEditPromptActive = false;
   }
 }
 
@@ -118,6 +160,8 @@ async function stopSftpExternalEdit(id) {
   clearInterval(productivityState.externalEditTimers.get(id));
   productivityState.externalEditTimers.delete(id);
   productivityState.externalEditPromptSignatures.delete(id);
+  productivityState.externalEditPrompts.delete(id);
+  productivityState.externalEditPromptQueue = productivityState.externalEditPromptQueue.filter(session => String(session?.id || "") !== String(id));
   productivityState.externalEditObserved.delete(id);
   await openSftpExternalEditManager();
 }

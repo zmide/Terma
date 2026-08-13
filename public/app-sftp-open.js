@@ -24,8 +24,15 @@ function sftpOpenTransportError() {
   return new Error("远程文件传输被中断。Terma 已自动重试一次；文件可能正在被改写，或当前浏览器到 Terma 的网络连接不稳定，请稍后重试");
 }
 
+function sftpTextEditorKind(size=0) {
+  const saved = runtimeSettings?.saved || runtimeSettings || {};
+  const mode = ["ace", "auto", "light"].includes(saved.sftp_text_editor_mode) ? saved.sftp_text_editor_mode : "ace";
+  const threshold = Math.max(1, Number(saved.sftp_light_editor_threshold_mb || 10)) * 1024 * 1024;
+  return mode === "light" || (mode === "auto" && Number(size || 0) >= threshold) ? "light" : "ace";
+}
+
 async function readSftpOpenBytes(connectionId, remotePath) {
-  const state = {paused:false, cancelled:false, resume:null};
+  const state = {paused:false, cancelled:false, resume:null, cancelCurrent:null};
   const controller = new AbortController();
   let received = 0;
   let total = 0;
@@ -51,6 +58,7 @@ async function readSftpOpenBytes(connectionId, remotePath) {
       state.cancelled = true;
       state.resume?.();
       controller.abort();
+      state.cancelCurrent?.();
     }
   });
   try {
@@ -98,7 +106,7 @@ async function readSftpOpenBytes(connectionId, remotePath) {
         }
         if (received !== total) throw new Error(`远程文件读取不完整：${formatBytes(received)} / ${formatBytes(total)}`);
         progress.update({progress:100, detail:`读取完成 · ${formatBytes(total)}`});
-        return {bytes, size:total, limit, progress};
+        return {bytes, size:total, limit, progress, state};
       } catch (error) {
         if (state.cancelled || error?.name === "AbortError") return null;
         if (attempt === 0 && sftpOpenTransportInterrupted(error)) {
@@ -117,25 +125,35 @@ async function readSftpOpenBytes(connectionId, remotePath) {
   }
 }
 
-function decodeSftpOpenText(bytes, requestedEncoding, progress) {
-  progress.update({progress:Number.NaN, detail:"正在解析文本编码...", pausable:false});
+function decodeSftpOpenText(bytes, requestedEncoding, progress, state) {
+  progress.update({progress:Number.NaN, detail:"正在解析文本编码...", pausable:false, cancellable:true});
   return new Promise((resolve, reject) => {
     const worker = new Worker("/sftp-open-worker.js");
-    const timer = setTimeout(() => {
-      worker.terminate();
-      reject(new Error("文本解析超时"));
-    }, 120000);
-    worker.addEventListener("message", event => {
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      if (state) state.cancelCurrent = null;
       worker.terminate();
-      if (!event.data?.ok) reject(new Error(event.data?.error || "文本解析失败"));
-      else resolve(event.data);
+      callback(value);
+    };
+    const timer = setTimeout(() => {
+      finish(reject, new Error("文本解析超时"));
+    }, 120000);
+    if (state) state.cancelCurrent = () => {
+      const error = new Error("已终止打开文件");
+      error.name = "AbortError";
+      finish(reject, error);
+    };
+    worker.addEventListener("message", event => {
+      if (!event.data?.ok) finish(reject, new Error(event.data?.error || "文本解析失败"));
+      else finish(resolve, event.data);
     }, {once:true});
     worker.addEventListener("error", event => {
-      clearTimeout(timer);
-      worker.terminate();
-      reject(new Error(event.message || "文本解析失败"));
+      finish(reject, new Error(event.message || "文本解析失败"));
     }, {once:true});
+    if (state?.cancelled) return state.cancelCurrent();
     worker.postMessage({buffer:bytes.buffer, encoding:requestedEncoding}, [bytes.buffer]);
   });
 }
@@ -146,10 +164,20 @@ async function readSftpTextWithProgress(connectionId, remotePath, requestedEncod
   const connection = currentConnection(connectionId) || connections.find(item => Number(item.id) === Number(connectionId));
   const preferred = connection?.sftp_text_encoding || "auto";
   try {
-    const decoded = await decodeSftpOpenText(opened.bytes, requestedEncoding || preferred, opened.progress);
-    opened.progress.finish(`已打开 · ${formatBytes(opened.size)}`);
-    return {...decoded, preferred_encoding:preferred, size:opened.size, limit:opened.limit};
+    const decoded = await decodeSftpOpenText(opened.bytes, requestedEncoding || preferred, opened.progress, opened.state);
+    if (opened.state?.cancelled) return null;
+    const editorKind = sftpTextEditorKind(opened.size);
+    opened.progress.update({
+      progress:Number.NaN,
+      detail:editorKind === "light"
+        ? "正在使用轻量编辑器解析..."
+        : "正在使用 Ace 编辑器解析（可在 SFTP 设置中选择轻量编辑器）...",
+      pausable:false,
+      cancellable:true
+    });
+    return {...decoded, editor_kind:editorKind, preferred_encoding:preferred, size:opened.size, limit:opened.limit, progress:opened.progress, is_cancelled:() => opened.state?.cancelled === true};
   } catch (error) {
+    if (error?.name === "AbortError" || opened.state?.cancelled) return null;
     opened.progress.fail(error.message || "文本解析失败");
     throw error;
   }

@@ -816,6 +816,22 @@ async function readRemoteBinaryFile(connectionId, remotePath, maximumBytes = DEF
   return {content:body, size:body.length, limit};
 }
 
+async function readRemoteFileMetadata(connectionId, remotePath) {
+  const connection = getSftpConnection(connectionId);
+  const command = [
+    `TERMA_TARGET=${remotePathOperand(connection, remotePath)}`,
+    `if [ -L "$TERMA_TARGET" ] && [ ! -e "$TERMA_TARGET" ]; then printf "%s\\n" "符号链接指向的目标不存在" >&2; exit 1; fi`,
+    `if [ ! -f "$TERMA_TARGET" ]; then printf "%s\\n" "目标不是普通文件" >&2; exit 1; fi`,
+    `if stat -L -c "%s %Y" "$TERMA_TARGET" >/dev/null 2>&1; then stat -L -c "%s %Y" "$TERMA_TARGET"`,
+    `elif stat -L -f "%z %m" "$TERMA_TARGET" >/dev/null 2>&1; then stat -L -f "%z %m" "$TERMA_TARGET"`,
+    `else printf "%s\\n" "远程系统缺少兼容的 stat 命令" >&2; exit 1; fi`
+  ].join("; ");
+  const output = (await runRemote(connection, command)).toString("utf8").trim();
+  const match = /^(\d+)\s+(\d+)$/.exec(output);
+  if (!match) throw new Error("远程文件元数据返回格式无效");
+  return {size:Number(match[1]), mtime:Number(match[2])};
+}
+
 function buildStreamRemoteOpenCommand(remotePath, maximumBytes, connection = null) {
   const limit = normalizeOpenFileLimit(maximumBytes);
   const limitMb = Math.max(1, Math.round(limit / 1024 / 1024));
@@ -1064,6 +1080,7 @@ module.exports = {
   renameRemotePath,
   readRemoteTextFile,
   readRemoteBinaryFile,
+  readRemoteFileMetadata,
   streamRemoteOpenFile,
   __buildStreamRemoteOpenCommand:buildStreamRemoteOpenCommand,
   __buildReadRemoteBinaryCommand:buildReadRemoteBinaryCommand,

@@ -610,11 +610,12 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     const modal = $("modal");
     const detectedLanguage = sftpEditorLanguageForFile(title);
     const wrapEnabled = localStorage.getItem("sftpEditorWordWrap") !== "0";
-    const versions = Array.isArray(diffOptions.versions) ? diffOptions.versions.slice(0, 10) : [];
+    let versions = Array.isArray(diffOptions.versions) ? diffOptions.versions.slice(0, 10) : [];
+    const historyLoading = typeof diffOptions.loadVersions === "function";
     const historyOptions = versions.length
       ? versions.map((version, index) => `<option value="${index}">${esc(sftpDiffDisplayTime(version.changed_at || Number(version.mtime || 0) * 1000))} · ${esc(formatBytes(version.size || 0))}</option>`).join("")
-      : `<option value="">没有可比较的备份</option>`;
-    modal.innerHTML = `<div class="modal-card wide sftp-editor-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(title)}</h2><span>${esc(formatBytes(size))} · 上限 ${esc(formatBytes(limit))}</span></div><div class="sftp-editor-controls"><label>文本编码<select id="sftpTextEncoding">${sftpTextEncodingOptions.map(([value,label]) => `<option value="${value}" ${value === encoding ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>语言<select id="sftpEditorLanguage"><option value="auto">自动（${esc(sftpEditorLanguageLabel(detectedLanguage))}）</option>${sftpEditorLanguageOptions.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></label><label class="check-row compact"><input id="sftpEditorWordWrap" type="checkbox" ${wrapEnabled ? "checked" : ""}> 自动换行</label><span id="sftpEditorStats"></span></div></div><div id="sftpEditorWorkspace" class="sftp-editor-workspace"><div id="sftpTextEditor" class="sftp-code-editor" aria-label="SFTP 文本编辑器"></div><div id="sftpEditorSplit" class="sftp-editor-splitter" role="separator" aria-orientation="horizontal" aria-label="调整编辑与差异区域比例" tabindex="0" hidden></div><div id="sftpDiffPreview" class="sftp-diff-preview" hidden></div></div><div class="sftp-editor-options"><label class="check-row"><input id="sftpBackupBeforeSave" type="checkbox" checked> 保存前备份远程文件</label><label class="check-row"><input id="sftpPersistEncoding" type="checkbox" ${preferredEncoding === encoding ? "checked" : ""}> 设为此连接默认文本编码</label><label class="sftp-diff-history-control"><span>比较版本</span><select id="sftpDiffHistory" ${versions.length ? "" : "disabled"}>${historyOptions}</select><small>最近 ${versions.length} / 10 个备份</small></label></div><div class="actions"><button id="sftpTextFormatJson" hidden>${icon("braces")}<span>格式化 JSON</span></button><button id="sftpTextDiff" ${versions.length ? "" : "disabled"}>预览差异</button><button class="primary" id="sftpTextSave">保存 <span class="shortcut-hint">Ctrl+S</span></button><button id="sftpTextClose">关闭</button></div></div>`;
+      : `<option value="">${historyLoading ? "正在读取备份..." : "没有可比较的备份"}</option>`;
+    modal.innerHTML = `<div class="modal-card wide sftp-editor-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(title)}</h2><span>${esc(formatBytes(size))} · 上限 ${esc(formatBytes(limit))}</span></div><div class="sftp-editor-controls"><label>文本编码<select id="sftpTextEncoding">${sftpTextEncodingOptions.map(([value,label]) => `<option value="${value}" ${value === encoding ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>语言<select id="sftpEditorLanguage"><option value="auto">自动（${esc(sftpEditorLanguageLabel(detectedLanguage))}）</option>${sftpEditorLanguageOptions.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></label><label class="check-row compact"><input id="sftpEditorWordWrap" type="checkbox" ${wrapEnabled ? "checked" : ""}> 自动换行</label><span id="sftpEditorStats"></span></div></div><div id="sftpEditorWorkspace" class="sftp-editor-workspace"><div id="sftpTextEditor" class="sftp-code-editor" aria-label="SFTP 文本编辑器"></div><div id="sftpEditorSplit" class="sftp-editor-splitter" role="separator" aria-orientation="horizontal" aria-label="调整编辑与差异区域比例" tabindex="0" hidden></div><div id="sftpDiffPreview" class="sftp-diff-preview" hidden></div></div><div class="sftp-editor-options"><label class="check-row"><input id="sftpBackupBeforeSave" type="checkbox" checked> 保存前备份远程文件</label><label class="check-row"><input id="sftpPersistEncoding" type="checkbox" ${preferredEncoding === encoding ? "checked" : ""}> 设为此连接默认文本编码</label><label class="sftp-diff-history-control"><span>比较版本</span><select id="sftpDiffHistory" disabled>${historyOptions}</select><small id="sftpDiffHistoryCount">${historyLoading ? "正在读取备份" : `最近 ${versions.length} / 10 个备份`}</small></label></div><div class="actions"><button id="sftpTextFormatJson" hidden>${icon("braces")}<span>格式化 JSON</span></button><button id="sftpTextDiff" disabled>预览差异</button><button class="primary" id="sftpTextSave">保存 <span class="shortcut-hint">Ctrl+S</span></button><button id="sftpTextClose">关闭</button></div></div>`;
     modal.hidden = false;
     modal.onclick = null;
     let finished = false;
@@ -625,14 +626,77 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     const diffPreview = $("sftpDiffPreview");
     let aceEditor = null;
     let fallbackEditor = null;
+    const useLightEditor = diffOptions.editorKind === "light";
+    const lightPageChars = 256 * 1024;
+    let lightSource = "";
+    let lightPageOffsets = [0, 0];
+    let lightPageIndex = 0;
+    const lightPageEdits = new Map();
+    let lightPager = null;
+    const rebuildLightPageOffsets = () => {
+      lightPageOffsets = [0];
+      let offset = 0;
+      while (offset < lightSource.length) {
+        let next = Math.min(lightSource.length, offset + lightPageChars);
+        if (next < lightSource.length && /[\uD800-\uDBFF]/.test(lightSource.charAt(next - 1)) && /[\uDC00-\uDFFF]/.test(lightSource.charAt(next))) next -= 1;
+        lightPageOffsets.push(next);
+        offset = next;
+      }
+      if (lightPageOffsets.length === 1) lightPageOffsets.push(0);
+    };
+    const lightPageCount = () => Math.max(1, lightPageOffsets.length - 1);
+    const lightOriginalPage = index => lightSource.slice(lightPageOffsets[index], lightPageOffsets[index + 1]);
+    const lightPageValue = index => lightPageEdits.has(index) ? lightPageEdits.get(index) : lightOriginalPage(index);
+    const commitLightPage = () => {
+      if (!useLightEditor || !fallbackEditor) return;
+      const value = fallbackEditor.value;
+      if (value === lightOriginalPage(lightPageIndex)) lightPageEdits.delete(lightPageIndex);
+      else lightPageEdits.set(lightPageIndex, value);
+    };
+    const renderLightPage = index => {
+      if (!useLightEditor || !fallbackEditor) return;
+      commitLightPage();
+      lightPageIndex = Math.max(0, Math.min(lightPageCount() - 1, Number(index || 0)));
+      fallbackEditor.value = lightPageValue(lightPageIndex);
+      const pageNumber = lightPager?.querySelector("input");
+      const pageTotal = lightPager?.querySelector("span");
+      const buttons = lightPager?.querySelectorAll("button") || [];
+      if (pageNumber) {
+        pageNumber.value = String(lightPageIndex + 1);
+        pageNumber.max = String(lightPageCount());
+      }
+      if (pageTotal) pageTotal.textContent = `/ ${lightPageCount()} · 每段最多 256 KB`;
+      if (buttons[0]) buttons[0].disabled = lightPageIndex === 0;
+      if (buttons[1]) buttons[1].disabled = lightPageIndex >= lightPageCount() - 1;
+      fallbackEditor.scrollTop = 0;
+      fallbackEditor.scrollLeft = 0;
+    };
     const useFallbackEditor = () => {
       fallbackEditor = document.createElement("textarea");
       fallbackEditor.className = "text-editor code-editor";
       fallbackEditor.spellcheck = false;
-      fallbackEditor.value = content;
-      host.replaceWith(fallbackEditor);
+      if (useLightEditor) {
+        lightSource = content;
+        rebuildLightPageOffsets();
+        const shell = document.createElement("div");
+        shell.className = "sftp-light-editor-shell";
+        lightPager = document.createElement("div");
+        lightPager.className = "sftp-light-editor-pager";
+        lightPager.innerHTML = `<button type="button" class="icon-button" title="上一段" aria-label="上一段">${icon("chevron-left")}</button><label>分段 <input type="number" min="1" step="1" aria-label="当前分段"></label><span></span><button type="button" class="icon-button" title="下一段" aria-label="下一段">${icon("chevron-right")}</button>`;
+        shell.append(fallbackEditor, lightPager);
+        host.replaceWith(shell);
+        const buttons = lightPager.querySelectorAll("button");
+        buttons[0].onclick = () => renderLightPage(lightPageIndex - 1);
+        buttons[1].onclick = () => renderLightPage(lightPageIndex + 1);
+        lightPager.querySelector("input").onchange = event => renderLightPage(Number(event.target.value || 1) - 1);
+        fallbackEditor.value = lightOriginalPage(0);
+        renderLightPage(0);
+      } else {
+        fallbackEditor.value = content;
+        host.replaceWith(fallbackEditor);
+      }
     };
-    if (window.ace?.edit) {
+    if (window.ace?.edit && !useLightEditor) {
       ace.config.set("basePath", "/vendor/ace");
       ace.config.set("useStrictCSP", true);
       aceEditor = ace.edit(host);
@@ -651,8 +715,25 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     } else {
       useFallbackEditor();
     }
-    const getValue = () => aceEditor ? aceEditor.getValue() : fallbackEditor.value;
-    const setValue = value => aceEditor ? aceEditor.setValue(value, -1) : (fallbackEditor.value = value);
+    content = "";
+    const getValue = () => {
+      if (aceEditor) return aceEditor.getValue();
+      if (!useLightEditor) return fallbackEditor.value;
+      commitLightPage();
+      if (!lightPageEdits.size) return lightSource;
+      const pages = [];
+      for (let index = 0; index < lightPageCount(); index += 1) pages.push(lightPageValue(index));
+      return pages.join("");
+    };
+    const setValue = value => {
+      if (aceEditor) return aceEditor.setValue(value, -1);
+      if (!useLightEditor) return (fallbackEditor.value = value);
+      lightSource = String(value || "");
+      lightPageEdits.clear();
+      lightPageIndex = 0;
+      rebuildLightPageOffsets();
+      renderLightPage(0);
+    };
     const focusEditor = () => aceEditor ? aceEditor.focus() : fallbackEditor.focus();
     let releaseEditorLayout = () => {};
     const finish = (value) => {
@@ -661,20 +742,29 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       document.removeEventListener("keydown", onModalKeyDown, true);
       releaseEditorLayout();
       try { aceEditor?.destroy(); } catch {}
+      lightSource = "";
+      lightPageEdits.clear();
       modal.hidden = true;
       resolve(value);
     };
     const saveButton = $("sftpTextSave");
     const selectedLanguage = () => $("sftpEditorLanguage")?.value === "auto" ? detectedLanguage : $("sftpEditorLanguage")?.value;
     const syncFormatButton = () => {
-      $("sftpTextFormatJson").hidden = !isSftpJsonFileName(title) || selectedLanguage() !== "json";
+      $("sftpTextFormatJson").hidden = useLightEditor || !isSftpJsonFileName(title) || selectedLanguage() !== "json";
     };
-    const updateStats = () => {
-      const value = getValue();
-      const bytes = new Blob([value]).size;
+    let contentModified = false;
+    const updateStats = (force=false, providedValue=null) => {
+      if (useLightEditor && contentModified && !force) {
+        $("sftpEditorStats").textContent = "已修改 · 保存时检查大小";
+        return true;
+      }
+      const initial = !contentModified;
+      const value = initial && useLightEditor ? "" : (providedValue === null ? getValue() : providedValue);
+      const bytes = initial ? Number(size || 0) : new Blob([value]).size;
       const tooLarge = bytes > limit;
       const stats = $("sftpEditorStats");
-      stats.textContent = `${value.split("\n").length} 行 · ${formatBytes(bytes)}${tooLarge ? " · 已超过上限" : ""}`;
+      const lines = initial && Number(diffOptions.lineCount) > 0 ? Number(diffOptions.lineCount) : value.split("\n").length;
+      stats.textContent = `${lines} 行 · ${formatBytes(bytes)}${tooLarge ? " · 已超过上限" : ""}`;
       stats.classList.toggle("limit-exceeded", tooLarge);
       saveButton.disabled = tooLarge;
       return !tooLarge;
@@ -682,10 +772,44 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     updateStats();
     syncFormatButton();
     if (aceEditor) {
-      aceEditor.session.on("change", updateStats);
+      aceEditor.session.on("change", () => { contentModified = true; updateStats(); });
       aceEditor.commands.addCommand({name:"saveSftpFile", bindKey:{win:"Ctrl-S",mac:"Command-S"}, exec:()=>saveButton.click()});
-    } else fallbackEditor.addEventListener("input", updateStats);
+    } else fallbackEditor.addEventListener("input", () => {
+      if (useLightEditor) {
+        commitLightPage();
+        contentModified = lightPageEdits.size > 0;
+      } else contentModified = true;
+      updateStats();
+    });
     releaseEditorLayout = bindSftpEditorLayout(card, editorWorkspace, diffSplitter, () => aceEditor?.resize(true));
+    const syncHistoryControls = () => {
+      const select = $("sftpDiffHistory");
+      const button = $("sftpTextDiff");
+      if (!select || !button) return;
+      select.innerHTML = versions.length
+        ? versions.map((version, index) => `<option value="${index}">${esc(sftpDiffDisplayTime(version.changed_at || Number(version.mtime || 0) * 1000))} · ${esc(formatBytes(version.size || 0))}</option>`).join("")
+        : `<option value="">没有可比较的备份</option>`;
+      select.disabled = useLightEditor || !versions.length;
+      button.disabled = useLightEditor || !versions.length;
+      const count = $("sftpDiffHistoryCount");
+      if (count) count.textContent = `最近 ${versions.length} / 10 个备份`;
+    };
+    if (historyLoading) {
+      Promise.resolve().then(() => diffOptions.loadVersions()).then(result => {
+        if (finished) return;
+        versions = Array.isArray(result?.versions) ? result.versions.slice(0, 10) : [];
+        syncHistoryControls();
+      }).catch(() => {
+        if (finished) return;
+        versions = [];
+        syncHistoryControls();
+      });
+    } else syncHistoryControls();
+    if (useLightEditor) {
+      $("sftpEditorLanguage").disabled = true;
+      $("sftpEditorLanguage").title = "轻量编辑器不加载语法高亮";
+      $("sftpTextDiff").title = "轻量编辑器为避免占用大量内存，不加载全文差异预览";
+    }
     $("sftpTextDiff").onclick = async () => {
       if (!versions.length) return notify("没有可比较的历史备份", "info");
       const box = diffPreview;
@@ -717,7 +841,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     };
     $("sftpTextEncoding").onchange = event => {
       const nextEncoding = event.target.value;
-      if (getValue() !== content) {
+      if (contentModified) {
         event.target.value = encoding;
         notify("请先保存或放弃当前修改，再切换文本编码", "info");
         return;
@@ -734,6 +858,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       try {
         const parsed = JSON.parse(getValue().replace(/^\uFEFF/, ""));
         setValue(JSON.stringify(parsed, null, 2));
+        contentModified = true;
         updateStats();
         focusEditor();
         notify("JSON 已格式化", "success");
@@ -748,11 +873,12 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       focusEditor();
     };
     $("sftpTextSave").onclick = () => {
-      if (!updateStats()) return notify(`在线编辑内容不能超过 ${formatBytes(limit)}`, "error");
-      finish({action:"save", content:getValue(), backup:$("sftpBackupBeforeSave").checked, encoding:$("sftpTextEncoding").value, persist_default:$("sftpPersistEncoding").checked});
+      const value = getValue();
+      if (!updateStats(true, value)) return notify(`在线编辑内容不能超过 ${formatBytes(limit)}`, "error");
+      finish({action:"save", content:value, changed:contentModified, backup:$("sftpBackupBeforeSave").checked, encoding:$("sftpTextEncoding").value, persist_default:$("sftpPersistEncoding").checked});
     };
     $("sftpTextClose").onclick = async () => {
-      if (getValue() !== content && !await confirmModal("当前修改尚未保存，确认关闭？", "放弃修改", "放弃修改", "继续编辑", true)) return;
+      if (contentModified && !await confirmModal("当前修改尚未保存，确认关闭？", "放弃修改", "放弃修改", "继续编辑", true)) return;
       finish(null);
     };
     const onModalKeyDown = event => {
@@ -760,6 +886,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     };
     document.addEventListener("keydown", onModalKeyDown, true);
     setTimeout(focusEditor, 0);
+    requestAnimationFrame(() => requestAnimationFrame(() => diffOptions.onReady?.()));
   });
 }
 
@@ -795,20 +922,34 @@ async function previewSftpText(id, path) {
     while (true) {
       const data = await withSftpFileOpenFeedback(id, path, () => readSftpTextWithProgress(id, path, requestedEncoding));
       if (!data) return;
-      const history = await api(`/api/connections/${id}/sftp/versions?path=${encodeURIComponent(path)}&limit=10`).catch(() => ({versions:[]}));
-      const next = await sftpTextModal(path, data.content || "", data.size || 0, data.limit || 50*1024*1024, data.encoding || "utf8", data.preferred_encoding || "auto", {
-        versions:history.versions || [],
-        loadVersion:(version, versionEncoding) => readSftpTextWithProgress(id, version.path, versionEncoding)
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (data.is_cancelled?.()) return;
+      const editorPromise = sftpTextModal(path, data.content || "", data.size || 0, data.limit || 50*1024*1024, data.encoding || "utf8", data.preferred_encoding || "auto", {
+        editorKind:data.editor_kind || "ace",
+        lineCount:data.line_count,
+        loadVersions:() => api(`/api/connections/${id}/sftp/versions?path=${encodeURIComponent(path)}&limit=10`).catch(() => ({versions:[]})),
+        onReady:() => data.progress?.finish(`已打开 · ${formatBytes(data.size || 0)}`),
+        loadVersion:async (version, versionEncoding) => {
+          const loaded = await readSftpTextWithProgress(id, version.path, versionEncoding);
+          loaded?.progress?.finish(`已打开备份 · ${formatBytes(loaded.size || 0)}`);
+          return loaded;
+        }
       });
+      data.content = "";
+      const next = await editorPromise;
       if (next === null) return;
       if (next.action === "encoding") {
         requestedEncoding = next.encoding;
         continue;
       }
-      if (next.content === (data.content || "") && !(next.persist_default && data.preferred_encoding !== next.encoding)) return notify("文件内容没有变化", "info");
+      if (!next.changed && !(next.persist_default && data.preferred_encoding !== next.encoding)) return notify("文件内容没有变化", "info");
       await api(`/api/connections/${id}/sftp/write`, {method:"POST", body:JSON.stringify({path, content:next.content, backup:next.backup, encoding:next.encoding, persist_default:next.persist_default})});
       const connection = connections.find(item => item.id === id);
       if (connection && next.persist_default) connection.sftp_text_encoding = next.encoding;
+      if (typeof queueSftpDirectoryRefresh === "function") {
+        queueSftpDirectoryRefresh(id);
+        flushPendingSftpDirectoryRefresh();
+      }
       notify(`文件已按 ${sftpTextEncodingLabel(next.encoding)} 保存`, "success");
       return;
     }

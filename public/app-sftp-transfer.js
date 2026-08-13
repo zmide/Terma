@@ -544,7 +544,9 @@ async function uploadSftpFilesToDirectory(inputFiles, connectionId, root=".", op
   const conflict = options.conflict || await chooseSftpUploadConflict(collisions);
   if (collisions.length && !conflict) return;
   try {
-    for (const item of files) {
+    let nextIndex = 0;
+    let firstError = null;
+    const uploadOne = async item => {
       const parts = item.relativePath.split("/");
       const filename = parts.pop() || item.file.name;
       const targetDirectory = parts.length ? joinRemotePath(directory, parts.join("/")) : directory;
@@ -561,10 +563,21 @@ async function uploadSftpFilesToDirectory(inputFiles, connectionId, root=".", op
       } catch (error) {
         const latest = await refreshSftpJobs();
         const state = latest.find(job => String(job.id) === String(started.id));
-        if (error?.cancelled || state?.status === "cancelled") continue;
+        if (error?.cancelled || state?.status === "cancelled") return;
         throw error;
       }
-    }
+    };
+    const concurrency = Math.max(1, Math.min(8, Number(runtimeSettings?.saved?.sftp_upload_concurrency || 3)));
+    const workers = Array.from({length:Math.min(concurrency, files.length)}, async () => {
+      while (!firstError) {
+        const index = nextIndex++;
+        if (index >= files.length) return;
+        try { await uploadOne(files[index]); }
+        catch (error) { firstError = error; }
+      }
+    });
+    await Promise.all(workers);
+    if (firstError) throw firstError;
   } finally {
     const input = sftpElement("sftpUpload", tabKey);
     if (input) input.value = "";

@@ -2,7 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { DATA_DIR } = require("./config");
-const { decodeRemoteText, invalidateRemoteDirectoryCache, listRemoteDir, readRemoteBinaryFile, writeRemoteFile } = require("./sftp");
+const { decodeRemoteText, invalidateRemoteDirectoryCache, readRemoteBinaryFile, readRemoteFileMetadata, writeRemoteFile } = require("./sftp");
 const { getSftpConnection } = require("./sftp-session");
 
 const ROOT = path.join(DATA_DIR, "external-edit");
@@ -24,12 +24,7 @@ function safeName(value) {
 }
 
 async function remoteMetadata(connectionId, remotePath) {
-  const parent = path.posix.dirname(remotePath);
-  const name = path.posix.basename(remotePath);
-  const listing = await listRemoteDir(connectionId, parent, {page:1, pageSize:500, query:name, refresh:true});
-  const item = (listing.entries || []).find(entry => entry.name === name);
-  if (!item || item.type !== "file") throw new Error("远程文件不存在或不是普通文件");
-  return {size:Number(item.size || 0), mtime:Number(item.mtime || 0)};
+  return readRemoteFileMetadata(connectionId, remotePath);
 }
 
 function sessionView(session) {
@@ -44,8 +39,25 @@ function sessionView(session) {
     updated_at:session.updatedAt,
     remote_metadata:session.remoteMetadata,
     can_compare:Boolean(session.canCompare),
-    last_backup_path:session.lastBackupPath || ""
+    last_backup_path:session.lastBackupPath || "",
+    save_rule:session.saveRule,
+    backup_on_auto_save:Boolean(session.backupOnAutoSave)
   };
+}
+
+async function commitExternalEdit(session, local, options: any = {}) {
+  const backup = options.backup === true;
+  const writeResult = await writeRemoteFile(session.connectionId, session.remotePath, local, {backup});
+  invalidateRemoteDirectoryCache(session.connectionId);
+  session.remoteMetadata = await remoteMetadata(session.connectionId, session.remotePath);
+  session.remoteHash = hash(local);
+  session.localHash = hash(local);
+  session.pendingLocalHash = "";
+  session.canCompare = false;
+  session.lastBackupPath = String(writeResult?.backup_path || "");
+  session.status = "synced";
+  session.message = backup ? "已自动覆盖远程文件并保留源文件备份" : "已自动覆盖远程文件";
+  session.updatedAt = Date.now();
 }
 
 function comparisonText(content, label) {
@@ -91,6 +103,10 @@ async function syncLocalChange(session) {
     const local = fs.readFileSync(session.localPath);
     const localHash = hash(local);
     if (localHash === session.localHash) return;
+    if (session.saveRule === "overwrite") {
+      await commitExternalEdit(session, local, {backup:session.backupOnAutoSave});
+      return;
+    }
     const [{content:remote}, metadata] = await Promise.all([
       readRemoteBinaryFile(session.connectionId, session.remotePath, 100 * 1024 * 1024),
       remoteMetadata(session.connectionId, session.remotePath)
@@ -118,6 +134,15 @@ async function syncLocalChange(session) {
     session.updatedAt = Date.now();
   } finally {
     session.syncing = false;
+    if (!session.closed) {
+      try {
+        const currentHash = hash(fs.readFileSync(session.localPath));
+        if (currentHash !== session.localHash && currentHash !== session.pendingLocalHash) {
+          clearTimeout(session.timer);
+          session.timer = setTimeout(() => syncLocalChange(session), 0);
+        }
+      } catch {}
+    }
   }
 }
 
@@ -157,7 +182,9 @@ async function startExternalEdit(connectionId, remotePathValue, options: any = {
     closed:false,
     timer:null,
     canCompare:false,
-    lastBackupPath:""
+    lastBackupPath:"",
+    saveRule:options.saveRule === "overwrite" ? "overwrite" : "prompt",
+    backupOnAutoSave:options.backupOnAutoSave !== false
   };
   sessions.set(id, session);
   try {

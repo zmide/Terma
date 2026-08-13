@@ -666,7 +666,7 @@ function renderSftpJob(job) {
   const progressBar = ["running", "pending", "paused", "done", "failed"].includes(job.status) && progressInfo ? `<div class="progress" aria-label="${Math.round(progress)}%"><i style="width:${progress}%"></i></div>` : "";
   let downloadAction = "";
   if (done && job.type === "download" && job.delivery_status === "saved") {
-    downloadAction = `<button class="primary" onclick="event.stopPropagation();openSftpDownloadDirectory(this)">${icon("folder-open")}<span>打开目录</span></button>`;
+    downloadAction = `<button class="icon-button primary sftp-task-icon-action" type="button" title="打开文件" aria-label="打开文件" onclick="event.stopPropagation();openSftpDownloadedFile('${escAttr(job.id)}',this)">${icon("external-link")}</button><button class="icon-button sftp-task-icon-action" type="button" title="打开目录" aria-label="打开目录" onclick="event.stopPropagation();openSftpDownloadDirectory(this,'${escAttr(job.id)}')">${icon("folder-open")}</button>`;
   } else if (done && job.type === "download" && ["delivered", "expired", "cache_cleared"].includes(job.delivery_status)) {
     downloadAction = `<button onclick="event.stopPropagation();downloadSftp(${Number(job.connection_id)},'${escAttr(job.remote_path || "")}', 'file', this)">${icon("download")}<span>再次下载</span></button>`;
   } else if (done && job.type === "download") {
@@ -678,7 +678,7 @@ function renderSftpJob(job) {
   const retrySyncBtn = syncJob && job.status === "failed" && job.type === "sync" ? `<button class="primary" onclick="event.stopPropagation();retrySftpSyncJob('${escAttr(job.raw_sync_id)}', this)">重试失败项</button>` : "";
   const exportSyncBtn = syncJob && ["failed", "done", "cancelled"].includes(job.status) ? `<button onclick="event.stopPropagation();exportSftpSyncResult('${escAttr(job.raw_sync_id)}', this)">${icon("download")}<span>导出结果</span></button>` : "";
   const desktopOpenBtn = desktopJob ? `<button onclick="event.stopPropagation();openLinuxDesktopTask(${Number(job.connection_id)},'${escAttr(job.raw_desktop_id)}', this)">${icon("monitor-cog")}<span>查看</span></button>` : "";
-  const deleteBtn = deletable ? `<button class="danger" onclick="event.stopPropagation();deleteSftpJob('${escAttr(job.id)}', this)">删除</button>` : "";
+  const deleteBtn = deletable ? `<button class="icon-button danger sftp-task-icon-action" type="button" title="删除任务" aria-label="删除任务" onclick="event.stopPropagation();deleteSftpJob('${escAttr(job.id)}', this)">${icon("trash-2")}</button>` : "";
   const finishedAt = job.finished_at ? `<time datetime="${escAttr(new Date(job.finished_at).toISOString())}">${esc(new Date(job.finished_at).toLocaleString())}</time>` : "";
   const deliveryText = job.saved_path ? `<span class="sftp-job-delivery">已保存到 ${esc(job.saved_path)}</span>` : "";
   const deliveryError = job.delivery_error ? `<div class="sftp-job-error"><strong>自动保存失败</strong><span>${esc(job.delivery_error).slice(0,500)}</span></div>` : "";
@@ -762,6 +762,7 @@ async function clearSftpRecycleBin(connectionId) {
 }
 
 function sftpJobStatus(status, phase="") {
+  if (status === "pending" && phase === "queued") return "排队中";
   if (status === "running" && phase === "receiving") return "正在准备上传";
   if (status === "running" && phase === "uploading") return "正在上传到远端";
   if (status === "running" && phase === "committing") return "正在完成";

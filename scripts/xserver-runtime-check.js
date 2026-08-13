@@ -83,12 +83,16 @@ async function main() {
     assert.equal(fs.existsSync(legacyManifest), false);
 
     const prepareSource = fs.readFileSync(path.join(__dirname, "prepare-xserver-runtime.js"), "utf8");
+    const windowsStartSource = fs.readFileSync(path.join(__dirname, "..", "start.bat"), "utf8");
+    const posixStartSource = fs.readFileSync(path.join(__dirname, "..", "start.sh"), "utf8");
     assert.equal(typeof downloadInstaller, "function");
     assert.match(prepareSource, /https\.get\(url/);
     assert.match(prepareSource, /nextUrl\.protocol === "http:"/);
     assert.match(prepareSource, /nextUrl\.protocol !== "https:"/);
     assert.match(prepareSource, /attempt <= 3/);
     assert.doesNotMatch(prepareSource, /\bfetch\(/);
+    assert.match(windowsStartSource, /call npm run xserver:prepare/);
+    assert.match(posixStartSource, /npm run xserver:prepare \|\| exit 1/);
 
     const source = fs.readFileSync(path.join(__dirname, "..", "desktop", "xserver-runtime.js"), "utf8");
     assert.match(source, /"-auth", attemptAuthorityFile/);
