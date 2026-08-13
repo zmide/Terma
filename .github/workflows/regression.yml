@@ -17,10 +17,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -31,16 +31,44 @@ jobs:
       - name: Run regression checks
         run: npm run regression
 
+      - name: Prepare artifact round-trip fixture
+        shell: bash
+        run: |
+          mkdir -p data/actions-node24-smoke
+          printf '%s\n' "Terma Actions Node 24 smoke: ${GITHUB_SHA}" > data/actions-node24-smoke/payload.txt
+          echo "TERMA_ACTIONS_SMOKE_SHA=$(sha256sum data/actions-node24-smoke/payload.txt | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
+
+      - name: Upload artifact round-trip fixture
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: terma-actions-node24-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 1
+          path: data/actions-node24-smoke/payload.txt
+
+      - name: Download artifact round-trip fixture
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          digest-mismatch: error
+          name: terma-actions-node24-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: data/actions-node24-roundtrip
+
+      - name: Verify artifact round-trip digest
+        shell: bash
+        run: |
+          test -f data/actions-node24-roundtrip/payload.txt
+          test "$(sha256sum data/actions-node24-roundtrip/payload.txt | cut -d ' ' -f 1)" = "$TERMA_ACTIONS_SMOKE_SHA"
+
   ui-smoke:
     name: Ubuntu / Electron UI smoke
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -62,9 +90,9 @@ jobs:
 
       - name: Upload UI diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ui-smoke-diagnostics
+          name: ui-smoke-diagnostics-${{ github.run_attempt }}
           if-no-files-found: ignore
           path: |
             data/ui-smoke-*.png
@@ -75,10 +103,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -101,10 +129,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm

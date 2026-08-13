@@ -14,6 +14,7 @@ for (const token of [
   "publish-release:",
   "needs:",
   "actions/download-artifact@",
+  "digest-mismatch: error",
   "draft: true",
   "Verify uploaded release assets",
   "npm sbom",
