@@ -95,7 +95,7 @@ function checkWindowsActivationAndMetadataFastPath() {
           name:"ready.txt",
           type:"file",
           size:123,
-          modified_at:1_700_000_000,
+          modified_at:1_700_000_000.125,
           metadata_known:true
         }]
       }
@@ -108,7 +108,7 @@ function checkWindowsActivationAndMetadataFastPath() {
       relativePath:"ready.txt",
       isDirectory:false,
       size:123,
-      mtimeMs:1_700_000_000_000
+      mtimeMs:1_700_000_000_125
     }]);
     assert.equal(adapter.activate(started.nativeId), true);
     assert.equal(activatedId, "win-fixture-request");
