@@ -9,6 +9,7 @@ const { expectedReleaseFiles, prepare, verifyRemote } = require("./release-publi
 const root = path.resolve(__dirname, "..");
 const workflow = fs.readFileSync(path.join(root, ".github", "workflows", "release.yml"), "utf8");
 const normalizedWorkflow = workflow.replace(/\r\n?/g, "\n");
+const publishReleaseJob = normalizedWorkflow.match(/\n  publish-release:\n[\s\S]*?(?=\n  [a-zA-Z0-9_-]+:\n|$)/)?.[0] || "";
 assert.equal((workflow.match(/softprops\/action-gh-release@/g) || []).length, 1);
 for (const token of [
   "publish-release:",
@@ -19,8 +20,8 @@ for (const token of [
   "SHA256SUMS"
 ]) assert.ok(workflow.includes(token), `release workflow missing ${token}`);
 assert.match(
-  normalizedWorkflow,
-  /\n  publish-release:\n[\s\S]*?\n      - name: Download all platform artifacts\n        uses: actions\/download-artifact@[0-9a-f]{40}[^\n]*\n        with:\n          digest-mismatch: error\n          pattern: Terma-\*\n          path: release-assets\n          merge-multiple: true\n/,
+  publishReleaseJob,
+  /\n      - name: Download all platform artifacts\n        uses: actions\/download-artifact@[0-9a-f]{40}[^\n]*\n        with:\n          digest-mismatch: error\n          pattern: Terma-\*\n          path: release-assets\n          merge-multiple: true\n/,
   "publish-release must download platform artifacts with digest mismatch failure enabled"
 );
 assert.match(
