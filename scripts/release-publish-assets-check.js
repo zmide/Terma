@@ -13,13 +13,16 @@ assert.equal((workflow.match(/softprops\/action-gh-release@/g) || []).length, 1)
 for (const token of [
   "publish-release:",
   "needs:",
-  "actions/download-artifact@",
-  "digest-mismatch: error",
   "draft: true",
   "Verify uploaded release assets",
   "npm sbom",
   "SHA256SUMS"
 ]) assert.ok(workflow.includes(token), `release workflow missing ${token}`);
+assert.match(
+  normalizedWorkflow,
+  /\n  publish-release:\n[\s\S]*?\n      - name: Download all platform artifacts\n        uses: actions\/download-artifact@[0-9a-f]{40}[^\n]*\n        with:\n          digest-mismatch: error\n          pattern: Terma-\*\n          path: release-assets\n          merge-multiple: true\n/,
+  "publish-release must download platform artifacts with digest mismatch failure enabled"
+);
 assert.match(
   normalizedWorkflow,
   /\n  regression:\n[\s\S]*?\n      - name: Run regression checks\n        run: npm run regression\n/,
