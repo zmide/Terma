@@ -127,6 +127,12 @@ export async function handleStorageRoutes(
       sftp_recycle_bin_enabled:data.sftp_recycle_bin_enabled ?? current.sftp_recycle_bin_enabled,
       sftp_floating_progress_enabled:data.sftp_floating_progress_enabled ?? current.sftp_floating_progress_enabled,
       sftp_max_open_file_size_mb:data.sftp_max_open_file_size_mb ?? current.sftp_max_open_file_size_mb,
+      sftp_text_editor_mode:data.sftp_text_editor_mode ?? current.sftp_text_editor_mode,
+      sftp_light_editor_threshold_mb:data.sftp_light_editor_threshold_mb ?? current.sftp_light_editor_threshold_mb,
+      sftp_external_edit_save_rule:data.sftp_external_edit_save_rule ?? current.sftp_external_edit_save_rule,
+      sftp_external_edit_backup_enabled:data.sftp_external_edit_backup_enabled ?? current.sftp_external_edit_backup_enabled,
+      sftp_download_concurrency:data.sftp_download_concurrency ?? current.sftp_download_concurrency,
+      sftp_upload_concurrency:data.sftp_upload_concurrency ?? current.sftp_upload_concurrency,
       sftp_download_directory:data.sftp_download_directory ?? current.sftp_download_directory,
       restore_workspace_tabs:data.restore_workspace_tabs ?? current.restore_workspace_tabs,
       workspace_toolbar_placement:data.workspace_toolbar_placement ?? current.workspace_toolbar_placement,
@@ -150,6 +156,7 @@ export async function handleStorageRoutes(
       }
     }
     dependencies.writeRuntimeSettings(dependencies.runtimeSettingsFile, next);
+    try { require("../sftp-jobs").refreshSftpTransferQueues?.(); } catch {}
     dependencies.sendJson(response, dependencies.runtimeSettingsView());
     return true;
   }

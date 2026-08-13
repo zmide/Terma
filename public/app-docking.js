@@ -1240,6 +1240,28 @@ function workspaceTabCopyTitle(tab) {
   return `${base} · 副本${copyCount > 1 ? ` ${copyCount}` : ""}`;
 }
 
+function workspaceTerminalCopyIdentity(tab) {
+  if (tab?.kind !== "terminal") return null;
+  const connectionId = Number(tab.id || 0);
+  if (!connectionId) return null;
+  let index;
+  if (typeof nextTerminalTabIndex === "function") index = nextTerminalTabIndex(connectionId);
+  else {
+    index = tabs.reduce((maximum, item) => {
+      if (item.kind !== "terminal" || Number(item.id) !== connectionId) return maximum;
+      const match = String(item.key || "").match(new RegExp(`^terminal-${connectionId}-(\\d+)$`));
+      return Math.max(maximum, Number(match?.[1] || 0));
+    }, 0) + 1;
+  }
+  const connection = typeof currentConnection === "function" ? currentConnection(connectionId) : null;
+  const fallbackBase = String(tab.title || "终端").replace(/\s+#\d+$/, "");
+  const baseTitle = connection?.name ? `${connection.name} · 终端` : fallbackBase;
+  return {
+    key:`terminal-${connectionId}-${index}`,
+    title:index > 1 ? `${baseTitle} #${index}` : baseTitle
+  };
+}
+
 function addWorkspaceTabCopy(tab, duplicateKey, duplicateTitle) {
   const {
     key:ignoredKey,
@@ -1260,8 +1282,9 @@ function duplicateWorkspaceTab(key, options={}) {
   focusedPaneId = pane.id;
   setPaneActiveKey(pane, key);
   activeView = tab.viewName || tab.kind || "welcome";
-  const duplicateKey = nextWorkspaceTabCopyKey(tab);
-  const duplicateTitle = workspaceTabCopyTitle(tab);
+  const terminalIdentity = workspaceTerminalCopyIdentity(tab);
+  const duplicateKey = terminalIdentity?.key || nextWorkspaceTabCopyKey(tab);
+  const duplicateTitle = terminalIdentity?.title || workspaceTabCopyTitle(tab);
   if (typeof options.beforeOpen === "function") {
     options.beforeOpen(duplicateKey, duplicateTitle, tab);
   } else if (

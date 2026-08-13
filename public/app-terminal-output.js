@@ -42,6 +42,8 @@ function drainTerminalOutput(session) {
     session.term.write(chunk, () => {
       if (Number(session.terminalOutputGeneration || 0) !== generation) return;
       session.terminalOutputWriting = false;
+      if (typeof refreshTerminalCommandBufferFromScreen === "function") refreshTerminalCommandBufferFromScreen(session);
+      if (typeof finalizePendingTerminalCommand === "function") finalizePendingTerminalCommand(session);
       if (session.pendingTerminalOutput?.length) scheduleTerminalOutputDrain(session);
     });
   } catch {
