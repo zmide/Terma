@@ -6,6 +6,7 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const { readFrontendDomain } = require("./frontend-source");
 const {
+  DEFAULT_NOTIFICATION_DISPLAY,
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,
   normalizeListenHosts,
@@ -102,11 +103,17 @@ async function main() {
   assert.match(DEFAULT_TERMINAL_SETTINGS.font_family, /monospace/);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 11,
+    schema_version: 12,
     listen_hosts: ["127.0.0.1", "127.0.0.2"],
     listen_port: 8123,
     sftp_recycle_bin_enabled: false,
     sftp_floating_progress_enabled: true,
+    notification_display: {
+      info:{...DEFAULT_NOTIFICATION_DISPLAY.info},
+      success:{...DEFAULT_NOTIFICATION_DISPLAY.success},
+      error:{...DEFAULT_NOTIFICATION_DISPLAY.error},
+      progress:{...DEFAULT_NOTIFICATION_DISPLAY.progress}
+    },
     sftp_max_open_file_size_mb: 50,
     sftp_text_editor_mode: "ace",
     sftp_light_editor_threshold_mb: 10,
@@ -126,6 +133,20 @@ async function main() {
   assert.equal(normalizeRuntimeSettings({}, { sftp_recycle_bin_enabled: true }).sftp_recycle_bin_enabled, true);
   assert.equal(normalizeRuntimeSettings({ sftp_floating_progress_enabled: false }).sftp_floating_progress_enabled, false);
   assert.equal(normalizeRuntimeSettings({}, { sftp_floating_progress_enabled: false }).sftp_floating_progress_enabled, false);
+  assert.deepEqual(normalizeRuntimeSettings({ notification_display:{
+    info:{enabled:false, duration_ms:1200},
+    progress:{enabled:false, success_duration_ms:5000, error_duration_ms:9000}
+  }}).notification_display, {
+    info:{enabled:false, duration_ms:1200},
+    success:{enabled:true, duration_ms:3500},
+    error:{enabled:true, duration_ms:8000},
+    progress:{enabled:false, success_duration_ms:5000, error_duration_ms:9000}
+  });
+  assert.equal(normalizeRuntimeSettings(
+    {notification_display:{progress:{success_duration_ms:null}}},
+    {notification_display:{progress:{enabled:true, success_duration_ms:5000, error_duration_ms:8000}}}
+  ).notification_display.progress.success_duration_ms, null);
+  assert.throws(() => normalizeRuntimeSettings({notification_display:{error:{duration_ms:200}}}), /通知显示时长/);
   assert.equal(normalizeRuntimeSettings({ sftp_max_open_file_size_mb: 12 }).sftp_max_open_file_size_mb, 12);
   assert.equal(normalizeRuntimeSettings({ sftp_text_editor_mode: "light" }).sftp_text_editor_mode, "light");
   assert.equal(normalizeRuntimeSettings({ sftp_light_editor_threshold_mb: 24 }).sftp_light_editor_threshold_mb, 24);
@@ -230,6 +251,12 @@ async function main() {
     assert.equal(persistedAfterFallback.listen_port, info.actual_port);
     assert.equal(persistedAfterFallback.sftp_recycle_bin_enabled, true);
     assert.equal(persistedAfterFallback.sftp_floating_progress_enabled, true);
+    assert.deepEqual(persistedAfterFallback.notification_display, {
+      info:{...DEFAULT_NOTIFICATION_DISPLAY.info},
+      success:{...DEFAULT_NOTIFICATION_DISPLAY.success},
+      error:{...DEFAULT_NOTIFICATION_DISPLAY.error},
+      progress:{...DEFAULT_NOTIFICATION_DISPLAY.progress}
+    });
     assert.equal(persistedAfterFallback.sftp_max_open_file_size_mb, 50);
     assert.equal(persistedAfterFallback.sftp_text_editor_mode, "ace");
     assert.equal(persistedAfterFallback.sftp_light_editor_threshold_mb, 10);
@@ -259,6 +286,7 @@ async function main() {
     assert.equal(settings.body.saved.listen_port, info.actual_port);
     assert.equal(settings.body.saved.sftp_recycle_bin_enabled, true);
     assert.equal(settings.body.saved.sftp_floating_progress_enabled, true);
+    assert.deepEqual(settings.body.saved.notification_display, persistedAfterFallback.notification_display);
     assert.equal(settings.body.saved.sftp_max_open_file_size_mb, 50);
     assert.equal(settings.body.saved.sftp_text_editor_mode, "ace");
     assert.equal(settings.body.saved.sftp_light_editor_threshold_mb, 10);
@@ -324,6 +352,25 @@ async function main() {
     assert.equal(floatingProgressDisabled.body.saved.sftp_recycle_bin_enabled, false);
     assert.equal(floatingProgressDisabled.body.saved.terminal.background_mode, "custom");
     console.log("PASS SFTP floating progress preference saves independently and defaults on");
+
+    const notificationDisplaySaved = await request(base, "/api/runtime-settings", {
+      method: "PUT",
+      body: JSON.stringify({ notification_display:{
+        info:{enabled:false, duration_ms:1500},
+        success:{enabled:true, duration_ms:4200},
+        error:{enabled:true, duration_ms:12000},
+        progress:{enabled:false, success_duration_ms:null, error_duration_ms:10000}
+      } })
+    });
+    assert.equal(notificationDisplaySaved.response.ok, true);
+    assert.deepEqual(notificationDisplaySaved.body.saved.notification_display, {
+      info:{enabled:false, duration_ms:1500},
+      success:{enabled:true, duration_ms:4200},
+      error:{enabled:true, duration_ms:12000},
+      progress:{enabled:false, success_duration_ms:null, error_duration_ms:10000}
+    });
+    assert.equal(notificationDisplaySaved.body.saved.sftp_floating_progress_enabled, false);
+    console.log("PASS notification category visibility and durations persist independently");
 
     const editorPolicySaved = await request(base, "/api/runtime-settings", {
       method: "PUT",

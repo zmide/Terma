@@ -213,6 +213,8 @@ async function loadSftpPage(options={}) {
   const dir = currentState.dir === "desc" ? "desc" : "asc";
   const pageSize = [25,50,100,200].includes(Number(currentState.pageSize)) ? Number(currentState.pageSize) : 50;
   const list = sftpElement("sftpList", tabKey);
+  const hadDirectoryView = Boolean(list?.querySelector(".sftp-head"));
+  const previousViewState = hadDirectoryView ? captureSftpViewState(tabKey) : null;
   const sameDirectory = Number(currentState.connectionId) === id && String(currentState.path || ".") === String(remotePath || ".");
   const keepContents = Boolean(list?.querySelector(".sftp-head") && sameDirectory && options.keepContents !== false);
   const preserveView = Boolean(options.preserveView ?? options.refresh) && keepContents;
@@ -294,10 +296,25 @@ async function loadSftpPage(options={}) {
   } catch (error) {
     if (error?.name === "AbortError" || requestSeq !== runtime.state.requestSeq) return false;
     if (error?.code === "SSH_CREDENTIAL_REPAIR_REDIRECTED") return false;
-    updateSftpConnectionUi(id, "disconnected", error.message || "SFTP 连接已断开");
+    const directoryAccessError = [
+      "SFTP_DIRECTORY_PERMISSION_DENIED",
+      "SFTP_DIRECTORY_NOT_FOUND",
+      "SFTP_DIRECTORY_ACCESS_FAILED"
+    ].includes(String(error?.code || ""));
+    runtime.state = {...currentState, loading:false, requestSeq};
+    if (sftpActiveRuntimeKey === tabKey) sftpState = runtime.state;
+    if (tab) tab.path = currentState.path;
+    updateSftpConnectionUi(id, directoryAccessError ? "connected" : "disconnected", error.message || "SFTP 连接已断开");
     const mountedList = sftpElement("sftpList", tabKey);
     if (mountedList && runtime.root?.dataset.sftpTabKey === tabKey) {
-      if (keepContents) {
+      if (hadDirectoryView) {
+        const breadcrumb = sftpElement("sftpBreadcrumb", tabKey);
+        const pathInput = sftpElement("sftpPathInput", tabKey);
+        if (breadcrumb) breadcrumb.innerHTML = sftpBreadcrumbHtml(id, currentState.path || ".", tabKey);
+        if (pathInput) pathInput.value = currentState.path || ".";
+        refreshSftpDirectoryActions(tabKey);
+        renderSftpEntries(tabKey);
+        if (previousViewState) restoreSftpViewState(previousViewState, tabKey);
         if (!silent) notify(error.message || "目录同步失败", "error");
       } else {
         mountedList.innerHTML = stateView("error", "目录加载失败", error.message, `<button onclick="refreshSftp({tabKey:'${escAttr(tabKey)}'})">重试</button>`);

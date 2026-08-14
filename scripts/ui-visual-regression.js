@@ -187,8 +187,30 @@ async function runVisualRegression(window) {
     window.__visualRegressionHadDesktopBridge = Object.prototype.hasOwnProperty.call(window, 'termaDesktop');
     window.__visualRegressionDesktopBridge = window.termaDesktop;
     window.termaDesktop = {capabilities:{platform:'win32'}};
-    api = async path => {
-      if (String(path).startsWith('/api/local-files')) {
+    api = async requestPath => {
+      const requestUrl = new URL(String(requestPath), 'http://terma.invalid');
+      if (requestUrl.pathname === '/api/local-files/locations') {
+        return {desktop:'C:/Users/demo/Desktop',downloads:'C:/Users/demo/Downloads',home:'C:/Users/demo'};
+      }
+      if (requestUrl.pathname === '/api/local-files') {
+        if (requestUrl.searchParams.has('path')) {
+          return {
+            kind:'directory',
+            path:'C:/fixture',
+            display_path:'C:/fixture',
+            parent:'C:/',
+            parent_kind:'directory',
+            entries:[
+              {name:'alpha.txt',path:'C:/fixture/alpha.txt',type:'file',size:12,mtime:1786550400000},
+              {name:'beta.txt',path:'C:/fixture/beta.txt',type:'file',size:24,mtime:1786550460000},
+              {name:'notes',path:'C:/fixture/notes',type:'dir',size:0,mtime:1786550520000}
+            ],
+            page:1,
+            page_size:100,
+            total:3,
+            total_pages:1
+          };
+        }
         return {
           kind:'computer',
           path:'',
@@ -206,7 +228,7 @@ async function runVisualRegression(window) {
           total_pages:1
         };
       }
-      return window.__visualRegressionOriginalApi(path);
+      return window.__visualRegressionOriginalApi(requestPath);
     };
     const localKey = await openLocalFiles(LOCAL_FILES_COMPUTER_PATH, true, 'visual-local-files');
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -221,6 +243,8 @@ async function runVisualRegression(window) {
     const toolbarHost = document.createElement('div');
     toolbarHost.innerHTML = localFilesToolbarButtonHtml(localKey);
     const toolbarButton = toolbarHost.querySelector('button');
+    const breadcrumbComputer = breadcrumb?.textContent.replace(/\s+/g,' ').trim() === '此电脑';
+    const driveRows = root?.querySelectorAll('.local-files-row.is-drive').length === 3;
     const originalViewStyle = view?.getAttribute('style') || '';
     if (view) view.style.cssText += ';width:500px;max-width:500px;flex:0 0 500px';
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -228,6 +252,44 @@ async function runVisualRegression(window) {
     const narrowPager = root?.querySelector('.sftp-pager');
     const narrowToolbarGrid = getComputedStyle(narrowToolbar).display === 'grid';
     const narrowPagerRows = getComputedStyle(narrowPager).gridTemplateColumns.split(' ').length === 2;
+    await loadLocalFiles(localKey,{path:'C:/fixture',location:'directory',page:1,refresh:true});
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const directoryRoot = document.querySelector('[data-local-files-tab-key="visual-local-files"]');
+    const directoryList = directoryRoot?.querySelector('.local-files-list');
+    const nameHeader = directoryList?.querySelector('[data-local-files-column="name"]');
+    const sizeHeader = directoryList?.querySelector('[data-local-files-column="size"]');
+    const mtimeHeader = directoryList?.querySelector('[data-local-files-column="mtime"]');
+    const nameHandle = directoryList?.querySelector('[data-local-files-column-resize="name"]');
+    const nameHandleRect = nameHandle?.getBoundingClientRect();
+    const nameBoundaryBefore = nameHeader?.getBoundingClientRect().right || 0;
+    const sizeBoundaryBefore = sizeHeader?.getBoundingClientRect().right || 0;
+    const startX = nameHandleRect ? nameHandleRect.left + nameHandleRect.width / 2 : nameBoundaryBefore;
+    nameHandle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:910,pointerType:'mouse',button:0,buttons:1,clientX:startX,clientY:(nameHandleRect?.top || 0)+8}));
+    document.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:910,pointerType:'mouse',button:0,buttons:1,clientX:startX-18,clientY:(nameHandleRect?.top || 0)+8}));
+    document.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:910,pointerType:'mouse',button:0,buttons:0,clientX:startX-18,clientY:(nameHandleRect?.top || 0)+8}));
+    const narrowHeaderVisible = Boolean(nameHeader && sizeHeader && mtimeHeader
+      && getComputedStyle(nameHeader).display !== 'none'
+      && getComputedStyle(sizeHeader).display !== 'none'
+      && getComputedStyle(mtimeHeader).display === 'none');
+    const narrowDividerResizable = Boolean(nameHandle && !nameHandle.hidden
+      && Math.abs((nameHeader?.getBoundingClientRect().right || 0) - (nameBoundaryBefore - 18)) <= 2
+      && Math.abs((sizeHeader?.getBoundingClientRect().right || 0) - sizeBoundaryBefore) <= 1);
+    const fileRows = [...(directoryRoot?.querySelectorAll('.local-files-row') || [])];
+    const firstRow = fileRows[0];
+    const secondRow = fileRows[1];
+    const firstPath = firstRow?.dataset.path || '';
+    const secondPath = secondRow?.dataset.path || '';
+    selectLocalFileEntry({shiftKey:false,ctrlKey:false,metaKey:false,target:{closest:()=>null}},firstPath,localKey);
+    const dragValues = new Map();
+    const dataTransfer = {effectAllowed:'none',setData:(type,value)=>dragValues.set(type,value),getData:type=>dragValues.get(type)||'',types:[]};
+    beginLocalFileDrag({dataTransfer,currentTarget:secondRow,clientX:12,clientY:12,preventDefault(){}},secondPath,localKey,secondRow);
+    const firstCheck = firstRow?.querySelector('.local-files-check');
+    const secondCheck = secondRow?.querySelector('.local-files-check');
+    const unselectedDragSynchronizes = Boolean(firstRow && secondRow && firstCheck && secondCheck
+      && !firstCheck.checked && !firstRow.classList.contains('is-selected') && !firstRow.classList.contains('active')
+      && secondCheck.checked && secondRow.classList.contains('is-selected') && secondRow.classList.contains('active')
+      && secondRow.classList.contains('is-dragging') && JSON.parse(dragValues.get(LOCAL_FILES_DRAG_MIME)).paths[0] === secondPath);
+    finishLocalFileDrag({immediate:true});
     if (view) view.setAttribute('style', originalViewStyle);
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return {
@@ -235,13 +297,16 @@ async function runVisualRegression(window) {
       found:Boolean(root && view && list && top && pager && breadcrumb),
       iconOnly:Boolean(toolbarButton && !toolbarButton.textContent.trim() && toolbarButton.querySelector('svg') && toolbarButton.title === '新建本地文件标签'),
       stickyTop:getComputedStyle(top).position === 'sticky',
-      breadcrumbComputer:breadcrumb?.textContent.replace(/\\s+/g,' ').trim() === '此电脑',
-      driveRows:root?.querySelectorAll('.local-files-row.is-drive').length === 3,
+      breadcrumbComputer,
+      driveRows,
       searchClear:Boolean(root?.querySelector('.local-files-search button[aria-label="清除搜索"]')),
       pagerDocked:Boolean(listRect && pagerRect && pagerRect.bottom <= listRect.bottom + 1 && pagerRect.bottom >= listRect.bottom - 100),
       noOverflow:document.body.scrollWidth <= window.innerWidth + 1,
       narrowToolbarGrid,
-      narrowPagerRows
+      narrowPagerRows,
+      narrowHeaderVisible,
+      narrowDividerResizable,
+      unselectedDragSynchronizes
     };
     } catch (error) {
       return {error:String(error?.stack || error)};

@@ -1246,6 +1246,13 @@ body.sftp-task-center-resizing, body.sftp-task-center-resizing * { cursor:nesw-r
 .ssh-trust-pager .icon-button svg { width:14px; height:14px; }
 .settings-grid h3 { margin-top:0; }
 .check-row { display:flex; gap:8px; align-items:center; margin:10px 0; color:var(--text); }
+.notification-preference-list { display:grid; margin:8px 0; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+.notification-preference-row { display:grid; grid-template-columns:minmax(180px,1fr) auto; align-items:center; gap:12px; min-height:48px; padding:7px 9px; background:color-mix(in srgb,var(--panel) 94%,var(--field)); }
+.notification-preference-row + .notification-preference-row { border-top:1px solid var(--line); }
+.notification-preference-row .check-row { margin:0; background:transparent; }
+.notification-duration { display:grid; grid-template-columns:auto 78px auto; align-items:center; gap:6px; color:var(--muted); font-size:12px; }
+.notification-duration input { width:78px; min-width:0; }
+.notification-progress-durations { display:flex; align-items:center; justify-content:flex-end; gap:12px; min-width:0; }
 .about-product { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
 .about-product h3 { margin:0 0 2px; color:var(--text); font-size:16px; }
 .about-mark { width:42px; height:42px; flex:0 0 42px; object-fit:cover; border-radius:7px; }
@@ -2952,6 +2959,8 @@ details.advanced-settings > :not(summary) { margin-left:12px; margin-right:12px;
   .settings-grid section { padding:10px; }
   .settings-layout { display:block; }
   .settings-group-head { padding-left:8px; }
+  .notification-preference-row { grid-template-columns:1fr; gap:6px; }
+  .notification-progress-durations { justify-content:flex-start; flex-wrap:wrap; }
   .runtime-config-summary { grid-template-columns:1fr; align-items:start; }
   .runtime-config-summary > .status-pill { justify-self:start; }
   .runtime-host-option { grid-template-columns:auto minmax(0,1fr); }

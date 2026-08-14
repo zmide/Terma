@@ -21,6 +21,7 @@ assert.match(desktopMainSource, /additionalData\?\.termaDisplaySession\s*\|\|\s*
 assert.match(desktopMainSource, /stdio:\s*\["ignore",\s*"ignore",\s*"ignore",\s*"ipc"\]/, "display clients must keep an IPC focus channel");
 assert.match(desktopMainSource, /function createStartupWindow\(/, "packaged startup must provide an immediate startup window");
 assert.match(desktopMainSource, /if \(!app\.isPackaged \|\| shouldStartInTray\(settings\)/, "the startup window must stay limited to packaged foreground launches");
+assert.match(desktopMainSource, /show:false,[\s\S]*?window\.once\("ready-to-show", reveal\)/, "the packaged startup window must stay hidden until its content is ready");
 assert.doesNotMatch(
   desktopMainSource.slice(0, readyIndex),
   /migrateLegacyBrandUserData\(\);/,
@@ -440,6 +441,20 @@ check("Existing Windows login settings are migrated during normal startup setup"
   assert.equal(state.loginSettings.length, 1);
   assert.equal(state.loginSettings[0].openAtLogin, true);
   assert.deepEqual(Array.from(state.loginSettings[0].args), [api.START_IN_TRAY_ARG]);
+});
+
+check("Packaged startup window waits for rendered content before becoming visible", () => {
+  const { api, state } = createHarness({ settings:{startMinimizedToTray:false} });
+  const window = api.createStartupWindow({startMinimizedToTray:false});
+  assert.ok(window);
+  assert.equal(window.options.show, false);
+  assert.equal(window.visible, false);
+  assert.equal(window.showCount, 0);
+  assert.match(window.loadedUrl, /^data:text\/html/);
+  window.emitOnce("ready-to-show");
+  assert.equal(window.visible, true);
+  assert.equal(window.showCount, 1);
+  assert.equal(state.windows.length, 1);
 });
 
 function createMarkerDatabase(file, entries) {

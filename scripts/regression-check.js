@@ -175,6 +175,7 @@ async function main() {
   const sftpBackend = read("src/sftp.ts");
   const sftpSessionSource = read("src/sftp-session.ts");
   const sftpSessionServerSource = read("src/server.ts");
+  const sftpJobRoutesSource = read("src/routes/sftp-job-routes.ts");
   const sftpEncodingSource = read("src/sftp-encoding.ts");
   const sftpFrontend = readFrontendDomain(root, "sftp");
   const remoteFrontend = readFrontendDomain(root, "remote");
@@ -197,12 +198,13 @@ async function main() {
   ok("SFTP 列表展示权限/所有者并支持无感后台同步", sftpFrontend.includes("权限 / 所有者") && sftpFrontend.includes("captureSftpViewState") && sftpFrontend.includes("restoreSftpViewState") && sftpFrontend.includes("completedSftpMutationForCurrentView") && sftpFrontend.includes("sftpPendingDirectoryRefreshes") && sftpFrontend.includes('list.classList.toggle("is-refreshing", keepContents)'));
   ok("SFTP 任务由标题栏全局入口集中展示并区分进行中、失败与历史", read("public/index.html").includes('id="sftpTaskCenterButton"') && read("public/index.html").includes('id="sftpTaskCenterDrawer"') && read("public/index.html").includes('id="sftpTaskCenterFailedTab"') && read("public/index.html").includes('id="sftpTaskCenterFailedCount"') && sftpFrontend.includes("function sftpTaskCollections") && sftpFrontend.includes("const current = jobs.filter(job => SFTP_ACTIVE_JOB_STATUSES.has(job.status))") && sftpFrontend.includes('const failed = jobs.filter(job => job.status === "failed"') && sftpFrontend.includes('const showingFailed = sftpTaskCenterView === "failed"') && sftpFrontend.includes('["done", "cancelled"].includes(job.status)') && !sftpFrontend.includes('id="sftpJobs"'));
   ok("SFTP 全局任务中心保留进度及暂停继续取消等操作", sftpFrontend.includes("function updateSftpTaskCenter") && sftpFrontend.includes('const deletable = ["paused", "failed", "done", "cancelled"].includes(job.status)') && sftpFrontend.includes("pauseSftpJob") && sftpFrontend.includes("resumeSftpJob") && sftpFrontend.includes("cancelSftpJob") && sftpFrontend.includes("deleteSftpJob"));
+  ok("任务中心失败页支持一键删除失败记录", read("public/index.html").includes('id="sftpTaskCenterClearLabel"') && sftpFrontend.includes('clearLabel.textContent = showingFailed ? "清空失败" : "清空历史"') && sftpFrontend.includes("function clearFailedSftpJobs") && sftpFrontend.includes("Promise.allSettled(failed.map(job => deleteSftpJobRecord(job.id)))") && read("public/app-static-actions.js").includes('sftpTaskCenterView === "failed" ? clearFailedSftpJobs'));
   ok("任务中心接入 Linux 桌面安装与卸载任务", sftpFrontend.includes('/api/linux-desktop/tasks') && sftpFrontend.includes('type:"linux-desktop"') && sftpFrontend.includes("openLinuxDesktopTask") && remoteFrontend.includes("if (typeof refreshSftpJobs === \"function\") void refreshSftpJobs()") && read("src/server.ts").includes("clearFinishedLinuxDesktopTasks"));
   ok("SFTP 原生拖出取消等待系统终态后再清理", read("src/sftp-jobs.ts").includes('job.phase = "cancelling"') && read("src/sftp-jobs.ts").includes("accepted = Boolean(nativeDragCancelHandler") && sftpFrontend.includes("job.can_cancel !== false"));
   ok("SFTP 后台任务创建不重复弹出加入提示", !/已加入[\s\S]{0,120}任务/.test(sftpFrontend));
   ok("SFTP 上传阶段使用用户视角文案", sftpFrontend.includes('phase === "receiving") return "正在准备上传"') && sftpFrontend.includes('phase === "uploading") return "正在上传到远端"') && !sftpFrontend.includes('return "正在接收"'));
   ok("SFTP 标题栏任务入口显示需关注任务数量及运行失败状态", sftpFrontend.includes('const status = failedCount ? "failed" : activeCount ? "running" : "idle"') && sftpFrontend.includes('button.classList.toggle("is-running"') && sftpFrontend.includes('button.classList.toggle("is-failed"') && sftpFrontend.includes("const attentionCount = current.length + failed.length") && sftpFrontend.includes('badge.textContent = attentionCount > 99 ? "99+" : String(attentionCount)') && sftpCss.includes(".sftp-task-center-button.is-running") && sftpCss.includes(".sftp-task-center-button.is-failed"));
-  ok("SFTP 本机接收与远端上传共享同一后台任务", sftpFrontend.includes('/sftp/upload-job') && sftpFrontend.includes('/api/sftp/jobs/${encodeURIComponent(started.id)}/content') && sftpFrontend.includes("sftpUploadRequests") && !sftpFrontend.includes("正在接收 ${filename}") && read("src/server.ts").includes("startUploadReceiveJob") && read("src/server.ts").includes("receiveUploadJobContent"));
+  ok("SFTP 本机接收与远端上传共享同一后台任务", sftpFrontend.includes('/sftp/upload-job') && sftpFrontend.includes('/api/sftp/jobs/${encodeURIComponent(started.id)}/content') && sftpFrontend.includes("sftpUploadRequests") && !sftpFrontend.includes("正在接收 ${filename}") && read("src/server.ts").includes("startUploadReceiveJob") && sftpJobRoutesSource.includes("receiveUploadJobContent"));
   ok("SFTP 上传通过远端暂存文件原子完成且取消会清理", read("src/sftp-jobs.ts").includes("remote_temp_path") && read("src/sftp-jobs.ts").includes("uploadRemoteCommitCommand") && read("src/sftp-jobs.ts").includes("cleanupRemoteUploadArtifact") && read("src/sftp-jobs.ts").includes("invalidateRemoteDirectoryCache(job.connection_id)"));
   ok("悬浮任务进度卡位于标题栏下方并支持关闭与永久静默", read("public/app-utils.js").includes('class="toast-copy"') && sftpCss.includes(".toast-head > .toast-icon") && sftpCss.includes('.sftp-task-float { position:absolute') && sftpCss.includes('top:calc(100% + 8px)') && read("public/index.html").includes('id="sftpTaskFloat"') && sftpFrontend.includes("dismissSftpTaskFloat") && sftpFrontend.includes("muteSftpTaskFloat") && sftpFrontend.includes("永久关闭此类悬浮进度卡") && readFrontendDomain(root, "settings").includes('id="taskCenterFloatingProgressEnabled"') && read("src/runtime-settings.ts").includes("sftp_floating_progress_enabled"));
   ok(
@@ -216,6 +218,7 @@ async function main() {
       && sftpCss.includes("--notification-stack-offset")
       && sftpCss.includes("transform:translateY(var(--notification-stack-offset))")
   );
+  ok("页面通知支持分类开关、显示时长和独立悬浮任务卡设置", read("src/runtime-settings.ts").includes("DEFAULT_NOTIFICATION_DISPLAY") && read("src/runtime-settings.ts").includes("normalizeNotificationDisplay") && read("public/app-utils.js").includes("function notificationDisplayPreferences") && read("public/app-utils.js").includes("preference?.enabled === false") && readFrontendDomain(root, "settings").includes('id="notificationInfoEnabled"') && readFrontendDomain(root, "settings").includes('id="notificationProgressSuccessDuration"') && readFrontendDomain(root, "settings").includes('id="taskCenterFloatingProgressEnabled"') && read("public/app.css").includes(".notification-preference-row"));
   ok(
     "Linux 缺少 FUSE 时提示原因并保留兼容拖出",
     sftpFrontend.includes("function sftpNativeDragFallbackInfo()")
@@ -286,7 +289,7 @@ async function main() {
   const appState = read("public/app-state.js");
   const appCss = read("public/app.css");
   const sftpTasksFrontend = read("public/app-sftp-tasks.js");
-  const serverSource = ["src/server.ts", "src/storage-restore.ts", "src/routes/storage-routes.ts", "src/routes/ssh-routes.ts", "src/routes/desktop-integration-routes.ts"].map(read).join("\n");
+  const serverSource = ["src/server.ts", "src/storage-restore.ts", "src/routes/storage-routes.ts", "src/routes/ssh-routes.ts", "src/routes/desktop-integration-routes.ts", "src/routes/sftp-job-routes.ts"].map(read).join("\n");
   const storageRoutesSource = read("src/routes/storage-routes.ts");
   const updateRouteSource = read("src/routes/update-routes.ts");
   const terminalSource = read("src/terminal.ts");
@@ -394,7 +397,7 @@ async function main() {
   ok("全局终端设置独立持久化并应用到当前和未来会话",
     runtimeSettingsSource.includes("DEFAULT_TERMINAL_SETTINGS")
       && runtimeSettingsSource.includes("normalizeTerminalSettings")
-      && runtimeSettingsSource.includes("schema_version: 11")
+      && runtimeSettingsSource.includes("schema_version: 12")
       && runtimeSettingsSource.includes('background_mode: "theme"')
       && runtimeSettingsSource.includes('background_color: "#0f1720"')
       && runtimeSettingsSource.includes("TERMINAL_BACKGROUND_MODES")

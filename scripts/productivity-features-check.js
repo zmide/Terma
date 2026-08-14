@@ -64,6 +64,7 @@ assert.match(docking, /activeWorkspaceGroupId/);
 assert.match(docking, /function workspaceTabByKey/);
 assert.match(docking, /function workspaceHasTabKey/);
 assert.match(terminal, /workspaceHasTabKey\(key\)/);
+assert.match(terminal, /const terminalOutput = event\.data instanceof ArrayBuffer[\s\S]{0,240}updateTerminalSmartState\(key, terminalOutput\)[\s\S]{0,240}consumeTerminalZmodemOutput/);
 assert.match(productivity, /workspaceTabByKey\(key\)/);
 assert.match(sftp, /workspaceAllTabs\(\)/);
 assert.match(docking, /if \(pane\.activeTabKey\) revealWorkspaceTab\(pane\.activeTabKey\)/);

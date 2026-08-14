@@ -792,11 +792,17 @@ async function navigateSftpHistory(direction, tabKey=activeTabKey) {
   restoreSftpRuntimeForTab(tabKey);
   const tab = tabs.find(item => item.key === tabKey);
   const navigation = sftpNavigationState(tabKey);
+  const previousIndex = navigation.index;
   const nextIndex = navigation.index + Number(direction || 0);
   if (!tab || nextIndex < 0 || nextIndex >= navigation.paths.length) return;
   navigation.index = nextIndex;
   syncSftpNavigationButtons(tabKey);
-  await loadSftpPage({connectionId:tab.id, path:navigation.paths[nextIndex], page:1, tabKey:tab.key, historyNavigation:true});
+  const loaded = await loadSftpPage({connectionId:tab.id, path:navigation.paths[nextIndex], page:1, tabKey:tab.key, historyNavigation:true});
+  if (!loaded && navigation.index === nextIndex) {
+    navigation.index = previousIndex;
+    syncSftpNavigationButtons(tabKey);
+  }
+  return loaded;
 }
 
 async function navigateSftpPath(remotePath, tabKey=activeTabKey, options={}) {

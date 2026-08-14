@@ -158,12 +158,29 @@ function renderTabsPreservingTerminalFocus() {
 function updateTerminalSmartState(key, chunk) {
   const session = terminalSessions.get(key);
   if (!session) return;
-  const text = typeof chunk === "string" ? chunk : "";
+  let text = typeof chunk === "string" ? chunk : "";
+  let hasOutput = text.length > 0;
+  const bytes = chunk instanceof Uint8Array
+    ? chunk
+    : chunk instanceof ArrayBuffer
+      ? new Uint8Array(chunk)
+      : null;
+  if (bytes) {
+    hasOutput = bytes.byteLength > 0;
+    if (hasOutput) {
+      try {
+        if (!session.smartOutputDecoder) session.smartOutputDecoder = new TextDecoder("utf-8", {fatal:false});
+        text = session.smartOutputDecoder.decode(bytes, {stream:true});
+      } catch {
+        text = "";
+      }
+    }
+  }
   session.smartOutputTail = `${session.smartOutputTail || ""}${text}`.slice(-500);
   session.sensitiveInput = /(?:password|passphrase|口令|密码)\s*[:：]?\s*$/i.test(session.smartOutputTail);
-  if (text) session.smartHadOutput = true;
+  if (hasOutput) session.smartHadOutput = true;
   const tab = typeof workspaceTabByKey === "function" ? workspaceTabByKey(key) : tabs.find(item => item.key === key);
-  if (tab && !isWorkspaceTabCurrentlyVisible(key) && tab.activityState !== "output") {
+  if (hasOutput && tab && !isWorkspaceTabCurrentlyVisible(key) && tab.activityState !== "output") {
     tab.activityState = "output";
     renderTabsPreservingTerminalFocus();
   }

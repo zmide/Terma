@@ -19,6 +19,12 @@ const DIRECTORY_CACHE_MAX_ENTRIES = 100000;
 const MAX_RECURSIVE_SEARCH_ENTRIES = 20000;
 const DETAILED_DIRECTORY_ENTRY_LIMIT = 5000;
 const LARGE_DIRECTORY_METADATA_TIMEOUT_MS = 5 * 60 * 1000;
+const REMOTE_DIRECTORY_HEADER = "__TERMA_DIRECTORY_V1__";
+const REMOTE_DIRECTORY_PERMISSION_DENIED = "__TERMA_DIRECTORY_PERMISSION_DENIED__";
+const REMOTE_DIRECTORY_NOT_FOUND = "__TERMA_DIRECTORY_NOT_FOUND__";
+const REMOTE_DIRECTORY_ACCESS_FAILED = "__TERMA_DIRECTORY_ACCESS_FAILED__";
+const REMOTE_DIRECTORY_CONTENT_UNREADABLE = "__TERMA_DIRECTORY_CONTENT_UNREADABLE__";
+const REMOTE_DIRECTORY_SIZE_UNSUPPORTED = "__TERMA_DIRECTORY_SIZE_UNSUPPORTED__";
 const SFTP_RECYCLE_DIRECTORY = ".terma-recycle-bin";
 const LEGACY_SFTP_RECYCLE_DIRECTORY = ".tunneldesk-recycle-bin";
 const SFTP_RECYCLE_DIRECTORIES = [SFTP_RECYCLE_DIRECTORY, LEGACY_SFTP_RECYCLE_DIRECTORY];
@@ -224,15 +230,14 @@ async function enumerateRemoteDir(connectionId, remotePath = ".") {
   const connection = getSftpConnection(connectionId);
   const dir = remotePath || ".";
   const listEntries = buildRemoteDirectoryEntriesCommand();
-  const command = [
-    `cd ${remotePathOperand(connection, dir)}`,
-    `pwd`,
-    listEntries
-  ].join(" && ");
+  const command = buildRemoteDirectoryReadCommand(
+    remotePathOperand(connection, dir),
+    `${buildRemoteDirectoryHeaderCommand()}; ${listEntries}`
+  );
   const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command));
-  const [cwdLine, ...rows] = output.split(/\r?\n/).filter(Boolean);
+  const {path:resolvedPath, rows} = parseRemoteDirectoryOutput(output);
   return {
-    path: cwdLine || dir,
+    path: resolvedPath,
     entries: rows.map((line) => {
       const [name, type, meta = "", link = "0", linkSize = "0", linkMissing = "0"] = line.split("\t");
       const [size, mtime, mode, owner, group] = meta.trim().split(/\s+/);
@@ -255,6 +260,41 @@ async function enumerateRemoteDir(connectionId, remotePath = ".") {
 function shouldFallbackToPagedDirectoryRead(error) {
   const message = String(error?.message || error || "");
   return /__TERMA_PAGED_DIRECTORY__|远程目录命令被连接中断|远程文件操作超时/i.test(message);
+}
+
+function normalizeRemoteDirectoryReadError(error, remotePath) {
+  const message = String(error?.message || error || "");
+  if (message.includes(REMOTE_DIRECTORY_PERMISSION_DENIED) || /permission denied|operation not permitted|access denied|权限不足|权限不够|拒绝访问/i.test(message)) {
+    const normalized: any = new Error(`没有权限访问远程目录：${remotePath || "."}`);
+    normalized.code = "SFTP_DIRECTORY_PERMISSION_DENIED";
+    normalized.statusCode = 403;
+    return normalized;
+  }
+  if (message.includes(REMOTE_DIRECTORY_NOT_FOUND)) {
+    const normalized: any = new Error(`远程目录不存在：${remotePath || "."}`);
+    normalized.code = "SFTP_DIRECTORY_NOT_FOUND";
+    normalized.statusCode = 404;
+    return normalized;
+  }
+  if (message.includes(REMOTE_DIRECTORY_ACCESS_FAILED)) {
+    const normalized: any = new Error(`无法访问远程目录：${remotePath || "."}`);
+    normalized.code = "SFTP_DIRECTORY_ACCESS_FAILED";
+    normalized.statusCode = 400;
+    return normalized;
+  }
+  if (message.includes(REMOTE_DIRECTORY_CONTENT_UNREADABLE)) {
+    const normalized: any = new Error("目录存在无法读取的内容，未返回不完整大小");
+    normalized.code = "SFTP_DIRECTORY_CONTENT_UNREADABLE";
+    normalized.statusCode = 403;
+    return normalized;
+  }
+  if (message.includes(REMOTE_DIRECTORY_SIZE_UNSUPPORTED)) {
+    const normalized: any = new Error("远程系统缺少兼容的 stat 命令");
+    normalized.code = "SFTP_DIRECTORY_SIZE_UNSUPPORTED";
+    normalized.statusCode = 400;
+    return normalized;
+  }
+  return error;
 }
 
 function remoteDirectoryFindFilter() {
@@ -291,22 +331,68 @@ function buildRemotePagedDirectoryEntriesCommand(options: any = {}) {
     fastMetadataEmitter,
     `terma_unfiltered_total=$(${listedEntries} | wc -l | tr -d '[:space:]')`,
     `terma_total=$(terma_entries | wc -l | tr -d '[:space:]')`,
-    `printf '%s\\n%s\\n%s\\n' "$(pwd)" "$terma_total" "$terma_unfiltered_total"`,
+    `printf '%s\\n%s\\n%s\\n%s\\n' '${REMOTE_DIRECTORY_HEADER}' "$(pwd)" "$terma_total" "$terma_unfiltered_total"`,
     sort === "name" ? selectedNamePage : selectedMetadataPage
   ].join("; ");
+}
+
+function buildRemoteDirectoryHeaderCommand() {
+  return `printf '%s\\n%s\\n' '${REMOTE_DIRECTORY_HEADER}' "$(pwd)"`;
+}
+
+function buildRemoteDirectoryReadCommand(directoryOperand, body) {
+  return [
+    `terma_directory=${directoryOperand}`,
+    `if [ ! -d "$terma_directory" ]; then printf '%s\\n' '${REMOTE_DIRECTORY_NOT_FOUND}' >&2; exit 66; fi`,
+    `if [ ! -x "$terma_directory" ]; then printf '%s\\n' '${REMOTE_DIRECTORY_PERMISSION_DENIED}' >&2; exit 77; fi`,
+    `cd "$terma_directory" || { printf '%s\\n' '${REMOTE_DIRECTORY_ACCESS_FAILED}' >&2; exit 78; }`,
+    `{ ${body}; }`
+  ].join("; ");
+}
+
+function remoteDirectoryOutputLines(output) {
+  return String(output || "").split(/\r?\n/).filter((line) => line !== "");
+}
+
+function parseRemoteDirectoryHeader(lines) {
+  if (lines[0] !== REMOTE_DIRECTORY_HEADER) throw new Error("远程目录响应格式无效，请重试");
+  const resolvedPath = String(lines[1] || "");
+  if (!resolvedPath || resolvedPath.includes("\t") || /[\0\r\n]/.test(resolvedPath)) {
+    throw new Error("远程目录响应路径无效，请重试");
+  }
+  return resolvedPath;
+}
+
+function parseRemoteDirectoryOutput(output) {
+  const lines = remoteDirectoryOutputLines(output);
+  return {path:parseRemoteDirectoryHeader(lines), rows:lines.slice(2)};
+}
+
+function parseRemotePagedDirectoryOutput(output) {
+  const lines = remoteDirectoryOutputLines(output);
+  const path = parseRemoteDirectoryHeader(lines);
+  const rawTotal = String(lines[2] || "");
+  const rawUnfilteredTotal = String(lines[3] || "");
+  if (!/^\d+$/.test(rawTotal) || !/^\d+$/.test(rawUnfilteredTotal)) {
+    throw new Error("远程目录分页响应格式无效，请重试");
+  }
+  const total = Number(rawTotal);
+  const unfilteredTotal = Number(rawUnfilteredTotal);
+  if (!Number.isSafeInteger(total) || !Number.isSafeInteger(unfilteredTotal) || unfilteredTotal < total) {
+    throw new Error("远程目录分页数量无效，请重试");
+  }
+  return {path, total, unfilteredTotal, rows:lines.slice(4)};
 }
 
 async function listRemoteDirPaged(connectionId, remotePath, options: any = {}) {
   const connection = getSftpConnection(connectionId);
   const dir = remotePath || ".";
-  const command = [
-    `cd ${remotePathOperand(connection, dir)}`,
+  const command = buildRemoteDirectoryReadCommand(
+    remotePathOperand(connection, dir),
     buildRemotePagedDirectoryEntriesCommand(options)
-  ].join(" && ");
+  );
   const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command, null, LARGE_DIRECTORY_METADATA_TIMEOUT_MS));
-  const [resolvedPath = dir, rawTotal = "0", rawUnfilteredTotal = "0", ...rows] = output.split(/\r?\n/).filter(Boolean);
-  const total = Math.max(0, Number(rawTotal || 0));
-  const unfilteredTotal = Math.max(total, Number(rawUnfilteredTotal || 0));
+  const {path:resolvedPath, total, unfilteredTotal, rows} = parseRemotePagedDirectoryOutput(output);
   const pageSize = Number(options.page_size || DEFAULT_DIRECTORY_PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const page = Math.min(Math.max(1, Number(options.page || 1)), totalPages);
@@ -345,16 +431,14 @@ async function listRemoteDirPaged(connectionId, remotePath, options: any = {}) {
 async function enumerateRemoteTree(connectionId, remotePath = ".") {
   const connection = getSftpConnection(connectionId);
   const dir = remotePath || ".";
-  const command = [
-    `cd ${remotePathOperand(connection, dir)}`,
-    `{ pwd; ${buildRemoteRecursiveDirectoryEntriesCommand()}; } | sed -n '1,${MAX_RECURSIVE_SEARCH_ENTRIES + 2}p;${MAX_RECURSIVE_SEARCH_ENTRIES + 3}q'`
-  ].join(" && ");
+  const limitedEntries = `{ ${buildRemoteDirectoryHeaderCommand()}; ${buildRemoteRecursiveDirectoryEntriesCommand()}; } | sed -n '1,${MAX_RECURSIVE_SEARCH_ENTRIES + 3}p;${MAX_RECURSIVE_SEARCH_ENTRIES + 4}q'`;
+  const command = buildRemoteDirectoryReadCommand(remotePathOperand(connection, dir), limitedEntries);
   const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command, null, 30000));
-  const [cwdLine, ...allRows] = output.split(/\r?\n/).filter(Boolean);
+  const {path:resolvedPath, rows:allRows} = parseRemoteDirectoryOutput(output);
   const truncated = allRows.length > MAX_RECURSIVE_SEARCH_ENTRIES;
   const rows = allRows.slice(0, MAX_RECURSIVE_SEARCH_ENTRIES);
   return {
-    path: cwdLine || dir,
+    path: resolvedPath,
     truncated,
     entries: rows.map((line) => {
       const separator = line.lastIndexOf("\t");
@@ -406,8 +490,14 @@ async function listRemoteDir(connectionId, remotePath = ".", options: any = {}) 
   try {
     snapshot = await loadDirectorySnapshot(connectionId, remotePath, recursive, normalized.refresh);
   } catch (error) {
-    if (!recursive && shouldFallbackToPagedDirectoryRead(error)) return listRemoteDirPaged(connectionId, remotePath, normalized);
-    throw error;
+    if (!recursive && shouldFallbackToPagedDirectoryRead(error)) {
+      try {
+        return await listRemoteDirPaged(connectionId, remotePath, normalized);
+      } catch (fallbackError) {
+        throw normalizeRemoteDirectoryReadError(fallbackError, remotePath);
+      }
+    }
+    throw normalizeRemoteDirectoryReadError(error, remotePath);
   }
   return {
     path: snapshot.path,
@@ -471,9 +561,10 @@ function buildRemoteDirectorySizeCommand(remotePath, connection = null, token = 
     `TERMA_TARGET=${remotePathOperand(connection, pathValue)}`,
     `TERMA_SIZE_FILE="\${TMPDIR:-/tmp}/.terma-size-${safeToken}"`,
     `trap 'rm -f "$TERMA_SIZE_FILE"' 0 1 2 3 15`,
-    `if [ ! -d "$TERMA_TARGET" ]; then printf '%s\\n' '目标不是目录或已不存在' >&2; exit 1; fi`,
-    `if stat -c '%s' "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_STAT_STYLE=gnu; elif stat -f '%z' "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_STAT_STYLE=bsd; else printf '%s\\n' '远程系统缺少兼容的 stat 命令' >&2; exit 1; fi`,
-    `if [ "$TERMA_STAT_STYLE" = gnu ]; then if ! find "$TERMA_TARGET" -type f -exec stat -c '%s' {} + > "$TERMA_SIZE_FILE"; then printf '%s\\n' '目录存在无法读取的内容，未返回不完整大小' >&2; exit 1; fi; else if ! find "$TERMA_TARGET" -type f -exec stat -f '%z' {} + > "$TERMA_SIZE_FILE"; then printf '%s\\n' '目录存在无法读取的内容，未返回不完整大小' >&2; exit 1; fi; fi`,
+    `if [ ! -d "$TERMA_TARGET" ]; then printf '%s\\n' '${REMOTE_DIRECTORY_NOT_FOUND}' >&2; exit 66; fi`,
+    `if [ ! -r "$TERMA_TARGET" ] || [ ! -x "$TERMA_TARGET" ]; then printf '%s\\n' '${REMOTE_DIRECTORY_PERMISSION_DENIED}' >&2; exit 77; fi`,
+    `if stat -c '%s' "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_STAT_STYLE=gnu; elif stat -f '%z' "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_STAT_STYLE=bsd; else printf '%s\\n' '${REMOTE_DIRECTORY_SIZE_UNSUPPORTED}' >&2; exit 69; fi`,
+    `if [ "$TERMA_STAT_STYLE" = gnu ]; then if ! find "$TERMA_TARGET" -type f -exec stat -c '%s' {} + > "$TERMA_SIZE_FILE" 2>/dev/null; then printf '%s\\n' '${REMOTE_DIRECTORY_CONTENT_UNREADABLE}' >&2; exit 79; fi; else if ! find "$TERMA_TARGET" -type f -exec stat -f '%z' {} + > "$TERMA_SIZE_FILE" 2>/dev/null; then printf '%s\\n' '${REMOTE_DIRECTORY_CONTENT_UNREADABLE}' >&2; exit 79; fi; fi`,
     `awk 'BEGIN { total=0 } { if ($1 !~ /^[0-9]+$/) exit 2; total += $1 } END { if (NR == 0) print "0"; else printf "%.0f\\n", total }' "$TERMA_SIZE_FILE"`
   ].join("; ");
 }
@@ -481,7 +572,12 @@ function buildRemoteDirectorySizeCommand(remotePath, connection = null, token = 
 async function readRemoteDirectorySize(connectionId, remotePath) {
   const connection = getSftpConnection(connectionId);
   const command = buildRemoteDirectorySizeCommand(remotePath, connection);
-  const output = (await runRemote(connection, command, null, 5 * 60 * 1000)).toString("utf8").trim();
+  let output = "";
+  try {
+    output = (await runRemote(connection, command, null, 5 * 60 * 1000)).toString("utf8").trim();
+  } catch (error) {
+    throw normalizeRemoteDirectoryReadError(error, remotePath);
+  }
   const sizeBytes = output.split(/\r?\n/).filter(Boolean).pop() || "";
   if (!/^\d+$/.test(sizeBytes)) throw new Error("远程目录大小返回格式无效");
   const exactSize = BigInt(sizeBytes);
@@ -1147,8 +1243,13 @@ module.exports = {
   listRemoteFileVersions,
   __remoteBackupVersionTimestamp:remoteBackupVersionTimestamp,
   __buildRemoteDirectoryEntriesCommand:buildRemoteDirectoryEntriesCommand,
+  __buildRemoteDirectoryReadCommand:buildRemoteDirectoryReadCommand,
   __buildRemotePagedDirectoryEntriesCommand:buildRemotePagedDirectoryEntriesCommand,
   __buildRemoteRecursiveDirectoryEntriesCommand:buildRemoteRecursiveDirectoryEntriesCommand,
+  __parseRemoteDirectoryOutput:parseRemoteDirectoryOutput,
+  __parseRemotePagedDirectoryOutput:parseRemotePagedDirectoryOutput,
+  __normalizeRemoteDirectoryReadError:normalizeRemoteDirectoryReadError,
+  __shouldFallbackToPagedDirectoryRead:shouldFallbackToPagedDirectoryRead,
   buildRemoteDirectorySizeCommand,
   readRemoteDirectorySize,
   normalizeRemoteDirectoryListOptions,

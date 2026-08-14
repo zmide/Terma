@@ -6,7 +6,8 @@ const workflowDirectory = path.resolve(__dirname, "../.github/workflows");
 const findings = [];
 const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const getNamedStep = (workflow, name) => {
-  const match = workflow.match(new RegExp(`(?:^|\\n)      - name: ${escapeRegex(name)}\\n[\\s\\S]*?(?=\\n      - name: |\\n  [a-zA-Z0-9_-]+:\\n|$)`));
+  const lineBreak = "\\r?\\n";
+  const match = workflow.match(new RegExp(`(?:^|${lineBreak})      - name: ${escapeRegex(name)}${lineBreak}[\\s\\S]*?(?=${lineBreak}      - name: |${lineBreak}  [a-zA-Z0-9_-]+:${lineBreak}|$)`));
   assert.ok(match, `Regression workflow 缺少 ${name} 步骤`);
   return match[0];
 };

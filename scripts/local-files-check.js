@@ -7,6 +7,7 @@ const { readFrontendDomain } = require("./frontend-source");
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "src", "local-files.ts"), "utf8");
 const server = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");
+const routes = fs.readFileSync(path.join(root, "src", "routes", "local-files-routes.ts"), "utf8");
 const localUi = fs.readFileSync(path.join(root, "public", "app-local-files.js"), "utf8");
 const sftpUi = readFrontendDomain(root, "sftp");
 const terminalUi = readFrontendDomain(root, "terminal");
@@ -14,27 +15,29 @@ const docking = readFrontendDomain(root, "docking");
 const index = fs.readFileSync(path.join(root, "public", "index.html"), "utf8");
 const css = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 
-assert.match(server, /pathname === "\/api\/local-files"/);
-assert.match(server, /pathname === "\/api\/local-files\/rename"/);
-assert.match(server, /pathname === "\/api\/local-files\/delete"/);
-assert.match(server, /pathname === "\/api\/local-files\/create"/);
-assert.match(server, /pathname === "\/api\/local-files\/chmod"/);
-assert.match(server, /!isDesktopRequest\(req\) \|\| !desktopIntegration\?\.getDesktopDirectory/);
-assert.match(server, /startLocalDeliveryJob\(Number\(data\.connection_id\), data\.paths \|\| \[\], data\.target/);
-assert.match(server, /pathname === "\/api\/local-files\/receive"[\s\S]*?sendJson\(res, startLocalDeliveryJob\(/);
-assert.match(server, /pathname === "\/api\/local-files\/receive-desktop"[\s\S]*?deliveryMode:"desktop"/);
+assert.match(server, /handleLocalFilesRoutes\(req, res, pathname/);
+assert.match(server, /getDesktopIntegration:\(\) => desktopIntegration/);
+assert.match(routes, /pathname !== "\/api\/local-files" && !pathname\.startsWith\("\/api\/local-files\/"\)/);
+assert.match(routes, /pathname === "\/api\/local-files\/rename"/);
+assert.match(routes, /pathname === "\/api\/local-files\/delete"/);
+assert.match(routes, /pathname === "\/api\/local-files\/create"/);
+assert.match(routes, /pathname === "\/api\/local-files\/chmod"/);
+assert.match(routes, /!dependencies\.isDesktopRequest\(request\) \|\| !desktopIntegration\?\.getDesktopDirectory/);
+assert.match(routes, /startLocalDeliveryJob\(Number\(data\.connection_id\), data\.paths \|\| \[\], data\.target/);
+assert.match(routes, /pathname === "\/api\/local-files\/receive"[\s\S]*?sendJson\(response, startLocalDeliveryJob\(/);
+assert.match(routes, /pathname === "\/api\/local-files\/receive-desktop"[\s\S]*?deliveryMode:"desktop"/);
 assert.match(server, /data\.mode === "separate"[\s\S]*?startLocalDeliveryJob\(connectionId, paths, targetDirectory/);
-assert.match(server, /sendJson\(res, startLocalDeliveryJob\([\s\S]*?\), 202\)/);
+assert.match(routes, /sendJson\(response, startLocalDeliveryJob\([\s\S]*?\), 202\)/);
 const sftpJobs = fs.readFileSync(path.join(root, "src", "sftp-jobs.ts"), "utf8");
 assert.match(sftpJobs, /function startLocalDeliveryJob\(/);
 assert.match(sftpJobs, /type:"local-delivery"/);
 assert.match(sftpJobs, /deliverSftpPaths\(connectionId, paths, current\.target_directory/);
 assert.match(sftpJobs, /current\.status = "done"/);
 assert.match(sftpJobs, /current\.status = "failed"/);
-assert.match(server, /pathname === "\/api\/local-files\/receive-plan"/);
-assert.match(server, /pathname === "\/api\/local-files\/copy-plan"/);
-assert.match(server, /pathname === "\/api\/local-files\/copy"/);
-assert.match(server, /data\.conflict \|\| "rename"/);
+assert.match(routes, /pathname === "\/api\/local-files\/receive-plan"/);
+assert.match(routes, /pathname === "\/api\/local-files\/copy-plan"/);
+assert.match(routes, /pathname === "\/api\/local-files\/copy"/);
+assert.match(routes, /data\.conflict \|\| "rename"/);
 assert.match(localUi, /localFilesReceiveConflictChoice/);
 assert.match(localUi, /\{label:"覆盖", value:"overwrite"/);
 assert.match(localUi, /\{label:"自动重命名", value:"rename"/);
@@ -220,4 +223,36 @@ try {
   fs.rmSync(temp, {recursive:true, force:true});
 }
 
-console.log("本地文件标签检查通过：桌面端权限、路径校验、四向分屏、多选和 SFTP 内部互传");
+async function checkLocalFilesRouteBoundary() {
+  const { handleLocalFilesRoutes } = require(path.join(root, "dist", "routes", "local-files-routes.js"));
+  const response = {};
+  const sent = [];
+  const dependencies = {
+    getDesktopIntegration:() => ({
+      getDesktopDirectory:() => "C:/Users/demo/Desktop",
+      getDownloadDirectory:() => "C:/Users/demo/Downloads"
+    }),
+    getHomeDirectory:() => "C:/Users/demo",
+    isDesktopRequest:() => false,
+    readJson:async () => ({}),
+    sendJson:(_response, data, status=200) => sent.push({data, status})
+  };
+
+  assert.equal(await handleLocalFilesRoutes({method:"GET", url:"/api/connections"}, response, "/api/connections", dependencies), false);
+  assert.equal(await handleLocalFilesRoutes({method:"GET", url:"/api/local-files"}, response, "/api/local-files", dependencies), true);
+  assert.deepEqual(sent.pop(), {data:{error:"本地文件只支持在 Terma 桌面端使用"}, status:403});
+
+  dependencies.isDesktopRequest = () => true;
+  assert.equal(await handleLocalFilesRoutes({method:"GET", url:"/api/local-files/locations"}, response, "/api/local-files/locations", dependencies), true);
+  assert.deepEqual(sent.pop(), {
+    data:{desktop:"C:/Users/demo/Desktop", downloads:"C:/Users/demo/Downloads", home:"C:/Users/demo"},
+    status:200
+  });
+}
+
+checkLocalFilesRouteBoundary()
+  .then(() => console.log("本地文件标签检查通过：桌面端权限、路径校验、四向分屏、多选和 SFTP 内部互传"))
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });

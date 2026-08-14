@@ -59,22 +59,6 @@ const {
   updateForward,
   deleteConnection,
   deleteForward,
-  listCommandSnippets,
-  insertCommandSnippet,
-  updateCommandSnippet,
-  deleteCommandSnippet,
-  useCommandSnippet,
-  listNamedWorkspaces,
-  insertNamedWorkspace,
-  updateNamedWorkspace,
-  duplicateNamedWorkspace,
-  useNamedWorkspace,
-  deleteNamedWorkspace,
-  listForwardTemplates,
-  insertForwardTemplate,
-  updateForwardTemplate,
-  deleteForwardTemplate,
-  applyForwardTemplate,
   encryptStoredConnectionSecrets,
   decryptStoredConnectionSecrets,
   validateSortOrder,
@@ -140,7 +124,6 @@ const { componentInstallCommand } = require("./remote-component-installer");
 const { createRemoteOfflineTaskManager } = require("./remote-offline-tasks");
 const { clearVncClipboardCapabilityCache, inspectVncClipboardHelper, readVncRemoteClipboard, vncClipboardHelperGuideResult, writeVncRemoteClipboard } = require("./vnc-clipboard");
 const { cleanupFtpTemp, deleteFtpPath, downloadFtpFile, listFtpDirectory, makeFtpDirectory, renameFtpPath, testFtpCredentials, testFtpProfile, uploadFtpFile } = require("./ftp");
-const { chmodLocalPath, copyLocalPaths, createLocalEntry, deleteLocalPaths, listLocalDirectory, planLocalPathCopy, renameLocalPath, uploadLocalPaths } = require("./local-files");
 const {
   closeAllSftpSessions,
   connectSftpSession,
@@ -148,16 +131,15 @@ const {
   disconnectSftpSession,
   getNativeSftpDragTicket,
   openNativeSftpDragTicketFile,
-  planSftpPathDelivery,
   releaseNativeSftpDragTicket,
   sftpSessionStatus,
   stageSftpPaths
 } = require("./sftp-session");
-const { deleteCommandTemplate, handleBatchCommandUpgrade, listCommandTemplates, saveCommandTemplate, updateCommandTemplate } = require("./commands");
+const { handleBatchCommandUpgrade } = require("./commands");
 const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemoteRecycleItem, encodeRemoteText, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteFileVersions, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, renameRemotePath, resolveRemoteUploadTarget, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
-const { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, extractJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, pauseSftpJob, receiveUploadJobContent, resumeSftpJob, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream, waitForSftpTransferStart } = require("./sftp-jobs");
+const { beginNativeSftpDragJob, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, extractJob, listSftpJobs, moveJob, receiveUploadJobContent, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream, waitForSftpTransferStart } = require("./sftp-jobs");
 const { getExternalEdit, getExternalEditComparison, listExternalEdits, resolveExternalEdit, startExternalEdit, stopAllExternalEdits, stopExternalEdit, stopExternalEditsForConnection } = require("./sftp-external-edit");
-const { cancelSyncJob, clearFinishedSyncJobs, deleteSyncJob, getSyncJob, listSyncJobs, retrySyncJob, startSyncJob, startSyncPlanningJob } = require("./sftp-sync");
+const { startSyncJob, startSyncPlanningJob } = require("./sftp-sync");
 const {
   appendSystemLog,
   deleteLogs,
@@ -228,6 +210,12 @@ const { createUpdateChecker } = require("./update-checker");
 const { UpdateInstaller } = require("./update-installer");
 const { createDatabaseBundleHeader, DatabaseTransferStore } = require("./database-transfer");
 const { handleLogRoutes } = require("./routes/log-routes");
+const { handleCommandResourceRoutes } = require("./routes/command-resource-routes");
+const { handleForwardTemplateRoutes } = require("./routes/forward-template-routes");
+const { handleLocalFilesRoutes } = require("./routes/local-files-routes");
+const { handleConfigTransferRoutes } = require("./routes/config-transfer-routes");
+const { handleSftpDesktopDownloadRoutes } = require("./routes/sftp-desktop-download-routes");
+const { handleSftpJobRoutes } = require("./routes/sftp-job-routes");
 const { handlePublicAuthRoutes, handleSecurityRoutes } = require("./routes/security-routes");
 const {
   handleDesktopIntegrationRoutes,
@@ -1880,87 +1868,16 @@ async function handleApi(req, res, pathname) {
   if (req.method === "GET" && pathname === "/api/connections") return sendJson(res, listConnections());
   if (req.method === "GET" && pathname === "/api/remote-profiles") return sendJson(res, listRemoteProfiles());
   if (req.method === "GET" && pathname === "/api/serial/ports") return sendJson(res, await listSerialPorts());
-  if (req.method === "GET" && pathname === "/api/command-snippets") return sendJson(res, listCommandSnippets());
-  if (req.method === "GET" && pathname === "/api/named-workspaces") return sendJson(res, listNamedWorkspaces());
-  if (req.method === "GET" && pathname === "/api/command-templates") return sendJson(res, listCommandTemplates());
-  if (req.method === "GET" && pathname === "/api/forward-templates") return sendJson(res, listForwardTemplates());
-  if (req.method === "GET" && pathname === "/api/sftp/jobs") return sendJson(res, listSftpJobs());
-  if (pathname === "/api/local-files" || pathname.startsWith("/api/local-files/")) {
-    if (!isDesktopRequest(req) || !desktopIntegration?.getDesktopDirectory) {
-      return sendJson(res, {error:"本地文件只支持在 Terma 桌面端使用"}, 403);
-    }
-    if (req.method === "GET" && pathname === "/api/local-files") {
-      const url = new URL(req.url, "http://terma.invalid");
-      const defaultDirectory = await Promise.resolve(desktopIntegration.getDesktopDirectory());
-      const location = url.searchParams.get("location") || "directory";
-      return sendJson(res, listLocalDirectory(location === "computer" ? "" : url.searchParams.get("path") || defaultDirectory, {
-        defaultDirectory,
-        location,
-        page:url.searchParams.get("page"),
-        page_size:url.searchParams.get("page_size"),
-        query:url.searchParams.get("query"),
-        sort:url.searchParams.get("sort"),
-        dir:url.searchParams.get("dir")
-      }));
-    }
-    if (req.method === "GET" && pathname === "/api/local-files/locations") {
-      return sendJson(res, {
-        desktop:await Promise.resolve(desktopIntegration.getDesktopDirectory()),
-        downloads:await Promise.resolve(desktopIntegration.getDownloadDirectory()),
-        home:os.homedir()
-      });
-    }
-    if (req.method === "POST" && pathname === "/api/local-files/open") {
-      if (!desktopIntegration?.openLocalPath) return sendJson(res, {error:"当前桌面端不能打开本地文件"}, 403);
-      const data = await readJson(req);
-      return sendJson(res, await Promise.resolve(desktopIntegration.openLocalPath(data.path || "")));
-    }
-    if (req.method === "POST" && pathname === "/api/local-files/rename") {
-      const data = await readJson(req);
-      return sendJson(res, renameLocalPath(data.path, data.new_name));
-    }
-    if (req.method === "POST" && pathname === "/api/local-files/delete") {
-      const data = await readJson(req);
-      return sendJson(res, deleteLocalPaths(data.paths || []));
-    }
-    if (req.method === "POST" && pathname === "/api/local-files/create") {
-      const data = await readJson(req);
-      return sendJson(res, createLocalEntry(data.directory, data.name, data.type));
-    }
-    if (req.method === "POST" && pathname === "/api/local-files/chmod") {
-      const data = await readJson(req);
-      return sendJson(res, chmodLocalPath(data.path, data.mode));
-    }
-    if (req.method === "POST" && pathname === "/api/local-files/upload") {
-      const data = await readJson(req);
-      const result = await uploadLocalPaths(Number(data.connection_id), data.paths || [], data.target || ".", data.conflict || "error");
-      return sendJson(res, result, 202);
-    }
-    if (req.method === "POST" && pathname === "/api/local-files/copy-plan") {
-      const data = await readJson(req);
-      return sendJson(res, planLocalPathCopy(data.paths || [], data.target || ""));
-    }
-    if (req.method === "POST" && pathname === "/api/local-files/copy") {
-      const data = await readJson(req);
-      return sendJson(res, copyLocalPaths(data.paths || [], data.target || "", data.conflict || "error"));
-    }
-    if (req.method === "POST" && pathname === "/api/local-files/receive-plan") {
-      const data = await readJson(req);
-      return sendJson(res, planSftpPathDelivery(data.paths || [], data.target || ""));
-    }
-    if (req.method === "POST" && pathname === "/api/local-files/receive") {
-      const data = await readJson(req);
-      return sendJson(res, startLocalDeliveryJob(Number(data.connection_id), data.paths || [], data.target || "", data.conflict || "rename"), 202);
-    }
-    if (req.method === "POST" && pathname === "/api/local-files/receive-desktop") {
-      const data = await readJson(req);
-      const desktopDirectory = await Promise.resolve(desktopIntegration.getDesktopDirectory());
-      return sendJson(res, startLocalDeliveryJob(Number(data.connection_id), data.paths || [], desktopDirectory, "rename", {
-        label:"发送到桌面",
-        deliveryMode:"desktop"
-      }), 202);
-    }
-  }
+  if (await handleCommandResourceRoutes(req, res, pathname, {readJson, sendJson})) return;
+  if (await handleForwardTemplateRoutes(req, res, pathname, {createConfigSnapshot, readJson, sendJson})) return;
+  if (await handleSftpJobRoutes(req, res, pathname, {sendJson})) return;
+  if (await handleLocalFilesRoutes(req, res, pathname, {
+    getDesktopIntegration:() => desktopIntegration,
+    getHomeDirectory:() => os.homedir(),
+    isDesktopRequest,
+    readJson,
+    sendJson
+  })) return;
   if (req.method === "GET" && pathname === "/api/linux-desktop/tasks") return sendJson(res, listLinuxDesktopTasks());
   if (req.method === "POST" && pathname === "/api/linux-desktop/tasks/clear-finished") return sendJson(res, clearFinishedLinuxDesktopTasks());
   if (req.method === "POST" && pathname === "/api/admin-grants") {
@@ -1975,81 +1892,31 @@ async function handleApi(req, res, pathname) {
     if (!isDesktopRequest(req)) return sendJson(res, {error:"外部编辑会话只能在本机桌面端中查看"}, 403);
     return sendJson(res, listExternalEdits());
   }
-  if (req.method === "GET" && pathname === "/api/sftp/sync/jobs") return sendJson(res, listSyncJobs());
-  if (req.method === "POST" && pathname === "/api/sftp/sync/jobs/clear-finished") return sendJson(res, clearFinishedSyncJobs());
   if (req.method === "POST" && pathname === "/api/sftp/sync/choose-directory") {
     if (!isDesktopRequest(req) || !desktopIntegration?.chooseSyncDirectory) return sendJson(res, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
     return sendJson(res, {path:await Promise.resolve(desktopIntegration.chooseSyncDirectory())});
   }
-  if (req.method === "GET" && pathname === "/api/sftp/download-settings") {
-    const saved = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
-    const desktop = Boolean(isDesktopRequest(req) && desktopIntegration?.getDownloadDirectory);
-    const defaultDirectory = desktop ? await Promise.resolve(desktopIntegration.getDownloadDirectory()) : "";
-    return sendJson(res, {
-      delivery_mode: desktop ? "desktop" : "browser",
-      configured_directory: desktop ? saved.sftp_download_directory : "",
-      default_directory: defaultDirectory,
-      effective_directory: desktop ? (saved.sftp_download_directory || defaultDirectory) : "",
-      can_choose_directory: Boolean(desktop && desktopIntegration?.chooseDownloadDirectory),
-      can_open_directory: Boolean(desktop && desktopIntegration?.openDownloadDirectory)
-    });
-  }
-  if (req.method === "POST" && pathname === "/api/sftp/download-settings/choose") {
-    if (!isDesktopRequest(req) || !desktopIntegration?.chooseDownloadDirectory) return sendJson(res, { error:"目录选择仅能在本机桌面端中使用" }, 403);
-    return sendJson(res, { path:await Promise.resolve(desktopIntegration.chooseDownloadDirectory()) });
-  }
-  if (req.method === "POST" && pathname === "/api/sftp/download-settings/open") {
-    if (!isDesktopRequest(req) || !desktopIntegration?.openDownloadDirectory) return sendJson(res, { error:"打开目录仅能在本机桌面端中使用" }, 403);
-    const data = await readJson(req);
-    const job = data.job_id ? listSftpJobs().find(item => String(item.id) === String(data.job_id)) : null;
-    const saved = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
-    const directory = job?.delivery_status === "saved" && job.saved_path
-      ? path.dirname(job.saved_path)
-      : saved.sftp_download_directory || await Promise.resolve(desktopIntegration.getDownloadDirectory());
-    return sendJson(res, await Promise.resolve(desktopIntegration.openDownloadDirectory(directory)));
-  }
-  if (req.method === "POST" && pathname === "/api/sftp/download-settings/open-file") {
-    if (!isDesktopRequest(req) || !desktopIntegration?.openLocalPath) return sendJson(res, { error:"打开文件仅能在本机桌面端中使用" }, 403);
-    const data = await readJson(req);
-    const job = listSftpJobs().find(item => String(item.id) === String(data.job_id || ""));
-    if (!job || job.type !== "download" || job.delivery_status !== "saved" || !job.saved_path) return sendJson(res, {error:"下载文件不存在或已被清理"}, 404);
-    return sendJson(res, await Promise.resolve(desktopIntegration.openLocalPath(job.saved_path)));
-  }
-  if (req.method === "GET" && pathname === "/api/export/config") return sendJson(res, { config: exportConfig() });
-
-  if (req.method === "POST" && pathname === "/api/import/parse") {
-    const body = await readBody(req);
-    const part = getPart(req.headers["content-type"], body, "config");
-    const parsed = parseConfigText(part.data.toString("utf8"));
-    parsed.filename = part.filename || "config";
-    return sendJson(res, parsed);
-  }
-  if (req.method === "POST" && pathname === "/api/import/parse-text") {
-    const data = await readJson(req);
-    const parsed = parseConfigText(data.text || "");
-    parsed.filename = data.filename || "pasted-config";
-    return sendJson(res, parsed);
-  }
-  if (req.method === "POST" && pathname === "/api/import/test") {
-    const data = await readJson(req);
-    return sendJson(res, await batchTest(data.tunnels || []));
-  }
-  if (req.method === "POST" && pathname === "/api/import/save") {
-    const data = await readJson(req);
-    createConfigSnapshot("批量导入前自动快照");
-    return sendJson(res, saveImported(data.tunnels || [], DEFAULT_EXTRA_ARGS), 201);
-  }
-  if (req.method === "POST" && pathname === "/api/export/config") {
-    const data = await readJson(req);
-    return sendJson(res, { config: exportConfig(data.ids || []) });
-  }
-  if (req.method === "POST" && pathname === "/api/command-templates") {
-    return sendJson(res, saveCommandTemplate(await readJson(req)), 201);
-  }
-  if (req.method === "POST" && pathname === "/api/forward-templates") {
-    const id = insertForwardTemplate(await readJson(req));
-    return sendJson(res, { id }, 201);
-  }
+  if (await handleSftpDesktopDownloadRoutes(req, res, pathname, {
+    runtimeSettingsFile:RUNTIME_SETTINGS_FILE,
+    getDesktopIntegration:() => desktopIntegration,
+    isDesktopRequest,
+    listSftpJobs,
+    readJson,
+    readRuntimeSettings,
+    sendJson
+  })) return;
+  if (await handleConfigTransferRoutes(req, res, pathname, {
+    defaultExtraArgs:DEFAULT_EXTRA_ARGS,
+    batchTest,
+    createConfigSnapshot,
+    exportConfig,
+    getPart,
+    parseConfigText,
+    readBody,
+    readJson,
+    saveImported,
+    sendJson
+  })) return;
   if (req.method === "POST" && pathname === "/api/commands/batch") {
     const data = await readJson(req);
     return sendJson(res, await batchRunCommands(data.ids || [], data.command || "", data));
@@ -2063,12 +1930,6 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && pathname === "/api/remote-profiles") {
     const id = insertRemoteProfile(await readJson(req));
     return sendJson(res, {id}, 201);
-  }
-  if (req.method === "POST" && pathname === "/api/command-snippets") {
-    return sendJson(res, insertCommandSnippet(await readJson(req)), 201);
-  }
-  if (req.method === "POST" && pathname === "/api/named-workspaces") {
-    return sendJson(res, insertNamedWorkspace(await readJson(req)), 201);
   }
   if (req.method === "POST" && pathname === "/api/connections/bulk-delete") {
     const data = await readJson(req);
@@ -2387,17 +2248,6 @@ async function handleApi(req, res, pathname) {
   if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "flags") {
     return sendJson(res, updateConnectionFlags(Number(parts[2]), await readJson(req)));
   }
-  if (parts.length >= 3 && parts[0] === "api" && parts[1] === "command-snippets") {
-    if (req.method === "PUT" && parts.length === 3) return sendJson(res, updateCommandSnippet(parts[2], await readJson(req)));
-    if (req.method === "DELETE" && parts.length === 3) return sendJson(res, deleteCommandSnippet(parts[2]));
-    if (req.method === "POST" && parts.length === 4 && parts[3] === "use") return sendJson(res, useCommandSnippet(parts[2]));
-  }
-  if (parts.length >= 3 && parts[0] === "api" && parts[1] === "named-workspaces") {
-    if (req.method === "PUT" && parts.length === 3) return sendJson(res, updateNamedWorkspace(parts[2], await readJson(req)));
-    if (req.method === "DELETE" && parts.length === 3) return sendJson(res, deleteNamedWorkspace(parts[2]));
-    if (req.method === "POST" && parts.length === 4 && parts[3] === "duplicate") return sendJson(res, duplicateNamedWorkspace(parts[2]), 201);
-    if (req.method === "POST" && parts.length === 4 && parts[3] === "use") return sendJson(res, useNamedWorkspace(parts[2]));
-  }
   if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "terminal-preferences") {
     const id = Number(parts[2]);
     const result = updateTerminalPreferences(id, await readJson(req));
@@ -2449,44 +2299,6 @@ async function handleApi(req, res, pathname) {
     invalidateRemoteDirectoryCache(id);
     return sendJson(res, result);
   }
-  if (parts.length >= 3 && parts[0] === "api" && parts[1] === "sftp" && parts[2] === "jobs") {
-    if (req.method === "POST" && parts.length === 4 && parts[3] === "clear-finished") return sendJson(res, clearFinishedSftpJobs());
-    if (req.method === "PUT" && parts.length === 5 && parts[4] === "content") {
-      try {
-        return sendJson(res, await receiveUploadJobContent(parts[3], req), 202);
-      } catch (error) {
-        if (error?.code === "SFTP_UPLOAD_CANCELLED") {
-          if (!res.destroyed && !res.writableEnded) return sendJson(res, {ok:true, status:"cancelled"}, 409);
-          return;
-        }
-        throw error;
-      }
-    }
-    if (req.method === "POST" && parts.length === 5 && parts[4] === "cancel") return sendJson(res, cancelSftpJob(parts[3]));
-    if (req.method === "POST" && parts.length === 5 && parts[4] === "pause") return sendJson(res, pauseSftpJob(parts[3]));
-    if (req.method === "POST" && parts.length === 5 && parts[4] === "resume") return sendJson(res, resumeSftpJob(parts[3]));
-    if (req.method === "DELETE" && parts.length === 4) return sendJson(res, deleteSftpJob(parts[3]));
-    if (req.method === "GET" && parts.length === 5 && parts[4] === "fetch") {
-      const item = getSftpJobFile(parts[3]);
-      const stat = fs.statSync(item.path);
-      res.writeHead(200, {
-        "Content-Type": "application/octet-stream",
-        "Content-Length": stat.size,
-        "Content-Disposition": `attachment; filename="${encodeURIComponent(item.name)}"`,
-        "Cache-Control": "no-store"
-      });
-      const stream = fs.createReadStream(item.path);
-      let responseFinished = false;
-      let streamClosed = false;
-      const markDelivered = () => {
-        if (responseFinished && streamClosed) markSftpJobDelivered(parts[3]);
-      };
-      res.on("finish", () => { responseFinished = true; markDelivered(); });
-      stream.on("close", () => { streamClosed = true; markDelivered(); });
-      stream.pipe(res);
-      return;
-    }
-  }
   if (parts.length >= 3 && parts[0] === "api" && parts[1] === "sftp" && parts[2] === "external-edits") {
     if (!isDesktopRequest(req)) return sendJson(res, {error:"外部编辑会话只能在本机桌面端中处理"}, 403);
     if (req.method === "GET" && parts.length === 4) return sendJson(res, getExternalEdit(parts[3]));
@@ -2495,27 +2307,6 @@ async function handleApi(req, res, pathname) {
     if (req.method === "POST" && parts.length === 5 && parts[4] === "resolve") {
       const data = await readJson(req);
       return sendJson(res, await resolveExternalEdit(parts[3], data.action, data));
-    }
-  }
-  if (parts.length >= 4 && parts[0] === "api" && parts[1] === "sftp" && parts[2] === "sync" && parts[3] === "jobs") {
-    if (req.method === "GET" && parts.length === 5) return sendJson(res, getSyncJob(parts[4]));
-    if (req.method === "DELETE" && parts.length === 5) return sendJson(res, deleteSyncJob(parts[4]));
-    if (req.method === "POST" && parts.length === 6 && parts[5] === "cancel") return sendJson(res, cancelSyncJob(parts[4]));
-    if (req.method === "POST" && parts.length === 6 && parts[5] === "retry") return sendJson(res, retrySyncJob(parts[4]), 202);
-  }
-  if (parts.length >= 3 && parts[0] === "api" && parts[1] === "forward-templates") {
-    if (req.method === "PUT" && parts.length === 3) {
-      updateForwardTemplate(parts[2], await readJson(req));
-      return sendJson(res, { ok: true });
-    }
-    if (req.method === "DELETE" && parts.length === 3) {
-      deleteForwardTemplate(parts[2]);
-      return sendJson(res, { ok: true });
-    }
-    if (req.method === "POST" && parts.length === 4 && parts[3] === "apply") {
-      const data = await readJson(req);
-      createConfigSnapshot("批量应用转发模板前自动快照");
-      return sendJson(res, applyForwardTemplate(parts[2], data.connection_ids || []));
     }
   }
   if (req.method === "POST" && parts.length === 4 && parts[0] === "api" && parts[1] === "connections" && parts[3] === "forwards") {
@@ -2838,10 +2629,6 @@ async function handleApi(req, res, pathname) {
     deleteConnection(Number(parts[2]), stopForward);
     clearConnectionHealthCache(Number(parts[2]));
     return sendJson(res, { ok: true });
-  }
-  if (parts.length === 3 && parts[0] === "api" && parts[1] === "command-templates") {
-    if (req.method === "PUT") return sendJson(res, updateCommandTemplate(parts[2], await readJson(req)));
-    if (req.method === "DELETE") return sendJson(res, deleteCommandTemplate(parts[2]));
   }
   if (req.method === "DELETE" && parts.length === 3 && parts[0] === "api" && parts[1] === "forwards") {
     const forward = getForward(Number(parts[2]));

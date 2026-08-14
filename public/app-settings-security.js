@@ -212,10 +212,86 @@ async function saveSessionManagement() {
   notify("会话设置已保存", "success");
 }
 
+function notificationDurationFormValue(id, options={}) {
+  const input = $(id);
+  const raw = String(input?.value || "").trim();
+  if (!raw && options.nullable) return null;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds < 0.5 || seconds > 60) throw new Error("通知显示时长必须在 0.5-60 秒之间");
+  return Math.round(seconds * 1000);
+}
+
+function notificationDisplayFormValue() {
+  return {
+    info:{
+      enabled:$("notificationInfoEnabled")?.checked !== false,
+      duration_ms:notificationDurationFormValue("notificationInfoDuration")
+    },
+    success:{
+      enabled:$("notificationSuccessEnabled")?.checked !== false,
+      duration_ms:notificationDurationFormValue("notificationSuccessDuration")
+    },
+    error:{
+      enabled:$("notificationErrorEnabled")?.checked !== false,
+      duration_ms:notificationDurationFormValue("notificationErrorDuration")
+    },
+    progress:{
+      enabled:$("notificationProgressEnabled")?.checked !== false,
+      success_duration_ms:notificationDurationFormValue("notificationProgressSuccessDuration", {nullable:true}),
+      error_duration_ms:notificationDurationFormValue("notificationProgressErrorDuration")
+    }
+  };
+}
+
+function syncNotificationSettingControls() {
+  const groups = [
+    ["notificationInfoEnabled", ["notificationInfoDuration"]],
+    ["notificationSuccessEnabled", ["notificationSuccessDuration"]],
+    ["notificationErrorEnabled", ["notificationErrorDuration"]],
+    ["notificationProgressEnabled", ["notificationProgressSuccessDuration", "notificationProgressErrorDuration"]]
+  ];
+  for (const [toggleId, fieldIds] of groups) {
+    const disabled = $(toggleId)?.checked === false;
+    fieldIds.forEach(id => { if ($(id)) $(id).disabled = disabled; });
+  }
+}
+
 async function saveNotificationOptions() {
+  const inPane = captureSettingsPane();
+  const button = $("notificationSaveBtn");
   const notification_mode = $("notificationMode")?.value || "on";
-  securitySettings = await api("/api/security", {method:"PUT", body:JSON.stringify({notification_mode})});
-  notify(notification_mode === "on" ? "通知已开启" : notification_mode === "muted" ? "通知已静音" : "通知已关闭", "success");
+  let notification_display;
+  try {
+    notification_display = notificationDisplayFormValue();
+  } catch (error) {
+    return notify(error.message || "通知设置无效", "error");
+  }
+  setButtonBusy(button, true, "保存中");
+  try {
+    const [securityResult, runtimeResult] = await Promise.allSettled([
+      api("/api/security", {method:"PUT", body:JSON.stringify({notification_mode})}),
+      api("/api/runtime-settings", {
+        method:"PUT",
+        body:JSON.stringify({
+          notification_display,
+          sftp_floating_progress_enabled:$("taskCenterFloatingProgressEnabled")?.checked !== false
+        })
+      })
+    ]);
+    if (securityResult.status === "fulfilled") securitySettings = securityResult.value;
+    if (runtimeResult.status === "fulfilled") runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...runtimeResult.value});
+    inPane(() => {
+      syncNotificationSettingControls();
+      if (typeof updateSftpTaskFloat === "function") updateSftpTaskFloat(typeof sftpLatestJobs === "undefined" ? [] : sftpLatestJobs);
+    });
+    const failure = [securityResult, runtimeResult].find(result => result.status === "rejected");
+    if (failure) throw failure.reason;
+    notify(notification_mode === "on" ? "通知设置已保存" : notification_mode === "muted" ? "通知设置已保存，后台事件已静音" : "通知设置已保存，后台事件提醒已关闭", "success");
+  } catch (error) {
+    notify(error.message || "通知设置保存失败", "error");
+  } finally {
+    inPane(() => setButtonBusy(button, false));
+  }
 }
 
 async function saveWebPassword() {

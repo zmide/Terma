@@ -20,7 +20,7 @@ registerTermaAction("static-task-center-close", () => closeSftpTaskCenter());
 registerTermaAction("static-task-center-view", ({element}) => setSftpTaskCenterView(staticActionValue(element, "taskView")));
 registerTermaAction("static-task-center-clear", ({event, element}) => {
   event.stopPropagation();
-  return clearFinishedSftpJobs(element);
+  return sftpTaskCenterView === "failed" ? clearFailedSftpJobs(element) : clearFinishedSftpJobs(element);
 });
 registerTermaAction("static-task-list-open", ({event}) => openSftpTaskList(event));
 registerTermaAction("static-task-resize-start", ({event, element}) => startSftpTaskCenterResize(event, element));

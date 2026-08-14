@@ -9,6 +9,12 @@ const MAX_PORT_FALLBACKS = 20;
 const DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB = 50;
 const DEFAULT_SFTP_LIGHT_EDITOR_THRESHOLD_MB = 10;
 const DEFAULT_SFTP_TRANSFER_CONCURRENCY = 3;
+const DEFAULT_NOTIFICATION_DISPLAY = Object.freeze({
+  info: Object.freeze({ enabled: true, duration_ms: 3500 }),
+  success: Object.freeze({ enabled: true, duration_ms: 3500 }),
+  error: Object.freeze({ enabled: true, duration_ms: 8000 }),
+  progress: Object.freeze({ enabled: true, success_duration_ms: null, error_duration_ms: 8000 })
+});
 const SFTP_TEXT_EDITOR_MODES = new Set(["ace", "auto", "light"]);
 const SFTP_EXTERNAL_EDIT_SAVE_RULES = new Set(["prompt", "overwrite"]);
 const DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT = Object.freeze({
@@ -140,12 +146,62 @@ function normalizeWorkspaceToolbarPlacement(value: any = {}, fallback: any = DEF
   };
 }
 
+function normalizeNotificationDuration(value, fallback, options: any = {}) {
+  if (options.nullable && value === null) return null;
+  if (options.nullable && (value === undefined || String(value).trim() === "")) {
+    return fallback === null || fallback === undefined ? null : normalizeNotificationDuration(fallback, null, options);
+  }
+  const candidate = value === undefined || value === null || String(value).trim() === "" ? fallback : value;
+  const duration = Number(candidate);
+  if (!Number.isInteger(duration) || duration < 500 || duration > 60000) {
+    throw new Error("通知显示时长必须是 0.5-60 秒之间的毫秒整数");
+  }
+  return duration;
+}
+
+function normalizeNotificationDisplay(value: any = {}, fallback: any = DEFAULT_NOTIFICATION_DISPLAY) {
+  const source = value && typeof value === "object" ? value : {};
+  const base = fallback && typeof fallback === "object" ? fallback : DEFAULT_NOTIFICATION_DISPLAY;
+  const category = (name, defaultValue) => {
+    const current = source[name] && typeof source[name] === "object" ? source[name] : {};
+    const previous = base[name] && typeof base[name] === "object" ? base[name] : defaultValue;
+    return { current, previous };
+  };
+  const info = category("info", DEFAULT_NOTIFICATION_DISPLAY.info);
+  const success = category("success", DEFAULT_NOTIFICATION_DISPLAY.success);
+  const error = category("error", DEFAULT_NOTIFICATION_DISPLAY.error);
+  const progress = category("progress", DEFAULT_NOTIFICATION_DISPLAY.progress);
+  return {
+    info: {
+      enabled: info.current.enabled === undefined ? info.previous.enabled !== false : info.current.enabled !== false,
+      duration_ms: normalizeNotificationDuration(info.current.duration_ms, info.previous.duration_ms)
+    },
+    success: {
+      enabled: success.current.enabled === undefined ? success.previous.enabled !== false : success.current.enabled !== false,
+      duration_ms: normalizeNotificationDuration(success.current.duration_ms, success.previous.duration_ms)
+    },
+    error: {
+      enabled: error.current.enabled === undefined ? error.previous.enabled !== false : error.current.enabled !== false,
+      duration_ms: normalizeNotificationDuration(error.current.duration_ms, error.previous.duration_ms)
+    },
+    progress: {
+      enabled: progress.current.enabled === undefined ? progress.previous.enabled !== false : progress.current.enabled !== false,
+      success_duration_ms: normalizeNotificationDuration(
+        progress.current.success_duration_ms,
+        progress.previous.success_duration_ms,
+        { nullable:true }
+      ),
+      error_duration_ms: normalizeNotificationDuration(progress.current.error_duration_ms, progress.previous.error_duration_ms)
+    }
+  };
+}
+
 function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
   const hostsValue = value.listen_hosts !== undefined ? value.listen_hosts
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 11,
+    schema_version: 12,
     listen_hosts: normalizeListenHosts(hostsValue, hostsValue === undefined ? (fallback.listen_hosts ?? DEFAULT_LISTEN_HOSTS) : null),
     listen_port: normalizeListenPort(portValue, portValue === undefined ? (fallback.listen_port ?? DEFAULT_LISTEN_PORT) : null),
     sftp_recycle_bin_enabled: value.sftp_recycle_bin_enabled === undefined
@@ -154,6 +210,10 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     sftp_floating_progress_enabled: value.sftp_floating_progress_enabled === undefined
       ? fallback.sftp_floating_progress_enabled !== false
       : value.sftp_floating_progress_enabled !== false,
+    notification_display: normalizeNotificationDisplay(
+      value.notification_display,
+      fallback.notification_display
+    ),
     sftp_max_open_file_size_mb: normalizeSftpMaxOpenFileSize(
       value.sftp_max_open_file_size_mb,
       fallback.sftp_max_open_file_size_mb
@@ -304,6 +364,7 @@ function availableListenHosts(interfaces: any = os.networkInterfaces()) {
 }
 
 module.exports = {
+  DEFAULT_NOTIFICATION_DISPLAY,
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,
   DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB,
@@ -316,6 +377,7 @@ module.exports = {
   isLoopbackHost,
   normalizeListenHosts,
   normalizeListenPort,
+  normalizeNotificationDisplay,
   normalizeRuntimeSettings,
   normalizeSftpDownloadDirectory,
   normalizeSftpExternalEditSaveRule,

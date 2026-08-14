@@ -326,6 +326,31 @@ const toastTimers = new Map();
 let toastSequence = 0;
 let toastLayoutFrame = 0;
 
+function notificationDisplayPreferences() {
+  const saved = typeof runtimeSettings !== "undefined" ? runtimeSettings?.saved?.notification_display : null;
+  const source = saved && typeof saved === "object" ? saved : {};
+  return {
+    info:{enabled:source.info?.enabled !== false, duration_ms:Number(source.info?.duration_ms) || 3500},
+    success:{enabled:source.success?.enabled !== false, duration_ms:Number(source.success?.duration_ms) || 3500},
+    error:{enabled:source.error?.enabled !== false, duration_ms:Number(source.error?.duration_ms) || 8000},
+    progress:{
+      enabled:source.progress?.enabled !== false,
+      success_duration_ms:Number.isInteger(source.progress?.success_duration_ms) ? source.progress.success_duration_ms : null,
+      error_duration_ms:Number(source.progress?.error_duration_ms) || 8000
+    }
+  };
+}
+
+function emptyProgressToastController() {
+  return {
+    update:() => {},
+    finish:() => {},
+    fail:() => {},
+    dismiss:() => {},
+    setPaused:() => {}
+  };
+}
+
 function prefersReducedToastMotion() {
   return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
 }
@@ -415,6 +440,8 @@ function notify(text, type="info") {
     const title = lines.shift() || "Terma";
     const detail = lines.join("\n").trim();
     const toastType = ["success", "error", "info"].includes(type) ? type : "info";
+    const preference = notificationDisplayPreferences()[toastType];
+    if (preference?.enabled === false) return;
     const iconName = toastType === "success" ? "circle-check" : toastType === "error" ? "circle-alert" : "info";
     const toastId = `toast-${Date.now()}-${++toastSequence}`;
     const toast = document.createElement("div");
@@ -433,20 +460,15 @@ function notify(text, type="info") {
         {duration:240, easing:"cubic-bezier(.2,.8,.2,1)"}
       );
     }
-    toastTimers.set(toastId, setTimeout(() => dismissToast(toast), toastType === "error" ? 8000 : 3500));
+    toastTimers.set(toastId, setTimeout(() => dismissToast(toast), preference.duration_ms));
     syncToastStackLayout();
   }
 }
 
 function createProgressToast(options={}) {
   const stack = $("toast");
-  if (!stack) return {
-    update:() => {},
-    finish:() => {},
-    fail:() => {},
-    dismiss:() => {},
-    setPaused:() => {}
-  };
+  const preference = notificationDisplayPreferences().progress;
+  if (!stack || preference.enabled === false) return emptyProgressToastController();
   const toastId = `toast-progress-${Date.now()}-${++toastSequence}`;
   const toast = document.createElement("div");
   toast.className = "toast info toast-progress";
@@ -514,7 +536,8 @@ function createProgressToast(options={}) {
       track.classList.remove("indeterminate");
       track.setAttribute("aria-valuenow", "100");
       bar.style.width = "100%";
-      toastTimers.set(toastId, setTimeout(() => dismissToast(toast), linger));
+      const duration = preference.success_duration_ms === null ? linger : preference.success_duration_ms;
+      toastTimers.set(toastId, setTimeout(() => dismissToast(toast), duration));
     },
     fail(message="操作失败") {
       if (settled) return;
@@ -526,7 +549,7 @@ function createProgressToast(options={}) {
       detail.hidden = false;
       actions.hidden = true;
       track.hidden = true;
-      toastTimers.set(toastId, setTimeout(() => dismissToast(toast), 8000));
+      toastTimers.set(toastId, setTimeout(() => dismissToast(toast), preference.error_duration_ms));
     },
     dismiss() {
       if (!settled && typeof options.onCancel === "function") options.onCancel();

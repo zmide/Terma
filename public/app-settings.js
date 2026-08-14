@@ -30,6 +30,12 @@ async function openSettings(updateTab=true) {
   }
 }
 
+function notificationSecondsValue(milliseconds, fallback="") {
+  const value = Number(milliseconds);
+  if (!Number.isFinite(value) || value <= 0) return fallback;
+  return String(Math.round(value / 100) / 10);
+}
+
 function renderSettings() {
   const s = securitySettings || {};
   const about = aboutSettings || {};
@@ -45,6 +51,7 @@ function renderSettings() {
     return `<div class="about-third-party-row" role="row"><span role="cell">${nameHtml}</span><code role="cell">${esc(version)}</code><span role="cell">${esc(license)}</span></div>`;
   }).join("");
   const toolbarPlacement = normalizeWorkspaceToolbarPlacement(runtimeSettings?.saved?.workspace_toolbar_placement);
+  const notificationDisplay = normalizeNotificationDisplay(runtimeSettings?.saved?.notification_display);
   const uiState = captureUiState($("view-settings") || document);
   $("view-settings").innerHTML = `<div class="panel settings-panel">
     <div class="workspace-head"><div><h2>设置</h2><div class="subtitle">访问保护、通知、运行信息与开源许可。</div></div></div>
@@ -63,9 +70,6 @@ function renderSettings() {
             <h3>工作区</h3>
             <label class="check-row"><input id="restoreWorkspaceTabs" type="checkbox" ${runtimeSettings?.saved?.restore_workspace_tabs !== false ? "checked" : ""}> 恢复上次未关闭的标签</label>
             <div class="muted">默认开启。重新启动 Terma 后会恢复终端、SFTP、转发、设置、日志、导入导出等所有未关闭的工作区标签。</div>
-            <h3>任务中心</h3>
-            <label class="check-row"><input id="taskCenterFloatingProgressEnabled" type="checkbox" ${runtimeSettings?.saved?.sftp_floating_progress_enabled !== false ? "checked" : ""}> 显示右上角悬浮任务进度卡</label>
-            <div class="muted">用于显示传输、目录同步和 Linux 桌面安装/卸载等后台任务。关闭悬浮卡不会停止任务，仍可从工作区标题栏的任务中心查看。</div>
             <h3>操作按钮位置</h3>
             <div class="muted">桌面端可以分别设置终端和 SFTP 的操作按钮。选择“工作区标题栏”时，只显示当前焦点标签的按钮；移动端仍使用紧凑布局。</div>
             <label for="toolbarPlacementUnsplitTerminal">未分屏 · 终端</label>
@@ -189,7 +193,34 @@ function renderSettings() {
           <option value="muted" ${s.notification_mode === "muted" ? "selected" : ""}>静音，只记录已读</option>
           <option value="off" ${s.notification_mode === "off" ? "selected" : ""}>关闭提醒</option>
         </select>
-        <div class="actions"><button class="primary" onclick="saveNotificationOptions()">保存通知设置</button><button onclick="requestDesktopNotifications()">开启桌面通知</button></div>
+        <h3>页面提示</h3>
+        <div class="notification-preference-list">
+          <div class="notification-preference-row">
+            <label class="check-row"><input id="notificationInfoEnabled" type="checkbox" ${notificationDisplay.info.enabled ? "checked" : ""} onchange="syncNotificationSettingControls()"> 信息提示</label>
+            <label class="notification-duration"><span>显示</span><input id="notificationInfoDuration" type="number" min="0.5" max="60" step="0.1" value="${notificationSecondsValue(notificationDisplay.info.duration_ms, "3.5")}"><span>秒</span></label>
+          </div>
+          <div class="notification-preference-row">
+            <label class="check-row"><input id="notificationSuccessEnabled" type="checkbox" ${notificationDisplay.success.enabled ? "checked" : ""} onchange="syncNotificationSettingControls()"> 成功提示</label>
+            <label class="notification-duration"><span>显示</span><input id="notificationSuccessDuration" type="number" min="0.5" max="60" step="0.1" value="${notificationSecondsValue(notificationDisplay.success.duration_ms, "3.5")}"><span>秒</span></label>
+          </div>
+          <div class="notification-preference-row">
+            <label class="check-row"><input id="notificationErrorEnabled" type="checkbox" ${notificationDisplay.error.enabled ? "checked" : ""} onchange="syncNotificationSettingControls()"> 错误提示</label>
+            <label class="notification-duration"><span>显示</span><input id="notificationErrorDuration" type="number" min="0.5" max="60" step="0.1" value="${notificationSecondsValue(notificationDisplay.error.duration_ms, "8")}"><span>秒</span></label>
+          </div>
+          <div class="notification-preference-row notification-progress-preference">
+            <label class="check-row"><input id="notificationProgressEnabled" type="checkbox" ${notificationDisplay.progress.enabled ? "checked" : ""} onchange="syncNotificationSettingControls()"> 任务进度提示</label>
+            <div class="notification-progress-durations">
+              <label class="notification-duration"><span>完成后</span><input id="notificationProgressSuccessDuration" type="number" min="0.5" max="60" step="0.1" value="${notificationSecondsValue(notificationDisplay.progress.success_duration_ms)}" placeholder="按任务默认"><span>秒</span></label>
+              <label class="notification-duration"><span>失败后</span><input id="notificationProgressErrorDuration" type="number" min="0.5" max="60" step="0.1" value="${notificationSecondsValue(notificationDisplay.progress.error_duration_ms, "8")}"><span>秒</span></label>
+            </div>
+          </div>
+          <div class="notification-preference-row">
+            <label class="check-row"><input id="taskCenterFloatingProgressEnabled" type="checkbox" ${runtimeSettings?.saved?.sftp_floating_progress_enabled !== false ? "checked" : ""}> 悬浮任务进度卡</label>
+            <span class="muted">任务进行期间显示</span>
+          </div>
+        </div>
+        <div class="muted">关闭页面提示或悬浮任务卡不会停止任务，也不会删除或隐藏任务中心中的记录。</div>
+        <div class="actions"><button id="notificationSaveBtn" class="primary" onclick="saveNotificationOptions()">保存通知设置</button><button onclick="requestDesktopNotifications()">开启桌面通知</button></div>
       </section>
         </div>
       </div>
@@ -244,6 +275,7 @@ function renderSettings() {
   restoreUiState(uiState);
   showSettingsSection(activeSettingsSection, {moveToWorkspace:false});
   syncRuntimeHostOptions();
+  syncNotificationSettingControls();
   syncDesktopCustomDataMode();
   syncUpdateNoticeForCurrentSection();
   refreshIcons();

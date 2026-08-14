@@ -238,7 +238,7 @@ function dismissSftpTaskFloat() {
 
 async function muteSftpTaskFloat() {
   const accepted = await confirmModal(
-    "静默后将永久关闭此类悬浮进度卡。后台任务仍会继续，也可以通过标题栏任务中心查看；需要恢复时，请前往通用设置重新开启。",
+    "静默后将永久关闭此类悬浮进度卡。后台任务仍会继续，也可以通过标题栏任务中心查看；需要恢复时，请前往通知设置重新开启。",
     "静默悬浮进度卡",
     "永久静默",
     "取消"
@@ -251,7 +251,7 @@ async function muteSftpTaskFloat() {
     });
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
     updateSftpTaskFloat(sftpLatestJobs);
-    notify("悬浮进度卡已静默，可在通用设置中重新开启", "success");
+    notify("悬浮进度卡已静默，可在通知设置中重新开启", "success");
   } catch (error) {
     notify(error.message || "静默悬浮进度卡失败", "error");
   }
@@ -439,7 +439,14 @@ function renderSftpTaskCenterDrawer(jobs=sftpLatestJobs) {
     !activeCount && !failedCount ? "暂无进行中的任务" : ""
   ].filter(Boolean).join(" · ");
   const footer = document.getElementById("sftpTaskCenterFooter");
-  if (footer) footer.hidden = !showingHistory || !history.length;
+  if (footer) footer.hidden = !((showingHistory && history.length) || (showingFailed && failed.length));
+  const clearLabel = document.getElementById("sftpTaskCenterClearLabel");
+  if (clearLabel) clearLabel.textContent = showingFailed ? "清空失败" : "清空历史";
+  const clearButton = document.getElementById("sftpTaskCenterClearButton");
+  if (clearButton) {
+    clearButton.title = showingFailed ? "删除全部失败任务记录" : "删除全部历史任务记录";
+    clearButton.setAttribute("aria-label", clearButton.title);
+  }
 }
 
 function updateSftpTaskCenter(jobs=sftpLatestJobs) {
@@ -831,15 +838,7 @@ async function deleteSftpJob(id, button=null) {
   const keepOpen = Boolean(drawer && !drawer.hidden);
   try {
     if (!await confirmModal("删除该任务记录？","删除任务","删除","取消", true)) return null;
-    if (key.startsWith("desktop:")) {
-      await api(`/api/linux-desktop/tasks/${encodeURIComponent(key.slice(8))}`, {method:"DELETE"});
-    } else if (key.startsWith("component:")) {
-      await api(`/api/remote-component/tasks/${encodeURIComponent(key.slice(10))}`, {method:"DELETE"});
-    } else if (key.startsWith("sync:")) {
-      await api(`/api/sftp/sync/jobs/${encodeURIComponent(key.slice(5))}`, {method:"DELETE"});
-    } else {
-      await api(`/api/sftp/jobs/${encodeURIComponent(id)}`, {method:"DELETE"});
-    }
+    await deleteSftpJobRecord(key);
     await refreshSftpJobs();
   } catch (error) {
     notify(error.message || "删除任务失败", "error");
@@ -851,6 +850,14 @@ async function deleteSftpJob(id, button=null) {
       renderSftpTaskCenterDrawer();
     }
   }
+}
+
+function deleteSftpJobRecord(id) {
+  const key = String(id || "");
+  if (key.startsWith("desktop:")) return api(`/api/linux-desktop/tasks/${encodeURIComponent(key.slice(8))}`, {method:"DELETE"});
+  if (key.startsWith("component:")) return api(`/api/remote-component/tasks/${encodeURIComponent(key.slice(10))}`, {method:"DELETE"});
+  if (key.startsWith("sync:")) return api(`/api/sftp/sync/jobs/${encodeURIComponent(key.slice(5))}`, {method:"DELETE"});
+  return api(`/api/sftp/jobs/${encodeURIComponent(key)}`, {method:"DELETE"});
 }
 
 function saveSftpJobFile(id) {
@@ -924,6 +931,33 @@ async function clearFinishedSftpJobs(button=null) {
     await refreshSftpJobs();
   } catch (error) {
     notify(error.message || "清空任务历史失败", "error");
+  } finally {
+    endUiAction(actionKey, button);
+    if (keepOpen && drawer) {
+      drawer.hidden = false;
+      centerButton?.setAttribute("aria-expanded", "true");
+      renderSftpTaskCenterDrawer();
+    }
+  }
+}
+
+async function clearFailedSftpJobs(button=null) {
+  const actionKey = "sftp-task:clear-failed";
+  if (!beginUiAction(actionKey, button, "清理中...")) return null;
+  const drawer = document.getElementById("sftpTaskCenterDrawer");
+  const centerButton = document.getElementById("sftpTaskCenterButton");
+  const keepOpen = Boolean(drawer && !drawer.hidden);
+  try {
+    const failed = sftpTaskCollections().failed;
+    if (!failed.length) return null;
+    if (!await confirmModal(`删除全部 ${failed.length} 条失败任务记录？此操作不会影响任务中心中的其他记录。`, "清空失败任务", "清空失败", "取消", true)) return null;
+    const results = await Promise.allSettled(failed.map(job => deleteSftpJobRecord(job.id)));
+    const removed = results.filter(result => result.status === "fulfilled").length;
+    const rejected = results.length - removed;
+    await refreshSftpJobs();
+    notify(rejected ? `已删除 ${removed} 条失败任务，${rejected} 条删除失败` : `已删除 ${removed} 条失败任务`, rejected ? "error" : "success");
+  } catch (error) {
+    notify(error.message || "清空失败任务失败", "error");
   } finally {
     endUiAction(actionKey, button);
     if (keepOpen && drawer) {

@@ -966,7 +966,7 @@ function closeStartupWindow() {
 
 function createStartupWindow(settings = readSettings()) {
   if (!app.isPackaged || shouldStartInTray(settings) || startupWindow) return null;
-  startupWindow = new BrowserWindow({
+  const window = startupWindow = new BrowserWindow({
     width:360,
     height:156,
     minWidth:360,
@@ -975,7 +975,7 @@ function createStartupWindow(settings = readSettings()) {
     maxHeight:156,
     frame:false,
     resizable:false,
-    show:true,
+    show:false,
     alwaysOnTop:true,
     skipTaskbar:false,
     center:true,
@@ -985,9 +985,16 @@ function createStartupWindow(settings = readSettings()) {
     webPreferences:{contextIsolation:true, nodeIntegration:false}
   });
   const html = `<!doctype html><meta charset="utf-8"><title>${PRODUCT_NAME} 正在启动</title><style>html,body{width:100%;height:100%;margin:0}body{box-sizing:border-box;display:grid;grid-template-columns:48px 1fr;align-items:center;gap:16px;padding:28px 30px;color:#18212b;background:#f4f6f8;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.mark{width:44px;height:44px;display:grid;place-items:center;border-radius:8px;color:#fff;background:#111827;font-size:20px;font-weight:700}.copy{display:grid;gap:7px}.copy strong{font-size:18px;letter-spacing:0}.copy span{color:#5f6b78;font-size:12px;letter-spacing:0}.line{height:3px;overflow:hidden;border-radius:2px;background:#d8dee6}.line i{display:block;width:42%;height:100%;background:#16825f;animation:load 1.1s ease-in-out infinite}@keyframes load{from{transform:translateX(-110%)}to{transform:translateX(250%)}}@media(prefers-color-scheme:dark){body{color:#eef2f6;background:#17202a}.mark{background:#0b1016}.copy span{color:#a6b0bb}.line{background:#34404c}}</style><div class="mark">T</div><div class="copy"><strong>Terma 正在启动</strong><span>正在准备服务与工作区...</span><div class="line"><i></i></div></div>`;
-  startupWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-  startupWindow.once("closed", () => { startupWindow = null; });
-  return startupWindow;
+  let revealed = false;
+  const reveal = () => {
+    if (revealed || startupWindow !== window || window.isDestroyed?.()) return;
+    revealed = true;
+    window.show();
+  };
+  window.once("ready-to-show", reveal);
+  window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  window.once("closed", () => { if (startupWindow === window) startupWindow = null; });
+  return window;
 }
 
 function createWindow(options = {}) {

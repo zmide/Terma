@@ -23,6 +23,34 @@ function normalizeWorkspaceToolbarPlacement(value={}) {
   };
 }
 
+function notificationDurationMs(value, fallback, nullable=false) {
+  if (nullable && (value === null || value === undefined || value === "")) return null;
+  const duration = Number(value);
+  return Number.isInteger(duration) && duration >= 500 && duration <= 60000 ? duration : fallback;
+}
+
+function normalizeNotificationDisplay(value={}) {
+  const source = value && typeof value === "object" ? value : {};
+  const entry = (name, fallbackDuration) => {
+    const current = source[name] && typeof source[name] === "object" ? source[name] : {};
+    return {
+      enabled:current.enabled !== false,
+      duration_ms:notificationDurationMs(current.duration_ms, fallbackDuration)
+    };
+  };
+  const progress = source.progress && typeof source.progress === "object" ? source.progress : {};
+  return {
+    info:entry("info", 3500),
+    success:entry("success", 3500),
+    error:entry("error", 8000),
+    progress:{
+      enabled:progress.enabled !== false,
+      success_duration_ms:notificationDurationMs(progress.success_duration_ms, null, true),
+      error_duration_ms:notificationDurationMs(progress.error_duration_ms, 8000)
+    }
+  };
+}
+
 function normalizeRuntimeSettingsResponse(value={}) {
   const source = value && typeof value === "object" ? value : {};
   const savedSource = source.saved && typeof source.saved === "object" ? source.saved : source;
@@ -69,6 +97,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
     ...source,
     sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
     sftp_floating_progress_enabled: savedSource.sftp_floating_progress_enabled !== false,
+    notification_display: normalizeNotificationDisplay(savedSource.notification_display),
     sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 50,
     sftp_text_editor_mode: ["ace", "auto", "light"].includes(savedSource.sftp_text_editor_mode) ? savedSource.sftp_text_editor_mode : "ace",
     sftp_light_editor_threshold_mb: Number(savedSource.sftp_light_editor_threshold_mb) || 10,
@@ -84,6 +113,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
       listen_port: runtimePortValue(savedSource.listen_port ?? savedSource.port),
       sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
       sftp_floating_progress_enabled: savedSource.sftp_floating_progress_enabled !== false,
+      notification_display: normalizeNotificationDisplay(savedSource.notification_display),
       sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 50,
       sftp_text_editor_mode: ["ace", "auto", "light"].includes(savedSource.sftp_text_editor_mode) ? savedSource.sftp_text_editor_mode : "ace",
       sftp_light_editor_threshold_mb: Number(savedSource.sftp_light_editor_threshold_mb) || 10,
@@ -354,9 +384,8 @@ function syncWorkspaceToolbarPlacementInputs(value) {
 async function saveWorkspaceSettings() {
   const inPane = captureSettingsPane();
   const input = $("restoreWorkspaceTabs");
-  const floatingProgress = $("taskCenterFloatingProgressEnabled");
   const button = $("restoreWorkspaceTabsSave");
-  if (!input || !floatingProgress || !button) return;
+  if (!input || !button) return;
   setButtonBusy(button, true, "保存中");
   try {
     const workspace_toolbar_placement = workspaceToolbarPlacementFormValue();
@@ -364,23 +393,19 @@ async function saveWorkspaceSettings() {
       method:"PUT",
       body:JSON.stringify({
         restore_workspace_tabs:input.checked,
-        sftp_floating_progress_enabled:floatingProgress.checked,
         workspace_toolbar_placement
       })
     });
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
     inPane(() => {
       input.checked = runtimeSettings.saved.restore_workspace_tabs;
-      floatingProgress.checked = runtimeSettings.saved.sftp_floating_progress_enabled;
       syncWorkspaceToolbarPlacementInputs(runtimeSettings.saved.workspace_toolbar_placement);
       if (typeof syncWorkspaceToolbarPlacements === "function") syncWorkspaceToolbarPlacements();
-      if (typeof updateSftpTaskFloat === "function") updateSftpTaskFloat(typeof sftpLatestJobs === "undefined" ? [] : sftpLatestJobs);
     });
     notify("工作区设置已保存", "success");
   } catch (error) {
     inPane(() => {
       input.checked = runtimeSettings?.saved?.restore_workspace_tabs !== false;
-      floatingProgress.checked = runtimeSettings?.saved?.sftp_floating_progress_enabled !== false;
       syncWorkspaceToolbarPlacementInputs(runtimeSettings?.saved?.workspace_toolbar_placement);
     });
     notify(error.message || "工作区设置保存失败", "error");

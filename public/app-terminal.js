@@ -1160,13 +1160,13 @@ async function connectTerminal(c, key) {
     if (session.socket !== socket) return;
     finishTerminalLatencySample(session, key);
     if (terminalAuthenticationFailureChunk(session, event.data)) session.authenticationFailed = true;
+    const terminalOutput = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data;
+    if (typeof updateTerminalSmartState === "function") updateTerminalSmartState(key, terminalOutput);
     if (typeof consumeTerminalZmodemOutput === "function" && consumeTerminalZmodemOutput(session, event.data)) {
       if (isMobileLayout()) scheduleTerminalFit();
       return;
     }
-    const terminalOutput = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data;
     queueTerminalOutput(session, terminalOutput);
-    if (typeof updateTerminalSmartState === "function") updateTerminalSmartState(key, typeof event.data === "string" ? event.data : "");
     if (isMobileLayout()) scheduleTerminalFit();
   });
   socket.addEventListener("close", () => {

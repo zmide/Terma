@@ -15,8 +15,13 @@ const {
   buildRestoreRemoteRecycleCommand,
   buildRemoteCreateFileCommand,
   __buildRemoteDirectoryEntriesCommand,
+  __buildRemoteDirectoryReadCommand,
   __buildRemotePagedDirectoryEntriesCommand,
   __buildRemoteRecursiveDirectoryEntriesCommand,
+  __parseRemoteDirectoryOutput,
+  __parseRemotePagedDirectoryOutput,
+  __normalizeRemoteDirectoryReadError,
+  __shouldFallbackToPagedDirectoryRead,
   __buildReadRemoteBinaryCommand,
   __buildReadRemoteBinaryExecCommand,
   __buildStreamRemoteOpenCommand,
@@ -109,12 +114,16 @@ assert.equal(__cachedDirectorySnapshot(9003, "."), null, "过期快照不能继�
 
 const frontendContext = {};
 vm.createContext(frontendContext);
-vm.runInContext(readFrontendDomain(path.join(__dirname, ".."), "sftp"), frontendContext);
+const sftpFrontendSource = readFrontendDomain(path.join(__dirname, ".."), "sftp");
+vm.runInContext(sftpFrontendSource, frontendContext);
 assert.equal(frontendContext.joinRemotePath("/", "Users"), "/Users");
 assert.equal(frontendContext.joinRemotePath("/Users", "demo"), "/Users/demo");
 assert.equal(frontendContext.parentRemotePath("/"), "/");
 assert.equal(frontendContext.parentRemotePath("/Users"), "/");
 assert.equal(frontendContext.parentRemotePath("relative"), ".");
+assert.match(sftpFrontendSource, /if \(!loaded && navigation\.index === nextIndex\) \{\s*navigation\.index = previousIndex;/, "目录加载失败时必须恢复 SFTP 历史游标");
+assert.match(sftpFrontendSource, /runtime\.state = \{\.\.\.currentState, loading:false, requestSeq\}/, "目录加载失败时必须恢复原 SFTP 目录状态");
+assert.match(sftpFrontendSource, /directoryAccessError \? "connected" : "disconnected"/, "目录权限和不存在错误不能误报为 SFTP 连接断开");
 
 const permission = normalizeRemotePermissionRequest(["/srv/a b", "/srv/a b"], "640", true, "www", "www");
 assert.deepEqual(permission, {paths:["/srv/a b"], mode:"640", recursive:true, owner:"www", group:"www"});
@@ -164,7 +173,10 @@ assert.match(directorySizeCommand, /TERMA_TARGET='\/srv\/a b\/o'\\''k'/, "目录
 assert.match(directorySizeCommand, /stat -c '%s'/, "Linux 和 BusyBox 应使用 GNU stat 字节数");
 assert.match(directorySizeCommand, /stat -f '%z'/, "macOS 和 BSD 应使用 BSD stat 字节数");
 assert.match(directorySizeCommand, /find "\$TERMA_TARGET" -type f/, "目录大小必须递归统计普通文件");
-assert.match(directorySizeCommand, /目录存在无法读取的内容，未返回不完整大小/, "权限或遍历失败时不能返回不完整的估算值");
+assert.match(directorySizeCommand, /\[ ! -r "\$TERMA_TARGET" \] \|\| \[ ! -x "\$TERMA_TARGET" \].*__TERMA_DIRECTORY_PERMISSION_DENIED__/, "目录大小读取必须在遍历前报告顶层目录权限失败");
+assert.match(directorySizeCommand, /2>\/dev\/null.*__TERMA_DIRECTORY_CONTENT_UNREADABLE__/, "目录大小遍历失败时必须隐藏远端本地化错误并返回 ASCII 标记");
+assert.match(directorySizeCommand, /__TERMA_DIRECTORY_NOT_FOUND__/, "目录大小读取必须区分目录不存在");
+assert.match(directorySizeCommand, /__TERMA_DIRECTORY_SIZE_UNSUPPORTED__/, "目录大小读取必须使用固定标记报告 stat 不兼容");
 assert.match(directorySizeCommand, /\.terma-size-0123456789abcdef/, "临时统计文件名应可预测且会由 trap 清理");
 assert.doesNotMatch(directorySizeCommand, /\bdu\b/, "目录大小应汇总精确文件字节数，不能使用按块取整的 du");
 assert.throws(() => buildRemoteDirectorySizeCommand(""), /远程目录路径无效/);
@@ -180,10 +192,65 @@ assert.match(directoryEntriesCommand, /\.tunneldesk-recycle-bin/);
 assert.match(directoryEntriesCommand, /\.terma-upload-\*\.part/);
 assert.match(directoryEntriesCommand, /\.tunneldesk-upload-\*\.part/);
 assert.match(directoryEntriesCommand, /__TERMA_PAGED_DIRECTORY__/, "大型目录必须在逐项 stat 前切换到分页读取");
+const protectedDirectoryCommand = __buildRemoteDirectoryReadCommand("'/root'", "printf '%s\\n' '__TERMA_DIRECTORY_V1__'; printf '%s\\n' \"$(pwd)\"");
+assert.match(protectedDirectoryCommand, /terma_directory='\/root'/, "目录读取必须先保存经过安全引用的目标路径");
+assert.match(protectedDirectoryCommand, /\[ ! -x "\$terma_directory" \].*__TERMA_DIRECTORY_PERMISSION_DENIED__/, "目录读取必须用 ASCII 标记报告权限失败，不能依赖远端错误编码");
+assert.match(protectedDirectoryCommand, /cd "\$terma_directory" \|\| \{.*__TERMA_DIRECTORY_ACCESS_FAILED__.*\}; \{ .*; \}$/, "目录枚举必须整体受 cd 成功条件约束");
+assert.equal(__shouldFallbackToPagedDirectoryRead(new Error("远程文件操作超时")), true);
+assert.equal(__shouldFallbackToPagedDirectoryRead(new Error("cd: /root: Permission denied")), false, "权限错误不能回退后继续枚举原目录");
+const normalizedPermissionError = __normalizeRemoteDirectoryReadError(new Error("cd: /root: 权限不够"), "/root");
+assert.equal(normalizedPermissionError.message, "没有权限访问远程目录：/root");
+assert.equal(normalizedPermissionError.code, "SFTP_DIRECTORY_PERMISSION_DENIED");
+assert.equal(normalizedPermissionError.statusCode, 403);
+const normalizedGarbledPermissionError = __normalizeRemoteDirectoryReadError(new Error("__TERMA_DIRECTORY_PERMISSION_DENIED__\n/bin/sh: ???"), "/root");
+assert.equal(normalizedGarbledPermissionError.message, "没有权限访问远程目录：/root");
+assert.equal(normalizedGarbledPermissionError.code, "SFTP_DIRECTORY_PERMISSION_DENIED");
+assert.equal(normalizedGarbledPermissionError.statusCode, 403);
+const normalizedUnreadableSizeError = __normalizeRemoteDirectoryReadError(new Error("__TERMA_DIRECTORY_CONTENT_UNREADABLE__\nfind: ???"), "/srv/data");
+assert.equal(normalizedUnreadableSizeError.message, "目录存在无法读取的内容，未返回不完整大小");
+assert.equal(normalizedUnreadableSizeError.code, "SFTP_DIRECTORY_CONTENT_UNREADABLE");
+assert.equal(normalizedUnreadableSizeError.statusCode, 403);
+const normalizedUnsupportedSizeError = __normalizeRemoteDirectoryReadError(new Error("__TERMA_DIRECTORY_SIZE_UNSUPPORTED__"), "/srv/data");
+assert.equal(normalizedUnsupportedSizeError.message, "远程系统缺少兼容的 stat 命令");
+assert.equal(normalizedUnsupportedSizeError.code, "SFTP_DIRECTORY_SIZE_UNSUPPORTED");
+const normalizedMissingDirectoryError = __normalizeRemoteDirectoryReadError(new Error("__TERMA_DIRECTORY_NOT_FOUND__"), "/missing");
+assert.equal(normalizedMissingDirectoryError.message, "远程目录不存在：/missing");
+assert.equal(normalizedMissingDirectoryError.code, "SFTP_DIRECTORY_NOT_FOUND");
+assert.equal(normalizedMissingDirectoryError.statusCode, 404);
+
+const parsedDirectory = __parseRemoteDirectoryOutput([
+  "__TERMA_DIRECTORY_V1__",
+  "/home/ha2",
+  ".history\\tf\\t0 1721289951 640 ha2 ha2\\t0\\t0\\t0"
+].join("\n"));
+assert.equal(parsedDirectory.path, "/home/ha2");
+assert.equal(parsedDirectory.rows.length, 1);
+assert.throws(
+  () => __parseRemoteDirectoryOutput(".history\\tf\\t0 1721289951 640 ha2 ha2\\t0\\t0\\t0\n.config\\td"),
+  /远程目录响应格式无效/,
+  "文件元数据不能被当成当前目录路径"
+);
+
+const parsedPagedDirectory = __parseRemotePagedDirectoryOutput([
+  "__TERMA_DIRECTORY_V1__",
+  "/home/ha2",
+  "80",
+  "80",
+  ".history\\tf\\t0\\t1721289951\\t640\\tha2\\tha2\\t0\\t0\\t0"
+].join("\n"));
+assert.equal(parsedPagedDirectory.path, "/home/ha2");
+assert.equal(parsedPagedDirectory.total, 80);
+assert.equal(parsedPagedDirectory.unfilteredTotal, 80);
+assert.throws(
+  () => __parseRemotePagedDirectoryOutput("__TERMA_DIRECTORY_V1__\n/home/ha2\n.history\\tf\n80"),
+  /分页响应格式无效/,
+  "分页数量行损坏时必须拒绝响应"
+);
 const sftpSource = fs.readFileSync(path.join(root, "src", "sftp.ts"), "utf8");
 assert.match(sftpSource, /listRemoteDirPaged/, "大型目录应在目录命令超时后使用分页目录读取");
 assert.match(sftpSource, /buildRemotePagedDirectoryEntriesCommand/, "大型目录读取必须在远端限制返回行数");
 const largeDirectoryMetadataCommand = __buildRemotePagedDirectoryEntriesCommand({page:2, page_size:50, sort:"mtime", dir:"desc"});
+assert.match(largeDirectoryMetadataCommand, /__TERMA_DIRECTORY_V1__/, "分页目录响应必须包含不可与文件名混淆的协议头");
 assert.match(largeDirectoryMetadataCommand, /-printf '%f\\t%y\\t%s\\t%T@\\t%m\\t%u\\t%g/, "GNU find 应批量读取大型目录元数据，避免逐项启动 stat");
 assert.match(largeDirectoryMetadataCommand, /terma_emit_all_metadata/, "大小和时间排序必须保留完整元数据");
 assert.match(largeDirectoryMetadataCommand, /-k2,2nr/, "大型目录按大小或时间降序时必须在远端完成数值排序");
