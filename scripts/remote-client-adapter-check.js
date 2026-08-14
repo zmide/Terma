@@ -7,12 +7,18 @@ const {EventEmitter} = require("node:events");
 const {MAC_WINDOWS_APP_PACKAGE_URL, MAC_WINDOWS_APP_URL, createRemoteClientAdapter} = require("../desktop/remote-clients");
 const {launchWindowsRdpWithCredential, windowsRdpCredentialTarget, windowsRdpCredentialTargets} = require("../desktop/windows-rdp-credentials");
 const { readFrontendDomain } = require("./frontend-source");
+const { readSources } = require("./backend-source");
 
 const root = path.join(__dirname, "..");
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "terma-remote-client-"));
 const mainSource = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
 const remoteUiSource = readFrontendDomain(root, "remote");
-const serverSource = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");
+const serverSource = readSources(root, [
+  "src/server.ts",
+  "src/routes/remote-profile-routes.ts",
+  "src/services/linux-desktop-service.ts",
+  "src/services/vnc-management-service.ts"
+]);
 const connectivitySource = fs.readFileSync(path.join(root, "src", "remote-connectivity.ts"), "utf8");
 const xserverSource = fs.readFileSync(path.join(root, "desktop", "xserver-runtime.js"), "utf8");
 const desktopIntegrationRoutesSource = fs.readFileSync(path.join(root, "src", "routes", "desktop-integration-routes.ts"), "utf8");
@@ -354,7 +360,7 @@ async function main() {
   assert.match(connectivitySource, /method:"xdmcp-query"/);
   assert.match(xserverSource, /family === 6 \? "udp6" : "udp4"/);
   assert.match(xserverSource, /dns\.lookup\(host/);
-  assert.match(serverSource, /profile\.protocol === "rdp"[\s\S]*?await probeTcpEndpoint\(profile\.host, profile\.port \|\| 3389\)/, "RDP 启动前必须从保存的远程连接探测目标端口");
+  assert.match(serverSource, /profile\.protocol === "rdp"[\s\S]*?await dependencies\.probeTcpEndpoint\(profile\.host, profile\.port \|\| 3389\)/, "RDP 启动前必须从保存的远程连接探测目标端口");
   assert.match(serverSource, /无法从本机连接 RDP 服务/, "RDP 端口不可达时必须阻止启动并给出明确提示");
   assert.match(serverSource, /password:profile\.password/, "RDP 启动必须把已解密密码限定在桌面适配器边界内");
 

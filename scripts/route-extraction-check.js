@@ -1,6 +1,8 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
@@ -358,8 +360,282 @@ async function checkForwardTemplateRoutes() {
   ]);
 }
 
-Promise.all([checkConfigTransferRoutes(), checkSftpDesktopDownloadRoutes(), checkSftpJobRoutes(), checkCommandResourceRoutes(), checkForwardTemplateRoutes()])
-  .then(() => console.log("路由拆分检查通过：配置传输、SFTP 下载与任务、命令资源及转发模板保持原接口行为"))
+async function checkConnectionRoutes() {
+  const { handleConnectionRoutes } = require(path.join(root, "dist", "routes", "connection-routes.js"));
+  const output = recorder();
+  const calls = [];
+  let json = {};
+  const source = {id:7, name:"Primary"};
+  const dependencies = {
+    appendSystemLog:message => calls.push(["log", message]),
+    defaultExtraArgs:["-o", "ConnectTimeout=8"],
+    duplicateConnection:(id, args) => ({id:17, name:"Primary copy", source_id:id, args}),
+    getConnection:() => source,
+    getDesktopIntegration:() => null,
+    isDesktopRequest:() => false,
+    listConnections:() => [source],
+    readJson:async () => json,
+    sendJson:output.sendJson
+  };
+
+  assert.equal(await handleConnectionRoutes({method:"GET"}, output.response, "/api/about", dependencies), false);
+  assert.equal(await handleConnectionRoutes({method:"GET"}, output.response, "/api/connections", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:[source], status:200});
+
+  assert.equal(await handleConnectionRoutes({method:"POST"}, output.response, "/api/connections/7/duplicate", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{id:17, name:"Primary copy", source_id:7, args:dependencies.defaultExtraArgs}, status:201});
+  assert.match(calls.pop()[1], /Primary -> Primary copy/);
+
+  json = {path:"/srv/app"};
+  assert.equal(await handleConnectionRoutes({method:"POST"}, output.response, "/api/connections/7/external-tools/vscode", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{error:"VS Code Remote SSH 只能在本机桌面端中使用"}, status:403});
+}
+
+async function checkRemoteTaskRoutes() {
+  const { handleRemoteTaskRoutes } = require(path.join(root, "dist", "routes", "remote-task-routes.js"));
+  const output = recorder();
+  const calls = [];
+  let json = {};
+  const connection = {id:7, name:"Linux"};
+  const dependencies = {
+    authorizeConnection:(_request, id) => {
+      calls.push(["authorize", id]);
+      return connection;
+    },
+    clearFinishedLinuxDesktopTasks:() => ({removed:2}),
+    configureRdpServerForConnection:async () => ({ok:true, task:{id:"rdp-1"}}),
+    createRemoteAdminGrant:(_connection, _data, scope) => {
+      calls.push(["scope", scope]);
+      return {id:"grant-1"};
+    },
+    deleteLinuxDesktopTask:() => true,
+    detectLinuxDesktopForConnection:async () => ({platform:"linux"}),
+    getConnection:() => connection,
+    handoffRemotePrivilegeGrant:(_grant, start) => start(),
+    issueRemoteAdminGrant:async () => ({ok:true, admin_grant_id:"grant-1"}),
+    linuxDesktopTaskView:task => task,
+    linuxDesktopTasks:new Map(),
+    listLinuxDesktopTasks:() => [{id:"desktop-1"}],
+    readJson:async () => json,
+    remoteOfflineTasks:{clearFinished:() => ({removed:1}), list:() => [], remove:() => true},
+    sendJson:output.sendJson,
+    startLinuxDesktopInstall:(id, desktopId, action, grant, mode) => ({id:"desktop-new", connection_id:id, desktop_id:desktopId, action, grant_id:grant?.id, mode})
+  };
+
+  assert.equal(await handleRemoteTaskRoutes({method:"GET"}, output.response, "/api/about", dependencies), false);
+  json = {connection_id:7, scope:"host:*"};
+  assert.equal(await handleRemoteTaskRoutes({method:"POST"}, output.response, "/api/admin-grants", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{ok:true, admin_grant_id:"grant-1"}, status:201});
+
+  json = {desktop_id:"xfce", mode:"install-offline"};
+  assert.equal(await handleRemoteTaskRoutes({method:"POST"}, output.response, "/api/connections/7/linux-desktop/install", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{id:"desktop-new", connection_id:7, desktop_id:"xfce", action:"install", grant_id:"grant-1", mode:"offline"}, status:202});
+  assert.deepEqual(calls.pop(), ["scope", "linux-desktop.install-offline"]);
+
+  assert.equal(await handleRemoteTaskRoutes({method:"GET"}, output.response, "/api/linux-desktop/tasks/missing", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{error:"桌面管理任务不存在或已过期"}, status:404});
+}
+
+async function checkSystemRoutes() {
+  const { handleSystemRoutes } = require(path.join(root, "dist", "routes", "system-routes.js"));
+  const output = recorder();
+  const dependencies = {
+    aboutInfo:() => ({product_name:"Terma"}),
+    batchRunCommands:async ids => ({count:ids.length}),
+    getDesktopIntegration:() => null,
+    getStartupStatus:() => ({state:"ready"}),
+    isDesktopRequest:() => false,
+    listNotifications:since => [{since}],
+    listSerialPorts:async () => [],
+    readJson:async () => ({ids:[1, 2], command:"uptime"}),
+    runtimeDiagnostics:() => ({pid:123}),
+    sendJson:output.sendJson
+  };
+
+  assert.equal(await handleSystemRoutes({method:"GET"}, output.response, "/api/unknown", dependencies), false);
+  assert.equal(await handleSystemRoutes({method:"GET"}, output.response, "/api/about", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{product_name:"Terma"}, status:200});
+  assert.equal(await handleSystemRoutes({method:"POST"}, output.response, "/api/legacy-brand-migration", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{error:"旧版数据迁移仅能在运行 Terma 的本机桌面版中执行"}, status:403});
+  assert.equal(await handleSystemRoutes({method:"GET", url:"/api/notifications?since=42"}, output.response, "/api/notifications", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:[{since:42}], status:200});
+}
+
+async function checkLocalControlRoutes() {
+  const { handleLocalControlRoutes } = require(path.join(root, "dist", "routes", "local-control-routes.js"));
+  const output = recorder();
+  let desktop = null;
+  let loopback = false;
+  let authenticated = false;
+  let shutdowns = 0;
+  const dependencies = {
+    getDesktopIntegration:() => desktop,
+    getNativeSftpDragTicket:async token => ({token}),
+    hasShutdownToken:() => false,
+    isAuthenticated:() => authenticated,
+    isDesktopRequest:() => false,
+    isDirectLoopbackRequest:() => loopback,
+    releaseNativeSftpDragTicket:() => true,
+    sendJson:output.sendJson,
+    shutdown:() => { shutdowns += 1; },
+    streamNativeSftpDragContent:async () => {}
+  };
+
+  assert.equal(await handleLocalControlRoutes({method:"GET"}, output.response, "/api/about", dependencies), false);
+  assert.equal(await handleLocalControlRoutes({method:"POST"}, output.response, "/api/shutdown", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{error:"Forbidden"}, status:403});
+  assert.equal(shutdowns, 0);
+
+  loopback = true;
+  authenticated = true;
+  assert.equal(await handleLocalControlRoutes({method:"POST"}, output.response, "/api/shutdown", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{ok:true}, status:200});
+  assert.equal(shutdowns, 1);
+
+  desktop = {};
+  loopback = false;
+  assert.equal(await handleLocalControlRoutes({method:"GET"}, output.response, "/api/sftp/native-drag/token", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{error:"原生拖出凭据只能由本机桌面端读取"}, status:403});
+}
+
+async function checkSftpTransferRoutes() {
+  const { handleSftpTransferRoutes } = require(path.join(root, "dist", "routes", "sftp-transfer-routes.js"));
+  const output = recorder();
+  const sent = [];
+  let json = {};
+  let cancelled = false;
+  const response = {destroyed:false, writableEnded:false};
+  const dependencies = {
+    authorizeConnectionId:() => 7,
+    getDesktopIntegration:() => null,
+    invalidateRemoteDirectoryCache:() => {},
+    isDesktopRequest:() => false,
+    readJson:async () => json,
+    readRemoteDirectorySize:async () => ({bytes:4096}),
+    readRuntimeSettings:() => ({sftp_max_open_file_size_mb:8, sftp_recycle_bin_enabled:true}),
+    receiveUploadJobContent:async () => {
+      if (cancelled) throw Object.assign(new Error("cancelled"), {code:"SFTP_UPLOAD_CANCELLED"});
+      return {ok:true};
+    },
+    resolveRemoteUploadTarget:async (_id, _directory, filename) => ({exists:json.exists === true, name:filename, path:`/tmp/${filename}`, renamed:false}),
+    runtimeSettingsFile:"runtime.json",
+    safeUploadName:name => String(name).replace(/[^a-z0-9.]+/gi, "_"),
+    send:(_response, status, data, headers={}) => sent.push({status, data, headers}),
+    sendJson:output.sendJson,
+    startUploadReceiveJob:() => ({id:"upload-1"})
+  };
+
+  assert.equal(await handleSftpTransferRoutes({method:"GET"}, response, "/api/about", dependencies), false);
+  assert.equal(await handleSftpTransferRoutes({method:"POST"}, response, "/api/connections/7/sftp/native-drag", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{error:"拖出到本机只能在桌面版中使用"}, status:403});
+
+  json = {filename:"report.txt", size:12, conflict:"error", exists:true};
+  assert.equal(await handleSftpTransferRoutes({method:"POST"}, response, "/api/connections/7/sftp/upload-job", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{error:"目标目录已存在同名项目", conflict:true, name:"report.txt"}, status:409});
+
+  json = {path:"/srv"};
+  assert.equal(await handleSftpTransferRoutes({method:"POST"}, response, "/api/connections/7/sftp/directory-size", dependencies), true);
+  assert.deepEqual(sent.pop(), {status:200, data:{bytes:4096}, headers:{"Cache-Control":"no-store"}});
+
+  json = {exists:false};
+  cancelled = true;
+  const uploadRequest = {method:"POST", url:"/api/connections/7/sftp/upload?path=/tmp", headers:{"x-file-name":"cancel.txt", "content-length":"3"}};
+  assert.equal(await handleSftpTransferRoutes(uploadRequest, response, "/api/connections/7/sftp/upload", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{ok:true, status:"cancelled", id:"upload-1"}, status:409});
+}
+
+async function checkBackupRestoreRoutes() {
+  const { handleBackupRestoreRoutes } = require(path.join(root, "dist", "routes", "backup-restore-routes.js"));
+  const output = recorder();
+  const snapshotCalls = [];
+  const snapshotDependencies = {
+    clearConnectionHealthCache:() => snapshotCalls.push("clear"),
+    createConfigSnapshot:reason => snapshotCalls.push(`snapshot:${reason}`),
+    readJson:async () => ({}),
+    requireEncryptionUnlocked:() => snapshotCalls.push("unlock"),
+    restoreConfigSnapshotById:id => {
+      snapshotCalls.push(`restore:${id}`);
+      return {ok:true};
+    },
+    sendJson:output.sendJson,
+    stopAllForwards:() => snapshotCalls.push("stop")
+  };
+  assert.equal(await handleBackupRestoreRoutes({method:"GET"}, output.response, "/api/about", snapshotDependencies), false);
+  assert.equal(await handleBackupRestoreRoutes({method:"POST"}, output.response, "/api/config-snapshots/snapshot-1/restore", snapshotDependencies), true);
+  assert.deepEqual(snapshotCalls, ["unlock", "snapshot:回滚前自动快照", "stop", "restore:snapshot-1", "clear"]);
+
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "terma-route-restore-"));
+  const databasePath = path.join(temporary, "terma.db");
+  const stagedPath = path.join(temporary, "staged.db");
+  fs.writeFileSync(databasePath, "original", "utf8");
+  fs.writeFileSync(stagedPath, "replacement", "utf8");
+  const calls = [];
+  let reopenCount = 0;
+  const stage = {
+    token:"restore-1",
+    database_path:stagedPath,
+    format:"sqlite",
+    security:null,
+    legacy_credential_bindings:[],
+    legacy_identity_bindings:[]
+  };
+  const dependencies = {
+    clearConnectionHealthCache:() => calls.push("clear"),
+    closeDatabase:() => calls.push("close"),
+    createConfigSnapshot:reason => calls.push(`snapshot:${reason}`),
+    databaseTransferStore:{
+      take:token => {
+        calls.push(`take:${token}`);
+        return stage;
+      },
+      discard:item => calls.push(`discard:${item.token || item}`)
+    },
+    dbPath:databasePath,
+    ensurePrivateFile:file => calls.push(`private:${path.basename(file)}`),
+    lockEncryption:() => calls.push("lock"),
+    normalizeRestoredCredentials:() => {
+      calls.push("normalize");
+      return {missing:[], unresolved:[], encrypted:[], mappings:[], encrypted_fields:0};
+    },
+    readJson:async () => ({restore_token:"restore-1", credential_bindings:[], identity_bindings:[]}),
+    readSecuritySettings:() => ({encryption_enabled:false}),
+    reconcileEncryptionStateAtStartup:() => calls.push("reconcile"),
+    reopenDatabase:() => {
+      reopenCount += 1;
+      calls.push(`reopen:${reopenCount}`);
+      if (reopenCount === 1) throw new Error("reopen failed");
+    },
+    requireEncryptionUnlocked:() => calls.push("unlock"),
+    sendJson:output.sendJson,
+    stopAllForwards:() => calls.push("stop"),
+    writeSecuritySettings:settings => calls.push(`security:${Boolean(settings.encryption_enabled)}`)
+  };
+
+  await assert.rejects(
+    handleBackupRestoreRoutes({method:"POST"}, output.response, "/api/restore/database", dependencies),
+    /reopen failed/
+  );
+  assert.equal(fs.readFileSync(databasePath, "utf8"), "original");
+  assert.deepEqual(calls.slice(0, 7), ["unlock", "take:restore-1", "normalize", "snapshot:恢复数据库前自动快照", "stop", "close", calls[6]]);
+  assert.match(calls[6], /^private:terma\.db\.bak-/);
+  assert.deepEqual(calls.slice(-5), ["close", "security:false", "lock", "reopen:2", "discard:restore-1"]);
+  fs.rmSync(temporary, {recursive:true, force:true});
+}
+
+Promise.all([
+  checkConfigTransferRoutes(),
+  checkSftpDesktopDownloadRoutes(),
+  checkSftpJobRoutes(),
+  checkCommandResourceRoutes(),
+  checkForwardTemplateRoutes(),
+  checkConnectionRoutes(),
+  checkRemoteTaskRoutes(),
+  checkSystemRoutes(),
+  checkLocalControlRoutes(),
+  checkSftpTransferRoutes(),
+  checkBackupRestoreRoutes()
+])
+  .then(() => console.log("路由拆分检查通过：连接、系统、远程任务、SFTP、备份恢复及既有领域路由保持接口与安全边界"))
   .catch(error => {
     console.error(error);
     process.exitCode = 1;

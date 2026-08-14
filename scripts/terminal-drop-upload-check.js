@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const assert = require("node:assert/strict");
+const { readSources } = require("./backend-source");
 const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
@@ -8,7 +9,7 @@ const terminal = readFrontendDomain(root, "terminal");
 const sftp = readFrontendDomain(root, "sftp");
 const backend = fs.readFileSync(path.join(root, "src", "sftp.ts"), "utf8");
 const jobs = fs.readFileSync(path.join(root, "src", "sftp-jobs.ts"), "utf8");
-const server = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");
+const server = readSources(root, ["src/server.ts", "src/routes/sftp-transfer-routes.ts"]);
 const desktop = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
 const preload = fs.readFileSync(path.join(root, "desktop", "preload.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");

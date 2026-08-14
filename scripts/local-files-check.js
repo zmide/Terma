@@ -2,11 +2,12 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { readSources } = require("./backend-source");
 const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "src", "local-files.ts"), "utf8");
-const server = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");
+const server = readSources(root, ["src/server.ts", "src/routes/sftp-transfer-routes.ts"]);
 const routes = fs.readFileSync(path.join(root, "src", "routes", "local-files-routes.ts"), "utf8");
 const localUi = fs.readFileSync(path.join(root, "public", "app-local-files.js"), "utf8");
 const sftpUi = readFrontendDomain(root, "sftp");
@@ -16,7 +17,7 @@ const index = fs.readFileSync(path.join(root, "public", "index.html"), "utf8");
 const css = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 
 assert.match(server, /handleLocalFilesRoutes\(req, res, pathname/);
-assert.match(server, /getDesktopIntegration:\(\) => desktopIntegration/);
+assert.match(server, /getDesktopIntegration/);
 assert.match(routes, /pathname !== "\/api\/local-files" && !pathname\.startsWith\("\/api\/local-files\/"\)/);
 assert.match(routes, /pathname === "\/api\/local-files\/rename"/);
 assert.match(routes, /pathname === "\/api\/local-files\/delete"/);

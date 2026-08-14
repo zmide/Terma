@@ -5,6 +5,7 @@ const { expectedArtifacts, relevantArtifacts, verifyReleaseVersion } = require("
 const { verifyMacIconPadding } = require("./mac-icon-padding-check");
 const runWorkspaceDockingChecks = require("./workspace-docking-check");
 const { indexScriptFiles, readFrontendDomain } = require("./frontend-source");
+const { readBackendSource, readSources } = require("./backend-source");
 
 const root = path.resolve(__dirname, "..");
 const checks = [];
@@ -112,6 +113,22 @@ async function main() {
   const licenseText = read("LICENSE");
   const thirdPartyNotices = read("THIRD_PARTY_NOTICES.md");
   const thirdPartySource = read("src/third-party-components.ts");
+  const routeFiles = fs.readdirSync(path.join(root, "src", "routes"))
+    .filter(file => file.endsWith(".ts"))
+    .map(file => path.join("src", "routes", file));
+  const serverSource = readBackendSource(root, [
+    "src/storage-restore.ts",
+    ...routeFiles,
+    "src/services/remote-admin-service.ts",
+    "src/services/remote-component-service.ts",
+    "src/services/x11-management-service.ts",
+    "src/services/vnc-management-service.ts",
+    "src/services/linux-desktop-service.ts",
+    "src/services/native-sftp-drag-service.ts",
+    "src/services/sftp-content-service.ts",
+    "src/static-content-handler.ts",
+    "src/http-response.ts"
+  ]);
   ok("Linux desktop filename uses package metadata accepted by electron-builder", packageJson.desktopName === "terma.desktop" && !Object.prototype.hasOwnProperty.call(packageJson.build?.linux || {}, "desktopName"));
   ok("GNU GPL v3 license is declared and packaged", packageJson.license === "GPL-3.0-only" && licenseText.includes("GNU GENERAL PUBLIC LICENSE") && packageJson.build?.extraResources?.includes("LICENSE"));
   ok("第三方组件声明随桌面安装包提供", packageJson.build?.extraResources?.includes("THIRD_PARTY_NOTICES.md") && thirdPartySource.includes("listThirdPartyComponents") && ["xterm.js","Ace Editor","jsdiff","noVNC","ZMODEM.js","ssh2","Lucide","Electron","node-pty","VcXsrv"].every(name => thirdPartySource.includes(`name:\"${name}\"`)) && ["xterm.js","Ace Editor","jsdiff","noVNC","zmodem.js","ssh2","Lucide","Electron","node-pty","VcXsrv"].every(name => thirdPartyNotices.includes(`## ${name}`)));
@@ -174,8 +191,16 @@ async function main() {
   );
   const sftpBackend = read("src/sftp.ts");
   const sftpSessionSource = read("src/sftp-session.ts");
-  const sftpSessionServerSource = read("src/server.ts");
+  const sftpSessionServerSource = readSources(root, [
+    "src/server.ts",
+    "src/server-runtime.ts",
+    "src/routes/sftp-transfer-routes.ts",
+    "src/routes/local-control-routes.ts"
+  ]);
   const sftpJobRoutesSource = read("src/routes/sftp-job-routes.ts");
+  const backupRestoreRoutesSource = read("src/routes/backup-restore-routes.ts");
+  const remoteTaskRoutesSource = read("src/routes/remote-task-routes.ts");
+  const sftpTransferRoutesSource = read("src/routes/sftp-transfer-routes.ts");
   const sftpEncodingSource = read("src/sftp-encoding.ts");
   const sftpFrontend = readFrontendDomain(root, "sftp");
   const remoteFrontend = readFrontendDomain(root, "remote");
@@ -199,12 +224,12 @@ async function main() {
   ok("SFTP 任务由标题栏全局入口集中展示并区分进行中、失败与历史", read("public/index.html").includes('id="sftpTaskCenterButton"') && read("public/index.html").includes('id="sftpTaskCenterDrawer"') && read("public/index.html").includes('id="sftpTaskCenterFailedTab"') && read("public/index.html").includes('id="sftpTaskCenterFailedCount"') && sftpFrontend.includes("function sftpTaskCollections") && sftpFrontend.includes("const current = jobs.filter(job => SFTP_ACTIVE_JOB_STATUSES.has(job.status))") && sftpFrontend.includes('const failed = jobs.filter(job => job.status === "failed"') && sftpFrontend.includes('const showingFailed = sftpTaskCenterView === "failed"') && sftpFrontend.includes('["done", "cancelled"].includes(job.status)') && !sftpFrontend.includes('id="sftpJobs"'));
   ok("SFTP 全局任务中心保留进度及暂停继续取消等操作", sftpFrontend.includes("function updateSftpTaskCenter") && sftpFrontend.includes('const deletable = ["paused", "failed", "done", "cancelled"].includes(job.status)') && sftpFrontend.includes("pauseSftpJob") && sftpFrontend.includes("resumeSftpJob") && sftpFrontend.includes("cancelSftpJob") && sftpFrontend.includes("deleteSftpJob"));
   ok("任务中心失败页支持一键删除失败记录", read("public/index.html").includes('id="sftpTaskCenterClearLabel"') && sftpFrontend.includes('clearLabel.textContent = showingFailed ? "清空失败" : "清空历史"') && sftpFrontend.includes("function clearFailedSftpJobs") && sftpFrontend.includes("Promise.allSettled(failed.map(job => deleteSftpJobRecord(job.id)))") && read("public/app-static-actions.js").includes('sftpTaskCenterView === "failed" ? clearFailedSftpJobs'));
-  ok("任务中心接入 Linux 桌面安装与卸载任务", sftpFrontend.includes('/api/linux-desktop/tasks') && sftpFrontend.includes('type:"linux-desktop"') && sftpFrontend.includes("openLinuxDesktopTask") && remoteFrontend.includes("if (typeof refreshSftpJobs === \"function\") void refreshSftpJobs()") && read("src/server.ts").includes("clearFinishedLinuxDesktopTasks"));
+  ok("任务中心接入 Linux 桌面安装与卸载任务", sftpFrontend.includes('/api/linux-desktop/tasks') && sftpFrontend.includes('type:"linux-desktop"') && sftpFrontend.includes("openLinuxDesktopTask") && remoteFrontend.includes("if (typeof refreshSftpJobs === \"function\") void refreshSftpJobs()") && remoteTaskRoutesSource.includes("clearFinishedLinuxDesktopTasks"));
   ok("SFTP 原生拖出取消等待系统终态后再清理", read("src/sftp-jobs.ts").includes('job.phase = "cancelling"') && read("src/sftp-jobs.ts").includes("accepted = Boolean(nativeDragCancelHandler") && sftpFrontend.includes("job.can_cancel !== false"));
   ok("SFTP 后台任务创建不重复弹出加入提示", !/已加入[\s\S]{0,120}任务/.test(sftpFrontend));
   ok("SFTP 上传阶段使用用户视角文案", sftpFrontend.includes('phase === "receiving") return "正在准备上传"') && sftpFrontend.includes('phase === "uploading") return "正在上传到远端"') && !sftpFrontend.includes('return "正在接收"'));
   ok("SFTP 标题栏任务入口显示需关注任务数量及运行失败状态", sftpFrontend.includes('const status = failedCount ? "failed" : activeCount ? "running" : "idle"') && sftpFrontend.includes('button.classList.toggle("is-running"') && sftpFrontend.includes('button.classList.toggle("is-failed"') && sftpFrontend.includes("const attentionCount = current.length + failed.length") && sftpFrontend.includes('badge.textContent = attentionCount > 99 ? "99+" : String(attentionCount)') && sftpCss.includes(".sftp-task-center-button.is-running") && sftpCss.includes(".sftp-task-center-button.is-failed"));
-  ok("SFTP 本机接收与远端上传共享同一后台任务", sftpFrontend.includes('/sftp/upload-job') && sftpFrontend.includes('/api/sftp/jobs/${encodeURIComponent(started.id)}/content') && sftpFrontend.includes("sftpUploadRequests") && !sftpFrontend.includes("正在接收 ${filename}") && read("src/server.ts").includes("startUploadReceiveJob") && sftpJobRoutesSource.includes("receiveUploadJobContent"));
+  ok("SFTP 本机接收与远端上传共享同一后台任务", sftpFrontend.includes('/sftp/upload-job') && sftpFrontend.includes('/api/sftp/jobs/${encodeURIComponent(started.id)}/content') && sftpFrontend.includes("sftpUploadRequests") && !sftpFrontend.includes("正在接收 ${filename}") && sftpTransferRoutesSource.includes("startUploadReceiveJob") && sftpJobRoutesSource.includes("receiveUploadJobContent"));
   ok("SFTP 上传通过远端暂存文件原子完成且取消会清理", read("src/sftp-jobs.ts").includes("remote_temp_path") && read("src/sftp-jobs.ts").includes("uploadRemoteCommitCommand") && read("src/sftp-jobs.ts").includes("cleanupRemoteUploadArtifact") && read("src/sftp-jobs.ts").includes("invalidateRemoteDirectoryCache(job.connection_id)"));
   ok("悬浮任务进度卡位于标题栏下方并支持关闭与永久静默", read("public/app-utils.js").includes('class="toast-copy"') && sftpCss.includes(".toast-head > .toast-icon") && sftpCss.includes('.sftp-task-float { position:absolute') && sftpCss.includes('top:calc(100% + 8px)') && read("public/index.html").includes('id="sftpTaskFloat"') && sftpFrontend.includes("dismissSftpTaskFloat") && sftpFrontend.includes("muteSftpTaskFloat") && sftpFrontend.includes("永久关闭此类悬浮进度卡") && readFrontendDomain(root, "settings").includes('id="taskCenterFloatingProgressEnabled"') && read("src/runtime-settings.ts").includes("sftp_floating_progress_enabled"));
   ok(
@@ -251,7 +276,7 @@ async function main() {
   ok("Windows 后台启动不保留控制台并透传桌面监听参数", startBat.includes("start-detached.js desktop %SERVER_ARGS%") && startBat.includes("start-detached.js web") && detachedStarter.includes("[root, ...process.argv.slice(3)]") && read("desktop/main.js").includes("...parseServerArgs()") && detachedStarter.includes("windowsHide: true") && detachedStarter.includes("child.unref()") && !startBat.includes("cmd /c npm run desktop:run") && !startBat.includes("timeout /t"));
   ok("Linux/macOS 桌面启动透传监听参数并监控后台进程", read("start.sh").includes('start-detached.js desktop $DESKTOP_ARGS "$@"') && read("start.sh").includes('start-detached.js web "$@"') && detachedStarter.includes("TERMA_START_PRINT_PID"));
   ok("启动脚本在依赖清单变化后自动安装", startBat.includes("scripts\\dependency-state.js") && read("start.sh").includes("scripts/dependency-state.js") && dependencyState.includes("package-lock.json") && dependencyState.includes(".terma-dependencies.sha256") && dependencyState.includes(".tunneldesk-dependencies.sha256"));
-  ok("关闭流程停止健康监控并退出桌面主进程", read("src/server.ts").includes("await stopForwardHealthMonitor()") && read("src/ssh.ts").includes("async function stopForwardHealthMonitor()") && read("desktop/main.js").includes("onShutdown: () =>"));
+  ok("关闭流程停止健康监控并退出桌面主进程", serverSource.includes("await stopForwardHealthMonitor()") && read("src/ssh.ts").includes("async function stopForwardHealthMonitor()") && read("desktop/main.js").includes("onShutdown: () =>"));
   ok("dist/server.js 存在", fs.existsSync(path.join(root, "dist/server.js")));
   const missingFrontend = frontendFiles.filter(file => !fs.existsSync(path.join(root, file)));
   ok("前端模块文件完整", missingFrontend.length === 0, missingFrontend.join(", "));
@@ -267,7 +292,7 @@ async function main() {
   const assetVersions = [...indexHtml.matchAll(/[?&]v=([^"&]+)/g)].map(match => match[1]);
   ok("静态资源缓存版本由服务端统一注入", assetVersions.length > 0
     && assetVersions.every(version => version === "__TERMA_VERSION__")
-    && read("src/server.ts").includes('.replaceAll("__TERMA_VERSION__", encodeURIComponent(PACKAGE_VERSION))'), [...new Set(assetVersions)].join(", "));
+    && serverSource.includes('.replaceAll("__TERMA_VERSION__", encodeURIComponent(PACKAGE_VERSION))'), [...new Set(assetVersions)].join(", "));
   ok("Lucide 在业务脚本前加载", indexHtml.indexOf("/vendor/lucide/lucide.min.js") >= 0 && indexHtml.indexOf("/vendor/lucide/lucide.min.js") < indexHtml.indexOf("/app-api.js"));
 
   const frontend = frontendFiles.map(read).join("\n");
@@ -289,7 +314,6 @@ async function main() {
   const appState = read("public/app-state.js");
   const appCss = read("public/app.css");
   const sftpTasksFrontend = read("public/app-sftp-tasks.js");
-  const serverSource = ["src/server.ts", "src/storage-restore.ts", "src/routes/storage-routes.ts", "src/routes/ssh-routes.ts", "src/routes/desktop-integration-routes.ts", "src/routes/sftp-job-routes.ts"].map(read).join("\n");
   const storageRoutesSource = read("src/routes/storage-routes.ts");
   const updateRouteSource = read("src/routes/update-routes.ts");
   const terminalSource = read("src/terminal.ts");
@@ -363,8 +387,8 @@ async function main() {
   ok("SSH 表单支持密钥和密码登录", indexHtml.includes("私钥登录") && indexHtml.includes("密码登录") && frontend.includes("toggleAuthFields"));
   ok("SSH 登录方式隔离认证字段", frontend.includes('identity_file:passwordAuth ? ""') && frontend.includes('ssh_password:passwordAuth ?') && frontend.includes('control.disabled = password') && frontend.includes('control.disabled = !password'));
   ok("通知首次加载只建立游标", frontend.includes("initializeNotificationCursor") && frontend.includes('api("/api/notifications?since=0")') && frontend.includes("notificationCursorInitialized = true"));
-  ok("SFTP 读取响应不缓存敏感内容", read("src/server.ts").includes('"Cache-Control": "no-store"'));
-  ok("SFTP 删除由服务端设置决定是否进入回收站并使用后台任务", serverSource.includes("const recycleEnabled = readRuntimeSettings(RUNTIME_SETTINGS_FILE).sftp_recycle_bin_enabled") && serverSource.includes("deletePathsJob(connectionId, requestedPaths, recycleEnabled)") && serverSource.includes("Array.isArray(data.paths) ? data.paths : [data.path]") && serverSource.includes("return sendJson(res, result, 202)") && read("src/sftp-jobs.ts").includes('progress_unit: "items"') && serverSource.includes('parts[4] === "trash" && parts[5] === "restore"'));
+  ok("SFTP 读取响应不缓存敏感内容", /"Cache-Control"\s*:\s*"no-store"/.test(serverSource));
+  ok("SFTP 删除由服务端设置决定是否进入回收站并使用后台任务", sftpTransferRoutesSource.includes("const recycleEnabled = dependencies.readRuntimeSettings(dependencies.runtimeSettingsFile).sftp_recycle_bin_enabled") && sftpTransferRoutesSource.includes("dependencies.deletePathsJob(connectionId, requestedPaths, recycleEnabled)") && sftpTransferRoutesSource.includes("Array.isArray(data.paths) ? data.paths : [data.path]") && sftpTransferRoutesSource.includes("dependencies.sendJson(response, result, 202)") && read("src/sftp-jobs.ts").includes('progress_unit: "items"') && sftpTransferRoutesSource.includes('parts[4] === "trash" && parts[5] === "restore"'));
   ok("关于页与开源许可弹窗已接入", settingsFrontend.includes('id="settings-about"') && settingsFrontend.includes("查看开源许可正文") && settingsFrontend.includes("showLicenseModal") && settingsFrontend.includes("about-third-party-list") && settingsFrontend.includes("third_party_components") && serverSource.includes('pathname === "/api/about"'));
   ok("设置页支持 GitHub Releases 更新检查", settingsFrontend.includes("refreshUpdateStatus") && settingsFrontend.includes("查看 Release") && updateRouteSource.includes('pathname === "/api/updates/check"'));
   ok("更新完成后按当前安装类型隔离状态并提供安全操作", settingsFrontend.includes("openDownloadedUpdateDirectory") && settingsFrontend.includes("打开下载目录") && settingsFrontend.includes("重新下载") && settingsFrontend.includes("安装完成并启动新版本后") && settingsFrontend.includes("download.asset_name === download.selected_asset_name") && settingsFrontend.includes('download.package_type === "portable"') && updateRouteSource.includes('pathname === "/api/updates/open-directory"') && updateRouteSource.includes('state.package_type === "portable"') && desktopSource.includes("shell.showItemInFolder(target)") && read("src/update-installer.ts").includes("matchesCurrentTarget") && read("src/update-installer.ts").includes("cleanupInstalledPackage") && serverSource.includes("scheduleInstalledUpdateCleanup"));
@@ -427,7 +451,7 @@ async function main() {
   ok("SFTP 使用 Ace 编辑器、语言模式、换行、图片预览和页面内全局设置", Boolean(packageJson.dependencies?.["ace-builds"]) && indexHtml.includes("/vendor/ace/ace.js") && serverSource.includes("ACE_VENDOR_DIR") && sftpFrontend.includes("sftpEditorLanguageForFile") && sftpFrontend.includes("ace.edit") && sftpFrontend.includes("setUseWrapMode") && sftpFrontend.includes("previewSftpImage") && serverSource.includes("preview-image") && sftpFrontend.includes('id="sftpGlobalSettingsButton"') && settingsFrontend.includes("showSftpGlobalSettings") && settingsFrontend.includes("sftpMaxOpenFileSizeMb"));
   ok("SFTP 文本冲突使用本地 jsdiff 并提供有界左右对比", Boolean(packageJson.dependencies?.diff) && indexHtml.includes("/vendor/diff/diff.min.js") && serverSource.includes('vendorFile("diff", "dist/diff.min.js")') && sftpFrontend.includes("sftpDiffViewerHtml") && sftpFrontend.includes("SFTP_DIFF_MAX_ROWS") && sftpFrontend.includes("timeout:1500") && read("THIRD_PARTY_NOTICES.md").includes("## jsdiff"));
   ok("SFTP 图片按二进制响应且 JSON 可一键格式化", serverSource.includes("Buffer.isBuffer(data)") && serverSource.includes("data instanceof Uint8Array") && sftpFrontend.includes('id="sftpTextFormatJson"') && sftpFrontend.includes("JSON.stringify(parsed, null, 2)") && sftpFrontend.includes("JSON 格式错误"));
-  ok("SFTP 下载按桌面与浏览器分流并管理临时缓存", runtimeSettingsSource.includes("sftp_download_directory") && serverSource.includes('deliveryMode: desktop ? "desktop" : "browser"') && read("src/sftp-jobs.ts").includes("autoSaveDownloadedFile") && read("src/sftp-jobs.ts").includes("DOWNLOAD_CACHE_TTL_MS") && read("src/sftp-jobs.ts").includes("BROWSER_DELIVERY_GRACE_MS") && read("src/sftp-jobs.ts").includes("markSftpJobDelivered") && sftpFrontend.includes("首次下载提示") && sftpFrontend.includes("sftpPendingBrowserDownloads") && sftpFrontend.includes("保存到本机") && sftpFrontend.includes("打开目录") && settingsFrontend.includes("SFTP 自动保存目录"));
+  ok("SFTP 下载按桌面与浏览器分流并管理临时缓存", runtimeSettingsSource.includes("sftp_download_directory") && sftpTransferRoutesSource.includes('deliveryMode:desktop ? "desktop" : "browser"') && read("src/sftp-jobs.ts").includes("autoSaveDownloadedFile") && read("src/sftp-jobs.ts").includes("DOWNLOAD_CACHE_TTL_MS") && read("src/sftp-jobs.ts").includes("BROWSER_DELIVERY_GRACE_MS") && read("src/sftp-jobs.ts").includes("markSftpJobDelivered") && sftpFrontend.includes("首次下载提示") && sftpFrontend.includes("sftpPendingBrowserDownloads") && sftpFrontend.includes("保存到本机") && sftpFrontend.includes("打开目录") && settingsFrontend.includes("SFTP 自动保存目录"));
   const programCacheSource = read("src/program-cache.ts");
   const settingsGeneralSource = settingsViewSource.slice(settingsViewSource.indexOf('id="settings-general"'), settingsViewSource.indexOf('id="settings-basic"'));
   ok("缓存管理独立于通用设置并按分类清理可释放缓存", storageRoutesSource.includes('pathname === "/api/cache"') && storageRoutesSource.includes('searchParams.get("category")') && serverSource.includes("programCacheView") && serverSource.includes("createProgramCacheManager") && programCacheSource.includes("retained_bytes") && programCacheSource.includes('"remote_components"') && programCacheSource.includes('"local_installers"') && read("src/update-installer.ts").includes("clearCache()") && settingsCacheSource.includes("cacheManagementPanelHtml") && settingsCacheSource.includes("data-action=\"cache-clear-category\"") && settingsCacheSource.includes("SFTP 拖出") && settingsCacheSource.includes("清理程序缓存") && settingsViewSource.includes('id="settings-cache"') && settingsViewSource.indexOf('id="settings-cache"') < settingsViewSource.indexOf('id="settings-about"') && !settingsGeneralSource.includes("cacheManagementPanelHtml"));
@@ -471,8 +495,8 @@ async function main() {
   ok("同名私钥不会绕过连接级绑定", importerSource.includes("identity_file: null") && importerSource.includes("missing_identity: Boolean(keyName)") && !importerSource.includes("identityFileMap") && serverSource.includes("const target = requested ?") && !serverSource.includes("existingByName.get(keyName)"));
   ok("私钥绑定只接受已枚举路径", serverSource.includes("allowedPaths.has(path.resolve(requested))") && serverSource.includes("私钥绑定无效，请重新选择"));
   ok("SSH config 与数据库恢复允许保留未绑定私钥", !importFrontend.includes("个连接尚未绑定私钥") && importFrontend.includes("未重新绑定的普通私钥路径会被清除") && serverSource.includes("updateIdentity.run(null, item.connection_id)") && !serverSource.includes("数据库备份中的连接尚未全部绑定私钥"));
-  ok("数据库恢复后重新打开句柄并自动刷新", serverSource.includes("reopenDatabase()") && serverSource.includes("database_reopened: true") && importFrontend.includes("数据库已恢复并自动刷新") && importFrontend.includes("await loadAll()"));
-  ok("数据库迁移包同步启用或关闭加密状态", serverSource.includes("if (stage.security) {") && serverSource.includes("encryption_enabled: Boolean(stage.security.encryption_enabled)"));
+  ok("数据库恢复后重新打开句柄并自动刷新", backupRestoreRoutesSource.includes("dependencies.reopenDatabase()") && backupRestoreRoutesSource.includes("database_reopened:true") && importFrontend.includes("数据库已恢复并自动刷新") && importFrontend.includes("await loadAll()"));
+  ok("数据库迁移包同步启用或关闭加密状态", backupRestoreRoutesSource.includes("if (stage.security) {") && backupRestoreRoutesSource.includes("encryption_enabled:Boolean(stage.security.encryption_enabled)"));
   ok("导入导出按 SSH config 与数据库拆分", workspaceFrontend.includes("SSH config 导入导出") && workspaceFrontend.includes("数据库导入导出") && indexHtml.indexOf("导出 SSH config") < indexHtml.indexOf("数据库导入导出"));
   ok("设置活动栏按职责重组并把缓存管理放在关于上方", workspaceFrontend.includes('"settings-general", "settings-2", "通用设置"') && workspaceFrontend.includes('"settings-basic", "shield-check", "安全设置"') && workspaceFrontend.includes('"settings-cache", "hard-drive", "缓存管理"') && workspaceFrontend.indexOf('"settings-cache", "hard-drive", "缓存管理"') < workspaceFrontend.indexOf('"settings-about", "info", "关于"') && !workspaceFrontend.includes('"settings-advanced"') && settingsFrontend.indexOf("storageSettingsPanelHtml()") < settingsFrontend.indexOf('id="settings-basic"'));
   ok("桌面设置并入程序且菜单去重", settingsFrontend.includes("desktopBehaviorPanelHtml") && settingsFrontend.includes("storageSettingsPanelHtml") && storageRoutesSource.includes('pathname === "/api/desktop-settings"') && desktopSource.includes("desktopIntegration") && !appMenuSource.includes('{ label: "设置"') && !trayMenuSource.includes('{ label: "设置"') && !trayMenuSource.includes("备份配置数据库"));

@@ -1,11 +1,22 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readSources } = require("./backend-source");
 const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const source = fs.readFileSync(path.join(root, "src", "remote-privilege.ts"), "utf8");
-const serverSource = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");
+const serverSource = readSources(root, [
+  "src/server.ts",
+  "src/routes/remote-task-routes.ts",
+  "src/routes/remote-profile-routes.ts",
+  "src/routes/x11-forwarding-routes.ts",
+  "src/services/remote-admin-service.ts",
+  "src/services/remote-component-service.ts",
+  "src/services/x11-management-service.ts",
+  "src/services/vnc-management-service.ts",
+  "src/services/linux-desktop-service.ts"
+]);
 const remoteFrontend = readFrontendDomain(root, "remote");
 assert.doesNotMatch(source, /localStorage|sessionStorage/);
 assert.doesNotMatch(source, /INSERT\s+INTO|UPDATE\s+|DELETE\s+FROM/);
@@ -15,8 +26,8 @@ assert.match(source, /jump_connection_id/);
 assert.match(source, /systemHostKeyArgs/);
 assert.match(serverSource, /createRemoteAdminGrant/);
 assert.match(serverSource, /linux-desktop\.install/);
-assert.match(serverSource, /handoffRemotePrivilegeGrant\(grant, \(\) => startLinuxDesktopInstall\(connectionId, data\.desktop_id, "install", grant, mode\)\)/);
-assert.match(serverSource, /handoffRemotePrivilegeGrant\(grant, \(\) => startLinuxDesktopInstall\(connectionId, data\.desktop_id, "uninstall", grant\)\)/);
+assert.match(serverSource, /dependencies\.handoffRemotePrivilegeGrant\(grant, \(\) => dependencies\.startLinuxDesktopInstall\(id, data\.desktop_id, "install", grant, mode\)\)/);
+assert.match(serverSource, /dependencies\.handoffRemotePrivilegeGrant\(grant, \(\) => dependencies\.startLinuxDesktopInstall\(id, data\.desktop_id, "uninstall", grant\)\)/);
 assert.match(serverSource, /x11\.sshd-config/);
 assert.match(serverSource, /xdmcp\.configure/);
 assert.match(serverSource, /x11\.remote-install/);

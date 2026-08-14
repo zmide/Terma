@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { readFrontendDomain } = require("./frontend-source");
+const { readSources } = require("./backend-source");
 
 const root = path.resolve(__dirname, "..");
 const remote = readFrontendDomain(root, "remote");
@@ -12,7 +13,16 @@ const app = ["app-state.js", "app.js"]
 const workspace = fs.readFileSync(path.join(root, "public", "app-workspace.js"), "utf8");
 const taskCenter = fs.readFileSync(path.join(root, "public", "app-sftp-tasks.js"), "utf8");
 const css = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
-const server = fs.readFileSync(path.join(root, "src", "server.ts"), "utf8");
+const server = readSources(root, [
+  "src/server.ts",
+  "src/routes/remote-profile-routes.ts",
+  "src/routes/remote-task-routes.ts",
+  "src/services/remote-admin-service.ts",
+  "src/services/remote-component-service.ts",
+  "src/services/vnc-management-service.ts",
+  "src/services/x11-management-service.ts",
+  "src/services/linux-desktop-service.ts"
+]);
 const xdmcp = fs.readFileSync(path.join(root, "src", "xdmcp-manager.ts"), "utf8");
 const desktop = fs.readFileSync(path.join(root, "src", "linux-desktop-manager.ts"), "utf8");
 
@@ -51,7 +61,7 @@ for (const action of ["install", "install-offline", "install-local-offline"]) {
 assert.match(remote, /rdp_install_plan/);
 const launchRemoteDesktopSource = remote.slice(remote.indexOf("async function launchRemoteDesktop"), remote.indexOf("async function installRemoteDesktopClient"));
 assert.doesNotMatch(launchRemoteDesktopSource, /profile\?\.protocol === "rdp"[\s\S]*?inspectRdpServer\(id\)/, "RDP launch must not rerun optional Linux/SSH diagnostics");
-assert.match(server, /profile\.protocol === "rdp"[\s\S]*?await probeTcpEndpoint\(profile\.host, profile\.port \|\| 3389\)/, "RDP launch must keep the saved-target TCP preflight");
+assert.match(server, /profile\.protocol === "rdp"[\s\S]*?await dependencies\.probeTcpEndpoint\(profile\.host, profile\.port \|\| 3389\)/, "RDP launch must keep the saved-target TCP preflight");
 assert.match(remote, /远端 xrdp 已安装/);
 assert.match(remote, /3389 未监听/);
 assert.match(remote, /remoteDesktopProtocolGuideMarkup\("rdp", diagnostics, profile\)/, "RDP status must explain the desktop login account and preferred backend");

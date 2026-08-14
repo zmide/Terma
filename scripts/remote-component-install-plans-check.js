@@ -1,8 +1,8 @@
 "use strict";
 
 const assert = require("node:assert/strict");
-const fs = require("node:fs");
 const path = require("node:path");
+const { readSources } = require("./backend-source");
 const { componentInstallCommand, componentInstallPlan } = require("../dist/remote-component-installer");
 const { buildRemoteX11InstallPlan } = require("../dist/x11");
 const { desktopInstallPlan } = require("../dist/linux-desktop-manager");
@@ -123,7 +123,15 @@ assert.match(xdmcpDnf.local_offline.description, /当前检测到 dnf/);
   assert.equal(result.defer_grant_release, true);
   assert.deepEqual(started.packages, ["lightdm", "lightdm-gtk-greeter"]);
 
-  const serverSource = fs.readFileSync(path.join(__dirname, "..", "src", "server.ts"), "utf8");
+  const serverSource = readSources(path.join(__dirname, ".."), [
+    "src/server.ts",
+    "src/routes/remote-task-routes.ts",
+    "src/routes/remote-profile-routes.ts",
+    "src/services/remote-component-service.ts",
+    "src/services/x11-management-service.ts",
+    "src/services/vnc-management-service.ts",
+    "src/services/linux-desktop-service.ts"
+  ]);
   assert.match(serverSource, /x11\.remote-install-local-offline/);
   assert.match(serverSource, /linux-desktop\.install-local-offline/);
   assert.match(serverSource, /parts\[3\] === "rdp-server"/);

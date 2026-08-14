@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { readSources } = require("./backend-source");
 const {
   DETECT_SCRIPT,
   buildVncStartCommand,
@@ -635,7 +636,11 @@ assert.match(buildDetectionScript(5907), /TERMA_VNC_PORT|terma_emit PORT "5907"/
 assert.match(buildDetectionScript(5907), /-iTCP:5907/);
 assert.match(buildDetectionScript(5907), /td_commands="\$\{td_commands\}\$\{td_commands:\+,\}\$td_command"/);
 assert.doesNotMatch(buildDetectionScript(5907), /\\\$\{td_commands/);
-const serverSource = fs.readFileSync(path.join(__dirname, "..", "src", "server.ts"), "utf8");
+const serverSource = readSources(path.join(__dirname, ".."), [
+  "src/server.ts",
+  "src/services/remote-component-service.ts",
+  "src/services/vnc-management-service.ts"
+]);
 assert.match(serverSource, /startRemoteComponentCommandTask/);
 assert.match(serverSource, /runSshCommandForConnectionStreaming\(connection, buildRemotePosixCommand\(normalized\), timeoutMs, onChunk\)/);
 
