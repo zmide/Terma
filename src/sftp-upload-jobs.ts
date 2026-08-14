@@ -19,6 +19,7 @@ function createSftpUploadJobs(dependencies: any) {
     releaseTransferSlot,
     resetTransferSpeed,
     resolveTransferWaiters,
+    uploadJobOwnsLocalPath,
     updateTransferProgress,
     waitForSftpTransferStart
   } = dependencies;
@@ -69,6 +70,8 @@ function createSftpUploadJobs(dependencies: any) {
       remote_temp_path:remoteTempPath,
       upload_generation:0,
       local_path:localPath,
+      local_path_owned:options.ownsLocalPath !== false,
+      resume_supported:true,
       staged_complete:phase === "uploading",
       created_at:Date.now(),
       started_at:Date.now(),
@@ -124,7 +127,7 @@ function createSftpUploadJobs(dependencies: any) {
     if (status === "done") {
       job.transferred = job.size || job.transferred;
       job.progress = 100;
-      try { fs.unlinkSync(job.local_path); } catch {}
+      if (uploadJobOwnsLocalPath(job)) try { fs.unlinkSync(job.local_path); } catch {}
       invalidateRemoteDirectoryCache(job.connection_id);
     }
     if (status !== "paused") finishTransferMetrics(job);
@@ -228,8 +231,11 @@ function createSftpUploadJobs(dependencies: any) {
     return uploadJobResult(job);
   }
 
-  function startUploadJob(connectionId: number, localPath: string, remotePath: string, size = 0) {
-    const job = createUploadJob(connectionId, localPath, remotePath, size, "uploading", {sizeKnown:true});
+  function startUploadJob(connectionId: number, localPath: string, remotePath: string, size = 0, options: any = {}) {
+    const job = createUploadJob(connectionId, localPath, remotePath, size, "uploading", {
+      sizeKnown:true,
+      ownsLocalPath:options.ownsLocalPath !== false
+    });
     job.conflict_mode = "overwrite";
     jobs.set(job.id, job);
     persistJobs(true);

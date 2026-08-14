@@ -577,6 +577,10 @@ function renderTabContent(tab) {
 function activateTab(key) {
   const tab = tabs.find(item => item.key === key);
   if (!tab) return;
+  const previousTab = tabs.find(item => item.key === activeTabKey);
+  if (previousTab?.kind === "command" && previousTab.key !== key && typeof rememberBatchCommandDraft === "function") {
+    rememberBatchCommandDraft(currentBatchRoot(), previousTab.key);
+  }
   if (activeView === "sftp" && activeTabKey !== key && typeof rememberSftpViewState === "function") {
     rememberSftpViewState(activeTabKey);
   }
@@ -605,7 +609,10 @@ function closeTabsByKey(keys, anchorKey="") {
     sftpDisconnectedTabs.delete(key);
     sftpViewStates.delete(key);
     if (typeof clearSftpDirectoryViewCache === "function") clearSftpDirectoryViewCache(key);
-    if (key === "command") stopBatchCommand();
+    if (key === "command") {
+      stopBatchCommand(key);
+      if (typeof resetBatchCommandDraft === "function") resetBatchCommandDraft(key);
+    }
   }
   tabs = tabs.filter(tab => !targets.has(tab.key));
   legacyWorkspaceTabHistory = legacyWorkspaceTabHistory.filter(key => tabs.some(tab => tab.key === key));

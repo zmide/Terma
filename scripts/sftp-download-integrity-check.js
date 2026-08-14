@@ -115,7 +115,12 @@ async function main() {
     assert.equal(hash(fs.readFileSync(growingResult.path)), hash(growingPayload), "an actively written file must preserve the snapshot received before EOF");
     const archived = jobs.startArchiveDownloadJob(connection.id, ["/fixture/folder"], { deliveryMode:"browser" });
     archiveJobId = archived.id;
+    const archiveStarting = jobs.listSftpJobs().find(item => item.id === archiveJobId);
+    assert.equal(archiveStarting.resume_supported, false, "archive streams must not advertise resume support");
+    assert.equal(archiveStarting.can_pause, false, "archive streams must not advertise pause support");
+    assert.throws(() => jobs.pauseSftpJob(archiveJobId), /暂不支持暂停/);
     await waitForJob(jobs, archiveJobId);
+    assert.equal(jobs.listSftpJobs().find(item => item.id === archiveJobId).can_resume, false);
     const archive = jobs.getSftpJobFile(archiveJobId);
     assert.match(archive.name, /^terma-.+\.tar\.gz$/, "a browser archive download must keep its tar.gz filename");
     assert.ok(fs.statSync(archive.path).size > 0, "the archive response must use the completed job artifact");

@@ -10,12 +10,19 @@ const { createDesktopStorageTransition } = require("../desktop/storage-migration
 const root = path.resolve(__dirname, "..");
 const desktopMainPath = path.join(root, "desktop", "main.js");
 const desktopMainSource = fs.readFileSync(desktopMainPath, "utf8");
+const desktopPreloadSource = fs.readFileSync(path.join(root, "desktop", "preload.js"), "utf8");
+const appSource = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
 const readyMarker = "app.whenReady().then";
 const readyIndex = desktopMainSource.indexOf(readyMarker);
 
 assert.notEqual(readyIndex, -1, "desktop/main.js must contain the app.whenReady startup block");
 assert.match(desktopMainSource, /org\.freedesktop\.Notifications/, "Linux notifications must verify the D-Bus service before showing");
 assert.match(desktopMainSource, /desktopNotificationsAvailable\(\)/, "desktop notifications must use the availability probe");
+assert.match(desktopMainSource, /startDesktopNotificationBridge\(\)/, "desktop startup must keep a main-process notification bridge active");
+assert.match(desktopMainSource, /terma:notification-event/, "desktop notification events must be forwarded to the renderer");
+assert.match(desktopPreloadSource, /onNotification\(callback\)/, "preload must expose the notification event bridge");
+assert.match(desktopPreloadSource, /onNotificationAction\(callback\)/, "preload must expose notification actions without Node access");
+assert.match(appSource, /if \(!window\.termaDesktop\) pollNotifications\(\)/, "desktop renderer must not duplicate the main-process notification poll");
 assert.match(desktopMainSource, /termaDisplaySession:\s*localLinuxDisplaySession/, "Linux second launches must report their graphical session with the Terma field");
 assert.match(desktopMainSource, /additionalData\?\.termaDisplaySession\s*\|\|\s*additionalData\?\.tunneldeskDisplaySession/, "Linux second launches must still accept the legacy TunnelDesk field");
 assert.match(desktopMainSource, /stdio:\s*\["ignore",\s*"ignore",\s*"ignore",\s*"ipc"\]/, "display clients must keep an IPC focus channel");
@@ -71,6 +78,7 @@ globalThis.__desktopStartupTestApi = {
   ensureDesktopSettingsFile,
   isWindowsPortable,
   desktopStartupFailurePresentation,
+  desktopNotificationAllowed,
   userRuntimeRoot,
   legacyPackagedRoot,
   resolveRuntimePaths,
@@ -1189,6 +1197,14 @@ check("Migration conflict keeps user data and backs up the complete legacy runti
   assert.equal(fs.existsSync(path.join(legacyRoot, "data", "tunnels.db")), true);
   assert.match(path.basename(backupRoot), /^migration-conflict-backup-/);
   assert.match(api.getPendingStorageMigrationNotice(), /继续使用用户目录/);
+});
+
+check("Desktop background notifications respect global mode and severity switches", () => {
+  const { api } = createHarness();
+  assert.equal(api.desktopNotificationAllowed({level:"success"}, {mode:"on", success:true}), true);
+  assert.equal(api.desktopNotificationAllowed({level:"error"}, {mode:"on", error:false}), false);
+  assert.equal(api.desktopNotificationAllowed({level:"info"}, {mode:"muted", info:true}), false);
+  assert.equal(api.desktopNotificationAllowed({level:"success"}, {mode:"off", success:true}), false);
 });
 
 console.log("Desktop startup semantics passed.");

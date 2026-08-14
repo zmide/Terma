@@ -615,6 +615,19 @@ function handleNotificationAction(action) {
   }
 }
 
+async function handleNotificationEvent(event, options={}) {
+  if (!event || typeof event !== "object") return;
+  lastNotificationId = Math.max(lastNotificationId, Number(event.id || 0));
+  if (event.type === "update" && typeof loadCachedUpdateStatus === "function") await loadCachedUpdateStatus();
+  const ignoredUpdate = event.type === "update" && updateSettings?.update_ignored;
+  const allowed = !["off", "muted"].includes(securitySettings?.notification_mode);
+  if (options.display !== false && !ignoredUpdate && allowed) {
+    notify(`${event.title}${event.message ? `\n${event.message}` : ""}`, event.level === "error" ? "error" : event.level === "success" ? "success" : "info");
+    if (!options.fromDesktop) showDesktopNotification(event);
+  }
+  localStorage.setItem("lastNotificationId", String(lastNotificationId));
+}
+
 async function pollNotifications() {
   try {
     if (!notificationCursorInitialized) {
@@ -622,16 +635,7 @@ async function pollNotifications() {
       return;
     }
     const events = await api(`/api/notifications?since=${encodeURIComponent(lastNotificationId)}`);
-    for (const event of events) {
-      lastNotificationId = Math.max(lastNotificationId, Number(event.id || 0));
-      if (event.type === "update" && typeof loadCachedUpdateStatus === "function") await loadCachedUpdateStatus();
-      if (event.type === "update" && updateSettings?.update_ignored) continue;
-      if (!['off', 'muted'].includes(securitySettings?.notification_mode)) {
-        notify(`${event.title}${event.message ? `\n${event.message}` : ""}`, event.level === "error" ? "error" : event.level === "success" ? "success" : "info");
-        showDesktopNotification(event);
-      }
-    }
-    localStorage.setItem("lastNotificationId", String(lastNotificationId));
+    for (const event of events) await handleNotificationEvent(event);
   } catch {}
 }
 

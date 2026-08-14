@@ -46,6 +46,8 @@ assert.match(source, /LOCAL_TRANSFER_TOP_LEVEL_LIMIT = 100/);
 assert.match(source, /LOCAL_TRANSFER_ENTRY_LIMIT = 1000/);
 assert.match(source, /!path\.isAbsolute\(requested\)/);
 assert.match(source, /lstat\.isSymbolicLink\(\)/);
+assert.match(source, /startUploadJob\(connectionId, item\.path, target\.path, item\.stat\.size, \{ownsLocalPath:false\}\)/);
+assert.match(source, /startUploadJob\(connectionId, entry\.path, remotePath, entry\.size, \{ownsLocalPath:false\}\)/);
 assert.match(localUi, /LOCAL_FILES_DRAG_MIME/);
 assert.match(localUi, /LOCAL_FILES_COMPUTER_PATH/);
 assert.match(localUi, /local-files-breadcrumb/);

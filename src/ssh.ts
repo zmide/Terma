@@ -1210,8 +1210,13 @@ async function batchRunCommands(ids, command, options: any = {}) {
   const text = String(command || "").trim();
   if (!cleanIds.length) throw new Error("请选择 SSH 连接");
   if (!text) throw new Error("请输入要执行的命令");
-  const timeoutMs = Math.max(5000, Math.min(Number(options.timeout_ms || 60000), 10 * 60 * 1000));
+  const requestedTimeoutMs = Number(options.timeout_ms);
+  const timeoutMs = Number.isFinite(requestedTimeoutMs)
+    ? Math.max(5000, Math.min(requestedTimeoutMs, 10 * 60 * 1000))
+    : 60000;
   const rows = cleanIds.map((id) => getConnection(id));
+  const missingIndex = rows.findIndex((connection) => !connection);
+  if (missingIndex >= 0) throw new Error(`SSH 连接不存在：${cleanIds[missingIndex]}`);
   const results = await mapLimit(rows, 4, async (connection) => {
     const started = Date.now();
     const result: any = await runSshCommandForConnection(connection, text, timeoutMs);

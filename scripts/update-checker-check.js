@@ -8,6 +8,8 @@ const {
   parseGitHubRepository
 } = require("../dist/update-checker");
 
+const projectRoot = path.resolve(__dirname, "..");
+
 const temporaryRoots = [];
 process.on("exit", () => {
   for (const directory of temporaryRoots) {
@@ -62,6 +64,14 @@ async function check(name, callback) {
 }
 
 (async () => {
+  await check("startup forces one update check while settings keeps the cached check path", async () => {
+    const runtimeSource = fs.readFileSync(path.join(projectRoot, "src", "server-runtime.ts"), "utf8");
+    const settingsSource = fs.readFileSync(path.join(projectRoot, "public", "app-settings-updates.js"), "utf8");
+    assert.match(runtimeSource, /updateChecker\.check\(\{force:true\}\)/);
+    assert.match(runtimeSource, /}, 10 \* 1000\);/);
+    assert.match(settingsSource, /`\/api\/updates\/check\$\{force \? "\?force=1" : ""\}`/);
+  });
+
   await check("semantic versions handle prefixes, numeric fields, and prereleases", async () => {
     assert.equal(compareVersions("v1.10.0", "1.9.9"), 1);
     assert.equal(compareVersions("1.0", "v1.0.0"), 0);

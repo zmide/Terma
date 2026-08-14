@@ -62,5 +62,17 @@ contextBridge.exposeInMainWorld("termaDesktop", {
     const handler = (_event, message) => callback(String(message || "无法启动系统拖拽"));
     ipcRenderer.on("terma:sftp-drag-error", handler);
     return () => ipcRenderer.removeListener("terma:sftp-drag-error", handler);
+  },
+  onNotification(callback) {
+    if (typeof callback !== "function") return () => {};
+    const handler = (_event, payload) => callback(payload && typeof payload === "object" ? payload : {});
+    ipcRenderer.on("terma:notification-event", handler);
+    return () => ipcRenderer.removeListener("terma:notification-event", handler);
+  },
+  onNotificationAction(callback) {
+    if (typeof callback !== "function") return () => {};
+    const handler = (_event, action) => callback(action && typeof action === "object" ? action : null);
+    ipcRenderer.on("terma:notification-action", handler);
+    return () => ipcRenderer.removeListener("terma:notification-action", handler);
   }
 });

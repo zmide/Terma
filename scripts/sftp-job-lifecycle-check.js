@@ -85,16 +85,77 @@ async function main() {
   const sessionModule = require.cache[require.resolve("../dist/sftp-session")];
   const originalSpawn = sessionModule.exports.spawnSftpSessionCommand;
   sessionModule.exports.spawnSftpSessionCommand = (_connection, command) => fakeRemoteChild(command);
+
+  const legacyUserLocal = path.join(temporaryRoot, "legacy-user-owned.bin");
+  const legacyManagedDirectory = path.join(process.env.TERMA_DATA_DIR, "uploads");
+  const legacyManagedLocal = path.join(legacyManagedDirectory, "legacy-managed.bin");
+  const ownedManagedLocal = path.join(legacyManagedDirectory, "owned-managed.bin");
+  fs.mkdirSync(legacyManagedDirectory, {recursive:true});
+  fs.writeFileSync(legacyUserLocal, Buffer.alloc(1024, 0x48));
+  fs.writeFileSync(legacyManagedLocal, Buffer.alloc(1024, 0x49));
+  fs.writeFileSync(ownedManagedLocal, Buffer.alloc(1024, 0x4a));
+  fs.writeFileSync(path.join(process.env.TERMA_DATA_DIR, "sftp-jobs.json"), JSON.stringify({jobs:[
+    {
+      id:"legacy-user-owned",
+      connection_id:connection.id,
+      connection_name:connection.name,
+      type:"upload",
+      status:"running",
+      phase:"uploading",
+      local_path:legacyUserLocal,
+      remote_path:"/tmp/legacy-user-owned.bin",
+      remote_temp_path:"/tmp/.terma-upload-legacy-user-owned.part",
+      created_at:Date.now() - 2
+    },
+    {
+      id:"legacy-managed",
+      connection_id:connection.id,
+      connection_name:connection.name,
+      type:"upload",
+      status:"running",
+      phase:"uploading",
+      local_path:legacyManagedLocal,
+      remote_path:"/tmp/legacy-managed.bin",
+      remote_temp_path:"/tmp/.terma-upload-legacy-managed.part",
+      created_at:Date.now() - 1
+    },
+    {
+      id:"owned-managed",
+      connection_id:connection.id,
+      connection_name:connection.name,
+      type:"upload",
+      status:"running",
+      phase:"uploading",
+      local_path:ownedManagedLocal,
+      local_path_owned:true,
+      remote_path:"/tmp/owned-managed.bin",
+      remote_temp_path:"/tmp/.terma-upload-owned-managed.part",
+      created_at:Date.now()
+    }
+  ]}, null, 2), "utf8");
+
   const jobs = require("../dist/sftp-jobs");
   const notifications = require("../dist/notifications");
   const jobIds = [];
 
+  const restoredLegacyJobs = jobs.listSftpJobs();
+  assert.equal(restoredLegacyJobs.find(item => item.id === "legacy-user-owned")?.local_path_owned, false);
+  assert.equal(restoredLegacyJobs.find(item => item.id === "legacy-managed")?.local_path_owned, false);
+  assert.equal(restoredLegacyJobs.find(item => item.id === "owned-managed")?.local_path_owned, true);
+  assert.equal(fs.existsSync(legacyUserLocal), true, "an interrupted legacy local-file upload must preserve its source");
+  assert.equal(fs.existsSync(legacyManagedLocal), true, "an unmarked legacy upload artifact must be preserved until cache cleanup can classify it");
+  assert.equal(fs.existsSync(ownedManagedLocal), false, "an explicitly owned interrupted upload artifact must be cleaned");
+
   const uploadLocal = path.join(temporaryRoot, "upload.bin");
   const cancelledLocal = path.join(temporaryRoot, "cancelled.bin");
   const atomicLocal = path.join(temporaryRoot, "atomic.bin");
+  const preservedLocal = path.join(temporaryRoot, "preserved.bin");
+  const preservedCancelledLocal = path.join(temporaryRoot, "preserved-cancelled.bin");
   fs.writeFileSync(uploadLocal, Buffer.alloc(1024 * 1024, 0x41));
   fs.writeFileSync(cancelledLocal, Buffer.alloc(1024 * 1024, 0x42));
   fs.writeFileSync(atomicLocal, Buffer.alloc(32 * 1024, 0x45));
+  fs.writeFileSync(preservedLocal, Buffer.alloc(32 * 1024, 0x46));
+  fs.writeFileSync(preservedCancelledLocal, Buffer.alloc(32 * 1024, 0x47));
 
   try {
     const upload = jobs.startUploadJob(connection.id, uploadLocal, "/tmp/upload.bin", fs.statSync(uploadLocal).size);
@@ -153,6 +214,34 @@ async function main() {
     commitChild.emit("close", 0, null);
     await waitForJob(jobs, atomic.id, "done");
     jobs.deleteSftpJob(atomic.id);
+
+    const preserved = jobs.startUploadJob(connection.id, preservedLocal, "/tmp/preserved.bin", fs.statSync(preservedLocal).size, {ownsLocalPath:false});
+    jobIds.push(preserved.id);
+    const preservedState = jobs.listSftpJobs().find(item => item.id === preserved.id);
+    assert.equal(preservedState.local_path_owned, false);
+    const preservedWriteChild = children.at(-1);
+    preservedWriteChild.stdin.resume();
+    await new Promise(resolve => preservedWriteChild.stdin.once("finish", resolve));
+    preservedWriteChild.stdout.end();
+    preservedWriteChild.stderr.end();
+    preservedWriteChild.emit("close", 0, null);
+    await new Promise(resolve => setImmediate(resolve));
+    const preservedCommitChild = children.at(-1);
+    preservedCommitChild.stdout.end();
+    preservedCommitChild.stderr.end();
+    preservedCommitChild.emit("close", 0, null);
+    await waitForJob(jobs, preserved.id, "done");
+    assert.equal(fs.existsSync(preservedLocal), true, "a user-owned upload source must remain after completion");
+    jobs.deleteSftpJob(preserved.id);
+    assert.equal(fs.existsSync(preservedLocal), true, "deleting a completed upload task must not remove a user-owned source");
+
+    const preservedCancelled = jobs.startUploadJob(connection.id, preservedCancelledLocal, "/tmp/preserved-cancelled.bin", fs.statSync(preservedCancelledLocal).size, {ownsLocalPath:false});
+    jobIds.push(preservedCancelled.id);
+    jobs.cancelSftpJob(preservedCancelled.id);
+    await settle();
+    assert.equal(fs.existsSync(preservedCancelledLocal), true, "cancelling an upload must not remove a user-owned source");
+    jobs.deleteSftpJob(preservedCancelled.id);
+    assert.equal(fs.existsSync(preservedCancelledLocal), true, "deleting a cancelled upload task must not remove a user-owned source");
 
     const receivedPayload = Buffer.alloc(384 * 1024, 0x43);
     const receiving = jobs.startUploadReceiveJob(connection.id, "/tmp/received.bin", "received.bin", receivedPayload.length);

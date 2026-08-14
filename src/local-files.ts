@@ -344,7 +344,7 @@ async function uploadLocalPaths(connectionId, values, remoteDirectory = ".", con
       throw error;
     }
     if (item.stat.isFile()) {
-      jobs.push(startUploadJob(connectionId, item.path, target.path, item.stat.size));
+      jobs.push(startUploadJob(connectionId, item.path, target.path, item.stat.size, {ownsLocalPath:false}));
       continue;
     }
     const tree = collectLocalTree(item.path);
@@ -353,7 +353,7 @@ async function uploadLocalPaths(connectionId, values, remoteDirectory = ".", con
       const relative = entry.relative.split(path.sep).join("/");
       const remotePath = path.posix.join(target.path, relative);
       if (entry.type === "dir") await ensureRemoteDirectory(connectionId, remotePath);
-      else jobs.push(startUploadJob(connectionId, entry.path, remotePath, entry.size));
+      else jobs.push(startUploadJob(connectionId, entry.path, remotePath, entry.size, {ownsLocalPath:false}));
     }
   }
   return {ok:true, jobs, count:jobs.length};

@@ -106,6 +106,7 @@ function createNativeSftpDragJobs(dependencies: any) {
       phase:"queued",
       can_cancel:true,
       can_pause:false,
+      resume_supported:false,
       stdout:"",
       stderr:"",
       error:"",

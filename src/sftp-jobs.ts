@@ -22,6 +22,11 @@ let historyCache: any[] | null = null;
 let persistTimer: any = null;
 let downloadCacheService: any = null;
 
+function uploadJobOwnsLocalPath(job) {
+  if (job?.type !== "upload") return false;
+  return job.local_path_owned === true;
+}
+
 function formatSftpTransferSize(value) {
   const bytes = Math.max(0, Number(value || 0));
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
@@ -131,6 +136,10 @@ function readHistory(): any[] {
   historyCache = loaded.map((source: any) => {
     const restored = serializableJob(source);
     if (Object.keys(restored).length !== Object.keys(source || {}).length) changed = true;
+    if (restored?.type === "upload" && typeof restored.local_path_owned !== "boolean") {
+      restored.local_path_owned = uploadJobOwnsLocalPath(restored);
+      changed = true;
+    }
     if (!ACTIVE_STATUSES.has(restored?.status)) return restored;
     changed = true;
     const interrupted = {
@@ -173,7 +182,7 @@ function listSftpJobs() {
     const job = serializableJob(source);
     return {
       ...job,
-      can_resume: ["upload", "download"].includes(job.type)
+      can_resume: job.resume_supported === true
         && ["paused", "failed"].includes(job.status)
         && (job.type !== "upload" || (job.staged_complete && job.phase !== "receiving" && fs.existsSync(job.local_path || "")))
     };
@@ -516,6 +525,7 @@ const {
   releaseTransferSlot,
   resetTransferSpeed,
   resolveTransferWaiters,
+  uploadJobOwnsLocalPath,
   updateTransferProgress,
   waitForSftpTransferStart
 });
@@ -590,7 +600,7 @@ function cancelSftpJob(id) {
 
 function cleanupJobArtifacts(job) {
   try { if (job.temp_path) fs.unlinkSync(job.temp_path); } catch {}
-  if (job.type === "upload") {
+  if (uploadJobOwnsLocalPath(job)) {
     try { if (job.local_path) fs.unlinkSync(job.local_path); } catch {}
   }
 }
@@ -645,6 +655,7 @@ const {
 function pauseSftpJob(id) {
   const job = jobs.get(id);
   if (!job) throw new Error("任务不存在");
+  if (job.resume_supported !== true || !["upload", "download"].includes(job.type)) throw new Error("该任务类型暂不支持暂停");
   if (!ACTIVE_STATUSES.has(job.status)) return { ok: true, status: job.status };
   if (job.type === "upload" && job.phase === "receiving") throw new Error("文件接收阶段只能取消任务");
   if (job.type === "upload" && job.phase === "committing") return { ok:true, status:job.status };
@@ -689,6 +700,7 @@ function resumeSftpJob(id) {
   }
   if (job.status === "running") return { ok: true, status: job.status };
   if (!["paused", "failed"].includes(job.status)) throw new Error(`当前状态（${job.status}）无法继续`);
+  if (job.resume_supported !== true) throw new Error("该任务类型暂不支持继续");
   if (job.type === "download") {
     queueTransferJob("download", job, () => runDownloadJob(id, false), {phase:"preparing", current:"正在继续下载"});
     return { ok: true, status: job.status };

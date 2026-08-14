@@ -796,6 +796,10 @@ activateTab = function(key) {
   const tab = tabs.find(item => item.key === key);
   const pane = workspaceFindPaneForTab(key);
   if (!tab || !pane) return;
+  const previousTab = tabs.find(item => item.key === pane.activeTabKey);
+  if (previousTab?.kind === "command" && previousTab.key !== key && typeof rememberBatchCommandDraft === "function") {
+    runInWorkspacePane(pane.id, () => rememberBatchCommandDraft(currentBatchRoot(), previousTab.key));
+  }
   saveFocusedSftpPaneState();
   focusedPaneId = pane.id;
   rememberWorkspacePaneTab(pane, key, pane.activeTabKey);
@@ -927,7 +931,10 @@ closeTabsByKey = function(keys, anchorKey="") {
     sftpDisconnectedTabs.delete(key);
     sftpViewStates.delete(key);
     if (typeof clearSftpDirectoryViewCache === "function") clearSftpDirectoryViewCache(key);
-    if (tab?.kind === "command") stopBatchCommand();
+    if (tab?.kind === "command") {
+      stopBatchCommand(key);
+      if (typeof resetBatchCommandDraft === "function") resetBatchCommandDraft(key);
+    }
   }
   tabs = tabs.filter(tab => !targets.has(tab.key));
   for (const pane of workspaceLeaves()) {

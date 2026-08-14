@@ -34,9 +34,9 @@ function listCommandTemplates() {
 
 function normalizeTemplate(data) {
   const name = String(data.name || "").trim();
-  const command = String(data.command || "").trim();
+  const command = String(data.command || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   if (!name) throw new Error("请输入模板名称");
-  if (!command) throw new Error("请输入模板命令");
+  if (!command.trim()) throw new Error("请输入模板命令");
   return {
     name,
     command,
@@ -98,10 +98,8 @@ function shellQuote(value) {
 }
 
 function buildRemoteScript(command) {
-  const lines = String(command || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const runs = lines.map((line) => `terma_run ${shellQuote(line)}\ntd_status=$?`).join("\n");
+  const script = String(command || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   return [
-    "terma_status=0",
     "terma_prompt() {",
     "  terma_user=$(id -un 2>/dev/null || whoami 2>/dev/null || printf user)",
     "  terma_host=$(hostname -s 2>/dev/null || hostname 2>/dev/null || printf host)",
@@ -115,13 +113,11 @@ function buildRemoteScript(command) {
     "  if [ \"$(id -u 2>/dev/null)\" = \"0\" ]; then terma_mark=\"#\"; else terma_mark=\"$\"; fi",
     "  printf '%s@%s:%s%s ' \"$terma_user\" \"$terma_host\" \"$terma_dir\" \"$terma_mark\"",
     "}",
-    "terma_run() {",
-    "  terma_cmd=$1",
-    "  terma_prompt",
-    "  printf '%s\\n' \"$terma_cmd\"",
-    "  eval \"$terma_cmd\"",
-    "}",
-    runs,
+    `terma_cmd=${shellQuote(script)}`,
+    "terma_prompt",
+    "printf '%s\\n' \"$terma_cmd\"",
+    "eval \"$terma_cmd\"",
+    "terma_status=$?",
     "terma_prompt",
     "printf '\\n'",
     "exit \"$terma_status\"",
@@ -130,12 +126,18 @@ function buildRemoteScript(command) {
 }
 
 async function runBatchCommandStream(socket, payload, activeChildren) {
+  payload = payload && typeof payload === "object" ? payload : {};
   const ids = [...new Set((payload.ids || []).map(Number).filter(Boolean))];
-  const command = String(payload.command || "").trim();
+  const command = String(payload.command || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   if (!ids.length) throw new Error("请选择 SSH 连接");
-  if (!command) throw new Error("请输入要执行的命令");
-  const timeoutMs = Math.max(5000, Math.min(Number(payload.timeout_ms || 60000), 10 * 60 * 1000));
+  if (!command.trim()) throw new Error("请输入要执行的命令");
+  const requestedTimeoutMs = Number(payload.timeout_ms);
+  const timeoutMs = Number.isFinite(requestedTimeoutMs)
+    ? Math.max(5000, Math.min(requestedTimeoutMs, 10 * 60 * 1000))
+    : 60000;
   const rows = ids.map((id) => getConnection(id));
+  const missingIndex = rows.findIndex((connection) => !connection);
+  if (missingIndex >= 0) throw new Error(`SSH 连接不存在：${ids[missingIndex]}`);
   const log = createBatchCommandLog(command, rows.length);
   sendJson(socket, { type: "meta", total: rows.length, log_path: path.relative(path.join(DATA_DIR, "logs"), log.fullPath).replace(/\\/g, "/"), log_label: log.label });
   appendSystemLog(`批量命令已启动：${log.label}`);
@@ -192,6 +194,11 @@ async function runBatchCommandStream(socket, payload, activeChildren) {
   }
 
   await Promise.all(Array.from({ length: Math.min(4, rows.length) }, worker));
+  if (socket.destroyed) {
+    appendBatchCommandLog(log.fullPath, "\n# 批量执行已停止或执行通道已断开\n");
+    appendSystemLog(`批量命令已停止：${log.label}`);
+    return;
+  }
   appendBatchCommandLog(log.fullPath, `\n# 批量执行完成：成功 ${ok} 个，失败 ${failed} 个\n`);
   sendJson(socket, { type: "done", ok, failed, total: rows.length, log_path: path.relative(path.join(DATA_DIR, "logs"), log.fullPath).replace(/\\/g, "/") });
   appendSystemLog(`批量命令已完成：${log.label}，成功 ${ok} 个，失败 ${failed} 个`);
@@ -260,6 +267,7 @@ function handleBatchCommandUpgrade(req, socket) {
 }
 
 module.exports = {
+  buildRemoteScript,
   listCommandTemplates,
   saveCommandTemplate,
   updateCommandTemplate,

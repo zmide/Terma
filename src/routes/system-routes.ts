@@ -62,7 +62,7 @@ export async function handleSystemRoutes(
     return true;
   }
   if (method === "POST" && pathname === "/api/commands/batch") {
-    const data = await dependencies.readJson(request);
+    const data = await dependencies.readJson(request) || {};
     dependencies.sendJson(response, await dependencies.batchRunCommands(data.ids || [], data.command || "", data));
     return true;
   }

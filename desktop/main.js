@@ -105,6 +105,11 @@ let pendingDisplayClientUrl = "";
 let displayClientAuthRejected = false;
 let displayClientAuthTimer = null;
 let trayStateTimer = null;
+let desktopNotificationTimer = null;
+let desktopNotificationCursor = 0;
+let desktopNotificationCursorInitialized = false;
+let desktopNotificationPreferences = null;
+let desktopNotificationPreferencesReadAt = 0;
 let trayState = { runningConnections: 0, runningForwards: 0, failedForwards: 0, totalForwards: 0, online: false };
 let pendingStorageMigrationNotice = "";
 let legacyBrandMigration = { status:"not-checked", source:"", target:"", backup:"", message:"" };
@@ -1886,6 +1891,109 @@ function notify(body) {
   if (desktopNotificationsAvailable()) new Notification({ title:PRODUCT_NAME, body, icon:iconPath("icon.png") }).show();
 }
 
+function desktopWindowIsBackground() {
+  return !mainWindow
+    || mainWindow.isDestroyed()
+    || mainWindow.isMinimized?.()
+    || !mainWindow.isVisible?.()
+    || !mainWindow.isFocused?.();
+}
+
+async function readDesktopNotificationPreferences(force=false) {
+  const now = Date.now();
+  if (!force && desktopNotificationPreferences && now - desktopNotificationPreferencesReadAt < 5000) {
+    return desktopNotificationPreferences;
+  }
+  const [security, runtime] = await Promise.all([
+    fetchJson("/api/security").catch(() => ({})),
+    fetchJson("/api/runtime-settings").catch(() => ({}))
+  ]);
+  const display = runtime?.saved?.notification_display || runtime?.notification_display || {};
+  desktopNotificationPreferences = {
+    mode:String(security?.notification_mode || "on"),
+    info:display?.info?.enabled !== false,
+    success:display?.success?.enabled !== false,
+    error:display?.error?.enabled !== false
+  };
+  desktopNotificationPreferencesReadAt = now;
+  return desktopNotificationPreferences;
+}
+
+function desktopNotificationAllowed(event, preferences) {
+  if (preferences?.mode !== "on") return false;
+  const level = ["success", "error"].includes(String(event?.level)) ? String(event.level) : "info";
+  return preferences?.[level] !== false;
+}
+
+function sendDesktopNotificationToRenderer(event, display) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send?.("terma:notification-event", {event, display:Boolean(display)});
+}
+
+function showBackendSystemNotification(event) {
+  const title = String(event?.title || PRODUCT_NAME);
+  const body = String(event?.message || "");
+  if (desktopNotificationsAvailable()) {
+    const notification = new Notification({title, body, icon:iconPath("icon.png")});
+    notification.on?.("click", () => {
+      showWindow();
+      setTimeout(() => {
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        mainWindow.webContents.send?.("terma:notification-action", event?.action || null);
+      }, 120);
+    });
+    notification.show();
+    return;
+  }
+  if (process.platform === "win32" && tray && typeof tray.displayBalloon === "function") {
+    tray.displayBalloon({
+      title,
+      content:body,
+      icon:nativeImage.createFromPath(iconPath("icon.ico")),
+      largeIcon:true
+    });
+  }
+}
+
+async function pollDesktopNotifications() {
+  if (!webUrl || quitting) return;
+  const events = await fetchJson(`/api/notifications?since=${encodeURIComponent(desktopNotificationCursor)}`);
+  if (!desktopNotificationCursorInitialized) {
+    desktopNotificationCursor = Array.isArray(events)
+      ? events.reduce((latest, event) => Math.max(latest, Number(event?.id || 0)), 0)
+      : 0;
+    desktopNotificationCursorInitialized = true;
+    return;
+  }
+  if (!Array.isArray(events) || !events.length) return;
+  const preferences = await readDesktopNotificationPreferences(true);
+  const updateStatus = events.some(event => event?.type === "update")
+    ? await fetchJson("/api/updates/status").catch(() => ({}))
+    : null;
+  const background = desktopWindowIsBackground();
+  for (const event of events) {
+    desktopNotificationCursor = Math.max(desktopNotificationCursor, Number(event?.id || 0));
+    const allowed = desktopNotificationAllowed(event, preferences)
+      && !(event?.type === "update" && updateStatus?.update_ignored);
+    sendDesktopNotificationToRenderer(event, allowed && !background);
+    if (allowed && background) showBackendSystemNotification(event);
+  }
+}
+
+function startDesktopNotificationBridge() {
+  if (desktopNotificationTimer) clearInterval(desktopNotificationTimer);
+  desktopNotificationCursorInitialized = false;
+  void pollDesktopNotifications().catch(error => console.warn(`notification bridge initialization failed: ${error.message}`));
+  desktopNotificationTimer = setInterval(() => {
+    void pollDesktopNotifications().catch(error => console.warn(`notification bridge poll failed: ${error.message}`));
+  }, 2500);
+}
+
+function stopDesktopNotificationBridge() {
+  if (desktopNotificationTimer) clearInterval(desktopNotificationTimer);
+  desktopNotificationTimer = null;
+}
+
 function buildAppMenu() {
   const settings = readSettings();
   Menu.setApplicationMenu(null);
@@ -2229,6 +2337,7 @@ async function openUpdateDirectory(file) {
 function quitApp() {
   quitting = true;
   if (trayStateTimer) clearInterval(trayStateTimer);
+  stopDesktopNotificationBridge();
   try { setNativeSftpDragCancelHandler?.(null); } catch {}
   try { nativeSftpDrag?.dispose?.(); } catch {}
   for (const session of nativeSftpDragSessions.values()) releaseNativeDragSession(session);
@@ -2344,6 +2453,7 @@ app.whenReady().then(async () => {
         quitting = true;
         if (trayStateTimer) clearInterval(trayStateTimer);
         trayStateTimer = null;
+        stopDesktopNotificationBridge();
         setTimeout(() => app.quit(), 0);
       },
       desktopIntegration: {
@@ -2401,6 +2511,7 @@ app.whenReady().then(async () => {
   ipcMain.on("terma:sftp-drag-cancel", handleSftpDragCancel);
   createTray();
   createWindow({ openDesktopSettings:firstRun });
+  startDesktopNotificationBridge();
   desktopStartupInProgress = false;
   if (pendingStorageMigrationNotice) setTimeout(() => notify(pendingStorageMigrationNotice), 1200);
   updateTrayState().catch(() => {});
@@ -2424,6 +2535,7 @@ app.on("activate", showWindow);
 
 app.on("before-quit", () => {
   quitting = true;
+  stopDesktopNotificationBridge();
   if (!displayClientMode) {
     for (const child of displayClientProcesses.values()) {
       try { child.send?.({ type:"quit" }); } catch {}

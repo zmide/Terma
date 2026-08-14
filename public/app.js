@@ -33,12 +33,12 @@ function startAutoRefresh() {
     if (!document.hidden) loadAll({silent:true});
   }, 4000);
   setInterval(() => {
-    if (!document.hidden) pollNotifications();
+    if (!window.termaDesktop && !document.hidden) pollNotifications();
   }, 5000);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       loadAll({silent:true});
-      pollNotifications();
+      if (!window.termaDesktop) pollNotifications();
     }
   });
 }
@@ -85,6 +85,10 @@ document.addEventListener("scroll", () => {
   if (!isMobileLayout()) hideActionMenu();
 }, true);
 window.termaDesktop?.onSftpDragError?.(message => notify(message, "error"));
+window.termaDesktop?.onNotification?.(payload => {
+  void handleNotificationEvent(payload?.event, {fromDesktop:true, display:payload?.display !== false});
+});
+window.termaDesktop?.onNotificationAction?.(action => handleNotificationAction(action));
 Promise.all([loadAll(), loadRuntimeSettings()]).then(() => {
   const restored = restoreTabsState();
   if (!restored) renderWelcome();
@@ -96,7 +100,7 @@ Promise.all([loadAll(), loadRuntimeSettings()]).then(() => {
   notify(e.message,"error");
 });
 startAutoRefresh();
-pollNotifications();
+if (!window.termaDesktop) pollNotifications();
 refreshSftpJobs();
 startSftpJobsTimer();
 initProductivityFeatures();

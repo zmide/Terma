@@ -460,7 +460,7 @@ function createServerRuntime(options: any = {}) {
     if (process.env.TERMA_DISABLE_UPDATE_CHECK !== "1" && process.env.TUNNELDESK_DISABLE_UPDATE_CHECK !== "1") {
       clearTimeout(updateCheckTimer);
       updateCheckTimer = setTimeout(() => {
-        updateChecker.check().catch(() => {});
+        updateChecker.check({force:true}).catch(() => {});
       }, 10 * 1000);
       updateCheckTimer.unref?.();
     }

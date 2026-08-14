@@ -35,7 +35,8 @@ function checkSourceContracts() {
   assert.match(connections, /async function loadKeys\(selected, select=/);
   assert.match(connections, /if \(body\?\.isConnected\) body\.innerHTML/);
   assert.match(batch, /function currentBatchRoot\(\)/);
-  assert.match(batch, /captureWorkspaceTab\(tabKey\)/);
+  assert.match(batch, /const batchCommandStates = new Map\(\)/);
+  assert.match(batch, /workspaceElementForTab\(batchCommandStateKey\(tabKey\), "#view-command"\)/);
   assert.match(batch, /const socket = new WebSocket/);
   assert.match(forwards, /function captureForwardWorkspace\(connectionId=selectedId\)/);
   assert.match(forwards, /scope\.querySelectorAll\("\.forward-check:checked"\)/);

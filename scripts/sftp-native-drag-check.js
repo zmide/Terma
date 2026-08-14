@@ -157,7 +157,8 @@ try {
     assert.match(restoredJobs.find(item => item.id === id).error, /重启/);
   }
   assert.equal(fs.existsSync(interruptedDownloadPath), false, "an interrupted download cache must be removed");
-  assert.equal(fs.existsSync(interruptedUploadPath), false, "an interrupted upload cache must be removed");
+  assert.equal(restoredJobs.find(item => item.id === "regular-upload-pending").local_path_owned, false);
+  assert.equal(fs.existsSync(interruptedUploadPath), true, "an unmarked interrupted upload source must be preserved");
   assert.deepEqual(jobs.cancelSftpJob("regular-download-running"), {ok:true, status:"failed"}, "cancelling a recovered job must be idempotent");
   assert.equal(restoredJobs.some(item => "native_drag_token" in item || "native_drag_ranges" in item), false);
 
