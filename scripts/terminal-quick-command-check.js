@@ -12,7 +12,7 @@ const commandSnippets = read("public/app-command-snippets.js");
 const terminal = read("public/app-terminal.js");
 const styles = read("public/app.css");
 const migrations = read("src/database/migrations.ts");
-const database = read("src/db.ts");
+const database = ["src/db.ts", "src/database/config-snapshot-service.ts"].map(read).join("\n");
 const index = read("public/index.html");
 
 for (const contract of [

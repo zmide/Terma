@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { readSources } = require("./backend-source");
+const { readSftpJobSource, readSources } = require("./backend-source");
 const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
@@ -29,7 +29,7 @@ assert.match(routes, /pathname === "\/api\/local-files\/receive"[\s\S]*?sendJson
 assert.match(routes, /pathname === "\/api\/local-files\/receive-desktop"[\s\S]*?deliveryMode:"desktop"/);
 assert.match(server, /data\.mode === "separate"[\s\S]*?startLocalDeliveryJob\(connectionId, paths, targetDirectory/);
 assert.match(routes, /sendJson\(response, startLocalDeliveryJob\([\s\S]*?\), 202\)/);
-const sftpJobs = fs.readFileSync(path.join(root, "src", "sftp-jobs.ts"), "utf8");
+const sftpJobs = readSftpJobSource(root);
 assert.match(sftpJobs, /function startLocalDeliveryJob\(/);
 assert.match(sftpJobs, /type:"local-delivery"/);
 assert.match(sftpJobs, /deliverSftpPaths\(connectionId, paths, current\.target_directory/);

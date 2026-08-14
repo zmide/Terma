@@ -3,6 +3,7 @@
 const assert = require("node:assert/strict");
 const { spawnSync } = require("node:child_process");
 const { buildRemotePosixCommand } = require("../dist/remote-posix");
+const { readSftpJobSource } = require("./backend-source");
 
 const source = [
   "set +e",
@@ -46,7 +47,7 @@ if (process.platform !== "win32") {
 }
 
 const sftpSource = require('node:fs').readFileSync(require('node:path').resolve(__dirname, '../src/sftp.ts'), 'utf8');
-const sftpJobsSource = require('node:fs').readFileSync(require('node:path').resolve(__dirname, '../src/sftp-jobs.ts'), 'utf8');
+const sftpJobsSource = readSftpJobSource(require('node:path').resolve(__dirname, '..'));
 assert.match(sftpSource, /spawnSftpSessionCommand\(connection, buildRemotePosixCommand\(command\)\)/);
 assert.match(sftpJobsSource, /spawnSftpSessionCommand\(connection, buildRemotePosixCommand\(command\)\)/);
 assert.doesNotMatch(sftpSource, /sh -c \$\{shellQuote\(command\)\}/);

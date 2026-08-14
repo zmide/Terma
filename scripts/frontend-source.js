@@ -4,6 +4,7 @@ const path = require("node:path");
 const FRONTEND_DOMAINS = Object.freeze({
   docking: [
     "app-workspace-groups.js",
+    "app-workspace-chrome.js",
     "app-docking.js",
     "app-workspace-drag.js",
     "app-workspace-persistence.js"
@@ -36,6 +37,7 @@ const FRONTEND_DOMAINS = Object.freeze({
     "app-terminal-settings.js",
     "app-terminal-startup.js",
     "app-terminal.js",
+    "app-terminal-command-tracking.js",
     "app-ssh-credentials.js"
   ],
   sftp: [
@@ -44,6 +46,7 @@ const FRONTEND_DOMAINS = Object.freeze({
     "app-sftp-diff.js",
     "app-sftp-open.js",
     "app-sftp.js",
+    "app-sftp-drag-payload.js",
     "app-sftp-drag.js",
     "app-sftp-operations.js",
     "app-sftp-transfer.js",

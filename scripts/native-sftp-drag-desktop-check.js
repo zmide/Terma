@@ -5,6 +5,7 @@ const Module = require("node:module");
 const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readSftpJobSource } = require("./backend-source");
 const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
@@ -610,7 +611,7 @@ function checkNativeSessionRaceGuards() {
   const mainSource = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
   const adapterSource = fs.readFileSync(adapterPath, "utf8");
   const rendererSource = readFrontendDomain(root, "sftp");
-  const jobsSource = fs.readFileSync(path.join(root, "src", "sftp-jobs.ts"), "utf8");
+  const jobsSource = readSftpJobSource(root);
   const sessionSource = fs.readFileSync(path.join(root, "src", "sftp-session.ts"), "utf8");
 
   assert.match(mainSource, /completedDeliveries:new Set\(\)/);
