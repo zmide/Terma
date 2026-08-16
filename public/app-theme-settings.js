@@ -474,19 +474,19 @@ function syncTermaLiquidNavigation() {
 function themeAppearancePanelHtml() {
   const value = normalizeTermaAppearanceSettings(termaAppearanceSettings);
   return `<section class="theme-appearance-panel" id="themeAppearancePanel">
-    <h3>界面效果</h3>
-    <div class="theme-preset-control" role="radiogroup" aria-label="主题效果预设">
-      <button type="button" class="theme-preset-button ${value.preset === "clear" ? "active" : ""}" data-theme-preset="clear" role="radio" aria-checked="${value.preset === "clear"}">${icon("sun")}<span><b>经典清晰</b><small>实色界面</small></span></button>
-      <button type="button" class="theme-preset-button ${value.preset === "luminous" ? "active" : ""}" data-theme-preset="luminous" role="radio" aria-checked="${value.preset === "luminous"}">${icon("sparkles")}<span><b>流光玻璃</b><small>毛玻璃底座与流动高光</small></span></button>
+    <h3>${esc(tr("settings:theme.title"))}</h3>
+    <div class="theme-preset-control" role="radiogroup" aria-label="${escAttr(tr("settings:theme.preset_group"))}">
+      <button type="button" class="theme-preset-button ${value.preset === "clear" ? "active" : ""}" data-theme-preset="clear" role="radio" aria-checked="${value.preset === "clear"}">${icon("sun")}<span><b>${esc(tr("settings:theme.clear_name"))}</b><small>${esc(tr("settings:theme.clear_detail"))}</small></span></button>
+      <button type="button" class="theme-preset-button ${value.preset === "luminous" ? "active" : ""}" data-theme-preset="luminous" role="radio" aria-checked="${value.preset === "luminous"}">${icon("sparkles")}<span><b>${esc(tr("settings:theme.luminous_name"))}</b><small>${esc(tr("settings:theme.luminous_detail"))}</small></span></button>
     </div>
-    <div class="theme-effect-scope"><span>${icon("panel-top")}<b>毛玻璃</b><small>弹窗、菜单、SFTP 外壳；调大更柔和</small></span><span>${icon("bell")}<b>流光玻璃</b><small>活动栏、操作区、顶部导航和通知；调大流动感更明显</small></span></div>
-    <div class="theme-appearance-control"><label for="themeFrostedStrength">毛玻璃强度</label><input id="themeFrostedStrength" type="range" min="0" max="100" step="1" value="${value.frosted_strength}"><output id="themeFrostedStrengthValue">${value.frosted_strength}%</output></div>
-    <p class="theme-control-help">控制背景模糊和表面分离度。强度越高，弹窗和工具层越柔和；强度越低，背景细节越清楚，低性能设备也更轻。</p>
-    <div class="theme-appearance-control"><label for="themeLiquidStrength">流光玻璃强度</label><input id="themeLiquidStrength" type="range" min="0" max="100" step="1" value="${value.liquid_strength}"><output id="themeLiquidStrengthValue">${value.liquid_strength}%</output></div>
-    <p class="theme-control-help">控制透明度、饱和度、边缘高光、阴影和缓慢移动的反射带。强度越高，材质越通透、层次越明显；强度越低，界面越接近稳定的半透明面板。</p>
-    <div class="theme-appearance-warning" role="note">${icon("info")}<span>流光玻璃仍在持续适配。终端正文、文本编辑器、差异内容和部分系统控件会保持实色，以保证清晰度与兼容性。</span></div>
-    <div class="theme-appearance-preview" aria-hidden="true"><div class="theme-preview-toolbar"><i></i><i></i><i></i><span></span></div><div class="theme-preview-card"><b></b><small></small><small></small></div><span class="theme-preview-notification">${icon("bell")}<b>通知</b></span><span class="theme-preview-task">${icon("list-checks")}<b>任务中心</b></span></div>
-    <div class="actions"><button class="primary" id="saveThemeAppearance" type="button">${icon("save")}<span>保存主题配置</span></button><button id="resetThemeAppearance" type="button">恢复默认</button></div>
+    <div class="theme-effect-scope"><span>${icon("panel-top")}<b>${esc(tr("settings:theme.frosted_name"))}</b><small>${esc(tr("settings:theme.frosted_scope"))}</small></span><span>${icon("bell")}<b>${esc(tr("settings:theme.luminous_name"))}</b><small>${esc(tr("settings:theme.luminous_scope"))}</small></span></div>
+    <div class="theme-appearance-control"><label for="themeFrostedStrength">${esc(tr("settings:theme.frosted_strength"))}</label><input id="themeFrostedStrength" type="range" min="0" max="100" step="1" value="${value.frosted_strength}"><output id="themeFrostedStrengthValue">${value.frosted_strength}%</output></div>
+    <p class="theme-control-help">${esc(tr("settings:theme.frosted_help"))}</p>
+    <div class="theme-appearance-control"><label for="themeLiquidStrength">${esc(tr("settings:theme.luminous_strength"))}</label><input id="themeLiquidStrength" type="range" min="0" max="100" step="1" value="${value.liquid_strength}"><output id="themeLiquidStrengthValue">${value.liquid_strength}%</output></div>
+    <p class="theme-control-help">${esc(tr("settings:theme.luminous_help"))}</p>
+    <div class="theme-appearance-warning" role="note">${icon("info")}<span>${esc(tr("settings:theme.compatibility_note"))}</span></div>
+    <div class="theme-appearance-preview" aria-hidden="true"><div class="theme-preview-toolbar"><i></i><i></i><i></i><span></span></div><div class="theme-preview-card"><b></b><small></small><small></small></div><span class="theme-preview-notification">${icon("bell")}<b>${esc(tr("settings:theme.notification_preview"))}</b></span><span class="theme-preview-task">${icon("list-checks")}<b>${esc(tr("settings:theme.task_center_preview"))}</b></span></div>
+    <div class="actions"><button class="primary" id="saveThemeAppearance" type="button">${icon("save")}<span>${esc(tr("settings:theme.save"))}</span></button><button id="resetThemeAppearance" type="button">${esc(tr("settings:theme.reset"))}</button></div>
   </section>`;
 }
 
@@ -539,7 +539,7 @@ function saveThemeAppearanceSettings() {
   termaAppearanceSettings = themeAppearanceFormValue();
   localStorage.setItem(TERMA_APPEARANCE_STORAGE_KEY, JSON.stringify(termaAppearanceSettings));
   applyTermaAppearanceSettings();
-  notify("主题配置已保存", "success");
+  notify(tr("settings:theme.saved"), "success");
 }
 
 function resetThemeAppearanceSettings() {
@@ -547,7 +547,7 @@ function resetThemeAppearanceSettings() {
   localStorage.setItem(TERMA_APPEARANCE_STORAGE_KEY, JSON.stringify(termaAppearanceSettings));
   applyTermaAppearanceSettings();
   if (activeView === "settings") renderSettings();
-  notify("主题配置已恢复默认", "success");
+  notify(tr("settings:theme.reset_done"), "success");
 }
 
 applyTermaAppearanceSettings();

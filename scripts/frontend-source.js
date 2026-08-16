@@ -38,7 +38,8 @@ const FRONTEND_DOMAINS = Object.freeze({
     "app-terminal-startup.js",
     "app-terminal.js",
     "app-terminal-command-tracking.js",
-    "app-ssh-credentials.js"
+    "app-ssh-credentials.js",
+    "app-terminal-image-paste.js"
   ],
   sftp: [
     "app-sftp-core.js",

@@ -9,6 +9,8 @@ const MAX_PORT_FALLBACKS = 20;
 const DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB = 50;
 const DEFAULT_SFTP_LIGHT_EDITOR_THRESHOLD_MB = 10;
 const DEFAULT_SFTP_TRANSFER_CONCURRENCY = 3;
+const DEFAULT_LANGUAGE = "zh-CN";
+const SUPPORTED_LANGUAGES = new Set(["zh-CN", "en-US"]);
 const DEFAULT_NOTIFICATION_DISPLAY = Object.freeze({
   info: Object.freeze({ enabled: true, duration_ms: 3500 }),
   success: Object.freeze({ enabled: true, duration_ms: 3500 }),
@@ -196,12 +198,21 @@ function normalizeNotificationDisplay(value: any = {}, fallback: any = DEFAULT_N
   };
 }
 
+function normalizeLanguage(value, fallback = DEFAULT_LANGUAGE) {
+  const language = String(value === undefined || value === null ? fallback : value).trim();
+  return SUPPORTED_LANGUAGES.has(language) ? language : DEFAULT_LANGUAGE;
+}
+
 function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
   const hostsValue = value.listen_hosts !== undefined ? value.listen_hosts
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 12,
+    schema_version: 14,
+    language: normalizeLanguage(value.language, fallback.language),
+    language_onboarding_version: Math.max(0, Math.min(1, Number.isInteger(Number(value.language_onboarding_version ?? fallback.language_onboarding_version))
+      ? Number(value.language_onboarding_version ?? fallback.language_onboarding_version)
+      : 0)),
     listen_hosts: normalizeListenHosts(hostsValue, hostsValue === undefined ? (fallback.listen_hosts ?? DEFAULT_LISTEN_HOSTS) : null),
     listen_port: normalizeListenPort(portValue, portValue === undefined ? (fallback.listen_port ?? DEFAULT_LISTEN_PORT) : null),
     sftp_recycle_bin_enabled: value.sftp_recycle_bin_enabled === undefined
@@ -364,6 +375,7 @@ function availableListenHosts(interfaces: any = os.networkInterfaces()) {
 }
 
 module.exports = {
+  DEFAULT_LANGUAGE,
   DEFAULT_NOTIFICATION_DISPLAY,
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,
@@ -377,6 +389,7 @@ module.exports = {
   isLoopbackHost,
   normalizeListenHosts,
   normalizeListenPort,
+  normalizeLanguage,
   normalizeNotificationDisplay,
   normalizeRuntimeSettings,
   normalizeSftpDownloadDirectory,

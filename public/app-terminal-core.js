@@ -1,5 +1,20 @@
+function syncTermaTerminalComponentMessages() {
+  const promptLabel = tr("terminal:a11y.prompt_label", {defaultValue:"终端输入"});
+  const tooMuchOutput = tr("terminal:a11y.too_much_output", {defaultValue:"输出内容过多，无法由屏幕阅读器全部播报；请逐行导航阅读"});
+  if (TerminalClass?.strings) {
+    TerminalClass.strings.promptLabel = promptLabel;
+    TerminalClass.strings.tooMuchOutput = tooMuchOutput;
+  }
+  document.querySelectorAll(".xterm-helper-textarea").forEach(element => element.setAttribute("aria-label", promptLabel));
+}
+
+if (typeof registerTermaI18nRenderer === "function") registerTermaI18nRenderer(syncTermaTerminalComponentMessages);
+
 async function ensureTerminalLibs() {
-  if (TerminalClass && FitAddonClass) return;
+  if (TerminalClass && FitAddonClass) {
+    syncTermaTerminalComponentMessages();
+    return;
+  }
   const errors = [];
   try {
     await loadScriptOnce("/vendor/xterm/xterm.js");
@@ -19,7 +34,11 @@ async function ensureTerminalLibs() {
       errors.push(error.message);
     }
   }
-  if (!TerminalClass || !FitAddonClass) throw new Error(`xterm 组件加载失败：${errors.join("；") || "未找到 Terminal/FitAddon"}`);
+  if (!TerminalClass || !FitAddonClass) {
+    const error = errors.join("; ") || tr("terminal:components.runtime_missing", {defaultValue:"未找到 Terminal/FitAddon"});
+    throw new Error(tr("terminal:components.xterm_load_failed", {error, defaultValue:`xterm 组件加载失败：${error}`}));
+  }
+  syncTermaTerminalComponentMessages();
 }
 
 function loadScriptOnce(src) {
@@ -28,7 +47,7 @@ function loadScriptOnce(src) {
     if (found?.dataset.loaded === "1") return resolve();
     if (found) {
       found.addEventListener("load", resolve, { once:true });
-      found.addEventListener("error", () => reject(new Error(`加载失败：${src}`)), { once:true });
+      found.addEventListener("error", () => reject(new Error(tr("terminal:components.script_load_failed", {source:src, defaultValue:`组件脚本加载失败：${src}`}))), { once:true });
       return;
     }
     const script = document.createElement("script");
@@ -38,7 +57,7 @@ function loadScriptOnce(src) {
       script.dataset.loaded = "1";
       resolve();
     };
-    script.onerror = () => reject(new Error(`加载失败：${src}`));
+    script.onerror = () => reject(new Error(tr("terminal:components.script_load_failed", {source:src, defaultValue:`组件脚本加载失败：${src}`})));
     document.head.appendChild(script);
   });
 }
@@ -64,7 +83,7 @@ const terminalEncodingOptions = [
   ["shift_jis", "Shift_JIS"], ["euc-kr", "EUC-KR"], ["latin1", "ISO-8859-1"]
 ];
 const terminalFontOptions = [
-  ["ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", "系统等宽"],
+  ["ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", tr("terminal:display.system_font", {defaultValue:"系统等宽"})],
   ["Cascadia Mono, Cascadia Code, Consolas, monospace", "Cascadia"],
   ["JetBrains Mono, Consolas, monospace", "JetBrains Mono"],
   ["Consolas, monospace", "Consolas"],
@@ -192,15 +211,18 @@ function terminalDirectoryFromOsc7(value) {
 }
 
 function terminalDirectoryDropLabel(session) {
-  return session?.currentDirectoryKnown ? String(session.currentDirectory || ".") : "当前目录";
+  return session?.currentDirectoryKnown ? String(session.currentDirectory || ".") : tr("terminal:drop.current_directory", {defaultValue:"当前目录"});
 }
 
 function updateTerminalDropOverlay(session) {
   const overlay = session?.mount?.querySelector?.(".terminal-drop-overlay");
   if (!overlay || overlay.hidden) return;
   const label = overlay.querySelector(".terminal-drop-label");
-  const action = overlay.dataset.mode === "copy" ? "复制" : "上传";
-  if (label) label.textContent = `松开${action}到终端当前目录：${terminalDirectoryDropLabel(session)}`;
+  const directory = terminalDirectoryDropLabel(session);
+  if (label) label.textContent = tr(overlay.dataset.mode === "copy" ? "terminal:drop.copy_to_current" : "terminal:drop.upload_to_current", {
+    directory,
+    defaultValue:overlay.dataset.mode === "copy" ? `松开复制到终端当前目录：${directory}` : `松开上传到终端当前目录：${directory}`
+  });
 }
 
 function setTerminalDropState(session, active, mode="upload") {
@@ -309,7 +331,7 @@ function bindTerminalDropUpload(session, connection, key, mount) {
     const overlay = document.createElement("div");
     overlay.className = "terminal-drop-overlay";
     overlay.hidden = true;
-    overlay.innerHTML = `<div class="terminal-drop-hint">${icon("upload-cloud")}<span class="terminal-drop-label">松开上传到终端当前目录</span></div>`;
+    overlay.innerHTML = `<div class="terminal-drop-hint">${icon("upload-cloud")}<span class="terminal-drop-label">${esc(tr("terminal:drop.upload_hint", {defaultValue:"松开上传到终端当前目录"}))}</span></div>`;
     mount.appendChild(overlay);
   }
   session.dropUploadMount = mount;
@@ -357,21 +379,21 @@ function bindTerminalDropUpload(session, connection, key, mount) {
     clear();
     if (!session.connected) {
       if (drag && typeof finishSftpDragPayload === "function") finishSftpDragPayload(drag);
-      return notify("终端尚未连接，无法接收文件", "error");
+      return notify(tr("terminal:drop.not_connected", {defaultValue:"终端尚未连接，无法接收文件"}), "error");
     }
     let directory = session.currentDirectoryKnown
       ? session.currentDirectory
       : await initializeTerminalDirectory(session, connection, key);
     if (!directory) {
       if (drag && typeof finishSftpDragPayload === "function") finishSftpDragPayload(drag);
-      return notify("无法确认终端当前目录，请先重连终端", "error");
+      return notify(tr("terminal:drop.directory_unknown", {defaultValue:"无法确认终端当前目录，请先重连终端"}), "error");
     }
     if (localPayload) {
-      if (typeof uploadLocalFilesToSftp !== "function") return notify("当前版本不支持本地文件上传", "error");
+      if (typeof uploadLocalFilesToSftp !== "function") return notify(tr("terminal:drop.local_upload_unavailable", {defaultValue:"当前版本不支持本地文件上传"}), "error");
       try {
-        await uploadLocalFilesToSftp(localPayload, {kind:"terminal", id:connection.id, title:`终端：${directory}`, path:directory}, key);
+        await uploadLocalFilesToSftp(localPayload, {kind:"terminal", id:connection.id, title:tr("terminal:drop.target_title", {directory, defaultValue:`终端：${directory}`}), path:directory}, key);
       } catch (error) {
-        notify(error.message || "上传本地文件到终端失败", "error");
+        notify(error.message || tr("terminal:drop.local_upload_failed", {defaultValue:"上传本地文件到终端失败"}), "error");
       }
       return;
     }
@@ -379,19 +401,19 @@ function bindTerminalDropUpload(session, connection, key, mount) {
       if (typeof markSftpDragDropAccepted === "function") markSftpDragDropAccepted(drag, key);
       if (typeof copySftpDraggedItemsToDirectory !== "function") {
         if (typeof finishSftpDragPayload === "function") finishSftpDragPayload(drag);
-        return notify("当前版本不支持 SFTP 项目拖入终端", "error");
+        return notify(tr("terminal:drop.sftp_drop_unavailable", {defaultValue:"当前版本不支持 SFTP 项目拖入终端"}), "error");
       }
-      return copySftpDraggedItemsToDirectory(drag, connection.id, directory, {title:`终端：${directory}`, tabKey:key});
+      return copySftpDraggedItemsToDirectory(drag, connection.id, directory, {title:tr("terminal:drop.target_title", {directory, defaultValue:`终端：${directory}`}), tabKey:key});
     }
     if (typeof collectDroppedFiles !== "function" || typeof uploadSftpFilesToDirectory !== "function") {
-      return notify("当前版本不支持终端文件上传", "error");
+      return notify(tr("terminal:drop.upload_unavailable", {defaultValue:"当前版本不支持终端文件上传"}), "error");
     }
     try {
       const files = await collectDroppedFiles(event.dataTransfer);
-      if (!files.length) throw new Error("没有找到可上传的文件");
+      if (!files.length) throw new Error(tr("terminal:drop.no_upload_files", {defaultValue:"没有找到可上传的文件"}));
       await uploadSftpFilesToDirectory(files, connection.id, directory);
     } catch (error) {
-      notify(error.message || "终端文件上传失败", "error");
+      notify(error.message || tr("terminal:drop.upload_failed", {defaultValue:"终端文件上传失败"}), "error");
     }
   });
 }
@@ -400,18 +422,18 @@ async function uploadLocalFilesToTerminalTab(payload, tab) {
   const key = String(tab?.key || "");
   const connection = currentConnection(Number(tab?.id || 0));
   const session = terminalSessions.get(key);
-  if (!connection || !session?.connected) throw new Error("终端尚未连接，无法接收文件");
+  if (!connection || !session?.connected) throw new Error(tr("terminal:drop.not_connected", {defaultValue:"终端尚未连接，无法接收文件"}));
   const directory = session.currentDirectoryKnown
     ? session.currentDirectory
     : await initializeTerminalDirectory(session, connection, key);
-  if (!directory) throw new Error("无法确认终端当前目录，请先重连终端");
-  return uploadLocalFilesToSftp(payload, {kind:"terminal", id:connection.id, title:`终端：${directory}`, path:directory}, key);
+  if (!directory) throw new Error(tr("terminal:drop.directory_unknown", {defaultValue:"无法确认终端当前目录，请先重连终端"}));
+  return uploadLocalFilesToSftp(payload, {kind:"terminal", id:connection.id, title:tr("terminal:drop.target_title", {directory, defaultValue:`终端：${directory}`}), path:directory}, key);
 }
 
 function terminalStartupConfigLabel(config) {
   const value = normalizeTerminalStartupConfig(config);
-  if (value.terminal_startup_mode === "default") return "服务器默认 Shell";
-  return value.terminal_profile_name || value.terminal_program_path.split(/[\\/]/).pop() || "自定义程序";
+  if (value.terminal_startup_mode === "default") return tr("terminal:startup.server_default_shell", {defaultValue:"服务器默认 Shell"});
+  return value.terminal_profile_name || value.terminal_program_path.split(/[\\/]/).pop() || tr("terminal:startup.custom_program", {defaultValue:"自定义程序"});
 }
 
 function terminalStartupProfileMatches(config, profile) {

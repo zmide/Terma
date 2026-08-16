@@ -19,17 +19,17 @@ function terminalQuickCommandsHeight() {
 
 function terminalQuickCommandToolbarButton(key) {
   const visible = terminalQuickCommandsVisible();
-  const label = visible ? "隐藏快速命令栏" : "显示快速命令栏";
-  return `<button class="terminal-action-quick-commands${visible ? " active" : ""}" data-terminal-quick-command-toggle data-terminal-key="${escAttr(key)}" title="${label}" aria-label="${label}" aria-pressed="${visible}">${icon("list-checks")}<span>命令栏</span></button>`;
+  const label = tr(visible ? "terminal:quick_commands.hide" : "terminal:quick_commands.show");
+  return `<button class="terminal-action-quick-commands${visible ? " active" : ""}" data-terminal-quick-command-toggle data-terminal-key="${escAttr(key)}" title="${escAttr(label)}" aria-label="${escAttr(label)}" aria-pressed="${visible}">${icon("list-checks")}<span>${esc(tr("terminal:quick_commands.toolbar"))}</span></button>`;
 }
 
 function renderTerminalQuickCommandBar(key) {
   const visible = terminalQuickCommandsVisible();
   const compact = terminalQuickCommandsHeight() <= 54;
-  return `<section class="terminal-quick-command-bar${visible ? "" : " hidden"}${compact ? " compact" : ""}" data-terminal-quick-command-bar data-terminal-key="${escAttr(key)}" style="--terminal-quick-command-height:${terminalQuickCommandsHeight()}px" aria-label="快速命令栏">
-    <div class="terminal-quick-command-resizer" data-terminal-quick-command-resizer role="separator" aria-label="调整快速命令栏高度" aria-orientation="horizontal" tabindex="0"></div>
-    <button type="button" class="icon-button terminal-quick-command-manage" data-terminal-quick-command-manage title="管理命令片段" aria-label="管理命令片段">${icon("sliders-horizontal")}</button>
-    <div class="terminal-quick-command-list" data-terminal-quick-command-list title="双击空白处新建快速命令"></div>
+  return `<section class="terminal-quick-command-bar${visible ? "" : " hidden"}${compact ? " compact" : ""}" data-terminal-quick-command-bar data-terminal-key="${escAttr(key)}" style="--terminal-quick-command-height:${terminalQuickCommandsHeight()}px" aria-label="${escAttr(tr("terminal:quick_commands.bar"))}">
+    <div class="terminal-quick-command-resizer" data-terminal-quick-command-resizer role="separator" aria-label="${escAttr(tr("terminal:quick_commands.resize"))}" aria-orientation="horizontal" tabindex="0"></div>
+    <button type="button" class="icon-button terminal-quick-command-manage" data-terminal-quick-command-manage title="${escAttr(tr("terminal:quick_commands.manage"))}" aria-label="${escAttr(tr("terminal:quick_commands.manage"))}">${icon("sliders-horizontal")}</button>
+    <div class="terminal-quick-command-list" data-terminal-quick-command-list title="${escAttr(tr("terminal:quick_commands.double_click_add"))}"></div>
   </section>`;
 }
 
@@ -50,10 +50,10 @@ function paintTerminalQuickCommandBar(bar) {
   const items = terminalQuickCommandItems();
   list.innerHTML = items.length
     ? items.map(item => {
-      const badge = String(item.quick_badge || "");
-      return `<button type="button" class="terminal-quick-command ${escAttr(item.quick_color || "blue")}${badge ? "" : " no-badge"}" data-terminal-quick-command-id="${Number(item.id)}" title="${escAttr(item.description || item.command)}"><span class="terminal-quick-command-drag" data-terminal-quick-command-drag role="button" tabindex="0" title="拖动调整顺序" aria-label="拖动调整 ${escAttr(item.name)} 的顺序">${icon("grip-vertical")}</span>${badge ? `<span class="terminal-quick-command-badge" aria-hidden="true">${esc(badge)}</span>` : ""}<span class="terminal-quick-command-name">${esc(item.name)}</span><small>${item.quick_action === "insert" ? "插入" : "执行"}</small></button>`;
+      const badge = commandSnippetBadgeGlyph(item.quick_badge);
+      return `<button type="button" class="terminal-quick-command ${escAttr(item.quick_color || "blue")}${badge ? "" : " no-badge"}" data-terminal-quick-command-id="${Number(item.id)}" title="${escAttr(item.description || item.command)}"><span class="terminal-quick-command-drag" data-terminal-quick-command-drag role="button" tabindex="0" title="${escAttr(tr("terminal:quick_commands.drag_reorder"))}" aria-label="${escAttr(tr("terminal:quick_commands.drag_named", {name:item.name}))}">${icon("grip-vertical")}</span>${badge ? `<span class="terminal-quick-command-badge" aria-hidden="true">${esc(badge)}</span>` : ""}<span class="terminal-quick-command-name">${esc(item.name)}</span><small>${esc(tr(item.quick_action === "insert" ? "terminal:quick_commands.insert" : "terminal:quick_commands.execute"))}</small></button>`;
     }).join("")
-    : `<div class="terminal-quick-command-empty">${icon("plus")}<span>双击空白处新建快速命令</span></div>`;
+    : `<div class="terminal-quick-command-empty">${icon("plus")}<span>${esc(tr("terminal:quick_commands.double_click_add"))}</span></div>`;
   refreshIcons();
 }
 
@@ -80,7 +80,7 @@ async function persistTerminalQuickCommandOrder(list) {
       if (previous.has(Number(item.id))) item.quick_sort_order = previous.get(Number(item.id));
     });
     refreshTerminalQuickCommandBars();
-    notify(`快速命令排序保存失败：${error.message}`, "error");
+    notify(tr("terminal:quick_commands.sort_save_failed", {error:error.message || tr("terminal:batch.operation_failed")}), "error");
   }
 }
 
@@ -154,7 +154,7 @@ function refreshTerminalQuickCommandBars() {
   });
   document.querySelectorAll("[data-terminal-quick-command-toggle]").forEach(button => {
     const visible = terminalQuickCommandsVisible();
-    const label = visible ? "隐藏快速命令栏" : "显示快速命令栏";
+    const label = tr(visible ? "terminal:quick_commands.hide" : "terminal:quick_commands.show");
     button.classList.toggle("active", visible);
     button.title = label;
     button.setAttribute("aria-label", label);
@@ -210,7 +210,7 @@ function bindTerminalQuickCommandResize(bar) {
 async function runTerminalQuickCommand(key, id, action="") {
   const snippet = productivityState.snippets.find(item => Number(item.id) === Number(id));
   const session = terminalSessions.get(key);
-  if (!snippet || !session) return notify("快速命令或终端会话不存在", "error");
+  if (!snippet || !session) return notify(tr("terminal:quick_commands.missing_session"), "error");
   const connection = session.connection || currentConnection(session.id);
   const command = await expandSnippetCommand(snippet, connection);
   const mode = ["execute", "insert"].includes(action) ? action : (snippet.quick_action === "insert" ? "insert" : "execute");
@@ -230,24 +230,24 @@ async function removeTerminalQuickCommand(id) {
   if (!item) return;
   await api(`/api/command-snippets/${id}`, {method:"PUT", body:JSON.stringify({...item, quick_visible:0})});
   await loadCommandSnippets();
-  notify("已从快速命令栏移除", "success");
+  notify(tr("terminal:quick_commands.removed"), "success");
 }
 
 async function deleteTerminalQuickCommand(id) {
-  if (!await confirmModal("删除这个命令片段？", "删除命令片段", "删除", "取消", true)) return;
+  if (!await confirmModal(tr("terminal:snippets.delete_message"), tr("terminal:snippets.delete_title"), tr("common:actions.delete"), tr("common:actions.cancel"), true)) return;
   await api(`/api/command-snippets/${id}`, {method:"DELETE"});
   await loadCommandSnippets();
-  notify("命令片段已删除", "success");
+  notify(tr("terminal:quick_commands.deleted"), "success");
 }
 
 function showTerminalQuickCommandMenu(event, key, id) {
   showActionMenu(event, [
-    {label:"立即执行", icon:"play", run:()=>runTerminalQuickCommand(key, id, "execute")},
-    {label:"仅插入终端", icon:"text-cursor-input", run:()=>runTerminalQuickCommand(key, id, "insert")},
+    {label:tr("terminal:quick_commands.execute_now"), icon:"play", run:()=>runTerminalQuickCommand(key, id, "execute")},
+    {label:tr("terminal:quick_commands.insert_only"), icon:"text-cursor-input", run:()=>runTerminalQuickCommand(key, id, "insert")},
     {separator:true},
-    {label:"编辑命令", icon:"pencil", run:()=>openCommandSnippetEditor(id, {quick:true})},
-    {label:"从命令栏移除", icon:"panel-bottom-close", run:()=>removeTerminalQuickCommand(id)},
-    {label:"删除命令片段", icon:"trash-2", danger:true, run:()=>deleteTerminalQuickCommand(id)}
+    {label:tr("terminal:quick_commands.edit"), icon:"pencil", run:()=>openCommandSnippetEditor(id, {quick:true})},
+    {label:tr("terminal:quick_commands.remove"), icon:"panel-bottom-close", run:()=>removeTerminalQuickCommand(id)},
+    {label:tr("terminal:quick_commands.delete"), icon:"trash-2", danger:true, run:()=>deleteTerminalQuickCommand(id)}
   ]);
 }
 

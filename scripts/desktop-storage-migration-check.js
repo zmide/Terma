@@ -85,6 +85,17 @@ function settings(root) {
     () => createDesktopStorageTransition(settings(source), settings(target), runtimePaths(source), runtimePaths(target)),
     /已经包含 data 数据/
   );
+  const previousLanguage = process.env.TERMA_INTERFACE_LANGUAGE;
+  process.env.TERMA_INTERFACE_LANGUAGE = "en-US";
+  try {
+    assert.throws(
+      () => createDesktopStorageTransition(settings(source), settings(target), runtimePaths(source), runtimePaths(target)),
+      /already contains data/
+    );
+  } finally {
+    if (previousLanguage === undefined) delete process.env.TERMA_INTERFACE_LANGUAGE;
+    else process.env.TERMA_INTERFACE_LANGUAGE = previousLanguage;
+  }
   assert.equal(fs.readFileSync(path.join(target, "data", "tunnels.db"), "utf8"), "existing");
 }
 

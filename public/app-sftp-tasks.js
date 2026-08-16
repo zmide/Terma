@@ -172,9 +172,83 @@ function sftpJobProgress(job) {
   };
 }
 
+function localizedSftpJobText(value) {
+  const source = String(value || "");
+  return typeof localizedTermaUiPhrase === "function" ? localizedTermaUiPhrase(source) : source;
+}
+
+function localizedSftpTaskMessage(message, code="", params={}) {
+  const source = String(message || "");
+  const normalizedCode = typeof normalizeBackendPublicErrorCode === "function"
+    ? normalizeBackendPublicErrorCode(code)
+    : String(code || "").trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_");
+  const safeParams = typeof backendPublicErrorParams === "function" ? backendPublicErrorParams(params) : {};
+  const language = typeof normalizeTermaLanguage === "function"
+    ? normalizeTermaLanguage(document.documentElement.lang || window.i18next?.resolvedLanguage || "zh-CN")
+    : String(document.documentElement.lang || "zh-CN");
+  const key = normalizedCode ? `tasks:job_issues.${normalizedCode}` : "";
+  if (key && window.i18next?.exists?.(key, {lng:language, fallbackLng:false})) {
+    return tr(key, {...safeParams, lng:language, fallbackLng:false, defaultValue:""});
+  }
+  if (normalizedCode && language === "en-US") {
+    return tr("tasks:job_issues.unknown", {lng:"en-US", fallbackLng:false, defaultValue:"The task could not be completed."});
+  }
+  if (!source) return "";
+  return typeof rememberTermaRawUiPhrase === "function" ? rememberTermaRawUiPhrase(source) : source;
+}
+
+function localizedSftpJobIssue(job, field) {
+  return localizedSftpTaskMessage(
+    job?.[field],
+    job?.[`${field}_code`],
+    job?.[`${field}_params`]
+  );
+}
+
+function sftpTaskInlineArgument(value) {
+  return `'${escAttr(String(value ?? ""))}'`;
+}
+
+function sftpJobDisplayLabel(job={}) {
+  if (job.label_i18n === true) return String(job.label || job.type || "");
+  const source = String(job.label || job.type || "");
+  const pathName = value => String(value || "").replace(/\\/g, "/").split("/").filter(Boolean).pop() || "";
+  if (job.type === "download") {
+    if (job.archive_download) {
+      const count = Array.isArray(job.remote_paths) ? job.remote_paths.length : Number(job.item_count || 0);
+      return tr("sftp:task_ui.archive_download", {count, defaultValue:`打包下载 ${count} 项`});
+    }
+    if (source === "批量下载到本机") return tr("sftp:task_ui.batch_download_local", {defaultValue:"批量下载到本机"});
+    const name = pathName(job.remote_path) || source.match(/^下载\s+(.+)$/)?.[1] || "";
+    return name ? tr("sftp:task_ui.download_file", {name, defaultValue:`下载 ${name}`}) : localizedSftpJobText(source);
+  }
+  if (job.type === "upload") {
+    const name = pathName(job.remote_path || job.local_path) || source.match(/^上传\s+(.+)$/)?.[1] || "";
+    return name ? tr("sftp:task_ui.upload_file", {name, defaultValue:`上传 ${name}`}) : localizedSftpJobText(source);
+  }
+  if (job.type === "delete") {
+    const count = Math.max(1, Number(job.item_count || job.size || 1));
+    const action = tr(job.recycled ? "sftp:operations.recycle_confirm" : "sftp:menu.delete", {defaultValue:job.recycled ? "移入回收站" : "删除"});
+    const name = count === 1 ? source.match(/^(?:移入回收站|删除)\s+(.+)$/)?.[1] || "" : "";
+    if (count === 1 && !name) return localizedSftpJobText(source);
+    return name
+      ? tr("sftp:task_ui.item_action", {action, name, defaultValue:`${action} ${name}`})
+      : tr("sftp:task_ui.items_action", {action, count, defaultValue:`${action} ${count} 项`});
+  }
+  if (job.type === "cross-copy") {
+    const count = Math.max(0, Number(job.source_paths?.length || job.item_count || job.size || 0));
+    return job.source_connection_name
+      ? tr("sftp:task_ui.copy_from_connection", {name:job.source_connection_name, count, defaultValue:`从 ${job.source_connection_name} 复制 ${count} 项`})
+      : tr("sftp:task_ui.copy_items", {count, defaultValue:`复制 ${count} 项`});
+  }
+  return localizedSftpJobText(source);
+}
+
 function sftpJobProgressLabel(job, progress) {
   if (!progress) return "";
-  return `${job?.progress_estimated ? "约 " : ""}${Math.round(progress.percent)}%`;
+  return job?.progress_estimated
+    ? tr("tasks:auto.estimated_percent", {percent:Math.round(progress.percent), defaultValue:`约 ${Math.round(progress.percent)}%`})
+    : `${Math.round(progress.percent)}%`;
 }
 
 function sftpTaskCollections(jobs=sftpLatestJobs) {
@@ -217,9 +291,9 @@ function sftpFloatingJobDetail(job) {
   const transferred = Math.max(0, Number(job.transferred || 0));
   const size = Math.max(0, Number(job.size || 0));
   const amount = job.progress_unit === "percent"
-    ? (job.current || "")
+    ? localizedSftpJobText(job.current)
     : job.progress_unit === "items" && size
-      ? `已处理 ${Math.min(size, transferred)} / ${size} 项`
+      ? tr("tasks:auto.processed_items", {count:size, completed:Math.min(size, transferred), total:size, defaultValue:`已处理 ${Math.min(size, transferred)} / ${size} 项`})
       : progress
         ? `${formatBytes(progress.transferred)} / ${formatBytes(progress.size)}`
         : "";
@@ -238,10 +312,10 @@ function dismissSftpTaskFloat() {
 
 async function muteSftpTaskFloat() {
   const accepted = await confirmModal(
-    "静默后将永久关闭此类悬浮进度卡。后台任务仍会继续，也可以通过标题栏任务中心查看；需要恢复时，请前往通知设置重新开启。",
-    "静默悬浮进度卡",
-    "永久静默",
-    "取消"
+    tr("sftp:task_ui.mute_message", {defaultValue:"静默后将永久关闭此类悬浮进度卡。后台任务仍会继续，也可以通过标题栏任务中心查看；需要恢复时，请前往通知设置重新开启。"}),
+    tr("sftp:task_ui.mute_title", {defaultValue:"静默悬浮进度卡"}),
+    tr("sftp:task_ui.mute_confirm", {defaultValue:"永久静默"}),
+    tr("common:actions.cancel", {defaultValue:"取消"})
   );
   if (!accepted) return;
   try {
@@ -251,9 +325,9 @@ async function muteSftpTaskFloat() {
     });
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
     updateSftpTaskFloat(sftpLatestJobs);
-    notify("悬浮进度卡已静默，可在通知设置中重新开启", "success");
+    notify(tr("sftp:task_ui.muted", {defaultValue:"悬浮进度卡已静默，可在通知设置中重新开启"}), "success");
   } catch (error) {
-    notify(error.message || "静默悬浮进度卡失败", "error");
+    notify(error.message || tr("sftp:task_ui.mute_failed", {defaultValue:"静默悬浮进度卡失败"}), "error");
   }
 }
 
@@ -292,21 +366,36 @@ function updateSftpTaskFloat(jobs=sftpLatestJobs) {
   const determinate = Boolean(aggregate?.determinate);
   const percent = Number(aggregate?.percent || 0);
   const totalSpeed = active.reduce((total, job) => total + (job.status === "running" ? Math.max(0, Number(job.speed_bps || 0)) : 0), 0);
-  const title = active.length === 1 ? (active[0].label || "后台任务") : `${active.length} 个后台任务`;
+  const title = active.length === 1
+    ? sftpJobDisplayLabel(active[0]) || tr("sftp:task_ui.background_task", {defaultValue:"后台任务"})
+    : tr("sftp:task_ui.background_tasks", {count:active.length, defaultValue:`${active.length} 个后台任务`});
   const detail = active.length === 1
     ? sftpFloatingJobDetail(active[0])
     : [
-        active.some(job => job.status === "running") ? `${active.filter(job => job.status === "running").length} 项执行中` : "",
-        active.some(job => job.status === "pending") ? `${active.filter(job => job.status === "pending").length} 项准备中` : "",
-        active.some(job => job.status === "paused") ? `${active.filter(job => job.status === "paused").length} 项已暂停` : "",
+        active.some(job => job.status === "running") ? tr("sftp:task_ui.running_items", {count:active.filter(job => job.status === "running").length, defaultValue:`${active.filter(job => job.status === "running").length} 项执行中`}) : "",
+        active.some(job => job.status === "pending") ? tr("sftp:task_ui.pending_items", {count:active.filter(job => job.status === "pending").length, defaultValue:`${active.filter(job => job.status === "pending").length} 项准备中`}) : "",
+        active.some(job => job.status === "paused") ? tr("sftp:task_ui.paused_items", {count:active.filter(job => job.status === "paused").length, defaultValue:`${active.filter(job => job.status === "paused").length} 项已暂停`}) : "",
         totalSpeed ? `${formatBytes(totalSpeed)}/s` : "",
-        determinate ? `${active.some(job => job.progress_estimated) ? "约 " : ""}${Math.round(percent)}%` : ""
+        determinate ? (active.some(job => job.progress_estimated) ? tr("tasks:auto.estimated_percent", {percent:Math.round(percent), defaultValue:`约 ${Math.round(percent)}%`}) : `${Math.round(percent)}%`) : ""
       ].filter(Boolean).join(" · ");
-  const singleCancelable = active.length === 1
-    && active[0].can_cancel !== false
-    && !(active[0].type === "upload" && active[0].phase === "committing");
+  const singleJob = active.length === 1 ? active[0] : null;
+  const singleCancelable = Boolean(singleJob
+    && singleJob.can_cancel !== false
+    && !(singleJob.type === "upload" && singleJob.phase === "committing"));
+  const singlePausable = Boolean(singleJob
+    && singleJob.status === "running"
+    && singleJob.resume_supported === true
+    && singleJob.can_pause !== false);
+  const singleResumable = Boolean(singleJob
+    && singleJob.status === "paused"
+    && singleJob.can_resume);
   if (!box.querySelector(".sftp-task-float-head")) {
-    box.innerHTML = `<div class="sftp-task-float-head"><button type="button" class="sftp-task-float-open" title="打开任务中心"><span class="sftp-task-float-icon"></span><span class="sftp-task-float-copy"><strong class="sftp-task-float-title"></strong><span class="sftp-task-float-detail"></span></span></button><span class="sftp-task-float-actions"><button type="button" class="icon-button sftp-task-float-cancel" onclick="event.stopPropagation();cancelSftpJob(this.dataset.jobId)" title="停止任务" aria-label="停止任务" hidden>${icon("square")}</button><button type="button" class="icon-button sftp-task-float-close" onclick="event.stopPropagation();dismissSftpTaskFloat()" title="关闭当前悬浮进度" aria-label="关闭当前悬浮进度">${icon("x")}</button><button type="button" class="icon-button sftp-task-float-mute" onclick="event.stopPropagation();muteSftpTaskFloat()" title="静默悬浮进度卡" aria-label="静默悬浮进度卡">${icon("bell-off")}</button></span></div><div class="progress" role="progressbar" aria-label="任务进度"><i></i></div>`;
+    const openText = tr("tasks:actions.open_center", {defaultValue:"打开任务中心"});
+    const stopText = tr("tasks:actions.stop", {defaultValue:"停止任务"});
+    const closeText = tr("tasks:actions.close_floating", {defaultValue:"关闭当前悬浮进度"});
+    const muteText = tr("tasks:actions.mute_floating", {defaultValue:"静默悬浮进度卡"});
+    const progressText = tr("tasks:actions.progress", {defaultValue:"任务进度"});
+    box.innerHTML = `<div class="sftp-task-float-head"><button type="button" class="sftp-task-float-open" title="${escAttr(openText)}"><span class="sftp-task-float-icon"></span><span class="sftp-task-float-copy"><strong class="sftp-task-float-title"></strong><span class="sftp-task-float-detail"></span></span></button><span class="sftp-task-float-actions"><button type="button" class="icon-button sftp-task-float-pause" onclick="event.stopPropagation();toggleSftpTaskFloatJob(this)" hidden></button><button type="button" class="icon-button sftp-task-float-cancel" onclick="event.stopPropagation();cancelSftpJob(this.dataset.jobId)" title="${escAttr(stopText)}" aria-label="${escAttr(stopText)}" hidden>${icon("square")}</button><button type="button" class="icon-button sftp-task-float-close" onclick="event.stopPropagation();dismissSftpTaskFloat()" title="${escAttr(closeText)}" aria-label="${escAttr(closeText)}">${icon("x")}</button><button type="button" class="icon-button sftp-task-float-mute" onclick="event.stopPropagation();muteSftpTaskFloat()" title="${escAttr(muteText)}" aria-label="${escAttr(muteText)}">${icon("bell-off")}</button></span></div><div class="progress" role="progressbar" aria-label="${escAttr(progressText)}"><i></i></div>`;
   }
   const hasRunning = active.some(job => job.status === "running");
   const statusIcon = box.querySelector(".sftp-task-float-icon");
@@ -319,6 +408,19 @@ function updateSftpTaskFloat(jobs=sftpLatestJobs) {
   const detailNode = box.querySelector(".sftp-task-float-detail");
   if (titleNode) titleNode.textContent = title;
   if (detailNode) detailNode.textContent = detail;
+  const pauseButton = box.querySelector(".sftp-task-float-pause");
+  if (pauseButton) {
+    const action = singlePausable ? "pause" : singleResumable ? "resume" : "";
+    pauseButton.hidden = !action;
+    pauseButton.dataset.action = action;
+    pauseButton.dataset.jobId = action ? String(singleJob?.id || "") : "";
+    pauseButton.title = action === "pause" ? tr("tasks:actions.pause", {defaultValue:"暂停"}) : tr("tasks:actions.resume", {defaultValue:"继续"});
+    pauseButton.setAttribute("aria-label", pauseButton.title);
+    if (action && pauseButton.dataset.icon !== action) {
+      pauseButton.innerHTML = icon(action === "pause" ? "pause" : "play");
+      pauseButton.dataset.icon = action;
+    }
+  }
   const cancelButton = box.querySelector(".sftp-task-float-cancel");
   if (cancelButton) {
     cancelButton.hidden = !singleCancelable;
@@ -429,22 +531,22 @@ function renderSftpTaskCenterDrawer(jobs=sftpLatestJobs) {
   if (historyCount) historyCount.textContent = String(history.length);
   list.innerHTML = visible.length
     ? visible.map(renderSftpJob).join("")
-    : `<div class="sftp-task-empty">${showingHistory ? "暂无已完成或已取消的任务" : showingFailed ? "暂无失败的任务" : "暂无进行中的任务"}</div>`;
+    : `<div class="sftp-task-empty">${esc(tr(showingHistory ? "tasks:auto.empty_history" : showingFailed ? "tasks:auto.empty_failed" : "tasks:auto.empty_current", {defaultValue:showingHistory ? "暂无已完成或已取消的任务" : showingFailed ? "暂无失败的任务" : "暂无进行中的任务"}))}</div>`;
   bindSftpTaskLogViewStates(list);
   list.setAttribute("aria-labelledby", showingHistory ? "sftpTaskCenterHistoryTab" : showingFailed ? "sftpTaskCenterFailedTab" : "sftpTaskCenterCurrentTab");
   const summary = document.getElementById("sftpTaskCenterSummary");
   if (summary) summary.textContent = [
-    activeCount ? `${activeCount} 项进行中` : "",
-    failedCount ? `${failedCount} 项失败` : "",
-    !activeCount && !failedCount ? "暂无进行中的任务" : ""
+    activeCount ? tr("tasks:auto.running_count", {count:activeCount, defaultValue:`${activeCount} 项进行中`}) : "",
+    failedCount ? tr("tasks:auto.failed_count", {count:failedCount, defaultValue:`${failedCount} 项失败`}) : "",
+    !activeCount && !failedCount ? tr("tasks:auto.empty_current", {defaultValue:"暂无进行中的任务"}) : ""
   ].filter(Boolean).join(" · ");
   const footer = document.getElementById("sftpTaskCenterFooter");
   if (footer) footer.hidden = !((showingHistory && history.length) || (showingFailed && failed.length));
   const clearLabel = document.getElementById("sftpTaskCenterClearLabel");
-  if (clearLabel) clearLabel.textContent = showingFailed ? "清空失败" : "清空历史";
+  if (clearLabel) clearLabel.textContent = tr(showingFailed ? "tasks:dialogs.clear_failed_action" : "tasks:dialogs.clear_history_action", {defaultValue:showingFailed ? "清空失败" : "清空历史"});
   const clearButton = document.getElementById("sftpTaskCenterClearButton");
   if (clearButton) {
-    clearButton.title = showingFailed ? "删除全部失败任务记录" : "删除全部历史任务记录";
+    clearButton.title = tr(showingFailed ? "tasks:auto.delete_all_failed" : "tasks:auto.delete_all_history", {defaultValue:showingFailed ? "删除全部失败任务记录" : "删除全部历史任务记录"});
     clearButton.setAttribute("aria-label", clearButton.title);
   }
 }
@@ -466,8 +568,13 @@ function updateSftpTaskCenter(jobs=sftpLatestJobs) {
   const attentionCount = current.length + failed.length;
   badge.hidden = !attentionCount;
   badge.textContent = attentionCount > 99 ? "99+" : String(attentionCount);
-  const description = [activeCount ? `${activeCount} 项进行中` : "", failedCount ? `${failedCount} 项失败` : ""].filter(Boolean).join("，");
-  button.title = description ? `任务中心：${description}` : "任务中心";
+  const description = [
+    activeCount ? tr("tasks:auto.running_count", {count:activeCount, defaultValue:`${activeCount} 项进行中`}) : "",
+    failedCount ? tr("tasks:auto.failed_count", {count:failedCount, defaultValue:`${failedCount} 项失败`}) : ""
+  ].filter(Boolean).join(tr("tasks:auto.summary_separator", {defaultValue:"，"}));
+  button.title = description
+    ? tr("tasks:auto.center_summary", {summary:description, defaultValue:`任务中心：${description}`})
+    : tr("tasks:title", {defaultValue:"任务中心"});
   button.setAttribute("aria-label", button.title);
   if (progressBar) {
     const progress = sftpTaskCenterProgress(jobs);
@@ -477,7 +584,7 @@ function updateSftpTaskCenter(jobs=sftpLatestJobs) {
     const fill = progressBar.querySelector("i");
     if (fill) fill.style.width = `${Math.round(progress?.percent || 0)}%`;
     if (progress) {
-      progressBar.setAttribute("aria-valuetext", determinate ? `${Math.round(progress.percent)}%` : "正在计算任务进度");
+      progressBar.setAttribute("aria-valuetext", determinate ? `${Math.round(progress.percent)}%` : tr("sftp:task_ui.calculating_progress", {defaultValue:"正在计算任务进度"}));
       if (determinate) progressBar.setAttribute("aria-valuenow", String(Math.round(progress.percent)));
       else progressBar.removeAttribute("aria-valuenow");
     } else {
@@ -575,7 +682,10 @@ async function refreshSftpJobs() {
     ...job,
     id:`sync:${job.id}`,
     raw_sync_id:job.id,
-    label:job.type === "sync-scan" ? "目录比较" : "目录同步",
+    label:job.type === "sync-scan"
+      ? tr("sftp:task_ui.directory_compare", {defaultValue:"目录比较"})
+      : tr("sftp:task_ui.directory_sync", {defaultValue:"目录同步"}),
+    label_i18n:true,
     connection_name:connections.find(item => Number(item.id) === Number(job.connection_id))?.name || "",
     status:job.status === "completed" ? "done" : job.status,
     size:Number(job.total || 0),
@@ -586,16 +696,29 @@ async function refreshSftpJobs() {
     can_pause:false,
     finished_at:["completed", "failed", "cancelled"].includes(job.status) ? job.updated_at : null,
     error:job.errors?.map(item => `${item.relative ? `${item.relative}：` : ""}${item.error}`).join("\n") || ""
-  })), ...desktopJobs.map(task => ({
+  })), ...desktopJobs.map(task => {
+    const component = task.desktop_label || tr("sftp:task_ui.linux_desktop", {defaultValue:"Linux 桌面"});
+    const action = task.action === "uninstall"
+      ? tr("sftp:task_ui.uninstall", {defaultValue:"卸载"})
+      : tr("sftp:task_ui.install", {defaultValue:"安装"});
+    const stages = {
+      prepare:tr("sftp:task_ui.stage_prepare", {defaultValue:"正在准备"}),
+      packages:tr("sftp:task_ui.stage_packages", {defaultValue:"正在处理软件包"}),
+      refresh:tr("sftp:task_ui.stage_refresh", {defaultValue:"正在刷新会话"}),
+      verify:tr("sftp:task_ui.stage_verify", {defaultValue:"正在验证结果"}),
+      done:tr("tasks:status.done", {defaultValue:"已完成"})
+    };
+    return ({
     id:`desktop:${task.id}`,
     raw_desktop_id:task.id,
     type:"linux-desktop",
-    label:`${task.desktop_label || "Linux 桌面"}${task.action_label || (task.action === "uninstall" ? "卸载" : "安装")}`,
+    label:tr("sftp:task_ui.component_action", {component, action, defaultValue:`${component}${action}`}),
+    label_i18n:true,
     connection_id:Number(task.connection_id || 0),
     connection_name:task.connection_name || "",
     status:task.status,
     phase:task.stage || "prepare",
-    current:({prepare:"正在准备", packages:"正在处理软件包", refresh:"正在刷新会话", verify:"正在验证结果", done:"已完成"}[task.stage] || task.stage || ""),
+    current:stages[task.stage] || task.stage || "",
     size:100,
     transferred:Number(task.progress || 0),
     progress:Number(task.progress || 0),
@@ -607,11 +730,18 @@ async function refreshSftpJobs() {
     updated_at:task.updated_at || 0,
     logs:Array.isArray(task.logs) ? task.logs : [],
     error:task.error || ""
-  })), ...componentJobs.map(task => ({
+  });
+  }), ...componentJobs.map(task => {
+    const component = task.component_label || tr("sftp:task_ui.remote_component", {defaultValue:"远端组件"});
+    const action = task.action_label
+      ? localizedSftpJobText(task.action_label)
+      : tr("sftp:task_ui.offline_install", {defaultValue:"离线安装"});
+    return ({
     id:`component:${task.id}`,
     raw_component_id:task.id,
     type:"remote-component",
-    label:`${task.component_label || "远端组件"}${task.action_label || "离线安装"}`,
+    label:tr("sftp:task_ui.component_action", {component, action, defaultValue:`${component}${action}`}),
+    label_i18n:true,
     connection_id:Number(task.connection_id || 0),
     connection_name:task.connection_name || "",
     status:task.status,
@@ -628,7 +758,8 @@ async function refreshSftpJobs() {
     updated_at:task.updated_at || 0,
     logs:Array.isArray(task.logs) ? task.logs : [],
     error:task.error || ""
-  }))];
+  });
+  })];
   if (requestSeq !== sftpJobsRequestSeq) return sftpLatestJobs;
   const readyBrowserDownload = jobs.find(job => job.status === "done"
     && job.type === "download"
@@ -636,7 +767,7 @@ async function refreshSftpJobs() {
   if (readyBrowserDownload) {
     sftpPendingBrowserDownloads.delete(readyBrowserDownload.id);
     saveSftpJobFile(readyBrowserDownload.id);
-    notify("下载完成，已交给当前设备的浏览器保存", "success");
+    notify(tr("sftp:task_ui.browser_saved", {defaultValue:"下载完成，已交给当前设备的浏览器保存"}), "success");
   }
   sftpLatestJobs = jobs;
   updateSftpTaskCenter(jobs);
@@ -663,36 +794,46 @@ function renderSftpJob(job) {
   const progress = progressInfo?.percent || 0;
   const speed = running ? Number(job.speed_bps || 0) : Number(job.average_bps || 0);
   const amount = job.progress_unit === "percent"
-    ? (job.current || "")
+    ? localizedSftpJobText(job.current)
     : job.progress_unit === "items" && job.size
-      ? `已处理 ${Math.min(Number(job.size), Number(job.transferred || 0))} / ${Number(job.size)} 项`
+      ? tr("tasks:auto.processed_items", {count:Number(job.size), completed:Math.min(Number(job.size), Number(job.transferred || 0)), total:Number(job.size), defaultValue:`已处理 ${Math.min(Number(job.size), Number(job.transferred || 0))} / ${Number(job.size)} 项`})
       : job.size
         ? `${formatBytes(job.transferred || 0)} / ${formatBytes(job.size)}`
         : formatBytes(job.transferred || 0);
-  const detail = [sftpJobStatus(job.status, job.phase), amount, speed ? `${formatBytes(speed)}/s${running ? "" : " 平均"}` : "", sftpJobProgressLabel(job, progressInfo)].filter(Boolean).join(" · ");
+  const detail = [sftpJobStatus(job.status, job.phase), amount, speed ? `${formatBytes(speed)}/s${running ? "" : tr("tasks:auto.average_suffix", {defaultValue:" 平均"})}` : "", sftpJobProgressLabel(job, progressInfo)].filter(Boolean).join(" · ");
   const progressBar = ["running", "pending", "paused", "done", "failed"].includes(job.status) && progressInfo ? `<div class="progress" aria-label="${Math.round(progress)}%"><i style="width:${progress}%"></i></div>` : "";
+  const jobIdArg = sftpTaskInlineArgument(job.id);
+  const rawSyncIdArg = sftpTaskInlineArgument(job.raw_sync_id);
+  const rawDesktopIdArg = sftpTaskInlineArgument(job.raw_desktop_id);
   let downloadAction = "";
   if (done && job.type === "download" && job.delivery_status === "saved") {
-    downloadAction = `<button class="icon-button primary sftp-task-icon-action" type="button" title="打开文件" aria-label="打开文件" onclick="event.stopPropagation();openSftpDownloadedFile('${escAttr(job.id)}',this)">${icon("external-link")}</button><button class="icon-button sftp-task-icon-action" type="button" title="打开目录" aria-label="打开目录" onclick="event.stopPropagation();openSftpDownloadDirectory(this,'${escAttr(job.id)}')">${icon("folder-open")}</button>`;
+    const openFile = tr("tasks:actions.open_file", {defaultValue:"打开文件"});
+    const openDirectory = tr("tasks:actions.open_directory", {defaultValue:"打开目录"});
+    downloadAction = `<button class="icon-button primary sftp-task-icon-action" type="button" title="${escAttr(openFile)}" aria-label="${escAttr(openFile)}" onclick="event.stopPropagation();openSftpDownloadedFile(${jobIdArg},this)">${icon("external-link")}</button><button class="icon-button sftp-task-icon-action" type="button" title="${escAttr(openDirectory)}" aria-label="${escAttr(openDirectory)}" onclick="event.stopPropagation();openSftpDownloadDirectory(this,${jobIdArg})">${icon("folder-open")}</button>`;
   } else if (done && job.type === "download" && ["delivered", "expired", "cache_cleared"].includes(job.delivery_status)) {
-    downloadAction = `<button onclick="event.stopPropagation();downloadSftp(${Number(job.connection_id)},'${escAttr(job.remote_path || "")}', 'file', this)">${icon("download")}<span>再次下载</span></button>`;
+    downloadAction = `<button onclick="event.stopPropagation();retryCompletedSftpDownload(${jobIdArg},this)">${icon("download")}<span>${esc(tr("tasks:actions.download_again", {defaultValue:"再次下载"}))}</span></button>`;
   } else if (done && job.type === "download") {
-    downloadAction = `<button class="primary" onclick="event.stopPropagation();saveSftpJobFile('${escAttr(job.id)}', this)">${icon("download")}<span>保存到本机</span></button>`;
+    downloadAction = `<button class="primary" onclick="event.stopPropagation();saveSftpJobFile(${jobIdArg},this)">${icon("download")}<span>${esc(tr("tasks:actions.save_local", {defaultValue:"保存到本机"}))}</span></button>`;
   }
-  const resumeBtn = resumable && (job.type === "download" || job.type === "upload") ? `<button class="${job.status === "failed" ? "primary" : ""}" onclick="event.stopPropagation();resumeSftpJob('${escAttr(job.id)}', this)">${job.status === "failed" ? "重试" : "继续"}</button>` : "";
-  const pauseBtn = running && job.can_pause !== false && (job.type === "download" || job.type === "upload") ? `<button onclick="event.stopPropagation();pauseSftpJob('${escAttr(job.id)}', this)">暂停</button>` : "";
-  const cancelBtn = cancelable ? `<button onclick="event.stopPropagation();cancelSftpJob('${escAttr(job.id)}', this)">取消</button>` : "";
-  const retrySyncBtn = syncJob && job.status === "failed" && job.type === "sync" ? `<button class="primary" onclick="event.stopPropagation();retrySftpSyncJob('${escAttr(job.raw_sync_id)}', this)">重试失败项</button>` : "";
-  const exportSyncBtn = syncJob && ["failed", "done", "cancelled"].includes(job.status) ? `<button onclick="event.stopPropagation();exportSftpSyncResult('${escAttr(job.raw_sync_id)}', this)">${icon("download")}<span>导出结果</span></button>` : "";
-  const desktopOpenBtn = desktopJob ? `<button onclick="event.stopPropagation();openLinuxDesktopTask(${Number(job.connection_id)},'${escAttr(job.raw_desktop_id)}', this)">${icon("monitor-cog")}<span>查看</span></button>` : "";
-  const deleteBtn = deletable ? `<button class="icon-button danger sftp-task-icon-action" type="button" title="删除任务" aria-label="删除任务" onclick="event.stopPropagation();deleteSftpJob('${escAttr(job.id)}', this)">${icon("trash-2")}</button>` : "";
+  const resumeBtn = resumable ? `<button class="${job.status === "failed" ? "primary" : ""}" onclick="event.stopPropagation();resumeSftpJob(${jobIdArg},this)">${esc(job.status === "failed" ? tr("tasks:actions.retry", {defaultValue:"重试"}) : tr("tasks:actions.resume", {defaultValue:"继续"}))}</button>` : "";
+  const pauseBtn = running && job.resume_supported === true && job.can_pause !== false ? `<button onclick="event.stopPropagation();pauseSftpJob(${jobIdArg},this)">${esc(tr("tasks:actions.pause", {defaultValue:"暂停"}))}</button>` : "";
+  const cancelBtn = cancelable ? `<button onclick="event.stopPropagation();cancelSftpJob(${jobIdArg},this)">${esc(tr("common:actions.cancel", {defaultValue:"取消"}))}</button>` : "";
+  const retrySyncBtn = syncJob && job.status === "failed" && job.type === "sync" ? `<button class="primary" onclick="event.stopPropagation();retrySftpSyncJob(${rawSyncIdArg},this)">${esc(tr("tasks:actions.retry_failed", {defaultValue:"重试失败项"}))}</button>` : "";
+  const exportSyncBtn = syncJob && ["failed", "done", "cancelled"].includes(job.status) ? `<button onclick="event.stopPropagation();exportSftpSyncResult(${rawSyncIdArg},this)">${icon("download")}<span>${esc(tr("tasks:actions.export_result", {defaultValue:"导出结果"}))}</span></button>` : "";
+  const desktopOpenBtn = desktopJob ? `<button onclick="event.stopPropagation();openLinuxDesktopTask(${Number(job.connection_id)},${rawDesktopIdArg},this)">${icon("monitor-cog")}<span>${esc(tr("tasks:actions.view", {defaultValue:"查看"}))}</span></button>` : "";
+  const deleteTask = tr("tasks:actions.delete", {defaultValue:"删除任务"});
+  const deleteBtn = deletable ? `<button class="icon-button danger sftp-task-icon-action" type="button" title="${escAttr(deleteTask)}" aria-label="${escAttr(deleteTask)}" onclick="event.stopPropagation();deleteSftpJob(${jobIdArg},this)">${icon("trash-2")}</button>` : "";
   const finishedAt = job.finished_at ? `<time datetime="${escAttr(new Date(job.finished_at).toISOString())}">${esc(new Date(job.finished_at).toLocaleString())}</time>` : "";
-  const deliveryText = job.saved_path ? `<span class="sftp-job-delivery">已保存到 ${esc(job.saved_path)}</span>` : "";
-  const deliveryError = job.delivery_error ? `<div class="sftp-job-error"><strong>自动保存失败</strong><span>${esc(job.delivery_error).slice(0,500)}</span></div>` : "";
-  const transferWarning = job.warning ? `<div class="sftp-job-warning"><strong>传输提示</strong><span>${esc(job.warning).slice(0,500)}</span></div>` : "";
+  const deliveryText = job.saved_path ? `<span class="sftp-job-delivery" data-i18n-skip>${esc(tr("tasks:notifications.saved_to", {path:job.saved_path, defaultValue:`已保存到 ${job.saved_path}`}))}</span>` : "";
+  const deliveryErrorText = localizedSftpJobIssue(job, "delivery_error");
+  const transferWarningText = localizedSftpJobIssue(job, "warning");
+  const jobErrorText = localizedSftpJobIssue(job, "error");
+  const deliveryError = deliveryErrorText ? `<div class="sftp-job-error"><strong>${esc(tr("tasks:auto.auto_save_failed", {defaultValue:"自动保存失败"}))}</strong><span data-i18n-skip>${esc(deliveryErrorText).slice(0,500)}</span></div>` : "";
+  const transferWarning = transferWarningText ? `<div class="sftp-job-warning"><strong>${esc(tr("tasks:auto.transfer_notice", {defaultValue:"传输提示"}))}</strong><span data-i18n-skip>${esc(transferWarningText).slice(0,500)}</span></div>` : "";
   const taskLogView = (desktopJob || componentJob) ? ensureSftpTaskLogViewState(job.id) : null;
-  const taskLog = taskLogView && job.logs?.length ? `<details class="global-task-log" data-task-id="${escAttr(job.id)}" ${taskLogView.expanded ? "open" : ""}><summary>查看日志</summary><pre>${esc(job.logs.slice(-80).map(item => `[${new Date(item.at || Date.now()).toLocaleTimeString()}] ${item.text || ""}`).join("\n"))}</pre></details>` : "";
-  return `<div class="sftp-job ${escAttr(job.status)}"><div><strong>${esc(job.label || job.type)}</strong><span>${esc(job.connection_name || "")} · ${esc(detail)}${job.progress_unit === "percent" ? "" : job.current ? ` · ${esc(job.current)}` : ""}${finishedAt ? ` · ${finishedAt}` : ""}</span>${deliveryText}${progressBar}${taskLog}${transferWarning}${deliveryError}${job.error ? `<div class="sftp-job-error"><strong>失败原因</strong><span>${esc(job.error).slice(0,500)}</span></div>` : ""}</div><div class="actions tight">${downloadAction}${resumeBtn}${pauseBtn}${retrySyncBtn}${exportSyncBtn}${desktopOpenBtn}${cancelBtn}${deleteBtn}</div></div>`;
+  const taskLog = taskLogView && job.logs?.length ? `<details class="global-task-log" data-task-id="${escAttr(job.id)}" ${taskLogView.expanded ? "open" : ""}><summary>${esc(tr("tasks:auto.view_logs", {defaultValue:"查看日志"}))}</summary><pre>${esc(job.logs.slice(-80).map(item => `[${new Date(item.at || Date.now()).toLocaleTimeString()}] ${item.text || ""}`).join("\n"))}</pre></details>` : "";
+  const currentText = localizedSftpJobText(job.current);
+  return `<div class="sftp-job ${escAttr(job.status)}"><div><strong data-i18n-skip>${esc(sftpJobDisplayLabel(job))}</strong><span data-i18n-skip>${esc(job.connection_name || "")} · ${esc(detail)}${job.progress_unit === "percent" ? "" : currentText ? ` · ${esc(currentText)}` : ""}${finishedAt ? ` · ${finishedAt}` : ""}</span>${deliveryText}${progressBar}${taskLog}${transferWarning}${deliveryError}${jobErrorText ? `<div class="sftp-job-error"><strong>${esc(tr("tasks:auto.failure_reason", {defaultValue:"失败原因"}))}</strong><span data-i18n-skip>${esc(jobErrorText).slice(0,500)}</span></div>` : ""}</div><div class="actions tight">${downloadAction}${resumeBtn}${pauseBtn}${retrySyncBtn}${exportSyncBtn}${desktopOpenBtn}${cancelBtn}${deleteBtn}</div></div>`;
 }
 
 function closeSftpRecycleBin() {
@@ -704,10 +845,18 @@ function closeSftpRecycleBin() {
 }
 
 function sftpRecycleItemHtml(connectionId, item) {
-  const deletedAt = item.deleted_at ? new Date(item.deleted_at).toLocaleString() : "时间未知";
+  const deletedAt = item.deleted_at
+    ? new Date(item.deleted_at).toLocaleString(document.documentElement.lang || undefined)
+    : tr("sftp:recycle_bin.unknown_time", {defaultValue:"时间未知"});
   const storage = item.storage === "tunneldesk" ? "tunneldesk" : "terma";
-  const legacy = storage === "tunneldesk" ? " · 旧版数据" : "";
-  return `<div class="sftp-recycle-item"><span class="sftp-recycle-icon ${escAttr(item.type)}">${icon(item.type === "dir" ? "folder" : "file")}</span><div><strong title="${escAttr(item.original_path)}">${esc(item.name || item.original_path)}</strong><span>${esc(item.original_path)}</span><small>删除于 ${esc(deletedAt)}${legacy}</small></div><div class="actions tight"><button type="button" onclick="restoreSftpRecycleItem(${connectionId},'${escAttr(item.id)}','${storage}')">${icon("undo-2")}<span>恢复</span></button><button class="danger" type="button" onclick="deleteSftpRecycleItem(${connectionId},'${escAttr(item.id)}','${escAttr(item.name || item.original_path)}','${storage}')">${icon("trash-2")}<span>永久删除</span></button></div></div>`;
+  const legacy = storage === "tunneldesk" ? tr("sftp:recycle_bin.legacy_suffix", {defaultValue:" · 旧版数据"}) : "";
+  const deletedText = tr("sftp:recycle_bin.deleted_at", {date:deletedAt, legacy, defaultValue:`删除于 ${deletedAt}${legacy}`});
+  const restore = tr("sftp:recycle_bin.restore", {defaultValue:"恢复"});
+  const permanentDelete = tr("sftp:recycle_bin.permanent_delete", {defaultValue:"永久删除"});
+  const idArg = sftpTaskInlineArgument(item.id);
+  const nameArg = sftpTaskInlineArgument(item.name || item.original_path);
+  const storageArg = sftpTaskInlineArgument(storage);
+  return `<div class="sftp-recycle-item"><span class="sftp-recycle-icon ${escAttr(item.type)}">${icon(item.type === "dir" ? "folder" : "file")}</span><div data-i18n-skip><strong title="${escAttr(item.original_path)}">${esc(item.name || item.original_path)}</strong><span>${esc(item.original_path)}</span><small>${esc(deletedText)}</small></div><div class="actions tight"><button type="button" title="${escAttr(restore)}" aria-label="${escAttr(restore)}" onclick="restoreSftpRecycleItem(${Number(connectionId)},${idArg},${storageArg})">${icon("undo-2")}<span>${esc(restore)}</span></button><button class="danger" type="button" title="${escAttr(permanentDelete)}" aria-label="${escAttr(permanentDelete)}" onclick="deleteSftpRecycleItem(${Number(connectionId)},${idArg},${nameArg},${storageArg})">${icon("trash-2")}<span>${esc(permanentDelete)}</span></button></div></div>`;
 }
 
 async function openSftpRecycleBin(tabKey=activeTabKey, connectionIdOverride=0) {
@@ -718,72 +867,95 @@ async function openSftpRecycleBin(tabKey=activeTabKey, connectionIdOverride=0) {
   sftpRecycleBinConnectionId = connectionId;
   const modal = $("modal");
   modal.onclick = null;
-  modal.innerHTML = `<div class="modal-card wide sftp-recycle-modal" role="dialog" aria-modal="true" aria-labelledby="sftpRecycleTitle"><div class="sftp-modal-head"><div><h2 id="sftpRecycleTitle">SFTP 回收站</h2><span id="sftpRecycleSummary">正在读取远端回收站</span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" onclick="closeSftpRecycleBin()">${icon("x")}</button></div><div id="sftpRecycleList" class="sftp-recycle-list">${stateView("loading", "正在读取回收站")}</div><div class="actions"><button id="sftpRecycleClear" class="danger" type="button" hidden onclick="clearSftpRecycleBin(${connectionId})">${icon("trash-2")}<span>清空回收站</span></button><button type="button" onclick="closeSftpRecycleBin()">关闭</button></div></div>`;
+  const close = tr("common:actions.close", {defaultValue:"关闭"});
+  const clear = tr("sftp:recycle_bin.clear", {defaultValue:"清空回收站"});
+  modal.innerHTML = `<div class="modal-card wide sftp-recycle-modal" role="dialog" aria-modal="true" aria-labelledby="sftpRecycleTitle"><div class="sftp-modal-head"><div><h2 id="sftpRecycleTitle">${esc(tr("sftp:recycle_bin.title", {defaultValue:"SFTP 回收站"}))}</h2><span id="sftpRecycleSummary">${esc(tr("sftp:recycle_bin.loading_remote", {defaultValue:"正在读取远端回收站"}))}</span></div><button class="icon-button" type="button" title="${escAttr(close)}" aria-label="${escAttr(close)}" onclick="closeSftpRecycleBin()">${icon("x")}</button></div><div id="sftpRecycleList" class="sftp-recycle-list">${stateView("loading", tr("sftp:recycle_bin.loading", {defaultValue:"正在读取回收站"}))}</div><div class="actions"><button id="sftpRecycleClear" class="danger" type="button" title="${escAttr(clear)}" aria-label="${escAttr(clear)}" hidden onclick="clearSftpRecycleBin(${connectionId})">${icon("trash-2")}<span>${esc(clear)}</span></button><button type="button" onclick="closeSftpRecycleBin()">${esc(close)}</button></div></div>`;
   modal.hidden = false;
   try {
     const data = await api(`/api/connections/${connectionId}/sftp/trash`);
     if (sftpRecycleBinConnectionId !== connectionId || !$("sftpRecycleList")) return;
     const items = data.items || [];
-    $("sftpRecycleSummary").textContent = `${data.enabled ? "已开启" : "当前关闭"} · ${items.length} 个项目`;
+    const state = data.enabled
+      ? tr("sftp:recycle_bin.enabled", {defaultValue:"已开启"})
+      : tr("sftp:recycle_bin.disabled", {defaultValue:"当前关闭"});
+    $("sftpRecycleSummary").textContent = tr("sftp:recycle_bin.summary", {state, count:items.length, defaultValue:`${state} · ${items.length} 个项目`});
     $("sftpRecycleList").innerHTML = items.length
       ? items.map(item => sftpRecycleItemHtml(connectionId, item)).join("")
-      : stateView("empty", "回收站为空", data.enabled ? "删除的远程项目会保存在这里。" : "可在 SFTP 页面右上角的全局设置中开启回收站。");
+      : stateView("empty", tr("sftp:recycle_bin.empty", {defaultValue:"回收站为空"}), data.enabled
+        ? tr("sftp:recycle_bin.empty_enabled_hint", {defaultValue:"删除的远程项目会保存在这里。"})
+        : tr("sftp:recycle_bin.empty_disabled_hint", {defaultValue:"可在 SFTP 页面右上角的全局设置中开启回收站。"}));
     $("sftpRecycleClear").hidden = !items.length;
   } catch (error) {
-    if ($("sftpRecycleList")) $("sftpRecycleList").innerHTML = stateView("error", "回收站读取失败", error.message, `<button onclick="openSftpRecycleBin('${escAttr(tabKey)}')">重试</button>`);
+    if ($("sftpRecycleList")) $("sftpRecycleList").innerHTML = stateView("error", tr("sftp:recycle_bin.load_failed", {defaultValue:"回收站读取失败"}), error.message, `<button onclick="openSftpRecycleBin(${sftpTaskInlineArgument(tabKey)})">${esc(tr("common:actions.retry", {defaultValue:"重试"}))}</button>`);
   }
 }
 
 async function restoreSftpRecycleItem(connectionId, id, storage="terma") {
   try {
     const result = await api(`/api/connections/${connectionId}/sftp/trash/restore`, {method:"POST", body:JSON.stringify({id, storage})});
-    notify(`已恢复：${result.original_path || "远程项目"}`, "success");
+    const path = result.original_path || tr("sftp:drag.remote_item", {defaultValue:"远程项目"});
+    notify(tr("sftp:recycle_bin.restored", {path, defaultValue:`已恢复：${path}`}), "success");
     queueSftpDirectoryRefresh(connectionId);
     flushPendingSftpDirectoryRefresh();
   } catch (error) {
-    notify(error.message || "恢复失败", "error");
+    notify(error.message || tr("sftp:recycle_bin.restore_failed", {defaultValue:"恢复失败"}), "error");
   }
   openSftpRecycleBin("", connectionId);
 }
 
 async function deleteSftpRecycleItem(connectionId, id, name, storage="terma") {
-  if (!await confirmModal(`永久删除回收站中的项目且无法恢复？\n${name}`, "永久删除", "永久删除", "取消", true)) return openSftpRecycleBin("", connectionId);
+  if (!await confirmModal(
+    tr("sftp:recycle_bin.delete_message", {name, defaultValue:`永久删除回收站中的项目且无法恢复？\n${name}`}),
+    tr("sftp:recycle_bin.permanent_delete", {defaultValue:"永久删除"}),
+    tr("sftp:recycle_bin.permanent_delete", {defaultValue:"永久删除"}),
+    tr("common:actions.cancel", {defaultValue:"取消"}),
+    true
+  )) return openSftpRecycleBin("", connectionId);
   try {
     await api(`/api/connections/${connectionId}/sftp/trash/delete`, {method:"POST", body:JSON.stringify({id, storage})});
-    notify("回收站项目已永久删除", "success");
+    notify(tr("sftp:recycle_bin.deleted", {defaultValue:"回收站项目已永久删除"}), "success");
   } catch (error) {
-    notify(error.message || "永久删除失败", "error");
+    notify(error.message || tr("sftp:recycle_bin.delete_failed", {defaultValue:"永久删除失败"}), "error");
   }
   openSftpRecycleBin("", connectionId);
 }
 
 async function clearSftpRecycleBin(connectionId) {
-  if (!await confirmModal("永久删除当前服务器回收站内的全部项目？此操作无法撤销。", "清空 SFTP 回收站", "全部永久删除", "取消", true)) return openSftpRecycleBin("", connectionId);
+  if (!await confirmModal(
+    tr("sftp:recycle_bin.clear_message", {defaultValue:"永久删除当前服务器回收站内的全部项目？此操作无法撤销。"}),
+    tr("sftp:recycle_bin.clear_title", {defaultValue:"清空 SFTP 回收站"}),
+    tr("sftp:recycle_bin.clear_confirm", {defaultValue:"全部永久删除"}),
+    tr("common:actions.cancel", {defaultValue:"取消"}),
+    true
+  )) return openSftpRecycleBin("", connectionId);
   try {
     await api(`/api/connections/${connectionId}/sftp/trash/clear`, {method:"POST", body:"{}"});
-    notify("SFTP 回收站已清空", "success");
+    notify(tr("sftp:recycle_bin.cleared", {defaultValue:"SFTP 回收站已清空"}), "success");
   } catch (error) {
-    notify(error.message || "清空回收站失败", "error");
+    notify(error.message || tr("sftp:recycle_bin.clear_failed", {defaultValue:"清空回收站失败"}), "error");
   }
   openSftpRecycleBin("", connectionId);
 }
 
 function sftpJobStatus(status, phase="") {
-  if (status === "pending" && phase === "queued") return "排队中";
-  if (status === "running" && phase === "receiving") return "正在准备上传";
-  if (status === "running" && phase === "uploading") return "正在上传到远端";
-  if (status === "running" && phase === "committing") return "正在完成";
-  if (status === "running" && phase === "system-saving") return "正在保存到本机";
-  if (status === "running" && phase === "local-saving") return "正在下载到本机";
-  if (status === "running" && phase === "cancelling") return "正在停止";
-  if (status === "pending" && phase === "resuming") return "正在继续";
-  return {pending:"准备中", running:"执行中", done:"完成", failed:"失败", cancelled:"已取消", paused:"已暂停"}[status] || status;
+  if (status === "running" && ["archiving", "committing", "downloading", "scanning", "transferring"].includes(phase)) {
+    return tr(`tasks:phase.${phase}`, {defaultValue:phase});
+  }
+  if (status === "pending" && phase === "queued") return tr("tasks:phase.queued", {defaultValue:"排队中"});
+  if (status === "running" && phase === "receiving") return tr("tasks:phase.receiving", {defaultValue:"正在准备上传"});
+  if (status === "running" && phase === "uploading") return tr("tasks:phase.uploading", {defaultValue:"正在上传到远端"});
+  if (status === "running" && phase === "committing") return tr("tasks:phase.completing", {defaultValue:"正在完成"});
+  if (status === "running" && phase === "system-saving") return tr("tasks:phase.system_saving", {defaultValue:"正在保存到本机"});
+  if (status === "running" && phase === "local-saving") return tr("tasks:phase.local_saving", {defaultValue:"正在下载到本机"});
+  if (status === "running" && phase === "cancelling") return tr("tasks:phase.cancelling", {defaultValue:"正在停止"});
+  if (status === "pending" && phase === "resuming") return tr("tasks:phase.resuming", {defaultValue:"正在继续"});
+  return tr(`tasks:status.${status}`, {defaultValue:status});
 }
 
 async function cancelSftpJob(id, button=null) {
   const key = String(id || "");
   const actionKey = `sftp-task:cancel:${key}`;
-  if (!beginUiAction(actionKey, button, "停止中...")) return null;
+  if (!beginUiAction(actionKey, button, tr("sftp:task_ui.stopping", {defaultValue:"停止中..."}))) return null;
   const upload = sftpUploadRequests.get(key);
   if (upload) upload.cancelled = true;
   try {
@@ -793,7 +965,7 @@ async function cancelSftpJob(id, button=null) {
       return;
     }
     const result = await api(`/api/sftp/jobs/${encodeURIComponent(id)}/cancel`, {method:"POST"});
-    if (result?.ok === false) notify(result.message || "停止请求未被接受，任务仍在继续", "info");
+    if (result?.ok === false) notify(localizedSftpTaskMessage(result.message, result.message_code, result.message_params) || tr("sftp:task_ui.stop_rejected", {defaultValue:"停止请求未被接受，任务仍在继续"}), "info");
     await refreshSftpJobs();
   } finally {
     try { upload?.xhr?.abort(); } catch {}
@@ -803,12 +975,12 @@ async function cancelSftpJob(id, button=null) {
 
 async function pauseSftpJob(id, button=null) {
   const actionKey = `sftp-task:pause:${String(id || "")}`;
-  if (!beginUiAction(actionKey, button, "暂停中...")) return null;
+  if (!beginUiAction(actionKey, button, tr("sftp:task_ui.pausing", {defaultValue:"暂停中..."}))) return null;
   try {
     await api(`/api/sftp/jobs/${encodeURIComponent(id)}/pause`, {method:"POST"});
     await refreshSftpJobs();
   } catch (error) {
-    notify(error.message || "暂停任务失败", "error");
+    notify(error.message || tr("sftp:task_ui.pause_failed", {defaultValue:"暂停任务失败"}), "error");
   } finally {
     endUiAction(actionKey, button);
   }
@@ -816,14 +988,14 @@ async function pauseSftpJob(id, button=null) {
 
 async function resumeSftpJob(id, button=null) {
   const actionKey = `sftp-task:resume:${String(id || "")}`;
-  if (!beginUiAction(actionKey, button, "处理中...")) return null;
+  if (!beginUiAction(actionKey, button, tr("sftp:task_ui.processing", {defaultValue:"处理中..."}))) return null;
   try {
     const result = await api(`/api/sftp/jobs/${encodeURIComponent(id)}/resume`, {method:"POST"});
     if (result && result.error) return notify(result.error, "error");
-    notify("SFTP 任务已重新开始", "success");
+    notify(tr("sftp:task_ui.resumed", {defaultValue:"SFTP 任务已重新开始"}), "success");
     await refreshSftpJobs();
   } catch (error) {
-    notify(error.message || "重试任务失败", "error");
+    notify(error.message || tr("sftp:task_ui.resume_failed", {defaultValue:"重试任务失败"}), "error");
   } finally {
     endUiAction(actionKey, button);
   }
@@ -832,16 +1004,22 @@ async function resumeSftpJob(id, button=null) {
 async function deleteSftpJob(id, button=null) {
   const key = String(id || "");
   const actionKey = `sftp-task:delete:${key}`;
-  if (!beginUiAction(actionKey, button, "删除中...")) return null;
+  if (!beginUiAction(actionKey, button, tr("sftp:task_ui.deleting", {defaultValue:"删除中..."}))) return null;
   const drawer = document.getElementById("sftpTaskCenterDrawer");
   const centerButton = document.getElementById("sftpTaskCenterButton");
   const keepOpen = Boolean(drawer && !drawer.hidden);
   try {
-    if (!await confirmModal("删除该任务记录？","删除任务","删除","取消", true)) return null;
+    if (!await confirmModal(
+      tr("tasks:dialogs.delete_message", {defaultValue:"删除该任务记录？"}),
+      tr("tasks:dialogs.delete_title", {defaultValue:"删除任务"}),
+      tr("common:actions.delete", {defaultValue:"删除"}),
+      tr("common:actions.cancel", {defaultValue:"取消"}),
+      true
+    )) return null;
     await deleteSftpJobRecord(key);
     await refreshSftpJobs();
   } catch (error) {
-    notify(error.message || "删除任务失败", "error");
+    notify(error.message || tr("sftp:task_ui.delete_failed", {defaultValue:"删除任务失败"}), "error");
   } finally {
     endUiAction(actionKey, button);
     if (keepOpen && drawer) {
@@ -850,6 +1028,21 @@ async function deleteSftpJob(id, button=null) {
       renderSftpTaskCenterDrawer();
     }
   }
+}
+
+async function toggleSftpTaskFloatJob(button) {
+  const id = String(button?.dataset?.jobId || "");
+  const action = String(button?.dataset?.action || "");
+  if (!id || !["pause", "resume"].includes(action)) return;
+  if (action === "pause") await pauseSftpJob(id, button);
+  else await resumeSftpJob(id, button);
+}
+
+if (typeof registerTermaI18nRenderer === "function") {
+  registerTermaI18nRenderer(() => {
+    if (typeof updateSftpTaskCenter === "function") updateSftpTaskCenter(Array.isArray(sftpLatestJobs) ? sftpLatestJobs : []);
+    if (sftpRecycleBinConnectionId && $("sftpRecycleTitle")) openSftpRecycleBin("", sftpRecycleBinConnectionId);
+  });
 }
 
 function deleteSftpJobRecord(id) {
@@ -879,31 +1072,31 @@ async function extractSingleSftp(id, path, tabKey=activeTabKey) {
 
 async function compressSingleSftp(id, path, tabKey=activeTabKey) {
   const runtime = sftpTabRuntimes.get(String(tabKey || ""));
-  const name = await inputModal("压缩远程项目", "压缩包名称（自动使用 tar.gz）", `${sftpPathName(path)}.tar.gz`);
+  const name = await inputModal(tr("sftp:dialogs.compress_remote", {defaultValue:"压缩远程项目"}), tr("sftp:dialogs.archive_name", {defaultValue:"压缩包名称（自动使用 tar.gz）"}), `${sftpPathName(path)}.tar.gz`);
   if (!name) return;
   try {
     const job = await api(`/api/connections/${id}/sftp/compress`, {method:"POST", body:JSON.stringify({paths:[path], target:runtime?.state.path || ".", filename:name})});
     trackSftpMutationJob(job);
     refreshSftpJobs();
   } catch (error) {
-    notify(error.message || "压缩任务创建失败", "error");
+    notify(error.message || tr("sftp:operations.compress_failed", {defaultValue:"压缩任务创建失败"}), "error");
   }
 }
 
 function openSftpActionSheet(tabKey=activeTabKey) {
   const actions = [
-    { label: "复制选中", value: "copy" },
-    { label: "移动选中", value: "move" },
-    ...(sftpClipboardMatchesConnection(tabKey) ? [{ label: "粘贴到当前目录", value: "paste" }] : []),
-    ...(sftpClipboard?.paths?.length ? [{ label: "取消复制/移动队列", value: "cancelClipboard" }] : []),
-    { label: "下载选中", value: "download" },
-    { label: "压缩选中", value: "compress" },
-    { label: "设置权限", value: "permissions" },
-    { label: "解压选中压缩包", value: "extract" },
-    { label: "删除选中", value: "delete", className: "danger" },
-    { label: "取消", value: "" }
+    { label: tr("sftp:action_sheet.copy_selected", {defaultValue:"复制选中"}), value: "copy" },
+    { label: tr("sftp:action_sheet.move_selected", {defaultValue:"移动选中"}), value: "move" },
+    ...(sftpClipboardMatchesConnection(tabKey) ? [{ label: tr("sftp:clipboard.paste_current", {defaultValue:"粘贴到当前目录"}), value: "paste" }] : []),
+    ...(sftpClipboard?.paths?.length ? [{ label: tr("sftp:clipboard.cancel_title", {defaultValue:"取消复制/移动队列"}), value: "cancelClipboard" }] : []),
+    { label: tr("sftp:action_sheet.download_selected", {defaultValue:"下载选中"}), value: "download" },
+    { label: tr("sftp:action_sheet.compress_selected", {defaultValue:"压缩选中"}), value: "compress" },
+    { label: tr("sftp:menu.permissions", {defaultValue:"设置权限"}), value: "permissions" },
+    { label: tr("sftp:action_sheet.extract_selected", {defaultValue:"解压选中压缩包"}), value: "extract" },
+    { label: tr("sftp:action_sheet.delete_selected", {defaultValue:"删除选中"}), value: "delete", className: "danger" },
+    { label: tr("common:actions.cancel", {defaultValue:"取消"}), value: "" }
   ];
-  chooseModal("SFTP 操作", "选择要执行的文件操作。", actions).then(value => {
+  chooseModal(tr("sftp:action_sheet.title", {defaultValue:"SFTP 操作"}), tr("sftp:action_sheet.hint", {defaultValue:"选择要执行的文件操作。"}), actions).then(value => {
     if (value === "copy" || value === "move") copySftpSelection(value, tabKey);
     if (value === "paste") pasteSftpClipboard(tabKey);
     if (value === "cancelClipboard") cancelSftpClipboard();
@@ -917,20 +1110,27 @@ function openSftpActionSheet(tabKey=activeTabKey) {
 
 async function clearFinishedSftpJobs(button=null) {
   const actionKey = "sftp-task:clear-history";
-  if (!beginUiAction(actionKey, button, "清理中...")) return null;
+  if (!beginUiAction(actionKey, button, tr("sftp:task_ui.clearing", {defaultValue:"清理中..."}))) return null;
   const drawer = document.getElementById("sftpTaskCenterDrawer");
   const centerButton = document.getElementById("sftpTaskCenterButton");
   const keepOpen = Boolean(drawer && !drawer.hidden);
   try {
-    if (!await confirmModal("清空全部已完成和已取消的任务记录？失败记录会保留。", "清空任务历史", "清空历史", "取消", true)) return null;
+    if (!await confirmModal(
+      tr("tasks:dialogs.clear_history_message", {defaultValue:"清空全部已完成和已取消的任务记录？失败记录会保留。"}),
+      tr("tasks:dialogs.clear_history_title", {defaultValue:"清空任务历史"}),
+      tr("tasks:dialogs.clear_history_action", {defaultValue:"清空历史"}),
+      tr("common:actions.cancel", {defaultValue:"取消"}),
+      true
+    )) return null;
     const result = await api("/api/sftp/jobs/clear-finished", {method:"POST"});
     const syncResult = window.termaDesktop ? await api("/api/sftp/sync/jobs/clear-finished", {method:"POST"}).catch(() => ({removed:0})) : {removed:0};
     const desktopResult = await api("/api/linux-desktop/tasks/clear-finished", {method:"POST"}).catch(() => ({removed:0}));
     const componentResult = await api("/api/remote-component/tasks/clear-finished", {method:"POST"}).catch(() => ({removed:0}));
-    notify(`已清理 ${Number(result.removed || 0) + Number(syncResult.removed || 0) + Number(desktopResult.removed || 0) + Number(componentResult.removed || 0)} 条历史任务`, "success");
+    const count = Number(result.removed || 0) + Number(syncResult.removed || 0) + Number(desktopResult.removed || 0) + Number(componentResult.removed || 0);
+    notify(tr("sftp:task_ui.history_cleared", {count, defaultValue:`已清理 ${count} 条历史任务`}), "success");
     await refreshSftpJobs();
   } catch (error) {
-    notify(error.message || "清空任务历史失败", "error");
+    notify(error.message || tr("sftp:task_ui.clear_history_failed", {defaultValue:"清空任务历史失败"}), "error");
   } finally {
     endUiAction(actionKey, button);
     if (keepOpen && drawer) {
@@ -943,21 +1143,29 @@ async function clearFinishedSftpJobs(button=null) {
 
 async function clearFailedSftpJobs(button=null) {
   const actionKey = "sftp-task:clear-failed";
-  if (!beginUiAction(actionKey, button, "清理中...")) return null;
+  if (!beginUiAction(actionKey, button, tr("sftp:task_ui.clearing", {defaultValue:"清理中..."}))) return null;
   const drawer = document.getElementById("sftpTaskCenterDrawer");
   const centerButton = document.getElementById("sftpTaskCenterButton");
   const keepOpen = Boolean(drawer && !drawer.hidden);
   try {
     const failed = sftpTaskCollections().failed;
     if (!failed.length) return null;
-    if (!await confirmModal(`删除全部 ${failed.length} 条失败任务记录？此操作不会影响任务中心中的其他记录。`, "清空失败任务", "清空失败", "取消", true)) return null;
+    if (!await confirmModal(
+      tr("tasks:dialogs.clear_failed_message", {count:failed.length, defaultValue:`删除全部 ${failed.length} 条失败任务记录？此操作不会影响任务中心中的其他记录。`}),
+      tr("tasks:dialogs.clear_failed_title", {defaultValue:"清空失败任务"}),
+      tr("tasks:dialogs.clear_failed_action", {defaultValue:"清空失败"}),
+      tr("common:actions.cancel", {defaultValue:"取消"}),
+      true
+    )) return null;
     const results = await Promise.allSettled(failed.map(job => deleteSftpJobRecord(job.id)));
     const removed = results.filter(result => result.status === "fulfilled").length;
     const rejected = results.length - removed;
     await refreshSftpJobs();
-    notify(rejected ? `已删除 ${removed} 条失败任务，${rejected} 条删除失败` : `已删除 ${removed} 条失败任务`, rejected ? "error" : "success");
+    notify(rejected
+      ? tr("sftp:task_ui.failed_tasks_partially_deleted", {removed, rejected, defaultValue:`已删除 ${removed} 条失败任务，${rejected} 条删除失败`})
+      : tr("sftp:task_ui.failed_tasks_deleted", {count:removed, defaultValue:`已删除 ${removed} 条失败任务`}), rejected ? "error" : "success");
   } catch (error) {
-    notify(error.message || "清空失败任务失败", "error");
+    notify(error.message || tr("sftp:task_ui.clear_failed_failed", {defaultValue:"清空失败任务失败"}), "error");
   } finally {
     endUiAction(actionKey, button);
     if (keepOpen && drawer) {
@@ -970,13 +1178,13 @@ async function clearFailedSftpJobs(button=null) {
 
 async function retrySftpSyncJob(id, button=null) {
   const actionKey = `sftp-task:sync-retry:${String(id || "")}`;
-  if (!beginUiAction(actionKey, button, "重试中...")) return null;
+  if (!beginUiAction(actionKey, button, tr("sftp:task_ui.retrying", {defaultValue:"重试中..."}))) return null;
   try {
     const job = await api(`/api/sftp/sync/jobs/${encodeURIComponent(id)}/retry`, {method:"POST", body:"{}"});
-    notify(`已重试 ${job.total || 0} 个失败项目`, "success");
+    notify(tr("sftp:task_ui.sync_retried", {count:job.total || 0, defaultValue:`已重试 ${job.total || 0} 个失败项目`}), "success");
     await refreshSftpJobs();
   } catch (error) {
-    notify(error.message || "同步任务重试失败", "error");
+    notify(error.message || tr("sftp:task_ui.sync_retry_failed", {defaultValue:"同步任务重试失败"}), "error");
   } finally {
     endUiAction(actionKey, button);
   }
@@ -984,7 +1192,7 @@ async function retrySftpSyncJob(id, button=null) {
 
 async function exportSftpSyncResult(id, button=null) {
   const actionKey = `sftp-task:sync-export:${String(id || "")}`;
-  if (!beginUiAction(actionKey, button, "导出中...")) return null;
+  if (!beginUiAction(actionKey, button, tr("sftp:task_ui.exporting", {defaultValue:"导出中..."}))) return null;
   try {
     const job = await api(`/api/sftp/sync/jobs/${encodeURIComponent(id)}`);
     const blob = new Blob([JSON.stringify(job, null, 2)], {type:"application/json"});
@@ -995,7 +1203,7 @@ async function exportSftpSyncResult(id, button=null) {
     link.click();
     setTimeout(() => { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
   } catch (error) {
-    notify(error.message || "导出同步结果失败", "error");
+    notify(error.message || tr("sftp:task_ui.export_failed", {defaultValue:"导出同步结果失败"}), "error");
   } finally {
     endUiAction(actionKey, button);
   }

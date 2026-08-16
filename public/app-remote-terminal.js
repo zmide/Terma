@@ -13,14 +13,22 @@ function openRemoteTerminal(id, updateTab=true, existingKey="", existingTitle=""
   const next = existingKey ? 0 : nextRemoteTerminalIndex(id);
   const key = existingKey || `remote-terminal-${id}-${next}`;
   const title = existingTitle || `${profile.name}${next > 1 ? ` #${next}` : ""}`;
-  const meta = REMOTE_PROTOCOL_META[profile.protocol];
   const view = $("view-remote-terminal");
   view.dataset.remoteTerminalKey = key;
-  view.innerHTML = `<div class="terminal-toolbar"><div class="terminal-title-row"><span class="terminal-connection-dot"></span><div id="remoteTerminalStatus" class="terminal-status">正在连接 ${esc(remoteProfileEndpoint(profile))}</div></div><div class="actions terminal-actions"><button class="icon-button" onclick="reconnectRemoteTerminal(${profile.id},'${escAttr(key)}')" title="重新连接" aria-label="重新连接">${icon("refresh-cw")}<span>重连</span></button><button class="icon-button" onclick="editRemoteProfile(${profile.id})" title="连接设置" aria-label="连接设置">${icon("settings-2")}</button></div></div><div id="remoteTerminalMount" class="terminal-box"></div><div class="terminal-mobile-composer"><input id="remoteTerminalMobileInput" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="输入内容" onkeydown="if(event.key==='Enter')sendRemoteTerminalMobileInput('${escAttr(key)}')"><button class="primary icon-button" onclick="sendRemoteTerminalMobileInput('${escAttr(key)}')" title="发送" aria-label="发送">${icon("send")}</button></div>`;
-  setWorkspace(title, `${meta.label} · ${remoteProfileEndpoint(profile)}`, "remote-terminal", key, updateTab, true, {kind:"remote-terminal", id:profile.id, protocol:profile.protocol, connectionStatus:"connecting"});
+  const endpoint = remoteProfileEndpoint(profile);
+  const reconnectTitle = tr("terminal:toolbar.reconnect", {defaultValue:"重新连接终端"});
+  const connectionSettingsTitle = tr("remote:actions.connection_settings", {defaultValue:"连接设置"});
+  const sendTitle = tr("remote:terminal.send", {defaultValue:"发送"});
+  view.innerHTML = `<div class="terminal-toolbar"><div class="terminal-title-row"><span class="terminal-connection-dot"></span><div id="remoteTerminalStatus" class="terminal-status">${esc(tr("remote:terminal.connecting", {endpoint, defaultValue:`正在连接 ${endpoint}`}))}</div></div><div class="actions terminal-actions"><button class="icon-button" onclick="reconnectRemoteTerminal(${profile.id},'${escAttr(key)}')" title="${escAttr(reconnectTitle)}" aria-label="${escAttr(reconnectTitle)}">${icon("refresh-cw")}<span>${esc(tr("terminal:toolbar.reconnect_short", {defaultValue:"重连"}))}</span></button><button class="icon-button" onclick="editRemoteProfile(${profile.id})" title="${escAttr(connectionSettingsTitle)}" aria-label="${escAttr(connectionSettingsTitle)}">${icon("settings-2")}</button></div></div><div id="remoteTerminalMount" class="terminal-box"></div><div class="terminal-mobile-composer"><input id="remoteTerminalMobileInput" type="text" enterkeyhint="send" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="${escAttr(tr("remote:terminal.input_placeholder", {defaultValue:"输入内容"}))}" onkeydown="if(event.key==='Enter')sendRemoteTerminalMobileInput('${escAttr(key)}')"><button class="primary icon-button" onclick="sendRemoteTerminalMobileInput('${escAttr(key)}')" title="${escAttr(sendTitle)}" aria-label="${escAttr(sendTitle)}">${icon("send")}</button></div>`;
+  setWorkspace(title, `${remoteProtocolLabel(profile.protocol)} · ${endpoint}`, "remote-terminal", key, updateTab, true, {kind:"remote-terminal", id:profile.id, protocol:profile.protocol, connectionStatus:"connecting"});
   attachRemoteTerminal(profile, key).catch(error => {
     const mount = document.querySelector(`[data-remote-terminal-key="${CSS.escape(key)}"] #remoteTerminalMount`) || $("remoteTerminalMount");
-    if (mount) mount.innerHTML = stateView("error", "终端组件加载失败", error.message, `<button onclick="reconnectRemoteTerminal(${profile.id},'${escAttr(key)}')">重新连接</button>`);
+    if (mount) mount.innerHTML = stateView(
+      "error",
+      tr("terminal:components.load_failed", {defaultValue:"终端组件加载失败"}),
+      typeof localizedTermaUiPhrase === "function" ? localizedTermaUiPhrase(error.message) : error.message,
+      `<button onclick="reconnectRemoteTerminal(${profile.id},'${escAttr(key)}')">${esc(tr("terminal:toolbar.reconnect", {defaultValue:"重新连接终端"}))}</button>`
+    );
   });
 }
 
@@ -62,18 +70,21 @@ function connectRemoteTerminal(profile, key) {
   if (!session) return;
   try { session.socket?.close(); } catch {}
   const protocol = location.protocol === "https:" ? "wss" : "ws";
-  const socket = new WebSocket(`${protocol}://${location.host}/ws/remote-terminal?id=${profile.id}&cols=${session.term.cols || 80}&rows=${session.term.rows || 24}&title=${encodeURIComponent(profile.name)}&log_id=${encodeURIComponent(session.logId)}`);
+  const language = typeof normalizeTermaLanguage === "function"
+    ? normalizeTermaLanguage(document.documentElement.lang || "zh-CN")
+    : "zh-CN";
+  const socket = new WebSocket(`${protocol}://${location.host}/ws/remote-terminal?id=${profile.id}&cols=${session.term.cols || 80}&rows=${session.term.rows || 24}&title=${encodeURIComponent(profile.name)}&log_id=${encodeURIComponent(session.logId)}&language=${encodeURIComponent(language)}`);
   socket.binaryType = "arraybuffer";
   session.socket = socket;
   session.connected = false;
   const status = $("remoteTerminalStatus");
-  if (status) status.textContent = `正在连接 ${remoteProfileEndpoint(profile)}`;
+  if (status) status.textContent = tr("remote:terminal.connecting", {endpoint:remoteProfileEndpoint(profile), defaultValue:`正在连接 ${remoteProfileEndpoint(profile)}`});
   setWorkspaceTabConnectionStatus(key, "connecting");
   socket.onopen = () => {
     if (session.socket !== socket) return;
     session.connected = true;
     const node = $("remoteTerminalStatus");
-    if (node) node.textContent = `已连接 ${remoteProfileEndpoint(profile)}`;
+    if (node) node.textContent = tr("remote:terminal.connected", {endpoint:remoteProfileEndpoint(profile), defaultValue:`已连接 ${remoteProfileEndpoint(profile)}`});
     setWorkspaceTabConnectionStatus(key, "connected");
     socket.send(JSON.stringify({type:"resize",cols:session.term.cols,rows:session.term.rows}));
     session.term.focus();
@@ -87,14 +98,14 @@ function connectRemoteTerminal(profile, key) {
   socket.onerror = () => {
     if (session.socket !== socket) return;
     const node = $("remoteTerminalStatus");
-    if (node) node.textContent = "连接错误";
+    if (node) node.textContent = tr("remote:terminal.connection_error", {defaultValue:"连接错误"});
   };
   socket.onclose = () => {
     if (session.socket !== socket) return;
     session.connected = false;
     session.socket = null;
     const node = $("remoteTerminalStatus");
-    if (node) node.textContent = "已断开，点击重连";
+    if (node) node.textContent = tr("remote:terminal.disconnected_reconnect", {defaultValue:"已断开，点击重连"});
     setWorkspaceTabConnectionStatus(key, "disconnected");
   };
 }
@@ -103,7 +114,7 @@ function reconnectRemoteTerminal(id, key) {
   const profile = remoteProfileById(id);
   const session = remoteTerminalSessions.get(key);
   if (!profile || !session) return openRemoteTerminal(id, false, key);
-  session.term.write("\r\n正在重新连接...\r\n");
+  session.term.write(`\r\n${tr("remote:terminal.reconnecting_notice", {defaultValue:"正在重新连接..."})}\r\n`);
   connectRemoteTerminal(profile, key);
 }
 

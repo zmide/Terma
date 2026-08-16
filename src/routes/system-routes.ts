@@ -7,7 +7,7 @@ interface SystemRouteDependencies {
   getDesktopIntegration(): any;
   getStartupStatus(): any;
   isDesktopRequest(request: IncomingMessage): boolean;
-  listNotifications(since: number): any[];
+  listNotifications(since: number, language?: string): any[];
   listSerialPorts(): Promise<any>;
   readJson(request: IncomingMessage): Promise<any>;
   runtimeDiagnostics(): any;
@@ -54,7 +54,10 @@ export async function handleSystemRoutes(
   }
   if (method === "GET" && pathname === "/api/notifications") {
     const url = new URL(request.url || pathname, "http://terma.invalid");
-    dependencies.sendJson(response, dependencies.listNotifications(Number(url.searchParams.get("since") || 0)));
+    const language = ["zh-CN", "en-US"].includes(String(url.searchParams.get("language") || ""))
+      ? String(url.searchParams.get("language"))
+      : "zh-CN";
+    dependencies.sendJson(response, dependencies.listNotifications(Number(url.searchParams.get("since") || 0), language));
     return true;
   }
   if (method === "GET" && pathname === "/api/serial/ports") {

@@ -243,7 +243,10 @@ async function runVisualRegression(window) {
     const toolbarHost = document.createElement('div');
     toolbarHost.innerHTML = localFilesToolbarButtonHtml(localKey);
     const toolbarButton = toolbarHost.querySelector('button');
-    const breadcrumbComputer = breadcrumb?.textContent.replace(/\s+/g,' ').trim() === '此电脑';
+    const localFilesToolbarLabel = tr('navigation:auto.new_local_files_tab', {defaultValue:'新建本地文件标签'});
+    const computerLabel = tr('sftp:local_files.this_computer', {defaultValue:'此电脑'});
+    const clearSearchLabel = tr('sftp:auto.clear_search', {defaultValue:'清除搜索'});
+    const breadcrumbComputer = breadcrumb?.textContent.replace(/\s+/g,' ').trim() === computerLabel;
     const driveRows = root?.querySelectorAll('.local-files-row.is-drive').length === 3;
     const originalViewStyle = view?.getAttribute('style') || '';
     if (view) view.style.cssText += ';width:500px;max-width:500px;flex:0 0 500px';
@@ -295,11 +298,11 @@ async function runVisualRegression(window) {
     return {
       localKey,
       found:Boolean(root && view && list && top && pager && breadcrumb),
-      iconOnly:Boolean(toolbarButton && !toolbarButton.textContent.trim() && toolbarButton.querySelector('svg') && toolbarButton.title === '新建本地文件标签'),
+      iconOnly:Boolean(toolbarButton && !toolbarButton.textContent.trim() && toolbarButton.querySelector('svg') && toolbarButton.title === localFilesToolbarLabel),
       stickyTop:getComputedStyle(top).position === 'sticky',
       breadcrumbComputer,
       driveRows,
-      searchClear:Boolean(root?.querySelector('.local-files-search button[aria-label="清除搜索"]')),
+      searchClear:Boolean([...(root?.querySelectorAll('.local-files-search button') || [])].some(button => button.getAttribute('aria-label') === clearSearchLabel)),
       pagerDocked:Boolean(listRect && pagerRect && pagerRect.bottom <= listRect.bottom + 1 && pagerRect.bottom >= listRect.bottom - 100),
       noOverflow:document.body.scrollWidth <= window.innerWidth + 1,
       narrowToolbarGrid,

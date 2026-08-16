@@ -14,9 +14,13 @@ function openFtpProfile(id, path="", updateTab=true, existingKey="") {
   setWorkspace(profile.name, remoteProfileEndpoint(profile), "ftp", key, updateTab, true, {kind:"ftp", id:profile.id, path:state.path, protocol:"ftp"});
   const view = $("view-ftp");
   view.dataset.ftpTabKey = key;
-  view.innerHTML = `<div class="ftp-toolbar"><button class="icon-button" onclick="ftpGoParent('${escAttr(key)}')" title="上一级" aria-label="上一级">${icon("corner-left-up")}</button><div class="ftp-path-field">${icon("folder-open")}<input id="ftpPathInput" value="${escAttr(state.path)}" onkeydown="if(event.key==='Enter')loadFtpDirectory('${escAttr(key)}',this.value)"></div><button class="icon-button" onclick="loadFtpDirectory('${escAttr(key)}',null,true)" title="刷新" aria-label="刷新">${icon("refresh-cw")}</button><button class="icon-button" onclick="createFtpDirectory('${escAttr(key)}')" title="新建文件夹" aria-label="新建文件夹">${icon("folder-plus")}</button><label class="icon-button ftp-upload-button" title="上传文件" aria-label="上传文件">${icon("upload")}<input id="ftpUploadInput" type="file" multiple onchange="uploadFtpFiles('${escAttr(key)}',this.files)"></label></div><div id="ftpList" class="ftp-list"></div>`;
+  const parent = tr("sftp:ftp.toolbar.parent", {defaultValue:"Go to parent"});
+  const refresh = tr("sftp:ftp.toolbar.refresh", {defaultValue:"Refresh"});
+  const create = tr("sftp:ftp.toolbar.create_directory", {defaultValue:"New directory"});
+  const upload = tr("sftp:ftp.toolbar.upload_file", {defaultValue:"Upload files"});
+  view.innerHTML = `<div class="ftp-toolbar"><button class="icon-button" onclick="ftpGoParent('${escAttr(key)}')" title="${escAttr(parent)}" aria-label="${escAttr(parent)}">${icon("corner-left-up")}</button><div class="ftp-path-field">${icon("folder-open")}<input id="ftpPathInput" value="${escAttr(state.path)}" onkeydown="if(event.key==='Enter')loadFtpDirectory('${escAttr(key)}',this.value)"></div><button class="icon-button" onclick="loadFtpDirectory('${escAttr(key)}',null,true)" title="${escAttr(refresh)}" aria-label="${escAttr(refresh)}">${icon("refresh-cw")}</button><button class="icon-button" onclick="createFtpDirectory('${escAttr(key)}')" title="${escAttr(create)}" aria-label="${escAttr(create)}">${icon("folder-plus")}</button><label class="icon-button ftp-upload-button" title="${escAttr(upload)}" aria-label="${escAttr(upload)}">${icon("upload")}<input id="ftpUploadInput" type="file" multiple onchange="uploadFtpFiles('${escAttr(key)}',this.files)"></label></div><div id="ftpList" class="ftp-list"></div>`;
   refreshIcons();
-  loadFtpDirectory(key, state.path).catch(error => notify(error.message, "error"));
+  loadFtpDirectory(key, state.path).catch(error => notify(typeof localizedTermaUiPhrase === "function" ? localizedTermaUiPhrase(error.message) : error.message, "error"));
 }
 
 async function ftpRequestWithCredentialRepair(key, context, operation, options={}) {
@@ -46,10 +50,11 @@ async function loadFtpDirectory(key, pathValue=null, refresh=false) {
   if (!state || state.loading) return;
   state.loading = true;
   const list = $("ftpList");
-  if (list) list.innerHTML = stateView("loading", "正在读取 FTP 目录", "正在与服务器交换目录列表。", "");
+  if (list) list.innerHTML = stateView("loading", tr("sftp:ftp.loading.title", {defaultValue:"Reading FTP directory"}), tr("sftp:ftp.loading.detail", {defaultValue:"Exchanging the directory listing with the server."}), "");
   try {
     const target = pathValue === null ? state.path : String(pathValue || "/");
-    const result = await ftpRequestWithCredentialRepair(key, "FTP 目录认证失败", () => api(`/api/remote-profiles/${state.profileId}/ftp?path=${encodeURIComponent(target)}${refresh ? "&refresh=1" : ""}`));
+    const context = tr("sftp:ftp.auth.directory", {defaultValue:"FTP directory authentication failed"});
+    const result = await ftpRequestWithCredentialRepair(key, context, () => api(`/api/remote-profiles/${state.profileId}/ftp?path=${encodeURIComponent(target)}${refresh ? "&refresh=1" : ""}`));
     state.path = result.path || target;
     state.entries = result.entries || [];
     const input = $("ftpPathInput");
@@ -68,8 +73,23 @@ function renderFtpEntries(key) {
   const state = ftpProfileStates.get(key);
   const list = $("ftpList");
   if (!state || !list) return;
-  if (!state.entries.length) return void (list.innerHTML = stateView("empty", "目录为空", "可以上传文件或新建文件夹。", `<button class="primary" onclick="createFtpDirectory('${escAttr(key)}')">新建文件夹</button>`));
-  list.innerHTML = `<div class="ftp-table" role="table"><div class="ftp-row ftp-head" role="row"><span>名称</span><span>大小</span><span>修改时间</span><span>操作</span></div>${state.entries.map(entry => `<div class="ftp-row" role="row" ondblclick="${entry.type === "directory" ? `loadFtpDirectory('${escAttr(key)}','${escAttr(`${state.path.replace(/\/$/, "")}/${entry.name}`)}')` : `downloadFtpEntry('${escAttr(key)}','${escAttr(entry.name)}')`}"><span class="ftp-name">${icon(entry.type === "directory" ? "folder" : entry.type === "link" ? "file-symlink" : "file")}<span>${esc(entry.name)}</span></span><span>${entry.type === "directory" ? "—" : formatBytes(entry.size)}</span><span>${entry.modified_at ? esc(new Date(entry.modified_at).toLocaleString()) : "—"}</span><span class="ftp-row-actions">${entry.type === "directory" ? `<button class="icon-button" onclick="loadFtpDirectory('${escAttr(key)}','${escAttr(`${state.path.replace(/\/$/, "")}/${entry.name}`)}')" title="打开" aria-label="打开">${icon("folder-open")}</button>` : `<button class="icon-button" onclick="downloadFtpEntry('${escAttr(key)}','${escAttr(entry.name)}')" title="下载" aria-label="下载">${icon("download")}</button>`}<button class="icon-button" onclick="renameFtpEntry('${escAttr(key)}','${escAttr(entry.name)}')" title="重命名" aria-label="重命名">${icon("pencil")}</button><button class="icon-button danger" onclick="deleteFtpEntry('${escAttr(key)}','${escAttr(entry.name)}','${entry.type}')" title="删除" aria-label="删除">${icon("trash-2")}</button></span></div>`).join("")}</div>`;
+  const create = tr("sftp:ftp.toolbar.create_directory", {defaultValue:"New directory"});
+  if (!state.entries.length) return void (list.innerHTML = stateView("empty", tr("sftp:ftp.empty.title", {defaultValue:"Directory is empty"}), tr("sftp:ftp.empty.detail", {defaultValue:"Upload files or create a new directory."}), `<button class="primary" onclick="createFtpDirectory('${escAttr(key)}')">${esc(create)}</button>`));
+  const headers = [
+    tr("sftp:ftp.table.name", {defaultValue:"Name"}),
+    tr("sftp:ftp.table.size", {defaultValue:"Size"}),
+    tr("sftp:ftp.table.modified", {defaultValue:"Modified"}),
+    tr("sftp:ftp.table.actions", {defaultValue:"Actions"})
+  ].map(label => `<span>${esc(label)}</span>`).join("");
+  const open = tr("sftp:ftp.entry.open", {defaultValue:"Open"});
+  const download = tr("sftp:ftp.entry.download", {defaultValue:"Download"});
+  const rename = tr("sftp:ftp.entry.rename", {defaultValue:"Rename"});
+  const remove = tr("sftp:ftp.entry.delete", {defaultValue:"Delete"});
+  list.innerHTML = `<div class="ftp-table" role="table"><div class="ftp-row ftp-head" role="row">${headers}</div>${state.entries.map(entry => {
+    const entryPath = `${state.path.replace(/\/$/, "")}/${entry.name}`;
+    const openAction = entry.type === "directory" ? `loadFtpDirectory('${escAttr(key)}','${escAttr(entryPath)}')` : `downloadFtpEntry('${escAttr(key)}','${escAttr(entry.name)}')`;
+    return `<div class="ftp-row" role="row" ondblclick="${openAction}"><span class="ftp-name">${icon(entry.type === "directory" ? "folder" : entry.type === "link" ? "file-symlink" : "file")}<span>${esc(entry.name)}</span></span><span>${entry.type === "directory" ? "—" : formatBytes(entry.size)}</span><span>${entry.modified_at ? esc(new Date(entry.modified_at).toLocaleString(document.documentElement.lang || undefined)) : "—"}</span><span class="ftp-row-actions">${entry.type === "directory" ? `<button class="icon-button" onclick="loadFtpDirectory('${escAttr(key)}','${escAttr(entryPath)}')" title="${escAttr(open)}" aria-label="${escAttr(open)}">${icon("folder-open")}</button>` : `<button class="icon-button" onclick="downloadFtpEntry('${escAttr(key)}','${escAttr(entry.name)}')" title="${escAttr(download)}" aria-label="${escAttr(download)}">${icon("download")}</button>`}<button class="icon-button" onclick="renameFtpEntry('${escAttr(key)}','${escAttr(entry.name)}')" title="${escAttr(rename)}" aria-label="${escAttr(rename)}">${icon("pencil")}</button><button class="icon-button danger" onclick="deleteFtpEntry('${escAttr(key)}','${escAttr(entry.name)}','${escAttr(entry.type)}')" title="${escAttr(remove)}" aria-label="${escAttr(remove)}">${icon("trash-2")}</button></span></div>`;
+  }).join("")}</div>`;
   refreshIcons();
 }
 
@@ -83,24 +103,29 @@ function ftpGoParent(key) {
 
 async function createFtpDirectory(key) {
   const state = ftpProfileStates.get(key);
-  const name = await inputModal("新建 FTP 文件夹", "文件夹名称", "");
+  const name = await inputModal(tr("sftp:ftp.create.title", {defaultValue:"New FTP directory"}), tr("sftp:ftp.create.label", {defaultValue:"Directory name"}), "");
   if (!state || !name) return;
-  await ftpRequestWithCredentialRepair(key, "新建 FTP 文件夹时认证失败", () => api(`/api/remote-profiles/${state.profileId}/ftp/mkdir`, {method:"POST", body:JSON.stringify({path:state.path,name})}));
+  const context = tr("sftp:ftp.auth.create", {defaultValue:"Authentication failed while creating an FTP directory"});
+  await ftpRequestWithCredentialRepair(key, context, () => api(`/api/remote-profiles/${state.profileId}/ftp/mkdir`, {method:"POST", body:JSON.stringify({path:state.path,name})}));
   await loadFtpDirectory(key, null, true);
 }
 
 async function renameFtpEntry(key, name) {
   const state = ftpProfileStates.get(key);
-  const newName = await inputModal("重命名 FTP 项目", "新名称", name);
+  const newName = await inputModal(tr("sftp:ftp.dialogs.rename", {defaultValue:"Rename FTP item"}), tr("sftp:ftp.dialogs.new_name", {defaultValue:"New name"}), name);
   if (!state || !newName || newName === name) return;
-  await ftpRequestWithCredentialRepair(key, "重命名 FTP 项目时认证失败", () => api(`/api/remote-profiles/${state.profileId}/ftp/rename`, {method:"POST", body:JSON.stringify({path:state.path,name,new_name:newName})}));
+  const context = tr("sftp:ftp.auth.rename", {defaultValue:"Authentication failed while renaming an FTP item"});
+  await ftpRequestWithCredentialRepair(key, context, () => api(`/api/remote-profiles/${state.profileId}/ftp/rename`, {method:"POST", body:JSON.stringify({path:state.path,name,new_name:newName})}));
   await loadFtpDirectory(key, null, true);
 }
 
 async function deleteFtpEntry(key, name, type) {
   const state = ftpProfileStates.get(key);
-  if (!state || !await confirmModal(`确定删除 ${name}${type === "directory" ? " 及其内容" : ""}？FTP 不支持 Terma 回收站。`, "删除 FTP 项目", "删除", "取消", true)) return;
-  await ftpRequestWithCredentialRepair(key, "删除 FTP 项目时认证失败", () => api(`/api/remote-profiles/${state.profileId}/ftp/delete`, {method:"POST", body:JSON.stringify({path:state.path,name,type})}));
+  const suffix = type === "directory" ? tr("sftp:ftp.delete.with_contents", {defaultValue:" and its contents"}) : "";
+  const message = tr("sftp:ftp.delete.confirm", {name, suffix, defaultValue:"Delete {{name}}{{suffix}}? FTP does not support the Terma recycle bin."});
+  if (!state || !await confirmModal(message, tr("sftp:ftp.delete.title", {defaultValue:"Delete FTP item"}), tr("sftp:ftp.delete.action", {defaultValue:"Delete"}), tr("sftp:ftp.delete.cancel", {defaultValue:"Cancel"}), true)) return;
+  const context = tr("sftp:ftp.auth.delete", {defaultValue:"Authentication failed while deleting an FTP item"});
+  await ftpRequestWithCredentialRepair(key, context, () => api(`/api/remote-profiles/${state.profileId}/ftp/delete`, {method:"POST", body:JSON.stringify({path:state.path,name,type})}));
   await loadFtpDirectory(key, null, true);
 }
 
@@ -108,37 +133,47 @@ async function uploadFtpFiles(key, files) {
   const state = ftpProfileStates.get(key);
   if (!state || !files?.length) return;
   for (const file of files) {
-    await ftpRequestWithCredentialRepair(key, `上传 ${file.name} 时认证失败`, async () => {
+    const context = tr("sftp:ftp.auth.upload", {name:file.name, defaultValue:"Authentication failed while uploading {{name}}"});
+    await ftpRequestWithCredentialRepair(key, context, async () => {
       const body = new FormData();
       body.append("path", state.path);
       body.append("file", file, file.name);
       const response = await fetch(`/api/remote-profiles/${state.profileId}/ftp/upload`, {method:"POST", body});
-      const result = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const error = new Error(result.error || `上传 ${file.name} 失败`);
-        error.code = result.code || "";
-        error.remoteProfileId = Number(result.remote_profile_id || state.profileId);
+        const error = await apiErrorFromResponse(response, tr("sftp:ftp.upload.failed_item", {name:file.name, defaultValue:"Upload failed for {{name}}"}));
+        if (!error.remoteProfileId) error.remoteProfileId = Number(state.profileId);
         throw error;
       }
+      const result = await response.json().catch(() => ({}));
       return result;
     });
   }
   $("ftpUploadInput").value = "";
   await loadFtpDirectory(key, null, true);
-  notify(`已上传 ${files.length} 个文件`, "success");
+  notify(tr("sftp:ftp.upload.completed", {count:files.length, defaultValue:"Uploaded {{count}} files"}), "success");
 }
 
 async function downloadFtpEntry(key, name) {
   const state = ftpProfileStates.get(key);
   if (!state) return;
   try {
-    await ftpRequestWithCredentialRepair(key, `下载 ${name} 时认证失败`, () => api(`/api/remote-profiles/${state.profileId}/ftp?path=${encodeURIComponent(state.path)}`));
+    const context = tr("sftp:ftp.auth.download", {name, defaultValue:"Authentication failed while downloading {{name}}"});
+    await ftpRequestWithCredentialRepair(key, context, () => api(`/api/remote-profiles/${state.profileId}/ftp?path=${encodeURIComponent(state.path)}`));
   } catch (error) {
-    notify(error.message || `下载 ${name} 失败`, "error");
+    const message = error.message || tr("sftp:ftp.download.failed", {name, defaultValue:"Download failed for {{name}}"});
+    notify(typeof localizedTermaUiPhrase === "function" ? localizedTermaUiPhrase(message) : message, "error");
     return;
   }
   const link = document.createElement("a");
   link.href = `/api/remote-profiles/${state.profileId}/ftp/download?path=${encodeURIComponent(state.path)}&name=${encodeURIComponent(name)}`;
   link.download = name;
   link.click();
+}
+
+if (typeof registerTermaI18nRenderer === "function") {
+  registerTermaI18nRenderer(() => {
+    if (typeof activeView === "undefined" || activeView !== "ftp" || typeof tabs === "undefined") return;
+    const tab = tabs.find(item => item.key === activeTabKey && item.kind === "ftp");
+    if (tab) openFtpProfile(tab.id, tab.path || "/", false, tab.key);
+  });
 }

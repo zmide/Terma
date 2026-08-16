@@ -169,12 +169,12 @@ assert.match(decodedUninstall, /dpkg-query/);
 assert.doesNotMatch(decodedUninstall, /autoremove/);
 assert.match(decodedUninstall, /terma_emit STAGE "verify"/);
 const remoteUi = readFrontendDomain(path.join(__dirname, ".."), "remote");
-assert.match(remoteUi, /系统默认/);
-assert.match(remoteUi, /账号默认/);
-assert.match(remoteUi, /XDMCP 配置/);
-assert.match(remoteUi, /RDP 当前会话/);
-assert.match(remoteUi, /VNC 共享当前会话/);
-assert.match(remoteUi, /虚拟会话 · 桌面由登录\/启动配置决定/);
-assert.match(remoteUi, /远程桌面不要求服务器连接物理显示器/);
+assert.match(remoteUi, /const badgeLabels = \{[\s\S]*?system_default:tr\("remote:linux_desktop\.usage\.system_default"/);
+assert.match(remoteUi, /const badgeHints = \{[\s\S]*?system_default:tr\("remote:linux_desktop\.usage_hints\.system_default"/);
+for (const key of ["system_default", "account_default", "xdmcp_configured", "rdp_active", "vnc_shared"]) {
+  assert.match(remoteUi, new RegExp(`badge\\("${key}"\\)`));
+}
+assert.match(remoteUi, /tr\("remote:linux_desktop\.virtual_session_configured"/);
+assert.match(remoteUi, /const managerHint = platformSupported[\s\S]*?tr\("remote:linux_desktop\.hint"[\s\S]*?tr\("remote:linux_desktop\.macos_hint"[\s\S]*?tr\("remote:linux_desktop\.unsupported_hint"/);
 assert.match(remoteUi, /remoteGraphicsRenderingMarkup/);
 console.log("Linux 桌面管理检查通过：Debian/Linux 识别、安装卸载方案、阶段标记和日志标记正常");

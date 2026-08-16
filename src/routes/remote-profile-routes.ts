@@ -23,22 +23,28 @@ interface RemoteProfileRouteDependencies {
   listRemoteProfiles(): any[];
   probeTcpEndpoint(host: string, port: number): Promise<any>;
   readJson(request: IncomingMessage): Promise<any>;
+  readBody(request: IncomingMessage, maxBytes?: number): Promise<Buffer>;
   readVncRemoteClipboard(profile: any, dependencies: any): Promise<any>;
+  readVncRemoteClipboardImage(profile: any, dependencies: any): Promise<any>;
   releaseRemoteAdminGrant(grant: any): void;
   remoteOfflineTasks: any;
   resolveManagementConnection(profile: any, dependencies: any): any;
   runRemotePrivilegeCommand(connection: any, command: string, options: any): Promise<any>;
   runSshCommandForConnection(connection: any, command: string, timeoutMs?: number): Promise<any>;
+  runSshCommandForConnectionStreaming(connection: any, command: string, timeoutMs?: number, onChunk?: any, options?: any): Promise<any>;
+  send(response: ServerResponse, status: number, data: unknown, headers?: Record<string, string>): void;
   sendJson(response: ServerResponse, data: unknown, status?: number): void;
   startRemoteComponentCommandTask(options: any): any;
   testFtpProfile(id: number): Promise<any>;
   testRemoteTerminalProfile(id: number): Promise<any>;
   testVncProfile(id: number): Promise<any>;
   updateRemoteProfile(id: number, data: any): any;
+  repairRemoteProfileManagementConnection(id: number, connectionId: number): any;
   updateRemoteProfileFlags(id: number, data: any): any;
   updateRemoteProfileUsage(id: number): any;
   updateVncProfileCredential(id: number, password: string): any;
   writeVncRemoteClipboard(profile: any, text: string, dependencies: any): Promise<any>;
+  writeVncRemoteClipboardImage(profile: any, image: Buffer, dependencies: any): Promise<any>;
   xdmcpTaskResourceKey(connection: any, data: any, options: any): string;
 }
 
@@ -101,6 +107,7 @@ export async function handleRemoteProfileRoutes(
     const clipboardDependencies = {
       getConnection:dependencies.getConnection,
       listConnections:dependencies.listConnections,
+      repairManagementConnection:(item: any, connectionId: number) => dependencies.repairRemoteProfileManagementConnection(item.id, connectionId),
       runSshCommandForConnection:dependencies.runSshCommandForConnection
     };
     if (method === "GET") {
@@ -109,6 +116,36 @@ export async function handleRemoteProfileRoutes(
     }
     if (method === "POST") {
       dependencies.sendJson(response, await dependencies.writeVncRemoteClipboard(profile, (await dependencies.readJson(request)).text, clipboardDependencies));
+      return true;
+    }
+  }
+  if (parts.length === 5 && parts[3] === "vnc-clipboard" && parts[4] === "image") {
+    response.setHeader("Cache-Control", "no-store");
+    const profile = dependencies.getRemoteProfile(id);
+    const clipboardDependencies = {
+      getConnection:dependencies.getConnection,
+      listConnections:dependencies.listConnections,
+      repairManagementConnection:(item: any, connectionId: number) => dependencies.repairRemoteProfileManagementConnection(item.id, connectionId),
+      runSshCommandForConnection:dependencies.runSshCommandForConnection,
+      runSshCommandForConnectionStreaming:dependencies.runSshCommandForConnectionStreaming
+    };
+    if (method === "GET") {
+      const result = await dependencies.readVncRemoteClipboardImage(profile, clipboardDependencies);
+      dependencies.send(response, 200, result.data, {
+        "Content-Type":"image/png",
+        "X-Terma-Clipboard-Bytes":String(result.bytes || result.data?.length || 0),
+        "X-Terma-Clipboard-Tool":String(result.tool || "")
+      });
+      return true;
+    }
+    if (method === "POST") {
+      const contentType = String(request.headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
+      if (contentType !== "image/png") {
+        dependencies.sendJson(response, {error:"VNC 图片剪贴板仅接受 PNG 图片"}, 415);
+        return true;
+      }
+      const image = await dependencies.readBody(request, 25 * 1024 * 1024 + 1);
+      dependencies.sendJson(response, await dependencies.writeVncRemoteClipboardImage(profile, image, clipboardDependencies));
       return true;
     }
   }
@@ -130,7 +167,8 @@ export async function handleRemoteProfileRoutes(
     if (profile.protocol !== "rdp") throw new Error("该连接不是 RDP 配置");
     const management = dependencies.resolveManagementConnection(profile, {
       getConnection:dependencies.getConnection,
-      listConnections:dependencies.listConnections
+      listConnections:dependencies.listConnections,
+      repairManagementConnection:(item: any, connectionId: number) => dependencies.repairRemoteProfileManagementConnection(item.id, connectionId)
     });
     if (method === "GET") {
       dependencies.sendJson(response, await dependencies.detectLinuxDesktopForConnection(management));
@@ -201,6 +239,7 @@ export async function handleRemoteProfileRoutes(
     dependencies.sendJson(response, await dependencies.detectXdmcpServer(profile, {
       getConnection:dependencies.getConnection,
       listConnections:dependencies.listConnections,
+      repairManagementConnection:(item: any, connectionId: number) => dependencies.repairRemoteProfileManagementConnection(item.id, connectionId),
       runSshCommandForConnection:dependencies.runSshCommandForConnection
     }));
     return true;
@@ -211,7 +250,8 @@ export async function handleRemoteProfileRoutes(
     const data = await dependencies.readJson(request);
     const management = dependencies.resolveManagementConnection(profile, {
       getConnection:dependencies.getConnection,
-      listConnections:dependencies.listConnections
+      listConnections:dependencies.listConnections,
+      repairManagementConnection:(item: any, connectionId: number) => dependencies.repairRemoteProfileManagementConnection(item.id, connectionId)
     });
     const requestedAction = String(data.action || "enable").toLowerCase();
     const grantScope = requestedAction.includes("local-offline") ? `xdmcp.${requestedAction}` : "xdmcp.configure";
@@ -221,6 +261,7 @@ export async function handleRemoteProfileRoutes(
       const configurationDependencies: any = {
         getConnection:dependencies.getConnection,
         listConnections:dependencies.listConnections,
+        repairManagementConnection:(item: any, connectionId: number) => dependencies.repairRemoteProfileManagementConnection(item.id, connectionId),
         runSshCommandForConnection:dependencies.runSshCommandForConnection
       };
       if (grant) {

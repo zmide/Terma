@@ -20,7 +20,7 @@ function selectConnection(id) {
 }
 
 function editConnection(id, updateTab=true){
-  if (!requireConfigEncryptionUnlocked("编辑 SSH 连接")) return;
+  if (!requireConfigEncryptionUnlocked(tr("connections:form.edit_context", {defaultValue:"编辑 SSH 连接"}))) return;
   const c = selectConnection(id);
   if(!c) return;
   $("view-edit").innerHTML = $("connectionFormTpl").innerHTML;
@@ -58,27 +58,38 @@ function editConnection(id, updateTab=true){
   loadKeys(c.identity_file);
   wireConnectionForm();
   scheduleConnectionExtraArgsValidation(form, 0);
-  setWorkspace(`${c.name} · 编辑`, `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`, "edit", `edit-${c.id}`, updateTab, true, {kind:"edit", id:c.id});
+  setWorkspace(
+    tr("connections:form.edit_title", {name:c.name, defaultValue:`${c.name} · 编辑`}),
+    `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`,
+    "edit", `edit-${c.id}`, updateTab, true, {kind:"edit", id:c.id}
+  );
 }
 
 async function deleteConnection(id){
   const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   const c = currentConnection(id);
-  if(!await confirmModal(`删除连接 ${c?.name || id} 及其所有转发？`, "删除 SSH 连接", "删除", "取消", true)) return;
+  const name = c?.name || id;
+  if(!await confirmModal(
+    tr("connections:dialogs.delete_ssh_message", {name, defaultValue:`删除连接 ${name} 及其所有转发？`}),
+    tr("connections:dialogs.delete_ssh_title", {defaultValue:"删除 SSH 连接"}),
+    tr("common:actions.delete", {defaultValue:"删除"}),
+    tr("common:actions.cancel", {defaultValue:"取消"}),
+    true
+  )) return;
   await api(`/api/connections/${id}`,{method:"DELETE"});
   if(selectedId===id) selectedId=null;
   await loadAll();
   inPane(renderWelcome);
-  notify("已删除连接","success");
+  notify(tr("connections:notifications.ssh_deleted", {defaultValue:"已删除连接"}),"success");
 }
 
 async function duplicateConnection(id) {
   const source = currentConnection(id);
   const result = await api(`/api/connections/${id}/duplicate`, {method:"POST"});
-  groupOpen.add(source?.group_name || "默认分组");
+  groupOpen.add(source?.group_name || TERMA_DEFAULT_CONNECTION_GROUP);
   saveGroupState();
   await loadAll();
-  notify(`已复制为 ${result.name}`, "success");
+  notify(tr("connections:notifications.duplicated", {name:result.name, defaultValue:`已复制为 ${result.name}`}), "success");
 }
 
 function connectionActionId(element) {

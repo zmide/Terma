@@ -55,6 +55,7 @@ const DISPLAY_CLIENT_ARG = "--terma-display-client";
 const LEGACY_DISPLAY_CLIENT_ARG = "--tunneldesk-display-client";
 const DISPLAY_CLIENT_URL_ENV = "TERMA_DISPLAY_CLIENT_URL";
 const LEGACY_DISPLAY_CLIENT_URL_ENV = "TUNNELDESK_DISPLAY_CLIENT_URL";
+const DESKTOP_INTERFACE_LANGUAGE_ENV = "TERMA_INTERFACE_LANGUAGE";
 const DESKTOP_TOKEN_ENV = "TERMA_DESKTOP_AUTH_TOKEN";
 const LEGACY_DESKTOP_TOKEN_ENV = "TUNNELDESK_DESKTOP_AUTH_TOKEN";
 const DISPLAY_CLIENT_AUTH_MESSAGE = "desktop-auth-token";
@@ -89,7 +90,8 @@ let xServerRuntime = null;
 const remoteClientAdapter = displayClientMode ? null : createRemoteClientAdapter({
   getDataDir:()=>DATA_DIR,
   shell,
-  getXServerDiagnostics:()=>xServerRuntime?.diagnostics?.() || null
+  getXServerDiagnostics:()=>xServerRuntime?.diagnostics?.() || null,
+  getLanguage:()=>desktopInterfaceLanguage
 });
 
 let mainWindow = null;
@@ -110,6 +112,7 @@ let desktopNotificationCursor = 0;
 let desktopNotificationCursorInitialized = false;
 let desktopNotificationPreferences = null;
 let desktopNotificationPreferencesReadAt = 0;
+let desktopInterfaceLanguage = normalizeDesktopNotificationLanguage(process.env[DESKTOP_INTERFACE_LANGUAGE_ENV]);
 let trayState = { runningConnections: 0, runningForwards: 0, failedForwards: 0, totalForwards: 0, online: false };
 let pendingStorageMigrationNotice = "";
 let legacyBrandMigration = { status:"not-checked", source:"", target:"", backup:"", message:"" };
@@ -197,6 +200,7 @@ function displayClientEnvironment(session, url) {
   for (const key of LINUX_DISPLAY_SESSION_KEYS) delete environment[key];
   Object.assign(environment, normalizeLinuxDisplaySession(session));
   environment[DISPLAY_CLIENT_URL_ENV] = url;
+  environment[DESKTOP_INTERFACE_LANGUAGE_ENV] = desktopInterfaceLanguage;
   delete environment[DESKTOP_TOKEN_ENV];
   delete environment[LEGACY_DISPLAY_CLIENT_URL_ENV];
   delete environment[LEGACY_DESKTOP_TOKEN_ENV];
@@ -301,7 +305,10 @@ function handleSecondInstance(_event, _commandLine, _workingDirectory, additiona
     return;
   }
   showWindow();
-  notify(`${PRODUCT_NAME} 已在运行，已切换到现有窗口`);
+  notify(desktopUiText(
+    `${PRODUCT_NAME} 已在运行，已切换到现有窗口`,
+    `${PRODUCT_NAME} is already running; switched to the existing window`
+  ));
 }
 
 function handleDisplayClientControlMessage(message) {
@@ -311,7 +318,10 @@ function handleDisplayClientControlMessage(message) {
     const token = normalizeDesktopAuthToken(message.token);
     if (!token) {
       displayClientAuthRejected = true;
-      if (pendingDisplayClientUrl) failDisplayClientStartup("显示客户端收到的桌面认证令牌无效，请在当前图形会话中重新启动 Terma。");
+      if (pendingDisplayClientUrl) failDisplayClientStartup(desktopUiText(
+        "显示客户端收到的桌面认证令牌无效，请在当前图形会话中重新启动 Terma。",
+        "The display client received an invalid desktop authentication token. Restart Terma in the current graphical session."
+      ));
       return;
     }
     desktopAuthToken = token;
@@ -462,7 +472,10 @@ function migrateLegacyBrandUserData(options = {}) {
   }
   if (legacyBrandAppRunning()) {
     result.status = "legacy-running";
-    result.message = "检测到旧版程序仍在运行。请先退出旧版，再迁移数据。";
+    result.message = desktopUiText(
+      "检测到旧版程序仍在运行。请先退出旧版，再迁移数据。",
+      "The legacy application is still running. Quit it before migrating data."
+    );
     legacyBrandMigration = result;
     return result;
   }
@@ -470,7 +483,10 @@ function migrateLegacyBrandUserData(options = {}) {
   if (!options.manual && previousMigration?.status === "migrated" && Number(previousMigration?.migration_version || 0) >= BRAND_MIGRATION_VERSION) {
     result.status = "already-migrated";
     result.backup = String(previousMigration.backup || "");
-    result.message = "旧版数据已经完成合并，可在设置中手动重新检查。";
+    result.message = desktopUiText(
+      "旧版数据已经完成合并，可在设置中手动重新检查。",
+      "Legacy data has already been merged. You can run the check again manually in Settings."
+    );
     legacyBrandMigration = result;
     return result;
   }
@@ -505,16 +521,27 @@ function migrateLegacyBrandUserData(options = {}) {
     };
     let metadataWarning = "";
     try { writeBrandMigrationMetadata(metadata); }
-    catch (metadataError) { metadataWarning = `（迁移记录写入失败：${metadataError.message || metadataError}）`; }
+    catch (metadataError) {
+      metadataWarning = desktopUiText(
+        `（迁移记录写入失败：${metadataError.message || metadataError}）`,
+        ` (failed to write the migration record: ${metadataError.message || metadataError})`
+      );
+    }
     result.status = "migrated";
-    result.message = `已将 ${LEGACY_PRODUCT_NAME} 数据合并到 ${PRODUCT_NAME}，当前数据和旧目录都已保留。${metadataWarning}`;
+    result.message = desktopUiText(
+      `已将 ${LEGACY_PRODUCT_NAME} 数据合并到 ${PRODUCT_NAME}，当前数据和旧目录都已保留。${metadataWarning}`,
+      `${LEGACY_PRODUCT_NAME} data was merged into ${PRODUCT_NAME}. Current data and the legacy directory were both preserved.${metadataWarning}`
+    );
     legacyBrandMigration = result;
     return result;
   } catch (error) {
     removeCreatedFiles(createdProfileFiles);
     result.backup = String(error.migrationBackup || "");
     result.status = "failed";
-    result.message = `旧版数据合并失败，当前 Terma 数据未被替换：${error.message || error}${result.backup ? `；当前数据备份：${result.backup}` : ""}`;
+    result.message = desktopUiText(
+      `旧版数据合并失败，当前 Terma 数据未被替换：${error.message || error}${result.backup ? `；当前数据备份：${result.backup}` : ""}`,
+      `Legacy data could not be merged. Current Terma data was not replaced: ${error.message || error}${result.backup ? `; current data backup: ${result.backup}` : ""}`
+    );
     legacyBrandMigration = result;
     return result;
   }
@@ -522,15 +549,26 @@ function migrateLegacyBrandUserData(options = {}) {
 
 function migrateLegacyBrandData(value = {}) {
   const preview = inspectLegacyBrandMigration();
-  if (!preview.source_available) return { ok:false, ...preview, error:"未发现可迁移的旧版数据" };
-  if (preview.legacy_running) return { ok:false, ...preview, error:"旧版程序仍在运行，请退出后再迁移" };
+  if (!preview.source_available) return {
+    ok:false,
+    ...preview,
+    error:desktopUiText("未发现可迁移的旧版数据", "No legacy data is available to migrate")
+  };
+  if (preview.legacy_running) return {
+    ok:false,
+    ...preview,
+    error:desktopUiText("旧版程序仍在运行，请退出后再迁移", "The legacy application is still running; quit it before migrating")
+  };
   if (preview.target_has_data && !Boolean(value.merge_current || value.replace_current)) {
     return {
       ok:false,
       ...preview,
       needs_merge_confirmation:true,
       needs_replace_confirmation:true,
-      error:"Terma 已有数据，确认后会先完整备份，再合并旧版连接、分组、远程配置、工作区和密钥"
+      error:desktopUiText(
+        "Terma 已有数据，确认后会先完整备份，再合并旧版连接、分组、远程配置、工作区和密钥",
+        "Terma already contains data. After confirmation, it will create a complete backup before merging legacy connections, groups, remote profiles, workspaces, and keys."
+      )
     };
   }
   setTimeout(async () => {
@@ -568,8 +606,14 @@ function prepareLegacyBrandMigrationAtStartup(settings, runtime = resolveRuntime
       target,
       backup:"",
       message:String(settings?.dataMode || "") === "user"
-        ? "检测到旧版数据；当前用户目录已有数据，请在迁移界面确认后合并。"
-        : "检测到旧版数据；当前使用项目或自定义数据目录，请在迁移界面确认后合并。"
+        ? desktopUiText(
+          "检测到旧版数据；当前用户目录已有数据，请在迁移界面确认后合并。",
+          "Legacy data was detected, and the current user directory already contains data. Confirm the merge in the migration view."
+        )
+        : desktopUiText(
+          "检测到旧版数据；当前使用项目或自定义数据目录，请在迁移界面确认后合并。",
+          "Legacy data was detected while a project or custom data directory is in use. Confirm the merge in the migration view."
+        )
     };
     return legacyBrandMigration;
   }
@@ -585,7 +629,8 @@ if (!displayClientMode) {
     appIsPackaged:app.isPackaged,
     resourcesPath:process.resourcesPath,
     projectRoot:path.resolve(__dirname, ".."),
-    userDataPath:app.getPath("userData")
+    userDataPath:app.getPath("userData"),
+    getLanguage:()=>desktopInterfaceLanguage
   });
 }
 configureWindowsAppIdentity();
@@ -621,6 +666,7 @@ function defaultDesktopSettings() {
   return {
     dataMode: app.isPackaged && !isWindowsPortable() ? "user" : "project",
     customDataDir: "",
+    interfaceLanguage: desktopSystemSuggestedLanguage(),
     openAtLogin: false,
     minimizeToTray: true,
     startMinimizedToTray: false,
@@ -631,10 +677,12 @@ function defaultDesktopSettings() {
 
 function readSettings() {
   try {
-    return {
+    const settings = {
       ...defaultDesktopSettings(),
       ...JSON.parse(fs.readFileSync(SETTINGS_FILE || BOOT_SETTINGS_FILE, "utf8"))
     };
+    settings.interfaceLanguage = normalizeDesktopNotificationLanguage(settings.interfaceLanguage);
+    return settings;
   } catch {
     return defaultDesktopSettings();
   }
@@ -663,6 +711,7 @@ function writeSettings(settings) {
 function initializeDesktopSettingsFile() {
   BOOT_SETTINGS_FILE = path.join(app.getPath("userData"), "desktop-settings.json");
   SETTINGS_FILE = BOOT_SETTINGS_FILE;
+  setDesktopInterfaceLanguage(readSettings().interfaceLanguage);
   return SETTINGS_FILE;
 }
 
@@ -679,10 +728,11 @@ function isWindowsPortable() {
 }
 
 function desktopStartupFailurePresentation(error, context = {}) {
-  const rawMessage = String(error?.message || error || "Terma 启动失败");
+  const text = (chinese, english) => desktopNotificationText(context.language || desktopInterfaceLanguage, chinese, english);
+  const rawMessage = String(error?.message || error || text("Terma 启动失败", "Terma failed to start"));
   const platform = String(context.platform || process.platform);
   if (error?.code !== "INSECURE_STORAGE_PERMISSIONS" || platform !== "win32") {
-    return {title:`${PRODUCT_NAME} 启动失败`, message:rawMessage};
+    return {title:text(`${PRODUCT_NAME} 启动失败`, `${PRODUCT_NAME} failed to start`), message:rawMessage};
   }
   const portable = Object.prototype.hasOwnProperty.call(context, "portable")
     ? Boolean(context.portable)
@@ -692,32 +742,60 @@ function desktopStartupFailurePresentation(error, context = {}) {
   const detail = String(error?.detail || rawMessage).trim();
   const unsupportedAcl = error?.failure_kind === "unsupported-acl"
     || /does not support|not supported|unsupported|incorrect function|文件系统.*不支持|不支持.*(?:ACL|访问控制)|功能不受支持/i.test(detail);
-  const mode = portable ? "Windows 便携版" : "Windows 桌面版";
+  const mode = portable ? text("Windows 便携版", "Windows portable edition") : text("Windows 桌面版", "Windows desktop edition");
   const reason = unsupportedAcl
-    ? "当前磁盘或文件系统不支持 Windows ACL（访问控制列表）。"
+    ? text("当前磁盘或文件系统不支持 Windows ACL（访问控制列表）。", "The current disk or file system does not support Windows ACLs (access control lists).")
     : error?.failure_kind === "access-denied"
-      ? "当前 Windows 账户没有权限收紧该目录的访问控制。"
-      : "Windows 无法为该目录建立并验证仅当前用户可访问的 ACL。";
+      ? text("当前 Windows 账户没有权限收紧该目录的访问控制。", "The current Windows account cannot tighten access control for this directory.")
+      : text("Windows 无法为该目录建立并验证仅当前用户可访问的 ACL。", "Windows could not create and verify an ACL that restricts this directory to the current user.");
   const action = portable
-    ? "请将 Terma 便携版整个文件夹移动到本机 NTFS 磁盘后重试。"
-    : "请改用当前用户目录下的本机 NTFS 路径；如果使用了自定义数据目录，请将它迁移到受支持的位置。";
+    ? text("请将 Terma 便携版整个文件夹移动到本机 NTFS 磁盘后重试。", "Move the entire Terma portable folder to a local NTFS disk, then try again.")
+    : text("请改用当前用户目录下的本机 NTFS 路径；如果使用了自定义数据目录，请将它迁移到受支持的位置。", "Use a local NTFS path under the current user profile. If a custom data directory is configured, move it to a supported location.");
   const lines = [
-    "Terma 无法安全使用当前数据目录，因此已停止启动，避免 SSH 密码、私钥信息和远程连接凭据被其他本机用户读取。",
+    text(
+      "Terma 无法安全使用当前数据目录，因此已停止启动，避免 SSH 密码、私钥信息和远程连接凭据被其他本机用户读取。",
+      "Terma stopped before startup because the current data directory cannot be used safely. This prevents other local users from reading SSH passwords, private-key information, or remote-connection credentials."
+    ),
     "",
-    `运行模式：${mode}`,
-    dataDirectory ? `数据目录：${dataDirectory}` : "",
-    failedPath && path.resolve(failedPath) !== path.resolve(dataDirectory || failedPath) ? `失败路径：${failedPath}` : "",
-    `检测结果：${reason}`,
-    `原始原因：${detail}`,
+    text(`运行模式：${mode}`, `Run mode: ${mode}`),
+    dataDirectory ? text(`数据目录：${dataDirectory}`, `Data directory: ${dataDirectory}`) : "",
+    failedPath && path.resolve(failedPath) !== path.resolve(dataDirectory || failedPath)
+      ? text(`失败路径：${failedPath}`, `Failed path: ${failedPath}`)
+      : "",
+    text(`检测结果：${reason}`, `Result: ${reason}`),
+    text(`原始原因：${detail}`, `Original reason: ${detail}`),
     "",
-    "处理方法：",
+    text("处理方法：", "How to resolve this:"),
     `1. ${action}`,
-    "2. 不要把 data 和 .ssh 放在 FAT32、exFAT、部分网络共享或不支持 Windows ACL 的兼容文件系统中。",
-    "3. 如果该位置本应支持 ACL，请确认当前 Windows 账户对目录拥有完全控制权限。",
+    text(
+      "2. 不要把 data 和 .ssh 放在 FAT32、exFAT、部分网络共享或不支持 Windows ACL 的兼容文件系统中。",
+      "2. Do not place data or .ssh on FAT32, exFAT, some network shares, or compatibility file systems without Windows ACL support."
+    ),
+    text(
+      "3. 如果该位置本应支持 ACL，请确认当前 Windows 账户对目录拥有完全控制权限。",
+      "3. If this location should support ACLs, confirm that the current Windows account has full control of the directory."
+    ),
     "",
-    "Terma 没有修改或删除现有连接数据，也不会自动降低安全要求。"
+    text(
+      "Terma 没有修改或删除现有连接数据，也不会自动降低安全要求。",
+      "Terma did not modify or delete existing connection data, and it will not lower these security requirements automatically."
+    )
   ].filter((line, index, values) => line || values[index - 1] !== "");
-  return {title:`${PRODUCT_NAME} 数据目录权限不受支持`, message:lines.join("\n")};
+  return {
+    title:text(`${PRODUCT_NAME} 数据目录权限不受支持`, `${PRODUCT_NAME} data-directory permissions are unsupported`),
+    message:lines.join("\n")
+  };
+}
+
+function desktopSystemSuggestedLanguage() {
+  try {
+    const country = String(app.getLocaleCountryCode?.() || "").toUpperCase();
+    if (country) return country === "CN" ? "zh-CN" : "en-US";
+    const locale = String(app.getLocale?.() || "").replace(/_/g, "-");
+    const region = locale.split("-").find((part, index) => index > 0 && /^[a-z]{2}$/i.test(part));
+    if (region) return String(region).toUpperCase() === "CN" ? "zh-CN" : "en-US";
+  } catch {}
+  return "en-US";
 }
 
 function sourceProjectRoot() {
@@ -814,7 +892,10 @@ function migrateLegacyPackagedRuntime(settings) {
       throw error;
     }
     status = "conflict-backed-up";
-    pendingStorageMigrationNotice = `检测到旧程序目录和用户目录中都有旧版数据。现继续使用用户目录，旧程序数据已完整备份到：${backupRoot}`;
+    pendingStorageMigrationNotice = desktopUiText(
+      `检测到旧程序目录和用户目录中都有旧版数据。现继续使用用户目录，旧程序数据已完整备份到：${backupRoot}`,
+      `Legacy data was found in both the old program directory and the user directory. Terma will continue using the user directory; the old program data was fully backed up to: ${backupRoot}`
+    );
   } else if (sourceHasData) {
     const stagingRoot = uniqueMigrationPath(app.getPath("userData"), "runtime-migration-staging");
     try {
@@ -826,7 +907,10 @@ function migrateLegacyPackagedRuntime(settings) {
       throw error;
     }
     status = "migrated";
-    pendingStorageMigrationNotice = `旧版数据已从旧程序目录迁移到用户目录：${targetRoot}。旧目录仍保留，可用于回滚。`;
+    pendingStorageMigrationNotice = desktopUiText(
+      `旧版数据已从旧程序目录迁移到用户目录：${targetRoot}。旧目录仍保留，可用于回滚。`,
+      `Legacy data was migrated from the old program directory to the user directory: ${targetRoot}. The old directory was preserved for rollback.`
+    );
   }
 
   const migratedSettings = {
@@ -850,7 +934,10 @@ function validateDesktopStorageTransition(transition) {
   const targetRoot = desktopStorageRuntimeRoot(resolveRuntimePaths(transition?.target_settings || {}));
   if (path.relative(sourceRoot, path.resolve(String(transition?.source_root || ""))) !== ""
     || path.relative(targetRoot, path.resolve(String(transition?.target_root || ""))) !== "") {
-    throw new Error("数据迁移状态与桌面路径设置不一致");
+    throw new Error(desktopUiText(
+      "数据迁移状态与桌面路径设置不一致",
+      "The data-migration state does not match the desktop path settings"
+    ));
   }
   return transition;
 }
@@ -879,7 +966,7 @@ function failedDesktopStorageSettings(transition, error) {
       failedAt:new Date().toISOString(),
       sourceRoot:transition.source_root,
       targetRoot:transition.target_root,
-      error:String(error?.message || error || "数据迁移失败").slice(0, 500)
+      error:String(error?.message || error || desktopUiText("数据迁移失败", "Data migration failed")).slice(0, 500)
     }
   };
   delete settings.pendingStorageMigration;
@@ -903,19 +990,27 @@ function recoverPendingDesktopStorageMigration(settings) {
   if (!transition) return settings;
   try {
     const completed = finishDesktopStorageTransition(transition);
-    pendingStorageMigrationNotice = `数据已迁移到新路径：${transition.target_root}。原目录仍保留，可用于回退。`;
+    pendingStorageMigrationNotice = desktopUiText(
+      `数据已迁移到新路径：${transition.target_root}。原目录仍保留，可用于回退。`,
+      `Data was migrated to the new location: ${transition.target_root}. The original directory was preserved for rollback.`
+    );
     return completed;
   } catch (error) {
     try { rollbackDesktopStorageTransition(transition); } catch {}
     const rolledBack = failedDesktopStorageSettings(transition, error);
     writeSettings(rolledBack);
-    pendingStorageMigrationNotice = `数据路径迁移未完成，Terma 已继续使用原目录：${transition.source_root}。原因：${error.message || error}`;
+    pendingStorageMigrationNotice = desktopUiText(
+      `数据路径迁移未完成，Terma 已继续使用原目录：${transition.source_root}。原因：${error.message || error}`,
+      `Data-path migration did not complete. Terma will continue using the original directory: ${transition.source_root}. Reason: ${error.message || error}`
+    );
     return rolledBack;
   }
 }
 
 function prepareRuntimeSettings() {
-  return migrateLegacyPackagedRuntime(recoverPendingDesktopStorageMigration(readSettings()));
+  const settings = readSettings();
+  setDesktopInterfaceLanguage(settings.interfaceLanguage);
+  return migrateLegacyPackagedRuntime(recoverPendingDesktopStorageMigration(settings));
 }
 
 function applyLoginSetting(settings) {
@@ -960,7 +1055,10 @@ async function waitForWebUrl(timeoutMs = 10000) {
     if (url) return url;
     await new Promise(resolve => setTimeout(resolve, 200));
   }
-  throw new Error(`Web 服务已经启动，但 ${WEB_URL_FILE} 未在 ${Math.round(timeoutMs / 1000)} 秒内生成`);
+  throw new Error(desktopUiText(
+    `Web 服务已经启动，但 ${WEB_URL_FILE} 未在 ${Math.round(timeoutMs / 1000)} 秒内生成`,
+    `The Web service started, but ${WEB_URL_FILE} was not created within ${Math.round(timeoutMs / 1000)} seconds`
+  ));
 }
 
 function closeStartupWindow() {
@@ -971,6 +1069,9 @@ function closeStartupWindow() {
 
 function createStartupWindow(settings = readSettings()) {
   if (!app.isPackaged || shouldStartInTray(settings) || startupWindow) return null;
+  const language = normalizeDesktopNotificationLanguage(settings.interfaceLanguage || desktopInterfaceLanguage);
+  const startupTitle = desktopNotificationText(language, `${PRODUCT_NAME} 正在启动`, `${PRODUCT_NAME} is starting`);
+  const startupMessage = desktopNotificationText(language, "正在准备服务与工作区...", "Preparing services and workspace...");
   const window = startupWindow = new BrowserWindow({
     width:360,
     height:156,
@@ -984,12 +1085,12 @@ function createStartupWindow(settings = readSettings()) {
     alwaysOnTop:true,
     skipTaskbar:false,
     center:true,
-    title:`${PRODUCT_NAME} 正在启动`,
+    title:startupTitle,
     icon:iconPath(),
     backgroundColor:"#f4f6f8",
     webPreferences:{contextIsolation:true, nodeIntegration:false}
   });
-  const html = `<!doctype html><meta charset="utf-8"><title>${PRODUCT_NAME} 正在启动</title><style>html,body{width:100%;height:100%;margin:0}body{box-sizing:border-box;display:grid;grid-template-columns:48px 1fr;align-items:center;gap:16px;padding:28px 30px;color:#18212b;background:#f4f6f8;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.mark{width:44px;height:44px;display:grid;place-items:center;border-radius:8px;color:#fff;background:#111827;font-size:20px;font-weight:700}.copy{display:grid;gap:7px}.copy strong{font-size:18px;letter-spacing:0}.copy span{color:#5f6b78;font-size:12px;letter-spacing:0}.line{height:3px;overflow:hidden;border-radius:2px;background:#d8dee6}.line i{display:block;width:42%;height:100%;background:#16825f;animation:load 1.1s ease-in-out infinite}@keyframes load{from{transform:translateX(-110%)}to{transform:translateX(250%)}}@media(prefers-color-scheme:dark){body{color:#eef2f6;background:#17202a}.mark{background:#0b1016}.copy span{color:#a6b0bb}.line{background:#34404c}}</style><div class="mark">T</div><div class="copy"><strong>Terma 正在启动</strong><span>正在准备服务与工作区...</span><div class="line"><i></i></div></div>`;
+  const html = `<!doctype html><meta charset="utf-8"><title>${startupTitle}</title><style>html,body{width:100%;height:100%;margin:0}body{box-sizing:border-box;display:grid;grid-template-columns:48px minmax(0,1fr);align-items:center;gap:16px;padding:28px 30px;color:#18212b;background:#f4f6f8;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.mark{width:44px;height:44px;display:grid;place-items:center;border-radius:8px;color:#fff;background:#111827;font-size:20px;font-weight:700}.copy{min-width:0;display:grid;gap:7px}.copy strong,.copy span{min-width:0;overflow-wrap:anywhere}.copy strong{font-size:18px;line-height:1.2;letter-spacing:0}.copy span{color:#5f6b78;font-size:12px;line-height:1.35;letter-spacing:0}.line{height:3px;overflow:hidden;border-radius:2px;background:#d8dee6}.line i{display:block;width:42%;height:100%;background:#16825f;animation:load 1.1s ease-in-out infinite}@keyframes load{from{transform:translateX(-110%)}to{transform:translateX(250%)}}@media(prefers-color-scheme:dark){body{color:#eef2f6;background:#17202a}.mark{background:#0b1016}.copy span{color:#a6b0bb}.line{background:#34404c}}</style><div class="mark">T</div><div class="copy"><strong>${startupTitle}</strong><span>${startupMessage}</span><div class="line"><i></i></div></div>`;
   let revealed = false;
   const reveal = () => {
     if (revealed || startupWindow !== window || window.isDestroyed?.()) return;
@@ -1101,8 +1202,14 @@ function createWindow(options = {}) {
     event.preventDefault();
     if (/^(https?|ftp|ssh|telnet):\/\//i.test(url)) shell.openExternal(url);
   });
-  renderer.on?.("render-process-gone", () => cancelNativeSftpDragSessionsForSender(renderer, "界面进程已结束，拖出任务已取消"));
-  renderer.once?.("destroyed", () => cancelNativeSftpDragSessionsForSender(renderer, "界面已关闭，拖出任务已取消"));
+  renderer.on?.("render-process-gone", () => cancelNativeSftpDragSessionsForSender(renderer, desktopUiText(
+    "界面进程已结束，拖出任务已取消",
+    "The renderer process ended; the drag-out task was cancelled"
+  )));
+  renderer.once?.("destroyed", () => cancelNativeSftpDragSessionsForSender(renderer, desktopUiText(
+    "界面已关闭，拖出任务已取消",
+    "The window closed; the drag-out task was cancelled"
+  )));
   mainWindow.on("close", event => {
     if (options.displayClient) return;
     if (quitting || !readSettings().minimizeToTray) return;
@@ -1136,19 +1243,38 @@ function urlBelongsToDesktop(value) {
 
 async function confirmDesktopBrowserAuthorization(request = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return false;
+  await readDesktopNotificationPreferences(true).catch(() => null);
   const scopes = Array.isArray(request.scopes) ? request.scopes : [];
   const durationMode = request.duration_mode === "browser-session" ? "browser-session" : "timed";
   const durationMinutes = Math.max(1, Math.min(480, Number(request.duration_minutes) || 10));
-  const durationLabel = durationMode === "browser-session" ? "本次浏览器会话（最长 12 小时）" : `${durationMinutes} 分钟`;
+  const durationLabel = durationMode === "browser-session"
+    ? desktopUiText("本次浏览器会话（最长 12 小时）", "this browser session (up to 12 hours)")
+    : desktopUiText(`${durationMinutes} 分钟`, `${durationMinutes} minutes`);
   const labels = [];
-  if (scopes.includes("xserver")) labels.push("管理 X Server 与本机图形组件");
-  if (scopes.includes("remote-client")) labels.push("调用系统 RDP、VNC 与 XDMCP 客户端");
+  if (scopes.includes("xserver")) labels.push(desktopUiText(
+    "管理 X Server 与本机图形组件",
+    "Manage the X Server and local graphical components"
+  ));
+  if (scopes.includes("remote-client")) labels.push(desktopUiText(
+    "调用系统 RDP、VNC 与 XDMCP 客户端",
+    "Launch system RDP, VNC, and XDMCP clients"
+  ));
+  const fallbackScope = desktopUiText("桌面图形集成", "Desktop graphical integration");
+  const allowLabel = durationMode === "browser-session"
+    ? desktopUiText("允许本次会话", "Allow this session")
+    : desktopUiText(`允许 ${durationMinutes} 分钟`, `Allow for ${durationMinutes} minutes`);
   return desktopBrowserAuthorizationPromptGate.request(() => dialog.showMessageBox(mainWindow, {
     type:"question",
-    title:"浏览器请求桌面集成",
-    message:`是否允许当前本机浏览器在${durationLabel}内使用 Terma 桌面集成？`,
-    detail:`授权范围：\n${labels.length ? labels.map(label => `• ${label}`).join("\n") : "• 桌面图形集成"}\n\n撤销或授权到期会关闭由该授权开启的 X11 终端；不会开放本地文件、数据目录、更新包或迁移能力。`,
-    buttons:["拒绝", `允许${durationMode === "browser-session" ? "本次会话" : ` ${durationMinutes} 分钟`}`],
+    title:desktopUiText("浏览器请求桌面集成", "Browser requests desktop integration"),
+    message:desktopUiText(
+      `是否允许当前本机浏览器在${durationLabel}内使用 Terma 桌面集成？`,
+      `Allow the current local browser to use Terma desktop integration for ${durationLabel}?`
+    ),
+    detail:desktopUiText(
+      `授权范围：\n${labels.length ? labels.map(label => `• ${label}`).join("\n") : `• ${fallbackScope}`}\n\n撤销或授权到期会关闭由该授权开启的 X11 终端；不会开放本地文件、数据目录、更新包或迁移能力。`,
+      `Authorization scope:\n${labels.length ? labels.map(label => `• ${label}`).join("\n") : `• ${fallbackScope}`}\n\nRevoking or expiring this authorization closes X11 terminals opened by it. It does not grant access to local files, the data directory, update packages, or migration capabilities.`
+    ),
+    buttons:[desktopUiText("拒绝", "Deny"), allowLabel],
     defaultId:0,
     cancelId:0,
     noLink:true
@@ -1182,6 +1308,12 @@ function handleDesktopTheme(event, theme) {
   applyDesktopTheme(theme);
 }
 
+function handleDesktopInterfaceLanguage(event, language) {
+  if (!rendererBelongsToDesktop(event) || !["zh-CN", "en-US"].includes(String(language || ""))) return;
+  setDesktopInterfaceLanguage(language, true);
+  desktopNotificationPreferencesReadAt = 0;
+}
+
 function handleDesktopCapabilities(event) {
   const allowed = Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents && rendererBelongsToDesktop(event));
   event.returnValue = allowed
@@ -1205,11 +1337,17 @@ function sendSftpDragEvent(session, payload) {
 
 function normalizedNativeSftpDragEntries(payload) {
   const entries = Array.isArray(payload?.entries) ? payload.entries : [];
-  if (!entries.length || entries.length > 100) throw new Error("一次最多拖出 100 个文件或目录");
+  if (!entries.length || entries.length > 100) throw new Error(desktopUiText(
+    "一次最多拖出 100 个文件或目录",
+    "You can drag out at most 100 files or directories at a time"
+  ));
   const unique = new Map();
   for (const entry of entries) {
     const remotePath = String(entry?.path || "").replace(/\\/g, "/");
-    if (!remotePath || remotePath.includes("\0") || remotePath.length > 4096) throw new Error("拖出的远端路径无效");
+    if (!remotePath || remotePath.includes("\0") || remotePath.length > 4096) throw new Error(desktopUiText(
+      "拖出的远端路径无效",
+      "The remote drag-out path is invalid"
+    ));
     unique.set(remotePath, {
       path:remotePath,
       name:String(entry?.name || path.posix.basename(remotePath) || "download").slice(0, 512),
@@ -1253,7 +1391,11 @@ function safeNativeSftpTarget(value, session) {
     id:kind === "local-files" ? 1 : id,
     tabKey,
     path:targetPath || ".",
-    title:String(value.title || (kind === "terminal" ? "终端" : kind === "local-files" ? "本地文件" : "SFTP")).slice(0, 256),
+    title:String(value.title || (kind === "terminal"
+      ? desktopUiText("终端", "Terminal")
+      : kind === "local-files"
+        ? desktopUiText("本地文件", "Local Files")
+        : "SFTP")).slice(0, 256),
     kind
   };
 }
@@ -1320,8 +1462,8 @@ function maybeFinishNativeDragSession(session) {
     ? ""
     : session.writeError
       || contentError
-      || (cancelled ? "已取消拖出" : terminal.message)
-      || (ok ? "" : "无法完成系统拖放");
+      || (cancelled ? desktopUiText("已取消拖出", "Drag-out cancelled") : terminal.message)
+      || (ok ? "" : desktopUiText("无法完成系统拖放", "Could not complete the system drag-and-drop operation"));
   let succeeded = Boolean(internalTarget) || (ok && !session.writeError && !contentError);
   if (internalTarget) {
     try {
@@ -1339,10 +1481,12 @@ function maybeFinishNativeDragSession(session) {
       if (outcome?.status === "cancelled") {
         cancelled = true;
         succeeded = false;
-        message = terminal.type === "completed" ? "拖出未完成" : "已取消拖出";
+        message = terminal.type === "completed"
+          ? desktopUiText("拖出未完成", "Drag-out did not complete")
+          : desktopUiText("已取消拖出", "Drag-out cancelled");
       } else if (outcome?.status === "failed") {
         succeeded = false;
-        message ||= "拖出下载失败";
+        message ||= desktopUiText("拖出下载失败", "Drag-out download failed");
       }
     } catch (error) {
       console.warn("Failed to finish SFTP native drag task:", error);
@@ -1362,7 +1506,10 @@ function maybeFinishNativeDragSession(session) {
 
 async function handleNativeSftpWriteRequest(session, nativeEvent) {
   if (!session || typeof deliverNativeSftpDragTicketItem !== "function") {
-    nativeSftpDrag?.completeWrite?.(nativeEvent.requestId, "桌面后端不支持按项目写入");
+    nativeSftpDrag?.completeWrite?.(nativeEvent.requestId, desktopUiText(
+      "桌面后端不支持按项目写入",
+      "The desktop backend does not support per-item writes"
+    ));
     return;
   }
   session.pendingWrites += 1;
@@ -1482,7 +1629,10 @@ function handleNativeSftpDragEvent(session, nativeEvent) {
     return;
   }
   if (nativeEvent.type === "contentError") {
-    session.contentErrors.push(String(nativeEvent.message || "SFTP 拖出文件读取失败"));
+    session.contentErrors.push(String(nativeEvent.message || desktopUiText(
+      "SFTP 拖出文件读取失败",
+      "Failed to read a file for SFTP drag-out"
+    )));
     console.warn("SFTP native drag content error:", nativeEvent.message || nativeEvent);
     return;
   }
@@ -1561,7 +1711,7 @@ function handleSftpDragCancel(event, payload) {
     return;
   }
   session.abortController?.abort();
-  scheduleNativeSftpDragCancelFallback(session, "已取消拖出");
+  scheduleNativeSftpDragCancelFallback(session, desktopUiText("已取消拖出", "Drag-out cancelled"));
 }
 
 function nativeSftpDragSessionCanCancel(session) {
@@ -1576,7 +1726,10 @@ function scheduleNativeSftpDragCancelFallback(session, message) {
   session.cancelTimer = setTimeout(() => {
     if (session.released || session.resultSent) return;
     if (session.terminalEvent && !(process.platform === "darwin" && session.terminalEvent.type === "ended")) return;
-    session.terminalEvent = {type:"cancelled", message:String(message || "已取消拖出")};
+    session.terminalEvent = {
+      type:"cancelled",
+      message:String(message || desktopUiText("已取消拖出", "Drag-out cancelled"))
+    };
     session.expectedWrites = session.completedItemIds.size;
     maybeFinishNativeDragSession(session);
   }, NATIVE_SFTP_DRAG_CANCEL_GRACE_MS);
@@ -1610,7 +1763,7 @@ function cancelNativeSftpDragByToken(token) {
       const accepted = Boolean(nativeSftpDrag?.cancel?.(session.nativeId || session.requestId));
       if (accepted) {
         session.abortController?.abort();
-        scheduleNativeSftpDragCancelFallback(session, "已取消拖出");
+        scheduleNativeSftpDragCancelFallback(session, desktopUiText("已取消拖出", "Drag-out cancelled"));
       }
       else session.cancelling = false;
       return accepted;
@@ -1629,7 +1782,10 @@ function handleStagedSftpStartDrag(event, payload, requestId) {
     return relative && !relative.startsWith("..") && !path.isAbsolute(relative) && fs.existsSync(file);
   }))];
   if (!validated.length) {
-    sendSftpDragResult(event, requestId, false, "拖出文件已失效，请重新准备后再试");
+    sendSftpDragResult(event, requestId, false, desktopUiText(
+      "拖出文件已失效，请重新准备后再试",
+      "The prepared drag-out files have expired. Prepare them again and retry."
+    ));
     return;
   }
   try {
@@ -1642,21 +1798,27 @@ function handleStagedSftpStartDrag(event, payload, requestId) {
     sendSftpDragResult(event, requestId, true);
   } catch (error) {
     console.error("SFTP native drag failed:", error);
-    const message = error?.message || "无法启动系统拖拽";
+    const message = error?.message || desktopUiText("无法启动系统拖拽", "Could not start the system drag operation");
     sendSftpDragResult(event, requestId, false, message);
   }
 }
 
 function handleStreamingSftpStartDrag(event, payload, requestId) {
   if (nativeSftpDrag?.capabilities?.().sftpExternalDrag !== "streaming") {
-    sendSftpDragResult(event, requestId, false, nativeSftpDrag?.probe?.reason || "当前桌面环境不支持一次拖出");
+    sendSftpDragResult(event, requestId, false, nativeSftpDrag?.probe?.reason || desktopUiText(
+      "当前桌面环境不支持一次拖出",
+      "The current desktop environment does not support direct drag-out"
+    ));
     return;
   }
   if (nativeSftpDragSessions.has(requestId)) return;
   let token = "";
   try {
     const connectionId = Number(payload?.connectionId);
-    if (!Number.isInteger(connectionId) || connectionId <= 0) throw new Error("SFTP 连接无效");
+    if (!Number.isInteger(connectionId) || connectionId <= 0) throw new Error(desktopUiText(
+      "SFTP 连接无效",
+      "The SFTP connection is invalid"
+    ));
     const entries = normalizedNativeSftpDragEntries(payload);
     const ticket = reserveNativeSftpDragTicket(connectionId, entries.map(item => item.path), {
       platform:process.platform,
@@ -1710,7 +1872,10 @@ function handleStreamingSftpStartDrag(event, payload, requestId) {
       try { nativeSftpDrag?.cancel?.(session.nativeId || session.requestId); } catch {}
       session.cancelTimer = setTimeout(() => {
         if (session.released || session.terminalEvent) return;
-        session.terminalEvent = {type:"error", message:"拖出操作已超时"};
+        session.terminalEvent = {
+          type:"error",
+          message:desktopUiText("拖出操作已超时", "The drag-out operation timed out")
+        };
         session.expectedWrites = session.completedItemIds.size;
         maybeFinishNativeDragSession(session);
       }, NATIVE_SFTP_DRAG_CANCEL_GRACE_MS);
@@ -1733,7 +1898,10 @@ function handleStreamingSftpStartDrag(event, payload, requestId) {
     }
     nativeSftpDragSessions.delete(requestId);
     console.error("SFTP streaming drag failed:", error);
-    sendSftpDragResult(event, requestId, false, error?.message || "无法启动系统拖放");
+    sendSftpDragResult(event, requestId, false, error?.message || desktopUiText(
+      "无法启动系统拖放",
+      "Could not start the system drag-and-drop operation"
+    ));
   }
 }
 
@@ -1827,8 +1995,11 @@ async function updateTrayState() {
     online: true
   };
   if (tray) {
-    const failed = trayState.failedForwards ? `，异常 ${trayState.failedForwards} 条` : "";
-    tray.setToolTip(`${PRODUCT_NAME}：正在转发 ${trayState.runningForwards}/${trayState.totalForwards} 条${failed}`);
+    const tooltip = desktopUiText(
+      `${PRODUCT_NAME}：正在转发 ${trayState.runningForwards}/${trayState.totalForwards} 条${trayState.failedForwards ? `，异常 ${trayState.failedForwards} 条` : ""}`,
+      `${PRODUCT_NAME}: forwarding ${trayState.runningForwards}/${trayState.totalForwards}${trayState.failedForwards ? `; ${trayState.failedForwards} failed` : ""}`
+    );
+    tray.setToolTip(tooltip);
     refreshTrayMenu();
   }
 }
@@ -1839,7 +2010,7 @@ async function startAllForwards() {
     await fetchJson(`/api/connections/${connection.id}/start-forwards`, { method: "POST" });
   }
   await updateTrayState().catch(() => {});
-  notify("已启动全部连接转发");
+  notify(desktopUiText("已启动全部连接转发", "Started forwarding for all connections"));
 }
 
 function forwardNeedsStop(forward) {
@@ -1853,7 +2024,7 @@ async function stopAllConnectionForwards() {
     await fetchJson(`/api/connections/${connection.id}/stop-forwards`, { method: "POST" });
   }
   await updateTrayState().catch(() => {});
-  notify("已停止全部连接转发");
+  notify(desktopUiText("已停止全部连接转发", "Stopped forwarding for all connections"));
 }
 
 function desktopNotificationsAvailable() {
@@ -1899,6 +2070,33 @@ function desktopWindowIsBackground() {
     || !mainWindow.isFocused?.();
 }
 
+function normalizeDesktopNotificationLanguage(value) {
+  return String(value || "") === "en-US" ? "en-US" : "zh-CN";
+}
+
+function setDesktopInterfaceLanguage(value, persist=false) {
+  const language = normalizeDesktopNotificationLanguage(value);
+  const changed = desktopInterfaceLanguage !== language;
+  desktopInterfaceLanguage = language;
+  process.env[DESKTOP_INTERFACE_LANGUAGE_ENV] = language;
+  if (persist && (SETTINGS_FILE || BOOT_SETTINGS_FILE)) {
+    const settings = readSettings();
+    if (settings.interfaceLanguage !== language) {
+      writeSettings({...settings, interfaceLanguage:language});
+    }
+  }
+  if (changed && tray) refreshTrayMenu();
+  return language;
+}
+
+function desktopNotificationText(language, chinese, english) {
+  return normalizeDesktopNotificationLanguage(language) === "en-US" ? english : chinese;
+}
+
+function desktopUiText(chinese, english) {
+  return desktopNotificationText(desktopInterfaceLanguage, chinese, english);
+}
+
 async function readDesktopNotificationPreferences(force=false) {
   const now = Date.now();
   if (!force && desktopNotificationPreferences && now - desktopNotificationPreferencesReadAt < 5000) {
@@ -1909,8 +2107,11 @@ async function readDesktopNotificationPreferences(force=false) {
     fetchJson("/api/runtime-settings").catch(() => ({}))
   ]);
   const display = runtime?.saved?.notification_display || runtime?.notification_display || {};
+  const runtimeLanguage = runtime?.saved?.language || runtime?.language;
+  const language = setDesktopInterfaceLanguage(runtimeLanguage || desktopInterfaceLanguage, Boolean(runtimeLanguage));
   desktopNotificationPreferences = {
     mode:String(security?.notification_mode || "on"),
+    language,
     info:display?.info?.enabled !== false,
     success:display?.success?.enabled !== false,
     error:display?.error?.enabled !== false
@@ -1957,7 +2158,8 @@ function showBackendSystemNotification(event) {
 
 async function pollDesktopNotifications() {
   if (!webUrl || quitting) return;
-  const events = await fetchJson(`/api/notifications?since=${encodeURIComponent(desktopNotificationCursor)}`);
+  const preferences = await readDesktopNotificationPreferences(true);
+  const events = await fetchJson(`/api/notifications?since=${encodeURIComponent(desktopNotificationCursor)}&language=${encodeURIComponent(preferences.language)}`);
   if (!desktopNotificationCursorInitialized) {
     desktopNotificationCursor = Array.isArray(events)
       ? events.reduce((latest, event) => Math.max(latest, Number(event?.id || 0)), 0)
@@ -1966,7 +2168,6 @@ async function pollDesktopNotifications() {
     return;
   }
   if (!Array.isArray(events) || !events.length) return;
-  const preferences = await readDesktopNotificationPreferences(true);
   const updateStatus = events.some(event => event?.type === "update")
     ? await fetchJson("/api/updates/status").catch(() => ({}))
     : null;
@@ -2006,6 +2207,7 @@ function createTray() {
     tray.setToolTip(PRODUCT_NAME);
     tray.on("double-click", showWindow);
     refreshTrayMenu();
+    void readDesktopNotificationPreferences(true).catch(() => {});
   } catch (error) {
     console.warn(`tray unavailable: ${error.message}`);
   }
@@ -2014,21 +2216,24 @@ function createTray() {
 function refreshTrayMenu() {
   if (!tray) return;
   const statusLabel = trayState.online
-    ? `正在转发：${trayState.runningForwards}/${trayState.totalForwards} 条，连接 ${trayState.runningConnections} 个${trayState.failedForwards ? `，异常 ${trayState.failedForwards} 条` : ""}`
-    : "正在转发：状态读取中";
+    ? desktopUiText(
+      `正在转发：${trayState.runningForwards}/${trayState.totalForwards} 条，连接 ${trayState.runningConnections} 个${trayState.failedForwards ? `，异常 ${trayState.failedForwards} 条` : ""}`,
+      `Forwarding: ${trayState.runningForwards}/${trayState.totalForwards}; ${trayState.runningConnections} connections${trayState.failedForwards ? `; ${trayState.failedForwards} failed` : ""}`
+    )
+    : desktopUiText("正在转发：状态读取中", "Forwarding: reading status");
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: `打开 ${PRODUCT_NAME}`, click: showWindow },
-    { label: "在浏览器打开", click: () => shell.openExternal(webUrl) },
+    { label: desktopUiText(`打开 ${PRODUCT_NAME}`, `Open ${PRODUCT_NAME}`), click: showWindow },
+    { label: desktopUiText("在浏览器打开", "Open in browser"), click: () => shell.openExternal(webUrl) },
     { label: statusLabel, enabled: false },
     { type: "separator" },
-    { label: "启动全部转发", click: () => startAllForwards().catch(showError) },
-    { label: "停止全部转发", click: () => stopAllConnectionForwards().catch(showError) },
+    { label: desktopUiText("启动全部转发", "Start all forwarding"), click: () => startAllForwards().catch(showError) },
+    { label: desktopUiText("停止全部转发", "Stop all forwarding"), click: () => stopAllConnectionForwards().catch(showError) },
     { type: "separator" },
-    { label: "打开 .ssh 目录", click: () => shell.openPath(PROJECT_SSH_DIR) },
-    { label: "打开日志目录", click: () => shell.openPath(LOG_DIR) },
-    { label: "导出日志", click: exportLogs },
+    { label: desktopUiText("打开 .ssh 目录", "Open .ssh directory"), click: () => shell.openPath(PROJECT_SSH_DIR) },
+    { label: desktopUiText("打开日志目录", "Open log directory"), click: () => shell.openPath(LOG_DIR) },
+    { label: desktopUiText("导出日志", "Export logs"), click: exportLogs },
     { type: "separator" },
-    { label: `退出 ${PRODUCT_NAME}`, click: quitApp }
+    { label: desktopUiText(`退出 ${PRODUCT_NAME}`, `Quit ${PRODUCT_NAME}`), click: quitApp }
   ]));
 }
 
@@ -2038,15 +2243,16 @@ function showError(error) {
 
 async function exportLogs() {
   try {
+    await readDesktopNotificationPreferences(true).catch(() => null);
     const result = await dialog.showOpenDialog(mainWindow || undefined, {
-      title: "选择日志导出目录",
+      title: desktopUiText("选择日志导出目录", "Select log export directory"),
       properties: ["openDirectory", "createDirectory"]
     });
     if (result.canceled || !result.filePaths[0]) return;
     const target = path.join(result.filePaths[0], `${PRODUCT_ID}-logs-${timestampName()}`);
     fs.mkdirSync(target, { recursive: true });
     if (fs.existsSync(LOG_DIR)) fs.cpSync(LOG_DIR, target, { recursive: true });
-    notify("日志已导出");
+    notify(desktopUiText("日志已导出", "Logs exported"));
     shell.openPath(target);
   } catch (error) {
     showError(error);
@@ -2065,7 +2271,9 @@ function desktopSettingsView() {
     paths,
     xserver:xServerDiagnostics(),
     project_mode_available: !app.isPackaged || isWindowsPortable(),
-    project_mode_label: isWindowsPortable() ? "便携程序所在文件夹" : "项目所在文件夹"
+    project_mode_label: isWindowsPortable()
+      ? desktopUiText("便携程序所在文件夹", "Portable application folder")
+      : desktopUiText("项目所在文件夹", "Project folder")
   };
 }
 
@@ -2074,10 +2282,13 @@ function normalizeDesktopSettings(value) {
   const projectModeAvailable = !app.isPackaged || isWindowsPortable();
   const requestedMode = String(value?.dataMode || current.dataMode);
   const allowedModes = new Set(projectModeAvailable ? ["project", "user", "custom"] : ["user", "custom"]);
-  if (!allowedModes.has(requestedMode)) throw new Error("数据路径模式无效");
+  if (!allowedModes.has(requestedMode)) throw new Error(desktopUiText("数据路径模式无效", "The data-path mode is invalid"));
   const customDataDir = String(value?.customDataDir || "").trim();
-  if (requestedMode === "custom" && !customDataDir) throw new Error("请选择自定义数据根目录");
-  if (customDataDir.includes("\0")) throw new Error("自定义数据目录无效");
+  if (requestedMode === "custom" && !customDataDir) throw new Error(desktopUiText(
+    "请选择自定义数据根目录",
+    "Select a custom data root directory"
+  ));
+  if (customDataDir.includes("\0")) throw new Error(desktopUiText("自定义数据目录无效", "The custom data directory is invalid"));
   return {
     ...current,
     dataMode: requestedMode,
@@ -2114,7 +2325,13 @@ function saveDesktopSettings(value) {
         const rolledBack = failedDesktopStorageSettings(transition, error);
         writeSettings(rolledBack);
         applyLoginSetting(rolledBack);
-        dialog.showErrorBox("Terma 数据迁移失败", `数据没有切换到新路径，原目录仍然保留并会继续使用。\n\n${error.message || error}`);
+        dialog.showErrorBox(
+          desktopUiText("Terma 数据迁移失败", "Terma data migration failed"),
+          desktopUiText(
+            `数据没有切换到新路径，原目录仍然保留并会继续使用。\n\n${error.message || error}`,
+            `Data was not switched to the new location. The original directory was preserved and will remain in use.\n\n${error.message || error}`
+          )
+        );
       } else {
         console.error(error);
       }
@@ -2132,8 +2349,9 @@ function saveDesktopSettings(value) {
 }
 
 async function chooseDesktopDataDir() {
+  await readDesktopNotificationPreferences(true).catch(() => null);
   const result = await dialog.showOpenDialog(mainWindow || undefined, {
-    title: `选择 ${PRODUCT_NAME} 数据根目录`,
+    title: desktopUiText(`选择 ${PRODUCT_NAME} 数据根目录`, `Select ${PRODUCT_NAME} data root directory`),
     properties: ["openDirectory", "createDirectory"]
   });
   return result.canceled ? "" : result.filePaths[0];
@@ -2150,14 +2368,18 @@ function defaultDesktopDirectory() {
 function validateDownloadDirectory(value) {
   const target = path.resolve(String(value || defaultDownloadDirectory()));
   fs.mkdirSync(target, { recursive:true });
-  if (!fs.statSync(target).isDirectory()) throw new Error("SFTP 下载路径不是目录");
+  if (!fs.statSync(target).isDirectory()) throw new Error(desktopUiText(
+    "SFTP 下载路径不是目录",
+    "The SFTP download path is not a directory"
+  ));
   fs.accessSync(target, fs.constants.W_OK);
   return target;
 }
 
 async function chooseDownloadDirectory() {
+  await readDesktopNotificationPreferences(true).catch(() => null);
   const result = await dialog.showOpenDialog(mainWindow || undefined, {
-    title:"选择 SFTP 自动保存目录",
+    title:desktopUiText("选择 SFTP 自动保存目录", "Select SFTP automatic save directory"),
     defaultPath:defaultDownloadDirectory(),
     properties:["openDirectory", "createDirectory"]
   });
@@ -2165,8 +2387,9 @@ async function chooseDownloadDirectory() {
 }
 
 async function chooseSyncDirectory() {
+  await readDesktopNotificationPreferences(true).catch(() => null);
   const result = await dialog.showOpenDialog(mainWindow || undefined, {
-    title:"选择本地同步目录",
+    title:desktopUiText("选择本地同步目录", "Select local sync directory"),
     properties:["openDirectory", "createDirectory"]
   });
   return result.canceled ? "" : result.filePaths[0];
@@ -2181,7 +2404,10 @@ async function openDownloadDirectory(value) {
 
 async function openLocalPath(value) {
   const target = path.resolve(String(value || ""));
-  if (!fs.existsSync(target)) throw new Error("本地文件或目录不存在");
+  if (!fs.existsSync(target)) throw new Error(desktopUiText(
+    "本地文件或目录不存在",
+    "The local file or directory does not exist"
+  ));
   const error = await shell.openPath(target);
   if (error) throw new Error(error);
   return {ok:true, path:target};
@@ -2192,7 +2418,10 @@ async function openVsCodeRemote(value={}) {
   const host = String(value.host || "").trim();
   const port = Number(value.port || 22);
   const remotePath = String(value.path || "").replace(/\\/g, "/").trim();
-  if (!user || !host || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error("VS Code Remote SSH 目标无效");
+  if (!user || !host || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error(desktopUiText(
+    "VS Code Remote SSH 目标无效",
+    "The VS Code Remote SSH target is invalid"
+  ));
   const target = `${user}@${host}${port === 22 ? "" : `:${port}`}`;
   const suffix = remotePath ? `/${remotePath.replace(/^\/+/, "").split("/").map(encodeURIComponent).join("/")}` : "";
   const uri = `vscode://vscode-remote/ssh-remote+${encodeURIComponent(target)}${suffix}`;
@@ -2202,7 +2431,10 @@ async function openVsCodeRemote(value={}) {
 
 async function openExternalFile(file, editor={}) {
   const target = path.resolve(String(file || ""));
-  if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error("外部编辑临时文件不存在");
+  if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error(desktopUiText(
+    "外部编辑临时文件不存在",
+    "The temporary file for external editing does not exist"
+  ));
   const mode = String(editor.mode || "system");
   if (mode === "system") {
     const error = await shell.openPath(target);
@@ -2213,9 +2445,12 @@ async function openExternalFile(file, editor={}) {
     await shell.openExternal(`vscode://file/${target.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/")}`);
     return {ok:true, mode};
   }
-  if (mode !== "custom") throw new Error("外部编辑器类型无效");
+  if (mode !== "custom") throw new Error(desktopUiText("外部编辑器类型无效", "The external-editor type is invalid"));
   const executable = path.resolve(String(editor.path || ""));
-  if (!path.isAbsolute(executable) || !fs.existsSync(executable) || !fs.statSync(executable).isFile()) throw new Error("自定义编辑器程序不存在");
+  if (!path.isAbsolute(executable) || !fs.existsSync(executable) || !fs.statSync(executable).isFile()) throw new Error(desktopUiText(
+    "自定义编辑器程序不存在",
+    "The custom editor executable does not exist"
+  ));
   const configuredArgs = Array.isArray(editor.args) ? editor.args.map(value => String(value)) : [];
   const args = configuredArgs.some(value => value.includes("${file}"))
     ? configuredArgs.map(value => value.replaceAll("${file}", target))
@@ -2291,7 +2526,10 @@ function desktopProgramCacheInfo() {
 }
 
 function clearDesktopProgramCache(category="") {
-  if (String(category || "") !== "local_installers") throw new Error("未知的桌面缓存分类");
+  if (String(category || "") !== "local_installers") throw new Error(desktopUiText(
+    "未知的桌面缓存分类",
+    "Unknown desktop cache category"
+  ));
   remoteClientAdapter?.clearCache?.();
   xServerRuntime?.clearCache?.();
   return desktopProgramCacheInfo();
@@ -2310,14 +2548,17 @@ function validatedUpdatePackagePath(file) {
   const updateRoot = path.resolve(path.join(DATA_DIR, "updates"));
   const relative = path.relative(updateRoot, target);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative) || !fs.existsSync(target)) {
-    throw new Error("更新安装包路径无效");
+    throw new Error(desktopUiText("更新安装包路径无效", "The update-package path is invalid"));
   }
   const supported = process.platform === "win32"
     ? /\.exe$/i
     : process.platform === "darwin"
       ? /\.(?:dmg|zip)$/i
       : /\.(?:appimage|deb|rpm)$/i;
-  if (!supported.test(target)) throw new Error("更新安装包类型与当前系统不匹配");
+  if (!supported.test(target)) throw new Error(desktopUiText(
+    "更新安装包类型与当前系统不匹配",
+    "The update-package type does not match the current system"
+  ));
   return target;
 }
 
@@ -2351,8 +2592,77 @@ function quitApp() {
 
 function assertDesktopClipboardSender(event) {
   if (!mainWindow || mainWindow.isDestroyed() || event?.sender !== mainWindow.webContents || !rendererBelongsToDesktop(event)) {
-    throw new Error("剪贴板请求来源无效");
+    throw new Error(desktopUiText("剪贴板请求来源无效", "The clipboard request source is invalid"));
   }
+}
+
+const DESKTOP_CLIPBOARD_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
+const DESKTOP_CLIPBOARD_IMAGE_MAX_DIMENSION = 16384;
+const DESKTOP_CLIPBOARD_IMAGE_MAX_PIXELS = 64 * 1024 * 1024;
+const DESKTOP_CLIPBOARD_PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function readDesktopClipboardImage() {
+  const image = clipboard.readImage();
+  if (!image || image.isEmpty()) return {ok:false, reason:"empty"};
+  const size = image.getSize();
+  const width = Math.max(0, Number(size?.width || 0));
+  const height = Math.max(0, Number(size?.height || 0));
+  if (!width || !height) return {ok:false, reason:"empty"};
+  if (width > DESKTOP_CLIPBOARD_IMAGE_MAX_DIMENSION
+    || height > DESKTOP_CLIPBOARD_IMAGE_MAX_DIMENSION
+    || width * height > DESKTOP_CLIPBOARD_IMAGE_MAX_PIXELS) {
+    return {
+      ok:false,
+      reason:"too_large",
+      error:desktopUiText("剪贴板图片尺寸过大，无法安全粘贴", "The clipboard image dimensions are too large to paste safely")
+    };
+  }
+  const data = image.toPNG();
+  if (!data.length) return {ok:false, reason:"empty"};
+  if (data.length > DESKTOP_CLIPBOARD_IMAGE_MAX_BYTES) {
+    return {
+      ok:false,
+      reason:"too_large",
+      error:desktopUiText("剪贴板图片超过 25 MB，无法粘贴到远端终端", "The clipboard image exceeds 25 MB and cannot be pasted into the remote terminal")
+    };
+  }
+  return {ok:true, mime_type:"image/png", width, height, byte_length:data.length, data};
+}
+
+function writeDesktopClipboardImage(value) {
+  const data = Buffer.isBuffer(value)
+    ? value
+    : value instanceof ArrayBuffer
+      ? Buffer.from(value)
+      : ArrayBuffer.isView(value)
+        ? Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+        : Array.isArray(value?.data)
+          ? Buffer.from(value.data)
+          : Buffer.alloc(0);
+  if (!data.length) throw new Error(desktopUiText("剪贴板图片为空", "The clipboard image is empty"));
+  if (data.length > DESKTOP_CLIPBOARD_IMAGE_MAX_BYTES) throw new Error(desktopUiText(
+    "剪贴板图片超过 25 MB，无法写入本机剪贴板",
+    "The clipboard image exceeds 25 MB and cannot be written to the local clipboard"
+  ));
+  if (data.length < DESKTOP_CLIPBOARD_PNG_SIGNATURE.length || !data.subarray(0, DESKTOP_CLIPBOARD_PNG_SIGNATURE.length).equals(DESKTOP_CLIPBOARD_PNG_SIGNATURE)) {
+    throw new Error(desktopUiText("剪贴板图片不是有效的 PNG 数据", "The clipboard image is not valid PNG data"));
+  }
+  const image = nativeImage.createFromBuffer(data);
+  if (image.isEmpty()) throw new Error(desktopUiText("剪贴板图片不是有效的 PNG 数据", "The clipboard image is not valid PNG data"));
+  const size = image.getSize();
+  const width = Math.max(0, Number(size?.width || 0));
+  const height = Math.max(0, Number(size?.height || 0));
+  if (!width || !height
+    || width > DESKTOP_CLIPBOARD_IMAGE_MAX_DIMENSION
+    || height > DESKTOP_CLIPBOARD_IMAGE_MAX_DIMENSION
+    || width * height > DESKTOP_CLIPBOARD_IMAGE_MAX_PIXELS) {
+    throw new Error(desktopUiText(
+      "剪贴板图片尺寸过大，无法安全写入",
+      "The clipboard image dimensions are too large to write safely"
+    ));
+  }
+  clipboard.writeImage(image);
+  return {ok:true, width, height, byte_length:data.length};
 }
 
 function registerDesktopClipboardHandlers() {
@@ -2364,6 +2674,14 @@ function registerDesktopClipboardHandlers() {
     assertDesktopClipboardSender(event);
     clipboard.writeText(String(text ?? ""));
     return {ok:true};
+  });
+  ipcMain.handle("terma:clipboard-read-image", event => {
+    assertDesktopClipboardSender(event);
+    return readDesktopClipboardImage();
+  });
+  ipcMain.handle("terma:clipboard-write-image", (event, data) => {
+    assertDesktopClipboardSender(event);
+    return writeDesktopClipboardImage(data);
   });
 }
 
@@ -2380,7 +2698,10 @@ function failDisplayClientStartup(message) {
 function completeDisplayClientStartup() {
   const targetUrl = pendingDisplayClientUrl;
   if (!targetUrl || !normalizeDesktopAuthToken(desktopAuthToken)) {
-    return failDisplayClientStartup(`无法验证已经运行的 ${PRODUCT_NAME} 后端，请在当前图形会话中重新启动。`);
+    return failDisplayClientStartup(desktopUiText(
+      `无法验证已经运行的 ${PRODUCT_NAME} 后端，请在当前图形会话中重新启动。`,
+      `Could not verify the running ${PRODUCT_NAME} backend. Restart it in the current graphical session.`
+    ));
   }
   if (displayClientAuthTimer) clearTimeout(displayClientAuthTimer);
   displayClientAuthTimer = null;
@@ -2397,18 +2718,27 @@ function completeDisplayClientStartup() {
 function startDisplayClient() {
   const targetUrl = displayClientUrl();
   if (!targetUrl) {
-    return failDisplayClientStartup(`无法连接已经运行的 ${PRODUCT_NAME} 后端，请在当前图形会话中重新启动。`);
+    return failDisplayClientStartup(desktopUiText(
+      `无法连接已经运行的 ${PRODUCT_NAME} 后端，请在当前图形会话中重新启动。`,
+      `Could not connect to the running ${PRODUCT_NAME} backend. Restart it in the current graphical session.`
+    ));
   }
   pendingDisplayClientUrl = targetUrl;
   if (displayClientAuthRejected) {
-    return failDisplayClientStartup("显示客户端收到的桌面认证令牌无效，请在当前图形会话中重新启动 Terma。");
+    return failDisplayClientStartup(desktopUiText(
+      "显示客户端收到的桌面认证令牌无效，请在当前图形会话中重新启动 Terma。",
+      "The display client received an invalid desktop authentication token. Restart Terma in the current graphical session."
+    ));
   }
   if (normalizeDesktopAuthToken(desktopAuthToken)) return completeDisplayClientStartup();
   if (!displayClientAuthTimer) {
     displayClientAuthTimer = setTimeout(() => {
       displayClientAuthTimer = null;
       if (pendingDisplayClientUrl && !desktopAuthToken) {
-        failDisplayClientStartup("等待桌面认证令牌超时，请在当前图形会话中重新启动 Terma。");
+        failDisplayClientStartup(desktopUiText(
+          "等待桌面认证令牌超时，请在当前图形会话中重新启动 Terma。",
+          "Timed out while waiting for the desktop authentication token. Restart Terma in the current graphical session."
+        ));
       }
     }, DISPLAY_CLIENT_AUTH_TIMEOUT_MS);
   }
@@ -2427,24 +2757,25 @@ app.whenReady().then(async () => {
   const firstRun = ensureDesktopSettingsFile();
   const startupDesktopSettings = prepareRuntimeSettings();
   createStartupWindow(startupDesktopSettings);
-  const startupRuntime = resolveRuntimePaths(startupDesktopSettings);
-  prepareLegacyBrandMigrationAtStartup(startupDesktopSettings, startupRuntime);
-  loadBackend(startupDesktopSettings);
-  if (startupDesktopSettings.xServerAutoStart) {
-    try { await xServerRuntime.start(); } catch (error) { console.warn(`X Server auto-start skipped: ${error.message}`); }
-  }
-  nativeSftpDrag = createNativeSftpDrag({
-    app,
-    nativeImage,
-    screen,
-    iconPath:iconPath("icon.png"),
-    platform:process.platform,
-    debug:NATIVE_SFTP_DRAG_DEBUG
-  });
-  setNativeSftpDragCancelHandler?.(cancelNativeSftpDragByToken);
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-  fs.mkdirSync(PROJECT_SSH_DIR, { recursive: true });
   try {
+    const startupRuntime = resolveRuntimePaths(startupDesktopSettings);
+    prepareLegacyBrandMigrationAtStartup(startupDesktopSettings, startupRuntime);
+    loadBackend(startupDesktopSettings);
+    if (startupDesktopSettings.xServerAutoStart) {
+      try { await xServerRuntime.start(); } catch (error) { console.warn(`X Server auto-start skipped: ${error.message}`); }
+    }
+    nativeSftpDrag = createNativeSftpDrag({
+      app,
+      nativeImage,
+      screen,
+      iconPath:iconPath("icon.png"),
+      platform:process.platform,
+      debug:NATIVE_SFTP_DRAG_DEBUG,
+      getLanguage:()=>desktopInterfaceLanguage
+    });
+    setNativeSftpDragCancelHandler?.(cancelNativeSftpDragByToken);
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.mkdirSync(PROJECT_SSH_DIR, { recursive: true });
     const desktopServerArgs = { ...parseServerArgs(), pidFile:PID_FILE };
     const backend = startServer(desktopServerArgs, {
       exitOnShutdown: false,
@@ -2495,7 +2826,13 @@ app.whenReady().then(async () => {
     closeStartupWindow();
     const alreadyRunning = error?.code === "TERMA_ALREADY_RUNNING" || error?.code === "TUNNELDESK_ALREADY_RUNNING";
     const presentation = alreadyRunning
-      ? {title:`${PRODUCT_NAME} 启动失败`, message:`${error.message}\n\n请使用已经打开的 ${PRODUCT_NAME} 窗口，或先停止已有无界面服务。`}
+      ? {
+        title:desktopUiText(`${PRODUCT_NAME} 启动失败`, `${PRODUCT_NAME} failed to start`),
+        message:desktopUiText(
+          `${error.message}\n\n请使用已经打开的 ${PRODUCT_NAME} 窗口，或先停止已有无界面服务。`,
+          `${error.message}\n\nUse the ${PRODUCT_NAME} window that is already open, or stop the existing headless service first.`
+        )
+      }
       : desktopStartupFailurePresentation(error, {dataDir:dataPath});
     dialog.showErrorBox(presentation.title, presentation.message);
     quitting = true;
@@ -2505,6 +2842,7 @@ app.whenReady().then(async () => {
   buildAppMenu();
   ipcMain.on("terma:capabilities", handleDesktopCapabilities);
   ipcMain.on("terma:set-theme", handleDesktopTheme);
+  ipcMain.on("terma:set-interface-language", handleDesktopInterfaceLanguage);
   ipcMain.on("terma:sftp-start-drag", handleSftpStartDrag);
   ipcMain.on("terma:sftp-drag-activate", handleSftpDragActivate);
   ipcMain.on("terma:sftp-drag-target", handleSftpDragTarget);
@@ -2523,9 +2861,21 @@ app.whenReady().then(async () => {
         const status = await fetchJson("/api/startup-status");
         const success = Number(status.autostart?.ok || 0) + Number(status.restore?.ok || 0);
         const failed = Number(status.autostart?.failed || 0) + Number(status.restore?.failed || 0);
-        notify(`管理界面：${webUrl}\n转发启动：成功 ${success}，失败 ${failed}${failed ? "；详情请查看系统日志" : ""}`);
+        const preferences = await readDesktopNotificationPreferences(true).catch(() => ({language:"zh-CN"}));
+        const language = preferences.language;
+        const management = desktopNotificationText(language, `管理界面：${webUrl}`, `Management interface: ${webUrl}`);
+        const detail = failed
+          ? desktopNotificationText(language, "；详情请查看系统日志", "; see System Logs for details")
+          : "";
+        const forwards = desktopNotificationText(
+          language,
+          `转发启动：成功 ${success}，失败 ${failed}${detail}`,
+          `Forwarding startup: ${success} succeeded, ${failed} failed${detail}`
+        );
+        notify(`${management}\n${forwards}`);
       } catch {
-        notify(`管理界面已启动：${webUrl}`);
+        const preferences = await readDesktopNotificationPreferences(true).catch(() => ({language:"zh-CN"}));
+        notify(desktopNotificationText(preferences.language, `管理界面已启动：${webUrl}`, `Management interface started: ${webUrl}`));
       }
     }, 2200);
   }

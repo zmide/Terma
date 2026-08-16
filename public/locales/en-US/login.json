@@ -1,0 +1,14 @@
+{
+  "title": "Sign in to Terma",
+  "description": "Enter the Web access password. If only an access token is configured, enter that token instead.",
+  "credential": "Password or token",
+  "show_password": "Show password",
+  "hide_password": "Hide password",
+  "submit": "Sign in",
+  "failed": "Sign-in failed",
+  "not_configured": "No Web password or access token has been configured",
+  "invalid": "The password or token is incorrect",
+  "temporarily_locked": "The password or token is incorrect. Sign-in is locked for {{seconds}} seconds",
+  "too_many_attempts": "Too many sign-in attempts. Try again in {{seconds}} seconds",
+  "switch_language": "Switch to Simplified Chinese"
+}

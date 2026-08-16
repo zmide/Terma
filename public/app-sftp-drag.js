@@ -115,7 +115,7 @@ function primeSftpNativeDrag(event, connectionId, path, name, type, tabKey=sftpT
     if (sftpNativeDragPointer !== pointer) return;
     row?.classList.add("is-preparing-drag");
     void stageSftpNativeDrag(connectionId, entries)
-      .catch(error => notify(error.message || "准备拖出文件失败", "error"))
+      .catch(error => notify(error.message || tr("sftp:drag.prepare_failed", {defaultValue:"准备拖出文件失败"}), "error"))
       .finally(() => row?.classList.remove("is-preparing-drag"));
   }, 180);
   sftpNativeDragPointer = pointer;
@@ -180,10 +180,17 @@ function showSftpDragPreview(entries, clientX, clientY) {
   }
   const first = items[0] || {};
   const isDirectory = first.type === "dir" || first.type === "directory";
-  const signature = `${isDirectory ? "folder" : "file"}\0${String(first.name || first.path || "远程项目")}\0${items.length}`;
+  const fallbackName = tr("sftp:drag.remote_item", {defaultValue:"远程项目"});
+  const displayName = first.name || sftpPathName(first.path) || fallbackName;
+  const summary = items.length > 1
+    ? tr("sftp:auto.item_count", {count:items.length, defaultValue:`共 ${items.length} 项`})
+    : isDirectory
+      ? tr("sftp:drag.remote_directory", {defaultValue:"远程目录"})
+      : tr("sftp:drag.remote_file", {defaultValue:"远程文件"});
+  const signature = `${isDirectory ? "folder" : "file"}\0${String(displayName)}\0${items.length}\0${summary}`;
   if (preview.dataset.content !== signature) {
     preview.dataset.content = signature;
-    preview.innerHTML = `<span class="sftp-drag-preview-icon">${icon(isDirectory ? "folder" : "file")}</span><span class="sftp-drag-preview-copy"><strong>${esc(first.name || sftpPathName(first.path) || "远程项目")}</strong><small>${items.length > 1 ? `共 ${items.length} 项` : isDirectory ? "远程目录" : "远程文件"}</small></span>${items.length > 1 ? `<b>${items.length}</b>` : ""}`;
+    preview.innerHTML = `<span class="sftp-drag-preview-icon">${icon(isDirectory ? "folder" : "file")}</span><span class="sftp-drag-preview-copy"><strong data-i18n-skip>${esc(displayName)}</strong><small>${esc(summary)}</small></span>${items.length > 1 ? `<b>${items.length}</b>` : ""}`;
   }
   moveSftpDragPreview(clientX, clientY);
 }
@@ -419,7 +426,10 @@ function scheduleSftpTabDragPreview(tabKey, options={}) {
       }
       const node = [...document.querySelectorAll(".tab[data-tab-key]")].find(tab => tab.dataset.tabKey === tabKey);
       node?.classList.add("sftp-drop-target");
-      showSftpDragHint(`松开复制到 ${currentTarget.kind === "terminal" ? "终端当前目录" : currentTarget.title}`, true, "copy", tabKey);
+      const targetLabel = currentTarget.kind === "terminal"
+        ? tr("sftp:drag.terminal_current_directory", {defaultValue:"终端当前目录"})
+        : currentTarget.title;
+      showSftpDragHint(tr("sftp:transfer.drop_copy_to", {target:targetLabel, defaultValue:`松开复制到 ${targetLabel}`}), true, "copy", tabKey);
     });
   };
   if (options.immediate) {
@@ -497,11 +507,11 @@ function handleSftpDocumentDragLeave(event) {
     }
     if (mode === "staged" && !drag.nativeStarted) {
       showSftpDragHint(drag.nativeFiles?.length
-        ? "内容已准备好；松开后再次拖动可保存到本机"
-        : "正在准备拖出内容；完成后再次拖动可保存到本机");
+        ? tr("sftp:drag.staged_ready", {defaultValue:"内容已准备好；松开后再次拖动可保存到本机"})
+        : tr("sftp:drag.staged_preparing", {defaultValue:"正在准备拖出内容；完成后再次拖动可保存到本机"}));
       return;
     }
-    showSftpDragHint("Web 版不能拖到系统；跨主机复制请拖到另一台 SFTP 标签");
+    showSftpDragHint(tr("sftp:drag.web_external_unavailable", {defaultValue:"Web 版不能拖到系统；跨主机复制请拖到另一台 SFTP 标签"}));
   }, 80);
 }
 
@@ -597,7 +607,7 @@ function startSftpNativeDrag(row, connectionId, entries, cached, mode=sftpExtern
     if (mode === "staged") sftpNativeDragArmed.add(key);
     if (sftpInternalDrag?.row === row) sftpInternalDrag.nativeStarted = false;
     clearSftpDragVisuals(row);
-    notify(error.message || "无法启动系统拖拽", "error");
+    notify(error.message || tr("sftp:drag.native_start_failed", {defaultValue:"无法启动系统拖拽"}), "error");
     return "";
   }
 }
@@ -631,14 +641,14 @@ function showSftpNativeDragTargetFeedback(target) {
   if (target.kind === "local-files") {
     const overlay = localFilesRoot(String(target.tabKey || ""))?.querySelector(".local-files-drop-overlay");
     if (overlay) overlay.hidden = false;
-    showSftpDragHint(`松开保存到 ${target.title}`, true, "copy", target.tabKey);
+    showSftpDragHint(tr("sftp:drag.drop_save_to", {target:target.title, defaultValue:`松开保存到 ${target.title}`}), true, "copy", target.tabKey);
     return;
   }
   const state = sftpTabRuntimes.get(String(target.tabKey || ""))?.state;
   if (state && Number(state.connectionId) === Number(target.id)) {
-    setSftpExternalDropState(true, {title:`松开复制到 ${target.title}`, path:target.path || state.path || ".", tabKey:target.tabKey});
+    setSftpExternalDropState(true, {title:tr("sftp:transfer.drop_copy_to", {target:target.title, defaultValue:`松开复制到 ${target.title}`}), path:target.path || state.path || ".", tabKey:target.tabKey});
   } else {
-    showSftpDragHint(`松开复制到 ${target.title}`, true, "copy", target.tabKey);
+    showSftpDragHint(tr("sftp:transfer.drop_copy_to", {target:target.title, defaultValue:`松开复制到 ${target.title}`}), true, "copy", target.tabKey);
   }
 }
 
@@ -663,24 +673,26 @@ function syncSftpNativeDragTargetAt(requestId, request, clientX, clientY, option
     const shellTab = tabs.find(tab => tab.key === shellTabKey);
     const state = localFileRuntimes.get(String(shellTabKey || ""));
     if (shellTab?.kind === "local-files") {
+      const path = state?.path || shellTab.path || tr("sftp:drag.desktop", {defaultValue:"桌面"});
       target = {
         kind:"local-files",
         id:1,
         key:String(shellTab.key),
         path:String(state?.path || shellTab.path || ""),
-        title:`本地文件：${state?.path || shellTab.path || "桌面"}`
+        title:tr("sftp:drag.local_files_target", {path, defaultValue:`本地文件：${path}`})
       };
     }
   }
   if (!target && node) {
     const terminalSession = [...terminalSessions.values()].find(session => session?.mount?.contains?.(node));
     if (terminalSession?.connected && terminalSession.currentDirectoryKnown) {
+      const path = terminalDirectoryDropLabel(terminalSession);
       target = {
         kind:"terminal",
         id:Number(terminalSession.id),
         key:String(terminalSession.key || ""),
         path:String(terminalSession.currentDirectory || "."),
-        title:`终端：${terminalDirectoryDropLabel(terminalSession)}`
+        title:tr("sftp:drag.terminal_target", {path, defaultValue:`终端：${path}`})
       };
     }
   }
@@ -809,7 +821,10 @@ async function handleSftpNativeDragResult(result) {
     const session = terminalSessions.get(String(internalTarget.tabKey || ""));
     if (session && typeof setTerminalDropState === "function") setTerminalDropState(session, false);
     await copySftpDraggedItemsToDirectory(request, Number(internalTarget.id), String(internalTarget.path || "."), {
-      title:`终端：${internalTarget.path || "当前目录"}`
+      title:tr("sftp:drag.terminal_target", {
+        path:internalTarget.path || tr("sftp:drag.current_directory", {defaultValue:"当前目录"}),
+        defaultValue:`终端：${internalTarget.path || "当前目录"}`
+      })
     });
     return;
   }
@@ -837,15 +852,15 @@ async function handleSftpNativeDragResult(result) {
       ? result.renamedItems.filter(item => item?.savedName)
       : [];
     if (renamedItems.length) {
-      const names = renamedItems.slice(0, 3).map(item => item.savedName).join("、");
-      const suffix = renamedItems.length > 3 ? ` 等 ${renamedItems.length} 项` : "";
-      notify(`目标目录存在同名项目，Finder 已自动保存为：${names}${suffix}`, "info");
+      const names = renamedItems.slice(0, 3).map(item => item.savedName).join(tr("sftp:drag.item_separator", {defaultValue:"、"}));
+      const suffix = renamedItems.length > 3 ? tr("sftp:drag.more_items", {count:renamedItems.length, defaultValue:` 等 ${renamedItems.length} 项`}) : "";
+      notify(tr("sftp:drag.finder_renamed", {names, suffix, defaultValue:`目标目录存在同名项目，Finder 已自动保存为：${names}${suffix}`}), "info");
     }
     return;
   }
   if (request.mode === "staged") sftpNativeDragArmed.add(request.key);
   if (/取消/.test(String(result?.message || ""))) return;
-  notify(result?.message || "无法启动系统拖拽，请再次拖动重试", "error");
+  notify(result?.message || tr("sftp:drag.native_retry", {defaultValue:"无法启动系统拖拽，请再次拖动重试"}), "error");
 }
 
 async function prepareSftpNativeDrag(connectionId, entries, row) {
@@ -859,13 +874,13 @@ async function prepareSftpNativeDrag(connectionId, entries, row) {
     sftpInternalDrag.nativeFiles = staged.files || [];
     if (sftpInternalDrag.leftWindow) {
       sftpNativeDragArmed.add(sftpNativeDragKey(connectionId, entries));
-      if (sftpInternalDrag.browserDragEnded) notify("拖出内容已准备好，请再次拖动", "info");
-      else showSftpDragHint("已准备好；松开后再次拖动可保存到外部");
+      if (sftpInternalDrag.browserDragEnded) notify(tr("sftp:drag.content_ready_drag_again", {defaultValue:"拖出内容已准备好，请再次拖动"}), "info");
+      else showSftpDragHint(tr("sftp:drag.ready_for_external", {defaultValue:"已准备好；松开后再次拖动可保存到外部"}));
     } else if (!sftpInternalDrag.browserDragEnded) {
-      showSftpDragHint("拖到其他 SFTP 标签可跨主机复制");
+      showSftpDragHint(tr("sftp:drag.cross_host_hint", {defaultValue:"拖到其他 SFTP 标签可跨主机复制"}));
     }
   } catch (error) {
-    if (sftpExternalDragPreparing === token) notify(error.message || "准备拖出文件失败", "error");
+    if (sftpExternalDragPreparing === token) notify(error.message || tr("sftp:drag.prepare_failed", {defaultValue:"准备拖出文件失败"}), "error");
   } finally {
     row?.classList.remove("is-preparing-drag");
     if (sftpExternalDragPreparing === token) sftpExternalDragPreparing = null;
@@ -901,14 +916,14 @@ function finishSftpItemDrag(event) {
     if (rememberSftpInternalDragHandoff(payload)) {
       const targetState = sftpTabRuntimes.get(previewTarget.key)?.state;
       const directory = Number(targetState?.connectionId) === Number(previewTarget.id) ? targetState.path : previewTarget.path || ".";
-      setSftpExternalDropState(true, {title:`松开复制到 ${previewTarget.title}`, path:directory, tabKey:previewTarget.key});
+      setSftpExternalDropState(true, {title:tr("sftp:transfer.drop_copy_to", {target:previewTarget.title, defaultValue:`松开复制到 ${previewTarget.title}`}), path:directory, tabKey:previewTarget.key});
     }
     return;
   }
   const outsideWindow = Boolean(drag?.leftWindow);
   if (sftpExternalDragMode() === "staged" && drag?.nativeFiles?.length && outsideWindow) {
     sftpNativeDragArmed.add(sftpNativeDragKey(drag.connectionId, drag.entries));
-    notify("拖出内容已准备好，请再次拖动", "info");
+    notify(tr("sftp:drag.content_ready_drag_again", {defaultValue:"拖出内容已准备好，请再次拖动"}), "info");
   }
   if (sftpExternalDragMode() === "staged" && drag && sftpExternalDragPreparing && outsideWindow) {
     drag.browserDragEnded = true;
@@ -926,7 +941,8 @@ function handleSftpTabDragOver(event, tabKey, tabElement=event.currentTarget) {
     event.preventDefault();
     event.dataTransfer.dropEffect = "copy";
     tabElement?.classList.add("sftp-drop-target");
-    showSftpDragHint(`松开上传到 ${target.kind === "terminal" ? "终端当前目录" : target.title}`, true, "upload", tabKey);
+    const targetLabel = target.kind === "terminal" ? tr("sftp:drag.terminal_current_directory", {defaultValue:"终端当前目录"}) : target.title;
+    showSftpDragHint(tr("sftp:transfer.drop_upload_to", {target:targetLabel, defaultValue:`松开上传到 ${targetLabel}`}), true, "upload", tabKey);
     scheduleSftpTabDragPreview(tabKey, {immediate:target.kind === "terminal"});
     return;
   }
@@ -936,7 +952,8 @@ function handleSftpTabDragOver(event, tabKey, tabElement=event.currentTarget) {
   event.preventDefault();
   event.dataTransfer.dropEffect = "copy";
   tabElement?.classList.add("sftp-drop-target");
-  showSftpDragHint(`松开复制到 ${target.kind === "terminal" ? "终端当前目录" : target.title}`, true, "copy", tabKey);
+  const targetLabel = target.kind === "terminal" ? tr("sftp:drag.terminal_current_directory", {defaultValue:"终端当前目录"}) : target.title;
+  showSftpDragHint(tr("sftp:transfer.drop_copy_to", {target:targetLabel, defaultValue:`松开复制到 ${targetLabel}`}), true, "copy", tabKey);
   scheduleSftpTabDragPreview(tabKey, {immediate:target.kind === "terminal"});
 }
 
@@ -962,11 +979,12 @@ async function sftpConflictChoice(connectionId, directory, entries, labels={}) {
   });
   const conflicts = (plan.items || []).filter(item => item.exists);
   if (!conflicts.length) return "error";
-  const preview = conflicts.slice(0, 6).map(item => item.name).join("、");
-  return chooseModal(labels.title || "发现同名项目", `${preview}${conflicts.length > 6 ? ` 等 ${conflicts.length} 项` : ""}`, [
-    {label:labels.overwrite || "覆盖同名项目", value:"overwrite", className:"danger"},
-    {label:labels.rename || "自动改名", value:"rename", className:"primary"},
-    {label:"取消", value:"cancel"}
+  const preview = conflicts.slice(0, 6).map(item => item.name).join(tr("sftp:drag.item_separator", {defaultValue:"、"}));
+  const suffix = conflicts.length > 6 ? tr("sftp:drag.more_items", {count:conflicts.length, defaultValue:` 等 ${conflicts.length} 项`}) : "";
+  return chooseModal(labels.title || tr("sftp:transfer.same_name_title", {defaultValue:"发现同名项目"}), `${preview}${suffix}`, [
+    {label:labels.overwrite || tr("sftp:transfer.overwrite_same_name", {defaultValue:"覆盖同名项目"}), value:"overwrite", className:"danger"},
+    {label:labels.rename || tr("sftp:transfer.auto_rename", {defaultValue:"自动改名"}), value:"rename", className:"primary"},
+    {label:tr("common:actions.cancel", {defaultValue:"取消"}), value:"cancel"}
   ]);
 }
 
@@ -982,7 +1000,7 @@ async function dropSftpItemsOnTab(event, tabKey, tabElement=event.currentTarget)
       if (target.kind === "terminal" && typeof uploadLocalFilesToTerminalTab === "function") await uploadLocalFilesToTerminalTab(localPayload, target);
       else await uploadLocalFilesToSftp(localPayload, target, tabKey);
     }
-    catch (error) { notify(error.message || "上传本地文件失败", "error"); }
+    catch (error) { notify(error.message || tr("sftp:transfer.upload_local_failed", {defaultValue:"上传本地文件失败"}), "error"); }
     return;
   }
   if (!drag || !["sftp", "terminal", "local-files"].includes(target?.kind) || String(target.key || "") === String(drag.sourceTabKey || "")) return;
@@ -992,12 +1010,12 @@ async function dropSftpItemsOnTab(event, tabKey, tabElement=event.currentTarget)
   if (activeTabKey !== tabKey) activateTab(tabKey);
   if (target.kind === "terminal") {
     try { await copySftpDraggedItemsToTerminalTab(drag, target); }
-    catch (error) { notify(error.message || "复制远程文件到终端失败", "error"); }
+    catch (error) { notify(error.message || tr("sftp:drag.copy_to_terminal_failed", {defaultValue:"复制远程文件到终端失败"}), "error"); }
     return;
   }
   if (target.kind === "local-files") {
     try { await copySftpDraggedItemsToLocalTab(drag, target); }
-    catch (error) { notify(error.message || "保存远程文件失败", "error"); }
+    catch (error) { notify(error.message || tr("sftp:drag.save_remote_failed", {defaultValue:"保存远程文件失败"}), "error"); }
     return;
   }
   await copySftpDraggedItemsToTarget(drag, target);
@@ -1007,12 +1025,12 @@ async function copySftpDraggedItemsToTerminalTab(drag, tab) {
   const key = String(tab?.key || "");
   const connection = currentConnection(Number(tab?.id || 0));
   const session = terminalSessions.get(key);
-  if (!connection || !session?.connected) throw new Error("终端尚未连接，无法接收文件");
+  if (!connection || !session?.connected) throw new Error(tr("sftp:drag.terminal_disconnected", {defaultValue:"终端尚未连接，无法接收文件"}));
   const directory = session.currentDirectoryKnown
     ? session.currentDirectory
     : await initializeTerminalDirectory(session, connection, key);
-  if (!directory) throw new Error("无法确认终端当前目录，请先重连终端");
-  return copySftpDraggedItemsToDirectory(drag, connection.id, directory, {title:`终端：${directory}`, tabKey:key});
+  if (!directory) throw new Error(tr("sftp:drag.terminal_directory_unknown", {defaultValue:"无法确认终端当前目录，请先重连终端"}));
+  return copySftpDraggedItemsToDirectory(drag, connection.id, directory, {title:tr("sftp:drag.terminal_target", {path:directory, defaultValue:`终端：${directory}`}), tabKey:key});
 }
 
 async function copySftpDraggedItemsToTarget(drag, target) {
@@ -1038,12 +1056,12 @@ async function copySftpDraggedItemsToDirectory(drag, targetConnectionId, directo
   markSftpDragDropAccepted(drag, options.tabKey || "");
   sftpExternalDragPreparing = null;
   finishSftpDragPayload(drag);
-  const title = String(options.title || "目标目录");
+  const title = String(options.title || tr("sftp:drag.target_directory", {defaultValue:"目标目录"}));
   const tabKey = String(options.tabKey || "");
-  showSftpDragHint(`正在检查 ${title} 并准备复制`, true, "copy", tabKey);
+  showSftpDragHint(tr("sftp:drag.checking_target", {target:title, defaultValue:`正在检查 ${title} 并准备复制`}), true, "copy", tabKey);
   const pendingHint = $("sftpDragHint");
   try {
-    const conflict = await sftpConflictChoice(Number(targetConnectionId), directory, drag.entries, {title:`${title}存在同名项目`});
+    const conflict = await sftpConflictChoice(Number(targetConnectionId), directory, drag.entries, {title:tr("sftp:drag.target_same_name", {target:title, defaultValue:`${title}存在同名项目`})});
     if (conflict === "cancel") return;
     const job = await api(`/api/connections/${drag.connectionId}/sftp/cross-copy`, {
       method:"POST",
@@ -1052,7 +1070,7 @@ async function copySftpDraggedItemsToDirectory(drag, targetConnectionId, directo
     trackSftpMutationJob(job);
     refreshSftpJobs();
   } catch (error) {
-    notify(error.message || "SFTP 项目复制失败", "error");
+    notify(error.message || tr("sftp:drag.copy_failed", {defaultValue:"SFTP 项目复制失败"}), "error");
   } finally {
     if ($("sftpDragHint") === pendingHint) pendingHint?.remove();
   }

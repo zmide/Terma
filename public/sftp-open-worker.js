@@ -1,10 +1,10 @@
 self.addEventListener("message", event => {
   try {
     const bytes = new Uint8Array(event.data.buffer);
-    if (bytes.includes(0)) throw new Error("该文件包含二进制内容，无法安全地以文本编辑");
+    if (bytes.includes(0)) throw Object.assign(new Error("binary content"), {code:"binary_content"});
     const allowed = new Set(["auto", "utf8", "utf8bom", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "latin1"]);
     let encoding = String(event.data.encoding || "auto").toLowerCase();
-    if (!allowed.has(encoding)) throw new Error("不支持的文本编码");
+    if (!allowed.has(encoding)) throw Object.assign(new Error("unsupported encoding"), {code:"unsupported_encoding"});
     const hasBom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
     if (encoding === "auto") {
       if (hasBom) encoding = "utf8bom";
@@ -35,6 +35,6 @@ self.addEventListener("message", event => {
     }
     self.postMessage({ok:true, content, encoding, bom:encoding === "utf8bom" && hasBom, line_count:lineCount});
   } catch (error) {
-    self.postMessage({ok:false, error:error?.message || "文本解码失败"});
+    self.postMessage({ok:false, error_code:error?.code || "decode_failed"});
   }
 });

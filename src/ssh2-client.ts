@@ -275,7 +275,7 @@ function connectPassword(connection) {
   return connectSsh(connection);
 }
 
-function spawnPasswordCommand(connection, command) {
+function spawnPasswordCommand(connection, command, options: any = {}) {
   const child: any = new EventEmitter();
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
@@ -321,10 +321,24 @@ function spawnPasswordCommand(connection, command) {
     try {
       const client: any = await connectPassword(connection);
       child.client = client;
+      let removeX11Handler = () => {};
       client.on("error", reportError);
       client.once("close", () => close(child.killed ? null : 255, child.killed ? "SIGTERM" : null));
-      client.exec(String(command || ""), (error, channel) => {
+      const x11Mode = ["untrusted", "trusted"].includes(String(options.x11Mode || ""))
+        ? String(options.x11Mode)
+        : "";
+      let channelOptions = {};
+      if (x11Mode) {
+        const authorization = localX11Authorization(x11Mode);
+        const handler = (_info, accept, rejectX11) => openBuiltinX11Channel(authorization, accept, rejectX11);
+        client.on("x11", handler);
+        removeX11Handler = () => client.removeListener("x11", handler);
+        client.once("close", removeX11Handler);
+        channelOptions = {x11:{screen:authorization.screen}};
+      }
+      client.exec(String(command || ""), channelOptions, (error, channel) => {
         if (error) {
+          removeX11Handler();
           reportError(error);
           return;
         }
@@ -342,9 +356,9 @@ function spawnPasswordCommand(connection, command) {
   return child;
 }
 
-function runPasswordCommand(connection, command, input = null, timeoutMs = 60000, onChunk = null) {
+function runPasswordCommand(connection, command, input = null, timeoutMs = 60000, onChunk = null, options: any = {}) {
   return new Promise((resolve) => {
-    const child: any = spawnPasswordCommand(connection, command);
+    const child: any = spawnPasswordCommand(connection, command, options);
     const stdout: any[] = [];
     const stderr: any[] = [];
     let settled = false;

@@ -1,9 +1,9 @@
 const CONNECTION_TERMINAL_PROFILE_GROUPS = [
-  ["shell", "Shell"],
-  ["repl", "交互式语言"],
-  ["session", "会话工具"],
-  ["tool", "交互工具"],
-  ["custom", "其他"]
+  ["shell", "terminal:startup.group_shell", "Shell"],
+  ["repl", "terminal:startup.group_repl", "交互式语言"],
+  ["session", "terminal:startup.group_session", "会话工具"],
+  ["tool", "terminal:startup.group_tool", "交互工具"],
+  ["custom", "terminal:startup.group_custom", "其他"]
 ];
 
 function connectionFormField(form, id) {
@@ -62,7 +62,7 @@ function toggleConnectionTerminalStartup(form=$("connectionForm")) {
     if (program && (profileSelect.value === "" || profileSelect.value === "__default__")) {
       if ([...profileSelect.options].some(option => option.value === "__custom__")) {
         profileSelect.value = "__custom__";
-        if (!field("conn_terminal_profile_name")?.value.trim()) field("conn_terminal_profile_name").value = "自定义程序";
+        if (!field("conn_terminal_profile_name")?.value.trim()) field("conn_terminal_profile_name").value = tr("terminal:startup.custom_program", {defaultValue:"自定义程序"});
         if (field("conn_terminal_profile_kind")) field("conn_terminal_profile_kind").value = "custom";
       }
     } else if (!program && [...profileSelect.options].some(option => option.value === "__default__")) {
@@ -77,11 +77,11 @@ function resetConnectionTerminalProfileSelect(form, saved=false) {
   const config = connectionTerminalFormConfig(form);
   select.replaceChildren();
   if (saved && config.terminal_startup_mode === "program" && config.terminal_program_path) {
-    select.add(new Option(`当前已保存：${config.terminal_profile_name || config.terminal_program_path}`, "__current__", true, true));
+    select.add(new Option(tr("terminal:startup.saved_option", {name:config.terminal_profile_name || config.terminal_program_path, defaultValue:`当前已保存：${config.terminal_profile_name || config.terminal_program_path}`}), "__current__", true, true));
   } else {
-    select.add(new Option("测试 SSH 后显示可用选项", "", true, true));
+    select.add(new Option(tr("terminal:startup.test_ssh_hint", {defaultValue:"测试 SSH 后显示可用选项"}), "", true, true));
   }
-  select.add(new Option("自定义程序...", "__custom__"));
+  select.add(new Option(tr("terminal:startup.custom_program_option", {defaultValue:"自定义程序..."}), "__custom__"));
 }
 
 function resetConnectionTerminalStartup(form=$("connectionForm")) {
@@ -98,7 +98,7 @@ function resetConnectionTerminalStartup(form=$("connectionForm")) {
   const status = field("connTerminalDetectionStatus");
   if (status) {
     status.className = "terminal-startup-detection muted";
-    status.textContent = "尚未检测。填写连接信息后点击“测试 SSH”。";
+    status.textContent = tr("terminal:startup.not_detected", {defaultValue:"尚未检测。填写连接信息后点击“测试 SSH”。"});
   }
   const summary = field("connTerminalCapabilities");
   if (summary) {
@@ -129,8 +129,8 @@ function fillConnectionTerminalStartup(form, connection={}) {
   if (status) {
     status.className = "terminal-startup-detection muted";
     status.textContent = mode === "program"
-      ? "已加载保存的启动配置。测试 SSH 可刷新这台机器的可用选项。"
-      : "当前使用服务器默认登录 Shell。测试 SSH 可检测更多可用选项。";
+      ? tr("terminal:startup.saved_detection", {defaultValue:"已加载保存的启动配置。测试 SSH 可刷新这台机器的可用选项。"})
+      : tr("terminal:startup.server_default_hint", {defaultValue:"当前使用服务器默认登录 Shell。测试 SSH 可检测更多可用选项。"});
   }
   form._terminalCapabilities = null;
   form._terminalCapabilitiesChecked = false;
@@ -186,7 +186,7 @@ function normalizeConnectionTerminalCapabilities(raw={}) {
     .filter(item => item.label);
   return {
     platform:String(raw.platform || "unknown").toLowerCase(),
-    platform_label:String(raw.platform_label || raw.os_label || raw.platform || "未知平台"),
+    platform_label:String(raw.platform_label || raw.os_label || raw.platform || tr("terminal:startup.unknown_platform", {defaultValue:"未知平台"})),
     default_shell:defaultShell,
     profiles:connectionTerminalCapabilityProfiles(raw),
     tools,
@@ -212,15 +212,15 @@ function renderConnectionTerminalCapabilitySummary(form, capabilities) {
   const heading = document.createElement("div");
   heading.className = "terminal-startup-capability-heading";
   const defaultShell = capabilities.default_shell;
-  const shellText = defaultShell?.path || defaultShell?.label || "未识别";
-  heading.textContent = `${capabilities.platform_label} · 默认 Shell：${shellText}`;
+  const shellText = defaultShell?.path || defaultShell?.label || tr("terminal:startup.not_detected_short", {defaultValue:"未识别"});
+  heading.textContent = tr("terminal:startup.capability_summary", {platform:capabilities.platform_label, shell:shellText, defaultValue:`${capabilities.platform_label} · 默认 Shell：${shellText}`});
   box.appendChild(heading);
 
   if (capabilities.profiles.length) {
     const row = document.createElement("div");
     row.className = "terminal-startup-capability-row";
     const label = document.createElement("strong");
-    label.textContent = "可启动";
+    label.textContent = tr("terminal:startup.launchable", {defaultValue:"可启动"});
     row.appendChild(label);
     const chips = document.createElement("div");
     chips.className = "terminal-startup-chips";
@@ -233,7 +233,7 @@ function renderConnectionTerminalCapabilitySummary(form, capabilities) {
     const row = document.createElement("div");
     row.className = "terminal-startup-capability-row";
     const label = document.createElement("strong");
-    label.textContent = "已安装工具";
+    label.textContent = tr("terminal:startup.installed_tools", {defaultValue:"已安装工具"});
     row.appendChild(label);
     const chips = document.createElement("div");
     chips.className = "terminal-startup-chips";
@@ -262,21 +262,23 @@ function renderConnectionTerminalProfiles(form, rawCapabilities) {
   select.replaceChildren();
   const defaultShell = capabilities.default_shell;
   const defaultLabel = defaultShell?.label || defaultShell?.name || defaultShell?.path;
-  select.add(new Option(defaultLabel ? `自动使用默认 Shell（${defaultLabel}）` : "自动使用服务器默认登录 Shell", "__default__"));
+  select.add(new Option(defaultLabel
+    ? tr("terminal:startup.default_detected_option", {shell:defaultLabel, defaultValue:`自动使用默认 Shell（${defaultLabel}）`})
+    : tr("terminal:startup.default_login_shell_option", {defaultValue:"自动使用服务器默认登录 Shell"}), "__default__"));
 
   const profileIndex = new Map(capabilities.profiles.map((profile,index) => [profile, index]));
-  for (const [kind, label] of CONNECTION_TERMINAL_PROFILE_GROUPS) {
+  for (const [kind, labelKey, fallbackLabel] of CONNECTION_TERMINAL_PROFILE_GROUPS) {
     const profiles = capabilities.profiles.filter(profile => profile.kind === kind);
     if (!profiles.length) continue;
     const group = document.createElement("optgroup");
-    group.label = label;
+    group.label = tr(labelKey, {defaultValue:fallbackLabel});
     profiles.forEach(profile => group.appendChild(new Option(
       `${profile.label}${profile.args ? ` · ${profile.args}` : ""}`,
       `profile:${profileIndex.get(profile)}`
     )));
     select.appendChild(group);
   }
-  select.add(new Option("自定义程序...", "__custom__"));
+  select.add(new Option(tr("terminal:startup.custom_program_option", {defaultValue:"自定义程序..."}), "__custom__"));
 
   if (config.terminal_startup_mode === "default") {
     select.value = "__default__";
@@ -288,7 +290,7 @@ function renderConnectionTerminalProfiles(form, rawCapabilities) {
     if (matchIndex >= 0) {
       select.value = `profile:${matchIndex}`;
     } else {
-      const current = new Option(`当前配置：${config.terminal_profile_name || config.terminal_program_path}`, "__current__", true, true);
+      const current = new Option(tr("terminal:startup.current_option", {name:config.terminal_profile_name || config.terminal_program_path, defaultValue:`当前配置：${config.terminal_profile_name || config.terminal_program_path}`}), "__current__", true, true);
       select.insertBefore(current, select.firstChild);
     }
   }
@@ -307,7 +309,7 @@ function applyConnectionTerminalProfile(value, select=null) {
   }
   if (value === "__custom__") {
     field("conn_terminal_startup_mode").value = "program";
-    if (!field("conn_terminal_profile_name").value.trim()) field("conn_terminal_profile_name").value = "自定义程序";
+    if (!field("conn_terminal_profile_name").value.trim()) field("conn_terminal_profile_name").value = tr("terminal:startup.custom_program", {defaultValue:"自定义程序"});
     field("conn_terminal_profile_kind").value = "custom";
     toggleConnectionTerminalStartup(form);
     setTimeout(() => field("conn_terminal_program_path")?.focus(), 0);
@@ -332,7 +334,7 @@ function markConnectionTerminalDetectionStale(form=$("connectionForm")) {
   const status = connectionFormField(form, "connTerminalDetectionStatus");
   if (status) {
     status.className = "terminal-startup-detection stale";
-    status.textContent = "连接信息已变化，下面的检测结果可能已过期。请重新测试 SSH。";
+    status.textContent = tr("terminal:startup.detection_stale", {defaultValue:"连接信息已变化，下面的检测结果可能已过期。请重新测试 SSH。"});
   }
   connectionFormField(form, "connTerminalCapabilities")?.classList.add("is-stale");
 }

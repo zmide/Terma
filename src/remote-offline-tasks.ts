@@ -3,6 +3,7 @@ const path = require("path");
 const crypto = require("crypto");
 const iconv = require("iconv-lite");
 const { buildRemotePosixCommand } = require("./remote-posix");
+const { publicError, publicErrorDetails, remoteOutputError } = require("./public-error");
 const {
   aptPrintUrisUsesOnlyCachedPackages,
   aptOutputNeedsLocalResolution,
@@ -83,6 +84,60 @@ const ACTION_LABELS = {
   configure:"配置"
 };
 
+const REMOTE_TASK_STAGE_KEYS = new Set([
+  "prepare",
+  "download",
+  "upload",
+  "install",
+  "configure",
+  "execute",
+  "verify"
+]);
+
+function normalizedTaskLocaleKey(value, fallback = "remote-component") {
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return normalized || fallback;
+}
+
+function taskCurrentKey(task) {
+  if (task.status === "done") return "done";
+  if (task.status === "failed") return "failed";
+  if (task.status === "cancelled") return "cancelled";
+  const stage = String(task.stage || "").trim().toLowerCase();
+  return REMOTE_TASK_STAGE_KEYS.has(stage) ? stage : "running";
+}
+
+function taskFailureDetails(error, fallbackCode = "remote_component_operation_failed") {
+  const source = error && typeof error === "object" ? error : null;
+  const hasExplicitPublicCode = Boolean(
+    source?.publicCode
+    || source?.public_code
+    || source?.errorCode
+    || source?.error_code
+  );
+  const details = publicErrorDetails(error, fallbackCode);
+  return {
+    code:details.code,
+    params:details.params,
+    preserveMessage:details.preserveMessage && hasExplicitPublicCode
+  };
+}
+
+function failTask(task, error, fallbackCode = "remote_component_operation_failed") {
+  const message = String(error?.message || error || "远端组件操作失败").trim();
+  const details = taskFailureDetails(error, fallbackCode);
+  task.status = "failed";
+  task.error = message;
+  task.error_code = details.code;
+  task.error_params = details.params;
+  task.preserve_error_message = details.preserveMessage;
+  task.current = "操作失败";
+}
+
 function actionLabel(action, fallback = "") {
   return String(fallback || ACTION_LABELS[String(action || "")] || action || "远端操作");
 }
@@ -93,8 +148,10 @@ function taskView(task) {
     type:"remote-component",
     component:task.component,
     component_label:task.component_label,
+    component_key:normalizedTaskLocaleKey(task.component),
     action:task.action,
     action_label:task.action_label,
+    action_key:normalizedTaskLocaleKey(task.action, "configure"),
     mode:task.mode || "",
     resource_key:task.resource_key || "",
     resource_keys:[...(task.resource_keys || (task.resource_key ? [task.resource_key] : []))],
@@ -106,8 +163,13 @@ function taskView(task) {
     progress_unit:"percent",
     progress_known:true,
     current:task.current || "",
+    current_key:taskCurrentKey(task),
+    current_params:task.current_params || {},
     logs:task.logs.slice(-300),
     error:task.error || "",
+    error_code:task.error_code || "",
+    error_params:task.error_params || {},
+    preserve_error_message:task.preserve_error_message === true,
     created_at:task.created_at,
     updated_at:task.updated_at,
     finished_at:task.finished_at || 0,
@@ -291,9 +353,12 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
       return occupied.some(key => requested.has(key));
     });
     if (!running) return;
-    const error: any = new Error(`${componentLabel}已有“${running.action_label || "管理"}”任务正在执行，请等待完成后再试`);
-    error.code = "REMOTE_TASK_CONFLICT";
-    error.statusCode = 409;
+    const error: any = publicError(
+      "REMOTE_TASK_CONFLICT",
+      `${componentLabel}已有“${running.action_label || "管理"}”任务正在执行，请等待完成后再试`,
+      {},
+      409
+    );
     error.task = taskView(running);
     throw error;
   }
@@ -354,7 +419,9 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
           update(task, "configure", 91, String(options.configure_label || "正在应用服务配置"));
           const configured = await options.after_install(onChunk);
           flushTaskLogs(task);
-          if (configured?.status !== 0) throw new Error(`${configured?.stderr || configured?.stdout || configured?.error?.message || "远端服务配置失败"}`.trim());
+          if (configured?.status !== 0) {
+            throw remoteOutputError(`${configured?.stderr || configured?.stdout || configured?.error?.message || "远端服务配置失败"}`.trim());
+          }
         };
         const completeAfterVerification = async (readyLog, doneLog) => {
           await runAfterInstall();
@@ -363,8 +430,12 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
           if (typeof options.verify === "function") task.after = await options.verify();
           if (typeof options.validate === "function") {
             const validation = await options.validate(task.after);
-            if (validation === false) throw new Error(`${task.component_label}安装命令已结束，但状态验证未通过`);
-            if (typeof validation === "string" && validation) throw new Error(validation);
+            if (validation === false) {
+              throw publicError("REMOTE_COMPONENT_VERIFICATION_FAILED", `${task.component_label}安装命令已结束，但状态验证未通过`);
+            }
+            if (typeof validation === "string" && validation) {
+              throw publicError("REMOTE_COMPONENT_VERIFICATION_FAILED", validation);
+            }
           }
           task.status = "done";
           task.progress = 100;
@@ -542,12 +613,13 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
           ? await dependencies.run_privileged_stream(connection, installCommand, {grant_id:options.grant?.id, scope:options.scope || `remote-component.${task.component}`, timeout_ms:20 * 60 * 1000}, onChunk)
           : await dependencies.run_ssh_stream(connection, buildRemotePosixCommand(installCommand), 20 * 60 * 1000, onChunk);
         flushTaskLogs(task);
-        if (result?.status !== 0) throw new Error(`${result?.stderr || result?.stdout || result?.error?.message || "远端离线安装失败"}`.trim());
+        if (result?.status !== 0) {
+          throw remoteOutputError(`${result?.stderr || result?.stdout || result?.error?.message || "远端离线安装失败"}`.trim());
+        }
         await completeAfterVerification("远端离线安装命令已完成", "离线安装完成");
       } catch (error) {
         flushTaskLogs(task);
-        task.status = "failed";
-        task.error = error?.message || String(error);
+        failTask(task, error);
         append(task, task.error, "error");
       } finally {
         try {
@@ -620,14 +692,18 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
           append(task, result?.stderr, "stderr");
         }
         if (result?.status !== 0) {
-          throw new Error(`${result?.stderr || result?.stdout || result?.error?.message || `${task.component_label}${task.action_label}失败`}`.trim());
+          throw remoteOutputError(`${result?.stderr || result?.stdout || result?.error?.message || `${task.component_label}${task.action_label}失败`}`.trim());
         }
         update(task, "verify", 94, String(options.verify_label || "正在重新探测远端状态"));
         if (typeof options.verify === "function") task.after = await options.verify(result);
         if (typeof options.validate === "function") {
           const validation = await options.validate(task.after, result);
-          if (validation === false) throw new Error(`${task.component_label}${task.action_label}命令已结束，但状态验证未通过`);
-          if (typeof validation === "string" && validation) throw new Error(validation);
+          if (validation === false) {
+            throw publicError("REMOTE_COMPONENT_VERIFICATION_FAILED", `${task.component_label}${task.action_label}命令已结束，但状态验证未通过`);
+          }
+          if (typeof validation === "string" && validation) {
+            throw publicError("REMOTE_COMPONENT_VERIFICATION_FAILED", validation);
+          }
         }
         task.status = "done";
         task.stage = "done";
@@ -636,9 +712,7 @@ function createRemoteOfflineTaskManager(dependencies: any = {}) {
         append(task, `${task.action_label}完成`);
       } catch (error) {
         flushTaskLogs(task);
-        task.status = "failed";
-        task.error = error?.message || String(error);
-        task.current = "操作失败";
+        failTask(task, error);
         append(task, task.error, "error");
       } finally {
         try { options.release?.(); } catch {}

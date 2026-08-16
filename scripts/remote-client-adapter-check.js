@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const dgram = require("node:dgram");
+const net = require("node:net");
 const {EventEmitter} = require("node:events");
 const {MAC_WINDOWS_APP_PACKAGE_URL, MAC_WINDOWS_APP_URL, createRemoteClientAdapter} = require("../desktop/remote-clients");
 const {launchWindowsRdpWithCredential, windowsRdpCredentialTarget, windowsRdpCredentialTargets} = require("../desktop/windows-rdp-credentials");
@@ -52,7 +53,21 @@ async function main() {
     __xServerDiagnosticsWithoutDesktopIntegration,
     __xdmcpTaskResourceKey
   } = require("../dist/server");
-  const {probeXdmcpEndpoint, xdmcpQueryPacket} = require("../dist/remote-connectivity");
+  const {probeTcpEndpoint, probeXdmcpEndpoint, xdmcpQueryPacket} = require("../dist/remote-connectivity");
+  const tcpResponder = net.createServer(socket => socket.end());
+  await new Promise((resolve, reject) => {
+    tcpResponder.once("error", reject);
+    tcpResponder.listen(0, "127.0.0.1", resolve);
+  });
+  const tcpProbe = await probeTcpEndpoint("127.0.0.1", tcpResponder.address().port, 500);
+  await new Promise(resolve => tcpResponder.close(resolve));
+  assert.deepEqual(tcpProbe, {
+    ok:true,
+    reason_code:"tcp_reachable",
+    reason_params:{},
+    raw_error:"",
+    error:""
+  });
   const xdmcpResponder = dgram.createSocket("udp4");
   let receivedXdmcpQuery = null;
   xdmcpResponder.on("message", (message, remote) => {
@@ -66,7 +81,40 @@ async function main() {
   const xdmcpProbe = await probeXdmcpEndpoint("127.0.0.1", xdmcpResponder.address().port, 500);
   xdmcpResponder.close();
   assert.deepEqual(receivedXdmcpQuery, xdmcpQueryPacket(), "XDMCP 降级探测必须发送标准 Query 数据包");
-  assert.deepEqual(xdmcpProbe, {ok:true, responded:true, response:"willing", error:""});
+  assert.deepEqual(xdmcpProbe, {
+    ok:true,
+    responded:true,
+    response:"willing",
+    reason_code:"xdmcp_willing",
+    reason_params:{},
+    raw_error:"",
+    error:""
+  });
+  const silentXdmcpResponder = dgram.createSocket("udp4");
+  await new Promise((resolve, reject) => {
+    silentXdmcpResponder.once("error", reject);
+    silentXdmcpResponder.bind(0, "127.0.0.1", resolve);
+  });
+  const silentXdmcpProbe = await probeXdmcpEndpoint("127.0.0.1", silentXdmcpResponder.address().port, 50);
+  silentXdmcpResponder.close();
+  assert.deepEqual(silentXdmcpProbe, {
+    ok:false,
+    responded:false,
+    response:"",
+    reason_code:"xdmcp_no_response",
+    reason_params:{},
+    raw_error:"",
+    error:""
+  });
+  assert.deepEqual(await probeXdmcpEndpoint("", 177, 50), {
+    ok:false,
+    responded:false,
+    response:"",
+    reason_code:"xdmcp_target_invalid",
+    reason_params:{},
+    raw_error:"",
+    error:""
+  });
   const resourceConnection = {id:42};
   assert.equal(__xdmcpTaskResourceKey(resourceConnection,{action:"enable"}), "xdmcp-server:42");
   assert.equal(__xdmcpTaskResourceKey(resourceConnection,{action:"repair-xrdp"}), "rdp-server:42");
@@ -120,6 +168,10 @@ async function main() {
   assert.match(windowsCredentialScriptSource, /CredWriteW/);
   assert.match(windowsCredentialScriptSource, /CredentialPersistSession/);
   assert.match(windowsCredentialScriptSource, /finally \{[\s\S]*?TermaWindowsCredential\]::Delete[\s\S]*?TermaWindowsCredential\]::Restore/);
+  assert.throws(
+    () => launchWindowsRdpWithCredential({environment:{TERMA_INTERFACE_LANGUAGE:"en-US"}}),
+    /Windows RDP launcher is unavailable/
+  );
 
   let credentialHelperLaunch = null;
   const helperResult = await launchWindowsRdpWithCredential({
@@ -354,10 +406,19 @@ async function main() {
   assert.match(mainSource, /current\.mode === "freerdp" && !current\.available\) \|\| passwordTransferNeedsXServer/);
   assert.match(remoteUiSource, /const clientLaunchable = Boolean\(item\.available \|\| item\.launchable\)/);
   assert.match(remoteUiSource, /remoteDesktopXServerButton/);
-  assert.match(remoteUiSource, /item\.xserver_installed \? "启动 XQuartz" : "安装 XQuartz"/);
+  assert.match(remoteUiSource, /item\.xserver_installed \? tr\("remote:auto\.start_xquartz"/);
+  assert.match(remoteUiSource, /: tr\("remote:auto\.install_xquartz"/);
   assert.match(connectivitySource, /function probeTcpEndpoint\(host: unknown, port: unknown, timeoutMs = 2200\)/);
   assert.match(connectivitySource, /function probeXdmcpEndpoint\(host: unknown, port: unknown, timeoutMs = 2200\)/);
   assert.match(connectivitySource, /method:"xdmcp-query"/);
+  assert.match(connectivitySource, /reason_code:reasonCode/);
+  assert.match(connectivitySource, /reason_params:reasonParams/);
+  assert.match(connectivitySource, /raw_error:normalizedRawError/);
+  assert.doesNotMatch(connectivitySource, /连接超时|连接失败|主机解析失败|未收到 XDMCP Query 响应|当前协议不支持端口探测/);
+  assert.match(remoteUiSource, /function remoteEndpointProbeReason\(probe=\{\}\)/);
+  assert.match(remoteUiSource, /probe\?\.reason_code/);
+  assert.match(remoteUiSource, /probe\?\.raw_error/);
+  assert.match(remoteUiSource, /remote:endpoint_probe\.reason_with_detail/);
   assert.match(xserverSource, /family === 6 \? "udp6" : "udp4"/);
   assert.match(xserverSource, /dns\.lookup\(host/);
   assert.match(serverSource, /profile\.protocol === "rdp"[\s\S]*?await dependencies\.probeTcpEndpoint\(profile\.host, profile\.port \|\| 3389\)/, "RDP 启动前必须从保存的远程连接探测目标端口");
@@ -410,6 +471,22 @@ async function main() {
   await assert.rejects(
     headlessLinux.open({id:5,protocol:"rdp",host:"linux.example",port:3389,options:{}}),
     /DISPLAY/
+  );
+
+  let interfaceLanguage = "zh-CN";
+  const localizedLinux = createRemoteClientAdapter({
+    platform:"linux",
+    environment:{},
+    spawn:fakeSpawn,
+    spawnSync:unavailableCommand,
+    getLanguage:()=>interfaceLanguage
+  });
+  assert.equal(localizedLinux.diagnostics().rdp.reason, "未找到 FreeRDP 或 Remmina");
+  interfaceLanguage = "en-US";
+  assert.equal(localizedLinux.diagnostics().rdp.reason, "FreeRDP or Remmina was not found");
+  await assert.rejects(
+    localizedLinux.open({id:6,protocol:"rdp",host:"invalid host",port:3389,options:{}}),
+    /remote-desktop target address is invalid/
   );
 
   console.log("远程桌面适配回归检查通过：Windows、macOS、Linux 的 RDP/VNC 启动参数、macOS FreeRDP/XQuartz 降级与凭据边界");

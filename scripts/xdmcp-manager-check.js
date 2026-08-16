@@ -210,6 +210,21 @@ const dependencies = {
 };
 const profile = {host:"192.0.2.10",options:{ssh_connection_id:0}};
 assert.equal(resolveManagementConnection(profile, dependencies).id, 1);
+let repairedManagementReference = null;
+const staleProfile = {id:91, protocol:"rdp", host:"192.0.2.10", options:{source_ssh_connection_id:999}};
+assert.equal(resolveManagementConnection(staleProfile, {
+  ...dependencies,
+  repairManagementConnection:(item, connectionId) => { repairedManagementReference = {profileId:item.id, connectionId}; }
+}).id, 1);
+assert.deepEqual(repairedManagementReference, {profileId:91, connectionId:1}, "失效 SSH 引用只应在同主机唯一匹配时自动修复");
+assert.throws(
+  () => resolveManagementConnection({...staleProfile,host:"198.51.100.20"}, dependencies),
+  error => error?.code === "REMOTE_MANAGEMENT_SSH_STALE"
+);
+assert.throws(
+  () => resolveManagementConnection({...staleProfile,options:{source_ssh_connection_id:1},host:"198.51.100.20"}, dependencies),
+  error => error?.code === "REMOTE_MANAGEMENT_SSH_HOST_MISMATCH"
+);
 const detectedPromise = detectXdmcpServer(profile, dependencies);
 
 Promise.resolve(detectedPromise).then(async detected => {
@@ -219,7 +234,10 @@ Promise.resolve(detectedPromise).then(async detected => {
   assert.equal(detected.graphics_rendering.state, "remote-x11");
   assert.equal(detected.legacy_config, true, "旧 TunnelDesk LightDM 配置仍需被被动识别");
 
-  assert.throws(() => resolveManagementConnection(profile, {...dependencies,listConnections:() => [...rows,{...rows[0],id:2,name:"Linux 2"}]}), /多个同主机/);
+  assert.throws(
+    () => resolveManagementConnection(profile, {...dependencies,listConnections:() => [...rows,{...rows[0],id:2,name:"Linux 2"}]}),
+    error => error?.code === "REMOTE_MANAGEMENT_SSH_AMBIGUOUS"
+  );
   assert.match(DETECT_SCRIPT, /\/usr\/share\/xsessions/);
   assert.match(DETECT_SCRIPT, /lightdm --show-config 2>&1/);
   assert.match(DETECT_SCRIPT, /\(\[\[:upper:\]\]\[\[:space:\]\]\+\)\?enabled/);

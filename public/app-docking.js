@@ -325,11 +325,11 @@ function createWorkspacePaneElement(paneId) {
   pane.innerHTML = `
     <div class="workspace-pane-chrome">
       <div class="tabs-shell">
-        <button class="tabs-scroll-button tabs-scroll-left" type="button" title="向左滚动标签" aria-label="向左滚动标签" hidden>${icon("chevron-left")}</button>
+        <button class="tabs-scroll-button tabs-scroll-left" type="button" title="${escAttr(tr("navigation:auto.scroll_tabs_left", {defaultValue:"Scroll tabs left"}))}" aria-label="${escAttr(tr("navigation:auto.scroll_tabs_left", {defaultValue:"Scroll tabs left"}))}" hidden>${icon("chevron-left")}</button>
         <div class="tabs" role="tablist"></div>
-        <button class="tabs-scroll-button tabs-scroll-right" type="button" title="向右滚动标签" aria-label="向右滚动标签" hidden>${icon("chevron-right")}</button>
+        <button class="tabs-scroll-button tabs-scroll-right" type="button" title="${escAttr(tr("navigation:auto.scroll_tabs_right", {defaultValue:"Scroll tabs right"}))}" aria-label="${escAttr(tr("navigation:auto.scroll_tabs_right", {defaultValue:"Scroll tabs right"}))}" hidden>${icon("chevron-right")}</button>
         <div class="workspace-tab-insert-indicator" aria-hidden="true" hidden></div>
-        <div class="workspace-tab-resizer" role="separator" aria-orientation="horizontal" aria-label="调整标签栏高度" tabindex="0" title="拖动调整标签栏高度，双击恢复默认"></div>
+        <div class="workspace-tab-resizer" role="separator" aria-orientation="horizontal" aria-label="${escAttr(tr("navigation:auto.resize_tab_bar", {defaultValue:"Resize tab bar"}))}" tabindex="0" title="${escAttr(tr("navigation:auto.resize_tab_bar_hint", {defaultValue:"Drag to resize the tab bar; double-click to reset"}))}"></div>
       </div>
       <div class="workspace-header-tools" data-workspace-role="header-tools" hidden></div>
     </div>
@@ -399,7 +399,7 @@ function buildWorkspaceLayoutNode(node) {
   separator.tabIndex = 0;
   separator.setAttribute("role", "separator");
   separator.setAttribute("aria-orientation", node.direction === "row" ? "vertical" : "horizontal");
-  separator.setAttribute("aria-label", "调整分屏比例");
+  separator.setAttribute("aria-label", tr("navigation:auto.resize_split", {defaultValue:"Resize split"}));
   separator.addEventListener("pointerdown", event => beginWorkspaceSplitterDrag(event, node.id));
   separator.addEventListener("dblclick", () => setWorkspaceSplitRatio(node.id, 0.5));
   separator.addEventListener("keydown", event => handleWorkspaceSplitterKey(event, node.id));
@@ -496,19 +496,30 @@ function syncWorkspaceLegacyTabIds() {
 }
 
 function workspaceTabHtml(tab, pane) {
-  const presentation = workspaceTabPresentation(tab);
   const broadcastSelected = typeof isTerminalBroadcastTarget === "function" && isTerminalBroadcastTarget(tab.key);
   const multiSelected = workspaceSelectedTabKeys.has(tab.key);
   const visibleInPane = tab.key === pane.activeTabKey;
   if (visibleInPane && tab.activityState) tab.activityState = "";
-  const fullTitle = [tab.title, tab.subtitle, broadcastSelected ? "终端同步中" : "", multiSelected ? "已选中，可组成工作区" : ""].filter(Boolean).join(" - ");
+  const localizedTitle = tab.kind === "local-files"
+    ? tr("common:auto.local_files", {defaultValue:"Local Files"})
+    : typeof localizedWorkspaceTabTitle === "function" ? localizedWorkspaceTabTitle(tab) : tab.title;
+  const presentation = workspaceTabPresentation({...tab, title:localizedTitle});
+  const fullTitle = [
+    localizedTitle,
+    typeof localizedWorkspaceTabSubtitle === "function" ? localizedWorkspaceTabSubtitle(tab) : tab.subtitle,
+    broadcastSelected ? tr("navigation:auto.terminal_syncing", {defaultValue:"Terminal broadcast active"}) : "",
+    multiSelected ? tr("navigation:auto.selected_for_workspace", {defaultValue:"Selected for workspace grouping"}) : ""
+  ].filter(Boolean).join(" - ");
   const showsConnectionStatus = ["terminal", "quick-terminal", "sftp", "remote-terminal"].includes(tab.kind)
     || (tab.kind === "remote-desktop" && tab.protocol === "vnc");
   const connectionStatus = showsConnectionStatus ? (tab.connectionStatus || "connecting") : "";
+  const connectionStateText = tr(`common:auto.${connectionStatus === "connected" ? "connected" : connectionStatus === "disconnected" ? "disconnected" : "connecting"}`, {defaultValue:connectionStatus === "connected" ? "Connected" : connectionStatus === "disconnected" ? "Disconnected" : "Connecting"});
   const connectionDot = connectionStatus
-    ? `<span class="tab-connection-dot ${connectionStatus}" title="${connectionStatus === "connected" ? "已连接" : connectionStatus === "disconnected" ? "已断开" : "连接中"}" aria-hidden="true"></span>`
+    ? `<span class="tab-connection-dot ${connectionStatus}" title="${escAttr(connectionStateText)}" aria-hidden="true"></span>`
     : "";
-  return `<button class="tab ${tab.key === pane.activeTabKey ? "active" : ""}${multiSelected ? " multi-selected" : ""}${tab.pinned ? " pinned" : ""}${broadcastSelected ? " broadcast-selected" : ""}${tab.activityState ? ` activity-${escAttr(tab.activityState)}` : ""}" role="tab" aria-selected="${tab.key === pane.activeTabKey}" aria-checked="${multiSelected}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(`${tab.title}${broadcastSelected ? "，已加入终端同步" : ""}${multiSelected ? "，已选择" : ""}`)}" data-pointerdown-action="workspace-tab-drag-start" data-action="workspace-tab-activate" data-contextmenu-action="workspace-tab-menu" data-dragover-action="workspace-tab-sftp-drag-over" data-dragleave-action="workspace-tab-sftp-drag-leave" data-drop-action="workspace-tab-sftp-drop">${connectionDot}${presentation.icon}${tab.pinned ? `<span class="tab-pin" aria-hidden="true">${icon("pin")}</span>` : ""}<span class="tab-title">${esc(presentation.title)}</span>${tab.closable && !tab.pinned ? `<span class="tab-close" title="关闭标签" aria-label="关闭标签" data-tab-key="${escAttr(tab.key)}" data-pointerdown-action="workspace-event-stop" data-action="workspace-tab-close">x</span>` : ""}</button>`;
+  const ariaLabel = `${localizedTitle}${broadcastSelected ? tr("navigation:auto.terminal_syncing_suffix", {defaultValue:", included in terminal sync"}) : ""}${multiSelected ? tr("navigation:auto.selected_suffix", {defaultValue:", selected"}) : ""}`;
+  const closeText = tr("navigation:auto.close_tab", {defaultValue:"Close tab"});
+  return `<button class="tab ${tab.key === pane.activeTabKey ? "active" : ""}${multiSelected ? " multi-selected" : ""}${tab.pinned ? " pinned" : ""}${broadcastSelected ? " broadcast-selected" : ""}${tab.activityState ? ` activity-${escAttr(tab.activityState)}` : ""}" role="tab" aria-selected="${tab.key === pane.activeTabKey}" aria-checked="${multiSelected}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(ariaLabel)}" data-pointerdown-action="workspace-tab-drag-start" data-action="workspace-tab-activate" data-contextmenu-action="workspace-tab-menu" data-dragover-action="workspace-tab-sftp-drag-over" data-dragleave-action="workspace-tab-sftp-drag-leave" data-drop-action="workspace-tab-sftp-drop">${connectionDot}${presentation.icon}${tab.pinned ? `<span class="tab-pin" aria-hidden="true">${icon("pin")}</span>` : ""}<span class="tab-title">${esc(presentation.title)}</span>${tab.closable && !tab.pinned ? `<span class="tab-close" title="${escAttr(closeText)}" aria-label="${escAttr(closeText)}" data-tab-key="${escAttr(tab.key)}" data-pointerdown-action="workspace-event-stop" data-action="workspace-tab-close">x</span>` : ""}</button>`;
 }
 
 renderTabs = function() {
@@ -734,7 +745,7 @@ setWorkspaceTabConnectionStatus = function(key, status) {
   for (const tab of matchingTabs) tab.connectionStatus = normalized;
   document.querySelectorAll(`.workspace-pane .tab[data-tab-key="${workspaceCssEscape(key)}"] .tab-connection-dot`).forEach(dot => {
     dot.className = `tab-connection-dot ${normalized}`;
-    dot.title = normalized === "connected" ? "已连接" : normalized === "disconnected" ? "已断开" : "连接中";
+    dot.title = tr(`common:auto.${normalized === "connected" ? "connected" : normalized === "disconnected" ? "disconnected" : "connecting"}`, {defaultValue:normalized === "connected" ? "Connected" : normalized === "disconnected" ? "Disconnected" : "Connecting"});
   });
 };
 
@@ -833,7 +844,7 @@ setWorkspace = function(title, subtitle, viewName, key=viewName, updateTab=true,
   if (resolvedPaneId === focusedPaneId) {
     const heading = document.getElementById("workspaceTitle");
     const description = document.getElementById("workspaceSubtitle");
-    if (heading) heading.textContent = "工作区";
+    if (heading) heading.textContent = tr("navigation:auto.workspace", {defaultValue:"Workspace"});
     if (description) description.textContent = subtitle || "";
     activeView = viewName;
     if (typeof syncWorkspaceDocumentTitle === "function") syncWorkspaceDocumentTitle(title, subtitle, viewName, key, meta);
@@ -873,11 +884,22 @@ function confirmWorkspaceConnectedTabClose(tabsToClose) {
   return new Promise(resolve => {
     const modal = $("modal");
     const multiple = tabsToClose.length > 1;
+    const currentTabTitle = tabsToClose[0].title || tr("common:dialogs.current_tab", {defaultValue:"Current tab"});
+    const currentStatus = tr(`common:auto.${tabsToClose[0].connectionStatus === "connecting" ? "connecting" : "connected"}`, {
+      defaultValue:tabsToClose[0].connectionStatus === "connecting" ? "Connecting" : "Connected"
+    });
     const message = multiple
-      ? `以下 ${tabsToClose.length} 个标签仍在连接或连接中。关闭后会断开对应会话，确定继续吗？`
-      : `“${tabsToClose[0].title || "当前标签"}”仍处于${tabsToClose[0].connectionStatus === "connecting" ? "连接中" : "已连接"}状态。关闭后会断开该会话，确定继续吗？`;
+      ? tr("common:dialogs.connected_tabs_many", {
+        count:tabsToClose.length,
+        defaultValue:`${tabsToClose.length} tabs are still connected or connecting. Closing them will disconnect their sessions. Continue?`
+      })
+      : tr("common:dialogs.connected_tab_one", {
+        title:currentTabTitle,
+        status:currentStatus,
+        defaultValue:`“${currentTabTitle}” is still ${currentStatus}. Closing it will disconnect the session. Continue?`
+      });
     const items = multiple
-      ? `<ul class="workspace-close-tabs-list">${tabsToClose.map(tab => `<li><strong>${esc(tab.title || "未命名标签")}</strong><span>${tab.connectionStatus === "connecting" ? "连接中" : "已连接"}</span></li>`).join("")}</ul>`
+      ? `<ul class="workspace-close-tabs-list">${tabsToClose.map(tab => `<li><strong data-i18n-skip>${esc(tab.title || tr("common:dialogs.unnamed_tab", {defaultValue:"Unnamed tab"}))}</strong><span>${esc(tr(`common:auto.${tab.connectionStatus === "connecting" ? "connecting" : "connected"}`, {defaultValue:tab.connectionStatus === "connecting" ? "Connecting" : "Connected"}))}</span></li>`).join("")}</ul>`
       : "";
     const finish = value => {
       modal.onclick = null;
@@ -888,10 +910,10 @@ function confirmWorkspaceConnectedTabClose(tabsToClose) {
     };
     modal.onclick = null;
     modal.innerHTML = `<div class="modal-card workspace-close-tabs-modal" role="alertdialog" aria-modal="true" aria-labelledby="workspaceCloseTabsTitle" aria-describedby="workspaceCloseTabsMessage">
-      <h2 id="workspaceCloseTabsTitle">关闭仍在连接的标签？</h2>
+      <h2 id="workspaceCloseTabsTitle">${esc(tr("common:dialogs.connected_tabs_title", {defaultValue:"Close connected tabs?"}))}</h2>
       <div id="workspaceCloseTabsMessage" class="modal-message">${esc(message)}</div>
       ${items}
-      <div class="actions"><button id="workspaceCloseTabsCancel" type="button">取消</button><button id="workspaceCloseTabsConfirm" class="danger" type="button">${icon("link-2-off")}<span>断开并关闭</span></button></div>
+      <div class="actions"><button id="workspaceCloseTabsCancel" type="button">${esc(tr("common:actions.cancel", {defaultValue:"Cancel"}))}</button><button id="workspaceCloseTabsConfirm" class="danger" type="button">${icon("link-2-off")}<span>${esc(tr("common:dialogs.disconnect_close", {defaultValue:"Disconnect and close"}))}</span></button></div>
     </div>`;
     modal.hidden = false;
     $("workspaceCloseTabsCancel").onclick = () => finish(false);
@@ -916,7 +938,7 @@ requestCloseTabsByKey = async function(keys, anchorKey="") {
 closeTabsByKey = function(keys, anchorKey="") {
   const targets = new Set(keys.filter(key => !tabs.find(item => item.key === key)?.pinned));
   if (!targets.size) {
-    if (keys.length) notify("固定标签需要先取消固定后才能关闭", "info");
+    if (keys.length) notify(tr("common:notifications.pinned_tabs_close", {defaultValue:"Unpin pinned tabs before closing them"}), "info");
     return;
   }
   if (typeof rememberClosedWorkspaceTabs === "function") rememberClosedWorkspaceTabs([...targets]);
@@ -999,10 +1021,19 @@ function nextWorkspaceTabCopyKey(tab) {
 }
 
 function workspaceTabCopyTitle(tab) {
-  if (tab?.kind === "local-files") return "本地文件";
-  const base = String(tab?.title || "标签").replace(/ · 副本(?: \d+)?$/, "");
-  const copyCount = tabs.filter(item => String(item.title || "").startsWith(`${base} · 副本`)).length + 1;
-  return `${base} · 副本${copyCount > 1 ? ` ${copyCount}` : ""}`;
+  if (tab?.kind === "local-files") return tr("common:auto.local_files", {defaultValue:"Local Files"});
+  const copySuffix = tr("common:workspace.copy_suffix", {defaultValue:" · Copy"});
+  let base = String(tab?.title || tr("navigation:auto.tab", {defaultValue:"Tab"}));
+  const suffixIndex = base.lastIndexOf(copySuffix);
+  if (suffixIndex >= 0 && /^(?: \d+)?$/.test(base.slice(suffixIndex + copySuffix.length))) {
+    base = base.slice(0, suffixIndex);
+  }
+  const copyCount = tabs.filter(item => String(item.title || "").startsWith(`${base}${copySuffix}`)).length + 1;
+  return tr(copyCount > 1 ? "common:workspace.copy_title_numbered" : "common:workspace.copy_title", {
+    base,
+    count:copyCount,
+    defaultValue:copyCount > 1 ? `${base} · Copy ${copyCount}` : `${base} · Copy`
+  });
 }
 
 function workspaceTerminalCopyIdentity(tab) {
@@ -1019,8 +1050,9 @@ function workspaceTerminalCopyIdentity(tab) {
     }, 0) + 1;
   }
   const connection = typeof currentConnection === "function" ? currentConnection(connectionId) : null;
-  const fallbackBase = String(tab.title || "终端").replace(/\s+#\d+$/, "");
-  const baseTitle = connection?.name ? `${connection.name} · 终端` : fallbackBase;
+  const terminalLabel = tr("common:auto.terminal", {defaultValue:"Terminal"});
+  const fallbackBase = String(tab.title || terminalLabel).replace(/\s+#\d+$/, "");
+  const baseTitle = connection?.name ? `${connection.name} · ${terminalLabel}` : fallbackBase;
   return {
     key:`terminal-${connectionId}-${index}`,
     title:index > 1 ? `${baseTitle} #${index}` : baseTitle
@@ -1124,16 +1156,16 @@ showTabContextMenu = function(event, key) {
   if (!tab || !pane || index < 0) return;
   focusWorkspacePane(pane.id);
   const options = [
-    ["组成工作区", () => beginWorkspaceGroupSelection(key), true, "combine"],
-    [tab.pinned ? "取消固定标签" : "固定标签", () => toggleWorkspaceTabPinned(key), true, "pin"],
-    ...(tab.kind === "terminal" ? [[tab.notificationsMuted ? "开启此标签通知" : "静音此标签通知", () => toggleTabNotifications(key), true, tab.notificationsMuted ? "bell" : "bell-off"]] : []),
-    ["复制标签", () => duplicateWorkspaceTab(key), workspaceCanDuplicateTab(tab), "copy"],
-    ["向左移动", () => moveWorkspaceTab(key, -1), index > 0, "arrow-left"],
-    ["向右移动", () => moveWorkspaceTab(key, 1), index < paneTabs.length - 1, "arrow-right"],
-    ["关闭当前标签", () => closeTabsByMode("current", key), Boolean(tab.closable && !tab.pinned), "x"],
-    ["关闭其他标签", () => closeTabsByMode("others", key), paneTabs.some(tabKey => tabs.find(item => item.key === tabKey)?.closable && !tabs.find(item => item.key === tabKey)?.pinned && tabKey !== key), "circle-x"],
-    ["关闭右侧标签", () => closeTabsByMode("right", key), paneTabs.slice(index + 1).some(tabKey => tabs.find(item => item.key === tabKey)?.closable && !tabs.find(item => item.key === tabKey)?.pinned), "panel-right-close"],
-    ["关闭此窗格标签", () => closeTabsByMode("all", key), paneTabs.some(tabKey => tabs.find(item => item.key === tabKey)?.closable && !tabs.find(item => item.key === tabKey)?.pinned), "panel-top-close"]
+    [tr("navigation:auto.combine_workspace", {defaultValue:"Combine into workspace"}), () => beginWorkspaceGroupSelection(key), true, "combine"],
+    [tr(tab.pinned ? "common:auto.unpin_tab" : "common:auto.pin_tab", {defaultValue:tab.pinned ? "Unpin tab" : "Pin tab"}), () => toggleWorkspaceTabPinned(key), true, "pin"],
+    ...(tab.kind === "terminal" ? [[tr(tab.notificationsMuted ? "navigation:auto.enable_tab_notifications" : "navigation:auto.mute_tab_notifications", {defaultValue:tab.notificationsMuted ? "Enable notifications for this tab" : "Mute notifications for this tab"}), () => toggleTabNotifications(key), true, tab.notificationsMuted ? "bell" : "bell-off"]] : []),
+    [tr("common:auto.duplicate_tab", {defaultValue:"Duplicate tab"}), () => duplicateWorkspaceTab(key), workspaceCanDuplicateTab(tab), "copy"],
+    [tr("common:auto.move_left", {defaultValue:"Move left"}), () => moveWorkspaceTab(key, -1), index > 0, "arrow-left"],
+    [tr("common:auto.move_right", {defaultValue:"Move right"}), () => moveWorkspaceTab(key, 1), index < paneTabs.length - 1, "arrow-right"],
+    [tr("common:auto.close_current_tab", {defaultValue:"Close current tab"}), () => closeTabsByMode("current", key), Boolean(tab.closable && !tab.pinned), "x"],
+    [tr("common:auto.close_other_tabs", {defaultValue:"Close other tabs"}), () => closeTabsByMode("others", key), paneTabs.some(tabKey => tabs.find(item => item.key === tabKey)?.closable && !tabs.find(item => item.key === tabKey)?.pinned && tabKey !== key), "circle-x"],
+    [tr("common:auto.close_right_tabs", {defaultValue:"Close tabs to the right"}), () => closeTabsByMode("right", key), paneTabs.slice(index + 1).some(tabKey => tabs.find(item => item.key === tabKey)?.closable && !tabs.find(item => item.key === tabKey)?.pinned), "panel-right-close"],
+    [tr("navigation:auto.close_pane_tabs", {defaultValue:"Close tabs in this pane"}), () => closeTabsByMode("all", key), paneTabs.some(tabKey => tabs.find(item => item.key === tabKey)?.closable && !tabs.find(item => item.key === tabKey)?.pinned), "panel-top-close"]
   ];
   const menu = document.createElement("div");
   menu.id = "tabContextMenu";

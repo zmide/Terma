@@ -270,6 +270,30 @@ export function createRemoteProfileRepository(dependencies: RemoteProfileReposit
     return getRemoteProfile(id);
   }
 
+  function repairRemoteProfileManagementConnection(id: number, connectionId: number) {
+    const profileId = Number(id);
+    const resolvedConnectionId = Number(connectionId);
+    if (!Number.isInteger(profileId) || profileId < 1) throw new Error("远程连接 ID 无效");
+    if (!Number.isInteger(resolvedConnectionId) || resolvedConnectionId < 1) throw new Error("SSH 管理连接 ID 无效");
+    const connection = dependencies.getConnection(resolvedConnectionId);
+    const existing = get("SELECT protocol,host,options_json FROM remote_profiles WHERE id=?", [profileId]);
+    if (!existing) throw new Error("远程连接不存在");
+    const profileHost = normalizeRemoteHost(existing.host).trim().toLowerCase().replace(/\.$/, "").replace(/^::ffff:/, "");
+    const connectionHost = normalizeRemoteHost(connection.ssh_host).trim().toLowerCase().replace(/\.$/, "").replace(/^::ffff:/, "");
+    if (!profileHost || profileHost !== connectionHost) {
+      throw new Error("SSH 管理连接与远程连接主机不一致，拒绝修复关联");
+    }
+    const options = parseRemoteOptions(existing.options_json);
+    const currentSourceId = Number(options.source_ssh_connection_id || 0);
+    const currentXdmcpId = Number(options.ssh_connection_id || 0);
+    if (currentSourceId === resolvedConnectionId
+      && (String(existing.protocol) !== "xdmcp" || currentXdmcpId === resolvedConnectionId)) return false;
+    options.source_ssh_connection_id = resolvedConnectionId;
+    if (String(existing.protocol) === "xdmcp") options.ssh_connection_id = resolvedConnectionId;
+    run("UPDATE remote_profiles SET options_json=?,updated_at=? WHERE id=?", [JSON.stringify(options),now(),profileId]);
+    return true;
+  }
+
   function getVncProfileCredential(id: number) {
     const profile = getRemoteProfile(id);
     if (profile.protocol !== "vnc") throw new Error("该连接不是 VNC 配置");
@@ -324,6 +348,7 @@ export function createRemoteProfileRepository(dependencies: RemoteProfileReposit
     createRemoteProfileFromConnection,
     createAllRemoteProfilesFromConnection,
     updateRemoteProfile,
+    repairRemoteProfileManagementConnection,
     getVncProfileCredential,
     updateVncProfileCredential,
     duplicateRemoteProfile,

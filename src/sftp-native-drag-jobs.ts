@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const { clearSftpJobIssue, setSftpJobIssue } = require("./sftp-job-issues");
 
 const NATIVE_DRAG_DISCARD_TTL_MS = 5 * 60 * 1000;
 
@@ -203,9 +204,17 @@ function createNativeSftpDragJobs(dependencies: any) {
     job.phase = "";
     job.can_cancel = false;
     job.can_pause = false;
-    job.error = finalStatus === "done"
-      ? ""
-      : String(error || (incomplete ? "目标端未读取完整内容" : finalStatus === "cancelled" ? "用户已取消" : "拖出下载失败"));
+    if (finalStatus === "done") {
+      clearSftpJobIssue(job, "error");
+    } else if (error) {
+      setSftpJobIssue(job, "error", String(error));
+    } else if (incomplete) {
+      setSftpJobIssue(job, "error", "目标端未读取完整内容", "sftp_native_drag_incomplete");
+    } else if (finalStatus === "cancelled") {
+      setSftpJobIssue(job, "error", "用户已取消", "sftp_user_cancelled");
+    } else {
+      setSftpJobIssue(job, "error", "拖出下载失败", "sftp_native_drag_failed");
+    }
     job.finished_at = Date.now();
     if (finalStatus === "done") {
       job.transferred = job.size || job.transferred;
@@ -252,6 +261,7 @@ function createNativeSftpDragJobs(dependencies: any) {
         phase:job.phase,
         can_cancel:true,
         code:"NATIVE_DRAG_CANCEL_REJECTED",
+        message_code:"sftp_native_drag_cancel_rejected",
         message:"系统暂未接受停止请求，传输仍在继续"
       };
     }
@@ -260,7 +270,7 @@ function createNativeSftpDragJobs(dependencies: any) {
     job.phase = "cancelling";
     job.can_cancel = false;
     job.can_pause = false;
-    job.error = "";
+    clearSftpJobIssue(job, "error");
     job.speed_bps = 0;
     persistJobs(true);
     return {ok:true, status:job.status, phase:job.phase, can_cancel:false};

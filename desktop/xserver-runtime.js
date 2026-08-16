@@ -18,6 +18,20 @@ const XQUARTZ_BYTES = 122035963;
 const XQUARTZ_SHA256 = "9ac35a505095bfbd3009c3b4772f0c6421e2f79c4210ab908459270d1c447909";
 const XQUARTZ_TEAM_ID = "NA574AWV7E";
 
+function normalizeDesktopLanguage(value) {
+  return String(value || "") === "en-US" ? "en-US" : "zh-CN";
+}
+
+function desktopUiText(language, chinese, english) {
+  return normalizeDesktopLanguage(language) === "en-US" ? english : chinese;
+}
+
+function languageGetter(options = {}, environment = process.env) {
+  return typeof options.getLanguage === "function"
+    ? options.getLanguage
+    : () => options.language || environment.TERMA_INTERFACE_LANGUAGE || process.env.TERMA_INTERFACE_LANGUAGE || "zh-CN";
+}
+
 function xdmcpWindowSettings(options = {}) {
   const rawMode = String(options.window_mode || "");
   const windowMode = ["resizable", "fullscreen", "fixed"].includes(rawMode)
@@ -88,7 +102,7 @@ function isWindowsDisplayCollisionError(error) {
   );
 }
 
-async function retryWindowsDisplayLaunch(allocate, launch, maxAttempts = 33) {
+async function retryWindowsDisplayLaunch(allocate, launch, maxAttempts = 33, language = process.env.TERMA_INTERFACE_LANGUAGE) {
   const excluded = new Set();
   let lastError = null;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -101,7 +115,7 @@ async function retryWindowsDisplayLaunch(allocate, launch, maxAttempts = 33) {
       excluded.add(displayNumber);
     }
   }
-  throw lastError || new Error("No available X11 display");
+  throw lastError || new Error(desktopUiText(language, "没有可用的 X11 显示", "No available X11 display"));
 }
 
 function wildcardXauthorityRecords(value) {
@@ -218,17 +232,25 @@ async function resolveXdmcpLocalAddress(host, port, requestedAddress = "", optio
   });
 }
 
-function xdmcpLaunchFailureMessage(rawMessage, displayNumber, localAddress = "") {
+function xdmcpLaunchFailureMessage(rawMessage, displayNumber, localAddress = "", language = process.env.TERMA_INTERFACE_LANGUAGE) {
   const raw = String(rawMessage || "").trim();
   if (/XDMCP fatal error:\s*Session failed/i.test(raw)) {
     const endpoint = localAddress ? `${localAddress}:${6000 + Number(displayNumber || 0)}` : `TCP ${6000 + Number(displayNumber || 0)}`;
-    return `XDMCP 会话建立失败：远端已响应 UDP 177，但未能连接本机 X Server。远端还必须反向访问本机 ${endpoint}；请检查远端到该地址的回程路由。经过 VPN、NAT 或端口映射时通常无法回连，可改用 VNC 或 RDP。`;
+    return desktopUiText(
+      language,
+      `XDMCP 会话建立失败：远端已响应 UDP 177，但未能连接本机 X Server。远端还必须反向访问本机 ${endpoint}；请检查远端到该地址的回程路由。经过 VPN、NAT 或端口映射时通常无法回连，可改用 VNC 或 RDP。`,
+      `XDMCP session setup failed: the remote host responded on UDP 177, but could not connect to the local X Server. The remote host must also be able to reach this machine at ${endpoint}; check the return route. Connections through VPN, NAT, or port forwarding usually cannot call back; try VNC or RDP instead.`
+    );
   }
   const fatal = /Fatal server error:\s*[\r\n]+(?:\(EE\)\s*)?([^\r\n]+)/i.exec(raw)?.[1]
     || /\(EE\)\s+([^\r\n]+)/i.exec(raw)?.[1]
     || raw.split(/\r?\n/).map(line => line.trim()).filter(Boolean).at(-1)
     || "";
-  return fatal || "XDMCP 图形桌面启动失败，请确认远端已启用 XDMCP/UDP 177，并允许远端回连本机 X Server";
+  return fatal || desktopUiText(
+    language,
+    "XDMCP 图形桌面启动失败，请确认远端已启用 XDMCP/UDP 177，并允许远端回连本机 X Server",
+    "XDMCP graphical desktop launch failed. Confirm that the remote host has enabled XDMCP/UDP 177 and allows callbacks to this X Server."
+  );
 }
 
 async function waitForStableProcess(processHandle, timeoutMs = 1800) {
@@ -294,6 +316,9 @@ function readXdmcpText(buffer, offset) {
 function createXServerRuntime(options = {}) {
   const platform = options.platform || process.platform;
   const environment = options.environment || process.env;
+  const detectWindowsProcess = typeof options.detectWindowsProcess === "function" ? options.detectWindowsProcess : null;
+  const getLanguage = languageGetter(options, environment);
+  const text = (chinese, english) => desktopUiText(getLanguage(), chinese, english);
   const projectRoot = options.projectRoot || path.resolve(__dirname, "..");
   const resourcesPath = options.resourcesPath || process.resourcesPath || "";
   const appIsPackaged = Boolean(options.appIsPackaged);
@@ -355,6 +380,7 @@ function createXServerRuntime(options = {}) {
   }
 
   function windowsProcess() {
+    if (detectWindowsProcess) return String(detectWindowsProcess() || "");
     const tasklist = output("tasklist.exe", ["/FO", "CSV", "/NH"]);
     const lower = tasklist.toLowerCase();
     return WINDOWS_SERVER_NAMES.find(name => lower.includes(`\"${name}\"`)) || "";
@@ -456,13 +482,14 @@ function createXServerRuntime(options = {}) {
         server:processName || (executable ? path.basename(executable) : ""),
         executable,
         display,
+        reason_preserve_message:Boolean(lastError),
         reason:lastError || (running && display
-          ? "X Server 已就绪"
+          ? text("X Server 已就绪", "X Server is ready")
           : running
-            ? "检测到 X Server，但 DISPLAY 未就绪"
+            ? text("检测到 X Server，但 DISPLAY 未就绪", "X Server was detected, but DISPLAY is not ready")
             : executable
-              ? "X Server 已安装，可由 Terma 启动"
-              : "当前安装包不包含 X Server 运行时")
+              ? text("X Server 已安装，可由 Terma 启动", "X Server is installed and can be started by Terma")
+              : text("当前安装包不包含 X Server 运行时", "The current package does not include an X Server runtime"))
       };
     }
     if (platform === "darwin") {
@@ -489,9 +516,10 @@ function createXServerRuntime(options = {}) {
         executable:application,
         display,
         authority_file:authority,
+        reason_preserve_message:Boolean(lastError),
         reason:lastError || (application
-          ? running && display ? "XQuartz 已就绪" : running ? "XQuartz 正在运行，但尚未识别 DISPLAY" : "XQuartz 可由 Terma 启动"
-          : "未安装 XQuartz")
+          ? running && display ? text("XQuartz 已就绪", "XQuartz is ready") : running ? text("XQuartz 正在运行，但尚未识别 DISPLAY", "XQuartz is running, but DISPLAY has not been detected") : text("XQuartz 可由 Terma 启动", "XQuartz can be started by Terma")
+          : text("未安装 XQuartz", "XQuartz is not installed"))
       };
     }
     const display = String(environment.DISPLAY || "").trim();
@@ -516,13 +544,14 @@ function createXServerRuntime(options = {}) {
       server:display ? "X.Org/Xwayland" : "",
       executable:xauth,
       display,
+      reason_preserve_message:Boolean(lastError),
       reason:lastError || (display
         ? xauth
           ? xdmcpClient
-            ? "X11 显示、xauth 和 Xephyr 已就绪"
-            : "X11 已就绪，但缺少 Xephyr；可安装 Linux 图形组件"
-          : "检测到 DISPLAY，但缺少 xauth"
-        : "当前桌面会话没有 DISPLAY")
+            ? text("X11 显示、xauth 和 Xephyr 已就绪", "X11 display, xauth, and Xephyr are ready")
+            : text("X11 已就绪，但缺少 Xephyr；可安装 Linux 图形组件", "X11 is ready, but Xephyr is missing. Install the Linux graphics components")
+          : text("检测到 DISPLAY，但缺少 xauth", "DISPLAY was detected, but xauth is missing")
+        : text("当前桌面会话没有 DISPLAY", "The current desktop session has no DISPLAY"))
     };
   }
 
@@ -555,7 +584,7 @@ function createXServerRuntime(options = {}) {
       errorText = String(result.stderr || result.error?.message || "").trim();
       await delay(180);
     }
-    throw new Error(errorText || "受限 X11 安全 Cookie 初始化失败");
+    throw new Error(errorText || text("受限 X11 安全 Cookie 初始化失败", "The untrusted X11 security cookie could not be initialized"));
   }
 
   async function availableDisplayNumber(excluded = new Set()) {
@@ -571,7 +600,7 @@ function createXServerRuntime(options = {}) {
       if (await canConnect(port, 250)) continue;
       if (platform !== "win32" || await isPortFree(port)) return candidate;
     }
-    throw new Error("没有可用的 X11 显示端口");
+    throw new Error(text("没有可用的 X11 显示端口", "No available X11 display port was found"));
   }
 
   async function waitForNestedDisplay(displayNumber, processHandle, timeoutMs = 12000) {
@@ -586,9 +615,9 @@ function createXServerRuntime(options = {}) {
   }
 
   async function installLinuxGraphicsComponents() {
-    if (platform !== "linux") throw new Error("Linux 图形组件安装仅适用于 Linux 桌面版");
+    if (platform !== "linux") throw new Error(text("Linux 图形组件安装仅适用于 Linux 桌面版", "Linux graphics component installation is available only on the Linux desktop build"));
     const manager = linuxPackageManager();
-    if (!manager) throw new Error("未检测到 apt-get、dnf 或 pacman，无法自动安装 Linux 图形组件");
+    if (!manager) throw new Error(text("未检测到 apt-get、dnf 或 pacman，无法自动安装 Linux 图形组件", "apt-get, dnf, or pacman was not found; Linux graphics components cannot be installed automatically"));
     const missing = [];
     if (!linuxXdmcpExecutable()) missing.push(manager === "apt-get" ? "xserver-xephyr" : manager === "dnf" ? "xorg-x11-server-Xephyr" : "xorg-server-xephyr");
     if (!commandPath("xfreerdp3", platform) && !commandPath("xfreerdp", platform) && !commandPath("wlfreerdp", platform)) missing.push(manager === "apt-get" ? "freerdp2-x11" : "freerdp");
@@ -609,7 +638,7 @@ function createXServerRuntime(options = {}) {
         command = "sudo";
         commandArgs = ["-n", manager, ...args];
       } else {
-        throw new Error("安装 Linux 图形组件需要 root、pkexec 或免密 sudo 权限");
+        throw new Error(text("安装 Linux 图形组件需要 root、pkexec 或免密 sudo 权限", "Installing Linux graphics components requires root, pkexec, or passwordless sudo access"));
       }
     }
     const result = await new Promise((resolve, reject) => {
@@ -621,7 +650,7 @@ function createXServerRuntime(options = {}) {
       childProcess.stdout?.on("data", chunk => { outputText = (outputText + chunk.toString()).slice(-12000); });
       childProcess.stderr?.on("data", chunk => { outputText = (outputText + chunk.toString()).slice(-12000); });
       childProcess.once("error", reject);
-      childProcess.once("close", code => code === 0 ? resolve(outputText) : reject(new Error(outputText.trim() || `安装命令退出 ${code}`)));
+      childProcess.once("close", code => code === 0 ? resolve(outputText) : reject(new Error(outputText.trim() || text(`安装命令退出 ${code}`, `Installation command exited with code ${code}`))));
     });
     return {ok:true, installed:missing, output:String(result || "").trim(), diagnostics:diagnostics()};
   }
@@ -632,7 +661,7 @@ function createXServerRuntime(options = {}) {
     try { fs.rmSync(attemptAuthorityFile, {force:true}); } catch {}
     const cookie = crypto.randomBytes(16).toString("hex");
     const xauth = existingFile([path.join(path.dirname(executable), "xauth.exe")]);
-    if (!xauth) throw new Error("X Server 运行时缺少 xauth.exe");
+    if (!xauth) throw new Error(text("X Server 运行时缺少 xauth.exe", "The X Server runtime is missing xauth.exe"));
     let authResult = null;
     for (const displayName of [`:${displayNumber}`, `localhost:${displayNumber}`, `127.0.0.1:${displayNumber}`]) {
       authResult = spawnSync(xauth, ["-f", attemptAuthorityFile, "add", displayName, ".", cookie], {
@@ -643,7 +672,8 @@ function createXServerRuntime(options = {}) {
       if (authResult.status !== 0) break;
     }
     if (authResult?.status !== 0 || !fs.existsSync(attemptAuthorityFile)) {
-      throw new Error(`Xauthority 生成失败：${String(authResult?.stderr || authResult?.error?.message || "xauth 返回错误").trim()}`);
+      const detail = String(authResult?.stderr || authResult?.error?.message || text("xauth 返回错误", "xauth returned an error")).trim();
+      throw new Error(text(`Xauthority 生成失败：${detail}`, `Xauthority generation failed: ${detail}`));
     }
     const numericAuthority = spawnSync(xauth, ["-f", attemptAuthorityFile, "nlist"], {
       encoding:"utf8",
@@ -658,9 +688,10 @@ function createXServerRuntime(options = {}) {
       input:`${wildcardAuthority}\n`
     }) : null;
     if (numericAuthority.status !== 0 || !wildcardAuthority || wildcardResult?.status !== 0) {
-      throw new Error(`Xauthority TCP 记录生成失败：${String(
-        wildcardResult?.stderr || numericAuthority.stderr || wildcardResult?.error?.message || numericAuthority.error?.message || "xauth 返回错误"
-      ).trim()}`);
+      const detail = String(
+        wildcardResult?.stderr || numericAuthority.stderr || wildcardResult?.error?.message || numericAuthority.error?.message || text("xauth 返回错误", "xauth returned an error")
+      ).trim();
+      throw new Error(text(`Xauthority TCP 记录生成失败：${detail}`, `Xauthority TCP record generation failed: ${detail}`));
     }
 
     const display = `127.0.0.1:${displayNumber}.0`;
@@ -706,16 +737,16 @@ function createXServerRuntime(options = {}) {
     try {
       if (!await waitForDisplayPort(displayNumber, 8000, processHandle)) {
         if (processHandle.exitCode !== null && !launchError) {
-          const collision = new Error(`X11 display :${displayNumber} is already in use`);
+          const collision = new Error(text(`X11 显示 :${displayNumber} 已被占用`, `X11 display :${displayNumber} is already in use`));
           collision.code = "X11_DISPLAY_COLLISION";
           throw collision;
         }
-        throw new Error(launchError || launchStderr.trim() || "X Server 启动超时");
+        throw new Error(launchError || launchStderr.trim() || text("X Server 启动超时", "X Server startup timed out"));
       }
       // VcXsrv opens the TCP listener before its auth/security extensions finish initializing.
       await waitForUntrustedXauth(display, xauth, attemptAuthorityFile);
       if (processHandle.exitCode !== null) {
-        const collision = new Error(`X11 display :${displayNumber} exited during startup`);
+        const collision = new Error(text(`X11 显示 :${displayNumber} 在启动期间退出`, `X11 display :${displayNumber} exited during startup`));
         collision.code = "X11_DISPLAY_COLLISION";
         throw collision;
       }
@@ -756,19 +787,21 @@ function createXServerRuntime(options = {}) {
     const current = diagnostics();
     if (current.available) return current;
     const executable = current.executable;
-    if (!executable) throw new Error("当前安装包未包含 X Server 运行时");
+    if (!executable) throw new Error(text("当前安装包未包含 X Server 运行时", "The current package does not include an X Server runtime"));
     return retryWindowsDisplayLaunch(
       excluded => availableDisplayNumber(excluded),
-      displayNumber => startWindowsDisplay(executable, displayNumber)
+      displayNumber => startWindowsDisplay(executable, displayNumber),
+      33,
+      getLanguage()
     );
   }
 
   async function startMac() {
     const current = diagnostics();
     if (current.available) return current;
-    if (!current.executable) throw new Error("未安装 XQuartz");
+    if (!current.executable) throw new Error(text("未安装 XQuartz", "XQuartz is not installed"));
     const result = spawnSync("/usr/bin/open", ["-gj", current.executable], {encoding:"utf8", timeout:5000});
-    if (result.status !== 0) throw new Error(String(result.stderr || "XQuartz 启动失败").trim());
+    if (result.status !== 0) throw new Error(String(result.stderr || text("XQuartz 启动失败", "XQuartz failed to start")).trim());
     for (let attempt = 0; attempt < 50; attempt += 1) {
       const next = diagnostics();
       if (next.available) {
@@ -777,7 +810,7 @@ function createXServerRuntime(options = {}) {
       }
       await delay(200);
     }
-    throw new Error("XQuartz 已启动，但没有找到可用的 DISPLAY");
+    throw new Error(text("XQuartz 已启动，但没有找到可用的 DISPLAY", "XQuartz started, but no usable DISPLAY was found"));
   }
 
   async function stopMac(force = false) {
@@ -789,7 +822,7 @@ function createXServerRuntime(options = {}) {
       timeout:8000,
       windowsHide:true
     });
-    if (result.status !== 0 && !force) throw new Error(String(result.stderr || "XQuartz 停止失败").trim());
+    if (result.status !== 0 && !force) throw new Error(String(result.stderr || text("XQuartz 停止失败", "XQuartz failed to stop")).trim());
     for (let attempt = 0; attempt < 40; attempt += 1) {
       if (!xQuartzProcessState().running) break;
       await delay(150);
@@ -808,7 +841,7 @@ function createXServerRuntime(options = {}) {
         await delay(100);
       }
     }
-    if (xQuartzProcessState().running) throw new Error("XQuartz 未能在限定时间内停止");
+    if (xQuartzProcessState().running) throw new Error(text("XQuartz 未能在限定时间内停止", "XQuartz did not stop within the allotted time"));
     macStartedByTerma = false;
     delete environment.DISPLAY;
     delete environment.XAUTHORITY;
@@ -818,9 +851,9 @@ function createXServerRuntime(options = {}) {
 
   function verifyXQuartzPackage(file) {
     const bytes = fs.statSync(file).size;
-    if (bytes !== XQUARTZ_BYTES) throw new Error(`XQuartz 安装包大小校验失败：${bytes}`);
+    if (bytes !== XQUARTZ_BYTES) throw new Error(text(`XQuartz 安装包大小校验失败：${bytes}`, `XQuartz installer size verification failed: ${bytes}`));
     const hash = crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
-    if (hash !== XQUARTZ_SHA256) throw new Error("XQuartz 安装包 SHA-256 校验失败");
+    if (hash !== XQUARTZ_SHA256) throw new Error(text("XQuartz 安装包 SHA-256 校验失败", "XQuartz installer SHA-256 verification failed"));
     const signature = spawnSync("/usr/sbin/pkgutil", ["--check-signature", file], {
       encoding:"utf8",
       timeout:15000,
@@ -828,7 +861,7 @@ function createXServerRuntime(options = {}) {
     });
     const signatureText = `${signature.stdout || ""}\n${signature.stderr || ""}`;
     if (signature.status !== 0 || !signatureText.includes(XQUARTZ_TEAM_ID) || !/Notarization:\s*trusted/i.test(signatureText)) {
-      throw new Error("XQuartz 安装包不是受信任的官方签名");
+      throw new Error(text("XQuartz 安装包不是受信任的官方签名", "The XQuartz installer does not have a trusted official signature"));
     }
     return {bytes, sha256:hash, team_id:XQUARTZ_TEAM_ID};
   }
@@ -845,7 +878,7 @@ function createXServerRuntime(options = {}) {
     const temporary = `${file}.tmp-${process.pid}-${Date.now()}`;
     try {
       const response = await fetch(XQUARTZ_URL, {headers:{"User-Agent":"Terma-XQuartz-Installer"}, redirect:"follow"});
-      if (!response.ok || !response.body) throw new Error(`XQuartz 下载失败：HTTP ${response.status}`);
+      if (!response.ok || !response.body) throw new Error(text(`XQuartz 下载失败：HTTP ${response.status}`, `XQuartz download failed: HTTP ${response.status}`));
       await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, {flags:"wx"}));
       verifyXQuartzPackage(temporary);
       fs.renameSync(temporary, file);
@@ -856,7 +889,7 @@ function createXServerRuntime(options = {}) {
   }
 
   async function installXQuartz() {
-    if (platform !== "darwin") throw new Error("XQuartz 安装仅适用于 macOS 桌面版");
+    if (platform !== "darwin") throw new Error(text("XQuartz 安装仅适用于 macOS 桌面版", "XQuartz installation is available only on the macOS desktop build"));
     const current = diagnostics();
     if (current.installed && current.xdmcp_client) return {ok:true, already_installed:true, diagnostics:current};
     xQuartzInstallerBusy = true;
@@ -874,11 +907,11 @@ function createXServerRuntime(options = {}) {
         processHandle.once("error", reject);
         processHandle.once("close", code => {
           if (code === 0) resolve(null);
-          else reject(new Error(stderr.trim() || "XQuartz 安装被取消或失败"));
+          else reject(new Error(stderr.trim() || text("XQuartz 安装被取消或失败", "XQuartz installation was cancelled or failed")));
         });
       });
       const installed = diagnostics();
-      if (!installed.installed) throw new Error("安装命令已完成，但没有检测到 XQuartz");
+      if (!installed.installed) throw new Error(text("安装命令已完成，但没有检测到 XQuartz", "Installation completed, but XQuartz was not detected"));
       try { fs.rmSync(installer, {force:true}); } catch {}
       return {ok:true, version:XQUARTZ_VERSION, restart_required:true, diagnostics:installed};
     } finally {
@@ -934,16 +967,16 @@ function createXServerRuntime(options = {}) {
     const current = diagnostics();
     if (!current.display || !current.xdmcp_client) {
       throw new Error(current.display
-        ? "Linux XDMCP 需要安装 Xephyr；请在 X Server 管理中安装 Linux 图形组件"
-        : "Linux 当前桌面会话没有 DISPLAY，请从图形桌面启动 Terma");
+        ? text("Linux XDMCP 需要安装 Xephyr；请在 X Server 管理中安装 Linux 图形组件", "Linux XDMCP requires Xephyr. Install the Linux graphics components in X Server management")
+        : text("Linux 当前桌面会话没有 DISPLAY，请从图形桌面启动 Terma", "The current Linux desktop session has no DISPLAY. Start Terma from the graphical desktop session"));
     }
     const mode = new Set(["query", "indirect", "broadcast"]).has(String(profile.options?.mode))
       ? String(profile.options.mode)
       : "query";
     const host = String(profile.host || "").trim();
-    if (mode !== "broadcast" && (!host || host.includes("\0") || /[\r\n]/.test(host))) throw new Error("XDMCP 目标主机无效");
+    if (mode !== "broadcast" && (!host || host.includes("\0") || /[\r\n]/.test(host))) throw new Error(text("XDMCP 目标主机无效", "The XDMCP target host is invalid"));
     const port = Number(profile.port || 177);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("XDMCP 端口无效");
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(text("XDMCP 端口无效", "The XDMCP port is invalid"));
     const displayNumber = await availableDisplayNumber();
     const {windowMode, width, height} = xdmcpWindowSettings(profile.options);
     const args = [`:${displayNumber}`];
@@ -973,7 +1006,7 @@ function createXServerRuntime(options = {}) {
     });
     if (!await waitForNestedDisplay(displayNumber, processHandle)) {
       try { processHandle.kill(); } catch {}
-      throw new Error(launchError.trim() || "Linux XDMCP 图形桌面启动超时，请确认服务器已启用 XDMCP/UDP 177");
+      throw new Error(launchError.trim() || text("Linux XDMCP 图形桌面启动超时，请确认服务器已启用 XDMCP/UDP 177", "Linux XDMCP graphical desktop startup timed out. Confirm that the server has enabled XDMCP/UDP 177"));
     }
     return {
       ok:true,
@@ -1001,16 +1034,16 @@ function createXServerRuntime(options = {}) {
   async function openMacXdmcp(profile = {}) {
     let current = diagnostics();
     if (!current.installed || !current.xdmcp_client) {
-      throw new Error("macOS XDMCP 需要安装 XQuartz；请在当前页面安装后重试");
+      throw new Error(text("macOS XDMCP 需要安装 XQuartz；请在当前页面安装后重试", "macOS XDMCP requires XQuartz. Install it from this page and try again"));
     }
     if (!current.available) current = await startMac();
     const mode = new Set(["query", "indirect", "broadcast"]).has(String(profile.options?.mode))
       ? String(profile.options.mode)
       : "query";
     const host = String(profile.host || "").trim();
-    if (mode !== "broadcast" && (!host || host.includes("\0") || /[\r\n]/.test(host))) throw new Error("XDMCP 目标主机无效");
+    if (mode !== "broadcast" && (!host || host.includes("\0") || /[\r\n]/.test(host))) throw new Error(text("XDMCP 目标主机无效", "The XDMCP target host is invalid"));
     const port = Number(profile.port || 177);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("XDMCP 端口无效");
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(text("XDMCP 端口无效", "The XDMCP port is invalid"));
     const displayNumber = await availableDisplayNumber();
     const {windowMode, width, height} = xdmcpWindowSettings(profile.options);
     const args = [`:${displayNumber}`];
@@ -1040,12 +1073,12 @@ function createXServerRuntime(options = {}) {
     });
     if (!await waitForMacXephyr(displayNumber, processHandle)) {
       try { processHandle.kill(); } catch {}
-      throw new Error(launchError.trim() || "macOS XDMCP 图形桌面启动超时，请确认远端已启用 XDMCP/UDP 177");
+      throw new Error(launchError.trim() || text("macOS XDMCP 图形桌面启动超时，请确认远端已启用 XDMCP/UDP 177", "macOS XDMCP graphical desktop startup timed out. Confirm that the remote host has enabled XDMCP/UDP 177"));
     }
     return {
       ok:true,
       protocol:"xdmcp",
-      client:"Terma 内置 XDMCP（XQuartz）",
+      client:text("Terma 内置 XDMCP（XQuartz）", "Terma built-in XDMCP (XQuartz)"),
       display:`:${displayNumber}.0`,
       pid:processHandle.pid,
       mode,
@@ -1056,21 +1089,21 @@ function createXServerRuntime(options = {}) {
   async function openXdmcp(profile = {}) {
     if (platform === "linux") return openLinuxXdmcp(profile);
     if (platform === "darwin") return openMacXdmcp(profile);
-    if (platform !== "win32") throw new Error("当前桌面版暂不支持 XDMCP 图形桌面");
+    if (platform !== "win32") throw new Error(text("当前桌面版暂不支持 XDMCP 图形桌面", "XDMCP graphical desktops are not supported by this desktop build"));
     const executable = bundledWindowsExecutable() || installedWindowsExecutable();
-    if (!executable) throw new Error("当前安装包未包含 X Server 运行时");
+    if (!executable) throw new Error(text("当前安装包未包含 X Server 运行时", "The current package does not include an X Server runtime"));
     const mode = new Set(["query", "indirect", "broadcast"]).has(String(profile.options?.mode))
       ? String(profile.options.mode)
       : "query";
     const host = String(profile.host || "").trim();
-    if (mode !== "broadcast" && (!host || host.includes("\0") || /[\r\n]/.test(host))) throw new Error("XDMCP 目标主机无效");
+    if (mode !== "broadcast" && (!host || host.includes("\0") || /[\r\n]/.test(host))) throw new Error(text("XDMCP 目标主机无效", "The XDMCP target host is invalid"));
     const port = Number(profile.port || 177);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("XDMCP 端口无效");
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(text("XDMCP 端口无效", "The XDMCP port is invalid"));
     const displayNumber = await availableDisplayNumber();
     const {windowMode, width, height} = xdmcpWindowSettings(profile.options);
     const requestedLocalAddress = String(profile.options?.local_address || "").trim();
     if (requestedLocalAddress.includes("\0") || /[\r\n]/.test(requestedLocalAddress) || (requestedLocalAddress && net.isIP(requestedLocalAddress) !== 4)) {
-      throw new Error("XDMCP 本地地址必须是本机 IPv4 地址");
+      throw new Error(text("XDMCP 本地地址必须是本机 IPv4 地址", "The XDMCP local address must be this machine's IPv4 address"));
     }
     const localAddress = await resolveXdmcpLocalAddress(host, port, requestedLocalAddress, {mode});
     fs.mkdirSync(runtimeDataDir, {recursive:true});
@@ -1115,16 +1148,16 @@ function createXServerRuntime(options = {}) {
     if (!await waitForDisplayPort(displayNumber, 8000, processHandle)) {
       try { processHandle.kill(); } catch {}
       launchError = launchError || readLogTail(launchLogFile);
-      throw new Error(xdmcpLaunchFailureMessage(launchError, displayNumber, localAddress));
+      throw new Error(xdmcpLaunchFailureMessage(launchError, displayNumber, localAddress, getLanguage()));
     }
     if (!await waitForStableProcess(processHandle)) {
       launchError = launchError || readLogTail(launchLogFile);
-      throw new Error(xdmcpLaunchFailureMessage(launchError, displayNumber, localAddress));
+      throw new Error(xdmcpLaunchFailureMessage(launchError, displayNumber, localAddress, getLanguage()));
     }
     return {
       ok:true,
       protocol:"xdmcp",
-      client:bundledWindowsExecutable() ? "Terma 内置 X Server" : path.basename(executable),
+      client:bundledWindowsExecutable() ? text("Terma 内置 X Server", "Terma built-in X Server") : path.basename(executable),
       display:`127.0.0.1:${displayNumber}.0`,
       pid:processHandle.pid,
       mode,
@@ -1142,20 +1175,28 @@ function createXServerRuntime(options = {}) {
         : platform === "darwin"
           ? macXdmcpExecutable()
           : "";
-    if (!executable) return {ok:false, protocol:"xdmcp", message:platform === "linux" ? "未安装 Xephyr，请在 X Server 管理中安装 Linux 图形组件" : platform === "darwin" ? "未安装 XQuartz，请在 X Server 管理中安装后重试" : "当前安装包未包含 X Server 运行时"};
+    if (!executable) return {
+      ok:false,
+      protocol:"xdmcp",
+      message:platform === "linux"
+        ? text("未安装 Xephyr，请在 X Server 管理中安装 Linux 图形组件", "Xephyr is not installed. Install the Linux graphics components in X Server management")
+        : platform === "darwin"
+          ? text("未安装 XQuartz，请在 X Server 管理中安装后重试", "XQuartz is not installed. Install it in X Server management and try again")
+          : text("当前安装包未包含 X Server 运行时", "The current package does not include an X Server runtime")
+    };
     const mode = new Set(["query", "indirect", "broadcast"]).has(String(profile.options?.mode))
       ? String(profile.options.mode)
       : "query";
     const host = mode === "broadcast" ? "255.255.255.255" : String(profile.host || "").trim().replace(/^\[(.*)\]$/, "$1");
     const port = Number(profile.port || 177);
-    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) return {ok:false, protocol:"xdmcp", message:"XDMCP 目标地址无效"};
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) return {ok:false, protocol:"xdmcp", message:text("XDMCP 目标地址无效", "The XDMCP target address is invalid")};
     return new Promise(resolve => {
       const resolveAddress = callback => {
         if (mode === "broadcast") return callback(null, host, 4);
         dns.lookup(host, (error, address, family) => callback(error, address, family));
       };
       resolveAddress((lookupError, address, family) => {
-        if (lookupError || !address) return resolve({ok:false, protocol:"xdmcp", message:lookupError?.message || "XDMCP 目标主机解析失败"});
+        if (lookupError || !address) return resolve({ok:false, protocol:"xdmcp", message:lookupError?.message || text("XDMCP 目标主机解析失败", "The XDMCP target host could not be resolved")});
         const socket = dgram.createSocket(family === 6 ? "udp6" : "udp4");
         let settled = false;
         const finish = result => {
@@ -1165,7 +1206,11 @@ function createXServerRuntime(options = {}) {
           try { socket.close(); } catch {}
           resolve(result);
         };
-        const timer = setTimeout(() => finish({ok:false, protocol:"xdmcp", message:"XDMCP 服务未响应，请确认显示管理器已启用 XDMCP/UDP 177"}), 2500);
+        const timer = setTimeout(() => finish({
+          ok:false,
+          protocol:"xdmcp",
+          message:text("XDMCP 服务未响应，请确认显示管理器已启用 XDMCP/UDP 177", "The XDMCP service did not respond. Confirm that the display manager has enabled XDMCP/UDP 177")
+        }), 2500);
         socket.once("error", error => finish({ok:false, protocol:"xdmcp", message:error.message}));
         socket.on("message", message => {
           if (message.length < 6 || message.readUInt16BE(0) !== 1) return;
@@ -1179,12 +1224,14 @@ function createXServerRuntime(options = {}) {
             ok:opcode === 5,
             protocol:"xdmcp",
             client:platform === "win32" && bundledWindowsExecutable()
-              ? "Terma 内置 X Server"
+              ? text("Terma 内置 X Server", "Terma built-in X Server")
               : platform === "darwin"
-                ? "Terma 内置 XDMCP（XQuartz）"
+                ? text("Terma 内置 XDMCP（XQuartz）", "Terma built-in XDMCP (XQuartz)")
                 : path.basename(executable),
             hostname:hostname.value,
-            message:status.value || (opcode === 5 ? "XDMCP 服务可用" : "XDMCP 服务拒绝连接")
+            message:status.value || (opcode === 5
+              ? text("XDMCP 服务可用", "The XDMCP service is available")
+              : text("XDMCP 服务拒绝连接", "The XDMCP service refused the connection"))
           });
         });
         socket.bind(0, family === 6 ? "::" : "0.0.0.0", () => {

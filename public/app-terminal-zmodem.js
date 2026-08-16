@@ -65,7 +65,7 @@ function ensureTerminalZmodemLibrary() {
   if (!terminalZmodemLibraryPromise) {
     terminalZmodemLibraryPromise = loadScriptOnce("/vendor/zmodem.js")
       .then(() => {
-        if (!window.Zmodem?.Sentry) throw new Error("ZMODEM 组件未正确加载");
+        if (!window.Zmodem?.Sentry) throw new Error(tr("terminal:zmodem.component_load_failed", {defaultValue:"ZMODEM 组件未正确加载"}));
         return window.Zmodem;
       })
       .catch(error => {
@@ -95,6 +95,7 @@ function terminalZmodemState(session) {
       armedOutputTail:"",
       timer:null,
       panel:null,
+      view:null,
       renderAt:0,
       preparedInput:null
     };
@@ -119,11 +120,12 @@ function terminalZmodemPanel(session) {
   panel.className = "terminal-zmodem-panel";
   panel.hidden = true;
   panel.setAttribute("aria-live", "polite");
+  panel.__termaZmodemSession = session;
   panel.addEventListener("click", event => {
     const button = event.target.closest?.("button[data-zmodem-action]");
     if (!button) return;
     const action = button.dataset.zmodemAction;
-    if (action === "cancel") terminalZmodemCancel(session, "用户取消");
+    if (action === "cancel") terminalZmodemCancel(session, tr("terminal:zmodem.user_cancelled", {defaultValue:"用户取消"}));
     else if (action === "receive") void terminalZmodemAcceptOffer(session, true);
     else if (action === "send") void terminalZmodemChooseFiles(session);
   });
@@ -132,24 +134,66 @@ function terminalZmodemPanel(session) {
   return panel;
 }
 
+function terminalZmodemViewText(view, field, fallbackKey="", fallbackDefault="") {
+  const key = String(view?.[`${field}Key`] || "");
+  if (key) {
+    const sourceOptions = view?.[`${field}Options`];
+    const options = sourceOptions && typeof sourceOptions === "object" ? {...sourceOptions} : {};
+    if (fallbackDefault && !Object.prototype.hasOwnProperty.call(options, "defaultValue")) options.defaultValue = fallbackDefault;
+    return tr(key, options);
+  }
+  const value = view?.[field];
+  if (value !== undefined && value !== null) return String(value);
+  return fallbackKey ? tr(fallbackKey, {defaultValue:fallbackDefault}) : fallbackDefault;
+}
+
 function terminalZmodemRender(session, view={}) {
+  const state = terminalZmodemState(session);
   const panel = terminalZmodemPanel(session);
   if (!panel) return;
   if (view.hidden) {
+    state.view = null;
     panel.hidden = true;
     panel.innerHTML = "";
     return;
   }
-  const progress = Math.max(0, Math.min(100, Number(view.progress || 0)));
-  const progressHtml = view.showProgress
+  const renderedView = {...view};
+  for (const field of ["title", "detail", "primaryLabel"]) {
+    const options = view?.[`${field}Options`];
+    if (options && typeof options === "object") renderedView[`${field}Options`] = {...options};
+  }
+  state.view = renderedView;
+  panel.__termaZmodemSession = session;
+  const title = terminalZmodemViewText(renderedView, "title", "terminal:zmodem.title", "ZMODEM 文件传输");
+  const detail = terminalZmodemViewText(renderedView, "detail");
+  const primaryLabel = terminalZmodemViewText(renderedView, "primaryLabel", "terminal:zmodem.continue", "继续");
+  const progress = Math.max(0, Math.min(100, Number(renderedView.progress || 0)));
+  const progressHtml = renderedView.showProgress
     ? `<div class="terminal-zmodem-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}"><i style="width:${progress}%"></i></div>`
     : "";
-  const primary = view.primaryAction
-    ? `<button type="button" class="primary" data-zmodem-action="${escAttr(view.primaryAction)}">${icon(view.primaryIcon || "folder-open")}<span>${esc(view.primaryLabel || "继续")}</span></button>`
+  const primary = renderedView.primaryAction
+    ? `<button type="button" class="primary" data-zmodem-action="${escAttr(renderedView.primaryAction)}" title="${escAttr(primaryLabel)}" aria-label="${escAttr(primaryLabel)}">${icon(renderedView.primaryIcon || "folder-open")}<span>${esc(primaryLabel)}</span></button>`
     : "";
-  panel.innerHTML = `<div class="terminal-zmodem-icon">${icon(view.icon || "arrow-left-right")}</div><div class="terminal-zmodem-copy"><strong>${esc(view.title || "ZMODEM 文件传输")}</strong><span>${esc(view.detail || "")}</span>${progressHtml}</div><div class="terminal-zmodem-actions">${primary}<button type="button" class="icon-button" data-zmodem-action="cancel" title="取消本次 ZMODEM 传输（Ctrl+C）" aria-label="取消本次 ZMODEM 传输">${icon("x")}</button></div>`;
+  const cancelTitle = tr("terminal:zmodem.cancel_hint", {defaultValue:"取消本次 ZMODEM 传输（Ctrl+C）"});
+  panel.innerHTML = `<div class="terminal-zmodem-icon">${icon(renderedView.icon || "arrow-left-right")}</div><div class="terminal-zmodem-copy"><strong>${esc(title)}</strong><span>${esc(detail)}</span>${progressHtml}</div><div class="terminal-zmodem-actions">${primary}<button type="button" class="icon-button" data-zmodem-action="cancel" title="${escAttr(cancelTitle)}" aria-label="${escAttr(cancelTitle)}">${icon("x")}</button></div>`;
   panel.hidden = false;
   refreshIcons();
+}
+
+function syncTerminalZmodemLocalization(root=document) {
+  const scope = root?.querySelectorAll ? root : document;
+  const panels = [];
+  if (scope?.matches?.(".terminal-zmodem-panel")) panels.push(scope);
+  panels.push(...scope.querySelectorAll(".terminal-zmodem-panel"));
+  for (const panel of panels) {
+    const session = panel.__termaZmodemSession;
+    const view = session?.zmodemState?.view;
+    if (view) terminalZmodemRender(session, view);
+  }
+}
+
+if (typeof registerTermaI18nRenderer === "function") {
+  registerTermaI18nRenderer(() => syncTerminalZmodemLocalization());
 }
 
 function terminalZmodemSendBinaryMode(session, enabled) {
@@ -175,15 +219,17 @@ function terminalZmodemArm(session, role) {
   terminalZmodemSendBinaryMode(session, true);
   terminalZmodemRender(session, {
     icon:role === "send" ? "upload" : "download",
-    title:role === "send" ? "等待远端 rz 响应" : "等待远端 sz 响应",
-    detail:"已启用二进制传输模式；按 Ctrl+C 可取消"
+    titleKey:role === "send" ? "terminal:zmodem.waiting_rz" : "terminal:zmodem.waiting_sz",
+    titleOptions:{defaultValue:role === "send" ? "等待远端 rz 响应" : "等待远端 sz 响应"},
+    detailKey:"terminal:zmodem.binary_mode_hint",
+    detailOptions:{defaultValue:"已启用二进制传输模式；按 Ctrl+C 可取消"}
   });
   state.timer = setTimeout(() => {
     if (!state.armed || state.active) return;
     state.armed = false;
     terminalZmodemSendBinaryMode(session, false);
     terminalZmodemRender(session, {hidden:true});
-    queueTerminalOutput(session, "\r\n[未检测到 ZMODEM 响应，已恢复普通终端模式]\r\n");
+    queueTerminalOutput(session, `\r\n${tr("terminal:zmodem.no_response_terminal", {defaultValue:"[未检测到 ZMODEM 响应，已恢复普通终端模式]"})}\r\n`);
     terminalZmodemFocus(session);
   }, TERMINAL_ZMODEM_DETECT_TIMEOUT_MS);
 }
@@ -211,11 +257,11 @@ function terminalZmodemPrepareInput(session, data) {
   if (!commandInfo.role || !commandInfo.canStart) return false;
   const broadcastCount = typeof terminalBroadcastKeys === "function" ? terminalBroadcastKeys().length : 0;
   if (broadcastCount > 1) {
-    notify("终端同步期间不能启动 ZMODEM，请先退出终端同步", "error");
+    notify(tr("terminal:zmodem.broadcast_blocked", {defaultValue:"终端同步期间不能启动 ZMODEM，请先退出终端同步"}), "error");
     return true;
   }
   if (!state.sentry) {
-    notify("ZMODEM 组件尚未就绪，请稍后重试", "error");
+    notify(tr("terminal:zmodem.component_not_ready", {defaultValue:"ZMODEM 组件尚未就绪，请稍后重试"}), "error");
     return true;
   }
   if (terminalZmodemRzNeedsOverwrite(commandInfo)) state.preparedInput = terminalZmodemRzInputWithOverwrite(data);
@@ -246,9 +292,10 @@ function terminalZmodemFinish(session, message="") {
   terminalZmodemFocus(session);
 }
 
-function terminalZmodemCancel(session, reason="已取消") {
+function terminalZmodemCancel(session, reason="") {
   const state = terminalZmodemState(session);
   if (!state.active && !state.armed) return false;
+  const resolvedReason = reason || tr("terminal:zmodem.cancelled", {defaultValue:"已取消"});
   state.cancelled = true;
   terminalZmodemClearTimer(state);
   terminalZmodemSendAbort(session);
@@ -265,7 +312,7 @@ function terminalZmodemCancel(session, reason="已取消") {
   state.discardUntil = Date.now() + 500;
   state.armedOutputTail = "";
   terminalZmodemRender(session, {hidden:true});
-  queueTerminalOutput(session, `\r\n[ZMODEM] 传输已取消（${reason}）\r\n`);
+  queueTerminalOutput(session, `\r\n${tr("terminal:zmodem.cancelled_terminal", {reason:resolvedReason, defaultValue:`[ZMODEM] 传输已取消（${resolvedReason}）`})}\r\n`);
   terminalZmodemFocus(session);
   state.timer = setTimeout(() => {
     state.cancelDraining = false;
@@ -294,12 +341,12 @@ function terminalZmodemObserveArmedOutput(session, value) {
   if (!error) return;
   const detail = String(error[1] || "").trim();
   const message = /need at least one file/i.test(detail)
-    ? "sz 需要指定远端文件，例如 sz filename"
+    ? tr("terminal:zmodem.sz_file_required", {defaultValue:"sz 需要指定远端文件，例如 sz filename"})
     : /garbage on commandline/i.test(detail)
-      ? "rz 用于接收本机文件，请直接运行 rz，不要附加远端文件名"
+      ? tr("terminal:zmodem.rz_no_remote_filename", {defaultValue:"rz 用于接收本机文件，请直接运行 rz，不要附加远端文件名"})
       : /cannot open/i.test(detail)
-        ? "远端 sz 未启动：文件不存在或无法读取"
-        : `远端 ${state.role === "send" ? "rz" : "sz"} 未启动：${detail}`;
+        ? tr("terminal:zmodem.sz_cannot_open", {defaultValue:"远端 sz 未启动：文件不存在或无法读取"})
+        : tr("terminal:zmodem.remote_program_not_started", {program:state.role === "send" ? "rz" : "sz", detail, defaultValue:`远端 ${state.role === "send" ? "rz" : "sz"} 未启动：${detail}`});
   terminalZmodemClearTimer(state);
   state.armed = false;
   state.active = false;
@@ -332,7 +379,8 @@ function terminalZmodemReceiveProgress(session, name, received, total) {
   state.renderAt = now;
   terminalZmodemRender(session, {
     icon:"download",
-    title:`正在接收 ${name}`,
+    titleKey:"terminal:zmodem.receiving_file",
+    titleOptions:{name, defaultValue:`正在接收 ${name}`},
     detail:`${terminalZmodemFormatBytes(received)} / ${terminalZmodemFormatBytes(total || received)}`,
     showProgress:Boolean(total),
     progress:total ? received / total * 100 : 0
@@ -348,8 +396,10 @@ async function terminalZmodemAcceptOffer(session, acceptBatch=false) {
   if (expected > TERMINAL_ZMODEM_MAX_FILE_BYTES) {
     terminalZmodemRender(session, {
       icon:"circle-alert",
-      title:"文件超过终端传输上限",
-      detail:`${terminalZmodemSafeFilename(details.name)} 为 ${terminalZmodemFormatBytes(expected)}；超过 512 MB 请改用 SFTP`
+      titleKey:"terminal:zmodem.file_limit_title",
+      titleOptions:{defaultValue:"文件超过终端传输上限"},
+      detailKey:"terminal:zmodem.file_limit_detail",
+      detailOptions:{name:terminalZmodemSafeFilename(details.name), size:terminalZmodemFormatBytes(expected), defaultValue:`${terminalZmodemSafeFilename(details.name)} 为 ${terminalZmodemFormatBytes(expected)}；超过 512 MB 请改用 SFTP`}
     });
     return;
   }
@@ -359,8 +409,10 @@ async function terminalZmodemAcceptOffer(session, acceptBatch=false) {
   if (state.batchTransferred + expected > TERMINAL_ZMODEM_MAX_FILE_BYTES) {
     terminalZmodemRender(session, {
       icon:"circle-alert",
-      title:"本次传输总量超过上限",
-      detail:`累计文件超过 512 MB，请取消后改用 SFTP`
+      titleKey:"terminal:zmodem.batch_limit_title",
+      titleOptions:{defaultValue:"本次传输总量超过上限"},
+      detailKey:"terminal:zmodem.batch_limit_detail",
+      detailOptions:{defaultValue:"累计文件超过 512 MB，请取消后改用 SFTP"}
     });
     return;
   }
@@ -373,19 +425,20 @@ async function terminalZmodemAcceptOffer(session, acceptBatch=false) {
       state.transferred += chunk.byteLength;
       state.batchTransferred += chunk.byteLength;
       if (state.transferred > TERMINAL_ZMODEM_MAX_FILE_BYTES || state.batchTransferred > TERMINAL_ZMODEM_MAX_FILE_BYTES) {
-        throw new Error("本次接收数据超过 512 MB，请改用 SFTP");
+        throw new Error(tr("terminal:zmodem.receive_limit_error", {defaultValue:"本次接收数据超过 512 MB，请改用 SFTP"}));
       }
       chunks.push(chunk);
       terminalZmodemReceiveProgress(session, name, state.transferred, expected);
     }});
     if (state.cancelled) return;
     const saved = terminalZmodemSaveFile(chunks, name);
-    notify(`已通过 sz 接收 ${saved.name}（${terminalZmodemFormatBytes(saved.size)}）`, "success");
-    queueTerminalOutput(session, `\r\n[ZMODEM] 已接收 ${saved.name}（${terminalZmodemFormatBytes(saved.size)}）\r\n`);
+    const savedSize = terminalZmodemFormatBytes(saved.size);
+    notify(tr("terminal:zmodem.received", {name:saved.name, size:savedSize, defaultValue:`已通过 sz 接收 ${saved.name}（${savedSize}）`}), "success");
+    queueTerminalOutput(session, `\r\n${tr("terminal:zmodem.received_terminal", {name:saved.name, size:savedSize, defaultValue:`[ZMODEM] 已接收 ${saved.name}（${savedSize}）`})}\r\n`);
   } catch (error) {
     if (state.cancelled) return;
-    terminalZmodemCancel(session, error.message || "接收失败");
-    notify(error.message || "ZMODEM 接收失败", "error");
+    terminalZmodemCancel(session, error.message || tr("terminal:zmodem.receive_failed_short", {defaultValue:"接收失败"}));
+    notify(error.message || tr("terminal:zmodem.receive_failed", {defaultValue:"ZMODEM 接收失败"}), "error");
   }
 }
 
@@ -404,13 +457,16 @@ function terminalZmodemOffer(session, offer) {
   const batchSize = Math.max(size, Number(details.bytes_remaining || size));
   terminalZmodemRender(session, {
     icon:"download",
-    title:`远端准备发送 ${name}`,
-    detail:remaining > 1
-      ? `本批 ${remaining} 个文件，共 ${terminalZmodemFormatBytes(batchSize)}；文件只会下载，不会自动打开`
-      : `${terminalZmodemFormatBytes(size)}；文件只会下载，不会自动打开`,
+    titleKey:"terminal:zmodem.remote_offer",
+    titleOptions:{name, defaultValue:`远端准备发送 ${name}`},
+    detailKey:remaining > 1 ? "terminal:zmodem.batch_offer_detail" : "terminal:zmodem.offer_detail",
+    detailOptions:remaining > 1
+      ? {count:remaining, size:terminalZmodemFormatBytes(batchSize), defaultValue:`本批 ${remaining} 个文件，共 ${terminalZmodemFormatBytes(batchSize)}；文件只会下载，不会自动打开`}
+      : {size:terminalZmodemFormatBytes(size), defaultValue:`${terminalZmodemFormatBytes(size)}；文件只会下载，不会自动打开`},
     primaryAction:"receive",
     primaryIcon:"download",
-    primaryLabel:remaining > 1 ? "接收本批文件" : "接收文件"
+    primaryLabelKey:remaining > 1 ? "terminal:zmodem.receive_batch" : "terminal:zmodem.receive_file",
+    primaryLabelOptions:{defaultValue:remaining > 1 ? "接收本批文件" : "接收文件"}
   });
 }
 
@@ -429,11 +485,11 @@ async function terminalZmodemPrepareSendFiles(session, files) {
     });
   } catch (error) {
     const choice = await chooseModal(
-      "无法检查同名文件",
-      `${error.message || "SFTP 检查不可用"}\n\n继续后远端 rz 可能覆盖同名文件。`,
+      tr("terminal:zmodem.collision_check_failed_title", {defaultValue:"无法检查同名文件"}),
+      tr("terminal:zmodem.collision_check_failed_detail", {error:error.message || tr("terminal:zmodem.sftp_check_unavailable", {defaultValue:"SFTP 检查不可用"}), defaultValue:`${error.message || "SFTP 检查不可用"}\n\n继续后远端 rz 可能覆盖同名文件。`}),
       [
-        {label:"继续并允许覆盖", value:"continue", className:"danger"},
-        {label:"取消上传", value:""}
+        {label:tr("terminal:zmodem.continue_overwrite", {defaultValue:"继续并允许覆盖"}), value:"continue", className:"danger"},
+        {label:tr("terminal:zmodem.cancel_upload", {defaultValue:"取消上传"}), value:""}
       ]
     );
     return choice === "continue" ? files : null;
@@ -448,9 +504,11 @@ async function terminalZmodemPrepareSendFiles(session, files) {
 }
 
 function terminalZmodemSentFileSummary(files) {
-  const names = files.map(file => String(file.name || "未命名文件"));
-  const visible = names.slice(0, 4).join("、");
-  return names.length > 4 ? `${visible} 等 ${names.length} 个文件` : visible;
+  const names = files.map(file => String(file.name || tr("terminal:zmodem.unnamed_file", {defaultValue:"未命名文件"})));
+  const visible = names.slice(0, 4).join(tr("terminal:zmodem.file_separator", {defaultValue:"、"}));
+  return names.length > 4
+    ? tr("terminal:zmodem.file_summary_more", {names:visible, count:names.length, defaultValue:`${visible} 等 ${names.length} 个文件`})
+    : visible;
 }
 
 function terminalZmodemChooseFiles(session) {
@@ -464,22 +522,22 @@ function terminalZmodemChooseFiles(session) {
   input.addEventListener("change", async () => {
     const files = [...(input.files || [])];
     input.remove();
-    if (!files.length) return terminalZmodemCancel(session, "未选择文件");
+    if (!files.length) return terminalZmodemCancel(session, tr("terminal:zmodem.no_file_selected", {defaultValue:"未选择文件"}));
     const unsafe = files.find(file => /[\x00-\x1f\x7f]/.test(file.name));
     const oversized = files.find(file => file.size > TERMINAL_ZMODEM_MAX_FILE_BYTES);
     if (unsafe || oversized) {
       const message = unsafe
-        ? `文件名包含控制字符：${terminalZmodemSafeFilename(unsafe.name)}`
-        : `${oversized.name} 超过 512 MB，请改用 SFTP`;
+        ? tr("terminal:zmodem.unsafe_filename", {name:terminalZmodemSafeFilename(unsafe.name), defaultValue:`文件名包含控制字符：${terminalZmodemSafeFilename(unsafe.name)}`})
+        : tr("terminal:zmodem.oversized_file", {name:oversized.name, defaultValue:`${oversized.name} 超过 512 MB，请改用 SFTP`});
       terminalZmodemCancel(session, message);
       notify(message, "error");
       return;
     }
     const preparedFiles = await terminalZmodemPrepareSendFiles(session, files);
-    if (!preparedFiles?.length) return terminalZmodemCancel(session, "已取消同名文件处理");
+    if (!preparedFiles?.length) return terminalZmodemCancel(session, tr("terminal:zmodem.collision_handling_cancelled", {defaultValue:"已取消同名文件处理"}));
     const total = preparedFiles.reduce((sum, file) => sum + file.size, 0);
     if (total > TERMINAL_ZMODEM_MAX_FILE_BYTES) {
-      const message = `所选文件合计 ${terminalZmodemFormatBytes(total)}，超过 512 MB，请改用 SFTP`;
+      const message = tr("terminal:zmodem.selection_limit", {size:terminalZmodemFormatBytes(total), defaultValue:`所选文件合计 ${terminalZmodemFormatBytes(total)}，超过 512 MB，请改用 SFTP`});
       terminalZmodemCancel(session, message);
       notify(message, "error");
       return;
@@ -487,13 +545,21 @@ function terminalZmodemChooseFiles(session) {
     let completed = 0;
     const sentFiles = [];
     try {
-      terminalZmodemRender(session, {icon:"upload", title:"正在通过 rz 上传", detail:`0 B / ${terminalZmodemFormatBytes(total)}`, showProgress:true, progress:0});
+      terminalZmodemRender(session, {
+        icon:"upload",
+        titleKey:"terminal:zmodem.uploading_via_rz",
+        titleOptions:{defaultValue:"正在通过 rz 上传"},
+        detail:`0 B / ${terminalZmodemFormatBytes(total)}`,
+        showProgress:true,
+        progress:0
+      });
       await window.Zmodem.Browser.send_files(state.zsession, preparedFiles, {
         on_progress:(file, transfer) => {
           const sent = Math.min(file.size, Number(transfer.get_offset?.() || 0));
           terminalZmodemRender(session, {
             icon:"upload",
-            title:`正在发送 ${file.name}`,
+            titleKey:"terminal:zmodem.sending_file",
+            titleOptions:{name:file.name, defaultValue:`正在发送 ${file.name}`},
             detail:`${terminalZmodemFormatBytes(completed + sent)} / ${terminalZmodemFormatBytes(total)}`,
             showProgress:true,
             progress:total ? (completed + sent) / total * 100 : 100
@@ -506,22 +572,23 @@ function terminalZmodemChooseFiles(session) {
       if (!state.cancelled) {
         const summary = terminalZmodemSentFileSummary(sentFiles);
         if (sentFiles.length) {
-          notify(`已通过 rz 发送：${summary}`, "success");
-          queueTerminalOutput(session, `\r\n[ZMODEM] 已发送：${summary}（${terminalZmodemFormatBytes(completed)}）\r\n`);
+          const completedSize = terminalZmodemFormatBytes(completed);
+          notify(tr("terminal:zmodem.sent", {summary, defaultValue:`已通过 rz 发送：${summary}`}), "success");
+          queueTerminalOutput(session, `\r\n${tr("terminal:zmodem.sent_terminal", {summary, size:completedSize, defaultValue:`[ZMODEM] 已发送：${summary}（${completedSize}）`})}\r\n`);
         } else {
-          notify("远端 rz 没有接收所选文件", "info");
-          queueTerminalOutput(session, "\r\n[ZMODEM] 远端未接收所选文件；请检查同名文件策略和 rz 参数\r\n");
+          notify(tr("terminal:zmodem.remote_rejected_files", {defaultValue:"远端 rz 没有接收所选文件"}), "info");
+          queueTerminalOutput(session, `\r\n${tr("terminal:zmodem.remote_rejected_terminal", {defaultValue:"[ZMODEM] 远端未接收所选文件；请检查同名文件策略和 rz 参数"})}\r\n`);
         }
       }
     } catch (error) {
       if (state.cancelled) return;
-      terminalZmodemCancel(session, error.message || "发送失败");
-      notify(error.message || "ZMODEM 发送失败", "error");
+      terminalZmodemCancel(session, error.message || tr("terminal:zmodem.send_failed_short", {defaultValue:"发送失败"}));
+      notify(error.message || tr("terminal:zmodem.send_failed", {defaultValue:"ZMODEM 发送失败"}), "error");
     }
   }, {once:true});
   input.addEventListener("cancel", () => {
     input.remove();
-    terminalZmodemCancel(session, "未选择文件");
+    terminalZmodemCancel(session, tr("terminal:zmodem.no_file_selected", {defaultValue:"未选择文件"}));
   }, {once:true});
   input.click();
 }
@@ -540,22 +607,33 @@ function terminalZmodemDetected(session, detection) {
     terminalZmodemSendBinaryMode(session, true);
     zsession.on("session_end", () => {
       if (state.cancelled) return;
-      terminalZmodemFinish(session, state.role === "receive" ? "接收会话已结束" : "发送会话已结束");
+      terminalZmodemFinish(session, state.role === "receive"
+        ? tr("terminal:zmodem.receive_session_finished", {defaultValue:"接收会话已结束"})
+        : tr("terminal:zmodem.send_session_finished", {defaultValue:"发送会话已结束"}));
     });
     if (state.role === "receive") {
       zsession.on("offer", offer => terminalZmodemOffer(session, offer));
-      terminalZmodemRender(session, {icon:"download", title:"已检测到 sz", detail:"正在读取远端文件信息；按 Ctrl+C 可取消"});
+      terminalZmodemRender(session, {
+        icon:"download",
+        titleKey:"terminal:zmodem.sz_detected",
+        titleOptions:{defaultValue:"已检测到 sz"},
+        detailKey:"terminal:zmodem.reading_remote_file",
+        detailOptions:{defaultValue:"正在读取远端文件信息；按 Ctrl+C 可取消"}
+      });
       Promise.resolve(zsession.start()).catch(error => {
-        if (!state.cancelled) terminalZmodemCancel(session, error.message || "接收启动失败");
+        if (!state.cancelled) terminalZmodemCancel(session, error.message || tr("terminal:zmodem.receive_start_failed", {defaultValue:"接收启动失败"}));
       });
     } else {
       terminalZmodemRender(session, {
         icon:"upload",
-        title:"已检测到 rz",
-        detail:"选择本机文件后开始上传；文件不会离开当前 SSH 会话",
+        titleKey:"terminal:zmodem.rz_detected",
+        titleOptions:{defaultValue:"已检测到 rz"},
+        detailKey:"terminal:zmodem.choose_files_hint",
+        detailOptions:{defaultValue:"选择本机文件后开始上传；文件不会离开当前 SSH 会话"},
         primaryAction:"send",
         primaryIcon:"files",
-        primaryLabel:"选择文件"
+        primaryLabelKey:"terminal:zmodem.choose_files",
+        primaryLabelOptions:{defaultValue:"选择文件"}
       });
     }
   } catch (error) {
@@ -600,7 +678,7 @@ function consumeTerminalZmodemOutput(session, value) {
   } catch (error) {
     if (!state.cancelled) {
       terminalZmodemCancel(session, error.message || String(error));
-      notify(error.message || "ZMODEM 协议错误", "error");
+      notify(error.message || tr("terminal:zmodem.protocol_error", {defaultValue:"ZMODEM 协议错误"}), "error");
     }
   }
   return true;
@@ -611,10 +689,11 @@ function closeTerminalZmodem(session) {
   const state = session.zmodemState;
   terminalZmodemClearTimer(state);
   if ((state.active || state.armed) && session.socket?.readyState === WebSocket.OPEN) {
-    try { terminalZmodemCancel(session, "终端已关闭"); } catch {}
+    try { terminalZmodemCancel(session, tr("terminal:zmodem.terminal_closed", {defaultValue:"终端已关闭"})); } catch {}
   }
   state.panel?.remove();
   state.panel = null;
+  state.view = null;
   state.sentry = null;
   state.zsession = null;
   state.active = false;

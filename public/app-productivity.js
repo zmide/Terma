@@ -4,8 +4,8 @@ function installProductivityHeaderButton() {
     const button = document.createElement("button");
     button.id = "quickPanelButton";
     button.className = "icon-button quick-panel-button";
-    button.title = "快速打开（Ctrl+K）";
-    button.setAttribute("aria-label", "快速打开");
+    button.title = tr("common:auto.quick_open_shortcut", {shortcut:"Ctrl+K"});
+    button.setAttribute("aria-label", tr("common:auto.quick_open"));
     button.innerHTML = icon("zap");
     button.onclick = openQuickPanel;
     if (host) host.appendChild(button);
@@ -27,8 +27,8 @@ function installXServerQuickAction(host = document.getElementById("workspaceQuic
     button = document.createElement("button");
     button.id = "xServerQuickButton";
     button.className = "icon-button xserver-quick-button";
-    button.title = "X Server 状态";
-    button.setAttribute("aria-label", "X Server 状态");
+    button.title = tr("remote:xserver.quick_status");
+    button.setAttribute("aria-label", tr("remote:xserver.quick_status"));
     button.onclick = () => openXServerManager();
     host.appendChild(button);
   }
@@ -50,17 +50,17 @@ async function refreshXServerQuickAction() {
     const state = diagnostics?.available && !authorizationRequired ? "ready" : diagnostics?.running || authorizationRequired ? "warning" : "error";
     const label = authorizationRequired
       ? diagnostics?.available || diagnostics?.running
-        ? "X Server 已运行，当前浏览器未授权"
-        : "当前浏览器未获得 X Server 授权"
-      : diagnostics?.available ? "X Server 已就绪" : diagnostics?.running ? "X Server 正在运行" : "X Server 未启动";
+        ? tr("remote:xserver.running_unauthorized")
+        : tr("remote:xserver.browser_unauthorized")
+      : diagnostics?.available ? tr("remote:xserver.ready") : diagnostics?.running ? tr("remote:xserver.running") : tr("remote:xserver.stopped");
     button.className = `icon-button xserver-quick-button ${state}`;
-    button.title = `${label}${diagnostics?.display ? ` · ${diagnostics.display}` : ""}${localDirectAuthorized ? " · 本机直连自动授权" : ""}${authorizationRequired ? " · 点击申请授权" : ""}`;
+    button.title = `${label}${diagnostics?.display ? ` · ${diagnostics.display}` : ""}${localDirectAuthorized ? ` · ${tr("remote:xserver.local_direct_authorized")}` : ""}${authorizationRequired ? ` · ${tr("remote:xserver.request_authorization")}` : ""}`;
     button.setAttribute("aria-label", button.title);
     button.innerHTML = xServerQuickIcon();
     refreshIcons();
   } catch {
     button.className = "icon-button xserver-quick-button error";
-    button.title = "X Server 状态不可用";
+    button.title = tr("remote:xserver.unavailable");
     button.setAttribute("aria-label", button.title);
     button.innerHTML = xServerQuickIcon();
     refreshIcons();

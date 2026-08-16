@@ -1,5 +1,6 @@
 const { RUNTIME_SETTINGS_FILE } = require("./config");
 const { readRuntimeSettings } = require("./runtime-settings");
+const { clearSftpJobIssue, setSftpJobIssue } = require("./sftp-job-issues");
 
 type TransferKind = "upload" | "download";
 
@@ -74,7 +75,8 @@ function createSftpTransferScheduler(dependencies: any) {
   function failTransferStart(job: any, error: any) {
     if (!activeStatuses.has(job.status)) return;
     job.status = "failed";
-    job.error = error?.message || "传输启动失败";
+    if (error?.message) setSftpJobIssue(job, "error", error.message);
+    else setSftpJobIssue(job, "error", "传输启动失败", "sftp_transfer_start_failed");
     job.finished_at = Date.now();
     finishTransferMetrics(job);
     rejectTransferWaiters(job, error);
@@ -97,6 +99,7 @@ function createSftpTransferScheduler(dependencies: any) {
     job.status = "pending";
     job.phase = "queued";
     job.current = options.queuedCurrent || (kind === "upload" ? "等待上传并发额度" : "等待下载并发额度");
+    clearSftpJobIssue(job, "error");
     job.can_pause = false;
     job.finished_at = null;
     transferQueues[kind].push(job.id);

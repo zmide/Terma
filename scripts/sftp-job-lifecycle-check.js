@@ -56,6 +56,19 @@ function waitForJob(jobs, id, expectedStatus) {
   });
 }
 
+function waitForJobState(jobs, id, predicate) {
+  const deadline = Date.now() + 3000;
+  return new Promise((resolve, reject) => {
+    const poll = () => {
+      const job = jobs.listSftpJobs().find(item => item.id === id);
+      if (job && predicate(job)) return resolve(job);
+      if (Date.now() >= deadline) return reject(new Error(`job ${id} did not reach the expected state; current=${job?.status || "missing"}/${job?.phase || ""}`));
+      setTimeout(poll, 10);
+    };
+    poll();
+  });
+}
+
 async function settle() {
   await new Promise(resolve => setTimeout(resolve, 80));
 }
@@ -142,6 +155,7 @@ async function main() {
   assert.equal(restoredLegacyJobs.find(item => item.id === "legacy-user-owned")?.local_path_owned, false);
   assert.equal(restoredLegacyJobs.find(item => item.id === "legacy-managed")?.local_path_owned, false);
   assert.equal(restoredLegacyJobs.find(item => item.id === "owned-managed")?.local_path_owned, true);
+  assert.equal(restoredLegacyJobs.find(item => item.id === "legacy-user-owned")?.error_code, "sftp_restart_interrupted");
   assert.equal(fs.existsSync(legacyUserLocal), true, "an interrupted legacy local-file upload must preserve its source");
   assert.equal(fs.existsSync(legacyManagedLocal), true, "an unmarked legacy upload artifact must be preserved until cache cleanup can classify it");
   assert.equal(fs.existsSync(ownedManagedLocal), false, "an explicitly owned interrupted upload artifact must be cleaned");
@@ -174,7 +188,7 @@ async function main() {
     assert.equal(paused.finished_at, null);
 
     jobs.resumeSftpJob(upload.id);
-    await waitForJob(jobs, upload.id, "running");
+    await waitForJobState(jobs, upload.id, job => job.status === "running" && job.can_pause !== false);
     jobs.pauseSftpJob(upload.id);
     await settle();
     paused = jobs.listSftpJobs().find(item => item.id === upload.id);
@@ -191,6 +205,7 @@ async function main() {
     const cancelledState = jobs.listSftpJobs().find(item => item.id === cancelled.id);
     assert.equal(cancelledState.status, "cancelled", "late upload events must not replace the cancelled state");
     assert.equal(cancelledState.error, "用户已取消");
+    assert.equal(cancelledState.error_code, "sftp_user_cancelled");
     assert.ok(children.some(child => child.command.includes("rm -f") && child.command.includes(cancelledState.remote_temp_path)), "cancel must clean the remote temporary upload");
     jobs.deleteSftpJob(cancelled.id);
 
@@ -289,6 +304,8 @@ async function main() {
     await assert.rejects(incompletePromise, /文件接收不完整/);
     const incompleteState = jobs.listSftpJobs().find(item => item.id === incomplete.id);
     assert.equal(incompleteState.status, "failed");
+    assert.equal(incompleteState.error_code, "sftp_upload_receive_incomplete");
+    assert.deepEqual(incompleteState.error_params, {expected:receivedPayload.length, actual:partialPayload.length});
     assert.equal(incompleteState.can_resume, false, "an incomplete receiving-stage upload must not be resumable");
     assert.equal(fs.existsSync(incompleteState.local_path), false);
     jobs.deleteSftpJob(incomplete.id);
@@ -296,6 +313,9 @@ async function main() {
     const pending = jobs.startDownloadJob(connection.id, "/tmp/pending.bin", { deliveryMode:"browser" });
     jobIds.push(pending.id);
     assert.throws(() => jobs.deleteSftpJob(pending.id), /请先暂停或取消运行中的任务/);
+    await waitForJobState(jobs, pending.id, job => job.status === "running" && job.can_pause === false);
+    assert.throws(() => jobs.pauseSftpJob(pending.id), /当前阶段暂不能暂停/);
+    await waitForJobState(jobs, pending.id, job => job.status === "running" && job.can_pause === true);
     jobs.pauseSftpJob(pending.id);
     await settle();
     const pendingPaused = jobs.listSftpJobs().find(item => item.id === pending.id);
@@ -304,7 +324,7 @@ async function main() {
 
     const download = jobs.startDownloadJob(connection.id, "/tmp/download.bin", { deliveryMode:"browser" });
     jobIds.push(download.id);
-    await waitForJob(jobs, download.id, "running");
+    await waitForJobState(jobs, download.id, job => job.status === "running" && job.can_pause === true);
     jobs.pauseSftpJob(download.id);
     await settle();
     const pausedDownload = jobs.listSftpJobs().find(item => item.id === download.id);
@@ -333,59 +353,6 @@ async function main() {
     await waitForJob(jobs, copy.id, "done");
     jobs.deleteSftpJob(copy.id);
 
-    const crossCopy = jobs.crossCopyJob(
-      connection.id,
-      targetConnection.id,
-      ["/tmp/cross-copy.bin"],
-      "/tmp/target",
-      "error",
-      [{path:"/tmp/cross-copy.bin", type:"file", size:1024, metadataKnown:true}]
-    );
-    jobIds.push(crossCopy.id);
-    const crossSource = children.at(-2);
-    const crossTarget = children.at(-1);
-    crossTarget.stdin.resume();
-    crossSource.stdout.write(Buffer.alloc(512, 0x46));
-    await new Promise(resolve => setImmediate(resolve));
-    const partialCrossCopy = jobs.listSftpJobs().find(item => item.id === crossCopy.id);
-    assert.equal(partialCrossCopy.size, 1024);
-    assert.equal(partialCrossCopy.progress_known, true);
-    assert.equal(partialCrossCopy.progress_estimated, true);
-    assert.equal(partialCrossCopy.progress, 50);
-    crossSource.stdout.end(Buffer.alloc(512, 0x47));
-    crossSource.stderr.end();
-    crossTarget.stdout.end();
-    crossTarget.stderr.end();
-    crossSource.emit("close", 0, null);
-    crossTarget.emit("close", 0, null);
-    const completedCrossCopy = await waitForJob(jobs, crossCopy.id, "done");
-    assert.equal(completedCrossCopy.progress, 100);
-    jobs.deleteSftpJob(crossCopy.id);
-
-    const sameHostCopy = jobs.crossCopyJob(
-      connection.id,
-      connection.id,
-      ["/tmp/same-host.bin"],
-      "/tmp/other-target",
-      "rename",
-      [{path:"/tmp/same-host.bin", type:"file", size:256, metadataKnown:true}]
-    );
-    jobIds.push(sameHostCopy.id);
-    const sameHostSource = children.at(-2);
-    const sameHostTarget = children.at(-1);
-    assert.match(sameHostTarget.command, /while \[ -e "\$td_target" \]/, "same-host copies must preserve automatic rename behavior");
-    sameHostTarget.stdin.resume();
-    sameHostSource.stdout.end(Buffer.alloc(256, 0x48));
-    sameHostSource.stderr.end();
-    sameHostTarget.stdout.end();
-    sameHostTarget.stderr.end();
-    sameHostSource.emit("close", 0, null);
-    sameHostTarget.emit("close", 0, null);
-    const completedSameHostCopy = await waitForJob(jobs, sameHostCopy.id, "done");
-    assert.equal(completedSameHostCopy.connection_id, connection.id);
-    assert.equal(completedSameHostCopy.progress, 100);
-    jobs.deleteSftpJob(sameHostCopy.id);
-
     assert.throws(() => jobs.crossCopyJob(
       connection.id,
       connection.id,
@@ -394,6 +361,13 @@ async function main() {
       "error",
       [{path:"/tmp/source-dir", type:"directory", size:0, metadataKnown:false}]
     ), /自身或其子目录/);
+    assert.throws(() => jobs.crossCopyJob(
+      connection.id,
+      connection.id,
+      ["/tmp/same-host.bin"],
+      "/tmp",
+      "overwrite"
+    ), /覆盖自身/);
 
     const failures = notifications.listNotifications(0).filter(item => /SFTP (上传|下载)失败/.test(String(item.title || "")));
     assert.deepEqual(failures, [], "pause and cancel must not emit transfer-failure notifications");

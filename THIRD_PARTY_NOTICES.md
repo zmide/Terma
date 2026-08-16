@@ -26,6 +26,14 @@ Terma includes or integrates the following third-party components in addition to
 - Use: SSH and SFTP transport
 - Copyright: Copyright Brian White. All rights reserved.
 
+## i18next
+
+- Project: https://github.com/i18next/i18next
+- Version: 26.3.6
+- License: MIT License
+- Use: interface internationalization and language resource management
+- Copyright: Copyright (c) 2011-present i18next
+
 ## Lucide
 
 - Project: https://github.com/lucide-icons/lucide

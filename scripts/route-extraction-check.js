@@ -527,11 +527,28 @@ async function checkSftpTransferRoutes() {
 
   assert.equal(await handleSftpTransferRoutes({method:"GET"}, response, "/api/about", dependencies), false);
   assert.equal(await handleSftpTransferRoutes({method:"POST"}, response, "/api/connections/7/sftp/native-drag", dependencies), true);
-  assert.deepEqual(output.sent.pop(), {data:{error:"拖出到本机只能在桌面版中使用"}, status:403});
+  assert.deepEqual(output.sent.pop(), {
+    data:{
+      error:"拖出到本机只能在桌面版中使用",
+      code:"SFTP_DRAG_OUT_DESKTOP_ONLY",
+      error_code:"sftp_drag_out_desktop_only"
+    },
+    status:403
+  });
 
   json = {filename:"report.txt", size:12, conflict:"error", exists:true};
   assert.equal(await handleSftpTransferRoutes({method:"POST"}, response, "/api/connections/7/sftp/upload-job", dependencies), true);
-  assert.deepEqual(output.sent.pop(), {data:{error:"目标目录已存在同名项目", conflict:true, name:"report.txt"}, status:409});
+  assert.deepEqual(output.sent.pop(), {
+    data:{
+      error:"目标目录已存在同名项目",
+      code:"SFTP_TARGET_CONFLICT",
+      error_code:"sftp_target_conflict",
+      error_params:{name:"report.txt"},
+      conflict:true,
+      name:"report.txt"
+    },
+    status:409
+  });
 
   json = {path:"/srv"};
   assert.equal(await handleSftpTransferRoutes({method:"POST"}, response, "/api/connections/7/sftp/directory-size", dependencies), true);

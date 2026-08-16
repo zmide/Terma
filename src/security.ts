@@ -47,12 +47,22 @@ const desktopBrowserGrants = new Map<string, {
 class AuthenticationError extends Error {
   statusCode: number;
   retryAfterSeconds: number;
+  publicCode: string;
+  publicParams: Record<string, string | number | boolean | null>;
 
-  constructor(message, statusCode = 401, retryAfterSeconds = 0) {
+  constructor(
+    message,
+    statusCode = 401,
+    retryAfterSeconds = 0,
+    publicCode = "",
+    publicParams: Record<string, string | number | boolean | null> = {}
+  ) {
     super(message);
     this.name = "AuthenticationError";
     this.statusCode = statusCode;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.publicCode = String(publicCode || "");
+    this.publicParams = publicParams;
   }
 }
 
@@ -704,20 +714,34 @@ function login(password, req) {
   const check = loginLimiter.check(source);
   if (!check.allowed) {
     const retryAfterSeconds = Math.max(1, Math.ceil(check.retryAfterMs / 1000));
-    throw new AuthenticationError(`登录尝试过多，请在 ${retryAfterSeconds} 秒后重试`, 429, retryAfterSeconds);
+    throw new AuthenticationError(
+      `登录尝试过多，请在 ${retryAfterSeconds} 秒后重试`,
+      429,
+      retryAfterSeconds,
+      "auth_login_rate_limited",
+      { seconds:retryAfterSeconds }
+    );
   }
   const settings = readSecuritySettings();
   const envToken = process.env.TERMA_AUTH_TOKEN || process.env.TUNNELDESK_AUTH_TOKEN || "";
   const passwordAccepted = verifySecret(password, settings.password_hash, settings.password_salt);
   const tokenAccepted = constantTimeSecretEqual(password, envToken) || verifySecret(password, settings.token_hash, settings.token_salt);
-  if (!hasConfiguredCredential(settings)) throw new AuthenticationError("尚未设置 Web 密码或访问 Token", 400);
+  if (!hasConfiguredCredential(settings)) {
+    throw new AuthenticationError("尚未设置 Web 密码或访问 Token", 400, 0, "auth_login_not_configured");
+  }
   if (!passwordAccepted && !tokenAccepted) {
     const result = loginLimiter.recordFailure(source);
     if (!result.allowed) {
       const retryAfterSeconds = Math.max(1, Math.ceil(result.retryAfterMs / 1000));
-      throw new AuthenticationError(`密码或 Token 不正确，登录已暂时锁定 ${retryAfterSeconds} 秒`, 429, retryAfterSeconds);
+      throw new AuthenticationError(
+        `密码或 Token 不正确，登录已暂时锁定 ${retryAfterSeconds} 秒`,
+        429,
+        retryAfterSeconds,
+        "auth_login_temporarily_locked",
+        { seconds:retryAfterSeconds }
+      );
     }
-    throw new AuthenticationError("密码或 Token 不正确", 401);
+    throw new AuthenticationError("密码或 Token 不正确", 401, 0, "auth_login_invalid");
   }
   loginLimiter.recordSuccess(source);
   return sessions.create();

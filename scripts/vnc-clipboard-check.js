@@ -15,6 +15,10 @@ assert.match(remoteSource, /event\.detail\?\.text/);
 assert.match(remoteSource, /requestVncClipboardText/);
 assert.match(remoteSource, /data-vnc-clipboard-sync/);
 assert.match(remoteSource, /data-vnc-clipboard-receive/);
+assert.match(remoteSource, /data-vnc-clipboard-send-image/);
+assert.match(remoteSource, /data-vnc-clipboard-receive-image/);
+assert.match(remoteSource, /sendVncClipboardImage/);
+assert.match(remoteSource, /receiveVncClipboardImage/);
 assert.match(remoteSource, /data-vnc-clipboard-helper/);
 assert.match(remoteSource, /configureVncClipboardSsh/);
 assert.match(remoteSource, /vncClipboardMatchingConnections/);
@@ -32,6 +36,7 @@ assert.match(preloadSource, /ipcRenderer\.invoke\("terma:clipboard-read"/);
 assert.match(preloadSource, /ipcRenderer\.invoke\("terma:clipboard-write"/);
 assert.match(remoteSource, /session\.clipboardLastSeenLocal = undefined/);
 assert.match(remoteSource, /vnc-clipboard/);
+assert.match(remoteSource, /responseType:"arrayBuffer"/);
 assert.match(remoteSource, /已发送（服务端未确认）/);
 
 const clipboard = {read:"", browserWrites:[], desktopWrites:[]};
@@ -95,6 +100,7 @@ const context = vm.createContext({
     }
     return {available:true, transport:bridgeTransport, text:bridgeRemoteText, truncated:false, max_bytes:32768};
   },
+  tr:(key, options={}) => options.defaultValue || key,
   notify:(message, state) => notifications.push({message:String(message), state:String(state || "")}),
   writeClipboardText:async text => clipboard.browserWrites.push(String(text))
 });

@@ -1,4 +1,10 @@
-const { getConnection, getRemoteProfile, updateRemoteProfileUsage } = require("./db");
+const {
+  getConnection,
+  getRemoteProfile,
+  listConnections,
+  repairRemoteProfileManagementConnection,
+  updateRemoteProfileUsage
+} = require("./db");
 const { runSshCommandForConnection } = require("./ssh");
 const { testVncProfile: testVncServerProfile } = require("./vnc-server-manager");
 const { connectVncSocket } = require("./vnc-handshake");
@@ -19,6 +25,8 @@ async function testVncProfile(id) {
   return testVncServerProfile(id, {
     getConnection,
     getRemoteProfile,
+    listConnections,
+    repairManagementConnection:(item, connectionId) => repairRemoteProfileManagementConnection(item.id, connectionId),
     updateRemoteProfileUsage,
     runSshCommandForConnection
   });

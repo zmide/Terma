@@ -14,23 +14,43 @@ function normalizeHost(value: any) {
 
 function resolveManagementConnection(profile: any, dependencies: any) {
   const requested = Number(profile?.options?.source_ssh_connection_id || profile?.options?.ssh_connection_id || 0);
-  if (requested) return dependencies.getConnection(requested);
   const host = normalizeHost(profile?.host);
-  const matches = dependencies.listConnections()
+  const connections = dependencies.listConnections();
+  const requestedConnection = requested
+    ? connections.find((item: any) => Number(item.id) === requested)
+    : null;
+  const protocol = String(profile?.protocol || "远程").toUpperCase();
+  if (requestedConnection) {
+    if (normalizeHost(requestedConnection.ssh_host) !== host) {
+      const error: any = new Error(`已关联的 SSH 管理连接与 ${protocol} 主机不一致，请重新选择同主机的 SSH 管理连接`);
+      error.code = "REMOTE_MANAGEMENT_SSH_HOST_MISMATCH";
+      error.remoteProfileId = Number(profile?.id || 0);
+      throw error;
+    }
+    return dependencies.getConnection(requested);
+  }
+  const matches = connections
     .filter((item: any) => normalizeHost(item.ssh_host) === host)
     .sort((a: any, b: any) => Number(Boolean(b.favorite)) - Number(Boolean(a.favorite)) || Number(a.id) - Number(b.id));
-  const protocol = String(profile?.protocol || "远程").toUpperCase();
   if (!matches.length) {
-    const error: any = new Error(`没有找到同主机的 SSH 管理连接；${protocol} 仍可按协议能力连接，Linux 服务管理和深度诊断需要另行关联 SSH`);
-    error.code = "REMOTE_MANAGEMENT_SSH_REQUIRED";
+    const error: any = new Error(requested
+      ? `已关联的 SSH 管理连接不存在，请为 ${protocol} 重新选择同主机的 SSH 管理连接`
+      : `没有找到同主机的 SSH 管理连接；${protocol} 仍可按协议能力连接，Linux 服务管理和深度诊断需要另行关联 SSH`);
+    error.code = requested ? "REMOTE_MANAGEMENT_SSH_STALE" : "REMOTE_MANAGEMENT_SSH_REQUIRED";
+    error.remoteProfileId = Number(profile?.id || 0);
     throw error;
   }
   if (matches.length > 1) {
     const error: any = new Error(`找到多个同主机 SSH 连接，请在 ${protocol} 连接设置中明确选择 SSH 管理连接`);
     error.code = "REMOTE_MANAGEMENT_SSH_AMBIGUOUS";
+    error.remoteProfileId = Number(profile?.id || 0);
     throw error;
   }
-  return dependencies.getConnection(Number(matches[0].id));
+  const resolvedId = Number(matches[0].id);
+  if (requested && typeof dependencies.repairManagementConnection === "function") {
+    dependencies.repairManagementConnection(profile, resolvedId);
+  }
+  return dependencies.getConnection(resolvedId);
 }
 
 function normalizeDisplay(value: any) {

@@ -97,6 +97,9 @@ async function main() {
     await once(child, "spawn");
     assert.equal(pidRunning(child.pid), true);
     const freePort = await availablePort();
+    const freeDiagnosis = await diagnosePortUsage("127.0.0.1", freePort);
+    assert.equal(freeDiagnosis.occupied, false, "A free listener port should remain available");
+    assert.equal(Object.hasOwn(freeDiagnosis, "message"), false, "Port diagnosis should return structured state without fixed-language copy");
     await assert.rejects(
       () => killPortOwner(child.pid, freePort, "127.0.0.1"),
       error => error?.statusCode === 409 && /(no longer the owner|占用状态|owner)/i.test(error.message)
@@ -123,6 +126,7 @@ async function main() {
       const ipv6Diagnosis = await diagnosePortUsage("::1", ipv6Port);
       const ipv6Owner = ipv6Diagnosis.processes.find(item => Number(item.pid) === listenerChild.pid);
       assert.equal(ipv6Diagnosis.occupied, true, "An IPv6 wildcard listener should occupy the IPv6 loopback port");
+      assert.equal(Object.hasOwn(ipv6Diagnosis, "message"), false, "IPv6 diagnosis should not include fixed-language copy");
       assert.ok(ipv6Owner, "The IPv6 wildcard listener should resolve to the child owner");
       assert.ok(
         ipv6Owner.listeners.some(item => item.address === "::" && item.family === 6 && item.port === ipv6Port),
@@ -137,6 +141,7 @@ async function main() {
     const diagnosis = await diagnosePortUsage("127.0.0.1", listenerPort);
     const listenerOwner = diagnosis.processes.find(item => Number(item.pid) === listenerChild.pid);
     assert.ok(diagnosis.occupied, "The listener port should be occupied");
+    assert.equal(Object.hasOwn(diagnosis, "message"), false, "Occupied-port diagnosis should remain language-neutral");
     assert.ok(listenerOwner, "The exact listener address should resolve to the child owner");
     assert.ok(listenerOwner.listeners.some(item => item.address === "127.0.0.1"), "Owner evidence should retain the listener address");
 
@@ -159,6 +164,10 @@ async function main() {
     assert.match(call, /pid\s*:\s*p\.pid/);
     assert.match(call, /host\s*:\s*diagnosis\.host/);
     assert.match(call, /port\s*:\s*diagnosis\.port/);
+    assert.match(frontend, /function forwardPortDiagnosisMessage\(diagnosis=\{\}\)/);
+    assert.match(frontend, /connections:forwards\.diagnosis_port_available/);
+    assert.match(frontend, /connections:forwards\.diagnosis_port_occupied/);
+    assert.doesNotMatch(frontend, /\b(?:result|diagnosis|after)\.message\b/);
 
     console.log("Port kill security check passed: PID/port/host validation, listener-address owner binding, and frontend request binding");
   } finally {

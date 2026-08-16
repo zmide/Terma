@@ -129,6 +129,7 @@ async function checkFrontendPromptQueue() {
       promptMessages.push(message);
       promptResolvers.push(resolve);
     }),
+    tr:(key, options={}) => options.defaultValue || key,
     notify() {},
     inputModal:async () => "",
     queueSftpDirectoryRefresh() {},

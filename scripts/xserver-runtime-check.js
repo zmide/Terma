@@ -57,6 +57,19 @@ async function main() {
     assert.equal(diagnostics.can_start, true);
     assert.equal(diagnostics.xdmcp_available, true);
     assert.match(diagnostics.executable, /runtime[\\/]xserver[\\/]win32[\\/]vcxsrv\.exe$/i);
+    let interfaceLanguage = "zh-CN";
+    const localizedManager = createXServerRuntime({
+      platform:"win32",
+      projectRoot:path.join(temporary, "missing-runtime"),
+      userDataPath:path.join(temporary, "localized-data"),
+      environment:{PATH:""},
+      detectWindowsProcess:()=>"",
+      getLanguage:()=>interfaceLanguage
+    });
+    assert.equal(localizedManager.diagnostics().reason, "当前安装包不包含 X Server 运行时");
+    interfaceLanguage = "en-US";
+    assert.equal(localizedManager.diagnostics().reason, "The current package does not include an X Server runtime");
+    assert.equal((await localizedManager.testXdmcp({host:"example.test",port:177})).message, "The current package does not include an X Server runtime");
 
     const preparedRuntime = path.join(temporary, "prepared-runtime");
     fs.mkdirSync(preparedRuntime, {recursive:true});
@@ -139,6 +152,7 @@ async function main() {
     assert.match(xdmcpLaunchFailureMessage("(EE) XDMCP fatal error: Session failed", 7), /TCP 6007/);
     assert.match(xdmcpLaunchFailureMessage("(EE) XDMCP fatal error: Session failed", 7), /VPN、NAT/);
     assert.match(xdmcpLaunchFailureMessage("(EE) XDMCP fatal error: Session failed", 7, "10.126.126.2"), /10\.126\.126\.2:6007/);
+    assert.match(xdmcpLaunchFailureMessage("(EE) XDMCP fatal error: Session failed", 7, "", "en-US"), /XDMCP session setup failed/);
     assert.equal(XQUARTZ_VERSION, "2.8.6");
     assert.equal(XQUARTZ_BYTES, 122035963);
     assert.equal(XQUARTZ_SHA256, "9ac35a505095bfbd3009c3b4772f0c6421e2f79c4210ab908459270d1c447909");

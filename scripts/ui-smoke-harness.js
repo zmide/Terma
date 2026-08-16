@@ -48,12 +48,14 @@ function runElectron(environment) {
       clearTimeout(timeout);
       callback(value);
     };
+    const smokeTimeoutMs = Math.max(180000, Number(environment.TERMA_UI_SMOKE_TIMEOUT_MS) || 300000);
+    const harnessTimeoutMs = smokeTimeoutMs + 60000;
     const timeout = setTimeout(() => {
       if (settled) return;
       settled = true;
       try { child.kill("SIGKILL"); } catch {}
-      reject(new Error("UI 冒烟超过 4 分钟仍未结束，已终止 Electron 测试进程"));
-    }, 240000);
+      reject(new Error(`UI 冒烟超过 ${Math.round(harnessTimeoutMs / 60000)} 分钟仍未结束，已终止 Electron 测试进程`));
+    }, harnessTimeoutMs);
     child.once("error", finish(reject));
     child.once("close", finish(code => code === 0 ? resolve() : reject(new Error(`UI 冒烟退出码 ${code}`))));
   });
@@ -61,6 +63,12 @@ function runElectron(environment) {
 
 async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-ui-smoke-"));
+  const dataDirectory = path.join(root, "data");
+  fs.mkdirSync(dataDirectory, {recursive:true});
+  fs.writeFileSync(path.join(dataDirectory, "runtime-settings.json"), JSON.stringify({
+    language:"zh-CN",
+    language_onboarding_version:1
+  }), "utf8");
   const port = await availablePort();
   const url = `http://127.0.0.1:${port}`;
   const serverOutput = [];
@@ -68,7 +76,7 @@ async function main() {
     cwd: path.resolve(__dirname, ".."),
     env: {
       ...process.env,
-      TERMA_DATA_DIR: path.join(root, "data"),
+      TERMA_DATA_DIR: dataDirectory,
       TERMA_SSH_DIR: path.join(root, ".ssh")
     },
     stdio: ["ignore", "pipe", "pipe"],

@@ -114,15 +114,17 @@ function showCommandContextMenu(event) {
   menu.id = "commandContextMenu";
   menu.className = "context-menu";
   const items = [
-    ["复制", () => copyCommandContext(target)],
-    ...(isInput ? [["粘贴", () => pasteCommandContext(target)], ["全选", () => { target.focus(); target.select(); }]] : [["复制全部", () => copyCommandContext(target, true)]])
+    [tr("terminal:batch.context_copy"), () => copyCommandContext(target)],
+    ...(isInput
+      ? [[tr("terminal:batch.context_paste"), () => pasteCommandContext(target)], [tr("terminal:batch.context_select_all"), () => { target.focus(); target.select(); }]]
+      : [[tr("terminal:batch.context_copy_all"), () => copyCommandContext(target, true)]])
   ];
   for (const [label, action] of items) {
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = label;
     button.addEventListener("click", async () => {
-      try { await action(); } catch (error) { notify(error.message || "操作失败", "error"); }
+      try { await action(); } catch (error) { notify(error.message || tr("terminal:batch.operation_failed"), "error"); }
       hideCommandContextMenu();
     });
     menu.appendChild(button);
@@ -137,7 +139,7 @@ async function renderCommandTemplates() {
   await loadCommandTemplates();
   $("connectionGroups").innerHTML = `<div class="command-template-manager">
     <div class="template-list">
-      ${commandTemplates.map(template => renderTemplateRow(template)).join("") || stateView("empty", "暂无命令模板", "可以新建模板，也可以直接进入批量执行输入命令。", `<button class="primary" onclick="newCommandTemplate()">新增模板</button>`)}
+      ${commandTemplates.map(template => renderTemplateRow(template)).join("") || stateView("empty", tr("terminal:batch.templates_empty_title"), tr("terminal:batch.templates_empty_hint"), `<button class="primary" onclick="newCommandTemplate()">${esc(tr("terminal:template_editor.add_title"))}</button>`)}
     </div>
   </div>`;
 }
@@ -145,16 +147,16 @@ async function renderCommandTemplates() {
 function renderTemplateEditor(template=null) {
   const editing = Boolean(template);
   return `<div class="modal-card wide command-template-modal" role="dialog" aria-modal="true" aria-labelledby="commandTemplateTitle">
-    <div class="modal-title-row"><div><h2 id="commandTemplateTitle">${editing ? "编辑命令模板" : "新增命令模板"}</h2><span class="muted">保存后可在批量执行中直接套用。</span></div><button class="icon-button" type="button" data-template-cancel title="关闭" aria-label="关闭">${icon("x")}</button></div>
-    <label>模板名称</label>
-    <input id="templateName" value="${escAttr(template?.name || "")}" placeholder="例如：查看系统信息">
-    <label>命令</label>
-    <textarea id="templateCommand" class="template-command-editor" wrap="off" spellcheck="false" placeholder="例如：uname -a">${esc(template?.command || "")}</textarea>
-    <label>备注</label>
-    <input id="templateDescription" value="${escAttr(template?.description || "")}" placeholder="可选">
+    <div class="modal-title-row"><div><h2 id="commandTemplateTitle">${esc(tr(editing ? "terminal:template_editor.edit_title" : "terminal:template_editor.add_title", {defaultValue:editing ? "编辑命令模板" : "新增命令模板"}))}</h2><span class="muted">${esc(tr("terminal:template_editor.hint", {defaultValue:"保存后可在批量执行中直接套用。"}))}</span></div><button class="icon-button" type="button" data-template-cancel title="${escAttr(tr("common:actions.close", {defaultValue:"关闭"}))}" aria-label="${escAttr(tr("common:actions.close", {defaultValue:"关闭"}))}">${icon("x")}</button></div>
+    <label>${esc(tr("terminal:template_editor.name", {defaultValue:"模板名称"}))}</label>
+    <input id="templateName" value="${escAttr(template?.name || "")}" placeholder="${escAttr(tr("terminal:template_editor.name_example", {defaultValue:"例如：查看系统信息"}))}">
+    <label>${esc(tr("terminal:template_editor.command", {defaultValue:"命令"}))}</label>
+    <textarea id="templateCommand" class="template-command-editor" wrap="off" spellcheck="false" placeholder="${escAttr(tr("terminal:template_editor.command_example", {defaultValue:"例如：uname -a"}))}">${esc(template?.command || "")}</textarea>
+    <label>${esc(tr("terminal:template_editor.comment", {defaultValue:"备注"}))}</label>
+    <input id="templateDescription" value="${escAttr(template?.description || "")}" placeholder="${escAttr(tr("remote:auto.optional", {defaultValue:"可选"}))}">
     <div class="actions">
-      <button class="primary" type="button" data-template-save>${editing ? "保存模板" : "新增模板"}</button>
-      <button type="button" data-template-cancel>取消</button>
+      <button class="primary" type="button" data-template-save>${esc(tr(editing ? "terminal:template_editor.save" : "terminal:template_editor.add", {defaultValue:editing ? "保存模板" : "新增模板"}))}</button>
+      <button type="button" data-template-cancel>${esc(tr("common:actions.cancel", {defaultValue:"取消"}))}</button>
     </div>
   </div>`;
 }
@@ -167,6 +169,8 @@ function formatCommandPreview(command) {
 
 function renderTemplateRow(template) {
   const preview = formatCommandPreview(template.command);
+  const editLabel = tr("terminal:batch.edit_template");
+  const deleteLabel = tr("terminal:batch.delete_template");
   return `<div class="template-row">
     <button class="template-main" onclick="applyTemplateToCommand('${escAttr(template.id)}')">
       <span class="conn-name">${esc(template.name)}</span>
@@ -174,8 +178,8 @@ function renderTemplateRow(template) {
       ${template.description ? `<span class="muted">${esc(template.description)}</span>` : ""}
     </button>
     <div class="template-actions">
-      <button class="icon-button" onclick="editCommandTemplate('${escAttr(template.id)}')" title="编辑模板" aria-label="编辑模板">${icon("pencil")}</button>
-      <button class="danger icon-button" onclick="deleteCommandTemplate('${escAttr(template.id)}')" title="删除模板" aria-label="删除模板">${icon("trash-2")}</button>
+      <button class="icon-button" onclick="editCommandTemplate('${escAttr(template.id)}')" title="${escAttr(editLabel)}" aria-label="${escAttr(editLabel)}">${icon("pencil")}</button>
+      <button class="danger icon-button" onclick="deleteCommandTemplate('${escAttr(template.id)}')" title="${escAttr(deleteLabel)}" aria-label="${escAttr(deleteLabel)}">${icon("trash-2")}</button>
     </div>
   </div>`;
 }
@@ -215,7 +219,7 @@ async function saveTemplateForm() {
   };
   const path = editingTemplateId ? `/api/command-templates/${encodeURIComponent(editingTemplateId)}` : "/api/command-templates";
   await api(path, {method: editingTemplateId ? "PUT" : "POST", body:JSON.stringify(payload)});
-  notify(editingTemplateId ? "模板已保存" : "模板已新增", "success");
+  notify(tr(editingTemplateId ? "terminal:batch.template_saved" : "terminal:batch.template_added"), "success");
   closeModal();
   await renderCommandTemplates();
   renderCommandTemplateOptions();
@@ -223,9 +227,15 @@ async function saveTemplateForm() {
 
 async function deleteCommandTemplate(id) {
   const template = commandTemplates.find(item => item.id === id);
-  if (!await confirmModal(`删除模板 ${template?.name || ""}？`, "删除命令模板", "删除", "取消", true)) return;
+  if (!await confirmModal(
+    tr("terminal:batch.delete_template_confirm", {name:template?.name || ""}),
+    tr("terminal:batch.delete_template_title"),
+    tr("common:actions.delete"),
+    tr("common:actions.cancel"),
+    true
+  )) return;
   await api(`/api/command-templates/${encodeURIComponent(id)}`, {method:"DELETE"});
-  notify("模板已删除", "success");
+  notify(tr("terminal:batch.template_deleted"), "success");
   await renderCommandTemplates();
   renderCommandTemplateOptions();
 }
@@ -256,38 +266,38 @@ function openBatchCommand(updateTab=true) {
   $("view-command").innerHTML = `<div class="panel command-panel">
     <div class="workspace-head">
       <div>
-        <h2>批量执行</h2>
-        <div class="subtitle">选择多个 SSH 连接后执行同一条命令，每台服务器实时显示独立输出。</div>
+        <h2>${esc(tr("terminal:batch.title"))}</h2>
+        <div class="subtitle">${esc(tr("terminal:batch.subtitle"))}</div>
       </div>
       <div class="actions">
-        <button onclick="setBatchCommandChecks(true)">${icon("list-checks")}<span>全选</span></button>
-        <button onclick="setBatchCommandChecks(false)">${icon("list-x")}<span>取消选择</span></button>
+        <button onclick="setBatchCommandChecks(true)">${icon("list-checks")}<span>${esc(tr("terminal:batch.select_all"))}</span></button>
+        <button onclick="setBatchCommandChecks(false)">${icon("list-x")}<span>${esc(tr("terminal:batch.clear_selection"))}</span></button>
       </div>
     </div>
     <div class="grid">
       <div>
-        <label>预设模板</label>
+        <label>${esc(tr("terminal:batch.preset_template"))}</label>
         <select id="batchCommandTemplate" onchange="useCommandTemplate(this.value)">${renderCommandTemplateOptionsHtml()}</select>
       </div>
       <div>
-        <label>超时时间（秒）</label>
+        <label>${esc(tr("terminal:batch.timeout_seconds"))}</label>
         <input id="batchCommandTimeout" type="number" min="5" max="600" value="${timeout}">
       </div>
     </div>
-    <label>命令</label>
-    <textarea id="batchCommandText" class="command-textarea" wrap="off" spellcheck="false" placeholder="例如：whoami 或 uname -a">${esc(command)}</textarea>
+    <label>${esc(tr("terminal:batch.command"))}</label>
+    <textarea id="batchCommandText" class="command-textarea" wrap="off" spellcheck="false" placeholder="${escAttr(tr("terminal:batch.command_placeholder"))}">${esc(command)}</textarea>
     <div class="actions command-actions">
-      <button id="batchCommandRunBtn" class="primary" onclick="runBatchCommand()">${icon("play")}<span>执行命令</span></button>
-      <button id="batchCommandStopBtn" onclick="stopBatchCommand()" disabled>${icon("square")}<span>停止</span></button>
-      <button id="batchExportTxtBtn" onclick="exportBatchCommand('txt')" hidden>${icon("file-text")}<span>导出 TXT</span></button>
-      <button id="batchExportJsonBtn" onclick="exportBatchCommand('json')" hidden>${icon("braces")}<span>导出 JSON</span></button>
+      <button id="batchCommandRunBtn" class="primary" onclick="runBatchCommand()">${icon("play")}<span>${esc(tr("terminal:batch.run"))}</span></button>
+      <button id="batchCommandStopBtn" onclick="stopBatchCommand()" disabled>${icon("square")}<span>${esc(tr("terminal:batch.stop"))}</span></button>
+      <button id="batchExportTxtBtn" onclick="exportBatchCommand('txt')" hidden>${icon("file-text")}<span>${esc(tr("terminal:batch.export_txt"))}</span></button>
+      <button id="batchExportJsonBtn" onclick="exportBatchCommand('json')" hidden>${icon("braces")}<span>${esc(tr("terminal:batch.export_json"))}</span></button>
       <span id="batchCommandStatus" class="muted"></span>
     </div>
-    <label>目标 SSH <span id="batchTargetCount" class="field-count">已选择 ${selected.size} 台</span></label>
+    <label>${esc(tr("terminal:batch.targets"))} <span id="batchTargetCount" class="field-count">${esc(tr("terminal:batch.selected_count", {count:selected.size}))}</span></label>
     <div class="command-targets">${renderBatchCommandTargets(selected)}</div>
     <div id="batchCommandResults" class="command-results"></div>
   </div>`;
-  setWorkspace("批量执行", "选择多个 SSH 执行命令", "command", "command", updateTab, true, {kind:"command"});
+  setWorkspace(tr("terminal:batch.title"), tr("terminal:batch.workspace_subtitle"), "command", "command", updateTab, true, {kind:"command"});
   const root = $("view-command");
   if (root) root.dataset.batchTabKey = tabKey;
   const select = batchElement("batchCommandTemplate", root);
@@ -307,7 +317,7 @@ async function loadCommandTemplates() {
 }
 
 function renderCommandTemplateOptionsHtml() {
-  return `<option value="">手动输入命令</option>` + commandTemplates.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
+  return `<option value="">${esc(tr("terminal:batch.manual_command"))}</option>` + commandTemplates.map(item => `<option value="${esc(item.id)}">${esc(item.name)}</option>`).join("");
 }
 
 function renderCommandTemplateOptions(root=currentBatchRoot()) {
@@ -328,7 +338,7 @@ function useCommandTemplate(id) {
 function renderBatchCommandTargets(selected=new Set()) {
   const groups = filteredConnections().reduce((m,c)=>{(m[c.group_name] ||= []).push(c); return m;},{});
   const names = Object.keys(groups);
-  if (!names.length) return stateView("empty", "暂无可执行连接", "请先在连接列表添加 SSH 服务器。");
+  if (!names.length) return stateView("empty", tr("terminal:batch.targets_empty_title"), tr("terminal:batch.targets_empty_hint"));
   return names.map(group => `<div class="command-target-group">
     <div class="command-target-title">${esc(group)} <span>${groups[group].length}</span></div>
     ${groups[group].map(c => `<label class="command-target">
@@ -346,7 +356,7 @@ function setBatchCommandChecks(checked) {
 
 function updateBatchTargetCount() {
   const count = currentBatchRoot()?.querySelectorAll(".batch-command-check:checked").length || 0;
-  if ($("batchTargetCount")) $("batchTargetCount").textContent = `已选择 ${count} 台`;
+  if ($("batchTargetCount")) $("batchTargetCount").textContent = tr("terminal:batch.selected_count", {count});
   rememberBatchCommandDraft();
 }
 
@@ -390,23 +400,23 @@ function setBatchCommandStatus(root, data=batchCommandStateForRoot(root).export,
   if (!status) return;
   let statusText = override;
   if (!statusText && data) {
-    if (data.status === "finished") statusText = `完成：成功 ${data.ok_count ?? 0} 个，失败 ${data.failed_count ?? 0} 个`;
-    else if (data.status === "stopped") statusText = "已停止，已保留收到的结果";
-    else if (data.status === "disconnected") statusText = "执行通道已断开，已保留收到的结果";
-    else if (data.status === "error") statusText = "批量命令连接失败";
-    else statusText = "正在执行...";
+    if (data.status === "finished") statusText = tr("terminal:batch.finished_summary", {ok:data.ok_count ?? 0, failed:data.failed_count ?? 0});
+    else if (data.status === "stopped") statusText = tr("terminal:batch.stopped_results_kept");
+    else if (data.status === "disconnected") statusText = tr("terminal:batch.channel_disconnected_results_kept");
+    else if (data.status === "error") statusText = tr("terminal:batch.connection_failed");
+    else statusText = tr("terminal:batch.running");
   }
   if (data?.log_path) {
-    status.innerHTML = `${esc(statusText)} · 日志：<button class="ghost" onclick="openLog('${escAttr(data.log_path)}','${escAttr(data.log_label)}')">${esc(data.log_label || "查看日志")}</button>`;
+    status.innerHTML = `${esc(statusText)} · ${esc(tr("terminal:batch.log"))}: <button class="ghost" onclick="openLog('${escAttr(data.log_path)}','${escAttr(data.log_label)}')">${esc(data.log_label || tr("terminal:batch.view_log"))}</button>`;
   } else status.textContent = statusText;
 }
 
 function batchCommandResultStatus(item, data=batchCommandStateForRoot().export) {
-  if (item.ok === true) return `成功 · exit ${item.exit_code ?? ""}${item.error ? ` · ${item.error}` : ""}`;
-  if (item.ok === false) return `失败 · exit ${item.exit_code ?? ""}${item.error ? ` · ${item.error}` : ""}`;
-  if (item.state === "stopped") return item.started ? "已停止" : "已停止，未启动";
-  if (item.state === "disconnected") return item.started ? "连接中断，结果不完整" : "连接中断，未启动";
-  return item.started ? "执行中" : (data?.running ? "等待执行" : "未完成");
+  if (item.ok === true) return tr("terminal:batch.result_success", {code:item.exit_code ?? "", error:item.error ? ` · ${item.error}` : ""});
+  if (item.ok === false) return tr("terminal:batch.result_failure", {code:item.exit_code ?? "", error:item.error ? ` · ${item.error}` : ""});
+  if (item.state === "stopped") return tr(item.started ? "terminal:batch.status_stopped" : "terminal:batch.status_stopped_not_started");
+  if (item.state === "disconnected") return tr(item.started ? "terminal:batch.status_disconnected_incomplete" : "terminal:batch.status_disconnected_not_started");
+  return tr(item.started ? "terminal:batch.status_running" : (data?.running ? "terminal:batch.status_waiting" : "terminal:batch.status_incomplete"));
 }
 
 function updateBatchCommandUi(root=currentBatchRoot(), data=batchCommandStateForRoot(root).export) {
@@ -416,7 +426,7 @@ function updateBatchCommandUi(root=currentBatchRoot(), data=batchCommandStateFor
   const busy = Boolean(state.preflight || (matches && data?.running));
   const runButton = batchElement("batchCommandRunBtn", root);
   const stopButton = batchElement("batchCommandStopBtn", root);
-  setButtonBusy(runButton, busy, state.preflight ? "准备中..." : "执行中...");
+  setButtonBusy(runButton, busy, tr(state.preflight ? "terminal:batch.preparing" : "terminal:batch.running"));
   if (stopButton) stopButton.disabled = !Boolean(matches && data?.running);
   root.querySelectorAll("#batchCommandTemplate, #batchCommandTimeout, #batchCommandText, .batch-command-check, .workspace-head .actions button").forEach(field => {
     field.disabled = busy;
@@ -465,7 +475,7 @@ function handleBatchCommandEvent(message, tabKey=activeTabKey, runId=null) {
   }
   if (message.type === "start") {
     if (data?.results?.[message.id]) Object.assign(data.results[message.id], {started:true, state:"running"});
-    if (uiRoot) updateBatchResultHead(message.id, "执行中", uiRoot);
+    if (uiRoot) updateBatchResultHead(message.id, tr("terminal:batch.status_running"), uiRoot);
     return;
   }
   if (message.type === "data") {
@@ -478,12 +488,15 @@ function handleBatchCommandEvent(message, tabKey=activeTabKey, runId=null) {
     return;
   }
   if (message.type === "exit") {
+    const localizedError = message.error
+      ? localizedBackendPublicError(message, message.error)
+      : "";
     if (data?.results?.[message.id]) {
       Object.assign(data.results[message.id], {
         ok:message.ok,
         state:message.ok ? "success" : "failed",
         exit_code:message.exit_code,
-        error:message.error || "",
+        error:localizedError,
         elapsed_ms:message.elapsed_ms
       });
     }
@@ -500,17 +513,18 @@ function handleBatchCommandEvent(message, tabKey=activeTabKey, runId=null) {
     return;
   }
   if (message.type === "error") {
+    const localizedError = localizedBackendPublicError(message, message.error || "");
     if (data) {
-      Object.assign(data, {status:"error",running:false,error:message.error || "",finished_at:new Date().toISOString()});
+      Object.assign(data, {status:"error",running:false,error:localizedError,finished_at:new Date().toISOString()});
       for (const item of Object.values(data.results || {})) {
-        if (item.ok === null) Object.assign(item, {state:"disconnected", error:item.error || message.error || ""});
+        if (item.ok === null) Object.assign(item, {state:"disconnected", error:item.error || localizedError});
       }
     }
     if (uiRoot) {
       setBatchCommandStatus(uiRoot, data);
       updateBatchCommandUi(uiRoot, data);
     }
-    notify(message.error || "批量命令失败", "error");
+    notify(localizedError || tr("terminal:batch.batch_failed"), "error");
   }
 }
 
@@ -523,8 +537,8 @@ async function runBatchCommand() {
   const ids = [...root.querySelectorAll(".batch-command-check:checked")].map(input => Number(input.value));
   let command = normalizeBatchCommandInput(commandInput?.value || "");
   const timeout = Math.max(5, Math.min(600, Number(batchElement("batchCommandTimeout", root)?.value || 60)));
-  if (!ids.length) return notify("请选择要执行命令的 SSH", "error");
-  if (!command.trim()) return notify("请输入要执行的命令", "error");
+  if (!ids.length) return notify(tr("terminal:batch.select_target_error"), "error");
+  if (!command.trim()) return notify(tr("terminal:batch.enter_command_error"), "error");
 
   state.preflight = true;
   updateBatchCommandUi(root, state.export);
@@ -537,11 +551,21 @@ async function runBatchCommand() {
   const lines = command.split(/\n/).map(line => line.trim()).filter(Boolean);
   const uniqueLines = [...new Set(lines)];
   if (lines.length > 1 && uniqueLines.length === 1
-    && await confirmModal(`检测到同一条命令重复了 ${lines.length} 次，是否只执行一次？`, "重复命令", "只执行一次", "按原内容执行")) {
+    && await confirmModal(
+      tr("terminal:batch.repeated_command_message", {count:lines.length}),
+      tr("terminal:batch.repeated_command_title"),
+      tr("terminal:batch.run_once"),
+      tr("terminal:batch.run_original")
+    )) {
     command = uniqueLines[0];
   }
   if (lines.length > 1 && uniqueLines.length !== 1
-    && !await confirmModal(`当前是 ${lines.length} 行脚本，将通过一次 SSH 连接按原始内容执行。继续吗？`, "批量执行确认", "继续", "取消")) {
+    && !await confirmModal(
+      tr("terminal:batch.multiline_message", {count:lines.length}),
+      tr("terminal:batch.confirm_title"),
+      tr("terminal:batch.continue"),
+      tr("common:actions.cancel")
+    )) {
     cancelPreflight();
     return;
   }
@@ -552,7 +576,13 @@ async function runBatchCommand() {
   if (commandInput.value !== command) commandInput.value = command;
   rememberBatchCommandDraft(root);
   if (commandLooksDangerous(command)
-    && !await confirmModal("这条命令看起来有破坏风险，确定要批量执行吗？", "危险命令确认", "继续执行", "取消", true)) {
+    && !await confirmModal(
+      tr("terminal:batch.dangerous_message"),
+      tr("terminal:batch.dangerous_title"),
+      tr("terminal:batch.continue_run"),
+      tr("common:actions.cancel"),
+      true
+    )) {
     cancelPreflight();
     return;
   }
@@ -561,7 +591,7 @@ async function runBatchCommand() {
     return;
   }
 
-  batchElement("batchCommandStatus", root).textContent = "正在验证 SSH 主机身份...";
+  batchElement("batchCommandStatus", root).textContent = tr("terminal:batch.verifying_host_identity");
   try {
     for (const id of ids) {
       await api("/api/ssh/preflight", {method:"POST", body:JSON.stringify({connection_id:id})});
@@ -572,7 +602,7 @@ async function runBatchCommand() {
     }
   } catch (error) {
     cancelPreflight();
-    if (error.code !== "SSH_HOST_TRUST_CANCELLED") notify(error.message || "SSH 主机身份校验失败", "error");
+    if (error.code !== "SSH_HOST_TRUST_CANCELLED") notify(error.message || tr("terminal:batch.host_identity_failed"), "error");
     return;
   }
 
@@ -611,7 +641,7 @@ async function runBatchCommand() {
   };
   renderBatchCommandResults(root);
   updateBatchCommandUi(root, state.export);
-  batchElement("batchCommandStatus", root).textContent = "正在连接执行通道...";
+  batchElement("batchCommandStatus", root).textContent = tr("terminal:batch.connecting_channel");
 
   const protocol = location.protocol === "https:" ? "wss" : "ws";
   const socket = new WebSocket(`${protocol}://${location.host}/ws/batch-command`);
@@ -628,7 +658,7 @@ async function runBatchCommand() {
     }
     const uiRoot = batchCommandUiRoot(tabKey);
     if (uiRoot) renderBatchCommandResults(uiRoot);
-    notify("批量命令连接失败", "error");
+    notify(tr("terminal:batch.connection_failed"), "error");
   });
   socket.addEventListener("close", () => {
     if (state.export?.run_id === runId && state.export.running) {
@@ -653,20 +683,20 @@ function stopBatchCommand(key=activeTabKey) {
 
 function exportBatchCommand(format) {
   const state = batchCommandState(activeTabKey);
-  if (!state.export || state.export.invalidated) return notify("暂无可导出的批量执行结果", "info");
+  if (!state.export || state.export.invalidated) return notify(tr("terminal:batch.no_export_results"), "info");
   const data = {...state.export, results:Object.values(state.export.results || {})};
   const text = format === "json"
     ? JSON.stringify(data, null, 2)
     : [
-        `命令：${data.command}`,
-        `开始：${data.started_at}`,
-        `结束：${data.finished_at || ""}`,
+        `${tr("terminal:batch.export_command")}: ${data.command}`,
+        `${tr("terminal:batch.export_started")}: ${data.started_at}`,
+        `${tr("terminal:batch.export_finished")}: ${data.finished_at || ""}`,
         "",
         ...data.results.flatMap(item => [
           `===== ${item.name} · ${item.host} =====`,
-          `状态：${batchCommandResultStatus(item, data)}`,
-          item.error ? `错误：${item.error}` : "",
-          item.output || "（无输出）",
+          `${tr("terminal:batch.export_status")}: ${batchCommandResultStatus(item, data)}`,
+          item.error ? `${tr("terminal:batch.export_error")}: ${item.error}` : "",
+          item.output || tr("terminal:batch.no_output"),
           ""
         ])
       ].join("\n");

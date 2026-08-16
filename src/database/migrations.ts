@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS connection_forwards (
   restore INTEGER NOT NULL DEFAULT 0,
   reconnect_count INTEGER NOT NULL DEFAULT 0,
   last_error TEXT,
+  last_error_code TEXT,
   started_at INTEGER,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
@@ -256,6 +257,17 @@ COMMIT;
   if (!commandSnippetColumns.has("quick_badge")) run("ALTER TABLE command_snippets ADD COLUMN quick_badge TEXT NOT NULL DEFAULT ''");
   if (!commandSnippetColumns.has("quick_color")) run("ALTER TABLE command_snippets ADD COLUMN quick_color TEXT NOT NULL DEFAULT 'blue'");
   if (!commandSnippetColumns.has("quick_sort_order")) run("ALTER TABLE command_snippets ADD COLUMN quick_sort_order INTEGER NOT NULL DEFAULT 0");
+  run(`UPDATE command_snippets SET quick_badge=CASE quick_badge
+    WHEN '令' THEN 'command'
+    WHEN '查' THEN 'inspect'
+    WHEN '服' THEN 'service'
+    WHEN '网' THEN 'network'
+    WHEN '库' THEN 'database'
+    WHEN '文' THEN 'file'
+    WHEN '启' THEN 'start'
+    WHEN '停' THEN 'stop'
+    ELSE quick_badge END
+    WHERE quick_badge IN ('令','查','服','网','库','文','启','停')`);
 
   const existingGroups = all("SELECT DISTINCT group_name FROM connections ORDER BY group_name COLLATE NOCASE");
   existingGroups.forEach((row: any, index: number) => run(
@@ -270,6 +282,7 @@ COMMIT;
   if (!forwardColumns.has("restore")) run("ALTER TABLE connection_forwards ADD COLUMN restore INTEGER NOT NULL DEFAULT 0");
   if (!forwardColumns.has("reconnect_count")) run("ALTER TABLE connection_forwards ADD COLUMN reconnect_count INTEGER NOT NULL DEFAULT 0");
   if (!forwardColumns.has("last_error")) run("ALTER TABLE connection_forwards ADD COLUMN last_error TEXT");
+  if (!forwardColumns.has("last_error_code")) run("ALTER TABLE connection_forwards ADD COLUMN last_error_code TEXT");
   if (!forwardColumns.has("started_at")) run("ALTER TABLE connection_forwards ADD COLUMN started_at INTEGER");
   if (!forwardColumns.has("url_scheme")) run("ALTER TABLE connection_forwards ADD COLUMN url_scheme TEXT");
   run("CREATE INDEX IF NOT EXISTS idx_connection_forwards_connection_id ON connection_forwards(connection_id,id)");

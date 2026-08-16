@@ -44,7 +44,23 @@ function checkUnavailableNativeFallback() {
   assert.equal(capabilities.platform, "win32");
   assert.equal(capabilities.sftpExternalDrag, "staged");
   assert.equal(capabilities.sftpNativeDragStart, "leave-window");
+  assert.equal(capabilities.sftpNativeDragReasonCode, "");
   assert.match(capabilities.sftpNativeDragReason, /fixture: native addon unavailable/);
+}
+
+function checkLocalizedUnsupportedPlatformFallback() {
+  const {createNativeSftpDrag} = require(adapterPath);
+  let interfaceLanguage = "zh-CN";
+  const adapter = createNativeSftpDrag({
+    platform:"freebsd",
+    getLanguage:()=>interfaceLanguage
+  });
+  assert.equal(adapter.capabilities().sftpNativeDragReason, "当前平台不支持原生 SFTP 拖出");
+  assert.equal(adapter.capabilities().sftpNativeDragReasonCode, "");
+  interfaceLanguage = "en-US";
+  assert.equal(adapter.capabilities().sftpNativeDragReason, "Native SFTP drag-out is not supported on this platform");
+  assert.equal(adapter.capabilities().sftpNativeDragReasonCode, "");
+  assert.throws(() => adapter.start(), /Native SFTP drag-out is not supported/);
 }
 
 function checkWindowsActivationAndMetadataFastPath() {
@@ -643,7 +659,7 @@ function checkNativeSessionRaceGuards() {
   assert.match(mainSource, /NATIVE_SFTP_DRAG_WINDOWS_TARGET_ACK_TIMEOUT_MS = 2000/);
   assert.match(mainSource, /\(point\.x - bounds\.x\) \/ zoomFactor/);
   assert.match(mainSource, /terma:sftp-drag-activate/);
-  assert.match(mainSource, /cancelled \? "已取消拖出"/);
+  assert.match(mainSource, /cancelled \? desktopUiText\("已取消拖出", "Drag-out cancelled"\)/);
   assert.match(mainSource, /forceTicketRelease:process\.platform === "linux"/);
   assert.match(adapterSource, /const LINUX_DROP_SETTLE_MS = 150/);
   assert.match(adapterSource, /message\.event === "read-error"/);
@@ -658,6 +674,7 @@ function checkNativeSessionRaceGuards() {
   assert.match(adapterSource, /onEvent\(\{type: "ready", requestId: spec\.requestId\}\)/);
   assert.match(adapterSource, /state\.files = files;[\s\S]*state\.activated = false;[\s\S]*onEvent\(\{type: "ready"/);
   assert.match(adapterSource, /sftpNativeDragStart: adapter\.probe\.available \? "pointerdown" : "leave-window"/);
+  assert.match(adapterSource, /sftpNativeDragReasonCode: adapter\.probe\.available \? "" : adapter\.probe\.reasonCode \|\| ""/);
   assert.match(adapterSource, /waitForActivation:true/);
   assert.match(adapterSource, /metadata_known === true/);
   assert.match(adapterSource, /module\.setInternalTarget\?\.\(nativeId, Boolean\(target\)\)/);
@@ -668,6 +685,7 @@ function checkNativeSessionRaceGuards() {
   assert.match(rendererSource, /event\.type === "ready"[\s\S]*sftpNativeDragPointer\.nativeReady = true/);
   assert.match(rendererSource, /event\.type === "ready"[\s\S]*request\.activated\) window\.termaDesktop\?\.activateSftpDrag/);
   assert.match(rendererSource, /event\.type === "transferStarted"[\s\S]*refreshSftpJobs\(\)/);
+  assert.match(rendererSource, /reasonCode === "linux_helper_missing"/);
   assert.doesNotMatch(rendererSource, /dataTransfer\.setData\("text\/plain"/);
   assert.doesNotMatch(rendererSource, /activateSftpNativeDragPointer\(pointer\);\s*if \(pointer\.row\)/);
   assert.match(rendererSource, /setSftpDragTarget\?\.\(requestId, normalized, \{final:Boolean\(options\.final\)\}\)/);
@@ -680,6 +698,7 @@ function checkNativeSessionRaceGuards() {
 
 async function main() {
   checkUnavailableNativeFallback();
+  checkLocalizedUnsupportedPlatformFallback();
   checkWindowsActivationAndMetadataFastPath();
   checkWindowsDelayedDirectoryInternalCancelPath();
   checkMacPromiseUsesTicketItemId();

@@ -8,14 +8,26 @@ const { ensurePrivateDirectory, ensurePrivateFile, storagePermissionFailureKind 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-storage-permissions-"));
 const directory = path.join(root, "data");
 const file = path.join(directory, "security.json");
+const storagePermissionSource = fs.readFileSync(path.join(__dirname, "..", "src", "storage-permissions.ts"), "utf8");
+
+assert.ok(
+  storagePermissionSource.indexOf('const grant = run(["/grant:r"')
+    < storagePermissionSource.indexOf('const inheritance = run(["/inheritance:r"]'),
+  "Windows storage hardening must establish explicit private access before removing inherited ACLs"
+);
 
 function powershell(command) {
-  const result = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", command], {
-    encoding:"utf8",
-    windowsHide:true
-  });
-  if (result.status !== 0) throw new Error(result.stderr || "PowerShell ACL check failed");
-  return String(result.stdout || "").trim();
+  const failures = [];
+  for (const executable of ["pwsh", "powershell"]) {
+    const result = spawnSync(executable, ["-NoProfile", "-NonInteractive", "-Command", command], {
+      encoding:"utf8",
+      windowsHide:true
+    });
+    const output = String(result.stdout || "").trim();
+    if (result.status === 0 && output) return output;
+    failures.push(String(result.error?.message || result.stderr || `${executable} returned no ACL data`).trim());
+  }
+  throw new Error(failures.filter(Boolean).join("\n") || "PowerShell ACL check failed");
 }
 
 function windowsAclSids(target) {

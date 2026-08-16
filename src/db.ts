@@ -123,6 +123,7 @@ function insertRemoteProfile(data) { return remoteProfileRepository.insertRemote
 function createRemoteProfileFromConnection(connectionId, protocol) { return remoteProfileRepository.createRemoteProfileFromConnection(connectionId, protocol); }
 function createAllRemoteProfilesFromConnection(connectionId) { return remoteProfileRepository.createAllRemoteProfilesFromConnection(connectionId); }
 function updateRemoteProfile(id, data) { return remoteProfileRepository.updateRemoteProfile(id, data); }
+function repairRemoteProfileManagementConnection(id, connectionId) { return remoteProfileRepository.repairRemoteProfileManagementConnection(id, connectionId); }
 function getVncProfileCredential(id) { return remoteProfileRepository.getVncProfileCredential(id); }
 function updateVncProfileCredential(id, value) { return remoteProfileRepository.updateVncProfileCredential(id, value); }
 function duplicateRemoteProfile(id) { return remoteProfileRepository.duplicateRemoteProfile(id); }
@@ -175,6 +176,7 @@ module.exports = {
   createRemoteProfileFromConnection,
   createAllRemoteProfilesFromConnection,
   updateRemoteProfile,
+  repairRemoteProfileManagementConnection,
   getVncProfileCredential,
   updateVncProfileCredential,
   duplicateRemoteProfile,

@@ -1,4 +1,5 @@
 import { IncomingMessage, ServerResponse } from "node:http";
+import { publicErrorBody } from "../public-error";
 
 interface SecurityRouteDependencies {
   AuthenticationError: new (...args: any[]) => Error;
@@ -44,11 +45,25 @@ export async function handlePublicAuthRoutes(
     dependencies.send(response, 200, { ok: true }, { "Set-Cookie": dependencies.sessionCookie(request, token) });
   } catch (error) {
     if (!(error instanceof dependencies.AuthenticationError)) throw error;
-    const authenticationError = error as Error & { retryAfterSeconds?: number; statusCode?: number };
+    const authenticationError = error as Error & {
+      publicCode?: string;
+      publicParams?: Record<string, string | number | boolean | null>;
+      retryAfterSeconds?: number;
+      statusCode?: number;
+    };
     const headers: Record<string, string> = authenticationError.retryAfterSeconds
       ? { "Retry-After": String(authenticationError.retryAfterSeconds) }
       : {};
-    dependencies.send(response, authenticationError.statusCode || 401, { error: authenticationError.message }, headers);
+    dependencies.send(
+      response,
+      authenticationError.statusCode || 401,
+      publicErrorBody(
+        authenticationError.publicCode || "AUTH_LOGIN_FAILED",
+        authenticationError.message,
+        authenticationError.publicParams
+      ),
+      headers
+    );
   }
   return true;
 }

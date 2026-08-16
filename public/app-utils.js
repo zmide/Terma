@@ -9,12 +9,13 @@ function configEncryptionLocked() {
   );
 }
 
-function requireConfigEncryptionUnlocked(action="修改加密配置") {
+function requireConfigEncryptionUnlocked(action="") {
   if (!configEncryptionLocked()) return true;
+  const actionLabel = action || tr("common:dialogs.modify_encrypted_config", {defaultValue:"修改加密配置"});
   notify(
     securitySettings?.encryption_transition_pending
-      ? `配置加密切换尚未完成，输入主密码继续修复后才能${action}`
-      : `配置加密已锁定，解锁后才能${action}`,
+      ? tr("common:notifications.encryption_transition_locked_action", {action:actionLabel, defaultValue:`配置加密切换尚未完成，输入主密码继续修复后才能${actionLabel}`})
+      : tr("common:notifications.encryption_locked_action", {action:actionLabel, defaultValue:`配置加密已锁定，解锁后才能${actionLabel}`}),
     "error"
   );
   if (typeof openSettingsSection === "function") void openSettingsSection("settings-basic");
@@ -42,7 +43,9 @@ function syncPasswordVisibilityControl(input) {
   const button = control?.querySelector(".password-visibility-toggle");
   if (!control || !button) return;
   const visible = input.type === "text";
-  const label = visible ? "隐藏密码" : "显示密码";
+  const label = visible
+    ? tr("common:auto.hide_password", {defaultValue:"隐藏密码"})
+    : tr("common:auto.show_password", {defaultValue:"显示密码"});
   button.disabled = Boolean(input.disabled);
   button.title = label;
   button.setAttribute("aria-label", label);
@@ -113,6 +116,35 @@ function actionMenuChildren(action) {
   return Array.isArray(children) ? children : [];
 }
 
+function localizedTermaUiPhrase(value) {
+  const source = String(value ?? "");
+  if (!source || typeof translatedTermaPhrase !== "function") return source;
+  return translatedTermaPhrase(source) || source;
+}
+
+function localizedIdentitySourceLabel(identity={}) {
+  const source = String(identity?.source || "").toLowerCase();
+  if (source === "project") return tr("connections:identity.source_project", {defaultValue:"当前密钥目录"});
+  if (source === "user") return tr("connections:identity.source_user", {defaultValue:"用户 ~/.ssh"});
+  return tr("connections:identity.source_unknown", {defaultValue:"已识别私钥"});
+}
+
+function localizedIdentityFileLabel(identity={}, options={}) {
+  const pathValue = String(identity?.path || "");
+  const rawLabel = String(identity?.label || "");
+  const sourceLabel = String(identity?.source_label || "");
+  const fallbackName = pathValue.split(/[\\/]/).filter(Boolean).pop() || rawLabel || pathValue;
+  const name = String(identity?.name || rawLabel.replace(sourceLabel ? new RegExp(`\\s*(?:-|·)\\s*${sourceLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`) : /$^/, "") || fallbackName);
+  const label = tr("connections:identity.file_label", {
+    name,
+    source:localizedIdentitySourceLabel(identity),
+    defaultValue:`${name} - ${localizedIdentitySourceLabel(identity)}`
+  });
+  if (options.permission === false || identity?.permission_ok !== false) return label;
+  const suffixKey = options.repair ? "connections:identity.permission_repair" : "connections:identity.permission_check";
+  return `${label}${tr(suffixKey, {defaultValue:options.repair ? "（权限需修复）" : "（需检查权限）"})}`;
+}
+
 function fillActionMenu(menu, actions, options={}) {
   const mobile = Boolean(options.mobile);
   const history = Array.isArray(options.history) ? options.history : [];
@@ -121,7 +153,7 @@ function fillActionMenu(menu, actions, options={}) {
     const back = document.createElement("button");
     back.type = "button";
     back.className = "action-menu-back";
-    back.innerHTML = `${icon("arrow-left")}<span>返回上一级</span>`;
+    back.innerHTML = `${icon("arrow-left")}<span>${esc(tr("common:auto.back_to_parent_menu", {defaultValue:"返回上一级"}))}</span>`;
     back.onclick = clickEvent => {
       clickEvent.preventDefault();
       clickEvent.stopPropagation();
@@ -143,7 +175,8 @@ function fillActionMenu(menu, actions, options={}) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `${action.danger ? "danger" : ""}${action.children ? " has-submenu" : ""}`.trim();
-    button.innerHTML = `${icon(action.icon || "circle")}<span>${esc(action.label)}</span>${action.children ? icon("chevron-right") : ""}`;
+    const label = localizedTermaUiPhrase(action.label);
+    button.innerHTML = `${icon(action.icon || "circle")}<span>${esc(label)}</span>${action.children ? icon("chevron-right") : ""}`;
     button.onclick = clickEvent => {
       clickEvent.preventDefault();
       clickEvent.stopPropagation();
@@ -158,7 +191,7 @@ function fillActionMenu(menu, actions, options={}) {
         return;
       }
       hideActionMenu();
-      Promise.resolve(action.run?.(clickEvent)).catch(error => notify(error?.message || "操作失败", "error"));
+      Promise.resolve(action.run?.(clickEvent)).catch(error => notify(error?.message || tr("common:auto.operation_failed", {defaultValue:"操作失败"}), "error"));
     };
     menu.appendChild(button);
   }
@@ -166,7 +199,7 @@ function fillActionMenu(menu, actions, options={}) {
     const close = document.createElement("button");
     close.type = "button";
     close.className = "action-menu-close";
-    close.innerHTML = `${icon("x")}<span>关闭</span>`;
+    close.innerHTML = `${icon("x")}<span>${esc(tr("common:actions.close", {defaultValue:"关闭"}))}</span>`;
     close.onclick = hideActionMenu;
     menu.appendChild(close);
   }
@@ -204,7 +237,7 @@ function showActionMenu(event, actions) {
     backdrop.id = "actionMenuBackdrop";
     backdrop.className = "action-menu-backdrop";
     backdrop.type = "button";
-    backdrop.setAttribute("aria-label", "关闭菜单");
+    backdrop.setAttribute("aria-label", tr("common:auto.close_menu", {defaultValue:"关闭菜单"}));
     backdrop.onclick = hideActionMenu;
     document.body.insertBefore(backdrop, menu);
     menu.classList.add("mobile-action-menu");
@@ -219,10 +252,37 @@ function updateFilePicker(input) {
   const name = input.closest(".file-picker")?.querySelector(".file-picker-name");
   if (name) {
     const files = Array.from(input.files || []);
-    name.textContent = files.length > 1 ? `已选择 ${files.length} 个文件` : files[0]?.name || "未选择文件";
+    if (files.length > 1) {
+      name.removeAttribute("data-i18n");
+      name.setAttribute("data-i18n-skip", "true");
+      name.dataset.filePickerCount = String(files.length);
+      name.textContent = tr("common:local_files.selected_files", {count:files.length, defaultValue:`已选择 ${files.length} 个文件`});
+    } else if (files.length === 1) {
+      name.removeAttribute("data-i18n");
+      name.setAttribute("data-i18n-skip", "true");
+      delete name.dataset.filePickerCount;
+      name.textContent = files[0].name;
+    } else {
+      name.removeAttribute("data-i18n-skip");
+      delete name.dataset.filePickerCount;
+      name.setAttribute("data-i18n", "common:auto.not_selected");
+      name.textContent = tr("common:auto.not_selected", {defaultValue:"未选择文件"});
+    }
   }
   settleNativeFileDialogViewport();
 }
+
+function syncFilePickerLabels(root=document) {
+  const scope = root?.querySelectorAll ? root : document;
+  for (const name of scope.querySelectorAll(".file-picker-name[data-file-picker-count]")) {
+    const count = Number(name.dataset.filePickerCount || 0);
+    if (Number.isSafeInteger(count) && count > 1) {
+      name.textContent = tr("common:local_files.selected_files", {count, defaultValue:`已选择 ${count} 个文件`});
+    }
+  }
+}
+
+if (typeof registerTermaI18nRenderer === "function") registerTermaI18nRenderer(() => syncFilePickerLabels());
 
 function currentPageHostForForward(bindHost) {
   const currentHost = location.hostname;
@@ -244,19 +304,27 @@ function preferredTheme() {
   return localStorage.getItem("theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 }
 
-function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  localStorage.setItem("theme", theme);
-  const text = theme === "dark" ? "切换为亮色" : "切换为暗色";
+function syncThemeToggleControls(theme=document.documentElement.dataset.theme || preferredTheme()) {
+  const text = theme === "dark"
+    ? tr("common:auto.switch_to_light", {defaultValue:"切换为亮色"})
+    : tr("common:auto.switch_to_dark", {defaultValue:"切换为暗色"});
   document.querySelectorAll(".theme-toggle").forEach(btn => {
     btn.title = text;
     btn.setAttribute("aria-label", text);
     btn.innerHTML = icon(theme === "dark" ? "sun" : "moon");
   });
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem("theme", theme);
+  syncThemeToggleControls(theme);
   window.termaDesktop?.setTheme?.(theme);
   if (typeof applyTerminalGlobalSettingsToSessions === "function") applyTerminalGlobalSettingsToSessions();
   if (typeof syncTerminalBackgroundForm === "function") syncTerminalBackgroundForm();
 }
+
+if (typeof registerTermaI18nRenderer === "function") registerTermaI18nRenderer(() => syncThemeToggleControls());
 
 function toggleTheme() {
   applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
@@ -436,7 +504,7 @@ function notify(text, type="info") {
   if (text) {
     const stack = $("toast");
     if (!stack) return;
-    const lines = String(text).split("\n");
+    const lines = String(text).split("\n").map(localizedTermaUiPhrase);
     const title = lines.shift() || "Terma";
     const detail = lines.join("\n").trim();
     const toastType = ["success", "error", "info"].includes(type) ? type : "info";
@@ -449,7 +517,8 @@ function notify(text, type="info") {
     toast.dataset.toastId = toastId;
     toast.setAttribute("role", toastType === "error" ? "alert" : "status");
     toast.setAttribute("aria-atomic", "true");
-    toast.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(iconName)}</span><div class="toast-copy"><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ""}</div><button type="button" class="icon-button" onclick="dismissToast(this.closest('.toast'))" title="关闭提示" aria-label="关闭提示">${icon("x")}</button></div>`;
+    const closeLabel = tr("common:auto.close_hint", {defaultValue:"关闭提示"});
+    toast.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(iconName)}</span><div class="toast-copy"><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ""}</div><button type="button" class="icon-button" onclick="dismissToast(this.closest('.toast'))" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div>`;
     stack.appendChild(toast);
     if (!prefersReducedToastMotion() && typeof toast.animate === "function") {
       toast.animate(
@@ -475,7 +544,10 @@ function createProgressToast(options={}) {
   toast.dataset.toastId = toastId;
   toast.setAttribute("role", "status");
   toast.setAttribute("aria-atomic", "true");
-  toast.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(options.icon || "loader-circle")}</span><div class="toast-copy"><strong></strong><span></span></div><button type="button" class="icon-button toast-progress-close" title="关闭提示" aria-label="关闭提示">${icon("x")}</button></div><div class="toast-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><div class="toast-progress-actions" hidden><button type="button" class="toast-progress-pause">${icon("pause")}<span>暂停</span></button><button type="button" class="toast-progress-cancel">${icon("square")}<span>终止</span></button></div>`;
+  const closeLabel = tr("common:auto.close_hint", {defaultValue:"关闭提示"});
+  const pauseLabel = tr("common:actions.pause", {defaultValue:"暂停"});
+  const stopLabel = tr("common:auto.stop", {defaultValue:"停止"});
+  toast.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(options.icon || "loader-circle")}</span><div class="toast-copy"><strong></strong><span></span></div><button type="button" class="icon-button toast-progress-close" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div><div class="toast-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100"><i></i></div><div class="toast-progress-actions" hidden><button type="button" class="toast-progress-pause">${icon("pause")}<span>${esc(pauseLabel)}</span></button><button type="button" class="toast-progress-cancel">${icon("square")}<span>${esc(stopLabel)}</span></button></div>`;
   const title = toast.querySelector(".toast-copy strong");
   const detail = toast.querySelector(".toast-copy span");
   const track = toast.querySelector(".toast-progress-track");
@@ -497,9 +569,9 @@ function createProgressToast(options={}) {
   const controller = {
     update(next={}) {
       if (settled) return;
-      if (next.title !== undefined) title.textContent = String(next.title || "Terma");
+      if (next.title !== undefined) title.textContent = localizedTermaUiPhrase(next.title || "Terma");
       if (next.detail !== undefined) {
-        detail.textContent = String(next.detail || "");
+        detail.textContent = localizedTermaUiPhrase(next.detail || "");
         detail.hidden = !detail.textContent;
       }
       const progress = Number(next.progress);
@@ -521,16 +593,19 @@ function createProgressToast(options={}) {
     setPaused(value) {
       paused = Boolean(value);
       toast.classList.toggle("paused", paused);
-      pauseButton.innerHTML = paused ? `${icon("play")}<span>继续</span>` : `${icon("pause")}<span>暂停</span>`;
-      pauseButton.setAttribute("aria-label", paused ? "继续" : "暂停");
+      const label = paused
+        ? tr("common:actions.continue", {defaultValue:"继续"})
+        : tr("common:actions.pause", {defaultValue:"暂停"});
+      pauseButton.innerHTML = `${icon(paused ? "play" : "pause")}<span>${esc(label)}</span>`;
+      pauseButton.setAttribute("aria-label", label);
     },
-    finish(message="已完成", linger=2200) {
+    finish(message="", linger=2200) {
       if (settled) return;
       settled = true;
       toast.classList.remove("info", "error", "paused");
       toast.classList.add("success");
       toast.querySelector(".toast-icon").innerHTML = icon("circle-check");
-      detail.textContent = String(message || "已完成");
+      detail.textContent = localizedTermaUiPhrase(message || tr("common:auto.done", {defaultValue:"已完成"}));
       detail.hidden = false;
       actions.hidden = true;
       track.classList.remove("indeterminate");
@@ -539,13 +614,13 @@ function createProgressToast(options={}) {
       const duration = preference.success_duration_ms === null ? linger : preference.success_duration_ms;
       toastTimers.set(toastId, setTimeout(() => dismissToast(toast), duration));
     },
-    fail(message="操作失败") {
+    fail(message="") {
       if (settled) return;
       settled = true;
       toast.classList.remove("info", "success", "paused");
       toast.classList.add("error");
       toast.querySelector(".toast-icon").innerHTML = icon("circle-alert");
-      detail.textContent = String(message || "操作失败");
+      detail.textContent = localizedTermaUiPhrase(message || tr("common:auto.operation_failed", {defaultValue:"操作失败"}));
       detail.hidden = false;
       actions.hidden = true;
       track.hidden = true;
@@ -558,8 +633,8 @@ function createProgressToast(options={}) {
     }
   };
 
-  title.textContent = String(options.title || "正在处理");
-  detail.textContent = String(options.detail || "");
+  title.textContent = localizedTermaUiPhrase(options.title || tr("common:auto.processing_now", {defaultValue:"正在处理"}));
+  detail.textContent = localizedTermaUiPhrase(options.detail || "");
   detail.hidden = !detail.textContent;
   syncActions();
   pauseButton.addEventListener("click", () => {
@@ -580,9 +655,11 @@ function desktopNotificationEnabled() {
 }
 
 async function requestDesktopNotifications() {
-  if (typeof Notification === "undefined") return notify("当前浏览器不支持系统通知", "info");
+  if (typeof Notification === "undefined") return notify(tr("common:notifications.browser_notifications_unsupported", {defaultValue:"当前浏览器不支持系统通知"}), "info");
   const permission = await Notification.requestPermission();
-  notify(permission === "granted" ? "桌面通知已开启" : "桌面通知未授权", permission === "granted" ? "success" : "info");
+  notify(permission === "granted"
+    ? tr("common:notifications.exact.desktop_notifications_enabled", {defaultValue:"桌面通知已开启"})
+    : tr("common:notifications.desktop_notifications_denied", {defaultValue:"桌面通知未授权"}), permission === "granted" ? "success" : "info");
 }
 
 function showDesktopNotification(event) {
@@ -606,13 +683,17 @@ function handleNotificationAction(action) {
   if (action.type === "tab" && action.key && typeof activateTab === "function") return activateTab(action.key);
   if (action.view === "forwards" && action.connection_id) return openForwards(Number(action.connection_id));
   if (action.view === "sftp" && action.connection_id) return openSftp(Number(action.connection_id));
-  if (action.view === "log" && action.path) return openLog(action.path, action.title || "日志");
+  if (action.view === "log" && action.path) return openLog(action.path, action.title || tr("common:log_viewer.default_title", {defaultValue:"日志"}));
   if (action.url) {
     try {
       const target = new URL(action.url, location.href);
       if (target.protocol === "https:" && target.hostname === "github.com") window.open(target.href, "_blank", "noopener");
     } catch {}
   }
+}
+
+function currentNotificationLanguage() {
+  return normalizeTermaLanguage(document.documentElement.lang || runtimeSettings?.saved?.language || "zh-CN");
 }
 
 async function handleNotificationEvent(event, options={}) {
@@ -634,7 +715,7 @@ async function pollNotifications() {
       await initializeNotificationCursor();
       return;
     }
-    const events = await api(`/api/notifications?since=${encodeURIComponent(lastNotificationId)}`);
+    const events = await api(`/api/notifications?since=${encodeURIComponent(lastNotificationId)}&language=${encodeURIComponent(currentNotificationLanguage())}`);
     for (const event of events) await handleNotificationEvent(event);
   } catch {}
 }
@@ -642,7 +723,7 @@ async function pollNotifications() {
 async function initializeNotificationCursor() {
   if (notificationCursorInitialized) return;
   if (!notificationCursorPromise) {
-    notificationCursorPromise = api("/api/notifications?since=0").then(events => {
+    notificationCursorPromise = api(`/api/notifications?since=0&language=${encodeURIComponent(currentNotificationLanguage())}`).then(events => {
       const latest = Array.isArray(events)
         ? events.reduce((max, event) => Math.max(max, Number(event.id || 0)), 0)
         : 0;
@@ -705,7 +786,7 @@ function syncUiActionControls(key, busy) {
   });
 }
 
-function beginUiAction(key, button=null, text="处理中...") {
+function beginUiAction(key, button=null, text="") {
   const actionKey = String(key || "").trim();
   if (actionKey && uiActionLocks.has(actionKey)) return false;
   if (button?.dataset?.uiActionBusy === "true") return false;
@@ -715,7 +796,7 @@ function beginUiAction(key, button=null, text="处理中...") {
   }
   if (button) {
     button.dataset.uiActionBusy = "true";
-    setButtonBusy(button, true, text);
+    setButtonBusy(button, true, text || tr("common:auto.processing", {defaultValue:"处理中..."}));
   }
   return true;
 }
@@ -895,7 +976,7 @@ function inputModal(title, label, defaultValue="") {
   return new Promise((resolve) => {
     const modal = $("modal");
     modal.onclick = null;
-    modal.innerHTML = `<div class="modal-card"><h2>${esc(title)}</h2><label>${esc(label)}</label><input id="modalInputValue" value="${esc(defaultValue)}"><div class="actions"><button class="primary" id="modalConfirmBtn">确定</button><button id="modalCancelBtn">取消</button></div></div>`;
+    modal.innerHTML = `<div class="modal-card"><h2>${esc(title)}</h2><label>${esc(label)}</label><input id="modalInputValue" value="${esc(defaultValue)}"><div class="actions"><button class="primary" id="modalConfirmBtn">${esc(tr("common:auto.confirm", {defaultValue:"确定"}))}</button><button id="modalCancelBtn">${esc(tr("common:actions.cancel", {defaultValue:"取消"}))}</button></div></div>`;
     modal.hidden = false;
     const input = $("modalInputValue");
     input.focus();
@@ -913,10 +994,10 @@ function inputModal(title, label, defaultValue="") {
   });
 }
 
-function confirmModal(message, title="确认操作", confirmText="确定", cancelText="取消", danger=false) {
+function confirmModal(message, title="", confirmText="", cancelText="", danger=false) {
   return chooseModal(title, message, [
-    { label: confirmText, value: true, className: danger ? "danger" : "primary" },
-    { label: cancelText, value: false }
+    { label: confirmText || tr("common:auto.confirm", {defaultValue:"确定"}), value: true, className: danger ? "danger" : "primary" },
+    { label: cancelText || tr("common:actions.cancel", {defaultValue:"取消"}), value: false }
   ]);
 }
 
@@ -924,7 +1005,13 @@ function sshHostTrustModal(challenge) {
   return new Promise(resolve => {
     const modal = $("modal");
     const changed = challenge?.state === "changed";
-    const permanentLabel = changed ? "更新并永久信任" : "信任并保存";
+    const permanentLabel = changed
+      ? tr("common:dialogs.ssh_host_update_trust", {defaultValue:"更新并永久信任"})
+      : tr("common:dialogs.ssh_host_save_trust", {defaultValue:"信任并保存"});
+    const title = changed
+      ? tr("common:dialogs.ssh_host_changed_title", {defaultValue:"SSH 主机密钥发生变化"})
+      : tr("common:dialogs.ssh_host_verify_title", {defaultValue:"确认 SSH 主机指纹"});
+    const unknown = tr("common:auto.unknown", {defaultValue:"未知"});
     const finish = value => {
       modal.onclick = null;
       modal.onkeydown = null;
@@ -935,21 +1022,21 @@ function sshHostTrustModal(challenge) {
     modal.innerHTML = `<div class="modal-card ssh-host-trust-modal ${changed ? "changed" : "unknown"}" role="alertdialog" aria-modal="true" aria-labelledby="sshHostTrustTitle">
       <div class="ssh-host-trust-head">
         <span class="ssh-host-trust-icon" aria-hidden="true">${icon(changed ? "shield-alert" : "shield-question")}</span>
-        <div><h2 id="sshHostTrustTitle">${changed ? "SSH 主机密钥发生变化" : "确认 SSH 主机指纹"}</h2><span>${esc(challenge?.host_label || "未知主机")}</span></div>
+        <div><h2 id="sshHostTrustTitle">${esc(title)}</h2><span>${esc(challenge?.host_label || tr("common:dialogs.ssh_host_unknown", {defaultValue:"未知主机"}))}</span></div>
       </div>
       <div class="ssh-host-trust-notice">${changed
-        ? "保存过的主机密钥与本次连接不一致。这可能是服务器重装或密钥更新，也可能表示连接被冒充。请先核对新指纹。"
-        : "这是 Terma 首次连接这台 SSH 主机。请与服务器管理员或可信渠道核对指纹。"}</div>
+        ? esc(tr("common:dialogs.ssh_host_changed_notice", {defaultValue:"保存过的主机密钥与本次连接不一致。这可能是服务器重装或密钥更新，也可能表示连接被冒充。请先核对新指纹。"}))
+        : esc(tr("common:dialogs.ssh_host_first_notice", {defaultValue:"这是 Terma 首次连接这台 SSH 主机。请与服务器管理员或可信渠道核对指纹。"}))}</div>
       <dl class="ssh-host-trust-details">
-        <div><dt>算法</dt><dd>${esc(challenge?.key_type || "未知")}</dd></div>
-        ${changed ? `<div class="previous"><dt>原指纹</dt><dd><code>${esc(challenge?.previous_fingerprint || "未知")}</code></dd></div>` : ""}
-        <div class="current"><dt>${changed ? "新指纹" : "指纹"}</dt><dd><code>${esc(challenge?.fingerprint || "未知")}</code></dd></div>
+        <div><dt>${esc(tr("common:dialogs.ssh_host_algorithm", {defaultValue:"算法"}))}</dt><dd>${esc(challenge?.key_type || unknown)}</dd></div>
+        ${changed ? `<div class="previous"><dt>${esc(tr("common:dialogs.ssh_host_previous_fingerprint", {defaultValue:"原指纹"}))}</dt><dd><code>${esc(challenge?.previous_fingerprint || unknown)}</code></dd></div>` : ""}
+        <div class="current"><dt>${esc(tr(changed ? "common:dialogs.ssh_host_new_fingerprint" : "common:dialogs.ssh_host_fingerprint", {defaultValue:changed ? "新指纹" : "指纹"}))}</dt><dd><code>${esc(challenge?.fingerprint || unknown)}</code></dd></div>
       </dl>
-      <div class="ssh-host-trust-hint">“仅本次信任”不会写入信任记录；下次连接仍会重新确认。</div>
+      <div class="ssh-host-trust-hint">${esc(tr("common:dialogs.ssh_host_once_hint", {defaultValue:"“仅本次信任”不会写入信任记录；下次连接仍会重新确认。"}))}</div>
       <div class="actions ssh-host-trust-actions">
-        <button id="sshHostTrustOnce" type="button">仅本次信任</button>
+        <button id="sshHostTrustOnce" type="button">${esc(tr("common:dialogs.ssh_host_trust_once", {defaultValue:"仅本次信任"}))}</button>
         <button id="sshHostTrustPersist" class="${changed ? "danger" : "primary"}" type="button">${permanentLabel}</button>
-        <button id="sshHostTrustCancel" type="button">取消</button>
+        <button id="sshHostTrustCancel" type="button">${esc(tr("common:actions.cancel", {defaultValue:"取消"}))}</button>
       </div>
     </div>`;
     modal.hidden = false;
@@ -994,16 +1081,16 @@ async function writeClipboardText(text) {
   } finally {
     field.remove();
   }
-  if (!copied) throw new Error("当前浏览器不支持直接复制，请使用系统复制");
+  if (!copied) throw new Error(tr("common:notifications.copy_unsupported", {defaultValue:"当前浏览器不支持直接复制，请使用系统复制"}));
 }
 
 async function copyText(text) {
   try {
     await writeClipboardText(text);
-    notify("已复制", "success");
+    notify(tr("common:notifications.copied", {defaultValue:"已复制"}), "success");
     return true;
   } catch (error) {
-    notify(error?.message || "复制失败，请使用系统复制", "error");
+    notify(error?.message || tr("common:notifications.copy_fallback", {defaultValue:"复制失败，请使用系统复制"}), "error");
     return false;
   }
 }

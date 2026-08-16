@@ -31,7 +31,7 @@ interface FileReadStream {
 }
 
 interface SftpJobRouteDependencies {
-  createReadStream?(file: string): FileReadStream;
+  createReadStream?(file: string, options?: {start?: number; end?: number}): FileReadStream;
   sendJson(response: ServerResponse, data: unknown, status?: number): void;
   sftpJobs?: SftpJobOperations;
   statFile?(file: string): { size: number };
@@ -40,6 +40,22 @@ interface SftpJobRouteDependencies {
 
 function hasErrorCode(error: unknown, code: string): boolean {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+}
+
+export function parseHttpByteRange(header: string | string[] | undefined, size: number): {start:number; end:number} | null | false {
+  if (header === undefined) return null;
+  if (Array.isArray(header) || size <= 0) return false;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match || (!match[1] && !match[2])) return false;
+  if (!match[1]) {
+    const suffix = Number(match[2]);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return false;
+    return {start:Math.max(0, size - suffix), end:size - 1};
+  }
+  const start = Number(match[1]);
+  const requestedEnd = match[2] ? Number(match[2]) : size - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || start < 0 || requestedEnd < start || start >= size) return false;
+  return {start, end:Math.min(size - 1, requestedEnd)};
 }
 
 export async function handleSftpJobRoutes(
@@ -95,17 +111,32 @@ export async function handleSftpJobRoutes(
     if (method === "GET" && action === "fetch") {
       const item = sftpJobs.getSftpJobFile(jobId);
       const stat = (dependencies.statFile || fs.statSync)(item.path);
-      response.writeHead(200, {
+      const range = parseHttpByteRange(request.headers?.range, stat.size);
+      if (range === false) {
+        response.writeHead(416, {
+          "Content-Range": `bytes */${stat.size}`,
+          "Accept-Ranges": "bytes",
+          "Cache-Control": "no-store"
+        });
+        response.end();
+        return true;
+      }
+      const partial = range !== null;
+      const start = range?.start ?? 0;
+      const end = range?.end ?? Math.max(0, stat.size - 1);
+      response.writeHead(partial ? 206 : 200, {
         "Content-Type": "application/octet-stream",
-        "Content-Length": stat.size,
+        "Content-Length": partial ? end - start + 1 : stat.size,
         "Content-Disposition": `attachment; filename="${encodeURIComponent(item.name)}"`,
+        "Accept-Ranges": "bytes",
+        ...(partial ? {"Content-Range":`bytes ${start}-${end}/${stat.size}`} : {}),
         "Cache-Control": "no-store"
       });
-      const stream = (dependencies.createReadStream || fs.createReadStream)(item.path);
+      const stream = (dependencies.createReadStream || fs.createReadStream)(item.path, partial ? {start, end} : undefined);
       let responseFinished = false;
       let streamClosed = false;
       const markDelivered = () => {
-        if (responseFinished && streamClosed) sftpJobs.markSftpJobDelivered(jobId);
+        if (!partial && responseFinished && streamClosed) sftpJobs.markSftpJobDelivered(jobId);
       };
       response.on("finish", () => { responseFinished = true; markDelivered(); });
       stream.on("close", () => { streamClosed = true; markDelivered(); });

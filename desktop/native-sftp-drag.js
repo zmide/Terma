@@ -12,24 +12,43 @@ const LINUX_HELPER_FORCE_KILL_MS = 2_000;
 const LINUX_CANCEL_CLOSE_GRACE_SECONDS = 10;
 const LINUX_CANCEL_HELPER_TERMINATE_MS = 12_000;
 
-function unavailableProbe(platform, reason) {
+function normalizeDesktopLanguage(value) {
+  return String(value || "") === "en-US" ? "en-US" : "zh-CN";
+}
+
+function desktopUiText(language, chinese, english) {
+  return normalizeDesktopLanguage(language) === "en-US" ? english : chinese;
+}
+
+function languageGetter(options = {}, environment = process.env) {
+  return typeof options.getLanguage === "function"
+    ? options.getLanguage
+    : () => options.language || environment.TERMA_INTERFACE_LANGUAGE || process.env.TERMA_INTERFACE_LANGUAGE || "zh-CN";
+}
+
+function unavailableProbe(platform, reason, getLanguage = () => process.env.TERMA_INTERFACE_LANGUAGE, reasonCode = "") {
+  const resolveReason = () => {
+    const value = typeof reason === "function" ? reason() : reason;
+    return String(value || desktopUiText(getLanguage(), "原生拖出模块不可用", "The native drag-out module is unavailable"));
+  };
   return {
     available: false,
     supported: false,
     platform,
+    reasonCode:String(reasonCode || ""),
     oneGesture: false,
     delayedContent: false,
-    reason: String(reason || "原生拖出模块不可用")
+    get reason() { return resolveReason(); }
   };
 }
 
-function safeProbe(module, platform) {
+function safeProbe(module, platform, getLanguage) {
   try {
     const result = module?.probe?.();
     if (result?.available && result?.supported !== false) return result;
-    return unavailableProbe(platform, result?.reason);
+    return unavailableProbe(platform, result?.reason, getLanguage);
   } catch (error) {
-    return unavailableProbe(platform, error?.message || error);
+    return unavailableProbe(platform, error?.message || error, getLanguage);
   }
 }
 
@@ -71,8 +90,14 @@ function parseJsonLine(line) {
   }
 }
 
-function probeLinuxHelper(helper) {
-  if (!helper) return unavailableProbe("linux", "Linux SFTP 拖出辅助程序尚未安装");
+function probeLinuxHelper(helper, getLanguage) {
+  const text = (chinese, english) => desktopUiText(getLanguage(), chinese, english);
+  if (!helper) return unavailableProbe(
+    "linux",
+    () => text("Linux SFTP 拖出辅助程序尚未安装", "The Linux SFTP drag-out helper is not installed"),
+    getLanguage,
+    "linux_helper_missing"
+  );
   try {
     const result = spawnSync(helper, ["--probe"], {
       encoding: "utf8",
@@ -95,9 +120,14 @@ function probeLinuxHelper(helper) {
         mode: "fuse-virtual-files"
       };
     }
-    return unavailableProbe("linux", parsed?.reason || String(result.stderr || "").trim() || `辅助程序退出码 ${result.status}`);
+    const detail = parsed?.reason || String(result.stderr || "").trim();
+    return unavailableProbe(
+      "linux",
+      detail || (() => text(`辅助程序退出码 ${result.status}`, `Helper exited with code ${result.status}`)),
+      getLanguage
+    );
   } catch (error) {
-    return unavailableProbe("linux", error?.message || error);
+    return unavailableProbe("linux", error?.message || error, getLanguage);
   }
 }
 
@@ -125,12 +155,14 @@ function normalizedUnixTimeMilliseconds(value) {
 }
 
 function createWindowsAdapter(options) {
+  const getLanguage = languageGetter(options, options.environment || process.env);
+  const text = (chinese, english) => desktopUiText(getLanguage(), chinese, english);
   let module = null;
   try {
     module = require("../native/win-sftp-drag");
   } catch (error) {
     return {
-      probe: unavailableProbe("win32", error?.message || error),
+      probe: unavailableProbe("win32", error?.message || error, getLanguage),
       start() {
         throw error;
       },
@@ -142,8 +174,12 @@ function createWindowsAdapter(options) {
     };
   }
   const probe = typeof module.activateDrag === "function" && typeof module.setInternalTarget === "function"
-    ? safeProbe(module, "win32")
-    : unavailableProbe("win32", "Windows SFTP 拖出模块版本过旧，请重新编译原生模块");
+    ? safeProbe(module, "win32", getLanguage)
+    : unavailableProbe(
+      "win32",
+      () => text("Windows SFTP 拖出模块版本过旧，请重新编译原生模块", "The Windows SFTP drag-out module is outdated. Rebuild the native module"),
+      getLanguage
+    );
   const active = new Set();
   return {
     probe,
@@ -197,12 +233,13 @@ function createWindowsAdapter(options) {
 }
 
 function createMacAdapter(options) {
+  const getLanguage = languageGetter(options, options.environment || process.env);
   let module = null;
   try {
     module = require("../native/macos-sftp-drag");
   } catch (error) {
     return {
-      probe: unavailableProbe("darwin", error?.message || error),
+      probe: unavailableProbe("darwin", error?.message || error, getLanguage),
       start() {
         throw error;
       },
@@ -212,7 +249,7 @@ function createMacAdapter(options) {
       dispose() {}
     };
   }
-  const probe = safeProbe(module, "darwin");
+  const probe = safeProbe(module, "darwin", getLanguage);
   return {
     probe,
     start(spec, onEvent) {
@@ -249,8 +286,10 @@ function createMacAdapter(options) {
 }
 
 function createLinuxAdapter(options) {
+  const getLanguage = languageGetter(options, options.environment || process.env);
+  const text = (chinese, english) => desktopUiText(getLanguage(), chinese, english);
   const helper = findLinuxHelper(options.app);
-  const probe = probeLinuxHelper(helper);
+  const probe = probeLinuxHelper(helper, getLanguage);
   const children = new Map();
   const completedCloseMs = Math.max(
     20,
@@ -276,7 +315,7 @@ function createLinuxAdapter(options) {
   return {
     probe,
     start(spec, onEvent) {
-      if (!probe.available) throw new Error(probe.reason || "Linux SFTP 拖出辅助程序不可用");
+      if (!probe.available) throw new Error(probe.reason || text("Linux SFTP 拖出辅助程序不可用", "The Linux SFTP drag-out helper is unavailable"));
       const child = spawn(helper, [
         "--ticket-url-fd", "3",
         "--close-grace-seconds", String(cancelCloseGraceSeconds)
@@ -325,9 +364,13 @@ function createLinuxAdapter(options) {
         state.cleanupTerminationRequested = true;
         try { child.kill("SIGTERM"); } catch {}
         state.scheduleHelperTermination?.("failure");
-        onEvent({type: "error", requestId: spec.requestId, message: String(message || "Linux 原生拖出启动失败")});
+        onEvent({
+          type:"error",
+          requestId:spec.requestId,
+          message:String(message || text("Linux 原生拖出启动失败", "Linux native drag-out failed to start"))
+        });
       };
-      const timeout = setTimeout(() => fail("Linux 原生拖出辅助程序启动超时"), READY_TIMEOUT_MS);
+      const timeout = setTimeout(() => fail(text("Linux 原生拖出辅助程序启动超时", "Linux native drag-out helper startup timed out")), READY_TIMEOUT_MS);
 
       const cursorEvent = type => {
         const event = {type, requestId:spec.requestId};
@@ -530,7 +573,7 @@ function createLinuxAdapter(options) {
             continue;
           }
           if (message.event === "read-error") {
-            state.readError = String(message.message || "Linux SFTP drag content read failed");
+            state.readError = String(message.message || text("Linux SFTP 拖出内容读取失败", "Linux SFTP drag content read failed"));
             onEvent({
               type:"contentError",
               requestId:spec.requestId,
@@ -568,7 +611,7 @@ function createLinuxAdapter(options) {
           const files = Array.isArray(message.paths)
             ? message.paths.map(item => path.resolve(String(item || ""))).filter(Boolean)
             : [];
-          if (!files.length) return fail("Linux 原生拖出辅助程序没有返回可拖出的文件");
+          if (!files.length) return fail(text("Linux 原生拖出辅助程序没有返回可拖出的文件", "The Linux native drag-out helper returned no files to drag"));
           settled = true;
           state.ready = true;
           state.files = files;
@@ -611,12 +654,18 @@ function createLinuxAdapter(options) {
               type: "error",
               requestId: spec.requestId,
               message: stderr.trim()
-                || `Linux native SFTP drag helper exited before completion (${signal || code})`
+                || text(
+                  `Linux 原生 SFTP 拖出辅助程序在完成前退出（${signal || code}）`,
+                  `Linux native SFTP drag helper exited before completion (${signal || code})`
+                )
             });
           }
           return;
         }
-        if (!settled) fail(stderr.trim() || `Linux 原生拖出辅助程序已退出（${signal || code}）`);
+        if (!settled) fail(stderr.trim() || text(
+          `Linux 原生拖出辅助程序已退出（${signal || code}）`,
+          `The Linux native drag-out helper exited (${signal || code})`
+        ));
       });
       return {nativeId: spec.requestId};
     },
@@ -685,8 +734,10 @@ function createLinuxAdapter(options) {
   };
 }
 
-function createNativeSftpDrag(options) {
+function createNativeSftpDrag(options = {}) {
   const platform = options.platform || process.platform;
+  const getLanguage = languageGetter(options, options.environment || process.env);
+  const text = (chinese, english) => desktopUiText(getLanguage(), chinese, english);
   const adapter = platform === "win32"
     ? createWindowsAdapter(options)
     : platform === "darwin"
@@ -694,9 +745,13 @@ function createNativeSftpDrag(options) {
       : platform === "linux"
         ? createLinuxAdapter(options)
         : {
-            probe: unavailableProbe(platform, "当前平台不支持原生 SFTP 拖出"),
+            probe: unavailableProbe(
+              platform,
+              () => text("当前平台不支持原生 SFTP 拖出", "Native SFTP drag-out is not supported on this platform"),
+              getLanguage
+            ),
             start() {
-              throw new Error("当前平台不支持原生 SFTP 拖出");
+              throw new Error(text("当前平台不支持原生 SFTP 拖出", "Native SFTP drag-out is not supported on this platform"));
             },
             activate() { return false; },
             cancel() {},
@@ -712,7 +767,8 @@ function createNativeSftpDrag(options) {
         sftpExternalDrag: adapter.probe.available ? "streaming" : "staged",
         sftpNativeDragStart: adapter.probe.available ? "pointerdown" : "leave-window",
         sftpNativeDragProtocol: adapter.probe.protocol || adapter.probe.mode || "",
-        sftpNativeDragReason: adapter.probe.available ? "" : adapter.probe.reason || "原生拖出模块不可用"
+        sftpNativeDragReasonCode: adapter.probe.available ? "" : adapter.probe.reasonCode || "",
+        sftpNativeDragReason: adapter.probe.available ? "" : adapter.probe.reason || text("原生拖出模块不可用", "The native drag-out module is unavailable")
       };
     }
   };

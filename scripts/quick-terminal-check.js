@@ -38,7 +38,8 @@ function frontendContext() {
       {id:1, name:"saved", ssh_host:"example.com", ssh_port:22, ssh_user:"root"},
       {id:2, name:"ipv6", ssh_host:"2001:db8::1", ssh_port:2200, ssh_user:"admin"}
     ],
-    console
+    console,
+    tr:(key, options={}) => options.defaultValue || key
   };
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(root, "public", "app-quick-ssh.js"), "utf8"), context, {filename:"app-quick-ssh.js"});
@@ -162,11 +163,16 @@ async function main() {
   console.log("PASS quick connection routes bind creation and revocation to the authenticated request");
 
   const terminalSource = fs.readFileSync(path.join(root, "public", "app-terminal.js"), "utf8");
+  const terminalBackendSource = fs.readFileSync(path.join(root, "src", "terminal.ts"), "utf8");
   const quickSshSource = fs.readFileSync(path.join(root, "public", "app-quick-ssh.js"), "utf8");
   const dockingSource = fs.readFileSync(path.join(root, "public", "app-docking.js"), "utf8");
   const apiSource = fs.readFileSync(path.join(root, "public", "app-api.js"), "utf8");
   const x11Source = fs.readFileSync(path.join(root, "public", "app-x11.js"), "utf8");
   assert.match(terminalSource, /quickConnectionsById/);
+  assert.match(terminalSource, /const languageQuery = `&language=\$\{encodeURIComponent\(normalizeTermaLanguage\(document\.documentElement\.lang\)\)\}`/);
+  assert.match(terminalBackendSource, /function normalizeTerminalLanguage\(value\)[\s\S]*=== "en-US" \? "en-US" : "zh-CN"/);
+  assert.match(terminalBackendSource, /Connected to \$\{endpoint\}/);
+  assert.match(terminalBackendSource, /\[X11\] Forwarding established: \$\{x11Diagnostics\.display\}/);
   assert.match(terminalSource, /terminal-action-sftp/);
   assert.match(apiSource, /X-Terma-Quick-Connection/);
   assert.match(x11Source, /openQuickX11Terminal/);
@@ -176,7 +182,7 @@ async function main() {
   assert.match(x11Source, /openXServerManager\(connectionId, terminalKey\)/, "临时 X11 菜单必须把连接和终端上下文传给 X Server 管理器");
   assert.match(x11Source, /配置命令已放入当前临时终端/, "临时 X11 手动配置必须复用当前终端且等待用户确认执行");
   assert.match(x11Source, /quickConnection \? "" : `<button[^`]+changeConnectionDefaultX11/s, "临时连接不得显示会写数据库的默认 X11 操作");
-  assert.match(apiSource, /\(sftp\|x11-forwarding\|x11-applications\)/, "临时连接令牌必须同时保护 SFTP、X11 管理与应用探测请求");
+  assert.match(apiSource, /\(sftp\|x11-forwarding\|x11-applications\|terminal-clipboard\)/, "临时连接令牌必须同时保护 SFTP、X11 管理、应用探测与终端剪贴板请求");
   assert.match(terminalSource, /\["terminal", "quick-terminal"\]\.includes\(tab\.kind\)/, "临时终端必须参与终端工具栏挂载");
   assert.match(dockingSource, /kind === "terminal" && tab\.kind === "quick-terminal"/, "工作区必须把临时终端识别为终端工具栏所有者");
   assert.match(quickSshSource, /const submission = \{form, cancelled:false\}/, "快速认证必须用独立请求状态区分用户取消和指纹弹窗替换");

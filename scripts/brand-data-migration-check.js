@@ -409,6 +409,20 @@ try {
   assert.equal(fs.readFileSync(path.join(rollbackData, "web.log"), "utf8"), "active log\n", "unrelated active runtime files must remain untouched");
   assert.equal(fs.existsSync(path.join(rollbackData, "rollback-only.json")), false, "files created during a failed promotion must be removed");
   assert.equal(fs.existsSync(path.join(rollbackSsh, "id_rollback_only")), false, "partially copied keys must not remain after rollback");
+
+  const previousLanguage = process.env.TERMA_INTERFACE_LANGUAGE;
+  process.env.TERMA_INTERFACE_LANGUAGE = "en-US";
+  try {
+    assert.throws(() => mergeLegacyRuntime({
+      sourceDataDir:path.join(temporaryRoot, "missing-legacy", "data"),
+      sourceSshDir:path.join(temporaryRoot, "missing-legacy", ".ssh"),
+      targetDataDir:path.join(temporaryRoot, "english-target", "data"),
+      targetSshDir:path.join(temporaryRoot, "english-target", ".ssh")
+    }), /No valid legacy database was found/);
+  } finally {
+    if (previousLanguage === undefined) delete process.env.TERMA_INTERFACE_LANGUAGE;
+    else process.env.TERMA_INTERFACE_LANGUAGE = previousLanguage;
+  }
   console.log("Brand data migration merge checks passed.");
 } finally {
   for (let attempt = 0; attempt < 8; attempt += 1) {

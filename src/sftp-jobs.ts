@@ -3,16 +3,18 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { DATA_DIR } = require("./config");
 const { notifyEvent } = require("./notifications");
-const { buildDeleteRemotePathCommand, buildRecycleRemotePathCommand, invalidateRemoteDirectoryCache, readRemoteDirectorySize } = require("./sftp");
-const { clearSftpDragCache, deliverSftpPaths, getSftpConnection, releaseNativeSftpDragTicket, sftpDragCacheInfo } = require("./sftp-session");
+const { buildDeleteRemotePathCommand, buildRecycleRemotePathCommand, invalidateRemoteDirectoryCache } = require("./sftp");
+const { clearSftpDragCache, deliverSftpPaths, getSftpConnection, openSftpChannel, releaseNativeSftpDragTicket, sftpDragCacheInfo } = require("./sftp-session");
 const { readSftpJobHistory, writeSftpJobHistoryAtomic } = require("./sftp-job-store");
+const { createCheckpointTransfers } = require("./sftp-checkpoint-transfers");
 const { createSftpDownloadCache } = require("./sftp-download-cache");
 const { createSftpDownloadJobs } = require("./sftp-download-jobs");
 const { filenameEncoding, remotePathOperand, shellQuote, spawnRemote } = require("./sftp-job-paths");
 const { createNativeSftpDragJobs } = require("./sftp-native-drag-jobs");
-const { buildCrossCopyOverwriteCommand, buildItemProgressJobCommand, crossCopyProgressEntries, normalizeCompressionRequest } = require("./sftp-operation-commands");
+const { buildCrossCopyOverwriteCommand, buildItemProgressJobCommand, normalizeCompressionRequest } = require("./sftp-operation-commands");
 const { createSftpTransferScheduler } = require("./sftp-transfer-scheduler");
 const { createSftpUploadJobs } = require("./sftp-upload-jobs");
+const { clearSftpJobIssue, setSftpJobIssue } = require("./sftp-job-issues");
 
 const jobs = new Map();
 const JOBS_FILE = path.join(DATA_DIR, "sftp-jobs.json");
@@ -128,6 +130,45 @@ function ignoreStoppedTransferFinish(job, status) {
   return job.status === "cancelled" || (job.status === "paused" && status !== "paused");
 }
 
+const {
+  cleanupCrossCopyArtifacts,
+  resumeCrossCopyJob,
+  startCrossCopyJob
+} = createCheckpointTransfers({
+  finishTransferMetrics,
+  getSftpConnection,
+  jobs,
+  notifyEvent,
+  openSftpChannel,
+  persistJobs,
+  queueTransferJob,
+  recordTransferred,
+  releaseTransferSlot,
+  remotePathOperand,
+  resetTransferSpeed,
+  shellQuote,
+  spawnRemote,
+  updateTransferProgress
+});
+
+function cleanupRemoteArchiveJobArtifact(job) {
+  const remotePath = String(job?.remote_archive_path || "");
+  if (!remotePath) return false;
+  try {
+    const connection = getSftpConnection(job.connection_id);
+    const child = spawnRemote(connection, `rm -f -- ${remotePathOperand(connection, remotePath)}`);
+    child.stdin?.end?.();
+    child.stdout?.resume?.();
+    child.stderr?.resume?.();
+    job.remote_archive_path = "";
+    if (job.remote_path === remotePath) job.remote_path = "";
+    job.archive_ready = false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function readHistory(): any[] {
   if (historyCache) return historyCache;
   const loaded = readSftpJobHistory(JOBS_FILE);
@@ -142,19 +183,24 @@ function readHistory(): any[] {
     }
     if (!ACTIVE_STATUSES.has(restored?.status)) return restored;
     changed = true;
+    const restartResumable = restored.resume_supported === true && ["download", "cross-copy"].includes(restored.type);
     const interrupted = {
       ...restored,
       status:"failed",
-      error:"Terma 已重启，任务已中断",
-      can_resume:false,
+      error:restartResumable ? "Terma 已重启，可从检查点继续任务" : "Terma 已重启，任务已中断",
+      error_code:restartResumable ? "sftp_restart_resume_available" : "sftp_restart_interrupted",
+      can_resume:restartResumable,
       speed_bps:0,
       average_bps:0,
       finished_at:interruptedAt,
       interrupted_at:interruptedAt
     };
+    delete interrupted.error_params;
     if (interrupted.type === "download") interrupted.delivery_status = "interrupted";
-    cleanupJobArtifacts(interrupted);
-    if (interrupted.type === "upload") cleanupRemoteUploadArtifact(interrupted);
+    if (!restartResumable) {
+      cleanupJobArtifacts(interrupted);
+      if (interrupted.type === "upload") cleanupRemoteUploadArtifact(interrupted);
+    }
     return interrupted;
   });
   if (changed) historyCache = writeSftpJobHistoryAtomic(JOBS_FILE, historyCache, MAX_HISTORY);
@@ -188,7 +234,13 @@ function listSftpJobs() {
     };
   });
   const activeIds = new Set(active.map((job) => job.id));
-  return [...active, ...readHistory().filter((job) => !activeIds.has(job.id))]
+  const history = readHistory().filter((job) => !activeIds.has(job.id)).map((job: any) => ({
+    ...job,
+    can_resume: job.resume_supported === true
+      && ["paused", "failed"].includes(job.status)
+      && ["download", "cross-copy"].includes(job.type)
+  }));
+  return [...active, ...history]
     .sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0))
     .slice(0, MAX_HISTORY);
 }
@@ -284,12 +336,12 @@ function startSftpJob(connectionId, type, command, label, options: any = {}) {
   child.stdout.on("end", flushOutput);
   child.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
   let finished = false;
-  const finish = (status, error = "") => {
+  const finish = (status, error = "", errorCode = "", errorParams = {}) => {
     if (finished || job.status === "cancelled") return;
     finished = true;
     flushOutput();
     job.status = status;
-    job.error = error;
+    setSftpJobIssue(job, "error", error, errorCode, errorParams);
     job.finished_at = Date.now();
     job.speed_bps = 0;
     job.average_bps = 0;
@@ -311,7 +363,9 @@ function startSftpJob(connectionId, type, command, label, options: any = {}) {
   };
   child.on("error", (error) => finish("failed", error.message));
   child.on("close", (code, signal) => {
-    finish(code === 0 ? "done" : "failed", code === 0 ? "" : (job.stderr || `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`));
+    if (code === 0) return finish("done");
+    if (job.stderr) return finish("failed", job.stderr);
+    finish("failed", `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`, signal ? "sftp_process_exit_with_signal" : "sftp_process_exit", {exit_code:code, signal:signal || ""});
   });
   return { id, status: job.status };
 }
@@ -427,12 +481,12 @@ function deletePathsJob(connectionId, paths, recycleEnabled = false) {
     stdoutEnded = true;
     consumeDeleteJobOutput(job, request.progress_marker, outputState, "", true);
   };
-  const finish = (status, error = "") => {
+  const finish = (status, error = "", errorCode = "", errorParams = {}) => {
     if (finished || job.status === "cancelled") return;
     finished = true;
     flushOutput();
     job.status = status;
-    job.error = error;
+    setSftpJobIssue(job, "error", error, errorCode, errorParams);
     job.finished_at = Date.now();
     job.speed_bps = 0;
     job.average_bps = 0;
@@ -462,7 +516,9 @@ function deletePathsJob(connectionId, paths, recycleEnabled = false) {
   child.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
   child.on("error", (error) => finish("failed", error.message));
   child.on("close", (code, signal) => {
-    finish(code === 0 ? "done" : "failed", code === 0 ? "" : (job.stderr || `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`));
+    if (code === 0) return finish("done");
+    if (job.stderr) return finish("failed", job.stderr);
+    finish("failed", `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`, signal ? "sftp_process_exit_with_signal" : "sftp_process_exit", {exit_code:code, signal:signal || ""});
   });
   return {
     id,
@@ -545,7 +601,7 @@ function cancelSftpJob(id) {
     job.can_pause = false;
     job.can_cancel = false;
     job.finished_at = Date.now();
-    job.error = "用户已取消";
+    setSftpJobIssue(job, "error", "用户已取消", "sftp_user_cancelled");
     rejectTransferWaiters(job, transferCancelledError());
     if (job.type === "native-drag" && job.native_drag_token) {
       forgetNativeSftpDragJob(job);
@@ -564,7 +620,7 @@ function cancelSftpJob(id) {
   job.status = "cancelled";
   job.can_pause = false;
   job.finished_at = Date.now();
-  job.error = "用户已取消";
+  setSftpJobIssue(job, "error", "用户已取消", "sftp_user_cancelled");
   try { job.child?.kill("SIGTERM"); } catch {}
   try { job.stream?.destroy(); } catch {}
   try { job.out?.destroy(); } catch {}
@@ -583,7 +639,10 @@ function cancelSftpJob(id) {
   } else {
     finishTransferMetrics(job);
   }
-  if (job.type === "download") removeDownloadCacheFile(job);
+  if (job.type === "download") {
+    removeDownloadCacheFile(job);
+    if (job.archive_download) cleanupRemoteArchiveJobArtifact(job);
+  }
   if (job.type === "upload") {
     cleanupJobArtifacts(job);
     if (uploadPhase !== "receiving") {
@@ -600,6 +659,8 @@ function cancelSftpJob(id) {
 
 function cleanupJobArtifacts(job) {
   try { if (job.temp_path) fs.unlinkSync(job.temp_path); } catch {}
+  if (job?.type === "cross-copy") cleanupCrossCopyArtifacts(job);
+  if (job?.archive_download) cleanupRemoteArchiveJobArtifact(job);
   if (uploadJobOwnsLocalPath(job)) {
     try { if (job.local_path) fs.unlinkSync(job.local_path); } catch {}
   }
@@ -612,7 +673,7 @@ function deleteSftpJob(id) {
     if (hist) {
       const remaining = readHistory().filter((item) => item.id !== id);
       writeJsonJobs(remaining);
-      if (hist.temp_path) try { fs.unlinkSync(hist.temp_path); } catch {}
+      cleanupJobArtifacts(hist);
       return { ok: true };
     }
     throw new Error("任务不存在");
@@ -629,6 +690,7 @@ const {
   getRemoteSize,
   getSftpJobFile,
   markSftpJobDelivered,
+  resumeArchiveDownloadJob,
   runDownloadJob,
   startArchiveDownloadJob,
   startDownloadJob,
@@ -655,16 +717,17 @@ const {
 function pauseSftpJob(id) {
   const job = jobs.get(id);
   if (!job) throw new Error("任务不存在");
-  if (job.resume_supported !== true || !["upload", "download"].includes(job.type)) throw new Error("该任务类型暂不支持暂停");
+  if (job.resume_supported !== true || !["upload", "download", "cross-copy"].includes(job.type)) throw new Error("该任务类型暂不支持暂停");
   if (!ACTIVE_STATUSES.has(job.status)) return { ok: true, status: job.status };
   if (job.type === "upload" && job.phase === "receiving") throw new Error("文件接收阶段只能取消任务");
   if (job.type === "upload" && job.phase === "committing") return { ok:true, status:job.status };
+  if (job.status === "running" && job.can_pause === false) throw new Error("当前阶段暂不能暂停，请等待进入文件传输阶段");
   if (job.status !== "running") {
     removeQueuedTransfer(job);
     rejectTransferWaiters(job, new Error("任务已暂停"));
     job.status = "paused";
     job.can_pause = false;
-    job.error = "";
+    clearSftpJobIssue(job, "error");
     job.finished_at = null;
     job.speed_bps = 0;
     job.average_bps = 0;
@@ -673,12 +736,12 @@ function pauseSftpJob(id) {
   }
   job.status = "paused";
   job.can_pause = false;
-  job.error = "";
+  clearSftpJobIssue(job, "error");
   job.finished_at = null;
   job.speed_bps = 0;
   job.average_bps = 0;
   persistJobs(true);
-  if (job.type === "download" && typeof job.pauseNow === "function") {
+  if (typeof job.pauseNow === "function") {
     job.pauseNow();
   } else if (job.type === "upload") {
     job.upload_generation = Math.max(0, Number(job.upload_generation || 0)) + 1;
@@ -692,16 +755,22 @@ function pauseSftpJob(id) {
 }
 
 function resumeSftpJob(id) {
-  const job = jobs.get(id);
+  let job = jobs.get(id);
   if (!job) {
     const hist = readHistory().find((item) => item.id === id);
     if (!hist) throw new Error("任务不存在");
-    return { ok: false, error: "历史任务无法恢复，请重新开始下载或上传" };
+    if (hist.resume_supported !== true || !["download", "cross-copy"].includes(hist.type)) {
+      return { ok: false, error: "历史任务无法恢复，请重新开始下载或上传" };
+    }
+    job = {...hist, status:"failed", can_resume:true, child:null, stream:null, out:null, responder:null};
+    jobs.set(id, job);
+    persistJobs(true);
   }
   if (job.status === "running") return { ok: true, status: job.status };
   if (!["paused", "failed"].includes(job.status)) throw new Error(`当前状态（${job.status}）无法继续`);
   if (job.resume_supported !== true) throw new Error("该任务类型暂不支持继续");
   if (job.type === "download") {
+    if (job.archive_download) return resumeArchiveDownloadJob(job);
     queueTransferJob("download", job, () => runDownloadJob(id, false), {phase:"preparing", current:"正在继续下载"});
     return { ok: true, status: job.status };
   }
@@ -709,166 +778,20 @@ function resumeSftpJob(id) {
     resumeUploadJob(id);
     return { ok: true, status: job.status };
   }
+  if (job.type === "cross-copy") return resumeCrossCopyJob(job);
   throw new Error("该任务类型暂不支持继续");
-}
-
-async function resolveCrossCopyProgressSize(job, sourceConnection, entries) {
-  let total = 0;
-  for (const entry of entries) {
-    if (job.status !== "running") return;
-    if (entry.type === "directory") {
-      const result = await readRemoteDirectorySize(job.source_connection_id, entry.path);
-      const size = result?.size ?? Number(result?.size_bytes || 0);
-      if (!Number.isSafeInteger(size) || size < 0) throw new Error("跨主机复制内容过大，无法计算进度");
-      total += size;
-    } else if (entry.metadataKnown) {
-      total += entry.size;
-    } else {
-      total += Number(await getRemoteSize(sourceConnection, entry.path));
-    }
-    if (!Number.isSafeInteger(total)) throw new Error("跨主机复制内容过大，无法计算进度");
-  }
-  if (job.status !== "running") return;
-  job.size = total;
-  job.size_known = true;
-  job.progress_known = true;
-  job.progress_estimated = true;
-  updateTransferProgress(job);
-  persistJobs(true);
 }
 
 function crossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir = ".", conflictMode = "error", entries: any[] = []) {
   const sourceConnection = getSftpConnection(sourceConnectionId);
   const targetConnection = getSftpConnection(targetConnectionId);
-  const sameConnection = Number(sourceConnectionId) === Number(targetConnectionId);
   if (filenameEncoding(sourceConnection) !== filenameEncoding(targetConnection)) {
     throw new Error("源主机和目标主机的 SFTP 文件名编码必须一致，避免复制后文件名乱码");
   }
-  const normalized: string[] = [...new Set<string>((paths || []).map((item) => path.posix.normalize(String(item || "").replace(/\\/g, "/"))).filter(Boolean))];
-  if (!normalized.length) throw new Error("请选择要复制的文件或目录");
-  if (normalized.length > 200 || normalized.some((item) => item.includes("\0") || item === "." || item === ".." || item.startsWith("../") || item.length > 4096)) {
-    throw new Error("复制路径无效或数量过多");
+  if (String(conflictMode || "") === "rename" && filenameEncoding(targetConnection) !== "utf8") {
+    throw new Error("非 UTF-8 文件名编码暂不支持自动改名，请选择覆盖或取消");
   }
-  const parent = path.posix.dirname(normalized[0]) || ".";
-  if (normalized.some((item) => (path.posix.dirname(item) || ".") !== parent)) throw new Error("复制的项目必须位于同一目录");
-  const names = normalized.map((item) => path.posix.basename(item));
-  const progressEntries = crossCopyProgressEntries(normalized, entries);
-  const initialSizeCandidate = progressEntries.reduce((total, entry) => total + entry.size, 0);
-  const initialSizeKnown = progressEntries.every(entry => entry.type === "file" && entry.metadataKnown)
-    && Number.isSafeInteger(initialSizeCandidate);
-  const initialSize = initialSizeKnown ? initialSizeCandidate : 0;
-  const conflict = ["error", "overwrite", "rename"].includes(String(conflictMode || "")) ? String(conflictMode) : "error";
-  const normalizedTargetDir = path.posix.normalize(String(targetDir || ".").replace(/\\/g, "/")) || ".";
-  if (sameConnection) {
-    const targetInsideSource = normalized.some((sourcePath) => normalizedTargetDir === sourcePath || normalizedTargetDir.startsWith(`${sourcePath}/`));
-    if (targetInsideSource) throw new Error("不能把远端项目复制到自身或其子目录");
-    const copiesOntoSource = normalized.some((sourcePath) => path.posix.join(normalizedTargetDir, path.posix.basename(sourcePath)) === sourcePath);
-    if (copiesOntoSource && conflict !== "rename") throw new Error("源和目标是同一项目，请选择自动改名或取消");
-  }
-  const sourceNames = names.map((name) => remotePathOperand(sourceConnection, `./${name}`)).join(" ");
-  const collisionChecks = names.map((name) => {
-    const operand = remotePathOperand(targetConnection, `./${name}`);
-    return `if [ -e ${operand} ] || [ -L ${operand} ]; then echo "目标目录已存在同名项目" >&2; exit 1; fi`;
-  }).join("; ");
-  const sourceCommand = `tar -cf - -C ${remotePathOperand(sourceConnection, parent)} -- ${sourceNames}`;
-  let targetCommand = `cd ${remotePathOperand(targetConnection, targetDir)} && ${collisionChecks} && tar -xf -`;
-  if (conflict === "overwrite") {
-    targetCommand = buildCrossCopyOverwriteCommand(targetConnection, targetDir, names);
-  } else if (conflict === "rename") {
-    if (filenameEncoding(targetConnection) !== "utf8") throw new Error("非 UTF-8 文件名编码暂不支持自动改名，请选择覆盖或取消");
-    const temporaryName = `.terma-cross-copy-${crypto.randomUUID()}`;
-    const moves = names.map((name) => {
-      const extension = path.posix.extname(name);
-      const base = extension && extension !== name ? name.slice(0, -extension.length) : name;
-      return [
-        `td_source="$td_tmp/"${shellQuote(name)}`,
-        `td_target=${shellQuote(name)}`,
-        `td_index=1`,
-        `while [ -e "$td_target" ] || [ -L "$td_target" ]; do td_target=${shellQuote(base)}" ($td_index)"${shellQuote(extension)}; td_index=$((td_index + 1)); done`,
-        `mv -- "$td_source" "$td_target"`
-      ].join("; ");
-    }).join("; ");
-    targetCommand = `cd ${remotePathOperand(targetConnection, targetDir)} && td_tmp=${shellQuote(temporaryName)} && mkdir "$td_tmp" && trap 'rm -rf -- "$td_tmp"' 0 1 2 3 15 && tar -xf - -C "$td_tmp" && ${moves} && rmdir "$td_tmp" && trap - 0 1 2 3 15`;
-  }
-  const source = spawnRemote(sourceConnection, sourceCommand);
-  const target = spawnRemote(targetConnection, targetCommand);
-  const id = crypto.randomUUID();
-  const job: any = {
-    id,
-    connection_id: Number(targetConnectionId),
-    connection_name: targetConnection.name,
-    source_connection_id: Number(sourceConnectionId),
-    source_connection_name: sourceConnection.name,
-    target_connection_id: Number(targetConnectionId),
-    type: "cross-copy",
-    label: sameConnection ? `复制 ${normalized.length} 项` : `从 ${sourceConnection.name} 复制 ${normalized.length} 项`,
-    status: "running",
-    stdout: "",
-    stderr: "",
-    error: "",
-    size: initialSize,
-    size_known: initialSizeKnown,
-    progress_known: initialSizeKnown,
-    progress_estimated: initialSizeKnown,
-    transferred: 0,
-    progress: 0,
-    created_at: Date.now(),
-    started_at: Date.now(),
-    finished_at: null,
-    child: source,
-    responder: target
-  };
-  resetTransferSpeed(job);
-  jobs.set(id, job);
-  persistJobs();
-  if (!initialSizeKnown) {
-    void resolveCrossCopyProgressSize(job, sourceConnection, progressEntries).catch(() => {});
-  }
-  let sourceCode = null;
-  let targetCode = null;
-  let finished = false;
-  const finish = (status, error = "") => {
-    if (finished || job.status === "cancelled") return;
-    finished = true;
-    if (status !== "done") {
-      try { source.kill("SIGTERM"); } catch {}
-      try { target.kill("SIGTERM"); } catch {}
-    }
-    job.status = status;
-    job.error = error;
-    job.finished_at = Date.now();
-    if (status === "done") {
-      if (!job.size_known) job.size = job.transferred;
-      job.size_known = true;
-      job.progress_known = true;
-      job.progress = 100;
-    }
-    finishTransferMetrics(job);
-    persistJobs(true);
-    notifyEvent({
-      type: "sftp",
-      level: status === "done" ? "success" : "error",
-      title: status === "done" ? (sameConnection ? "SFTP 复制已完成" : "跨主机复制已完成") : (sameConnection ? "SFTP 复制失败" : "跨主机复制失败"),
-      message: `${sameConnection ? targetConnection.name : `${sourceConnection.name} → ${targetConnection.name}`} · ${normalized.length} 项${error ? `\n${error}` : ""}`,
-      action: { view: "sftp", connection_id: Number(targetConnectionId) }
-    }, { cooldown_ms: 0 });
-  };
-  const maybeFinish = () => {
-    if (sourceCode === null || targetCode === null) return;
-    if (sourceCode === 0 && targetCode === 0) finish("done");
-    else finish("failed", job.stderr || `源主机退出码 ${sourceCode}，目标主机退出码 ${targetCode}`);
-  };
-  source.stdout.on("data", (chunk) => { recordTransferred(job, chunk.length); persistJobs(); });
-  source.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${sourceConnection.name}: ${chunk.toString()}`.slice(-12000); persistJobs(); });
-  target.stdout.on("data", (chunk) => { job.stdout = `${job.stdout}${chunk.toString()}`.slice(-12000); persistJobs(); });
-  target.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${targetConnection.name}: ${chunk.toString()}`.slice(-12000); persistJobs(); });
-  source.on("error", (error) => finish("failed", `${sourceConnection.name}: ${error.message}`));
-  target.on("error", (error) => finish("failed", `${targetConnection.name}: ${error.message}`));
-  target.stdin.on("error", (error) => finish("failed", `${targetConnection.name}: ${error.message}`));
-  source.on("close", (code) => { sourceCode = code; maybeFinish(); });
-  target.on("close", (code) => { targetCode = code; maybeFinish(); });
-  source.stdout.pipe(target.stdin);
-  return { id, status: job.status, type: job.type, connection_id: Number(targetConnectionId) };
+  return startCrossCopyJob(sourceConnectionId, targetConnectionId, paths, targetDir, conflictMode);
 }
 
 function copyJob(connectionId, paths, targetDir) {

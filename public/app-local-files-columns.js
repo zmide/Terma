@@ -32,13 +32,19 @@ function writeLocalFilesColumnLayout(layout) {
 }
 
 function localFilesColumnLabel(key) {
-  return {name:"名称", size:"大小", mtime:"修改时间"}[key] || key;
+  return {
+    name:tr("sftp:auto.name", {defaultValue:"名称"}),
+    size:tr("sftp:auto.size", {defaultValue:"大小"}),
+    mtime:tr("sftp:auto.modified", {defaultValue:"修改时间"})
+  }[key] || key;
 }
 
 function localFilesHeaderColumnHtml(key, tabKey, mark="") {
   const label = `${localFilesColumnLabel(key)}${mark ? ` ${mark}` : ""}`;
   const hasNext = LOCAL_FILES_COLUMN_KEYS.indexOf(key) < LOCAL_FILES_COLUMN_KEYS.length - 1;
-  return `<div class="local-files-head-cell local-files-column-${key}" data-local-files-column="${key}"><button type="button" data-action="local-files-sort" data-sort="${key}" data-tab-key="${escAttr(tabKey)}"><span>${esc(label)}</span>${key === "name" ? `<small class="local-files-compact-column-labels">类型 · 修改时间</small>` : ""}</button>${hasNext ? `<i class="local-files-column-resize" data-local-files-column-resize="${key}" role="separator" aria-orientation="vertical" aria-label="调整${esc(localFilesColumnLabel(key))}与下一列的比例" tabindex="0"></i>` : ""}</div>`;
+  const compact = tr("sftp:auto.local_compact_columns", {defaultValue:"类型 · 修改时间"});
+  const resize = tr("sftp:auto.resize_columns", {column:localFilesColumnLabel(key), defaultValue:`调整${localFilesColumnLabel(key)}与下一列的比例`});
+  return `<div class="local-files-head-cell local-files-column-${key}" data-local-files-column="${key}"><button type="button" data-action="local-files-sort" data-sort="${key}" data-tab-key="${escAttr(tabKey)}"><span>${esc(label)}</span>${key === "name" ? `<small class="local-files-compact-column-labels">${esc(compact)}</small>` : ""}</button>${hasNext ? `<i class="local-files-column-resize" data-local-files-column-resize="${key}" role="separator" aria-orientation="vertical" aria-label="${escAttr(resize)}" tabindex="0"></i>` : ""}</div>`;
 }
 
 function visibleLocalFilesColumnKeys(list) {

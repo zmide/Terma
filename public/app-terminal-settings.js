@@ -19,12 +19,12 @@ const defaultTerminalGlobalSettings = Object.freeze({
   multiline_paste_mode:"prompt"
 });
 const terminalMouseActionOptions = [
-  ["none", "不执行操作"],
-  ["context_menu", "打开终端菜单"],
-  ["paste_clipboard", "粘贴剪贴板内容"],
-  ["open_settings", "打开全局终端设置"],
-  ["send_enter", "发送回车"],
-  ["paste_selection", "粘贴终端选区"]
+  ["none", () => tr("terminal:settings.mouse_none")],
+  ["context_menu", () => tr("terminal:settings.mouse_context_menu")],
+  ["paste_clipboard", () => tr("terminal:settings.mouse_paste_clipboard")],
+  ["open_settings", () => tr("terminal:settings.mouse_open_settings")],
+  ["send_enter", () => tr("terminal:settings.mouse_send_enter")],
+  ["paste_selection", () => tr("terminal:settings.mouse_paste_selection")]
 ];
 
 function normalizeTerminalGlobalSettings(value={}) {
@@ -34,8 +34,8 @@ function normalizeTerminalGlobalSettings(value={}) {
   const backgroundColorValue = String(source.background_color || defaultTerminalGlobalSettings.background_color).trim();
   const fontFamily = String(source.font_family || defaultTerminalGlobalSettings.font_family).trim();
   const fontSize = Number(source.font_size ?? defaultTerminalGlobalSettings.font_size);
-  if (!fontFamily || fontFamily.length > 300 || /[\0\r\n]/.test(fontFamily)) throw new Error("默认终端字体无效");
-  if (!Number.isInteger(fontSize) || fontSize < 10 || fontSize > 32) throw new Error("默认终端字号必须是 10-32 之间的整数");
+  if (!fontFamily || fontFamily.length > 300 || /[\0\r\n]/.test(fontFamily)) throw new Error(tr("terminal:settings.invalid_font"));
+  if (!Number.isInteger(fontSize) || fontSize < 10 || fontSize > 32) throw new Error(tr("terminal:settings.invalid_font_size"));
   const prefixes = (Array.isArray(source.url_prefixes) ? source.url_prefixes : String(source.url_prefixes || "").split(/[|,\s]+/))
     .map(item => String(item || "").trim()).filter(Boolean).slice(0, 10);
   return {
@@ -219,11 +219,12 @@ function editTerminalMultilinePaste(initialText) {
   return new Promise(resolve => {
     const modal = $("modal");
     modal.onclick = null;
+    const closeLabel = tr("common:actions.close");
     modal.innerHTML = `<div class="modal-card terminal-paste-modal" role="dialog" aria-modal="true" aria-labelledby="terminalPasteTitle">
-      <div class="terminal-settings-head"><div><h2 id="terminalPasteTitle">粘贴多行命令</h2><span id="terminalPasteSummary"></span></div><button id="terminalPasteClose" class="icon-button" type="button" title="关闭" aria-label="关闭">${icon("x")}</button></div>
-      <label for="terminalPasteEditor">粘贴内容</label>
+      <div class="terminal-settings-head"><div><h2 id="terminalPasteTitle">${esc(tr("terminal:settings.multiline_paste_title"))}</h2><span id="terminalPasteSummary"></span></div><button id="terminalPasteClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div>
+      <label for="terminalPasteEditor">${esc(tr("terminal:settings.paste_content"))}</label>
       <textarea id="terminalPasteEditor" class="terminal-paste-editor" spellcheck="false"></textarea>
-      <div class="actions terminal-paste-actions"><button id="terminalPasteCancel" type="button">取消</button><button id="terminalPasteSingleLine" type="button">合并为一行并粘贴</button><button id="terminalPasteConfirm" class="primary" type="button">${icon("clipboard-paste")}<span>粘贴到终端</span></button></div>
+      <div class="actions terminal-paste-actions"><button id="terminalPasteCancel" type="button">${esc(tr("common:actions.cancel"))}</button><button id="terminalPasteSingleLine" type="button">${esc(tr("terminal:settings.merge_and_paste"))}</button><button id="terminalPasteConfirm" class="primary" type="button">${icon("clipboard-paste")}<span>${esc(tr("terminal:settings.paste_to_terminal"))}</span></button></div>
     </div>`;
     modal.hidden = false;
     const editor = $("terminalPasteEditor");
@@ -231,7 +232,7 @@ function editTerminalMultilinePaste(initialText) {
     const updateSummary = () => {
       const text = editor.value;
       const lines = text ? text.split("\n").length : 0;
-      $("terminalPasteSummary").textContent = `${lines} 行 · ${text.length} 个字符`;
+      $("terminalPasteSummary").textContent = tr("terminal:settings.paste_summary", {lines, characters:text.length});
     };
     const finish = value => {
       modal.onclick = null;
@@ -278,7 +279,7 @@ async function sendTerminalPasteText(key, text) {
     return false;
   }
   if (!edited) {
-    notify("粘贴内容为空", "info");
+    notify(tr("terminal:settings.paste_empty"), "info");
     focusTerminalSession(key);
     return false;
   }
@@ -442,7 +443,7 @@ function cancelTerminalCursorCopy(session, key, clearSelection=true) {
 function startTerminalCursorCopy(key) {
   const session = terminalSessions.get(key);
   const mount = session?.term?.element?.closest?.(".terminal-box") || terminalElementForKey(key, "#terminalMount");
-  if (!session?.term || !mount || typeof session.term.select !== "function") return notify("当前终端不支持光标复制", "error");
+  if (!session?.term || !mount || typeof session.term.select !== "function") return notify(tr("terminal:settings.cursor_copy_unsupported"), "error");
   cancelTerminalCursorCopy(session, key);
   const originalTheme = {...(session.term.options.theme || {})};
   session.term.options.theme = {
@@ -455,14 +456,14 @@ function startTerminalCursorCopy(key) {
   hint.className = "terminal-cursor-copy-hint";
   hint.setAttribute("role", "status");
   hint.setAttribute("aria-live", "polite");
-  hint.title = "触摸时会选择手指上方的位置；拖到终端边缘可滚动内容";
-  hint.innerHTML = `${icon("mouse-pointer-2")}<span class="terminal-cursor-copy-message">光标复制：拖到复制起点后松手</span>`;
+  hint.title = tr("terminal:settings.cursor_copy_touch_hint");
+  hint.innerHTML = `${icon("mouse-pointer-2")}<span class="terminal-cursor-copy-message">${esc(tr("terminal:settings.cursor_copy_start"))}</span>`;
   const message = hint.querySelector(".terminal-cursor-copy-message");
   const cancelButton = document.createElement("button");
   cancelButton.className = "icon-button terminal-cursor-copy-cancel";
   cancelButton.type = "button";
-  cancelButton.title = "取消光标复制";
-  cancelButton.setAttribute("aria-label", "取消光标复制");
+  cancelButton.title = tr("terminal:settings.cursor_copy_cancel");
+  cancelButton.setAttribute("aria-label", tr("terminal:settings.cursor_copy_cancel"));
   cancelButton.innerHTML = icon("x");
   hint.appendChild(cancelButton);
   mount.appendChild(hint);
@@ -527,14 +528,14 @@ function startTerminalCursorCopy(key) {
     if (state.phase === "start") {
       state.start = point;
       state.phase = "end";
-      if (message) message.textContent = "已选起点，请拖到复制终点后松手";
+      if (message) message.textContent = tr("terminal:settings.cursor_copy_end");
       selectTerminalCursorRange(session, point, point);
       return;
     }
     selectTerminalCursorRange(session, state.start, point);
     const text = session.term.getSelection?.() || "";
     if (!text) {
-      notify("没有选中可复制的文本", "info");
+      notify(tr("terminal:settings.cursor_copy_empty"), "info");
       cancelTerminalCursorCopy(session, key);
       return;
     }
@@ -609,50 +610,53 @@ function bindTerminalGlobalBehavior(session, key, connectionId, mount) {
   }, {capture:true});
   mount.addEventListener("paste", event => {
     const text = event.clipboardData?.getData("text/plain") || "";
-    if (!text) return;
+    const imageFile = typeof terminalClipboardImageFromPasteEvent === "function" ? terminalClipboardImageFromPasteEvent(event) : null;
+    if (!text && !(typeof terminalClipboardPasteMayContainImage === "function" && terminalClipboardPasteMayContainImage(event, imageFile))) return;
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation?.();
-    sendTerminalPasteText(key, text);
+    if (text) sendTerminalPasteText(key, text);
+    else if (typeof handleTerminalClipboardImagePaste === "function") void handleTerminalClipboardImagePaste(key, connectionId, imageFile);
   }, {capture:true});
 }
 
 function terminalMouseActionOptionsHtml(current) {
-  return terminalMouseActionOptions.map(([value,label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`).join("");
+  return terminalMouseActionOptions.map(([value,label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${esc(label())}</option>`).join("");
 }
 
 async function showTerminalGlobalSettings(key=activeTabKey) {
   const settings = await ensureTerminalGlobalSettings();
   const modal = $("modal");
   modal.onclick = null;
+  const closeLabel = tr("common:actions.close");
   modal.innerHTML = `<div class="modal-card terminal-settings-modal" role="dialog" aria-modal="true" aria-labelledby="terminalSettingsTitle">
-    <div class="terminal-settings-head"><div><h2 id="terminalSettingsTitle">全局终端设置</h2><span>应用到继承默认值的连接；连接独立设置优先</span></div><button class="icon-button" type="button" title="关闭" aria-label="关闭" onclick="closeTerminalGlobalSettings('${escAttr(key)}')">${icon("x")}</button></div>
-    <div class="terminal-settings-tabs" role="tablist" aria-label="终端设置分类">
-      <button id="terminalSettingsTabAppearance" class="active" type="button" role="tab" aria-selected="true" aria-controls="terminalSettingsPanelAppearance" onclick="selectTerminalSettingsTab('appearance')">${icon("palette")}<span>外观</span></button>
-      <button id="terminalSettingsTabInteraction" type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanelInteraction" onclick="selectTerminalSettingsTab('interaction')">${icon("mouse-pointer-2")}<span>鼠标与链接</span></button>
-      <button id="terminalSettingsTabClipboard" type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanelClipboard" onclick="selectTerminalSettingsTab('clipboard')">${icon("copy")}<span>选择与粘贴</span></button>
+    <div class="terminal-settings-head"><div><h2 id="terminalSettingsTitle">${esc(tr("terminal:settings.title"))}</h2><span>${esc(tr("terminal:settings.scope"))}</span></div><button class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}" onclick="closeTerminalGlobalSettings('${escAttr(key)}')">${icon("x")}</button></div>
+    <div class="terminal-settings-tabs" role="tablist" aria-label="${escAttr(tr("terminal:settings.categories"))}">
+      <button id="terminalSettingsTabAppearance" class="active" type="button" role="tab" aria-selected="true" aria-controls="terminalSettingsPanelAppearance" onclick="selectTerminalSettingsTab('appearance')">${icon("palette")}<span>${esc(tr("terminal:settings.appearance"))}</span></button>
+      <button id="terminalSettingsTabInteraction" type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanelInteraction" onclick="selectTerminalSettingsTab('interaction')">${icon("mouse-pointer-2")}<span>${esc(tr("terminal:settings.mouse_and_links"))}</span></button>
+      <button id="terminalSettingsTabClipboard" type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanelClipboard" onclick="selectTerminalSettingsTab('clipboard')">${icon("copy")}<span>${esc(tr("terminal:settings.selection_and_paste"))}</span></button>
     </div>
     <div class="terminal-settings-panels">
       <section id="terminalSettingsPanelAppearance" class="terminal-settings-panel" role="tabpanel" aria-labelledby="terminalSettingsTabAppearance">
         <div class="terminal-settings-background-layout">
           <div class="terminal-settings-section terminal-settings-font-section">
-            <h3>${icon("type")}默认字体</h3>
+            <h3>${icon("type")}${esc(tr("terminal:settings.default_font"))}</h3>
             <div class="terminal-settings-field-grid">
-              <div><label for="terminalSettingFontFamily">字体或字体栈</label><input id="terminalSettingFontFamily" list="terminalSettingFontOptions" value="${escAttr(settings.font_family)}"><datalist id="terminalSettingFontOptions">${terminalFontOptions.map(([value,label]) => `<option value="${escAttr(value)}">${esc(label)}</option>`).join("")}</datalist></div>
-              <div><label for="terminalSettingFontSize">默认字号</label><input id="terminalSettingFontSize" type="number" min="10" max="32" step="1" value="${settings.font_size}"></div>
+              <div><label for="terminalSettingFontFamily">${esc(tr("terminal:settings.font_family"))}</label><input id="terminalSettingFontFamily" list="terminalSettingFontOptions" value="${escAttr(settings.font_family)}"><datalist id="terminalSettingFontOptions">${terminalFontOptions.map(([value,label]) => `<option value="${escAttr(value)}">${esc(label)}</option>`).join("")}</datalist></div>
+              <div><label for="terminalSettingFontSize">${esc(tr("terminal:settings.default_font_size"))}</label><input id="terminalSettingFontSize" type="number" min="10" max="32" step="1" value="${settings.font_size}"></div>
             </div>
-            <div class="muted">连接中单独设置的字体和字号优先于这里的默认值。</div>
+            <div class="muted">${esc(tr("terminal:settings.font_hint"))}</div>
           </div>
           <div class="terminal-settings-section terminal-settings-background-section">
-            <h3>${icon("monitor-cog")}终端背景</h3>
-            <div class="terminal-background-choices" role="radiogroup" aria-label="终端背景颜色">
-              <label class="terminal-background-choice"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="theme" ${settings.background_mode === "theme" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><span class="terminal-background-swatch terminal-background-theme"></span><span>跟随主题</span></label>
-              <label class="terminal-background-choice"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="black" ${settings.background_mode === "black" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><span class="terminal-background-swatch terminal-background-black"></span><span>黑色</span></label>
-              <label class="terminal-background-choice"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="white" ${settings.background_mode === "white" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><span class="terminal-background-swatch terminal-background-white"></span><span>白色</span></label>
-              <label class="terminal-background-choice terminal-background-custom"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="custom" ${settings.background_mode === "custom" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><input id="terminalSettingBackgroundColor" class="terminal-color-picker" type="color" value="${escAttr(settings.background_color)}" title="选择自定义背景颜色" aria-label="选择自定义背景颜色" oninput="selectTerminalCustomBackground(this.value)"><span>自定义</span><output id="terminalSettingBackgroundColorValue">${esc(settings.background_color)}</output></label>
+            <h3>${icon("monitor-cog")}${esc(tr("terminal:settings.background"))}</h3>
+            <div class="terminal-background-choices" role="radiogroup" aria-label="${escAttr(tr("terminal:settings.background_color"))}">
+              <label class="terminal-background-choice"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="theme" ${settings.background_mode === "theme" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><span class="terminal-background-swatch terminal-background-theme"></span><span>${esc(tr("terminal:settings.follow_theme"))}</span></label>
+              <label class="terminal-background-choice"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="black" ${settings.background_mode === "black" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><span class="terminal-background-swatch terminal-background-black"></span><span>${esc(tr("terminal:settings.black"))}</span></label>
+              <label class="terminal-background-choice"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="white" ${settings.background_mode === "white" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><span class="terminal-background-swatch terminal-background-white"></span><span>${esc(tr("terminal:settings.white"))}</span></label>
+              <label class="terminal-background-choice terminal-background-custom"><input class="sr-only" type="radio" name="terminalSettingBackgroundMode" value="custom" ${settings.background_mode === "custom" ? "checked" : ""} onchange="syncTerminalBackgroundForm()"><input id="terminalSettingBackgroundColor" class="terminal-color-picker" type="color" value="${escAttr(settings.background_color)}" title="${escAttr(tr("terminal:settings.choose_custom_background"))}" aria-label="${escAttr(tr("terminal:settings.choose_custom_background"))}" oninput="selectTerminalCustomBackground(this.value)"><span>${esc(tr("terminal:settings.custom"))}</span><output id="terminalSettingBackgroundColorValue">${esc(settings.background_color)}</output></label>
             </div>
           </div>
-          <div id="terminalBackgroundPreview" class="terminal-background-preview" aria-label="终端颜色预览">
+          <div id="terminalBackgroundPreview" class="terminal-background-preview" aria-label="${escAttr(tr("terminal:settings.color_preview"))}">
             <div><span class="terminal-preview-green">root@server</span>:<span class="terminal-preview-blue">~</span>$ ls</div>
             <div><span class="terminal-preview-blue">docs</span>&nbsp;&nbsp;<span class="terminal-preview-cyan">config.yml</span>&nbsp;&nbsp;<span class="terminal-preview-red">error.log</span></div>
             <div>$ <span class="terminal-preview-cursor">&nbsp;</span></div>
@@ -662,49 +666,49 @@ async function showTerminalGlobalSettings(key=activeTabKey) {
       <section id="terminalSettingsPanelInteraction" class="terminal-settings-panel" role="tabpanel" aria-labelledby="terminalSettingsTabInteraction" hidden>
         <div class="terminal-settings-grid">
           <div class="terminal-settings-section">
-            <h3>${icon("mouse-pointer-2")}鼠标</h3>
-            <div class="terminal-settings-field-grid"><div><label>中键操作</label><select id="terminalSettingMiddleMouse">${terminalMouseActionOptionsHtml(settings.middle_mouse_action)}</select></div><div><label>右键操作</label><select id="terminalSettingRightMouse">${terminalMouseActionOptionsHtml(settings.right_mouse_action)}</select></div></div>
-            <label class="check-row"><input id="terminalSettingCtrlClick" type="checkbox" ${settings.ctrl_left_click_moves_cursor ? "checked" : ""}> Ctrl + 左键移动终端光标</label>
+            <h3>${icon("mouse-pointer-2")}${esc(tr("terminal:settings.mouse"))}</h3>
+            <div class="terminal-settings-field-grid"><div><label>${esc(tr("terminal:settings.middle_mouse"))}</label><select id="terminalSettingMiddleMouse">${terminalMouseActionOptionsHtml(settings.middle_mouse_action)}</select></div><div><label>${esc(tr("terminal:settings.right_mouse"))}</label><select id="terminalSettingRightMouse">${terminalMouseActionOptionsHtml(settings.right_mouse_action)}</select></div></div>
+            <label class="check-row"><input id="terminalSettingCtrlClick" type="checkbox" ${settings.ctrl_left_click_moves_cursor ? "checked" : ""}> ${esc(tr("terminal:settings.ctrl_click_cursor"))}</label>
           </div>
           <div class="terminal-settings-section">
-            <h3>${icon("link")}链接</h3>
-            <label class="check-row"><input id="terminalSettingUrlLinks" type="checkbox" ${settings.url_links_enabled ? "checked" : ""} onchange="syncTerminalSettingsForm()"> 识别 URL 超链接</label>
-            <label>URL 前缀</label><input id="terminalSettingUrlPrefixes" value="${esc(settings.url_prefixes.join(" | "))}" ${settings.url_links_enabled ? "" : "disabled"}>
-            <label class="check-row"><input id="terminalSettingUrlCtrlClick" type="checkbox" ${settings.url_ctrl_click ? "checked" : ""} ${settings.url_links_enabled ? "" : "disabled"}> Ctrl + 单击打开链接</label>
+            <h3>${icon("link")}${esc(tr("terminal:settings.links"))}</h3>
+            <label class="check-row"><input id="terminalSettingUrlLinks" type="checkbox" ${settings.url_links_enabled ? "checked" : ""} onchange="syncTerminalSettingsForm()"> ${esc(tr("terminal:settings.detect_urls"))}</label>
+            <label>${esc(tr("terminal:settings.url_prefixes"))}</label><input id="terminalSettingUrlPrefixes" value="${esc(settings.url_prefixes.join(" | "))}" ${settings.url_links_enabled ? "" : "disabled"}>
+            <label class="check-row"><input id="terminalSettingUrlCtrlClick" type="checkbox" ${settings.url_ctrl_click ? "checked" : ""} ${settings.url_links_enabled ? "" : "disabled"}> ${esc(tr("terminal:settings.ctrl_click_link"))}</label>
           </div>
         </div>
       </section>
       <section id="terminalSettingsPanelClipboard" class="terminal-settings-panel" role="tabpanel" aria-labelledby="terminalSettingsTabClipboard" hidden>
         <div class="terminal-settings-grid terminal-settings-clipboard-grid">
           <div class="terminal-settings-section">
-            <h3>${icon("text-select")}选择</h3>
-            <label>双击选择分隔符</label>
-            <div class="terminal-settings-inline"><input id="terminalSettingWordSeparators" value="${esc(settings.word_separators)}"><button type="button" onclick="resetTerminalWordSeparators()">重置</button></div>
-            <label class="check-row"><input id="terminalSettingShiftDoubleClick" type="checkbox" ${settings.shift_double_click_uses_separators ? "checked" : ""}> Shift + 双击时使用分隔符</label>
-            <label class="check-row"><input id="terminalSettingNonWhitespaceBlock" type="checkbox" ${settings.select_non_whitespace_block ? "checked" : ""}> 连续非空白内容作为一个整体</label>
+            <h3>${icon("text-select")}${esc(tr("terminal:settings.selection"))}</h3>
+            <label>${esc(tr("terminal:settings.double_click_separators"))}</label>
+            <div class="terminal-settings-inline"><input id="terminalSettingWordSeparators" value="${esc(settings.word_separators)}"><button type="button" onclick="resetTerminalWordSeparators()">${esc(tr("terminal:settings.reset"))}</button></div>
+            <label class="check-row"><input id="terminalSettingShiftDoubleClick" type="checkbox" ${settings.shift_double_click_uses_separators ? "checked" : ""}> ${esc(tr("terminal:settings.shift_double_click"))}</label>
+            <label class="check-row"><input id="terminalSettingNonWhitespaceBlock" type="checkbox" ${settings.select_non_whitespace_block ? "checked" : ""}> ${esc(tr("terminal:settings.non_whitespace_block"))}</label>
           </div>
           <div class="terminal-settings-section">
-            <h3>${icon("copy")}复制</h3>
+            <h3>${icon("copy")}${esc(tr("terminal:settings.copy"))}</h3>
             <div class="terminal-settings-check-grid">
-              <label class="check-row"><input id="terminalSettingAutoCopy" type="checkbox" ${settings.auto_copy_selection ? "checked" : ""}> 选中后自动复制</label>
-              <label class="check-row"><input id="terminalSettingTabsToSpaces" type="checkbox" ${settings.copy_tabs_to_spaces ? "checked" : ""}> 制表符转为 4 个空格</label>
-              <label class="check-row"><input id="terminalSettingTrailingNewline" type="checkbox" ${settings.copy_include_trailing_newline ? "checked" : ""}> 包含末尾换行</label>
-              <label class="check-row"><input id="terminalSettingTrimSpaces" type="checkbox" ${settings.copy_trim_trailing_spaces ? "checked" : ""}> 删除行尾空白</label>
+              <label class="check-row"><input id="terminalSettingAutoCopy" type="checkbox" ${settings.auto_copy_selection ? "checked" : ""}> ${esc(tr("terminal:settings.auto_copy"))}</label>
+              <label class="check-row"><input id="terminalSettingTabsToSpaces" type="checkbox" ${settings.copy_tabs_to_spaces ? "checked" : ""}> ${esc(tr("terminal:settings.tabs_to_spaces"))}</label>
+              <label class="check-row"><input id="terminalSettingTrailingNewline" type="checkbox" ${settings.copy_include_trailing_newline ? "checked" : ""}> ${esc(tr("terminal:settings.trailing_newline"))}</label>
+              <label class="check-row"><input id="terminalSettingTrimSpaces" type="checkbox" ${settings.copy_trim_trailing_spaces ? "checked" : ""}> ${esc(tr("terminal:settings.trim_spaces"))}</label>
             </div>
           </div>
           <div class="terminal-settings-section terminal-settings-paste-section">
-            <h3>${icon("clipboard-paste")}粘贴</h3>
-            <label>粘贴多行文本时</label>
+            <h3>${icon("clipboard-paste")}${esc(tr("terminal:settings.paste"))}</h3>
+            <label>${esc(tr("terminal:settings.multiline_behavior"))}</label>
             <select id="terminalSettingMultilinePaste">
-              <option value="prompt" ${settings.multiline_paste_mode === "prompt" ? "selected" : ""}>打开可编辑命令窗口</option>
-              <option value="paste" ${settings.multiline_paste_mode === "paste" ? "selected" : ""}>直接粘贴</option>
-              <option value="single_line" ${settings.multiline_paste_mode === "single_line" ? "selected" : ""}>合并为一行</option>
+              <option value="prompt" ${settings.multiline_paste_mode === "prompt" ? "selected" : ""}>${esc(tr("terminal:settings.multiline_prompt"))}</option>
+              <option value="paste" ${settings.multiline_paste_mode === "paste" ? "selected" : ""}>${esc(tr("terminal:settings.multiline_direct"))}</option>
+              <option value="single_line" ${settings.multiline_paste_mode === "single_line" ? "selected" : ""}>${esc(tr("terminal:settings.multiline_single"))}</option>
             </select>
           </div>
         </div>
       </section>
     </div>
-    <div class="actions terminal-settings-actions"><button type="button" onclick="resetTerminalGlobalSettingsForm()">恢复默认</button><button type="button" onclick="closeTerminalGlobalSettings('${escAttr(key)}')">取消</button><button id="terminalSettingsSave" class="primary" type="button" onclick="saveTerminalGlobalSettings('${escAttr(key)}')">${icon("save")}<span>保存全局设置</span></button></div>
+    <div class="actions terminal-settings-actions"><button type="button" onclick="resetTerminalGlobalSettingsForm()">${esc(tr("terminal:settings.restore_defaults"))}</button><button type="button" onclick="closeTerminalGlobalSettings('${escAttr(key)}')">${esc(tr("common:actions.cancel"))}</button><button id="terminalSettingsSave" class="primary" type="button" onclick="saveTerminalGlobalSettings('${escAttr(key)}')">${icon("save")}<span>${esc(tr("terminal:settings.save"))}</span></button></div>
   </div>`;
   modal.hidden = false;
   modal.onkeydown = event => {
@@ -829,16 +833,16 @@ function terminalGlobalSettingsFormValue() {
 
 async function saveTerminalGlobalSettings(key=activeTabKey) {
   const button = $("terminalSettingsSave");
-  setButtonBusy(button, true, "保存中");
+  setButtonBusy(button, true, tr("common:auto.saving"));
   try {
     const result = await api("/api/runtime-settings", {method:"PUT", body:JSON.stringify({terminal:terminalGlobalSettingsFormValue()})});
     terminalGlobalSettings = normalizeTerminalGlobalSettings(result?.saved?.terminal || result?.terminal);
     if (typeof runtimeSettings !== "undefined" && runtimeSettings) runtimeSettings = {...runtimeSettings, ...result};
     applyTerminalGlobalSettingsToSessions();
     closeTerminalGlobalSettings(key);
-    notify("全局终端设置已保存", "success");
+    notify(tr("terminal:settings.saved"), "success");
   } catch (error) {
-    notify(error.message || "全局终端设置保存失败", "error");
+    notify(error.message || tr("terminal:settings.save_failed"), "error");
   } finally {
     setButtonBusy(button, false);
   }

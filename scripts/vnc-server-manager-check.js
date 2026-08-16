@@ -591,9 +591,9 @@ const reachableMacos = parseDetectionOutput([
 ].join("\n"));
 assert.equal(reachableMacos.status, "ready");
 assert.equal(reachableMacos.recommended_action, "connect");
-assert.match(manualGuide(macos, 5900).summary, /自带屏幕共享/);
-assert.match(manualGuide(macos, 5900).steps.join(" "), /系统设置/);
-assert.match(manualGuide({platform:"unknown"}, 5900).summary, /没有可用的 SSH 管理通道/);
+assert.equal(manualGuide(macos, 5900).summary.key, "macos_summary");
+assert.equal(manualGuide(macos, 5900).steps[0].key, "macos_open_settings");
+assert.equal(manualGuide({platform:"unknown"}, 5900).summary.key, "unknown_summary");
 assert.equal(manualGuide({platform:"unknown"}, 5900).commands.length, 0);
 
 assert.match(DETECT_SCRIPT, /launchctl print system\/com\.apple\.screensharing/);
@@ -651,6 +651,7 @@ const virtualProfile = {id:8, protocol:"vnc", host:"192.0.2.77", port:5900, opti
 let virtualProbeCommand = "";
 const missingProbe = detectVncServer(profile, {
   getConnection:id => Number(id) === 77 ? connection : null,
+  listConnections:() => [connection],
   runSshCommandForConnection:async (_connection, command) => {
     receivedProbeCommand = String(command || "");
     return {status:0, stdout:[
@@ -670,6 +671,7 @@ const missingProbe = detectVncServer(profile, {
 });
 const virtualProbe = detectVncServer(virtualProfile, {
   getConnection:id => Number(id) === 77 ? connection : null,
+  listConnections:() => [connection],
   runSshCommandForConnection:async (_connection, command) => {
     virtualProbeCommand = String(command || "");
     return {status:0, stdout:[

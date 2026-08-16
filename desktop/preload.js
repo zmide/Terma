@@ -10,11 +10,20 @@ contextBridge.exposeInMainWorld("termaDesktop", {
   setTheme(theme) {
     if (theme === "dark" || theme === "light") ipcRenderer.send("terma:set-theme", theme);
   },
+  setInterfaceLanguage(language) {
+    if (language === "zh-CN" || language === "en-US") ipcRenderer.send("terma:set-interface-language", language);
+  },
   readClipboardText() {
     return ipcRenderer.invoke("terma:clipboard-read");
   },
   writeClipboardText(text) {
     return ipcRenderer.invoke("terma:clipboard-write", String(text ?? ""));
+  },
+  readClipboardImage() {
+    return ipcRenderer.invoke("terma:clipboard-read-image");
+  },
+  writeClipboardImage(data) {
+    return ipcRenderer.invoke("terma:clipboard-write-image", data);
   },
   startSftpDrag(payload, requestId) {
     ipcRenderer.send("terma:sftp-start-drag", {
@@ -53,13 +62,13 @@ contextBridge.exposeInMainWorld("termaDesktop", {
   },
   onSftpDragResult(callback) {
     if (typeof callback !== "function") return () => {};
-    const handler = (_event, result) => callback(result && typeof result === "object" ? result : {ok:false, message:"无法启动系统拖拽"});
+    const handler = (_event, result) => callback(result && typeof result === "object" ? result : {ok:false, message:""});
     ipcRenderer.on("terma:sftp-drag-result", handler);
     return () => ipcRenderer.removeListener("terma:sftp-drag-result", handler);
   },
   onSftpDragError(callback) {
     if (typeof callback !== "function") return () => {};
-    const handler = (_event, message) => callback(String(message || "无法启动系统拖拽"));
+    const handler = (_event, message) => callback(String(message || ""));
     ipcRenderer.on("terma:sftp-drag-error", handler);
     return () => ipcRenderer.removeListener("terma:sftp-drag-error", handler);
   },

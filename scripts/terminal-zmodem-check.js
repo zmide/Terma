@@ -31,6 +31,7 @@ const sandbox = {
   performance,
   WebSocket:{OPEN:1},
   cleanTerminalCommandText:value => String(value || "").replace(/[\x00-\x1f\x7f]/g, "").trim(),
+  tr:(key, options={}) => options.defaultValue || key,
   currentTerminalPromptCommand:() => "",
   terminalBroadcastKeys:() => [],
   queueTerminalOutput(session, output) { session.outputs.push(output); },

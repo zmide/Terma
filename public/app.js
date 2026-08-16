@@ -84,12 +84,16 @@ refreshIcons();
 document.addEventListener("scroll", () => {
   if (!isMobileLayout()) hideActionMenu();
 }, true);
-window.termaDesktop?.onSftpDragError?.(message => notify(message, "error"));
+window.termaDesktop?.onSftpDragError?.(message => notify(
+  message || tr("sftp:drag.native_start_failed", {defaultValue:"无法启动系统拖拽"}),
+  "error"
+));
 window.termaDesktop?.onNotification?.(payload => {
   void handleNotificationEvent(payload?.event, {fromDesktop:true, display:payload?.display !== false});
 });
 window.termaDesktop?.onNotificationAction?.(action => handleNotificationAction(action));
-Promise.all([loadAll(), loadRuntimeSettings()]).then(() => {
+Promise.all([loadAll(), loadRuntimeSettings()]).then(async () => {
+  await ensureTermaLanguageOnboarding();
   const restored = restoreTabsState();
   if (!restored) renderWelcome();
   window.workspaceRestorePending = false;

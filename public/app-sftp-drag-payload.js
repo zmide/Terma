@@ -43,30 +43,31 @@ function sftpNativeDragStartTiming() {
 function sftpNativeDragFallbackInfo() {
   const capabilities = window.termaDesktop?.capabilities;
   if (capabilities?.platform !== "linux" || capabilities?.sftpExternalDrag !== "staged") return null;
+  const reasonCode = String(capabilities.sftpNativeDragReasonCode || "").trim().toLowerCase();
   const reason = String(capabilities.sftpNativeDragReason || "").trim();
   const normalizedReason = reason.toLowerCase();
-  let reasonText = reason || "系统缺少 FUSE3 运行环境";
-  let action = "请检查系统 FUSE3 运行环境后重启 Terma";
+  let reasonText = reason || tr("sftp:drag.fuse_missing");
+  let action = tr("sftp:drag.fuse_check_action");
   if (normalizedReason.includes("/dev/fuse is unavailable")) {
-    reasonText = "系统没有提供 /dev/fuse";
-    action = "请安装 FUSE3 并启用 FUSE 内核设备；容器或沙箱中还需向应用开放 /dev/fuse";
+    reasonText = tr("sftp:drag.dev_fuse_unavailable");
+    action = tr("sftp:drag.dev_fuse_install_action");
   } else if (normalizedReason.includes("cannot access /dev/fuse")) {
-    reasonText = "当前用户无权访问 /dev/fuse";
-    action = "请按当前发行版的方式授予 FUSE 设备访问权限，重新登录后再启动 Terma";
+    reasonText = tr("sftp:drag.dev_fuse_denied");
+    action = tr("sftp:drag.dev_fuse_permission_action");
   } else if (normalizedReason.includes("fusermount3 is unavailable")) {
-    reasonText = "系统没有安装 FUSE3（fusermount3）";
-    action = "请安装 fuse3 运行包后重启 Terma";
+    reasonText = tr("sftp:drag.fusermount_missing");
+    action = tr("sftp:drag.fusermount_install_action");
   } else if (normalizedReason.includes("runtime directory cannot be prepared")) {
-    reasonText = "当前用户的运行目录不可写";
-    action = "请检查 XDG_RUNTIME_DIR 权限后重启 Terma";
-  } else if (normalizedReason.includes("辅助程序尚未安装")) {
-    reasonText = "安装包中缺少 Linux 拖出组件";
-    action = "请重新安装完整的 Terma 桌面版";
+    reasonText = tr("sftp:drag.runtime_directory_unwritable");
+    action = tr("sftp:drag.runtime_directory_action");
+  } else if (reasonCode === "linux_helper_missing") {
+    reasonText = tr("sftp:drag.helper_missing");
+    action = tr("sftp:drag.helper_reinstall_action");
   }
   return {
     reason:reasonText,
     action,
-    hint:"Linux 当前使用兼容拖出；跨主机可直接拖动，保存到本机需准备完成后再拖一次"
+    hint:tr("sftp:drag.linux_compat_hint")
   };
 }
 
@@ -75,7 +76,7 @@ function showSftpNativeDragFallbackNotice() {
   if (!fallback || sftpNativeDragFallbackNoticeShown) return;
   sftpNativeDragFallbackNoticeShown = true;
   notify(
-    `Linux 一次拖出当前不可用\n${fallback.reason}。${fallback.action}。当前仍可使用兼容拖出，准备完成后再拖一次即可。`,
+    tr("sftp:drag.linux_fallback_notice", {reason:fallback.reason, action:fallback.action}),
     "info"
   );
 }
@@ -84,9 +85,9 @@ function sftpDragSourceHint() {
   const mode = sftpExternalDragMode();
   const fallback = sftpNativeDragFallbackInfo();
   if (fallback) return fallback.hint;
-  if (mode === "streaming") return "拖到其他 SFTP 标签可跨主机复制；拖出窗口可直接保存到本机";
-  if (mode === "staged") return "拖到其他 SFTP 标签可跨主机复制；拖出窗口可准备下载到本机";
-  return "Web 版仅支持拖到其他 SFTP 标签跨主机复制；保存到本机请使用“下载”";
+  if (mode === "streaming") return tr("sftp:drag.streaming_hint");
+  if (mode === "staged") return tr("sftp:drag.staged_hint");
+  return tr("sftp:drag.web_hint");
 }
 
 function cleanupSftpNativeDragCache(now=Date.now()) {
@@ -111,7 +112,7 @@ function stageSftpNativeDrag(connectionId, entries) {
     body:JSON.stringify({paths:entries.map(item => item.path)})
   }).then(staged => {
     const result = {files:Array.isArray(staged.files) ? staged.files : [], createdAt:Date.now(), promise:null};
-    if (!result.files.length) throw new Error("没有可拖出的文件");
+    if (!result.files.length) throw new Error(tr("sftp:drag.no_files"));
     sftpNativeDragCache.set(key, result);
     return result;
   }).catch(error => {

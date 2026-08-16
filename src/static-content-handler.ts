@@ -18,6 +18,7 @@ function vendorFile(packageName, relativePath) {
 }
 
 const VENDOR_FILES = new Map([
+  ["/vendor/i18next/i18next.min.js", vendorFile("i18next", "dist/umd/i18next.min.js")],
   ["/vendor/lucide/lucide.min.js", vendorFile("lucide", "dist/umd/lucide.min.js")],
   ["/vendor/diff/diff.min.js", vendorFile("diff", "dist/diff.min.js")],
   ["/vendor/xterm/xterm.css", vendorFile("@xterm/xterm", "css/xterm.css")],
@@ -33,7 +34,7 @@ VENDOR_FILES.set("/vendor/ace/theme-tomorrow_night.css", vendorFile("ace-builds"
 const NOVNC_VENDOR_DIR = vendorFile("@novnc/novnc", "core/..");
 
 function loginPage() {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Terma 登录</title><link rel="stylesheet" href="/login.css"><script src="/login.js" defer></script></head><body><div class="card"><h1>Terma</h1><div class="muted">请输入 Web 访问密码；仅配置 Token 时也可直接输入 Token。</div><label for="password">密码或 Token</label><div class="password-field"><input id="password" type="password" autocomplete="current-password" autofocus><button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false"><svg id="passwordShowIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg><svg id="passwordHideIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 3l18 18"></path><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c6.5 0 10 8 10 8a18.3 18.3 0 0 1-2.3 3.5"></path><path d="M6.6 6.6C3.7 8.5 2 12 2 12s3.5 8 10 8a10.8 10.8 0 0 0 5.4-1.4"></path></svg></button></div><button id="loginButton" class="login-button" type="button">登录</button><div id="err" class="err"></div></div></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title data-login-i18n="title">Terma 登录</title><link rel="stylesheet" href="/login.css"><script src="/login.js" defer></script></head><body><button id="languageToggle" class="language-toggle" type="button" title="切换到 English" aria-label="切换到 English">文/A</button><div class="card"><h1>Terma</h1><div class="muted" data-login-i18n="description">请输入 Web 访问密码；仅配置 Token 时也可直接输入 Token。</div><label for="password" data-login-i18n="credential">密码或 Token</label><div class="password-field"><input id="password" type="password" autocomplete="current-password" autofocus><button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false"><svg id="passwordShowIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"></path><circle cx="12" cy="12" r="3"></circle></svg><svg id="passwordHideIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M3 3l18 18"></path><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c6.5 0 10 8 10 8a18.3 18.3 0 0 1-2.3 3.5"></path><path d="M6.6 6.6C3.7 8.5 2 12 2 12s3.5 8 10 8a10.8 10.8 0 0 0 5.4-1.4"></path></svg></button></div><button id="loginButton" class="login-button" type="button" data-login-i18n="submit">登录</button><div id="err" class="err" role="alert" aria-live="polite"></div></div></body></html>`;
 }
 
 function mainAppContentSecurityPolicy(nonce) {
@@ -53,7 +54,10 @@ function serveStatic(req, res, pathname) {
       "Content-Security-Policy":"default-src 'self'; style-src 'self'; style-src-attr 'none'; script-src 'self'; script-src-attr 'none'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     });
   }
-  const loginAsset = pathname === "/login.css" || pathname === "/login.js";
+  const loginAsset = pathname === "/login.css"
+    || pathname === "/login.js"
+    || pathname === "/locales/zh-CN/login.json"
+    || pathname === "/locales/en-US/login.json";
   if (!loginAsset && !isAuthenticated(req) && authRequired(req)) return send(res, 302, "", {Location:"/login"});
   let file;
   let isVendorFile = VENDOR_FILES.has(pathname);
@@ -78,7 +82,7 @@ function serveStatic(req, res, pathname) {
   if (isVendorFile && (!fs.existsSync(file) || fs.statSync(file).isDirectory())) return sendJson(res, {error:"Vendor file not found"}, 404);
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(PUBLIC_DIR, "index.html");
   const extension = path.extname(file).toLowerCase();
-  const types = {".html":"text/html; charset=utf-8", ".js":"text/javascript; charset=utf-8", ".mjs":"text/javascript; charset=utf-8", ".css":"text/css; charset=utf-8"};
+  const types = {".html":"text/html; charset=utf-8", ".js":"text/javascript; charset=utf-8", ".mjs":"text/javascript; charset=utf-8", ".css":"text/css; charset=utf-8", ".json":"application/json; charset=utf-8"};
   let body = fs.readFileSync(file);
   const responseHeaders = {"Content-Type":types[extension] || "application/octet-stream", "Cache-Control":"no-cache"};
   if (extension === ".html" && path.basename(file) === "index.html") {

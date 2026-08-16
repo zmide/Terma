@@ -1,94 +1,96 @@
 function updateStatusHtml() {
   const update = updateSettings;
   if (!update) {
-    return `<div class="update-card"><div class="update-card-head"><strong>GitHub Release 更新</strong><span>正在读取版本信息</span></div><div class="update-status checking"><div><strong>正在检查更新</strong><span>正在读取 GitHub Releases。</span></div><span class="status-pill">检查中</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>重新检查</span></button></div></div>`;
+    return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:updates.reading_version"))}</span></div><div class="update-status checking"><div><strong>${esc(tr("settings:updates.checking"))}</strong><span>${esc(tr("settings:updates.reading_releases"))}</span></div><span class="status-pill">${esc(tr("settings:updates.checking_short"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("settings:updates.check_again"))}</span></button></div></div>`;
   }
   if (update.error) {
-    return `<div class="update-card"><div class="update-card-head"><strong>GitHub Release 更新</strong><span>检查失败</span></div><div class="update-status failed"><div><strong>暂时无法检查更新</strong><span>${esc(update.error)}</span></div><span class="status-pill failed">失败</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>重试</span></button></div></div>`;
+    return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:updates.check_failed"))}</span></div><div class="update-status failed"><div><strong>${esc(tr("settings:updates.check_unavailable"))}</strong><span>${esc(update.error)}</span></div><span class="status-pill failed">${esc(tr("settings:updates.failed"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("common:actions.retry"))}</span></button></div></div>`;
   }
-  const currentVersion = update.current_version ? `v${String(update.current_version).replace(/^v/i, "")}` : "当前版本未知";
+  const currentVersion = update.current_version ? `v${String(update.current_version).replace(/^v/i, "")}` : tr("settings:updates.current_unknown");
   if (!update.latest_version) {
-    return `<div class="update-card"><div class="update-card-head"><strong>GitHub Release 更新</strong><span>${esc(currentVersion)}</span></div><div class="update-status"><div><strong>尚未检查更新</strong><span>启动检查完成后会自动更新此处。</span></div><span class="status-pill">待检查</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>立即检查</span></button></div></div>`;
+    return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(currentVersion)}</span></div><div class="update-status"><div><strong>${esc(tr("settings:auto.update_not_checked"))}</strong><span>${esc(tr("settings:updates.auto_refresh_hint"))}</span></div><span class="status-pill">${esc(tr("settings:updates.pending_check"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("settings:updates.check_now"))}</span></button></div></div>`;
   }
-  const latestVersion = update.latest_version ? `v${String(update.latest_version).replace(/^v/i, "")}` : "尚无正式版本";
-  const checkedAt = update.checked_at ? new Date(update.checked_at).toLocaleString("zh-CN", {hour12:false}) : "尚未检查";
-  const publishedAt = update.published_at ? new Date(update.published_at).toLocaleDateString("zh-CN") : "";
+  const latestVersion = update.latest_version ? `v${String(update.latest_version).replace(/^v/i, "")}` : tr("settings:auto.update_no_release");
+  const locale = document.documentElement.lang || "zh-CN";
+  const checkedAt = update.checked_at ? new Date(update.checked_at).toLocaleString(locale, {hour12:false}) : tr("settings:auto.update_not_checked");
+  const publishedAt = update.published_at ? new Date(update.published_at).toLocaleDateString(locale) : "";
   // A completed manual update makes any persisted download result irrelevant.
   const download = update.update_available ? (update.download_status || {}) : {};
   const progress = Math.max(0, Math.min(100, Number(download.progress_percent || 0)));
   const statusLabel = download.state === "downloading"
     ? download.phase === "probing"
-      ? "正在测速"
+      ? tr("settings:auto.update_speed_test")
       : download.phase === "verifying"
-        ? "正在校验"
-        : "下载中"
+        ? tr("settings:auto.update_verify")
+        : tr("settings:auto.update_download")
     : download.state === "downloaded"
-      ? "已下载并校验"
+      ? tr("settings:auto.update_downloaded")
       : download.state === "failed"
-        ? "下载失败"
-        : update.update_available ? "可更新" : "已是最新版";
+        ? tr("settings:auto.update_failed")
+        : tr(update.update_available ? "settings:auto.update_available" : "settings:auto.update_latest");
   const resourceName = update.update_available
-    ? download.selected_asset_name || download.asset_name || "未找到当前平台资源"
-    : "当前无需下载";
+    ? download.selected_asset_name || download.asset_name || tr("settings:auto.update_no_asset")
+    : tr("settings:auto.update_no_download", {defaultValue:"当前无需下载"});
   const platformLabels = {win32:"Windows", darwin:"macOS", linux:"Linux"};
-  const packageLabels = {portable:"便携版", installer:"安装版", dmg:"DMG", zip:"ZIP", appimage:"AppImage", deb:"DEB", rpm:"RPM"};
+  const packageLabels = {portable:tr("settings:auto.update_portable", {defaultValue:"便携版"}), installer:tr("settings:auto.update_installer", {defaultValue:"安装版"}), dmg:"DMG", zip:"ZIP", appimage:"AppImage", deb:"DEB", rpm:"RPM"};
   const target = [platformLabels[download.platform] || download.platform, download.arch, packageLabels[download.package_type] || download.package_type].filter(Boolean).join(" · ");
   const progressText = download.state === "downloading"
     ? download.phase === "probing"
-      ? "正在测试直连和加速线路"
+      ? tr("settings:updates.testing_routes")
       : download.phase === "verifying"
-        ? `100% · 正在校验 SHA-256`
+        ? tr("settings:updates.verifying_sha", {progress:100})
         : `${Math.round(progress)}% · ${formatUpdateBytes(download.bytes_downloaded)} / ${formatUpdateBytes(download.size || download.selected_asset_size)}`
     : download.state === "downloaded"
       ? `100% · ${formatUpdateBytes(download.size)}`
       : `${Math.round(progress)}%`;
   const sourceSpeed = formatUpdateSpeed(download.source_speed_bytes_per_second);
+  const sourceLabel = download.source_id === "direct" ? tr("settings:updates.direct_route") : download.source_label;
   const sourceText = download.phase === "probing"
-    ? "正在并行测速"
-    : download.source_label
-      ? `${download.source_label}${sourceSpeed ? ` · 测速 ${sourceSpeed}` : ""}`
+    ? tr("settings:auto.update_parallel_speed")
+    : sourceLabel
+      ? `${sourceLabel}${sourceSpeed ? tr("settings:updates.speed_suffix", {speed:sourceSpeed}) : ""}`
       : update.update_available
-        ? "下载前自动选择最快线路"
+        ? tr("settings:auto.select_fastest_route")
         : "";
   const notes = updateReleaseNotesHtml(update);
   const releaseUrl = safeGitHubReleaseUrl(update.release_url);
-  const releaseLink = releaseUrl ? `<a class="button-link" href="${escAttr(releaseUrl)}" target="_blank" rel="noopener">${icon("external-link")}<span>查看 Release</span></a>` : "";
+  const releaseLink = releaseUrl ? `<a class="button-link" href="${escAttr(releaseUrl)}" target="_blank" rel="noopener">${icon("external-link")}<span>${esc(tr("settings:updates.view_release"))}</span></a>` : "";
   const downloadedCurrent = download.state === "downloaded"
     && String(download.version || "").replace(/^v/i, "") === String(update.latest_version || "").replace(/^v/i, "")
     && Boolean(download.asset_name)
     && download.asset_name === download.selected_asset_name;
   const openDirectoryAction = download.can_open_directory
-    ? `<button onclick="openDownloadedUpdateDirectory()">${icon("folder-open")}<span>打开下载目录</span></button>`
+    ? `<button onclick="openDownloadedUpdateDirectory()">${icon("folder-open")}<span>${esc(tr("settings:updates.open_download_directory"))}</span></button>`
     : "";
   const redownloadAction = downloadedCurrent
-    ? `<button id="downloadUpdateBtn" onclick="downloadUpdatePackage(true)">${icon("download")}<span>重新下载</span></button>`
+    ? `<button id="downloadUpdateBtn" onclick="downloadUpdatePackage(true)">${icon("download")}<span>${esc(tr("settings:auto.update_redownload"))}</span></button>`
     : "";
   const downloadAction = update.update_available
     ? downloadedCurrent
       ? download.package_type === "portable"
-        ? `${openDirectoryAction || `<span class="muted">便携版已下载并通过校验；请在运行设备的 updates 目录中找到文件，关闭旧版本后手动替换。</span>`}${redownloadAction}`
-        : `${download.can_open ? `<button class="primary" onclick="openDownloadedUpdate()">${icon("package-open")}<span>打开已校验安装包</span></button>` : ""}${openDirectoryAction || (!download.can_open ? `<span class="muted">安装包已下载并通过校验；请在运行设备的 updates 目录中手动安装。</span>` : "")}${redownloadAction}`
+        ? `${openDirectoryAction || `<span class="muted">${esc(tr("settings:updates.portable_ready_hint"))}</span>`}${redownloadAction}`
+        : `${download.can_open ? `<button class="primary" onclick="openDownloadedUpdate()">${icon("package-open")}<span>${esc(tr("settings:updates.open_verified_package"))}</span></button>` : ""}${openDirectoryAction || (!download.can_open ? `<span class="muted">${esc(tr("settings:updates.installer_ready_hint"))}</span>` : "")}${redownloadAction}`
       : download.state === "downloading"
-        ? `<button id="downloadUpdateBtn" disabled>${icon("download")}<span>${download.phase === "probing" ? "正在测速" : download.phase === "verifying" ? "正在校验" : "正在下载"}</span></button>`
-        : `<button id="downloadUpdateBtn" class="primary" onclick="downloadUpdatePackage()">${icon("download")}<span>${download.state === "failed" ? "重新下载并校验" : "下载并校验"}</span></button>`
+        ? `<button id="downloadUpdateBtn" disabled>${icon("download")}<span>${esc(tr(download.phase === "probing" ? "settings:auto.update_speed_test" : download.phase === "verifying" ? "settings:auto.update_verify" : "settings:auto.update_download"))}</span></button>`
+        : `<button id="downloadUpdateBtn" class="primary" onclick="downloadUpdatePackage()">${icon("download")}<span>${esc(tr(download.state === "failed" ? "settings:updates.redownload_verify" : "settings:auto.update_download_verify"))}</span></button>`
     : "";
-  const downloadError = download.state === "failed" && download.error ? `<div class="warning">更新下载失败：${esc(download.error)}</div>` : "";
+  const downloadError = download.state === "failed" && download.error ? `<div class="warning">${esc(tr("settings:updates.download_failed_detail", {error:download.error}))}</div>` : "";
   const ignoreControl = update.update_available
-    ? `<label class="check-row update-ignore-row"><input id="updateIgnoreCurrentVersion" type="checkbox" ${update.update_ignored ? "checked" : ""} onchange="setUpdateVersionIgnored(this)"> 忽略 ${esc(latestVersion)} 的更新提醒</label><div class="muted update-ignore-help">只隐藏该版本的提示弹窗和红点，关于页面仍可正常下载；出现更高版本时会自动恢复提醒。</div>`
+    ? `<label class="check-row update-ignore-row"><input id="updateIgnoreCurrentVersion" type="checkbox" ${update.update_ignored ? "checked" : ""} onchange="setUpdateVersionIgnored(this)"> ${esc(tr("settings:auto.ignore_version", {version:latestVersion}))}</label><div class="muted update-ignore-help">${esc(tr("settings:auto.ignore_version_hint"))}</div>`
     : "";
   return `<div class="update-card">
-    <div class="update-card-head"><strong>GitHub Release 更新</strong><span>当前版本 ${esc(currentVersion)}</span></div>
+    <div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:auto.current_version", {version:currentVersion}))}</span></div>
     <dl class="update-details">
-      <div><dt>状态</dt><dd><span class="status-pill ${download.state === "failed" ? "failed" : update.update_available ? "reconnecting" : "running"}">${esc(statusLabel)}</span><small>最近检查 ${esc(checkedAt)}</small></dd></div>
-      <div><dt>最新版本</dt><dd><strong>${esc(latestVersion)}</strong>${publishedAt ? `<small>发布于 ${esc(publishedAt)}</small>` : ""}</dd></div>
-      <div><dt>资源</dt><dd><strong title="${escAttr(resourceName)}">${esc(resourceName)}</strong>${target ? `<small>${esc(target)}</small>` : ""}</dd></div>
-      ${sourceText ? `<div><dt>线路</dt><dd><strong>${esc(sourceText)}</strong><small>线路不可用时会自动切换</small></dd></div>` : ""}
-      <div><dt>进度</dt><dd><strong>${esc(progressText)}</strong><div class="update-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}"><i style="width:${progress}%"></i></div></dd></div>
+      <div><dt>${esc(tr("settings:updates.status"))}</dt><dd><span class="status-pill ${download.state === "failed" ? "failed" : update.update_available ? "reconnecting" : "running"}">${esc(statusLabel)}</span><small>${esc(tr("settings:auto.last_checked", {status:checkedAt}))}</small></dd></div>
+      <div><dt>${esc(tr("settings:auto.latest_version"))}</dt><dd><strong>${esc(latestVersion)}</strong>${publishedAt ? `<small>${esc(tr("settings:auto.published_at", {date:publishedAt}))}</small>` : ""}</dd></div>
+      <div><dt>${esc(tr("settings:auto.asset"))}</dt><dd><strong title="${escAttr(resourceName)}">${esc(resourceName)}</strong>${target ? `<small>${esc(target)}</small>` : ""}</dd></div>
+      ${sourceText ? `<div><dt>${esc(tr("settings:auto.route"))}</dt><dd><strong>${esc(sourceText)}</strong><small>${esc(tr("settings:auto.route_fallback"))}</small></dd></div>` : ""}
+      <div><dt>${esc(tr("settings:auto.progress"))}</dt><dd><strong>${esc(progressText)}</strong><div class="update-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}"><i style="width:${progress}%"></i></div></dd></div>
     </dl>
     ${notes}${downloadError}
-    <div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>检查更新</span></button>${downloadAction}${releaseLink}</div>
+    <div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("settings:auto.check_updates"))}</span></button>${downloadAction}${releaseLink}</div>
     ${ignoreControl}
-    <div class="muted">自动匹配运行 Terma 主机的平台、架构和 Windows 安装类型；下载前会测试直连与加速线路并自动选择最快线路，文件仍按 GitHub 提供的 SHA-256 校验，不会静默安装或自动回滚。</div>
+    <div class="muted">${esc(tr("settings:auto.update_security_hint"))}</div>
   </div>`;
 }
 
@@ -122,7 +124,7 @@ function updateMarkdownInlineHtml(value) {
 }
 
 function updateMarkdownHtml(value, displayedVersion = "") {
-  const lines = String(value || "暂无更新说明").slice(0, 12000).replace(/\r\n?/g, "\n").split("\n");
+  const lines = String(value || tr("settings:updates.no_release_notes")).slice(0, 12000).replace(/\r\n?/g, "\n").split("\n");
   const normalizedVersion = String(displayedVersion || "").trim().replace(/^v/i, "").toLowerCase();
   if (normalizedVersion) {
     const firstContentIndex = lines.findIndex(line => line.trim());
@@ -199,6 +201,35 @@ function updateMarkdownHtml(value, displayedVersion = "") {
   return result.join("");
 }
 
+function localizedUpdateReleaseMarkdown(value) {
+  const source = String(value || "").trim();
+  if (!source) return "";
+  const requestedLanguage = String(document.documentElement.lang || "zh-CN").toLowerCase().startsWith("en") ? "en" : "zh";
+  const lines = source.replace(/\r\n?/g, "\n").split("\n");
+  const languageHeadings = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const heading = /^#{1,6}\s+(.+?)\s*$/.exec(lines[index].trim());
+    if (!heading) continue;
+    const label = heading[1].replace(/<[^>]+>/g, "").trim().toLowerCase();
+    const language = /^(?:english|en(?:-us)?)(?:\s+version)?$/.test(label)
+      ? "en"
+      : /^(?:简体中文|中文|zh(?:-cn)?|chinese)(?:\s+version)?$/.test(label)
+        ? "zh"
+        : "";
+    if (language) languageHeadings.push({index, language});
+  }
+  const selected = languageHeadings.find(item => item.language === requestedLanguage);
+  if (selected) {
+    const next = languageHeadings.find(item => item.index > selected.index);
+    const localized = lines.slice(selected.index + 1, next?.index ?? lines.length).join("\n").trim();
+    if (localized) return localized;
+  }
+  if (requestedLanguage === "en" && /[\u3400-\u9fff]/.test(source)) {
+    return tr("settings:updates.notes_language_unavailable", {defaultValue:"English release notes are not available for this older version. Open its GitHub release page to view the original notes."});
+  }
+  return source;
+}
+
 function updateReleaseNotesHtml(update) {
   const history = Array.isArray(update?.release_notes) && update.release_notes.length
     ? update.release_notes.slice(0, 10)
@@ -206,10 +237,11 @@ function updateReleaseNotesHtml(update) {
       ? [{version:update.latest_version, published_at:update.published_at, notes:update.notes}]
       : [];
   if (!history.length) return "";
-  return `<div class="update-notes"><strong>最近版本更新内容</strong><div class="update-release-list">${history.map((item, index) => {
+  return `<div class="update-notes"><strong>${esc(tr("settings:auto.recent_release_notes", {defaultValue:"最近版本更新内容"}))}</strong><div class="update-release-list">${history.map((item, index) => {
     const version = String(item?.version || "").replace(/^v/i, "");
-    const published = item?.published_at ? new Date(item.published_at).toLocaleDateString("zh-CN") : "";
-    return `<section class="update-release-entry"><div class="update-release-head"><b>${version ? `v${esc(version)}` : index === 0 ? "最新版本" : "上一版本"}</b>${index === 0 ? `<span class="status-pill running">最新</span>` : ""}${published ? `<small>${esc(published)}</small>` : ""}</div><div class="update-release-markdown">${updateMarkdownHtml(item?.notes, version)}</div></section>`;
+    const published = item?.published_at ? new Date(item.published_at).toLocaleDateString(document.documentElement.lang || "zh-CN") : "";
+    const releaseLabel = version ? `v${esc(version)}` : esc(tr(`settings:auto.${index === 0 ? "latest_release" : "previous_release"}`, {defaultValue:index === 0 ? "最新版本" : "上一版本"}));
+    return `<section class="update-release-entry"><div class="update-release-head"><b>${releaseLabel}</b>${index === 0 ? `<span class="status-pill running">${esc(tr("settings:auto.latest_badge", {defaultValue:"最新"}))}</span>` : ""}${published ? `<small>${esc(published)}</small>` : ""}</div><div class="update-release-markdown">${updateMarkdownHtml(localizedUpdateReleaseMarkdown(item?.notes), version)}</div></section>`;
   }).join("")}</div></div>`;
 }
 
@@ -250,7 +282,7 @@ function safeGitHubReleaseUrl(value) {
 async function refreshUpdateStatus(force=false) {
   const inPane = captureSettingsPane();
   const button = $("checkUpdateBtn");
-  setButtonBusy(button, true, "检查中");
+  setButtonBusy(button, true, tr("settings:updates.checking_short"));
   try {
     const status = await api(`/api/updates/check${force ? "?force=1" : ""}`);
     const download = await api("/api/updates/download/status").catch(()=>null);
@@ -260,9 +292,11 @@ async function refreshUpdateStatus(force=false) {
       renderUpdateStatus();
       syncUpdateNoticeForCurrentSection();
     });
-    if (force && !updateSettings.update_ignored) notify(updateSettings.update_available ? `发现新版本 v${String(updateSettings.latest_version || "").replace(/^v/i, "")}` : "当前已经是最新版本", updateSettings.update_available ? "info" : "success");
+    if (force && !updateSettings.update_ignored) notify(updateSettings.update_available
+      ? tr("settings:updates.new_version_found", {version:`v${String(updateSettings.latest_version || "").replace(/^v/i, "")}`})
+      : tr("settings:updates.already_latest"), updateSettings.update_available ? "info" : "success");
   } catch (error) {
-    updateSettings = { error:error.message || "连接 GitHub 失败" };
+    updateSettings = { error:error.message || tr("settings:updates.github_connection_failed") };
     inPane(() => {
       renderUpdateStatus();
       syncUpdateNoticeForCurrentSection();
@@ -293,10 +327,10 @@ async function setUpdateVersionIgnored(input) {
       renderUpdateStatus({icons:true});
     });
     syncUpdateNoticeDots();
-    notify(enabled ? `已忽略 v${currentUpdateNoticeVersion()} 的更新提示` : `已恢复 v${currentUpdateNoticeVersion()} 的更新提示`, "success");
+    notify(tr(enabled ? "settings:updates.ignore_enabled" : "settings:updates.ignore_disabled", {version:`v${currentUpdateNoticeVersion()}`}), "success");
   } catch (error) {
     if (input) input.checked = !enabled;
-    notify(error.message || "更新提醒设置保存失败", "error");
+    notify(error.message || tr("settings:updates.ignore_save_failed"), "error");
   } finally {
     inPane(() => {
       const current = $("updateIgnoreCurrentVersion");
@@ -335,13 +369,13 @@ function formatUpdateSpeed(value) {
 async function downloadUpdatePackage(redownload=false) {
   const inPane = captureSettingsPane();
   if (!await confirmModal(
-    `${redownload ? "将重新下载并覆盖当前已下载的更新文件。" : "将从 GitHub Release 下载当前系统的安装产物。"}下载前会同时测试直连和加速线路，自动选择当前最快线路；某条线路失败时会继续尝试其他线路。下载完成后会严格校验 GitHub 提供的 SHA-256 摘要，不会自动安装，也不会关闭当前程序。继续？`,
-    redownload ? "重新下载更新" : "下载并校验更新",
-    redownload ? "重新下载" : "开始下载",
-    "取消"
+    tr(redownload ? "settings:updates.redownload_confirm" : "settings:updates.download_confirm"),
+    tr(redownload ? "settings:auto.update_redownload_action" : "settings:auto.update_download_verify"),
+    tr(redownload ? "settings:auto.update_redownload" : "settings:auto.update_start"),
+    tr("common:actions.cancel")
   )) return;
   const button = $("downloadUpdateBtn");
-  setButtonBusy(button, true, "测速中");
+  setButtonBusy(button, true, tr("settings:auto.update_speed_testing"));
   try {
     const request = api("/api/updates/download", {method:"POST", body:"{}"});
     startUpdateDownloadPolling(inPane);
@@ -350,7 +384,7 @@ async function downloadUpdatePackage(redownload=false) {
     inPane(() => {
       renderUpdateStatus({icons:true});
     });
-    notify("更新安装包已下载并通过 SHA-256 校验", "success");
+    notify(tr("settings:updates.package_verified"), "success");
   } catch (error) {
     const failedStatus = await api("/api/updates/download/status").catch(() => null);
     updateSettings.download_status = failedStatus || {
@@ -373,26 +407,24 @@ async function openDownloadedUpdate() {
     return openDownloadedUpdateDirectory();
   }
   if (!await confirmModal(
-    "将交给系统打开已校验的安装包。安装程序会处理正在运行的旧版本；安装完成并启动新版本后，下载的安装包会自动删除。如果需要手动操作，也可以取消后选择“打开下载目录”。继续？",
-    "打开更新安装包",
-    "打开安装包",
-    "取消"
+    tr("settings:updates.open_package_confirm"),
+    tr("settings:auto.update_open_package"),
+    tr("settings:updates.open_package"),
+    tr("common:actions.cancel")
   )) return;
   await api("/api/updates/open", {method:"POST", body:"{}"});
-  notify("已交给系统打开安装包", "success");
+  notify(tr("settings:updates.package_opened"), "success");
 }
 
 async function openDownloadedUpdateDirectory() {
   const portable = updateSettings?.download_status?.package_type === "portable";
-  const message = portable
-    ? "将打开便携版所在目录。请先关闭当前 Terma，再用新版本文件替换旧版本并重新启动；运行中的便携版不会自动覆盖自身。"
-    : "将打开已校验安装包所在目录，方便手动运行、复制或留存安装包。";
+  const message = tr(portable ? "settings:updates.open_portable_directory_confirm" : "settings:updates.open_installer_directory_confirm");
   if (!await confirmModal(
     message,
-    "打开更新下载目录",
-    "打开目录",
-    "取消"
+    tr("settings:auto.update_open_download"),
+    tr("settings:updates.open_directory"),
+    tr("common:actions.cancel")
   )) return;
   await api("/api/updates/open-directory", {method:"POST", body:"{}"});
-  notify(portable ? "已打开下载目录，请关闭旧版本后手动替换" : "已打开更新下载目录", "success");
+  notify(tr(portable ? "settings:updates.portable_directory_opened" : "settings:updates.directory_opened"), "success");
 }

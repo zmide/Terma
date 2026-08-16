@@ -1,0 +1,14 @@
+{
+  "title": "Terma 登录",
+  "description": "请输入 Web 访问密码；仅配置 Token 时也可直接输入 Token。",
+  "credential": "密码或 Token",
+  "show_password": "显示密码",
+  "hide_password": "隐藏密码",
+  "submit": "登录",
+  "failed": "登录失败",
+  "not_configured": "尚未设置 Web 密码或访问 Token",
+  "invalid": "密码或 Token 不正确",
+  "temporarily_locked": "密码或 Token 不正确，登录已暂时锁定 {{seconds}} 秒",
+  "too_many_attempts": "登录尝试过多，请在 {{seconds}} 秒后重试",
+  "switch_language": "切换到 English"
+}

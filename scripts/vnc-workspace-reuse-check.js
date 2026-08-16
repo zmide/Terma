@@ -90,12 +90,13 @@ assert.match(cachedBranch, /view\.replaceChildren\(session\.workspace\)/, "tab s
 assert.match(cachedBranch, /applyVncDisplayMode\(session\)/, "reattached noVNC canvas must restore its selected display policy immediately");
 assert.doesNotMatch(cachedBranch, /inspectLinuxDesktopForRemoteProfile|connectEmbeddedVnc\(profile, key\)[\s\S]*await/, "cached VNC restore must stay local and synchronous");
 assert.match(renderEmbeddedVnc, /managementNodes[\s\S]*?Array\.from\(view\.childNodes\)/, "opening the embedded viewer must preserve the probe and management DOM");
-assert.match(renderEmbeddedVnc, /showVncManagement\([^)]*\)[\s\S]*?返回探测与管理/, "the VNC toolbar must expose a return-to-management command");
+assert.match(renderEmbeddedVnc, /showVncManagement\([^)]*\)/, "the VNC toolbar must expose a return-to-management command");
+assert.match(renderEmbeddedVnc, /const backLabel = tr\("remote:vnc_ui\.back_management"/, "the VNC toolbar return command must use an i18n label");
 assert.match(renderEmbeddedVnc, /session\.presentation = "viewer"/, "attaching the desktop must remember the viewer presentation");
 assert.match(openEmbeddedVncDesktop, /captureRemoteDesktopRenderScope\(profile\.id, key, view\)[\s\S]*?withRemoteDesktopRenderScope\(renderScope/, "late embedded VNC probes must be scoped to the view that requested them");
 assert.match(openEmbeddedVncDesktop, /finally \{\s*if \(button\) setButtonBusy\(button, false\);\s*\}/, "the cached launch button must leave its busy state even after it is detached from the document");
 assert.doesNotMatch(openEmbeddedVncDesktop, /document\.contains\(button\)/, "detached management controls must not retain an opening state");
-assert.match(syncEmbeddedVncManagementControls, /setButtonBusy\(launchButton, false\)[\s\S]*?label\.textContent = "重新进入"[\s\S]*?closeButton\.hidden = false/, "a retained desktop must expose re-enter and close actions on the probe page");
+assert.match(syncEmbeddedVncManagementControls, /setButtonBusy\(launchButton, false\)[\s\S]*?label\.textContent = tr\("remote:vnc_status\.reenter"[\s\S]*?closeButton\.hidden = false/, "a retained desktop must expose localized re-enter and close actions on the probe page");
 assert.match(showVncManagement, /view\.replaceChildren\(\.\.\.session\.managementNodes\)/, "returning from the viewer must restore the preserved management page");
 assert.match(showVncManagement, /captureRemoteDesktopRenderScope\(profileId, key, view\)[\s\S]*?session\.presentation = "management"/, "returning to management must invalidate stale desktop renders and remember the chosen presentation");
 assert.match(showVncManagement, /inspectVncServer\(profileId, null, container\)/, "restored management state should refresh its remote probe in place");
@@ -276,6 +277,7 @@ async function checkEmbeddedVncPresentationScope() {
     inspectLinuxDesktopForRemoteProfile:async () => ({platform_supported:true, has_desktop:true}),
     renderLinuxDesktopMissingWorkspace:() => { throw new Error("unexpected missing desktop render"); },
     renderEmbeddedVnc:() => { renders += 1; },
+    tr:(key, options={}) => options.defaultValue || key,
     notify:() => {}
   };
   vm.runInNewContext(`${openEmbeddedVncDesktop}\nthis.testOpenEmbeddedVnc = openEmbeddedVncDesktop;`, context);

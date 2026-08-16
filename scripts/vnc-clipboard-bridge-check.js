@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   MAX_CLIPBOARD_BYTES,
   buildClipboardDetectionScript,
@@ -11,6 +13,9 @@ const {
   vncClipboardHelperInstallPlan,
   writeVncRemoteClipboard
 } = require("../dist/vnc-clipboard");
+const root = path.resolve(__dirname, "..");
+const englishRemote = JSON.parse(fs.readFileSync(path.join(root, "public", "locales", "en-US", "remote.json"), "utf8"));
+const chineseRemote = JSON.parse(fs.readFileSync(path.join(root, "public", "locales", "zh-CN", "remote.json"), "utf8"));
 const legacyPrefix = ["T", "D"].join("");
 
 const detectionScript = buildClipboardDetectionScript(5900);
@@ -27,13 +32,14 @@ function decodeRemotePosixPayload(command) {
 }
 
 async function main() {
-  const profile = {id:7, protocol:"vnc", options:{source_ssh_connection_id:73}};
+  const profile = {id:7, protocol:"vnc", host:"mac.test", options:{source_ssh_connection_id:73}};
   const connection = {id:73, ssh_host:"mac.test", ssh_port:22, ssh_user:"tester"};
   const commands = [];
   const text = "Terma macOS VNC clipboard 中文\n第二行 😀";
   const encoded = Buffer.from(text, "utf8").toString("base64");
   let step = 0;
   const dependencies = {
+    listConnections:() => [connection],
     getConnection(id) {
       assert.equal(id, 73);
       return connection;
@@ -100,7 +106,7 @@ async function main() {
     ],
     runSshCommandForConnection:async () => ({status:0, stdout:"TERMA_VNC_CLIPBOARD_MODE=macos\nTERMA_VNC_CLIPBOARD_TOOL=pbcopy\nTERMA_VNC_CLIPBOARD_OS=Darwin\n", stderr:""})
   });
-  assert.equal(automaticallyMatchedId, 0, "按主机匹配不应依赖再次查询数据库");
+  assert.equal(automaticallyMatchedId, 73, "按主机唯一匹配后应读取完整 SSH 凭据");
   assert.equal(autoCapability.available, true);
   assert.equal(autoCapability.connection_id, 73);
   assert.equal(autoCapability.resolved_by, "host");
@@ -112,16 +118,26 @@ async function main() {
     runSshCommandForConnection:async () => ({status:1, stderr:"must not run"})
   });
   assert.equal(noMatch.available, false);
-  assert.match(noMatch.reason, /选择 SSH 剪贴板辅助连接/);
+  assert.match(noMatch.reason, /没有找到同主机的 SSH 管理连接/);
 
   clearVncClipboardCapabilityCache();
-  const linuxProfile = {id:8, protocol:"vnc", options:{source_ssh_connection_id:74}};
+  const ambiguous = await detectVncClipboardBridge(autoProfile, {
+    getConnection:() => connection,
+    listConnections:() => [connection, {...connection,id:74,name:"Duplicate"}],
+    runSshCommandForConnection:async () => ({status:1, stderr:"must not run"})
+  });
+  assert.equal(ambiguous.available, false);
+  assert.match(ambiguous.reason, /多个同主机 SSH 连接/);
+
+  clearVncClipboardCapabilityCache();
+  const linuxProfile = {id:8, protocol:"vnc", host:"linux.test", options:{source_ssh_connection_id:74}};
   const linuxConnection = {id:74, ssh_host:"linux.test", ssh_port:22, ssh_user:"operator"};
   const linuxText = "Linux VNC 中文双向剪贴板";
   const linuxEncoded = Buffer.from(linuxText, "utf8").toString("base64");
   let linuxStep = 0;
   const linuxCommands = [];
   const linuxDependencies = {
+    listConnections:() => [linuxConnection],
     getConnection:id => Number(id) === 74 ? linuxConnection : null,
     async runSshCommandForConnection(receivedConnection, command) {
       assert.equal(receivedConnection, linuxConnection);
@@ -165,6 +181,7 @@ async function main() {
 
   clearVncClipboardCapabilityCache();
   const missingLinuxHelper = await inspectVncClipboardHelper(linuxProfile, {
+    listConnections:() => [linuxConnection],
     getConnection:id => Number(id) === 74 ? linuxConnection : null,
     async runSshCommandForConnection() {
       return {status:0, stdout:[
@@ -182,7 +199,10 @@ async function main() {
   assert.equal(missingLinuxHelper.install_plan.local_offline.available, true);
   assert.deepEqual(missingLinuxHelper.install_plan.local_offline.package_names, ["xclip"]);
   assert.equal(missingLinuxHelper.uninstall_plan.available, false);
-  assert.match(missingLinuxHelper.guide.summary, /X11/i);
+  assert.equal(missingLinuxHelper.guide.summary.i18n_key, "remote:clipboard_guide.linux_summary");
+  assert.equal(missingLinuxHelper.guide.summary.params.session, "x11");
+  assert.match(englishRemote.clipboard_guide.linux_summary, /session/i);
+  assert.match(chineseRemote.clipboard_guide.linux_summary, /图形会话/);
 
   const guideResult = vncClipboardHelperGuideResult(missingLinuxHelper);
   assert.equal(guideResult.ok, true);
@@ -194,7 +214,7 @@ async function main() {
   assert.equal(guideResult.after.platform, "linux");
   assert.equal(guideResult.install_plan.online.available, true);
   assert.equal(guideResult.uninstall_plan.available, false);
-  assert.match(guideResult.guide.summary, /X11/i);
+  assert.equal(guideResult.guide.summary.i18n_key, "remote:clipboard_guide.linux_summary");
 
   const waylandPlan = vncClipboardHelperInstallPlan({
     available:true,
@@ -209,6 +229,7 @@ async function main() {
 
   clearVncClipboardCapabilityCache();
   const unsupported = await detectVncClipboardBridge(profile, {
+    listConnections:() => [connection],
     getConnection:() => connection,
     runSshCommandForConnection:async () => ({status:0, stdout:"TERMA_VNC_CLIPBOARD_MODE=unsupported\n", stderr:""})
   });

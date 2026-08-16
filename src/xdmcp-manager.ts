@@ -1,4 +1,5 @@
 const { buildRemotePosixCommand } = require("./remote-posix");
+const { publicError, remoteOutputError } = require("./public-error");
 const { componentInstallCommand, componentInstallPlan } = require("./remote-component-installer");
 const { packagePlan: rdpPackagePlan } = require("./rdp-server-manager");
 const { createXdmcpRenderingDiagnostics } = require("./remote-graphics-rendering");
@@ -627,7 +628,7 @@ apt-get install -y xfce4 dbus-x11`;
   if (packageManager === "dnf") return String.raw`dnf group install -y "Xfce"
 dnf install -y dbus-x11`;
   if (packageManager === "pacman") return String.raw`pacman -S --noconfirm xfce4 dbus`;
-  throw new Error("当前系统没有可自动安装的 XFCE 包管理器");
+  throw publicError("XDMCP_XFCE_PACKAGE_MANAGER_UNSUPPORTED", "当前系统没有可自动安装的 XFCE 包管理器", { manager:packageManager || "unknown" });
 }
 
 function xrdpXfceConfigurationScript() {
@@ -959,31 +960,31 @@ printf 'TERMA_CLEANED_SESSIONS=%s\nTERMA_CLEANED_USER=%s\nTERMA_CLEANED_DISPLAY=
 }
 
 function buildConfigurationScript(diagnostics, action, restart = true, options: any = {}) {
-  if (!diagnostics.privileged) throw new Error("所选 SSH 连接需要 root 或免密 sudo 权限");
+  if (!diagnostics.privileged) throw publicError("XDMCP_ADMIN_REQUIRED", "所选 SSH 连接需要 root 或免密 sudo 权限");
   if (action === "cleanup-sessions") {
-    if (!diagnostics.can_cleanup_remote_sessions) throw new Error("没有可由 Terma 安全结束的远程图形会话");
+    if (!diagnostics.can_cleanup_remote_sessions) throw publicError("XDMCP_CLEANUP_UNAVAILABLE", "没有可由 Terma 安全结束的远程图形会话");
     return remoteGraphicalCleanupScript(diagnostics);
   }
   if (action === "uninstall-lightdm") {
     const plan = lightdmUninstallPlan(diagnostics);
-    if (!plan?.available || !plan.command) throw new Error(plan?.reason || "当前 LightDM 不能安全自动卸载");
+    if (!plan?.available || !plan.command) throw publicError("XDMCP_UNINSTALL_UNAVAILABLE", plan?.reason || "当前 LightDM 不能安全自动卸载");
     return plan.command;
   }
   const detectedSession = String(diagnostics.preferred_session?.id || "");
   const session = /^[A-Za-z0-9_.+-]+$/.test(detectedSession) ? detectedSession : "";
   if (action === "install-lightdm") {
-    if (!diagnostics.replacement_available) throw new Error("当前系统不支持自动安装并切换 LightDM");
+    if (!diagnostics.replacement_available) throw publicError("XDMCP_LIGHTDM_INSTALL_UNSUPPORTED", "当前系统不支持自动安装并切换 LightDM");
     return lightdmConfigurationScript({enable:true, restart, install:true, firewall:diagnostics.firewall, session, previousService:String(diagnostics.service || ""), installCommand:String(options.install_command || "")});
   }
   if (action === "repair-xrdp") {
-    if (!diagnostics.xrdp_needs_repair) throw new Error("当前系统没有检测到需要修复的 XFCE xrdp 会话");
+    if (!diagnostics.xrdp_needs_repair) throw publicError("XDMCP_XRDP_REPAIR_UNAVAILABLE", "当前系统没有检测到需要修复的 XFCE xrdp 会话");
     return rootWrapper(String.raw`set -eu
 ${xrdpXfceConfigurationScript()}
 printf 'TERMA_XRDP_CONFIGURED=xfce\n'
 `);
   }
   if (action === "install-xfce") {
-    if (diagnostics.manager !== "lightdm" || !diagnostics.can_install_xfce) throw new Error("当前系统无法由 Terma 自动安装并配置 XFCE");
+    if (diagnostics.manager !== "lightdm" || !diagnostics.can_install_xfce) throw publicError("XDMCP_XFCE_INSTALL_UNAVAILABLE", "当前系统无法由 Terma 自动安装并配置 XFCE");
     return lightdmConfigurationScript({
       enable:true,
       restart,
@@ -996,7 +997,7 @@ printf 'TERMA_XRDP_CONFIGURED=xfce\n'
       forceUserSession:true
     });
   }
-  if (!diagnostics.supported) throw new Error("当前显示管理器无法由 Terma 自动配置 XDMCP");
+  if (!diagnostics.supported) throw publicError("XDMCP_MANAGER_UNSUPPORTED", "当前显示管理器无法由 Terma 自动配置 XDMCP", { manager:diagnostics.manager || "unknown" });
   const enable = action !== "disable";
   return diagnostics.manager === "gdm"
     ? gdmConfigurationScript({enable, restart, firewall:diagnostics.firewall})
@@ -1007,8 +1008,9 @@ async function detectXdmcpServer(profile, dependencies) {
   const connection = resolveManagementConnection(profile, dependencies);
   const result = await dependencies.runSshCommandForConnection(connection, buildRemotePosixCommand(DETECT_SCRIPT), 30000);
   if (result.status !== 0) {
-    const message = `${result.stderr || result.stdout || result.error?.message || "远端探测失败"}`.trim();
-    throw new Error(message || "远端 XDMCP 探测失败");
+    const output = `${result.stderr || result.stdout || result.error?.message || ""}`.trim();
+    if (output) throw remoteOutputError(output);
+    throw publicError("XDMCP_PROBE_FAILED", "远端 XDMCP 探测失败");
   }
   return {
     ok:true,
@@ -1062,13 +1064,13 @@ async function configureXdmcpServer(profile, data, dependencies) {
         : "install-lightdm";
   }
   const offlineAction = offlineActionMap.get(action) || "";
-  if (!new Set(["enable", "disable", "restart", "install-lightdm", "uninstall-lightdm", "install-xfce", "repair-xrdp", "repair-session", "cleanup-sessions", ...localActionMap.keys(), ...offlineActionMap.keys()]).has(action)) throw new Error("XDMCP 管理操作无效");
+  if (!new Set(["enable", "disable", "restart", "install-lightdm", "uninstall-lightdm", "install-xfce", "repair-xrdp", "repair-session", "cleanup-sessions", ...localActionMap.keys(), ...offlineActionMap.keys()]).has(action)) throw publicError("XDMCP_ACTION_INVALID", "XDMCP 管理操作无效");
   const confirmation = String(data?.confirmation || "");
   if (action === "uninstall-lightdm") {
-    if (confirmation !== "XDMCP_UNINSTALL_LIGHTDM") throw new Error("请确认卸载 LightDM 并恢复原显示管理器");
+    if (confirmation !== "XDMCP_UNINSTALL_LIGHTDM") throw publicError("XDMCP_UNINSTALL_CONFIRMATION_REQUIRED", "请确认卸载 LightDM 并恢复原显示管理器");
   } else if (action === "cleanup-sessions") {
-    if (confirmation !== "XDMCP_END_REMOTE_SESSIONS") throw new Error("请确认结束同账号的远程图形会话");
-  } else if (confirmation !== "XDMCP_TRUSTED_LAN") throw new Error("请确认只在可信局域网启用 XDMCP");
+    if (confirmation !== "XDMCP_END_REMOTE_SESSIONS") throw publicError("XDMCP_CLEANUP_CONFIRMATION_REQUIRED", "请确认结束同账号的远程图形会话");
+  } else if (confirmation !== "XDMCP_TRUSTED_LAN") throw publicError("XDMCP_TRUSTED_LAN_CONFIRMATION_REQUIRED", "请确认只在可信局域网启用 XDMCP");
   const connection = resolveManagementConnection(profile, dependencies);
   const before: any = await detectXdmcpServer(profile, dependencies);
   const privileged = typeof dependencies.runPrivilegedSshCommandForConnection === "function";
@@ -1078,10 +1080,11 @@ async function configureXdmcpServer(profile, data, dependencies) {
     const localPlan = packagePlan?.component_plan?.local_offline || packagePlan?.local_offline;
     const packages = localPlan?.package_names || packagePlan?.local_offline_packages || [];
     if (!before.platform_unsupported && before.package_manager !== "apt" && !localPlan?.available) {
-      throw new Error(`本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前检测到 ${before.package_manager || "非 APT 包管理器"}，请返回选择其他可用方式`);
+      const manager = before.package_manager || "non-apt";
+      throw publicError("XDMCP_LOCAL_OFFLINE_UNSUPPORTED", `本机下载后离线安装仅支持 Debian/Ubuntu 及兼容 APT/.deb 系统；当前检测到 ${manager}，请返回选择其他可用方式`, { manager });
     }
-    if (!localPlan?.available || !packages.length) throw new Error("当前 XDMCP 操作没有可用的本机离线软件包方案");
-    if (typeof dependencies.startRemoteOfflineInstall !== "function") throw new Error("当前后端未启用远端组件离线任务中心");
+    if (!localPlan?.available || !packages.length) throw publicError("XDMCP_LOCAL_OFFLINE_UNAVAILABLE", "当前 XDMCP 操作没有可用的本机离线软件包方案");
+    if (typeof dependencies.startRemoteOfflineInstall !== "function") throw publicError("XDMCP_OFFLINE_TASKS_UNAVAILABLE", "当前后端未启用远端组件离线任务中心");
     const configuredBefore = privileged && !before.privileged ? {...before, privileged:true} : before;
     const configurationScript = buildConfigurationScript(configuredBefore, localAction, data?.restart !== false, {install_command:":"});
     const task = await dependencies.startRemoteOfflineInstall({
@@ -1112,7 +1115,7 @@ async function configureXdmcpServer(profile, data, dependencies) {
     const packagePlan = before.package_plans?.[offlineAction === "install-xfce" ? "xfce" : "lightdm"] || xdmcpPackagePlan(before, offlineAction);
     const selected = componentInstallCommand(packagePlan?.component_plan || packagePlan?.install_plan || packagePlan, "offline");
     installCommand = String(selected?.command || packagePlan?.offline_command || "").trim();
-    if (!installCommand) throw new Error("远端没有可用的 XDMCP 软件包缓存；请返回安装界面选择仍可用的方式，或查看手动说明");
+    if (!installCommand) throw publicError("XDMCP_REMOTE_CACHE_UNAVAILABLE", "远端没有可用的 XDMCP 软件包缓存；请返回安装界面选择仍可用的方式，或查看手动说明");
   }
   const effectiveAction = offlineAction || action;
   const validateAfter = after => validateXdmcpState(effectiveAction, after, data?.restart !== false);
@@ -1156,12 +1159,13 @@ async function configureXdmcpServer(profile, data, dependencies) {
     ? await dependencies.runPrivilegedSshCommandForConnection(connection, command, timeoutMs)
     : await dependencies.runSshCommandForConnection(connection, command, timeoutMs);
   if (result.status !== 0) {
-    const message = `${result.stderr || result.stdout || result.error?.message || "配置失败"}`.trim();
-    throw new Error(message || "XDMCP 配置失败");
+    const output = `${result.stderr || result.stdout || result.error?.message || ""}`.trim();
+    if (output) throw remoteOutputError(output);
+    throw publicError("XDMCP_CONFIGURATION_FAILED", "XDMCP 配置失败");
   }
   const after = await waitForXdmcpState(profile, dependencies, effectiveAction, data?.restart !== false);
   const validation = validateAfter(after);
-  if (validation !== true) throw new Error(typeof validation === "string" ? validation : "XDMCP 状态验证未通过");
+  if (validation !== true) throw publicError("XDMCP_STATE_VALIDATION_FAILED", typeof validation === "string" ? validation : "XDMCP 状态验证未通过");
   return {ok:true, action, mode:offlineAction ? "offline" : "online", before, after, output:String(result.stdout || "").trim(), temporary_authorization:privileged};
 }
 

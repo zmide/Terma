@@ -14,6 +14,8 @@ const database = require("../dist/db");
 const connectionUi = readFrontendDomain(path.join(__dirname, ".."), "connections");
 const remoteUi = readFrontendDomain(path.join(__dirname, ".."), "remote");
 const appCss = fs.readFileSync(path.join(__dirname, "..", "public", "app.css"), "utf8");
+const zhConnections = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "public", "locales", "zh-CN", "connections.json"), "utf8"));
+const enConnections = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "public", "locales", "en-US", "connections.json"), "utf8"));
 
 assert.match(connectionUi, /function renderRemoteHostGroups\(profiles\)/);
 assert.doesNotMatch(connectionUi, /remoteProfiles\.forEach\(profile => remoteHostOpen\.add\(remoteHostKey\(profile\)\)\)/, "其他连接中的服务器子菜单首次进入时应保持折叠");
@@ -27,7 +29,9 @@ const remoteHostKey = Function(`${remoteHostKeySource}; return remoteHostKey;`)(
 assert.equal(remoteHostKey({group_name:"生产", host:"EXAMPLE.COM"}), remoteHostKey({group_name:"生产", host:"example.com"}));
 assert.notEqual(remoteHostKey({group_name:"生产", host:"example.com"}), remoteHostKey({group_name:"测试", host:"example.com"}));
 assert.match(connectionUi, /remoteProfileOpenActionsForSsh\(id\)/, "SSH 更多菜单必须读取同主机的已有其他连接");
-assert.match(connectionUi, /label:"打开其他连接…"/, "SSH 更多菜单必须提供已有连接快捷入口");
+assert.match(connectionUi, /tr\("connections:actions\.open_other_connections"/, "SSH 更多菜单必须通过国际化词条提供已有连接快捷入口");
+assert.equal(zhConnections.actions.open_other_connections, "打开其他连接…");
+assert.equal(enConnections.actions.open_other_connections, "Open other connection…");
 assert.match(remoteUi, /function remoteProfilesForSshConnection\(connection\)/);
 assert.match(remoteUi, /return profileHost === host;/, "已有连接快捷入口必须严格按标准化主机地址关联");
 assert.doesNotMatch(remoteUi, /profileHost === host \|\|/, "来源 SSH 编号不得把不同主机的连接错误挂到快捷入口");

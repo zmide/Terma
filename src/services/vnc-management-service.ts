@@ -1,4 +1,4 @@
-const { getConnection, listConnections } = require("../db");
+const { getConnection, listConnections, repairRemoteProfileManagementConnection } = require("../db");
 const { componentInstallCommand } = require("../remote-component-installer");
 const { runSshCommandForConnection } = require("../ssh");
 const {
@@ -26,6 +26,8 @@ const {
 async function inspectVncServerForProfile(profile) {
   return detectVncServer(profile, {
     getConnection,
+    listConnections,
+    repairManagementConnection:(item, connectionId) => repairRemoteProfileManagementConnection(item.id, connectionId),
     runSshCommandForConnection
   });
 }
@@ -206,7 +208,12 @@ async function configureVncServerForProfile(profile, data: any = {}) {
 
 async function inspectVncClipboardHelperForProfile(profile) {
   clearVncClipboardCapabilityCache();
-  return inspectVncClipboardHelper(profile, { getConnection, listConnections, runSshCommandForConnection });
+  return inspectVncClipboardHelper(profile, {
+    getConnection,
+    listConnections,
+    repairManagementConnection:(item, connectionId) => repairRemoteProfileManagementConnection(item.id, connectionId),
+    runSshCommandForConnection
+  });
 }
 
 async function configureVncClipboardHelperForProfile(profile, data: any = {}) {

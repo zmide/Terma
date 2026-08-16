@@ -9,9 +9,9 @@ async function confirmSftpDownloadNotice(downloadSettings) {
   if (sftpDownloadNoticeRequests.has(noticeKey)) return sftpDownloadNoticeRequests.get(noticeKey);
   const request = (async () => {
     const message = desktop
-      ? `下载完成后会自动保存到：\n${downloadSettings.effective_directory || "系统下载目录"}\n\n之后可在 SFTP 全局设置中修改。`
-      : `下载完成后会由浏览器保存到当前${isMobileLayout() ? "手机" : "设备"}的下载目录。\n\n浏览器可能会询问保存位置或拦截多个文件下载。`;
-    const accepted = await confirmModal(message, "首次下载提示", "继续下载", "取消");
+      ? tr("sftp:transfer.desktop_download_notice", {path:downloadSettings.effective_directory || tr("sftp:settings.system_download_directory")})
+      : tr("sftp:transfer.browser_download_notice", {device:tr(isMobileLayout() ? "sftp:transfer.phone" : "sftp:transfer.device")});
+    const accepted = await confirmModal(message, tr("sftp:transfer.first_download_title"), tr("sftp:transfer.continue_download"), tr("common:actions.cancel"));
     if (accepted) localStorage.setItem(noticeKey, "1");
     return accepted;
   })();
@@ -50,8 +50,37 @@ async function downloadSftp(id, path, type="file") {
     startSftpJobsTimer();
     return true;
   } catch (error) {
-    notify(error.message || "下载失败", "error");
+    notify(error.message || tr("sftp:transfer.download_failed"), "error");
     return false;
+  }
+}
+
+async function retryCompletedSftpDownload(jobId, button=null) {
+  const job = sftpLatestJobs.find(item => String(item.id) === String(jobId));
+  if (!job || job.type !== "download") return notify(tr("sftp:transfer.download_job_missing"), "error");
+  const actionKey = `sftp-task:download-again:${jobId}`;
+  if (!beginUiAction(actionKey, button, tr("sftp:transfer.preparing"))) return false;
+  try {
+    const settings = await getSftpDownloadSettings();
+    if (!await confirmSftpDownloadNotice(settings)) return false;
+    let result;
+    if (job.archive_download && Array.isArray(job.archive_source_paths) && job.archive_source_paths.length) {
+      result = await api(`/api/connections/${Number(job.connection_id)}/sftp/download-batch`, {
+        method:"POST",
+        body:JSON.stringify({paths:job.archive_source_paths, mode:"archive"})
+      });
+    } else {
+      result = await queueSftpDownload(Number(job.connection_id), String(job.remote_path || ""), "file");
+    }
+    trackSftpBrowserDownload(result);
+    await refreshSftpJobs();
+    startSftpJobsTimer();
+    return true;
+  } catch (error) {
+    notify(error.message || tr("sftp:transfer.redownload_failed"), "error");
+    return false;
+  } finally {
+    endUiAction(actionKey, button);
   }
 }
 
@@ -68,10 +97,10 @@ function downloadWithProgress(url, onProgress, fallbackName="download") {
       if (xhr.status < 200 || xhr.status >= 300) {
         const reader = new FileReader();
         reader.onload = () => {
-          try { reject(new Error(JSON.parse(String(reader.result || "")).error || xhr.statusText || "下载失败")); }
-          catch { reject(new Error(xhr.statusText || "下载失败")); }
+          try { reject(new Error(JSON.parse(String(reader.result || "")).error || xhr.statusText || tr("sftp:transfer.download_failed"))); }
+          catch { reject(new Error(xhr.statusText || tr("sftp:transfer.download_failed"))); }
         };
-        reader.onerror = () => reject(new Error(xhr.statusText || "下载失败"));
+        reader.onerror = () => reject(new Error(xhr.statusText || tr("sftp:transfer.download_failed")));
         reader.readAsText(xhr.response);
         return;
       }
@@ -88,7 +117,7 @@ function downloadWithProgress(url, onProgress, fallbackName="download") {
       }, 1000);
       resolve();
     };
-    xhr.onerror = () => reject(new Error("下载连接失败：可能是 Terma 服务重启或网络中断。"));
+    xhr.onerror = () => reject(new Error(tr("sftp:transfer.download_connection_failed")));
     xhr.send();
   });
 }
@@ -102,19 +131,19 @@ function normalizeDroppedRelativePath(value, fallback="upload") {
 async function downloadSftpSelection(tabKey=activeTabKey) {
   const tab = tabs.find(item => item.key === tabKey && item.kind === "sftp");
   const entries = selectedSftpEntries(tabKey);
-  if (!tab || !entries.length) return notify("请选择要下载的文件或目录", "info");
+  if (!tab || !entries.length) return notify(tr("sftp:transfer.select_download_items"), "info");
   try {
     const settings = await getSftpDownloadSettings();
     const browser = settings.delivery_mode !== "desktop";
-    const mode = await chooseModal("批量下载", browser
-      ? `已选择 ${entries.length} 项。分别下载会逐项交给当前设备；其中目录会各自打包为 tar.gz。`
-      : `已选择 ${entries.length} 项。分别下载会保留文件夹结构，打包下载会生成 tar.gz 文件。`, [
-      {label:"分别下载", value:"separate", className:"primary"},
-      {label:"打包下载", value:"archive"},
-      {label:"取消", value:""}
+    const mode = await chooseModal(tr("sftp:transfer.batch_download_title"), browser
+      ? tr("sftp:transfer.batch_download_browser", {count:entries.length})
+      : tr("sftp:transfer.batch_download_desktop", {count:entries.length}), [
+      {label:tr("sftp:transfer.download_separately"), value:"separate", className:"primary"},
+      {label:tr("sftp:transfer.download_archive"), value:"archive"},
+      {label:tr("common:actions.cancel"), value:""}
     ]);
     if (!mode || !await confirmSftpDownloadNotice(settings)) return;
-    notify(mode === "separate" ? "正在下载选中项目…" : "正在创建下载压缩包…", "info");
+    notify(tr(mode === "separate" ? "sftp:transfer.downloading_selected" : "sftp:transfer.creating_archive"), "info");
     if (mode === "separate" && browser) {
       for (const entry of entries) await queueSftpDownload(tab.id, entry.path, entry.type);
     } else {
@@ -124,7 +153,7 @@ async function downloadSftpSelection(tabKey=activeTabKey) {
       });
       if (mode === "separate") {
         trackSftpMutationJob(result);
-        notify(`后台传输已开始：${entries.length} 个项目到下载目录`, "info");
+        notify(tr(entries.length === 1 ? "common:notifications.background_transfer_downloads_one" : "common:notifications.background_transfer_downloads_other", {count:entries.length, defaultValue:`后台传输已开始：${entries.length} 个项目到下载目录`}), "info");
       } else {
         trackSftpBrowserDownload(result);
       }
@@ -133,7 +162,7 @@ async function downloadSftpSelection(tabKey=activeTabKey) {
     await refreshSftpJobs();
     startSftpJobsTimer();
   } catch (error) {
-    notify(error.message || "批量下载失败", "error");
+    notify(error.message || tr("sftp:transfer.batch_download_failed"), "error");
   }
 }
 
@@ -145,7 +174,7 @@ async function sendSftpSelectionToDesktop(tabKey=activeTabKey) {
     await sendSftpPathsToDesktop(tab.id, paths);
     clearSftpSelection(tabKey);
   } catch (error) {
-    notify(error.message || "发送到桌面失败", "error");
+    notify(error.message || tr("sftp:transfer.send_desktop_failed"), "error");
   }
 }
 
@@ -270,8 +299,8 @@ function setSftpExternalDropState(active, options={}) {
   overlay.dataset.mode = crossHost ? "copy" : "upload";
   const path = options.path || runtime?.state.path || ".";
   const message = crossHost
-    ? options.title || `松开复制到 ${path}`
-    : options.title || `松开上传到 ${path}`;
+    ? options.title || tr("sftp:transfer.drop_copy_to", {target:path})
+    : options.title || tr("sftp:transfer.drop_upload_to", {target:path});
   showSftpDragHint(message, true, crossHost ? "copy" : "upload", tabKey);
   const visibleHost = sftpElement("sftpList", tabKey) || shell;
   const rect = visibleHost?.getBoundingClientRect?.();
@@ -324,7 +353,7 @@ function restoreSftpDropFeedbackAfterRender(tabKey) {
   if (!drag || !target || target.key !== tabKey) return;
   const state = sftpTabRuntimes.get(tabKey)?.state;
   const directory = Number(state?.connectionId) === Number(target.id) ? state.path : target.path || ".";
-  setSftpExternalDropState(true, {title:`松开复制到 ${target.title}`, path:directory, tabKey});
+  setSftpExternalDropState(true, {title:tr("sftp:transfer.drop_copy_to", {target:target.title}), path:directory, tabKey});
 }
 
 function sftpDataTransferHasFiles(dataTransfer) {
@@ -380,7 +409,7 @@ function handleSftpOwnDragOver(event, enter=false, tabKey=sftpTabKeyFromNode(eve
     if (enter) sftpDropDepth = 1;
     const state = sftpTabRuntimes.get(tabKey)?.state;
     const directory = Number(state?.connectionId) === Number(target.id) ? state.path : target.path || ".";
-    setSftpExternalDropState(true, {title:`松开复制到 ${target.title}`, path:directory, tabKey});
+    setSftpExternalDropState(true, {title:tr("sftp:transfer.drop_copy_to", {target:target.title}), path:directory, tabKey});
   } else {
     sftpDropDepth = 0;
     setSftpExternalDropState(false, {keepHint:true, tabKey});
@@ -399,7 +428,7 @@ function handleLocalFileDragOverSftp(event, tabKey=sftpTabKeyFromNode(event?.cur
   event.stopPropagation?.();
   if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
   const runtime = sftpTabRuntimes.get(String(tabKey || ""));
-  setSftpExternalDropState(true, {title:`松开上传到 ${target.title}`, path:runtime?.state.path || target.path || ".", tabKey});
+  setSftpExternalDropState(true, {title:tr("sftp:transfer.drop_upload_to", {target:target.title}), path:runtime?.state.path || target.path || ".", tabKey});
   return true;
 }
 
@@ -455,7 +484,7 @@ async function handleSftpDrop(event, tabKey=sftpTabKeyFromNode(event?.currentTar
     try {
       if (target?.kind === "sftp" && typeof uploadLocalFilesToSftp === "function") await uploadLocalFilesToSftp(localPayload, target, tabKey);
     } catch (error) {
-      notify(error.message || "上传本地文件失败", "error");
+      notify(error.message || tr("sftp:transfer.upload_local_failed"), "error");
     }
     return;
   }
@@ -480,10 +509,10 @@ async function handleSftpDrop(event, tabKey=sftpTabKeyFromNode(event?.currentTar
   setSftpExternalDropState(false, {tabKey});
   try {
     const files = await collectDroppedFiles(event.dataTransfer);
-    if (!files.length) throw new Error("没有找到可上传的文件");
+    if (!files.length) throw new Error(tr("sftp:transfer.no_upload_files"));
     await uploadSftpFiles(files, tabKey);
   } catch (error) {
-    notify(error.message || "读取拖入文件失败", "error");
+    notify(error.message || tr("sftp:transfer.read_drop_failed"), "error");
   }
 }
 
@@ -507,12 +536,12 @@ async function createRemoteUploadDirectories(connectionId, root, files) {
 
 async function chooseSftpUploadConflict(collisions) {
   if (!collisions.length) return "error";
-  const preview = collisions.slice(0, 6).map(item => item.name || item.filename || "未命名项目").join("\n");
-  const extra = collisions.length > 6 ? `\n等 ${collisions.length} 个同名项` : "";
-  return chooseModal("发现同名文件", `${preview}${extra}\n\n请选择本次上传的处理方式。`, [
-    {label:"覆盖同名文件", value:"overwrite", className:"danger"},
-    {label:"自动改名", value:"rename"},
-    {label:"取消上传", value:""}
+  const preview = collisions.slice(0, 6).map(item => item.name || item.filename || tr("sftp:transfer.unnamed_item")).join("\n");
+  const extra = collisions.length > 6 ? `\n${tr("sftp:transfer.same_name_extra", {count:collisions.length})}` : "";
+  return chooseModal(tr("sftp:transfer.same_name_title"), `${preview}${extra}\n\n${tr("sftp:transfer.choose_upload_behavior")}`, [
+    {label:tr("sftp:transfer.overwrite_same_name"), value:"overwrite", className:"danger"},
+    {label:tr("sftp:transfer.auto_rename"), value:"rename"},
+    {label:tr("sftp:transfer.cancel_upload"), value:""}
   ]);
 }
 
@@ -552,7 +581,13 @@ async function uploadSftpFilesToDirectory(inputFiles, connectionId, root=".", op
       const targetDirectory = parts.length ? joinRemotePath(directory, parts.join("/")) : directory;
       const started = await api(`/api/connections/${Number(connectionId)}/sftp/upload-job`, {
         method:"POST",
-        body:JSON.stringify({path:targetDirectory, filename, conflict:conflict || "error", size:Number(item.file.size || 0)})
+        body:JSON.stringify({
+          path:targetDirectory,
+          filename,
+          conflict:conflict || "error",
+          size:Number(item.file.size || 0),
+          private:options.private === true
+        })
       });
       trackSftpMutationJob(started);
       await refreshSftpJobs();
@@ -600,12 +635,12 @@ async function uploadSftpFile(tabKey=activeTabKey) {
   try {
     await uploadSftpFiles(files, tabKey);
   } catch (error) {
-    notify(error.message || "上传失败", "error");
+    notify(error.message || tr("sftp:transfer.upload_failed"), "error");
   }
 }
 
 function uploadCancelledError() {
-  const error = new Error("上传已取消");
+  const error = new Error(tr("sftp:transfer.upload_cancelled"));
   error.cancelled = true;
   return error;
 }
@@ -648,14 +683,14 @@ function uploadWithProgress(url, body, job) {
       try {
         const data = JSON.parse(xhr.responseText || "{}");
         if (data.status === "cancelled") return finish(() => reject(uploadCancelledError()));
-        finish(() => reject(new Error(data.error || xhr.statusText || "上传失败")));
+        finish(() => reject(new Error(data.error || xhr.statusText || tr("sftp:transfer.upload_failed"))));
       } catch {
-        finish(() => reject(new Error(xhr.responseText || xhr.statusText || "上传失败")));
+        finish(() => reject(new Error(xhr.responseText || xhr.statusText || tr("sftp:transfer.upload_failed"))));
       }
     };
-    xhr.onerror = () => finish(() => reject(request.cancelled ? uploadCancelledError() : new Error("上传连接失败：可能是 Terma 服务重启或网络中断。")));
+    xhr.onerror = () => finish(() => reject(request.cancelled ? uploadCancelledError() : new Error(tr("sftp:transfer.upload_connection_failed"))));
     xhr.onabort = () => finish(() => reject(uploadCancelledError()));
-    xhr.ontimeout = () => finish(() => reject(new Error("上传连接超时")));
+    xhr.ontimeout = () => finish(() => reject(new Error(tr("sftp:transfer.upload_timeout"))));
     xhr.send(body);
   });
 }

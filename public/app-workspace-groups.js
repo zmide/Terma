@@ -11,6 +11,7 @@ const WORKSPACE_TAB_HEIGHT_MIN = 26;
 const WORKSPACE_TAB_HEIGHT_MAX = 48;
 const WORKSPACE_GROUP_STORAGE_VERSION = 1;
 const WORKSPACE_GROUP_MAIN_ID = "workspace-main";
+const WORKSPACE_GROUP_MAIN_LEGACY_NAMES = new Set(["主工作区", "Main workspace"]);
 const legacyWorkspaceApi = {
   renderTabs,
   updateWorkspaceTabScrollControls,
@@ -54,7 +55,7 @@ let workspaceGroupSerial = 0;
 let activeWorkspaceGroupId = WORKSPACE_GROUP_MAIN_ID;
 let workspaceGroups = [{
   id:WORKSPACE_GROUP_MAIN_ID,
-  name:"主工作区",
+  name:"",
   tabs:[],
   layout:null,
   activeTabKey:"",
@@ -80,6 +81,20 @@ function currentWorkspaceGroup() {
   return workspaceGroups.find(group => group.id === activeWorkspaceGroupId)
     || workspaceGroups[0]
     || null;
+}
+
+function normalizedWorkspaceGroupStoredName(groupId, name) {
+  const raw = String(name || "").trim();
+  if (groupId === WORKSPACE_GROUP_MAIN_ID && (!raw || WORKSPACE_GROUP_MAIN_LEGACY_NAMES.has(raw))) return "";
+  return raw;
+}
+
+function workspaceGroupDisplayName(group) {
+  const raw = normalizedWorkspaceGroupStoredName(group?.id, group?.name);
+  if (group?.id === WORKSPACE_GROUP_MAIN_ID && !raw) {
+    return tr("common:auto.main_workspace", {defaultValue:"主工作区"});
+  }
+  return raw || tr("common:auto.workspace", {defaultValue:"工作区"});
 }
 
 function workspaceAllTabs() {
@@ -143,7 +158,7 @@ function trimWorkspacePaneTabHistory(pane) {
 }
 
 function workspaceGroupName() {
-  return currentWorkspaceGroup()?.name || "主工作区";
+  return workspaceGroupDisplayName(currentWorkspaceGroup());
 }
 
 function workspaceGroupPersistableTab(tab) {
@@ -191,11 +206,15 @@ function captureCurrentWorkspaceGroup() {
 function workspaceGroupBarElement() {
   let bar = document.getElementById("workspaceGroupBar");
   const dock = workspaceDockElement();
-  if (bar || !dock?.parentElement) return bar;
+  if (bar) {
+    bar.setAttribute("aria-label", tr("navigation:menus.workspace_groups", {defaultValue:"工作区组"}));
+    return bar;
+  }
+  if (!dock?.parentElement) return null;
   bar = document.createElement("nav");
   bar.id = "workspaceGroupBar";
   bar.className = "workspace-group-bar";
-  bar.setAttribute("aria-label", "工作区组");
+  bar.setAttribute("aria-label", tr("navigation:menus.workspace_groups", {defaultValue:"工作区组"}));
   dock.parentElement.insertBefore(bar, dock);
   return bar;
 }
@@ -219,10 +238,14 @@ function renderWorkspaceGroupBar() {
     const active = group.id === activeWorkspaceGroupId;
     const tabCount = group.tabs.filter(tab => tab?.kind).length;
     const hasActivity = group.tabs.some(tab => tab?.activityState);
-    return `<button class="workspace-group-tab${active ? " active" : ""}${hasActivity ? " has-activity" : ""}" type="button" role="tab" aria-selected="${active}" draggable="true" data-workspace-group-id="${escAttr(group.id)}" title="${escAttr(group.name)}，${tabCount} 个标签${hasActivity ? "，有新的终端活动" : ""}" data-action="workspace-group-switch" data-contextmenu-action="workspace-group-menu" data-dragstart-action="workspace-group-drag-start" data-dragover-action="workspace-group-drag-over" data-drop-action="workspace-group-drop" data-dragend-action="workspace-group-drag-end">${icon("panels-top-left")}<span>${esc(group.name)}</span>${hasActivity ? `<i class="workspace-group-activity" aria-label="有新的终端活动"></i>` : ""}<small>${tabCount}</small></button>`;
+    const displayName = workspaceGroupDisplayName(group);
+    const activityLabel = tr("navigation:menus.workspace_group_activity", {defaultValue:"有新的终端活动"});
+    const activitySuffix = hasActivity ? tr("navigation:menus.workspace_group_activity_suffix", {defaultValue:"，有新的终端活动"}) : "";
+    const tabTitle = tr("navigation:menus.workspace_group_tab_title", {name:displayName, count:tabCount, activity:activitySuffix, defaultValue:`${displayName}，${tabCount} 个标签${activitySuffix}`});
+    return `<button class="workspace-group-tab${active ? " active" : ""}${hasActivity ? " has-activity" : ""}" type="button" role="tab" aria-selected="${active}" aria-label="${escAttr(tabTitle)}" draggable="true" data-i18n-skip data-workspace-group-id="${escAttr(group.id)}" title="${escAttr(tabTitle)}" data-action="workspace-group-switch" data-contextmenu-action="workspace-group-menu" data-dragstart-action="workspace-group-drag-start" data-dragover-action="workspace-group-drag-over" data-drop-action="workspace-group-drop" data-dragend-action="workspace-group-drag-end">${icon("panels-top-left")}<span>${esc(displayName)}</span>${hasActivity ? `<i class="workspace-group-activity" aria-label="${escAttr(activityLabel)}"></i>` : ""}<small>${tabCount}</small></button>`;
   }).join("");
   const selectionActions = workspaceGroupSelectionMode
-    ? `<span class="workspace-group-selection">选择要组合的标签 · 已选 ${selectedCount} 个</span><button class="primary" type="button" data-action="workspace-group-selection-confirm" ${selectedCount < 2 ? "disabled" : ""}>${icon("check")}<span>确认组合</span></button><button type="button" data-action="workspace-group-selection-cancel">${icon("x")}<span>取消</span></button>`
+    ? `<span class="workspace-group-selection">${esc(tr("navigation:menus.workspace_group_selection", {count:selectedCount, defaultValue:`选择要组合的标签 · 已选 ${selectedCount} 个`}))}</span><button class="primary" type="button" title="${escAttr(tr("navigation:menus.workspace_group_confirm", {defaultValue:"确认组合"}))}" aria-label="${escAttr(tr("navigation:menus.workspace_group_confirm", {defaultValue:"确认组合"}))}" data-action="workspace-group-selection-confirm" ${selectedCount < 2 ? "disabled" : ""}>${icon("check")}<span>${esc(tr("navigation:menus.workspace_group_confirm", {defaultValue:"确认组合"}))}</span></button><button type="button" title="${escAttr(tr("common:actions.cancel", {defaultValue:"取消"}))}" aria-label="${escAttr(tr("common:actions.cancel", {defaultValue:"取消"}))}" data-action="workspace-group-selection-cancel">${icon("x")}<span>${esc(tr("common:actions.cancel", {defaultValue:"取消"}))}</span></button>`
     : "";
   bar.innerHTML = `<div class="workspace-group-tabs" role="tablist">${groupButtons}</div><div class="workspace-group-actions">${selectionActions}</div>`;
 }
@@ -250,7 +273,7 @@ function cancelWorkspaceGroupSelection() {
 }
 
 async function confirmWorkspaceGroupSelection() {
-  if (workspaceSelectedTabKeys.size < 2) return notify("请选择至少两个标签", "info");
+  if (workspaceSelectedTabKeys.size < 2) return notify(tr("navigation:menus.workspace_group_minimum", {defaultValue:"请选择至少两个标签"}), "info");
   await createWorkspaceGroupFromSelection();
 }
 
@@ -273,25 +296,25 @@ function nextWorkspaceGroupId() {
 }
 
 function defaultWorkspaceGroupName() {
-  const used = new Set(workspaceGroups.map(group => String(group.name || "").toLowerCase()));
+  const used = new Set(workspaceGroups.map(group => workspaceGroupDisplayName(group).toLowerCase()));
   let index = 1;
-  let name = `工作区 ${index}`;
+  let name = tr("navigation:menus.workspace_group_default_name", {index, defaultValue:`工作区 ${index}`});
   while (used.has(name.toLowerCase())) {
     index += 1;
-    name = `工作区 ${index}`;
+    name = tr("navigation:menus.workspace_group_default_name", {index, defaultValue:`工作区 ${index}`});
   }
   return name;
 }
 
 async function createWorkspaceGroupFromSelection() {
   const selectedKeys = [...workspaceSelectedTabKeys].filter(key => tabs.some(tab => tab.key === key));
-  if (selectedKeys.length < 2) return notify("请选择至少两个标签", "info");
+  if (selectedKeys.length < 2) return notify(tr("navigation:menus.workspace_group_minimum", {defaultValue:"请选择至少两个标签"}), "info");
   hideTabContextMenu();
-  const name = await inputModal("组成工作区", "工作区名称", defaultWorkspaceGroupName());
+  const name = await inputModal(tr("navigation:auto.combine_workspace", {defaultValue:"组成工作区"}), tr("navigation:menus.workspace_group_name", {defaultValue:"工作区名称"}), defaultWorkspaceGroupName());
   if (!name) return;
   const normalizedName = String(name).trim();
-  if (workspaceGroups.some(group => group.name.toLowerCase() === normalizedName.toLowerCase())) {
-    return notify("已经存在同名工作区", "info");
+  if (workspaceGroups.some(group => workspaceGroupDisplayName(group).toLowerCase() === normalizedName.toLowerCase())) {
+    return notify(tr("navigation:menus.workspace_group_duplicate", {defaultValue:"已经存在同名工作区"}), "info");
   }
   const source = captureCurrentWorkspaceGroup();
   if (!source) return;
@@ -314,7 +337,7 @@ async function createWorkspaceGroupFromSelection() {
   workspaceGroupSelectionMode = false;
   workspaceSelectedTabKeys.clear();
   switchWorkspaceGroup(group.id, {notify:false, skipCapture:true});
-  notify(`已组成工作区“${normalizedName}”`, "success");
+  notify(tr("navigation:menus.workspace_group_created", {name:normalizedName, defaultValue:`已组成工作区“${normalizedName}”`}), "success");
 }
 
 function applyWorkspaceGroupState(group) {
@@ -367,7 +390,10 @@ function switchWorkspaceGroup(groupId, options={}) {
   applyWorkspaceGroupState(target);
   saveTabsState();
   revealWorkspaceTab(activeTabKey);
-  if (options.notify !== false) notify(`已切换到“${target.name}”`, "success");
+  if (options.notify !== false) {
+    const name = workspaceGroupDisplayName(target);
+    notify(tr("navigation:menus.workspace_group_switched", {name, defaultValue:`已切换到“${name}”`}), "success");
+  }
 }
 
 function beginWorkspaceGroupDrag(event, groupId, groupElement=event.currentTarget) {
@@ -412,11 +438,11 @@ async function renameWorkspaceGroup(groupId) {
   hideTabContextMenu();
   const group = workspaceGroups.find(item => item.id === groupId);
   if (!group) return;
-  const name = await inputModal("重命名工作区", "工作区名称", group.name);
+  const name = await inputModal(tr("navigation:menus.workspace_group_rename_title", {defaultValue:"重命名工作区"}), tr("navigation:menus.workspace_group_name", {defaultValue:"工作区名称"}), workspaceGroupDisplayName(group));
   if (!name) return;
   const normalizedName = String(name).trim();
-  if (workspaceGroups.some(item => item.id !== group.id && item.name.toLowerCase() === normalizedName.toLowerCase())) {
-    return notify("已经存在同名工作区", "info");
+  if (workspaceGroups.some(item => item.id !== group.id && workspaceGroupDisplayName(item).toLowerCase() === normalizedName.toLowerCase())) {
+    return notify(tr("navigation:menus.workspace_group_duplicate", {defaultValue:"已经存在同名工作区"}), "info");
   }
   group.name = normalizedName;
   renderWorkspaceGroupBar();
@@ -427,7 +453,14 @@ async function dissolveWorkspaceGroup(groupId) {
   hideTabContextMenu();
   const group = workspaceGroups.find(item => item.id === groupId);
   if (!group || group.id === WORKSPACE_GROUP_MAIN_ID) return;
-  if (!await confirmModal(`“${group.name}”中的标签会移回主工作区，会话不会关闭。`, "解散工作区", "解散", "取消", true)) return;
+  const displayName = workspaceGroupDisplayName(group);
+  if (!await confirmModal(
+    tr("navigation:menus.workspace_group_dissolve_message", {name:displayName, defaultValue:`“${displayName}”中的标签会移回主工作区，会话不会关闭。`}),
+    tr("navigation:menus.workspace_group_dissolve_title", {defaultValue:"解散工作区"}),
+    tr("navigation:menus.workspace_group_dissolve", {defaultValue:"解散"}),
+    tr("common:actions.cancel", {defaultValue:"取消"}),
+    true
+  )) return;
   if (group.id === activeWorkspaceGroupId) captureCurrentWorkspaceGroup();
   const main = workspaceGroups.find(item => item.id === WORKSPACE_GROUP_MAIN_ID) || workspaceGroups[0];
   const existing = new Set(main.tabs.map(tab => tab.key));
@@ -455,12 +488,12 @@ async function dissolveWorkspaceGroup(groupId) {
   }
   renderWorkspaceGroupBar();
   saveTabsState();
-  notify(`工作区“${group.name}”已解散`, "success");
+  notify(tr("navigation:menus.workspace_group_dissolved", {name:displayName, defaultValue:`工作区“${displayName}”已解散`}), "success");
 }
 
 function listWorkspaceGroups() {
   captureCurrentWorkspaceGroup();
-  return workspaceGroups.map(group => ({id:group.id, name:group.name, tabCount:group.tabs.length, active:group.id === activeWorkspaceGroupId}));
+  return workspaceGroups.map(group => ({id:group.id, name:workspaceGroupDisplayName(group), tabCount:group.tabs.length, active:group.id === activeWorkspaceGroupId}));
 }
 
 function showWorkspaceGroupContextMenu(event, groupId) {
@@ -473,15 +506,17 @@ function showWorkspaceGroupContextMenu(event, groupId) {
   menu.id = "tabContextMenu";
   menu.className = "context-menu tab-context-menu";
   const options = [
-    ["打开工作区", () => switchWorkspaceGroup(group.id), group.id !== activeWorkspaceGroupId, "panels-top-left"],
-    ["重命名", () => renameWorkspaceGroup(group.id), true, "pencil"],
-    ["保存为预设", () => { hideTabContextMenu(); if (group.id !== activeWorkspaceGroupId) switchWorkspaceGroup(group.id, {notify:false}); saveCurrentNamedWorkspace(); }, true, "save"],
-    ["解散工作区", () => dissolveWorkspaceGroup(group.id), group.id !== WORKSPACE_GROUP_MAIN_ID, "ungroup"]
+    [tr("navigation:menus.workspace_group_open", {defaultValue:"打开工作区"}), () => switchWorkspaceGroup(group.id), group.id !== activeWorkspaceGroupId, "panels-top-left"],
+    [tr("navigation:menus.workspace_group_rename", {defaultValue:"重命名"}), () => renameWorkspaceGroup(group.id), true, "pencil"],
+    [tr("navigation:menus.workspace_group_save_preset", {defaultValue:"保存为预设"}), () => { hideTabContextMenu(); if (group.id !== activeWorkspaceGroupId) switchWorkspaceGroup(group.id, {notify:false}); saveCurrentNamedWorkspace(); }, true, "save"],
+    [tr("navigation:menus.workspace_group_dissolve_title", {defaultValue:"解散工作区"}), () => dissolveWorkspaceGroup(group.id), group.id !== WORKSPACE_GROUP_MAIN_ID, "ungroup"]
   ];
   for (const [label, action, enabled, iconName] of options) {
     const button = document.createElement("button");
     button.type = "button";
     button.innerHTML = `${icon(iconName)}<span>${esc(label)}</span>`;
+    button.title = label;
+    button.setAttribute("aria-label", label);
     button.disabled = !enabled;
     button.onclick = action;
     menu.appendChild(button);

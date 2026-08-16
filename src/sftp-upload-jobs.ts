@@ -2,6 +2,23 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { remotePathOperand, shellQuote, spawnRemote } = require("./sftp-job-paths");
+const { clearSftpJobIssue, setSftpJobIssue } = require("./sftp-job-issues");
+
+function codedSftpJobError(message: string, code: string, params: any = {}) {
+  const error: any = new Error(message);
+  error.sftpJobCode = code;
+  error.sftpJobParams = params;
+  return error;
+}
+
+function uploadCommitErrorCode(message: unknown) {
+  const source = String(message || "").trim();
+  if (source === "远端上传暂存文件不存在") return "sftp_upload_remote_staging_missing";
+  if (source === "远端上传内容不完整") return "sftp_upload_remote_incomplete";
+  if (source === "目标路径是目录，无法覆盖") return "sftp_upload_target_is_directory";
+  if (source === "目标目录已存在同名项目") return "sftp_upload_target_exists";
+  return "";
+}
 
 function createSftpUploadJobs(dependencies: any) {
   const {
@@ -68,6 +85,7 @@ function createSftpUploadJobs(dependencies: any) {
       progress:0,
       remote_path:remotePath,
       remote_temp_path:remoteTempPath,
+      private_mode:options.privateMode === true,
       upload_generation:0,
       local_path:localPath,
       local_path_owned:options.ownsLocalPath !== false,
@@ -83,7 +101,7 @@ function createSftpUploadJobs(dependencies: any) {
 
   function uploadRemoteWriteCommand(connection: any, job: any, append = false) {
     const operator = append ? ">>" : ">";
-    return `cat ${operator} ${remotePathOperand(connection, job.remote_temp_path)}`;
+    return `${job.private_mode ? "umask 077; " : ""}cat ${operator} ${remotePathOperand(connection, job.remote_temp_path)}`;
   }
 
   function uploadRemoteCommitCommand(connection: any, job: any) {
@@ -115,11 +133,11 @@ function createSftpUploadJobs(dependencies: any) {
     } catch {}
   }
 
-  function finishUploadTransfer(job: any, status: string, error = "") {
+  function finishUploadTransfer(job: any, status: string, error = "", errorCode = "", errorParams: any = {}) {
     if (ignoreStoppedTransferFinish(job, status)) return;
     if (job.finished_at && status !== "paused") return;
     job.status = status;
-    job.error = error || "";
+    setSftpJobIssue(job, "error", error, errorCode, errorParams);
     if (status !== "paused") {
       job.finished_at = Date.now();
       job.can_pause = false;
@@ -163,7 +181,9 @@ function createSftpUploadJobs(dependencies: any) {
     child.on("close", (code: number | null, signal: string | null) => {
       if (Number(job.upload_generation || 0) !== Number(generation)) return;
       if (job.status === "cancelled" || job.status === "paused") return;
-      finishUploadTransfer(job, code === 0 ? "done" : "failed", code === 0 ? "" : (job.stderr || `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`));
+      if (code === 0) return finishUploadTransfer(job, "done");
+      if (job.stderr) return finishUploadTransfer(job, "failed", job.stderr, uploadCommitErrorCode(job.stderr));
+      finishUploadTransfer(job, "failed", `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`, signal ? "sftp_process_exit_with_signal" : "sftp_process_exit", {exit_code:code, signal:signal || ""});
     });
     child.stdin.end();
   }
@@ -172,7 +192,8 @@ function createSftpUploadJobs(dependencies: any) {
     if (!job || job.status === "cancelled") return;
     job.status = "failed";
     job.can_pause = false;
-    job.error = error?.message || String(error || "文件接收失败");
+    if (error?.message) setSftpJobIssue(job, "error", error.message, error.sftpJobCode || "", error.sftpJobParams || {});
+    else setSftpJobIssue(job, "error", String(error || "文件接收失败"), "sftp_upload_receive_failed");
     job.finished_at = Date.now();
     finishTransferMetrics(job);
     releaseTransferSlot(job);
@@ -196,7 +217,7 @@ function createSftpUploadJobs(dependencies: any) {
     job.staged_complete = true;
     job.transferred = transferred;
     updateTransferProgress(job);
-    job.error = "";
+    clearSftpJobIssue(job, "error");
     job.finished_at = null;
     resetTransferSpeed(job);
     persistJobs(true);
@@ -225,7 +246,8 @@ function createSftpUploadJobs(dependencies: any) {
       }
       if (job.status === "paused") return;
       if (code === 0) return commitUploadTransfer(job, runGeneration);
-      finishUploadTransfer(job, "failed", job.stderr || `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`);
+      if (job.stderr) return finishUploadTransfer(job, "failed", job.stderr);
+      finishUploadTransfer(job, "failed", `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`, signal ? "sftp_process_exit_with_signal" : "sftp_process_exit", {exit_code:code, signal:signal || ""});
     });
     stream.pipe(child.stdin);
     return uploadJobResult(job);
@@ -251,7 +273,10 @@ function createSftpUploadJobs(dependencies: any) {
     fs.mkdirSync(directory, {recursive:true});
     const safeName = path.basename(String(filename || "upload.bin")).replace(/[<>:"/\\|?*\x00-\x1f]/g, "_") || "upload.bin";
     const localPath = path.join(directory, `${Date.now()}-${crypto.randomBytes(8).toString("hex")}-${safeName}`);
-    const job = createUploadJob(connectionId, localPath, remotePath, size, "receiving", {sizeKnown:options.sizeKnown !== false});
+    const job = createUploadJob(connectionId, localPath, remotePath, size, "receiving", {
+      sizeKnown:options.sizeKnown !== false,
+      privateMode:options.privateMode === true
+    });
     job.conflict_mode = options.conflict === "overwrite" ? "overwrite" : "error";
     jobs.set(job.id, job);
     persistJobs(true);
@@ -278,7 +303,7 @@ function createSftpUploadJobs(dependencies: any) {
     const declaredSize = Math.max(0, Number(request?.headers?.["content-length"] || 0));
     const declaredSizeKnown = request?.headers?.["content-length"] !== undefined;
     if (job.size > 0 && declaredSize > 0 && declaredSize !== job.size) {
-      const error = new Error(`文件大小不一致：应为 ${job.size} 字节，实际 ${declaredSize} 字节`);
+      const error = codedSftpJobError(`文件大小不一致：应为 ${job.size} 字节，实际 ${declaredSize} 字节`, "sftp_upload_size_mismatch", {expected:job.size, actual:declaredSize});
       finishUploadReceiveFailure(job, error);
       throw error;
     }
@@ -316,7 +341,7 @@ function createSftpUploadJobs(dependencies: any) {
           reject(uploadReceiveCancelledError());
           return;
         }
-        const error = source instanceof Error ? source : new Error(String(source || "文件接收失败"));
+        const error = source instanceof Error ? source : codedSftpJobError(String(source || "文件接收失败"), "sftp_upload_receive_failed");
         finishUploadReceiveFailure(job, error);
         reject(error);
       };
@@ -324,7 +349,7 @@ function createSftpUploadJobs(dependencies: any) {
         if (settled) return;
         if (job.status === "cancelled") return fail(uploadReceiveCancelledError());
         const expected = Math.max(0, Number(job.size || declaredSize || 0));
-        if (expected && received !== expected) return fail(new Error(`文件接收不完整：应为 ${expected} 字节，实际 ${received} 字节`));
+        if (expected && received !== expected) return fail(codedSftpJobError(`文件接收不完整：应为 ${expected} 字节，实际 ${received} 字节`, "sftp_upload_receive_incomplete", {expected, actual:received}));
         settled = true;
         clearHandles();
         job.size = expected || received;
@@ -346,15 +371,15 @@ function createSftpUploadJobs(dependencies: any) {
         recordTransferred(job, Number(chunk?.length || 0));
         persistJobs();
       });
-      request.once("aborted", () => fail(new Error("文件接收连接已中断")));
+      request.once("aborted", () => fail(codedSftpJobError("文件接收连接已中断", "sftp_upload_receive_connection_interrupted")));
       request.once("error", fail);
       out.once("error", fail);
       out.once("finish", complete);
       out.once("close", () => {
-        if (!settled && !out.writableFinished) fail(new Error("文件接收连接已关闭"));
+        if (!settled && !out.writableFinished) fail(codedSftpJobError("文件接收连接已关闭", "sftp_upload_receive_connection_closed"));
       });
       if (request.aborted || request.destroyed) {
-        fail(new Error("文件接收连接已中断"));
+        fail(codedSftpJobError("文件接收连接已中断", "sftp_upload_receive_connection_interrupted"));
         return;
       }
       request.pipe(out);
@@ -367,7 +392,7 @@ function createSftpUploadJobs(dependencies: any) {
     if (!job.staged_complete || !job.local_path || !fs.existsSync(job.local_path)) throw new Error("上传暂存文件不存在，无法继续");
     queueTransferJob("upload", job, () => {
       const connection = getSftpConnection(job.connection_id);
-      job.error = "";
+      clearSftpJobIssue(job, "error");
       const generation = Math.max(0, Number(job.upload_generation || 0)) + 1;
       job.upload_generation = generation;
       const temporary = remotePathOperand(connection, job.remote_temp_path);
@@ -385,11 +410,14 @@ function createSftpUploadJobs(dependencies: any) {
       child.on("close", (code: number | null) => {
         if (Number(job.upload_generation || 0) !== generation) return;
         if (job.status === "cancelled" || job.status === "paused") return;
-        if (code !== 0) return finishUploadTransfer(job, "failed", stderr.trim() || "读取远端上传进度失败");
+        if (code !== 0) {
+          if (stderr.trim()) return finishUploadTransfer(job, "failed", stderr.trim());
+          return finishUploadTransfer(job, "failed", "读取远端上传进度失败", "sftp_upload_remote_progress_failed");
+        }
         const offset = Number(stdout.trim() || 0);
         const localSize = fs.statSync(job.local_path).size;
         if (!Number.isSafeInteger(offset) || offset < 0 || offset > localSize) {
-          finishUploadTransfer(job, "failed", "远端暂存文件大小异常，无法继续上传");
+          finishUploadTransfer(job, "failed", "远端暂存文件大小异常，无法继续上传", "sftp_upload_remote_staging_size_invalid");
           return;
         }
         startUploadTransfer(job, offset, generation);

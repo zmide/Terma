@@ -8,11 +8,13 @@ function normalizeDesktopIntegrationScopes(scopes) {
 }
 
 function desktopIntegrationExpiryText(status) {
-  if (status?.authorization_browser_session) return "授权在本次浏览器会话结束或达到 12 小时时失效";
+  if (status?.authorization_browser_session) return tr("remote:desktop_authorization.browser_session_expiry");
   const expiresAt = Number(status?.authorization_expires_at || 0);
   if (!expiresAt) return "";
   const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 60000));
-  return remaining > 0 ? `临时授权约 ${remaining} 分钟后到期` : "临时授权已到期";
+  return remaining > 0
+    ? tr("remote:desktop_authorization.expires_in", {count:remaining})
+    : tr("remote:desktop_authorization.expired");
 }
 
 function normalizeDesktopIntegrationAuthorizationDuration(options={}) {
@@ -20,7 +22,7 @@ function normalizeDesktopIntegrationAuthorizationDuration(options={}) {
   if (authorizationMode === "browser-session") return {authorizationMode, durationMinutes:0};
   const durationMinutes = Number(options.durationMinutes ?? 10);
   if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 480) {
-    throw new Error("授权时长必须是 1 到 480 分钟");
+    throw new Error(tr("remote:desktop_authorization.duration_invalid"));
   }
   return {authorizationMode, durationMinutes};
 }
@@ -45,17 +47,17 @@ async function loadDesktopIntegrationStatus(force=false) {
 async function requestDesktopIntegrationAuthorization(scopes=["xserver", "remote-client"], options={}) {
   const normalizedScopes = normalizeDesktopIntegrationScopes(scopes);
   const duration = normalizeDesktopIntegrationAuthorizationDuration(options);
-  if (!normalizedScopes.length) throw new Error("没有可申请的桌面集成能力");
+  if (!normalizedScopes.length) throw new Error(tr("remote:desktop_authorization.no_scopes"));
   const current = await loadDesktopIntegrationStatus(true);
   if (current.native_desktop || normalizedScopes.every(scope => current.scopes?.includes(scope))) return current;
   if (!current.desktop_backend_available) {
-    if (!options.silent) notify("当前连接的是独立 Web/测试后端，没有可确认授权的 Terma 桌面端", "error");
+    if (!options.silent) notify(tr("remote:desktop_authorization.desktop_unavailable"), "error");
     return null;
   }
   if (!current.can_request_authorization) {
     const message = current.web_session_authenticated
-      ? "桌面集成临时授权只能从运行 Terma 的本机浏览器申请"
-      : "请先使用 Web 密码或访问 Token 登录，再申请桌面集成临时授权";
+      ? tr("remote:desktop_authorization.local_only")
+      : tr("remote:desktop_authorization.login_first");
     if (!options.silent) notify(message, "error");
     return null;
   }
@@ -69,19 +71,19 @@ async function requestDesktopIntegrationAuthorization(scopes=["xserver", "remote
   });
   desktopIntegrationStatusCache = result;
   if (!result.approved || !result.authorized) {
-    if (!options.silent) notify("Terma 桌面端未授予临时桌面集成权限", "info");
+    if (!options.silent) notify(tr("remote:desktop_authorization.not_granted"), "info");
     return null;
   }
   if (!options.silent) notify(duration.authorizationMode === "browser-session"
-    ? "已获得本次浏览器会话的桌面集成授权，最长 12 小时"
-    : `已获得 ${duration.durationMinutes} 分钟桌面集成临时授权`, "success");
+    ? tr("remote:desktop_authorization.browser_session_granted")
+    : tr("remote:desktop_authorization.granted_minutes", {count:duration.durationMinutes}), "success");
   return result;
 }
 
 async function revokeDesktopIntegrationAuthorization(options={}) {
   const result = await api("/api/desktop-integration/authorize", {method:"DELETE", body:"{}"});
   desktopIntegrationStatusCache = null;
-  if (!options.silent) notify("已撤销当前浏览器的桌面集成临时授权", "success");
+  if (!options.silent) notify(tr("remote:desktop_authorization.revoked"), "success");
   return result;
 }
 
@@ -97,17 +99,17 @@ function desktopIntegrationAuthorizationMarkup(status, scopes, options={}) {
   const authorized = status?.native_desktop || normalizedScopes.every(scope => status?.scopes?.includes(scope));
   if (authorized && status?.authorization_kind !== "temporary") return "";
   if (authorized) {
-    return `<div class="connection-test-status success desktop-integration-authorization"><div class="desktop-integration-authorization-copy"><b>浏览器临时授权已启用</b><small>${esc(desktopIntegrationExpiryText(status))}</small></div><div class="desktop-integration-authorization-actions"><button type="button" data-action="desktop-integration-revoke" data-refresh-target="${escAttr(options.refreshTarget || "")}" data-remote-profile-id="${Number(options.remoteProfileId || 0)}">${icon("shield-off")}<span>撤销授权</span></button></div></div>`;
+    return `<div class="connection-test-status success desktop-integration-authorization"><div class="desktop-integration-authorization-copy"><b>${esc(tr("remote:desktop_authorization.enabled"))}</b><small>${esc(desktopIntegrationExpiryText(status))}</small></div><div class="desktop-integration-authorization-actions"><button type="button" data-action="desktop-integration-revoke" data-refresh-target="${escAttr(options.refreshTarget || "")}" data-remote-profile-id="${Number(options.remoteProfileId || 0)}">${icon("shield-off")}<span>${esc(tr("remote:desktop_authorization.revoke"))}</span></button></div></div>`;
   }
   if (!status?.desktop_backend_available) return "";
   const canRequest = Boolean(status.can_request_authorization);
   const detail = canRequest
-    ? "在 Terma 桌面端确认后，当前本机浏览器可在所选时长内调用图形集成功能。"
+    ? tr("remote:desktop_authorization.request_hint")
     : status.web_session_authenticated
-      ? "此授权只能从运行 Terma 的同一台设备上的浏览器申请。"
-      : "请先使用 Web 密码或访问 Token 登录，再申请临时授权。";
-  const controls = canRequest ? `<div class="desktop-integration-authorization-actions"><label class="desktop-integration-duration"><span>授权时长</span><select data-role="desktop-integration-duration" data-change-action="desktop-integration-duration"><option value="5">5 分钟</option><option value="10" selected>10 分钟</option><option value="30">30 分钟</option><option value="60">1 小时</option><option value="custom">自定义</option><option value="browser-session">本次浏览器会话（最长 12 小时）</option></select></label><label class="desktop-integration-custom-duration" hidden><span>分钟</span><input type="number" min="1" max="480" step="1" value="120" inputmode="numeric" data-role="desktop-integration-custom-minutes"></label><button class="primary" type="button" data-action="desktop-integration-authorize" data-scopes="${escAttr(normalizedScopes.join(","))}" data-refresh-target="${escAttr(options.refreshTarget || "")}" data-remote-profile-id="${Number(options.remoteProfileId || 0)}">${icon("shield-check")}<span>申请授权</span></button></div>` : "";
-  return `<div class="connection-test-status warning desktop-integration-authorization"><div class="desktop-integration-authorization-copy"><b>等待桌面授权</b><small>${esc(detail)}</small></div>${controls}</div>`;
+      ? tr("remote:desktop_authorization.same_device_only")
+      : tr("common:notifications.desktop_authorization_login_required");
+  const controls = canRequest ? `<div class="desktop-integration-authorization-actions"><label class="desktop-integration-duration"><span>${esc(tr("remote:desktop_authorization.duration"))}</span><select data-role="desktop-integration-duration" data-change-action="desktop-integration-duration"><option value="5">${esc(tr("remote:desktop_authorization.minutes", {count:5}))}</option><option value="10" selected>${esc(tr("remote:desktop_authorization.minutes", {count:10}))}</option><option value="30">${esc(tr("remote:desktop_authorization.minutes", {count:30}))}</option><option value="60">${esc(tr("remote:desktop_authorization.hour"))}</option><option value="custom">${esc(tr("remote:desktop_authorization.custom"))}</option><option value="browser-session">${esc(tr("remote:desktop_authorization.browser_session_option"))}</option></select></label><label class="desktop-integration-custom-duration" hidden><span>${esc(tr("remote:desktop_authorization.minute_unit"))}</span><input type="number" min="1" max="480" step="1" value="120" inputmode="numeric" data-role="desktop-integration-custom-minutes"></label><button class="primary" type="button" data-action="desktop-integration-authorize" data-scopes="${escAttr(normalizedScopes.join(","))}" data-refresh-target="${escAttr(options.refreshTarget || "")}" data-remote-profile-id="${Number(options.remoteProfileId || 0)}">${icon("shield-check")}<span>${esc(tr("remote:desktop_authorization.request"))}</span></button></div>` : "";
+  return `<div class="connection-test-status warning desktop-integration-authorization"><div class="desktop-integration-authorization-copy"><b>${esc(tr("remote:desktop_authorization.waiting"))}</b><small>${esc(detail)}</small></div>${controls}</div>`;
 }
 
 async function refreshDesktopIntegrationConsumer(element) {
@@ -123,7 +125,7 @@ if (typeof registerTermaAction === "function") {
   registerTermaAction("desktop-integration-authorize", async ({element}) => {
     const scopes = String(element.dataset.scopes || "").split(",");
     const duration = desktopIntegrationAuthorizationSelection(element);
-    setButtonBusy(element, true, "等待桌面端确认...");
+    setButtonBusy(element, true, tr("remote:desktop_authorization.waiting_confirmation"));
     try {
       if (await requestDesktopIntegrationAuthorization(scopes, duration)) await refreshDesktopIntegrationConsumer(element);
     } finally {
@@ -131,7 +133,7 @@ if (typeof registerTermaAction === "function") {
     }
   });
   registerTermaAction("desktop-integration-revoke", async ({element}) => {
-    setButtonBusy(element, true, "撤销中...");
+    setButtonBusy(element, true, tr("remote:desktop_authorization.revoking"));
     try {
       await revokeDesktopIntegrationAuthorization();
       await refreshDesktopIntegrationConsumer(element);

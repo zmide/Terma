@@ -97,6 +97,7 @@ function buildRemoteX11UninstallPlan(discovery: any = {}) {
 }
 
 function buildRemoteX11InstallPlan(discovery: any = {}) {
+  const guideText = (key: string, params: any = {}) => ({i18n_key:`common:x11.${key}`, params});
   const platform = normalizeRemotePlatform(discovery.platform);
   const packageManager = String(discovery.package_manager || "none").toLowerCase();
   const packages = X11_INSTALL_PACKAGES[packageManager] || [];
@@ -134,8 +135,8 @@ function buildRemoteX11InstallPlan(discovery: any = {}) {
       restart_required:true,
       xquartz_installed:Boolean(discovery.xquartz_installed),
       instructions:installed
-        ? ["远端 XQuartz 与 xauth 已安装，无需重复安装。", "如果刚开启 SSH X11 转发，请重新建立 SSH 会话后再启动图形程序。"]
-        : ["Terma 会下载并校验 XQuartz 官方安装包，然后调用 macOS 安装器。", "终端出现 sudo 密码提示时，请输入远端 macOS 账号密码；安装后重新检测 X11 程序。"]
+        ? [guideText("guide_instruction_macos_ready"), guideText("guide_instruction_reconnect")]
+        : [guideText("guide_instruction_macos_install"), guideText("guide_instruction_macos_sudo")]
     };
   }
   if (!packages.length) {
@@ -162,7 +163,7 @@ function buildRemoteX11InstallPlan(discovery: any = {}) {
       manual:plan.manual,
       uninstall:buildRemoteX11UninstallPlan(discovery),
       requires_password:false,
-      instructions:["未识别到 apt、dnf 或 pacman。请在远端终端中按系统发行版手动安装 xauth 与常用 X11 应用。"]
+      instructions:[guideText("guide_instruction_manual_package_manager")]
     };
   }
   const command = packageManager === "brew"
@@ -210,7 +211,7 @@ function buildRemoteX11InstallPlan(discovery: any = {}) {
     manual:plan.manual,
     uninstall:buildRemoteX11UninstallPlan(discovery),
     requires_password:!privileged && packageManager !== "brew",
-    instructions:["安装过程中如果终端出现 sudo 密码提示，请在该终端输入远端 Linux 账号密码。", "安装完成后返回 X11 图形应用窗口并点击重新识别。"]
+    instructions:[guideText("guide_instruction_linux_sudo"), guideText("guide_instruction_redetect")]
   };
 }
 
@@ -465,6 +466,8 @@ function x11RuntimeDiagnostics() {
       platform,
       server:running || (installed ? path.basename(installed) : ""),
       display,
+      reason_code:available ? "xserver_ready" : installed ? "xserver_installed_stopped" : "xserver_runtime_missing",
+      reason_params:{},
       reason:available ? "本机 X Server 已就绪" : installed ? "已找到 X Server，但尚未运行" : "未检测到 VcXsrv、Xming、X410 或 DISPLAY"
     };
   }
@@ -487,6 +490,12 @@ function x11RuntimeDiagnostics() {
       server:application ? "XQuartz" : "",
       display,
       authority_file:state.authorityFile || String(process.env.XAUTHORITY || ""),
+      reason_code:available
+        ? "xquartz_ready"
+        : application
+          ? running ? "xquartz_display_unavailable" : "xquartz_installed_stopped"
+          : "xquartz_not_installed",
+      reason_params:{},
       reason:available ? "XQuartz 已就绪" : application ? running ? "XQuartz 正在运行，但当前会话未识别 DISPLAY" : "已安装 XQuartz，但尚未运行" : "未安装 XQuartz"
     };
   }
@@ -499,6 +508,8 @@ function x11RuntimeDiagnostics() {
     platform,
     server:display ? "X11/XWayland" : "",
     display,
+    reason_code:display ? (xauth ? "linux_x11_ready" : "linux_xauth_missing") : "linux_display_missing",
+    reason_params:{},
     reason:display ? (xauth ? "X11 显示与 xauth 已就绪" : "检测到 DISPLAY，但缺少 xauth") : "当前会话没有 DISPLAY"
   };
 }

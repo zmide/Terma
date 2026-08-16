@@ -1,5 +1,6 @@
 const crypto = require("node:crypto");
 const { readSecuritySettings, writeSecuritySettings } = require("./security");
+const { publicError } = require("./public-error");
 
 let activeKey = null;
 let activeLegacyKey = null;
@@ -80,12 +81,12 @@ function unlockDescriptor(password, descriptor) {
   const version = Number(descriptor.version || 1);
   const rootKey = deriveRootKey(password, descriptor.salt);
   if (version === 1) {
-    if (!safeEqualText(rootKey.toString("hex"), descriptor.check)) throw new Error("主密码不正确");
+    if (!safeEqualText(rootKey.toString("hex"), descriptor.check)) throw publicError("CONFIG_PASSWORD_INCORRECT", "主密码不正确");
     return { version, rootKey, encryptionKey:rootKey };
   }
-  if (![2, CURRENT_ENCRYPTION_VERSION].includes(version)) throw new Error("配置加密版本不受支持");
+  if (![2, CURRENT_ENCRYPTION_VERSION].includes(version)) throw publicError("CONFIG_ENCRYPTION_VERSION_UNSUPPORTED", "配置加密版本不受支持");
   const material = keyMaterial(rootKey, version);
-  if (!safeEqualText(material.verifier, descriptor.check)) throw new Error("主密码不正确");
+  if (!safeEqualText(material.verifier, descriptor.check)) throw publicError("CONFIG_PASSWORD_INCORRECT", "主密码不正确");
   return { version, rootKey, encryptionKey:material.encryptionKey };
 }
 
@@ -133,9 +134,9 @@ function unlockEncryption(password) {
 function enableEncryption(password) {
   const settings = readSecuritySettings();
   if (settings.encryption_enabled || encryptionStatus(settings) !== "disabled") {
-    throw new Error("配置加密已启用或正在切换，请先完成当前操作");
+    throw publicError("CONFIG_ENCRYPTION_BUSY", "配置加密已启用或正在切换，请先完成当前操作");
   }
-  if (String(password || "").length < 12) throw new Error("主密码至少 12 位");
+  if (String(password || "").length < 12) throw publicError("CONFIG_PASSWORD_TOO_SHORT", "主密码至少 12 位", { min:12 });
   const salt = crypto.randomBytes(16).toString("hex");
   const rootKey = deriveRootKey(password, salt);
   const material = keyMaterial(rootKey, CURRENT_ENCRYPTION_VERSION);
@@ -158,7 +159,7 @@ function enableEncryption(password) {
 function beginDisableEncryption() {
   const settings = readSecuritySettings();
   if (!settings.encryption_enabled) return { ok:true, state:"disabled" };
-  if (!activeKey && !activeLegacyKey) throw new Error("配置加密已锁定，请先解锁");
+  if (!activeKey && !activeLegacyKey) throw publicError("CONFIG_ENCRYPTION_LOCKED", "配置加密已锁定，请先解锁", {}, 423);
   writeSecuritySettings({ encryption_enabled:true, encryption_state:"disabling" });
   return { ok:true, state:"disabling", version:encryptionVersion(settings) };
 }
@@ -166,7 +167,7 @@ function beginDisableEncryption() {
 function completeEncryptionEnable() {
   const settings = readSecuritySettings();
   if (!settings.encryption_enabled || encryptionVersion(settings) !== CURRENT_ENCRYPTION_VERSION) {
-    throw new Error("配置加密升级状态无效");
+    throw publicError("CONFIG_ENCRYPTION_UPGRADE_STATE_INVALID", "配置加密升级状态无效");
   }
   writeSecuritySettings({
     encryption_enabled:true,
@@ -205,7 +206,7 @@ function prepareEncryptionUpgrade(password) {
   const version = encryptionVersion(settings);
   if (version === CURRENT_ENCRYPTION_VERSION) return state === "enabling";
   if (state !== "enabled") return false;
-  if (!activeLegacyKey || activeLegacyVersion !== version) throw new Error("配置加密尚未解锁，无法轮换密钥");
+  if (!activeLegacyKey || activeLegacyVersion !== version) throw publicError("CONFIG_ENCRYPTION_ROTATION_LOCKED", "配置加密尚未解锁，无法轮换密钥", {}, 423);
   const salt = crypto.randomBytes(16).toString("hex");
   const rootKey = deriveRootKey(password, salt);
   const material = keyMaterial(rootKey, CURRENT_ENCRYPTION_VERSION);
@@ -256,7 +257,12 @@ function requireEncryptionUnlocked() {
   const transition = state.transition_pending
     ? "配置加密切换尚未完成，请先在设置 > 安全中输入主密码继续修复"
     : "配置加密已锁定，请先在设置 > 安全中输入主密码解锁";
-  const error: any = new Error(transition);
+  const error: any = publicError(
+    state.transition_pending ? "CONFIG_ENCRYPTION_TRANSITION_PENDING" : "CONFIG_ENCRYPTION_LOCKED",
+    transition,
+    {},
+    423
+  );
   error.code = state.transition_pending ? "ENCRYPTION_TRANSITION_PENDING" : "ENCRYPTION_LOCKED";
   error.statusCode = 423;
   throw error;
@@ -266,7 +272,7 @@ function encryptText(value) {
   if (value == null || value === "") return value;
   const settings = readSecuritySettings();
   if (!settings.encryption_enabled) return value;
-  if (!activeKey) throw new Error("配置加密尚未解锁或升级未完成");
+  if (!activeKey) throw publicError("CONFIG_ENCRYPTION_NOT_READY", "配置加密尚未解锁或升级未完成", {}, 423);
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", activeKey, iv);
   cipher.setAAD(V3_CIPHERTEXT_AAD);
@@ -277,7 +283,7 @@ function encryptText(value) {
 
 function decryptWithKey(text, key, aad = null) {
   const [, , ivText, tagText, dataText] = text.split(":");
-  if (!ivText || !tagText || typeof dataText !== "string") throw new Error("配置加密字段格式无效");
+  if (!ivText || !tagText || typeof dataText !== "string") throw publicError("CONFIG_ENCRYPTION_FIELD_INVALID", "配置加密字段格式无效");
   const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(ivText, "base64url"));
   if (aad) decipher.setAAD(aad);
   decipher.setAuthTag(Buffer.from(tagText, "base64url"));
@@ -290,9 +296,15 @@ function decryptText(value) {
     const settings = readSecuritySettings();
     if (text && settings.encryption_enabled) {
       const transitionPending = ["enabling", "disabling"].includes(encryptionStatus(settings));
-      const error: any = new Error(transitionPending
+      const fallbackMessage = transitionPending
         ? "配置加密切换尚未完成，敏感字段已暂停使用"
-        : "配置加密状态与数据库敏感字段不一致，请先修复配置加密");
+        : "配置加密状态与数据库敏感字段不一致，请先修复配置加密";
+      const error: any = publicError(
+        transitionPending ? "CONFIG_ENCRYPTION_TRANSITION_PENDING" : "CONFIG_ENCRYPTION_INCONSISTENT",
+        fallbackMessage,
+        {},
+        423
+      );
       error.code = transitionPending ? "ENCRYPTION_TRANSITION_PENDING" : "ENCRYPTION_INCONSISTENT";
       error.statusCode = 423;
       throw error;

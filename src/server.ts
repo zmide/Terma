@@ -21,6 +21,7 @@ const {
   createRemoteProfileFromConnection,
   createAllRemoteProfilesFromConnection,
   updateRemoteProfile,
+  repairRemoteProfileManagementConnection,
   getVncProfileCredential,
   updateVncProfileCredential,
   duplicateRemoteProfile,
@@ -75,13 +76,16 @@ const {
   testSsh,
   batchRunCommands,
   runSshCommandForConnection,
+  runSshCommandForConnectionStreaming,
   clearConnectionHealthCache
 } = require("./ssh");
 const { diagnoseSshError } = require("./ssh-diagnostics");
+const { publicErrorDetails } = require("./public-error");
 const { inspectExtraArgs } = require("./ssh-command");
 const { deployGeneratedPublicKey, generateSshKey } = require("./ssh-key-wizard");
 const { authorizeQuickConnectionId, createQuickTerminalTicket, revokeQuickTerminalTicket } = require("./quick-terminal");
 const { createTerminalStartupTicket } = require("./terminal-startup");
+const { TERMINAL_CLIPBOARD_IMAGE_MAX_BYTES, writeTerminalClipboardImage } = require("./terminal-clipboard");
 const { x11RuntimeDiagnostics } = require("./x11");
 const { configureXdmcpServer, detectXdmcpServer, resolveManagementConnection } = require("./xdmcp-manager");
 const { handoffRemotePrivilegeGrant, runRemotePrivilegeCommand } = require("./remote-privilege");
@@ -95,7 +99,12 @@ const {
 } = require("./terminal");
 const { handleRemoteTerminalUpgrade, listSerialPorts, testRemoteTerminalProfile } = require("./remote-terminal");
 const { handleVncUpgrade, testVncProfile } = require("./vnc-proxy");
-const { readVncRemoteClipboard, writeVncRemoteClipboard } = require("./vnc-clipboard");
+const {
+  readVncRemoteClipboard,
+  readVncRemoteClipboardImage,
+  writeVncRemoteClipboard,
+  writeVncRemoteClipboardImage
+} = require("./vnc-clipboard");
 const { deleteFtpPath, downloadFtpFile, listFtpDirectory, makeFtpDirectory, renameFtpPath, testFtpCredentials, testFtpProfile, uploadFtpFile } = require("./ftp");
 const {
   connectSftpSession,
@@ -225,8 +234,10 @@ const {
   xdmcpTaskResourceKey
 } = require("./services/remote-component-service");
 const {
+  configureX11ClipboardHelperForConnection,
   detectSshX11ForConnection,
   installX11ApplicationsForConnection,
+  inspectX11ClipboardHelperForConnection,
   startSshX11ConfigurationTask,
   verifyX11ApplicationForConnection,
   x11ApplicationsForConnection,
@@ -362,9 +373,15 @@ async function handleApi(req, res, pathname) {
     testSsh, userSshDir:USER_SSH_DIR
   })) return;
   if (await handleTerminalRoutes(req, res, pathname, {
+    authorizeConnection:authorizedConnectionForRequest,
     createQuickTerminalTicket, createTerminalStartupTicket, getConnection,
-    closeQuickConnectionTerminals, disconnectSftpSession, isDesktopCapabilityRequest, readJson, requestAuthenticationBinding,
-    requireEncryptionUnlocked, revokeQuickTerminalTicket, sendJson
+    closeQuickConnectionTerminals, disconnectSftpSession, isDesktopCapabilityRequest, readBody, readJson, requestAuthenticationBinding,
+    requireEncryptionUnlocked, revokeQuickTerminalTicket, sendJson,
+    terminalClipboardImageMaxBytes:TERMINAL_CLIPBOARD_IMAGE_MAX_BYTES,
+    writeTerminalClipboardImage:(connection, image, options) => writeTerminalClipboardImage(connection, image, {
+      ...options,
+      runCommand:runSshCommandForConnectionStreaming
+    })
   })) return;
   if (await handleRemoteCredentialRoutes(req, res, pathname, {
     getRemoteProfile,
@@ -379,8 +396,10 @@ async function handleApi(req, res, pathname) {
   })) return;
   if (await handleX11ForwardingRoutes(req, res, pathname, {
     authorizeConnection:authorizedConnectionForRequest,
+    configureX11ClipboardHelperForConnection,
     createRemoteAdminGrant,
     detectSshX11ForConnection,
+    inspectX11ClipboardHelperForConnection,
     readJson,
     releaseRemoteAdminGrant,
     sendJson,
@@ -492,11 +511,14 @@ async function handleApi(req, res, pathname) {
     getDesktopIntegration, getRemoteProfile, getVncProfileCredential,
     insertRemoteProfile, inspectVncClipboardHelperForProfile, inspectVncServerForProfile,
     isDesktopCapabilityRequest, listConnections, listRemoteProfiles, probeTcpEndpoint,
-    readJson, readVncRemoteClipboard, releaseRemoteAdminGrant, remoteOfflineTasks,
-    resolveManagementConnection, runRemotePrivilegeCommand, runSshCommandForConnection,
-    sendJson, startRemoteComponentCommandTask, testFtpProfile, testRemoteTerminalProfile,
+    readBody, readJson, readVncRemoteClipboard, readVncRemoteClipboardImage,
+    releaseRemoteAdminGrant, remoteOfflineTasks, resolveManagementConnection,
+    repairRemoteProfileManagementConnection,
+    runRemotePrivilegeCommand, runSshCommandForConnection, runSshCommandForConnectionStreaming,
+    send, sendJson, startRemoteComponentCommandTask, testFtpProfile, testRemoteTerminalProfile,
     testVncProfile, updateRemoteProfile, updateRemoteProfileFlags, updateRemoteProfileUsage,
-    updateVncProfileCredential, writeVncRemoteClipboard, xdmcpTaskResourceKey
+    updateVncProfileCredential, writeVncRemoteClipboard, writeVncRemoteClipboardImage,
+    xdmcpTaskResourceKey
   })) return;
   if (await handleSftpTransferRoutes(req, res, pathname, {
     authorizeConnectionId:authorizedSftpConnectionId, clearRemoteRecycleItems, compressJob,
@@ -542,9 +564,13 @@ function requestHandler(req, res) {
       const status = Number(error?.statusCode || error?.status_code || 400);
       const body: any = {error:error.message || String(error)};
       const diagnosis = diagnoseSshError(body.error);
-      const authenticationFailure = diagnosis.reason === "SSH 认证失败";
+      const authenticationFailure = diagnosis.reason_code === "ssh_auth";
       if (authenticationFailure) body.code = "SSH_AUTHENTICATION_FAILED";
       else if (error?.code) body.code = String(error.code);
+      const publicDetails = publicErrorDetails(error, body.code);
+      body.error_code = publicDetails.code;
+      if (Object.keys(publicDetails.params).length) body.error_params = publicDetails.params;
+      if (publicDetails.preserveMessage) body.preserve_error_message = true;
       const connectionId = Number(error?.connectionId || error?.connection_id || 0);
       if (Number.isSafeInteger(connectionId) && connectionId !== 0) body.connection_id = connectionId;
       if (error?.connectionName) body.connection_name = String(error.connectionName);

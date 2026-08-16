@@ -7,6 +7,7 @@ const { getConnection } = require("./db");
 const { effectiveExtraArgs, securePrivateKeyPermissions } = require("./ssh");
 const { appendBatchCommandLog, appendSystemLog, createBatchCommandLog } = require("./logs");
 const { notifyEvent } = require("./notifications");
+const { publicError, publicErrorDetails } = require("./public-error");
 const { shouldUseBuiltinSsh, spawnPasswordCommand } = require("./ssh2-client");
 const { systemHostKeyArgs } = require("./ssh-host-trust");
 const { proxyJumpArgument, sshDestinationArgs, structuredOpenSshArgs } = require("./ssh-connection");
@@ -35,8 +36,8 @@ function listCommandTemplates() {
 function normalizeTemplate(data) {
   const name = String(data.name || "").trim();
   const command = String(data.command || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  if (!name) throw new Error("请输入模板名称");
-  if (!command.trim()) throw new Error("请输入模板命令");
+  if (!name) throw publicError("COMMAND_TEMPLATE_NAME_REQUIRED", "请输入模板名称");
+  if (!command.trim()) throw publicError("COMMAND_TEMPLATE_COMMAND_REQUIRED", "请输入模板命令");
   return {
     name,
     command,
@@ -56,7 +57,7 @@ function saveCommandTemplate(data) {
 function updateCommandTemplate(id, data) {
   const items = readTemplates();
   const index = items.findIndex((item) => item.id === id);
-  if (index < 0) throw new Error("模板不存在");
+  if (index < 0) throw publicError("COMMAND_TEMPLATE_NOT_FOUND", "模板不存在");
   items[index] = { ...items[index], ...normalizeTemplate(data) };
   writeTemplates(items);
   return items[index];
@@ -65,7 +66,7 @@ function updateCommandTemplate(id, data) {
 function deleteCommandTemplate(id) {
   const items = readTemplates();
   const next = items.filter((item) => item.id !== id);
-  if (next.length === items.length) throw new Error("模板不存在");
+  if (next.length === items.length) throw publicError("COMMAND_TEMPLATE_NOT_FOUND", "模板不存在");
   writeTemplates(next);
   return { ok: true };
 }
@@ -91,6 +92,17 @@ function buildCommandArgs(connection) {
 
 function sendJson(socket, data) {
   sendWebSocketFrame(socket, JSON.stringify(data));
+}
+
+function batchCommandErrorPayload(error) {
+  const details = publicErrorDetails(error);
+  const preserveMessage = details.preserveMessage || !error?.publicCode;
+  return {
+    error:error?.message || String(error),
+    error_code:details.code,
+    ...(Object.keys(details.params).length ? {error_params:details.params} : {}),
+    ...(preserveMessage ? {preserve_error_message:true} : {})
+  };
 }
 
 function shellQuote(value) {
@@ -129,15 +141,15 @@ async function runBatchCommandStream(socket, payload, activeChildren) {
   payload = payload && typeof payload === "object" ? payload : {};
   const ids = [...new Set((payload.ids || []).map(Number).filter(Boolean))];
   const command = String(payload.command || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  if (!ids.length) throw new Error("请选择 SSH 连接");
-  if (!command.trim()) throw new Error("请输入要执行的命令");
+  if (!ids.length) throw publicError("BATCH_TARGETS_REQUIRED", "请选择 SSH 连接");
+  if (!command.trim()) throw publicError("BATCH_COMMAND_REQUIRED", "请输入要执行的命令");
   const requestedTimeoutMs = Number(payload.timeout_ms);
   const timeoutMs = Number.isFinite(requestedTimeoutMs)
     ? Math.max(5000, Math.min(requestedTimeoutMs, 10 * 60 * 1000))
     : 60000;
   const rows = ids.map((id) => getConnection(id));
   const missingIndex = rows.findIndex((connection) => !connection);
-  if (missingIndex >= 0) throw new Error(`SSH 连接不存在：${ids[missingIndex]}`);
+  if (missingIndex >= 0) throw publicError("BATCH_CONNECTION_NOT_FOUND", `SSH 连接不存在：${ids[missingIndex]}`, {id:ids[missingIndex]});
   const log = createBatchCommandLog(command, rows.length);
   sendJson(socket, { type: "meta", total: rows.length, log_path: path.relative(path.join(DATA_DIR, "logs"), log.fullPath).replace(/\\/g, "/"), log_label: log.label });
   appendSystemLog(`批量命令已启动：${log.label}`);
@@ -167,12 +179,20 @@ async function runBatchCommandStream(socket, payload, activeChildren) {
           else failed++;
           const message = error ? error.message : `退出码 ${exitCode ?? ""}`;
           appendBatchCommandLog(log.fullPath, `\n[结束] ${connection.name} ${success ? "成功" : `失败：${message}`}，用时 ${Date.now() - started}ms\n`);
-          sendJson(socket, { type: "exit", id: connection.id, name: connection.name, ok: success, exit_code: exitCode, error: error ? error.message : "", elapsed_ms: Date.now() - started });
+          sendJson(socket, {
+            type:"exit",
+            id:connection.id,
+            name:connection.name,
+            ok:success,
+            exit_code:exitCode,
+            ...(error ? batchCommandErrorPayload(error) : {error:""}),
+            elapsed_ms:Date.now() - started
+          });
           resolve(null);
         };
         const timer = setTimeout(() => {
           try { child.kill("SIGKILL"); } catch {}
-          finish(null, new Error("命令执行超时"));
+          finish(null, publicError("BATCH_COMMAND_TIMEOUT", "命令执行超时"));
         }, timeoutMs);
         child.stdout?.on("data", (chunk) => {
           const text = chunk.toString();
@@ -238,12 +258,12 @@ function handleBatchCommandUpgrade(req, socket) {
           if ((opcode === 1 || opcode === 2) && !started) {
             started = true;
             runBatchCommandStream(socket, JSON.parse(data.toString("utf8")), activeChildren)
-              .catch((error) => sendJson(socket, { type: "error", error: error.message }))
+              .catch((error) => sendJson(socket, {type:"error", ...batchCommandErrorPayload(error)}))
               .finally(() => closeWebSocket(socket));
           }
         });
       } catch (error) {
-        sendJson(socket, { type: "error", error: error.message });
+        sendJson(socket, {type:"error", ...batchCommandErrorPayload(publicError("BATCH_WEBSOCKET_INVALID", error?.message || "WebSocket 数据无效"))});
         closeWebSocket(socket, 1009, "WebSocket 数据无效");
       }
     });
@@ -251,7 +271,7 @@ function handleBatchCommandUpgrade(req, socket) {
     appendSystemLog(`批量命令 WebSocket 启动失败：${error.message}`);
     try {
       if (upgraded) {
-        sendJson(socket, { type: "error", error: error.message });
+        sendJson(socket, {type:"error", ...batchCommandErrorPayload(error)});
         closeWebSocket(socket, 1011, "批量命令启动失败");
       } else {
         socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");

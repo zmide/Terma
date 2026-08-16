@@ -9,6 +9,20 @@ const { launchWindowsRdpWithCredential } = require("./windows-rdp-credentials");
 const MAC_WINDOWS_APP_URL = "macappstore://itunes.apple.com/app/id1295203466";
 const MAC_WINDOWS_APP_PACKAGE_URL = "https://go.microsoft.com/fwlink/?linkid=868963";
 
+function normalizeDesktopLanguage(value) {
+  return String(value || "") === "en-US" ? "en-US" : "zh-CN";
+}
+
+function desktopUiText(language, chinese, english) {
+  return normalizeDesktopLanguage(language) === "en-US" ? english : chinese;
+}
+
+function languageGetter(options = {}, environment = process.env) {
+  return typeof options.getLanguage === "function"
+    ? options.getLanguage
+    : () => options.language || environment.TERMA_INTERFACE_LANGUAGE || process.env.TERMA_INTERFACE_LANGUAGE || "zh-CN";
+}
+
 function rdpDisplayMode(options = {}) {
   const mode = String(options.display_mode || "");
   if (["dynamic", "fullscreen", "fixed"].includes(mode)) return mode;
@@ -23,16 +37,24 @@ function remoteDesktopSize(options = {}) {
   };
 }
 
-function normalizeRemoteClientHost(value) {
+function normalizeRemoteClientHost(value, language = process.env.TERMA_INTERFACE_LANGUAGE) {
   const raw = String(value ?? "").trim();
   const host = raw.startsWith("[") && raw.endsWith("]") ? raw.slice(1, -1) : raw;
-  if (!host || host.startsWith("[") || host.endsWith("]") || /[\0\r\n\t\s/\\]/.test(host)) throw new Error("远程桌面目标地址无效");
-  if (host.includes(":") && net.isIP(host) !== 6) throw new Error("远程桌面目标 IPv6 地址无效");
+  if (!host || host.startsWith("[") || host.endsWith("]") || /[\0\r\n\t\s/\\]/.test(host)) throw new Error(desktopUiText(
+    language,
+    "远程桌面目标地址无效",
+    "The remote-desktop target address is invalid"
+  ));
+  if (host.includes(":") && net.isIP(host) !== 6) throw new Error(desktopUiText(
+    language,
+    "远程桌面目标 IPv6 地址无效",
+    "The remote-desktop target IPv6 address is invalid"
+  ));
   return host;
 }
 
-function remoteClientEndpoint(hostValue, portValue) {
-  const host = normalizeRemoteClientHost(hostValue);
+function remoteClientEndpoint(hostValue, portValue, language = process.env.TERMA_INTERFACE_LANGUAGE) {
+  const host = normalizeRemoteClientHost(hostValue, language);
   const port = Number(portValue || 0);
   return `${net.isIP(host) === 6 ? `[${host}]` : host}:${port}`;
 }
@@ -48,6 +70,10 @@ function createRemoteClientAdapter(options = {}) {
   const existsSync = options.existsSync || fs.existsSync;
   const getDataDir = options.getDataDir || (() => options.dataDir || process.cwd());
   const getXServerDiagnostics = options.getXServerDiagnostics || (() => null);
+  const getLanguage = languageGetter(options, environment);
+  const text = (chinese, english) => desktopUiText(getLanguage(), chinese, english);
+  const normalizeHost = value => normalizeRemoteClientHost(value, getLanguage());
+  const endpoint = (host, port) => remoteClientEndpoint(host, port, getLanguage());
   const startupProbeMs = Math.max(0, Number(options.startupProbeMs ?? 1400));
   const clientPath = platform === "win32" ? path.win32 : path.posix;
 
@@ -97,14 +123,20 @@ function createRemoteClientAdapter(options = {}) {
       const uri = windowsVncUriHandler();
       rdp = {
         available:Boolean(mstsc),
-        client:mstsc ? "远程桌面连接" : "",
+        client:mstsc ? text("远程桌面连接", "Remote Desktop Connection") : "",
         executable:mstsc,
         mode:"rdp-file",
         application:"",
         password_transfer_supported:Boolean(mstsc),
         password_transfer_mode:mstsc ? "windows-credential-manager" : ""
       };
-      vnc = {available:Boolean(vncViewer || uri), client:vncViewer ? clientPath.basename(vncViewer) : uri ? "系统 VNC 客户端" : "", executable:vncViewer, mode:vncViewer ? "executable" : uri ? "uri" : "", application:""};
+      vnc = {
+        available:Boolean(vncViewer || uri),
+        client:vncViewer ? clientPath.basename(vncViewer) : uri ? text("系统 VNC 客户端", "System VNC client") : "",
+        executable:vncViewer,
+        mode:vncViewer ? "executable" : uri ? "uri" : "",
+        application:""
+      };
     } else if (platform === "darwin") {
       const rdpApp = macApplication(["Windows App.app", "Microsoft Remote Desktop.app"]);
       const freeRdp = findExecutable(["xfreerdp3", "xfreerdp"]);
@@ -129,17 +161,23 @@ function createRemoteClientAdapter(options = {}) {
         requires_xserver:freeRdpNeedsXServer,
         xserver_installed:Boolean(xServer?.installed),
         can_install:!rdpApp && (!freeRdp || !freeRdpCanStartXServer),
-        install_label:"安装 Windows App",
+        install_label:text("安装 Windows App", "Install Windows App"),
         install_kind:"app-store",
         reason:rdpApp || (freeRdp && freeRdpDisplayReady)
           ? ""
           : freeRdpCanStartXServer
-            ? "已检测到 FreeRDP；连接时 Terma 会自动启动 XQuartz"
+            ? text("已检测到 FreeRDP；连接时 Terma 会自动启动 XQuartz", "FreeRDP was detected; Terma will start XQuartz automatically when connecting")
             : freeRdp
-              ? "已检测到 FreeRDP，但尚未安装可用的 XQuartz；可安装 XQuartz，或改用 Windows App"
-            : "macOS 未检测到 RDP 客户端；可安装 Windows App 后重试"
+              ? text("已检测到 FreeRDP，但尚未安装可用的 XQuartz；可安装 XQuartz，或改用 Windows App", "FreeRDP was detected, but a usable XQuartz installation is missing. Install XQuartz or use Windows App instead.")
+              : text("macOS 未检测到 RDP 客户端；可安装 Windows App 后重试", "No RDP client was detected on macOS. Install Windows App and try again.")
       };
-      vnc = {available:Boolean(screenSharing), client:screenSharing ? "屏幕共享" : "", executable:screenSharing ? "/usr/bin/open" : "", mode:"uri", application:screenSharing};
+      vnc = {
+        available:Boolean(screenSharing),
+        client:screenSharing ? text("屏幕共享", "Screen Sharing") : "",
+        executable:screenSharing ? "/usr/bin/open" : "",
+        mode:"uri",
+        application:screenSharing
+      };
     } else {
       const rdpClient = findExecutable(["xfreerdp3", "xfreerdp", "wlfreerdp", "remmina"]);
       const vncClient = findExecutable(["vncviewer", "gvncviewer", "remmina"]);
@@ -157,9 +195,13 @@ function createRemoteClientAdapter(options = {}) {
         application:"",
         password_transfer_supported:Boolean(rdpClient && !/remmina$/i.test(rdpClient) && rdpDisplayReady),
         password_transfer_mode:rdpClient && !/remmina$/i.test(rdpClient) ? "freerdp" : "",
-        reason:!rdpClient ? "未找到 FreeRDP 或 Remmina" : rdpDisplayReady ? "" : "当前 Terma 没有可用的图形桌面 DISPLAY",
+        reason:!rdpClient
+          ? text("未找到 FreeRDP 或 Remmina", "FreeRDP or Remmina was not found")
+          : rdpDisplayReady
+            ? ""
+            : text("当前 Terma 没有可用的图形桌面 DISPLAY", "No graphical desktop DISPLAY is available to Terma"),
         can_install:!rdpClient,
-        install_label:"安装 FreeRDP"
+        install_label:text("安装 FreeRDP", "Install FreeRDP")
       };
       vnc = {
         available:Boolean(vncClient && vncDisplayReady),
@@ -167,14 +209,21 @@ function createRemoteClientAdapter(options = {}) {
         executable:vncClient,
         mode:/remmina$/i.test(vncClient) ? "remmina" : /gvncviewer$/i.test(vncClient) ? "gvncviewer" : "vncviewer",
         application:"",
-        reason:!vncClient ? "未找到系统 VNC 客户端" : vncDisplayReady ? "" : "当前 Terma 没有可用的图形桌面 DISPLAY"
+        reason:!vncClient
+          ? text("未找到系统 VNC 客户端", "No system VNC client was found")
+          : vncDisplayReady
+            ? ""
+            : text("当前 Terma 没有可用的图形桌面 DISPLAY", "No graphical desktop DISPLAY is available to Terma")
       };
     }
     return {
       platform,
       rdp,
       vnc,
-      password_policy:"默认不传递密码；用户明确允许后，Windows 使用临时凭据存储，FreeRDP 使用标准输入，密码不会进入命令行"
+      password_policy:text(
+        "默认不传递密码；用户明确允许后，Windows 使用临时凭据存储，FreeRDP 使用标准输入，密码不会进入命令行",
+        "Passwords are not transferred by default. When explicitly allowed, Windows uses temporary credential storage and FreeRDP uses standard input, so passwords never enter the command line."
+      )
     };
   }
 
@@ -191,18 +240,35 @@ function createRemoteClientAdapter(options = {}) {
   function readableLaunchError(stderr, executable, code) {
     const text = String(stderr || "").replace(/\x1b\[[0-9;]*m/g, "");
     if (/failed to open display|cannot open display/i.test(text)) {
-      return "FreeRDP 无法连接当前 Linux 图形桌面（DISPLAY 不可用），请从桌面会话启动 Terma";
+      return desktopUiText(
+        getLanguage(),
+        "FreeRDP 无法连接当前 Linux 图形桌面（DISPLAY 不可用），请从桌面会话启动 Terma",
+        "FreeRDP cannot connect to the current Linux graphical desktop because DISPLAY is unavailable. Start Terma from the desktop session."
+      );
     }
     if (/certificate name mismatch/i.test(text)) {
-      return "RDP 证书名称与连接地址不一致，请在 FreeRDP 证书提示中确认后重试";
+      return desktopUiText(
+        getLanguage(),
+        "RDP 证书名称与连接地址不一致，请在 FreeRDP 证书提示中确认后重试",
+        "The RDP certificate name does not match the connection address. Confirm the FreeRDP certificate prompt and try again."
+      );
     }
     if (/authentication failure|logon failure|ERRCONNECT_LOGON_FAILURE/i.test(text)) {
-      return "RDP 登录失败，请检查桌面账号、密码和域";
+      return desktopUiText(
+        getLanguage(),
+        "RDP 登录失败，请检查桌面账号、密码和域",
+        "RDP sign-in failed. Check the desktop username, password, and domain."
+      );
     }
     const useful = text.split(/\r?\n/)
       .map(line => line.replace(/^\[[^\]]+\]\s*(?:\[[^\]]+\]\s*)*/, "").trim())
       .filter(line => line && !/^\d+:\s/.test(line) && !/Caught signal|winpr_log_backtrace|lib(?:winpr|freerdp)|__libc_start_main|\(_start\+/i.test(line));
-    return useful.slice(-4).join("；") || `${clientPath.basename(executable)} 启动后立即退出（代码 ${code ?? "未知"}）`;
+    const original = useful.slice(-4).join(desktopUiText(getLanguage(), "；", "; "));
+    return original || desktopUiText(
+      getLanguage(),
+      `${clientPath.basename(executable)} 启动后立即退出（代码 ${code ?? "未知"}）`,
+      `${clientPath.basename(executable)} exited immediately after launch (code ${code ?? "unknown"})`
+    );
   }
 
   function spawnObserved(executable, args, input = "") {
@@ -277,17 +343,17 @@ function createRemoteClientAdapter(options = {}) {
   }
 
   function verifyMacWindowsAppPackage(file) {
-    if (platform !== "darwin" || !file || !existsSync(file)) throw new Error("Windows App 安装包不存在");
+    if (platform !== "darwin" || !file || !existsSync(file)) throw new Error(text("Windows App 安装包不存在", "The Windows App installer package was not found"));
     const bytes = fs.statSync(file).size;
-    if (bytes < 1024 * 1024) throw new Error("Windows App 安装包内容不完整");
+    if (bytes < 1024 * 1024) throw new Error(text("Windows App 安装包内容不完整", "The Windows App installer package is incomplete"));
     const signature = runtimeSpawnSync("/usr/sbin/pkgutil", ["--check-signature", file], {
       encoding:"utf8",
       timeout:15000,
       windowsHide:true
     });
-    const text = `${signature.stdout || ""}\n${signature.stderr || ""}`;
-    if (signature.status !== 0 || !/Microsoft Corporation/i.test(text) || !/Notarization:\s*trusted/i.test(text)) {
-      throw new Error("Windows App 安装包不是受信任的 Microsoft 签名包");
+    const signatureText = `${signature.stdout || ""}\n${signature.stderr || ""}`;
+    if (signature.status !== 0 || !/Microsoft Corporation/i.test(signatureText) || !/Notarization:\s*trusted/i.test(signatureText)) {
+      throw new Error(text("Windows App 安装包不是受信任的 Microsoft 签名包", "The Windows App installer package does not have a trusted Microsoft signature"));
     }
     return {bytes};
   }
@@ -313,7 +379,7 @@ function createRemoteClientAdapter(options = {}) {
   }
 
   async function downloadMacWindowsAppPackage() {
-    if (typeof runtimeFetch !== "function") throw new Error("当前运行环境不能下载 Windows App 安装包");
+    if (typeof runtimeFetch !== "function") throw new Error(text("当前运行环境不能下载 Windows App 安装包", "The current runtime cannot download the Windows App installer package"));
     const file = localMacWindowsAppPackages()[0];
     const temporary = `${file}.tmp-${process.pid}-${Date.now()}`;
     try {
@@ -321,7 +387,10 @@ function createRemoteClientAdapter(options = {}) {
         headers:{"User-Agent":"Terma-Windows-App-Installer"},
         redirect:"follow"
       });
-      if (!response?.ok || !response.body) throw new Error(`Windows App 下载失败：HTTP ${response?.status || "未知"}`);
+      if (!response?.ok || !response.body) throw new Error(text(
+        `Windows App 下载失败：HTTP ${response?.status || "未知"}`,
+        `Windows App download failed: HTTP ${response?.status || "unknown"}`
+      ));
       await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(temporary, {flags:"wx"}));
       verifyMacWindowsAppPackage(temporary);
       fs.renameSync(temporary, file);
@@ -342,24 +411,27 @@ function createRemoteClientAdapter(options = {}) {
       let stderr = "";
       child.stderr?.on?.("data", chunk => { stderr = (stderr + chunk.toString()).slice(-12000); });
       child.once("error", reject);
-      child.once("close", code => code === 0 ? resolve(null) : reject(new Error(stderr.trim() || "Windows App 安装被取消或失败")));
+      child.once("close", code => code === 0 ? resolve(null) : reject(new Error(stderr.trim() || text(
+        "Windows App 安装被取消或失败",
+        "Windows App installation was cancelled or failed"
+      ))));
     });
   }
 
   function writeRdpFile(profile, fileOptions = {}) {
     const value = profile.options || {};
     const safeRdpValue = (input, label) => {
-      const text = String(input ?? "");
-      if (/[\0\r\n]/.test(text)) throw new Error(`${label}不能包含换行或控制字符`);
-      return text;
+      const safeText = String(input ?? "");
+      if (/[\0\r\n]/.test(safeText)) throw new Error(`${label}${text("不能包含换行或控制字符", " must not contain line breaks or control characters")}`);
+      return safeText;
     };
     const displayMode = rdpDisplayMode(value);
     const {width, height} = remoteDesktopSize(value);
     const audioMode = value.audio === "remote" ? 1 : value.audio === "off" ? 2 : 0;
     const lines = [
-      `full address:s:${remoteClientEndpoint(profile.host, Number(profile.port || 3389))}`,
-      ...(fileOptions.omitUsername ? [] : [`username:s:${safeRdpValue(profile.username || "", "RDP 用户名")}`]),
-      `domain:s:${safeRdpValue(value.domain || "", "RDP 域")}`,
+      `full address:s:${endpoint(profile.host, Number(profile.port || 3389))}`,
+      ...(fileOptions.omitUsername ? [] : [`username:s:${safeRdpValue(profile.username || "", text("RDP 用户名", "RDP username"))}`]),
+      `domain:s:${safeRdpValue(value.domain || "", text("RDP 域", "RDP domain"))}`,
       `screen mode id:i:${displayMode === "fullscreen" ? 2 : 1}`,
       `desktopwidth:i:${width}`,
       `desktopheight:i:${height}`,
@@ -378,7 +450,9 @@ function createRemoteClientAdapter(options = {}) {
   }
 
   async function openRdp(profile, item) {
-    if (!item.available) throw new Error(item.reason || (platform === "darwin" ? "未找到 Windows App 或 Microsoft Remote Desktop" : "未找到可用的 RDP 客户端"));
+    if (!item.available) throw new Error(item.reason || (platform === "darwin"
+      ? text("未找到 Windows App 或 Microsoft Remote Desktop", "Windows App or Microsoft Remote Desktop was not found")
+      : text("未找到可用的 RDP 客户端", "No usable RDP client was found")));
     const value = profile.options || {};
     const displayMode = rdpDisplayMode(value);
     const {width, height} = remoteDesktopSize(value);
@@ -388,7 +462,10 @@ function createRemoteClientAdapter(options = {}) {
     let transferMode = "";
     if (platform === "darwin" && item.mode === "rdp-file" && passwordTransferRequested) {
       if (!item.password_transfer_supported || !item.password_transfer_executable) {
-        throw new Error("macOS Windows App 没有可用的密码预填充接口。请安装 FreeRDP 与 XQuartz，或关闭“允许传递密码”后由 Windows App 输入凭据");
+        throw new Error(text(
+          "macOS Windows App 没有可用的密码预填充接口。请安装 FreeRDP 与 XQuartz，或关闭“允许传递密码”后由 Windows App 输入凭据",
+          "Windows App on macOS has no password prefill interface. Install FreeRDP and XQuartz, or turn off ‘Allow password transfer’ and enter credentials in Windows App."
+        ));
       }
       selectedItem = {
         ...item,
@@ -399,17 +476,17 @@ function createRemoteClientAdapter(options = {}) {
         application:""
       };
     }
-    if (passwordTransferRequested && !String(profile.username || "")) throw new Error("传递 RDP 密码时必须填写用户名");
+    if (passwordTransferRequested && !String(profile.username || "")) throw new Error(text("传递 RDP 密码时必须填写用户名", "A username is required when transferring the RDP password"));
     const omitGeneratedUsername = Number(value.source_ssh_connection_id || 0) > 0 && !String(profile.username || "");
     if (platform === "win32" && passwordTransferRequested) {
-      const endpoint = remoteClientEndpoint(profile.host, Number(profile.port || 3389));
+      const rdpEndpoint = endpoint(profile.host, Number(profile.port || 3389));
       const rdpFile = writeRdpFile(profile, {omitUsername:omitGeneratedUsername, promptForCredentials:false});
       await runtimeWindowsRdpCredentialLaunch({
         spawn:runtimeSpawn,
         environment,
         executable:selectedItem.executable,
         rdpFile,
-        endpoint,
+        endpoint:rdpEndpoint,
         username:String(profile.username || ""),
         password
       });
@@ -422,11 +499,14 @@ function createRemoteClientAdapter(options = {}) {
     } else if (platform === "win32") await spawnDetached(selectedItem.executable, [writeRdpFile(profile)]);
     else if (platform === "darwin" && selectedItem.mode === "rdp-file") await spawnDetached("/usr/bin/open", ["-a", selectedItem.application, writeRdpFile(profile)]);
     else if (selectedItem.mode === "remmina") {
-      if (passwordTransferRequested) throw new Error("当前 Remmina 启动方式不能安全接收已保存密码；请安装 FreeRDP，或关闭“允许传递密码”后由客户端输入凭据");
+      if (passwordTransferRequested) throw new Error(text(
+        "当前 Remmina 启动方式不能安全接收已保存密码；请安装 FreeRDP，或关闭“允许传递密码”后由客户端输入凭据",
+        "The current Remmina launch mode cannot safely receive a saved password. Install FreeRDP, or turn off ‘Allow password transfer’ and enter credentials in the client."
+      ));
       const user = profile.username ? `${encodeURIComponent(profile.username)}@` : "";
-      await spawnObserved(selectedItem.executable, ["-c", `rdp://${user}${remoteClientEndpoint(profile.host, Number(profile.port || 3389))}`]);
+      await spawnObserved(selectedItem.executable, ["-c", `rdp://${user}${endpoint(profile.host, Number(profile.port || 3389))}`]);
     } else {
-      const args = [`/v:${remoteClientEndpoint(profile.host, Number(profile.port || 3389))}`];
+      const args = [`/v:${endpoint(profile.host, Number(profile.port || 3389))}`];
       if (profile.username) args.push(`/u:${profile.username}`);
       if (value.domain) args.push(`/d:${value.domain}`);
       if (displayMode === "fullscreen") args.push("/f");
@@ -438,7 +518,10 @@ function createRemoteClientAdapter(options = {}) {
       if (value.admin_session) args.push("/admin");
       args.push(`/audio-mode:${value.audio === "remote" ? 1 : value.audio === "off" ? 2 : 0}`);
       args.push("/cert:tofu");
-      if (passwordTransferRequested && /[\0\r\n]/.test(password)) throw new Error("该 RDP 密码包含换行或控制字符，不能通过 FreeRDP 标准输入传递");
+      if (passwordTransferRequested && /[\0\r\n]/.test(password)) throw new Error(text(
+        "该 RDP 密码包含换行或控制字符，不能通过 FreeRDP 标准输入传递",
+        "This RDP password contains line breaks or control characters and cannot be passed through FreeRDP standard input"
+      ));
       const stdinPassword = passwordTransferRequested ? `${password}\n` : "";
       if (stdinPassword) args.push("/from-stdin");
       await spawnObserved(selectedItem.executable, args, stdinPassword);
@@ -456,18 +539,18 @@ function createRemoteClientAdapter(options = {}) {
   }
 
   async function openVnc(profile, item) {
-    if (!item.available) throw new Error("未找到可用的 VNC 客户端");
+    if (!item.available) throw new Error(text("未找到可用的 VNC 客户端", "No usable VNC client was found"));
     const value = profile.options || {};
     const port = Number(profile.port || 5900);
-    const uri = `vnc://${remoteClientEndpoint(profile.host, port)}`;
+    const uri = `vnc://${endpoint(profile.host, port)}`;
     if (item.mode === "uri") {
-      if (!runtimeShell?.openExternal) throw new Error("当前桌面环境不能打开 VNC 链接");
+      if (!runtimeShell?.openExternal) throw new Error(text("当前桌面环境不能打开 VNC 链接", "The current desktop environment cannot open VNC links"));
       await runtimeShell.openExternal(uri);
     } else if (item.mode === "remmina") await spawnDetached(item.executable, ["-c", uri]);
-    else if (item.mode === "gvncviewer") await spawnDetached(item.executable, [remoteClientEndpoint(profile.host, port)]);
-    else if (/tvnviewer(?:\.exe)?$/i.test(item.executable)) await spawnDetached(item.executable, [`-host=${normalizeRemoteClientHost(profile.host)}`, `-port=${port}`]);
+    else if (item.mode === "gvncviewer") await spawnDetached(item.executable, [endpoint(profile.host, port)]);
+    else if (/tvnviewer(?:\.exe)?$/i.test(item.executable)) await spawnDetached(item.executable, [`-host=${normalizeHost(profile.host)}`, `-port=${port}`]);
     else {
-      const host = normalizeRemoteClientHost(profile.host);
+      const host = normalizeHost(profile.host);
       const args = [`${net.isIP(host) === 6 ? `[${host}]` : host}::${port}`, `-QualityLevel=${Number(value.quality ?? 8)}`];
       if (value.shared) args.push("-Shared");
       if (value.view_only) args.push("-ViewOnly");
@@ -477,17 +560,17 @@ function createRemoteClientAdapter(options = {}) {
   }
 
   async function open(profile = {}) {
-    if (!["rdp", "vnc"].includes(String(profile.protocol || ""))) throw new Error("仅 RDP/VNC 使用系统远程桌面客户端");
-    const host = normalizeRemoteClientHost(profile.host);
+    if (!["rdp", "vnc"].includes(String(profile.protocol || ""))) throw new Error(text("仅 RDP/VNC 使用系统远程桌面客户端", "The system remote-desktop client supports RDP and VNC only"));
+    const host = normalizeHost(profile.host);
     const port = Number(profile.port);
-    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error("远程桌面目标无效");
+    if (!host || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error(text("远程桌面目标无效", "The remote-desktop target is invalid"));
     const state = diagnostics();
     return profile.protocol === "rdp" ? openRdp(profile, state.rdp) : openVnc(profile, state.vnc);
   }
 
   async function install(protocol) {
-    if (protocol !== "rdp") throw new Error("当前只支持安装 RDP 客户端");
-    if (platform !== "darwin") throw new Error("当前平台没有可由此入口安装的 RDP 客户端");
+    if (protocol !== "rdp") throw new Error(text("当前只支持安装 RDP 客户端", "Only RDP client installation is supported here"));
+    if (platform !== "darwin") throw new Error(text("当前平台没有可由此入口安装的 RDP 客户端", "This platform has no RDP client that can be installed from this entry point"));
     const current = diagnostics();
     if (current.rdp.application) return {ok:true, protocol, already_installed:true, client:current.rdp.client};
     let installer = findVerifiedMacWindowsAppPackage();
@@ -504,7 +587,7 @@ function createRemoteClientAdapter(options = {}) {
     }
     await installMacWindowsAppPackage(installer);
     const installed = diagnostics();
-    if (!installed.rdp.application) throw new Error("安装命令已完成，但没有检测到 Windows App");
+    if (!installed.rdp.application) throw new Error(text("安装命令已完成，但没有检测到 Windows App", "Installation completed, but Windows App was not detected"));
     return {ok:true, protocol, client:installed.rdp.client, offline:!downloaded, cached_package:true, restart_required:false};
   }
 

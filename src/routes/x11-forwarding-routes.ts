@@ -2,8 +2,10 @@ import { IncomingMessage, ServerResponse } from "node:http";
 
 interface X11ForwardingRouteDependencies {
   authorizeConnection(request: IncomingMessage, connectionId: unknown): any;
+  configureX11ClipboardHelperForConnection(connection: any, data: any): Promise<any>;
   createRemoteAdminGrant(connection: any, data: any, scope: string): any;
   detectSshX11ForConnection(connection: any): Promise<any>;
+  inspectX11ClipboardHelperForConnection(connection: any): Promise<any>;
   readJson(request: IncomingMessage): Promise<any>;
   releaseRemoteAdminGrant(grant: any): void;
   sendJson(response: ServerResponse, data: unknown, status?: number): void;
@@ -16,6 +18,20 @@ export async function handleX11ForwardingRoutes(
   pathname: string,
   dependencies: X11ForwardingRouteDependencies
 ): Promise<boolean> {
+  const clipboardMatch = pathname.match(/^\/api\/connections\/(-?\d+)\/x11-clipboard\/helper$/);
+  if (clipboardMatch) {
+    const connection = dependencies.authorizeConnection(request, clipboardMatch[1]);
+    if (request.method === "GET") {
+      dependencies.sendJson(response, await dependencies.inspectX11ClipboardHelperForConnection(connection));
+      return true;
+    }
+    if (request.method === "POST") {
+      const result = await dependencies.configureX11ClipboardHelperForConnection(connection, await dependencies.readJson(request));
+      dependencies.sendJson(response, result, result?.task ? 202 : 200);
+      return true;
+    }
+    return false;
+  }
   const match = pathname.match(/^\/api\/connections\/(-?\d+)\/x11-forwarding$/);
   if (!match) return false;
 

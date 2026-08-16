@@ -18,6 +18,7 @@ for (let index = 0; index < payload.length; index += 1) payload[index] = (index 
 const growingPayload = Buffer.alloc(768 * 1024, 0x5a);
 const growingInitialSize = 256 * 1024;
 let growingSizeChecks = 0;
+const archiveRemotePath = "/tmp/terma-download-check.tar.gz";
 const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength:2048 });
 const hostKey = privateKey.export({ type:"pkcs1", format:"pem" });
 const sshServer = new Server({ hostKeys:[hostKey] }, client => {
@@ -27,15 +28,31 @@ const sshServer = new Server({ hostKeys:[hostKey] }, client => {
     session.on("exec", (acceptExec, _reject, info) => {
       const stream = acceptExec();
       const command = decodeRemotePosixCommand(info?.command);
-      const supported = command.includes("wc -c") || command.includes("cat --") || command.includes("tar -C");
+      const supported = command.includes("wc -c") || command.includes("cat --") || command.includes("tail -c") || command.includes("tar -C") || command.includes("rm -f --");
       const growing = command.includes("growing.log");
-      if (command.includes("wc -c") && growing) {
+      const archiveMarker = command.match(/(__TERMA_ARCHIVE_[a-f0-9]+__:)/i)?.[1] || "";
+      if (command.includes("tar -C") && archiveMarker) {
+        stream.write(`${archiveMarker}${archiveRemotePath}\n`);
+      } else if (command.includes("wc -c") && growing) {
         growingSizeChecks += 1;
         stream.write(String(growingSizeChecks === 1 ? growingInitialSize : growingPayload.length));
       } else if (command.includes("wc -c")) stream.write(String(payload.length));
       else if (command.includes("cat --") && growing) stream.write(growingPayload);
+      else if ((command.includes("cat --") || command.includes("tail -c")) && command.includes(archiveRemotePath)) {
+        const oneBasedOffset = Number(command.match(/tail -c \+(\d+)/)?.[1] || 1);
+        const offset = Math.max(0, oneBasedOffset - 1);
+        const remaining = payload.subarray(offset);
+        const split = Math.min(128 * 1024, remaining.length);
+        stream.write(remaining.subarray(0, split));
+        setTimeout(() => {
+          if (stream.destroyed || stream.closed) return;
+          stream.write(remaining.subarray(split));
+          stream.exit(0);
+          stream.end();
+        }, 180);
+        return;
+      }
       else if (command.includes("cat --")) stream.write(payload);
-      else if (command.includes("tar -C")) stream.write(payload);
       else stream.stderr.write("unsupported test command");
       stream.exit(supported ? 0 : 1);
       stream.end();
@@ -70,6 +87,17 @@ async function waitForStatus(jobs, id, statuses) {
     await new Promise(resolve => setTimeout(resolve, 20));
   }
   throw new Error("download status check timed out");
+}
+
+async function waitForJobState(jobs, id, predicate) {
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const job = jobs.listSftpJobs().find(item => item.id === id);
+    if (job && predicate(job)) return job;
+    if (job && ["failed", "cancelled"].includes(job.status)) throw new Error(job.error || job.stderr || job.status);
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error("download state check timed out");
 }
 
 async function main() {
@@ -116,11 +144,18 @@ async function main() {
     const archived = jobs.startArchiveDownloadJob(connection.id, ["/fixture/folder"], { deliveryMode:"browser" });
     archiveJobId = archived.id;
     const archiveStarting = jobs.listSftpJobs().find(item => item.id === archiveJobId);
-    assert.equal(archiveStarting.resume_supported, false, "archive streams must not advertise resume support");
-    assert.equal(archiveStarting.can_pause, false, "archive streams must not advertise pause support");
-    assert.throws(() => jobs.pauseSftpJob(archiveJobId), /暂不支持暂停/);
+    assert.equal(archiveStarting.resume_supported, true, "archive downloads must advertise checkpoint resume support");
+    assert.equal(archiveStarting.can_pause, false, "the remote packing phase must not advertise pause support");
+    assert.deepEqual(archiveStarting.archive_source_paths, ["/fixture/folder"]);
+    const archiveDownloading = await waitForJobState(jobs, archiveJobId, job => job.status === "running" && job.phase === "downloading" && job.transferred > 0);
+    assert.equal(archiveDownloading.can_pause, true, "the archive download phase must allow pausing");
+    jobs.pauseSftpJob(archiveJobId);
+    const archivePaused = await waitForStatus(jobs, archiveJobId, ["paused"]);
+    assert.ok(archivePaused.transferred > 0 && archivePaused.transferred < archivePaused.size, "pausing an archive must keep a partial local checkpoint");
+    jobs.resumeSftpJob(archiveJobId);
     await waitForJob(jobs, archiveJobId);
     assert.equal(jobs.listSftpJobs().find(item => item.id === archiveJobId).can_resume, false);
+    assert.equal(jobs.listSftpJobs().find(item => item.id === archiveJobId).remote_archive_path, "", "completed archive downloads must clean the remote temporary file");
     const archive = jobs.getSftpJobFile(archiveJobId);
     assert.match(archive.name, /^terma-.+\.tar\.gz$/, "a browser archive download must keep its tar.gz filename");
     assert.ok(fs.statSync(archive.path).size > 0, "the archive response must use the completed job artifact");

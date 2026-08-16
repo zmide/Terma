@@ -6,6 +6,7 @@ if (typeof registerTermaAction === "function") {
 registerTermaAction("static-operation-pin", () => toggleOperationPanePinned());
 registerTermaAction("static-operation-collapse", () => setOperationPaneCollapsed(true));
 registerTermaAction("static-operation-expand", () => setOperationPaneCollapsed(false));
+registerTermaAction("static-language-toggle", () => toggleTermaLanguage());
 registerTermaAction("static-theme-toggle", () => toggleTheme());
 registerTermaAction("static-refresh", () => loadAll());
 registerTermaAction("static-operation-guide-dismiss", () => dismissOperationPanePinGuide());

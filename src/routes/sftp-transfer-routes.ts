@@ -1,6 +1,7 @@
 import path from "node:path";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
+import { publicErrorBody } from "../public-error";
 
 interface SftpTransferRouteDependencies {
   authorizeConnectionId(request: IncomingMessage, value: string): number;
@@ -71,7 +72,7 @@ export async function handleSftpTransferRoutes(
   const desktopIntegration = dependencies.getDesktopIntegration();
   if (method === "POST" && pathname === "/api/sftp/sync/choose-directory") {
     if (!dependencies.isDesktopRequest(request) || !desktopIntegration?.chooseSyncDirectory) {
-      dependencies.sendJson(response, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
+      dependencies.sendJson(response, publicErrorBody("SFTP_LOCAL_SYNC_DESKTOP_ONLY", "本地目录同步只能在本机桌面端中使用"), 403);
       return true;
     }
     dependencies.sendJson(response, {path:await Promise.resolve(desktopIntegration.chooseSyncDirectory())});
@@ -84,7 +85,7 @@ export async function handleSftpTransferRoutes(
 
   if (method === "POST" && parts.length === 6 && parts[4] === "sync" && parts[5] === "plan") {
     if (!dependencies.isDesktopRequest(request) || !desktopIntegration?.chooseSyncDirectory) {
-      dependencies.sendJson(response, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
+      dependencies.sendJson(response, publicErrorBody("SFTP_LOCAL_SYNC_DESKTOP_ONLY", "本地目录同步只能在本机桌面端中使用"), 403);
       return true;
     }
     dependencies.sendJson(response, dependencies.startSyncPlanningJob(connectionId, await dependencies.readJson(request)), 202);
@@ -92,7 +93,7 @@ export async function handleSftpTransferRoutes(
   }
   if (method === "POST" && parts.length === 6 && parts[4] === "sync" && parts[5] === "execute") {
     if (!dependencies.isDesktopRequest(request) || !desktopIntegration?.chooseSyncDirectory) {
-      dependencies.sendJson(response, {error:"本地目录同步只能在本机桌面端中使用"}, 403);
+      dependencies.sendJson(response, publicErrorBody("SFTP_LOCAL_SYNC_DESKTOP_ONLY", "本地目录同步只能在本机桌面端中使用"), 403);
       return true;
     }
     const data = await dependencies.readJson(request);
@@ -154,7 +155,7 @@ export async function handleSftpTransferRoutes(
     const targetDirectory = desktop ? (saved.sftp_download_directory || defaultDirectory) : "";
     if (data.mode === "separate") {
       if (!desktop || !targetDirectory) {
-        dependencies.sendJson(response, {error:"分别下载文件和目录仅支持本机桌面版；当前设备请使用打包下载"}, 400);
+        dependencies.sendJson(response, publicErrorBody("SFTP_SEPARATE_DOWNLOAD_DESKTOP_ONLY", "分别下载文件和目录仅支持本机桌面版；当前设备请使用打包下载"), 400);
         return true;
       }
       dependencies.sendJson(response, dependencies.startLocalDeliveryJob(connectionId, paths, targetDirectory, "rename", {
@@ -200,7 +201,7 @@ export async function handleSftpTransferRoutes(
     ]);
     const contentType = imageTypes.get(extension);
     if (!contentType) {
-      dependencies.sendJson(response, {error:"该文件不是支持预览的图片格式"}, 415);
+      dependencies.sendJson(response, publicErrorBody("SFTP_IMAGE_PREVIEW_UNSUPPORTED", "该文件不是支持预览的图片格式", { extension }), 415);
       return true;
     }
     const maximumBytes = dependencies.readRuntimeSettings(dependencies.runtimeSettingsFile).sftp_max_open_file_size_mb * 1024 * 1024;
@@ -219,7 +220,7 @@ export async function handleSftpTransferRoutes(
   }
   if (method === "POST" && parts[4] === "native-drag") {
     if (!dependencies.isDesktopRequest(request) || !desktopIntegration) {
-      dependencies.sendJson(response, {error:"拖出到本机只能在桌面版中使用"}, 403);
+      dependencies.sendJson(response, publicErrorBody("SFTP_DRAG_OUT_DESKTOP_ONLY", "拖出到本机只能在桌面版中使用"), 403);
       return true;
     }
     const data = await dependencies.readJson(request);
@@ -228,7 +229,7 @@ export async function handleSftpTransferRoutes(
   }
   if (method === "POST" && parts[4] === "stage-drag") {
     if (!dependencies.isDesktopRequest(request) || !desktopIntegration) {
-      dependencies.sendJson(response, {error:"拖出到本机仅能在桌面版中使用"}, 403);
+      dependencies.sendJson(response, publicErrorBody("SFTP_DRAG_OUT_DESKTOP_ONLY", "拖出到本机仅能在桌面版中使用"), 403);
       return true;
     }
     const data = await dependencies.readJson(request);
@@ -242,12 +243,13 @@ export async function handleSftpTransferRoutes(
     const conflict = ["overwrite", "rename"].includes(data.conflict) ? data.conflict : "error";
     const target = await dependencies.resolveRemoteUploadTarget(connectionId, directory, filename, conflict);
     if (target.exists && conflict === "error") {
-      dependencies.sendJson(response, {error:"目标目录已存在同名项目", conflict:true, name:target.name}, 409);
+      dependencies.sendJson(response, {...publicErrorBody("SFTP_TARGET_CONFLICT", "目标目录已存在同名项目", { name:target.name }), conflict:true, name:target.name}, 409);
       return true;
     }
     const result = dependencies.startUploadReceiveJob(connectionId, target.path, filename, Math.max(0, Number(data.size || 0)), {
       conflict,
-      sizeKnown:Object.prototype.hasOwnProperty.call(data, "size")
+      sizeKnown:Object.prototype.hasOwnProperty.call(data, "size"),
+      privateMode:data.private === true
     });
     dependencies.sendJson(response, {...result, remote_path:target.path, renamed:target.renamed}, 201);
     return true;
@@ -259,7 +261,7 @@ export async function handleSftpTransferRoutes(
     const conflict = ["overwrite", "rename"].includes(url.searchParams.get("conflict") || "") ? String(url.searchParams.get("conflict")) : "error";
     const target = await dependencies.resolveRemoteUploadTarget(connectionId, directory, filename, conflict);
     if (target.exists && conflict === "error") {
-      dependencies.sendJson(response, {error:"目标目录已存在同名项目", conflict:true, name:target.name}, 409);
+      dependencies.sendJson(response, {...publicErrorBody("SFTP_TARGET_CONFLICT", "目标目录已存在同名项目", { name:target.name }), conflict:true, name:target.name}, 409);
       return true;
     }
     const started = dependencies.startUploadReceiveJob(connectionId, target.path, filename, Math.max(0, Number(request.headers["content-length"] || 0)), {
@@ -335,7 +337,7 @@ export async function handleSftpTransferRoutes(
   if (method === "POST" && parts[4] === "cross-copy") {
     const targetConnectionId = Number(data.target_connection_id);
     if (targetConnectionId < 0 && targetConnectionId !== connectionId) {
-      dependencies.sendJson(response, {error:"不能把文件跨会话复制到另一个临时连接"}, 403);
+      dependencies.sendJson(response, publicErrorBody("SFTP_CROSS_TEMPORARY_CONNECTION_FORBIDDEN", "不能把文件跨会话复制到另一个临时连接"), 403);
       return true;
     }
     const result = dependencies.crossCopyJob(connectionId, targetConnectionId, data.paths || [], data.target || ".", data.conflict || "error", data.entries || []);

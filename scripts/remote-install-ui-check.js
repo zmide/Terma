@@ -89,8 +89,9 @@ assert.match(remote, /installVncClipboardHelper/);
 assert.match(remote, /function uninstallVncClipboardHelper\(/, "Linux 剪贴板辅助必须提供卸载入口");
 assert.match(remote, /const uninstallAction = platform === "linux" && uninstallPlan\.available/, "macOS 剪贴板辅助不得显示卸载按钮");
 assert.match(remote, /function watchVncClipboardHelperTask\(/, "剪贴板辅助安装和卸载必须复用任务状态轮询");
-assert.match(remote, /const activeAction = String\(result\.task\.action \|\| action\)[\s\S]{0,520}watchVncClipboardHelperTask\(session, result\.task\.id, activeAction\)/, "clipboard install conflicts must observe the action that is actually running");
-assert.match(remote, /const activeAction = String\(result\.task\.action \|\| "uninstall"\)[\s\S]{0,520}watchVncClipboardHelperTask\(session, result\.task\.id, activeAction\)/, "clipboard uninstall conflicts must observe the action that is actually running");
+assert.match(remote, /const activeAction = String\(result\.task\.action \|\| action\);/, "clipboard install conflicts must derive the action that is actually running");
+assert.match(remote, /const activeAction = String\(result\.task\.action \|\| "uninstall"\);/, "clipboard uninstall conflicts must derive the action that is actually running");
+assert.match(remote, /await watchVncClipboardHelperTask\(session, result\.task\.id, activeAction\);/, "clipboard task polling must observe the resolved action");
 assert.match(remote, /macOS 已自带 pbcopy\/pbpaste/);
 assert.match(remote, /remoteInstallModesMarkup\(diagnostics\.install_plan/);
 assert.match(server, /configureVncClipboardHelperForProfile/);
@@ -111,7 +112,7 @@ assert.match(remote, /configureXdmcpHost\([^\n]+['\"]uninstall-lightdm['\"]/, "X
 assert.match(remote, /uninstallRemoteX11Components/, "X11 component management must expose uninstall");
 assert.match(remote, /uninstallRemoteX11Components\([^\n]+['"]xserver['"]\)/, "X Server manager must expose direct remote X11 component removal");
 assert.match(remote, /const uninstallX11Components = !macos && sshX11\?\.xauth_path/, "quick X11 connections must expose component removal when xauth is installed");
-assert.match(remote, /远端已识别 xauth 和 \$\{applicationCount\} 个常用 X11 程序，组件安装完成。/, "X11 install dialog must render refreshed installed state");
+assert.match(remote, /tr\("common:x11\.guide_apps_ready", \{count:applicationCount,/, "X11 install dialog must render refreshed installed state with the localized application count");
 assert.match(remote, /method === "xdmcp-query"/, "XDMCP fallback must render protocol-level UDP Query diagnostics");
 assert.match(remote, /remote-service-state vnc-connection-help-panel/, "VNC diagnostics must use the shared in-workspace service state card");
 assert.match(remote, /共享来源用 x11vnc，独立来源用 TigerVNC/);
@@ -221,6 +222,7 @@ function fakeTaskRoot(details) {
 const remoteContext = vm.createContext({console, Map, Set, Date, setInterval, clearInterval, setTimeout, clearTimeout});
 remoteContext.currentLog = null;
 remoteContext.$ = id => id === "linuxDesktopTaskLog" ? remoteContext.currentLog : null;
+remoteContext.tr = (key, options={}) => options.defaultValue || key;
 vm.runInContext(remote, remoteContext);
 const linuxDesktopWorkspaceCalls = [];
 remoteContext.showPrimary = () => {};

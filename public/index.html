@@ -14,97 +14,99 @@
   <link rel="stylesheet" href="/app-theme-glass.css?v=__TERMA_VERSION__">
 </head>
 <body>
-  <div id="toast" class="notification-stack" aria-live="polite" aria-label="通知"></div>
+  <div id="toast" class="notification-stack" aria-live="polite" aria-label="通知" data-i18n-aria-label="common:log_display.notification"></div>
   <div id="modal" class="modal" hidden></div>
   <div class="app">
     <div class="left-pane">
       <div class="brand">
         <h1 aria-label="Terma"><img class="brand-mark" src="/assets/terma-icon.png" alt="" aria-hidden="true"><span class="brand-name-full" aria-hidden="true">Terma</span></h1>
-        <button id="operationPaneExpand" class="operation-pane-expand icon-button" type="button" data-action="static-operation-expand" title="展开操作区" aria-label="展开操作区"><img class="brand-mark" src="/assets/terma-icon.png" alt="" aria-hidden="true"></button>
+        <button id="operationPaneExpand" class="operation-pane-expand icon-button" type="button" data-action="static-operation-expand" title="展开操作区" data-i18n-title="common:auto.expand_operation_pane" aria-label="展开操作区" data-i18n-aria-label="common:auto.expand_operation_pane"><img class="brand-mark" src="/assets/terma-icon.png" alt="" aria-hidden="true"></button>
         <div class="side-actions">
-          <button id="operationPanePin" class="operation-pane-pin icon-button is-pinned" type="button" data-icon="pin" data-action="static-operation-pin" title="操作区已固定；点击改为自动收起" aria-label="操作区已固定；点击改为自动收起" aria-pressed="true"><i data-lucide="pin"></i></button>
-          <button id="operationPaneCollapse" class="operation-pane-collapse icon-button" type="button" data-action="static-operation-collapse" title="收起操作区" aria-label="收起操作区"><i data-lucide="panel-left-close"></i></button>
-          <button class="mobile-brand-action theme-toggle icon-button" data-action="static-theme-toggle" title="切换主题" aria-label="切换主题"><i data-lucide="moon"></i></button>
-          <button class="mobile-brand-action icon-button" data-action="static-refresh" title="刷新数据" aria-label="刷新数据"><i data-lucide="refresh-cw"></i></button>
+          <button id="operationPanePin" class="operation-pane-pin icon-button is-pinned" type="button" data-icon="pin" data-action="static-operation-pin" data-i18n-skip="true" title="操作区已固定；点击改为自动收起" aria-label="操作区已固定；点击改为自动收起" aria-pressed="true"><i data-lucide="pin"></i></button>
+          <button id="operationPaneCollapse" class="operation-pane-collapse icon-button" type="button" data-action="static-operation-collapse" title="收起操作区" data-i18n-title="common:auto.collapse_operation_pane" aria-label="收起操作区" data-i18n-aria-label="common:auto.collapse_operation_pane"><i data-lucide="panel-left-close"></i></button>
+          <button id="mobileLanguageToggle" class="mobile-brand-action language-toggle icon-button" type="button" data-action="static-language-toggle" title="切换到 English" data-i18n-title="login:switch_language" aria-label="切换到 English" data-i18n-aria-label="login:switch_language"><i data-lucide="languages"></i></button>
+          <button class="mobile-brand-action theme-toggle icon-button" data-action="static-theme-toggle" title="切换为暗色" data-i18n-title="common:auto.switch_to_dark" aria-label="切换为暗色" data-i18n-aria-label="common:auto.switch_to_dark"><i data-lucide="moon"></i></button>
+          <button class="mobile-brand-action icon-button" data-action="static-refresh" title="刷新数据" data-i18n-title="common:auto.refresh_data" aria-label="刷新数据" data-i18n-aria-label="common:auto.refresh_data"><i data-lucide="refresh-cw"></i></button>
         </div>
-        <div id="operationPanePinGuide" class="operation-pane-pin-guide" role="region" aria-label="操作区使用提示" aria-live="polite" hidden>
-          <div><strong>固定操作区</strong><span>取消固定后，点击工作区会自动收起；每个操作区都可以单独设置。</span></div>
-          <button class="icon-button" type="button" data-action="static-operation-guide-dismiss" title="知道了" aria-label="关闭提示"><i data-lucide="x"></i></button>
+        <div id="operationPanePinGuide" class="operation-pane-pin-guide" role="region" aria-label="操作区使用提示" data-i18n-aria-label="common:auto.operation_pane_guide" aria-live="polite" hidden>
+          <div><strong data-i18n="common:auto.pin_operation_pane">固定操作区</strong><span data-i18n="common:auto.operation_pane_guide_text">取消固定后，点击工作区会自动收起；每个操作区都可以单独设置。</span></div>
+          <button class="icon-button" type="button" data-action="static-operation-guide-dismiss" title="知道了" data-i18n-title="common:auto.got_it" aria-label="关闭提示" data-i18n-aria-label="common:auto.close_hint"><i data-lucide="x"></i></button>
         </div>
       </div>
       <div class="left-body">
-        <nav class="activity" aria-label="主导航">
+        <nav class="activity" aria-label="主导航" data-i18n-aria-label="common:auto.main_navigation">
           <div class="activity-top">
-            <button id="navConnections" class="active" data-action="static-primary" data-primary="connections" data-explorer="true" title="连接列表" aria-label="连接列表"><i data-lucide="server"></i></button>
-            <button id="navRemote" data-action="static-primary" data-primary="remote" data-explorer="true" title="其他连接" aria-label="其他连接"><i data-lucide="plug-zap"></i></button>
-            <button id="navRunning" data-action="static-primary" data-primary="running" data-explorer="true" title="正在转发" aria-label="正在转发"><i data-lucide="route"></i></button>
-            <button id="navCommand" data-action="static-primary" data-primary="command" data-explorer="true" title="批量命令" aria-label="批量命令"><i data-lucide="square-terminal"></i></button>
-            <button id="navImport" data-action="static-primary" data-primary="import" data-explorer="true" title="导入导出" aria-label="导入导出"><i data-lucide="arrow-left-right"></i></button>
-            <button id="navLogs" data-action="static-primary" data-primary="logs" data-explorer="true" title="日志" aria-label="日志"><i data-lucide="scroll-text"></i></button>
-            <button id="navSettings" data-action="static-primary" data-primary="settings" data-explorer="true" title="设置" aria-label="设置"><i data-lucide="settings"></i><span id="navSettingsUpdateDot" class="nav-update-dot" hidden aria-label="发现新版本"></span></button>
+            <button id="navConnections" class="active" data-action="static-primary" data-primary="connections" data-explorer="true" title="连接列表" data-i18n-title="navigation:auto.connections" aria-label="连接列表" data-i18n-aria-label="navigation:auto.connections"><i data-lucide="server"></i></button>
+            <button id="navRemote" data-action="static-primary" data-primary="remote" data-explorer="true" title="其他连接" data-i18n-title="navigation:auto.remote" aria-label="其他连接" data-i18n-aria-label="navigation:auto.remote"><i data-lucide="plug-zap"></i></button>
+            <button id="navRunning" data-action="static-primary" data-primary="running" data-explorer="true" title="正在转发" data-i18n-title="navigation:auto.running" aria-label="正在转发" data-i18n-aria-label="navigation:auto.running"><i data-lucide="route"></i></button>
+            <button id="navCommand" data-action="static-primary" data-primary="command" data-explorer="true" title="批量命令" data-i18n-title="navigation:auto.batch" aria-label="批量命令" data-i18n-aria-label="navigation:auto.batch"><i data-lucide="square-terminal"></i></button>
+            <button id="navImport" data-action="static-primary" data-primary="import" data-explorer="true" title="导入导出" data-i18n-title="navigation:auto.import_export" aria-label="导入导出" data-i18n-aria-label="navigation:auto.import_export"><i data-lucide="arrow-left-right"></i></button>
+            <button id="navLogs" data-action="static-primary" data-primary="logs" data-explorer="true" title="日志" data-i18n-title="navigation:auto.logs" aria-label="日志" data-i18n-aria-label="navigation:auto.logs"><i data-lucide="scroll-text"></i></button>
+            <button id="navSettings" data-action="static-primary" data-primary="settings" data-explorer="true" title="设置" data-i18n-title="settings:title" aria-label="设置" data-i18n-aria-label="settings:title"><i data-lucide="settings"></i><span id="navSettingsUpdateDot" class="nav-update-dot" hidden aria-label="发现新版本" data-i18n-aria-label="common:auto.new_version"></span></button>
           </div>
           <div class="activity-bottom">
-            <button id="themeToggle" class="theme-toggle" type="button" data-action="static-theme-toggle" title="切换主题" aria-label="切换主题"><i data-lucide="moon"></i></button>
-            <button id="activityRefresh" type="button" data-action="static-refresh" title="刷新数据" aria-label="刷新数据"><i data-lucide="refresh-cw"></i></button>
+            <button id="languageToggle" class="language-toggle" type="button" data-action="static-language-toggle" title="切换到 English" data-i18n-title="login:switch_language" aria-label="切换到 English" data-i18n-aria-label="login:switch_language"><i data-lucide="languages"></i></button>
+            <button id="themeToggle" class="theme-toggle" type="button" data-action="static-theme-toggle" title="切换为暗色" data-i18n-title="common:auto.switch_to_dark" aria-label="切换为暗色" data-i18n-aria-label="common:auto.switch_to_dark"><i data-lucide="moon"></i></button>
+            <button id="activityRefresh" type="button" data-action="static-refresh" title="刷新数据" data-i18n-title="common:auto.refresh_data" aria-label="刷新数据" data-i18n-aria-label="common:auto.refresh_data"><i data-lucide="refresh-cw"></i></button>
             <a class="github-link" href="https://github.com/zmide/Terma" target="_blank" rel="noopener" title="GitHub">
               <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.2.8-.6v-2c-3.3.7-4-1.4-4-1.4-.5-1.3-1.2-1.6-1.2-1.6-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 .1.6 2.1 3.4 1.5.1-.7.4-1.2.7-1.5-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>
             </a>
           </div>
-          <div id="activityBarResize" class="activity-bar-resizer" role="separator" aria-orientation="vertical" aria-label="调整活动栏宽度" tabindex="0" title="拖动调整活动栏宽度，双击恢复默认"></div>
+          <div id="activityBarResize" class="activity-bar-resizer" role="separator" aria-orientation="vertical" aria-label="调整活动栏宽度" data-i18n-aria-label="common:auto.adjust_activity_bar" tabindex="0" title="拖动调整活动栏宽度，双击恢复默认" data-i18n-title="common:auto.adjust_activity_bar_hint"></div>
         </nav>
         <aside id="sidebar" class="sidebar">
           <div class="side-nav">
-            <button id="sideConnections" class="active" data-action="static-primary" data-primary="connections">连接列表</button>
-            <button id="sideRemote" data-action="static-primary" data-primary="remote">其他连接</button>
-            <button id="sideImport" data-action="static-primary" data-primary="import">导入导出</button>
+            <button id="sideConnections" class="active" data-action="static-primary" data-primary="connections" data-i18n="navigation:auto.connections">连接列表</button>
+            <button id="sideRemote" data-action="static-primary" data-primary="remote" data-i18n="navigation:auto.remote">其他连接</button>
+            <button id="sideImport" data-action="static-primary" data-primary="import" data-i18n="navigation:auto.import_export">导入导出</button>
           </div>
           <div id="explorerTools" class="explorer-tools">
-            <button data-action="static-group-add">添加分组</button>
-            <button class="primary" data-action="static-connection-new">添加 SSH</button>
-            <button data-action="static-forwards-start-all">启动全部转发</button>
-            <button data-action="static-forwards-stop-all">停止全部转发</button>
+            <button data-action="static-group-add" data-i18n="common:auto.add_group">添加分组</button>
+            <button class="primary" data-action="static-connection-new" data-i18n="common:auto.add_ssh">添加 SSH</button>
+            <button data-action="static-forwards-start-all" data-i18n="common:auto.start_all_forwards">启动全部转发</button>
+            <button data-action="static-forwards-stop-all" data-i18n="common:auto.stop_all_forwards">停止全部转发</button>
           </div>
           <div id="connectionGroups" class="tree"></div>
         </aside>
       </div>
-      <div id="operationPaneResize" class="operation-pane-resizer" role="separator" aria-orientation="vertical" aria-label="调整操作区宽度" tabindex="0" title="拖动调整操作区宽度，双击恢复默认"></div>
+      <div id="operationPaneResize" class="operation-pane-resizer" role="separator" aria-orientation="vertical" aria-label="调整操作区宽度" data-i18n-aria-label="common:auto.adjust_operation_pane" tabindex="0" title="拖动调整操作区宽度，双击恢复默认" data-i18n-title="common:auto.adjust_operation_pane_hint"></div>
     </div>
 
     <main id="content" class="content">
-      <div class="mobile-back-bar"><button id="mobileBack" class="mobile-back" type="button" data-action="static-explorer-back" title="返回连接列表" aria-label="返回连接列表"><i data-lucide="arrow-left"></i></button></div>
+      <div class="mobile-back-bar"><button id="mobileBack" class="mobile-back" type="button" data-action="static-explorer-back" title="返回连接列表" data-i18n-title="common:auto.back_to_connections" aria-label="返回连接列表" data-i18n-aria-label="common:auto.back_to_connections"><i data-lucide="arrow-left"></i></button></div>
       <div class="topbar">
         <div class="workspace-heading">
-          <div class="workspace-heading-title"><strong id="workspaceTitle">工作区</strong><button class="icon-button workspace-quick-connect-button" type="button" data-action="quick-connect-open" title="快速打开 SSH / SFTP" aria-label="快速打开 SSH / SFTP"><i data-lucide="server"></i></button></div>
-          <div id="workspaceSubtitle" class="cmd">选择左侧 SSH 后开始操作</div>
+          <div class="workspace-heading-title"><strong id="workspaceTitle" data-i18n="common:auto.workspace">工作区</strong><button class="icon-button workspace-quick-connect-button" type="button" data-action="quick-connect-open" title="快速打开 SSH / SFTP" data-i18n-title="common:auto.quick_open" aria-label="快速打开 SSH / SFTP" data-i18n-aria-label="common:auto.quick_open"><i data-lucide="server"></i></button></div>
+          <div id="workspaceSubtitle" class="cmd" data-i18n-skip="true">选择左侧 SSH 后开始操作</div>
         </div>
         <div id="workspaceGlobalHeaderTools" class="workspace-header-tools workspace-global-header-tools" data-workspace-role="global-header-tools" hidden></div>
-        <div id="workspaceQuickActions" class="workspace-quick-actions" aria-label="全局快捷操作"></div>
+        <div id="workspaceQuickActions" class="workspace-quick-actions" aria-label="全局快捷操作" data-i18n-aria-label="common:auto.global_quick_actions"></div>
         <div id="sftpTaskCenter" class="sftp-task-center">
-          <button id="sftpTaskCenterButton" class="icon-button sftp-task-center-button" type="button" data-action="static-task-center-toggle" title="任务中心" aria-label="任务中心" aria-expanded="false" aria-controls="sftpTaskCenterDrawer">
+          <button id="sftpTaskCenterButton" class="icon-button sftp-task-center-button" type="button" data-action="static-task-center-toggle" data-i18n-skip="true" title="任务中心" aria-label="任务中心" aria-expanded="false" aria-controls="sftpTaskCenterDrawer">
             <span id="sftpTaskCenterIcon" class="sftp-task-center-icon"><i data-lucide="list-checks"></i></span>
             <span id="sftpTaskCenterBadge" class="sftp-task-center-badge" hidden></span>
           </button>
-          <span id="sftpTaskCenterProgress" class="sftp-task-center-progress" role="progressbar" aria-label="任务总进度" aria-valuemin="0" aria-valuemax="100" hidden><i></i></span>
-          <aside id="sftpTaskCenterDrawer" class="sftp-task-center-drawer" aria-label="任务中心" hidden>
+          <span id="sftpTaskCenterProgress" class="sftp-task-center-progress" role="progressbar" aria-label="任务总进度" data-i18n-aria-label="common:auto.task_total_progress" aria-valuemin="0" aria-valuemax="100" hidden><i></i></span>
+          <aside id="sftpTaskCenterDrawer" class="sftp-task-center-drawer" aria-label="任务中心" data-i18n-aria-label="tasks:title" hidden>
             <header class="sftp-task-center-head">
-              <div><strong>任务中心</strong><span id="sftpTaskCenterSummary">暂无进行中的任务</span></div>
-              <button class="icon-button" type="button" data-action="static-task-center-close" title="关闭任务中心" aria-label="关闭任务中心"><i data-lucide="x"></i></button>
+              <div><strong data-i18n="tasks:title">任务中心</strong><span id="sftpTaskCenterSummary" data-i18n-skip="true">暂无进行中的任务</span></div>
+              <button class="icon-button" type="button" data-action="static-task-center-close" title="关闭任务中心" data-i18n-title="common:auto.close_task_center" aria-label="关闭任务中心" data-i18n-aria-label="common:auto.close_task_center"><i data-lucide="x"></i></button>
             </header>
-            <div class="sftp-task-center-tabs" role="tablist" aria-label="任务视图">
-              <button id="sftpTaskCenterCurrentTab" type="button" role="tab" aria-selected="true" data-action="static-task-center-view" data-task-view="current"><span>进行中</span><small id="sftpTaskCenterCurrentCount">0</small></button>
-              <button id="sftpTaskCenterFailedTab" type="button" role="tab" aria-selected="false" data-action="static-task-center-view" data-task-view="failed"><span>失败</span><small id="sftpTaskCenterFailedCount">0</small></button>
-              <button id="sftpTaskCenterHistoryTab" type="button" role="tab" aria-selected="false" data-action="static-task-center-view" data-task-view="history"><span>历史记录</span><small id="sftpTaskCenterHistoryCount">0</small></button>
+            <div class="sftp-task-center-tabs" role="tablist" aria-label="任务视图" data-i18n-aria-label="common:auto.task_view">
+              <button id="sftpTaskCenterCurrentTab" type="button" role="tab" aria-selected="true" data-action="static-task-center-view" data-task-view="current"><span data-i18n="common:auto.current_tasks">进行中</span><small id="sftpTaskCenterCurrentCount">0</small></button>
+              <button id="sftpTaskCenterFailedTab" type="button" role="tab" aria-selected="false" data-action="static-task-center-view" data-task-view="failed"><span data-i18n="tasks:status.failed">失败</span><small id="sftpTaskCenterFailedCount">0</small></button>
+              <button id="sftpTaskCenterHistoryTab" type="button" role="tab" aria-selected="false" data-action="static-task-center-view" data-task-view="history"><span data-i18n="common:auto.history">历史记录</span><small id="sftpTaskCenterHistoryCount">0</small></button>
             </div>
             <div id="sftpTaskCenterList" class="sftp-task-center-list" role="tabpanel"></div>
             <footer id="sftpTaskCenterFooter" class="sftp-task-center-footer" hidden>
-              <button id="sftpTaskCenterClearButton" class="danger" type="button" data-action="static-task-center-clear"><i data-lucide="trash-2"></i><span id="sftpTaskCenterClearLabel">清空历史</span></button>
+              <button id="sftpTaskCenterClearButton" class="danger" type="button" data-action="static-task-center-clear"><i data-lucide="trash-2"></i><span id="sftpTaskCenterClearLabel" data-i18n-skip="true">清空历史</span></button>
             </footer>
-            <div id="sftpTaskCenterResize" class="sftp-task-center-resize-handle" role="button" tabindex="0" aria-label="调整任务中心大小" title="拖动调整任务中心大小，双击恢复默认" data-pointerdown-action="static-task-resize-start" data-dblclick-action="static-task-resize-reset" data-keydown-action="static-task-resize-key"></div>
+            <div id="sftpTaskCenterResize" class="sftp-task-center-resize-handle" role="button" tabindex="0" aria-label="调整任务中心大小" data-i18n-aria-label="common:auto.adjust_task_center" title="拖动调整任务中心大小，双击恢复默认" data-i18n-title="common:auto.adjust_task_center_hint" data-pointerdown-action="static-task-resize-start" data-dblclick-action="static-task-resize-reset" data-keydown-action="static-task-resize-key"></div>
           </aside>
         </div>
-        <aside id="sftpTaskFloat" class="sftp-task-float" aria-label="任务悬浮进度" data-action="static-task-list-open" hidden></aside>
+        <aside id="sftpTaskFloat" class="sftp-task-float" aria-label="任务悬浮进度" data-i18n-aria-label="common:auto.task_floating_progress" data-action="static-task-list-open" hidden></aside>
         <div id="notice" class="notice"></div>
-        <div id="workspaceHeaderResize" class="workspace-header-resizer" role="separator" aria-orientation="horizontal" aria-label="调整工作区标题栏高度" tabindex="0" title="拖动调整标题栏高度，双击恢复默认"></div>
+        <div id="workspaceHeaderResize" class="workspace-header-resizer" role="separator" aria-orientation="horizontal" aria-label="调整工作区标题栏高度" data-i18n-aria-label="common:auto.adjust_workspace_header" tabindex="0" title="拖动调整标题栏高度，双击恢复默认" data-i18n-title="common:auto.adjust_workspace_header_hint"></div>
       </div>
       <div id="workspaceDock" class="workspace-dock"></div>
       <template id="workspaceViewsTpl">
@@ -128,13 +130,13 @@
   </div>
 
   <nav class="mobile-tabs">
-    <button id="mobileConnections" class="active" data-action="static-primary" data-primary="connections" title="连接列表" aria-label="连接列表"><i data-lucide="server"></i><span class="mobile-tab-label">连接</span></button>
-    <button id="mobileRemote" data-action="static-primary" data-primary="remote" title="其他连接" aria-label="其他连接"><i data-lucide="plug-zap"></i><span class="mobile-tab-label">其他</span></button>
-    <button id="mobileRunning" data-action="static-primary" data-primary="running" title="正在转发" aria-label="正在转发"><i data-lucide="route"></i><span class="mobile-tab-label">转发</span></button>
-    <button id="mobileCommand" data-action="static-primary" data-primary="command" title="批量命令" aria-label="批量命令"><i data-lucide="square-terminal"></i><span class="mobile-tab-label">批量</span></button>
-    <button id="mobileImport" data-action="static-primary" data-primary="import" title="导入导出" aria-label="导入导出"><i data-lucide="arrow-left-right"></i><span class="mobile-tab-label">导入</span></button>
-    <button id="mobileLogs" data-action="static-primary" data-primary="logs" title="日志" aria-label="日志"><i data-lucide="scroll-text"></i><span class="mobile-tab-label">日志</span></button>
-    <button id="mobileSettings" data-action="static-primary" data-primary="settings" title="设置" aria-label="设置"><i data-lucide="settings"></i><span class="mobile-tab-label">设置</span><span id="mobileSettingsUpdateDot" class="nav-update-dot" hidden aria-label="发现新版本"></span></button>
+    <button id="mobileConnections" class="active" data-action="static-primary" data-primary="connections" title="连接列表" data-i18n-title="navigation:auto.connections" aria-label="连接列表" data-i18n-aria-label="navigation:auto.connections"><i data-lucide="server"></i><span class="mobile-tab-label" data-i18n="connections:title">连接</span></button>
+    <button id="mobileRemote" data-action="static-primary" data-primary="remote" title="其他连接" data-i18n-title="navigation:auto.remote" aria-label="其他连接" data-i18n-aria-label="navigation:auto.remote"><i data-lucide="plug-zap"></i><span class="mobile-tab-label" data-i18n="common:auto.other">其他</span></button>
+    <button id="mobileRunning" data-action="static-primary" data-primary="running" title="正在转发" data-i18n-title="navigation:auto.running" aria-label="正在转发" data-i18n-aria-label="navigation:auto.running"><i data-lucide="route"></i><span class="mobile-tab-label" data-i18n="navigation:auto.forwards">转发</span></button>
+    <button id="mobileCommand" data-action="static-primary" data-primary="command" title="批量命令" data-i18n-title="navigation:auto.batch" aria-label="批量命令" data-i18n-aria-label="navigation:auto.batch"><i data-lucide="square-terminal"></i><span class="mobile-tab-label" data-i18n="navigation:auto.batch_short">批量</span></button>
+    <button id="mobileImport" data-action="static-primary" data-primary="import" title="导入导出" data-i18n-title="navigation:auto.import_export" aria-label="导入导出" data-i18n-aria-label="navigation:auto.import_export"><i data-lucide="arrow-left-right"></i><span class="mobile-tab-label" data-i18n="navigation:auto.import">导入</span></button>
+    <button id="mobileLogs" data-action="static-primary" data-primary="logs" title="日志" data-i18n-title="navigation:auto.logs" aria-label="日志" data-i18n-aria-label="navigation:auto.logs"><i data-lucide="scroll-text"></i><span class="mobile-tab-label" data-i18n="navigation:auto.logs">日志</span></button>
+    <button id="mobileSettings" data-action="static-primary" data-primary="settings" title="设置" data-i18n-title="settings:title" aria-label="设置" data-i18n-aria-label="settings:title"><i data-lucide="settings"></i><span class="mobile-tab-label" data-i18n="settings:title">设置</span><span id="mobileSettingsUpdateDot" class="nav-update-dot" hidden aria-label="发现新版本" data-i18n-aria-label="common:auto.new_version"></span></button>
     <a class="mobile-github-link" href="https://github.com/zmide/Terma" target="_blank" rel="noopener" title="GitHub" aria-label="GitHub">
       <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.2.8-.6v-2c-3.3.7-4-1.4-4-1.4-.5-1.3-1.2-1.6-1.2-1.6-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 .1.6 2.1 3.4 1.5.1-.7.4-1.2.7-1.5-2.6-.3-5.4-1.3-5.4-5.9 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.4 11.4 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.4 5.9.4.4.8 1.1.8 2.2v3.3c0 .4.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>
     </a>
@@ -145,140 +147,140 @@
     <form id="connectionForm">
       <input type="hidden" id="conn_id">
       <div class="grid">
-        <div><label>名称</label><input id="conn_name" required placeholder="server-a"></div>
-        <div><label>分组</label><select id="conn_group"></select></div>
+        <div><label data-i18n="common:auto.name">名称</label><input id="conn_name" required placeholder="server-a"></div>
+        <div><label data-i18n="connections:auto.group">分组</label><select id="conn_group"></select></div>
       </div>
       <div class="grid">
-        <div><label>SSH 用户</label><input id="conn_user" required placeholder="root"></div>
-        <div><label>SSH 主机</label><input id="conn_host" required placeholder="example.com"></div>
+        <div><label data-i18n="connections:auto.ssh_user">SSH 用户</label><input id="conn_user" required placeholder="root"></div>
+        <div><label data-i18n="connections:auto.ssh_host">SSH 主机</label><input id="conn_host" required placeholder="example.com"></div>
       </div>
       <div class="grid3">
-        <div><label>SSH 端口</label><input id="conn_port" type="number" min="1" max="65535" value="22"></div>
-        <div><label>排序</label><input id="conn_sort_order" type="number" min="1" max="2147483647" step="1" value="1"></div>
-        <div><label>启动 Terma 时自动启用转发</label><select id="conn_autostart"><option value="0">否</option><option value="1">是</option></select></div>
+        <div><label data-i18n="connections:auto.ssh_port">SSH 端口</label><input id="conn_port" type="number" min="1" max="65535" value="22"></div>
+        <div><label data-i18n="connections:auto.sort">排序</label><input id="conn_sort_order" type="number" min="1" max="2147483647" step="1" value="1"></div>
+        <div><label data-i18n="connections:auto.auto_start_forwards">启动 Terma 时自动启用转发</label><select id="conn_autostart"><option value="0" data-i18n="common:auto.no">否</option><option value="1" data-i18n="common:auto.yes">是</option></select></div>
       </div>
-      <label>标签</label><input id="conn_tags" placeholder="例如：生产 数据库 海外">
+      <label data-i18n="common:auto.label">标签</label><input id="conn_tags" placeholder="例如：生产 数据库 海外" data-i18n-placeholder="connections:auto.tags_example">
       <div class="auth-switch">
-        <label>登录方式</label>
-        <select id="conn_auth_type" data-change-action="static-auth-fields"><option value="key">私钥登录</option><option value="password">密码登录</option></select>
+        <label data-i18n="connections:auto.login_method">登录方式</label>
+        <select id="conn_auth_type" data-change-action="static-auth-fields"><option value="key" data-i18n="connections:auto.key_login">私钥登录</option><option value="password" data-i18n="connections:auto.password_login">密码登录</option></select>
       </div>
       <div id="keyAuthBox" class="grid">
         <div>
-          <label>私钥</label>
-          <div class="key-picker"><select id="conn_key" data-change-action="static-key-status"><option value="">不使用私钥</option></select><button type="button" data-action="static-key-refresh">刷新</button></div>
-          <div id="keyStatus" class="key-status muted">未选择私钥</div>
-          <div class="upload-line"><label class="file-picker"><input id="key_upload" type="file" accept="*/*" data-change-action="static-file-picker"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button type="button" data-action="static-key-upload">上传到当前密钥目录</button></div>
-          <div class="actions"><button type="button" data-action="static-key-status">检查权限</button><button type="button" data-action="static-key-repair">一键修复权限</button></div>
+          <label data-i18n="common:auto.private_key">私钥</label>
+          <div class="key-picker"><select id="conn_key" data-change-action="static-key-status"><option value="" data-i18n="connections:auto.no_private_key">不使用私钥</option></select><button type="button" data-action="static-key-refresh" data-i18n="common:auto.refresh">刷新</button></div>
+          <div id="keyStatus" class="key-status muted" data-i18n-skip="true">未选择私钥</div>
+          <div class="upload-line"><label class="file-picker"><input id="key_upload" type="file" accept="*/*" data-change-action="static-file-picker"><span class="file-picker-button" data-i18n="common:auto.choose_file">选择文件</span><span class="file-picker-name" data-i18n="common:auto.not_selected">未选择文件</span></label><button type="button" data-action="static-key-upload" data-i18n="connections:auto.upload_key">上传到当前密钥目录</button></div>
+          <div class="actions"><button type="button" data-action="static-key-status" data-i18n="connections:auto.check_permissions">检查权限</button><button type="button" data-action="static-key-repair" data-i18n="connections:auto.repair_permissions">一键修复权限</button></div>
           <div class="grid connection-key-options">
-            <div><label>私钥口令（可选）</label><input id="conn_key_passphrase" type="password" autocomplete="new-password" placeholder="留空表示无口令或保持原口令"></div>
-            <div><label>SSH Agent</label><select id="conn_agent_mode"><option value="auto">自动优先使用</option><option value="off">不使用 Agent</option><option value="required">只使用 Agent</option></select></div>
+            <div><label data-i18n="connections:auto.key_passphrase">私钥口令（可选）</label><input id="conn_key_passphrase" type="password" autocomplete="new-password" placeholder="留空表示无口令或保持原口令" data-i18n-placeholder="connections:auto.passphrase_placeholder"></div>
+            <div><label>SSH Agent</label><select id="conn_agent_mode"><option value="auto" data-i18n="connections:auto.agent_auto">自动优先使用</option><option value="off" data-i18n="connections:auto.agent_off">不使用 Agent</option><option value="required" data-i18n="connections:auto.agent_required">只使用 Agent</option></select></div>
           </div>
-          <label id="connClearPassphraseLine" class="checkline" hidden><input id="conn_clear_key_passphrase" type="checkbox">清除已保存的私钥口令</label>
+          <label id="connClearPassphraseLine" class="checkline" hidden><input id="conn_clear_key_passphrase" type="checkbox"><span data-i18n="connections:auto.clear_passphrase">清除已保存的私钥口令</span></label>
         </div>
       </div>
       <div id="passwordAuthBox" class="auth-password" hidden>
-        <label>SSH 密码</label><input id="conn_password" type="password" autocomplete="new-password" placeholder="输入 SSH 登录密码">
-        <div class="muted">编辑已有密码连接时留空表示保持原密码。</div>
+        <label data-i18n="connections:auto.ssh_password">SSH 密码</label><input id="conn_password" type="password" autocomplete="new-password" placeholder="输入 SSH 登录密码" data-i18n-placeholder="connections:auto.ssh_password_placeholder">
+        <div class="muted" data-i18n="connections:auto.password_edit_hint">编辑已有密码连接时留空表示保持原密码。</div>
       </div>
       <details id="connAdvancedOptions" class="connection-form-advanced">
         <summary>
-          <span class="connection-form-advanced-title"><i data-lucide="sliders-horizontal"></i><b>高级选项</b></span>
-          <span id="connAdvancedStatus" class="connection-form-advanced-status">终端、跳板与连接调优</span>
+          <span class="connection-form-advanced-title"><i data-lucide="sliders-horizontal"></i><b data-i18n="connections:auto.advanced">高级选项</b></span>
+          <span id="connAdvancedStatus" class="connection-form-advanced-status" data-i18n-skip="true">终端、跳板与连接调优</span>
           <i class="connection-form-advanced-chevron" data-lucide="chevron-down"></i>
         </summary>
         <div class="connection-form-advanced-body">
         <fieldset class="terminal-startup-card">
-          <legend>终端配置</legend>
-        <div class="terminal-startup-intro">默认使用服务器的登录 Shell。测试 SSH 后可快速选择检测到的 Bash、Zsh、PowerShell、Python、Node、tmux 等程序，也可以填写自定义命令。</div>
+          <legend data-i18n="connections:auto.terminal_config">终端配置</legend>
+        <div class="terminal-startup-intro" data-i18n="connections:auto.terminal_intro">默认使用服务器的登录 Shell。测试 SSH 后可快速选择检测到的 Bash、Zsh、PowerShell、Python、Node、tmux 等程序，也可以填写自定义命令。</div>
         <div class="grid terminal-startup-selectors">
           <div>
-            <label>启动方式</label>
+            <label data-i18n="connections:auto.startup_mode">启动方式</label>
             <select id="conn_terminal_startup_mode" data-change-action="static-terminal-startup">
-              <option value="default">自动（使用服务器默认登录 Shell）</option>
-              <option value="program">指定程序或交互环境</option>
+              <option value="default" data-i18n="connections:auto.startup_default">自动（使用服务器默认登录 Shell）</option>
+              <option value="program" data-i18n="connections:auto.startup_program">指定程序或交互环境</option>
             </select>
           </div>
           <div>
-            <label>快速选择</label>
+            <label data-i18n="connections:auto.quick_select">快速选择</label>
             <select id="conn_terminal_profile_select" data-change-action="static-terminal-profile">
-              <option value="">测试 SSH 后显示可用选项</option>
-              <option value="__custom__">自定义程序...</option>
+              <option value="" data-i18n="connections:auto.test_first">测试 SSH 后显示可用选项</option>
+              <option value="__custom__" data-i18n="connections:auto.custom_program">自定义程序...</option>
             </select>
           </div>
         </div>
-        <div id="connTerminalDetectionStatus" class="terminal-startup-detection muted" aria-live="polite">尚未检测。填写连接信息后点击“测试 SSH”。</div>
+        <div id="connTerminalDetectionStatus" class="terminal-startup-detection muted" data-i18n-skip="true" aria-live="polite">尚未检测。填写连接信息后点击“测试 SSH”。</div>
         <div id="connTerminalProgramFields" class="terminal-startup-program" hidden>
           <div class="grid3 terminal-startup-meta">
-            <div><label>配置名称</label><input id="conn_terminal_profile_name" maxlength="80" placeholder="例如：Bash（登录模式）"></div>
+            <div><label data-i18n="connections:auto.profile_name">配置名称</label><input id="conn_terminal_profile_name" maxlength="80" placeholder="例如：Bash（登录模式）" data-i18n-placeholder="connections:auto.profile_example"></div>
             <div>
-              <label>类型</label>
+              <label data-i18n="common:auto.type">类型</label>
               <select id="conn_terminal_profile_kind">
                 <option value="shell">Shell</option>
-                <option value="repl">交互式语言</option>
-                <option value="session">会话工具</option>
-                <option value="tool">交互工具</option>
-                <option value="custom">自定义</option>
+                <option value="repl" data-i18n="connections:auto.interactive_language">交互式语言</option>
+                <option value="session" data-i18n="connections:auto.session_tool">会话工具</option>
+                <option value="tool" data-i18n="connections:auto.interactive_tool">交互工具</option>
+                <option value="custom" data-i18n="connections:auto.custom">自定义</option>
               </select>
             </div>
             <div>
-              <label>远端平台</label>
+              <label data-i18n="connections:auto.remote_platform">远端平台</label>
               <select id="conn_terminal_program_platform">
-                <option value="auto">自动判断</option>
+                <option value="auto" data-i18n="connections:auto.auto_detect">自动判断</option>
                 <option value="posix">Linux / macOS / Unix</option>
                 <option value="windows">Windows</option>
               </select>
             </div>
           </div>
-          <label>程序完整路径</label>
-          <input id="conn_terminal_program_path" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="例如：/bin/bash、/usr/bin/python3、C:\Program Files\PowerShell\7\pwsh.exe">
+          <label data-i18n="connections:auto.program_path">程序完整路径</label>
+          <input id="conn_terminal_program_path" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="例如：/bin/bash、/usr/bin/python3、C:\Program Files\PowerShell\7\pwsh.exe" data-i18n-placeholder="connections:auto.program_path_example">
           <div class="grid terminal-startup-command-options">
-            <div><label>启动参数</label><input id="conn_terminal_program_args" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="例如：-l、-i 或 --noprofile"></div>
-            <div><label>启动目录（可选）</label><input id="conn_terminal_working_directory" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="例如：/srv/app 或 C:\work"></div>
+            <div><label data-i18n="connections:auto.startup_args">启动参数</label><input id="conn_terminal_program_args" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="例如：-l、-i 或 --noprofile" data-i18n-placeholder="connections:auto.startup_args_example"></div>
+            <div><label data-i18n="connections:auto.working_directory">启动目录（可选）</label><input id="conn_terminal_working_directory" maxlength="1024" autocomplete="off" spellcheck="false" placeholder="例如：/srv/app 或 C:\work" data-i18n-placeholder="connections:auto.working_directory_example"></div>
           </div>
-          <div class="terminal-startup-warning">参数会在远端启动程序时使用，请不要在这里填写密码或访问令牌。</div>
+          <div class="terminal-startup-warning" data-i18n="connections:auto.startup_secret_warning">参数会在远端启动程序时使用，请不要在这里填写密码或访问令牌。</div>
         </div>
         <div id="connTerminalCapabilities" class="terminal-startup-capabilities" hidden></div>
         </fieldset>
         <fieldset class="connection-advanced-card">
-          <legend>连接与跳板</legend>
+          <legend data-i18n="connections:auto.connection_jump">连接与跳板</legend>
         <div class="grid3">
-          <div><label>经由跳板连接</label><select id="conn_jump"><option value="">直接连接</option></select></div>
-          <div><label>TCP KeepAlive</label><select id="conn_tcp_keepalive"><option value="1">开启</option><option value="0">关闭</option></select></div>
-          <div><label>X11 图形转发</label><select id="conn_x11_mode"><option value="off">关闭</option><option value="untrusted">受限（-X）</option><option value="trusted">可信（-Y）</option></select></div>
+          <div><label data-i18n="connections:auto.jump_host">经由跳板连接</label><select id="conn_jump"><option value="" data-i18n="connections:auto.direct">直接连接</option></select></div>
+          <div><label>TCP KeepAlive</label><select id="conn_tcp_keepalive"><option value="1" data-i18n="common:auto.enable">开启</option><option value="0" data-i18n="connections:auto.off">关闭</option></select></div>
+          <div><label data-i18n="connections:auto.x11_forwarding">X11 图形转发</label><select id="conn_x11_mode"><option value="off" data-i18n="connections:auto.off">关闭</option><option value="untrusted" data-i18n="connections:auto.x11_restricted">受限（-X）</option><option value="trusted" data-i18n="connections:auto.x11_trusted">可信（-Y）</option></select></div>
         </div>
         <div class="grid3">
-          <div><label>连接超时（秒）</label><input id="conn_connect_timeout" type="number" min="3" max="120" value="10"></div>
-          <div><label>保活间隔（秒）</label><input id="conn_keepalive_interval" type="number" min="0" max="300" value="60" title="0 表示关闭保活" aria-describedby="conn_keepalive_interval_help"><small id="conn_keepalive_interval_help" class="field-help">0 表示关闭</small></div>
-          <div><label>连续无响应次数</label><input id="conn_keepalive_count" type="number" min="1" max="20" value="3"></div>
+          <div><label data-i18n="connections:auto.connect_timeout">连接超时（秒）</label><input id="conn_connect_timeout" type="number" min="3" max="120" value="10"></div>
+          <div><label data-i18n="connections:auto.keepalive_interval">保活间隔（秒）</label><input id="conn_keepalive_interval" type="number" min="0" max="300" value="60" title="0 表示关闭保活" data-i18n-title="connections:auto.keepalive_off_title" aria-describedby="conn_keepalive_interval_help"><small id="conn_keepalive_interval_help" class="field-help" data-i18n="connections:auto.keepalive_off">0 表示关闭</small></div>
+          <div><label data-i18n="connections:auto.keepalive_count">连续无响应次数</label><input id="conn_keepalive_count" type="number" min="1" max="20" value="3"></div>
         </div>
         </fieldset>
         <div class="connection-extra-options">
-          <label for="conn_extra">OpenSSH 连接调优参数（可选）</label><textarea id="conn_extra" aria-describedby="connExtraDiagnostics" placeholder="可分行填写算法、压缩等安全调优参数，例如 -o Compression=yes"></textarea>
+          <label for="conn_extra" data-i18n="connections:auto.openssh_tuning">OpenSSH 连接调优参数（可选）</label><textarea id="conn_extra" aria-describedby="connExtraDiagnostics" placeholder="可分行填写算法、压缩等安全调优参数，例如 -o Compression=yes" data-i18n-placeholder="connections:auto.openssh_tuning_placeholder"></textarea>
           <div id="connExtraDiagnostics" class="ssh-extra-diagnostics" role="status" aria-live="polite" hidden></div>
         </div>
         </div>
       </details>
       <div id="connRemoteGenerationLine" class="grid connection-derived-options">
         <div>
-          <label>同时生成其他连接</label>
+          <label data-i18n="connections:auto.related_connections">同时生成其他连接</label>
           <select id="conn_remote_generation">
-            <option value="">仅保存 SSH</option>
-            <option value="all">生成全部（RDP、VNC、XDMCP、FTP、Telnet）</option>
-            <option value="rdp">生成 RDP</option>
-            <option value="vnc">生成 VNC</option>
-            <option value="xdmcp">生成 XDMCP</option>
-            <option value="ftp">生成 FTP</option>
-            <option value="telnet">生成 Telnet</option>
+            <option value="" data-i18n="connections:auto.ssh_only">仅保存 SSH</option>
+            <option value="all" data-i18n="connections:auto.generate_all">生成全部（RDP、VNC、XDMCP、FTP、Telnet）</option>
+            <option value="rdp" data-i18n="connections:auto.generate_rdp">生成 RDP</option>
+            <option value="vnc" data-i18n="connections:auto.generate_vnc">生成 VNC</option>
+            <option value="xdmcp" data-i18n="connections:auto.generate_xdmcp">生成 XDMCP</option>
+            <option value="ftp" data-i18n="connections:auto.generate_ftp">生成 FTP</option>
+            <option value="telnet" data-i18n="connections:auto.generate_telnet">生成 Telnet</option>
           </select>
-          <small class="field-help">其他连接继承主机、分组和来源关系，协议专用密码仍需单独填写。</small>
+          <small class="field-help" data-i18n="connections:auto.related_hint">其他连接继承主机、分组和来源关系，协议专用密码仍需单独填写。</small>
         </div>
       </div>
       <div class="actions">
-        <button class="primary" type="submit">保存连接</button>
-        <button id="connSaveAndConnect" type="button" data-action="static-connection-save-connect">保存并连接</button>
-        <button id="connSaveAndClear" type="button" data-action="static-connection-save-clear">保存并清空</button>
-        <button id="connTestBtn" type="button" data-action="static-connection-test">测试 SSH</button>
-        <button type="button" data-action="static-connection-reset">清空</button>
+        <button class="primary" type="submit" data-i18n="connections:auto.save_connection">保存连接</button>
+        <button id="connSaveAndConnect" type="button" data-action="static-connection-save-connect" data-i18n="connections:auto.save_connect">保存并连接</button>
+        <button id="connSaveAndClear" type="button" data-action="static-connection-save-clear" data-i18n="connections:auto.save_clear">保存并清空</button>
+        <button id="connTestBtn" type="button" data-action="static-connection-test" data-i18n="connections:auto.test_ssh">测试 SSH</button>
+        <button type="button" data-action="static-connection-reset" data-i18n="common:auto.clear">清空</button>
       </div>
       <div id="connTestStatus" class="connection-test-status" hidden aria-live="polite"></div>
     </form>
@@ -290,30 +292,30 @@
     <form id="forwardForm">
       <input type="hidden" id="forward_conn_id">
       <div class="grid">
-        <div><label>转发类型</label><select id="forward_mode" data-change-action="static-forward-labels"><option value="local">本地转发 -L</option><option value="remote">远程转发 -R</option><option value="socks">SOCKS5 -D</option></select></div>
-        <div><label id="forward_bind_label">本地监听地址</label><input id="forward_bind_host" value="127.0.0.1"></div>
+        <div><label data-i18n="connections:auto.forward_type">转发类型</label><select id="forward_mode" data-change-action="static-forward-labels"><option value="local" data-i18n="connections:auto.local_forward">本地转发 -L</option><option value="remote" data-i18n="connections:auto.remote_forward">远程转发 -R</option><option value="socks" data-i18n="connections:auto.socks_forward">SOCKS5 -D</option></select></div>
+        <div><label id="forward_bind_label" data-i18n="connections:auto.local_bind_host">本地监听地址</label><input id="forward_bind_host" value="127.0.0.1"></div>
       </div>
       <div class="grid3">
-        <div><label id="forward_bind_port_label">本地监听端口</label><input id="forward_bind_port" type="number" min="1" max="65535"></div>
-        <div id="targetHostBox"><label>目标主机</label><input id="forward_target_host" value="127.0.0.1"></div>
-        <div id="targetPortBox"><label>目标端口</label><input id="forward_target_port" type="number" min="1" max="65535"></div>
+        <div><label id="forward_bind_port_label" data-i18n="connections:auto.local_bind_port">本地监听端口</label><input id="forward_bind_port" type="number" min="1" max="65535"></div>
+        <div id="targetHostBox"><label data-i18n="connections:auto.target_host">目标主机</label><input id="forward_target_host" value="127.0.0.1"></div>
+        <div id="targetPortBox"><label data-i18n="connections:auto.target_port">目标端口</label><input id="forward_target_port" type="number" min="1" max="65535"></div>
       </div>
       <div class="grid3">
-        <div><label>服务名称</label><input id="forward_service_name" placeholder="例如：后台面板"></div>
-        <div><label>服务类型</label><select id="forward_service_type"><option value="">自动</option><option value="web">Web</option><option value="mysql">MySQL</option><option value="redis">Redis</option><option value="ssh">SSH</option><option value="socks">SOCKS5</option><option value="other">其他</option></select></div>
-        <div><label>备注</label><input id="forward_service_note" placeholder="可选"></div>
+        <div><label data-i18n="connections:auto.service_name">服务名称</label><input id="forward_service_name" placeholder="例如：后台面板" data-i18n-placeholder="connections:auto.service_name_example"></div>
+        <div><label data-i18n="connections:auto.service_type">服务类型</label><select id="forward_service_type"><option value="" data-i18n="common:auto.automatic">自动</option><option value="web">Web</option><option value="mysql">MySQL</option><option value="redis">Redis</option><option value="ssh">SSH</option><option value="socks">SOCKS5</option><option value="other" data-i18n="common:auto.other">其他</option></select></div>
+        <div><label data-i18n="connections:auto.note">备注</label><input id="forward_service_note" placeholder="可选" data-i18n-placeholder="remote:auto.optional"></div>
       </div>
       <div class="grid">
-        <div><label>访问协议</label><select id="forward_url_scheme"><option value="">自动</option><option value="http">http</option><option value="https">https</option></select></div>
-        <div><label>转发模板</label><select id="forward_template_select" data-change-action="static-forward-template-apply"><option value="">选择模板</option></select></div>
+        <div><label data-i18n="connections:auto.access_protocol">访问协议</label><select id="forward_url_scheme"><option value="" data-i18n="common:auto.automatic">自动</option><option value="http">http</option><option value="https">https</option></select></div>
+        <div><label data-i18n="connections:auto.forward_template">转发模板</label><select id="forward_template_select" data-change-action="static-forward-template-apply"><option value="" data-i18n="connections:auto.choose_template">选择模板</option></select></div>
       </div>
-      <div class="actions"><button class="primary" id="forwardSubmitBtn" type="submit">添加转发</button><button type="button" data-action="static-forward-template-save">保存为模板</button><button type="button" data-action="static-forward-template-manage">管理模板</button><button type="button" data-action="static-forward-port-recommend">推荐端口</button><button type="button" id="cancelForwardEditBtn" data-action="static-forward-edit-cancel" hidden>取消编辑</button><button type="button" id="bulkDeleteForwardsBtn" class="danger" data-action="static-forward-bulk-delete" hidden>删除选中转发</button></div>
+      <div class="actions"><button class="primary" id="forwardSubmitBtn" type="submit" data-i18n="connections:auto.add_forward">添加转发</button><button type="button" data-action="static-forward-template-save" data-i18n="connections:auto.save_template">保存为模板</button><button type="button" data-action="static-forward-template-manage" data-i18n="connections:auto.manage_template">管理模板</button><button type="button" data-action="static-forward-port-recommend" data-i18n="connections:auto.recommend_port">推荐端口</button><button type="button" id="cancelForwardEditBtn" data-action="static-forward-edit-cancel" hidden data-i18n="connections:auto.cancel_edit">取消编辑</button><button type="button" id="bulkDeleteForwardsBtn" class="danger" data-action="static-forward-bulk-delete" hidden data-i18n="connections:auto.delete_selected_forwards">删除选中转发</button></div>
     </form>
     <div id="forwardTemplateManager" class="template-list" hidden></div>
   </div>
   <div class="panel">
-    <h3>转发列表</h3>
-    <div id="forwardList" class="muted">暂无</div>
+    <h3 data-i18n="connections:forwards.workspace_title">转发列表</h3>
+    <div id="forwardList" class="muted"></div>
   </div>
 </template>
 
@@ -321,35 +323,35 @@
   <div class="panel" id="importMainPanel">
     <div class="workspace-head">
       <div>
-        <h2>导入导出</h2>
-        <div class="subtitle">迁移 SSH config、数据库备份和连接配置快照。</div>
+        <h2 data-i18n="navigation:auto.import_export">导入导出</h2>
+        <div class="subtitle" data-i18n="settings:auto.import_migration">迁移 SSH config、数据库备份和连接配置快照。</div>
       </div>
     </div>
     <div class="grid import-main-grid">
       <section id="import-source" class="import-section">
-        <h3><i data-lucide="file-input"></i>SSH config 导入导出</h3>
-        <label>上传配置文件</label>
-        <div class="upload-line"><label class="file-picker"><input id="config_upload" type="file" accept="*/*" data-change-action="static-file-picker"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button data-action="static-import-config">上传解析</button></div>
-        <label>或粘贴 config 内容</label><textarea id="config_text" placeholder="Host demo&#10;  HostName example.com&#10;  User root&#10;  LocalForward 6010 127.0.0.1:6868"></textarea>
-        <div class="actions"><button data-action="static-import-text">粘贴解析</button></div>
+        <h3><i data-lucide="file-input"></i><span data-i18n="settings:auto.ssh_config_import_export">SSH config 导入导出</span></h3>
+        <label data-i18n="settings:auto.upload_config">上传配置文件</label>
+        <div class="upload-line"><label class="file-picker"><input id="config_upload" type="file" accept="*/*" data-change-action="static-file-picker"><span class="file-picker-button" data-i18n="common:auto.choose_file">选择文件</span><span class="file-picker-name" data-i18n="common:auto.not_selected">未选择文件</span></label><button data-action="static-import-config" data-i18n="settings:auto.upload_parse">上传解析</button></div>
+        <label data-i18n="settings:auto.paste_config">或粘贴 config 内容</label><textarea id="config_text" placeholder="Host demo&#10;  HostName example.com&#10;  User root&#10;  LocalForward 6010 127.0.0.1:6868"></textarea>
+        <div class="actions"><button data-action="static-import-text" data-i18n="settings:auto.paste_parse">粘贴解析</button></div>
         <div id="import-results" class="import-results-block">
-          <div class="import-results-head"><h3><i data-lucide="list-checks"></i>导入结果</h3><div class="actions"><button id="bindImportKeysBtn" data-action="static-import-bind-keys" hidden>绑定私钥</button><button id="batchTestBtn" data-action="static-import-test">批量测试</button><button id="batchSaveBtn" class="primary" data-action="static-import-save">批量保存</button></div></div>
+          <div class="import-results-head"><h3><i data-lucide="list-checks"></i><span data-i18n="settings:auto.import_results">导入结果</span></h3><div class="actions"><button id="bindImportKeysBtn" data-action="static-import-bind-keys" data-i18n="settings:auto.bind_keys" hidden>绑定私钥</button><button id="batchTestBtn" data-action="static-import-test" data-i18n="settings:auto.batch_test">批量测试</button><button id="batchSaveBtn" class="primary" data-action="static-import-save" data-i18n="settings:auto.batch_save">批量保存</button></div></div>
           <div id="importResults"></div>
         </div>
         <div class="import-export-config">
-          <h3><i data-lucide="file-output"></i>导出 SSH config</h3>
+          <h3><i data-lucide="file-output"></i><span data-i18n="settings:auto.export_config">导出 SSH config</span></h3>
           <textarea id="export_text" readonly></textarea>
-          <div class="actions"><button data-action="static-export-config">生成导出内容</button><button data-action="static-export-copy">复制</button></div>
+          <div class="actions"><button data-action="static-export-config" data-i18n="settings:auto.generate_export">生成导出内容</button><button data-action="static-export-copy" data-i18n="common:auto.copy">复制</button></div>
         </div>
       </section>
       <section id="import-export" class="import-section">
-        <h3><i data-lucide="database-backup"></i>数据库导入导出</h3>
-        <div class="actions"><button data-action="static-backup-database">下载数据库备份</button><button id="backupBundleBtn" data-action="static-backup-bundle" hidden>下载加密迁移包</button></div>
-        <label>恢复数据库 / 加密迁移包</label>
-        <div class="upload-line"><label class="file-picker"><input id="db_restore_upload" type="file" accept=".db,.json,.termabackup,.tdbackup,.tdbackup.json,application/json,application/octet-stream,*/*" data-change-action="static-file-picker"><span class="file-picker-button">选择文件</span><span class="file-picker-name">未选择文件</span></label><button class="danger" data-action="static-backup-restore">上传恢复</button></div>
-        <div id="backupBundleNote" class="muted">普通备份使用 .db 文件；启用配置加密后会显示 .termabackup 加密迁移包下载入口。</div>
+        <h3><i data-lucide="database-backup"></i><span data-i18n="settings:auto.database_import_export">数据库导入导出</span></h3>
+        <div class="actions"><button data-action="static-backup-database" data-i18n="settings:auto.download_database">下载数据库备份</button><button id="backupBundleBtn" data-action="static-backup-bundle" data-i18n="settings:auto.download_bundle" hidden>下载加密迁移包</button></div>
+        <label data-i18n="settings:auto.restore_database">恢复数据库 / 加密迁移包</label>
+        <div class="upload-line"><label class="file-picker"><input id="db_restore_upload" type="file" accept=".db,.json,.termabackup,.tdbackup,.tdbackup.json,application/json,application/octet-stream,*/*" data-change-action="static-file-picker"><span class="file-picker-button" data-i18n="common:auto.choose_file">选择文件</span><span class="file-picker-name" data-i18n="common:auto.not_selected">未选择文件</span></label><button class="danger" data-action="static-backup-restore" data-i18n="settings:auto.upload_restore">上传恢复</button></div>
+        <div id="backupBundleNote" class="muted" data-i18n-skip="true">普通备份使用 .db 文件；启用配置加密后会显示 .termabackup 加密迁移包下载入口。</div>
         <div class="import-export-config legacy-brand-migration-block">
-          <h3><i data-lucide="refresh-cw"></i>旧版数据迁移</h3>
+          <h3><i data-lucide="refresh-cw"></i><span data-i18n="settings:auto.legacy_migration">旧版数据迁移</span></h3>
           <div id="legacyBrandMigration"></div>
         </div>
       </section>
@@ -360,6 +362,8 @@
 <script src="/vendor/lucide/lucide.min.js?v=__TERMA_VERSION__"></script>
 <script src="/vendor/ace/ace.js?v=__TERMA_VERSION__"></script>
 <script src="/vendor/diff/diff.min.js?v=__TERMA_VERSION__"></script>
+<script src="/vendor/i18next/i18next.min.js?v=__TERMA_VERSION__"></script>
+<script src="/app-i18n.js?v=__TERMA_VERSION__"></script>
 <script src="/app-api.js?v=__TERMA_VERSION__"></script>
 <script src="/app-utils.js?v=__TERMA_VERSION__"></script>
 <script src="/app-events.js?v=__TERMA_VERSION__"></script>
@@ -399,6 +403,7 @@
 <script src="/app-terminal.js?v=__TERMA_VERSION__"></script>
 <script src="/app-terminal-command-tracking.js?v=__TERMA_VERSION__"></script>
 <script src="/app-ssh-credentials.js?v=__TERMA_VERSION__"></script>
+<script src="/app-terminal-image-paste.js?v=__TERMA_VERSION__"></script>
 <script src="/app-forwards.js?v=__TERMA_VERSION__"></script>
 <script src="/app-import.js?v=__TERMA_VERSION__"></script>
 <script src="/app-sftp-core.js?v=__TERMA_VERSION__"></script>

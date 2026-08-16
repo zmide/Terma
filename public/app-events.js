@@ -2,9 +2,9 @@ const termaActionHandlers = new Map();
 
 function registerTermaAction(name, handler) {
   const key = String(name || "").trim();
-  if (!key) throw new Error("事件委托 action 名称不能为空");
-  if (typeof handler !== "function") throw new Error(`事件委托 ${key} 缺少处理函数`);
-  if (termaActionHandlers.has(key)) throw new Error(`事件委托 action 重复注册：${key}`);
+  if (!key) throw new Error(tr("errors:events.name_required", {defaultValue:"事件委托 action 名称不能为空"}));
+  if (typeof handler !== "function") throw new Error(tr("errors:events.handler_required", {action:key, defaultValue:`事件委托 ${key} 缺少处理函数`}));
+  if (termaActionHandlers.has(key)) throw new Error(tr("errors:events.duplicate", {action:key, defaultValue:`事件委托 action 重复注册：${key}`}));
   termaActionHandlers.set(key, handler);
 }
 
@@ -22,7 +22,7 @@ function dispatchTermaAction(event, attribute) {
   const action = String(element.getAttribute(attribute) || "").trim();
   const handler = termaActionHandlers.get(action);
   if (!handler) {
-    console.error(`未注册的 Terma 界面 action：${action}`);
+    console.error(tr("errors:events.unregistered", {action, defaultValue:`未注册的 Terma 界面 action：${action}`}));
     return;
   }
   try {

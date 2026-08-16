@@ -1,9 +1,9 @@
 function vncClipboardDefaultStatus(session) {
-  if (session?.clipboardBridgeError) return {text:"SSH 剪贴板辅助不可用", state:"error"};
-  if (session?.clipboardAutoSync) return {text:vncClipboardUsesSsh(session?.clipboardTransport) ? "剪贴板：自动同步（SSH）" : "剪贴板：自动同步", state:"active"};
-  if (session?.clipboardPermissionBlocked) return {text:"剪贴板权限受限", state:"error"};
-  if (vncClipboardUsesSsh(session?.clipboardTransport)) return {text:"剪贴板：SSH 辅助", state:""};
-  return {text:"剪贴板：手动", state:""};
+  if (session?.clipboardBridgeError) return {text:tr("remote:clipboard.helper_unavailable", {defaultValue:"SSH 剪贴板辅助不可用"}), state:"error"};
+  if (session?.clipboardAutoSync) return {text:vncClipboardUsesSsh(session?.clipboardTransport) ? tr("remote:clipboard.auto_sync_ssh", {defaultValue:"剪贴板：自动同步（SSH）"}) : tr("remote:clipboard.auto_sync", {defaultValue:"剪贴板：自动同步"}), state:"active"};
+  if (session?.clipboardPermissionBlocked) return {text:tr("remote:clipboard.permission_limited", {defaultValue:"剪贴板权限受限"}), state:"error"};
+  if (vncClipboardUsesSsh(session?.clipboardTransport)) return {text:tr("remote:clipboard.ssh_helper_status", {defaultValue:"剪贴板：SSH 辅助"}), state:""};
+  return {text:tr("remote:clipboard.manual", {defaultValue:"剪贴板：手动"}), state:""};
 }
 
 function vncClipboardUsesSsh(transport="") {
@@ -72,6 +72,8 @@ function refreshVncClipboardControlRefs(session) {
   session.clipboardStatus = workspace.querySelector("#vncClipboardStatus") || session.clipboardStatus;
   session.clipboardHelperButton = workspace.querySelector("[data-vnc-clipboard-helper]") || session.clipboardHelperButton;
   session.clipboardSyncButton = workspace.querySelector("[data-vnc-clipboard-sync]") || session.clipboardSyncButton;
+  session.clipboardSendImageButton = workspace.querySelector("[data-vnc-clipboard-send-image]") || session.clipboardSendImageButton;
+  session.clipboardReceiveImageButton = workspace.querySelector("[data-vnc-clipboard-receive-image]") || session.clipboardReceiveImageButton;
   session.clipboardReceiveButton = workspace.querySelector("[data-vnc-clipboard-receive]") || session.clipboardReceiveButton;
 }
 
@@ -84,14 +86,14 @@ function renderVncClipboardControls(session) {
     status.textContent = session.clipboardStatusText || fallback.text;
     status.className = `vnc-clipboard-status${session.clipboardStatusState ? ` ${session.clipboardStatusState}` : fallback.state ? ` ${fallback.state}` : ""}`;
     const connectionName = session.clipboardBridgeConnectionName ? ` · ${session.clipboardBridgeConnectionName}` : "";
-    status.title = `${session.clipboardBridgeError || status.textContent}${connectionName} · 点击设置 SSH 剪贴板辅助`;
+    status.title = tr("remote:clipboard.status_setup_hint", {status:localizedRemoteTaskText(session.clipboardBridgeError) || status.textContent, connection:connectionName, defaultValue:`${session.clipboardBridgeError || status.textContent}${connectionName} · 点击设置 SSH 剪贴板辅助`});
     status.classList.toggle("clickable", true);
   }
   const syncButton = session.clipboardSyncButton;
   if (syncButton) {
     syncButton.classList.toggle("active", Boolean(session.clipboardAutoSync));
     syncButton.setAttribute("aria-pressed", session.clipboardAutoSync ? "true" : "false");
-    syncButton.title = session.clipboardAutoSync ? "关闭剪贴板自动同步" : "开启剪贴板自动同步";
+    syncButton.title = session.clipboardAutoSync ? tr("remote:clipboard.disable_auto_sync", {defaultValue:"关闭剪贴板自动同步"}) : tr("remote:clipboard.enable_auto_sync", {defaultValue:"开启剪贴板自动同步"});
     syncButton.setAttribute("aria-label", syncButton.title);
   }
   const helperButton = session.clipboardHelperButton;
@@ -100,8 +102,8 @@ function renderVncClipboardControls(session) {
     helperButton.classList.toggle("active", active);
     helperButton.classList.toggle("attention", Boolean(session.clipboardBridgeError));
     helperButton.title = active
-      ? `SSH 剪贴板辅助已启用${session.clipboardBridgeConnectionName ? `：${session.clipboardBridgeConnectionName}` : ""}`
-      : session.clipboardBridgeError || "设置 SSH 剪贴板辅助";
+      ? tr("remote:clipboard.helper_enabled_named", {connection:session.clipboardBridgeConnectionName ? `: ${session.clipboardBridgeConnectionName}` : "", defaultValue:`SSH 剪贴板辅助已启用${session.clipboardBridgeConnectionName ? `：${session.clipboardBridgeConnectionName}` : ""}`})
+      : localizedRemoteTaskText(session.clipboardBridgeError) || tr("remote:clipboard.configure_helper", {defaultValue:"设置 SSH 剪贴板辅助"});
     helperButton.setAttribute("aria-label", helperButton.title);
   }
   const receiveButton = session.clipboardReceiveButton;
@@ -109,9 +111,19 @@ function renderVncClipboardControls(session) {
     receiveButton.disabled = !session.remoteClipboardAvailable && !vncClipboardBridgeCandidate(session);
     receiveButton.classList.toggle("attention", Boolean(session.remoteClipboardAvailable && session.remoteClipboardPending));
     receiveButton.title = session.remoteClipboardAvailable
-      ? "读取最近收到的远端剪贴板"
-      : vncClipboardBridgeCandidate(session) ? "通过 SSH 读取远端系统剪贴板" : "远端尚未发送剪贴板";
+      ? tr("remote:clipboard.read_recent_remote", {defaultValue:"读取最近收到的远端剪贴板"})
+      : vncClipboardBridgeCandidate(session) ? tr("remote:clipboard.read_remote_ssh", {defaultValue:"通过 SSH 读取远端系统剪贴板"}) : tr("remote:clipboard.remote_not_sent", {defaultValue:"远端尚未发送剪贴板"});
     receiveButton.setAttribute("aria-label", receiveButton.title);
+  }
+  const imageAvailable = vncClipboardImageTransportAvailable(session);
+  for (const button of [session.clipboardSendImageButton, session.clipboardReceiveImageButton]) {
+    if (!button) continue;
+    button.disabled = !imageAvailable || !session.connected;
+    button.classList.toggle("attention", Boolean(session.clipboardBridgeError));
+    button.title = imageAvailable
+      ? (button === session.clipboardSendImageButton ? tr("remote:clipboard.send_local_image", {defaultValue:"发送本机剪贴板图片"}) : tr("remote:clipboard.read_remote_image", {defaultValue:"读取远端剪贴板图片"}))
+      : tr("common:x11.clipboard_requires_helper", {defaultValue:"图片剪贴板需要 SSH 辅助和 xclip/wl-clipboard"});
+    button.setAttribute("aria-label", button.title);
   }
 }
 
@@ -141,18 +153,19 @@ function requestVncClipboardSshConnection(session) {
     const selectedId = configuredId || Number(matches[0]?.id || 0);
     const optionRows = (typeof connections !== "undefined" && Array.isArray(connections) ? connections : []).map(connection => {
       const sameHost = normalizeVncClipboardHost(connection.ssh_host) === normalizeVncClipboardHost(session.profile.host);
-      const label = `${connection.name} · ${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port || 22}${sameHost ? " · 同主机" : ""}`;
+      const label = tr("remote:clipboard.connection_option", {name:connection.name, user:connection.ssh_user, host:connection.ssh_host, port:connection.ssh_port || 22, sameHost:sameHost ? tr("remote:clipboard.same_host_suffix", {defaultValue:" · 同主机"}) : "", defaultValue:`${connection.name} · ${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port || 22}${sameHost ? " · 同主机" : ""}`});
       return `<option value="${Number(connection.id)}" ${Number(connection.id) === selectedId ? "selected" : ""}>${esc(label)}</option>`;
     }).join("");
     modal.hidden = false;
+    const closeLabel = tr("remote:clipboard.close", {defaultValue:"关闭"});
     modal.innerHTML = `<form class="modal-card vnc-clipboard-modal vnc-clipboard-helper-modal">
-      <div class="modal-title-row"><div><h2>SSH 剪贴板辅助</h2><span class="muted">${esc(session.profile.name)} · ${esc(session.profile.host)}</span></div><button class="icon-button" type="button" data-vnc-clipboard-helper-cancel title="关闭" aria-label="关闭">${icon("x")}</button></div>
-      <div class="connection-test-status">VNC 的旧剪贴板协议只能可靠传输 Latin-1。关联 SSH 后，Terma 会直接读写远端系统剪贴板，中文使用 UTF-8 传输。</div>
-      ${matches.length ? `<div class="connection-test-status success">已找到 ${matches.length} 个同主机 SSH 连接，默认选择 ${esc(matches[0].name || matches[0].ssh_host)}。</div>` : `<div class="connection-test-status warning">没有自动找到同主机 SSH。可以选择其他能管理此桌面会话的 SSH 连接。</div>`}
-      <label>SSH 辅助连接</label><select id="vncClipboardSshConnection" onchange="inspectVncClipboardHelper(vncSessions.get('${escAttr(session.key)}'),document.querySelector('#vncClipboardHelperState'))"><option value="0">自动匹配同主机</option>${optionRows}</select>
-      <div class="muted">Linux 远端需要 xclip/xsel（X11）或 wl-clipboard（Wayland）；macOS 已自带 pbcopy/pbpaste，不会安装 Linux 软件包。</div>
-      <div id="vncClipboardHelperState" class="vnc-clipboard-helper-state"><div class="xdmcp-server-loading">${icon("loader-circle")}<span>正在识别远端系统和剪贴板辅助工具</span></div></div>
-      <div class="actions"><button type="button" data-vnc-clipboard-helper-cancel>取消</button><button class="primary" type="submit">保存并检测</button></div></form>`;
+      <div class="modal-title-row"><div><h2>${esc(tr("remote:clipboard.helper_title", {defaultValue:"SSH 剪贴板辅助"}))}</h2><span class="muted">${esc(session.profile.name)} · ${esc(session.profile.host)}</span></div><button class="icon-button" type="button" data-vnc-clipboard-helper-cancel title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div>
+      <div class="connection-test-status">${esc(tr("remote:clipboard.protocol_explanation", {defaultValue:"VNC 的旧剪贴板协议只能可靠传输 Latin-1。关联 SSH 后，Terma 会直接读写远端系统剪贴板，中文使用 UTF-8 传输。"}))}</div>
+      ${matches.length ? `<div class="connection-test-status success">${esc(tr("remote:clipboard.matches_found", {count:matches.length, name:matches[0].name || matches[0].ssh_host, defaultValue:`已找到 ${matches.length} 个同主机 SSH 连接，默认选择 ${matches[0].name || matches[0].ssh_host}。`}))}</div>` : `<div class="connection-test-status warning">${esc(tr("remote:clipboard.no_match", {defaultValue:"没有自动找到同主机 SSH。可以选择其他能管理此桌面会话的 SSH 连接。"}))}</div>`}
+      <label>${esc(tr("remote:clipboard.ssh_connection", {defaultValue:"SSH 辅助连接"}))}</label><select id="vncClipboardSshConnection" onchange="inspectVncClipboardHelper(vncSessions.get('${escAttr(session.key)}'),document.querySelector('#vncClipboardHelperState'))"><option value="0">${esc(tr("remote:clipboard.match_same_host", {defaultValue:"自动匹配同主机"}))}</option>${optionRows}</select>
+      <div class="muted">${esc(tr("remote:clipboard.platform_tools_hint", {defaultValue:"Linux 远端需要 xclip/xsel（X11）或 wl-clipboard（Wayland）；macOS 已自带 pbcopy/pbpaste，不会安装 Linux 软件包。"}))}</div>
+      <div id="vncClipboardHelperState" class="vnc-clipboard-helper-state"><div class="xdmcp-server-loading">${icon("loader-circle")}<span>${esc(tr("remote:clipboard.detecting_helper", {defaultValue:"正在识别远端系统和剪贴板辅助工具"}))}</span></div></div>
+      <div class="actions"><button type="button" data-vnc-clipboard-helper-cancel>${esc(tr("remote:clipboard.cancel", {defaultValue:"取消"}))}</button><button class="primary" type="submit">${esc(tr("remote:clipboard.save_detect", {defaultValue:"保存并检测"}))}</button></div></form>`;
     const finish = value => {
       document.removeEventListener("keydown", onKeyDown);
       modal.onclick = null;
@@ -180,7 +193,7 @@ function vncClipboardHelperManualMarkup(diagnostics={}) {
   return remoteInstallManualMarkup(diagnostics.install_plan || {}, {
     steps:Array.isArray(guide.steps) ? guide.steps : [],
     commands:Array.isArray(guide.commands) ? guide.commands : [],
-    note:guide.summary || "安装或检查完成后，返回此窗口重新检测。"
+    note:localizedRemoteTaskText(guide.summary) || tr("remote:clipboard.return_detect", {defaultValue:"安装或检查完成后，返回此窗口重新检测。"})
   });
 }
 
@@ -194,6 +207,7 @@ function renderVncClipboardHelperState(session, diagnostics, container) {
     session.clipboardTransportChecked = true;
     session.clipboardBridgeConnectionId = Number(diagnostics.connection_id || 0);
     session.clipboardBridgeConnectionName = String(diagnostics.connection_name || "");
+    session.clipboardBridgeTool = String(diagnostics.tool || "");
     session.clipboardBridgeResolvedBy = String(diagnostics.resolved_by || "");
     session.clipboardBridgeError = "";
     session.clipboardStatusText = "";
@@ -203,29 +217,31 @@ function renderVncClipboardHelperState(session, diagnostics, container) {
     session.clipboardTransportChecked = true;
     session.clipboardBridgeConnectionId = Number(diagnostics.connection_id || 0);
     session.clipboardBridgeConnectionName = String(diagnostics.connection_name || "");
-    session.clipboardBridgeError = String(diagnostics.reason || "SSH 剪贴板辅助通道不可用");
+    session.clipboardBridgeTool = String(diagnostics.tool || "");
+    session.clipboardBridgeError = localizedRemoteTaskText(diagnostics.reason) || tr("remote:clipboard.channel_unavailable", {defaultValue:"SSH 剪贴板辅助通道不可用"});
     session.clipboardStatusText = "";
     session.clipboardStatusState = "";
   }
-  const platformLabel = platform === "macos" ? "macOS" : platform === "linux" ? "Linux" : "未识别系统";
+  const platformLabel = platform === "macos" ? "macOS" : platform === "linux" ? "Linux" : tr("remote:clipboard.unknown_platform", {defaultValue:"未识别系统"});
   const tool = diagnostics.tool ? ` · ${diagnostics.tool}` : "";
-  const title = available ? `${platformLabel} 剪贴板辅助可用${tool}` : `${platformLabel} 剪贴板辅助尚不可用`;
+  const title = available ? tr("remote:clipboard.available_title", {platform:platformLabel, tool, defaultValue:`${platformLabel} 剪贴板辅助可用${tool}`}) : tr("remote:clipboard.unavailable_title", {platform:platformLabel, defaultValue:`${platformLabel} 剪贴板辅助尚不可用`});
   const actionKey = vncClipboardHelperActionKey(session.profile?.id);
   let body = "";
   if (platform === "macos") {
-    body = `<div class="connection-test-status ${available ? "success" : "warning"}">${icon(available ? "circle-check" : "circle-alert")}<span>${esc(available ? "macOS 系统自带 pbcopy/pbpaste，无需安装。" : diagnostics.reason || "macOS 已自带剪贴板工具，请检查图形登录会话和剪贴板权限。")}</span></div>`;
+    body = `<div class="connection-test-status ${available ? "success" : "warning"}">${icon(available ? "circle-check" : "circle-alert")}<span>${esc(available ? tr("remote:clipboard.macos_builtin", {defaultValue:"macOS 系统自带 pbcopy/pbpaste，无需安装。"}) : localizedRemoteTaskText(diagnostics.reason) || tr("remote:clipboard.macos_check_session", {defaultValue:"macOS 已自带剪贴板工具，请检查图形登录会话和剪贴板权限。"}))}</span></div>`;
   } else if (platform === "linux" && !available) {
-    body = `${remoteInstallModesMarkup(diagnostics.install_plan || {}, mode => `installVncClipboardHelper('${escAttr(session.key)}','${escAttr(mode)}',this)`, "revealRemoteInstallManual(this)", actionKey)}<div class="connection-test-status warning">${icon("info")}<span>${esc(diagnostics.reason || "请安装与当前 X11/Wayland 会话匹配的剪贴板工具。")}</span></div>`;
+    body = `${remoteInstallModesMarkup(diagnostics.install_plan || {}, mode => `installVncClipboardHelper('${escAttr(session.key)}','${escAttr(mode)}',this)`, "revealRemoteInstallManual(this)", actionKey)}<div class="connection-test-status warning">${icon("info")}<span>${esc(localizedRemoteTaskText(diagnostics.reason) || tr("remote:clipboard.install_matching_tool", {defaultValue:"请安装与当前 X11/Wayland 会话匹配的剪贴板工具。"}))}</span></div>`;
   } else if (available) {
     const uninstallPlan = diagnostics.uninstall_plan || diagnostics.install_plan?.uninstall || {};
     const uninstallAction = platform === "linux" && uninstallPlan.available
-      ? `<div class="actions tight"><button class="danger" type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="uninstallVncClipboardHelper('${escAttr(session.key)}',this)">${icon("package-minus")}<span>卸载辅助工具</span></button></div>`
+      ? `<div class="actions tight"><button class="danger" type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="uninstallVncClipboardHelper('${escAttr(session.key)}',this)">${icon("package-minus")}<span>${esc(tr("remote:clipboard.uninstall_helper", {defaultValue:"卸载辅助工具"}))}</span></button></div>`
       : "";
-    body = `<div class="connection-test-status success">${icon("circle-check")}<span>SSH Unicode 剪贴板通道已经可用。</span></div>${uninstallAction}`;
+    body = `<div class="connection-test-status success">${icon("circle-check")}<span>${esc(tr("remote:clipboard.unicode_channel_ready", {defaultValue:"SSH Unicode 剪贴板通道已经可用。"}))}</span></div>${uninstallAction}`;
   } else {
-    body = `<div class="connection-test-status warning">${icon("circle-alert")}<span>${esc(diagnostics.reason || "请先确认 SSH 辅助连接对应的远端系统。")}</span></div>`;
+    body = `<div class="connection-test-status warning">${icon("circle-alert")}<span>${esc(localizedRemoteTaskText(diagnostics.reason) || tr("remote:clipboard.confirm_remote_system", {defaultValue:"请先确认 SSH 辅助连接对应的远端系统。"}))}</span></div>`;
   }
-  container.innerHTML = `<div class="rdp-server-head"><span class="xdmcp-server-icon ${available ? "ready" : "warning"}">${icon(available ? "circle-check" : "circle-alert")}</span><div><b>${esc(title)}</b><small>${esc(diagnostics.connection_name || session.profile.host || "")}</small></div><button class="icon-button" type="button" onclick="inspectVncClipboardHelper(vncSessions.get('${escAttr(session.key)}'),document.querySelector('#vncClipboardHelperState'))" title="重新检测" aria-label="重新检测">${icon("refresh-cw")}</button></div>${body}${vncClipboardHelperManualMarkup(diagnostics)}`;
+  const detectAgain = tr("remote:clipboard.detect_again", {defaultValue:"重新检测"});
+  container.innerHTML = `<div class="rdp-server-head"><span class="xdmcp-server-icon ${available ? "ready" : "warning"}">${icon(available ? "circle-check" : "circle-alert")}</span><div><b>${esc(title)}</b><small>${esc(diagnostics.connection_name || session.profile.host || "")}</small></div><button class="icon-button" type="button" onclick="inspectVncClipboardHelper(vncSessions.get('${escAttr(session.key)}'),document.querySelector('#vncClipboardHelperState'))" title="${escAttr(detectAgain)}" aria-label="${escAttr(detectAgain)}">${icon("refresh-cw")}</button></div>${body}${vncClipboardHelperManualMarkup(diagnostics)}`;
   renderVncClipboardControls(session);
   setRemoteInstallDialogCommands(diagnostics.install_plan || {}, diagnostics.guide?.commands || []);
   refreshIcons();
@@ -250,7 +266,7 @@ async function persistVncClipboardSshSelection(session, connectionId) {
 async function inspectVncClipboardHelper(session, container) {
   if (!session?.profile || !container) return null;
   try {
-    container.innerHTML = `<div class="xdmcp-server-loading">${icon("loader-circle")}<span>正在识别远端系统和剪贴板辅助工具</span></div>`;
+    container.innerHTML = `<div class="xdmcp-server-loading">${icon("loader-circle")}<span>${esc(tr("remote:clipboard.detecting_helper", {defaultValue:"正在识别远端系统和剪贴板辅助工具"}))}</span></div>`;
     refreshIcons();
     const connectionId = Number($("modal")?.querySelector("#vncClipboardSshConnection")?.value || 0);
     const diagnostics = await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/helper`, {method:"POST", body:JSON.stringify({action:"guide", connection_id:connectionId})});
@@ -259,9 +275,9 @@ async function inspectVncClipboardHelper(session, container) {
   } catch (error) {
     const connectionId = Number($("modal")?.querySelector("#vncClipboardSshConnection")?.value || session.profile.options?.source_ssh_connection_id || 0);
     const repair = connectionId > 0 && typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure(error)
-      ? `<button type="button" data-action="vnc-clipboard-credential-repair" data-vnc-key="${escAttr(session.key)}" data-connection-id="${connectionId}">${icon("key-round")}<span>修复 SSH 凭据</span></button>`
+      ? `<button type="button" data-action="vnc-clipboard-credential-repair" data-vnc-key="${escAttr(session.key)}" data-connection-id="${connectionId}">${icon("key-round")}<span>${esc(tr("remote:clipboard.repair_ssh_credentials", {defaultValue:"修复 SSH 凭据"}))}</span></button>`
       : "";
-    container.innerHTML = remoteDiagnosticStatusMarkup(error.message || "剪贴板辅助探测失败", {tone:"error", icon:"circle-alert", title:"SSH 剪贴板辅助不可用", actions:repair});
+    container.innerHTML = remoteDiagnosticStatusMarkup(error.message || tr("remote:clipboard.probe_failed", {defaultValue:"剪贴板辅助探测失败"}), {tone:"error", icon:"circle-alert", title:tr("remote:clipboard.helper_unavailable", {defaultValue:"SSH 剪贴板辅助不可用"}), actions:repair});
     refreshIcons();
     return null;
   }
@@ -272,7 +288,7 @@ async function repairVncClipboardCredentials(key, connectionId) {
   const id = Number(connectionId || 0);
   if (!session || id < 1 || typeof repairSshCredentials !== "function") return false;
   return repairSshCredentials(id, {
-    context:"VNC 剪贴板辅助认证失败",
+    context:tr("remote:clipboard.auth_failed", {defaultValue:"VNC 剪贴板辅助认证失败"}),
     onSaved:async () => configureVncClipboardSsh(session.key)
   });
 }
@@ -292,6 +308,7 @@ function resetVncClipboardTransportState(session) {
   session.clipboardBridgeError = "";
   session.clipboardBridgeConnectionId = 0;
   session.clipboardBridgeConnectionName = "";
+  session.clipboardBridgeTool = "";
 }
 
 async function watchVncClipboardHelperTask(session, taskId, action="install") {
@@ -305,8 +322,8 @@ async function watchVncClipboardHelperTask(session, taskId, action="install") {
     catch (error) {
       if (session.clipboardHelperTaskId === String(taskId)) {
         session.clipboardHelperTaskId = "";
-        session.clipboardBridgeError = error.message || `无法读取剪贴板辅助${uninstalling ? "卸载" : "安装"}状态`;
-        setVncClipboardStatus(session, "SSH 剪贴板辅助不可用", "error");
+        session.clipboardBridgeError = error.message || tr("remote:clipboard.task_status_read_failed", {action:uninstalling ? tr("remote:clipboard.uninstall", {defaultValue:"卸载"}) : tr("remote:clipboard.install", {defaultValue:"安装"}), defaultValue:`无法读取剪贴板辅助${uninstalling ? "卸载" : "安装"}状态`});
+        setVncClipboardStatus(session, tr("remote:clipboard.helper_unavailable", {defaultValue:"SSH 剪贴板辅助不可用"}), "error");
         if (session.clipboardAutoSync) startVncClipboardPolling(session);
       }
       return;
@@ -314,8 +331,8 @@ async function watchVncClipboardHelperTask(session, taskId, action="install") {
     if (task.status === "running") continue;
     session.clipboardHelperTaskId = "";
     if (task.status !== "done") {
-      session.clipboardBridgeError = task.error || `剪贴板辅助工具${uninstalling ? "卸载" : "安装"}失败`;
-      setVncClipboardStatus(session, "SSH 剪贴板辅助不可用", "error");
+      session.clipboardBridgeError = remoteTaskErrorLabel(task) || tr("remote:clipboard.task_failed", {action:uninstalling ? tr("remote:clipboard.uninstall", {defaultValue:"卸载"}) : tr("remote:clipboard.install", {defaultValue:"安装"}), defaultValue:`剪贴板辅助工具${uninstalling ? "卸载" : "安装"}失败`});
+      setVncClipboardStatus(session, tr("remote:clipboard.helper_unavailable", {defaultValue:"SSH 剪贴板辅助不可用"}), "error");
       notify(session.clipboardBridgeError, "error");
       if (session.clipboardAutoSync) startVncClipboardPolling(session);
       return;
@@ -328,18 +345,19 @@ async function watchVncClipboardHelperTask(session, taskId, action="install") {
       resetVncClipboardTransportState(session);
       const transport = await ensureVncClipboardTransport(session);
       if (uninstalling) {
-        if (vncClipboardUsesSsh(transport)) throw new Error("卸载完成后重新探测仍检测到 SSH 剪贴板辅助工具");
-        setVncClipboardStatus(session, "SSH 剪贴板辅助已卸载", "success", 2600);
-        notify("剪贴板辅助工具卸载完成，远端状态已重新探测", "success");
+        if (vncClipboardUsesSsh(transport)) throw new Error(tr("remote:clipboard.uninstall_still_detected", {defaultValue:"卸载完成后重新探测仍检测到 SSH 剪贴板辅助工具"}));
+        setVncClipboardStatus(session, tr("remote:clipboard.helper_uninstalled", {defaultValue:"SSH 剪贴板辅助已卸载"}), "success", 2600);
+        notify(tr("remote:clipboard.uninstall_verified", {defaultValue:"剪贴板辅助工具卸载完成，远端状态已重新探测"}), "success");
       } else {
-        if (!vncClipboardUsesSsh(transport)) throw new Error(session.clipboardBridgeError || diagnostics?.reason || "安装完成，但当前图形会话仍无法访问系统剪贴板");
-        setVncClipboardStatus(session, "SSH 剪贴板辅助已启用", "success", 2600);
-        notify("剪贴板辅助工具安装完成，SSH Unicode 通道已刷新", "success");
+        if (!vncClipboardUsesSsh(transport)) throw new Error(localizedRemoteTaskText(session.clipboardBridgeError || diagnostics?.reason) || tr("remote:clipboard.install_session_unavailable", {defaultValue:"安装完成，但当前图形会话仍无法访问系统剪贴板"}));
+        setVncClipboardStatus(session, tr("remote:clipboard.helper_enabled", {defaultValue:"SSH 剪贴板辅助已启用"}), "success", 2600);
+        notify(tr("remote:clipboard.install_verified", {defaultValue:"剪贴板辅助工具安装完成，SSH Unicode 通道已刷新"}), "success");
       }
       if (session.clipboardAutoSync) startVncClipboardPolling(session);
     } catch (error) {
-      session.clipboardBridgeError = error.message || `${uninstalling ? "卸载" : "安装"}完成，但 SSH 剪贴板辅助状态验证失败`;
-      setVncClipboardStatus(session, "SSH 剪贴板辅助不可用", "error");
+      const actionLabel = uninstalling ? tr("remote:clipboard.uninstall", {defaultValue:"卸载"}) : tr("remote:clipboard.install", {defaultValue:"安装"});
+      session.clipboardBridgeError = error.message || tr("remote:clipboard.verify_failed", {action:actionLabel, defaultValue:`${uninstalling ? "卸载" : "安装"}完成，但 SSH 剪贴板辅助状态验证失败`});
+      setVncClipboardStatus(session, tr("remote:clipboard.helper_unavailable", {defaultValue:"SSH 剪贴板辅助不可用"}), "error");
       notify(session.clipboardBridgeError, "error");
     }
     return;
@@ -348,10 +366,10 @@ async function watchVncClipboardHelperTask(session, taskId, action="install") {
 
 async function installVncClipboardHelper(key, mode="online", button=null) {
   const session = vncSessions.get(key);
-  if (!session?.profile) return notify("VNC 会话不存在", "error");
+  if (!session?.profile) return notify(tr("remote:clipboard.session_missing", {defaultValue:"VNC 会话不存在"}), "error");
   const actionKey = vncClipboardHelperActionKey(session.profile.id);
-  if (!beginUiAction(actionKey, button, "安装中...")) {
-    notify("剪贴板辅助工具任务正在执行，请等待完成", "info");
+  if (!beginUiAction(actionKey, button, tr("remote:clipboard.installing", {defaultValue:"安装中..."}))) {
+    notify(tr("remote:clipboard.task_running", {defaultValue:"剪贴板辅助工具任务正在执行，请等待完成"}), "info");
     return null;
   }
   const modal = $("modal");
@@ -360,14 +378,18 @@ async function installVncClipboardHelper(key, mode="online", button=null) {
   const sourceId = connectionId || Number(diagnostics.connection_id || 0);
   const normalizedMode = ["online", "offline", "local-offline"].includes(mode) ? mode : "online";
   const action = normalizedMode === "local-offline" ? "install-local-offline" : normalizedMode === "offline" ? "install-offline" : "install";
-  const modeLabel = normalizedMode === "local-offline" ? "本机下载后离线" : normalizedMode === "offline" ? "使用远端缓存" : "在线";
+  const modeLabel = normalizedMode === "local-offline"
+    ? tr("remote:vnc_ui.mode_local_offline", {defaultValue:"本机下载后离线"})
+    : normalizedMode === "offline"
+      ? tr("remote:vnc_ui.mode_remote_cache", {defaultValue:"使用远端缓存"})
+      : tr("remote:vnc_ui.mode_online", {defaultValue:"在线"});
   let adminAuth = null;
   try {
     setButtonBusy(button, true);
     await persistVncClipboardSshSelection(session, connectionId);
     session.clipboardHelperModalFinish?.({installing:true});
     if (!diagnostics.root) {
-      adminAuth = await requestRemoteAdminAuthorization(sourceId, `${modeLabel}安装 Unicode 剪贴板辅助工具`);
+      adminAuth = await requestRemoteAdminAuthorization(sourceId, tr("remote:clipboard.install_unicode_action", {mode:modeLabel, defaultValue:`${modeLabel}安装 Unicode 剪贴板辅助工具`}));
       if (!adminAuth) return;
     }
     const result = await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/helper`, {method:"POST", body:JSON.stringify({action, connection_id:connectionId, ...(adminAuth ? {admin_auth:adminAuth} : {})})});
@@ -376,18 +398,19 @@ async function installVncClipboardHelper(key, mode="online", button=null) {
       const activeUninstall = activeAction === "uninstall";
       stopVncClipboardPolling(session);
       resetVncClipboardTransportState(session);
-      setVncClipboardStatus(session, activeUninstall ? "SSH 剪贴板辅助卸载中" : "SSH 剪贴板辅助安装中", "active");
-      const requestAccepted = notifyRemoteComponentTaskRequest(result, `${modeLabel}安装剪贴板辅助工具`, `剪贴板辅助工具${modeLabel}安装已加入任务中心`);
+      setVncClipboardStatus(session, activeUninstall ? tr("remote:clipboard.helper_uninstalling", {defaultValue:"SSH 剪贴板辅助卸载中"}) : tr("remote:clipboard.helper_installing", {defaultValue:"SSH 剪贴板辅助安装中"}), "active");
+      const actionLabel = tr("remote:clipboard.install_helper_action", {mode:modeLabel, defaultValue:`${modeLabel}安装剪贴板辅助工具`});
+      const requestAccepted = notifyRemoteComponentTaskRequest(result, actionLabel, tr("remote:clipboard.install_added", {mode:modeLabel, defaultValue:`剪贴板辅助工具${modeLabel}安装已加入任务中心`}));
       if (typeof refreshSftpJobs === "function") void refreshSftpJobs();
       await watchVncClipboardHelperTask(session, result.task.id, activeAction);
       return requestAccepted ? result : null;
     }
     resetVncClipboardTransportState(session);
     renderVncClipboardHelperState(session, result.after || result.before, modal?.querySelector("#vncClipboardHelperState"));
-    notify("剪贴板辅助工具安装完成", "success");
+    notify(tr("remote:clipboard.install_complete", {defaultValue:"剪贴板辅助工具安装完成"}), "success");
     return result;
   } catch (error) {
-    notify(error.message || "剪贴板辅助工具安装失败", "error");
+    notify(error.message || tr("remote:clipboard.install_failed", {defaultValue:"剪贴板辅助工具安装失败"}), "error");
     return null;
   } finally {
     endUiAction(actionKey, button);
@@ -396,10 +419,10 @@ async function installVncClipboardHelper(key, mode="online", button=null) {
 
 async function uninstallVncClipboardHelper(key, button=null) {
   const session = vncSessions.get(key);
-  if (!session?.profile) return notify("VNC 会话不存在", "error");
+  if (!session?.profile) return notify(tr("remote:clipboard.session_missing", {defaultValue:"VNC 会话不存在"}), "error");
   const actionKey = vncClipboardHelperActionKey(session.profile.id);
-  if (!beginUiAction(actionKey, button, "卸载中...")) {
-    notify("剪贴板辅助工具任务正在执行，请等待完成", "info");
+  if (!beginUiAction(actionKey, button, tr("remote:clipboard.uninstalling", {defaultValue:"卸载中..."}))) {
+    notify(tr("remote:clipboard.task_running", {defaultValue:"剪贴板辅助工具任务正在执行，请等待完成"}), "info");
     return null;
   }
   const modal = $("modal");
@@ -407,27 +430,27 @@ async function uninstallVncClipboardHelper(key, button=null) {
   const diagnostics = session.clipboardHelperDiagnostics || {};
   const uninstallPlan = diagnostics.uninstall_plan || diagnostics.install_plan?.uninstall || {};
   if (String(diagnostics.platform || "").toLowerCase() !== "linux" || !diagnostics.available || !uninstallPlan.available) {
-    return notify(uninstallPlan.reason || "当前没有可安全自动卸载的 Linux 剪贴板辅助工具", "error");
+    return notify(localizedRemoteTaskText(uninstallPlan.reason) || tr("remote:clipboard.no_safe_uninstall", {defaultValue:"当前没有可安全自动卸载的 Linux 剪贴板辅助工具"}), "error");
   }
   const sourceId = connectionId || Number(diagnostics.connection_id || 0);
   const packageLabel = Array.isArray(uninstallPlan.package_names) && uninstallPlan.package_names.length
     ? uninstallPlan.package_names.join("、")
-    : diagnostics.tool || "剪贴板辅助软件包";
+    : diagnostics.tool || tr("remote:clipboard.helper_package", {defaultValue:"剪贴板辅助软件包"});
   let adminAuth = null;
   try {
-    setButtonBusy(button, true, "准备卸载...");
+    setButtonBusy(button, true, tr("remote:clipboard.preparing_uninstall", {defaultValue:"准备卸载..."}));
     await persistVncClipboardSshSelection(session, connectionId);
     session.clipboardHelperModalFinish?.({installing:true});
     const confirmed = await confirmModal(
-      `将从远端 Linux 卸载 ${packageLabel}。依赖该工具的其他桌面程序也可能受影响，VNC 将退回服务端原生剪贴板能力。是否继续？`,
-      "卸载剪贴板辅助工具",
-      "卸载",
-      "取消",
+      tr("remote:clipboard.confirm_uninstall", {package:packageLabel, defaultValue:`将从远端 Linux 卸载 ${packageLabel}。依赖该工具的其他桌面程序也可能受影响，VNC 将退回服务端原生剪贴板能力。是否继续？`}),
+      tr("remote:clipboard.uninstall_helper_action", {defaultValue:"卸载剪贴板辅助工具"}),
+      tr("remote:clipboard.uninstall", {defaultValue:"卸载"}),
+      tr("remote:clipboard.cancel", {defaultValue:"取消"}),
       true
     );
     if (!confirmed) return null;
     if (!diagnostics.root) {
-      adminAuth = await requestRemoteAdminAuthorization(sourceId, "卸载 Unicode 剪贴板辅助工具");
+      adminAuth = await requestRemoteAdminAuthorization(sourceId, tr("remote:clipboard.uninstall_unicode_action", {defaultValue:"卸载 Unicode 剪贴板辅助工具"}));
       if (!adminAuth) return null;
     }
     const result = await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/helper`, {method:"POST", body:JSON.stringify({action:"uninstall", connection_id:connectionId, ...(adminAuth ? {admin_auth:adminAuth} : {})})});
@@ -436,17 +459,17 @@ async function uninstallVncClipboardHelper(key, button=null) {
       const activeUninstall = activeAction === "uninstall";
       stopVncClipboardPolling(session);
       resetVncClipboardTransportState(session);
-      setVncClipboardStatus(session, activeUninstall ? "SSH 剪贴板辅助卸载中" : "SSH 剪贴板辅助安装中", "active");
-      const requestAccepted = notifyRemoteComponentTaskRequest(result, "卸载剪贴板辅助工具", "剪贴板辅助工具卸载已加入任务中心");
+      setVncClipboardStatus(session, activeUninstall ? tr("remote:clipboard.helper_uninstalling", {defaultValue:"SSH 剪贴板辅助卸载中"}) : tr("remote:clipboard.helper_installing", {defaultValue:"SSH 剪贴板辅助安装中"}), "active");
+      const requestAccepted = notifyRemoteComponentTaskRequest(result, tr("remote:clipboard.uninstall_helper_action", {defaultValue:"卸载剪贴板辅助工具"}), tr("remote:clipboard.uninstall_added", {defaultValue:"剪贴板辅助工具卸载已加入任务中心"}));
       if (typeof refreshSftpJobs === "function") void refreshSftpJobs();
       await watchVncClipboardHelperTask(session, result.task.id, activeAction);
       return requestAccepted ? result : null;
     }
     resetVncClipboardTransportState(session);
-    notify("剪贴板辅助工具卸载完成", "success");
+    notify(tr("remote:clipboard.uninstall_complete", {defaultValue:"剪贴板辅助工具卸载完成"}), "success");
     return result;
   } catch (error) {
-    notify(error.message || "剪贴板辅助工具卸载失败", "error");
+    notify(error.message || tr("remote:clipboard.uninstall_failed", {defaultValue:"剪贴板辅助工具卸载失败"}), "error");
     return null;
   } finally {
     endUiAction(actionKey, button);
@@ -455,7 +478,7 @@ async function uninstallVncClipboardHelper(key, button=null) {
 
 async function configureVncClipboardSsh(key) {
   const session = vncSessions.get(key);
-  if (!session?.profile) return notify("VNC 会话不存在", "error");
+  if (!session?.profile) return notify(tr("remote:clipboard.session_missing", {defaultValue:"VNC 会话不存在"}), "error");
   const connectionId = await requestVncClipboardSshConnection(session);
   if (connectionId === null) return focusEmbeddedVnc(session);
   if (connectionId?.installing) return focusEmbeddedVnc(session);
@@ -467,14 +490,16 @@ async function configureVncClipboardSsh(key) {
     session.clipboardBridgeError = "";
     session.clipboardBridgeConnectionId = 0;
     session.clipboardBridgeConnectionName = "";
+    session.clipboardBridgeTool = "";
     const transport = await ensureVncClipboardTransport(session);
     if (!vncClipboardUsesSsh(transport)) {
-      setVncClipboardStatus(session, "SSH 剪贴板辅助不可用", "error");
-      notify(session.clipboardBridgeError || "所选 SSH 无法访问远端图形剪贴板，请检查远端剪贴板组件和桌面会话", "error");
+      setVncClipboardStatus(session, tr("remote:clipboard.helper_unavailable", {defaultValue:"SSH 剪贴板辅助不可用"}), "error");
+      notify(localizedRemoteTaskText(session.clipboardBridgeError) || tr("remote:clipboard.selected_ssh_unavailable", {defaultValue:"所选 SSH 无法访问远端图形剪贴板，请检查远端剪贴板组件和桌面会话"}), "error");
       return;
     }
-    setVncClipboardStatus(session, "SSH 剪贴板辅助已启用", "success", 2600);
-    notify(`已通过 ${session.clipboardBridgeConnectionName || "所选 SSH"} 启用中文剪贴板辅助`, "success");
+    setVncClipboardStatus(session, tr("remote:clipboard.helper_enabled", {defaultValue:"SSH 剪贴板辅助已启用"}), "success", 2600);
+    const connectionName = session.clipboardBridgeConnectionName || tr("remote:clipboard.selected_ssh", {defaultValue:"所选 SSH"});
+    notify(tr("remote:clipboard.unicode_helper_enabled_via", {connection:connectionName, defaultValue:`已通过 ${connectionName} 启用中文剪贴板辅助`}), "success");
     if (session.clipboardPendingUnicodeText !== undefined) {
       const pending = session.clipboardPendingUnicodeText;
       session.clipboardPendingUnicodeText = undefined;
@@ -482,8 +507,8 @@ async function configureVncClipboardSsh(key) {
     }
     if (session.clipboardAutoSync) startVncClipboardPolling(session);
   } catch (error) {
-    session.clipboardBridgeError = error.message || "SSH 剪贴板辅助设置失败";
-    setVncClipboardStatus(session, "SSH 剪贴板辅助不可用", "error");
+    session.clipboardBridgeError = error.message || tr("remote:clipboard.setup_failed", {defaultValue:"SSH 剪贴板辅助设置失败"});
+    setVncClipboardStatus(session, tr("remote:clipboard.helper_unavailable", {defaultValue:"SSH 剪贴板辅助不可用"}), "error");
     notify(session.clipboardBridgeError, "error");
   } finally {
     focusEmbeddedVnc(session);
@@ -504,8 +529,8 @@ function resetVncClipboardBridgeWriteState(session) {
 }
 
 function vncClipboardSendUnavailableReason(session) {
-  if (!session?.rfb || !session.connected) return "VNC 尚未连接完成";
-  if (session.profile?.options?.view_only || session.rfb.viewOnly) return "仅查看模式不能向远端发送剪贴板";
+  if (!session?.rfb || !session.connected) return tr("remote:clipboard.vnc_not_ready", {defaultValue:"VNC 尚未连接完成"});
+  if (session.profile?.options?.view_only || session.rfb.viewOnly) return tr("remote:clipboard.view_only_no_send", {defaultValue:"仅查看模式不能向远端发送剪贴板"});
   return "";
 }
 
@@ -517,9 +542,126 @@ function vncClipboardSessionVisible(session) {
   return true;
 }
 
+const VNC_CLIPBOARD_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
+const VNC_CLIPBOARD_PNG_SIGNATURE = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function vncClipboardImageTransportAvailable(session) {
+  const transport = String(session?.clipboardTransport || "");
+  if (transport === "ssh-linux-wayland") return session?.clipboardBridgeTool === "wl-clipboard";
+  return transport === "ssh-linux-x11" && session?.clipboardBridgeTool === "xclip";
+}
+
+function vncClipboardImageBytes(payload) {
+  const source = payload?.data ?? payload;
+  if (source instanceof ArrayBuffer) return new Uint8Array(source);
+  if (ArrayBuffer.isView(source)) return new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+  if (Array.isArray(source)) return Uint8Array.from(source);
+  if (Array.isArray(source?.data)) return Uint8Array.from(source.data);
+  throw new Error(tr("remote:clipboard.image_invalid", {defaultValue:"剪贴板图片数据无效"}));
+}
+
+function validateVncClipboardImageBytes(value) {
+  const bytes = vncClipboardImageBytes(value);
+  if (!bytes.byteLength) throw new Error(tr("remote:clipboard.image_empty", {defaultValue:"剪贴板图片为空"}));
+  if (bytes.byteLength > VNC_CLIPBOARD_IMAGE_MAX_BYTES) throw new Error(tr("remote:clipboard.image_too_large", {defaultValue:"剪贴板图片超过 25 MB"}));
+  if (bytes.byteLength < VNC_CLIPBOARD_PNG_SIGNATURE.length || !VNC_CLIPBOARD_PNG_SIGNATURE.every((item, index) => bytes[index] === item)) {
+    throw new Error(tr("remote:clipboard.image_not_png", {defaultValue:"剪贴板图片不是有效的 PNG 数据"}));
+  }
+  return bytes;
+}
+
+async function readVncLocalClipboardImage() {
+  if (window.termaDesktop?.readClipboardImage) {
+    const payload = await window.termaDesktop.readClipboardImage();
+    if (!payload?.ok) {
+      if (payload?.reason === "empty") return null;
+      throw new Error(payload?.error || tr("remote:clipboard.local_image_read_failed", {defaultValue:"无法读取本机剪贴板图片"}));
+    }
+    return validateVncClipboardImageBytes(payload);
+  }
+  if (navigator.clipboard?.read) {
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const type = item.types.find(value => String(value || "").toLowerCase() === "image/png");
+      if (type) return validateVncClipboardImageBytes(await (await item.getType(type)).arrayBuffer());
+    }
+  }
+  return null;
+}
+
+async function writeVncLocalClipboardImage(value) {
+  const bytes = validateVncClipboardImageBytes(value);
+  if (window.termaDesktop?.writeClipboardImage) {
+    await window.termaDesktop.writeClipboardImage(bytes);
+    return true;
+  }
+  if (navigator.clipboard?.write && typeof ClipboardItem === "function") {
+    await navigator.clipboard.write([new ClipboardItem({"image/png":new Blob([bytes], {type:"image/png"})})]);
+    return true;
+  }
+  throw new Error(tr("remote:clipboard.local_image_write_unsupported", {defaultValue:"当前环境不支持自动写入本机图片剪贴板"}));
+}
+
+async function sendVncClipboardImage(key, announce=false) {
+  const session = vncSessions.get(key);
+  const unavailable = vncClipboardSendUnavailableReason(session);
+  if (unavailable) {
+    if (announce) notify(unavailable, "info");
+    return false;
+  }
+  try {
+    const transport = await ensureVncClipboardTransport(session);
+    if (!vncClipboardImageTransportAvailable({...session, clipboardTransport:transport})) {
+      throw new Error(tr("remote:clipboard.image_requires_helper", {defaultValue:"图片剪贴板需要 SSH 辅助和远端 xclip/wl-clipboard"}));
+    }
+    const bytes = await readVncLocalClipboardImage();
+    if (!bytes) {
+      if (announce) notify(tr("remote:clipboard.local_png_missing", {defaultValue:"本机剪贴板中没有 PNG 图片"}), "info");
+      return false;
+    }
+    await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/image`, {
+      method:"POST",
+      headers:{"Content-Type":"image/png"},
+      body:bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      responseType:"json"
+    });
+    setVncClipboardStatus(session, tr("remote:clipboard.image_synced_remote", {defaultValue:"图片已同步到远端"}), "success", 2600);
+    if (announce) notify(tr("remote:clipboard.local_image_synced", {defaultValue:"本机剪贴板图片已同步到远端 VNC 桌面"}), "success");
+    return true;
+  } catch (error) {
+    setVncClipboardStatus(session, tr("remote:clipboard.image_sync_failed", {defaultValue:"图片剪贴板同步失败"}), "error");
+    if (announce) notify(error.message || tr("remote:clipboard.local_image_send_failed", {defaultValue:"发送本机剪贴板图片失败"}), "error");
+    return false;
+  }
+}
+
+async function receiveVncClipboardImage(key, announce=false) {
+  const session = vncSessions.get(key);
+  const unavailable = vncClipboardSendUnavailableReason(session);
+  if (unavailable) {
+    if (announce) notify(unavailable, "info");
+    return false;
+  }
+  try {
+    const transport = await ensureVncClipboardTransport(session);
+    if (!vncClipboardImageTransportAvailable({...session, clipboardTransport:transport})) {
+      throw new Error(tr("remote:clipboard.image_requires_helper", {defaultValue:"图片剪贴板需要 SSH 辅助和远端 xclip/wl-clipboard"}));
+    }
+    const result = await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/image`, {responseType:"arrayBuffer"});
+    await writeVncLocalClipboardImage(result.data);
+    setVncClipboardStatus(session, tr("remote:clipboard.remote_image_read", {defaultValue:"已读取远端图片"}), "success", 2600);
+    if (announce) notify(tr("remote:clipboard.remote_image_written", {defaultValue:"远端 VNC 剪贴板图片已写入本机剪贴板"}), "success");
+    return true;
+  } catch (error) {
+    setVncClipboardStatus(session, tr("remote:clipboard.remote_image_read_failed", {defaultValue:"读取远端图片失败"}), "error");
+    if (announce) notify(error.message || tr("remote:clipboard.remote_clipboard_image_failed", {defaultValue:"读取远端剪贴板图片失败"}), "error");
+    return false;
+  }
+}
+
 async function readVncLocalClipboard() {
   if (window.termaDesktop?.readClipboardText) return String(await window.termaDesktop.readClipboardText());
-  if (!navigator.clipboard?.readText) throw new Error("当前浏览器不支持直接读取剪贴板");
+  if (!navigator.clipboard?.readText) throw new Error(tr("remote:clipboard.browser_read_unsupported", {defaultValue:"当前浏览器不支持直接读取剪贴板"}));
   return String(await navigator.clipboard.readText());
 }
 
@@ -530,7 +672,7 @@ async function writeVncLocalClipboard(text, manual=false) {
     return;
   }
   if (!manual) {
-    if (!navigator.clipboard?.writeText) throw new Error("当前浏览器不能自动写入剪贴板");
+    if (!navigator.clipboard?.writeText) throw new Error(tr("remote:clipboard.browser_write_unsupported", {defaultValue:"当前浏览器不能自动写入剪贴板"}));
     await navigator.clipboard.writeText(value);
     return;
   }
@@ -575,6 +717,7 @@ async function ensureVncClipboardTransport(session) {
       if (vncClipboardUsesSsh(session.clipboardTransport)) {
         session.clipboardBridgeConnectionId = Number(result.connection_id || 0);
         session.clipboardBridgeConnectionName = String(result.connection_name || "");
+        session.clipboardBridgeTool = String(result.tool || "");
         session.clipboardBridgeResolvedBy = String(result.resolved_by || "");
         session.remoteClipboardBridgeLastSeen = normalizeVncClipboardText(result.text ?? "");
         session.remoteClipboardAvailable = true;
@@ -584,13 +727,14 @@ async function ensureVncClipboardTransport(session) {
       } else {
         session.clipboardBridgeConnectionId = Number(result?.connection_id || session.clipboardBridgeConnectionId || 0);
         session.clipboardBridgeConnectionName = String(result?.connection_name || session.clipboardBridgeConnectionName || "");
+        session.clipboardBridgeTool = String(result?.tool || session.clipboardBridgeTool || "");
         session.clipboardBridgeResolvedBy = String(result?.resolved_by || session.clipboardBridgeResolvedBy || "");
-        session.clipboardBridgeError = String(result?.reason || "SSH 剪贴板辅助通道不可用");
+        session.clipboardBridgeError = localizedRemoteTaskText(result?.reason) || tr("remote:clipboard.channel_unavailable", {defaultValue:"SSH 剪贴板辅助通道不可用"});
       }
     } catch (error) {
       session.clipboardTransport = "rfb";
       session.clipboardTransportChecked = true;
-      session.clipboardBridgeError = error.message || "SSH 剪贴板辅助通道不可用";
+      session.clipboardBridgeError = error.message || tr("remote:clipboard.channel_unavailable", {defaultValue:"SSH 剪贴板辅助通道不可用"});
     } finally {
       session.clipboardTransportPromise = null;
       renderVncClipboardControls(session);
@@ -642,15 +786,16 @@ async function sendVncClipboardText(session, text, announce=false) {
         || session.rfb !== writeRfb
         || !session.connected
       ) return false;
-      setVncClipboardStatus(session, "SSH 剪贴板同步失败", "error");
-      if (announce) notify(error.message || "写入远端系统剪贴板失败", "error");
+      setVncClipboardStatus(session, tr("remote:clipboard.ssh_sync_failed", {defaultValue:"SSH 剪贴板同步失败"}), "error");
+      if (announce) notify(error.message || tr("remote:clipboard.remote_write_failed", {defaultValue:"写入远端系统剪贴板失败"}), "error");
       return false;
     }
   } else {
     if (vncClipboardNeedsUnicodeBridge(value) && !vncClipboardLegacyRfbCanSendUnicode(session)) {
       session.clipboardPendingUnicodeText = value;
-      const reason = `${session.clipboardBridgeError || "远端 VNC 未协商 Unicode 剪贴板；请关联同主机 SSH，并在 Linux 安装 xclip/xsel 或 wl-clipboard"}。点击红色剪贴板状态进行设置`;
-      setVncClipboardStatus(session, "中文剪贴板需要 SSH 辅助", "error");
+      const detail = localizedRemoteTaskText(session.clipboardBridgeError) || tr("remote:clipboard.unicode_not_negotiated", {defaultValue:"远端 VNC 未协商 Unicode 剪贴板；请关联同主机 SSH，并在 Linux 安装 xclip/xsel 或 wl-clipboard"});
+      const reason = tr("remote:clipboard.click_error_status", {detail, defaultValue:`${detail}。点击红色剪贴板状态进行设置`});
+      setVncClipboardStatus(session, tr("remote:clipboard.unicode_requires_ssh", {defaultValue:"中文剪贴板需要 SSH 辅助"}), "error");
       if (announce) notify(reason, "error");
       return false;
     }
@@ -659,8 +804,8 @@ async function sendVncClipboardText(session, text, announce=false) {
   session.clipboardLastSeenLocal = value;
   session.clipboardLastSentText = value;
   const confirmed = vncClipboardUsesSsh(transport);
-  setVncClipboardStatus(session, confirmed ? "已同步到远端" : "已发送（服务端未确认）", confirmed ? "success" : "warning", 2200);
-  if (announce) notify(confirmed ? "本机剪贴板已通过 SSH 同步到远端系统" : "本机剪贴板已通过 VNC 发送，服务端不会返回确认", confirmed ? "success" : "info");
+  setVncClipboardStatus(session, confirmed ? tr("remote:clipboard.synced_remote", {defaultValue:"已同步到远端"}) : tr("remote:clipboard.sent_unconfirmed", {defaultValue:"已发送（服务端未确认）"}), confirmed ? "success" : "warning", 2200);
+  if (announce) notify(confirmed ? tr("remote:clipboard.local_synced_ssh", {defaultValue:"本机剪贴板已通过 SSH 同步到远端系统"}) : tr("remote:clipboard.local_sent_vnc", {defaultValue:"本机剪贴板已通过 VNC 发送，服务端不会返回确认"}), confirmed ? "success" : "info");
   return true;
 }
 
@@ -680,10 +825,10 @@ async function syncVncClipboardFromLocal(session) {
       session.clipboardAutoSync = false;
       session.clipboardPermissionBlocked = true;
       stopVncClipboardPolling(session);
-      setVncClipboardStatus(session, "剪贴板权限受限", "error");
+      setVncClipboardStatus(session, tr("remote:clipboard.permission_limited", {defaultValue:"剪贴板权限受限"}), "error");
       if (!session.clipboardPermissionNoticeShown) {
         session.clipboardPermissionNoticeShown = true;
-        notify("无法持续读取本机剪贴板，已改为手动同步", "info");
+        notify(tr("remote:clipboard.auto_read_failed_manual", {defaultValue:"无法持续读取本机剪贴板，已改为手动同步"}), "info");
       }
     }
     return false;
@@ -721,7 +866,7 @@ async function pollVncRemoteClipboardBridge(session, force=false) {
       || !session.connected
     ) return false;
     if (result?.truncated) {
-      setVncClipboardStatus(session, `远端剪贴板超过 ${Math.round(Number(result.max_bytes || 0) / 1024)} KiB，未自动同步`, "warning");
+      setVncClipboardStatus(session, tr("remote:clipboard.remote_too_large", {size:Math.round(Number(result.max_bytes || 0) / 1024), defaultValue:`远端剪贴板超过 ${Math.round(Number(result.max_bytes || 0) / 1024)} KiB，未自动同步`}), "warning");
       return false;
     }
     const value = normalizeVncClipboardText(result?.text ?? "");
@@ -763,7 +908,7 @@ async function pollVncRemoteClipboardBridge(session, force=false) {
       || session.rfb !== readRfb
       || !session.connected
     ) return false;
-    session.clipboardBridgeError = error.message || "读取远端系统剪贴板失败";
+    session.clipboardBridgeError = error.message || tr("remote:clipboard.remote_read_failed", {defaultValue:"读取远端系统剪贴板失败"});
     if (force) throw error;
     return false;
   } finally {
@@ -793,7 +938,7 @@ async function handleVncRemoteClipboard(session, rfb, text) {
   if (vncClipboardUsesSsh(session.clipboardTransport)) session.remoteClipboardBridgeLastSeen = value;
   renderVncClipboardControls(session);
   if (!session.clipboardAutoSync || !vncClipboardSessionVisible(session)) {
-    setVncClipboardStatus(session, "收到远端内容，点击读取", "warning");
+    setVncClipboardStatus(session, tr("remote:clipboard.remote_received_click", {defaultValue:"收到远端内容，点击读取"}), "warning");
     return;
   }
   try {
@@ -802,13 +947,13 @@ async function handleVncRemoteClipboard(session, rfb, text) {
     session.clipboardLastSeenLocal = value;
     session.remoteClipboardPending = false;
     session.clipboardPermissionBlocked = false;
-    setVncClipboardStatus(session, "已从远端同步", "success", 2200);
+    setVncClipboardStatus(session, tr("remote:clipboard.synced_from_remote", {defaultValue:"已从远端同步"}), "success", 2200);
   } catch (error) {
     if (session.rfb !== rfb || session.clipboardRemoteOperationId !== operationId) return;
-    setVncClipboardStatus(session, "收到远端内容，点击读取", "warning");
+    setVncClipboardStatus(session, tr("remote:clipboard.remote_received_click", {defaultValue:"收到远端内容，点击读取"}), "warning");
     if (!session.clipboardRemoteWriteNoticeShown) {
       session.clipboardRemoteWriteNoticeShown = true;
-      notify("已收到远端剪贴板；浏览器未允许自动写入，请点击工具栏的读取按钮", "info");
+      notify(tr("remote:clipboard.remote_received_manual_read", {defaultValue:"已收到远端剪贴板；浏览器未允许自动写入，请点击工具栏的读取按钮"}), "info");
     }
   }
 }
@@ -817,11 +962,11 @@ function requestVncClipboardText(session, reason="") {
   return new Promise(resolve => {
     const modal = $("modal");
     modal.hidden = false;
-    modal.innerHTML = `<form class="modal-card vnc-clipboard-modal"><h2>发送剪贴板到 ${esc(session?.profile?.name || "VNC")}</h2>
+    modal.innerHTML = `<form class="modal-card vnc-clipboard-modal"><h2>${esc(tr("remote:clipboard.send_to", {name:session?.profile?.name || "VNC", defaultValue:`发送剪贴板到 ${session?.profile?.name || "VNC"}`}))}</h2>
       ${reason ? `<div class="connection-test-status warning">${esc(reason)}</div>` : ""}
-      <label>要发送的文本</label><textarea id="vncClipboardManualText" rows="8" autofocus placeholder="在此按 Ctrl+V 或 Command+V 粘贴；留空可清空远端剪贴板"></textarea>
-      <div class="muted">内容只发送到当前 VNC 会话，不会保存到 Terma。</div>
-      <div class="actions"><button type="button" data-vnc-clipboard-cancel>取消</button><button class="primary" type="submit">发送</button></div></form>`;
+      <label>${esc(tr("remote:clipboard.text_to_send", {defaultValue:"要发送的文本"}))}</label><textarea id="vncClipboardManualText" rows="8" autofocus placeholder="${escAttr(tr("remote:clipboard.manual_paste_placeholder", {defaultValue:"在此按 Ctrl+V 或 Command+V 粘贴；留空可清空远端剪贴板"}))}"></textarea>
+      <div class="muted">${esc(tr("remote:clipboard.session_only_notice", {defaultValue:"内容只发送到当前 VNC 会话，不会保存到 Terma。"}))}</div>
+      <div class="actions"><button type="button" data-vnc-clipboard-cancel>${esc(tr("remote:clipboard.cancel", {defaultValue:"取消"}))}</button><button class="primary" type="submit">${esc(tr("remote:clipboard.send", {defaultValue:"发送"}))}</button></div></form>`;
     const finish = value => {
       document.removeEventListener("keydown", onKeyDown);
       modal.onclick = null;

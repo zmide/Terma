@@ -28,6 +28,9 @@ function decodeRemoteShellPayload(command) {
       return {status:0, stdout:"stopped"};
     }
   });
+  assert.equal(resourceTask.component_key, "vnc-server");
+  assert.equal(resourceTask.action_key, "stop");
+  assert.equal(resourceTask.current_key, "execute");
   let duplicateExecutorRan = false;
   assert.throws(() => resourceManager.startCommand({
     connection:{id:99, name:"resource-lock", ssh_host:"resource-lock.test"},
@@ -36,7 +39,12 @@ function decodeRemoteShellPayload(command) {
     resource_key:"vnc-server:15",
     action:"uninstall",
     async run() { duplicateExecutorRan = true; return {status:0}; }
-  }), error => error?.statusCode === 409 && error?.code === "REMOTE_TASK_CONFLICT" && error?.task?.id === resourceTask.id);
+  }), error => error?.statusCode === 409
+    && error?.code === "REMOTE_TASK_CONFLICT"
+    && error?.publicCode === "remote_task_conflict"
+    && error?.task?.id === resourceTask.id
+    && error?.task?.component_key === "vnc-server"
+    && error?.task?.action_key === "stop");
   assert.equal(duplicateExecutorRan, false, "a conflicting executor must never start");
   assert.throws(() => resourceManager.startAptInstall({
     connection:{id:99, name:"resource-lock", ssh_host:"resource-lock.test"},
@@ -369,6 +377,9 @@ function decodeRemoteShellPayload(command) {
     await new Promise(resolve => setTimeout(resolve, 20));
   }
   assert.equal(failedView.status, "failed");
+  assert.equal(failedView.current_key, "failed");
+  assert.equal(failedView.error_code, "remote_component_operation_failed");
+  assert.equal(failedView.preserve_error_message, false);
   assert.ok(failedManager.list().some(item => item.id === failed.id), "failed tasks remain until explicitly removed");
   assert.equal(failedManager.clearFinished().removed, 0, "clear history must retain failed tasks");
   assert.equal(failedManager.remove(failed.id), true);
@@ -400,12 +411,35 @@ function decodeRemoteShellPayload(command) {
   }
   assert.equal(commandView.status, "done");
   assert.equal(commandView.progress, 100);
+  assert.equal(commandView.component_key, "rdp-server");
+  assert.equal(commandView.action_key, "uninstall");
+  assert.equal(commandView.current_key, "done");
   assert.equal(commandView.action_label, "卸载");
   assert.equal(commandView.mode, "uninstall");
   assert.equal(commandView.before.xrdp_installed, true);
   assert.equal(commandView.after.xrdp_installed, false);
   assert.equal(commandReleased, true);
   assert.ok(commandView.logs.some(item => item.text.includes("removing packages")));
+
+  const rawFailureManager = createRemoteOfflineTaskManager({data_dir:root});
+  const rawFailureTask = rawFailureManager.startCommand({
+    connection:{id:11, name:"raw-failure", ssh_host:"demo.test"},
+    component:"x11-forwarding",
+    component_label:"SSH X11 转发",
+    action:"enable",
+    async run() { return {status:1, stderr:"远端自定义脚本错误"}; }
+  });
+  const rawFailureDeadline = Date.now() + 1000;
+  let rawFailureView;
+  while (Date.now() < rawFailureDeadline) {
+    rawFailureView = rawFailureManager.list().find(item => item.id === rawFailureTask.id);
+    if (rawFailureView?.status !== "running") break;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(rawFailureView.status, "failed");
+  assert.equal(rawFailureView.error_code, "remote_output");
+  assert.equal(rawFailureView.preserve_error_message, true);
+  assert.equal(rawFailureView.error, "远端自定义脚本错误");
 
   const utf8Manager = createRemoteOfflineTaskManager({data_dir:root});
   const utf8Task = utf8Manager.startCommand({

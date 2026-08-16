@@ -44,6 +44,7 @@ function loadDockingModel() {
     icon:() => "",
     esc:value => String(value),
     escAttr:value => String(value),
+    tr:(key, options={}) => options.defaultValue || key,
     notify:noop,
     hideTabContextMenu:noop,
     closeTerminalSession:noop,

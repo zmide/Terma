@@ -3,14 +3,16 @@ async function openLog(path, title, updateTab=true, existingKey="") {
   const inPane = action => typeof runInWorkspacePane === "function" ? runInWorkspacePane(paneId, action) : action();
   const currentTab = tabs.find(tab => tab.key === activeTabKey);
   const tabKey = existingKey || (!updateTab && currentTab?.kind === "log" ? currentTab.key : `log-${path}`);
+  const sourceTitle = String(title || tr("common:log_viewer.default_title", {defaultValue:"Log"}));
+  const displayTitle = typeof localizedLogLabel === "function" ? localizedLogLabel(sourceTitle) : sourceTitle;
   inPane(() => {
-    setWorkspace(title, "日志查看", "log", tabKey, updateTab, true, {kind:"log", path});
-    $("view-log").innerHTML = stateView("loading", "正在读取日志", title);
+    setWorkspace(displayTitle, tr("common:log_viewer.workspace_title", {defaultValue:"Log viewer"}), "log", tabKey, updateTab, true, {kind:"log", path, logTitleSource:sourceTitle});
+    $("view-log").innerHTML = stateView("loading", tr("common:log_viewer.loading", {defaultValue:"Reading log"}), displayTitle);
   });
   const inTab = typeof captureWorkspaceTab === "function" ? captureWorkspaceTab(tabKey) : inPane;
   const result = await loadLogWindow(path);
   const render = () => {
-    const state = {path, title, offset:result.offset, text:result.text || "", matches:result.matches || [], matches_truncated:Boolean(result.matches_truncated), has_older:Boolean(result.has_older)};
+    const state = {path, title:displayTitle, sourceTitle, offset:result.offset, text:result.text || "", matches:result.matches || [], matches_truncated:Boolean(result.matches_truncated), has_older:Boolean(result.has_older)};
     logViewerStates.set(tabKey, state);
     logViewerState = state;
     renderLogViewer(state, tabKey, "end");
@@ -39,6 +41,23 @@ function positionLogViewerScroll(container, mode="end", previous={}) {
   requestAnimationFrame(apply);
 }
 
+function localizedSystemLogText(value, state) {
+  const source = String(value || "");
+  const language = normalizeTermaLanguage(document.documentElement.lang || "zh-CN");
+  if (language !== "en-US" || !String(state?.sourceTitle || state?.title || "").startsWith("system-")) return source;
+  return source.split("\n").map(line => {
+    const timestamp = line.match(/^(\[[^\]]+\]\s*)(.*)$/);
+    const prefix = timestamp?.[1] || "";
+    let body = timestamp?.[2] ?? line;
+    let eventPrefix = "";
+    if (/^\u901a\u77e5\uff1a\s*/iu.test(body)) {
+      body = body.replace(/^\u901a\u77e5\uff1a\s*/iu, "");
+      eventPrefix = `${tr("common:log_display.notification", {defaultValue:"Notification"})}: `;
+    }
+    return `${prefix}${eventPrefix}${localizedTermaUiPhrase(body)}`;
+  }).join("\n");
+}
+
 function renderLogViewer(state=currentLogViewerState(), tabKey=activeTabKey, scrollMode="end") {
   if (!state) return;
   const view = $("view-log");
@@ -47,16 +66,18 @@ function renderLogViewer(state=currentLogViewerState(), tabKey=activeTabKey, scr
   const matches = state.matches || [];
   let contexts = "";
   if (logSearch.trim()) {
-    const blocks = matches.slice(0, 50).map(match => `<pre>${highlightLogText(match.text)}</pre>`).join("");
+    const blocks = matches.slice(0, 50).map(match => `<pre>${highlightLogText(localizedSystemLogText(match.text, state))}</pre>`).join("");
     const summary = matches.length
-      ? `共显示 ${matches.length} 处命中${state.matches_truncated ? "，更多结果已省略" : ""}`
-      : "正文中没有对应内容";
-    contexts = `<div class="panel compact-log-context"><strong>搜索上下文</strong><span>${summary}</span>${blocks}</div>`;
+      ? (state.matches_truncated
+        ? tr("common:log_viewer.matches_truncated", {count:matches.length, defaultValue:"Showing {{count}} matches; more results were omitted"})
+        : tr("common:log_viewer.matches", {count:matches.length, defaultValue:"Showing {{count}} matches"}))
+      : tr("common:log_viewer.no_matches", {defaultValue:"No matching content was found in the log"});
+    contexts = `<div class="panel compact-log-context"><strong>${esc(tr("common:log_viewer.search_context", {defaultValue:"Search context"}))}</strong><span>${esc(summary)}</span>${blocks}</div>`;
   }
   const older = state.has_older
-    ? `<div class="actions log-load-actions"><button onclick="loadOlderLog('${escAttr(tabKey)}')">${icon("chevrons-up")}加载更早内容</button><span class="muted">按 256 KB 分段读取，不会一次载入整个大日志。</span></div>`
+    ? `<div class="actions log-load-actions"><button onclick="loadOlderLog('${escAttr(tabKey)}')">${icon("chevrons-up")}${esc(tr("common:log_viewer.load_older", {defaultValue:"Load earlier content"}))}</button><span class="muted">${esc(tr("common:log_viewer.chunk_hint", {defaultValue:"Logs are read in 256 KB chunks instead of loading a large file all at once."}))}</span></div>`
     : "";
-  view.innerHTML = `${older}${contexts}<pre class="log-view">${highlightLogText(state.text || "日志为空")}</pre>`;
+  view.innerHTML = `${older}${contexts}<pre class="log-view" data-i18n-skip>${highlightLogText(localizedSystemLogText(state.text || tr("common:log_display.empty", {defaultValue:"Log is empty"}), state))}</pre>`;
   refreshIcons();
   positionLogViewerScroll(scrollContainer, scrollMode, previousScroll);
 }
@@ -98,7 +119,7 @@ async function openTodaySystemLog() {
   const dd = String(now.getDate()).padStart(2, "0");
   const today = `${yyyy}-${mm}-${dd}`;
   const log = (logsData.system || []).find(item => String(item.path || item.label || "").includes(today));
-  if (!log) return notify("今天暂无系统日志", "info");
+  if (!log) return notify(tr("common:notifications.no_system_log_today", {defaultValue:"There is no system log for today"}), "info");
   inPane(() => openLog(log.path, log.label || `system-${today}`));
 }
 
@@ -113,6 +134,37 @@ async function openSystemLogAt(timestamp) {
   const dd = String(date.getDate()).padStart(2, "0");
   const day = `${yyyy}-${mm}-${dd}`;
   const log = (logsData.system || []).find(item => String(item.path || item.label || "").includes(day));
-  if (!log) return notify(`${yyyy}年${Number(mm)}月${Number(dd)}日没有对应系统日志`, "info");
+  if (!log) {
+    const language = normalizeTermaLanguage(document.documentElement.lang || "zh-CN");
+    const formattedDate = new Intl.DateTimeFormat(language, {year:"numeric", month:"long", day:"numeric"}).format(date);
+    return notify(tr("common:log_viewer.no_system_log_date", {date:formattedDate, defaultValue:"There is no system log for {{date}}"}), "info");
+  }
   inPane(() => openLog(log.path, log.label || `system-${day}`));
+}
+
+if (typeof registerTermaI18nRenderer === "function") {
+  registerTermaI18nRenderer(() => {
+    if (typeof renderLogs === "function" && $("connectionGroups")) renderLogs().catch(() => {});
+    let changed = false;
+    for (const tab of tabs) {
+      if (tab.kind !== "log") continue;
+      const state = logViewerStates.get(tab.key);
+      const source = tab.logTitleSource || state?.sourceTitle || tab.title;
+      const title = typeof localizedLogLabel === "function" ? localizedLogLabel(source) : source;
+      tab.logTitleSource = source;
+      if (tab.title !== title) {
+        tab.title = title;
+        changed = true;
+      }
+      if (state) {
+        state.sourceTitle = source;
+        state.title = title;
+        if (typeof activeView !== "undefined" && activeView === "log" && tab.key === activeTabKey) renderLogViewer(state, tab.key, "preserve");
+      }
+    }
+    if (changed) {
+      renderTabs();
+      saveTabsState();
+    }
+  });
 }

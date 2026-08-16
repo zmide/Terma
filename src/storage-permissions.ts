@@ -17,15 +17,14 @@ function storagePermissionFailureKind(detail, platform = process.platform) {
 }
 
 function windowsAccount() {
-  const username = String(process.env.USERNAME || "").trim();
-  const domain = String(process.env.USERDOMAIN || "").trim();
-  if (username) return domain ? `${domain}\\${username}` : username;
   try {
     const result = spawnSync("whoami", [], {encoding:"utf8", windowsHide:true});
-    return result.status === 0 ? String(result.stdout || "").trim() : "";
-  } catch {
-    return "";
-  }
+    const account = result.status === 0 ? String(result.stdout || "").trim() : "";
+    if (account) return account;
+  } catch {}
+  const username = String(process.env.USERNAME || "").trim();
+  const domain = String(process.env.USERDOMAIN || "").trim();
+  return username ? (domain ? `${domain}\\${username}` : username) : "";
 }
 
 function windowsAclPrincipals(output, target) {
@@ -80,10 +79,13 @@ function ensurePrivateWindowsPath(target, directory, options: any = {}) {
   ].map(item => item.toLowerCase()).filter(Boolean));
   const run = args => spawnSync("icacls", [resolved, ...args], {encoding:"utf8", windowsHide:true});
   try {
-    const inheritance = run(["/inheritance:r"]);
-    if (inheritance.status !== 0) return permissionError(resolved, String(inheritance.stderr || inheritance.stdout || "icacls inheritance failed").trim(), options);
+    // Establish the private explicit ACL before removing inherited entries. If
+    // icacls is interrupted or the grant fails, the path keeps its existing
+    // inherited access instead of being left with an empty, unusable DACL.
     const grant = run(["/grant:r", `${account}:${rights}`, `*S-1-5-18:${rights}`, `*S-1-5-32-544:${rights}`]);
     if (grant.status !== 0) return permissionError(resolved, String(grant.stderr || grant.stdout || "icacls grant failed").trim(), options);
+    const inheritance = run(["/inheritance:r"]);
+    if (inheritance.status !== 0) return permissionError(resolved, String(inheritance.stderr || inheritance.stdout || "icacls inheritance failed").trim(), options);
     const listed = run([]);
     if (listed.status !== 0) return permissionError(resolved, String(listed.stderr || listed.stdout || "icacls listing failed").trim(), options);
     for (const principal of windowsAclPrincipals(listed.stdout || "", resolved)) {

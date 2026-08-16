@@ -1,10 +1,12 @@
 import { IncomingMessage, ServerResponse } from "node:http";
 
 interface TerminalRouteDependencies {
+  authorizeConnection(request: IncomingMessage, connectionId: number): any;
   createQuickTerminalTicket(value: unknown, requestBinding: string): unknown;
   createTerminalStartupTicket(connectionId: unknown, startup: unknown): unknown;
   getConnection(id: number): any;
   isDesktopCapabilityRequest(request: IncomingMessage, scope: string): boolean;
+  readBody(request: IncomingMessage, maxBytes?: number): Promise<Buffer>;
   readJson(request: IncomingMessage): Promise<any>;
   requestAuthenticationBinding(request: IncomingMessage): string;
   requireEncryptionUnlocked(): void;
@@ -12,6 +14,8 @@ interface TerminalRouteDependencies {
   closeQuickConnectionTerminals?(connectionId: number, reason?: string): unknown;
   disconnectSftpSession?(connectionId: number, options?: any): unknown;
   sendJson(response: ServerResponse, data: unknown, status?: number): void;
+  terminalClipboardImageMaxBytes: number;
+  writeTerminalClipboardImage(connection: any, value: Buffer, options?: any): Promise<any>;
 }
 
 export async function handleTerminalRoutes(
@@ -20,6 +24,33 @@ export async function handleTerminalRoutes(
   pathname: string,
   dependencies: TerminalRouteDependencies
 ): Promise<boolean> {
+  const clipboardImageMatch = pathname.match(/^\/api\/connections\/(-?\d+)\/terminal-clipboard\/image$/);
+  if (request.method === "POST" && clipboardImageMatch) {
+    const connectionId = Number(clipboardImageMatch[1]);
+    const connection = dependencies.authorizeConnection(request, connectionId);
+    const contentType = String(request.headers["content-type"] || "").split(";", 1)[0].trim().toLowerCase();
+    if (contentType !== "image/png") {
+      dependencies.sendJson(response, {error:"终端剪贴板直写仅接受 PNG 图片"}, 415);
+      return true;
+    }
+    const requestedX11Mode = String(request.headers["x-terma-terminal-x11-mode"] || "").trim().toLowerCase();
+    if (!["off", "trusted", "untrusted"].includes(requestedX11Mode)) {
+      dependencies.sendJson(response, {error:"X11 模式无效"}, 400);
+      return true;
+    }
+    if (requestedX11Mode === "off") {
+      dependencies.sendJson(response, {ready:false, available:false, reason:"x11-disabled"});
+      return true;
+    }
+    if (!dependencies.isDesktopCapabilityRequest(request, "xserver")) {
+      dependencies.sendJson(response, {ready:false, available:false, reason:"desktop-integration-unavailable"});
+      return true;
+    }
+    const image = await dependencies.readBody(request, dependencies.terminalClipboardImageMaxBytes + 1);
+    const result = await dependencies.writeTerminalClipboardImage(connection, image, {x11Mode:requestedX11Mode});
+    dependencies.sendJson(response, result);
+    return true;
+  }
   if (request.method === "POST" && pathname === "/api/terminal/quick-tickets") {
     const data = await dependencies.readJson(request);
     if (String(data?.auth_type || "") === "key") dependencies.requireEncryptionUnlocked();

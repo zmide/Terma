@@ -1,5 +1,24 @@
 function renderRunningForwards() {
   const uiState = captureUiState($("connectionGroups") || document);
+  const labels = {
+    running:tr("connections:forwards.running", {defaultValue:"运行中"}),
+    reconnecting:tr("connections:forwards.reconnecting", {defaultValue:"重连中"}),
+    failed:tr("connections:forwards.failed", {defaultValue:"启动失败"}),
+    search:tr("common:auto.search", {defaultValue:"搜索"}),
+    rule:tr("connections:forwards.rule", {defaultValue:"转发规则"}),
+    server:tr("common:auto.server", {defaultValue:"服务器"}),
+    port:tr("common:auto.port", {defaultValue:"端口"}),
+    type:tr("common:auto.type", {defaultValue:"类型"}),
+    status:tr("common:auto.status", {defaultValue:"状态"}),
+    open:tr("common:auto.open", {defaultValue:"打开"}),
+    copy:tr("common:auto.copy", {defaultValue:"复制"}),
+    retry:tr("common:actions.retry", {defaultValue:"重试"}),
+    clear:tr("common:auto.clear", {defaultValue:"清除"}),
+    stop:tr("connections:actions.stop_forwards", {defaultValue:"停止转发"}),
+    failureLogs:tr("common:workspace.failure_logs", {defaultValue:"失败日志"}),
+    noAddress:tr("connections:forwards.no_address", {defaultValue:"无可打开地址"})
+  };
+  const filterLabel = `${labels.search}: ${labels.rule} · ${labels.server} · ${labels.port}`;
   const rows = connections.flatMap(connection => (connection.forwards || [])
     .filter(forward => forward.status === "running" || forward.status === "reconnecting" || forward.status === "failed")
     .map(forward => ({connection, forward})));
@@ -21,32 +40,37 @@ function renderRunningForwards() {
   const runningCount = rows.filter(({forward}) => forward.status === "running").length;
   const reconnectingCount = rows.filter(({forward}) => forward.status === "reconnecting").length;
   const failedCount = rows.filter(({forward}) => forward.status === "failed").length;
-  $("connectionGroups").innerHTML = `<div class="running-overview"><span><strong>${runningCount}</strong> 运行中</span><span class="${reconnectingCount ? "warning" : ""}"><strong>${reconnectingCount}</strong> 重连中</span><span class="${failedCount ? "bad" : ""}"><strong>${failedCount}</strong> 启动失败</span></div><div class="running-toolbar"><div class="search-field">${icon("search")}<input id="runningFilterInput" placeholder="搜索转发、服务器、端口" value="${esc(runningFilter)}" oninput="setRunningFilter(this.value)"></div><button class="${runningGroupMode === "server" ? "active" : ""}" onclick="setRunningGroupMode('server')">服务器</button><button class="${runningGroupMode === "type" ? "active" : ""}" onclick="setRunningGroupMode('type')">类型</button><button class="${runningGroupMode === "status" ? "active" : ""}" onclick="setRunningGroupMode('status')">状态</button></div>` +
+  $("connectionGroups").innerHTML = `<div class="running-overview"><span title="${escAttr(`${runningCount} ${labels.running}`)}" aria-label="${escAttr(`${runningCount} ${labels.running}`)}"><strong>${runningCount}</strong><span class="running-overview-label">${esc(labels.running)}</span></span><span class="${reconnectingCount ? "warning" : ""}" title="${escAttr(`${reconnectingCount} ${labels.reconnecting}`)}" aria-label="${escAttr(`${reconnectingCount} ${labels.reconnecting}`)}"><strong>${reconnectingCount}</strong><span class="running-overview-label">${esc(labels.reconnecting)}</span></span><span class="${failedCount ? "bad" : ""}" title="${escAttr(`${failedCount} ${labels.failed}`)}" aria-label="${escAttr(`${failedCount} ${labels.failed}`)}"><strong>${failedCount}</strong><span class="running-overview-label">${esc(labels.failed)}</span></span></div><div class="running-toolbar"><div class="search-field" title="${escAttr(filterLabel)}">${icon("search")}<input id="runningFilterInput" placeholder="${escAttr(labels.search)}" aria-label="${escAttr(filterLabel)}" value="${escAttr(runningFilter)}" oninput="setRunningFilter(this.value)"></div><button class="${runningGroupMode === "server" ? "active" : ""}" title="${escAttr(labels.server)}" aria-label="${escAttr(labels.server)}" onclick="setRunningGroupMode('server')">${esc(labels.server)}</button><button class="${runningGroupMode === "type" ? "active" : ""}" title="${escAttr(labels.type)}" aria-label="${escAttr(labels.type)}" onclick="setRunningGroupMode('type')">${esc(labels.type)}</button><button class="${runningGroupMode === "status" ? "active" : ""}" title="${escAttr(labels.status)}" aria-label="${escAttr(labels.status)}" onclick="setRunningGroupMode('status')">${esc(labels.status)}</button></div>` +
     [...groups.entries()].map(([title, items]) => {
       const open = runningOpen.has(title);
       return `<div class="group">
-    <button class="group-head" onclick="toggleRunningGroup(decodeURIComponent('${encodeURIComponent(title)}'))"><span class="chev">${open ? "▾" : "▸"}</span><span>${esc(title)}</span><span class="count">${items.length}</span></button>
+    <button class="group-head" title="${escAttr(title)}" aria-label="${escAttr(title)}" onclick="toggleRunningGroup(decodeURIComponent('${encodeURIComponent(title)}'))"><span class="chev">${open ? "▾" : "▸"}</span><span>${esc(title)}</span><span class="count">${items.length}</span></button>
     ${open ? items.map(({connection, forward}) => {
       const access = forwardAccessInfo(forward);
       const runtimeDetail = forwardQualityText(forward);
       const failureTime = forward.status === "failed" ? forwardEventTimeText(forward.updated_at) : "";
-      const clearTitle = forward.status === "failed" ? "清除异常状态" : "停止转发";
+      const clearTitle = forward.status === "failed" ? labels.clear : labels.stop;
+      const displayName = forwardDisplayName(forward);
       return `<div class="forward-running-row">
       <div>
-        <div class="conn-name">${esc(forwardDisplayName(forward))}</div>
+        <div class="conn-name" title="${escAttr(displayName)}">${esc(displayName)}</div>
         <div class="forward-tags"><span>${forwardModeText(forward.mode)}</span>${forward.service_type ? `<span>${serviceTypeText(forward.service_type)}</span>` : ""}</div>
         <div class="conn-meta">${esc(connection.name)} · ${forwardText(forward)}</div>
-        <div class="forward-running-state"><span class="status-pill ${escAttr(forward.status || "stopped")}">${forwardStatusText(forward.status)}</span>${failureTime ? `<span>失败于 ${esc(failureTime)}</span>` : ""}</div>
+        <div class="forward-running-state"><span class="status-pill ${escAttr(forward.status || "stopped")}">${forwardStatusText(forward.status)}</span>${failureTime ? `<span>${esc(tr("connections:forwards.failed_at", {time:failureTime, defaultValue:`失败于 ${failureTime}`}))}</span>` : ""}</div>
         ${runtimeDetail ? `<div class="conn-meta">${runtimeDetail}</div>` : ""}
-        ${forward.last_error ? `<div class="conn-meta error forward-error-detail">${esc(forward.last_error).slice(0,500)}</div>${forward.updated_at ? `<button class="forward-error-log-link" onclick="openSystemLogAt(${Number(forward.updated_at)})">${icon("scroll-text")}<span>查看失败当天日志</span></button>` : ""}` : ""}
+        ${forward.last_error ? `<div class="conn-meta error forward-error-detail">${esc(forward.last_error).slice(0,500)}</div>${forward.updated_at ? `<button class="forward-error-log-link" title="${escAttr(labels.failureLogs)}" aria-label="${escAttr(labels.failureLogs)}" onclick="openSystemLogAt(${Number(forward.updated_at)})">${icon("scroll-text")}<span>${esc(labels.failureLogs)}</span></button>` : ""}` : ""}
         ${forward.service_note ? `<div class="conn-meta">${esc(forward.service_note)}</div>` : ""}
         ${forwardAccessHtml(access)}
       </div>
-      <div class="running-actions">${access.url ? `<a class="open-forward-link" href="${esc(access.url)}" target="_blank" rel="noopener">${icon("external-link")}<span>打开</span></a><button class="icon-button" title="复制地址" aria-label="复制地址" onclick="copyText('${escAttr(access.url)}')">${icon("copy")}</button>` : `<span class="muted running-no-url">无可打开地址</span>`}<button class="icon-button" title="重试转发" aria-label="重试转发" onclick="retryForwardFromRunning(${forward.id},this)">${icon("rotate-cw")}</button><button class="danger icon-button" title="${clearTitle}" aria-label="${clearTitle}" onclick="stopForwardFromRunning(${forward.id})">${icon(forward.status === "failed" ? "circle-x" : "square")}</button></div>
+      <div class="running-actions">${access.url ? `<a class="open-forward-link" href="${escAttr(access.url)}" target="_blank" rel="noopener" title="${escAttr(labels.open)}" aria-label="${escAttr(labels.open)}">${icon("external-link")}<span>${esc(labels.open)}</span></a><button class="icon-button" title="${escAttr(labels.copy)}" aria-label="${escAttr(labels.copy)}" onclick="copyText('${escAttr(access.url)}')">${icon("copy")}</button>` : `<span class="muted running-no-url" title="${escAttr(labels.noAddress)}">${esc(labels.noAddress)}</span>`}<button class="icon-button" title="${escAttr(labels.retry)}" aria-label="${escAttr(labels.retry)}" onclick="retryForwardFromRunning(${forward.id},this)">${icon("rotate-cw")}</button><button class="danger icon-button" title="${escAttr(clearTitle)}" aria-label="${escAttr(clearTitle)}" onclick="stopForwardFromRunning(${forward.id})">${icon(forward.status === "failed" ? "circle-x" : "square")}</button></div>
     </div>`;
     }).join("") : ""}
   </div>`;
-    }).join("") || stateView("empty", rows.length ? "没有匹配的转发" : "暂无正在转发", rows.length ? "请调整搜索条件或分组方式。" : "启动连接的转发后会显示在这里。");
+    }).join("") || stateView(
+      "empty",
+      rows.length ? tr("common:auto.no_matches", {defaultValue:"没有匹配结果"}) : tr("connections:forwards.empty", {defaultValue:"暂无转发规则"}),
+      rows.length ? filterLabel : tr("connections:forwards.empty_hint", {defaultValue:"添加并启动转发后会显示在这里。"})
+    );
   restoreUiState(uiState);
 }
 

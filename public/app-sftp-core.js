@@ -305,10 +305,12 @@ function updateSftpFileOpenFeedback(connectionId, remotePath, loading) {
       button.disabled = loading;
       button.classList.toggle("is-loading", loading);
       button.setAttribute("aria-busy", loading ? "true" : "false");
-      button.title = loading ? "正在打开文件" : (image ? "预览图片" : "以文本打开");
+      button.title = tr(loading ? "sftp:auto.opening_file" : image ? "sftp:menu.preview_image" : "sftp:menu.open_as_text", {
+        defaultValue:loading ? "正在打开文件" : (image ? "预览图片" : "以文本打开")
+      });
       button.innerHTML = loading
-        ? `${icon("loader-circle")}<span>打开中</span>`
-        : `${icon(image ? "image" : "file-text")}<span>${image ? "预览" : "打开"}</span>`;
+        ? `${icon("loader-circle")}<span>${esc(tr("sftp:auto.opening", {defaultValue:"打开中"}))}</span>`
+        : `${icon(image ? "image" : "file-text")}<span>${esc(tr(image ? "sftp:auto.preview" : "sftp:auto.open", {defaultValue:image ? "预览" : "打开"}))}</span>`;
     });
   }
 }
@@ -316,7 +318,7 @@ function updateSftpFileOpenFeedback(connectionId, remotePath, loading) {
 async function withSftpFileOpenFeedback(connectionId, remotePath, operation) {
   const key = sftpFileOpenKey(connectionId, remotePath);
   if (sftpOpeningFiles.has(key)) {
-    notify("文件正在打开，请稍候", "info");
+    notify(tr("sftp:auto.opening_file", {defaultValue:"正在打开文件"}), "info");
     return null;
   }
   sftpOpeningFiles.add(key);
@@ -507,8 +509,8 @@ function clearSftpDirectorySizeCache(connectionId) {
 function sftpDirectorySizePresentation(record) {
   if (record?.status === "loading") return {
     className:"is-loading",
-    label:"读取中",
-    title:"正在递归读取目录实际大小",
+    label:tr("sftp:auto.reading", {defaultValue:"读取中"}),
+    title:tr("sftp:auto.directory_size_reading", {defaultValue:"正在递归读取目录实际大小"}),
     disabled:true,
     iconName:"loader-circle"
   };
@@ -517,22 +519,22 @@ function sftpDirectorySizePresentation(record) {
     return {
       className:"is-ready",
       label:formatBytes(Number(exactBytes)),
-      title:`实际内容大小 ${exactBytes} 字节；点击重新读取`,
+      title:tr("sftp:auto.directory_size_ready", {bytes:exactBytes, defaultValue:`实际内容大小 ${exactBytes} 字节；点击重新读取`}),
       disabled:false,
       iconName:"refresh-cw"
     };
   }
   if (record?.status === "error") return {
     className:"is-error",
-    label:"重试",
-    title:`读取失败：${record.error || "未知错误"}；点击重试`,
+    label:tr("common:actions.retry", {defaultValue:"重试"}),
+    title:tr("sftp:auto.directory_size_failed", {error:localizedTermaUiPhrase(record.error || tr("sftp:auto.unknown", {defaultValue:"未知错误"})), defaultValue:`读取失败：${record.error || "未知错误"}；点击重试`}),
     disabled:false,
     iconName:"circle-alert"
   };
   return {
     className:"is-idle",
-    label:"读取",
-    title:"递归读取目录内普通文件的实际总字节数",
+    label:tr("sftp:auto.read", {defaultValue:"读取"}),
+    title:tr("sftp:auto.directory_size_hint", {defaultValue:"递归读取目录内普通文件的实际总字节数"}),
     disabled:false,
     iconName:"calculator"
   };
@@ -565,11 +567,11 @@ async function readSftpDirectorySize(connectionId, remotePath) {
       body:JSON.stringify({path:remotePath})
     });
     const sizeBytes = String(result?.size_bytes ?? result?.size ?? "");
-    if (!/^\d+$/.test(sizeBytes)) throw new Error("目录大小返回格式无效");
+    if (!/^\d+$/.test(sizeBytes)) throw new Error(tr("sftp:auto.directory_size_invalid"));
     setSftpDirectorySizeRecord(connectionId, remotePath, {status:"ready", sizeBytes});
   } catch (error) {
-    setSftpDirectorySizeRecord(connectionId, remotePath, {status:"error", error:error.message || "目录大小读取失败"});
-    notify(error.message || "目录大小读取失败", "error");
+    setSftpDirectorySizeRecord(connectionId, remotePath, {status:"error", error:error.message || tr("sftp:auto.directory_size_read_failed")});
+    notify(error.message || tr("sftp:auto.directory_size_read_failed"), "error");
   }
   syncSftpDirectorySizeButtons(connectionId, remotePath);
 }
@@ -598,10 +600,10 @@ function sftpDirectoryContentSignature(state) {
 function sftpBreadcrumbHtml(id, remotePath, tabKey=activeTabKey) {
   const raw = String(remotePath || ".").replace(/\\/g, "/");
   const clean = raw === "/" ? "/" : (raw.replace(/\/+$/,"") || ".");
-  if (clean === ".") return `<button class="crumb active" aria-current="page" onclick="navigateSftpPath('.','${escAttr(tabKey)}')">当前目录</button>`;
+  if (clean === ".") return `<button class="crumb active" aria-current="page" onclick="navigateSftpPath('.','${escAttr(tabKey)}')">${esc(tr("sftp:auto.current_directory"))}</button>`;
   const absolute = clean.startsWith("/");
   const parts = clean.split("/").filter(Boolean);
-  const crumbs = absolute ? [{label:"根目录", path:"/"}] : [{label:"当前目录", path:"."}];
+  const crumbs = absolute ? [{label:tr("sftp:auto.root_directory"), path:"/"}] : [{label:tr("sftp:auto.current_directory"), path:"."}];
   let current = absolute ? "" : ".";
   for (const part of parts) {
     current = current === "." ? part : `${current.replace(/\/$/,"")}/${part}`;
@@ -612,7 +614,7 @@ function sftpBreadcrumbHtml(id, remotePath, tabKey=activeTabKey) {
 
 function renderSftpFavorites(id, tabKey=activeTabKey) {
   const items = sftpFavorites.filter(item => item.connectionId === id);
-  return `<span class="sftp-favorites-label">常用目录</span>${items.length ? items.map(item => `<button onclick="navigateSftpPath('${escAttr(item.path)}','${escAttr(tabKey)}')" title="${esc(item.path)}"><span aria-hidden="true">★</span>${esc(item.name || item.path)}</button>`).join("") : `<span class="muted">收藏当前目录后可快速跳转</span>`}`;
+  return `<span class="sftp-favorites-label">${esc(tr("sftp:auto.favorites"))}</span>${items.length ? items.map(item => `<button onclick="navigateSftpPath('${escAttr(item.path)}','${escAttr(tabKey)}')" title="${escAttr(item.path)}"><span aria-hidden="true">★</span>${esc(item.name || item.path)}</button>`).join("") : `<span class="muted">${esc(tr("sftp:auto.favorites_hint"))}</span>`}`;
 }
 
 function isCurrentSftpFavorite(id, path) {
@@ -635,12 +637,22 @@ function sftpFilenameEncodingLabel(connection) {
 function renderSftpClipboardActions(tabKey=activeTabKey) {
   if (!sftpClipboard?.paths?.length) return "";
   const count = sftpClipboard.paths.length;
-  const mode = sftpClipboard.mode === "move" ? "移动" : "复制";
+  const moving = sftpClipboard.mode === "move";
+  const mode = tr(moving ? "sftp:clipboard.move" : "sftp:clipboard.copy", {defaultValue:moving ? "移动" : "复制"});
   const matches = sftpClipboardMatchesConnection(tabKey);
   const canPaste = matches || sftpClipboard.mode === "copy";
   const crossHost = canPaste && !matches;
-  const source = sftpClipboard.connectionName ? `来源：${sftpClipboard.connectionName}` : "";
-  return `<span class="sftp-clipboard-state" title="${escAttr(source || `${mode}队列 ${count} 项`)}">${icon(mode === "移动" ? "folder-input" : "copy")}<span>${mode}队列 ${count} 项</span></span><button class="primary" onclick="pasteSftpClipboard('${escAttr(tabKey)}')" ${canPaste ? "" : "disabled"} title="${escAttr(matches ? "粘贴到当前目录" : crossHost ? "从来源主机复制到当前主机" : "跨主机仅支持复制，不能移动")}">${icon(crossHost ? "network" : "clipboard-paste")}<span>${crossHost ? "跨主机复制" : "粘贴"}</span></button><button class="icon-button" title="取消复制/移动队列" aria-label="取消复制或移动队列" onclick="cancelSftpClipboard()">${icon("x")}</button>`;
+  const queue = tr(moving ? "sftp:clipboard.move_queue" : "sftp:clipboard.copy_queue", {count, defaultValue:`${mode}队列 ${count} 项`});
+  const source = sftpClipboard.connectionName ? tr("sftp:clipboard.source", {name:sftpClipboard.connectionName, defaultValue:`来源：${sftpClipboard.connectionName}`}) : "";
+  const pasteTitle = matches
+    ? tr("sftp:clipboard.paste_current", {defaultValue:"粘贴到当前目录"})
+    : crossHost
+      ? tr("sftp:clipboard.copy_from_source", {defaultValue:"从来源主机复制到当前主机"})
+      : tr("sftp:clipboard.cross_copy_only", {defaultValue:"跨主机仅支持复制，不能移动"});
+  const action = crossHost ? tr("sftp:clipboard.cross_copy", {defaultValue:"跨主机复制"}) : tr("common:actions.paste", {defaultValue:"粘贴"});
+  const cancelTitle = tr("sftp:clipboard.cancel_title", {defaultValue:"取消复制/移动队列"});
+  const cancelLabel = tr("sftp:clipboard.cancel_label", {defaultValue:"取消复制或移动队列"});
+  return `<span class="sftp-clipboard-state" title="${escAttr(source || queue)}">${icon(moving ? "folder-input" : "copy")}<span>${esc(queue)}</span></span><button class="primary" onclick="pasteSftpClipboard('${escAttr(tabKey)}')" ${canPaste ? "" : "disabled"} title="${escAttr(pasteTitle)}">${icon(crossHost ? "network" : "clipboard-paste")}<span>${esc(action)}</span></button><button class="icon-button" title="${escAttr(cancelTitle)}" aria-label="${escAttr(cancelLabel)}" onclick="cancelSftpClipboard()">${icon("x")}</button>`;
 }
 
 function showSftpFilenameEncodingMenu(event, connectionId) {
@@ -667,7 +679,7 @@ async function applySftpFilenameEncoding(connectionId, encoding, label, tabKey=a
     const labelNode = sftpElement("sftpFilenameEncodingButton", key)?.querySelector("span");
     if (labelNode) labelNode.textContent = label;
   }
-  notify(`SFTP 文件名编码已切换为 ${label}`, "success");
+  notify(tr("common:notifications.exact.sftp_filename_encoding_switched", {encoding:label}), "success");
   await Promise.all(sftpTabKeysForConnection(connectionId).map(key => {
     const runtime = sftpTabRuntimes.get(key);
     return runtime
@@ -686,7 +698,7 @@ function refreshSftpDirectoryActions(tabKey=activeTabKey) {
     const active = isCurrentSftpFavorite(tab.id, state.path || ".");
     favoriteButton.classList.toggle("is-active", active);
     favoriteButton.innerHTML = icon(active ? "star-off" : "star");
-    favoriteButton.title = active ? "取消收藏当前目录" : "收藏当前目录";
+    favoriteButton.title = tr(active ? "sftp:auto.unfavorite_current" : "sftp:auto.favorite_current", {defaultValue:active ? "取消收藏当前目录" : "收藏当前目录"});
     favoriteButton.setAttribute("aria-label", favoriteButton.title);
   }
   const favorites = sftpElement("sftpFavorites", tabKey);
@@ -702,7 +714,7 @@ function cancelSftpClipboard() {
   if (!sftpClipboard) return;
   sftpClipboard = null;
   for (const runtime of sftpTabRuntimes.values()) refreshSftpDirectoryActions(runtime.tabKey);
-  notify("已取消复制/移动队列", "info");
+  notify(tr("sftp:clipboard.cancelled", {defaultValue:"已取消复制/移动队列"}), "info");
 }
 
 async function toggleSftpFavorite(tabKey=activeTabKey) {
@@ -713,12 +725,12 @@ async function toggleSftpFavorite(tabKey=activeTabKey) {
   const index = sftpFavorites.findIndex(item => item.connectionId === tab.id && item.path === path);
   if (index >= 0) {
     sftpFavorites.splice(index, 1);
-    notify("已取消收藏路径", "success");
+    notify(tr("common:notifications.sftp_favorite_cancelled"), "success");
   } else {
-    const name = await inputModal("收藏路径", "收藏名称", path.split("/").filter(Boolean).pop() || path);
+    const name = await inputModal(tr("sftp:auto.favorite_dialog_title"), tr("sftp:auto.favorite_name"), path.split("/").filter(Boolean).pop() || path);
     if (!name) return;
     sftpFavorites.unshift({connectionId:tab.id, path, name});
-    notify("已收藏路径", "success");
+    notify(tr("common:notifications.sftp_favorite_added"), "success");
   }
   saveSftpFavorites();
   for (const item of sftpTabRuntimes.values()) {
@@ -888,7 +900,7 @@ function syncSftpMobileToolbarState(tabKey=activeTabKey) {
   if (mount) mount.hidden = mobile && !expanded;
   if (!toggle) return;
   toggle.setAttribute("aria-expanded", String(expanded));
-  toggle.title = expanded ? "收起操作按钮" : "展开操作按钮";
+  toggle.title = tr(expanded ? "sftp:auto.collapse_actions" : "sftp:auto.expand_actions", {defaultValue:expanded ? "收起操作按钮" : "展开操作按钮"});
   toggle.setAttribute("aria-label", toggle.title);
   toggle.innerHTML = icon(expanded ? "chevron-up" : "chevron-down");
 }
@@ -950,7 +962,9 @@ function updateSftpConnectionUi(connectionId, status="disconnected", error="") {
     if (button) {
       button.dataset.status = normalized;
       button.disabled = connecting;
-      button.title = connecting ? "正在连接 SFTP" : connected ? "断开 SFTP 连接" : "重新连接 SFTP";
+      button.title = tr(connecting ? "sftp:auto.connecting" : connected ? "sftp:auto.disconnect" : "sftp:auto.reconnect_sftp", {
+        defaultValue:connecting ? "正在连接 SFTP" : connected ? "断开 SFTP 连接" : "重新连接 SFTP"
+      });
       button.setAttribute("aria-label", button.title);
       button.innerHTML = connected
         ? icon("link-2-off")
@@ -959,7 +973,7 @@ function updateSftpConnectionUi(connectionId, status="disconnected", error="") {
     if (banner) {
       banner.hidden = connected || connecting;
       const detail = banner.querySelector(".sftp-connection-detail");
-      if (detail) detail.textContent = error || "当前目录仍保留，可重新连接后继续操作。";
+      if (detail) detail.textContent = error || tr("sftp:auto.connection_preserved", {defaultValue:"当前目录仍保留，可重新连接后继续操作。"});
     }
   }
 }
@@ -982,7 +996,7 @@ async function disconnectSftpConnection(connectionId, tabKey=activeTabKey) {
   if (existing) return existing;
   const request = api(`/api/connections/${id}/sftp/session?forget=1`, {method:"DELETE", skipSftpConnect:true})
     .catch(error => {
-      notify(error.message || "断开 SFTP 连接失败", "error");
+      notify(error.message || tr("sftp:auto.disconnect_failed"), "error");
       throw error;
     })
     .finally(() => {
@@ -1000,7 +1014,7 @@ function syncSftpSearchFeedback(tabKey=activeTabKey, searching=false) {
   panel.classList.toggle("is-searching", Boolean(searching));
   panel.setAttribute("aria-busy", searching ? "true" : "false");
   const status = panel.querySelector(".sftp-search-status-icon");
-  if (status) status.title = searching ? "正在搜索" : "搜索";
+  if (status) status.title = tr(searching ? "sftp:auto.searching" : "sftp:auto.search", {defaultValue:searching ? "正在搜索" : "搜索"});
 }
 
 async function openTemporarySftpCredentialSession(connectionId, tabKey, temporaryConnection) {
@@ -1016,7 +1030,7 @@ async function openTemporarySftpCredentialSession(connectionId, tabKey, temporar
 async function repairSftpCredentials(connectionId, tabKey) {
   if (typeof repairSshCredentials !== "function") return false;
   return repairSshCredentials(connectionId, {
-    context:"SFTP 认证失败",
+    context:tr("sftp:auto.authentication_failed"),
     onSaved:async () => ensureSftpConnection(connectionId, {
       force:true,
       tabKey,
@@ -1057,7 +1071,7 @@ async function ensureSftpConnection(connectionId, options={}) {
       return true;
     } catch (error) {
       if (sftpConnectionVersions.get(id) === version) {
-        const message = error?.name === "AbortError" ? "SFTP 连接超时，请重试" : (error.message || "SFTP 自动重连失败");
+        const message = error?.name === "AbortError" ? tr("sftp:auto.connection_timeout") : (error.message || tr("sftp:auto.auto_reconnect_failed"));
         updateSftpConnectionUi(id, "disconnected", message);
       }
       if (
@@ -1070,7 +1084,7 @@ async function ensureSftpConnection(connectionId, options={}) {
         const repaired = await repairSftpCredentials(id, tabKey);
         if (repaired?.saved) return true;
         if (repaired) {
-          const redirected = new Error("已改用临时 SFTP 凭据");
+          const redirected = new Error(tr("sftp:auto.temporary_credentials_used"));
           redirected.code = "SSH_CREDENTIAL_REPAIR_REDIRECTED";
           throw redirected;
         }
@@ -1101,7 +1115,7 @@ async function reconnectSftpConnection(connectionId, options={}) {
   } catch (error) {
     if (error?.code === "SSH_CREDENTIAL_REPAIR_REDIRECTED") return true;
     updateSftpConnectionUi(id, "disconnected", error.message);
-    if (!options.silent) notify(error.message || "SFTP 重连失败", "error");
+    if (!options.silent) notify(error.message || tr("sftp:auto.reconnect_failed"), "error");
     return false;
   }
 }
@@ -1128,7 +1142,7 @@ async function refreshActiveSftpSessionStatus(tabKey="") {
       }
       updateSftpConnectionUi(id, result.connected ? "connected" : "disconnected", result.error || "");
     } catch (error) {
-      updateSftpConnectionUi(id, "disconnected", error.message || "SFTP 状态检查失败");
+      updateSftpConnectionUi(id, "disconnected", error.message || tr("sftp:auto.status_check_failed"));
     }
   }
 }

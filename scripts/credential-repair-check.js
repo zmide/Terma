@@ -127,8 +127,8 @@ async function main() {
   assert.match(sources.sshModal, /sshCredentialSave[^\n]+checked/);
   assert.match(sources.terminal, /repairTerminalCredentials/);
   assert.match(sources.terminal, /connection\.quick_connection[\s\S]*?startQuickSshConnection[\s\S]*?repair:true/);
-  assert.match(sources.terminal, /SSH 认证失败，正在打开临时凭据修复窗口/);
-  assert.match(sources.quickSsh, /修复临时 SSH 凭据/);
+  assert.match(sources.terminal, /tr\("terminal:system\.quick_auth_repair_opening", \{defaultValue:/);
+  assert.match(sources.quickSsh, /tr\("connections:quick_ssh\.repair_title", \{defaultValue:/);
   assert.match(sources.sftp, /repairSftpCredentials/);
   assert.match(sources.health, /repairConnectionHealthCredentials/);
   assert.match(sources.x11, /repairX11ManagerCredentials/);
@@ -136,8 +136,8 @@ async function main() {
   assert.match(sources.x11, /showXServerManagerLoading\(\)/);
   assert.match(sources.x11, /x11-quick-credential-repair/);
   assert.match(sources.linux, /linux-desktop-credential-repair/);
-  assert.match(sources.linux, /正在探测[\s\S]*?的系统、桌面与 X11 状态/);
-  assert.match(sources.forwards, /启动端口转发时认证失败/);
+  assert.match(sources.linux, /tr\("remote:linux_desktop\.detecting_host", \{host:hostLabel,/);
+  assert.match(sources.forwards, /context:tr\("connections:forwards\.auth_failed_context", \{defaultValue:/);
   assert.match(sources.ftp, /ftpRequestWithCredentialRepair/);
   assert.match(sources.ftpModal, /test-credentials/);
   assert.match(sources.ftpModal, /remoteCredentialSave[^\n]+checked disabled/);

@@ -54,7 +54,12 @@ function sftpOrderedColumnHtml(parts) {
 }
 
 function sftpColumnLabel(key) {
-  return {name:"名称",size:"大小",mtime:"修改时间",access:"权限 / 所有者"}[key] || key;
+  return {
+    name:tr("sftp:auto.name", {defaultValue:"名称"}),
+    size:tr("sftp:auto.size", {defaultValue:"大小"}),
+    mtime:tr("sftp:auto.modified", {defaultValue:"修改时间"}),
+    access:tr("sftp:auto.permissions_owner", {defaultValue:"权限 / 所有者"})
+  }[key] || key;
 }
 
 function sftpHeaderColumnHtml(key, tabKey, mark="") {
@@ -62,8 +67,8 @@ function sftpHeaderColumnHtml(key, tabKey, mark="") {
   const label = `${sftpColumnLabel(key)}${mark ? ` ${mark}` : ""}`;
   const compatibilityClass = {size:"sftp-size",mtime:"sftp-time",access:"sftp-access"}[key] || "";
   return `<div class="sftp-head-cell sftp-column-${key} ${compatibilityClass}" data-sftp-column="${key}" draggable="true">${sortable
-    ? `<button type="button" data-sftp-column-sort="${key}" data-sftp-tab-key="${escAttr(tabKey)}"><span>${esc(label)}</span>${key === "name" ? `<small class="sftp-compact-column-labels">大小 · 修改时间 · 权限</small>` : ""}</button>`
-    : `<span>${esc(label)}</span>`}<i class="sftp-column-resize" data-sftp-column-resize="${key}" role="separator" aria-orientation="vertical" aria-label="调整${esc(sftpColumnLabel(key))}与下一列的比例" tabindex="0"></i></div>`;
+    ? `<button type="button" data-sftp-column-sort="${key}" data-sftp-tab-key="${escAttr(tabKey)}"><span>${esc(label)}</span>${key === "name" ? `<small class="sftp-compact-column-labels">${esc(tr("sftp:auto.compact_columns", {defaultValue:"大小 · 修改时间 · 权限"}))}</small>` : ""}</button>`
+    : `<span>${esc(label)}</span>`}<i class="sftp-column-resize" data-sftp-column-resize="${key}" role="separator" aria-orientation="vertical" aria-label="${escAttr(tr("sftp:auto.resize_columns", {column:sftpColumnLabel(key), defaultValue:`调整${sftpColumnLabel(key)}与下一列的比例`}))}" tabindex="0"></i></div>`;
 }
 
 function visibleSftpColumnKeys(list) {

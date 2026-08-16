@@ -16,11 +16,13 @@ function readSources(root, files) {
 
 const SFTP_JOB_SOURCE_FILES = [
   "src/sftp-jobs.ts",
+  "src/sftp-checkpoint-transfers.ts",
   "src/sftp-download-cache.ts",
   "src/sftp-download-jobs.ts",
   "src/sftp-job-paths.ts",
   "src/sftp-native-drag-jobs.ts",
   "src/sftp-operation-commands.ts",
+  "src/sftp-range-cache.ts",
   "src/sftp-transfer-scheduler.ts",
   "src/sftp-upload-jobs.ts"
 ];

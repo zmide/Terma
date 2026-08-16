@@ -25,6 +25,25 @@ try {
 const sessions = new Set<any>();
 const TERMINAL_ENCODINGS = new Set(["utf8", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "latin1"]);
 
+function normalizeTerminalLanguage(value) {
+  return String(value || "") === "en-US" ? "en-US" : "zh-CN";
+}
+
+function terminalUiText(language, chinese, english) {
+  return normalizeTerminalLanguage(language) === "en-US" ? english : chinese;
+}
+
+function terminalSessionText(session, chinese, english) {
+  return terminalUiText(session?.language, chinese, english);
+}
+
+function terminalClosureReason(language, reason, fallbackChinese, fallbackEnglish) {
+  const source = String(reason || "").trim();
+  if (!source || source === fallbackChinese) return terminalUiText(language, fallbackChinese, fallbackEnglish);
+  if (source === "Web 会话已退出") return terminalUiText(language, source, "The web session signed out");
+  return source;
+}
+
 function releaseTerminalSession(session) {
   sessions.delete(session);
   if (session.desktopGrantExpiryTimer) clearTimeout(session.desktopGrantExpiryTimer);
@@ -38,13 +57,13 @@ function scheduleDesktopGrantExpiry(session, expiresAtValue) {
   if (!expiresAt) return true;
   const remaining = expiresAt - Date.now();
   if (remaining <= 0) {
-    sendTerminalOutput(session, "\r\n[X11] 桌面集成授权已到期，本次 X11 终端已关闭。\r\n");
+    sendTerminalOutput(session, `\r\n${terminalSessionText(session, "[X11] 桌面集成授权已到期，本次 X11 终端已关闭。", "[X11] Desktop integration authorization expired. This X11 terminal has been closed.")}\r\n`);
     closeTerminalSession(session);
     return false;
   }
   session.desktopGrantExpiryTimer = setTimeout(() => {
     if (!sessions.has(session)) return;
-    sendTerminalOutput(session, "\r\n[X11] 桌面集成授权已到期，本次 X11 终端已关闭。\r\n");
+    sendTerminalOutput(session, `\r\n${terminalSessionText(session, "[X11] 桌面集成授权已到期，本次 X11 终端已关闭。", "[X11] Desktop integration authorization expired. This X11 terminal has been closed.")}\r\n`);
     closeTerminalSession(session);
   }, remaining);
   session.desktopGrantExpiryTimer.unref?.();
@@ -60,7 +79,7 @@ function bindDesktopBrowserGrant(session, authorization: any = {}) {
 
 function setSessionEncoding(session, value) {
   const encoding = String(value || "utf8").toLowerCase();
-  if (!TERMINAL_ENCODINGS.has(encoding)) throw new Error("不支持的终端编码");
+  if (!TERMINAL_ENCODINGS.has(encoding)) throw new Error(terminalSessionText(session, "不支持的终端编码", "Unsupported terminal encoding"));
   flushSessionOutputDecoder(session);
   session.terminalEncoding = encoding;
   session.outputDecoder = session.binaryMode || encoding === "utf8" ? null : iconv.getDecoder(encoding);
@@ -110,34 +129,36 @@ function resolveTerminalCwd() {
 
 function handleTerminalUpgrade(req, socket, options: any = {}) {
   let upgraded = false;
+  let language = "zh-CN";
   try {
     const key = validateWebSocketUpgrade(req);
     const url = new URL(req.url, "http://terma.invalid");
+    language = normalizeTerminalLanguage(url.searchParams.get("language"));
     const id = Number(url.searchParams.get("id"));
     const quickToken = url.searchParams.get("quick_token") || "";
-    if (!id && !quickToken) throw new Error("缺少连接 ID 或快速连接凭据");
+    if (!id && !quickToken) throw new Error(terminalUiText(language, "缺少连接 ID 或快速连接凭据", "A connection ID or quick-connect credential is required"));
     const storedConnection = quickToken
       ? consumeQuickTerminalTicket(quickToken, options.requestBinding)
       : getConnection(id);
     if (quickToken && storedConnection.auth_type === "key") requireEncryptionUnlocked();
     const quickX11Mode = String(url.searchParams.get("x11_mode") || "off");
     if (quickToken) {
-      if (!["off", "trusted", "untrusted"].includes(quickX11Mode)) throw new Error("快速连接的 X11 模式无效");
+      if (!["off", "trusted", "untrusted"].includes(quickX11Mode)) throw new Error(terminalUiText(language, "快速连接的 X11 模式无效", "The quick-connect X11 mode is invalid"));
       storedConnection.x11_mode = quickX11Mode;
     } else if (url.searchParams.has("x11_mode")) {
-      throw new Error("保存的连接不能通过快速连接参数覆盖 X11 模式");
+      throw new Error(terminalUiText(language, "保存的连接不能通过快速连接参数覆盖 X11 模式", "A saved connection cannot override its X11 mode through quick-connect parameters"));
     }
     const startupToken = url.searchParams.get("startup_token") || "";
-    if (quickToken && startupToken) throw new Error("快速连接不能使用已保存的终端启动配置");
+    if (quickToken && startupToken) throw new Error(terminalUiText(language, "快速连接不能使用已保存的终端启动配置", "Quick connect cannot use a saved terminal startup configuration"));
     const startupOverride = startupToken ? consumeTerminalStartupTicket(startupToken, id) : null;
     const connection = mergeTerminalStartup(storedConnection, startupOverride);
     const x11Mode = String(connection.x11_mode || "off");
     if (["trusted", "untrusted"].includes(x11Mode) && !options.x11Authorized) {
-      throw new Error("当前浏览器没有 X11 桌面集成授权，请重新申请授权后再打开 X11 终端");
+      throw new Error(terminalUiText(language, "当前浏览器没有 X11 桌面集成授权，请重新申请授权后再打开 X11 终端", "This browser is not authorized for X11 desktop integration. Request authorization again before opening an X11 terminal"));
     }
     const requestedEncoding = String(url.searchParams.get("encoding") || "").toLowerCase();
     if (requestedEncoding) {
-      if (!TERMINAL_ENCODINGS.has(requestedEncoding)) throw new Error("不支持的终端编码");
+      if (!TERMINAL_ENCODINGS.has(requestedEncoding)) throw new Error(terminalUiText(language, "不支持的终端编码", "Unsupported terminal encoding"));
       connection.terminal_encoding = requestedEncoding;
     }
     const accept = websocketAccept(key);
@@ -156,16 +177,19 @@ function handleTerminalUpgrade(req, socket, options: any = {}) {
     const rows = Number(url.searchParams.get("rows") || 24);
     const title = url.searchParams.get("title") || "";
     const logId = url.searchParams.get("log_id") || "";
-    const session: any = startTerminalProcess(connection, socket, cols, rows, title, logId);
+    const session: any = startTerminalProcess(connection, socket, cols, rows, title, logId, language);
     session.connectionId = Number(connection.id || 0);
     session.quickConnection = Boolean(quickToken);
     session.x11Mode = x11Mode;
     sessions.add(session);
     bindDesktopBrowserGrant(session, options);
+    const startupProfile = connection.terminal_profile_name || connection.terminal_program_path;
     const startupLabel = connection.terminal_startup_mode === "program"
-      ? `，启动 ${connection.terminal_profile_name || connection.terminal_program_path}`
+      ? terminalUiText(language, `，启动 ${startupProfile}`, `, starting ${startupProfile}`)
       : "";
-    sendWebSocketFrame(socket, `连接到 ${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}${session.ptyProcess || session.remotePty ? "（PTY）" : ""}${startupLabel}\r\n`);
+    const ptyLabel = session.ptyProcess || session.remotePty ? terminalUiText(language, "（PTY）", " (PTY)") : "";
+    const endpoint = `${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}`;
+    sendWebSocketFrame(socket, `${terminalUiText(language, `连接到 ${endpoint}`, `Connected to ${endpoint}`)}${ptyLabel}${startupLabel}\r\n`);
 
     const parser = new WebSocketFrameParser({ maxFrameSize: 1024 * 1024, maxMessageSize: 2 * 1024 * 1024 });
     socket.on("data", (chunk) => {
@@ -176,7 +200,7 @@ function handleTerminalUpgrade(req, socket, options: any = {}) {
           if (opcode === 1 || opcode === 2) writeTerminalInput(session, payload);
         });
       } catch (error) {
-        sendWebSocketFrame(socket, `\r\nWebSocket 错误：${error.message}\r\n`);
+        sendWebSocketFrame(socket, `\r\n${terminalUiText(language, "WebSocket 错误", "WebSocket error")}: ${error.message}\r\n`);
         closeTerminalSession(session);
       }
     });
@@ -186,8 +210,8 @@ function handleTerminalUpgrade(req, socket, options: any = {}) {
     appendSystemLog(`终端 WebSocket 启动失败：${error.message}`);
     try {
       if (upgraded) {
-        sendWebSocketFrame(socket, `\r\n终端启动失败：${error.message}\r\n`);
-        closeWebSocket(socket, 1011, "终端启动失败");
+        sendWebSocketFrame(socket, `\r\n${terminalUiText(language, "终端启动失败", "Terminal startup failed")}: ${error.message}\r\n`);
+        closeWebSocket(socket, 1011, terminalUiText(language, "终端启动失败", "Terminal startup failed"));
       } else {
         socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         socket.end(error.message);
@@ -237,10 +261,13 @@ function startPlainTerminal(session, connection, args, cwd, log) {
   child.stderr.on("data", (chunk) => sendTerminalOutput(session, chunk));
   child.on("error", (error) => {
     appendSystemLog(`普通终端启动失败：${error.message}`);
-    sendTerminalOutput(session, `\r\n终端启动失败：${error.message}\r\n`);
+    sendTerminalOutput(session, `\r\n${terminalSessionText(session, "终端启动失败", "Terminal startup failed")}: ${error.message}\r\n`);
   });
   child.on("exit", (code, signal) => {
-    sendTerminalOutput(session, `\r\nSSH 会话已结束${signal ? `，信号 ${signal}` : `，退出码 ${code ?? ""}`}\r\n`);
+    const detail = signal
+      ? terminalSessionText(session, `，信号 ${signal}`, `, signal ${signal}`)
+      : terminalSessionText(session, `，退出码 ${code ?? ""}`, `, exit code ${code ?? ""}`);
+    sendTerminalOutput(session, `\r\n${terminalSessionText(session, "SSH 会话已结束", "SSH session ended")}${detail}\r\n`);
     releaseTerminalSession(session);
     closeWebSocket(session.socket);
   });
@@ -248,7 +275,7 @@ function startPlainTerminal(session, connection, args, cwd, log) {
   return session;
 }
 
-function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
+function startRemotePty(connection, socket, cols, rows, log, fallback = null, language = "zh-CN") {
   const encoding = String(connection.terminal_encoding || "utf8");
   const session: any = {
     socket,
@@ -256,6 +283,7 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
     ssh2Client: null,
     ssh2Stream: null,
     pendingInput: [],
+    language:normalizeTerminalLanguage(language),
     logFile: log.fullPath,
     terminalEncoding: encoding,
     outputDecoder: encoding === "utf8" ? null : iconv.getDecoder(encoding)
@@ -269,12 +297,15 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
     session.ssh2Client = client;
     session.ssh2Stream = stream;
     session.x11Diagnostics = x11Diagnostics || null;
-    client.on("error", (error) => sendTerminalOutput(session, `\r\nSSH 连接错误：${normalizeSshTransportError(error, connection).message}\r\n`));
+    client.on("error", (error) => sendTerminalOutput(session, `\r\n${terminalSessionText(session, "SSH 连接错误", "SSH connection error")}: ${normalizeSshTransportError(error, connection).message}\r\n`));
     stream.on("data", (chunk) => sendTerminalOutput(session, chunk));
     stream.stderr?.on("data", (chunk) => sendTerminalOutput(session, chunk));
-    stream.on("error", (error) => sendTerminalOutput(session, `\r\n终端错误：${normalizeSshTransportError(error, connection).message}\r\n`));
+    stream.on("error", (error) => sendTerminalOutput(session, `\r\n${terminalSessionText(session, "终端错误", "Terminal error")}: ${normalizeSshTransportError(error, connection).message}\r\n`));
     stream.on("close", (code, signal) => {
-      sendTerminalOutput(session, `\r\nSSH 会话已结束${signal ? `，信号 ${signal}` : `，退出码 ${code ?? ""}`}\r\n`);
+      const detail = signal
+        ? terminalSessionText(session, `，信号 ${signal}`, `, signal ${signal}`)
+        : terminalSessionText(session, `，退出码 ${code ?? ""}`, `, exit code ${code ?? ""}`);
+      sendTerminalOutput(session, `\r\n${terminalSessionText(session, "SSH 会话已结束", "SSH session ended")}${detail}\r\n`);
       releaseTerminalSession(session);
       try { client.end(); } catch {}
       closeWebSocket(socket);
@@ -282,14 +313,17 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
     if (["trusted", "untrusted"].includes(String(connection.x11_mode || ""))) {
       const rawReason = String(x11Diagnostics?.reason || "");
       const normalizedReason = /Unable to request X11|X11 forwarding request failed|administratively prohibited/i.test(rawReason)
-        ? "远端 SSH 服务未开启或拒绝了 X11 转发"
-        : rawReason || "远端没有分配 DISPLAY";
+        ? terminalSessionText(session, "远端 SSH 服务未开启或拒绝了 X11 转发", "The remote SSH service has not enabled or has rejected X11 forwarding")
+        : rawReason || terminalSessionText(session, "远端没有分配 DISPLAY", "The remote host did not assign DISPLAY");
       const x11Message = x11Diagnostics?.available
         // DISPLAY is the authoritative end-to-end signal here.  Some remote
         // login shells hide xauth from the probe even though sshd already
         // created the forwarding cookie and GUI applications work.
-        ? `\r\n[X11] 转发已建立：${x11Diagnostics.display}\r\n`
-        : `\r\n[X11] 转发未建立：${normalizedReason}。本次已自动降级为普通 SSH 终端，命令行仍可正常使用；图形程序不会显示。请在 X Server 管理中检查 X11Forwarding 和远端 xauth/XQuartz。\r\n`;
+        ? `\r\n${terminalUiText(session.language, `[X11] 转发已建立：${x11Diagnostics.display}`, `[X11] Forwarding established: ${x11Diagnostics.display}`)}\r\n`
+        : `\r\n${terminalSessionText(session,
+          `[X11] 转发未建立：${normalizedReason}。本次已自动降级为普通 SSH 终端，命令行仍可正常使用；图形程序不会显示。请在 X Server 管理中检查 X11Forwarding 和远端 xauth/XQuartz。`,
+          `[X11] Forwarding was not established: ${normalizedReason}. This session automatically fell back to a regular SSH terminal; command-line access still works, but graphical applications will not appear. Check X11Forwarding and remote xauth/XQuartz in X Server Management.`
+        )}\r\n`;
       sendTerminalOutput(session, x11Message);
     }
     for (const pending of session.pendingInput.splice(0)) stream.write(pending);
@@ -298,23 +332,23 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null) {
     session.remotePty = false;
     appendSystemLog(`内置 SSH PTY 启动失败：${error.message}`);
     if (fallback && sessions.has(session)) {
-      sendTerminalOutput(session, `\r\n内置 SSH PTY 启动失败，已切换普通终端：${error.message}\r\n`);
+      sendTerminalOutput(session, `\r\n${terminalSessionText(session, "内置 SSH PTY 启动失败，已切换普通终端", "The built-in SSH PTY failed to start; switched to a regular terminal")}: ${error.message}\r\n`);
       for (const pending of session.pendingInput.splice(0)) fallback.input.push(pending);
       startPlainTerminal(session, connection, fallback.args, fallback.cwd, log);
       for (const pending of fallback.input) session.child?.stdin.write(pending);
       return;
     }
-    sendTerminalOutput(session, `\r\n终端启动失败：${error.message}\r\n`);
+    sendTerminalOutput(session, `\r\n${terminalSessionText(session, "终端启动失败", "Terminal startup failed")}: ${error.message}\r\n`);
     releaseTerminalSession(session);
     closeWebSocket(socket);
   });
   return session;
 }
 
-function startTerminalProcess(connection, socket, cols, rows, title = "", logId = "") {
+function startTerminalProcess(connection, socket, cols, rows, title = "", logId = "", language = "zh-CN") {
   const log = createTerminalLog(connection, title, logId);
   if (shouldUseBuiltinSsh(connection)) {
-    return startRemotePty(connection, socket, cols, rows, log);
+    return startRemotePty(connection, socket, cols, rows, log, null, language);
   }
 
   const args = buildTerminalCommand(connection);
@@ -330,11 +364,14 @@ function startTerminalProcess(connection, socket, cols, rows, title = "", logId 
       };
       if (cwd) ptyOptions.cwd = cwd;
       const ptyProcess = pty.spawn(resolveTerminalBin(), args, ptyOptions);
-      const session: any = { socket, ptyProcess, logFile: log.fullPath };
+      const session: any = { socket, ptyProcess, logFile: log.fullPath, language:normalizeTerminalLanguage(language) };
       setSessionEncoding(session, connection.terminal_encoding);
       ptyProcess.onData((data) => sendTerminalOutput(session, data));
       ptyProcess.onExit(({ exitCode, signal }) => {
-        sendTerminalOutput(session, `\r\nSSH 会话已结束${signal ? `，信号 ${signal}` : `，退出码 ${exitCode ?? ""}`}\r\n`);
+        const detail = signal
+          ? terminalSessionText(session, `，信号 ${signal}`, `, signal ${signal}`)
+          : terminalSessionText(session, `，退出码 ${exitCode ?? ""}`, `, exit code ${exitCode ?? ""}`);
+        sendTerminalOutput(session, `\r\n${terminalSessionText(session, "SSH 会话已结束", "SSH session ended")}${detail}\r\n`);
         releaseTerminalSession(session);
         closeWebSocket(socket);
       });
@@ -343,17 +380,18 @@ function startTerminalProcess(connection, socket, cols, rows, title = "", logId 
     } catch (error) {
       appendSystemLog(`PTY 启动失败，已退回普通终端：${error.message}`);
       if (process.platform === "darwin") {
-        sendWebSocketFrame(socket, `PTY 启动失败，正在尝试内置 SSH PTY：${error.message}\r\n`);
-        return startRemotePty(connection, socket, cols, rows, log, { args, cwd, input: [] });
+        sendWebSocketFrame(socket, `${terminalUiText(language, "PTY 启动失败，正在尝试内置 SSH PTY", "PTY startup failed; trying the built-in SSH PTY")}: ${error.message}\r\n`);
+        return startRemotePty(connection, socket, cols, rows, log, { args, cwd, input: [] }, language);
       }
-      sendWebSocketFrame(socket, `PTY 启动失败，已自动切换普通终端：${error.message}\r\n`);
+      sendWebSocketFrame(socket, `${terminalUiText(language, "PTY 启动失败，已自动切换普通终端", "PTY startup failed; automatically switched to a regular terminal")}: ${error.message}\r\n`);
     }
   } else if (process.platform === "darwin") {
-    sendWebSocketFrame(socket, `PTY 组件不可用，正在尝试内置 SSH PTY：${ptyLoadError || "node-pty 未安装"}\r\n`);
-    return startRemotePty(connection, socket, cols, rows, log, { args, cwd, input: [] });
+    const reason = ptyLoadError || terminalUiText(language, "node-pty 未安装", "node-pty is not installed");
+    sendWebSocketFrame(socket, `${terminalUiText(language, "PTY 组件不可用，正在尝试内置 SSH PTY", "The PTY component is unavailable; trying the built-in SSH PTY")}: ${reason}\r\n`);
+    return startRemotePty(connection, socket, cols, rows, log, { args, cwd, input: [] }, language);
   }
 
-  const session: any = { socket, child: null, logFile: log.fullPath };
+  const session: any = { socket, child: null, logFile: log.fullPath, language:normalizeTerminalLanguage(language) };
   setSessionEncoding(session, connection.terminal_encoding);
   return startPlainTerminal(session, connection, args, cwd, log);
 }
@@ -408,7 +446,8 @@ function closeDesktopBrowserGrantTerminals(grantId, reason = "桌面集成授权
   let closed = 0;
   for (const session of [...sessions]) {
     if (session.desktopBrowserGrantId !== requestedGrantId) continue;
-    sendTerminalOutput(session, `\r\n[X11] ${reason}，本次 X11 终端已关闭。\r\n`);
+    const localizedReason = terminalClosureReason(session.language, reason, "桌面集成授权已撤销", "Desktop integration authorization was revoked");
+    sendTerminalOutput(session, `\r\n${terminalSessionText(session, `[X11] ${localizedReason}，本次 X11 终端已关闭。`, `[X11] ${localizedReason}. This X11 terminal has been closed.`)}\r\n`);
     closeTerminalSession(session);
     closed += 1;
   }
@@ -419,7 +458,8 @@ function closeQuickConnectionTerminals(connectionId, reason = "临时连接已�
   const id = Number(connectionId);
   for (const session of [...sessions]) {
     if (!session.quickConnection || Number(session.connectionId) !== id) continue;
-    try { sendTerminalOutput(session, `\r\n[${reason}]\r\n`); } catch {}
+    const localizedReason = terminalClosureReason(session.language, reason, "临时连接已撤销", "The temporary connection was revoked");
+    try { sendTerminalOutput(session, `\r\n[${localizedReason}]\r\n`); } catch {}
     closeTerminalSession(session);
   }
 }

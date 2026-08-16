@@ -122,6 +122,8 @@ export async function handleStorageRoutes(
     const current = dependencies.readRuntimeSettings(dependencies.runtimeSettingsFile);
     const data = await dependencies.readJson(request);
     const next = dependencies.normalizeRuntimeSettings({
+      language:data.language ?? current.language,
+      language_onboarding_version:data.language_onboarding_version ?? current.language_onboarding_version,
       listen_hosts:data.listen_hosts ?? current.listen_hosts,
       listen_port:data.listen_port ?? current.listen_port,
       sftp_recycle_bin_enabled:data.sftp_recycle_bin_enabled ?? current.sftp_recycle_bin_enabled,

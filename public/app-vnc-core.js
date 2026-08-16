@@ -65,12 +65,15 @@ function renderVncCursorModeControl(session) {
   const button = session?.workspace?.querySelector("[data-vnc-cursor-mode]");
   if (!button) return;
   const mode = vncCursorMode(session);
+  const pointerState = session.localCursorHidden
+    ? tr("navigation:menus.vnc_pointer_hidden", {defaultValue:"隐藏"})
+    : tr("navigation:menus.vnc_pointer_visible", {defaultValue:"显示"});
   const detail = mode === "auto"
-    ? `自动（当前${session.localCursorHidden ? "隐藏" : "显示"}本地光标）`
+    ? tr("navigation:menus.vnc_mouse_auto_current", {state:pointerState, defaultValue:`自动（当前${pointerState}本地光标）`})
     : mode === "hide"
-      ? "手动隐藏本地光标"
-      : "手动显示本地光标";
-  const label = `鼠标模式：${detail}`;
+      ? tr("remote:auto.mouse_hide", {defaultValue:"手动隐藏本地光标"})
+      : tr("remote:auto.mouse_show", {defaultValue:"手动显示本地光标"});
+  const label = tr("navigation:menus.vnc_mouse_mode_detail", {detail, defaultValue:`鼠标模式：${detail}`});
   button.title = label;
   button.setAttribute("aria-label", label);
   button.setAttribute("aria-pressed", String(mode !== "auto"));
@@ -82,10 +85,10 @@ function showVncCursorModeMenu(event, key) {
   if (!session) return;
   const mode = vncCursorMode(session);
   showActionMenu(event, [
-    {label:"自动（按远端平台）", icon:mode === "auto" ? "circle-check" : "sparkles", run:()=>setVncCursorMode(key, "auto")},
+    {label:tr("remote:auto.mouse_auto", {defaultValue:"自动（按远端平台）"}), icon:mode === "auto" ? "circle-check" : "sparkles", run:()=>setVncCursorMode(key, "auto")},
     {separator:true},
-    {label:"手动：显示本地光标", icon:mode === "show" ? "circle-check" : "mouse-pointer-2", run:()=>setVncCursorMode(key, "show")},
-    {label:"手动：隐藏本地光标", icon:mode === "hide" ? "circle-check" : "eye-off", run:()=>setVncCursorMode(key, "hide")}
+    {label:tr("remote:auto.mouse_show", {defaultValue:"手动显示本地光标"}), icon:mode === "show" ? "circle-check" : "mouse-pointer-2", run:()=>setVncCursorMode(key, "show")},
+    {label:tr("remote:auto.mouse_hide", {defaultValue:"手动隐藏本地光标"}), icon:mode === "hide" ? "circle-check" : "eye-off", run:()=>setVncCursorMode(key, "hide")}
   ]);
 }
 
@@ -101,6 +104,11 @@ async function setVncCursorMode(key, mode) {
   if (index >= 0) remoteProfiles[index] = updated;
   session.profile = updated;
   applyVncCursorPolicy(session);
-  const text = mode === "auto" ? "VNC 鼠标模式已设为自动" : mode === "hide" ? "已手动隐藏本地光标" : "已手动显示本地光标";
+  const detail = mode === "auto"
+    ? tr("remote:auto.mouse_auto", {defaultValue:"自动（按远端平台）"})
+    : mode === "hide"
+      ? tr("remote:auto.mouse_hide", {defaultValue:"手动隐藏本地光标"})
+      : tr("remote:auto.mouse_show", {defaultValue:"手动显示本地光标"});
+  const text = tr("navigation:menus.vnc_mouse_mode_saved", {detail, defaultValue:`VNC 鼠标模式已设为：${detail}`});
   notify(text, "success");
 }

@@ -91,9 +91,10 @@ function restoreWorkspaceGroups(saved) {
       groupTabs.push({...tab});
       groupTabKeys.add(tab.key);
     }
+    const storedName = normalizedWorkspaceGroupStoredName(groupId, stored.name);
     restoredGroups.push({
       id:groupId,
-      name:String(stored.name || (groupId === WORKSPACE_GROUP_MAIN_ID ? "主工作区" : defaultWorkspaceGroupName())).trim() || "工作区",
+      name:storedName || (groupId === WORKSPACE_GROUP_MAIN_ID ? "" : defaultWorkspaceGroupName()),
       tabs:groupTabs,
       layout:stored.layout || null,
       activeTabKey:groupTabs.some(tab => tab.key === stored.activeTabKey) ? stored.activeTabKey : groupTabs[0]?.key || "",
@@ -110,7 +111,7 @@ function restoreWorkspaceGroups(saved) {
     }
     restoredGroups.push({
       id:WORKSPACE_GROUP_MAIN_ID,
-      name:"主工作区",
+      name:"",
       tabs:legacyTabs,
       layout:saved.layout || null,
       activeTabKey:legacyTabs.some(tab => tab.key === saved.activeTabKey) ? saved.activeTabKey : legacyTabs[0]?.key || "",
@@ -118,7 +119,7 @@ function restoreWorkspaceGroups(saved) {
     });
   }
   if (!restoredGroups.some(group => group.id === WORKSPACE_GROUP_MAIN_ID)) {
-    restoredGroups.unshift({id:WORKSPACE_GROUP_MAIN_ID, name:"主工作区", tabs:[], layout:null, activeTabKey:"", focusedPaneId:"pane-1"});
+    restoredGroups.unshift({id:WORKSPACE_GROUP_MAIN_ID, name:"", tabs:[], layout:null, activeTabKey:"", focusedPaneId:"pane-1"});
   }
   workspaceGroups = restoredGroups;
   activeWorkspaceGroupId = workspaceGroups.some(group => group.id === saved.activeWorkspaceGroupId)

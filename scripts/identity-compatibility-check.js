@@ -50,6 +50,7 @@ function loadIdentityUi() {
     connectionBulkMode:false,
     selectedConnectionIds:new Set(),
     icon:name => `<svg data-icon="${name}"></svg>`,
+    tr:(key, options={}) => String(options.defaultValue || key),
     esc:value => String(value ?? "").replace(/[&<>"']/g, character => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[character])),
     escAttr:value => String(value ?? "").replace(/[&<>"']/g, character => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[character])),
     api:async pathname => pathname === "/api/identity-files" ? [] : Promise.reject(new Error(`Unexpected API request: ${pathname}`))

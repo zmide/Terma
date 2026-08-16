@@ -97,9 +97,12 @@ assert.equal(safe.quick_sort_order, 1000000);
 assert.deepEqual(inserted.slice(5, 11), [1, 1, "execute", "", "blue", 1000000]);
 const changed = repository.updateCommandSnippet(7, {quick_action:"insert", quick_badge:"库", quick_color:"purple", quick_sort_order:4});
 assert.equal(changed.quick_action, "insert");
-assert.equal(changed.quick_badge, "库");
+assert.equal(changed.quick_badge, "database");
 assert.equal(changed.quick_color, "purple");
 assert.equal(changed.quick_sort_order, 4);
-assert.deepEqual(updated.slice(5, 11), [1, 1, "insert", "库", "purple", 4]);
+assert.deepEqual(updated.slice(5, 11), [1, 1, "insert", "database", "purple", 4]);
+assert.match(commandSnippets, /commandSnippetLegacyBadgeCodes/);
+assert.match(quickCommands, /commandSnippetBadgeGlyph\(item\.quick_badge\)/);
+assert.match(migrations, /WHEN '服' THEN 'service'/);
 
 console.log("终端快速命令栏检查通过：独立模块、可调高度、事件委托、数据库兼容和展示字段白名单均已覆盖");

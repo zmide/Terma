@@ -11,6 +11,16 @@ function localFilesAvailable() {
   return Boolean(window.termaDesktop);
 }
 
+function localFilesEntryDisplayName(entry) {
+  const rawName = String(entry?.name || "");
+  if (entry?.type !== "drive") return rawName;
+  const localDisk = rawName.match(/^本地磁盘\s*\(([A-Za-z]:)\)$/);
+  if (localDisk) return tr("sftp:local_files.local_disk", {drive:localDisk[1], defaultValue:`本地磁盘 (${localDisk[1]})`});
+  const fileSystem = rawName.match(/^文件系统\s*(\([^)]*\))$/);
+  if (fileSystem) return tr("sftp:local_files.file_system", {root:fileSystem[1], defaultValue:`文件系统 ${fileSystem[1]}`});
+  return rawName;
+}
+
 function localFilesRoot(tabKey) {
   return typeof workspaceElementForTab === "function"
     ? workspaceElementForTab(tabKey, "#view-local-files")
@@ -53,19 +63,20 @@ function refreshLocalFilesForDeliveryJob(job) {
 
 function localFilesToolbarButtonHtml(tabKey="") {
   if (!localFilesAvailable()) return "";
-  return `<button type="button" class="icon-button local-files-open-button" title="新建本地文件标签" aria-label="新建本地文件标签" data-action="local-files-new-tab" data-tab-key="${escAttr(tabKey)}">${icon("hard-drive")}</button>`;
+  const label = tr("navigation:auto.new_local_files_tab", {defaultValue:"新建本地文件标签"});
+  return `<button type="button" class="icon-button local-files-open-button" title="${escAttr(label)}" aria-label="${escAttr(label)}" data-action="local-files-new-tab" data-tab-key="${escAttr(tabKey)}">${icon("hard-drive")}</button>`;
 }
 
 function showNewLocalFilesMenu(event) {
-  if (!localFilesAvailable()) return notify("本地文件只支持桌面端", "info");
-  const actions = [{label:"新建标签", icon:"file-plus-2", run:()=>openLocalFilesInPlacement("")}];
+  if (!localFilesAvailable()) return notify(tr("sftp:local_files.desktop_only", {defaultValue:"本地文件只支持桌面端"}), "info");
+  const actions = [{label:tr("navigation:auto.new_tab", {defaultValue:"新建标签"}), icon:"file-plus-2", run:()=>openLocalFilesInPlacement("")}];
   if (!isMobileLayout() && typeof applyWorkspaceTabDrop === "function") {
     actions.push(
       {separator:true},
-      {label:"向左分屏新建", icon:"panel-left", run:()=>openLocalFilesInPlacement("left")},
-      {label:"向右分屏新建", icon:"panel-right", run:()=>openLocalFilesInPlacement("right")},
-      {label:"向上分屏新建", icon:"panel-top", run:()=>openLocalFilesInPlacement("top")},
-      {label:"向下分屏新建", icon:"panel-bottom", run:()=>openLocalFilesInPlacement("bottom")}
+      {label:tr("navigation:auto.new_split_left", {defaultValue:"向左分屏新建"}), icon:"panel-left", run:()=>openLocalFilesInPlacement("left")},
+      {label:tr("navigation:auto.new_split_right", {defaultValue:"向右分屏新建"}), icon:"panel-right", run:()=>openLocalFilesInPlacement("right")},
+      {label:tr("navigation:auto.new_split_top", {defaultValue:"向上分屏新建"}), icon:"panel-top", run:()=>openLocalFilesInPlacement("top")},
+      {label:tr("navigation:auto.new_split_bottom", {defaultValue:"向下分屏新建"}), icon:"panel-bottom", run:()=>openLocalFilesInPlacement("bottom")}
     );
   }
   showActionMenu(event, actions);
@@ -97,7 +108,7 @@ async function openLocalFilesInPlacement(splitZone="") {
 
 async function openLocalFiles(requestedPath="", updateTab=true, existingKey="") {
   if (!localFilesAvailable()) {
-    notify("本地文件只支持在 Terma 桌面端使用", "info");
+    notify(tr("sftp:local_files.desktop_only_detail", {defaultValue:"本地文件只支持在 Terma 桌面端使用"}), "info");
     return "";
   }
   const key = existingKey || `local-files-${Date.now()}-${++localFileTabSerial}`;
@@ -106,13 +117,16 @@ async function openLocalFiles(requestedPath="", updateTab=true, existingKey="") 
   const storedPath = requestedPath || tab?.path || runtime.path || "";
   const computer = storedPath === LOCAL_FILES_COMPUTER_PATH || tab?.localLocation === "computer" || runtime.location === "computer";
   const pathValue = computer ? "" : storedPath;
+  const workspaceTitle = tr("sftp:local_files.title", {defaultValue:"本地文件"});
+  const computerLabel = tr("sftp:local_files.this_computer", {defaultValue:"此电脑"});
+  const systemDesktopLabel = tr("sftp:local_files.system_desktop", {defaultValue:"系统桌面"});
   const view = $("view-local-files");
   const mountedShell = view?.dataset.workspaceTabKey === key && view.querySelector(".local-files-shell");
   const mountedPathMatches = computer
     ? runtime.location === "computer"
     : runtime.location === "directory" && localDeliveryPathKey(runtime.path) === localDeliveryPathKey(pathValue);
   if (mountedShell && runtime.loaded && mountedPathMatches) {
-    setWorkspace("本地文件", runtime.displayPath || (computer ? "此电脑" : pathValue || "系统桌面"), "local-files", key, updateTab, true, {
+    setWorkspace(workspaceTitle, runtime.displayPath || (computer ? computerLabel : pathValue || systemDesktopLabel), "local-files", key, updateTab, true, {
       kind:"local-files",
       path:computer ? LOCAL_FILES_COMPUTER_PATH : pathValue,
       localLocation:computer ? "computer" : "directory"
@@ -127,42 +141,42 @@ async function openLocalFiles(requestedPath="", updateTab=true, existingKey="") 
     <div class="local-files-top">
       <div class="local-files-toolbar">
         <div class="local-files-toolbar-actions">
-          <button class="icon-button local-files-history-back" title="后退" aria-label="后退" data-action="local-files-history" data-history-direction="-1" data-tab-key="${escAttr(key)}" disabled>${icon("arrow-left")}</button>
-          <button class="icon-button local-files-history-forward" title="前进" aria-label="前进" data-action="local-files-history" data-history-direction="1" data-tab-key="${escAttr(key)}" disabled>${icon("arrow-right")}</button>
-          <button class="icon-button local-files-parent" title="上一级" aria-label="上一级" data-action="local-files-parent" data-tab-key="${escAttr(key)}">${icon("corner-left-up")}</button>
+          <button class="icon-button local-files-history-back" title="${escAttr(tr("sftp:local_files.history_back", {defaultValue:"后退"}))}" aria-label="${escAttr(tr("sftp:local_files.history_back", {defaultValue:"后退"}))}" data-action="local-files-history" data-history-direction="-1" data-tab-key="${escAttr(key)}" disabled>${icon("arrow-left")}</button>
+          <button class="icon-button local-files-history-forward" title="${escAttr(tr("sftp:local_files.history_forward", {defaultValue:"前进"}))}" aria-label="${escAttr(tr("sftp:local_files.history_forward", {defaultValue:"前进"}))}" data-action="local-files-history" data-history-direction="1" data-tab-key="${escAttr(key)}" disabled>${icon("arrow-right")}</button>
+          <button class="icon-button local-files-parent" title="${escAttr(tr("sftp:auto.parent_directory", {defaultValue:"上一级"}))}" aria-label="${escAttr(tr("sftp:auto.parent_directory", {defaultValue:"上一级"}))}" data-action="local-files-parent" data-tab-key="${escAttr(key)}">${icon("corner-left-up")}</button>
           <span class="local-files-toolbar-separator" aria-hidden="true"></span>
-          <button class="icon-button" title="桌面" aria-label="桌面" data-action="local-files-location" data-location="desktop" data-tab-key="${escAttr(key)}">${icon("monitor")}</button>
-          <button class="icon-button" title="下载目录" aria-label="下载目录" data-action="local-files-location" data-location="downloads" data-tab-key="${escAttr(key)}">${icon("download")}</button>
-          <button class="icon-button" title="用户主目录" aria-label="用户主目录" data-action="local-files-location" data-location="home" data-tab-key="${escAttr(key)}">${icon("home")}</button>
-          <button class="icon-button" title="刷新" aria-label="刷新" data-action="local-files-refresh" data-tab-key="${escAttr(key)}">${icon("refresh-cw")}</button>
+          <button class="icon-button" title="${escAttr(tr("sftp:local_files.desktop", {defaultValue:"桌面"}))}" aria-label="${escAttr(tr("sftp:local_files.desktop", {defaultValue:"桌面"}))}" data-action="local-files-location" data-location="desktop" data-tab-key="${escAttr(key)}">${icon("monitor")}</button>
+          <button class="icon-button" title="${escAttr(tr("sftp:local_files.downloads", {defaultValue:"下载目录"}))}" aria-label="${escAttr(tr("sftp:local_files.downloads", {defaultValue:"下载目录"}))}" data-action="local-files-location" data-location="downloads" data-tab-key="${escAttr(key)}">${icon("download")}</button>
+          <button class="icon-button" title="${escAttr(tr("sftp:local_files.home", {defaultValue:"用户主目录"}))}" aria-label="${escAttr(tr("sftp:local_files.home", {defaultValue:"用户主目录"}))}" data-action="local-files-location" data-location="home" data-tab-key="${escAttr(key)}">${icon("home")}</button>
+          <button class="icon-button" title="${escAttr(tr("common:auto.refresh", {defaultValue:"刷新"}))}" aria-label="${escAttr(tr("common:auto.refresh", {defaultValue:"刷新"}))}" data-action="local-files-refresh" data-tab-key="${escAttr(key)}">${icon("refresh-cw")}</button>
           <span class="local-files-toolbar-separator" aria-hidden="true"></span>
-          <button class="icon-button local-files-create-directory" title="新建文件夹" aria-label="新建文件夹" data-action="local-files-create" data-entry-kind="dir" data-tab-key="${escAttr(key)}" ${computer ? "disabled" : ""}>${icon("folder-plus")}</button>
-          <button class="icon-button local-files-create-file" title="新建文件" aria-label="新建文件" data-action="local-files-create" data-entry-kind="file" data-tab-key="${escAttr(key)}" ${computer ? "disabled" : ""}>${icon("file-plus-2")}</button>
+          <button class="icon-button local-files-create-directory" title="${escAttr(tr("common:auto.new_folder", {defaultValue:"新建文件夹"}))}" aria-label="${escAttr(tr("common:auto.new_folder", {defaultValue:"新建文件夹"}))}" data-action="local-files-create" data-entry-kind="dir" data-tab-key="${escAttr(key)}" ${computer ? "disabled" : ""}>${icon("folder-plus")}</button>
+          <button class="icon-button local-files-create-file" title="${escAttr(tr("common:auto.new_file", {defaultValue:"新建文件"}))}" aria-label="${escAttr(tr("common:auto.new_file", {defaultValue:"新建文件"}))}" data-action="local-files-create" data-entry-kind="file" data-tab-key="${escAttr(key)}" ${computer ? "disabled" : ""}>${icon("file-plus-2")}</button>
           <span class="local-files-toolbar-separator" aria-hidden="true"></span>
-          <button class="icon-button" title="新建本地文件标签" aria-label="新建本地文件标签" data-action="local-files-new-tab" data-tab-key="${escAttr(key)}">${icon("plus")}</button>
+          <button class="icon-button" title="${escAttr(tr("navigation:auto.new_local_files_tab", {defaultValue:"新建本地文件标签"}))}" aria-label="${escAttr(tr("navigation:auto.new_local_files_tab", {defaultValue:"新建本地文件标签"}))}" data-action="local-files-new-tab" data-tab-key="${escAttr(key)}">${icon("plus")}</button>
         </div>
       </div>
       <div class="local-files-search-wrap">
-        <div class="local-files-search">${icon("search")}<input aria-label="搜索当前目录" placeholder="搜索当前目录" value="${esc(runtime.query)}" data-input-action="local-files-search" data-tab-key="${escAttr(key)}"><button type="button" class="icon-button" title="清除搜索" aria-label="清除搜索" data-action="local-files-search-clear" data-tab-key="${escAttr(key)}">${icon("x")}</button></div>
+        <div class="local-files-search">${icon("search")}<input aria-label="${escAttr(tr("sftp:auto.search_current", {defaultValue:"搜索当前目录"}))}" placeholder="${escAttr(tr("sftp:auto.search_current", {defaultValue:"搜索当前目录"}))}" value="${esc(runtime.query)}" data-input-action="local-files-search" data-tab-key="${escAttr(key)}"><button type="button" class="icon-button" title="${escAttr(tr("sftp:auto.clear_search", {defaultValue:"清除搜索"}))}" aria-label="${escAttr(tr("sftp:auto.clear_search", {defaultValue:"清除搜索"}))}" data-action="local-files-search-clear" data-tab-key="${escAttr(key)}">${icon("x")}</button></div>
       </div>
       <div class="local-files-navigation-row">
         <div class="local-files-path-block">
-          <nav class="local-files-breadcrumb" aria-label="本地目录路径" data-dblclick-action="local-files-path-edit" data-tab-key="${escAttr(key)}">${localFilesBreadcrumbHtml(runtime, key)}</nav>
-          <form class="local-files-path-editor" hidden data-submit-action="local-files-path-submit" data-tab-key="${escAttr(key)}"><input aria-label="本地目录路径" value="${esc(pathValue)}" placeholder="本地目录路径"><button class="icon-button" type="submit" title="转到路径" aria-label="转到路径">${icon("corner-down-left")}</button><button type="button" class="icon-button" title="取消" aria-label="取消" data-action="local-files-path-cancel" data-tab-key="${escAttr(key)}">${icon("x")}</button></form>
+          <nav class="local-files-breadcrumb" aria-label="${escAttr(tr("sftp:local_files.path", {defaultValue:"本地目录路径"}))}" data-dblclick-action="local-files-path-edit" data-tab-key="${escAttr(key)}">${localFilesBreadcrumbHtml(runtime, key)}</nav>
+          <form class="local-files-path-editor" hidden data-submit-action="local-files-path-submit" data-tab-key="${escAttr(key)}"><input aria-label="${escAttr(tr("sftp:local_files.path", {defaultValue:"本地目录路径"}))}" value="${esc(pathValue)}" placeholder="${escAttr(tr("sftp:local_files.path", {defaultValue:"本地目录路径"}))}"><button class="icon-button" type="submit" title="${escAttr(tr("sftp:auto.go_to_path", {defaultValue:"转到路径"}))}" aria-label="${escAttr(tr("sftp:auto.go_to_path", {defaultValue:"转到路径"}))}">${icon("corner-down-left")}</button><button type="button" class="icon-button" title="${escAttr(tr("common:actions.cancel", {defaultValue:"取消"}))}" aria-label="${escAttr(tr("common:actions.cancel", {defaultValue:"取消"}))}" data-action="local-files-path-cancel" data-tab-key="${escAttr(key)}">${icon("x")}</button></form>
         </div>
-        <button class="icon-button local-files-path-edit-button" title="手动输入路径" aria-label="手动输入路径" data-action="local-files-path-edit" data-tab-key="${escAttr(key)}">${icon("pencil")}</button>
+        <button class="icon-button local-files-path-edit-button" title="${escAttr(tr("sftp:auto.enter_path", {defaultValue:"手动输入目录"}))}" aria-label="${escAttr(tr("sftp:auto.enter_path", {defaultValue:"手动输入目录"}))}" data-action="local-files-path-edit" data-tab-key="${escAttr(key)}">${icon("pencil")}</button>
       </div>
-      <div class="local-files-selection" hidden><strong>已选择 <span>0</span> 项</strong><div class="local-files-selection-actions"><button type="button" data-local-files-single-action title="打开" aria-label="打开" data-action="local-files-selection-open" data-tab-key="${escAttr(key)}">${icon("folder-open")}<span>打开</span></button><button type="button" title="上传到 SFTP" aria-label="上传到 SFTP" data-action="local-files-selection-upload" data-tab-key="${escAttr(key)}">${icon("upload")}<span>上传</span></button><button type="button" title="复制路径" aria-label="复制路径" data-action="local-files-selection-copy" data-tab-key="${escAttr(key)}">${icon("clipboard")}<span>路径</span></button><button type="button" data-local-files-single-action title="重命名" aria-label="重命名" data-action="local-files-selection-rename" data-tab-key="${escAttr(key)}">${icon("pencil")}<span>重命名</span></button><button type="button" title="删除" aria-label="删除" class="danger" data-action="local-files-selection-delete" data-tab-key="${escAttr(key)}">${icon("trash-2")}<span>删除</span></button><button type="button" data-local-files-single-action title="权限" aria-label="权限" data-action="local-files-selection-chmod" data-tab-key="${escAttr(key)}">${icon("key-round")}<span>权限</span></button><button class="icon-button" title="取消选择" aria-label="取消选择" data-action="local-files-selection-clear" data-tab-key="${escAttr(key)}">${icon("x")}</button></div></div>
+      <div class="local-files-selection" hidden><strong>${esc(tr("sftp:local_files.selected_prefix", {defaultValue:"已选择"}))} <span>0</span> ${esc(tr("sftp:local_files.selected_suffix", {defaultValue:"项"}))}</strong><div class="local-files-selection-actions"><button type="button" data-local-files-single-action title="${escAttr(tr("common:auto.open", {defaultValue:"打开"}))}" aria-label="${escAttr(tr("common:auto.open", {defaultValue:"打开"}))}" data-action="local-files-selection-open" data-tab-key="${escAttr(key)}">${icon("folder-open")}<span>${esc(tr("common:auto.open", {defaultValue:"打开"}))}</span></button><button type="button" title="${escAttr(tr("common:auto.upload_to_sftp", {defaultValue:"上传到 SFTP"}))}" aria-label="${escAttr(tr("common:auto.upload_to_sftp", {defaultValue:"上传到 SFTP"}))}" data-action="local-files-selection-upload" data-tab-key="${escAttr(key)}">${icon("upload")}<span>${esc(tr("sftp:local_files.upload_short", {defaultValue:"上传"}))}</span></button><button type="button" title="${escAttr(tr("common:auto.copy_path", {defaultValue:"复制路径"}))}" aria-label="${escAttr(tr("common:auto.copy_path", {defaultValue:"复制路径"}))}" data-action="local-files-selection-copy" data-tab-key="${escAttr(key)}">${icon("clipboard")}<span>${esc(tr("sftp:local_files.path_short", {defaultValue:"路径"}))}</span></button><button type="button" data-local-files-single-action title="${escAttr(tr("common:auto.rename", {defaultValue:"重命名"}))}" aria-label="${escAttr(tr("common:auto.rename", {defaultValue:"重命名"}))}" data-action="local-files-selection-rename" data-tab-key="${escAttr(key)}">${icon("pencil")}<span>${esc(tr("common:auto.rename", {defaultValue:"重命名"}))}</span></button><button type="button" title="${escAttr(tr("common:actions.delete", {defaultValue:"删除"}))}" aria-label="${escAttr(tr("common:actions.delete", {defaultValue:"删除"}))}" class="danger" data-action="local-files-selection-delete" data-tab-key="${escAttr(key)}">${icon("trash-2")}<span>${esc(tr("common:actions.delete", {defaultValue:"删除"}))}</span></button><button type="button" data-local-files-single-action title="${escAttr(tr("sftp:menu.permissions", {defaultValue:"设置权限"}))}" aria-label="${escAttr(tr("sftp:menu.permissions", {defaultValue:"设置权限"}))}" data-action="local-files-selection-chmod" data-tab-key="${escAttr(key)}">${icon("key-round")}<span>${esc(tr("sftp:local_files.permissions_short", {defaultValue:"权限"}))}</span></button><button class="icon-button" title="${escAttr(tr("sftp:local_files.clear_selection", {defaultValue:"取消选择"}))}" aria-label="${escAttr(tr("sftp:local_files.clear_selection", {defaultValue:"取消选择"}))}" data-action="local-files-selection-clear" data-tab-key="${escAttr(key)}">${icon("x")}</button></div></div>
     </div>
-    <div class="local-files-list" data-contextmenu-action="local-files-directory-menu" data-tab-key="${escAttr(key)}">${stateView("loading", "正在读取本地目录", computer ? "此电脑" : pathValue || "系统桌面")}</div>
-    <div class="local-files-drop-overlay" hidden>${icon("download")}<strong>松开保存到当前本地目录</strong></div>
+    <div class="local-files-list" data-contextmenu-action="local-files-directory-menu" data-tab-key="${escAttr(key)}">${stateView("loading", tr("sftp:local_files.loading_directory", {defaultValue:"正在读取本地目录"}), computer ? computerLabel : pathValue || systemDesktopLabel)}</div>
+    <div class="local-files-drop-overlay" hidden>${icon("download")}<strong>${esc(tr("sftp:local_files.drop_save_current", {defaultValue:"松开保存到当前本地目录"}))}</strong></div>
   </div>`;
-  setWorkspace("本地文件", computer ? "此电脑" : pathValue || "系统桌面", "local-files", key, updateTab, true, {kind:"local-files", path:computer ? LOCAL_FILES_COMPUTER_PATH : pathValue, localLocation:computer ? "computer" : "directory"});
+  setWorkspace(workspaceTitle, computer ? computerLabel : pathValue || systemDesktopLabel, "local-files", key, updateTab, true, {kind:"local-files", path:computer ? LOCAL_FILES_COMPUTER_PATH : pathValue, localLocation:computer ? "computer" : "directory"});
   try {
     await loadLocalFiles(key, computer ? {location:"computer", page:runtime.page} : {path:pathValue, page:runtime.page});
     return key;
   } catch (error) {
-    notify(error.message || "读取本地目录失败", "error");
+    notify(error.message || tr("sftp:local_files.read_failed", {defaultValue:"读取本地目录失败"}), "error");
     return key;
   }
 }
@@ -177,7 +191,9 @@ async function loadLocalFiles(tabKey, options={}) {
   const sameLocation = location === runtime.location && (location === "computer" || localDeliveryPathKey(requestedPath) === localDeliveryPathKey(runtime.path));
   const preserveScroll = options.preserveScroll === true || (options.refresh === true && sameLocation);
   const scrollPosition = options.scrollPosition || (preserveScroll ? captureLocalFilesScrollPosition(tabKey, list) : null);
-  const displayRequest = location === "computer" ? "此电脑" : requestedPath || "系统桌面";
+  const computerLabel = tr("sftp:local_files.this_computer", {defaultValue:"此电脑"});
+  const systemDesktopLabel = tr("sftp:local_files.system_desktop", {defaultValue:"系统桌面"});
+  const displayRequest = location === "computer" ? computerLabel : requestedPath || systemDesktopLabel;
   const params = new URLSearchParams({
     page:String(options.page || runtime.page || 1),
     page_size:String(runtime.pageSize || 50),
@@ -187,12 +203,12 @@ async function loadLocalFiles(tabKey, options={}) {
   });
   if (location === "computer") params.set("location", "computer");
   else params.set("path", String(requestedPath || ""));
-  if (!options.refresh) list.innerHTML = stateView("loading", "正在读取本地目录", displayRequest);
+  if (!options.refresh) list.innerHTML = stateView("loading", tr("sftp:local_files.loading_directory", {defaultValue:"正在读取本地目录"}), displayRequest);
   const data = await api(`/api/local-files?${params.toString()}`);
   Object.assign(runtime, {
     path:data.path || "",
     location:data.kind === "computer" ? "computer" : "directory",
-    displayPath:data.display_path || data.path || "",
+    displayPath:data.kind === "computer" ? computerLabel : data.display_path || data.path || "",
     entries:data.entries || [],
     page:Number(data.page || 1),
     pageSize:Number(data.page_size || 50),
@@ -208,13 +224,13 @@ async function loadLocalFiles(tabKey, options={}) {
   if (tab) {
     tab.path = runtime.location === "computer" ? LOCAL_FILES_COMPUTER_PATH : runtime.path;
     tab.localLocation = runtime.location;
-    tab.subtitle = runtime.displayPath || (runtime.location === "computer" ? "此电脑" : runtime.path);
+    tab.subtitle = runtime.displayPath || (runtime.location === "computer" ? computerLabel : runtime.path);
   }
   const pathInput = root.querySelector(".local-files-path-editor input");
   if (pathInput) pathInput.value = runtime.path;
   const breadcrumb = root.querySelector(".local-files-breadcrumb");
   if (breadcrumb) breadcrumb.innerHTML = localFilesBreadcrumbHtml(runtime, tabKey);
-  if (tabKey === activeTabKey) $("workspaceSubtitle").textContent = runtime.displayPath || (runtime.location === "computer" ? "此电脑" : runtime.path);
+  if (tabKey === activeTabKey) $("workspaceSubtitle").textContent = runtime.displayPath || (runtime.location === "computer" ? computerLabel : runtime.path);
   syncLocalFilesNavigationButtons(tabKey);
   syncLocalFilesCreateButtons(tabKey);
   renderLocalFiles(tabKey, {scrollPosition});
@@ -271,28 +287,39 @@ function renderLocalFiles(tabKey, options={}) {
   const columns = ["name", "size", "mtime"];
   const headColumns = typeof localFilesHeaderColumnHtml === "function"
     ? columns.map(key => localFilesHeaderColumnHtml(key, tabKey, sortMark(key))).join("")
-    : columns.map(key => `<button data-action="local-files-sort" data-sort="${key}" data-tab-key="${escAttr(tabKey)}">${key === "name" ? "名称" : key === "size" ? "大小" : "修改时间"}${sortMark(key) ? ` ${sortMark(key)}` : ""}</button>`).join("");
-  const head = `<div class="local-files-head"><label><input type="checkbox" aria-label="选择当前页全部项目" data-change-action="local-files-select-all" data-tab-key="${escAttr(tabKey)}"></label>${headColumns}</div>`;
+    : columns.map(key => {
+      const label = key === "name"
+        ? tr("sftp:auto.name", {defaultValue:"名称"})
+        : key === "size"
+          ? tr("sftp:auto.size", {defaultValue:"大小"})
+          : tr("sftp:auto.modified", {defaultValue:"修改时间"});
+      return `<button data-action="local-files-sort" data-sort="${key}" data-tab-key="${escAttr(tabKey)}">${esc(label)}${sortMark(key) ? ` ${sortMark(key)}` : ""}</button>`;
+    }).join("");
+  const head = `<div class="local-files-head"><label><input type="checkbox" aria-label="${escAttr(tr("sftp:auto.select_page", {defaultValue:"选择当前页全部项目"}))}" data-change-action="local-files-select-all" data-tab-key="${escAttr(tabKey)}"></label>${headColumns}</div>`;
   const rows = runtime.entries.map(entry => {
     const isDrive = entry.type === "drive";
     const isDir = isDrive || entry.type === "dir";
+    const displayName = localFilesEntryDisplayName(entry);
     const iconMarkup = isDrive ? icon("hard-drive") : sftpIcon(entry.name, isDir);
-    const sizeText = isDrive && entry.size ? `${formatBytes(entry.free || 0)} 可用 / ${formatBytes(entry.size)}` : (isDir ? "--" : formatBytes(entry.size));
+    const sizeText = isDrive && entry.size
+      ? tr("common:local_files.available_space", {free:formatBytes(entry.free || 0), total:formatBytes(entry.size), defaultValue:`${formatBytes(entry.free || 0)} 可用 / ${formatBytes(entry.size)}`})
+      : (isDir ? "--" : formatBytes(entry.size));
     const mobileMeta = isDrive
       ? sizeText
-      : [isDir ? "目录" : sizeText, entry.mtime ? formatSftpTime(entry.mtime) : ""].filter(Boolean).join(" · ");
+      : [isDir ? tr("sftp:auto.directory", {defaultValue:"目录"}) : sizeText, entry.mtime ? formatSftpTime(entry.mtime) : ""].filter(Boolean).join(" · ");
     const active = String(runtime.activePath || "") === String(entry.path);
     return `<div class="local-files-row ${isDrive ? "is-drive" : ""} ${active ? "active" : ""}" draggable="${isMobileLayout() || isDrive ? "false" : "true"}" data-path="${escAttr(entry.path)}" data-entry-type="${escAttr(entry.type)}" data-tab-key="${escAttr(tabKey)}" data-action="local-files-entry-select" data-dblclick-action="local-files-entry-activate" data-contextmenu-action="local-files-entry-menu" data-dragstart-action="local-files-entry-drag-start" data-dragend-action="local-files-entry-drag-end">
-      <input class="local-files-check" type="checkbox" value="${escAttr(entry.path)}" data-name="${escAttr(entry.name)}" data-type="${escAttr(entry.type)}" data-size="${Math.max(0, Number(entry.size || 0))}" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}" data-action="local-files-entry-checkbox" aria-label="选择 ${escAttr(entry.name)}" ${isDrive ? "disabled" : ""}>
-      <button class="local-files-name" data-action="local-files-entry-select-stop" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}"><span class="sftp-icon ${isDrive ? "drive" : entry.type}">${iconMarkup}</span><span class="local-files-name-copy"><span class="local-files-file-name">${esc(entry.name)}</span><span class="local-files-mobile-meta">${esc(mobileMeta)}</span></span></button>
+      <input class="local-files-check" type="checkbox" value="${escAttr(entry.path)}" data-name="${escAttr(entry.name)}" data-type="${escAttr(entry.type)}" data-size="${Math.max(0, Number(entry.size || 0))}" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}" data-action="local-files-entry-checkbox" data-i18n-skip aria-label="${escAttr(tr("common:local_files.select_entry", {name:displayName, defaultValue:`选择 ${displayName}`}))}" ${isDrive ? "disabled" : ""}>
+      <button class="local-files-name" data-action="local-files-entry-select-stop" data-path="${escAttr(entry.path)}" data-tab-key="${escAttr(tabKey)}"><span class="sftp-icon ${isDrive ? "drive" : entry.type}">${iconMarkup}</span><span class="local-files-name-copy"><span class="local-files-file-name" data-i18n-skip>${esc(displayName)}</span><span class="local-files-mobile-meta">${esc(mobileMeta)}</span></span></button>
       <span class="local-files-size" title="${escAttr(sizeText)}">${esc(sizeText)}</span><span class="local-files-time">${entry.mtime ? formatSftpTime(entry.mtime) : "--"}</span>
     </div>`;
   }).join("");
   const page = Number(runtime.page || 1), totalPages = Number(runtime.totalPages || 1), total = Number(runtime.total || 0);
   const first = total ? (page - 1) * Number(runtime.pageSize || 50) + 1 : 0;
   const last = total ? Math.min(first + runtime.entries.length - 1, total) : 0;
-  const pager = `<div class="sftp-pager-dock"><div class="pager sftp-pager"><button data-action="local-files-page" data-page="${page - 1}" data-tab-key="${escAttr(tabKey)}" ${page <= 1 ? "disabled" : ""}>上一页</button><span class="pager-count"><span class="sftp-scroll-cue" title="下方还有文件" aria-hidden="true">${icon("chevron-down")}</span>第 ${page}/${totalPages} 页 · ${first}-${last} / ${total} · <select aria-label="每页数量" data-change-action="local-files-page-limit" data-tab-key="${escAttr(tabKey)}">${[25,50,100,200].map(size => `<option value="${size}" ${size === Number(runtime.pageSize) ? "selected" : ""}>${size} 项</option>`).join("")}</select></span><button data-action="local-files-page" data-page="${page + 1}" data-tab-key="${escAttr(tabKey)}" ${page >= totalPages ? "disabled" : ""}>下一页</button></div></div>`;
-  list.innerHTML = head + (rows || stateView("empty", runtime.query ? "没有匹配的本地文件" : "当前目录为空", runtime.path)) + pager;
+  const pageSummary = tr("sftp:auto.page_summary", {page, pages:totalPages, first, last, total, defaultValue:`第 ${page}/${totalPages} 页 · ${first}-${last} / ${total} ·`});
+  const pager = `<div class="sftp-pager-dock"><div class="pager sftp-pager"><button data-action="local-files-page" data-page="${page - 1}" data-tab-key="${escAttr(tabKey)}" ${page <= 1 ? "disabled" : ""}>${esc(tr("sftp:auto.previous_page", {defaultValue:"上一页"}))}</button><span class="pager-count"><span class="sftp-scroll-cue" title="${escAttr(tr("sftp:auto.more_below", {defaultValue:"下方还有文件"}))}" aria-hidden="true">${icon("chevron-down")}</span>${esc(pageSummary)} <select aria-label="${escAttr(tr("sftp:auto.page_size", {defaultValue:"每页数量"}))}" data-change-action="local-files-page-limit" data-tab-key="${escAttr(tabKey)}">${[25,50,100,200].map(size => `<option value="${size}" ${size === Number(runtime.pageSize) ? "selected" : ""}>${esc(tr("sftp:auto.item_count", {count:size, defaultValue:`${size} 项`}))}</option>`).join("")}</select></span><button data-action="local-files-page" data-page="${page + 1}" data-tab-key="${escAttr(tabKey)}" ${page >= totalPages ? "disabled" : ""}>${esc(tr("sftp:auto.next_page", {defaultValue:"下一页"}))}</button></div></div>`;
+  list.innerHTML = head + (rows || stateView("empty", runtime.query ? tr("common:local_files.no_matches", {defaultValue:"没有匹配的本地文件"}) : tr("sftp:auto.empty_directory", {defaultValue:"当前目录为空"}), runtime.path)) + pager;
   if (typeof bindLocalFilesColumnControls === "function") bindLocalFilesColumnControls(list);
   watchLocalFilesListLayout(list, tabKey);
   updateLocalFilesSelection(tabKey);
@@ -371,16 +398,16 @@ function showLocalFileEntryMenu(event, pathValue, type, tabKey) {
   const selectionCount = selectedPaths.length;
   const actions = [
     isDir
-      ? {label:"打开", icon:"folder-open", run:() => navigateLocalFilesPath(pathValue, tabKey)}
-      : {label:"打开 / 编辑", icon:"file-text", run:() => api("/api/local-files/open", {method:"POST", body:JSON.stringify({path:pathValue})}).catch(error => notify(error.message || "打开本地文件失败", "error"))},
-    {label:"在系统文件管理器中打开", icon:"external-link", run:() => api("/api/local-files/open", {method:"POST", body:JSON.stringify({path:isDir ? pathValue : localFilesRuntime(tabKey).path})}).catch(error => notify(error.message || "打开本地路径失败", "error"))},
-    {label:selectionCount > 1 ? `复制 ${selectionCount} 个路径` : "复制路径", icon:"clipboard", run:() => copyText(selectedPaths.join("\n"))},
+      ? {label:tr("common:auto.open", {defaultValue:"打开"}), icon:"folder-open", run:() => navigateLocalFilesPath(pathValue, tabKey)}
+      : {label:tr("common:local_files.open_edit", {defaultValue:"打开 / 编辑"}), icon:"file-text", run:() => api("/api/local-files/open", {method:"POST", body:JSON.stringify({path:pathValue})}).catch(error => notify(error.message || tr("sftp:local_files.open_file_failed", {defaultValue:"打开本地文件失败"}), "error"))},
+    {label:tr("common:auto.open_in_system_file_manager", {defaultValue:"在系统文件管理器中打开"}), icon:"external-link", run:() => api("/api/local-files/open", {method:"POST", body:JSON.stringify({path:isDir ? pathValue : localFilesRuntime(tabKey).path})}).catch(error => notify(error.message || tr("sftp:local_files.open_path_failed", {defaultValue:"打开本地路径失败"}), "error"))},
+    {label:selectionCount > 1 ? tr("common:local_files.copy_paths", {count:selectionCount, defaultValue:`复制 ${selectionCount} 个路径`}) : tr("common:auto.copy_path", {defaultValue:"复制路径"}), icon:"clipboard", run:() => copyText(selectedPaths.join("\n"))},
     {separator:true},
-    ...(canMutate && selectionCount === 1 ? [{label:"重命名", icon:"pencil", run:() => renameLocalPath(pathValue, tabKey)}] : []),
-    ...(canMutate ? [{label:selectionCount > 1 ? `删除已选 ${selectionCount} 项` : "删除", icon:"trash-2", danger:true, run:() => deleteLocalFiles(selectedPaths, tabKey)}] : []),
-    ...(window.termaDesktop && canMutate ? [{label:"上传到 SFTP", icon:"upload", children:() => localFilesUploadActions(tabKey)}] : []),
-    ...(canMutate && localFilesWorkspaceTransferActions(tabKey, transferEntries).length ? [{label:"发送到对端", icon:"send", children:() => localFilesWorkspaceTransferActions(tabKey, transferEntries)}] : []),
-    ...(canMutate && selectionCount === 1 ? [{label:"设置权限", icon:"key-round", run:() => chmodLocalPath(pathValue, tabKey)}] : [])
+    ...(canMutate && selectionCount === 1 ? [{label:tr("common:auto.rename", {defaultValue:"重命名"}), icon:"pencil", run:() => renameLocalPath(pathValue, tabKey)}] : []),
+    ...(canMutate ? [{label:selectionCount > 1 ? tr("common:local_files.delete_selected", {count:selectionCount, defaultValue:`删除已选 ${selectionCount} 项`}) : tr("common:actions.delete", {defaultValue:"删除"}), icon:"trash-2", danger:true, run:() => deleteLocalFiles(selectedPaths, tabKey)}] : []),
+    ...(window.termaDesktop && canMutate ? [{label:tr("common:auto.upload_to_sftp", {defaultValue:"上传到 SFTP"}), icon:"upload", children:() => localFilesUploadActions(tabKey)}] : []),
+    ...(canMutate && localFilesWorkspaceTransferActions(tabKey, transferEntries).length ? [{label:tr("sftp:menu.send_peer", {defaultValue:"发送到对端"}), icon:"send", children:() => localFilesWorkspaceTransferActions(tabKey, transferEntries)}] : []),
+    ...(canMutate && selectionCount === 1 ? [{label:tr("sftp:menu.permissions", {defaultValue:"设置权限"}), icon:"key-round", run:() => chmodLocalPath(pathValue, tabKey)}] : [])
   ];
   showActionMenu(event, actions);
 }
@@ -390,48 +417,58 @@ function showLocalFilesDirectoryMenu(event, tabKey) {
   event.preventDefault();
   event.stopPropagation();
   const canCreate = localFilesRuntime(tabKey).location !== "computer";
+  const selectedCount = selectedLocalFiles(tabKey).length;
   showActionMenu(event, [
-    ...(canCreate ? [{label:"新建文件", icon:"file-plus-2", run:() => createLocalEntryFromPrompt(tabKey, "file")}] : []),
-    ...(canCreate ? [{label:"新建文件夹", icon:"folder-plus", run:() => createLocalEntryFromPrompt(tabKey, "dir")}] : []),
-    ...(selectedLocalFiles(tabKey).length ? [{separator:true}, {label:"删除已选项目", icon:"trash-2", danger:true, run:() => deleteSelectedLocalFiles(tabKey)}] : []),
+    ...(canCreate ? [{label:tr("common:auto.new_file", {defaultValue:"新建文件"}), icon:"file-plus-2", run:() => createLocalEntryFromPrompt(tabKey, "file")}] : []),
+    ...(canCreate ? [{label:tr("common:auto.new_folder", {defaultValue:"新建文件夹"}), icon:"folder-plus", run:() => createLocalEntryFromPrompt(tabKey, "dir")}] : []),
+    ...(selectedCount ? [{separator:true}, {label:tr("sftp:local_files.delete_selected_items", {defaultValue:"删除已选项目"}), icon:"trash-2", danger:true, run:() => deleteSelectedLocalFiles(tabKey)}] : []),
     {separator:true},
-    {label:"刷新", icon:"refresh-cw", run:() => localFilesMutationRefresh(tabKey)}
+    {label:tr("common:auto.refresh", {defaultValue:"刷新"}), icon:"refresh-cw", run:() => localFilesMutationRefresh(tabKey)}
   ]);
 }
 
 async function createLocalEntryFromPrompt(tabKey, type) {
-  if (localFilesRuntime(tabKey).location === "computer") return notify("请先进入一个磁盘或目录后再新建项目", "info");
-  const name = await inputModal(type === "dir" ? "新建文件夹" : "新建文件", "名称");
+  if (localFilesRuntime(tabKey).location === "computer") return notify(tr("sftp:local_files.enter_directory_before_create", {defaultValue:"请先进入一个磁盘或目录后再新建项目"}), "info");
+  const name = await inputModal(
+    type === "dir" ? tr("common:auto.new_folder", {defaultValue:"新建文件夹"}) : tr("common:auto.new_file", {defaultValue:"新建文件"}),
+    tr("sftp:operations.name_label", {defaultValue:"名称"})
+  );
   if (!name) return;
   const runtime = localFilesRuntime(tabKey);
   try {
     await api("/api/local-files/create", {method:"POST", body:JSON.stringify({directory:runtime.path, name, type})});
     await localFilesMutationRefresh(tabKey);
-    notify(type === "dir" ? "文件夹已创建" : "文件已创建", "success");
-  } catch (error) { notify(error.message || "创建本地项目失败", "error"); }
+    notify(type === "dir" ? tr("sftp:local_files.folder_created", {defaultValue:"文件夹已创建"}) : tr("sftp:local_files.file_created", {defaultValue:"文件已创建"}), "success");
+  } catch (error) { notify(error.message || tr("sftp:local_files.create_failed", {defaultValue:"创建本地项目失败"}), "error"); }
 }
 
 async function renameLocalPath(pathValue, tabKey) {
   const entry = localFilesEntry(tabKey, pathValue);
-  const name = await inputModal("重命名", "新名称", entry?.name || String(pathValue).split(/[\\/]/).pop());
+  const name = await inputModal(tr("sftp:menu.rename", {defaultValue:"重命名"}), tr("sftp:dialogs.new_name", {defaultValue:"新名称"}), entry?.name || String(pathValue).split(/[\\/]/).pop());
   if (!name) return;
   try {
     await api("/api/local-files/rename", {method:"POST", body:JSON.stringify({path:pathValue, new_name:name})});
     await localFilesMutationRefresh(tabKey);
-    notify("已重命名", "success");
-  } catch (error) { notify(error.message || "重命名失败", "error"); }
+    notify(tr("sftp:local_files.renamed", {defaultValue:"已重命名"}), "success");
+  } catch (error) { notify(error.message || tr("sftp:local_files.rename_failed", {defaultValue:"重命名失败"}), "error"); }
 }
 
 async function deleteLocalFiles(paths, tabKey) {
   const items = Array.isArray(paths) ? paths.filter(Boolean) : [];
-  if (!items.length) return notify("请选择文件或目录", "info");
-  if (!await confirmModal(`确认删除 ${items.length} 个本地项目？删除后无法通过 Terma 恢复。`, "删除本地项目", "删除", "取消", true)) return;
+  if (!items.length) return notify(tr("sftp:local_files.select_items", {defaultValue:"请选择文件或目录"}), "info");
+  if (!await confirmModal(
+    tr("sftp:local_files.delete_confirm", {count:items.length, defaultValue:`确认删除 ${items.length} 个本地项目？删除后无法通过 Terma 恢复。`}),
+    tr("sftp:local_files.delete_title", {defaultValue:"删除本地项目"}),
+    tr("common:actions.delete", {defaultValue:"删除"}),
+    tr("common:actions.cancel", {defaultValue:"取消"}),
+    true
+  )) return;
   try {
     await api("/api/local-files/delete", {method:"POST", body:JSON.stringify({paths:items})});
     await localFilesMutationRefresh(tabKey);
     clearLocalFilesSelection(tabKey);
-    notify(`已删除 ${items.length} 个本地项目`, "success");
-  } catch (error) { notify(error.message || "删除本地项目失败", "error"); }
+    notify(tr("sftp:local_files.deleted", {count:items.length, defaultValue:`已删除 ${items.length} 个本地项目`}), "success");
+  } catch (error) { notify(error.message || tr("sftp:local_files.delete_failed", {defaultValue:"删除本地项目失败"}), "error"); }
 }
 
 function deleteSelectedLocalFiles(tabKey) {
@@ -440,39 +477,43 @@ function deleteSelectedLocalFiles(tabKey) {
 
 async function renameSelectedLocalFile(tabKey) {
   const selected = selectedLocalFiles(tabKey);
-  if (selected.length !== 1) return notify("重命名一次只能选择一个项目", "info");
+  if (selected.length !== 1) return notify(tr("sftp:local_files.rename_one_only", {defaultValue:"重命名一次只能选择一个项目"}), "info");
   return renameLocalPath(selected[0].path, tabKey);
 }
 
 async function chmodLocalPath(pathValue, tabKey) {
-  if (navigator.platform?.toLowerCase().includes("win")) return notify("Windows 不支持 POSIX 权限设置", "info");
+  if (navigator.platform?.toLowerCase().includes("win")) return notify(tr("sftp:local_files.windows_posix_unsupported", {defaultValue:"Windows 不支持 POSIX 权限设置"}), "info");
   const entry = localFilesEntry(tabKey, pathValue);
-  const mode = await inputModal("设置权限", "权限（例如 644 或 755）", entry?.mode || "644");
+  const mode = await inputModal(
+    tr("sftp:menu.permissions", {defaultValue:"设置权限"}),
+    tr("sftp:local_files.permissions_example", {defaultValue:"权限（例如 644 或 755）"}),
+    entry?.mode || "644"
+  );
   if (!mode) return;
   try {
     await api("/api/local-files/chmod", {method:"POST", body:JSON.stringify({path:pathValue, mode})});
     await localFilesMutationRefresh(tabKey);
-    notify("权限已更新", "success");
-  } catch (error) { notify(error.message || "设置权限失败", "error"); }
+    notify(tr("sftp:local_files.permissions_updated", {defaultValue:"权限已更新"}), "success");
+  } catch (error) { notify(error.message || tr("sftp:local_files.permissions_failed", {defaultValue:"设置权限失败"}), "error"); }
 }
 
 async function chmodSelectedLocalFile(tabKey) {
   const selected = selectedLocalFiles(tabKey);
-  if (selected.length !== 1) return notify("设置权限一次只能选择一个项目", "info");
+  if (selected.length !== 1) return notify(tr("sftp:local_files.permissions_one_only", {defaultValue:"设置权限一次只能选择一个项目"}), "info");
   return chmodLocalPath(selected[0].path, tabKey);
 }
 
 async function openSelectedLocalFiles(tabKey) {
   const selected = selectedLocalFiles(tabKey);
-  if (selected.length !== 1) return notify("打开一次只能选择一个项目", "info");
+  if (selected.length !== 1) return notify(tr("sftp:local_files.open_one_only", {defaultValue:"打开一次只能选择一个项目"}), "info");
   const item = selected[0];
   if (item.type === "dir" || item.type === "drive") return navigateLocalFilesPath(item.path, tabKey);
-  return api("/api/local-files/open", {method:"POST", body:JSON.stringify({path:item.path})}).catch(error => notify(error.message || "打开本地文件失败", "error"));
+  return api("/api/local-files/open", {method:"POST", body:JSON.stringify({path:item.path})}).catch(error => notify(error.message || tr("sftp:local_files.open_file_failed", {defaultValue:"打开本地文件失败"}), "error"));
 }
 
 async function copySelectedLocalFilePaths(tabKey) {
   const selected = selectedLocalFiles(tabKey);
-  if (!selected.length) return notify("请选择文件或目录", "info");
+  if (!selected.length) return notify(tr("sftp:local_files.select_items", {defaultValue:"请选择文件或目录"}), "info");
   return copyText(selected.map(item => item.path).join("\n"));
 }
 
@@ -481,10 +522,14 @@ function localFilesUploadActions(tabKey) {
   if (!payload.paths.length) return [];
   const active = tabs.find(tab => tab.key === activeTabKey && tab.kind === "sftp");
   const targets = [];
-  if (active) targets.push({label:`上传到当前 SFTP：${active.title || active.name || active.id}`, icon:"folder-up", run:() => uploadLocalFilesToSftp(payload, active, active.key)});
+  if (active) {
+    const name = active.title || active.name || active.id || "";
+    targets.push({label:tr("navigation:transfer.upload_current_sftp", {name, defaultValue:`上传到当前 SFTP：${name}`}), icon:"folder-up", run:() => uploadLocalFilesToSftp(payload, active, active.key)});
+  }
   for (const connection of (connections || [])) {
     if (active && Number(active.id) === Number(connection.id)) continue;
-    targets.push({label:`${connection.name || connection.ssh_host} · SFTP`, icon:"server", run:() => uploadLocalFilesToSftp(payload, {kind:"sftp", id:connection.id, title:connection.name || connection.ssh_host, path:"."}, tabKey)});
+    const name = connection.name || connection.ssh_host || "";
+    targets.push({label:tr("navigation:transfer.sftp_connection", {name, defaultValue:`${name} · SFTP`}), icon:"server", run:() => uploadLocalFilesToSftp(payload, {kind:"sftp", id:connection.id, title:name, path:"."}, tabKey)});
   }
   return targets;
 }
@@ -498,8 +543,8 @@ function localFilesWorkspaceTransferActions(tabKey, entries=localFilesSelectedPa
 
 function showLocalFilesUploadMenu(event, tabKey) {
   const targets = localFilesUploadActions(tabKey);
-  if (!selectedLocalFiles(tabKey).length) return notify("请选择要上传的文件或目录", "info");
-  if (!targets.length) return notify("暂无可用的 SFTP 连接", "info");
+  if (!selectedLocalFiles(tabKey).length) return notify(tr("navigation:transfer.select_upload_items", {defaultValue:"请选择要上传的文件或目录"}), "info");
+  if (!targets.length) return notify(tr("navigation:transfer.no_sftp_targets", {defaultValue:"暂无可用的 SFTP 连接"}), "info");
   showActionMenu(event, targets);
 }
 
@@ -654,21 +699,23 @@ function syncLocalFilesCreateButtons(tabKey) {
 
 function localFilesBreadcrumbHtml(runtime, tabKey) {
   const key = escAttr(tabKey);
-  if (runtime.location === "computer") return `<button class="crumb active" type="button" aria-current="page" data-action="local-files-computer" data-tab-key="${key}">${icon("monitor")}<span>此电脑</span></button>`;
+  const computerLabel = tr("sftp:local_files.this_computer", {defaultValue:"此电脑"});
+  const localFilesLabel = tr("sftp:local_files.title", {defaultValue:"本地文件"});
+  if (runtime.location === "computer") return `<button class="crumb active" type="button" aria-current="page" data-action="local-files-computer" data-tab-key="${key}">${icon("monitor")}<span>${esc(computerLabel)}</span></button>`;
   const value = String(runtime.path || "");
-  if (!value) return `<button class="crumb active" type="button" aria-current="page" data-action="local-files-computer" data-tab-key="${key}">${icon("monitor")}<span>本地文件</span></button>`;
+  if (!value) return `<button class="crumb active" type="button" aria-current="page" data-action="local-files-computer" data-tab-key="${key}">${icon("monitor")}<span>${esc(localFilesLabel)}</span></button>`;
   const isWindows = /^[A-Za-z]:[\\/]/.test(value);
   const parts = isWindows ? value.replace(/[\\/]+$/, "").split(/[\\/]/) : value.split("/");
   const crumbs = [];
   if (isWindows) {
     const drive = `${parts.shift()}\\`;
-    crumbs.push(`<button class="crumb" type="button" data-action="local-files-computer" data-tab-key="${key}">${icon("monitor")}<span>此电脑</span></button><span class="crumb-sep">${icon("chevron-right")}</span>`);
+    crumbs.push(`<button class="crumb" type="button" data-action="local-files-computer" data-tab-key="${key}">${icon("monitor")}<span>${esc(computerLabel)}</span></button><span class="crumb-sep">${icon("chevron-right")}</span>`);
     let current = drive;
-    crumbs.push(`<button class="crumb ${parts.length ? "" : "active"}" type="button" ${parts.length ? "" : "aria-current=\"page\""} data-action="local-files-path" data-path="${escAttr(current)}" data-tab-key="${key}"><span>${esc(current.replace(/\\$/, ""))}</span></button>`);
+    crumbs.push(`<button class="crumb ${parts.length ? "" : "active"}" type="button" ${parts.length ? "" : "aria-current=\"page\""} data-action="local-files-path" data-path="${escAttr(current)}" data-tab-key="${key}"><span data-i18n-skip>${esc(current.replace(/\\$/, ""))}</span></button>`);
     for (let index = 0; index < parts.length; index += 1) {
       if (!parts[index]) continue;
       current += `${current.endsWith("\\") ? "" : "\\"}${parts[index]}`;
-      crumbs.push(`<span class="crumb-sep">${icon("chevron-right")}</span><button class="crumb ${index === parts.length - 1 ? "active" : ""}" type="button" ${index === parts.length - 1 ? "aria-current=\"page\"" : ""} data-action="local-files-path" data-path="${escAttr(current)}" data-tab-key="${key}"><span>${esc(parts[index])}</span></button>`);
+      crumbs.push(`<span class="crumb-sep">${icon("chevron-right")}</span><button class="crumb ${index === parts.length - 1 ? "active" : ""}" type="button" ${index === parts.length - 1 ? "aria-current=\"page\"" : ""} data-action="local-files-path" data-path="${escAttr(current)}" data-tab-key="${key}"><span data-i18n-skip>${esc(parts[index])}</span></button>`);
     }
   } else {
     crumbs.push(`<button class="crumb ${parts.length <= 1 ? "active" : ""}" type="button" data-action="local-files-path" data-path="/" data-tab-key="${key}"><span>/</span></button>`);
@@ -676,7 +723,7 @@ function localFilesBreadcrumbHtml(runtime, tabKey) {
     for (let index = 0; index < parts.length; index += 1) {
       if (!parts[index]) continue;
       current += `/${parts[index]}`;
-      crumbs.push(`<span class="crumb-sep">${icon("chevron-right")}</span><button class="crumb ${index === parts.length - 1 ? "active" : ""}" type="button" ${index === parts.length - 1 ? "aria-current=\"page\"" : ""} data-action="local-files-path" data-path="${escAttr(current)}" data-tab-key="${key}"><span>${esc(parts[index])}</span></button>`);
+      crumbs.push(`<span class="crumb-sep">${icon("chevron-right")}</span><button class="crumb ${index === parts.length - 1 ? "active" : ""}" type="button" ${index === parts.length - 1 ? "aria-current=\"page\"" : ""} data-action="local-files-path" data-path="${escAttr(current)}" data-tab-key="${key}"><span data-i18n-skip>${esc(parts[index])}</span></button>`);
     }
   }
   return crumbs.join("");
@@ -730,14 +777,14 @@ function activateLocalFileEntry(event, pathValue, type, tabKey) {
   event.stopPropagation();
   setLocalFileActivePath(pathValue, tabKey);
   if (type === "dir" || type === "drive") return navigateLocalFilesPath(pathValue, tabKey);
-  return api("/api/local-files/open", {method:"POST", body:JSON.stringify({path:pathValue})}).catch(error => notify(error.message || "打开本地文件失败", "error"));
+  return api("/api/local-files/open", {method:"POST", body:JSON.stringify({path:pathValue})}).catch(error => notify(error.message || tr("sftp:local_files.open_file_failed", {defaultValue:"打开本地文件失败"}), "error"));
 }
 
 function submitLocalFilesPath(event, tabKey, form=event.currentTarget) {
   event.preventDefault();
   const value = form?.querySelector("input")?.value || "";
   hideLocalFilesPathEditor(tabKey);
-  return navigateLocalFilesPath(value, tabKey).catch(error => notify(error.message || "打开本地目录失败", "error"));
+  return navigateLocalFilesPath(value, tabKey).catch(error => notify(error.message || tr("sftp:local_files.open_directory_failed", {defaultValue:"打开本地目录失败"}), "error"));
 }
 
 async function navigateLocalFilesLocation(name, tabKey) {
@@ -888,14 +935,15 @@ async function uploadLocalFilesToSftp(payload, target, tabKey="") {
   if (!payload?.paths?.length || !["sftp", "terminal"].includes(String(target?.kind || ""))) return;
   const runtime = target.kind === "sftp" ? sftpTabRuntimes.get(String(target.key || tabKey || "")) : null;
   const directory = runtime?.state.path || target.path || ".";
+  const targetName = target.title || tr("navigation:transfer.target_directory", {defaultValue:"目标目录"});
   const conflict = typeof sftpConflictChoice === "function"
-    ? await sftpConflictChoice(Number(target.id), directory, payload.entries || [], {title:`${target.title || "目标目录"}存在同名项目`})
+    ? await sftpConflictChoice(Number(target.id), directory, payload.entries || [], {title:tr("navigation:transfer.target_conflict_title", {target:targetName, defaultValue:`${targetName}存在同名项目`})})
     : "error";
   if (conflict === "cancel") return;
   const result = await api("/api/local-files/upload", {method:"POST", body:JSON.stringify({connection_id:Number(target.id), paths:payload.paths, target:directory, conflict})});
   for (const job of result.jobs || []) trackSftpMutationJob(job);
   refreshSftpJobs();
-  notify(`已开始上传 ${result.count || payload.paths.length} 个项目到 ${directory}`, "success");
+  notify(tr("navigation:transfer.upload_started", {count:result.count || payload.paths.length, target:directory, defaultValue:`已开始上传 ${result.count || payload.paths.length} 个项目到 ${directory}`}), "success");
 }
 
 async function localFilesReceiveConflictChoice(directory, entries) {
@@ -906,11 +954,12 @@ async function localFilesReceiveConflictChoice(directory, entries) {
   });
   const conflicts = (plan.items || []).filter(item => item.exists);
   if (!conflicts.length) return "error";
-  const preview = conflicts.slice(0, 6).map(item => item.name).join("、");
-  return chooseModal("本地目录存在同名项目", `${preview}${conflicts.length > 6 ? ` 等 ${conflicts.length} 项` : ""}`, [
-    {label:"覆盖", value:"overwrite", className:"danger"},
-    {label:"自动重命名", value:"rename", className:"primary"},
-    {label:"取消", value:"cancel"}
+  const preview = conflicts.slice(0, 6).map(item => item.name).join(tr("navigation:transfer.item_separator", {defaultValue:"、"}));
+  const more = conflicts.length > 6 ? tr("navigation:transfer.more_items", {count:conflicts.length, defaultValue:` 等 ${conflicts.length} 项`}) : "";
+  return chooseModal(tr("navigation:transfer.local_conflict_title", {defaultValue:"本地目录存在同名项目"}), `${preview}${more}`, [
+    {label:tr("common:auto.overwrite", {defaultValue:"覆盖"}), value:"overwrite", className:"danger"},
+    {label:tr("common:auto.auto_rename", {defaultValue:"自动重命名"}), value:"rename", className:"primary"},
+    {label:tr("common:actions.cancel", {defaultValue:"取消"}), value:"cancel"}
   ]);
 }
 
@@ -918,7 +967,7 @@ async function copySftpDraggedItemsToLocalTab(drag, target) {
   if (!drag?.entries?.length || target?.kind !== "local-files") return;
   finishSftpDragPayload(drag);
   const runtime = localFilesRuntime(target.key);
-  if (runtime.location === "computer") throw new Error("请先打开一个本地磁盘或目录，再保存远程文件");
+  if (runtime.location === "computer") throw new Error(tr("navigation:transfer.open_local_directory", {defaultValue:"请先打开一个本地磁盘或目录，再保存远程文件"}));
   const directory = runtime.path || target.path || "";
   const conflict = await localFilesReceiveConflictChoice(directory, drag.entries);
   if (conflict === "cancel") return;
@@ -927,7 +976,7 @@ async function copySftpDraggedItemsToLocalTab(drag, target) {
   trackSftpMutationJob(job);
   await refreshSftpJobs();
   startSftpJobsTimer();
-  notify(`后台传输已开始：${drag.entries.length} 个项目到 ${directory}`, "info");
+  notify(tr(drag.entries.length === 1 ? "common:notifications.background_transfer_target_one" : "common:notifications.background_transfer_target_other", {count:drag.entries.length, target:directory, defaultValue:`后台传输已开始：${drag.entries.length} 个项目到 ${directory}`}), "info");
 }
 
 function handleLocalFilesDragOver(event, tabKey) {
@@ -957,7 +1006,7 @@ async function handleLocalFilesDrop(event, tabKey) {
   try {
     await copySftpDraggedItemsToLocalTab(drag, tab);
   } catch (error) {
-    notify(error.message || "保存远程文件失败", "error");
+    notify(error.message || tr("sftp:local_files.save_remote_failed", {defaultValue:"保存远程文件失败"}), "error");
   }
 }
 
@@ -967,9 +1016,43 @@ async function sendSftpPathsToDesktop(connectionId, paths) {
   trackSftpMutationJob(job);
   await refreshSftpJobs();
   startSftpJobsTimer();
-  notify(`后台传输已开始：${paths.length} 个项目到桌面`, "info");
+  notify(tr(paths.length === 1 ? "common:notifications.background_transfer_desktop_one" : "common:notifications.background_transfer_desktop_other", {count:paths.length, defaultValue:`后台传输已开始：${paths.length} 个项目到桌面`}), "info");
   return job;
 }
+
+function syncLocalFilesLanguage() {
+  if (typeof tabs === "undefined" || !Array.isArray(tabs)) return;
+  const title = tr("sftp:local_files.title", {defaultValue:"本地文件"});
+  const computerLabel = tr("sftp:local_files.this_computer", {defaultValue:"此电脑"});
+  for (const tab of tabs) {
+    if (tab?.kind !== "local-files") continue;
+    const runtime = localFileRuntimes.get(String(tab.key || ""));
+    tab.title = title;
+    if (!runtime) continue;
+    if (runtime.location === "computer") runtime.displayPath = computerLabel;
+    tab.subtitle = runtime.displayPath || runtime.path || (runtime.location === "computer" ? computerLabel : "");
+    const root = localFilesRoot(tab.key);
+    if (!root) continue;
+    const breadcrumb = root.querySelector(".local-files-breadcrumb");
+    if (breadcrumb) breadcrumb.innerHTML = localFilesBreadcrumbHtml(runtime, tab.key);
+    root.querySelectorAll(".local-files-row[data-path]").forEach(row => {
+      const entry = localFilesEntry(tab.key, row.dataset.path);
+      if (!entry) return;
+      const displayName = localFilesEntryDisplayName(entry);
+      const name = row.querySelector(".local-files-file-name");
+      const checkbox = row.querySelector(".local-files-check");
+      if (name) name.textContent = displayName;
+      if (checkbox) checkbox.setAttribute("aria-label", tr("common:local_files.select_entry", {name:displayName, defaultValue:`选择 ${displayName}`}));
+    });
+    if (typeof activeTabKey !== "undefined" && tab.key === activeTabKey) {
+      const subtitle = $("workspaceSubtitle");
+      if (subtitle) subtitle.textContent = tab.subtitle;
+    }
+  }
+  if (typeof renderTabs === "function") renderTabs();
+}
+
+if (typeof registerTermaI18nRenderer === "function") registerTermaI18nRenderer(syncLocalFilesLanguage);
 
 const renderLocalFilesTabContentBase = renderTabContent;
 renderTabContent = function(tab) {

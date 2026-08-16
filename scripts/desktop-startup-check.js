@@ -39,6 +39,11 @@ assert.ok(
     < desktopMainSource.indexOf("loadBackend(startupDesktopSettings)"),
   "eligible brand migration must finish before the backend opens the database"
 );
+assert.match(
+  desktopMainSource.slice(readyIndex),
+  /createStartupWindow\(startupDesktopSettings\);\s*try\s*\{[\s\S]*?loadBackend\(startupDesktopSettings\);[\s\S]*?\}\s*catch\s*\(error\)/,
+  "desktop startup must catch backend-load failures and present them instead of leaving a hidden stalled process"
+);
 
 const testableSource = `${desktopMainSource.slice(0, readyIndex)}
 globalThis.__desktopStartupTestApi = {
@@ -76,6 +81,9 @@ globalThis.__desktopStartupTestApi = {
   buildAppMenu,
   initializeDesktopSettingsFile,
   ensureDesktopSettingsFile,
+  setDesktopInterfaceLanguage,
+  handleDesktopInterfaceLanguage,
+  getDesktopInterfaceLanguage: () => desktopInterfaceLanguage,
   isWindowsPortable,
   desktopStartupFailurePresentation,
   desktopNotificationAllowed,
@@ -465,6 +473,20 @@ check("Packaged startup window waits for rendered content before becoming visibl
   assert.equal(state.windows.length, 1);
 });
 
+check("Packaged startup window follows the persisted interface language", () => {
+  const { api, state } = createHarness({
+    settings:{startMinimizedToTray:false, interfaceLanguage:"en-US"}
+  });
+  api.setDesktopInterfaceLanguage("en-US", true);
+  assert.equal(api.getDesktopInterfaceLanguage(), "en-US");
+  const window = api.createStartupWindow({startMinimizedToTray:false, interfaceLanguage:"en-US"});
+  assert.equal(window.options.title, "Terma is starting");
+  const html = decodeURIComponent(String(window.loadedUrl).split(",", 2)[1] || "");
+  assert.match(html, />Terma is starting</);
+  assert.match(html, />Preparing services and workspace\.\.\.</);
+  assert.equal(JSON.parse(fs.readFileSync(state.settingsFile, "utf8")).interfaceLanguage, "en-US");
+});
+
 function createMarkerDatabase(file, entries) {
   fs.mkdirSync(path.dirname(file), { recursive:true });
   const db = new DatabaseSync(file);
@@ -520,6 +542,21 @@ check("Desktop window uses the isolated native-theme bridge", () => {
   assert.equal(window.options.webPreferences.contextIsolation, true);
   assert.equal(window.options.webPreferences.nodeIntegration, false);
   assert.equal(window.options.webPreferences.preload, path.join(root, "desktop", "preload.js"));
+});
+
+check("Desktop interface language follows the trusted renderer immediately", () => {
+  const { api, state } = createHarness({settings:{interfaceLanguage:"zh-CN"}});
+  api.setWebUrl("http://127.0.0.1:8088");
+  api.createWindow();
+  api.handleDesktopInterfaceLanguage({
+    senderFrame:{url:"http://127.0.0.1:8088/settings"}
+  }, "en-US");
+  assert.equal(api.getDesktopInterfaceLanguage(), "en-US");
+  assert.equal(JSON.parse(fs.readFileSync(state.settingsFile, "utf8")).interfaceLanguage, "en-US");
+  api.handleDesktopInterfaceLanguage({
+    senderFrame:{url:"https://example.invalid/settings"}
+  }, "zh-CN");
+  assert.equal(api.getDesktopInterfaceLanguage(), "en-US");
 });
 
 check("Explicit Windows login launch starts in the tray", () => {
@@ -992,7 +1029,7 @@ check("Brand migration refuses to run while TunnelDesk is still active", () => {
   assert.equal(preview.legacy_running, true);
   const requested = api.migrateLegacyBrandData({ replace_current: true });
   assert.equal(requested.ok, false);
-  assert.match(requested.error, /旧版程序/);
+  assert.match(requested.error, /旧版程序|legacy application/i);
   assert.equal(fs.existsSync(path.join(state.userData, "runtime", "data", "tunnels.db")), false);
   assert.equal(fs.existsSync(path.join(state.legacyUserData, "runtime", "data", "tunnels.db")), true);
 });
@@ -1098,7 +1135,7 @@ check("Desktop startup completes an interrupted data path migration before openi
   assert.equal(fs.readFileSync(path.join(targetRoot, "data", "tunnels.db"), "utf8"), "active database");
   assert.equal(fs.readFileSync(path.join(targetRoot, ".ssh", "id_ed25519"), "utf8"), "active key");
   assert.equal(fs.readFileSync(path.join(sourceRoot, "data", "tunnels.db"), "utf8"), "active database");
-  assert.match(api.getPendingStorageMigrationNotice(), /原目录仍保留/);
+  assert.match(api.getPendingStorageMigrationNotice(), /原目录仍保留|original directory was preserved/i);
 });
 
 check("Windows portable uses PORTABLE_EXECUTABLE_DIR instead of its temporary executable", () => {
@@ -1134,12 +1171,29 @@ check("Windows portable explains unsupported ACL storage without hiding the safe
     failure_kind:"unsupported-acl",
     message:`无法收紧 Terma 数据权限：${dataDir}`
   }, {dataDir});
-  assert.match(presentation.title, /数据目录权限不受支持/);
-  assert.match(presentation.message, /Windows 便携版/);
+  assert.match(presentation.title, /数据目录权限不受支持|data-directory permissions are unsupported/i);
+  assert.match(presentation.message, /Windows 便携版|Windows portable edition/i);
   assert.match(presentation.message, /NTFS/);
-  assert.match(presentation.message, /FAT32、exFAT/);
-  assert.match(presentation.message, /没有修改或删除现有连接数据/);
+  assert.match(presentation.message, /FAT32(?:、|,\s*)exFAT/);
+  assert.match(presentation.message, /没有修改或删除现有连接数据|did not modify or delete existing connection data/i);
   assert.match(presentation.message, new RegExp(dataDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+});
+
+check("Windows ACL startup errors follow the persisted English interface language", () => {
+  const { api } = createHarness({
+    platform:"win32",
+    settings:{dataMode:"project", interfaceLanguage:"en-US"}
+  });
+  const presentation = api.desktopStartupFailurePresentation({
+    code:"INSECURE_STORAGE_PERMISSIONS",
+    detail:"The file system does not support ACLs.",
+    failure_kind:"unsupported-acl",
+    message:"The data directory permissions could not be restricted"
+  }, {dataDir:"C:\\Terma\\data", language:"en-US"});
+  assert.match(presentation.title, /permissions are unsupported/);
+  assert.match(presentation.message, /Windows desktop edition/);
+  assert.match(presentation.message, /Use a local NTFS path/);
+  assert.doesNotMatch(presentation.message, /处理方法|便携版/);
 });
 
 check("macOS migrates legacy app data before selecting the user runtime", () => {
@@ -1169,7 +1223,7 @@ check("macOS migrates legacy app data before selecting the user runtime", () => 
   assert.equal(fs.existsSync(path.join(targetRoot, "data", "web.json")), false);
   assert.equal(fs.existsSync(path.join(legacyData, "tunnels.db")), true);
   assert.equal(JSON.parse(fs.readFileSync(state.settingsFile, "utf8")).dataMode, "user");
-  assert.match(api.getPendingStorageMigrationNotice(), /已从旧程序目录迁移/);
+  assert.match(api.getPendingStorageMigrationNotice(), /已从旧程序目录迁移|migrated from the old program directory/i);
 });
 
 check("Migration conflict keeps user data and backs up the complete legacy runtime", () => {
@@ -1196,7 +1250,7 @@ check("Migration conflict keeps user data and backs up the complete legacy runti
   assert.equal(fs.existsSync(path.join(backupRoot, "data", "web.pid")), false);
   assert.equal(fs.existsSync(path.join(legacyRoot, "data", "tunnels.db")), true);
   assert.match(path.basename(backupRoot), /^migration-conflict-backup-/);
-  assert.match(api.getPendingStorageMigrationNotice(), /继续使用用户目录/);
+  assert.match(api.getPendingStorageMigrationNotice(), /继续使用用户目录|continue using the user directory/i);
 });
 
 check("Desktop background notifications respect global mode and severity switches", () => {

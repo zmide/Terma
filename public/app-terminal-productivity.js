@@ -22,30 +22,34 @@ function rememberClosedWorkspaceTabs(keys) {
 function restoreRecentlyClosedTab() {
   loadClosedWorkspaceTabs();
   const tab = productivityState.closedTabs.shift();
-  if (!tab) return notify("没有可恢复的已关闭标签", "info");
+  if (!tab) return notify(tr("terminal:productivity.no_closed_tab"), "info");
   localStorage.setItem("closedWorkspaceTabsV1", JSON.stringify(productivityState.closedTabs));
-  if (Number(tab.id) && !currentConnection(Number(tab.id))) return notify("原连接已删除，无法恢复这个标签", "error");
+  if (Number(tab.id) && !currentConnection(Number(tab.id))) return notify(tr("terminal:productivity.connection_deleted"), "error");
   let key = tab.key;
   if (tabs.some(item => item.key === key)) key = `${key}-restored-${Date.now()}`;
   addTab(key, tab.title, tab.subtitle, tab.viewName, tab.closable !== false, {...tab, key, pinned:false});
   renderTabContent(tabs.find(item => item.key === key));
-  notify("已恢复最近关闭的标签", "success");
+  notify(tr("terminal:productivity.tab_restored"), "success");
 }
 
 function openTerminalBroadcastPicker() {
   const terminalTabs = tabs.filter(tab => tab.kind === "terminal");
-  if (terminalTabs.length < 2) return notify("至少打开两个终端后才能广播输入", "info");
+  if (terminalTabs.length < 2) return notify(tr("common:notifications.terminal_broadcast_minimum", {defaultValue:"至少打开两个终端后才能广播输入"}), "info");
   const selected = productivityState.broadcastTargets.size
     ? productivityState.broadcastTargets
     : new Set(terminalTabs.map(tab => tab.key));
+  const title = tr("terminal:broadcast.title", {defaultValue:"终端广播"});
+  const selectTargets = tr("terminal:broadcast.select_targets", {defaultValue:"选择要同步输入的终端"});
+  const startLabel = tr("terminal:broadcast.start", {defaultValue:"开始同步"});
+  const cancelLabel = tr("common:actions.cancel", {defaultValue:"取消"});
   const modal = $("modal");
   modal.hidden = false;
-  modal.innerHTML = `<div class="modal-card"><h2>终端广播</h2><label>选择要同步输入的终端</label><div class="snippet-target-grid">${terminalTabs.map(tab => `<label class="checkline"><input name="broadcastTarget" type="checkbox" value="${escAttr(tab.key)}" ${selected.has(tab.key) ? "checked" : ""}>${esc(tab.title)}</label>`).join("")}</div><div class="actions"><button class="primary" onclick="startTerminalBroadcast()">开始同步</button><button onclick="closeModal()">取消</button></div></div>`;
+  modal.innerHTML = `<div class="modal-card terminal-broadcast-modal" role="dialog" aria-modal="true" aria-labelledby="terminalBroadcastTitle"><h2 id="terminalBroadcastTitle">${esc(title)}</h2><label id="terminalBroadcastTargetLabel">${esc(selectTargets)}</label><div class="snippet-target-grid terminal-broadcast-target-grid" role="group" aria-labelledby="terminalBroadcastTargetLabel">${terminalTabs.map(tab => `<label class="checkline snippet-target-option" title="${escAttr(tab.title)}"><input name="broadcastTarget" type="checkbox" value="${escAttr(tab.key)}" aria-label="${escAttr(tab.title)}" ${selected.has(tab.key) ? "checked" : ""}><span class="snippet-target-name">${esc(tab.title)}</span></label>`).join("")}</div><div class="actions"><button class="primary" onclick="startTerminalBroadcast()" title="${escAttr(startLabel)}" aria-label="${escAttr(startLabel)}">${esc(startLabel)}</button><button onclick="closeModal()" title="${escAttr(cancelLabel)}" aria-label="${escAttr(cancelLabel)}">${esc(cancelLabel)}</button></div></div>`;
 }
 
 function startTerminalBroadcast() {
   const targets = [...document.querySelectorAll("input[name='broadcastTarget']:checked")].map(input => input.value);
-  if (targets.length < 2) return notify("请至少选择两个需要同步的终端", "info");
+  if (targets.length < 2) return notify(tr("common:notifications.terminal_sync_minimum", {defaultValue:"请至少选择两个需要同步的终端"}), "info");
   productivityState.broadcastTargets = new Set(targets);
   closeModal();
   updateTerminalBroadcastBar();
@@ -87,7 +91,11 @@ function updateTerminalBroadcastBar(message="") {
     else document.querySelector(".topbar")?.appendChild(bar);
   }
   productivityState.broadcastTargets = new Set(keys);
-  bar.innerHTML = `${icon("radio")}<strong>终端同步</strong><span>${esc(message || `${keys.length} 个终端 · 可在任意选中终端输入`)}</span><button class="icon-button terminal-broadcast-exit" onclick="stopTerminalBroadcast()" title="退出终端同步" aria-label="退出终端同步">${icon("x")}</button>`;
+  const statusTitle = tr("terminal:broadcast.status_title", {defaultValue:"终端同步"});
+  const statusMessage = message || tr("terminal:broadcast.status_message", {count:keys.length, defaultValue:`${keys.length} 个终端 · 可在任意选中终端输入`});
+  const exitLabel = tr("terminal:broadcast.exit", {defaultValue:"退出终端同步"});
+  const fullStatus = `${statusTitle} · ${statusMessage}`;
+  bar.innerHTML = `${icon("radio")}<div class="terminal-broadcast-copy" role="status" aria-live="polite" aria-label="${escAttr(fullStatus)}" title="${escAttr(fullStatus)}"><strong>${esc(statusTitle)}</strong><span>${esc(statusMessage)}</span></div><button class="icon-button terminal-broadcast-exit" onclick="stopTerminalBroadcast()" title="${escAttr(exitLabel)}" aria-label="${escAttr(exitLabel)}">${icon("x")}</button>`;
   document.body.classList.add("terminal-broadcast-active");
   refreshIcons();
 }
@@ -114,7 +122,7 @@ function handleTerminalBroadcastInput(sourceKey, outgoing, raw) {
     if (source?.socket?.readyState === WebSocket.OPEN) source.socket.send(outgoing);
     if (!productivityState.broadcastPaused) {
       productivityState.broadcastPaused = true;
-      updateTerminalBroadcastBar("有终端正在等待隐藏输入，已暂停同步");
+      updateTerminalBroadcastBar(tr("terminal:broadcast.paused_hidden_input", {defaultValue:"有终端正在等待隐藏输入，已暂停同步"}));
     }
     return true;
   }
@@ -125,7 +133,13 @@ function handleTerminalBroadcastInput(sourceKey, outgoing, raw) {
   const value = String(raw || "");
   const needsConfirmation = value.length > 2 && (/[\r\n]/.test(value) || (typeof commandLooksDangerous === "function" && commandLooksDangerous(value)));
   if (needsConfirmation) {
-    confirmModal(`即将向 ${keys.length} 个终端发送：\n\n${value}`, "确认广播输入", "发送", "取消", true)
+    confirmModal(
+      tr("terminal:broadcast.confirm_message", {count:keys.length, value, defaultValue:`即将向 ${keys.length} 个终端发送：\n\n${value}`}),
+      tr("terminal:broadcast.confirm_title", {defaultValue:"确认广播输入"}),
+      tr("terminal:broadcast.send", {defaultValue:"发送"}),
+      tr("common:actions.cancel", {defaultValue:"取消"}),
+      true
+    )
       .then(accepted => {
         if (accepted) sendBroadcastPayload(sourceKey, outgoing, raw);
         if (typeof focusTerminalSession === "function") focusTerminalSession(sourceKey);
@@ -203,7 +217,12 @@ function markTerminalCommandComplete(key, source="idle") {
   renderTabsPreservingTerminalFocus();
   const connection = currentConnection(session.id);
   if (elapsed >= 5000 && !connection?.notifications_muted && !tab.notificationsMuted) {
-    const event = {title:"命令已完成", message:`${tab.title} · ${Math.max(1, Math.round(elapsed / 1000))} 秒`, action:{type:"tab", key}};
+    const seconds = Math.max(1, Math.round(elapsed / 1000));
+    const event = {
+      title:tr("terminal:notifications.command_complete", {defaultValue:"命令已完成"}),
+      message:tr("terminal:notifications.command_duration", {title:tab.title, seconds, defaultValue:`${tab.title} · ${seconds} 秒`}),
+      action:{type:"tab", key}
+    };
     notify(event.message, "success");
     if (typeof showDesktopNotification === "function") showDesktopNotification(event);
   }
@@ -221,7 +240,7 @@ async function toggleConnectionNotifications(id) {
   const muted = connection.notifications_muted ? 0 : 1;
   await api(`/api/connections/${id}/flags`, {method:"POST", body:JSON.stringify({favorite:Number(connection.favorite || 0), notifications_muted:muted})});
   connection.notifications_muted = muted;
-  notify(muted ? "已静音此连接的命令完成通知" : "已开启此连接的命令完成通知", "success");
+  notify(tr(muted ? "terminal:notifications.connection_muted" : "terminal:notifications.connection_enabled"), "success");
 }
 
 function toggleTabNotifications(key) {
@@ -231,7 +250,7 @@ function toggleTabNotifications(key) {
   if (typeof hideTabContextMenu === "function") hideTabContextMenu();
   saveTabsState();
   renderTabs();
-  notify(tab.notificationsMuted ? "已静音此终端标签的命令完成通知" : "已开启此终端标签的命令完成通知", "success");
+  notify(tr(tab.notificationsMuted ? "terminal:notifications.tab_muted" : "terminal:notifications.tab_enabled"), "success");
 }
 
 function terminalSftpPath(key) {

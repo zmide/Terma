@@ -19,6 +19,83 @@ function openConnectionAdvancedOptions(form=$("connectionForm")) {
   return details;
 }
 
+function localizedConnectionExtraArgsIssue(item={}) {
+  const code = String(item.code || "");
+  const optionSource = item.option || item.token || tr("connections:validation.additional_args", {defaultValue:"附加参数"});
+  const option = typeof localizedTermaUiPhrase === "function" ? localizedTermaUiPhrase(optionSource) : optionSource;
+  const token = String(item.token || item.option || "");
+  const quote = String(item.message || "").match(/(["']) \u5f15\u53f7/)?.[1] || '"';
+  const currentValue = String(item.message || "").match(/\uff08\u5f53\u524d\uff1a(.+?)\uff09/)?.[1] || "";
+  const current = currentValue ? tr("connections:validation.current_suffix", {value:currentValue, defaultValue:`（当前：${currentValue}）`}) : "";
+  const values = {option, token, quote, current};
+  const defaultMessage = item.message || tr("connections:validation.invalid_parameter", {defaultValue:"参数无效"});
+  const handlers = {
+    SSH_EXTRA_ARGS_UNCLOSED_QUOTE:() => ({
+      message:tr("connections:validation.messages.unclosed_quote", {...values, defaultValue:defaultMessage}),
+      suggestion:tr("connections:validation.suggestions.unclosed_quote", {...values, defaultValue:item.suggestion || ""})
+    }),
+    SSH_EXTRA_ARGS_DUPLICATES_STRUCTURED_FIELD:() => ({
+      message:tr("connections:validation.messages.duplicate_structured", {...values, defaultValue:defaultMessage}),
+      suggestion:tr("connections:validation.suggestions.duplicate_structured", {...values, defaultValue:item.suggestion || ""})
+    }),
+    SSH_EXTRA_ARGS_MISSING_OPTION_VALUE:() => ({
+      message:tr("connections:validation.messages.missing_option_value", {...values, defaultValue:defaultMessage}),
+      suggestion:tr("connections:validation.suggestions.missing_option_value", {...values, defaultValue:item.suggestion || ""})
+    }),
+    SSH_EXTRA_ARGS_HOST_TRUST_MANAGED:() => ({
+      message:tr("connections:validation.messages.host_trust_managed", {...values, defaultValue:defaultMessage}),
+      suggestion:tr("connections:validation.suggestions.host_trust_managed", {...values, defaultValue:item.suggestion || ""})
+    }),
+    SSH_EXTRA_ARGS_OPTION_NOT_ALLOWED:() => ({
+      message:tr("connections:validation.messages.option_not_allowed", {...values, defaultValue:defaultMessage}),
+      suggestion:tr("connections:validation.suggestions.option_not_allowed", {...values, defaultValue:item.suggestion || ""})
+    }),
+    SSH_EXTRA_ARGS_POSITIONAL_TOKEN:() => ({
+      message:tr("connections:validation.messages.positional_token", {...values, defaultValue:defaultMessage}),
+      suggestion:tr("connections:validation.suggestions.positional_token", {...values, defaultValue:item.suggestion || ""})
+    }),
+    SSH_EXTRA_ARGS_MISSING_ARGUMENT:() => ({
+      message:tr("connections:validation.messages.missing_argument", {...values, defaultValue:defaultMessage}),
+      suggestion:tr("connections:validation.suggestions.missing_argument", {...values, defaultValue:item.suggestion || ""})
+    }),
+    SSH_EXTRA_ARGS_SHORT_OPTION_NOT_ALLOWED:() => ({
+      message:tr("connections:validation.messages.short_option_not_allowed", {...values, defaultValue:defaultMessage}),
+      suggestion:tr("connections:validation.suggestions.short_option_not_allowed", {...values, defaultValue:item.suggestion || ""})
+    })
+  };
+  const localized = handlers[code]?.();
+  const message = localized?.message
+    || (typeof localizedTermaUiPhrase === "function" ? localizedTermaUiPhrase(defaultMessage) : defaultMessage);
+  const suggestion = localized?.suggestion
+    || (typeof localizedTermaUiPhrase === "function" ? localizedTermaUiPhrase(item.suggestion || "") : (item.suggestion || ""));
+  return {option, message, suggestion};
+}
+
+function localizedConnectionExtraArgsError(details={}) {
+  const issues = Array.isArray(details?.issues) ? details.issues : Array.isArray(details) ? details : [];
+  if (!issues.length) return "";
+  const heading = tr("connections:validation.invalid_summary", {
+    count:issues.length,
+    defaultValue:`SSH 附加参数有 ${issues.length} 处需要修正：`
+  });
+  const rows = issues.map(item => {
+    const localized = localizedConnectionExtraArgsIssue(item);
+    const line = tr("connections:validation.line_label", {
+      line:Number(item?.line || 1),
+      option:localized.option,
+      defaultValue:`第 ${Number(item?.line || 1)} 行 · ${localized.option}`
+    });
+    const severity = item?.severity === "warning"
+      ? tr("connections:validation.reminder", {defaultValue:"提醒"})
+      : tr("connections:validation.problem", {defaultValue:"问题"});
+    const suggestion = localized.suggestion
+      ? tr("connections:validation.suggestion_suffix", {suggestion:localized.suggestion, defaultValue:`；建议：${localized.suggestion}`})
+      : "";
+    return tr("connections:validation.issue_row", {line, severity, message:localized.message, suggestion, defaultValue:`${line}（${severity}）：${localized.message}${suggestion}`});
+  });
+  return [heading, ...rows].join("\n");
+}
+
 function updateConnectionAdvancedStatus(form=$("connectionForm"), openForIssues=true) {
   const status = connectionFormField(form, "connAdvancedStatus");
   if (!status) return;
@@ -29,11 +106,11 @@ function updateConnectionAdvancedStatus(form=$("connectionForm"), openForIssues=
   const terminalError = terminalStatus?.classList.contains("error");
   const terminalWarning = terminalStatus?.classList.contains("warning");
   const parts = [];
-  if (errors) parts.push(`${errors} 处参数错误`);
-  if (warnings) parts.push(`${warnings} 条参数提醒`);
-  if (terminalError) parts.push("终端检测失败");
-  else if (terminalWarning) parts.push("终端检测有提醒");
-  status.textContent = parts.join(" · ") || "终端、跳板与连接调优";
+  if (errors) parts.push(tr("connections:validation.error_count", {count:errors, defaultValue:`${errors} 处参数错误`}));
+  if (warnings) parts.push(tr("connections:validation.warning_count", {count:warnings, defaultValue:`${warnings} 条参数提醒`}));
+  if (terminalError) parts.push(tr("connections:validation.terminal_failed", {defaultValue:"终端检测失败"}));
+  else if (terminalWarning) parts.push(tr("connections:validation.terminal_warning", {defaultValue:"终端检测有提醒"}));
+  status.textContent = parts.join(" · ") || tr("connections:validation.summary", {defaultValue:"终端、跳板与连接调优"});
   status.className = `connection-form-advanced-status${errors || terminalError ? " error" : warnings || terminalWarning ? " warning" : ""}`;
   if (openForIssues && parts.length) openConnectionAdvancedOptions(form);
 }
@@ -69,14 +146,17 @@ function renderConnectionExtraArgsDiagnostics(form=$("connectionForm"), issues=[
   box.className = `ssh-extra-diagnostics ${errors.length ? "has-errors" : "has-warnings"}`;
   const heading = document.createElement("div");
   heading.className = "ssh-extra-diagnostics-head";
-  heading.innerHTML = `<strong>${errors.length ? `${errors.length} 处需要修正` : `${items.length} 条参数提醒`}</strong><span>点击下面条目可定位到对应行</span>`;
+  heading.innerHTML = `<strong>${esc(errors.length
+    ? tr("connections:validation.fix_count", {count:errors.length, defaultValue:`${errors.length} 处需要修正`})
+    : tr("connections:validation.warning_count", {count:items.length, defaultValue:`${items.length} 条参数提醒`}))}</strong><span>${esc(tr("connections:validation.click_to_locate", {defaultValue:"点击下面条目可定位到对应行"}))}</span>`;
   box.replaceChildren(heading);
   for (const item of items) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `ssh-extra-issue ${item.severity === "warning" ? "warning" : "error"}`;
-    const label = item.option || item.token || "附加参数";
-    button.innerHTML = `<span class="ssh-extra-issue-title">${icon(item.severity === "warning" ? "triangle-alert" : "circle-alert")}<b>第 ${Number(item.line || 1)} 行 · ${esc(label)}</b></span><span>${esc(item.message || "参数无效")}</span>${item.suggestion ? `<small>${esc(item.suggestion)}</small>` : ""}`;
+    const localized = localizedConnectionExtraArgsIssue(item);
+    const lineLabel = tr("connections:validation.line_label", {line:Number(item.line || 1), option:localized.option, defaultValue:`第 ${Number(item.line || 1)} 行 · ${localized.option}`});
+    button.innerHTML = `<span class="ssh-extra-issue-title">${icon(item.severity === "warning" ? "triangle-alert" : "circle-alert")}<b>${esc(lineLabel)}</b></span><span>${esc(localized.message)}</span>${localized.suggestion ? `<small>${esc(localized.suggestion)}</small>` : ""}`;
     button.addEventListener("click", () => focusConnectionExtraArgsIssue(form, item));
     box.appendChild(button);
   }
@@ -116,6 +196,6 @@ async function ensureConnectionExtraArgsValid(form=$("connectionForm")) {
   const firstError = result?.issues?.find(item => item?.severity === "error");
   if (!firstError) return true;
   focusConnectionExtraArgsIssue(form, firstError);
-  notify(`SSH 附加参数第 ${firstError.line || 1} 行需要修正`, "error");
+  notify(tr("common:notifications.ssh_extra_argument_line", {line:firstError.line || 1, defaultValue:`SSH 附加参数第 ${firstError.line || 1} 行需要修正`}), "error");
   return false;
 }

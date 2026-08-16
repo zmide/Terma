@@ -5,19 +5,50 @@ const { normalizeRemoteHost } = require("./remote-host");
 
 const TCP_PROTOCOLS = new Set(["rdp", "vnc"]);
 
-function probeTcpEndpoint(host: unknown, port: unknown, timeoutMs = 2200): Promise<{ok:boolean; error:string}> {
+type ConnectivityReasonParams = Record<string, string | number | boolean>;
+
+function connectivityReason(reasonCode: string, reasonParams: ConnectivityReasonParams = {}, rawError: unknown = "") {
+  const normalizedRawError = String(rawError || "");
+  return {
+    reason_code:reasonCode,
+    reason_params:reasonParams,
+    raw_error:normalizedRawError,
+    // Compatibility for callers that still read `error`: fixed UI copy never belongs here.
+    error:normalizedRawError
+  };
+}
+
+function probeTcpEndpoint(host: unknown, port: unknown, timeoutMs = 2200): Promise<{ok:boolean; reason_code:string; reason_params:ConnectivityReasonParams; raw_error:string; error:string}> {
   return new Promise(resolve => {
+    let targetHost = "";
+    try {
+      targetHost = normalizeRemoteHost(host);
+    } catch {
+      resolve({ok:false, ...connectivityReason("tcp_target_invalid")});
+      return;
+    }
+    const targetPort = Number(port || 0);
+    if (!targetHost || !Number.isSafeInteger(targetPort) || targetPort < 1 || targetPort > 65535) {
+      resolve({ok:false, ...connectivityReason("tcp_target_invalid")});
+      return;
+    }
     let settled = false;
-    const socket = net.createConnection({host:normalizeRemoteHost(host), port:Number(port || 0)});
-    const finish = (ok: boolean, error = "") => {
+    let socket: any;
+    const finish = (ok: boolean, reasonCode: string, reasonParams: ConnectivityReasonParams = {}, rawError: unknown = "") => {
       if (settled) return;
       settled = true;
-      socket.destroy();
-      resolve({ok, error:String(error || "")});
+      try { socket?.destroy(); } catch {}
+      resolve({ok, ...connectivityReason(reasonCode, reasonParams, rawError)});
     };
-    socket.setTimeout(timeoutMs, () => finish(false, "连接超时"));
-    socket.once("connect", () => finish(true));
-    socket.once("error", (error: any) => finish(false, error?.message || "连接失败"));
+    try {
+      socket = net.createConnection({host:targetHost, port:targetPort});
+    } catch (error: any) {
+      finish(false, "tcp_failed", {}, error?.message);
+      return;
+    }
+    socket.setTimeout(timeoutMs, () => finish(false, "tcp_timeout"));
+    socket.once("connect", () => finish(true, "tcp_reachable"));
+    socket.once("error", (error: any) => finish(false, "tcp_failed", {}, error?.message));
   });
 }
 
@@ -31,22 +62,28 @@ function xdmcpResponseLabel(opcode: number) {
   return `opcode-${opcode}`;
 }
 
-function probeXdmcpEndpoint(host: unknown, port: unknown, timeoutMs = 2200): Promise<{ok:boolean; responded:boolean; response:string; error:string}> {
+function probeXdmcpEndpoint(host: unknown, port: unknown, timeoutMs = 2200): Promise<{ok:boolean; responded:boolean; response:string; reason_code:string; reason_params:ConnectivityReasonParams; raw_error:string; error:string}> {
   return new Promise(resolve => {
-    const targetHost = normalizeRemoteHost(host);
+    let targetHost = "";
+    try {
+      targetHost = normalizeRemoteHost(host);
+    } catch {
+      resolve({ok:false, responded:false, response:"", ...connectivityReason("xdmcp_target_invalid")});
+      return;
+    }
     const targetPort = Number(port || 177);
     if (!targetHost || !Number.isSafeInteger(targetPort) || targetPort < 1 || targetPort > 65535) {
-      resolve({ok:false, responded:false, response:"", error:"XDMCP 目标无效"});
+      resolve({ok:false, responded:false, response:"", ...connectivityReason("xdmcp_target_invalid")});
       return;
     }
     dns.lookup(targetHost, (lookupError: any, address: string, family: number) => {
       if (lookupError || !address) {
-        resolve({ok:false, responded:false, response:"", error:lookupError?.message || "主机解析失败"});
+        resolve({ok:false, responded:false, response:"", ...connectivityReason("host_resolution_failed", {}, lookupError?.message)});
         return;
       }
       const socket = dgram.createSocket(family === 6 ? "udp6" : "udp4");
       let settled = false;
-      const finish = (result: {ok:boolean; responded:boolean; response:string; error:string}) => {
+      const finish = (result: {ok:boolean; responded:boolean; response:string; reason_code:string; reason_params:ConnectivityReasonParams; raw_error:string; error:string}) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
@@ -57,21 +94,21 @@ function probeXdmcpEndpoint(host: unknown, port: unknown, timeoutMs = 2200): Pro
         ok:false,
         responded:false,
         response:"",
-        error:"未收到 XDMCP Query 响应"
+        ...connectivityReason("xdmcp_no_response")
       }), timeoutMs);
-      socket.once("error", (error: any) => finish({ok:false, responded:false, response:"", error:error?.message || "XDMCP UDP 探测失败"}));
+      socket.once("error", (error: any) => finish({ok:false, responded:false, response:"", ...connectivityReason("xdmcp_udp_failed", {}, error?.message)}));
       socket.once("message", (message: Buffer) => {
-        if (message.length < 6) return finish({ok:false, responded:true, response:"invalid", error:"收到无效的 XDMCP 响应"});
+        if (message.length < 6) return finish({ok:false, responded:true, response:"invalid", ...connectivityReason("xdmcp_response_invalid")});
         const version = message.readUInt16BE(0);
         const opcode = message.readUInt16BE(2);
         const response = xdmcpResponseLabel(opcode);
-        if (version !== 1) return finish({ok:false, responded:true, response, error:`收到不支持的 XDMCP 版本 ${version}`});
-        if (opcode === 5) return finish({ok:true, responded:true, response, error:""});
-        if (opcode === 6) return finish({ok:false, responded:true, response, error:"XDMCP 服务已响应，但当前拒绝图形登录"});
-        return finish({ok:false, responded:true, response, error:`收到非预期的 XDMCP 响应 ${opcode}`});
+        if (version !== 1) return finish({ok:false, responded:true, response, ...connectivityReason("xdmcp_version_unsupported", {version})});
+        if (opcode === 5) return finish({ok:true, responded:true, response, ...connectivityReason("xdmcp_willing")});
+        if (opcode === 6) return finish({ok:false, responded:true, response, ...connectivityReason("xdmcp_login_rejected")});
+        return finish({ok:false, responded:true, response, ...connectivityReason("xdmcp_opcode_unexpected", {opcode})});
       });
       socket.connect(targetPort, address, () => socket.send(xdmcpQueryPacket(), error => {
-        if (error) finish({ok:false, responded:false, response:"", error:error.message || "XDMCP Query 发送失败"});
+        if (error) finish({ok:false, responded:false, response:"", ...connectivityReason("xdmcp_send_failed", {}, error.message)});
       }));
     });
   });
@@ -79,11 +116,21 @@ function probeXdmcpEndpoint(host: unknown, port: unknown, timeoutMs = 2200): Pro
 
 async function inspectRemoteProfileConnectivity(profile: any) {
   const protocol = String(profile?.protocol || "").toLowerCase();
-  const host = normalizeRemoteHost(profile?.host);
+  let host = "";
+  let hostValid = true;
+  try {
+    host = normalizeRemoteHost(profile?.host);
+  } catch {
+    host = String(profile?.host || "").trim();
+    hostValid = false;
+  }
   const port = Number(profile?.port || (protocol === "rdp" ? 3389 : protocol === "vnc" ? 5900 : protocol === "xdmcp" ? 177 : 0));
   if (protocol === "xdmcp") {
     if (String(profile?.options?.mode || "query").toLowerCase() === "broadcast") {
-      return {protocol, host, port, supported:false, method:"xdmcp-broadcast", ok:false, responded:false, response:"", error:"XDMCP 广播模式不适用单主机 Query 探测"};
+      return {protocol, host, port, supported:false, method:"xdmcp-broadcast", ok:false, responded:false, response:"", ...connectivityReason("xdmcp_broadcast_probe_unsupported")};
+    }
+    if (!hostValid) {
+      return {protocol, host, port, supported:true, method:"xdmcp-query", ok:false, responded:false, response:"", ...connectivityReason("xdmcp_target_invalid")};
     }
     const result = await probeXdmcpEndpoint(host, port);
     return {protocol, host, port, supported:true, method:"xdmcp-query", ...result};
@@ -96,8 +143,11 @@ async function inspectRemoteProfileConnectivity(profile: any) {
       supported:false,
       method:"none",
       ok:false,
-      error:"当前协议不支持端口探测"
+      ...connectivityReason("protocol_probe_unsupported", {protocol})
     };
+  }
+  if (!hostValid) {
+    return {protocol, host, port, supported:true, method:"tcp", ok:false, ...connectivityReason("tcp_target_invalid")};
   }
   const result = await probeTcpEndpoint(host, port);
   return {protocol, host, port, supported:true, method:"tcp", ...result};

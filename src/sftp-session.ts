@@ -7,9 +7,11 @@ const { DATA_DIR } = require("./config");
 const { getConnection } = require("./db");
 const { resolveQuickConnectionById } = require("./quick-terminal");
 const { connectSsh, normalizeSshTransportError } = require("./ssh2-client");
+const { openCachedRange } = require("./sftp-range-cache");
 
 const sessions = new Map();
 const SFTP_DRAG_ROOT = path.join(DATA_DIR, "sftp-drag");
+const SFTP_RANGE_CACHE_ROOT = path.join(SFTP_DRAG_ROOT, "range-cache");
 const SFTP_DRAG_TTL_MS = 6 * 60 * 60 * 1000;
 const SFTP_DRAG_CLEAR_GRACE_MS = 10 * 60 * 1000;
 const SFTP_NATIVE_DRAG_TICKET_TTL_MS = 70 * 60 * 1000;
@@ -512,25 +514,43 @@ async function openNativeSftpDragTicketFile(token, index, options: any = {}) {
   const start = Math.max(0, Math.min(size, Number(options.start || 0)));
   const requestedEnd = options.end === undefined || options.end === null ? size - 1 : Number(options.end);
   const end = Math.max(start - 1, Math.min(size - 1, requestedEnd));
-  const channel: any = await openSftpChannel(ticket.connectionId);
-  let stream;
-  try {
-    if (size === 0 || end < start) {
-      stream = new PassThrough();
-      stream.end();
-    } else {
-      stream = channel.createReadStream(entry.remotePath, {start, end, autoClose:true});
-    }
-  } catch (error) {
-    try { channel?.end(); } catch {}
-    throw error;
-  }
-  const close = () => {
-    try { channel?.end(); } catch {}
+  const connection = getSftpConnection(ticket.connectionId);
+  activeSftpDragStaging.set(SFTP_RANGE_CACHE_ROOT, Number.POSITIVE_INFINITY);
+  const releaseCacheLease = () => {
+    activeSftpDragStaging.set(SFTP_RANGE_CACHE_ROOT, Date.now() + SFTP_DRAG_CLEAR_GRACE_MS);
   };
-  stream.once("close", close);
-  stream.once("end", close);
-  stream.once("error", close);
+  let stream;
+  if (size === 0 || end < start) {
+    stream = new PassThrough();
+    stream.end();
+  } else {
+    stream = openCachedRange({
+      root:SFTP_RANGE_CACHE_ROOT,
+      keyParts:[connectionFingerprint(connection), entry.remotePath, size, Number(entry.modifiedAt || 0)],
+      size,
+      start,
+      end,
+      retries:2,
+      openSource:async (rangeStart: number, rangeEnd: number) => {
+        const channel: any = await openSftpChannel(ticket.connectionId);
+        let source;
+        try {
+          source = channel.createReadStream(entry.remotePath, {start:rangeStart, end:rangeEnd, autoClose:true});
+        } catch (error) {
+          try { channel?.end(); } catch {}
+          throw error;
+        }
+        const close = () => { try { channel?.end(); } catch {} };
+        source.once("close", close);
+        source.once("end", close);
+        source.once("error", close);
+        return source;
+      }
+    });
+  }
+  stream.once("close", releaseCacheLease);
+  stream.once("end", releaseCacheLease);
+  stream.once("error", releaseCacheLease);
   return {
     stream,
     entry:nativeSftpDragTicketView(ticket).entries[Number(index)],
@@ -1084,6 +1104,7 @@ module.exports = {
   deliverSftpPaths,
   getSftpConnection,
   getNativeSftpDragTicket,
+  openSftpChannel,
   openNativeSftpDragTicketFile,
   releaseNativeSftpDragTicket,
   reserveNativeSftpDragTicket,

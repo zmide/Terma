@@ -2,6 +2,7 @@ const net = require("node:net");
 const iconv = require("iconv-lite");
 const { getRemoteProfile, updateRemoteProfileUsage } = require("./db");
 const { appendSystemLog, appendTerminalLog, createTerminalLog } = require("./logs");
+const { publicError } = require("./public-error");
 const { WebSocketFrameParser, closeWebSocket, sendWebSocketFrame, validateWebSocketUpgrade, websocketAccept } = require("./websocket");
 const { formatRemoteEndpoint } = require("./remote-host");
 
@@ -18,6 +19,18 @@ const OPT_ECHO = 1;
 const OPT_SGA = 3;
 const OPT_TTYPE = 24;
 const OPT_NAWS = 31;
+
+function normalizeRemoteTerminalLanguage(value) {
+  return String(value || "") === "en-US" ? "en-US" : "zh-CN";
+}
+
+function remoteTerminalUiText(language, chinese, english) {
+  return normalizeRemoteTerminalLanguage(language) === "en-US" ? english : chinese;
+}
+
+function remoteTerminalSessionText(session, chinese, english) {
+  return remoteTerminalUiText(session?.language, chinese, english);
+}
 
 function serialRuntime() {
   try {
@@ -51,7 +64,7 @@ async function testRemoteTerminalProfile(id) {
   if (profile.protocol === "telnet") {
     await new Promise((resolve, reject) => {
       const socket = net.createConnection({host:profile.host, port:Number(profile.port || 23)});
-      const timer = setTimeout(() => socket.destroy(new Error("Telnet 连接超时")), 10000);
+      const timer = setTimeout(() => socket.destroy(publicError("REMOTE_TERMINAL_CONNECTION_TIMEOUT", "Telnet 连接超时")), 10000);
       socket.once("connect", () => {
         clearTimeout(timer);
         socket.destroy();
@@ -66,25 +79,33 @@ async function testRemoteTerminalProfile(id) {
     return {ok:true, protocol:"telnet", endpoint:formatRemoteEndpoint(profile.host, profile.port)};
   }
   const runtime = serialRuntime();
-  if (!runtime.available) throw new Error(`串口组件不可用：${runtime.error || "serialport 未安装"}`);
-  await new Promise((resolve, reject) => {
-    const port = new runtime.SerialPort({
-      path:profile.options.path,
-      baudRate:Number(profile.options.baud_rate || 115200),
-      autoOpen:false
+  if (!runtime.available) throw publicError("SERIAL_RUNTIME_UNAVAILABLE", `串口组件不可用：${runtime.error || "serialport 未安装"}`, {detail:runtime.error || "serialport 未安装"});
+  try {
+    await new Promise((resolve, reject) => {
+      const port = new runtime.SerialPort({
+        path:profile.options.path,
+        baudRate:Number(profile.options.baud_rate || 115200),
+        autoOpen:false
+      });
+      port.open(error => {
+        if (error) return reject(error);
+        port.close(closeError => closeError ? reject(closeError) : resolve(null));
+      });
     });
-    port.open(error => {
-      if (error) return reject(error);
-      port.close(closeError => closeError ? reject(closeError) : resolve(null));
-    });
-  });
+  } catch (error) {
+    throw publicError("SERIAL_PORT_TEST_FAILED", `串口测试失败：${error?.message || error}`, {detail:error?.message || String(error)});
+  }
   updateRemoteProfileUsage(id);
   return {ok:true, protocol:"serial", endpoint:profile.options.path};
 }
 
-function remoteTerminalProfile(id) {
+function remoteTerminalProfile(id, language="zh-CN") {
   const profile = getRemoteProfile(Number(id));
-  if (!["telnet", "serial"].includes(profile.protocol)) throw new Error("该连接不能在终端中打开");
+  if (!["telnet", "serial"].includes(profile.protocol)) {
+    const error = publicError("REMOTE_TERMINAL_UNSUPPORTED_PROTOCOL", "该连接不能在终端中打开");
+    error.message = remoteTerminalUiText(language, error.message, "This connection cannot be opened in a terminal");
+    throw error;
+  }
   return profile;
 }
 
@@ -216,20 +237,20 @@ function connectTelnet(session) {
   session.telnetParser = {state:"data", command:0, option:null, sub:[]};
   socket.setNoDelay(true);
   socket.setKeepAlive(true, 30000);
-  socket.setTimeout(30000, () => socket.destroy(new Error("Telnet 连接超时")));
+  socket.setTimeout(30000, () => socket.destroy(new Error(remoteTerminalSessionText(session, "Telnet 连接超时", "Telnet connection timed out"))));
   socket.once("connect", () => {
     socket.setTimeout(0);
     updateRemoteProfileUsage(profile.id);
-    emitOutput(session, `已连接到 ${formatRemoteEndpoint(profile.host, profile.port)}\r\n`);
+    emitOutput(session, `${remoteTerminalSessionText(session, `已连接到 ${formatRemoteEndpoint(profile.host, profile.port)}`, `Connected to ${formatRemoteEndpoint(profile.host, profile.port)}`)}\r\n`);
   });
   socket.on("data", chunk => consumeTelnetData(session, chunk));
-  socket.on("error", error => emitOutput(session, `\r\nTelnet 错误：${error.message}\r\n`));
-  socket.on("close", () => closeRemoteTerminalSession(session, "Telnet 会话已结束"));
+  socket.on("error", error => emitOutput(session, `\r\n${remoteTerminalSessionText(session, "Telnet 错误", "Telnet error")}: ${error.message}\r\n`));
+  socket.on("close", () => closeRemoteTerminalSession(session, remoteTerminalSessionText(session, "Telnet 会话已结束", "Telnet session ended")));
 }
 
 function connectSerial(session) {
   const runtime = serialRuntime();
-  if (!runtime.available) throw new Error(`串口组件不可用：${runtime.error || "serialport 未安装"}`);
+  if (!runtime.available) throw new Error(remoteTerminalSessionText(session, `串口组件不可用：${runtime.error || "serialport 未安装"}`, `Serial support is unavailable: ${runtime.error || "serialport is not installed"}`));
   const options = session.profile.options;
   const port = new runtime.SerialPort({
     path:options.path,
@@ -245,15 +266,15 @@ function connectSerial(session) {
   session.transport = port;
   port.open(error => {
     if (error) {
-      emitOutput(session, `\r\n串口打开失败：${error.message}\r\n`);
+      emitOutput(session, `\r\n${remoteTerminalSessionText(session, "串口打开失败", "Could not open the serial port")}: ${error.message}\r\n`);
       return closeRemoteTerminalSession(session);
     }
     updateRemoteProfileUsage(session.profile.id);
-    emitOutput(session, `已打开串口 ${options.path} · ${options.baud_rate} baud\r\n`);
+    emitOutput(session, `${remoteTerminalSessionText(session, `已打开串口 ${options.path} · ${options.baud_rate} baud`, `Opened serial port ${options.path} · ${options.baud_rate} baud`)}\r\n`);
   });
   port.on("data", data => emitOutput(session, data));
-  port.on("error", error => emitOutput(session, `\r\n串口错误：${error.message}\r\n`));
-  port.on("close", () => closeRemoteTerminalSession(session, "串口会话已结束"));
+  port.on("error", error => emitOutput(session, `\r\n${remoteTerminalSessionText(session, "串口错误", "Serial-port error")}: ${error.message}\r\n`));
+  port.on("close", () => closeRemoteTerminalSession(session, remoteTerminalSessionText(session, "串口会话已结束", "Serial-port session ended")));
 }
 
 function writeRemoteTerminalInput(session, payload) {
@@ -275,10 +296,12 @@ function writeRemoteTerminalInput(session, payload) {
 
 function handleRemoteTerminalUpgrade(req, socket) {
   let upgraded = false;
+  let language = "zh-CN";
   try {
     const key = validateWebSocketUpgrade(req);
     const url = new URL(req.url, "http://terma.invalid");
-    const profile = remoteTerminalProfile(Number(url.searchParams.get("id")));
+    language = normalizeRemoteTerminalLanguage(url.searchParams.get("language"));
+    const profile = remoteTerminalProfile(Number(url.searchParams.get("id")), language);
     socket.write([
       "HTTP/1.1 101 Switching Protocols",
       "Upgrade: websocket",
@@ -300,6 +323,7 @@ function handleRemoteTerminalUpgrade(req, socket) {
       decoder:encoding === "utf8" ? null : iconv.getDecoder(encoding),
       cols:Math.max(2, Number(url.searchParams.get("cols")) || 80),
       rows:Math.max(1, Number(url.searchParams.get("rows")) || 24),
+      language,
       closed:false
     };
     sessions.add(session);
@@ -314,7 +338,7 @@ function handleRemoteTerminalUpgrade(req, socket) {
           if (opcode === 1 || opcode === 2) writeRemoteTerminalInput(session, payload);
         });
       } catch (error) {
-        emitOutput(session, `\r\nWebSocket 错误：${error.message}\r\n`);
+        emitOutput(session, `\r\n${remoteTerminalSessionText(session, "WebSocket 错误", "WebSocket error")}: ${error.message}\r\n`);
         closeRemoteTerminalSession(session);
       }
     });
@@ -325,8 +349,8 @@ function handleRemoteTerminalUpgrade(req, socket) {
     appendSystemLog(`远程终端启动失败：${error.message}`);
     try {
       if (upgraded) {
-        sendWebSocketFrame(socket, `\r\n终端启动失败：${error.message}\r\n`);
-        closeWebSocket(socket, 1011, "终端启动失败");
+        sendWebSocketFrame(socket, `\r\n${remoteTerminalUiText(language, "终端启动失败", "Terminal startup failed")}: ${error.message}\r\n`);
+        closeWebSocket(socket, 1011, remoteTerminalUiText(language, "终端启动失败", "Terminal startup failed"));
       } else {
         socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         socket.end(error.message);

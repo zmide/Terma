@@ -103,7 +103,9 @@ async function main() {
   assert.match(DEFAULT_TERMINAL_SETTINGS.font_family, /monospace/);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 12,
+    schema_version: 14,
+    language: "zh-CN",
+    language_onboarding_version: 0,
     listen_hosts: ["127.0.0.1", "127.0.0.2"],
     listen_port: 8123,
     sftp_recycle_bin_enabled: false,
@@ -142,6 +144,8 @@ async function main() {
     error:{enabled:true, duration_ms:8000},
     progress:{enabled:false, success_duration_ms:5000, error_duration_ms:9000}
   });
+  assert.equal(normalizeRuntimeSettings({language:"en-US"}).language, "en-US");
+  assert.equal(normalizeRuntimeSettings({language:"invalid"}).language, "zh-CN");
   assert.equal(normalizeRuntimeSettings(
     {notification_display:{progress:{success_duration_ms:null}}},
     {notification_display:{progress:{enabled:true, success_duration_ms:5000, error_duration_ms:8000}}}
@@ -248,6 +252,7 @@ async function main() {
     assert.deepEqual(info.actual_hosts, startupHosts);
     assert.equal(info.urls.includes(info.local_url), true);
     const persistedAfterFallback = JSON.parse(fs.readFileSync(runtimeFile, "utf8"));
+    assert.equal(persistedAfterFallback.language, "zh-CN");
     assert.equal(persistedAfterFallback.listen_port, info.actual_port);
     assert.equal(persistedAfterFallback.sftp_recycle_bin_enabled, true);
     assert.equal(persistedAfterFallback.sftp_floating_progress_enabled, true);
@@ -284,6 +289,7 @@ async function main() {
     assert.equal(settings.response.ok, true);
     assert.deepEqual(settings.body.saved.listen_hosts, startupHosts);
     assert.equal(settings.body.saved.listen_port, info.actual_port);
+    assert.equal(settings.body.saved.language, "zh-CN");
     assert.equal(settings.body.saved.sftp_recycle_bin_enabled, true);
     assert.equal(settings.body.saved.sftp_floating_progress_enabled, true);
     assert.deepEqual(settings.body.saved.notification_display, persistedAfterFallback.notification_display);
@@ -303,6 +309,15 @@ async function main() {
     assert.equal(settings.body.local_url, base);
     assert.deepEqual(settings.body.actual_hosts, startupHosts);
     console.log("PASS runtime settings API reports saved and actual listener state");
+
+    const languageSaved = await request(base, "/api/runtime-settings", {
+      method:"PUT",
+      body:JSON.stringify({language:"en-US"})
+    });
+    assert.equal(languageSaved.response.ok, true);
+    assert.equal(languageSaved.body.saved.language, "en-US");
+    assert.equal(JSON.parse(fs.readFileSync(runtimeFile, "utf8")).language, "en-US");
+    console.log("PASS interface language persists independently");
 
     const terminalSaved = await request(base, "/api/runtime-settings", {
       method: "PUT",
@@ -452,6 +467,7 @@ async function main() {
     assert.equal(saved.response.ok, true);
     assert.deepEqual(saved.body.saved.listen_hosts, ["127.0.0.1"]);
     assert.equal(saved.body.saved.listen_port, nextPort);
+    assert.equal(saved.body.saved.language, "en-US");
     assert.equal(saved.body.saved.sftp_recycle_bin_enabled, false);
     assert.equal(saved.body.saved.sftp_floating_progress_enabled, false);
     assert.equal(saved.body.saved.sftp_max_open_file_size_mb, 12);

@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { publicError } from "./public-error";
 
 export interface LoginProtectionOptions {
   maxFailures: number;
@@ -164,8 +165,8 @@ export class SessionStore {
   configure(options: Partial<SessionStoreOptions>): void {
     const ttlMs = Number(options.ttlMs ?? this.options.ttlMs);
     const maxSessions = Number(options.maxSessions ?? this.options.maxSessions);
-    if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new Error("会话有效期必须大于 0");
-    if (!Number.isInteger(maxSessions) || maxSessions <= 0) throw new Error("最大会话数必须为正整数");
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw publicError("AUTH_SESSION_TTL_INVALID", "会话有效期必须大于 0");
+    if (!Number.isInteger(maxSessions) || maxSessions <= 0) throw publicError("AUTH_MAX_SESSIONS_INVALID", "最大会话数必须为正整数");
     this.options.ttlMs = Math.floor(ttlMs);
     this.options.maxSessions = maxSessions;
 

@@ -7,7 +7,7 @@ function showWorkspaceTabsContextMenu(event) {
   menu.className = "context-menu tab-context-menu";
   const button = document.createElement("button");
   button.type = "button";
-  button.innerHTML = `${icon("combine")}<span>组成工作区</span>`;
+  button.innerHTML = `${icon("combine")}<span>${esc(tr("navigation:auto.combine_workspace", {defaultValue:"Combine into workspace"}))}</span>`;
   button.disabled = tabs.length < 2;
   button.onclick = () => beginWorkspaceGroupSelection();
   menu.appendChild(button);
@@ -100,7 +100,13 @@ function updateWorkspaceTabDropTarget(clientX, clientY) {
   if (insertion) insertion.hidden = true;
   indicator.hidden = false;
   indicator.dataset.zone = target.zone;
-  const labels = {left:"在左侧分屏", right:"在右侧分屏", top:"在上方分屏", bottom:"在下方分屏", center:"移到此窗格"};
+  const labels = {
+    left:tr("navigation:auto.drop_left", {defaultValue:"Drop in a split on the left"}),
+    right:tr("navigation:auto.drop_right", {defaultValue:"Drop in a split on the right"}),
+    top:tr("navigation:auto.drop_top", {defaultValue:"Drop in a split above"}),
+    bottom:tr("navigation:auto.drop_bottom", {defaultValue:"Drop in a split below"}),
+    center:tr("navigation:auto.drop_center", {defaultValue:"Move to this pane"})
+  };
   indicator.querySelector("span").textContent = labels[target.zone] || "";
 }
 

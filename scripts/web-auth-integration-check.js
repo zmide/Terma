@@ -63,18 +63,39 @@ function assertLoginPagePasswordToggle(html) {
   const showIcon = makeElement({ hidden: false });
   const hideIcon = makeElement({ hidden: true });
   const loginButton = makeElement();
+  const languageToggle = makeElement({ title: "切换到 English" });
   const elements = {
     password,
     passwordToggle: toggle,
     passwordShowIcon: showIcon,
     passwordHideIcon: hideIcon,
     loginButton,
+    languageToggle,
     err: makeElement()
   };
+  const storage = new Map();
   const context = {
-    document: { getElementById(id) { return elements[id]; } },
-    fetch: async () => ({ ok: true }),
-    location: { href: "" }
+    document: {
+      documentElement:{lang:"zh-CN"},
+      getElementById(id) { return elements[id]; },
+      querySelectorAll() { return []; }
+    },
+    fetch: async () => ({
+      ok:true,
+      async json() {
+        return {
+          show_password:"显示密码",
+          hide_password:"隐藏密码",
+          switch_language:"切换到 English"
+        };
+      }
+    }),
+    localStorage:{
+      getItem(key) { return storage.get(String(key)) ?? null; },
+      setItem(key, value) { storage.set(String(key), String(value)); }
+    },
+    location: { href: "" },
+    navigator:{language:"zh-CN"}
   };
   vm.runInNewContext(script, context, { timeout: 1000 });
   const click = toggle.listeners.get("click");

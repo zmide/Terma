@@ -17,37 +17,37 @@ function storageSettingsPanelHtml() {
   const paths = desktopSettings?.paths || {};
   const storage = desktopSettings?.storage || {};
   const configurable = Boolean(desktopSettings?.available);
-  const saveAction = `<button class="primary storage-settings-save" type="button" onclick="${configurable ? "saveDesktopSettings(this)" : "saveWebStorageSettings(this)"}">${icon("save")}<span>保存数据路径并重启</span></button>`;
+  const saveAction = `<button class="primary storage-settings-save" type="button" onclick="${configurable ? "saveDesktopSettings(this)" : "saveWebStorageSettings(this)"}">${icon("save")}<span>${esc(tr("settings:auto.save_data_restart"))}</span></button>`;
   if (desktopSettings?.storage_management_available === false) return `<section class="desktop-settings-section storage-settings-section">
-    <h3>数据存储</h3>
-    <div class="warning">远程管理数据路径需要启用 Web 密码并登录。关闭局域网密码时，只能在运行 Terma 的本机修改。</div>
+    <h3>${esc(tr("settings:storage.title"))}</h3>
+    <div class="warning">${esc(tr("settings:storage.remote_management_warning"))}</div>
   </section>`;
   return `<section class="desktop-settings-section storage-settings-section">
-    <h3>数据存储</h3>
+    <h3>${esc(tr("settings:storage.title"))}</h3>
     <div class="storage-settings-layout">
       ${configurable ? `
-        <label for="desktopDataMode">数据路径模式</label>
+        <label for="desktopDataMode">${esc(tr("settings:auto.data_path_mode"))}</label>
         <div class="storage-settings-primary-row">
           <select id="desktopDataMode" onchange="syncDesktopCustomDataMode()">
-            ${desktopSettings.project_mode_available ? `<option value="project" ${settings.dataMode === "project" ? "selected" : ""}>${esc(desktopSettings.project_mode_label || "项目所在文件夹")}</option>` : ""}
-            <option value="user" ${settings.dataMode === "user" ? "selected" : ""}>用户数据路径（推荐）</option>
-            <option value="custom" ${settings.dataMode === "custom" ? "selected" : ""}>自定义路径</option>
+            ${desktopSettings.project_mode_available ? `<option value="project" ${settings.dataMode === "project" ? "selected" : ""}>${esc(tr("settings:storage.project_folder"))}</option>` : ""}
+            <option value="user" ${settings.dataMode === "user" ? "selected" : ""}>${esc(tr("settings:storage.user_data_recommended"))}</option>
+            <option value="custom" ${settings.dataMode === "custom" ? "selected" : ""}>${esc(tr("settings:storage.custom_path"))}</option>
           </select>
           ${saveAction}
         </div>
         <div id="desktopCustomDataBox" class="desktop-custom-path">
-          <label for="desktopCustomDataDir">自定义数据根目录</label>
-          <div class="upload-line"><input id="desktopCustomDataDir" value="${escAttr(settings.customDataDir || "")}" placeholder="选择或输入绝对路径"><button type="button" onclick="chooseDesktopDataDirectory()">${icon("folder-open")}<span>选择</span></button></div>
+          <label for="desktopCustomDataDir">${esc(tr("settings:storage.custom_data_root"))}</label>
+          <div class="upload-line"><input id="desktopCustomDataDir" value="${escAttr(settings.customDataDir || "")}" placeholder="${escAttr(tr("settings:auto.choose_absolute_path"))}"><button type="button" onclick="chooseDesktopDataDirectory()">${icon("folder-open")}<span>${esc(tr("settings:storage.choose"))}</span></button></div>
         </div>
-        <div class="muted">保存数据路径后桌面端会重启，当前 SSH 转发会按已有恢复策略重新连接。</div>` : `
-        <label for="webStorageRoot">运行根目录</label>
+        <div class="muted">${esc(tr("settings:auto.data_path_restart_hint"))}</div>` : `
+        <label for="webStorageRoot">${esc(tr("settings:storage.runtime_root"))}</label>
         <div class="storage-settings-primary-row">
-          <div class="upload-line"><input id="webStorageRoot" value="${escAttr(storage.root || desktopSettings?.base_dir || "")}" placeholder="选择或输入绝对路径"><button type="button" onclick="openStorageDirectoryBrowser()">${icon("folder-open")}<span>浏览</span></button></div>
+          <div class="upload-line"><input id="webStorageRoot" value="${escAttr(storage.root || desktopSettings?.base_dir || "")}" placeholder="${escAttr(tr("settings:auto.choose_absolute_path"))}"><button type="button" onclick="openStorageDirectoryBrowser()">${icon("folder-open")}<span>${esc(tr("settings:storage.browse"))}</span></button></div>
           ${saveAction}
         </div>
-        <label class="check-row"><input id="webStorageMigrate" type="checkbox" checked> 复制当前数据库、设置和密钥到新目录</label>
-        <div class="muted">保存后 Terma 会自动重启。目标已有数据库时不会覆盖；也可在启动前使用 TERMA_DATA_DIR 和 TERMA_SSH_DIR 分别覆盖目录，旧版 TUNNELDESK_* 变量仍可兼容读取。</div>`}
-      <div class="desktop-current-paths"><code>数据：${esc(paths.dataDir || "")}</code><code>密钥：${esc(paths.sshDir || "")}</code></div>
+        <label class="check-row"><input id="webStorageMigrate" type="checkbox" checked> ${esc(tr("settings:storage.copy_to_new_root"))}</label>
+        <div class="muted">${esc(tr("settings:storage.web_root_hint"))}</div>`}
+      <div class="desktop-current-paths"><code>${esc(tr("settings:auto.data_path_label", {path:paths.dataDir || "", defaultValue:`数据：${paths.dataDir || ""}`}))}</code><code>${esc(tr("settings:auto.key_path_label", {path:paths.sshDir || "", defaultValue:`密钥：${paths.sshDir || ""}`}))}</code></div>
     </div>
   </section>`;
 }
@@ -59,13 +59,13 @@ async function openStorageDirectoryBrowser(startPath="") {
     const listing = await api(`/api/storage/directories?path=${encodeURIComponent(requested)}`);
     const modal = $("modal");
     modal.hidden = false;
-    modal.innerHTML = `<div class="modal-card wide storage-directory-modal">
-      <h2>选择运行根目录</h2>
+    modal.innerHTML = `<div class="modal-card wide storage-directory-modal" role="dialog" aria-modal="true" aria-labelledby="storageDirectoryTitle">
+      <h2 id="storageDirectoryTitle">${esc(tr("settings:storage.select_runtime_root"))}</h2>
       <div class="storage-directory-path"><code>${esc(listing.current)}</code></div>
-      <div class="storage-directory-roots" aria-label="文件系统根目录">${(listing.roots || []).map((item, index) => `<button type="button" data-storage-root="${index}" class="${item.path === listing.current ? "active" : ""}">${icon("hard-drive")}<span>${esc(item.name)}</span></button>`).join("")}</div>
-      <div class="storage-directory-actions"><button id="storageDirectoryUp" type="button" ${listing.parent ? "" : "disabled"}>${icon("corner-left-up")}<span>上一级</span></button><button id="storageDirectorySelect" class="primary" type="button">${icon("folder-check")}<span>选择当前目录</span></button></div>
-      <div class="storage-directory-list">${listing.directories.length ? listing.directories.map((item, index) => `<button type="button" data-storage-directory="${index}">${icon("folder")}<span>${esc(item.name)}</span></button>`).join("") : stateView("empty", "当前目录没有子目录")}</div>
-      <div class="actions"><button type="button" onclick="closeModal()">取消</button></div>
+      <div class="storage-directory-roots" aria-label="${escAttr(tr("settings:storage.filesystem_roots"))}">${(listing.roots || []).map((item, index) => `<button type="button" data-storage-root="${index}" class="${item.path === listing.current ? "active" : ""}">${icon("hard-drive")}<span>${esc(item.name)}</span></button>`).join("")}</div>
+      <div class="storage-directory-actions"><button id="storageDirectoryUp" type="button" ${listing.parent ? "" : "disabled"}>${icon("corner-left-up")}<span>${esc(tr("settings:storage.parent_directory"))}</span></button><button id="storageDirectorySelect" class="primary" type="button">${icon("folder-check")}<span>${esc(tr("settings:storage.select_current"))}</span></button></div>
+      <div class="storage-directory-list">${listing.directories.length ? listing.directories.map((item, index) => `<button type="button" data-storage-directory="${index}">${icon("folder")}<span>${esc(item.name)}</span></button>`).join("") : stateView("empty", tr("settings:storage.no_subdirectories"))}</div>
+      <div class="actions"><button type="button" onclick="closeModal()">${esc(tr("common:actions.cancel"))}</button></div>
     </div>`;
     modal.querySelectorAll("[data-storage-directory]").forEach(button => {
       button.onclick = () => openStorageDirectoryBrowser(listing.directories[Number(button.dataset.storageDirectory)].path);
@@ -80,23 +80,23 @@ async function openStorageDirectoryBrowser(startPath="") {
     };
     refreshIcons();
   } catch (error) {
-    notify(error.message || "目录读取失败", "error");
+    notify(error.message || tr("settings:auto.directory_read_failed"), "error");
   }
 }
 
 async function saveWebStorageSettings(button) {
   const root = $("webStorageRoot")?.value.trim() || "";
   const migrate = Boolean($("webStorageMigrate")?.checked);
-  if (!root) return notify("请选择运行根目录", "error");
-  if (!await confirmModal("保存后会停止当前转发、迁移数据并重启 Terma。继续？", "更改数据路径", "保存并重启", "取消", true)) return;
+  if (!root) return notify(tr("settings:auto.choose_runtime_root"), "error");
+  if (!await confirmModal(tr("settings:storage.web_change_confirm"), tr("settings:auto.change_data_path"), tr("settings:auto.save_restart"), tr("common:actions.cancel"), true)) return;
   try {
-    setButtonBusy(button, true, "正在保存");
+    setButtonBusy(button, true, tr("settings:storage.saving"));
     const result = await api("/api/desktop-settings", {method:"PUT", body:JSON.stringify({root, migrate})});
-    notify("数据路径已保存，正在重启 Terma", "success");
+    notify(tr("settings:auto.data_path_saved"), "success");
     await waitForStorageRestart(result.data_dir);
   } catch (error) {
     setButtonBusy(button, false);
-    notify(error.message || "数据路径保存失败", "error");
+    notify(error.message || tr("settings:auto.data_path_failed"), "error");
   }
 }
 
@@ -105,7 +105,10 @@ async function waitForStorageRestart(expectedDataDir) {
   for (let attempt = 0; attempt < 60; attempt += 1) {
     try {
       const response = await fetch(`/api/desktop-settings?restart=${Date.now()}`, {cache:"no-store"});
-      if (response.ok) {
+      if (!response.ok) {
+        const responseError = await apiErrorFromResponse(response, tr("settings:auto.restart_timeout"));
+        if (response.status >= 400 && response.status < 500 && ![404, 409].includes(response.status)) throw responseError;
+      } else {
         const value = await response.json();
         const dataDir = value.storage?.data_dir || value.paths?.dataDir || "";
         if (!expectedDataDir || dataDir === expectedDataDir) {
@@ -116,28 +119,31 @@ async function waitForStorageRestart(expectedDataDir) {
     } catch {}
     await new Promise(resolve => setTimeout(resolve, 500));
   }
-  throw new Error("重启等待超时，请手动刷新页面查看状态");
+  throw new Error(tr("settings:auto.restart_timeout"));
 }
 
 function desktopBehaviorPanelHtml() {
   if (!desktopSettings?.available) return "";
   const settings = desktopSettings.settings || {};
   const xserver = desktopSettings.xserver || {};
-  const xserverState = xserver.available ? `已就绪${xserver.display ? ` · ${xserver.display}` : ""}` : xserver.installed ? "可启动" : "未安装";
+  const displaySuffix = xserver.display ? ` · ${xserver.display}` : "";
+  const xserverState = xserver.available
+    ? tr("settings:auto.xserver_ready", {display:displaySuffix, defaultValue:`已就绪${displaySuffix}`})
+    : tr(xserver.installed ? "settings:storage.xserver_startable" : "settings:auto.not_installed");
   return `<section class="desktop-settings-section">
-    <h3>桌面端行为</h3>
-    <div class="muted">这些选项只在本机桌面版显示。</div>
+    <h3>${esc(tr("settings:auto.desktop_behavior"))}</h3>
+    <div class="muted">${esc(tr("settings:auto.desktop_behavior_hint"))}</div>
     <div class="desktop-settings-grid">
       <div class="desktop-toggle-list">
-        <label class="check-row"><input id="desktopOpenAtLogin" type="checkbox" ${settings.openAtLogin ? "checked" : ""}> 开机后自动启动桌面端</label>
-        <label class="check-row"><input id="desktopMinimizeToTray" type="checkbox" ${settings.minimizeToTray ? "checked" : ""}> 关闭窗口时最小化到托盘</label>
-        <label class="check-row"><input id="desktopStartMinimized" type="checkbox" ${settings.startMinimizedToTray ? "checked" : ""}> 开机自动启动时静默到托盘</label>
-        <label class="check-row"><input id="desktopStartupNotification" type="checkbox" ${settings.showStartupNotification ? "checked" : ""}> 启动完成后显示系统通知</label>
-        <label class="check-row"><input id="desktopXServerAutoStart" type="checkbox" ${settings.xServerAutoStart !== false ? "checked" : ""}> 启动 Terma 时自动准备 X Server</label>
+        <label class="check-row"><input id="desktopOpenAtLogin" type="checkbox" ${settings.openAtLogin ? "checked" : ""}> ${esc(tr("settings:auto.open_at_login"))}</label>
+        <label class="check-row"><input id="desktopMinimizeToTray" type="checkbox" ${settings.minimizeToTray ? "checked" : ""}> ${esc(tr("settings:auto.minimize_to_tray"))}</label>
+        <label class="check-row"><input id="desktopStartMinimized" type="checkbox" ${settings.startMinimizedToTray ? "checked" : ""}> ${esc(tr("settings:auto.start_minimized"))}</label>
+        <label class="check-row"><input id="desktopStartupNotification" type="checkbox" ${settings.showStartupNotification ? "checked" : ""}> ${esc(tr("settings:auto.startup_notification"))}</label>
+        <label class="check-row"><input id="desktopXServerAutoStart" type="checkbox" ${settings.xServerAutoStart !== false ? "checked" : ""}> ${esc(tr("settings:auto.prepare_xserver"))}</label>
       </div>
     </div>
-    <div class="desktop-runtime-row"><span>${icon(xserver.available ? "circle-check" : xserver.installed ? "circle-pause" : "circle-alert")}<b>X Server</b><small>${esc(xserverState)}</small></span><button type="button" onclick="openXServerManager()">${icon("x11")}<span>管理</span></button></div>
-    <div class="actions"><button id="desktopSettingsSaveBtn" class="primary" type="button" onclick="saveDesktopSettings(this)">${icon("save")}<span>保存桌面行为</span></button></div>
+    <div class="desktop-runtime-row"><span>${icon(xserver.available ? "circle-check" : xserver.installed ? "circle-pause" : "circle-alert")}<b>X Server</b><small>${esc(xserverState)}</small></span><button type="button" onclick="openXServerManager()">${icon("x11")}<span>${esc(tr("settings:storage.manage"))}</span></button></div>
+    <div class="actions"><button id="desktopSettingsSaveBtn" class="primary" type="button" onclick="saveDesktopSettings(this)">${icon("save")}<span>${esc(tr("settings:auto.save_desktop_behavior"))}</span></button></div>
   </section>`;
 }
 
@@ -154,7 +160,7 @@ async function chooseDesktopDataDirectory() {
       const input = $("desktopCustomDataDir");
       if (result.path && input) input.value = result.path;
     });
-  } catch (error) { notify(error.message || "目录选择失败", "error"); }
+  } catch (error) { notify(error.message || tr("settings:auto.directory_choose_failed"), "error"); }
 }
 
 function desktopStoragePathChanged() {
@@ -168,12 +174,12 @@ function desktopStoragePathChanged() {
 async function chooseDesktopStorageMigration() {
   if (!desktopStoragePathChanged()) return "unchanged";
   return chooseModal(
-    "更改数据路径",
-    "是否立即把当前连接、设置、日志和 Terma 管理的 SSH 密钥复制到新路径？迁移完成后会重启，原目录仍会保留用于回退。仅切换路径不会删除旧数据，但新位置可能显示为空。",
+    tr("settings:auto.change_data_path"),
+    tr("settings:storage.migration_question"),
     [
-      {label:"迁移并重启", value:"migrate", className:"primary"},
-      {label:"仅切换并重启", value:"switch"},
-      {label:"取消", value:"cancel"}
+      {label:tr("settings:auto.migrate_restart"), value:"migrate", className:"primary"},
+      {label:tr("settings:auto.switch_restart"), value:"switch"},
+      {label:tr("common:actions.cancel"), value:"cancel"}
     ]
   );
 }
@@ -182,7 +188,7 @@ async function saveDesktopSettings(button=$("desktopSettingsSaveBtn")) {
   const migrationChoice = await chooseDesktopStorageMigration();
   if (migrationChoice === "cancel") return;
   try {
-    setButtonBusy(button, true, "正在保存");
+    setButtonBusy(button, true, tr("settings:storage.saving"));
     const result = await api("/api/desktop-settings", {method:"PUT", body:JSON.stringify({
       dataMode:$("desktopDataMode").value,
       customDataDir:$("desktopCustomDataDir").value.trim(),
@@ -193,9 +199,9 @@ async function saveDesktopSettings(button=$("desktopSettingsSaveBtn")) {
       showStartupNotification:$("desktopStartupNotification").checked,
       xServerAutoStart:$("desktopXServerAutoStart").checked
     })});
-    notify(result.migration_requested ? "正在迁移数据，完成后 Terma 会自动重启" : "桌面设置已保存，Terma 正在重启", "success");
+    notify(tr(result.migration_requested ? "settings:auto.migrating_data" : "settings:auto.desktop_settings_restarting"), "success");
   } catch (error) {
     setButtonBusy(button, false);
-    notify(error.message || "桌面设置保存失败", "error");
+    notify(error.message || tr("settings:auto.desktop_settings_failed"), "error");
   }
 }

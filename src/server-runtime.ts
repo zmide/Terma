@@ -300,6 +300,7 @@ function createServerRuntime(options: any = {}) {
   }
 
   function runtimeSettingsView() {
+    const settingsPersisted = fs.existsSync(RUNTIME_SETTINGS_FILE);
     const persisted = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
     const actualHosts = args.actual_hosts || args.listen_hosts;
     const actualPort = args.actual_port || args.port;
@@ -309,6 +310,7 @@ function createServerRuntime(options: any = {}) {
     const effective = {listen_hosts:[...(actualHosts || [])], listen_port:actualPort, sources};
     return {
       ...saved,
+      settings_persisted:settingsPersisted,
       saved,
       effective,
       sources,

@@ -1,4 +1,5 @@
 import { IncomingMessage, ServerResponse } from "node:http";
+import { publicError, publicErrorBody } from "../public-error";
 
 const DESKTOP_INTEGRATION_SCOPES = new Set(["xserver", "remote-client"]);
 
@@ -32,12 +33,58 @@ function normalizeDesktopIntegrationScopes(value: unknown): string[] {
 function normalizeDesktopIntegrationDuration(value: any = {}) {
   const mode = String(value.authorization_mode || "timed").trim().toLowerCase();
   if (mode === "browser-session") return { mode, durationMinutes:0, browserSession:true };
-  if (mode !== "timed") throw new Error("桌面集成授权时长类型无效");
+  if (mode !== "timed") throw publicError("DESKTOP_AUTH_DURATION_MODE_INVALID", "桌面集成授权时长类型无效");
   const durationMinutes = value.duration_minutes === undefined ? 10 : Number(value.duration_minutes);
   if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 480) {
-    throw new Error("桌面集成授权时长必须是 1 到 480 分钟");
+    throw publicError("DESKTOP_AUTH_DURATION_INVALID", "桌面集成授权时长必须是 1 到 480 分钟", { min:1, max:480 });
   }
   return { mode, durationMinutes, browserSession:false };
+}
+
+function xServerDiagnosticsReasonCode(diagnostics: any = {}, platform: NodeJS.Platform = process.platform): string {
+  const explicit = String(diagnostics?.reason_code || "").trim().toLowerCase();
+  if (/^[a-z][a-z0-9_]{0,79}$/.test(explicit)) return explicit;
+  const resolvedPlatform = String(diagnostics?.platform || platform || "").trim().toLowerCase();
+  if (resolvedPlatform === "win32") {
+    if (diagnostics?.available) return "xserver_ready";
+    if (diagnostics?.running) return "xserver_display_unavailable";
+    if (diagnostics?.installed) return "xserver_installed_stopped";
+    return "xserver_runtime_missing";
+  }
+  if (resolvedPlatform === "darwin") {
+    if (diagnostics?.available) return "xquartz_ready";
+    if (diagnostics?.running) return "xquartz_display_unavailable";
+    if (diagnostics?.installed) return "xquartz_installed_stopped";
+    return "xquartz_not_installed";
+  }
+  if (resolvedPlatform === "linux") {
+    if (diagnostics?.available) {
+      return diagnostics?.xdmcp_available === false
+        ? "linux_x11_ready_xephyr_missing"
+        : "linux_x11_ready";
+    }
+    if (diagnostics?.running || diagnostics?.display) return "linux_xauth_missing";
+    return "linux_display_missing";
+  }
+  return "xserver_unavailable";
+}
+
+function withXServerDiagnosticsReasonContract(
+  diagnostics: any = {},
+  platform: NodeJS.Platform = process.platform,
+  reasonCode = ""
+) {
+  const normalized = diagnostics && typeof diagnostics === "object" && !Array.isArray(diagnostics)
+    ? diagnostics
+    : {};
+  return {
+    ...normalized,
+    reason_code:reasonCode || xServerDiagnosticsReasonCode(normalized, platform),
+    reason_params:normalized.reason_params && typeof normalized.reason_params === "object" && !Array.isArray(normalized.reason_params)
+      ? normalized.reason_params
+      : {},
+    reason_preserve_message:normalized.reason_preserve_message === true
+  };
 }
 
 export function desktopIntegrationStatus(
@@ -90,6 +137,9 @@ export function xServerDiagnosticsWithoutDesktopIntegration(
       ? "当前浏览器会话没有桌面集成权限。X Server 正在运行，但启动、停止和本机程序调用只能在 Terma 桌面端执行。"
       : "当前浏览器会话没有桌面集成权限。请在 Terma 桌面端确认临时授权后，再启动 X Server 或调用本机程序。"
     : "当前连接的是独立 Web/测试后端，无法读取运行 Terma 桌面设备上的 X Server";
+  const reasonCode = authorizationRequired
+    ? running ? "desktop_xserver_authorization_required_running" : "desktop_xserver_authorization_required"
+    : "desktop_xserver_standalone_unavailable";
   return {
     platform,
     desktop:false,
@@ -110,7 +160,10 @@ export function xServerDiagnosticsWithoutDesktopIntegration(
     server:String(serverSide?.server || ""),
     display:String(serverSide?.display || ""),
     reason,
-    server_side:serverSide
+    reason_code:reasonCode,
+    reason_params:{},
+    reason_preserve_message:false,
+    server_side:withXServerDiagnosticsReasonContract(serverSide, platform)
   };
 }
 
@@ -174,7 +227,7 @@ export async function handleDesktopIntegrationRoutes(
     const requestedScopes = normalizeDesktopIntegrationScopes(data.scopes);
     const duration = normalizeDesktopIntegrationDuration(data);
     if (!requestedScopes.length) {
-      dependencies.sendJson(response, {error:"没有可申请的桌面集成能力"}, 400);
+      dependencies.sendJson(response, publicErrorBody("DESKTOP_AUTH_SCOPE_EMPTY", "没有可申请的桌面集成能力"), 400);
       return true;
     }
     if (current.native_desktop || requestedScopes.every(scope => current.scopes.includes(scope))) {
@@ -182,15 +235,15 @@ export async function handleDesktopIntegrationRoutes(
       return true;
     }
     if (!desktopIntegration?.confirmDesktopBrowserAuthorization) {
-      dependencies.sendJson(response, {error:"当前后端没有可确认授权的 Terma 桌面端"}, 409);
+      dependencies.sendJson(response, publicErrorBody("DESKTOP_AUTH_BACKEND_UNAVAILABLE", "当前后端没有可确认授权的 Terma 桌面端"), 409);
       return true;
     }
     if (!current.direct_loopback) {
-      dependencies.sendJson(response, {error:"桌面集成临时授权只允许从本机浏览器申请"}, 403);
+      dependencies.sendJson(response, publicErrorBody("DESKTOP_AUTH_LOCAL_BROWSER_ONLY", "桌面集成临时授权只允许从本机浏览器申请"), 403);
       return true;
     }
     if (!current.web_session_authenticated) {
-      dependencies.sendJson(response, {error:"请先使用 Web 密码或访问 Token 登录，再申请桌面集成授权"}, 401);
+      dependencies.sendJson(response, publicErrorBody("DESKTOP_AUTH_LOGIN_REQUIRED", "请先使用 Web 密码或访问 Token 登录，再申请桌面集成授权"), 401);
       return true;
     }
     const scopes = [...new Set([...current.scopes, ...requestedScopes])];
@@ -282,12 +335,12 @@ export async function handleDesktopIntegrationRoutes(
 
   if (method === "POST" && pathname === "/api/remote-clients/install") {
     if (!dependencies.isDesktopCapabilityRequest(request, "remote-client") || !desktopIntegration?.installRemoteClient) {
-      dependencies.sendJson(response, {error:"客户端只能由获得临时授权的本机浏览器或 Terma 桌面端安装"}, 403);
+      dependencies.sendJson(response, publicErrorBody("DESKTOP_REMOTE_CLIENT_INSTALL_FORBIDDEN", "客户端只能由获得临时授权的本机浏览器或 Terma 桌面端安装"), 403);
       return true;
     }
     const protocol = String((await dependencies.readJson(request)).protocol || "").toLowerCase();
     if (protocol !== "rdp") {
-      dependencies.sendJson(response, {error:"当前只支持安装 RDP 客户端"}, 400);
+      dependencies.sendJson(response, publicErrorBody("DESKTOP_REMOTE_CLIENT_PROTOCOL_UNSUPPORTED", "当前只支持安装 RDP 客户端", { protocol }), 400);
       return true;
     }
     dependencies.sendJson(response, await Promise.resolve(desktopIntegration.installRemoteClient(protocol)));
@@ -296,7 +349,7 @@ export async function handleDesktopIntegrationRoutes(
 
   if (method === "POST" && pathname === "/api/xserver/install") {
     if (!dependencies.isDesktopCapabilityRequest(request, "xserver")) {
-      dependencies.sendJson(response, {error:"图形组件只能由获得临时授权的本机浏览器或 Terma 桌面端安装"}, 403);
+      dependencies.sendJson(response, publicErrorBody("DESKTOP_GRAPHICS_INSTALL_FORBIDDEN", "图形组件只能由获得临时授权的本机浏览器或 Terma 桌面端安装"), 403);
       return true;
     }
     if (platform === "darwin" && desktopIntegration?.installXQuartz) {
@@ -307,7 +360,7 @@ export async function handleDesktopIntegrationRoutes(
       dependencies.sendJson(response, await Promise.resolve(desktopIntegration.installLinuxGraphicsComponents()));
       return true;
     }
-    dependencies.sendJson(response, {error:"当前平台没有可自动安装的图形组件"}, 403);
+    dependencies.sendJson(response, publicErrorBody("DESKTOP_GRAPHICS_INSTALL_UNAVAILABLE", "当前平台没有可自动安装的图形组件", { platform }), 403);
     return true;
   }
 
@@ -321,7 +374,10 @@ export async function handleDesktopIntegrationRoutes(
     if (method === "GET") {
       if (authorized && desktopIntegration?.xServerDiagnostics) {
         dependencies.sendJson(response, {
-          ...(await Promise.resolve(desktopIntegration.xServerDiagnostics())),
+          ...withXServerDiagnosticsReasonContract(
+            await Promise.resolve(desktopIntegration.xServerDiagnostics()),
+            platform
+          ),
           ...scopedIntegration,
           desktop:true,
           integration_available:true
@@ -337,18 +393,24 @@ export async function handleDesktopIntegrationRoutes(
     }
     if (method === "POST") {
       if (!dependencies.isDesktopCapabilityRequest(request, "xserver") || !desktopIntegration?.startXServer) {
-        dependencies.sendJson(response, {error:"X Server 只能由获得临时授权的本机浏览器或 Terma 桌面端启动"}, 403);
+        dependencies.sendJson(response, publicErrorBody("DESKTOP_XSERVER_START_FORBIDDEN", "X Server 只能由获得临时授权的本机浏览器或 Terma 桌面端启动"), 403);
         return true;
       }
-      dependencies.sendJson(response, await Promise.resolve(desktopIntegration.startXServer()));
+      dependencies.sendJson(response, withXServerDiagnosticsReasonContract(
+        await Promise.resolve(desktopIntegration.startXServer()),
+        platform
+      ));
       return true;
     }
     if (method === "DELETE") {
       if (!dependencies.isDesktopCapabilityRequest(request, "xserver") || !desktopIntegration?.stopXServer) {
-        dependencies.sendJson(response, {error:"X Server 只能由获得临时授权的本机浏览器或 Terma 桌面端停止"}, 403);
+        dependencies.sendJson(response, publicErrorBody("DESKTOP_XSERVER_STOP_FORBIDDEN", "X Server 只能由获得临时授权的本机浏览器或 Terma 桌面端停止"), 403);
         return true;
       }
-      dependencies.sendJson(response, await Promise.resolve(desktopIntegration.stopXServer()));
+      dependencies.sendJson(response, withXServerDiagnosticsReasonContract(
+        await Promise.resolve(desktopIntegration.stopXServer()),
+        platform
+      ));
       return true;
     }
   }

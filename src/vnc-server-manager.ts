@@ -1,4 +1,5 @@
 const { buildRemotePosixCommand } = require("./remote-posix");
+const { publicError } = require("./public-error");
 const { componentInstallCommand, componentInstallPlan } = require("./remote-component-installer");
 const { connectVncSocket } = require("./vnc-handshake");
 const { XRDP_RENDER_PROBE_SCRIPT, createVncRenderingDiagnostics } = require("./remote-graphics-rendering");
@@ -1337,15 +1338,15 @@ function firewallPlan(diagnostics: any = {}) {
 function passwordSetupScript(diagnostics: any = {}, password = "", options: any = {}) {
   const sessionUser = validPosixName(diagnostics.session_user) || "root";
   const sessionHome = String(diagnostics.session_home || (sessionUser === "root" ? "/root" : `/home/${sessionUser}`));
-  if (!sessionHome.startsWith("/")) throw new Error("VNC 桌面用户主目录无效");
+  if (!sessionHome.startsWith("/")) throw publicError("VNC_SESSION_HOME_INVALID", "VNC 桌面用户主目录无效");
   const passwordFile = String(diagnostics.password_file || `${sessionHome.replace(/\/$/, "")}/.vnc/passwd`);
-  if (!passwordFile.startsWith("/")) throw new Error("VNC 密码文件路径无效");
+  if (!passwordFile.startsWith("/")) throw publicError("VNC_PASSWORD_FILE_INVALID", "VNC 密码文件路径无效");
   const allowNoPassword = options.allow_no_password === true;
   if (!password && allowNoPassword) return {sessionUser, sessionHome, passwordFile:"", command:"", noPassword:true};
   if (!password && diagnostics.password_file) return {sessionUser, sessionHome, passwordFile, command:"", noPassword:false};
-  if (!password) throw new Error("请提供 VNC 密码，或明确允许以无密码模式启动 VNC 服务");
+  if (!password) throw publicError("VNC_PASSWORD_REQUIRED", "请提供 VNC 密码，或明确允许以无密码模式启动 VNC 服务");
   const commands = new Set((diagnostics.commands || []).map(value => String(value)));
-  if (!commands.has("x11vnc") && !commands.has("vncpasswd")) throw new Error("远端缺少 x11vnc 或 vncpasswd，无法安全创建 VNC 密码文件");
+  if (!commands.has("x11vnc") && !commands.has("vncpasswd")) throw publicError("VNC_PASSWORD_TOOL_UNAVAILABLE", "远端缺少 x11vnc 或 vncpasswd，无法安全创建 VNC 密码文件");
   const encoded = Buffer.from(String(password), "utf8").toString("base64");
   const directory = passwordFile.replace(/\/[^/]+$/, "") || sessionHome;
   const store = commands.has("x11vnc")
@@ -1748,18 +1749,22 @@ function startPlanReason(diagnostics: any = {}) {
   return "没有检测到可自动配置/启动的 VNC 服务方案，请打开手动配置说明";
 }
 
+function vncGuideText(key: string, params: any = {}) {
+  return {key, params};
+}
+
 function manualGuide(diagnostics: any = {}, port = 5900) {
   const targetPort = numericPort(port);
   const platform = String(diagnostics.platform || "unknown").toLowerCase();
   if (platform === "macos") {
     return {
-      title:"macOS VNC 手动开启说明",
-      summary:"macOS 自带屏幕共享/VNC 服务，不需要另外安装 VNC Server。",
+      title:vncGuideText("macos_title"),
+      summary:vncGuideText("macos_summary"),
       steps:[
-        "打开“系统设置 > 通用 > 共享”。",
-        "开启“屏幕共享”；在详细信息中允许本次连接使用的 macOS 账号。",
-        "如使用 VNC 密码，打开屏幕共享的访问设置，启用“VNC 观看者可以使用密码控制屏幕”并设置密码。",
-        `返回 Terma 重新探测 ${targetPort}/TCP；如果仍不可达，请检查 macOS 防火墙和局域网访问权限。`
+        vncGuideText("macos_open_settings"),
+        vncGuideText("macos_enable_sharing"),
+        vncGuideText("macos_password"),
+        vncGuideText("macos_redetect", {port:targetPort})
       ],
       commands:[],
       platform:"macos"
@@ -1767,12 +1772,12 @@ function manualGuide(diagnostics: any = {}, port = 5900) {
   }
   if (platform !== "linux") {
     return {
-      title:"VNC 服务检测/配置说明",
-      summary:"当前 VNC 连接没有可用的 SSH 管理通道，Terma 暂时无法识别远端系统，也无法判断服务是未安装还是未启动。",
+      title:vncGuideText("unknown_title"),
+      summary:vncGuideText("unknown_summary"),
       steps:[
-        "在连接设置中关联同一台主机的 SSH 连接，Terma 才能执行只读探测和临时授权安装。",
-        `也可以在远端手动确认是否有 VNC Server 监听 ${targetPort}/TCP。`,
-        "如果远端是 macOS，请在“系统设置 > 通用 > 共享”中开启“屏幕共享”或“远程管理”；Linux 请使用对应发行版的包管理器安装 x11vnc 或 TigerVNC。"
+        vncGuideText("unknown_link_ssh"),
+        vncGuideText("unknown_check_port", {port:targetPort}),
+        vncGuideText("unknown_platform_help")
       ],
       commands:[],
       platform:"unknown"
@@ -1793,32 +1798,39 @@ function manualGuide(diagnostics: any = {}, port = 5900) {
   const tigerWrapperAvailable = componentState?.wrapper_available === true;
   const installStep = virtualSession
     ? componentState?.manual_only
-      ? "当前只有 Xtigervnc/Xvnc 原始服务器，没有 vncserver/tigervncserver 包装器；请安装完整 TigerVNC Server，或按发行版文档手动创建 X 会话、窗口管理器和认证配置。"
-      : "安装完整 TigerVNC Server 和剪贴板辅助组件后，先为目标账号执行 vncpasswd，再使用 vncserver 创建独立桌面会话。"
-    : "安装 x11vnc 和剪贴板辅助组件后，先执行 x11vnc -storepasswd 创建 VNC 密码文件；Terma 只有在连接设置已保存 VNC 密码时才会自动创建该文件。";
+      ? vncGuideText("linux_install_tigervnc_manual")
+      : vncGuideText("linux_install_tigervnc")
+    : vncGuideText("linux_install_x11vnc");
   const startCommand = virtualSession
     ? tigerWrapperAvailable || !componentState?.manual_only
       ? `vncpasswd ~/.vnc/passwd && vncserver :1 -rfbport ${targetPort} -geometry 1440x900 -localhost no`
       : componentState?.raw_server_available ? `Xtigervnc :1 -rfbport ${targetPort} -geometry 1440x900 -localhost no` : ""
     : `x11vnc -display ${selectedDisplay} -auth $XAUTHORITY -rfbauth ~/.vnc/passwd${manualSharedMemoryArg} -forever -shared -rfbport ${targetPort}`;
   const session = diagnostics.session_active && diagnostics.session_user && diagnostics.display
-    ? `已识别图形会话：${diagnostics.session_user} · DISPLAY ${diagnostics.display}${diagnostics.xauthority ? ` · XAUTHORITY ${diagnostics.xauthority}` : ""}`
-    : "尚未识别到可复用的活动图形会话；如果需要独立桌面，请使用 TigerVNC 和 Linux 桌面管理。";
+    ? vncGuideText("linux_session_detected", {
+        user:String(diagnostics.session_user),
+        display:String(diagnostics.display),
+        xauthority:diagnostics.xauthority ? ` · XAUTHORITY ${diagnostics.xauthority}` : ""
+      })
+    : vncGuideText("linux_session_missing");
+  const componentKey = targetComponent === "tigervnc" ? "tigervnc" : "x11vnc";
   return {
-    title:"Linux VNC 服务安装/配置说明",
+    title:vncGuideText("linux_title"),
     summary:componentState?.install_required
-      ? componentState.reason
+      ? vncGuideText("linux_component_install_required", {component_key:componentKey})
       : componentState?.installed
-        ? (start ? `已检测到${componentState.label}，当前端口没有可用监听；Terma 可以尝试配置并启动，或按下面命令手动操作。` : `已检测到${componentState.label}，但当前没有可自动启动的服务方案；请按下面命令手动配置。`)
-        : `当前主机没有检测到${componentState.label}；可以使用 Terma 临时管理员授权安装，或在终端手动安装。`,
+        ? (start
+          ? vncGuideText("linux_installed_stopped", {component_key:componentKey})
+          : vncGuideText("linux_installed_manual", {component_key:componentKey}))
+        : vncGuideText("linux_component_missing", {component_key:componentKey}),
     steps:[
       session,
       installStep,
       virtualSession
-        ? "独立虚拟桌面不依赖当前物理屏幕或 XRDP 会话；请确认 Linux 桌面启动命令可用，并为目标账号保留 ~/.vnc 配置。"
-        : `在已有图形桌面上启动 x11vnc，并确认 DISPLAY=${selectedDisplay} 和 XAUTHORITY 指向当前桌面。`,
-      `确认服务监听 ${targetPort}/TCP，再在 Terma 中重新探测。`,
-      "Linux X11 中文剪贴板需要 xclip/xsel；Wayland 会话需要 wl-clipboard。缺少这些工具时，Terma 会保留手动同步，但不会把中文降级成问号。"
+        ? vncGuideText("linux_virtual_session")
+        : vncGuideText("linux_shared_session", {display:selectedDisplay}),
+      vncGuideText("linux_redetect", {port:targetPort}),
+      vncGuideText("linux_clipboard")
     ],
     commands:[install, ...(offlineInstall ? [offlineInstall] : []), startCommand].filter(Boolean).concat(firewall ? [firewall] : []),
     install_plan:packages?.component_plan || null,
@@ -1832,8 +1844,16 @@ function manualGuide(diagnostics: any = {}, port = 5900) {
 }
 
 async function detectVncServer(profile: any, dependencies: any = {}) {
-  const sourceId = Number(profile?.options?.source_ssh_connection_id || profile?.options?.ssh_connection_id || 0);
-  const connection = sourceId && dependencies.getConnection ? dependencies.getConnection(sourceId) : null;
+  let connection = null;
+  let managementError: any = null;
+  if (dependencies.getConnection && dependencies.listConnections) {
+    try {
+      const { resolveManagementConnection } = require("./xdmcp-server-core");
+      connection = resolveManagementConnection(profile, dependencies);
+    } catch (error) {
+      managementError = error;
+    }
+  }
   if (!connection || !dependencies.runSshCommandForConnection) {
     return {
       diagnostics_available:false,
@@ -1842,6 +1862,9 @@ async function detectVncServer(profile: any, dependencies: any = {}) {
       status:"unknown",
       recommended_action:"guide",
       can_install:false,
+      ssh_error:String(managementError?.message || ""),
+      code:String(managementError?.code || ""),
+      remote_profile_id:Number(profile?.id || 0),
       ssh_connection:null,
       guide:manualGuide({platform:"unknown"}, profile?.port)
     };
@@ -1948,7 +1971,7 @@ async function detectVncServer(profile: any, dependencies: any = {}) {
 
 async function testVncProfile(id: number, dependencies: any = {}) {
   const profile = dependencies.getRemoteProfile ? dependencies.getRemoteProfile(id) : null;
-  if (!profile) throw new Error("VNC 连接不存在");
+  if (!profile) throw publicError("VNC_PROFILE_NOT_FOUND", "VNC 连接不存在");
   const port = numericPort(profile.port);
   const endpoint = formatRemoteEndpoint(profile.host, port);
   const diagnosticsPromise = detectVncServer(profile, dependencies).catch(error => ({

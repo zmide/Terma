@@ -107,6 +107,7 @@ function createLocalFilesUiModel() {
     icon:name => `<i data-icon="${name}"></i>`,
     esc:value => String(value ?? ""),
     escAttr:value => String(value ?? ""),
+    tr:(key, options={}) => options.defaultValue || key,
     isMobileLayout:() => false,
     notify(message, type) { notifications.push({message, type}); },
     showActionMenu(_event, actions) { capturedMenu = actions; },
@@ -453,8 +454,10 @@ async function main() {
   assert.match(sftpUiSource, /async function dropSftpItemsOnTab\([\s\S]*?readLocalFileDragPayload\(event\?\.dataTransfer\)[\s\S]*?uploadLocalFilesToSftp\(localPayload, target, tabKey\)/);
   assert.match(sftpUiSource, /function handleSftpTabDragOver\([\s\S]*?workspaceTabByKey\(tabKey\)/, "分屏标签拖入必须通过工作区模型解析目标标签");
   assert.match(sftpUiSource, /function handleLocalFileDragOverSftp\([\s\S]*?workspaceTabByKey\(tabKey\)/, "分屏 SFTP 内容区拖入必须通过工作区模型解析目标标签");
-  assert.match(terminalUiSource, /mount\.addEventListener\("drop", async event => \{[\s\S]*?readLocalFileDragPayload\(event\.dataTransfer\)[\s\S]*?session\.currentDirectoryKnown[\s\S]*?initializeTerminalDirectory\(session, connection, key\)[\s\S]*?uploadLocalFilesToSftp\(localPayload, \{kind:"terminal", id:connection\.id, title:`终端：\$\{directory\}`, path:directory\}, key\)/);
-  assert.match(sftpUiSource, /<span class="pager-count">[\s\S]*?<select aria-label="每页数量" onchange="setSftpPageSize/);
+  assert.match(terminalUiSource, /mount\.addEventListener\("drop", async event => \{[\s\S]*?readLocalFileDragPayload\(event\.dataTransfer\)/);
+  assert.match(terminalUiSource, /session\.currentDirectoryKnown[\s\S]*?initializeTerminalDirectory\(session, connection, key\)/);
+  assert.match(terminalUiSource, /uploadLocalFilesToSftp\(localPayload, \{kind:"terminal", id:connection\.id, title:tr\("terminal:drop\.target_title", \{directory,[\s\S]*?path:directory\}, key\)/);
+  assert.match(sftpUiSource, /<span class="pager-count">[\s\S]*?<select aria-label="\$\{escAttr\(tr\("sftp:auto\.page_size"\)\)\}" onchange="setSftpPageSize/);
 
   assert.match(css, /\.local-files-list > \.sftp-pager-dock \{[^}]*position:sticky;[^}]*bottom:0;/);
   assert.match(css, /\.local-files-column-resize::before \{[^}]*background:var\(--column-divider/, "本地文件列调整竖线必须使用统一分隔线颜色");

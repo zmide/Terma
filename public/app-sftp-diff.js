@@ -81,8 +81,8 @@ function setSftpEditorDiffVisible(workspace, splitter, preview, visible) {
 
 function sftpDiffDisplayTime(value) {
   const timestamp = Number(value || 0);
-  if (!timestamp) return "时间未知";
-  return new Date(timestamp).toLocaleString("zh-CN", {hour12:false});
+  if (!timestamp) return tr("sftp:diff.time_unknown", {defaultValue:"时间未知"});
+  return new Date(timestamp).toLocaleString(document.documentElement.lang || "zh-CN", {hour12:false});
 }
 
 function sftpDiffPartLines(value) {
@@ -101,14 +101,14 @@ function sftpDiffViewerHtml(oldText, newText, options={}) {
   const previous = String(oldText || "");
   const current = String(newText || "");
   if (previous.length + current.length > SFTP_DIFF_MAX_CHARS) {
-    return `<div class="sftp-diff-unavailable">用于比较的文本超过 ${formatBytes(SFTP_DIFF_MAX_CHARS)}，已停止计算以避免界面卡顿；文件仍可正常编辑和保存。</div>`;
+    return `<div class="sftp-diff-unavailable">${esc(tr("sftp:diff.text_too_large", {limit:formatBytes(SFTP_DIFF_MAX_CHARS), defaultValue:`用于比较的文本超过 ${formatBytes(SFTP_DIFF_MAX_CHARS)}，已停止计算以避免界面卡顿；文件仍可正常编辑和保存。`}))}</div>`;
   }
   const parts = window.Diff?.diffLines?.(previous, current, {
     stripTrailingCr:true,
     timeout:1500,
     maxEditLength:20000
   });
-  if (!parts) return `<div class="sftp-diff-unavailable">文件差异过大，已停止计算以避免界面卡顿。</div>`;
+  if (!parts) return `<div class="sftp-diff-unavailable">${esc(tr("sftp:diff.difference_too_large", {defaultValue:"文件差异过大，已停止计算以避免界面卡顿。"}))}</div>`;
   const rows = [];
   let oldLine = 1;
   let newLine = 1;
@@ -123,7 +123,7 @@ function sftpDiffViewerHtml(oldText, newText, options={}) {
     const hidden = lines.length - 8;
     oldLine += hidden;
     newLine += hidden;
-    rows.push(`<div class="sftp-diff-collapsed"><span>${hidden} 行未变化</span></div>`);
+    rows.push(`<div class="sftp-diff-collapsed"><span>${esc(tr("sftp:diff.unchanged_lines", {count:hidden, defaultValue:`${hidden} 行未变化`}))}</span></div>`);
     for (const line of lines.slice(-4)) if (!appendPair(line, line)) return false;
     return true;
   };
@@ -144,9 +144,9 @@ function sftpDiffViewerHtml(oldText, newText, options={}) {
     }
     if (rows.length >= SFTP_DIFF_MAX_ROWS) break;
   }
-  if (rows.length >= SFTP_DIFF_MAX_ROWS) rows.push(`<div class="sftp-diff-collapsed"><span>只显示前 ${SFTP_DIFF_MAX_ROWS} 行，请使用外部对比工具查看完整内容</span></div>`);
+  if (rows.length >= SFTP_DIFF_MAX_ROWS) rows.push(`<div class="sftp-diff-collapsed"><span>${esc(tr("sftp:diff.row_limit", {count:SFTP_DIFF_MAX_ROWS, defaultValue:`只显示前 ${SFTP_DIFF_MAX_ROWS} 行，请使用外部对比工具查看完整内容`}))}</span></div>`);
   const changed = parts.some(part => part.added || part.removed);
-  return `<div class="sftp-side-diff${changed ? "" : " no-changes"}"><div class="sftp-diff-columns"><strong>${esc(options.oldLabel || "旧版本")}</strong><strong>${esc(options.newLabel || "新版本")}</strong></div>${changed ? rows.join("") : `<div class="sftp-diff-unavailable">两个版本内容相同。</div>`}</div>`;
+  return `<div class="sftp-side-diff${changed ? "" : " no-changes"}"><div class="sftp-diff-columns"><strong>${esc(options.oldLabel || tr("sftp:diff.old_version", {defaultValue:"旧版本"}))}</strong><strong>${esc(options.newLabel || tr("sftp:diff.new_version", {defaultValue:"新版本"}))}</strong></div>${changed ? rows.join("") : `<div class="sftp-diff-unavailable">${esc(tr("sftp:diff.same_content", {defaultValue:"两个版本内容相同。"}))}</div>`}</div>`;
 }
 
 function openSftpExternalComparison(session, comparison) {
@@ -155,10 +155,13 @@ function openSftpExternalComparison(session, comparison) {
     const conflict = session.status === "conflict";
     modal.hidden = false;
     modal.innerHTML = `<div class="modal-card sftp-comparison-modal" role="dialog" aria-modal="true">
-      <div class="sftp-comparison-head"><div><h2>${esc(comparison.remote_path || session.remote_path)}</h2><span>覆盖前请确认左右两侧的变化</span></div><button class="icon-button" data-sftp-compare-choice="" title="关闭" aria-label="关闭">${icon("x")}</button></div>
-      <div class="sftp-comparison-meta"><span><b>远端当前版本</b>${esc(sftpDiffDisplayTime(comparison.remote_changed_at))} · ${esc(formatBytes(comparison.old_size || 0))}</span><span><b>外部编辑内容</b>${esc(sftpDiffDisplayTime(comparison.local_changed_at))} · ${esc(formatBytes(comparison.new_size || 0))}</span></div>
-      <div class="sftp-comparison-body">${sftpDiffViewerHtml(comparison.old_text, comparison.new_text, {oldLabel:comparison.old_label, newLabel:comparison.new_label})}</div>
-      <div class="actions sftp-comparison-actions"><button class="danger" data-sftp-compare-choice="${conflict ? "overwrite" : "save"}">${conflict ? "覆盖并备份远端" : "保存到远端"}</button><button data-sftp-compare-choice="save_as">另存为</button><button data-sftp-compare-choice="cancel">取消</button></div>
+      <div class="sftp-comparison-head"><div><h2>${esc(comparison.remote_path || session.remote_path)}</h2><span>${esc(tr("sftp:diff.confirm_changes", {defaultValue:"覆盖前请确认左右两侧的变化"}))}</span></div><button class="icon-button" data-sftp-compare-choice="" title="${escAttr(tr("sftp:diff.close", {defaultValue:"关闭"}))}" aria-label="${escAttr(tr("sftp:diff.close", {defaultValue:"关闭"}))}">${icon("x")}</button></div>
+      <div class="sftp-comparison-meta"><span><b>${esc(tr("sftp:diff.remote_current", {defaultValue:"远端当前版本"}))}</b>${esc(sftpDiffDisplayTime(comparison.remote_changed_at))} · ${esc(formatBytes(comparison.old_size || 0))}</span><span><b>${esc(tr("sftp:diff.external_content", {defaultValue:"外部编辑内容"}))}</b>${esc(sftpDiffDisplayTime(comparison.local_changed_at))} · ${esc(formatBytes(comparison.new_size || 0))}</span></div>
+      <div class="sftp-comparison-body">${sftpDiffViewerHtml(comparison.old_text, comparison.new_text, {
+        oldLabel:tr("sftp:diff.remote_current", {defaultValue:"远端当前版本"}),
+        newLabel:tr("sftp:diff.external_content", {defaultValue:"外部编辑内容"})
+      })}</div>
+      <div class="actions sftp-comparison-actions"><button class="danger" data-sftp-compare-choice="${conflict ? "overwrite" : "save"}">${esc(tr(conflict ? "sftp:diff.overwrite_and_backup" : "sftp:diff.save_remote", {defaultValue:conflict ? "覆盖并备份远端" : "保存到远端"}))}</button><button data-sftp-compare-choice="save_as">${esc(tr("sftp:diff.save_as", {defaultValue:"另存为"}))}</button><button data-sftp-compare-choice="cancel">${esc(tr("sftp:diff.cancel", {defaultValue:"取消"}))}</button></div>
     </div>`;
     refreshIcons();
     let done = false;

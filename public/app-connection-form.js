@@ -4,7 +4,7 @@ function connPayload(form=$("connectionForm"), validateStartup=false) {
   const passwordAuth = field("conn_auth_type").value === "password";
   const selectedKey = field("conn_key");
   if (!passwordAuth && selectedKey?.selectedOptions?.[0]?.dataset?.legacyUnsafe === "1") {
-    throw new Error(connectionFormIdentityWarning(form) || IDENTITY_FILE_UNSAFE_FALLBACK);
+    throw new Error(connectionFormIdentityWarning(form) || connectionIdentityUnsafeFallback());
   }
   const startup = connectionTerminalFormConfig(form);
   if (validateStartup && startup.terminal_startup_mode === "program" && !startup.terminal_program_path) {
@@ -12,12 +12,12 @@ function connPayload(form=$("connectionForm"), validateStartup=false) {
     const programPath = field("conn_terminal_program_path");
     programPath?.focus({preventScroll:true});
     programPath?.scrollIntoView({block:"center", behavior:"smooth"});
-    throw new Error("请填写要在远端启动的程序完整路径");
+    throw new Error(tr("connections:form.program_path_required", {defaultValue:"请填写要在远端启动的程序完整路径"}));
   }
   return {
     id:field("conn_id").value,
     name:field("conn_name").value.trim(),
-    group_name:(groupValue === "__new_group__" ? pendingGroup : groupValue).trim()||"默认分组",
+    group_name:(groupValue === "__new_group__" ? pendingGroup : groupValue).trim()||TERMA_DEFAULT_CONNECTION_GROUP,
     ssh_user:field("conn_user").value.trim(),
     ssh_host:field("conn_host").value.trim(),
     ssh_port:Number(field("conn_port").value||22),
@@ -46,7 +46,7 @@ function renderJumpConnectionOptions(selected="", currentId=0) {
   if (!select) return;
   const items = connections.filter(item => Number(item.id) !== Number(currentId) && !item.jump_connection_id);
   select.replaceChildren(
-    new Option("直接连接", ""),
+    new Option(tr("connections:auto.direct", {defaultValue:"直接连接"}), ""),
     ...items.map(item => new Option(`${item.name} · ${item.ssh_user}@${item.ssh_host}:${item.ssh_port}`, String(item.id)))
   );
   select.value = selected ? String(selected) : "";
@@ -68,22 +68,22 @@ function toggleAuthFields() {
   }
   const x11 = $("conn_x11_mode");
   if (x11) x11.title = password
-    ? "X11 图形转发由内置 SSH 使用已保存密码建立"
-    : "X11 图形转发默认由内置 SSH 建立，必要时安全回退系统 OpenSSH";
+    ? tr("connections:form.x11_password_hint", {defaultValue:"X11 图形转发由内置 SSH 使用已保存密码建立"})
+    : tr("connections:form.x11_key_hint", {defaultValue:"X11 图形转发默认由内置 SSH 建立，必要时安全回退系统 OpenSSH"});
 }
 
 function groupNames(extra="", kind="all") {
   const items = kind === "ssh" ? connections : kind === "remote" ? remoteProfiles : [...connections, ...remoteProfiles];
-  const names = new Set(items.map(c => c.group_name || "默认分组"));
-  names.add("默认分组");
+  const names = new Set(items.map(c => c.group_name || TERMA_DEFAULT_CONNECTION_GROUP));
+  names.add(TERMA_DEFAULT_CONNECTION_GROUP);
   if (extra) names.add(extra);
   return [...names];
 }
 
 function renderGroupOptions(selected="") {
   if (!$("conn_group")) return;
-  const value = selected || pendingGroup || "默认分组";
-  $("conn_group").innerHTML = groupNames(value, "ssh").map(name => `<option value="${esc(name)}">${esc(name)}</option>`).join("") + `<option value="__new_group__">新增分组...</option>`;
+  const value = selected || pendingGroup || TERMA_DEFAULT_CONNECTION_GROUP;
+  $("conn_group").innerHTML = groupNames(value, "ssh").map(name => `<option value="${esc(name)}">${esc(connectionGroupDisplayName(name))}</option>`).join("") + `<option value="__new_group__">${esc(tr("connections:groups.new_option", {defaultValue:"新增分组..."}))}</option>`;
   $("conn_group").value = value;
   pendingGroupSelectValue = value;
   $("conn_group").onchange = handleGroupSelectChange;
@@ -91,7 +91,7 @@ function renderGroupOptions(selected="") {
 
 function handleGroupSelectChange() {
   if ($("conn_group").value !== "__new_group__") return;
-  $("conn_group").value = pendingGroupSelectValue || "默认分组";
+  $("conn_group").value = pendingGroupSelectValue || TERMA_DEFAULT_CONNECTION_GROUP;
   openGroupModal((name) => {
     pendingGroup = name;
     groupOpen.add(pendingGroup);
@@ -103,12 +103,12 @@ function handleGroupSelectChange() {
 function openGroupModal(onSave) {
   $("modal").hidden = false;
   $("modal").innerHTML = `<div class="modal-card">
-    <h2>新增分组</h2>
-    <label>分组名称</label>
-    <input id="modalGroupName" placeholder="例如：生产环境">
+    <h2>${esc(tr("connections:groups.new_title", {defaultValue:"新增分组"}))}</h2>
+    <label>${esc(tr("connections:groups.name_label", {defaultValue:"分组名称"}))}</label>
+    <input id="modalGroupName" placeholder="${escAttr(tr("connections:groups.placeholder", {defaultValue:"例如：生产环境"}))}">
     <div class="actions">
-      <button class="primary" data-action="connection-group-save">保存</button>
-      <button data-action="connection-modal-close">取消</button>
+      <button class="primary" data-action="connection-group-save">${esc(tr("common:actions.save", {defaultValue:"保存"}))}</button>
+      <button data-action="connection-modal-close">${esc(tr("common:actions.cancel", {defaultValue:"取消"}))}</button>
     </div>
   </div>`;
   window.pendingGroupModalSave = onSave;
@@ -117,7 +117,7 @@ function openGroupModal(onSave) {
 
 function saveGroupModal() {
   const name = $("modalGroupName")?.value.trim();
-  if (!name) return notify("请输入分组名称", "error");
+  if (!name) return notify(tr("connections:groups.name_required", {defaultValue:"请输入分组名称"}), "error");
   const save = window.pendingGroupModalSave;
   closeModal();
   if (save) save(name);
@@ -133,7 +133,7 @@ function resetConnectionForm(){
   if (!$("connectionForm")) return;
   $("connectionForm").reset();
   $("conn_id").value="";
-  renderGroupOptions(pendingGroup || "默认分组");
+  renderGroupOptions(pendingGroup || TERMA_DEFAULT_CONNECTION_GROUP);
   $("conn_port").value=22;
   $("conn_sort_order").value=1;
   $("conn_auth_type").value="key";
@@ -191,13 +191,13 @@ function wireConnectionForm() {
 }
 
 async function saveConnectionForm(clearAfterSave=false, trigger=null, connectAfterSave=false) {
-  if (!requireConfigEncryptionUnlocked("保存 SSH 连接")) return;
+  if (!requireConfigEncryptionUnlocked(tr("connections:form.save_context", {defaultValue:"保存 SSH 连接"}))) return;
   const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   const form = $("connectionForm");
   if (!form || form.dataset.saving === "1") return;
   const sourceTabKey = String(activeTabKey || "");
   form.dataset.saving = "1";
-  if (trigger) setButtonBusy(trigger, true, "保存中...");
+  if (trigger) setButtonBusy(trigger, true, tr("connections:form.saving", {defaultValue:"保存中..."}));
   try {
     if (!await ensureConnectionExtraArgsValid(form)) return;
     const p=connPayload(form, true);
@@ -215,7 +215,7 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null, connectAft
             body:JSON.stringify({protocol:generation})
           });
         } catch (generationError) {
-          notify(`SSH 已保存，但其他连接生成失败：${generationError.message}`, "error");
+          notify(tr("connections:form.generation_failed", {error:generationError.message, defaultValue:`SSH 已保存，但其他连接生成失败：${generationError.message}`}), "error");
         }
       }
     }
@@ -224,7 +224,7 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null, connectAft
       try {
         await linkRemoteProfileSshManagement(remoteProfileLinkId, savedConnectionId);
       } catch (linkError) {
-        notify(`SSH 已保存，但自动关联远程连接失败：${linkError.message}`, "error");
+        notify(tr("connections:form.link_failed", {error:linkError.message, defaultValue:`SSH 已保存，但自动关联远程连接失败：${linkError.message}`}), "error");
       }
     }
     pendingGroup = "";
@@ -234,7 +234,7 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null, connectAft
     if (connectAfterSave && savedConnectionId) {
       if (sourceTabKey && tabs.some(tab => tab.key === sourceTabKey)) closeTabsByKey([sourceTabKey], sourceTabKey);
       openTerminal(savedConnectionId);
-      notify("连接已保存，正在打开终端", "success");
+      notify(tr("connections:form.saved_opening_terminal", {defaultValue:"连接已保存，正在打开终端"}), "success");
     } else if (clearAfterSave && !p.id) {
       let keyLoad = Promise.resolve();
       inPane(() => {
@@ -244,14 +244,18 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null, connectAft
       });
       await keyLoad;
       const generatedCount = generation === "all" ? Number(generated?.created_count || 0) : generated ? 1 : 0;
-      notify(`连接已保存${generatedCount ? `，并生成 ${generatedCount} 个其他连接` : ""}，表单已清空`,"success");
+      notify(generatedCount
+        ? tr("connections:form.saved_generated_cleared", {count:generatedCount, defaultValue:`连接已保存，并生成 ${generatedCount} 个其他连接，表单已清空`})
+        : tr("connections:form.saved_cleared", {defaultValue:"连接已保存，表单已清空"}),"success");
     } else {
       const generatedCount = generation === "all" ? Number(generated?.created_count || 0) : generated ? 1 : 0;
-      notify(`连接已保存${generatedCount ? `，并生成 ${generatedCount} 个其他连接` : ""}`,"success");
+      notify(generatedCount
+        ? tr("connections:form.saved_generated", {count:generatedCount, defaultValue:`连接已保存，并生成 ${generatedCount} 个其他连接`})
+        : tr("connections:form.saved", {defaultValue:"连接已保存"}),"success");
     }
   } catch(err){
     if (Array.isArray(err?.details?.issues)) renderConnectionExtraArgsDiagnostics(form, err.details.issues);
-    notify(err.message,"error");
+    notify(localizedTermaUiPhrase(err.message),"error");
   }
   finally {
     delete form.dataset.saving;
@@ -270,7 +274,7 @@ async function loadKeys(selected, select=$("conn_key")) {
   const showLegacy = Boolean(connectionFormIdentityWarning(select.form))
     && !currentAllowed
     && (selected !== undefined ? Boolean(current) : previousWasLegacy);
-  select.innerHTML = `${showLegacy ? connectionLegacyIdentityOption(select.form) : ""}<option value="">不使用私钥</option>` + keys.map(k=>`<option value="${esc(k.path)}">${esc(k.label)}${k.permission_ok ? "" : "（需检查权限）"}</option>`).join("");
+  select.innerHTML = `${showLegacy ? connectionLegacyIdentityOption(select.form) : ""}<option value="">${esc(tr("connections:auto.no_private_key", {defaultValue:"不使用私钥"}))}</option>` + keys.map(key => `<option value="${esc(key.path)}">${esc(localizedIdentityFileLabel(key, {permission:true}))}</option>`).join("");
   if (currentAllowed) select.value = current;
   renderKeyStatus(select, root.querySelector?.("#keyStatus"));
 }
@@ -279,15 +283,15 @@ async function uploadOneKey(file){
   const form = new FormData();
   form.append("key", file);
   const res = await fetch("/api/identity-files", {method:"POST", body:form});
+  if(!res.ok) throw await apiErrorFromResponse(res, tr("connections:credentials.upload_failed", {defaultValue:"私钥上传失败"}));
   const data = await res.json();
-  if(!res.ok) throw new Error(data.error||res.statusText);
   return data;
 }
 
 async function uploadKey(){
   const f=$("key_upload").files[0];
   const select = $("conn_key");
-  if(!f) return notify("请选择密钥文件","error");
+  if(!f) return notify(tr("connections:form.select_key_file", {defaultValue:"请选择密钥文件"}),"error");
   const data=await uploadOneKey(f);
   await loadKeys(data.path, select);
   const form = select?.closest?.("form");
@@ -295,28 +299,30 @@ async function uploadKey(){
     form._terminalCredentialRevision = Number(form._terminalCredentialRevision || 0) + 1;
     markConnectionTerminalDetectionStale(form);
   }
-  notify("密钥已上传","success");
+  notify(tr("connections:form.key_uploaded", {defaultValue:"密钥已上传"}),"success");
 }
 
 async function renderKeyStatus(select=$("conn_key"), box=$("keyStatus")) {
   if (!box) return;
   if (select?.selectedOptions?.[0]?.dataset?.legacyUnsafe === "1") {
-    box.textContent = connectionFormIdentityWarning(select.form) || IDENTITY_FILE_UNSAFE_FALLBACK;
+    box.textContent = connectionFormIdentityWarning(select.form) || connectionIdentityUnsafeFallback();
     box.className = "key-status warning";
     return;
   }
   const key = select?.value || "";
   if (!key) {
-    box.textContent = "未选择私钥";
+    box.textContent = tr("connections:auto.no_private_key_selected", {defaultValue:"未选择私钥"});
     box.className = "key-status muted";
     return;
   }
   try {
     const status = await api("/api/identity-files/check", {method:"POST", body:JSON.stringify({path:key})});
-    box.textContent = status.ok ? `权限正常：${status.label}` : `需要修复权限：${status.details}`;
+    box.textContent = status.ok
+      ? tr("connections:form.permission_ok", {detail:status.label, defaultValue:`权限正常：${status.label}`})
+      : tr("connections:form.permission_repair_needed", {detail:status.details, defaultValue:`需要修复权限：${status.details}`});
     box.className = `key-status ${status.ok ? "success" : "error"}`;
   } catch (error) {
-    box.textContent = error.message;
+    box.textContent = localizedTermaUiPhrase(error.message);
     box.className = "key-status error";
   }
 }
@@ -324,13 +330,15 @@ async function renderKeyStatus(select=$("conn_key"), box=$("keyStatus")) {
 async function repairSelectedKey() {
   const select = $("conn_key");
   const key = select?.value || "";
-  if (!key) return notify("请先选择私钥", "info");
+  if (!key) return notify(tr("connections:form.select_key_first", {defaultValue:"请先选择私钥"}), "info");
   try {
     const status = await api("/api/identity-files/repair", {method:"POST", body:JSON.stringify({path:key})});
     await loadKeys(key, select);
-    notify(status.ok ? "私钥权限已修复" : `已尝试修复：${status.details}`, status.ok ? "success" : "error");
+    notify(status.ok
+      ? tr("connections:form.permission_repaired", {defaultValue:"私钥权限已修复"})
+      : tr("connections:form.permission_repair_attempted", {detail:status.details, defaultValue:`已尝试修复：${status.details}`}), status.ok ? "success" : "error");
   } catch (error) {
-    notify(error.message, "error");
+    notify(localizedTermaUiPhrase(error.message), "error");
   }
 }
 
@@ -341,19 +349,19 @@ async function testConnectionForm(button=null){
   const status = connectionFormField(form, "connTestStatus");
   const detectionStatus = connectionFormField(form, "connTerminalDetectionStatus");
   const startRevision = Number(form?._terminalCredentialRevision || 0);
-  setButtonBusy(button, true, "测试中...");
-  if (status) { status.hidden = false; status.className = "connection-test-status busy"; status.textContent = "正在测试 SSH 连接，请稍候..."; }
+  setButtonBusy(button, true, tr("connections:form.testing", {defaultValue:"测试中..."}));
+  if (status) { status.hidden = false; status.className = "connection-test-status busy"; status.textContent = tr("connections:form.testing_wait", {defaultValue:"正在测试 SSH 连接，请稍候..."}); }
   if (detectionStatus) {
     detectionStatus.className = "terminal-startup-detection busy";
-    detectionStatus.textContent = "正在连接并检测远端平台、默认 Shell 和可用程序...";
+    detectionStatus.textContent = tr("connections:form.detecting_environment", {defaultValue:"正在连接并检测远端平台、默认 Shell 和可用程序..."});
   }
-  notify("正在测试 SSH 连接，请稍候...", "info");
+  notify(tr("connections:form.testing_wait", {defaultValue:"正在测试 SSH 连接，请稍候..."}), "info");
   try {
     const payload = {...connPayload(form), discover_terminal:true};
     const r=await api("/api/test-ssh",{method:"POST",body:JSON.stringify(payload)});
     const message = r.ok
-      ? `SSH 测试成功，用时 ${r.elapsed_ms}ms`
-      : `SSH 测试失败：${r.output || r.error || "请检查连接信息"}`;
+      ? tr("connections:form.test_success", {elapsed:r.elapsed_ms, defaultValue:`SSH 测试成功，用时 ${r.elapsed_ms}ms`})
+      : tr("connections:form.test_failed", {error:r.output || r.error || tr("connections:form.check_connection", {defaultValue:"请检查连接信息"}), defaultValue:`SSH 测试失败：${r.output || r.error || "请检查连接信息"}`});
     if (status) { status.className = `connection-test-status ${r.ok ? "success" : "error"}`; status.textContent = message; }
     if (r.ok && Number(form?._terminalCredentialRevision || 0) !== startRevision) {
       form._terminalCapabilitiesChecked = true;
@@ -361,7 +369,7 @@ async function testConnectionForm(button=null){
       connectionFormField(form, "connTerminalCapabilities")?.classList.add("is-stale");
       if (detectionStatus) {
         detectionStatus.className = "terminal-startup-detection stale";
-        detectionStatus.textContent = "测试期间连接信息发生了变化，本次检测结果未应用。请重新测试 SSH。";
+        detectionStatus.textContent = tr("connections:form.test_changed", {defaultValue:"测试期间连接信息发生了变化，本次检测结果未应用。请重新测试 SSH。"});
       }
     } else if (r.ok) {
       const rawCapabilities = r.capabilities || r.terminal_capabilities || r.discovery;
@@ -370,9 +378,9 @@ async function testConnectionForm(button=null){
       if (rawCapabilities && typeof rawCapabilities === "object") {
         const capabilities = renderConnectionTerminalProfiles(form, rawCapabilities);
         if (detectionStatus) {
-          const defaultShell = capabilities.default_shell?.label || capabilities.default_shell?.path || "未识别";
+          const defaultShell = capabilities.default_shell?.label || capabilities.default_shell?.path || tr("connections:form.unidentified", {defaultValue:"未识别"});
           detectionStatus.className = "terminal-startup-detection success";
-          detectionStatus.textContent = `检测完成：${capabilities.platform_label}，默认 Shell 为 ${defaultShell}，可快速选择 ${capabilities.profiles.length} 个启动配置。`;
+          detectionStatus.textContent = tr("connections:form.detection_complete", {platform:capabilities.platform_label, shell:defaultShell, count:capabilities.profiles.length, defaultValue:`检测完成：${capabilities.platform_label}，默认 Shell 为 ${defaultShell}，可快速选择 ${capabilities.profiles.length} 个启动配置。`});
         }
       } else if (detectionStatus) {
         form._terminalCapabilities = null;
@@ -384,20 +392,20 @@ async function testConnectionForm(button=null){
           summary.replaceChildren();
         }
         detectionStatus.className = "terminal-startup-detection warning";
-        detectionStatus.textContent = "SSH 连接正常，但未能读取远端启动环境。仍可使用默认 Shell 或手动填写程序路径。";
+        detectionStatus.textContent = tr("connections:form.environment_unavailable", {defaultValue:"SSH 连接正常，但未能读取远端启动环境。仍可使用默认 Shell 或手动填写程序路径。"});
       }
     } else if (detectionStatus) {
       detectionStatus.className = "terminal-startup-detection error";
-      detectionStatus.textContent = "SSH 测试失败，未更新终端启动选项。";
+      detectionStatus.textContent = tr("connections:form.startup_not_updated", {defaultValue:"SSH 测试失败，未更新终端启动选项。"});
     }
     notify(message, r.ok?"success":"error");
   } catch(e){
     if (Array.isArray(e?.details?.issues)) renderConnectionExtraArgsDiagnostics(form, e.details.issues);
-    const message = `SSH 测试无法完成：${e.message}`;
+    const message = tr("connections:form.test_unable", {error:e.message, defaultValue:`SSH 测试无法完成：${e.message}`});
     if (status) { status.className = "connection-test-status error"; status.textContent = message; }
     if (detectionStatus) {
       detectionStatus.className = "terminal-startup-detection error";
-      detectionStatus.textContent = "无法检测远端启动环境，请检查连接信息后重试。";
+      detectionStatus.textContent = tr("connections:form.detection_failed", {defaultValue:"无法检测远端启动环境，请检查连接信息后重试。"});
     }
     notify(message,"error");
   }

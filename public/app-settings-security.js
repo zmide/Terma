@@ -12,7 +12,7 @@ function showSettingsSection(id, options={}) {
     group.hidden = group.id !== next;
   });
   setExplorerSectionActive(next);
-  if (activeView === "settings" && $("workspaceSubtitle")) $("workspaceSubtitle").textContent = SETTINGS_SECTION_META[next];
+  if (activeView === "settings" && $("workspaceSubtitle")) $("workspaceSubtitle").textContent = settingsSectionLabel(next);
   if (next === "settings-about") markUpdateNoticeRead();
   if (options.moveToWorkspace !== false) {
     const scope = typeof currentWorkspaceDomScope === "function" ? currentWorkspaceDomScope() : document;
@@ -32,32 +32,43 @@ function closeLicenseModal() {
   modal.onclick = null;
   modal.hidden = true;
   modal.innerHTML = "";
-  $("openLicenseBtn")?.focus();
+  const trigger = licenseModalTrigger;
+  licenseModalTrigger = null;
+  const focusTarget = trigger?.isConnected ? trigger : $("openLicenseBtn");
+  focusTarget?.focus({preventScroll:true});
+  setTimeout(() => {
+    if (modal.hidden && focusTarget?.isConnected) focusTarget.focus({preventScroll:true});
+  }, 0);
 }
 
-async function showLicenseModal() {
-  const trigger = $("openLicenseBtn");
+async function showLicenseModal(triggerElement=null) {
+  const trigger = triggerElement || $("openLicenseBtn");
+  licenseModalTrigger = trigger || null;
   try {
     const about = aboutSettings?.license_text ? aboutSettings : await loadAboutSettings();
-    if (!about.license_text) throw new Error(about.license_error || "未找到随程序提供的开源许可正文");
+    if (!about.license_text) throw new Error(about.license_error || tr("settings:security.license_missing"));
     const modal = $("modal");
     modal.innerHTML = `<div class="modal-card wide license-modal" role="dialog" aria-modal="true" aria-labelledby="licenseModalTitle">
-      <div class="license-modal-head"><div><h2 id="licenseModalTitle">GNU General Public License v3.0</h2><span>${esc(about.product_name || "Terma")} · ${esc(about.license || "GPL-3.0-only")}</span></div><button id="licenseModalClose" class="icon-button" type="button" title="关闭许可正文" aria-label="关闭许可正文">${icon("x")}</button></div>
+      <div class="license-modal-head"><div><h2 id="licenseModalTitle">GNU General Public License v3.0</h2><span>${esc(about.product_name || "Terma")} · ${esc(about.license || "GPL-3.0-only")}</span></div><button id="licenseModalClose" class="icon-button" type="button" title="${escAttr(tr("settings:security.close_license"))}" aria-label="${escAttr(tr("settings:security.close_license"))}">${icon("x")}</button></div>
       <pre id="licenseText" class="license-text" tabindex="0"></pre>
-      <div class="actions"><button type="button" onclick="closeLicenseModal()">关闭</button></div>
+      <div class="actions"><button type="button" onclick="closeLicenseModal()">${esc(tr("common:actions.close"))}</button></div>
     </div>`;
-    $("licenseText").textContent = about.license_text || "未找到开源许可正文。";
+    $("licenseText").textContent = about.license_text || tr("settings:security.license_missing_short");
     modal.hidden = false;
     modal.onclick = null;
     $("licenseModalClose").onclick = closeLicenseModal;
     licenseModalKeyHandler = event => {
-      if (event.key === "Escape") closeLicenseModal();
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeLicenseModal();
     };
     document.addEventListener("keydown", licenseModalKeyHandler);
     $("licenseModalClose").focus();
   } catch (error) {
+    licenseModalTrigger = null;
     trigger?.focus();
-    notify(`许可正文加载失败：${error.message}`, "error");
+    notify(tr("settings:security.license_load_failed", {error:error.message}), "error");
   }
 }
 
@@ -65,7 +76,7 @@ async function loadRuntimeDiagnostics() {
   const box = $("runtimeDiagnostics");
   const view = box?.closest("#view-settings");
   if (!box) return;
-  box.textContent = "正在加载...";
+  box.textContent = tr("settings:auto.loading", {defaultValue:"正在加载..."});
   try {
     const data = await api("/api/diagnostics/runtime");
     let webInfo = null;
@@ -73,10 +84,10 @@ async function loadRuntimeDiagnostics() {
     const ptyHelper = data.platform === "win32"
       ? "Windows ConPTY"
       : data.platform !== "darwin"
-        ? "当前平台不依赖 spawn-helper"
+        ? tr("settings:auto.diagnostic_helper_not_required", {defaultValue:"当前平台不依赖 spawn-helper"})
       : data.pty?.helper_exists
-        ? `${data.pty.helper_executable ? "可执行" : "不可执行"} · ${data.pty.helper_path}`
-        : "未找到";
+        ? `${data.pty.helper_executable ? tr("settings:auto.diagnostic_executable", {defaultValue:"可执行"}) : tr("settings:auto.diagnostic_not_executable", {defaultValue:"不可执行"})} · ${data.pty.helper_path}`
+        : tr("settings:auto.diagnostic_not_found", {defaultValue:"未找到"});
     const localUrl = safeRuntimeUrl(data.web_url || webInfo?.local_url || runtimeSettings?.local_url);
     const lanUrls = [...new Set((data.lan_urls || webInfo?.lan_urls || runtimeSettings?.lan_urls || []).map(safeRuntimeUrl).filter(Boolean))];
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, local_url:localUrl, lan_urls:lanUrls});
@@ -85,20 +96,23 @@ async function loadRuntimeDiagnostics() {
     const actualHosts = runtimeHostValues(webInfo?.hosts || webInfo?.host || runtimeSettings?.effective?.listen_hosts);
     const actualPort = runtimePortValue(webInfo?.port ?? runtimeSettings?.effective?.listen_port);
     const ptyStatus = data.pty?.operational
-      ? "可用"
+      ? tr("settings:auto.diagnostic_available", {defaultValue:"可用"})
       : data.pty?.available
-        ? "组件已加载，但运行条件不完整"
-        : `不可用（${data.pty?.error || "optional 依赖未安装或加载失败"}）`;
+        ? tr("settings:auto.diagnostic_partial", {defaultValue:"组件已加载，但运行条件不完整"})
+        : tr("settings:auto.diagnostic_unavailable", {
+            error:data.pty?.error || tr("settings:auto.diagnostic_optional_missing", {defaultValue:"optional 依赖未安装或加载失败"}),
+            defaultValue:`不可用（${data.pty?.error || "optional 依赖未安装或加载失败"}）`
+          });
     const rows = [
-      ["进程", `PID ${data.pid} · ${data.platform}/${data.arch} · ${data.node}`],
-      ["实际监听", `${actualHosts.join("、") || "未知"}:${actualPort}`],
-      ["本机地址", localUrl || "未生成"],
-      ["局域网地址", lanUrls.join("，") || "无"],
-      ["数据目录", data.data_dir || "未知"],
-      ["日志目录", data.log_dir || "未知"],
-      ["Web 日志", data.web_log || "未知"],
-      ["PTY", ptyStatus],
-      ["PTY 辅助程序", ptyHelper]
+      [tr("settings:auto.diagnostic_process", {defaultValue:"进程"}), `PID ${data.pid} · ${data.platform}/${data.arch} · ${data.node}`],
+      [tr("settings:auto.diagnostic_listener", {defaultValue:"实际监听"}), `${actualHosts.join("、") || tr("settings:auto.diagnostic_unknown", {defaultValue:"未知"})}:${actualPort}`],
+      [tr("settings:auto.diagnostic_local_address", {defaultValue:"本机地址"}), localUrl || tr("settings:auto.diagnostic_not_generated", {defaultValue:"未生成"})],
+      [tr("settings:auto.diagnostic_lan_address", {defaultValue:"局域网地址"}), lanUrls.join("，") || tr("settings:auto.diagnostic_none", {defaultValue:"无"})],
+      [tr("settings:auto.diagnostic_data_directory", {defaultValue:"数据目录"}), data.data_dir || tr("settings:auto.diagnostic_unknown", {defaultValue:"未知"})],
+      [tr("settings:auto.diagnostic_log_directory", {defaultValue:"日志目录"}), data.log_dir || tr("settings:auto.diagnostic_unknown", {defaultValue:"未知"})],
+      [tr("settings:auto.diagnostic_web_log", {defaultValue:"Web 日志"}), data.web_log || tr("settings:auto.diagnostic_unknown", {defaultValue:"未知"})],
+      [tr("settings:auto.diagnostic_pty", {defaultValue:"PTY"}), ptyStatus],
+      [tr("settings:auto.diagnostic_pty_helper", {defaultValue:"PTY 辅助程序"}), ptyHelper]
     ];
     box.className = "diagnostics-box";
     box.innerHTML = `<dl class="runtime-diagnostic-grid">${rows.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl>`;
@@ -109,15 +123,19 @@ async function loadRuntimeDiagnostics() {
 }
 
 function notificationPermissionText() {
-  if (typeof Notification === "undefined") return "当前浏览器不支持系统通知，仍会显示页面提示";
-  return { granted: "已授权系统通知", denied: "浏览器已拒绝系统通知，仍会显示页面提示", default: "未授权，仅显示页面提示" }[Notification.permission] || Notification.permission;
+  if (typeof Notification === "undefined") return tr("settings:auto.notifications_unsupported");
+  return {
+    granted:tr("settings:auto.notifications_authorized"),
+    denied:tr("settings:auto.notifications_denied"),
+    default:tr("settings:auto.notifications_page_only")
+  }[Notification.permission] || Notification.permission;
 }
 
 function updateSecurityBadges() {
   const s = securitySettings || {};
-  if ($("securityPasswordState")) $("securityPasswordState").textContent = s.password_set ? "（已设置）" : "（未设置）";
-  if ($("securityTokenState")) $("securityTokenState").textContent = s.token_set ? "（已设置）" : "（未设置）";
-  if ($("securityTokenBtn")) $("securityTokenBtn").textContent = s.token_set ? "重新生成 Token" : "生成 Token";
+  if ($("securityPasswordState")) $("securityPasswordState").textContent = tr(s.password_set ? "settings:auto.set" : "settings:auto.not_set");
+  if ($("securityTokenState")) $("securityTokenState").textContent = tr(s.token_set ? "settings:auto.set" : "settings:auto.not_set");
+  if ($("securityTokenBtn")) $("securityTokenBtn").textContent = tr(s.token_set ? "settings:auto.regenerate_token" : "settings:auto.generate_token");
 }
 
 function localDirectDesktopIntegrationPresentation(settings=securitySettings || {}, overrides={}) {
@@ -127,27 +145,27 @@ function localDirectDesktopIntegrationPresentation(settings=securitySettings || 
   const hosts = Array.isArray(status.actual_listen_hosts) ? status.actual_listen_hosts : [];
   if (!enabled) return {
     className:"",
-    text:"默认关闭。启用后，只在 Terma 实际仅监听本机回环地址、当前浏览器直连本机且已通过当前 Web 访问策略时，自动开放 X Server 和系统远程客户端。"
+    text:tr("settings:security.desktop_integration_disabled")
   };
   if (trustedProxyEnabled) return {
     className:"warning",
-    text:"当前不生效：已启用可信反向代理。反代访问仍需 Web 登录；桌面集成继续使用临时授权。"
+    text:tr("settings:security.desktop_integration_proxy")
   };
   if (status.listen_loopback_only === false) return {
     className:"warning",
-    text:`当前不生效：Terma 实际监听包含非回环地址${hosts.length ? `（${hosts.join("、")}）` : ""}。`
+    text:tr("settings:security.desktop_integration_non_loopback", {hosts:hosts.length ? ` (${hosts.join(", ")})` : ""})
   };
   if (status.direct_loopback_request === false) return {
     className:"warning",
-    text:"当前不生效：此页面不是通过 127.0.0.1、localhost 或 [::1] 直连访问，或请求包含反向代理转发头。"
+    text:tr("settings:security.desktop_integration_not_direct")
   };
   if (status.web_access_authorized === false) return {
     className:"warning",
-    text:"监听条件满足，但当前 Web 访问策略仍要求登录；完成登录后才会自动获得有限桌面集成权限。"
+    text:tr("settings:security.desktop_integration_login_required")
   };
   return {
     className:"success",
-    text:"当前已生效：此本机直连浏览器可自动使用 X Server 和系统远程客户端；本地文件、更新、迁移等桌面能力仍不开放。"
+    text:tr("settings:security.desktop_integration_active")
   };
 }
 
@@ -184,12 +202,12 @@ async function saveSecurityOptions() {
   const global_login_lock_seconds = Number($("securityGlobalLoginLockSeconds")?.value);
   let confirm_unsafe = false;
   if (auth_mode === "off") {
-    confirm_unsafe = await confirmModal("关闭局域网访问密码会让同一局域网内设备直接操作 Terma。确认关闭？", "高风险设置", "确认关闭", "取消", true);
+    confirm_unsafe = await confirmModal(tr("settings:security.disable_lan_password_confirm"), tr("settings:auto.high_risk"), tr("settings:security.confirm_disable"), tr("common:actions.cancel"), true);
     if (!confirm_unsafe) return;
   }
   securitySettings = await api("/api/security", {method:"PUT", body:JSON.stringify({auth_mode, lan_auth_enabled, secure_cookie_mode, trusted_proxy_enabled, trusted_proxy_addresses, local_direct_desktop_integration_enabled, allowed_hosts, login_max_failures, login_window_seconds, login_lock_seconds, global_login_protection_enabled, global_login_max_failures, global_login_window_seconds, global_login_lock_seconds, confirm_unsafe})});
   updateLocalDirectDesktopIntegrationPreview();
-  notify("安全策略已保存", "success");
+  notify(tr("settings:security.policy_saved"), "success");
 }
 
 if (typeof registerTermaAction === "function") {
@@ -209,7 +227,7 @@ async function saveSessionManagement() {
     renderSettings();
     refreshIcons();
   });
-  notify("会话设置已保存", "success");
+  notify(tr("settings:security.session_saved"), "success");
 }
 
 function notificationDurationFormValue(id, options={}) {
@@ -217,7 +235,7 @@ function notificationDurationFormValue(id, options={}) {
   const raw = String(input?.value || "").trim();
   if (!raw && options.nullable) return null;
   const seconds = Number(raw);
-  if (!Number.isFinite(seconds) || seconds < 0.5 || seconds > 60) throw new Error("通知显示时长必须在 0.5-60 秒之间");
+  if (!Number.isFinite(seconds) || seconds < 0.5 || seconds > 60) throw new Error(tr("settings:auto.notification_duration_invalid"));
   return Math.round(seconds * 1000);
 }
 
@@ -264,9 +282,9 @@ async function saveNotificationOptions() {
   try {
     notification_display = notificationDisplayFormValue();
   } catch (error) {
-    return notify(error.message || "通知设置无效", "error");
+    return notify(error.message || tr("settings:auto.notification_invalid"), "error");
   }
-  setButtonBusy(button, true, "保存中");
+  setButtonBusy(button, true, tr("settings:auto.saving"));
   try {
     const [securityResult, runtimeResult] = await Promise.allSettled([
       api("/api/security", {method:"PUT", body:JSON.stringify({notification_mode})}),
@@ -286,9 +304,9 @@ async function saveNotificationOptions() {
     });
     const failure = [securityResult, runtimeResult].find(result => result.status === "rejected");
     if (failure) throw failure.reason;
-    notify(notification_mode === "on" ? "通知设置已保存" : notification_mode === "muted" ? "通知设置已保存，后台事件已静音" : "通知设置已保存，后台事件提醒已关闭", "success");
+    notify(tr(notification_mode === "on" ? "settings:auto.notification_saved" : notification_mode === "muted" ? "settings:security.notifications_muted" : "settings:security.notifications_off"), "success");
   } catch (error) {
-    notify(error.message || "通知设置保存失败", "error");
+    notify(error.message || tr("settings:auto.notification_save_failed"), "error");
   } finally {
     inPane(() => setButtonBusy(button, false));
   }
@@ -303,17 +321,17 @@ async function saveWebPassword() {
     if (input) input.value = "";
     updateSecurityBadges();
   });
-  notify("Web 密码已保存", "success");
+  notify(tr("settings:auto.web_password_saved"), "success");
 }
 
 async function generateAccessToken() {
   const inPane = captureSettingsPane();
-  if (securitySettings?.token_set && !await confirmModal("重新生成 Token 后，旧 Token 会立即失效。继续？", "重新生成 Token", "继续", "取消", true)) return;
+  if (securitySettings?.token_set && !await confirmModal(tr("settings:security.regenerate_token_confirm"), tr("settings:auto.regenerate_token"), tr("settings:security.continue"), tr("common:actions.cancel"), true)) return;
   const result = await api("/api/security/token", {method:"POST", body:JSON.stringify({})});
   securitySettings = result;
   inPane(updateSecurityBadges);
-  await inputModal("访问 Token 只显示一次", "请保存这个 Token", result.token || "");
-  notify("访问 Token 已生成", "success");
+  await inputModal(tr("settings:auto.token_once"), tr("settings:auto.token_save"), result.token || "");
+  notify(tr("settings:auto.token_generated"), "success");
 }
 
 async function enableConfigEncryption() {
@@ -322,8 +340,8 @@ async function enableConfigEncryption() {
   const result = await api("/api/security/encryption/enable", {method:"POST", body:JSON.stringify({password})});
   await loadSecuritySettings();
   inPane(renderSettings);
-  const snapshotText = result.removed_snapshots ? `，并清理 ${result.removed_snapshots} 个旧快照` : "";
-  notify(`配置加密已启用，已处理 ${result.encrypted_rows || 0} 行敏感配置${snapshotText}`, "success");
+  const snapshotText = result.removed_snapshots ? tr("settings:security.snapshots_removed", {count:result.removed_snapshots}) : "";
+  notify(tr("settings:security.encryption_enabled", {rows:result.encrypted_rows || 0, snapshots:snapshotText}), "success");
 }
 
 async function unlockConfigEncryption() {
@@ -332,19 +350,19 @@ async function unlockConfigEncryption() {
   const result = await api("/api/security/encryption/unlock", {method:"POST", body:JSON.stringify({password})});
   await loadSecuritySettings();
   inPane(renderSettings);
-  notify(result.key_rotated ? `配置加密密钥已轮换，处理 ${result.transition_rows || 0} 行敏感配置；请重新生成备份并清理旧 v1 备份` : result.transition_rows ? `配置加密切换已修复，处理 ${result.transition_rows} 行敏感配置` : "配置加密已解锁", "success");
+  notify(tr(result.key_rotated ? "settings:security.encryption_rotated" : result.transition_rows ? "settings:security.encryption_repaired" : "settings:security.encryption_unlocked", {rows:result.transition_rows || 0}), "success");
 }
 
 async function disableConfigEncryption() {
   const inPane = captureSettingsPane();
   const password = $("securityMasterPassword").value;
-  if (securitySettings?.encryption_enabled && !password) return notify("请输入主密码后再关闭配置加密", "error");
-  if (!await confirmModal("关闭配置加密会先用主密码解密已加密字段，再关闭加密。关闭后可以使用普通数据库备份迁移。确认关闭？", "关闭配置加密", "解密并关闭", "取消", true)) return;
+  if (securitySettings?.encryption_enabled && !password) return notify(tr("settings:security.master_password_required"), "error");
+  if (!await confirmModal(tr("settings:security.disable_encryption_confirm"), tr("settings:security.disable_encryption_title"), tr("settings:security.decrypt_disable"), tr("common:actions.cancel"), true)) return;
   const result = await api("/api/security/encryption/disable", {method:"POST", body:JSON.stringify({password})});
   await loadSecuritySettings();
   inPane(renderSettings);
-  const snapshotText = result.removed_snapshots ? `，并清理 ${result.removed_snapshots} 个旧快照` : "";
-  notify(`配置加密已关闭，已解密 ${result.decrypted_rows || 0} 行敏感配置${snapshotText}`, "success");
+  const snapshotText = result.removed_snapshots ? tr("settings:security.snapshots_removed", {count:result.removed_snapshots}) : "";
+  notify(tr("settings:security.encryption_disabled", {rows:result.decrypted_rows || 0, snapshots:snapshotText}), "success");
 }
 
 async function logout() {

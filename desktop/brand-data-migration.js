@@ -38,6 +38,10 @@ const KNOWN_TABLES = new Set([
   "tunnels"
 ]);
 
+function migrationText(chinese, english, language = process.env.TERMA_INTERFACE_LANGUAGE) {
+  return String(language || "").toLowerCase().startsWith("en") ? english : chinese;
+}
+
 function quoteIdentifier(value) {
   return `"${String(value).replaceAll("\"", "\"\"")}"`;
 }
@@ -47,10 +51,15 @@ function normalized(value) {
 }
 
 function legacyCopyName(baseName, existingNames) {
-  const base = String(baseName || "旧版项目").trim() || "旧版项目";
-  let candidate = `${base}（旧版）`;
+  const fallback = migrationText("旧版项目", "Legacy item");
+  const base = String(baseName || fallback).trim() || fallback;
+  const format = suffix => migrationText(
+    suffix > 1 ? `${base}（旧版 ${suffix}）` : `${base}（旧版）`,
+    suffix > 1 ? `${base} (legacy ${suffix})` : `${base} (legacy)`
+  );
+  let candidate = format(1);
   let suffix = 2;
-  while (existingNames.has(normalized(candidate))) candidate = `${base}（旧版 ${suffix++}）`;
+  while (existingNames.has(normalized(candidate))) candidate = format(suffix++);
   existingNames.add(normalized(candidate));
   return candidate;
 }
@@ -58,7 +67,10 @@ function legacyCopyName(baseName, existingNames) {
 function isLegacyCopyName(candidate, sourceName) {
   const value = String(candidate || "");
   const base = String(sourceName || "");
-  return value === `${base}（旧版）` || (value.startsWith(`${base}（旧版 `) && value.endsWith("）"));
+  return value === `${base}（旧版）`
+    || (value.startsWith(`${base}（旧版 `) && value.endsWith("）"))
+    || value === `${base} (legacy)`
+    || (value.startsWith(`${base} (legacy `) && value.endsWith(")"));
 }
 
 function normalizedPath(value) {
@@ -259,14 +271,14 @@ function secretCounts(db) {
 function assertDatabaseMatchesSecurityDescriptor(db, descriptor, label) {
   const secrets = secretCounts(db);
   if (descriptor.enabled) {
-    if (descriptor.state !== "enabled") throw new Error(`${label}的配置加密仍处于切换状态，不能迁移`);
-    if (!descriptor.salt || !descriptor.check) throw new Error(`${label}缺少配置加密校验信息，不能迁移`);
-    if (secrets.plain) throw new Error(`${label}启用了配置加密，但数据库仍包含明文敏感字段`);
-    if (descriptor.version === 1 && (secrets.v2 || secrets.v3)) throw new Error(`${label}的配置加密版本与数据库字段不一致`);
-    if (descriptor.version === 2 && (secrets.v1 || secrets.v3)) throw new Error(`${label}的配置加密版本与数据库字段不一致`);
-    if (descriptor.version === 3 && (secrets.v1 || secrets.v2)) throw new Error(`${label}的配置加密版本与数据库字段不一致`);
+    if (descriptor.state !== "enabled") throw new Error(migrationText(`${label}的配置加密仍处于切换状态，不能迁移`, `${label} configuration encryption is still transitioning and cannot be migrated`));
+    if (!descriptor.salt || !descriptor.check) throw new Error(migrationText(`${label}缺少配置加密校验信息，不能迁移`, `${label} is missing configuration-encryption verification data and cannot be migrated`));
+    if (secrets.plain) throw new Error(migrationText(`${label}启用了配置加密，但数据库仍包含明文敏感字段`, `${label} has configuration encryption enabled, but the database still contains plaintext sensitive fields`));
+    if (descriptor.version === 1 && (secrets.v2 || secrets.v3)) throw new Error(migrationText(`${label}的配置加密版本与数据库字段不一致`, `${label} configuration-encryption version does not match its database fields`));
+    if (descriptor.version === 2 && (secrets.v1 || secrets.v3)) throw new Error(migrationText(`${label}的配置加密版本与数据库字段不一致`, `${label} configuration-encryption version does not match its database fields`));
+    if (descriptor.version === 3 && (secrets.v1 || secrets.v2)) throw new Error(migrationText(`${label}的配置加密版本与数据库字段不一致`, `${label} configuration-encryption version does not match its database fields`));
   } else if (secrets.encrypted) {
-    throw new Error(`${label}未启用配置加密，但数据库包含加密敏感字段`);
+    throw new Error(migrationText(`${label}未启用配置加密，但数据库包含加密敏感字段`, `${label} does not have configuration encryption enabled, but its database contains encrypted sensitive fields`));
   }
   return secrets;
 }
@@ -274,27 +286,39 @@ function assertDatabaseMatchesSecurityDescriptor(db, descriptor, label) {
 function assertSecretCompatibility(sourceDb, targetDb, sourceDataDir, targetDataDir, descriptors = {}) {
   const sourceSecurity = descriptors.source || securityDescriptor(sourceDataDir);
   const targetSecurity = descriptors.target || securityDescriptor(targetDataDir);
-  const sourceSecrets = assertDatabaseMatchesSecurityDescriptor(sourceDb, sourceSecurity, "旧版数据");
+  const sourceSecrets = assertDatabaseMatchesSecurityDescriptor(sourceDb, sourceSecurity, migrationText("旧版数据", "Legacy data"));
   const targetSecrets = targetDb
-    ? assertDatabaseMatchesSecurityDescriptor(targetDb, targetSecurity, "当前 Terma 数据")
+    ? assertDatabaseMatchesSecurityDescriptor(targetDb, targetSecurity, migrationText("当前 Terma 数据", "Current Terma data"))
     : { encrypted:0, v1:0, v2:0, v3:0, plain:0 };
   const sourceEncrypted = sourceSecrets.encrypted;
   const sourcePlain = sourceSecrets.plain;
   if (targetDb && targetSecurity.enabled && targetSecrets.plain) {
-    throw new Error("当前 Terma 的数据库包含未加密敏感字段，不能继续品牌迁移；请先解锁并重新启用配置加密完成修复");
+    throw new Error(migrationText(
+      "当前 Terma 的数据库包含未加密敏感字段，不能继续品牌迁移；请先解锁并重新启用配置加密完成修复",
+      "The current Terma database contains unencrypted sensitive fields, so brand migration cannot continue. Unlock it and re-enable configuration encryption to repair the data first."
+    ));
   }
   if (targetDb && !targetSecurity.enabled && targetSecrets.encrypted) {
-    throw new Error("当前 Terma 未启用配置加密，但数据库包含加密字段，不能继续品牌迁移");
+    throw new Error(migrationText(
+      "当前 Terma 未启用配置加密，但数据库包含加密字段，不能继续品牌迁移",
+      "Configuration encryption is disabled in the current Terma data, but its database contains encrypted fields, so brand migration cannot continue."
+    ));
   }
   if (sourceEncrypted && targetDb) {
     const sameKey = sourceSecurity.enabled && targetSecurity.enabled
       && sourceSecurity.version === targetSecurity.version
       && sourceSecurity.salt === targetSecurity.salt
       && sourceSecurity.check === targetSecurity.check;
-    if (!sameKey) throw new Error("旧版数据库中的凭据使用另一套配置加密，不能直接合并；请先在旧版解锁后导出迁移包");
+    if (!sameKey) throw new Error(migrationText(
+      "旧版数据库中的凭据使用另一套配置加密，不能直接合并；请先在旧版解锁后导出迁移包",
+      "Credentials in the legacy database use a different configuration-encryption key and cannot be merged directly. Unlock the legacy app and export a migration package first."
+    ));
   }
   if (targetDb && targetSecurity.enabled && sourcePlain) {
-    throw new Error("当前 Terma 已启用配置加密，不能把旧版明文凭据直接写入；请先使用加密迁移包");
+    throw new Error(migrationText(
+      "当前 Terma 已启用配置加密，不能把旧版明文凭据直接写入；请先使用加密迁移包",
+      "Configuration encryption is enabled in current Terma data, so legacy plaintext credentials cannot be written directly. Use an encrypted migration package first."
+    ));
   }
 }
 
@@ -363,7 +387,7 @@ function mergeConnectionGroups(targetDb, sourceDb, summary) {
     if (index.has(key)) map.set(String(row.name), index.get(key));
     else {
       const inserted = insertRow(targetDb, "connection_groups", row, { omit: [] });
-      if (!inserted && !tableExists(targetDb, "connection_groups")) throw new Error("目标数据库缺少 connection_groups 表");
+      if (!inserted && !tableExists(targetDb, "connection_groups")) throw new Error(migrationText("目标数据库缺少 connection_groups 表", "The target database is missing the connection_groups table"));
       index.set(key, row.name);
       map.set(String(row.name), row.name);
       summary.inserted.connection_groups += 1;
@@ -414,7 +438,7 @@ function mergeConnections(targetDb, sourceDb, groupMap, identityMapper, summary)
     copy.jump_connection_id = null;
     // Runtime state never crosses an application restart.
     const insertedId = insertRow(targetDb, "connections", copy);
-    if (!insertedId) throw new Error(`无法迁移连接：${row.name || row.id}`);
+    if (!insertedId) throw new Error(migrationText(`无法迁移连接：${row.name || row.id}`, `Could not migrate connection: ${row.name || row.id}`));
     index.set(key, { ...copy, id: insertedId });
     map.set(Number(row.id), insertedId);
     if (row.jump_connection_id != null) pendingJump.push([insertedId, Number(row.jump_connection_id)]);
@@ -438,7 +462,7 @@ function mergeForwards(targetDb, sourceDb, connectionMap, summary) {
   const map = new Map();
   for (const row of tableRows(sourceDb, "connection_forwards")) {
     const mappedConnectionId = connectionMap.get(Number(row.connection_id));
-    if (!mappedConnectionId) throw new Error(`转发 ${row.id} 找不到对应连接`);
+    if (!mappedConnectionId) throw new Error(migrationText(`转发 ${row.id} 找不到对应连接`, `Forward ${row.id} has no matching connection`));
     const key = forwardKey(row, mappedConnectionId);
     const existing = index.get(key);
     if (existing) {
@@ -453,9 +477,10 @@ function mergeForwards(targetDb, sourceDb, connectionMap, summary) {
     copy.status = "stopped";
     copy.reconnect_count = 0;
     copy.last_error = null;
+    copy.last_error_code = null;
     copy.started_at = null;
     const insertedId = insertRow(targetDb, "connection_forwards", copy);
-    if (!insertedId) throw new Error(`无法迁移转发：${row.id}`);
+    if (!insertedId) throw new Error(migrationText(`无法迁移转发：${row.id}`, `Could not migrate forward: ${row.id}`));
     index.set(key, { ...copy, id: insertedId });
     map.set(Number(row.id), insertedId);
     summary.inserted.connection_forwards += 1;
@@ -488,7 +513,7 @@ function mergeNamedRows(targetDb, sourceDb, table, keyFunction, transform, summa
       else existingNames.add(normalized(copy.name));
     }
     const insertedId = insertRow(targetDb, table, copy);
-    if (!insertedId && table !== "app_meta") throw new Error(`无法迁移 ${table}：${row.name || row.id}`);
+    if (!insertedId && table !== "app_meta") throw new Error(migrationText(`无法迁移 ${table}：${row.name || row.id}`, `Could not migrate ${table}: ${row.name || row.id}`));
     const actualId = insertedId || row.id;
     index.set(key, { ...copy, id: actualId });
     if (sourceId != null) map.set(Number(sourceId), Number(actualId));
@@ -540,12 +565,13 @@ function assertKnownTables(sourceDb, targetDb) {
   const unsupported = databaseTables(sourceDb).filter(table => !KNOWN_TABLES.has(table) && rowCount(sourceDb, table) > 0);
   if (!unsupported.length) return;
   const targetUnsupported = unsupported.filter(table => !tableExists(targetDb, table));
-  throw new Error(`旧数据包含无法安全合并的表：${targetUnsupported.concat(unsupported.filter(table => !targetUnsupported.includes(table))).join(", ")}`);
+  const tables = targetUnsupported.concat(unsupported.filter(table => !targetUnsupported.includes(table))).join(", ");
+  throw new Error(migrationText(`旧数据包含无法安全合并的表：${tables}`, `Legacy data contains tables that cannot be merged safely: ${tables}`));
 }
 
 function mergeDatabaseFiles(sourceFile, targetFile, options = {}) {
-  if (!sqliteFile(sourceFile)) throw new Error(`旧数据库不是有效 SQLite 文件：${sourceFile}`);
-  if (targetFile && fs.existsSync(targetFile) && !sqliteFile(targetFile)) throw new Error(`当前数据库不是有效 SQLite 文件：${targetFile}`);
+  if (!sqliteFile(sourceFile)) throw new Error(migrationText(`旧数据库不是有效 SQLite 文件：${sourceFile}`, `The legacy database is not a valid SQLite file: ${sourceFile}`));
+  if (targetFile && fs.existsSync(targetFile) && !sqliteFile(targetFile)) throw new Error(migrationText(`当前数据库不是有效 SQLite 文件：${targetFile}`, `The current database is not a valid SQLite file: ${targetFile}`));
   const summary = {
     before: {},
     source: {},
@@ -558,8 +584,8 @@ function mergeDatabaseFiles(sourceFile, targetFile, options = {}) {
   let targetDb = null;
   try {
     const sourceIntegrity = sourceDb.prepare("PRAGMA integrity_check").get();
-    if (String(sourceIntegrity?.integrity_check || "").toLowerCase() !== "ok") throw new Error("旧数据库完整性检查失败");
-    if (sourceDb.prepare("PRAGMA foreign_key_check").all().length) throw new Error("旧数据库存在外键错误");
+    if (String(sourceIntegrity?.integrity_check || "").toLowerCase() !== "ok") throw new Error(migrationText("旧数据库完整性检查失败", "Legacy database integrity check failed"));
+    if (sourceDb.prepare("PRAGMA foreign_key_check").all().length) throw new Error(migrationText("旧数据库存在外键错误", "The legacy database contains foreign-key errors"));
     summary.source = counts(sourceDb);
     if (targetFile && fs.existsSync(targetFile)) targetDb = new DatabaseSync(targetFile);
     else {
@@ -591,9 +617,9 @@ function mergeDatabaseFiles(sourceFile, targetFile, options = {}) {
       mergeNamedRows(targetDb, sourceDb, "command_snippets", row => `${normalized(row.name)}\u0001${snippetContentKey(row)}`, row => ({ ...row, group_name:groups.get(String(row.group_name)) || row.group_name }), summary, { contentKey:snippetContentKey });
       const remoteContentKey = row => [normalized(row.protocol),normalized(row.host),Number(row.port || 0),normalized(row.username)].join("\u0001");
       maps.remoteProfiles = mergeNamedRows(targetDb, sourceDb, "remote_profiles", row => `${normalized(row.name)}\u0001${remoteContentKey(row)}`, row => ({ ...row, group_name:groups.get(String(row.group_name)) || row.group_name, options_json:rewriteRemoteOptions(row.options_json, maps) }), summary, { contentKey:remoteContentKey });
-      if (connections.size !== rowCount(sourceDb, "connections")) throw new Error("旧 SSH 连接未全部建立合并映射");
-      if (forwards.size !== rowCount(sourceDb, "connection_forwards")) throw new Error("旧端口转发未全部建立合并映射");
-      if (maps.remoteProfiles.size !== rowCount(sourceDb, "remote_profiles")) throw new Error("旧远程配置未全部建立合并映射");
+      if (connections.size !== rowCount(sourceDb, "connections")) throw new Error(migrationText("旧 SSH 连接未全部建立合并映射", "Not all legacy SSH connections received merge mappings"));
+      if (forwards.size !== rowCount(sourceDb, "connection_forwards")) throw new Error(migrationText("旧端口转发未全部建立合并映射", "Not all legacy port forwards received merge mappings"));
+      if (maps.remoteProfiles.size !== rowCount(sourceDb, "remote_profiles")) throw new Error(migrationText("旧远程配置未全部建立合并映射", "Not all legacy remote profiles received merge mappings"));
       // Fill credential/options gaps on profiles with the target row kept as
       // the visible source of truth.
       for (const sourceRow of tableRows(sourceDb, "remote_profiles")) {
@@ -624,13 +650,16 @@ function mergeDatabaseFiles(sourceFile, targetFile, options = {}) {
     }
     targetDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     const integrity = targetDb.prepare("PRAGMA integrity_check").get();
-    if (String(integrity?.integrity_check || "").toLowerCase() !== "ok") throw new Error("合并后的数据库完整性检查失败");
-    if (targetDb.prepare("PRAGMA foreign_key_check").all().length) throw new Error("合并后的数据库存在外键错误");
+    if (String(integrity?.integrity_check || "").toLowerCase() !== "ok") throw new Error(migrationText("合并后的数据库完整性检查失败", "Merged database integrity check failed"));
+    if (targetDb.prepare("PRAGMA foreign_key_check").all().length) throw new Error(migrationText("合并后的数据库存在外键错误", "The merged database contains foreign-key errors"));
     summary.after = counts(targetDb);
     for (const table of KNOWN_TABLES) {
       const expected = Number(summary.before[table] || 0) + Number(summary.inserted[table] || 0);
       const actual = Number(summary.after[table] || 0);
-      if (actual !== expected) throw new Error(`数据库表 ${table} 合并计数异常：预期 ${expected}，实际 ${actual}`);
+      if (actual !== expected) throw new Error(migrationText(
+        `数据库表 ${table} 合并计数异常：预期 ${expected}，实际 ${actual}`,
+        `Merged row count for database table ${table} is invalid: expected ${expected}, got ${actual}`
+      ));
     }
     return { summary, sourceOnly:false };
   } finally {
@@ -698,14 +727,14 @@ function mergeLegacyRuntime(options = {}) {
   const targetSshDir = path.resolve(options.targetSshDir);
   const sourceDb = path.join(sourceDataDir, "tunnels.db");
   const targetDb = path.join(targetDataDir, "tunnels.db");
-  if (!sqliteFile(sourceDb)) throw new Error(`未发现有效的旧版数据库：${sourceDb}`);
+  if (!sqliteFile(sourceDb)) throw new Error(migrationText(`未发现有效的旧版数据库：${sourceDb}`, `No valid legacy database was found: ${sourceDb}`));
   const targetExists = fs.existsSync(targetDb);
   const sourceSecurity = securityDescriptor(sourceDataDir);
   const targetSecurity = securityDescriptor(targetDataDir);
   const sourceSecurityFile = path.join(sourceDataDir, SECURITY_FILE);
   const targetSecurityFile = path.join(targetDataDir, SECURITY_FILE);
   const runtimeRoot = path.dirname(targetDataDir);
-  if (path.dirname(targetSshDir) !== runtimeRoot) throw new Error("数据目录和密钥目录必须属于同一个运行目录");
+  if (path.dirname(targetSshDir) !== runtimeRoot) throw new Error(migrationText("数据目录和密钥目录必须属于同一个运行目录", "The data and key directories must belong to the same runtime directory"));
   fs.mkdirSync(runtimeRoot, { recursive:true });
   const staging = path.join(runtimeRoot, `.terma-brand-migration-staging-${process.pid}-${Date.now()}`);
   const swap = path.join(runtimeRoot, `.terma-brand-migration-swap-${process.pid}-${Date.now()}`);
@@ -724,7 +753,7 @@ function mergeLegacyRuntime(options = {}) {
     const stagedDb = path.join(stageData, "tunnels.db");
     let mergeResult;
     if (targetExists) {
-      if (!sqliteFile(targetDb)) throw new Error(`当前数据库不是有效 SQLite 文件：${targetDb}`);
+      if (!sqliteFile(targetDb)) throw new Error(migrationText(`当前数据库不是有效 SQLite 文件：${targetDb}`, `The current database is not a valid SQLite file: ${targetDb}`));
       cloneSqlite(targetDb, stagedDb);
       const sshMerge = mergeSshDirectories(sourceSshDir, stageSsh, { finalTargetDir:targetSshDir });
       const identityMapper = value => sourceIdentityPath(value, sourceSshDir, sshMerge.identityMap);
@@ -737,7 +766,7 @@ function mergeLegacyRuntime(options = {}) {
     } else {
       const sourceValidationDb = openReadOnly(sourceDb);
       try {
-        assertDatabaseMatchesSecurityDescriptor(sourceValidationDb, sourceSecurity, "旧版数据");
+        assertDatabaseMatchesSecurityDescriptor(sourceValidationDb, sourceSecurity, migrationText("旧版数据", "Legacy data"));
       } finally {
         sourceValidationDb.close();
       }
@@ -752,14 +781,14 @@ function mergeLegacyRuntime(options = {}) {
         if (row.identity_file) updateRow(db, "connections", row.id, { identity_file:identityMapper(row.identity_file) });
       }
       for (const row of tableRows(db, "connection_forwards")) {
-        updateRow(db, "connection_forwards", row.id, { pid:null, status:"stopped", reconnect_count:0, last_error:null, started_at:null });
+        updateRow(db, "connection_forwards", row.id, { pid:null, status:"stopped", reconnect_count:0, last_error:null, last_error_code:null, started_at:null });
       }
       for (const row of tableRows(db, "tunnels")) {
         if (row.identity_file) updateRow(db, "tunnels", row.id, { identity_file:identityMapper(row.identity_file), pid:null, status:"stopped" });
       }
       db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
       const integrity = db.prepare("PRAGMA integrity_check").get();
-      if (String(integrity?.integrity_check || "").toLowerCase() !== "ok" || db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("旧数据库完整性检查失败");
+      if (String(integrity?.integrity_check || "").toLowerCase() !== "ok" || db.prepare("PRAGMA foreign_key_check").all().length) throw new Error(migrationText("旧数据库完整性检查失败", "Legacy database integrity check failed"));
       const sourceReadOnly = openReadOnly(sourceDb);
       const sourceCounts = counts(sourceReadOnly);
       sourceReadOnly.close();
@@ -796,7 +825,10 @@ function mergeLegacyRuntime(options = {}) {
     copyMissingDirectory(stageData, targetDataDir, dataFileFilter, createdTargetEntries);
     if (fs.existsSync(stageSsh)) copyMissingDirectory(stageSsh, targetSshDir, () => true, createdTargetEntries);
     for (const file of mergeResult.ssh?.files || []) {
-      if (!fs.existsSync(file.destination) || fileHash(file.destination) !== file.hash) throw new Error(`迁移后的密钥校验失败：${path.basename(file.destination)}`);
+      if (!fs.existsSync(file.destination) || fileHash(file.destination) !== file.hash) throw new Error(migrationText(
+        `迁移后的密钥校验失败：${path.basename(file.destination)}`,
+        `Migrated key verification failed: ${path.basename(file.destination)}`
+      ));
     }
     if (!targetExists) {
       securityPromotion = fs.existsSync(targetSecurityFile)

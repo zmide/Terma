@@ -176,7 +176,7 @@ async function runMobileScenario(window) {
       };
       closeSftpTaskCenter();
       await toggleSftpTaskCenter();
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      await new Promise(resolve=>setTimeout(resolve,0));
       const mobileTaskCenterDrawer=document.querySelector('#sftpTaskCenterDrawer');
       const mobileTaskCenterList=document.querySelector('#sftpTaskCenterList');
       const mobileTaskCenterResize=document.querySelector('#sftpTaskCenterResize');

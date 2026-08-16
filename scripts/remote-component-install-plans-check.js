@@ -1,6 +1,7 @@
 "use strict";
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const path = require("node:path");
 const { readSources } = require("./backend-source");
 const { componentInstallCommand, componentInstallPlan } = require("../dist/remote-component-installer");
@@ -14,6 +15,19 @@ const { configureXdmcpServer, parseDetectionOutput: parseXdmcpDetection, xdmcpPa
 function assertRemoteCacheCommand(command, label) {
   assert.match(command, /--no-download/, `${label} must refuse package downloads`);
   assert.doesNotMatch(command, /apt-get\s+update/, `${label} must not refresh package indexes`);
+}
+
+function localeValue(language, dottedKey) {
+  const resource = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "public", "locales", language, "remote.json"), "utf8"));
+  return dottedKey.split(".").reduce((value, key) => value?.[key], resource);
+}
+
+function renderStructuredText(value, language) {
+  assert.equal(typeof value?.i18n_key, "string", "guide text must use an explicit i18n key");
+  const key = value.i18n_key.replace(/^remote:/, "");
+  const template = localeValue(language, key);
+  assert.equal(typeof template, "string", `${value.i18n_key} must exist in ${language}`);
+  return template.replace(/{{\s*([^}\s]+)\s*}}/g, (_match, name) => String(value.params?.[name] ?? ""));
 }
 
 const generic = componentInstallPlan({
@@ -70,7 +84,11 @@ assert.match(vncDnf.local_offline.description, /当前检测到 dnf/);
 const clipboardDnf = vncClipboardHelperInstallPlan({platform:"linux", package_manager:"dnf", session_type:"x11"});
 assert.equal(clipboardDnf.local_offline.available, false);
 assert.match(clipboardDnf.local_offline.description, /当前检测到 dnf/);
-assert.match(vncClipboardHelperGuide({platform:"linux", package_manager:"dnf", session_type:"x11"}).steps.join("\n"), /不支持“本机下载后离线安装”/);
+const clipboardDnfGuide = vncClipboardHelperGuide({platform:"linux", package_manager:"dnf", session_type:"x11"});
+assert.equal(clipboardDnfGuide.steps.at(-1)?.i18n_key, "remote:clipboard_guide.linux_offline_manager");
+assert.deepEqual(clipboardDnfGuide.steps.at(-1)?.params, {manager:"dnf"});
+assert.match(renderStructuredText(clipboardDnfGuide.steps.at(-1), "zh-CN"), /不支持“本机下载后离线安装”/);
+assert.match(renderStructuredText(clipboardDnfGuide.steps.at(-1), "en-US"), /does not support Local offline/);
 
 const xdmcp = parseXdmcpDetection([
   "TERMA_OS_ID=debian",

@@ -24,6 +24,7 @@ ipcMain.on("terma-ui-smoke:csp-violation", (_event, violation) => {
 });
 app.disableHardwareAcceleration();
 app.setPath("userData", smokeUserData);
+const smokeTimeoutMs = Math.max(180000, Number(process.env.TERMA_UI_SMOKE_TIMEOUT_MS) || 300000);
 const smokeWatchdog = setTimeout(async () => {
   let stage = "unknown";
   try {
@@ -32,9 +33,9 @@ const smokeWatchdog = setTimeout(async () => {
       new Promise(resolve => setTimeout(() => resolve("renderer-unresponsive"), 1000))
     ]);
   } catch {}
-  console.error(`UI 冒烟超过 180 秒仍未完成，停留阶段：${stage}`);
+  console.error(`UI 冒烟超过 ${Math.round(smokeTimeoutMs / 1000)} 秒仍未完成，停留阶段：${stage}`);
   app.exit(1);
-}, 180000);
+}, smokeTimeoutMs);
 
 app.whenReady().then(async () => {
   await session.defaultSession.clearCache();
@@ -61,6 +62,94 @@ app.whenReady().then(async () => {
   await window.loadURL(url);
   await new Promise(resolve => setTimeout(resolve, 1200));
   console.log("[ui-smoke] page loaded");
+  console.log("[ui-smoke] language onboarding");
+  window.setSize(392, 800);
+  await new Promise(resolve => setTimeout(resolve, 80));
+  const languageOnboardingUi = await window.webContents.executeJavaScript(`(async () => {
+    const previousApi = api;
+    const previousRuntimeSettings = runtimeSettings;
+    const previousSuggestedLanguage = suggestedTermaLanguage;
+    const previousLanguage = document.documentElement.lang || 'zh-CN';
+    let savedPayload = null;
+    try {
+      const regionDefaults = suggestedTermaLanguage(['zh-CN']) === 'zh-CN'
+        && suggestedTermaLanguage(['zh-Hans-CN']) === 'zh-CN'
+        && suggestedTermaLanguage(['en-US']) === 'en-US'
+        && suggestedTermaLanguage(['zh-HK']) === 'en-US'
+        && suggestedTermaLanguage(['invalid-locale']) === 'en-US';
+      suggestedTermaLanguage = () => 'en-US';
+      await setTermaLanguage('en-US', {emit:false});
+      window.i18next.removeResourceBundle('zh-CN', 'common');
+      window.i18next.removeResourceBundle('zh-CN', 'settings');
+      const coldStartMissingChineseResources = !window.i18next.hasResourceBundle('zh-CN', 'common')
+        && !window.i18next.hasResourceBundle('zh-CN', 'settings');
+      runtimeSettings = {settings_persisted:false, saved:{language:'zh-CN', language_onboarding_version:0}};
+      await ensureTermaLanguageOnboarding();
+      const newCard = document.querySelector('.language-onboarding');
+      const newRect = newCard?.getBoundingClientRect();
+      const newUserDefaultsEnglish = document.querySelector('input[name="terma-onboarding-language"]:checked')?.value === 'en-US';
+      const englishOption = document.querySelector('input[name="terma-onboarding-language"][value="en-US"]')?.closest('.language-onboarding-option');
+      const chineseOption = document.querySelector('input[name="terma-onboarding-language"][value="zh-CN"]')?.closest('.language-onboarding-option');
+      const nativeChoiceCopy = englishOption?.querySelector('strong')?.textContent?.trim() === 'English'
+        && englishOption?.querySelector('small')?.textContent?.trim() === 'Default outside mainland China'
+        && chineseOption?.querySelector('strong')?.textContent?.trim() === '简体中文'
+        && chineseOption?.querySelector('small')?.textContent?.trim() === '中国大陆默认';
+      const coldStartChineseResourcesLoaded = window.i18next.hasResourceBundle('zh-CN', 'common')
+        && window.i18next.hasResourceBundle('zh-CN', 'settings');
+      const fitsNarrowViewport = Boolean(newRect
+        && newRect.left >= -0.5
+        && newRect.right <= innerWidth + 0.5
+        && newRect.top >= -0.5
+        && newRect.bottom <= innerHeight + 0.5
+        && document.documentElement.scrollWidth <= innerWidth + 1);
+      closeTermaLanguageOnboarding();
+
+      runtimeSettings = {settings_persisted:true, saved:{language:'zh-CN', language_onboarding_version:0}};
+      await setTermaLanguage('zh-CN', {emit:false});
+      await ensureTermaLanguageOnboarding();
+      const existingUserKeepsLanguage = document.querySelector('input[name="terma-onboarding-language"]:checked')?.value === 'zh-CN';
+      const englishChoice = document.querySelector('input[name="terma-onboarding-language"][value="en-US"]');
+      if (englishChoice) englishChoice.checked = true;
+      api = async (path, options={}) => {
+        if (path !== '/api/runtime-settings' || options.method !== 'PUT') throw new Error('Unexpected language onboarding request');
+        savedPayload = JSON.parse(options.body || '{}');
+        return {settings_persisted:true, saved:{...runtimeSettings.saved, ...savedPayload}};
+      };
+      const saved = await confirmTermaLanguageOnboarding(document.querySelector('.language-onboarding button[type="submit"]'));
+      return {
+        regionDefaults,
+        newUserDefaultsEnglish,
+        nativeChoiceCopy,
+        coldStartNativeChoice:Boolean(coldStartMissingChineseResources && coldStartChineseResourcesLoaded && nativeChoiceCopy),
+        existingUserKeepsLanguage,
+        fitsNarrowViewport,
+        saved:Boolean(saved && savedPayload?.language === 'en-US' && savedPayload?.language_onboarding_version === 1),
+        closed:document.querySelector('.language-onboarding') === null
+      };
+    } finally {
+      api = previousApi;
+      runtimeSettings = previousRuntimeSettings;
+      suggestedTermaLanguage = previousSuggestedLanguage;
+      closeTermaLanguageOnboarding();
+      await setTermaLanguage(previousLanguage, {emit:false});
+    }
+  })()`);
+  window.setSize(1200, 800);
+  let desktopViewportReady = false;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    desktopViewportReady = await window.webContents.executeJavaScript("window.innerWidth > 760 && !isMobileLayout()");
+    if (desktopViewportReady) break;
+  }
+  if (!desktopViewportReady) throw new Error("语言引导窄屏检查后未恢复桌面视口");
+  await window.webContents.executeJavaScript(`(async () => {
+    // The onboarding scenario intentionally exercises the non-mainland English
+    // default. Keep the legacy geometry and interaction scenarios on their
+    // explicit Chinese baseline; English coverage runs in the dedicated i18n
+    // scenario below and must not make localized selectors data-dependent.
+    await setTermaLanguage('zh-CN', {emit:false});
+    syncResponsivePane();
+  })()`);
   console.log("[ui-smoke] noVNC module");
   const noVncModuleUi = await window.webContents.executeJavaScript(`(async () => {
     const RFB = await noVncRfbClass();
@@ -87,8 +176,7 @@ app.whenReady().then(async () => {
       clearInterval(sftpJobsTimer);
       sftpJobsTimer = null;
     }
-    if (Array.isArray(connections) && connections.length) return;
-    connections = [{
+    const fixtureConnection = {
       id: 900001,
       name: 'UI Smoke',
       group_name: 'UI Smoke',
@@ -110,7 +198,10 @@ app.whenReady().then(async () => {
         status: 'running',
         reconnect_count: 0
       }]
-    }];
+    };
+    const fixtureIndex = connections.findIndex(item => Number(item?.id) === fixtureConnection.id);
+    if (fixtureIndex >= 0) connections.splice(fixtureIndex, 1);
+    connections.unshift(fixtureConnection);
     groupOpen.add('UI Smoke');
     renderConnections();
     // Keep the in-memory fixture stable when the isolated test service has no records.
@@ -451,9 +542,10 @@ app.whenReady().then(async () => {
       operationPaneCollapsible: expandedBrand && collapsedBrand && paneExpanded && paneCollapsed && collapsedBrandExpands && differentActivityExpands && activeActivityCollapses && collapsedContentWidth >= expandedContentWidth + 250,
       operationPaneCollapseLayout:{expandedBrand,collapsedBrand,paneExpanded,paneCollapsed,collapsedBrandExpands,collapsedBrandExpandState,differentActivityExpands,activeActivityCollapses,expandedContentWidth,collapsedContentWidth},
       operationPanePinBehavior: pinGuideShownOnce&&pinGuideTargetsPin&&pinGuideDoesNotRepeat&&runningPinShowsAutoCollapse&&unpinnedContentClickCollapses&&pinnedContentClickStaysOpen&&independentPinPersistence,
-      activityUtilities: document.querySelector('.activity-bottom')?.children[0]?.id === 'themeToggle'
-        && document.querySelector('.activity-bottom')?.children[1]?.id === 'activityRefresh'
-        && document.querySelector('.activity-bottom')?.children[2]?.classList.contains('github-link'),
+      activityUtilities: document.querySelector('.activity-bottom')?.children[0]?.id === 'languageToggle'
+        && document.querySelector('.activity-bottom')?.children[1]?.id === 'themeToggle'
+        && document.querySelector('.activity-bottom')?.children[2]?.id === 'activityRefresh'
+        && document.querySelector('.activity-bottom')?.children[3]?.classList.contains('github-link'),
       compactDesktopHeader: brandHeight >= 33.5
         && brandHeight <= 64.5
         && topbarHeight >= 33.5
@@ -478,6 +570,67 @@ app.whenReady().then(async () => {
         items: activityItems
       }
     };
+  })()`);
+  console.log("[ui-smoke] forwarding template actions");
+  const forwardTemplateLayoutUi = await window.webContents.executeJavaScript(`(() => {
+    const previousTemplates = forwardTemplates;
+    const previousEditing = editingForwardTemplateId;
+    let host = document.querySelector('#forwardTemplateManager');
+    const created = !host;
+    if (!host) {
+      host = document.createElement('div');
+      host.id = 'forwardTemplateManager';
+      document.body.appendChild(host);
+    }
+    const previousStyle = host.getAttribute('style');
+    const previousHtml = host.innerHTML;
+    try {
+      host.hidden = false;
+      host.style.position = 'fixed';
+      host.style.left = '8px';
+      host.style.top = '8px';
+      host.style.width = '292px';
+      host.style.zIndex = '-1';
+      forwardTemplates = [
+        {id:'layout-1',name:'Memcached',mode:'local',bind_host:'127.0.0.1',bind_port:11211,target_host:'127.0.0.1',target_port:11211},
+        {id:'layout-2',name:'Web HTTP',mode:'local',bind_host:'127.0.0.1',bind_port:8080,target_host:'127.0.0.1',target_port:80}
+      ];
+      editingForwardTemplateId = null;
+      renderForwardTemplateManager();
+      const rows = [...host.querySelectorAll('.template-row')];
+      const actionGroups = rows.map(row => row.querySelector('.template-actions'));
+      const buttons = [...host.querySelectorAll('.template-actions button')];
+      const singleLine = buttons.every(button => {
+        const range = document.createRange();
+        range.selectNodeContents(button);
+        return [...range.getClientRects()].length <= 1
+          && getComputedStyle(button).whiteSpace === 'nowrap'
+          && button.scrollWidth <= button.clientWidth + 1;
+      });
+      const insideRows = rows.every((row,index) => {
+        const rowRect = row.getBoundingClientRect();
+        const actionsRect = actionGroups[index]?.getBoundingClientRect();
+        return Boolean(actionsRect
+          && actionsRect.left >= rowRect.left - 0.5
+          && actionsRect.right <= rowRect.right + 0.5
+          && actionsRect.top >= rowRect.top - 0.5
+          && actionsRect.bottom <= rowRect.bottom + 0.5);
+      });
+      const noOverlap = actionGroups.every(group => {
+        const rects = [...group.querySelectorAll('button')].map(button => button.getBoundingClientRect());
+        return rects.every((rect,index) => index === 0 || rect.left >= rects[index - 1].right - 0.5);
+      });
+      return {rows:rows.length, buttons:buttons.length, singleLine, insideRows, noOverlap};
+    } finally {
+      forwardTemplates = previousTemplates;
+      editingForwardTemplateId = previousEditing;
+      if (created) host.remove();
+      else {
+        host.innerHTML = previousHtml;
+        if (previousStyle === null) host.removeAttribute('style');
+        else host.setAttribute('style', previousStyle);
+      }
+    }
   })()`);
   console.log("[ui-smoke] appearance effects disabled");
   const appearanceEffectsUi = await window.webContents.executeJavaScript(`(async () => {
@@ -544,12 +697,30 @@ app.whenReady().then(async () => {
       const welcome = document.querySelector('#view-welcome');
       welcome.innerHTML = '<div id="startupSummary"></div>';
       startupSummaryStatus = {state:'ready',local_url:'http://127.0.0.1:8088',lan_urls:[]};
+      const startupCountSnapshot = state => {
+        const card = document.querySelector('[data-startup-state="' + state + '"]');
+        const count = card?.querySelector('strong');
+        const label = card?.querySelector('small');
+        const countRect = count?.getBoundingClientRect();
+        const labelRect = label?.getBoundingClientRect();
+        return {
+          count:count?.textContent?.trim() || '',
+          label:label?.textContent?.trim() || '',
+          labelBelow:Boolean(countRect && labelRect && labelRect.top >= countRect.bottom - 0.5)
+        };
+      };
       fixture.forwards[0].status = 'running';
       renderStartupSummary();
-      const runningText = document.querySelector('#startupSummary')?.textContent || '';
+      const runningState = startupCountSnapshot('running');
+      const runningFailedState = startupCountSnapshot('failed');
+      fixture.forwards[0].status = 'reconnecting';
+      renderStartupSummary();
+      const reconnectingState = startupCountSnapshot('reconnecting');
       fixture.forwards[0].status = 'failed';
       renderStartupSummary();
       const failedText = document.querySelector('#startupSummary')?.textContent || '';
+      const failedRunningState = startupCountSnapshot('running');
+      const failedState = startupCountSnapshot('failed');
       selectConnection(fixture.id);
       const explicitSelectionReopens = groupOpen.has(fixture.group_name);
       return {
@@ -558,8 +729,9 @@ app.whenReady().then(async () => {
         collapsedAfterRefresh,
         collapsePersisted,
         explicitSelectionReopens,
-        runningCountLive:runningText.includes('运行中 1') && runningText.includes('启动失败 0'),
-        failureCountLive:failedText.includes('运行中 0') && failedText.includes('启动失败 1') && failedText.includes('存在启动失败的转发'),
+        runningCountLive:runningState.count === '1' && runningState.label === '运行中' && runningFailedState.count === '0' && runningFailedState.label === '启动失败',
+        failureCountLive:failedRunningState.count === '0' && failedRunningState.label === '运行中' && failedState.count === '1' && failedState.label === '启动失败' && failedText.includes('存在启动失败的转发'),
+        startupLabelsBelowNumbers:runningState.labelBelow && reconnectingState.labelBelow && failedState.labelBelow,
         oldStartupLabelsRemoved:!failedText.includes('转发成功') && !failedText.includes('部分转发异常') && !failedText.includes('异常 1')
       };
     } finally {
@@ -814,8 +986,9 @@ app.whenReady().then(async () => {
       await pause();
       const multiCard = modal.querySelector('.workspace-close-tabs-modal');
       const multiRect = multiCard?.getBoundingClientRect();
+      const multiItems = [...(multiCard?.querySelectorAll('.workspace-close-tabs-list li') || [])];
       const multiPromptListsNames = Boolean(multiCard
-        && multiCard.textContent.includes('3 个标签')
+        && multiItems.length === 3
         && multiCard.textContent.includes('Connected terminal')
         && multiCard.textContent.includes('Connecting SFTP')
         && multiCard.textContent.includes('Connecting VNC'));
@@ -838,6 +1011,7 @@ app.whenReady().then(async () => {
         escapePreservesTabs,
         cancelPreservesTabs,
         multiPromptListsNames,
+        multiPromptDiagnostics:{itemCount:multiItems.length,items:multiItems.map(item=>item.textContent.trim()),text:multiCard?.textContent.replace(/\s+/g,' ').trim()||''},
         confirmed,
         disconnectedClosesImmediately,
         withinViewport:Boolean(connectedRect && multiRect
@@ -1560,9 +1734,14 @@ app.whenReady().then(async () => {
     const previousRuntimeCheck = runtimeSettingsCheck;
     const previousSecurity = securitySettings;
     const previousDesktopSettings = desktopSettings;
+    const previousLatestJobs = sftpLatestJobs;
+    const previousLanguage = normalizeTermaLanguage(document.documentElement.lang || runtimeSettings?.saved?.language);
     const previousReadVersion = updateNoticeReadVersion;
     const previousStoredVersion = sessionStorage.getItem(UPDATE_NOTICE_SESSION_KEY);
     const previousLatencyVisible = terminalLatencyVisible;
+    let thirdPartyLiveFixture = null;
+    let thirdPartyLiveEditor = null;
+    let thirdPartyLiveZmodemSession = null;
     try {
       primaryView = 'settings';
       activeSettingsSection = 'settings-general';
@@ -1628,6 +1807,992 @@ app.whenReady().then(async () => {
       renderSettings();
       renderExplorerTools();
       syncUpdateNoticeDots();
+      await setTermaLanguage('zh-CN');
+      const visibleHan = [];
+      const thirdPartyLiveSwitch = {
+        scenario:'third-party-live-language-switch',
+        aceSeededChinese:false,
+        zmodemSeededChinese:false,
+        aceClean:false,
+        zmodemClean:false,
+        zmodemLocalizedTitle:false,
+        zmodemUserTextPreserved:false
+      };
+      const collectThirdPartyChromeHan = (root, textSelector, preservedValues=[]) => {
+        const findings = [];
+        if (!root) return findings;
+        const chromeValue = value => preservedValues.reduce((result, preserved) => result.split(preserved).join(''), value);
+        for (const textRoot of root.querySelectorAll(textSelector)) {
+          const walker = document.createTreeWalker(textRoot, NodeFilter.SHOW_TEXT);
+          while (walker.nextNode()) {
+            const value = String(walker.currentNode.nodeValue || '').replace(/\\s+/g, ' ').trim();
+            if (value && /[\u3400-\u9fff]/.test(chromeValue(value))) findings.push(value);
+          }
+        }
+        const elements = [];
+        if (root.matches?.('[title],[aria-label],[placeholder],[aria-roledescription]')) elements.push(root);
+        elements.push(...root.querySelectorAll('[title],[aria-label],[placeholder],[aria-roledescription]'));
+        for (const element of elements) {
+          for (const attribute of ['title','aria-label','placeholder','aria-roledescription']) {
+            const value = String(element.getAttribute(attribute) || '').replace(/\\s+/g, ' ').trim();
+            if (value && /[\u3400-\u9fff]/.test(chromeValue(value))) findings.push('@' + attribute + '=' + value);
+          }
+        }
+        return findings;
+      };
+      if (typeof window.ace?.edit !== 'function') throw new Error('Ace runtime was not loaded before the live language-switch scenario');
+      window.ace.config.set('basePath', '/vendor/ace');
+      window.ace.config.set('useStrictCSP', true);
+      syncTermaAceLocalization();
+      thirdPartyLiveFixture = document.createElement('section');
+      thirdPartyLiveFixture.style.cssText = 'position:fixed;left:-2000px;top:0;width:720px;height:420px;z-index:9999;background:var(--panel)';
+      thirdPartyLiveFixture.innerHTML = '<div class="sftp-code-editor third-party-live-ace" style="width:100%;height:260px"></div><div class="terminal-box third-party-live-zmodem"></div>';
+      document.body.appendChild(thirdPartyLiveFixture);
+      const thirdPartyLiveAceHost = thirdPartyLiveFixture.querySelector('.third-party-live-ace');
+      thirdPartyLiveEditor = window.ace.edit(thirdPartyLiveAceHost);
+      thirdPartyLiveAceHost.__termaAceEditor = thirdPartyLiveEditor;
+      thirdPartyLiveEditor.session.setUseWorker(false);
+      thirdPartyLiveEditor.setValue('{\\n  "value": 1\\n}\\n', -1);
+      await new Promise(resolve => thirdPartyLiveEditor.session.setMode('ace/mode/json', resolve));
+      thirdPartyLiveEditor.setOption('enableKeyboardAccessibility', true);
+      thirdPartyLiveEditor.session.setAnnotations([{row:0,column:0,text:'Smoke warning',type:'warning'}]);
+      thirdPartyLiveEditor.renderer.updateFull(true);
+      thirdPartyLiveEditor.execCommand('find');
+      for (let attempt=0; attempt<20 && !thirdPartyLiveFixture.querySelector('.ace_search'); attempt+=1) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      syncTermaAceLocalization(thirdPartyLiveFixture);
+      thirdPartyLiveZmodemSession = {mount:thirdPartyLiveFixture.querySelector('.third-party-live-zmodem')};
+      const thirdPartyLiveZmodemFilename = '设置';
+      terminalZmodemRender(thirdPartyLiveZmodemSession, {
+        titleKey:'terminal:zmodem.receiving_file',
+        titleOptions:{name:thirdPartyLiveZmodemFilename, defaultValue:'正在接收 ' + thirdPartyLiveZmodemFilename},
+        detailKey:'terminal:zmodem.binary_mode_hint',
+        detailOptions:{defaultValue:'已启用二进制传输模式；按 Ctrl+C 可取消'},
+        primaryAction:'send',
+        primaryLabelKey:'terminal:zmodem.choose_files',
+        primaryLabelOptions:{defaultValue:'选择文件'}
+      });
+      const aceChineseBeforeSwitch = collectThirdPartyChromeHan(thirdPartyLiveAceHost, '.ace_search');
+      const zmodemChineseBeforeSwitch = collectThirdPartyChromeHan(thirdPartyLiveZmodemSession.mount, '.terminal-zmodem-panel', [thirdPartyLiveZmodemFilename]);
+      thirdPartyLiveSwitch.aceSeededChinese = aceChineseBeforeSwitch.length > 0;
+      thirdPartyLiveSwitch.zmodemSeededChinese = zmodemChineseBeforeSwitch.length > 0;
+      const tabsBeforeLanguageSwitch = tabs.map(tab => tab.key);
+      const languageTaskFixtures = [
+        {id:'language-paused-cross-copy',status:'paused',type:'cross-copy',label:'跨 SFTP 传输',connection_id:1,connection_name:'Target',size:100,transferred:50,can_resume:true,resume_supported:true},
+        {id:'language-running-cross-copy',status:'running',type:'cross-copy',phase:'transferring',label:'跨 SFTP 传输',connection_id:1,connection_name:'Target',size:100,transferred:25,can_pause:true,resume_supported:true}
+      ];
+      sftpLatestJobs = languageTaskFixtures;
+      updateSftpTaskCenter(languageTaskFixtures);
+      const originalLanguageApi = api;
+      const languageRequests = [];
+      api = async (path, options={}) => {
+        if (path === '/api/runtime-settings' && String(options.method || 'GET').toUpperCase() === 'PUT') {
+          const body = JSON.parse(options.body || '{}');
+          languageRequests.push(body);
+          return normalizeRuntimeSettingsResponse({
+            ...runtimeSettings,
+            saved:{...runtimeSettings.saved, language:body.language}
+          });
+        }
+        return originalLanguageApi(path, options);
+      };
+      document.querySelector('#languageToggle')?.click();
+      for (let attempt=0; attempt<30 && document.documentElement.lang !== 'en-US'; attempt+=1) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      api = originalLanguageApi;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const aceHanAfterSwitch = collectThirdPartyChromeHan(thirdPartyLiveAceHost, '.ace_search');
+      const zmodemHanAfterSwitch = collectThirdPartyChromeHan(thirdPartyLiveZmodemSession.mount, '.terminal-zmodem-panel', [thirdPartyLiveZmodemFilename]);
+      thirdPartyLiveSwitch.aceClean = aceHanAfterSwitch.length === 0;
+      thirdPartyLiveSwitch.zmodemClean = zmodemHanAfterSwitch.length === 0;
+      const thirdPartyLiveZmodemTitle = String(thirdPartyLiveZmodemSession.mount.querySelector('.terminal-zmodem-copy strong')?.textContent || '');
+      thirdPartyLiveSwitch.zmodemLocalizedTitle = thirdPartyLiveZmodemTitle === tr('terminal:zmodem.receiving_file', {name:thirdPartyLiveZmodemFilename});
+      thirdPartyLiveSwitch.zmodemUserTextPreserved = thirdPartyLiveZmodemTitle.includes(thirdPartyLiveZmodemFilename);
+      visibleHan.push(...aceHanAfterSwitch.map(value => 'third-party-live-ace: ' + value));
+      visibleHan.push(...zmodemHanAfterSwitch.map(value => 'third-party-live-zmodem: ' + value));
+      terminalZmodemRender(thirdPartyLiveZmodemSession, {hidden:true});
+      try { thirdPartyLiveEditor.destroy(); } catch {}
+      thirdPartyLiveFixture.remove();
+      thirdPartyLiveEditor = null;
+      thirdPartyLiveZmodemSession = null;
+      thirdPartyLiveFixture = null;
+      renderSettings();
+      renderExplorerTools();
+      await new Promise(resolve => setTimeout(resolve, 0));
+      const englishTaskMarkup = languageTaskFixtures.map(renderSftpJob).join('');
+      const languageButton = document.querySelector('#languageToggle');
+      const languageThemeButton = document.querySelector('#themeToggle');
+      const languageRect = languageButton?.getBoundingClientRect();
+      const themeRect = languageThemeButton?.getBoundingClientRect();
+      const collectVisibleHan = (scope, includeHidden=false, root=document.body) => {
+        const scanRoot = root?.nodeType ? root : document.body;
+        const walker = document.createTreeWalker(scanRoot, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          const parent = node.parentElement;
+          const value = String(node.nodeValue || '').replace(/\\s+/g,' ').trim();
+          if (!value || !/[\u3400-\u9fff]/.test(value) || !parent || termaI18nSkipped(parent)) continue;
+           if (!includeHidden && (!parent.getClientRects().length || getComputedStyle(parent).visibility === 'hidden')) continue;
+           visibleHan.push(scope+': '+value);
+         }
+        for (const element of scanRoot.querySelectorAll?.('[title],[aria-label],[placeholder]') || []) {
+          if (termaI18nSkipped(element) || (!includeHidden && (!element.getClientRects().length || getComputedStyle(element).visibility === 'hidden'))) continue;
+          for (const attribute of ['title','aria-label','placeholder']) {
+            const value = String(element.getAttribute(attribute) || '').replace(/\\s+/g,' ').trim();
+            if (value && /[\u3400-\u9fff]/.test(value)) visibleHan.push(scope+': @'+attribute+'='+value);
+          }
+        }
+      };
+      const collectTranslatedHan = async (scope, includeHidden=false, root=document.body) => {
+        applyTermaTranslations(root || document.body);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        collectVisibleHan(scope, includeHidden, root);
+      };
+      for (const section of ['settings-general','settings-basic','settings-notifications','settings-runtime','settings-cache','settings-about']) {
+        showSettingsSection(section, {moveToWorkspace:false});
+        await new Promise(resolve => setTimeout(resolve, 0));
+        collectVisibleHan(section);
+      }
+      for (const name of ['connections','remote','running','command','logs','import']) {
+        showPrimary(name);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        collectVisibleHan(name);
+      }
+      const previousLanguageApi = api;
+      const languageRemoteConnection = connections[0] || {id:1,name:'Language SSH',ssh_host:'192.0.2.7',ssh_port:22,ssh_user:'smoke',x11_mode:'trusted'};
+      const languageVncProfile = {id:910091,name:'Language VNC',protocol:'vnc',host:'192.0.2.77',port:5900,username:'',options:{source_ssh_connection_id:Number(languageRemoteConnection.id),view_only:false}};
+      const languageVncKey = 'language-vnc-clipboard';
+      const languageVncSession = {key:languageVncKey,profile:languageVncProfile,rfb:{viewOnly:false},screen:document.createElement('div'),connecting:false,connected:true,clipboardAutoSync:false,clipboardTransport:'ssh-linux-x11',clipboardTransportChecked:true,clipboardBridgeTool:'xclip',remoteClipboardAvailable:false,remoteClipboardPending:false,remoteClipboardText:'',viewport:null};
+      vncSessions.set(languageVncKey, languageVncSession);
+      api = async (path, options={}) => {
+        const value = String(path);
+        if (value === '/api/xserver') return {integration_available:true,desktop:true,desktop_backend_available:true,authorization_required:false,platform:'linux',available:true,running:true,managed:true,mode:'native',server:'X11',display:':0',reason:'X Server 已就绪',can_start:false,can_stop:false,can_install:false};
+        if (value.endsWith('/x11-forwarding')) return {platform:'linux',ready:true,enabled:true,x11_forwarding:'yes',sshd_present:true,config_present:true,can_manage:true,can_terminal_manage:true,xauth_path:'/usr/bin/xauth',xauth_location:'/usr/bin/xauth',x11_display_offset:'10',terminal_commands:{}};
+        if (value.endsWith('/x11-clipboard/helper')) return {platform:'linux',installed:false,package_manager:'apt',reason:'远端尚未安装 xclip；安装后可从 X11 转发终端粘贴图片',install_plan:{online:{available:true,description:'在线安装'},offline:{available:true,description:'使用远端缓存'},local_offline:{available:true,package_names:['xclip'],description:'本机下载后离线安装'},manual:{available:true,description:'手动安装/配置说明'}},guide:{steps:['确认本机 X Server 已启动'],commands:['command -v xclip']},uninstall_plan:{available:false}};
+        return previousLanguageApi(value, options);
+      };
+      try {
+        await openXServerManager(Number(languageRemoteConnection.id));
+        collectVisibleHan('xserver');
+        closeXServerManager();
+        renderEmbeddedVnc(languageVncProfile, languageVncKey, {platform:'linux'});
+        await new Promise(resolve => setTimeout(resolve, 0));
+        collectVisibleHan('vnc');
+        collectVisibleHan('document', true);
+      } finally {
+        closeXServerManager();
+        vncSessions.delete(languageVncKey);
+        api = previousLanguageApi;
+      }
+      const i18nScenarioErrors = [];
+      const runI18nScenario = async (name, action) => {
+        try {
+          await action();
+          await new Promise(resolve => setTimeout(resolve, 0));
+          applyTermaTranslations(document);
+          await new Promise(resolve => setTimeout(resolve, 0));
+        } catch (error) {
+          i18nScenarioErrors.push(name + ': ' + (error?.message || error));
+        }
+      };
+      await runI18nScenario('file-picker-language-switch', async () => {
+        const input = document.getElementById('config_upload');
+        const name = input?.closest('.file-picker')?.querySelector('.file-picker-name');
+        if (!input || !name) throw new Error('config file picker was not found');
+        try {
+          Object.defineProperty(input, 'files', {configurable:true,value:[]});
+          updateFilePicker(input);
+          if (name.textContent.trim() !== 'No file selected' || name.dataset.i18n !== 'common:auto.not_selected') throw new Error('empty file picker was not generated in English');
+          Object.defineProperty(input, 'files', {configurable:true,value:[{name:'中文配置.conf'}]});
+          updateFilePicker(input);
+          if (name.textContent.trim() !== '中文配置.conf' || name.dataset.i18n || name.dataset.i18nSkip !== 'true') throw new Error('selected user filename was not protected from translation');
+          await setTermaLanguage('zh-CN', {emit:false});
+          await setTermaLanguage('en-US', {emit:false});
+          applyTermaTranslations(name);
+          if (name.textContent.trim() !== '中文配置.conf') throw new Error('selected user filename changed after switching languages');
+          Object.defineProperty(input, 'files', {configurable:true,value:[{name:'一.txt'},{name:'二.txt'}]});
+          updateFilePicker(input);
+          if (name.textContent.trim() !== '2 files selected' || name.dataset.filePickerCount !== '2') throw new Error('multi-file count was not generated in English');
+          await setTermaLanguage('zh-CN', {emit:false});
+          if (name.textContent.trim() !== '已选择 2 个文件') throw new Error('multi-file count did not refresh in Chinese');
+          await setTermaLanguage('en-US', {emit:false});
+          if (name.textContent.trim() !== '2 files selected') throw new Error('multi-file count did not refresh back to English');
+          Object.defineProperty(input, 'files', {configurable:true,value:[]});
+          updateFilePicker(input);
+          if (name.textContent.trim() !== 'No file selected' || name.dataset.i18n !== 'common:auto.not_selected' || name.dataset.i18nSkip) throw new Error('cleared file picker did not restore the English empty state');
+        } finally {
+          delete input.files;
+          updateFilePicker(input);
+        }
+      });
+      await runI18nScenario('connection-health-diagnosis', async () => {
+        const fixed = localizedHealthSshDiagnosis({
+          diagnosis:{reason_code:'ssh_handshake_timeout',reason:'SSH 握手超时',message:'SSH 握手超时，请检查主机地址、端口和 SSH 服务'},
+          raw_output:'SSH 握手超时，请检查主机地址、端口和 SSH 服务',
+          preserve_raw_output:false
+        });
+        if (fixed !== 'SSH handshake timed out. Check the host address, port, and SSH service.' || /[\u3400-\u9fff]/.test(fixed)) throw new Error('fixed SSH health diagnosis was not generated in English');
+        const remoteOutput = '远端自定义诊断输出';
+        const preserved = localizedHealthSshDiagnosis({
+          diagnosis:{reason_code:'ssh_failed',reason:'SSH 操作失败',message:remoteOutput},
+          raw_output:remoteOutput,
+          preserve_raw_output:true
+        });
+        if (!preserved.includes('The SSH connection failed.') || !preserved.includes(remoteOutput)) throw new Error('raw remote SSH output was not preserved');
+      });
+      await runI18nScenario('third-party-components', async () => {
+        if (typeof window.ace?.edit !== 'function') throw new Error('Ace runtime was not loaded');
+        if (typeof window.Diff?.diffLines !== 'function') throw new Error('jsdiff runtime was not loaded');
+        if (typeof window.Zmodem?.Sentry !== 'function') throw new Error('ZMODEM runtime was not loaded');
+        const aceMessages = termaAceMessages();
+        if (Object.values(aceMessages).some(value => /[\u3400-\u9fff]/.test(String(value)))) {
+          throw new Error('Ace messages still contain Chinese');
+        }
+        const fixture = document.createElement('section');
+        fixture.style.cssText = 'position:fixed;left:24px;top:24px;width:720px;height:420px;z-index:9999;background:var(--panel)';
+        fixture.innerHTML = '<div class="third-party-ace" style="width:100%;height:220px"></div><div class="third-party-diff"></div><div class="third-party-zmodem"></div>';
+        document.body.appendChild(fixture);
+        let editor = null;
+        try {
+          const aceHost = fixture.querySelector('.third-party-ace');
+          editor = window.ace.edit(aceHost);
+          editor.setValue('first\\nsecond\\n', -1);
+          editor.execCommand('find');
+          let findInput = null;
+          let replaceInput = null;
+          for (let attempt=0; attempt<20 && !findInput; attempt+=1) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+            findInput = fixture.querySelector('.ace_search_form .ace_search_field');
+            replaceInput = fixture.querySelector('.ace_replace_form .ace_search_field');
+          }
+          syncTermaAceLocalization(fixture);
+          if (!findInput || findInput.placeholder !== aceMessages['search-box.find.placeholder']) {
+            throw new Error('Ace find placeholder was not localized: ' + JSON.stringify({actual:findInput?.placeholder || '', expected:aceMessages['search-box.find.placeholder']}));
+          }
+          if (!replaceInput || replaceInput.placeholder !== aceMessages['search-box.replace.placeholder']) {
+            throw new Error('Ace replace placeholder was not localized: ' + JSON.stringify({actual:replaceInput?.placeholder || '', expected:aceMessages['search-box.replace.placeholder']}));
+          }
+          const diffHost = fixture.querySelector('.third-party-diff');
+          diffHost.innerHTML = sftpDiffViewerHtml('first\\nold value\\n', 'first\\nnew value\\n', {
+            oldLabel:tr('sftp:diff.old_version'),
+            newLabel:tr('sftp:diff.new_version')
+          });
+          const zmodemMount = fixture.querySelector('.third-party-zmodem');
+          const zmodemSession = {mount:zmodemMount};
+          terminalZmodemRender(zmodemSession, {
+            detailKey:'terminal:zmodem.binary_mode_hint',
+            detailOptions:{defaultValue:'已启用二进制传输模式；按 Ctrl+C 可取消'},
+            primaryAction:'send',
+            primaryLabelKey:'terminal:zmodem.choose_files',
+            primaryLabelOptions:{defaultValue:'选择文件'}
+          });
+          collectVisibleHan('third-party-components', true, fixture);
+          terminalZmodemRender(zmodemSession, {hidden:true});
+        } finally {
+          try { editor?.destroy(); } catch {}
+          fixture.remove();
+        }
+      });
+      await runI18nScenario('welcome', async () => {
+        const scenarioApi = api;
+        api = async (path, options={}) => String(path) === '/api/startup-status'
+          ? {state:'ready',local_url:'http://127.0.0.1:18100',lan_urls:[]}
+          : scenarioApi(path, options);
+        try {
+          await setTermaLanguage('zh-CN', {emit:false});
+          renderWelcome();
+          await new Promise(resolve => setTimeout(resolve, 0));
+          if (document.getElementById('workspaceSubtitle')?.textContent.trim() !== '选择左侧项目后开始操作') throw new Error('welcome workspace subtitle was not seeded in Chinese');
+          await setTermaLanguage('en-US', {emit:false});
+          await new Promise(resolve => setTimeout(resolve, 0));
+          applyTermaTranslations(document.getElementById('view-welcome'));
+          collectVisibleHan('welcome-open', true, document.getElementById('view-welcome'));
+          collectVisibleHan('welcome-workspace-header-after-switch', true, document.querySelector('.workspace-heading'));
+          if (document.getElementById('workspaceSubtitle')?.textContent.trim() !== 'Select an item on the left to begin') throw new Error('welcome workspace subtitle did not switch to English');
+        } finally {
+          api = scenarioApi;
+        }
+      });
+      await runI18nScenario('rdp-form', async () => {
+        renderRemoteProfileForm({protocol:'rdp',name:'Language RDP',group_name:'Default',options:{display_mode:'dynamic',clipboard:true}});
+        await new Promise(resolve => setTimeout(resolve, 0));
+        applyTermaTranslations(document.getElementById('view-edit'));
+        collectVisibleHan('rdp-form-open', true, document.getElementById('view-edit'));
+      });
+      await runI18nScenario('quick-panel', async () => {
+        await openQuickPanel();
+        renderQuickPanel('');
+        await new Promise(resolve => setTimeout(resolve, 0));
+        applyTermaTranslations(document);
+        collectVisibleHan('quick-panel-open', true, document.getElementById('quickPanel'));
+        closeQuickPanel();
+      });
+      await runI18nScenario('ssh-key-wizard', async () => {
+        openSshKeyWizard();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        applyTermaTranslations(document);
+        collectVisibleHan('ssh-key-wizard-open', true, document.getElementById('modal'));
+        closeModal();
+      });
+      await runI18nScenario('connected-tab-close', async () => {
+        const decision = confirmWorkspaceConnectedTabClose([{title:'Language Terminal',connectionStatus:'connected'}]);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        collectVisibleHan('connected-tab-close-modal', true, document.getElementById('modal'));
+        document.getElementById('workspaceCloseTabsCancel')?.click();
+        await decision;
+      });
+      await runI18nScenario('recent-commands', async () => {
+        const previousRecentCommands = recentTerminalCommands;
+        recentTerminalCommands = ['printf "language smoke"'];
+        try {
+          showRecentTerminalCommands('language-terminal');
+          const modal = document.getElementById('modal');
+          collectVisibleHan('recent-commands-immediate', true, modal);
+          if (modal?.querySelector('h2')?.textContent.trim() !== 'Recent commands') throw new Error('recent commands dialog was not generated in English');
+          document.getElementById('recentCommandClose')?.click();
+        } finally {
+          recentTerminalCommands = previousRecentCommands;
+          closeModal();
+        }
+      });
+      await runI18nScenario('workspace-tab-menu', async () => {
+        const tab = tabs.find(item => item.closable !== false) || tabs[0];
+        if (!tab) throw new Error('no workspace tab available');
+        showTabContextMenu({preventDefault(){},stopPropagation(){},clientX:160,clientY:120}, tab.key);
+        await collectTranslatedHan('workspace-tab-menu-open', true, document.getElementById('tabContextMenu'));
+        hideTabContextMenu();
+      });
+      await runI18nScenario('local-files-shortcuts', async () => {
+        const scenarioLocalFilesAvailable = localFilesAvailable;
+        localFilesAvailable = () => true;
+        const host = document.createElement('div');
+        try {
+          host.innerHTML = localFilesToolbarButtonHtml('language-local-files');
+          document.body.appendChild(host);
+          await collectTranslatedHan('local-files-shortcut-button', true, host);
+          showNewLocalFilesMenu({preventDefault(){},stopPropagation(){},clientX:180,clientY:140});
+          const menu = document.getElementById('actionMenu');
+          if (!menu) throw new Error('local files menu was not opened');
+          await collectTranslatedHan('local-files-shortcut-menu', true, menu);
+        } finally {
+          hideActionMenu();
+          host.remove();
+          localFilesAvailable = scenarioLocalFilesAvailable;
+        }
+      });
+      await runI18nScenario('local-files-view', async () => {
+        const scenarioLocalFilesRoot = localFilesRoot;
+        const tabKey = 'language-local-files-view';
+        const host = document.createElement('div');
+        host.innerHTML = '<div id="view-local-files"><div class="local-files-shell"><div class="local-files-list"></div></div></div>';
+        document.body.appendChild(host);
+        localFilesRoot = () => host.querySelector('#view-local-files');
+        Object.assign(localFilesRuntime(tabKey), {
+          path:'C:/LanguageSmoke',displayPath:'C:/LanguageSmoke',location:'directory',parent:'C:/',parentKind:'directory',
+          page:1,pageSize:50,total:1,totalPages:1,loaded:true,query:'',sort:'name',dir:'asc',
+          entries:[{name:'notes.txt',path:'C:/LanguageSmoke/notes.txt',type:'file',size:12,mtime:1700000000,mode:'644'}]
+        });
+        try {
+          renderLocalFiles(tabKey);
+          const root = localFilesRoot(tabKey);
+          collectVisibleHan('local-files-view-immediate', true, root);
+          const row = root?.querySelector('.local-files-row');
+          if (!row) throw new Error('local files row was not rendered');
+          showLocalFileEntryMenu({preventDefault(){},stopPropagation(){},clientX:220,clientY:180}, 'C:/LanguageSmoke/notes.txt', 'file', tabKey);
+          const menu = document.getElementById('actionMenu');
+          collectVisibleHan('local-files-context-menu-immediate', true, menu);
+          const labels = [...menu.querySelectorAll('button span')].map(item => item.textContent.trim());
+          if (!labels.includes('Open / Edit') || !labels.includes('Open in system file manager') || !labels.includes('Copy path')) throw new Error('local files context menu was not generated in English');
+        } finally {
+          hideActionMenu();
+          localFileRuntimes.delete(tabKey);
+          localFilesRoot = scenarioLocalFilesRoot;
+          host.remove();
+        }
+      });
+      await runI18nScenario('remote-explorer-menu', async () => {
+        showRemoteExplorerMenu({preventDefault(){},stopPropagation(){},clientX:180,clientY:140});
+        await collectTranslatedHan('remote-explorer-menu-open', true, document.getElementById('actionMenu'));
+        hideActionMenu();
+      });
+      await runI18nScenario('sftp-settings', async () => {
+        const scenarioApi = api;
+        api = async (path, options={}) => String(path) === '/api/sftp/download-settings'
+          ? {delivery_mode:'desktop',configured_directory:'',default_directory:'C:\\Downloads',effective_directory:'C:\\Downloads'}
+          : scenarioApi(path, options);
+        try {
+          await showSftpGlobalSettings();
+          for (const section of ['general','editor','transfer']) {
+            selectSftpSettingsTab(section);
+            await new Promise(resolve => setTimeout(resolve, 0));
+            collectVisibleHan('sftp-settings-' + section, true, document.getElementById('modal'));
+          }
+        } finally {
+          closeSftpGlobalSettings();
+          api = scenarioApi;
+        }
+      });
+      await runI18nScenario('sftp-view', async () => {
+        const scenarioApi = api;
+        const scenarioRefreshSftpJobs = refreshSftpJobs;
+        const scenarioStartSftpJobsTimer = startSftpJobsTimer;
+        const connectionId = Number(languageRemoteConnection.id);
+        const tabKey = 'language-sftp-view';
+        refreshSftpJobs = async () => [];
+        startSftpJobsTimer = () => {};
+        api = async (path, options={}) => {
+          const value = String(path);
+          if (['/api/sftp/jobs','/api/sftp/sync/jobs','/api/linux-desktop/tasks','/api/remote-component/tasks'].includes(value)) return [];
+          if (value.startsWith('/api/connections/' + connectionId + '/sftp?')) return {
+            path:'/',page:1,page_size:50,total:1,total_pages:1,unfiltered_total:1,paged:true,sort:'name',dir:'asc',
+            entries:[{name:'notes.txt',path:'/notes.txt',type:'file',size:12,mtime:1700000000,mode:'-rw-r--r--',owner:'smoke',group:'smoke',metadata_known:true}]
+          };
+          return scenarioApi(path, options);
+        };
+        try {
+          await openSftp(connectionId, '/', true, tabKey);
+          toggleSftpSearch(tabKey);
+          updateSftpConnectionUi(connectionId, 'disconnected', 'SFTP 连接已断开');
+          await new Promise(resolve => setTimeout(resolve, 0));
+          applyTermaTranslations(document);
+          collectVisibleHan('sftp-view-open', true, document.querySelector('[data-sftp-tab-key="' + tabKey + '"]'));
+          await runI18nScenario('sftp-context-menu', async () => {
+            const row = document.querySelector('[data-sftp-tab-key="' + tabKey + '"] .sftp-row');
+            if (!row) throw new Error('SFTP row was not rendered');
+            showSftpEntryMenu({currentTarget:row,target:row,preventDefault(){},stopPropagation(){},clientX:220,clientY:180}, connectionId, '/notes.txt', 'notes.txt', 'file', tabKey);
+            await collectTranslatedHan('sftp-context-menu-open', true, document.getElementById('actionMenu'));
+            hideActionMenu();
+          });
+          await runI18nScenario('sftp-permissions-dialog', async () => {
+            openSftpPermissionsForSelection(['/notes.txt'], tabKey);
+            const modal = document.getElementById('modal');
+            collectVisibleHan('sftp-permissions-dialog-immediate', true, modal);
+            if (modal?.querySelector('h2')?.textContent.trim() !== 'Set permissions') throw new Error('SFTP permissions dialog was not generated in English');
+            document.getElementById('sftpPermissionCancel')?.click();
+          });
+          await runI18nScenario('sftp-rename-dialog', async () => {
+            const operation = renameSftp(connectionId, '/notes.txt', 'notes.txt', tabKey);
+            await new Promise(resolve => setTimeout(resolve, 0));
+            const modal = document.getElementById('modal');
+            collectVisibleHan('sftp-rename-dialog-immediate', true, modal);
+            if (modal?.querySelector('h2')?.textContent.trim() !== 'Rename' || modal?.querySelector('label')?.textContent.trim() !== 'New name') throw new Error('SFTP rename dialog was not generated in English');
+            document.getElementById('modalCancelBtn')?.click();
+            await operation;
+          });
+          await runI18nScenario('sftp-compress-dialog', async () => {
+            const operation = compressSingleSftp(connectionId, '/notes.txt', tabKey);
+            await new Promise(resolve => setTimeout(resolve, 0));
+            const modal = document.getElementById('modal');
+            collectVisibleHan('sftp-compress-dialog-immediate', true, modal);
+            if (modal?.querySelector('h2')?.textContent.trim() !== 'Compress remote item') throw new Error('SFTP compression dialog was not generated in English');
+            document.getElementById('modalCancelBtn')?.click();
+            await operation;
+          });
+        } finally {
+          closeTabsByKey([tabKey], tabKey);
+          refreshSftpJobs = scenarioRefreshSftpJobs;
+          startSftpJobsTimer = scenarioStartSftpJobsTimer;
+          api = scenarioApi;
+        }
+      });
+      await runI18nScenario('xclip-local-offline', async () => {
+        const scenarioApi = api;
+        const connectionId = Number(languageRemoteConnection.id);
+        api = async (path, options={}) => String(path).endsWith('/x11-clipboard/helper')
+          ? {platform:'linux',root:true,installed:false,install_plan:{local_offline:{available:true}}}
+          : scenarioApi(path, options);
+        try {
+          const action = runX11ClipboardHelperAction(connectionId, 'local-offline');
+          for (let attempt=0; attempt<20 && document.getElementById('modal')?.hidden; attempt+=1) await new Promise(resolve => setTimeout(resolve, 5));
+          collectVisibleHan('xclip-local-offline-modal', true, document.getElementById('modal'));
+          document.querySelector('#modal .actions button:not(.primary):last-child')?.click();
+          await action;
+        } finally {
+          closeModal();
+          api = scenarioApi;
+        }
+      });
+      await runI18nScenario('xclip-no-plan-notification', async () => {
+        notify('当前系统没有可用的 xclip 安装方案，请查看手动安装说明', 'error');
+        await new Promise(resolve => setTimeout(resolve, 0));
+        applyTermaTranslations(document.getElementById('toast'));
+        collectVisibleHan('xclip-no-plan-notification-open', true, document.getElementById('toast'));
+      });
+      await runI18nScenario('named-workspaces', async () => {
+        const previousWorkspaces = productivityState.workspaces;
+        const scenarioWorkspaces = [{
+          id:910101,
+          name:'Workspace 4',
+          description:'',
+          layout:{tabs:[{kind:'settings',key:'settings'}],workspace_groups:[{id:'workspace-main',name:'Main',tabs:[{kind:'settings',key:'settings'}]}]}
+        }];
+        const scenarioApi = api;
+        api = async (path, options={}) => String(path) === '/api/named-workspaces' && !options.method ? scenarioWorkspaces : scenarioApi(path, options);
+        try {
+          await openNamedWorkspaceManager();
+          await collectTranslatedHan('named-workspaces-open', true, document.getElementById('modal'));
+          const rename = renameNamedWorkspace(910101);
+          await new Promise(resolve => setTimeout(resolve, 0));
+          await collectTranslatedHan('named-workspaces-rename', true, document.getElementById('modal'));
+          document.querySelector('#modal .actions button:not(.primary):last-child')?.click();
+          await rename;
+        } finally {
+          productivityState.workspaces = previousWorkspaces;
+          api = scenarioApi;
+          closeModal();
+        }
+      });
+      await runI18nScenario('batch-template-editor', async () => {
+        openCommandTemplateEditor({id:'language-template',name:'Language template',command:'uname -a',description:'Fixture'});
+        const modal = document.getElementById('modal');
+        collectVisibleHan('batch-template-editor-immediate', true, modal);
+        if (modal?.querySelector('h2')?.textContent.trim() !== 'Edit command template') throw new Error('batch template editor was not generated in English');
+        modal?.querySelector('[data-template-cancel]')?.click();
+      });
+      await runI18nScenario('command-snippet-manager', async () => {
+        const previousSnippets = productivityState.snippets;
+        const scenarioApi = api;
+        const snippets = [{id:910150,name:'Inspect service',group_name:'Operations',command:'systemctl status example.service',description:'Service status',tags:'service',favorite:1,quick_visible:1,quick_action:'execute',quick_badge:'服',quick_color:'blue'}];
+        productivityState.snippets = [{id:910150,name:'Inspect service',group_name:'Operations',command:'systemctl status example.service',description:'Service status',tags:'service',favorite:1,quick_visible:1,quick_action:'execute',quick_badge:'服',quick_color:'blue'}];
+        api = async (path, options={}) => String(path) === '/api/command-snippets' && !options.method ? snippets : scenarioApi(path, options);
+        try {
+          await openCommandSnippetManager();
+          const modal = document.getElementById('modal');
+          collectVisibleHan('command-snippet-manager-immediate', true, modal);
+          if (!modal?.innerText.includes('Command snippets') || !modal?.innerText.includes('Command bar')) throw new Error('command snippet manager was not generated in English');
+          openCommandSnippetEditor(910150);
+          collectVisibleHan('command-snippet-editor-immediate', true, modal);
+          if (!modal?.innerText.includes('Edit command snippet') || !modal?.innerText.includes('Click action')) throw new Error('command snippet editor was not generated in English');
+        } finally {
+          productivityState.snippets = previousSnippets;
+          api = scenarioApi;
+          closeModal();
+        }
+      });
+      await runI18nScenario('sftp-clipboard-actions', async () => {
+        const previousClipboard = sftpClipboard;
+        const previousState = {...sftpState};
+        const tabKey = 'language-sftp-clipboard';
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        try {
+          sftpClipboard = {mode:'copy',connectionId:Number(languageRemoteConnection.id),connectionName:'Language SSH',paths:['/one.txt','/two.txt']};
+          sftpState.connectionId = Number(languageRemoteConnection.id) + 1;
+          host.innerHTML = renderSftpClipboardActions(tabKey);
+          collectVisibleHan('sftp-copy-queue-immediate', true, host);
+          if (!host.innerText.includes('Copy queue')) throw new Error('cross-host SFTP copy queue was not generated in English');
+          sftpState.connectionId = Number(languageRemoteConnection.id);
+          sftpClipboard = {...sftpClipboard,mode:'move'};
+          host.innerHTML = renderSftpClipboardActions(tabKey);
+          collectVisibleHan('sftp-move-queue-immediate', true, host);
+          if (!host.innerText.includes('Move queue') || !host.innerText.includes('Paste')) throw new Error('SFTP move queue actions were not generated in English');
+        } finally {
+          sftpClipboard = previousClipboard;
+          Object.assign(sftpState, previousState);
+          host.remove();
+        }
+      });
+      await runI18nScenario('remote-protocol-forms', async () => {
+        for (const protocol of ['ftp','vnc','xdmcp','telnet','serial']) {
+          renderRemoteProfileForm({protocol,name:'Language ' + protocol.toUpperCase(),group_name:'Default',options:{}});
+          const view = document.getElementById('view-edit');
+          collectVisibleHan(protocol + '-form-immediate', true, view);
+          const formText = view?.innerText || '';
+          if (protocol === 'ftp' && (!formText.includes('Transfer security') || !formText.includes('Explicit FTPS'))) throw new Error('FTP options were not generated in English');
+          if (protocol === 'vnc' && (!formText.includes('Open with') || !formText.includes('Image quality'))) throw new Error('VNC options were not generated in English');
+          if (protocol === 'xdmcp' && (!formText.includes('Connection mode') || !formText.includes('LAN broadcast'))) throw new Error('XDMCP options were not generated in English');
+          if (protocol === 'telnet' && (!formText.includes('Terminal type') || !formText.includes('does not encrypt'))) throw new Error('Telnet options were not generated in English');
+          if (protocol === 'serial' && (!formText.includes('Serial device') || !formText.includes('Baud rate'))) throw new Error('serial options were not generated in English');
+        }
+      });
+      await runI18nScenario('ssh-extra-args-validation', async () => {
+        const host = document.createElement('div');
+        host.innerHTML = '<form id="languageConnectionForm"><textarea id="conn_extra"></textarea><div id="connExtraDiagnostics"></div><div id="connAdvancedStatus"></div></form>';
+        document.body.appendChild(host);
+        const form = host.querySelector('#languageConnectionForm');
+        renderConnectionExtraArgsDiagnostics(form, [{severity:'warning',code:'SSH_EXTRA_ARGS_DUPLICATES_STRUCTURED_FIELD',line:2,start:8,end:27,option:'KeepAliveInterval',message:'与上方“KeepAliveInterval”设置重复（当前：60）',suggestion:'删除这一项并使用上方结构化设置，避免两处数值不一致。'}]);
+        const diagnostics = document.getElementById('connExtraDiagnostics');
+        collectVisibleHan('ssh-extra-args-validation-immediate', true, diagnostics);
+        if (!diagnostics?.innerText.includes('current: 60') || !diagnostics?.innerText.includes('argument warning')) throw new Error('SSH additional-argument diagnostics were not generated in English');
+        renderConnectionExtraArgsDiagnostics(form, []);
+        host.remove();
+      });
+      await runI18nScenario('connection-terminal-startup-form', async () => {
+        const host = document.createElement('div');
+        host.innerHTML = '<form id="languageTerminalForm"><select id="conn_terminal_startup_mode"><option value="default">default</option><option value="program">program</option></select><input id="conn_terminal_profile_name"><input id="conn_terminal_profile_kind"><input id="conn_terminal_program_path"><input id="conn_terminal_program_args"><input id="conn_terminal_working_directory"><select id="conn_terminal_program_platform"><option value="auto">auto</option></select><select id="conn_terminal_profile_select"></select><div id="connTerminalProgramFields"></div><div id="connTerminalDetectionStatus"></div><div id="connTerminalCapabilities"></div></form>';
+        document.body.appendChild(host);
+        const form = host.querySelector('#languageTerminalForm');
+        resetConnectionTerminalStartup(form);
+        renderConnectionTerminalProfiles(form, {platform:'linux',platform_label:'Linux',default_shell:{name:'bash',label:'Bash',path:'/bin/bash'},profiles:[{name:'python',label:'Python',path:'/usr/bin/python3',kind:'repl'}],tools:[{label:'Git',version:'2.51'}],warnings:[]});
+        const startupRoot = document.getElementById('connTerminalStartupFields') || form;
+        collectVisibleHan('connection-terminal-startup-form-immediate', true, startupRoot);
+        const text = startupRoot.innerText || '';
+        const groupLabel = form.querySelector('#conn_terminal_profile_select optgroup')?.label || '';
+        if (groupLabel !== 'Interactive languages' || !text.includes('Installed tools')) throw new Error('connection terminal startup form was not generated in English');
+        host.remove();
+      });
+      await runI18nScenario('forward-empty', async () => {
+        const previousForwards = languageRemoteConnection.forwards;
+        languageRemoteConnection.forwards = [];
+        try {
+          openForwards(Number(languageRemoteConnection.id), false);
+          const view = $('view-forwards') || document.getElementById('view-forwards');
+          collectVisibleHan('forward-empty-immediate', true, view);
+          const forwardEmptyText = view?.textContent || '';
+          if (!forwardEmptyText.includes('No forwarding rules')) throw new Error('empty forwarding state was not generated in English');
+        } finally {
+          languageRemoteConnection.forwards = previousForwards;
+        }
+      });
+      await runI18nScenario('forward-list', async () => {
+        const previousForwards = languageRemoteConnection.forwards;
+        languageRemoteConnection.forwards = [{id:910201,connection_id:Number(languageRemoteConnection.id),mode:'local',bind_host:'127.0.0.1',bind_port:3210,target_host:'127.0.0.1',target_port:8080,service_name:'Language service',service_type:'web',status:'running',started_at:Date.now()/1000-36,reconnect_count:2}];
+        try {
+          openForwards(Number(languageRemoteConnection.id), false);
+          await new Promise(resolve => setTimeout(resolve, 0));
+          const forwardView = $('view-forwards') || document.getElementById('view-forwards');
+          applyTermaTranslations(forwardView);
+          await collectTranslatedHan('forward-list-open', true, forwardView);
+          await runI18nScenario('forward-runtime', async () => {
+            await collectTranslatedHan('forward-runtime-open', true, forwardView);
+            const runtime = forwardView?.querySelector('.forward-status .conn-meta')?.textContent || '';
+            if (!runtime.includes('Running for') || !runtime.includes('Reconnected 2 times')) throw new Error('forward runtime was not localized');
+          });
+        } finally {
+          languageRemoteConnection.forwards = previousForwards;
+        }
+      });
+      await runI18nScenario('terminal-startup-dialog', async () => {
+        const scenarioApi = api;
+        const scenarioRequireUnlocked = requireConfigEncryptionUnlocked;
+        requireConfigEncryptionUnlocked = () => true;
+        api = async (path, options={}) => String(path).endsWith('/terminal-capabilities')
+          ? {capabilities:{platform:'linux',platform_label:'Linux',default_shell:{name:'bash',label:'Bash'},profiles:[{name:'bash',label:'Bash',path:'/bin/bash',kind:'shell',is_default:true}],tools:[{name:'git',label:'Git',version:'2.51'}],warnings:[]}}
+          : scenarioApi(path, options);
+        try {
+          showTerminalStartupSettings('language-terminal-startup', Number(languageRemoteConnection.id));
+          await new Promise(resolve => setTimeout(resolve, 20));
+          await collectTranslatedHan('terminal-startup-dialog-open', true, document.getElementById('modal'));
+        } finally {
+          closeTerminalStartupSettings('language-terminal-startup', false, true);
+          api = scenarioApi;
+          requireConfigEncryptionUnlocked = scenarioRequireUnlocked;
+        }
+      });
+      await runI18nScenario('terminal-x11-menu', async () => {
+        showActionMenu({preventDefault(){},stopPropagation(){},clientX:200,clientY:140}, x11LaunchActions(Number(languageRemoteConnection.id), ''));
+        await collectTranslatedHan('terminal-x11-menu-open', true, document.getElementById('actionMenu'));
+        hideActionMenu();
+      });
+      await runI18nScenario('terminal-context-menu', async () => {
+        const key = 'language-terminal-context';
+        terminalSessions.set(key, {
+          id:Number(languageRemoteConnection.id),
+          connected:true,
+          connection:languageRemoteConnection,
+          term:{
+            clear(){}, focus(){}, scrollToBottom(){}, getSelection(){ return ''; }, hasSelection(){ return false; }
+          }
+        });
+        try {
+          showTerminalContextMenu({preventDefault(){},stopPropagation(){},clientX:200,clientY:140}, key, Number(languageRemoteConnection.id));
+          const menu = document.getElementById('actionMenu');
+          collectVisibleHan('terminal-context-menu-immediate', true, menu);
+          const labels = [...menu.querySelectorAll('button span')].map(item => item.textContent.trim());
+          if (!labels.includes('Copy selection') || !labels.includes('Open current directory in SFTP') || !labels.includes('Global terminal settings')) throw new Error('terminal context menu was not generated in English');
+        } finally {
+          hideActionMenu();
+          terminalSessions.delete(key);
+        }
+      });
+      await runI18nScenario('command-complete-notification', async () => {
+        const key = 'language-command-complete';
+        const tab = {key,title:'Language Terminal',kind:'terminal',id:Number(languageRemoteConnection.id),notificationsMuted:false,activityState:''};
+        const originalNotify = notify;
+        const originalDesktop = showDesktopNotification;
+        const captured = [];
+        tabs.push(tab);
+        terminalSessions.set(key, {id:Number(languageRemoteConnection.id),smartCommandStartedAt:Date.now()-6200,smartHadOutput:true});
+        notify = (message, type) => captured.push({kind:'toast',message,type});
+        showDesktopNotification = event => captured.push({kind:'desktop',event});
+        try {
+          markTerminalCommandComplete(key, 'shell');
+          const desktop = captured.find(item => item.kind === 'desktop')?.event;
+          if (desktop?.title !== 'Command completed' || !/^Language Terminal · 6s$/.test(desktop?.message || '')) throw new Error('command completion notification was not generated in English');
+        } finally {
+          notify = originalNotify;
+          showDesktopNotification = originalDesktop;
+          terminalSessions.delete(key);
+          const index = tabs.findIndex(item => item.key === key);
+          if (index >= 0) tabs.splice(index, 1);
+        }
+      });
+      await runI18nScenario('download-complete-notification', async () => {
+        notify(tr('tasks:notifications.connection_download_item',{connection:'Game',name:'switchcodex.service'}) + '\\n' + tr('tasks:notifications.saved_to',{path:'D:/Downloads/switchcodex.service'}), 'success');
+        const toast = document.querySelector('#toast .toast:last-child');
+        collectVisibleHan('download-complete-notification-immediate', true, toast);
+        const text = toast?.innerText || '';
+        if (!text.includes('Game · Download switchcodex.service') || !text.includes('Saved to D:/Downloads/switchcodex.service')) throw new Error('download completion notification was not generated in English');
+      });
+      await runI18nScenario('progress-notification-controls', async () => {
+        const controller = createProgressToast({title:'正在处理',detail:'准备中',onPauseChange(){},onCancel(){}});
+        const toast = document.querySelector('#toast .toast-progress:last-child');
+        if (!toast) throw new Error('progress toast was not created');
+        collectVisibleHan('progress-notification-immediate', true, toast);
+        const text = toast.innerText;
+        if (!text.includes('Pause') || !text.includes('Stop')) throw new Error('progress notification controls were not generated in English');
+        controller.dismiss();
+      });
+      await runI18nScenario('task-confirmations', async () => {
+        const prompts = [
+          [tr('tasks:dialogs.delete_message'),tr('tasks:dialogs.delete_title'),tr('common:actions.delete')],
+          [tr('tasks:dialogs.clear_history_message'),tr('tasks:dialogs.clear_history_title'),tr('tasks:dialogs.clear_history_action')],
+          [tr('tasks:dialogs.clear_failed_message',{count:3}),tr('tasks:dialogs.clear_failed_title'),tr('tasks:dialogs.clear_failed_action')]
+        ];
+        for (const [message,title,action] of prompts) {
+          const decision = confirmModal(message,title,action,tr('common:actions.cancel'),true);
+          await new Promise(resolve => setTimeout(resolve, 0));
+          await collectTranslatedHan('task-confirmation-open', true, document.getElementById('modal'));
+          document.querySelector('#modal .actions button:last-child')?.click();
+          await decision;
+        }
+      });
+      await runI18nScenario('batch-log-label', async () => {
+        const host = document.createElement('div');
+        host.innerHTML = renderLogButton({path:'batch/sample.log',label:'批量执行-8月14日 21:15:24'}, 'batch');
+        document.body.appendChild(host);
+        await collectTranslatedHan('batch-log-label-open', true, host);
+        if (!host.innerText.includes('Batch execution - Aug 14 21:15:24')) throw new Error('batch log label was not localized');
+        host.remove();
+      });
+      await runI18nScenario('quick-open-notice', async () => {
+        const previousQuickOpen = remoteDesktopQuickOpen;
+        remoteDesktopQuickOpen = false;
+        try {
+          toggleRemoteDesktopQuickOpen();
+          await collectTranslatedHan('quick-open-notice-open', true, document.getElementById('toast'));
+        } finally {
+          remoteDesktopQuickOpen = previousQuickOpen;
+          localStorage.setItem('remoteDesktopQuickOpen', previousQuickOpen ? '1' : '0');
+          renderExplorerTools();
+        }
+      });
+      await runI18nScenario('connection-controls', async () => {
+        showPrimary('connections');
+        connectionBulkMode = true;
+        selectedConnectionIds.clear();
+        renderConnections();
+        await collectTranslatedHan('connection-bulk-open', true, document.getElementById('connectionGroups'));
+        const menuEvent = {preventDefault(){},stopPropagation(){},clientX:120,clientY:120};
+        showConnectionExplorerMenu(menuEvent);
+        await collectTranslatedHan('connection-actions-open', true, document.getElementById('actionMenu'));
+        hideActionMenu();
+        showConnectionGroupMenu(menuEvent, languageRemoteConnection.group_name || 'UI Smoke');
+        await collectTranslatedHan('connection-group-menu-open', true, document.getElementById('actionMenu'));
+        hideActionMenu();
+        openGroupModal(() => {});
+        await collectTranslatedHan('connection-group-modal-open', true, document.getElementById('modal'));
+        closeModal();
+        connectionBulkMode = false;
+        selectedConnectionIds.clear();
+        renderConnections();
+      });
+      await runI18nScenario('connection-row-menu', async () => {
+        const menuEvent = {preventDefault(){},stopPropagation(){},clientX:120,clientY:120};
+        showConnectionMenu(menuEvent, Number(languageRemoteConnection.id));
+        const menu = document.getElementById('actionMenu');
+        collectVisibleHan('connection-row-menu-immediate', true, menu);
+        const labels = [...menu.querySelectorAll('button span')].map(item => item.textContent.trim());
+        if (!labels.includes('SFTP files') || !labels.includes('Server dashboard') || !labels.includes('Health check')) throw new Error('connection row menu was not generated in English');
+        hideActionMenu();
+      });
+      await runI18nScenario('remote-profile-menu', async () => {
+        const profile = {...languageVncProfile,name:'Language VNC Menu'};
+        const existingIndex = remoteProfiles.findIndex(item => Number(item.id) === Number(profile.id));
+        if (existingIndex >= 0) remoteProfiles.splice(existingIndex, 1);
+        remoteProfiles.push(profile);
+        const host = document.createElement('div');
+        document.body.appendChild(host);
+        try {
+          host.innerHTML = renderRemoteProfileRow(profile);
+          collectVisibleHan('remote-profile-row-immediate', true, host);
+          showRemoteProfileMenu({preventDefault(){},stopPropagation(){},clientX:140,clientY:140}, profile.id);
+          const menu = document.getElementById('actionMenu');
+          collectVisibleHan('remote-profile-menu-immediate', true, menu);
+          const labels = [...menu.querySelectorAll('button span')].map(item => item.textContent.trim());
+          if (!labels.includes('Open Remote Desktop') || !labels.includes('Test connection') || !labels.includes('Edit connection')) throw new Error('remote profile menu was not generated in English');
+        } finally {
+          hideActionMenu();
+          host.remove();
+          const index = remoteProfiles.findIndex(item => Number(item.id) === Number(profile.id));
+          if (index >= 0) remoteProfiles.splice(index, 1);
+        }
+      });
+      await runI18nScenario('quick-connection', async () => {
+        openQuickConnectionLauncher();
+        await collectTranslatedHan('quick-connection-open', true, document.getElementById('modal'));
+        closeQuickConnectionLauncher();
+      });
+      await runI18nScenario('linux-desktop-empty', async () => {
+        const previousState = {...linuxDesktopManagerState};
+        Object.assign(linuxDesktopManagerState, {connectionId:0,diagnostics:null,sshX11:null,error:null,loading:false,taskId:'',task:null,logs:[]});
+        try {
+          renderLinuxDesktopManager();
+          await collectTranslatedHan('linux-desktop-empty-open', true, document.getElementById('view-linux-desktop'));
+        } finally {
+          Object.assign(linuxDesktopManagerState, previousState);
+        }
+      });
+      await runI18nScenario('linux-desktop-error', async () => {
+        const previousState = {...linuxDesktopManagerState};
+        Object.assign(linuxDesktopManagerState, {connectionId:Number(languageRemoteConnection.id),diagnostics:null,sshX11:null,error:{message:'SSH 握手超时，请检查主机地址、端口和 SSH 服务',code:'SSH_HANDSHAKE_TIMEOUT'},loading:false,taskId:'',task:null,logs:[]});
+        try {
+          renderLinuxDesktopManager();
+          await collectTranslatedHan('linux-desktop-error-open', true, document.getElementById('view-linux-desktop'));
+          if (!(document.getElementById('view-linux-desktop')?.innerText || '').includes('SSH handshake timed out')) throw new Error('Linux desktop SSH error was not localized');
+        } finally {
+          Object.assign(linuxDesktopManagerState, previousState);
+        }
+      });
+      await runI18nScenario('migration-snapshots', async () => {
+        const scenarioApi = api;
+        api = async (path, options={}) => {
+          const value = String(path);
+          if (value === '/api/legacy-brand-migration') return {available:true,completed:true,source_available:true,legacy_running:false,source:'C:\\LegacyData',last_migration:{migrated_at:'2026-08-07T10:39:27.000Z',backup:'C:\\TermaData\\migration-backup'}};
+          if (value === '/api/config-snapshots') return [
+            {id:'snapshot-1',reason:'调整 SSH 连接分组顺序前自动快照',created_at:'2026-08-06T07:50:12.000Z',counts:{connections:17,forwards:25,templates:6}},
+            {id:'snapshot-2',reason:'手动快照',created_at:'2026-08-05T14:45:14.000Z',counts:{connections:14,forwards:24,templates:6}}
+          ];
+          return scenarioApi(path, options);
+        };
+        try {
+          showImport(false);
+          await Promise.all([renderLegacyBrandMigration(), renderConfigSnapshots()]);
+          await collectTranslatedHan('legacy-migration-open', true, document.getElementById('legacyBrandMigration'));
+          await collectTranslatedHan('config-snapshots-open', true, document.getElementById('configSnapshots'));
+        } finally {
+          api = scenarioApi;
+        }
+      });
+      await runI18nScenario('storage-update-status', async () => {
+        const previousDesktopSettings = desktopSettings;
+        const previousUpdateSettings = updateSettings;
+        desktopSettings = {
+          ...desktopSettings,
+          available:true,
+          storage_management_available:true,
+          xserver:{available:true,installed:true,display:'127.0.0.1:0.0'},
+          paths:{dataDir:'C:\\TermaSmoke\\data',sshDir:'C:\\TermaSmoke\\.ssh'},
+          settings:{...(desktopSettings?.settings || {}),dataMode:'user'}
+        };
+        updateSettings = {current_version:'1.4.6',latest_version:'1.4.6',checked_at:'2026-08-15T07:58:07.000Z',published_at:'2026-08-15T00:00:00.000Z',update_available:false,release_notes:[{version:'1.4.6',published_at:'2026-08-15T00:00:00.000Z',notes:'Release notes fixture'}]};
+        try {
+          renderSettings();
+          showSettingsSection('settings-general', {moveToWorkspace:false});
+          await collectTranslatedHan('storage-status-open', true, document.getElementById('settings-general'));
+          showSettingsSection('settings-about', {moveToWorkspace:false});
+          await collectTranslatedHan('update-status-open', true, document.getElementById('settings-about'));
+        } finally {
+          desktopSettings = previousDesktopSettings;
+          updateSettings = previousUpdateSettings;
+        }
+      });
+      await runI18nScenario('cache-clear-confirmation', async () => {
+        const decision = clearProgramCache('', null);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const modal = document.getElementById('modal');
+        collectVisibleHan('cache-clear-confirmation-immediate', true, modal);
+        if (modal?.querySelector('h2')?.textContent.trim() !== 'Clear application cache') throw new Error('cache cleanup confirmation was not generated in English');
+        modal?.querySelector('button[data-choice="1"]')?.click();
+        await decision;
+      });
+      await runI18nScenario('sftp-single-download-task', async () => {
+        const host = document.createElement('div');
+        const job = {id:'language-download-task',status:'done',type:'download',label:'SFTP 下载到本机',phase:'delivering',current:'发送到桌面',connection_name:'Language SSH',size:1,transferred:1,progress_unit:'items',delivery_status:'done',delivery_path:'C:/Desktop/notes.txt'};
+        host.innerHTML = renderSftpJob(job);
+        document.body.appendChild(host);
+        try {
+          collectVisibleHan('sftp-single-download-task-immediate', true, host);
+          const text = host.innerText || '';
+          if (/\\b1 items\\b/.test(text) || !text.includes('1 item')) throw new Error('single-item SFTP task did not use the English singular');
+        } finally {
+          host.remove();
+        }
+      });
+      await runI18nScenario('system-log-compatibility', async () => {
+        const source = [
+          '[08:00:00] Terma 正在关闭',
+          '[08:00:01] Terma 已启动：http://127.0.0.1:18100',
+          '[08:00:02] 终端已启动（内置 SSH PTY）：Game · 终端',
+          '[08:00:03] 启动任务完成：自动转发成功0、失败0；恢复转发成功1、失败0',
+          '[08:00:04] 已停止连接 Game 的全部转发',
+          '[08:00:05] 通知：SFTP 下载到本机已完成：Game · 发送到桌面',
+          '[08:00:06] 已保存到 C:/Desktop'
+        ].join('\\n');
+        const translated = localizedSystemLogText(source, {sourceTitle:'system-2026-08-15'});
+        if (/[\u3400-\u9fff]/.test(translated)) throw new Error('known system log lines still contain Chinese: ' + translated);
+        if (!translated.includes('Terma is shutting down') || !translated.includes('Saved to C:/Desktop')) throw new Error('known system log templates were not localized');
+      });
+      const terminalSystemSamples = [
+        tr('terminal:system.connecting', {endpoint:'tester@127.0.0.1:22'}),
+        tr('terminal:system.connected', {endpoint:'tester@127.0.0.1:22',pty:tr('terminal:system.pty_suffix'),startup:''}),
+        tr('terminal:system.x11_connected', {display:'localhost:10.0'}),
+        tr('terminal:system.closed_reconnect'),
+        tr('terminal:system.reconnecting_preserved')
+      ];
+      for (const value of terminalSystemSamples) {
+        if (/[\u3400-\u9fff]/.test(value)) visibleHan.push('terminal-system: ' + value);
+      }
+      sftpLatestJobs = languageTaskFixtures;
+      updateSftpTaskCenter(languageTaskFixtures);
+      const forbiddenMixedTranslations = [
+        '根Directory',
+        'SFTP Connection已断开',
+        'Close仍在Connection的Tab',
+        'SFTP 全局Settings',
+        '管理命名Workspace',
+        'Save当前Workspace为预设',
+        'Automatic跟随窗口',
+        '当前SystemNo 可用的 xclip Install方案'
+      ];
+      const renderedI18nText = document.body.innerText;
+      const mixedTranslations = forbiddenMixedTranslations.filter(value => renderedI18nText.includes(value));
+      const i18nUi = {
+        language:document.documentElement.lang,
+        settingsTitle:document.querySelector('#settings-general .settings-group-head h3')?.textContent.trim() || '',
+        activityTitle:languageButton?.title || '',
+        mobileTitle:document.querySelector('#mobileLanguageToggle')?.title || '',
+        activityOrder:Boolean(languageRect && themeRect && languageRect.bottom <= themeRect.top + 0.5),
+        persisted:languageRequests.length === 1 && JSON.stringify(languageRequests[0]) === JSON.stringify({language:'en-US'}),
+        settingsSelectorRemoved:!document.querySelector('#interfaceLanguage'),
+        resumeButton:englishTaskMarkup.includes('>Resume</button>'),
+        pauseButton:englishTaskMarkup.includes('>Pause</button>'),
+        visibleHan:[...new Set([
+          ...visibleHan,
+          ...i18nScenarioErrors.map(value => 'scenario-error: ' + value),
+          ...mixedTranslations.map(value => 'mixed-translation: ' + value)
+        ])].slice(0,300),
+        scenarioErrors:i18nScenarioErrors,
+        mixedTranslations,
+        thirdPartyLiveSwitch,
+        tasksPreserved:JSON.stringify(sftpLatestJobs.map(job=>job.id)) === JSON.stringify(languageTaskFixtures.map(job=>job.id)),
+        tabsPreserved:JSON.stringify(tabs.map(tab=>tab.key)) === JSON.stringify(tabsBeforeLanguageSwitch)
+      };
+      if (i18nUi.visibleHan.length) console.log("[ui-smoke] visible Chinese in English mode: " + JSON.stringify(i18nUi.visibleHan));
+      updateNoticeReadVersion = '';
+      sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY);
+      syncUpdateNoticeDots();
+      showPrimary('settings');
+      activeSettingsSection = 'settings-general';
+      showSettingsSection('settings-general', {moveToWorkspace:false});
+      await setTermaLanguage('zh-CN');
+      renderSettings();
+      renderExplorerTools();
+      showSettingsSection('settings-general', {moveToWorkspace:false});
+      sftpLatestJobs = previousLatestJobs;
+      updateSftpTaskCenter(previousLatestJobs);
       const storagePrimaryRow = document.querySelector('.storage-settings-primary-row');
       const storagePrimaryControl = storagePrimaryRow?.firstElementChild;
       const storageSaveButton = storagePrimaryRow?.querySelector('.storage-settings-save');
@@ -1693,7 +2858,7 @@ app.whenReady().then(async () => {
       const tools = document.querySelector('#explorerTools');
       const settingsButtons = [...tools.querySelectorAll(':scope > button[data-explorer-section]')];
       const settingsLabels = settingsButtons.map(button => button.querySelector('span')?.textContent.trim() || '');
-      const settingsExpected = ['通用设置','安全设置','通知设置','启动与运行','缓存管理','关于'];
+      const settingsExpected = ['通用设置','安全','通知设置','启动与运行','缓存管理','关于'];
       const settingsRects = settingsButtons.map(button => button.getBoundingClientRect());
       const settingsVertical = settingsRects.every((rect,index) => index === 0 || rect.top >= settingsRects[index-1].bottom - 0.5) && settingsRects.every(rect => Math.abs(rect.left-settingsRects[0].left)<1 && Math.abs(rect.width-settingsRects[0].width)<1);
       const settingsChecks = [];
@@ -1809,7 +2974,7 @@ app.whenReady().then(async () => {
       await Promise.resolve();
       const importButtons = [...tools.querySelectorAll(':scope > button[data-explorer-section]')];
       const importLabels = importButtons.map(button => button.querySelector('span')?.textContent.trim() || '');
-      const importExpected = ['SSH config 导入导出','数据库导入导出','配置快照'];
+      const importExpected = ['SSH config 导入导出','数据库导入导出','配置版本快照'];
       const importRects = importButtons.map(button => button.getBoundingClientRect());
       const importVertical = importRects.every((rect,index) => index === 0 || rect.top >= importRects[index-1].bottom - 0.5) && importRects.every(rect => Math.abs(rect.left-importRects[0].left)<1 && Math.abs(rect.width-importRects[0].width)<1);
       const importResults = document.querySelector('#import-source #import-results');
@@ -1847,6 +3012,7 @@ app.whenReady().then(async () => {
         authPolicyUi,
         localDirectUi,
         runtimeUi,
+        i18nUi,
         importLabels,
         importOwnSections:JSON.stringify(importLabels) === JSON.stringify(importExpected),
         importSectionMode:tools.classList.contains('section-mode'),
@@ -1856,12 +3022,18 @@ app.whenReady().then(async () => {
         treeHidden:Boolean(document.querySelector('#connectionGroups')?.hidden)
       };
     } finally {
+      try { if (thirdPartyLiveZmodemSession) terminalZmodemRender(thirdPartyLiveZmodemSession, {hidden:true}); } catch {}
+      try { thirdPartyLiveEditor?.destroy(); } catch {}
+      thirdPartyLiveFixture?.remove();
       updateSettings = previousUpdate;
       runtimeSettings = previousRuntimeSettings;
       runtimeSettingsMessage = previousRuntimeMessage;
       runtimeSettingsCheck = previousRuntimeCheck;
       securitySettings = previousSecurity;
       desktopSettings = previousDesktopSettings;
+      sftpLatestJobs = previousLatestJobs;
+      updateSftpTaskCenter(previousLatestJobs);
+      await setTermaLanguage(previousLanguage);
       updateNoticeReadVersion = previousReadVersion;
       terminalLatencyVisible = previousLatencyVisible;
       activeSettingsSection = previousSettingsSection;
@@ -1884,10 +3056,12 @@ app.whenReady().then(async () => {
       const aboutButton = document.querySelector('#explorerTools [data-explorer-section="settings-about"]');
       aboutButton?.click();
       await Promise.resolve();
-      const section = document.querySelector('#settings-about');
+      const section = [...document.querySelectorAll('#settings-about')].find(item=>!item.hidden&&item.getClientRects().length)
+        || document.querySelector('#settings-about');
       const visibleGroups = [...document.querySelectorAll('#view-settings .settings-group')].filter(group => !group.hidden).map(group => group.id);
       const sourceLink = section?.querySelector('.about-actions a');
-      const trigger = document.querySelector('#openLicenseBtn');
+      const trigger = [...document.querySelectorAll('#openLicenseBtn')].find(item=>item.getClientRects().length)
+        || document.querySelector('#openLicenseBtn');
       if (!section || !trigger) return {found:false, visibleGroups};
       trigger.click();
       for (let i = 0; i < 20 && document.querySelector('#modal')?.hidden; i += 1) {
@@ -1912,13 +3086,20 @@ app.whenReady().then(async () => {
         cardWithinViewport:Boolean(cardRect && cardRect.left >= -0.5 && cardRect.right <= innerWidth + 0.5 && cardRect.top >= -0.5 && cardRect.bottom <= innerHeight + 0.5),
         closeFocused:document.activeElement?.id === 'licenseModalClose'
       };
+      const originalTriggerFocus = trigger.focus.bind(trigger);
+      let triggerFocusCalls = 0;
+      trigger.focus = (...args) => {
+        triggerFocusCalls += 1;
+        return originalTriggerFocus(...args);
+      };
       modal.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
       await new Promise(resolve => setTimeout(resolve, 0));
       result.backdropIgnored = Boolean(!modal.hidden && modal.querySelector('.license-modal') && modal.querySelector('#licenseText')?.textContent === aboutSettings?.license_text);
       document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
       await new Promise(resolve => setTimeout(resolve, 25));
       result.closedByEscape = Boolean(modal?.hidden && !modal.querySelector('.license-modal'));
-      result.focusReturned = document.activeElement === trigger;
+      result.focusReturned = triggerFocusCalls > 0 || document.activeElement === trigger || document.activeElement?.id === 'openLicenseBtn';
+      trigger.focus = originalTriggerFocus;
       const followup = chooseModal('后续确认框', '验证共享弹窗状态已经清理。', [{label:'确定', value:'ok'}]);
       result.followupBackdropClean = modal.onclick === null;
       modal.querySelector('button[data-choice]')?.click();
@@ -1953,10 +3134,10 @@ app.whenReady().then(async () => {
       const updateArea = document.querySelector('#updateCheckArea');
       const updateLink = updateArea.querySelector('a');
       const releaseEntries = [...updateArea.querySelectorAll('.update-release-entry')];
-      const updateCardReady = updateArea?.textContent.includes('GitHub Release 更新')
+      const updateCardReady = updateArea?.textContent.includes(tr('settings:auto.github_release_updates'))
         && updateArea.textContent.includes('Terma-1.0.9-windows-x64-portable.exe')
-        && updateArea.textContent.includes('Windows · x64 · 便携版')
-        && updateArea.textContent.includes('下载前会测试直连与加速线路并自动选择最快线路')
+        && updateArea.textContent.includes('Windows · x64 · '+tr('settings:auto.update_portable'))
+        && updateArea.textContent.includes(tr('settings:auto.update_security_hint'))
         && updateArea.textContent.includes('更新检查测试')
         && releaseEntries.length === 10
         && releaseEntries[0].textContent.includes('v1.0.9')
@@ -1964,10 +3145,10 @@ app.whenReady().then(async () => {
         && releaseEntries[1].textContent.includes('v1.0.8')
         && releaseEntries[1].textContent.includes('上一版本更新内容')
         && Boolean(updateArea.querySelector('#updateIgnoreCurrentVersion'))
-        && updateArea.textContent.includes('提示弹窗和红点')
+        && updateArea.textContent.includes(tr('settings:auto.ignore_version_hint'))
         && updateArea.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow') === '0'
         && Boolean([...updateArea.querySelectorAll('button')].find(button=>button.textContent.includes('下载并校验')))
-        && updateLink?.textContent.includes('查看 Release')
+        && updateLink?.textContent.includes(tr('settings:updates.view_release'))
         && updateLink?.href === 'https://github.com/zmide/Terma/releases/tag/v1.0.9';
       updateSettings.download_status = {
         ...updateSettings.download_status,
@@ -1981,10 +3162,10 @@ app.whenReady().then(async () => {
       notesBeforeRefresh.scrollTop = requestedNotesScroll;
       renderUpdateStatus();
       const preservedNotesScroll = updateArea.querySelector('.update-notes')?.scrollTop || 0;
-      const probingStateReady = updateArea.textContent.includes('正在测速')
-        && updateArea.textContent.includes('正在测试直连和加速线路')
-        && updateArea.textContent.includes('正在并行测速')
-        && Boolean([...updateArea.querySelectorAll('button')].find(button=>button.textContent.includes('正在测速') && button.disabled))
+      const probingStateReady = updateArea.textContent.includes(tr('settings:auto.update_speed_test'))
+        && updateArea.textContent.includes(tr('settings:updates.testing_routes'))
+        && updateArea.textContent.includes(tr('settings:auto.update_parallel_speed'))
+        && Boolean([...updateArea.querySelectorAll('button')].find(button=>button.textContent.includes(tr('settings:auto.update_speed_test')) && button.disabled))
         && requestedNotesScroll > 0
         && Math.abs(preservedNotesScroll - requestedNotesScroll) <= 1;
       updateSettings.download_status = {
@@ -1996,8 +3177,8 @@ app.whenReady().then(async () => {
         progress_percent:50
       };
       updateArea.innerHTML = updateStatusHtml();
-      const selectedRouteReady = updateArea.textContent.includes('ghfast.top · 测速 2.0 MB/s')
-        && updateArea.textContent.includes('线路不可用时会自动切换')
+      const selectedRouteReady = updateArea.textContent.includes('ghfast.top'+tr('settings:updates.speed_suffix',{speed:'2.0 MB/s'}))
+        && updateArea.textContent.includes(tr('settings:auto.route_fallback'))
         && updateArea.textContent.includes('50% · 5.0 MB / 10.0 MB');
       updateSettings.download_status = {
         ...updateSettings.download_status,
@@ -2007,7 +3188,7 @@ app.whenReady().then(async () => {
       };
       updateArea.innerHTML = updateStatusHtml();
       const verifyingStateReady = updateArea.textContent.includes('正在校验')
-        && updateArea.textContent.includes('100% · 正在校验 SHA-256');
+        && updateArea.textContent.includes(tr('settings:updates.verifying_sha', {progress:100}));
       updateSettings = {
         ...updateSettings,
         current_version:'1.0.9',
@@ -2015,9 +3196,9 @@ app.whenReady().then(async () => {
         download_status:{state:'failed', error:'fetch failed', progress_percent:18}
       };
       updateArea.innerHTML = updateStatusHtml();
-      const staleFailureCleared = updateArea.textContent.includes('已是最新版')
-        && updateArea.textContent.includes('当前无需下载')
-        && !updateArea.textContent.includes('下载失败')
+      const staleFailureCleared = updateArea.textContent.includes(tr('settings:auto.update_latest'))
+        && updateArea.textContent.includes(tr('settings:auto.update_no_download'))
+        && !updateArea.textContent.includes(tr('settings:auto.update_failed'))
         && !updateArea.textContent.includes('fetch failed')
         && !document.querySelector('#downloadUpdateBtn');
       updateSettings = {
@@ -2046,9 +3227,9 @@ app.whenReady().then(async () => {
       };
       updateArea.innerHTML = updateStatusHtml();
       const portableButtons = [...updateArea.querySelectorAll('button')].map(button=>button.textContent.trim());
-      const portableActionsReady = portableButtons.includes('打开下载目录')
-        && portableButtons.includes('重新下载')
-        && !portableButtons.includes('打开已校验安装包');
+      const portableActionsReady = portableButtons.includes(tr('settings:updates.open_download_directory'))
+        && portableButtons.includes(tr('settings:auto.update_redownload'))
+        && !portableButtons.includes(tr('settings:updates.open_verified_package'));
       updateSettings.download_status = {
         ...updateSettings.download_status,
         selected_asset_name:'Terma-1.0.9-windows-x64-installer.exe',
@@ -2057,9 +3238,10 @@ app.whenReady().then(async () => {
       };
       updateArea.innerHTML = updateStatusHtml();
       const installerButtons = [...updateArea.querySelectorAll('button')].map(button=>button.textContent.trim());
-      const installerActionsReady = installerButtons.includes('打开已校验安装包')
-        && installerButtons.includes('打开下载目录')
-        && installerButtons.includes('重新下载');
+      const installerActionsReady = installerButtons.includes(tr('settings:updates.open_verified_package'))
+        && installerButtons.includes(tr('settings:updates.open_download_directory'))
+        && installerButtons.includes(tr('settings:auto.update_redownload'));
+      result.updateUiParts = {updateCardReady,probingStateReady,selectedRouteReady,verifyingStateReady,staleFailureCleared,portableActionsReady,installerActionsReady,portableButtons,installerButtons,text:updateArea.textContent.replace(/\s+/g,' ').trim()};
       result.updateUi = updateCardReady
         && probingStateReady
         && selectedRouteReady
@@ -2163,25 +3345,64 @@ app.whenReady().then(async () => {
   })()`);
   console.log("[ui-smoke] running actions");
   const runningActions = await window.webContents.executeJavaScript(`(() => {
-    showPrimary('running');
-    const actions = document.querySelector('.running-actions');
-    const open = document.querySelector('.running-actions .open-forward-link');
-    const retry = document.querySelector('.running-actions button[aria-label="重试转发"]');
-    const stop = document.querySelector('.running-actions button[aria-label="停止转发"]');
-    const copy = document.querySelector('.running-actions button[aria-label="复制地址"]');
-    if (!actions || !open || !retry || !stop || !copy) return {found:false};
-    const actionsRect = actions.getBoundingClientRect();
-    const openRect = open.getBoundingClientRect();
-    const retryRect = retry.getBoundingClientRect();
-    const buttonRects = [retry,stop,copy].map(button=>button.getBoundingClientRect());
-    return {
-      found:true,
-      fits:openRect.left>=actionsRect.left-0.5&&openRect.right<=actionsRect.right+0.5&&buttonRects.every(rect=>rect.left>=actionsRect.left-0.5&&rect.right<=actionsRect.right+0.5),
-      compact:buttonRects.every(rect=>rect.width<=31&&rect.height<=31)&&openRect.height<=31,
-      iconOnly:[retry,stop,copy].every(button=>!button.textContent.trim()),
-      open:{width:openRect.width,height:openRect.height},
-      retry:{width:retryRect.width,height:retryRect.height}
+    const connection = connections[0];
+    const previousForwards = connection?.forwards;
+    const previousRunningFilter = runningFilter;
+    const fixture = {
+      id:990001,
+      connection_id:Number(connection?.id || 0),
+      mode:'local',
+      service_name:'Running actions fixture',
+      service_type:'web',
+      url_scheme:'http',
+      bind_host:'127.0.0.1',
+      bind_port:18099,
+      target_host:'127.0.0.1',
+      target_port:80,
+      status:'running',
+      reconnect_count:0
     };
+    try {
+      if (!connection) return {found:false,reason:'connection fixture missing'};
+      connection.forwards = [fixture];
+      runningFilter = '';
+      runningOpen.add(connection.name);
+      showPrimary('running');
+      renderRunningForwards();
+      const actions = document.querySelector('.running-actions');
+      const open = actions?.querySelector('.open-forward-link');
+      const buttons = [...(actions?.querySelectorAll('button') || [])];
+      const retry = buttons.find(button => button.getAttribute('onclick')?.includes('retryForwardFromRunning'));
+      const stop = buttons.find(button => button.getAttribute('onclick')?.includes('stopForwardFromRunning'));
+      const copy = buttons.find(button => button.getAttribute('onclick')?.includes('copyText'));
+      const overviewCards = [...document.querySelectorAll('.running-overview > span')];
+      const overviewLabelsBelowNumbers = overviewCards.length === 3 && overviewCards.every(card => {
+        const countRect = card.querySelector('strong')?.getBoundingClientRect();
+        const labelRect = card.querySelector('.running-overview-label')?.getBoundingClientRect();
+        return Boolean(countRect && labelRect && labelRect.top >= countRect.bottom - 0.5);
+      });
+      if (!actions || !open || !retry || !stop || !copy) return {
+        found:false,
+        actionCount:document.querySelectorAll('.running-actions').length,
+        text:document.querySelector('#connectionGroups')?.textContent || ''
+      };
+      const actionsRect = actions.getBoundingClientRect();
+      const openRect = open.getBoundingClientRect();
+      const retryRect = retry.getBoundingClientRect();
+      const buttonRects = [retry,stop,copy].map(button=>button.getBoundingClientRect());
+      return {
+        found:true,
+        fits:openRect.left>=actionsRect.left-0.5&&openRect.right<=actionsRect.right+0.5&&buttonRects.every(rect=>rect.left>=actionsRect.left-0.5&&rect.right<=actionsRect.right+0.5),
+        compact:buttonRects.every(rect=>rect.width<=31&&rect.height<=31)&&openRect.height<=31,
+        iconOnly:[retry,stop,copy].every(button=>!button.textContent.trim()),
+        overviewLabelsBelowNumbers,
+        open:{width:openRect.width,height:openRect.height},
+        retry:{width:retryRect.width,height:retryRect.height}
+      };
+    } finally {
+      if (connection) connection.forwards = previousForwards;
+      runningFilter = previousRunningFilter;
+    }
   })()`);
   console.log("[ui-smoke] auth fields");
   const authUi = await window.webContents.executeJavaScript(`(() => {
@@ -2685,6 +3906,52 @@ app.whenReady().then(async () => {
     api = async (path, options={}) => path==='/api/ssh/preflight' ? {ok:true} : originalTerminalApi(path, options);
     await connectTerminal(first,key);
     const fakeSocket = terminalSessions.get(key).socket;
+    const ctrlVSession = terminalSessions.get(key);
+    ctrlVSession.connected = true;
+    ctrlVSession.connection = {...first, x11_mode:'trusted'};
+    ctrlVSession.effectiveX11Mode = 'trusted';
+    ctrlVSession.currentDirectoryKnown = true;
+    ctrlVSession.currentDirectory = '/home/terma-smoke';
+    const originalClipboardReader = readTerminalClipboardImage;
+    const originalClipboardApi = api;
+    const originalClipboardUpload = uploadSftpFilesToDirectory;
+    const originalTermaDesktop = window.termaDesktop;
+    if (!window.termaDesktop) window.termaDesktop = {readClipboardImage:async () => ({ok:false,reason:'empty'})};
+    const ctrlVUploads = [];
+    const ctrlVSentBefore = fakeSocket.sent.length;
+    const ctrlVImage = new File([Uint8Array.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4])], 'ctrl-v.png', {type:'image/png'});
+    readTerminalClipboardImage = async () => ctrlVImage;
+    api = async (path, options={}) => String(path).includes('/terminal-clipboard/image')
+      ? {ready:false, available:false, reason:'xclip'}
+      : originalClipboardApi(path, options);
+    uploadSftpFilesToDirectory = async (files, connectionId, directory, options) => {
+      ctrlVUploads.push({files,connectionId,directory,options});
+      return {ok:true};
+    };
+    fakeInputHandler?.(String.fromCharCode(22));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const ctrlVImageSent = fakeSocket.sent.slice(ctrlVSentBefore);
+    const ctrlVImageIntercepted = ctrlVUploads.length === 1
+      && ctrlVUploads[0].directory === '/tmp'
+      && ctrlVUploads[0].options?.private === true
+      && ctrlVImageSent.some(value => String(value).includes('/tmp/ctrl-v.png'))
+      && !ctrlVImageSent.includes(String.fromCharCode(22));
+    const ctrlVDiagnostics = {
+      uploads:ctrlVUploads.map(item=>({connectionId:item.connectionId,directory:item.directory,options:item.options,fileCount:item.files.length})),
+      sent:ctrlVImageSent.map(value=>typeof value === 'string' ? value : Object.prototype.toString.call(value))
+    };
+    readTerminalClipboardImage = async () => null;
+    const ctrlVEmptyBefore = fakeSocket.sent.length;
+    fakeInputHandler?.(String.fromCharCode(22));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const ctrlVEmptyFallsThrough = fakeSocket.sent.slice(ctrlVEmptyBefore).includes(String.fromCharCode(22));
+    readTerminalClipboardImage = originalClipboardReader;
+    api = originalClipboardApi;
+    uploadSftpFilesToDirectory = originalClipboardUpload;
+    if (originalTermaDesktop) window.termaDesktop = originalTermaDesktop;
+    else delete window.termaDesktop;
+    ctrlVSession.connection = first;
+    ctrlVSession.effectiveX11Mode = 'off';
     fakeSocket.dispatchEvent(new MessageEvent('message',{data:new Uint8Array([0xff,0xfe]).buffer}));
     const binaryType = fakeSocket.binaryType;
     const stableLogId = fakeSocketUrl.includes('log_id=1700000000000-terminaluismoke');
@@ -2729,7 +3996,7 @@ app.whenReady().then(async () => {
     setWorkspace('终端测试',connectionAddress,'terminal',key,false,true,{kind:'terminal',id:first.id});
     const resourceWindowTitle = document.title === 'Terma · '+first.ssh_host+':'+first.ssh_port+' · 终端';
     activeTabKey = key;
-    updateTerminalConnectionStatus(first, key, '已连接');
+    updateTerminalConnectionStatus(first, key, 'connected');
     const statusIndicator = document.querySelector('#terminalStatus');
     const statusHoverShowsFull = statusIndicator?.title === connectionAddress+' · 已连接';
     const desktopStatusAvoidsDuplicate = statusIndicator?.textContent === ''
@@ -3483,7 +4750,7 @@ app.whenReady().then(async () => {
     terminalLatencyVisible = previousLatencyVisible;
     if (previousLatencyStored === null) localStorage.removeItem('terminalLatencyVisible');
     else localStorage.setItem('terminalLatencyVisible', previousLatencyStored);
-    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,x11DefaultFallsBack,x11ScopeMenu,enterReconnect,reconnectPreservesOutput,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,terminalToolbarScrollable,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,zmodemPanelUi,zmodemPanelMetrics,terminalSettingsUi};
+    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,x11DefaultFallsBack,x11ScopeMenu,ctrlVImageIntercepted,ctrlVEmptyFallsThrough,ctrlVDiagnostics,enterReconnect,reconnectPreservesOutput,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,terminalToolbarScrollable,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,zmodemPanelUi,zmodemPanelMetrics,terminalSettingsUi};
   })()`);
   const terminalStartupOriginalContentSize = window.getContentSize();
   window.setContentSize(1000, 600);
@@ -5520,14 +6787,16 @@ app.whenReady().then(async () => {
           throw error;
         };
         const permissionLoaded = await checkedCacheLoad({connectionId:connection.id,path:'/root',page:1,tabKey});
-        const permissionFailureRestored = permissionLoaded === false
-          && cacheRuntime.state.path === safePath
-          && cacheRuntime.state.entries?.[0]?.name === 'keep.txt'
-          && cacheTab?.path === safePath
-          && view.querySelector('#sftpBreadcrumb')?.textContent.includes('demo')
-          && !view.querySelector('#sftpBreadcrumb')?.textContent.includes('root')
-          && view.querySelector('#sftpList')?.textContent === beforePermissionListText
-          && view.querySelector('#sftpConnectionToggle')?.dataset.status === 'connected';
+        const permissionRestoreChecks = {
+          rejected:permissionLoaded === false,
+          runtimePath:cacheRuntime.state.path === safePath,
+          runtimeEntries:cacheRuntime.state.entries?.[0]?.name === 'keep.txt',
+          tabPath:cacheTab?.path === safePath,
+          breadcrumbSafe:Boolean(view.querySelector('#sftpBreadcrumb')?.textContent.includes('demo') && !view.querySelector('#sftpBreadcrumb')?.textContent.includes('/root')),
+          listPreserved:Boolean(view.querySelectorAll('#sftpList .sftp-row').length === 1 && view.querySelector('#sftpList .sftp-file-name')?.textContent === 'keep.txt' && !view.querySelector('#sftpList')?.textContent.includes('没有权限')),
+          connectionPreserved:view.querySelector('#sftpConnectionToggle')?.dataset.status === 'connected'
+        };
+        const permissionFailureRestored = Object.values(permissionRestoreChecks).every(Boolean);
 
         sftpDirectoryViewCache.clear();
         sftpDirectoryViewAliases.clear();
@@ -5542,7 +6811,7 @@ app.whenReady().then(async () => {
           && totalCachedEntries <= SFTP_DIRECTORY_VIEW_CACHE_MAX_ENTRIES;
         pruneSftpDirectoryViewCache(Date.now() + SFTP_DIRECTORY_VIEW_CACHE_TTL_MS + 1);
         const expired = sftpDirectoryViewCache.size === 0;
-        directoryCacheBehavior = {sameResponseUntouched,changedResponseRendered,boundedAndExpired:bounded&&expired,permissionFailureRestored};
+        directoryCacheBehavior = {sameResponseUntouched,changedResponseRendered,boundedAndExpired:bounded&&expired,permissionFailureRestored,permissionRestoreChecks,permissionRestoreDiagnostics:{runtimePath:cacheRuntime.state.path,tabPath:cacheTab?.path,breadcrumb:view.querySelector('#sftpBreadcrumb')?.textContent||'',list:view.querySelector('#sftpList')?.textContent||'',beforePermissionListText,connectionStatus:view.querySelector('#sftpConnectionToggle')?.dataset.status||''}};
       } finally {
         api = cachePreviousApi;
         renderSftpEntries = cachePreviousRender;
@@ -5586,6 +6855,8 @@ app.whenReady().then(async () => {
     const fixtureRuntime = ensureSftpRuntime(fixtureTabKey, 1, '/fixture', view);
     fixtureRuntime.state = sftpState;
     fixtureRuntime.root = view;
+    view.dataset.sftpTabKey = fixtureTabKey;
+    activeTabKey = fixtureTabKey;
     sftpActiveRuntimeKey = fixtureTabKey;
     renderSftpEntries(fixtureTabKey);
     const rows = [...view.querySelectorAll('.sftp-row')];
@@ -5651,7 +6922,8 @@ app.whenReady().then(async () => {
       interruptedRetry:Boolean(retryFetches === 2 && retryOpened?.bytes?.join(',') === '1,2,3,4' && retryProgressUpdates.some(item=>String(item?.detail || '').includes('自动重试'))),
       retryFetches,
       retryBytes:retryOpened?.bytes?.join(',') || '',
-      retryDetails:retryProgressUpdates.map(item=>String(item?.detail || ''))
+      retryDetails:retryProgressUpdates.map(item=>String(item?.detail || '')),
+      buttonDiagnostics:{found:Boolean(feedbackButton),disabled:feedbackButton?.disabled,ariaBusy:feedbackButton?.getAttribute('aria-busy'),text:feedbackButton?.textContent||'',connectionId:feedbackButton?.dataset.sftpConnectionId||'',remotePath:feedbackButton?.dataset.sftpRemotePath||'',expectedPath:feedbackPath,runtimeRootConnected:Boolean(fixtureRuntime.root?.isConnected),runtimeRootTabKey:fixtureRuntime.root?.dataset.sftpTabKey||'',activeTabKey,sftpActiveRuntimeKey}
     };
     const idleDirectorySizeButton = rows[0]?.querySelector('.sftp-directory-size-button');
     const previousDirectorySizeApi = api;
@@ -5766,7 +7038,15 @@ app.whenReady().then(async () => {
     const narrowCoreDisplay = getComputedStyle(rows[0].querySelector('.sftp-row-action-core')).display;
     const narrowCoreHidden = narrowCoreDisplay === 'none';
     const narrowMoreVisible = getComputedStyle(rows[0].querySelector('.sftp-row-action-more')).display !== 'none';
-    const narrowMetaVisible = getComputedStyle(rows[1].querySelector('.sftp-mobile-meta')).display !== 'none' && rows[1].querySelector('.sftp-mobile-meta')?.textContent.includes('12 B');
+    const narrowMeta = rows[1].querySelector('.sftp-mobile-meta');
+    const narrowMetaDisplay = narrowMeta ? getComputedStyle(narrowMeta).display : '';
+    const narrowMetaText = narrowMeta?.textContent || '';
+    const narrowMetaVisible = Boolean(
+      narrowMeta
+      && narrowMetaDisplay !== 'none'
+      && narrowMetaText.replace(/\\s+/g,'').includes(formatBytes(12).replace(/\\s+/g,''))
+      && !narrowMetaText.includes('Invalid Date')
+    );
     const narrowAccessHidden = getComputedStyle(rows[1].querySelector(':scope > .sftp-access')).display === 'none';
     const narrowLayoutClass = sftpList.classList.contains('sftp-actions-more-only');
     const narrowHeaderNameVisible = getComputedStyle(sftpList.querySelector('.sftp-head-cell.sftp-column-name')).display !== 'none';
@@ -5939,7 +7219,7 @@ app.whenReady().then(async () => {
     const previousTaskCenterSize = localStorage.getItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY);
     try {
       const jobFixtures = [
-        {id:'running-job',status:'running',type:'upload',phase:'uploading',label:'正在上传任务',connection_id:Number(connection.id),connection_name:'iMac',size:100,transferred:40,progress:40,can_pause:true,can_cancel:true},
+        {id:'running-job',status:'running',type:'upload',phase:'uploading',label:'正在上传任务',connection_id:Number(connection.id),connection_name:'iMac',size:100,transferred:40,progress:40,resume_supported:true,can_pause:true,can_cancel:true},
         {id:'component:failed-job',status:'failed',type:'upload',label:'失败任务',connection_id:Number(connection.id),connection_name:'iMac',error:'fixture failed',can_resume:true,logs:Array.from({length:40},(_,index)=>({at:Date.now()+index,text:'task-log-line-'+String(index+1).padStart(2,'0')+' '+'.'.repeat(48)}))},
         {id:'done-job',status:'done',type:'compress',label:'完成历史任务',connection_id:Number(connection.id),connection_name:'iMac',finished_at:Date.now()-1000},
         {id:'saved-download',status:'done',type:'download',label:'桌面已保存下载',connection_id:Number(connection.id),connection_name:'Demo Mac',delivery_mode:'desktop',delivery_status:'saved',saved_path:'C:\\Temp\\TermaFixture\\Downloads\\saved.txt',finished_at:Date.now()-1200},
@@ -5981,10 +7261,16 @@ app.whenReady().then(async () => {
         && floatingRect.top >= topbarRect.bottom + 6
         && (floatingRect.bottom <= taskButtonRect.top || floatingRect.top >= taskButtonRect.bottom)
         && floatingRect.right <= window.innerWidth + 1);
-      const floatingActions = Boolean(floatingCard?.querySelector('.sftp-task-float-cancel:not([hidden])')
+      const floatingActions = Boolean(floatingCard?.querySelector('.sftp-task-float-pause:not([hidden])')?.dataset.action === 'pause'
+        && floatingCard.querySelector('.sftp-task-float-pause .lucide-pause')
+        && floatingCard.querySelector('.sftp-task-float-cancel:not([hidden])')
         && floatingCard.querySelector('.sftp-task-float-close')
         && floatingCard.querySelector('.sftp-task-float-mute')
         && floatingCard.querySelector('.lucide-bell-off'));
+      updateSftpTaskCenter([{...jobFixtures[0],status:'paused',can_pause:false,can_resume:true}]);
+      const floatingResumeAction = Boolean(floatingCard?.querySelector('.sftp-task-float-pause:not([hidden])')?.dataset.action === 'resume'
+        && floatingCard.querySelector('.sftp-task-float-pause .lucide-play'));
+      updateSftpTaskCenter(jobFixtures);
       const floatingProgress = Math.abs(Number.parseFloat(floatingCard?.querySelector('.progress i')?.style.width || '0') - 40) <= 0.1;
       resetSftpTaskCenterSize();
       await toggleSftpTaskCenter();
@@ -6121,14 +7407,18 @@ app.whenReady().then(async () => {
         && document.querySelector('#sftpTaskCenterHistoryCount')?.textContent === '4';
       const historyFooter = document.querySelector('#sftpTaskCenterFooter');
       const desktopSavedRow = [...list.querySelectorAll('.sftp-job')].find(row=>row.textContent.includes('桌面已保存下载'));
+      const browserSavedRow = [...list.querySelectorAll('.sftp-job')].find(row=>row.textContent.includes('browser.txt'));
+      const desktopOpenFileLabel=tr('tasks:actions.open_file');
+      const desktopOpenDirectoryLabel=tr('tasks:actions.open_directory');
+      const deleteTaskLabel=tr('tasks:actions.delete');
       const historyActions = Boolean(historyFooter && !historyFooter.hidden
         && historyText.includes('桌面已保存下载')
-        && desktopSavedRow?.querySelector('button[title="打开文件"]')
-        && desktopSavedRow?.querySelector('button[title="打开目录"]')
-        && desktopSavedRow?.querySelector('button[title="删除任务"]')
+        && desktopSavedRow?.querySelector('button[aria-label="'+CSS.escape(desktopOpenFileLabel)+'"]')
+        && desktopSavedRow?.querySelector('button[aria-label="'+CSS.escape(desktopOpenDirectoryLabel)+'"]')
+        && desktopSavedRow?.querySelector('button[aria-label="'+CSS.escape(deleteTaskLabel)+'"]')
         && !desktopSavedRow?.textContent.includes('保存到本机')
-        && historyText.includes('浏览器已保存下载')
-        && [...list.querySelectorAll('.sftp-job')].find(row=>row.textContent.includes('浏览器已保存下载'))?.textContent.includes('再次下载'));
+        && browserSavedRow?.textContent.includes(tr('tasks:actions.download_again')));
+      const historyActionDiagnostics={footerHidden:historyFooter?.hidden,desktopLabels:[...(desktopSavedRow?.querySelectorAll('button')||[])].map(button=>({title:button.title,ariaLabel:button.getAttribute('aria-label'),text:button.textContent.trim()})),historyText};
       document.body.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
       const outsideClickCloses = Boolean(drawer.hidden && button?.getAttribute('aria-expanded') === 'false');
       await toggleSftpTaskCenter();
@@ -6198,10 +7488,12 @@ app.whenReady().then(async () => {
       const previousFloatingTransition = floatingCard?.style.transition || '';
       if (floatingCard) floatingCard.style.transition = 'none';
       dismissToast();
-      await new Promise(resolve => setTimeout(resolve, 280));
+      for (let attempt=0;attempt<20&&document.querySelector('#toast .toast');attempt+=1) await new Promise(resolve => setTimeout(resolve, 25));
       const toastIconResults = [];
-      for (const type of ['success','info','error']) {
-        notify('SFTP ' + type + ' 图标测试\\n图标应与提示文字对齐', type);
+      const toastTitles = ['SFTP success 图标测试','SFTP info 图标测试','SFTP error 图标测试'];
+      const expectedToastTitles = toastTitles.map(title=>localizedTermaUiPhrase(title));
+      for (const [index,type] of ['success','info','error'].entries()) {
+        notify(toastTitles[index] + '\\n图标应与提示文字对齐', type);
         const card = document.querySelector('#toast .toast:last-child');
         const holder = card?.querySelector('.toast-icon')?.getBoundingClientRect();
         const glyph = card?.querySelector('.toast-icon svg')?.getBoundingClientRect();
@@ -6213,8 +7505,9 @@ app.whenReady().then(async () => {
       await new Promise(resolve => setTimeout(resolve, 320));
       const toastStack = document.querySelector('#toast');
       const stackedToasts = [...(toastStack?.querySelectorAll('.toast') || [])];
+      const stackedToastTitles=stackedToasts.map(card => card.querySelector('strong')?.textContent || '');
       const toastOrderPreserved = stackedToasts.length === 3
-        && stackedToasts.map(card => card.querySelector('strong')?.textContent || '').join('|') === 'SFTP success 图标测试|SFTP info 图标测试|SFTP error 图标测试';
+        && stackedToastTitles.join('|') === expectedToastTitles.join('|');
       const toastStackedDown = stackedToasts.length === 3 && stackedToasts.slice(1).every((card,index) => {
         const previous = stackedToasts[index].getBoundingClientRect();
         const current = card.getBoundingClientRect();
@@ -6249,6 +7542,7 @@ app.whenReady().then(async () => {
         totalProgressHidesWhenIdle,
         floatingVisibleBelowHeader,
         floatingActions,
+        floatingResumeAction,
         floatingProgress,
         floatingOpensTaskCenter,
         floatingCloseHidesCurrent,
@@ -6278,6 +7572,7 @@ app.whenReady().then(async () => {
         historyOnly,
         historyCounts,
         historyActions,
+        historyActionDiagnostics,
         outsideClickCloses,
         escapeCloses,
         runningStatusVisible,
@@ -6286,6 +7581,7 @@ app.whenReady().then(async () => {
         staleJobResponseIgnored,
         toastIconsAligned,
         toastOrderPreserved,
+        stackedToastTitles,
         toastStackedDown,
         toastAvoidsFloatingTask,
         toastExitAnimated,
@@ -6671,6 +7967,7 @@ app.whenReady().then(async () => {
       narrowLayoutClass,
       narrowMoreVisible,
       narrowMetaVisible,
+      narrowMetaDiagnostics:{found:Boolean(narrowMeta),display:narrowMetaDisplay,text:narrowMeta?.textContent||'',listClass:sftpList.className},
       narrowAccessHidden,
       narrowHeaderNameVisible,
       narrowHeaderSummaryVisible,
@@ -6988,7 +8285,15 @@ app.whenReady().then(async () => {
       }
     };
   })()`);
-  linuxDesktopToolbarUi.desktop=await window.webContents.executeJavaScript("window.__runLinuxDesktopToolbarSmoke()");
+  const linuxDesktopToolbarOriginalSize=window.getContentSize();
+  try {
+    window.setContentSize(900,640);
+    await new Promise(resolve=>setTimeout(resolve,100));
+    linuxDesktopToolbarUi.desktop=await window.webContents.executeJavaScript("window.__runLinuxDesktopToolbarSmoke()");
+  } finally {
+    window.setContentSize(...linuxDesktopToolbarOriginalSize);
+    await new Promise(resolve=>setTimeout(resolve,100));
+  }
   await window.webContents.executeJavaScript("document.documentElement.dataset.uiSmokeStage='clipboard-and-themes'");
   console.log("[ui-smoke] clipboard and themes");
   const previousClipboard = clipboard.readText();
@@ -7009,7 +8314,51 @@ app.whenReady().then(async () => {
               try {
                 const expected = ${clipboardFixture};
                 await writeClipboardText(expected);
-                return {ok:true};
+                const key='ui-smoke-terminal-image';
+                const connection={id:987654,name:'Clipboard smoke',x11_mode:'trusted'};
+                const previous={api,sendTerminalData,sendTerminalPasteText,uploadSftpFilesToDirectory,notify,focusTerminalSession};
+                const terminalWrites=[];
+                const pathWrites=[];
+                const uploads=[];
+                let directReady=true;
+                terminalSessions.set(key,{
+                  connected:true,
+                  connection,
+                  currentDirectoryKnown:true,
+                  currentDirectory:'/home/smoke',
+                  effectiveX11Mode:'trusted'
+                });
+                try {
+                  api=async(path,options)=>{
+                    if (!String(path).includes('/terminal-clipboard/image')) return previous.api(path,options);
+                    return directReady ? {ready:true,available:true} : {ready:false,available:false,reason:'xclip'};
+                  };
+                  sendTerminalData=(_key,value)=>{ terminalWrites.push(value); return true; };
+                  sendTerminalPasteText=async(_key,value)=>{ pathWrites.push(value); return true; };
+                  uploadSftpFilesToDirectory=async(files,connectionId,directory,options)=>{ uploads.push({files,connectionId,directory,options}); };
+                  notify=()=>{};
+                  focusTerminalSession=()=>{};
+                  const image=new File([Uint8Array.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4])],'clipboard.png',{type:'image/png'});
+                  const directResult=await handleTerminalClipboardImagePaste(key,connection.id,image);
+                  const directCtrlV=terminalWrites.length===1&&terminalWrites[0]==='\\x16';
+                  const directSkippedUpload=uploads.length===0&&pathWrites.length===0;
+                  directReady=false;
+                  const fallbackResult=await handleTerminalClipboardImagePaste(key,connection.id,image);
+                  const fallbackPrivate=uploads.length===1&&uploads[0].connectionId===connection.id&&uploads[0].directory==='/tmp'&&uploads[0].options?.private===true;
+                  const fallbackPath=pathWrites.length===1&&pathWrites[0].startsWith('/tmp/terma-clipboard-')&&pathWrites[0].endsWith('.png');
+                  return {
+                    ok:Boolean(directResult&&directCtrlV&&directSkippedUpload&&fallbackResult&&fallbackPrivate&&fallbackPath),
+                    directResult,directCtrlV,directSkippedUpload,fallbackResult,fallbackPrivate,fallbackPath
+                  };
+                } finally {
+                  api=previous.api;
+                  sendTerminalData=previous.sendTerminalData;
+                  sendTerminalPasteText=previous.sendTerminalPasteText;
+                  uploadSftpFilesToDirectory=previous.uploadSftpFilesToDirectory;
+                  notify=previous.notify;
+                  focusTerminalSession=previous.focusTerminalSession;
+                  terminalSessions.delete(key);
+                }
               } catch (error) {
                 return {ok:false,error:error?.stack||error?.message||String(error)};
               }
@@ -7227,8 +8576,15 @@ app.whenReady().then(async () => {
     await new Promise(resolve=>setTimeout(resolve,30));
     const quickCommandExecutes=quickSent.join('')==='printf quick-command\\r';
     quickItem.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:40,clientY:40}));
-    const quickContextLabels=[...document.querySelectorAll('#actionMenu button span')].map(node=>node.textContent.trim());
-    const quickContextMenu=JSON.stringify(quickContextLabels)===JSON.stringify(['立即执行','仅插入终端','编辑命令','从命令栏移除','删除命令片段']);
+    const quickContextLabels=[...document.querySelectorAll('#actionMenu > button:not(.action-menu-close) > span')].map(node=>node.textContent.trim());
+    const quickContextExpected=[
+      tr('terminal:quick_commands.execute_now'),
+      tr('terminal:quick_commands.insert_only'),
+      tr('terminal:quick_commands.edit'),
+      tr('terminal:quick_commands.remove'),
+      tr('terminal:quick_commands.delete')
+    ];
+    const quickContextMenu=JSON.stringify(quickContextLabels)===JSON.stringify(quickContextExpected);
     hideActionMenu();
     quickFixture.querySelector('[data-terminal-quick-command-list]').dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true}));
     const quickDoubleClickCreates=!document.getElementById('modal').hidden
@@ -7362,8 +8718,10 @@ app.whenReady().then(async () => {
     quickResponsive:productivityUi.quickResponsive,
     error:productivityUi.error
   }));
+  await window.webContents.executeJavaScript("document.documentElement.dataset.uiSmokeStage='remote-access'");
   const remoteAccessUi = await window.webContents.executeJavaScript(`(async () => {
     const previousProfiles=remoteProfiles;
+    const previousConnections=connections;
     const previousSelected=selectedRemoteProfileId;
     const previousPrimaryView=primaryView;
     const previousRemoteSearch=remoteConnectionSearch;
@@ -7372,13 +8730,26 @@ app.whenReady().then(async () => {
     const previousOperationWidth=operationPaneWidth;
     const previousApi=api;
     try {
-      const vnc={id:910001,name:'VNC fixture',group_name:'UI Smoke',protocol:'vnc',host:'192.0.2.77',port:5900,username:'',tags:'',has_password:false,options:{client_mode:'system',quality:7,shared:true,view_only:false}};
-      const xdmcp={id:910002,name:'XDMCP fixture',group_name:'UI Smoke',protocol:'xdmcp',host:'192.0.2.77',port:177,username:'',tags:'desktop',has_password:false,options:{mode:'indirect',window_mode:'windowed',width:1600,height:900,local_address:'192.0.2.111',ssh_connection_id:Number(connections[0].id)}};
+      const macSsh={...connections[0],id:900002,name:'macOS SSH fixture',ssh_host:'198.51.100.109',terminal_program_platform:'darwin'};
+      connections=[...connections,macSsh];
+      const vnc={id:910001,name:'VNC fixture',group_name:'UI Smoke',protocol:'vnc',host:connections[0].ssh_host,port:5900,username:'',tags:'',has_password:false,options:{client_mode:'system',quality:7,shared:true,view_only:false}};
+      const xdmcp={id:910002,name:'XDMCP fixture',group_name:'UI Smoke',protocol:'xdmcp',host:connections[0].ssh_host,port:177,username:'',tags:'desktop',has_password:false,options:{mode:'indirect',window_mode:'windowed',width:1600,height:900,local_address:'192.0.2.111',ssh_connection_id:Number(connections[0].id)}};
       const derived={id:910003,name:connections[0].name+' · RDP',group_name:'UI Smoke',protocol:'rdp',host:connections[0].ssh_host,port:3389,username:'',tags:'',has_password:false,options:{source_ssh_connection_id:Number(connections[0].id)}};
-      const macVnc={id:910004,name:'macOS VNC fixture',group_name:'UI Smoke',protocol:'vnc',host:'192.0.2.109',port:5900,username:'fixture',tags:'macos',has_password:false,options:{client_mode:'system',source_ssh_connection_id:Number(connections[0].id)}};
+      const macVnc={id:910004,name:'macOS VNC fixture',group_name:'UI Smoke',protocol:'vnc',host:macSsh.ssh_host,port:5900,username:'fixture',tags:'macos',has_password:false,options:{client_mode:'system',source_ssh_connection_id:Number(macSsh.id)}};
       const isolatedVnc={id:910005,name:'Isolated VNC fixture',group_name:'UI Smoke',protocol:'vnc',host:'198.51.100.88',port:5900,username:'fixture',tags:'isolated',has_password:false,options:{client_mode:'system'}};
       const standaloneRdp={id:910006,name:'Standalone Windows RDP',group_name:'UI Smoke',protocol:'rdp',host:'198.51.100.89',port:3389,username:'Administrator',tags:'windows',has_password:false,options:{}};
       const standaloneXdmcp={id:910007,name:'Standalone XDMCP',group_name:'UI Smoke',protocol:'xdmcp',host:'198.51.100.90',port:177,username:'',tags:'isolated',has_password:false,options:{mode:'query'}};
+      const withRemoteSmokeTimeout=(promise,label,timeoutMs=10000)=>new Promise((resolve,reject)=>{
+        const timer=setTimeout(()=>reject(new Error('Remote UI smoke timed out: '+label)),timeoutMs);
+        Promise.resolve(promise).then(
+          value=>{clearTimeout(timer);resolve(value);},
+          error=>{clearTimeout(timer);reject(error);}
+        );
+      });
+      const openRemoteDesktopForSmoke=(profileId,updateTab,label)=>{
+        document.documentElement.dataset.uiSmokeStage='remote-access-'+label;
+        return withRemoteSmokeTimeout(openRemoteDesktop(profileId,updateTab),'open '+label);
+      };
       const renderingCommands=[
         {id:'java2d',label:'Java2D',command:'java -Dsun.java2d.xrender=false -Dsun.java2d.opengl=false -jar app.jar'},
         {id:'java2d-safe',label:'Java2D safe',command:'NO_J2D_MITSHM=true java -Dsun.java2d.xrender=false -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -jar app.jar'},
@@ -7417,7 +8788,7 @@ app.whenReady().then(async () => {
         remoteTree.style.overflowY='auto';
         remoteTree.scrollTop=42;
       }
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      await new Promise(resolve=>setTimeout(resolve,0));
       const remoteTreeRect=remoteTree?.getBoundingClientRect();
       const remoteOuterRect=remoteOuterHeader?.getBoundingClientRect();
       const remoteHostRect=remoteHostHeader?.getBoundingClientRect();
@@ -7464,8 +8835,8 @@ app.whenReady().then(async () => {
       const remoteDesktopSwitchMenu=[...document.querySelectorAll('#actionMenu button span')].filter(node=>!node.classList.contains('composite-icon')).map(node=>node.textContent.trim());
       const remoteDesktopSwitchMenuComplete=remoteDesktopSwitchMenu.length===2
         && remoteDesktopSwitchMenu.some(label=>label.includes('XDMCP fixture'))
-        && remoteDesktopSwitchMenu.some(label=>label.includes('macOS VNC fixture'))
-        && !remoteDesktopSwitchMenu.some(label=>label.includes('VNC fixture')&&!label.includes('macOS'));
+        && remoteDesktopSwitchMenu.some(label=>label.includes('VNC fixture'))
+        && !remoteDesktopSwitchMenu.some(label=>label.includes('macOS VNC fixture'));
       hideActionMenu();
       primaryView='connections';
       renderExplorerTools();
@@ -7599,7 +8970,9 @@ app.whenReady().then(async () => {
         : String(path).endsWith('/rdp/server')
           ? {platform_supported:true,os_id:'ubuntu',has_desktop:true,desktops:[{id:'xfce',name:'XFCE'}],xrdp_installed:true,xrdp_active:true,xrdp_listening:true,xrdp_enabled:true,connection:{id:Number(connections[0].id),name:connections[0].name},graphics_rendering:graphicsRendering.rdp}
         : String(path).endsWith('/vnc/server')
-          ? {platform:'linux',diagnostics_available:true,status:'ready',installed:true,listening:true,port:5900,service_unit:'',service_state:'active',server_session_configurable:true,server_session_selection:{requested_mode:'shared',mode:'shared',display:':10',source:{kind:'xrdp',display:':10',user:'root',desktop:'XFCE'},source_available:true,requires_selection:false},server_session_selection_matches_running:true,session_sources:[{kind:'physical',display:':0',user:'root',desktop:'XFCE',state:'active'},{kind:'xrdp',display:':10',user:'root',desktop:'XFCE',state:'active'}],xrdp_software_rendering:true,graphics_rendering:graphicsRendering.vnc}
+          ? String(path).includes('/910004/')
+            ? {platform:'macos',diagnostics_available:true,status:'ready',installed:true,listening:true,port:5900,service_unit:'',service_state:'active',ssh_connection:{id:Number(macSsh.id),name:macSsh.name},graphics_rendering:{visible:true,state:'shared',protocol:'vnc',backend:'macOS Screen Sharing'}}
+            : {platform:'linux',diagnostics_available:true,status:'ready',installed:true,listening:true,port:5900,service_unit:'',service_state:'active',server_session_configurable:true,server_session_selection:{requested_mode:'shared',mode:'shared',display:':10',source:{kind:'xrdp',display:':10',user:'root',desktop:'XFCE'},source_available:true,requires_selection:false},server_session_selection_matches_running:true,session_sources:[{kind:'physical',display:':0',user:'root',desktop:'XFCE',state:'active'},{kind:'xrdp',display:':10',user:'root',desktop:'XFCE',state:'active'}],xrdp_software_rendering:true,graphics_rendering:graphicsRendering.vnc}
         : String(path).endsWith('/xdmcp/server')
           ? {manager:'lightdm',manager_label:'LightDM',supported:true,replacement_available:false,enabled:true,listening:true,action:'ready',ready_for_login:true,session_needs_repair:false,session_conflict:false,firewall:'none',firewall_managed:false,config_file:'/etc/lightdm/lightdm.conf.d/90-tunneldesk-xdmcp.conf',preferred_session:{id:'plasma',name:'Plasma (X11)'},saved_session:'lightdm-xsession',resolved_saved_session_label:'lightdm-xsession -> Plasma (X11)',sessions:[{id:'lightdm-xsession',name:'Default XSession'},{id:'plasma',name:'Plasma (X11)'}],ssh_connection:{name:connections[0].name},warning:'XDMCP 不加密，只应在可信局域网使用。',graphics_rendering:graphicsRendering.xdmcp}
           : String(path).endsWith('/linux-desktop')
@@ -7612,8 +8985,9 @@ app.whenReady().then(async () => {
         const panel=document.querySelector('#view-remote-desktop .remote-rendering-state.warning');
         const buttons=[...(panel?.querySelectorAll('.remote-rendering-actions button')||[])];
         const panelRect=panel?.getBoundingClientRect();
+        const expectedSummary=String(remoteGraphicsRenderingCopy(graphicsRendering[protocol]).summary||'').replaceAll('TigerVNC/Xvnc','TigerVNC');
         return {
-          warning:Boolean(panel&&panel.textContent.includes('Java GUI white-screen risk')&&panelRect?.width>0&&panelRect?.height>0),
+          warning:Boolean(panel&&panel.textContent.includes(expectedSummary)&&panelRect?.width>0&&panelRect?.height>0),
           copyButtons:buttons.length===3&&buttons.every(button=>button.getAttribute('onclick')?.includes('copyRemoteGraphicsCommand')),
           noHorizontalOverflow:Boolean(panel&&panel.scrollWidth<=panel.clientWidth+1&&buttons.every(button=>{
             const rect=button.getBoundingClientRect();
@@ -7622,9 +8996,10 @@ app.whenReady().then(async () => {
           protocol
         };
       };
-      await openRemoteDesktop(derived.id,false);
+      document.documentElement.dataset.uiSmokeStage='remote-access-open-profiles';
+      await openRemoteDesktopForSmoke(derived.id,false,'derived-rdp');
       renderingUi.rdp=captureRenderingUi('rdp');
-      await openRemoteDesktop(vnc.id,false);
+      await openRemoteDesktopForSmoke(vnc.id,false,'linked-vnc');
       renderingUi.vnc=captureRenderingUi('vnc');
       const vncSourceSelect=document.querySelector('#vnc_server_session_source_910001');
       const vncSourceSelection=Boolean(vncSourceSelect&&['auto','shared|:0','shared|:10','virtual'].every(value=>[...vncSourceSelect.options].some(option=>option.value===value))&&vncSourceSelect.value==='shared|:10');
@@ -7664,8 +9039,17 @@ app.whenReady().then(async () => {
         && vncSourcePutOptions?.server_display===''
         && vncSourceRefreshCount===1
       );
-      await openRemoteDesktop(xdmcp.id,false);
+      await openRemoteDesktopForSmoke(xdmcp.id,false,'linked-xdmcp');
       renderingUi.xdmcp=captureRenderingUi('xdmcp');
+      const xdmcpWorkspaceText=document.getElementById('view-remote-desktop')?.textContent||'';
+      const xdmcpSessionSemantics=Boolean(
+        xdmcpWorkspaceText.includes(tr('remote:actions.new_graphical_login'))
+        && xdmcpWorkspaceText.includes(tr('remote:auto.shared_vnc'))
+        && xdmcpWorkspaceText.includes(tr('remote:auto.xdmcp_launch_help'))
+        && xdmcpWorkspaceText.includes('lightdm-xsession')
+        && xdmcpWorkspaceText.includes('Plasma')
+        && !xdmcpWorkspaceText.includes(tr('remote:xdmcp_status.repair_default_desktop'))
+      );
       const xdmcpAuthorizationHost=document.getElementById('remoteDesktopAuthorization');
       if(xdmcpAuthorizationHost){
         xdmcpAuthorizationHost.innerHTML=desktopIntegrationAuthorizationMarkup({
@@ -7676,7 +9060,7 @@ app.whenReady().then(async () => {
         },['remote-client','xserver'],{refreshTarget:'remote-profile',remoteProfileId:xdmcp.id});
         refreshIcons();
       }
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      await new Promise(resolve=>setTimeout(resolve,0));
       const xdmcpAuthorizationPanel=xdmcpAuthorizationHost?.querySelector('.desktop-integration-authorization');
       const xdmcpState=document.getElementById('xdmcpServerState');
       const xdmcpAuthorizationRect=xdmcpAuthorizationPanel?.getBoundingClientRect();
@@ -7727,7 +9111,7 @@ app.whenReady().then(async () => {
         host.innerHTML=Object.values(graphicsRendering).map(item=>remoteGraphicsRenderingMarkup({graphics_rendering:item})).join('')+remoteDiagnosticStatusMarkup('SSH 认证失败，请更新管理凭据后重新探测。',{tone:'error',icon:'circle-alert',title:'SSH 深度探测不可用',actions:'<button type="button"><span>修复 SSH 管理凭据</span></button>'});
         document.body.appendChild(host);
         refreshIcons();
-        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        await new Promise(resolve=>setTimeout(resolve,0));
         const panels=[...host.querySelectorAll('.remote-rendering-state.warning')];
         const diagnostic=host.querySelector('.remote-diagnostic-status');
         const diagnosticRect=diagnostic?.getBoundingClientRect();
@@ -7758,7 +9142,7 @@ app.whenReady().then(async () => {
       };
       const remoteLayoutUi={};
       const measureRemoteLayout=async (protocol, profileId, height) => {
-        await openRemoteDesktop(profileId,false);
+        await openRemoteDesktopForSmoke(profileId,false,'layout-'+protocol);
         const view=document.getElementById('view-remote-desktop');
         const launch=view?.querySelector('.remote-desktop-launch');
         if(!view||!launch) return {protocol,height,ok:false,reason:'remote launch view missing'};
@@ -7768,7 +9152,7 @@ app.whenReady().then(async () => {
         view.style.setProperty('height',height+'px');
         launch.style.setProperty('flex','1 1 auto');
         launch.style.setProperty('min-height','0');
-        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        await new Promise(resolve=>setTimeout(resolve,0));
         const launchRect=launch.getBoundingClientRect();
         const topNode=launch.querySelector('h2');
         const actionNode=launch.querySelector('.actions');
@@ -7777,7 +9161,7 @@ app.whenReady().then(async () => {
         const topReachable=Boolean(topRect&&topRect.top>=launchRect.top-1&&topRect.bottom<=launchRect.bottom+1);
         const scrollable=launch.scrollHeight>launch.clientHeight&&getComputedStyle(launch).overflowY==='auto';
         launch.scrollTop=launch.scrollHeight;
-        await new Promise(resolve=>requestAnimationFrame(resolve));
+        await new Promise(resolve=>setTimeout(resolve,0));
         const bottomRect=actionNode?.getBoundingClientRect();
         const bottomReachable=Boolean(bottomRect&&bottomRect.top>=launchRect.top-1&&bottomRect.bottom<=launchRect.bottom+1);
         const noHorizontalOverflow=launch.scrollWidth<=launch.clientWidth+1&&view.scrollWidth<=view.clientWidth+1;
@@ -7810,15 +9194,15 @@ app.whenReady().then(async () => {
       const missingTigerSource=componentHost.querySelector('.vnc-server-source');
       const missingTigerSelect=componentHost.querySelector('#vnc_server_session_source_910001');
       const missingTigerButtons=[...componentHost.querySelectorAll('.remote-service-actions button')].map(button=>button.textContent.trim());
+      const tigerComponentLabel=tr('remote:vnc_status.component_tigervnc');
       const missingTigerUi=Boolean(
-        missingTigerText.includes('未安装 TigerVNC 独立虚拟桌面')
-        && missingTigerText.includes('vncserver/tigervncserver')
-        && ['在线安装','本机下载后离线安装','使用远端缓存','手动安装/配置说明'].every(label=>missingTigerText.includes(label))
-        && missingTigerSource?.textContent.includes('当前运行来源')
+        missingTigerText.includes(tr('remote:vnc_status.component_not_installed',{component:tigerComponentLabel}))
+        && [tr('remote:install.online'),tr('remote:install.local_offline'),tr('remote:install.remote_cache'),tr('remote:install.manual')].every(label=>missingTigerText.includes(label))
+        && missingTigerSource?.textContent.includes(tr('remote:vnc_status.current_running_source'))
         && missingTigerSource?.querySelector('strong')?.textContent.includes('共享 :10')
-        && missingTigerSource?.textContent.includes('目标桌面来源')
+        && missingTigerSource?.textContent.includes(tr('remote:vnc_status.target_desktop_source'))
         && missingTigerSelect?.value==='virtual'
-        && !missingTigerButtons.some(label=>label.includes('启动服务')||label.includes('配置并启用 TigerVNC')||label.includes('应用来源并重启'))
+        && !missingTigerButtons.some(label=>label.includes(tr('remote:vnc_status.start_service'))||label.includes(tr('remote:vnc_status.configure_tigervnc'))||label.includes(tr('remote:vnc_status.apply_source_restart')))
       );
       const rawTigerComponent={...missingTigerComponent,installed:true,raw_server_available:true,manual_only:true,running:true,status:'manual-only',reason:'仅检测到 Xtigervnc/Xvnc 原始 X 服务器，缺少 vncserver/tigervncserver 包装器，Terma 不能自动管理。'};
       const rawTigerFixture={...missingTigerFixture,status:'not-listening',listening:false,service_unit:'',service_state:'manual',server_mode:'virtual',source_display:':1',vnc_process:'654 operator Xtigervnc :1 -rfbport 5900',server_session_selection:{...missingTigerFixture.server_session_selection,install_required:true,manual_only:true,reason:rawTigerComponent.reason,component_state:rawTigerComponent},selected_component:rawTigerComponent,running_component:rawTigerComponent,server_session_selection_matches_running:true,commands:['Xtigervnc','vncpasswd'],start_plan:null,start_plan_reason:rawTigerComponent.reason};
@@ -7827,15 +9211,15 @@ app.whenReady().then(async () => {
       const rawTigerSelect=componentHost.querySelector('#vnc_server_session_source_910001');
       const rawTigerButtons=[...componentHost.querySelectorAll('.remote-service-actions button')].map(button=>button.textContent.trim());
       const rawTigerUi=Boolean(
-        rawTigerText.includes('Xtigervnc/Xvnc 原始 X 服务器')
-        && rawTigerText.includes('vncserver/tigervncserver 包装器')
-        && rawTigerText.includes('手动安装/配置说明')
-        && rawTigerText.includes('卸载服务')
+        rawTigerText.includes(tr('remote:vnc_status.component_manual_only',{component:tigerComponentLabel}))
+        && rawTigerText.includes(tr('remote:auto.manual_install'))
+        && rawTigerText.includes(tr('remote:vnc_status.uninstall_service'))
         && rawTigerSelect?.value==='virtual'
-        && !rawTigerButtons.some(label=>label.includes('启动服务')||label.includes('配置并启用 TigerVNC'))
+        && !rawTigerButtons.some(label=>label.includes(tr('remote:vnc_status.start_service'))||label.includes(tr('remote:vnc_status.configure_tigervnc')))
       );
       const vncComponentManagementUi=missingTigerUi&&rawTigerUi;
       componentHost.remove();
+      document.documentElement.dataset.uiSmokeStage='remote-access-standalone-profiles';
       const vncActionButton=document.createElement('button');
       vncActionButton.innerHTML='<span>停止服务</span>';
       document.body.appendChild(vncActionButton);
@@ -7852,28 +9236,21 @@ app.whenReady().then(async () => {
         await new Promise(resolve=>setTimeout(resolve,0));
         const duplicateBlocked=vncActionCalls===1&&vncActionButton.disabled&&vncActionButton.getAttribute('aria-busy')==='true';
         releaseVncAction?.({ok:true});
-        await Promise.all([firstVncAction,secondVncAction]);
+        await withRemoteSmokeTimeout(Promise.all([firstVncAction,secondVncAction]),'VNC duplicate action');
         var vncServiceActionDebounced=Boolean(duplicateBlocked&&!vncActionButton.disabled&&!vncActionButton.hasAttribute('aria-busy'));
       } finally {
         runVncServerActionImpl=previousRunVncServerActionImpl;
         vncActionButton.remove();
       }
-      const xdmcpWorkspaceText=document.getElementById('view-remote-desktop')?.textContent||'';
-      const xdmcpSessionSemantics=Boolean(
-        xdmcpWorkspaceText.includes('新建图形登录')
-        && xdmcpWorkspaceText.includes('共享当前桌面（VNC）')
-        && xdmcpWorkspaceText.includes('需要共享当前桌面时请使用 VNC')
-        && xdmcpWorkspaceText.includes('lightdm-xsession -> Plasma (X11)')
-        && !xdmcpWorkspaceText.includes('修复默认桌面')
-      );
-      await openRemoteDesktop(macVnc.id,false);
+      await openRemoteDesktopForSmoke(macVnc.id,false,'mac-vnc');
       const macVncWorkspace=document.getElementById('view-remote-desktop');
+      const macVncWorkspaceText=macVncWorkspace?.textContent||'';
       const macVncBypassesLinuxDesktop=Boolean(
-        macVncWorkspace?.textContent.includes('macOS VNC fixture')
-        && !macVncWorkspace.querySelector('.linux-desktop-missing-notice')
-        && !macVncWorkspace.textContent.includes('前往 Linux 桌面管理')
+        ['macOS','VNC','fixture'].every(token=>macVncWorkspaceText.includes(token))
+        && !macVncWorkspace?.querySelector('.linux-desktop-missing-notice')
+        && !macVncWorkspaceText.includes(tr('remote:diagnostics.open_linux_desktop_manager'))
       );
-      await openRemoteDesktop(standaloneRdp.id,true);
+      await openRemoteDesktopForSmoke(standaloneRdp.id,true,'standalone-rdp');
       const standaloneRdpWorkspace=document.getElementById('view-remote-desktop');
       const standaloneRdpKey='remote-desktop-'+standaloneRdp.id;
       const standaloneRdpTab=tabs.find(tab=>tab.key===standaloneRdpKey);
@@ -7906,7 +9283,7 @@ app.whenReady().then(async () => {
         && diagnosticActionsRect.left>=diagnosticCopyRect.right-1
         && diagnosticActionsRect.right<=diagnosticRect.right+1
         && diagnosticPanel.scrollWidth<=diagnosticPanel.clientWidth+1);
-      await openRemoteDesktop(isolatedVnc.id,true);
+      await openRemoteDesktopForSmoke(isolatedVnc.id,true,'standalone-vnc');
       const standaloneVncWorkspace=document.getElementById('view-remote-desktop');
       const standaloneVncText=standaloneVncWorkspace?.textContent||'';
       const standaloneVncDisabled=Boolean(standaloneVncWorkspace?.querySelector('#remoteDesktopLaunchButton')?.disabled);
@@ -7916,7 +9293,7 @@ app.whenReady().then(async () => {
         && standaloneVncText.includes('新建 SSH 管理连接')
         && !standaloneVncDisabled
       );
-      await openRemoteDesktop(standaloneXdmcp.id,true);
+      await openRemoteDesktopForSmoke(standaloneXdmcp.id,true,'standalone-xdmcp');
       const standaloneXdmcpWorkspace=document.getElementById('view-remote-desktop');
       const standaloneXdmcpKey='remote-desktop-'+standaloneXdmcp.id;
       const standaloneXdmcpTab=tabs.find(tab=>tab.key===standaloneXdmcpKey);
@@ -7968,6 +9345,7 @@ app.whenReady().then(async () => {
         && linuxVncStoppedHost.textContent.includes('启动 VNC 服务')
         && linuxVncStoppedHost.textContent.includes('x11vnc.service')
       );
+      document.documentElement.dataset.uiSmokeStage='remote-access-x11-and-xserver';
       openX11AppLauncher(Number(connections[0].id));
       await new Promise(resolve=>setTimeout(resolve,0));
       const x11PresetValues=[...document.querySelectorAll('#x11AppPreset option')].map(option=>option.value);
@@ -7976,6 +9354,7 @@ app.whenReady().then(async () => {
       const x11InstalledApi=api;
       let x11InstalledDialog=false;
       let xServerRemoteUninstall=false;
+      let xServerClipboardLayout=false;
       try {
         api=async (path,options) => String(path).endsWith('/x11-applications/install-plan')
           ? {discovery:{platform:'linux',xauth_available:true,applications:[{id:'xterm',label:'XTerm'}]},install_plan:{supported:true,package_manager:'apt',uninstall:{available:true,command:'apt-get purge -y xauth x11-apps xterm'},online:{available:true,command:'apt-get install -y xauth x11-apps xterm'},instructions:[]}}
@@ -7983,7 +9362,9 @@ app.whenReady().then(async () => {
             ? {integration_available:true,desktop:true,desktop_backend_available:true,authorization_required:false,platform:'win32',available:true,running:true,managed:true,mode:'bundled',server:'VcXsrv',display:':0.0',can_start:false,can_stop:true,can_install:false}
             : String(path).endsWith('/x11-forwarding')
               ? {platform:'linux',ready:true,x11_forwarding:'yes',sshd_present:true,config_file:'/etc/ssh/sshd_config',xauth_path:'/usr/bin/xauth',xauth_location:'/usr/bin/xauth',x11_display_offset:'10',can_manage:true,can_terminal_manage:true}
-              : x11InstalledApi(path,options);
+              : String(path).endsWith('/x11-clipboard/helper')
+                ? {platform:'linux',installed:false,package_manager:'apt',install_plan:{online:{available:true,description:'使用远端 apt 安装 xclip'},offline:{available:true,description:'仅使用远端软件包缓存'},local_offline:{available:true,description:'本机下载 xclip 及依赖，通过 SFTP 上传到远端后安装',package_names:['xclip']},manual:{available:true,description:'查看 X11 转发、DISPLAY、xclip 和权限检查步骤'}},guide:{steps:[],commands:[]},reason:'远端尚未安装 xclip'}
+                : x11InstalledApi(path,options);
         await openX11InstallGuide(Number(connections[0].id));
         const installedGuide=document.querySelector('.x11-install-guide');
         x11InstalledDialog=Boolean(
@@ -7993,7 +9374,34 @@ app.whenReady().then(async () => {
         );
         closeX11InstallGuide();
         await openXServerManager(Number(connections[0].id));
-        xServerRemoteUninstall=Boolean(document.querySelector('.xserver-manager')?.textContent.includes('卸载 X11 组件'));
+        const xServerInstalledManager=document.querySelector('.xserver-manager');
+        const clipboardPanel=xServerInstalledManager?.querySelector('.xserver-clipboard-panel');
+        const clipboardModes=clipboardPanel?.querySelector('.remote-install-modes');
+        const clipboardModeButtons=[...clipboardModes?.querySelectorAll('.remote-install-mode')||[]];
+        const firstClipboardModeRect=clipboardModeButtons[0]?.getBoundingClientRect();
+        const secondClipboardModeRect=clipboardModeButtons[1]?.getBoundingClientRect();
+        const thirdClipboardModeRect=clipboardModeButtons[2]?.getBoundingClientRect();
+        const clipboardStatus=clipboardPanel?.querySelector(':scope > .connection-test-status');
+        const clipboardStatusIconRect=clipboardStatus?.querySelector('svg')?.getBoundingClientRect();
+        const clipboardStatusCopyRect=clipboardStatus?.querySelector('span')?.getBoundingClientRect();
+        const clipboardStatusCenterDelta=clipboardStatusIconRect&&clipboardStatusCopyRect
+          ? Math.abs((clipboardStatusIconRect.top+clipboardStatusIconRect.height/2)-(clipboardStatusCopyRect.top+clipboardStatusCopyRect.height/2))
+          : Number.POSITIVE_INFINITY;
+        const missingXclipMentions=(clipboardPanel?.textContent.match(/远端尚未安装 xclip/g)||[]).length;
+        xServerRemoteUninstall=Boolean(xServerInstalledManager?.textContent.includes('卸载 X11 组件'));
+        xServerClipboardLayout=Boolean(
+          clipboardPanel
+          && clipboardPanel.querySelector('.xserver-clipboard-head > button[onclick*="inspectX11ClipboardHelper"]')
+          && clipboardModeButtons.length===4
+          && firstClipboardModeRect
+          && secondClipboardModeRect
+          && thirdClipboardModeRect
+          && Math.abs(firstClipboardModeRect.top-secondClipboardModeRect.top)<=1
+          && thirdClipboardModeRect.top>firstClipboardModeRect.top+1
+          && clipboardPanel.scrollWidth<=clipboardPanel.clientWidth+1
+          && clipboardStatusCenterDelta<=1
+          && missingXclipMentions===1
+        );
         closeXServerManager();
       } finally {
         api=x11InstalledApi;
@@ -8156,7 +9564,7 @@ app.whenReady().then(async () => {
       const adaptiveTitle=adaptiveCard.querySelector('.modal-title-row');
       const adaptiveActions=adaptiveCard.querySelector('.actions');
       adaptiveCard.scrollTop=adaptiveCard.scrollHeight;
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      await new Promise(resolve=>setTimeout(resolve,0));
       const adaptiveRect=adaptiveCard.getBoundingClientRect();
       const adaptiveTitleRect=adaptiveTitle.getBoundingClientRect();
       const adaptiveActionsRect=adaptiveActions.getBoundingClientRect();
@@ -8201,7 +9609,7 @@ app.whenReady().then(async () => {
       primaryView='connections';
       renderExplorerTools();
       applyOperationPaneWidth(OPERATION_PANE_WIDTH_DEFAULT,{fit:false});
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      await new Promise(resolve=>setTimeout(resolve,0));
       const defaultAddSshButton=document.querySelector('#explorerTools .explorer-main-action');
       const defaultAddSshLabel=defaultAddSshButton?.querySelector('span');
       const defaultAddSshRect=defaultAddSshButton?.getBoundingClientRect();
@@ -8211,7 +9619,7 @@ app.whenReady().then(async () => {
         && defaultAddSshLabelRect.right<=defaultAddSshRect.right-4
         && defaultAddSshButton.scrollWidth<=defaultAddSshButton.clientWidth+1);
       applyOperationPaneWidth(OPERATION_PANE_WIDTH_MIN,{fit:false});
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      await new Promise(resolve=>setTimeout(resolve,0));
       const brand=document.querySelector('.brand');
       const brandRect=brand?.getBoundingClientRect();
       const brandButtons=[...document.querySelectorAll('.brand .side-actions button')].map(button=>button.getBoundingClientRect());
@@ -8225,10 +9633,11 @@ app.whenReady().then(async () => {
       const narrowAddSshButton=document.querySelector('#explorerTools .explorer-main-action');
       const narrowAddSshTextFits=Boolean(narrowAddSshButton?.textContent.includes('添加 SSH')
         && narrowAddSshButton.scrollWidth<=narrowAddSshButton.clientWidth+1);
-      return {rdpDisplayForm,vncModePersisted,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncNoPassword,sshCredentialRepairUi,quickTerminalCredentialRepairUi,ftpCredentialRepairUi,vncServiceDiagnosisUi,vncServiceActionDebounced,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,xdmcpAuthorizationLayout,standaloneRdpFallback,standaloneRdpStatusHidden,standaloneVncFallback,standaloneXdmcpFallback,standaloneXdmcpStatusHidden,standaloneFallbackDetails,remoteDiagnosticAlignment,graphicsRendering:renderingUi,renderingCopyInteraction,vncSourceSelection,vncSourceRefreshInPlace,remoteLayoutUi,vncFailureRecovery,vncComponentManagementUi,macVncBypassesLinuxDesktop,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,remoteNameDoubleClickOpens,remoteDesktopSwitchAvailable,remoteDesktopSingleDisabled,remoteDesktopSwitchMenuComplete,sshActivitySeparated,x11AppLauncher,x11InstalledDialog,xServerRemoteUninstall,xServerImmediateLoading,xServerManager,quickXServerManager,xServerDesktopIntegrationUnavailable,xServerBrowserAuthorization,xServerLocalDirectAuthorization,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,healthIconOnly,narrowBrandActionsFit,expandedBrandNameVisible,defaultAddSshTextFits,narrowAddSshTextFits};
+      return {rdpDisplayForm,vncModePersisted,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncNoPassword,sshCredentialRepairUi,quickTerminalCredentialRepairUi,ftpCredentialRepairUi,vncServiceDiagnosisUi,vncServiceActionDebounced,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,xdmcpAuthorizationLayout,standaloneRdpFallback,standaloneRdpStatusHidden,standaloneVncFallback,standaloneXdmcpFallback,standaloneXdmcpStatusHidden,standaloneFallbackDetails,remoteDiagnosticAlignment,graphicsRendering:renderingUi,renderingCopyInteraction,vncSourceSelection,vncSourceRefreshInPlace,remoteLayoutUi,vncFailureRecovery,vncComponentManagementUi,vncComponentDiagnostics:{missingTigerUi,rawTigerUi,missingTigerText,rawTigerText,missingTigerButtons,rawTigerButtons},xdmcpWorkspaceText,macVncBypassesLinuxDesktop,macVncWorkspaceText,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,remoteNameDoubleClickOpens,remoteDesktopSwitchAvailable,remoteDesktopSwitchProfiles:remoteDesktopSwitchProfiles(derived.id).map(profile=>profile.name),remoteDesktopSingleDisabled,remoteDesktopSwitchMenuComplete,remoteDesktopSwitchMenu,sshActivitySeparated,x11AppLauncher,x11InstalledDialog,xServerRemoteUninstall,xServerClipboardLayout,xServerImmediateLoading,xServerManager,quickXServerManager,xServerDesktopIntegrationUnavailable,xServerBrowserAuthorization,xServerLocalDirectAuthorization,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,healthIconOnly,narrowBrandActionsFit,expandedBrandNameVisible,defaultAddSshTextFits,narrowAddSshTextFits};
     } finally {
       applyOperationPaneWidth(previousOperationWidth,{fit:false});
       api=previousApi;
+      connections=previousConnections;
       remoteProfiles=previousProfiles;
       remoteConnectionSearch=previousRemoteSearch;
       remoteDesktopQuickOpen=previousRemoteDesktopQuickOpen;
@@ -8280,10 +9689,13 @@ app.whenReady().then(async () => {
     const viewport = await window.webContents.executeJavaScript("({width:window.innerWidth,mobile:isMobileLayout()})");
     throw new Error(`Mobile viewport did not become ready: ${JSON.stringify(viewport)}`);
   }
+  await window.webContents.executeJavaScript("document.documentElement.dataset.uiSmokeStage='mobile-linux-desktop-toolbar'");
   linuxDesktopToolbarUi.narrow=await window.webContents.executeJavaScript("window.__runLinuxDesktopToolbarSmoke()");
   await window.webContents.executeJavaScript("delete window.__runLinuxDesktopToolbarSmoke");
+  await window.webContents.executeJavaScript("document.documentElement.dataset.uiSmokeStage='mobile-remote-rendering'");
   remoteAccessUi.narrowRendering=await window.webContents.executeJavaScript("window.__runRemoteRenderingNarrowSmoke()");
   await window.webContents.executeJavaScript("delete window.__runRemoteRenderingNarrowSmoke");
+  await window.webContents.executeJavaScript("document.documentElement.dataset.uiSmokeStage='mobile-scenario'");
   const mobile = await runMobileScenario(window);
   if (!screenshotEnabled) window.hide();
   if (screenshotEnabled) {
@@ -8291,14 +9703,14 @@ app.whenReady().then(async () => {
     fs.writeFileSync(path.join(diagnosticsDirectory, "ui-smoke-mobile.png"), image.toPNG());
   }
   if (process.env.TERMA_UI_SMOKE_VERBOSE === "1") {
-    console.log(JSON.stringify({ ...result, noVncModuleUi, cspViolations, refreshStateUi, workspaceTabDragUi, workspaceDockingUi, workspaceTabVisibilityUi, workspaceHeaderResizeUi, pages, navigationUi, aboutUi, desktopMenu, runningActions, authUi, connectionStartupUi, saveAndClearUi, notificationUi, restoreKeyUi, restoreCredentialUi, terminalUi, terminalStartupUi, logSettingsUi, sftpUi, productivityUi, remoteAdminUi, linuxDesktopToolbarUi, remoteAccessUi, clipboardUi, dark, visual, mobile, errors }, null, 2));
+    console.log(JSON.stringify({ ...result, noVncModuleUi, languageOnboardingUi, forwardTemplateLayoutUi, cspViolations, refreshStateUi, workspaceTabDragUi, workspaceDockingUi, workspaceTabVisibilityUi, workspaceHeaderResizeUi, pages, navigationUi, aboutUi, desktopMenu, runningActions, authUi, connectionStartupUi, saveAndClearUi, notificationUi, restoreKeyUi, restoreCredentialUi, terminalUi, terminalStartupUi, logSettingsUi, sftpUi, productivityUi, remoteAdminUi, linuxDesktopToolbarUi, remoteAccessUi, clipboardUi, dark, visual, mobile, errors }, null, 2));
   }
   const operationPagesFailed = pages.some(page => page.scrollWidth > page.width || !page.toolFits || !page.layoutMode || !page.compactHeight);
   const failedOperationPages = pages.filter(page => page.scrollWidth > page.width || !page.toolFits || !page.layoutMode || !page.compactHeight);
   const overflow = pages.some(page => page.scrollWidth > page.width) || mobile.scrollWidth > mobile.width || mobile.bodyWidth > mobile.width;
   const darkFailed = dark.theme !== "dark" || dark.buttonBackground === "rgb(255, 255, 255)" || !dark.glass;
   const menuFailed = !desktopMenu.opened || !desktopMenu.duplicateConnection || !desktopMenu.simplifiedMenu || !desktopMenu.leftAligned || !desktopMenu.submenuLeftAligned || !desktopMenu.parentStaysOpen || !desktopMenu.submenu || !desktopMenu.generateAll || !desktopMenu.closedOnScroll || !mobile.menuOpened || !mobile.menuClosed;
-  const refreshStateUiFailed = !refreshStateUi.found || !refreshStateUi.collapsedBeforeRefresh || !refreshStateUi.collapsedAfterRefresh || !refreshStateUi.collapsePersisted || !refreshStateUi.explicitSelectionReopens || !refreshStateUi.runningCountLive || !refreshStateUi.failureCountLive || !refreshStateUi.oldStartupLabelsRemoved;
+  const refreshStateUiFailed = !refreshStateUi.found || !refreshStateUi.collapsedBeforeRefresh || !refreshStateUi.collapsedAfterRefresh || !refreshStateUi.collapsePersisted || !refreshStateUi.explicitSelectionReopens || !refreshStateUi.runningCountLive || !refreshStateUi.failureCountLive || !refreshStateUi.startupLabelsBelowNumbers || !refreshStateUi.oldStartupLabelsRemoved;
   const workspaceTabDragUiFailed = !workspaceTabDragUi.beganImmediately || !workspaceTabDragUi.activatedOnPress || !workspaceTabDragUi.dragGhostVisible || !workspaceTabDragUi.dropPositionVisible || !workspaceTabDragUi.dropPositionRemoved || !workspaceTabDragUi.dragGhostRemoved || !workspaceTabDragUi.touchReady || !workspaceTabDragUi.commonTitleFits || !workspaceTabDragUi.numberedSessionTitleFits || !workspaceTabDragUi.compactKindLabels || !workspaceTabDragUi.distinctKindIcons || !workspaceTabDragUi.remoteProtocolTitlesCompact || JSON.stringify(workspaceTabDragUi.remoteProtocolLetters) !== JSON.stringify(['R','V','X']) || !workspaceTabDragUi.remoteProtocolMonitorBadges || !workspaceTabDragUi.remoteProtocolThemeAware || !workspaceTabDragUi.activeSelectionVisible || !workspaceTabDragUi.tabFontWithinResizeRange || !workspaceTabDragUi.shortTabUsesContentWidth || !workspaceTabDragUi.fullTitleTooltip || JSON.stringify(workspaceTabDragUi.liveOrder) !== JSON.stringify(['drag-a','drag-b','drag-c']) || JSON.stringify(workspaceTabDragUi.savedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || JSON.stringify(workspaceTabDragUi.persistedOrder) !== JSON.stringify(['drag-b','drag-c','drag-a']) || !workspaceTabDragUi.activeFollowsDragged || !workspaceTabDragUi.clickSuppressed || !workspaceTabDragUi.cancelStarted || !workspaceTabDragUi.cancelRestored || !workspaceTabDragUi.closeDoesNotDrag || !workspaceTabDragUi.fallbackMove || !workspaceTabDragUi.scrollControlsVisible || !workspaceTabDragUi.scrollControlsHideWhenFit || !workspaceTabDragUi.nativeScrollbarHidden || !workspaceTabDragUi.wheelScrollsTabs;
   const workspaceTabCloseUiFailed = !workspaceTabCloseUi.remoteStatusDotVisible
     || !workspaceTabCloseUi.systemRemoteStatusHidden
@@ -8368,7 +9780,7 @@ app.whenReady().then(async () => {
     || !workspaceHeaderResizeUi.doubleClickResets
     || !workspaceHeaderResizeUi.heightRestored
     || !workspaceHeaderResizeUi.tabStorageIndependent;
-  const runningActionsFailed = !runningActions.found || !runningActions.fits || !runningActions.compact || !runningActions.iconOnly;
+  const runningActionsFailed = !runningActions.found || !runningActions.fits || !runningActions.compact || !runningActions.iconOnly || !runningActions.overviewLabelsBelowNumbers;
   const authUiFailed = !authUi.found || !Object.values(authUi.passwordMode).every(Boolean) || !Object.values(authUi.keyMode).every(Boolean) || !authUi.passwordEyeToggle;
   const connectionStartupUiFailed = !Object.values(connectionStartupUi).every(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
     || !connectionStartupUi.categories.includes('Shell')
@@ -8376,20 +9788,29 @@ app.whenReady().then(async () => {
     || !connectionStartupUi.categories.includes('会话工具');
   const saveAndClearUiFailed = !Object.values(saveAndClearUi).every(Boolean);
   const notificationUiFailed = notificationUi.replayed !== 0 || !notificationUi.initialized || notificationUi.cursor !== notificationUi.stored || !notificationUi.categoryControls || !notificationUi.floatingUnderNotifications || !notificationUi.successSuppressed || !notificationUi.infoVisible || !notificationUi.progressSuppressed;
-  const restoreKeyUiFailed = !restoreKeyUi.opened || restoreKeyUi.rowCount !== 12 || JSON.stringify(restoreKeyUi.originalNames) !== JSON.stringify(['old-key-a','old-key-b']) || restoreKeyUi.candidates.length !== 3 || !restoreKeyUi.candidates.some(item=>item.includes('当前密钥目录')) || !restoreKeyUi.candidates.some(item=>item.includes('用户 ~/.ssh')) || !restoreKeyUi.candidateValuePreserved || !restoreKeyUi.stagesWindowsPath || !restoreKeyUi.backdropIgnored || !restoreKeyUi.continuedWithUnbound || !restoreKeyUi.continuedAllUnbound || !restoreKeyUi.configAllowsUnbound || !restoreKeyUi.configSortEditable || !restoreKeyUi.acceptsAll || !restoreKeyUi.uploadDirectory || !restoreKeyUi.actions || !restoreKeyUi.statusReady || !restoreKeyUi.cardWithinViewport || !restoreKeyUi.closed;
+  const restoreKeyUiFailed = !restoreKeyUi.opened || restoreKeyUi.rowCount !== 12 || JSON.stringify(restoreKeyUi.originalNames) !== JSON.stringify(['old-key-a','old-key-b']) || restoreKeyUi.candidates.length !== 3 || !restoreKeyUi.candidates.some(item=>item.includes('id_ed25519_demo')) || !restoreKeyUi.candidates.some(item=>item.includes('id_rsa_project')) || !restoreKeyUi.candidateValuePreserved || !restoreKeyUi.stagesWindowsPath || !restoreKeyUi.backdropIgnored || !restoreKeyUi.continuedWithUnbound || !restoreKeyUi.continuedAllUnbound || !restoreKeyUi.configAllowsUnbound || !restoreKeyUi.configSortEditable || !restoreKeyUi.acceptsAll || !restoreKeyUi.uploadDirectory || !restoreKeyUi.actions || !restoreKeyUi.statusReady || !restoreKeyUi.cardWithinViewport || !restoreKeyUi.closed;
   const restoreCredentialUiFailed = !restoreCredentialUi.opened || !restoreCredentialUi.backdropIgnored || !restoreCredentialUi.originalLabels.some(item=>item.includes('私钥：id_old')) || !restoreCredentialUi.originalLabels.some(item=>item.includes('备份含密码')) || !restoreCredentialUi.originalLabels.some(item=>item.includes('备份未包含密码')) || !restoreCredentialUi.initialStatuses.includes('保留备份密码') || !restoreCredentialUi.stagedStatuses.some(item=>item.includes('将绑定：id_key')) || !restoreCredentialUi.stagedStatuses.includes('将使用新密码') || !restoreCredentialUi.preservesSavedPassword || !restoreCredentialUi.replacesMissingPassword || !restoreCredentialUi.bindsKey || !restoreCredentialUi.sortFields || !restoreCredentialUi.updatesSort || !restoreCredentialUi.preservesSort || !restoreCredentialUi.cardWithinViewport || !restoreCredentialUi.closed;
   const settingsSectionsFailed = navigationUi.settingsChecks.some(item=>item.visible.length!==1||item.visible[0]!==item.requested||item.active.length!==1||item.active[0]!==item.requested) || navigationUi.aboutVisible?.length!==1 || navigationUi.aboutVisible?.[0]!=='settings-about' || navigationUi.aboutActive?.length!==1 || navigationUi.aboutActive?.[0]!=='settings-about';
   const importSectionsFailed = navigationUi.importChecks.some(item=>item.visible.length!==1||item.visible[0]!==item.requested||item.active.length!==1||item.active[0]!==item.requested);
   const importSourceCheck = navigationUi.importChecks.find(item => item.requested === 'import-source');
   const runtimeUi = navigationUi.runtimeUi || {};
+  const i18nUi = navigationUi.i18nUi || {};
+  const thirdPartyLiveSwitch = i18nUi.thirdPartyLiveSwitch || {};
+  const thirdPartyLiveSwitchFailed = thirdPartyLiveSwitch.scenario !== 'third-party-live-language-switch'
+    || !thirdPartyLiveSwitch.aceSeededChinese
+    || !thirdPartyLiveSwitch.zmodemSeededChinese
+    || !thirdPartyLiveSwitch.aceClean
+    || !thirdPartyLiveSwitch.zmodemClean
+    || !thirdPartyLiveSwitch.zmodemLocalizedTitle
+    || !thirdPartyLiveSwitch.zmodemUserTextPreserved;
   const sessionUi = navigationUi.sessionUi || {};
   const authPolicyUi = navigationUi.authPolicyUi || {};
   const localDirectUi = navigationUi.localDirectUi || {};
   const runtimeUiFailed = !runtimeUi.found || runtimeUi.port !== '18100' || JSON.stringify(runtimeUi.selectedHosts) !== JSON.stringify(['0.0.0.0']) || !runtimeUi.sftpSettingsAbsent || !runtimeUi.terminalLatencySettingChecked || !runtimeUi.wildcardCollapsed || runtimeUi.urlLinks.length !== 2 || !runtimeUi.urlLinks.some(url=>url.includes('192.0.2.10:18100')) || !runtimeUi.restartNotice;
   const sessionUiFailed = sessionUi.ttl !== '720' || sessionUi.max !== '1000' || sessionUi.cleanup !== '10' || !sessionUi.active || !sessionUi.save;
-  const activityUiFailed = result.activity.count !== 10 || !result.activity.iconCentered || !result.activity.centersAligned || !result.activity.insideColumn || !result.activity.resizable || !result.activityUtilities;
+  const activityUiFailed = result.activity.count !== 11 || !result.activity.iconCentered || !result.activity.centersAligned || !result.activity.insideColumn || !result.activity.resizable || !result.activityUtilities;
   const appearanceEffectsUiFailed = Object.values(appearanceEffectsUi).some(value => value !== true);
-  const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || !navigationUi.themeUi?.entryHidden || !navigationUi.themeUi?.controlsHidden || !navigationUi.themeUi?.oldConfigIgnored || !navigationUi.themeUi?.clearPreset || !navigationUi.themeUi?.noEffects || !navigationUi.themeUi?.zeroBlur || !navigationUi.cacheUi?.selected || !navigationUi.cacheUi?.panel || navigationUi.cacheUi?.categories !== 6 || !navigationUi.cacheUi?.beforeAbout || !navigationUi.cacheUi?.absentFromGeneral || !navigationUi.storageAlignmentUi?.found || !navigationUi.storageAlignmentUi?.topAligned || !navigationUi.storageAlignmentUi?.bottomAligned || !navigationUi.storageMigrationUi?.controlsFound || !navigationUi.storageMigrationUi?.threeChoices || !navigationUi.storageMigrationUi?.cancelBlockedRequest || !navigationUi.storageMigrationUi?.oneMigrationRequest || !navigationUi.storageMigrationUi?.migrationRequested || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || !authPolicyUi.redundantCheckboxRemoved || !authPolicyUi.localOnlyLabel || !authPolicyUi.alwaysLabel || !authPolicyUi.directDefinition || !localDirectUi.control || !localDirectUi.defaultOff || !localDirectUi.policyCopy || !localDirectUi.enabled || !localDirectUi.proxyBlocked || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.newerVersionShowsAgain;
+  const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || i18nUi.language !== 'en-US' || i18nUi.settingsTitle !== 'General' || i18nUi.activityTitle !== 'Switch to Simplified Chinese' || i18nUi.mobileTitle !== 'Switch to Simplified Chinese' || !i18nUi.activityOrder || !i18nUi.persisted || !i18nUi.settingsSelectorRemoved || i18nUi.visibleHan?.length || thirdPartyLiveSwitchFailed || !i18nUi.resumeButton || !i18nUi.pauseButton || !i18nUi.tasksPreserved || !i18nUi.tabsPreserved || !navigationUi.themeUi?.entryHidden || !navigationUi.themeUi?.controlsHidden || !navigationUi.themeUi?.oldConfigIgnored || !navigationUi.themeUi?.clearPreset || !navigationUi.themeUi?.noEffects || !navigationUi.themeUi?.zeroBlur || !navigationUi.cacheUi?.selected || !navigationUi.cacheUi?.panel || navigationUi.cacheUi?.categories !== 6 || !navigationUi.cacheUi?.beforeAbout || !navigationUi.cacheUi?.absentFromGeneral || !navigationUi.storageAlignmentUi?.found || !navigationUi.storageAlignmentUi?.topAligned || !navigationUi.storageAlignmentUi?.bottomAligned || !navigationUi.storageMigrationUi?.controlsFound || !navigationUi.storageMigrationUi?.threeChoices || !navigationUi.storageMigrationUi?.cancelBlockedRequest || !navigationUi.storageMigrationUi?.oneMigrationRequest || !navigationUi.storageMigrationUi?.migrationRequested || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || !authPolicyUi.redundantCheckboxRemoved || !authPolicyUi.localOnlyLabel || !authPolicyUi.alwaysLabel || !authPolicyUi.directDefinition || !localDirectUi.control || !localDirectUi.defaultOff || !localDirectUi.policyCopy || !localDirectUi.enabled || !localDirectUi.proxyBlocked || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.newerVersionShowsAgain;
   const aboutUiFailed = Boolean(aboutUi.error) || !aboutUi.found || !aboutUi.aboutSelected || aboutUi.duplicateSettingsNav !== 0 || !aboutUi.versionMatches || !aboutUi.licenseMetadata || !aboutUi.sourceLink || !aboutUi.modalOpen || !aboutUi.accessible || !aboutUi.fullText || !aboutUi.textScrollable || !aboutUi.cardWithinViewport || !aboutUi.closeFocused || !aboutUi.backdropIgnored || !aboutUi.closedByEscape || !aboutUi.focusReturned || !aboutUi.followupBackdropClean || !aboutUi.followupResolved || !aboutUi.updateUi;
   const hostTrustUiFailed = !hostTrustUi.unknown?.open
     || !hostTrustUi.unknown?.fingerprint
@@ -8407,7 +9828,7 @@ app.whenReady().then(async () => {
     || !hostTrustUi.settings?.visible
     || !hostTrustUi.settings?.record
     || !hostTrustUi.settings?.removeButton;
-  const expectedSettingsActions = ['通用设置','安全设置','通知设置','启动与运行','缓存管理','关于'];
+  const expectedSettingsActions = ['通用设置','安全','通知设置','启动与运行','缓存管理','关于'];
   const mobileResizeNavigationFailed = !mobile.workspaceResizeNavigation || !Object.values(mobile.workspaceResizeNavigation).every(Boolean);
   const mobileWorkspaceChromeResizeFailed = !mobile.workspaceChromeResize?.found
     || !mobile.workspaceChromeResize?.handlesHidden
@@ -8421,7 +9842,7 @@ app.whenReady().then(async () => {
   const terminalDropUi = terminalSettingsUi.drop || {};
   const mobileTerminalSettingsUi = mobile.terminalGlobalSettings || {};
   const terminalStartupUiFailed = !terminalStartupUi.found || !Object.values(terminalStartupUi).every(Boolean);
-  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.x11ScopeMenu || !terminalUi.enterReconnect || !terminalUi.reconnectPreservesOutput || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.terminalToolbarScrollable || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalFontChangeKeepsWheelContinuity || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalUi.zmodemPanelUi || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.fontInheritance || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.pasteCommandHistory || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
+  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.x11ScopeMenu || !terminalUi.ctrlVImageIntercepted || !terminalUi.ctrlVEmptyFallsThrough || !terminalUi.enterReconnect || !terminalUi.reconnectPreservesOutput || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.terminalToolbarScrollable || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalFontChangeKeepsWheelContinuity || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalUi.zmodemPanelUi || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.fontInheritance || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.pasteCommandHistory || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
   const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || !logSettingsUi.days || !logSettingsUi.fileMb || !logSettingsUi.totalMb || !logSettingsUi.rotations || !logSettingsUi.cleanup || !logSettingsUi.save || !logSettingsUi.closed || !logSettingsUi.fullTerminalTime || !logSettingsUi.defaultsToLatest || !logSettingsUi.followsTheme;
   const productivityUiFailed = !productivityUi.quickVisible || productivityUi.actionCount < 7 || !productivityUi.quickConnectionActionsInline || !productivityUi.quickPanelDirect || !productivityUi.workspaceSearchable || !productivityUi.workspacePreviewOpens || !productivityUi.quickButtonPlacement || !productivityUi.quickButtonLightning || !productivityUi.xServerQuickUsesX11 || !productivityUi.xServerUnauthorizedWarning || !productivityUi.xServerLocalDirectReady || !productivityUi.broadcastFromEither || !productivityUi.broadcastTabMarked || !productivityUi.broadcastHeaderGrouped || !productivityUi.broadcastExitCompact || !productivityUi.visibleSplitHasNoActivity || !productivityUi.visibleSplitClearsPriorActivity || !productivityUi.hiddenBinaryOutputMarked || productivityUi.syncRows !== 3 || !productivityUi.conflictSafe || !productivityUi.namedWorkspaceTools || !productivityUi.terminalTools || !productivityUi.quickToolbarIconVisible || !productivityUi.quickToggleStateVisible || !productivityUi.quickCompactWidths || !productivityUi.quickCommandExecutes || !productivityUi.quickContextMenu || !productivityUi.quickDoubleClickCreates || !productivityUi.quickEditorBackCloses || !productivityUi.quickManagerPolished || !productivityUi.quickOrderPersists || !productivityUi.quickHeightAdjustable || !productivityUi.quickToggleHides || !productivityUi.quickWheelScrolls || !productivityUi.quickResponsive;
   const remoteAdminUiFailed = Boolean(remoteAdminUi.desktop?.error)
@@ -8471,7 +9892,7 @@ app.whenReady().then(async () => {
   const remoteRenderingProtocols = ['rdp','vnc','xdmcp'];
   const remoteRenderingUiFailed = remoteRenderingProtocols.some(protocol => !remoteAccessUi.graphicsRendering?.[protocol]?.warning || !remoteAccessUi.graphicsRendering?.[protocol]?.copyButtons || !remoteAccessUi.graphicsRendering?.[protocol]?.noHorizontalOverflow) || !remoteAccessUi.renderingCopyInteraction?.success || !remoteAccessUi.renderingCopyInteraction?.failure || !remoteAccessUi.narrowRendering?.ok;
   const remoteLayoutUiFailed = remoteRenderingProtocols.some(protocol => !remoteAccessUi.remoteLayoutUi?.[protocol]?.ok);
-  const remoteAccessUiFailed = !remoteAccessUi.rdpDisplayForm || !remoteAccessUi.vncModePersisted || !remoteAccessUi.vncPasswordForm || !remoteAccessUi.vncRetryPrompt || !remoteAccessUi.vncRetryValue || !remoteAccessUi.vncNoPassword || !remoteAccessUi.sshCredentialRepairUi || !remoteAccessUi.quickTerminalCredentialRepairUi || !remoteAccessUi.ftpCredentialRepairUi || !remoteAccessUi.vncServiceDiagnosisUi || !remoteAccessUi.vncServiceActionDebounced || !remoteAccessUi.xdmcpForm || !remoteAccessUi.xdmcpMenuAvailable || !remoteAccessUi.xdmcpSessionSemantics || !remoteAccessUi.xdmcpAuthorizationLayout || !remoteAccessUi.standaloneRdpFallback || !remoteAccessUi.standaloneRdpStatusHidden || !remoteAccessUi.standaloneVncFallback || !remoteAccessUi.standaloneXdmcpFallback || !remoteAccessUi.standaloneXdmcpStatusHidden || !remoteAccessUi.remoteDiagnosticAlignment || remoteRenderingUiFailed || remoteLayoutUiFailed || !remoteAccessUi.vncSourceSelection || !remoteAccessUi.vncSourceRefreshInPlace || !remoteAccessUi.vncFailureRecovery || !remoteAccessUi.vncComponentManagementUi || !remoteAccessUi.macVncBypassesLinuxDesktop || !remoteAccessUi.macVncSetupGuidance || !remoteAccessUi.remoteActivitySeparated || !remoteAccessUi.remoteHostStickyStyle || !remoteAccessUi.remoteHostStickyFollowsOuter || !remoteAccessUi.derivedSourcePresentation || !remoteAccessUi.remoteNameDoubleClickOpens || !remoteAccessUi.remoteDesktopSwitchAvailable || !remoteAccessUi.remoteDesktopSingleDisabled || !remoteAccessUi.remoteDesktopSwitchMenuComplete || !remoteAccessUi.sshActivitySeparated || !remoteAccessUi.x11AppLauncher || !remoteAccessUi.x11InstalledDialog || !remoteAccessUi.xServerRemoteUninstall || !remoteAccessUi.xServerImmediateLoading || !remoteAccessUi.xServerManager || !remoteAccessUi.quickXServerManager || !remoteAccessUi.xServerDesktopIntegrationUnavailable || !remoteAccessUi.xServerBrowserAuthorization || !remoteAccessUi.xServerLocalDirectAuthorization || !remoteAccessUi.adaptiveModal || !remoteAccessUi.modalHeaderControlsAligned || !remoteAccessUi.modalBackdropLocked || !remoteAccessUi.healthIconOnly || !remoteAccessUi.narrowBrandActionsFit || !remoteAccessUi.expandedBrandNameVisible || !remoteAccessUi.defaultAddSshTextFits || !remoteAccessUi.narrowAddSshTextFits;
+  const remoteAccessUiFailed = !remoteAccessUi.rdpDisplayForm || !remoteAccessUi.vncModePersisted || !remoteAccessUi.vncPasswordForm || !remoteAccessUi.vncRetryPrompt || !remoteAccessUi.vncRetryValue || !remoteAccessUi.vncNoPassword || !remoteAccessUi.sshCredentialRepairUi || !remoteAccessUi.quickTerminalCredentialRepairUi || !remoteAccessUi.ftpCredentialRepairUi || !remoteAccessUi.vncServiceDiagnosisUi || !remoteAccessUi.vncServiceActionDebounced || !remoteAccessUi.xdmcpForm || !remoteAccessUi.xdmcpMenuAvailable || !remoteAccessUi.xdmcpSessionSemantics || !remoteAccessUi.xdmcpAuthorizationLayout || !remoteAccessUi.standaloneRdpFallback || !remoteAccessUi.standaloneRdpStatusHidden || !remoteAccessUi.standaloneVncFallback || !remoteAccessUi.standaloneXdmcpFallback || !remoteAccessUi.standaloneXdmcpStatusHidden || !remoteAccessUi.remoteDiagnosticAlignment || remoteRenderingUiFailed || remoteLayoutUiFailed || !remoteAccessUi.vncSourceSelection || !remoteAccessUi.vncSourceRefreshInPlace || !remoteAccessUi.vncFailureRecovery || !remoteAccessUi.vncComponentManagementUi || !remoteAccessUi.macVncBypassesLinuxDesktop || !remoteAccessUi.macVncSetupGuidance || !remoteAccessUi.remoteActivitySeparated || !remoteAccessUi.remoteHostStickyStyle || !remoteAccessUi.remoteHostStickyFollowsOuter || !remoteAccessUi.derivedSourcePresentation || !remoteAccessUi.remoteNameDoubleClickOpens || !remoteAccessUi.remoteDesktopSwitchAvailable || !remoteAccessUi.remoteDesktopSingleDisabled || !remoteAccessUi.remoteDesktopSwitchMenuComplete || !remoteAccessUi.sshActivitySeparated || !remoteAccessUi.x11AppLauncher || !remoteAccessUi.x11InstalledDialog || !remoteAccessUi.xServerRemoteUninstall || !remoteAccessUi.xServerClipboardLayout || !remoteAccessUi.xServerImmediateLoading || !remoteAccessUi.xServerManager || !remoteAccessUi.quickXServerManager || !remoteAccessUi.xServerDesktopIntegrationUnavailable || !remoteAccessUi.xServerBrowserAuthorization || !remoteAccessUi.xServerLocalDirectAuthorization || !remoteAccessUi.adaptiveModal || !remoteAccessUi.modalHeaderControlsAligned || !remoteAccessUi.modalBackdropLocked || !remoteAccessUi.healthIconOnly || !remoteAccessUi.narrowBrandActionsFit || !remoteAccessUi.expandedBrandNameVisible || !remoteAccessUi.defaultAddSshTextFits || !remoteAccessUi.narrowAddSshTextFits;
   const expectedSftpToolActions = ['收藏当前目录','新建文件夹','新建文件','上传文件','SFTP 回收站','搜索当前目录','打开此连接的终端','刷新目录','SFTP 全局设置'];
   const directoryActionsUi = sftpUi.directoryActionsUi || {};
   const connectionSessionUi = sftpUi.connectionSessionUi || {};
@@ -8482,7 +9903,7 @@ app.whenReady().then(async () => {
   const textEncodingUi = sftpUi.textEncodingUi || {};
   const globalSettingsUi = sftpUi.globalSettingsUi || {};
   const downloadNoticeUi = sftpUi.downloadNoticeUi || {};
-  const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.drawerDefaultCompact || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.failedOnly || !jobUi.failedActions || !jobUi.failedClearAvailable || !jobUi.currentProgress || !jobUi.drawerResizable || !jobUi.drawerResizeAdaptive || !jobUi.drawerResizePersists || !jobUi.drawerResizeReset || !jobUi.deleteDuplicateBlocked || !jobUi.deleteKeepsDrawerOpen || !jobUi.taskLogInitialOpen || !jobUi.taskLogInitialBottom || !jobUi.taskLogRefreshKeepsOpen || !jobUi.taskLogRefreshShowsLatest || !jobUi.taskLogRefreshFollowsBottom || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned || !jobUi.toastOrderPreserved || !jobUi.toastStackedDown || !jobUi.toastAvoidsFloatingTask || !jobUi.toastExitAnimated || !jobUi.toastReflowAnimated || !jobUi.toastMovedUp;
+  const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingResumeAction || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.drawerDefaultCompact || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.failedOnly || !jobUi.failedActions || !jobUi.failedClearAvailable || !jobUi.currentProgress || !jobUi.drawerResizable || !jobUi.drawerResizeAdaptive || !jobUi.drawerResizePersists || !jobUi.drawerResizeReset || !jobUi.deleteDuplicateBlocked || !jobUi.deleteKeepsDrawerOpen || !jobUi.taskLogInitialOpen || !jobUi.taskLogInitialBottom || !jobUi.taskLogRefreshKeepsOpen || !jobUi.taskLogRefreshShowsLatest || !jobUi.taskLogRefreshFollowsBottom || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned || !jobUi.toastOrderPreserved || !jobUi.toastStackedDown || !jobUi.toastAvoidsFloatingTask || !jobUi.toastExitAnimated || !jobUi.toastReflowAnimated || !jobUi.toastMovedUp;
   const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.lightPaged || !textEncodingUi.lightNextPage || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
   const nativeDragUiFailed = !nativeDragUi.found || !nativeDragUi.webExternalDragBlocked || !nativeDragUi.linuxFallbackNoticeOnce || !nativeDragUi.linuxFallbackUsesCompatibilityMode || !nativeDragUi.streamingPreparesOnPointerDown || !nativeDragUi.streamingThresholdActivatesOnce || !nativeDragUi.streamingCaptureCancelSurvives || !nativeDragUi.pointerUpCancelsPending || !nativeDragUi.streamingSkipsStage || !nativeDragUi.streamingNativeBlocksParallelBrowserDrag || !nativeDragUi.nativeIdleHintStable || !nativeDragUi.nativeOutsideHintStaysStable || !nativeDragUi.nativeMotionTargetsSftp || !nativeDragUi.nativeTransientMissKeepsTarget || !nativeDragUi.nativeFinalTransientMissKeepsTarget || !nativeDragUi.nativeReleasedClearsStaleTarget || !nativeDragUi.nativeResultCopiesOnce || !nativeDragUi.firstDragOnlyStages || !nativeDragUi.firstDragReset || !nativeDragUi.cacheReused || !nativeDragUi.cachedUnarmedStaysInternal || !nativeDragUi.sameWindowDropDoesNotArm || !nativeDragUi.armedDragStartsSynchronously || !nativeDragUi.failureRearmed || !nativeDragUi.successClearsState || !nativeDragUi.finderRenameNoticeShown;
   const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedTabSwitchDoesNotReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.terminalTabPreviewActivated || !connectionSessionUi.invalidTerminalDropRestoresSource || !connectionSessionUi.invalidSftpDropRestoresSource || !connectionSessionUi.acceptedTerminalDropStays || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !globalSettingsUi.classicSurface || !globalSettingsUi.themedField || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !sftpUi.fileOpenFeedback?.interruptedRetry || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryCacheBehavior.permissionFailureRestored || !sftpUi.searchKeyboardUi?.opened || !sftpUi.searchKeyboardUi?.closed || !sftpUi.searchKeyboardUi?.recursive || !sftpUi.searchKeyboardUi?.feedback || !sftpUi.syncIndicatorFollowsScroll || !sftpUi.diffComparisonUi || !sftpUi.columnLayoutUi?.order || !sftpUi.columnLayoutUi?.persisted || !sftpUi.columnLayoutUi?.resized || !sftpUi.columnLayoutUi?.pointerStable || !sftpUi.columnLayoutUi?.pairOnly || !sftpUi.columnLayoutUi?.adjacentResizeStable || !sftpUi.columnLayoutUi?.dividerUniform || !sftpUi.columnLayoutUi?.localNarrowResizable || !sftpUi.columnLayoutUi?.openButtonStable || !sftpUi.columnLayoutUi?.selectionToolbarStable || !sftpUi.columnLayoutUi?.scrollbarUnified || !sftpUi.columnLayoutUi?.globalCss || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithoutDirectoryReload || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.emptyFavoritesCompact || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !directoryActionsUi.terminalJumpFirst || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/demo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.multiNameAddsSelection || !sftpUi.multiNameCancelsSelection || !sftpUi.singleNameReplacesSelection || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.dragSelectionSynchronized || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactHorizontalScroll || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.narrowHeaderNameVisible || !sftpUi.narrowHeaderSummaryVisible || !sftpUi.narrowCompactActions || !sftpUi.completedMutationDetected || !sftpUi.desktopPagerSingleRow || !sftpUi.pagerFloatsAtWorkspaceBottom || !sftpUi.pagerOpaqueAndElevated || !sftpUi.pagerDockSealsBottom || !sftpUi.pagerPinnedToViewport || !sftpUi.scrollCueVisibleAboveContent || !sftpUi.scrollCueHidesAtEnd || !sftpUi.narrowPagerWraps || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
@@ -8493,7 +9914,9 @@ app.whenReady().then(async () => {
     || !directoryActionsUi.duplicateDirectoryStateIsolated
     || !directoryActionsUi.duplicateHistoryIsolated
     || !directoryActionsUi.duplicateShellMatchesTab;
-  const code = errors.length || cspViolations.length || !noVncModuleUi.loaded || !noVncModuleUi.prototype || !zmodemModuleUi.loaded || !zmodemModuleUi.browser || !zmodemModuleUi.abortSequence || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceTabCloseUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || appearanceEffectsUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.quickConnectionLauncher || !result.quickSshCandidates || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
+  const languageOnboardingFailed = !languageOnboardingUi.regionDefaults || !languageOnboardingUi.newUserDefaultsEnglish || !languageOnboardingUi.nativeChoiceCopy || !languageOnboardingUi.coldStartNativeChoice || !languageOnboardingUi.existingUserKeepsLanguage || !languageOnboardingUi.fitsNarrowViewport || !languageOnboardingUi.saved || !languageOnboardingUi.closed;
+  const forwardTemplateLayoutFailed = forwardTemplateLayoutUi.rows !== 2 || forwardTemplateLayoutUi.buttons !== 6 || !forwardTemplateLayoutUi.singleLine || !forwardTemplateLayoutUi.insideRows || !forwardTemplateLayoutUi.noOverlap;
+  const code = errors.length || cspViolations.length || languageOnboardingFailed || forwardTemplateLayoutFailed || !noVncModuleUi.loaded || !noVncModuleUi.prototype || !zmodemModuleUi.loaded || !zmodemModuleUi.browser || !zmodemModuleUi.abortSequence || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceTabCloseUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || appearanceEffectsUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.quickConnectionLauncher || !result.quickSshCandidates || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
   if (code) console.error("UI smoke failure summary:", JSON.stringify({
     failedChecks:Object.entries({
       overflow,
@@ -8533,6 +9956,22 @@ app.whenReady().then(async () => {
       sftpTabIsolationFailed,
       clipboardUiFailed:!clipboardUi.ok
     }).filter(([, failed]) => Boolean(failed)).map(([name]) => name),
+    workspaceTabCloseUi,
+    runningActions,
+    restoreKeyUi,
+    activityUi:{activity:result.activity, activityUtilities:result.activityUtilities},
+    aboutUi,
+    terminalUiFalse:Object.entries(terminalUi).filter(([, value]) => value === false).map(([name]) => name),
+    terminalUiScalars:{
+      found:terminalUi.found,
+      desktopBackHidden:terminalUi.desktopBackHidden,
+      desktopKeysHidden:terminalUi.desktopKeysHidden,
+      binaryType:terminalUi.binaryType,
+      labels:terminalUi.labels,
+      toolbarLabels:terminalUi.toolbarLabels
+    },
+    remoteAccessUiFalse:Object.entries(remoteAccessUi).filter(([, value]) => value === false).map(([name]) => name),
+    remoteAccessUiDiagnostics:{xdmcpWorkspaceText:remoteAccessUi.xdmcpWorkspaceText,macVncWorkspaceText:remoteAccessUi.macVncWorkspaceText,vncComponentDiagnostics:remoteAccessUi.vncComponentDiagnostics,remoteDesktopSwitchProfiles:remoteAccessUi.remoteDesktopSwitchProfiles,remoteDesktopSwitchMenu:remoteAccessUi.remoteDesktopSwitchMenu,graphicsRendering:remoteAccessUi.graphicsRendering,renderingCopyInteraction:remoteAccessUi.renderingCopyInteraction,narrowRendering:remoteAccessUi.narrowRendering,remoteLayoutUi:remoteAccessUi.remoteLayoutUi},
     sftpUiDiagnostics:{
       error:sftpUi.error,
       topLevelFalse:Object.entries(sftpUi).filter(([, value]) => value === false).map(([name]) => name),
@@ -8547,9 +9986,11 @@ app.whenReady().then(async () => {
       downloadNoticeFalse:Object.entries(downloadNoticeUi).filter(([, value]) => value === false).map(([name]) => name),
       fileOpenFeedbackFalse:Object.entries(sftpUi.fileOpenFeedback || {}).filter(([, value]) => value === false).map(([name]) => name),
       fileOpenFeedback:sftpUi.fileOpenFeedback,
+      narrowMetaDiagnostics:sftpUi.narrowMetaDiagnostics,
       columnLayoutFalse:Object.entries(sftpUi.columnLayoutUi || {}).filter(([, value]) => value === false).map(([name]) => name),
       connectionSessionFalse:Object.entries(connectionSessionUi).filter(([, value]) => value === false).map(([name]) => name),
       jobUiFalse:Object.entries(jobUi).filter(([, value]) => value === false).map(([name]) => name),
+      jobUiDiagnostics:{historyActionDiagnostics:jobUi.historyActionDiagnostics,stackedToastTitles:jobUi.stackedToastTitles},
       textEncodingUiFalse:Object.entries(textEncodingUi).filter(([, value]) => value === false).map(([name]) => name),
       reusedWithoutDirectoryReload:sftpUi.directoryActionsUi?.reusedWithoutDirectoryReload,
       directoryActionsFalse:Object.entries(sftpUi.directoryActionsUi || {}).filter(([, value]) => value === false).map(([name]) => name),

@@ -22,10 +22,13 @@ async function copyExternalConnectionCommand(id, kind="ssh") {
   const connection = currentConnection(Number(id));
   if (!connection) return;
   await navigator.clipboard.writeText(externalConnectionCommand(connection, kind));
-  notify(`已复制 ${kind === "sftp" ? "SFTP" : "SSH"} 命令（不含密码和私钥口令）`, "success");
+  const message = kind === "sftp"
+    ? tr("common:notifications.exact.sftp_command_copied", {defaultValue:"已复制 SFTP 命令（不含密码和私钥口令）"})
+    : tr("common:notifications.exact.ssh_command_copied", {defaultValue:"已复制 SSH 命令（不含密码和私钥口令）"});
+  notify(message, "success");
 }
 
 async function openConnectionInVsCode(id, remotePath="") {
   await api(`/api/connections/${Number(id)}/external-tools/vscode`, {method:"POST", body:JSON.stringify({path:remotePath})});
-  notify("已交给 VS Code Remote SSH 打开", "success");
+  notify(tr("common:notifications.opened_vscode_ssh", {defaultValue:"已交给 VS Code Remote SSH 打开"}), "success");
 }

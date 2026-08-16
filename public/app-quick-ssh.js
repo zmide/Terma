@@ -100,20 +100,25 @@ async function startQuickSshConnection(target, options={}) {
   const identities = await api("/api/identity-files").catch(() => []);
   const modal = $("modal");
   modal.dataset.quickSshAuth = "1";
+  const title = options.repair
+    ? tr("connections:quick_ssh.repair_title", {defaultValue:"修复临时 SSH 凭据"})
+    : options.reconnectKey
+      ? tr("connections:quick_ssh.reconnect_title", {defaultValue:"重新认证快速连接"})
+      : tr("connections:quick_ssh.title", {defaultValue:"快速连接"});
   modal.innerHTML = `<form class="modal-card quick-ssh-auth-modal" data-submit-action="quick-ssh-submit" data-host="${escAttr(target.host)}" data-port="${Number(target.port || 22)}" data-reconnect-key="${escAttr(options.reconnectKey || "")}">
-    <header class="quick-ssh-auth-head"><div><h2>${options.repair ? "修复临时 SSH 凭据" : options.reconnectKey ? "重新认证快速连接" : "快速连接"}</h2><span>${esc(quickSshEndpointText(target))}</span></div><button class="icon-button" type="button" data-action="quick-ssh-close" title="关闭" aria-label="关闭">${icon("x")}</button></header>
+    <header class="quick-ssh-auth-head"><div><h2>${esc(title)}</h2><span>${esc(quickSshEndpointText(target))}</span></div><button class="icon-button" type="button" data-action="quick-ssh-close" title="${escAttr(tr("common:actions.close", {defaultValue:"关闭"}))}" aria-label="${escAttr(tr("common:actions.close", {defaultValue:"关闭"}))}">${icon("x")}</button></header>
     <div class="quick-ssh-target-grid">
-      <div><label for="quickSshUser">SSH 用户名</label><input id="quickSshUser" required autocomplete="username" value="${escAttr(target.user || "")}" placeholder="root"></div>
-      <div><label for="quickSshPort">端口</label><input id="quickSshPort" type="number" min="1" max="65535" required value="${Number(target.port || 22)}"></div>
+      <div><label for="quickSshUser">${esc(tr("connections:auto.ssh_user", {defaultValue:"SSH 用户名"}))}</label><input id="quickSshUser" required autocomplete="username" value="${escAttr(target.user || "")}" placeholder="root"></div>
+      <div><label for="quickSshPort">${esc(tr("connections:auto.ssh_port", {defaultValue:"端口"}))}</label><input id="quickSshPort" type="number" min="1" max="65535" required value="${Number(target.port || 22)}"></div>
     </div>
-    <fieldset class="quick-ssh-auth-choice"><legend>认证方式</legend>
-      <label><input type="radio" name="quickSshAuthType" value="password" checked data-change-action="quick-ssh-auth-type"><span>${icon("key-round")}密码</span></label>
-      <label><input type="radio" name="quickSshAuthType" value="key" data-change-action="quick-ssh-auth-type"><span>${icon("file-key")}私钥</span></label>
+    <fieldset class="quick-ssh-auth-choice"><legend>${esc(tr("connections:auto.login_method", {defaultValue:"认证方式"}))}</legend>
+      <label><input type="radio" name="quickSshAuthType" value="password" checked data-change-action="quick-ssh-auth-type"><span>${icon("key-round")}${esc(tr("connections:auto.password_login", {defaultValue:"密码"}))}</span></label>
+      <label><input type="radio" name="quickSshAuthType" value="key" data-change-action="quick-ssh-auth-type"><span>${icon("file-key")}${esc(tr("connections:auto.key_login", {defaultValue:"私钥"}))}</span></label>
     </fieldset>
-    <div class="quick-ssh-auth-panel"><label for="quickSshPassword">SSH 密码</label><input id="quickSshPassword" type="password" required autocomplete="current-password"></div>
-    <div class="quick-ssh-auth-panel" hidden><label for="quickSshIdentity">私钥</label><select id="quickSshIdentity"><option value="">请选择私钥</option>${identities.map(item => `<option value="${escAttr(item.path)}">${esc(item.label || item.path)}${item.permission_ok ? "" : "（需检查权限）"}</option>`).join("")}</select><label for="quickSshPassphrase">私钥口令（可选）</label><input id="quickSshPassphrase" type="password" autocomplete="off"></div>
-    <div id="quickSshStatus" class="quick-ssh-status ${options.repair ? "warning" : ""}" aria-live="polite">${options.repair ? "上次认证失败。请修改用户名、密码或私钥；新凭据仍只用于本次临时会话，不会保存到连接库。" : "凭据仅用于本次临时会话（最长 12 小时），不会保存到连接库。"}</div>
-    <div class="actions"><button type="button" data-action="quick-ssh-new">保存为 SSH 连接</button><button type="button" data-action="quick-ssh-close">取消</button><button id="quickSshConnect" class="primary" type="submit">${icon("square-terminal")}<span>连接终端</span></button></div>
+    <div class="quick-ssh-auth-panel"><label for="quickSshPassword">${esc(tr("connections:auto.ssh_password", {defaultValue:"SSH 密码"}))}</label><input id="quickSshPassword" type="password" required autocomplete="current-password"></div>
+    <div class="quick-ssh-auth-panel" hidden><label for="quickSshIdentity">${esc(tr("connections:auto.key_login", {defaultValue:"私钥"}))}</label><select id="quickSshIdentity"><option value="">${esc(tr("connections:identity.select", {defaultValue:"请选择私钥"}))}</option>${identities.map(item => `<option value="${escAttr(item.path)}">${esc(localizedIdentityFileLabel(item, {permission:true}))}</option>`).join("")}</select><label for="quickSshPassphrase">${esc(tr("connections:auto.key_passphrase", {defaultValue:"私钥口令（可选）"}))}</label><input id="quickSshPassphrase" type="password" autocomplete="off"></div>
+    <div id="quickSshStatus" class="quick-ssh-status ${options.repair ? "warning" : ""}" aria-live="polite">${esc(options.repair ? tr("connections:quick_ssh.repair_hint", {defaultValue:"上次认证失败。请修改用户名、密码或私钥；新凭据仍只用于本次临时会话，不会保存到连接库。"}) : tr("connections:quick_ssh.session_hint", {defaultValue:"凭据仅用于本次临时会话（最长 12 小时），不会保存到连接库。"}))}</div>
+    <div class="actions"><button type="button" data-action="quick-ssh-new">${esc(tr("connections:quick_ssh.save_connection", {defaultValue:"保存为 SSH 连接"}))}</button><button type="button" data-action="quick-ssh-close">${esc(tr("common:actions.cancel", {defaultValue:"取消"}))}</button><button id="quickSshConnect" class="primary" type="submit">${icon("square-terminal")}<span>${esc(tr("connections:quick_ssh.connect_terminal", {defaultValue:"连接终端"}))}</span></button></div>
   </form>`;
   modal.hidden = false;
   modal.onkeydown = event => {
@@ -148,10 +153,10 @@ async function submitQuickSshConnection(form, trigger) {
     quick_connection_id:Number(terminalSessions.get(String(form.dataset.reconnectKey || ""))?.connection?.id || 0)
   };
   form.dataset.submitting = "1";
-  setButtonBusy(trigger, true, "连接中...");
+  setButtonBusy(trigger, true, tr("connections:quick_ssh.connecting", {defaultValue:"连接中..."}));
   const status = $("quickSshStatus");
   if (status) {
-    status.textContent = "正在校验 SSH 主机身份...";
+    status.textContent = tr("connections:quick_ssh.verifying_host", {defaultValue:"正在校验 SSH 主机身份..."});
     status.className = "quick-ssh-status";
   }
   try {
@@ -160,7 +165,7 @@ async function submitQuickSshConnection(form, trigger) {
       body:JSON.stringify({connection:{ssh_user:user, ssh_host:host, ssh_port:port}})
     });
     if (submission.cancelled) return;
-    if (status) status.textContent = "正在创建一次性连接凭据...";
+    if (status) status.textContent = tr("connections:quick_ssh.creating_ticket", {defaultValue:"正在创建一次性连接凭据..."});
     const ticket = await api("/api/terminal/quick-tickets", {method:"POST", body:JSON.stringify(payload)});
     payload.ssh_password = "";
     payload.private_key_passphrase = "";
@@ -181,7 +186,7 @@ async function submitQuickSshConnection(form, trigger) {
     else openQuickTerminal(ticket.connection, ticket.token);
   } catch (error) {
     if (status) {
-      status.textContent = error.message || "快速连接失败";
+      status.textContent = localizedTermaUiPhrase(error.message || tr("connections:quick_ssh.failed", {defaultValue:"快速连接失败"}));
       status.className = "quick-ssh-status error";
     }
     throw error;
@@ -212,7 +217,7 @@ function runQuickSshDefault(value) {
     closeQuickSshLaunchSurfaces();
     openTerminal(exact.id);
   } else {
-    startQuickSshConnection(target).catch(error => notify(error.message, "error"));
+    startQuickSshConnection(target).catch(error => notify(localizedTermaUiPhrase(error.message || tr("connections:quick_ssh.failed", {defaultValue:"快速连接失败"})), "error"));
   }
   return true;
 }

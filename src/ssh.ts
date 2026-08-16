@@ -29,6 +29,27 @@ let healthMonitorBusy = false;
 let healthMonitorTask: Promise<any> | null = null;
 const ssh2Forwards = new Map();
 
+function forwardFailureDetails(message: unknown, fallbackCode = "ssh_failed", preserveMessage = true) {
+  const raw = String(message || "").trim();
+  const diagnosis = diagnoseSshError(raw || fallbackCode);
+  return {
+    raw:preserveMessage ? raw : "",
+    code:preserveMessage && raw ? diagnosis.reason_code || fallbackCode : fallbackCode,
+    display:diagnosis.display,
+    diagnosis
+  };
+}
+
+function saveForwardFailure(id: number, message: unknown, fallbackCode = "ssh_failed", preserveMessage = true) {
+  const details = forwardFailureDetails(message, fallbackCode, preserveMessage);
+  run("UPDATE connection_forwards SET status='failed', pid=NULL, last_error=?, last_error_code=?, updated_at=? WHERE id=?", [details.raw || null, details.code, now(), Number(id)]);
+  return details;
+}
+
+function clearForwardFailure(id: number) {
+  run("UPDATE connection_forwards SET last_error=NULL, last_error_code=NULL WHERE id=?", [Number(id)]);
+}
+
 function ensureSshDirs() {
   ensurePrivateDirectory(SSH_DIR, { required:true });
 }
@@ -566,15 +587,11 @@ async function inspectPortOwner(port, host = "127.0.0.1") {
 async function diagnosePortUsage(host, port) {
   const occupied = !(await portAvailable(host, port));
   const processes = occupied ? await inspectPortOwner(port, host) : [];
-  const label = formatRemoteEndpoint(host, port);
   return {
     host,
     port: Number(port),
     occupied,
-    processes,
-    message: occupied
-      ? `监听端口 ${label} 已被占用${processes.length ? `：${processes.map((item) => `${item.name}(${item.pid})`).join("、")}` : ""}`
-      : `监听端口 ${label} 可用`
+    processes
   };
 }
 
@@ -683,7 +700,7 @@ async function startForwardInternal(id, options: any = {}) {
       const details = usage.processes.length
         ? usage.processes.map((item) => `${item.name} PID ${item.pid}${item.path ? `\n${item.path}` : ""}`).join("\n")
         : "未能识别占用进程";
-      const display = diagnoseSshError(`${usage.message}\n${details}`).display;
+      const display = diagnoseSshError(`Address already in use: ${formatRemoteEndpoint(usage.host, usage.port)}\n${details}`).display;
       notifyIssue(`forward:${Number(id)}:down`, {
         type: "forward",
         level: "error",
@@ -929,6 +946,7 @@ async function connectionHealth(connectionId, options: any = {}) {
       elapsed_ms:0,
       output:message,
       raw_output:"",
+      preserve_raw_output:false,
       diagnosis:diagnoseSshError(message),
       issues
     };
@@ -1097,9 +1115,10 @@ async function testSsh(data) {
     const start = Date.now();
     const result: any = await runPasswordCommand({ ...data, ssh_password: String(data.ssh_password || "") }, probe, null, 15000);
     if (isHostTrustError(result.error)) throw result.error;
-    const rawOutput = (result.stdout || result.stderr || (result.error ? result.error.message : "") || (result.status === 0 ? "SSH 连接成功（退出码 0）" : `SSH 退出码 ${result.status}`)).trim();
+    const preservedOutput = String(result.stdout || result.stderr || "").trim();
+    const rawOutput = (preservedOutput || (result.error ? result.error.message : "") || (result.status === 0 ? "SSH 连接成功（退出码 0）" : `SSH 退出码 ${result.status}`)).trim();
     const diagnosis = diagnoseSshError(rawOutput);
-    return { ok: result.status === 0, elapsed_ms: Date.now() - start, output: result.status === 0 ? "SSH 连接成功" : diagnosis.display, raw_output: rawOutput, diagnosis };
+    return { ok: result.status === 0, elapsed_ms: Date.now() - start, output: result.status === 0 ? "SSH 连接成功" : diagnosis.display, raw_output:rawOutput, preserve_raw_output:Boolean(preservedOutput), diagnosis };
   }
   await ensureConnectionHostTrusted(data);
   const args = ["-T", ...systemConnectionArgs(data), "-o", "BatchMode=yes", "-p", String(data.ssh_port || 22)];
@@ -1112,13 +1131,15 @@ async function testSsh(data) {
   const start = Date.now();
   const result: any = await runSshTest(args, 15000, data.terminal_encoding);
   const ok = result.status === 0;
-  const rawOutput = (result.stdout || result.stderr || (result.error ? result.error.message : "") || (ok ? "SSH 连接成功（退出码 0）" : `SSH 退出码 ${result.status}`)).trim();
+  const preservedOutput = String(result.stdout || result.stderr || "").trim();
+  const rawOutput = (preservedOutput || (result.error ? result.error.message : "") || (ok ? "SSH 连接成功（退出码 0）" : `SSH 退出码 ${result.status}`)).trim();
   const diagnosis = diagnoseSshError(rawOutput);
   return {
     ok,
     elapsed_ms: Date.now() - start,
     output: ok ? "SSH 连接成功" : diagnosis.display,
     raw_output: rawOutput,
+    preserve_raw_output:Boolean(preservedOutput),
     diagnosis
   };
 }
@@ -1164,14 +1185,21 @@ async function runSshCommandForConnection(connection, command, timeoutMs = 60000
   });
 }
 
-async function runSshCommandForConnectionStreaming(connection, command, timeoutMs = 60000, onChunk = null) {
+async function runSshCommandForConnectionStreaming(connection, command, timeoutMs = 60000, onChunk = null, options: any = {}) {
+  const x11Mode = ["untrusted", "trusted"].includes(String(options.x11Mode || ""))
+    ? String(options.x11Mode)
+    : "";
   if (shouldUseBuiltinSsh(connection)) {
-    const result: any = await runPasswordCommand(connection, command, null, timeoutMs, onChunk);
+    const result: any = await runPasswordCommand(connection, command, options.input ?? null, timeoutMs, onChunk, {x11Mode});
     if (isHostTrustError(result.error)) throw result.error;
     return result;
   }
   await ensureConnectionHostTrusted(connection);
   const args = ["-T", ...systemConnectionArgs(connection), "-o", "BatchMode=yes", "-p", String(connection.ssh_port || 22)];
+  const xauthLocation = process.env.TERMA_XAUTH || process.env.TUNNELDESK_XAUTH;
+  if (x11Mode && xauthLocation) args.push("-o", `XAuthLocation=${xauthLocation}`);
+  if (x11Mode === "trusted") args.push("-Y");
+  else if (x11Mode === "untrusted") args.push("-X");
   if (connection.identity_file) {
     securePrivateKeyPermissions(connection.identity_file);
     args.push("-i", connection.identity_file);
@@ -1179,7 +1207,7 @@ async function runSshCommandForConnectionStreaming(connection, command, timeoutM
   args.push(...effectiveExtraArgs(connection.extra_args, connection));
   args.push(...sshDestinationArgs(connection), String(command || ""));
   return new Promise((resolve) => {
-    const child = spawn(SSH_BIN, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(SSH_BIN, args, { stdio: ["pipe", "pipe", "pipe"] });
     const stdout = [];
     const stderr = [];
     let settled = false;
@@ -1200,8 +1228,11 @@ async function runSshCommandForConnectionStreaming(connection, command, timeoutM
     }, timeoutMs);
     child.stdout?.on("data", (chunk) => { stdout.push(Buffer.from(chunk)); onChunk?.(chunk, "stdout"); });
     child.stderr?.on("data", (chunk) => { stderr.push(Buffer.from(chunk)); onChunk?.(chunk, "stderr"); });
+    child.stdin?.on("error", () => {});
     child.on("error", (error) => finish(null, error));
     child.on("close", (code) => finish(code));
+    if (options.input !== undefined && options.input !== null) child.stdin?.end(options.input);
+    else child.stdin?.end();
   });
 }
 
