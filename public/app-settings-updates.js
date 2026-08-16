@@ -11,11 +11,13 @@ function updateStatusHtml() {
     return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(currentVersion)}</span></div><div class="update-status"><div><strong>${esc(tr("settings:auto.update_not_checked"))}</strong><span>${esc(tr("settings:updates.auto_refresh_hint"))}</span></div><span class="status-pill">${esc(tr("settings:updates.pending_check"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("settings:updates.check_now"))}</span></button></div></div>`;
   }
   const latestVersion = update.latest_version ? `v${String(update.latest_version).replace(/^v/i, "")}` : tr("settings:auto.update_no_release");
+  const republished = Boolean(update.republished_available);
+  const releaseAvailable = Boolean(update.update_available || republished);
   const locale = document.documentElement.lang || "zh-CN";
   const checkedAt = update.checked_at ? new Date(update.checked_at).toLocaleString(locale, {hour12:false}) : tr("settings:auto.update_not_checked");
   const publishedAt = update.published_at ? new Date(update.published_at).toLocaleDateString(locale) : "";
   // A completed manual update makes any persisted download result irrelevant.
-  const download = update.update_available ? (update.download_status || {}) : {};
+  const download = releaseAvailable ? (update.download_status || {}) : {};
   const progress = Math.max(0, Math.min(100, Number(download.progress_percent || 0)));
   const statusLabel = download.state === "downloading"
     ? download.phase === "probing"
@@ -27,8 +29,8 @@ function updateStatusHtml() {
       ? tr("settings:auto.update_downloaded")
       : download.state === "failed"
         ? tr("settings:auto.update_failed")
-        : tr(update.update_available ? "settings:auto.update_available" : "settings:auto.update_latest");
-  const resourceName = update.update_available
+        : tr(republished ? "settings:auto.update_republished" : update.update_available ? "settings:auto.update_available" : "settings:auto.update_latest");
+  const resourceName = releaseAvailable
     ? download.selected_asset_name || download.asset_name || tr("settings:auto.update_no_asset")
     : tr("settings:auto.update_no_download", {defaultValue:"当前无需下载"});
   const platformLabels = {win32:"Windows", darwin:"macOS", linux:"Linux"};
@@ -49,23 +51,26 @@ function updateStatusHtml() {
     ? tr("settings:auto.update_parallel_speed")
     : sourceLabel
       ? `${sourceLabel}${sourceSpeed ? tr("settings:updates.speed_suffix", {speed:sourceSpeed}) : ""}`
-      : update.update_available
+      : releaseAvailable
         ? tr("settings:auto.select_fastest_route")
         : "";
   const notes = updateReleaseNotesHtml(update);
   const releaseUrl = safeGitHubReleaseUrl(update.release_url);
   const releaseLink = releaseUrl ? `<a class="button-link" href="${escAttr(releaseUrl)}" target="_blank" rel="noopener">${icon("external-link")}<span>${esc(tr("settings:updates.view_release"))}</span></a>` : "";
+  const selectedAsset = Array.isArray(update.assets) ? update.assets.find(asset => asset?.name === (download.selected_asset_name || download.asset_name)) : null;
+  const downloadedDigestMatches = !republished || !selectedAsset?.digest || !download.digest || selectedAsset.digest === download.digest;
   const downloadedCurrent = download.state === "downloaded"
     && String(download.version || "").replace(/^v/i, "") === String(update.latest_version || "").replace(/^v/i, "")
     && Boolean(download.asset_name)
-    && download.asset_name === download.selected_asset_name;
+    && download.asset_name === download.selected_asset_name
+    && downloadedDigestMatches;
   const openDirectoryAction = download.can_open_directory
     ? `<button onclick="openDownloadedUpdateDirectory()">${icon("folder-open")}<span>${esc(tr("settings:updates.open_download_directory"))}</span></button>`
     : "";
   const redownloadAction = downloadedCurrent
     ? `<button id="downloadUpdateBtn" onclick="downloadUpdatePackage(true)">${icon("download")}<span>${esc(tr("settings:auto.update_redownload"))}</span></button>`
     : "";
-  const downloadAction = update.update_available
+  const downloadAction = releaseAvailable
     ? downloadedCurrent
       ? download.package_type === "portable"
         ? `${openDirectoryAction || `<span class="muted">${esc(tr("settings:updates.portable_ready_hint"))}</span>`}${redownloadAction}`
@@ -75,19 +80,20 @@ function updateStatusHtml() {
         : `<button id="downloadUpdateBtn" class="primary" onclick="downloadUpdatePackage()">${icon("download")}<span>${esc(tr(download.state === "failed" ? "settings:updates.redownload_verify" : "settings:auto.update_download_verify"))}</span></button>`
     : "";
   const downloadError = download.state === "failed" && download.error ? `<div class="warning">${esc(tr("settings:updates.download_failed_detail", {error:download.error}))}</div>` : "";
+  const republishedNotice = republished ? `<div class="warning">${esc(tr("settings:updates.republished_hint", {version:latestVersion}))}</div>` : "";
   const ignoreControl = update.update_available
     ? `<label class="check-row update-ignore-row"><input id="updateIgnoreCurrentVersion" type="checkbox" ${update.update_ignored ? "checked" : ""} onchange="setUpdateVersionIgnored(this)"> ${esc(tr("settings:auto.ignore_version", {version:latestVersion}))}</label><div class="muted update-ignore-help">${esc(tr("settings:auto.ignore_version_hint"))}</div>`
     : "";
   return `<div class="update-card">
     <div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:auto.current_version", {version:currentVersion}))}</span></div>
     <dl class="update-details">
-      <div><dt>${esc(tr("settings:updates.status"))}</dt><dd><span class="status-pill ${download.state === "failed" ? "failed" : update.update_available ? "reconnecting" : "running"}">${esc(statusLabel)}</span><small>${esc(tr("settings:auto.last_checked", {status:checkedAt}))}</small></dd></div>
+      <div><dt>${esc(tr("settings:updates.status"))}</dt><dd><span class="status-pill ${download.state === "failed" ? "failed" : releaseAvailable ? "reconnecting" : "running"}">${esc(statusLabel)}</span><small>${esc(tr("settings:auto.last_checked", {status:checkedAt}))}</small></dd></div>
       <div><dt>${esc(tr("settings:auto.latest_version"))}</dt><dd><strong>${esc(latestVersion)}</strong>${publishedAt ? `<small>${esc(tr("settings:auto.published_at", {date:publishedAt}))}</small>` : ""}</dd></div>
       <div><dt>${esc(tr("settings:auto.asset"))}</dt><dd><strong title="${escAttr(resourceName)}">${esc(resourceName)}</strong>${target ? `<small>${esc(target)}</small>` : ""}</dd></div>
       ${sourceText ? `<div><dt>${esc(tr("settings:auto.route"))}</dt><dd><strong>${esc(sourceText)}</strong><small>${esc(tr("settings:auto.route_fallback"))}</small></dd></div>` : ""}
       <div><dt>${esc(tr("settings:auto.progress"))}</dt><dd><strong>${esc(progressText)}</strong><div class="update-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}"><i style="width:${progress}%"></i></div></dd></div>
     </dl>
-    ${notes}${downloadError}
+    ${republishedNotice}${notes}${downloadError}
     <div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("settings:auto.check_updates"))}</span></button>${downloadAction}${releaseLink}</div>
     ${ignoreControl}
     <div class="muted">${esc(tr("settings:auto.update_security_hint"))}</div>
@@ -99,7 +105,8 @@ function safeUpdateMarkdownUrl(value) {
     const url = new URL(String(value || ""));
     return ["http:", "https:"].includes(url.protocol) ? url.href : "";
   } catch {
-    return "";
+    const fragment = String(value || "").trim();
+    return /^#[\p{L}\p{N}_-]+$/u.test(fragment) ? fragment : "";
   }
 }
 
@@ -152,6 +159,8 @@ function updateMarkdownHtml(value, displayedVersion = "") {
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
+    if (/^\s*<!--(?:[\s\S]*?)-->\s*$/.test(line)) continue;
+    if (/^\s*<a\b[^>]*\bid\s*=\s*["'][^"']+["'][^>]*>\s*<\/a>\s*$/i.test(line)) continue;
     if (/^```/.test(line.trim())) {
       flushBlocks();
       const code = [];
@@ -163,7 +172,7 @@ function updateMarkdownHtml(value, displayedVersion = "") {
       flushBlocks();
       continue;
     }
-    const heading = /^(#{1,3})\s+(.+)$/.exec(line.trim());
+    const heading = /^(#{1,6})\s+(.+)$/.exec(line.trim());
     if (heading) {
       flushBlocks();
       const level = Math.min(6, heading[1].length + 3);
@@ -292,9 +301,11 @@ async function refreshUpdateStatus(force=false) {
       renderUpdateStatus();
       syncUpdateNoticeForCurrentSection();
     });
-    if (force && !updateSettings.update_ignored) notify(updateSettings.update_available
-      ? tr("settings:updates.new_version_found", {version:`v${String(updateSettings.latest_version || "").replace(/^v/i, "")}`})
-      : tr("settings:updates.already_latest"), updateSettings.update_available ? "info" : "success");
+    if (force && !updateSettings.update_ignored) notify(updateSettings.republished_available
+      ? tr("settings:updates.republished_found", {version:`v${String(updateSettings.latest_version || "").replace(/^v/i, "")}`})
+      : updateSettings.update_available
+        ? tr("settings:updates.new_version_found", {version:`v${String(updateSettings.latest_version || "").replace(/^v/i, "")}`})
+        : tr("settings:updates.already_latest"), updateSettings.update_available || updateSettings.republished_available ? "info" : "success");
   } catch (error) {
     updateSettings = { error:error.message || tr("settings:updates.github_connection_failed") };
     inPane(() => {
@@ -368,8 +379,9 @@ function formatUpdateSpeed(value) {
 
 async function downloadUpdatePackage(redownload=false) {
   const inPane = captureSettingsPane();
+  const republished = Boolean(updateSettings?.republished_available);
   if (!await confirmModal(
-    tr(redownload ? "settings:updates.redownload_confirm" : "settings:updates.download_confirm"),
+    tr(redownload ? "settings:updates.redownload_confirm" : republished ? "settings:updates.republished_confirm" : "settings:updates.download_confirm"),
     tr(redownload ? "settings:auto.update_redownload_action" : "settings:auto.update_download_verify"),
     tr(redownload ? "settings:auto.update_redownload" : "settings:auto.update_start"),
     tr("common:actions.cancel")

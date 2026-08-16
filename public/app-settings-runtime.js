@@ -206,7 +206,10 @@ function closeTermaLanguageOnboarding() {
 async function confirmTermaLanguageOnboarding(button=null) {
   const selected = $("modal")?.querySelector('input[name="terma-onboarding-language"]:checked')?.value;
   const language = normalizeTermaLanguage(selected || runtimeSettings?.saved?.language);
-  if (button) setButtonBusy(button, true, tr("settings:language_onboarding.saving", {defaultValue:"Saving..."}));
+  if (button) setButtonBusy(button, true, tr("settings:language_onboarding.saving", {
+    lng:language,
+    defaultValue:language === "zh-CN" ? "正在保存..." : "Saving..."
+  }));
   try {
     const result = await api("/api/runtime-settings", {
       method:"PUT",
@@ -217,11 +220,61 @@ async function confirmTermaLanguageOnboarding(button=null) {
     closeTermaLanguageOnboarding();
     return true;
   } catch (error) {
-    notify(error.message || tr("settings:language_onboarding.save_failed", {defaultValue:"Failed to save language"}), "error");
+    notify(error.message || tr("settings:language_onboarding.save_failed", {
+      lng:language,
+      defaultValue:language === "zh-CN" ? "语言设置保存失败" : "Failed to save language"
+    }), "error");
     return false;
   } finally {
     if (button?.isConnected) setButtonBusy(button, false);
   }
+}
+
+function termaLanguageOnboardingCopy(language, isNew) {
+  const selectedLanguage = normalizeTermaLanguage(language);
+  const chinese = selectedLanguage === "zh-CN";
+  return {
+    title:tr("settings:language_onboarding.title", {
+      lng:selectedLanguage,
+      defaultValue:chinese ? "选择界面语言" : "Choose your language"
+    }),
+    message:tr(isNew ? "settings:language_onboarding.new_user_message" : "settings:language_onboarding.existing_user_message", {
+      lng:selectedLanguage,
+      defaultValue:chinese
+        ? (isNew ? "Terma 已按当前设备地区预选语言，进入前可以修改。" : "请选择要继续使用的 Terma 界面语言。")
+        : (isNew ? "Terma selected a default from this device's region. You can change it before entering." : "Choose the Terma interface language to continue.")
+    }),
+    switchHint:tr("settings:language_onboarding.switch_hint", {
+      lng:selectedLanguage,
+      defaultValue:chinese ? "之后可随时通过语言按钮切换。" : "You can switch languages at any time from the language button."
+    }),
+    continueLabel:tr("settings:language_onboarding.continue", {
+      lng:selectedLanguage,
+      defaultValue:chinese ? "继续" : "Continue"
+    })
+  };
+}
+
+function updateTermaLanguageOnboarding(language) {
+  const form = $("modal")?.querySelector(".language-onboarding");
+  if (!form) return false;
+  const selectedLanguage = normalizeTermaLanguage(language);
+  const selectedInput = form.querySelector(`input[name="terma-onboarding-language"][value="${selectedLanguage}"]`);
+  if (selectedInput) selectedInput.checked = true;
+  form.querySelectorAll(".language-onboarding-option").forEach(item => {
+    item.classList.toggle("selected", item.contains(selectedInput));
+  });
+  const copy = termaLanguageOnboardingCopy(selectedLanguage, form.dataset.newUser === "true");
+  const title = form.querySelector("#languageOnboardingTitle");
+  const message = form.querySelector(".language-onboarding-message");
+  const switchHint = form.querySelector(".language-onboarding-note");
+  const continueButton = form.querySelector('button[type="submit"]');
+  if (title) title.textContent = copy.title;
+  if (message) message.textContent = copy.message;
+  if (switchHint) switchHint.textContent = copy.switchHint;
+  if (continueButton) continueButton.textContent = copy.continueLabel;
+  form.lang = selectedLanguage;
+  return true;
 }
 
 async function ensureTermaLanguageOnboarding() {
@@ -237,26 +290,23 @@ async function ensureTermaLanguageOnboarding() {
   const modal = $("modal");
   if (!modal) return false;
   const isNew = runtimeSettings?.settings_persisted !== true;
-  const title = tr("settings:language_onboarding.title", {defaultValue:"Choose your language"});
-  const message = tr(isNew ? "settings:language_onboarding.new_user_message" : "settings:language_onboarding.existing_user_message", {defaultValue:"Choose the interface language before entering Terma."});
   const englishDetail = tr("settings:language_onboarding.english_detail", {lng:"en-US", defaultValue:"Default outside mainland China"});
   const chineseName = tr("common:languages.zh-CN", {lng:"zh-CN", defaultValue:"简体中文"});
   const chineseDetail = tr("settings:language_onboarding.chinese_detail", {lng:"zh-CN", defaultValue:"中国大陆默认"});
-  const switchHint = tr("settings:language_onboarding.switch_hint", {defaultValue:"You can switch languages at any time."});
-  const continueLabel = tr("settings:language_onboarding.continue", {defaultValue:"Continue"});
-  modal.innerHTML = `<form class="modal-card language-onboarding" role="dialog" aria-modal="true" aria-labelledby="languageOnboardingTitle" onsubmit="event.preventDefault();confirmTermaLanguageOnboarding(this.querySelector('button[type=submit]'))">
+  modal.innerHTML = `<form class="modal-card language-onboarding" data-i18n-skip data-new-user="${isNew}" role="dialog" aria-modal="true" aria-labelledby="languageOnboardingTitle" onsubmit="event.preventDefault();confirmTermaLanguageOnboarding(this.querySelector('button[type=submit]'))">
     <div class="language-onboarding-mark">T</div>
     <div class="language-onboarding-copy">
-      <h2 id="languageOnboardingTitle">${esc(title)}</h2>
-      <p>${esc(message)}</p>
+      <h2 id="languageOnboardingTitle"></h2>
+      <p class="language-onboarding-message"></p>
     </div>
     <div class="language-onboarding-options">
-      <label class="language-onboarding-option ${suggestedLanguage === "en-US" ? "selected" : ""}"><input type="radio" name="terma-onboarding-language" value="en-US" ${suggestedLanguage === "en-US" ? "checked" : ""} onchange="this.form.querySelectorAll('.language-onboarding-option').forEach(item=>item.classList.toggle('selected',item.contains(this)))"><span><strong>English</strong><small>${esc(englishDetail)}</small></span></label>
-      <label class="language-onboarding-option ${suggestedLanguage === "zh-CN" ? "selected" : ""}"><input type="radio" name="terma-onboarding-language" value="zh-CN" ${suggestedLanguage === "zh-CN" ? "checked" : ""} onchange="this.form.querySelectorAll('.language-onboarding-option').forEach(item=>item.classList.toggle('selected',item.contains(this)))"><span><strong>${esc(chineseName)}</strong><small>${esc(chineseDetail)}</small></span></label>
+      <label class="language-onboarding-option"><input type="radio" name="terma-onboarding-language" value="en-US" onchange="updateTermaLanguageOnboarding(this.value)"><span><strong>English</strong><small>${esc(englishDetail)}</small></span></label>
+      <label class="language-onboarding-option"><input type="radio" name="terma-onboarding-language" value="zh-CN" onchange="updateTermaLanguageOnboarding(this.value)"><span><strong>${esc(chineseName)}</strong><small>${esc(chineseDetail)}</small></span></label>
     </div>
-    <div class="language-onboarding-note">${esc(switchHint)}</div>
-    <div class="actions"><button class="primary" type="submit">${esc(continueLabel)}</button></div>
+    <div class="language-onboarding-note"></div>
+    <div class="actions"><button class="primary" type="submit"></button></div>
   </form>`;
+  updateTermaLanguageOnboarding(suggestedLanguage);
   modal.hidden = false;
   modal.onclick = null;
   refreshIcons();

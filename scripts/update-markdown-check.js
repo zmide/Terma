@@ -58,6 +58,40 @@ const versionDeduplicated = context.updateMarkdownHtml("## v1.2.0\n\n### 重要�
 assert.doesNotMatch(versionDeduplicated, />v1\.2\.0</);
 assert.match(versionDeduplicated, /<h6>重要修复<\/h6>/);
 
+const releaseBody = [
+  "[English](#english) · [简体中文](#简体中文)",
+  "",
+  "<a id=\"english\"></a>",
+  "### English",
+  "",
+  "> English summary",
+  "",
+  "#### Important fixes",
+  "",
+  "- Fixed the startup issue.",
+  "",
+  "<a id=\"简体中文\"></a>",
+  "### 简体中文",
+  "",
+  "> 中文摘要",
+  "",
+  "#### 重要修复",
+  "",
+  "- 修复启动问题。"
+].join("\n");
+context.document = {documentElement:{lang:"zh-CN"}};
+context.tr = (_key, options) => options?.defaultValue || "";
+const chineseRelease = context.localizedUpdateReleaseMarkdown(releaseBody);
+assert.doesNotMatch(chineseRelease, /English|<a id=/);
+assert.doesNotMatch(chineseRelease, /### 简体中文/);
+const renderedChineseRelease = context.updateMarkdownHtml(chineseRelease, "1.4.7");
+assert.doesNotMatch(renderedChineseRelease, /&lt;a id=/);
+assert.match(renderedChineseRelease, /<h6>重要修复<\/h6>/);
+assert.match(renderedChineseRelease, /<li>修复启动问题。<\/li>/);
+const renderedNavigation = context.updateMarkdownHtml("[English](#english)\n\n<a id=\"english\"></a>\n#### Important fixes");
+assert.match(renderedNavigation, /href=\"#english\"/);
+assert.doesNotMatch(renderedNavigation, /&lt;a id=/);
+
 assert.match(styles, /\.update-release-markdown :not\(pre\) > code \{[^}]*background:color-mix\(/);
 assert.doesNotMatch(styles, /\.update-release-markdown code \{[^}]*background:var\(--code\)/);
 assert.match(styles, /\.update-notes \{[^}]*background:var\(--panel2,var\(--panel\)\)/);

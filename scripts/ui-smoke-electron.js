@@ -87,6 +87,7 @@ app.whenReady().then(async () => {
       await ensureTermaLanguageOnboarding();
       const newCard = document.querySelector('.language-onboarding');
       const newRect = newCard?.getBoundingClientRect();
+      await new Promise(resolve => queueMicrotask(() => requestAnimationFrame(resolve)));
       const newUserDefaultsEnglish = document.querySelector('input[name="terma-onboarding-language"]:checked')?.value === 'en-US';
       const englishOption = document.querySelector('input[name="terma-onboarding-language"][value="en-US"]')?.closest('.language-onboarding-option');
       const chineseOption = document.querySelector('input[name="terma-onboarding-language"][value="zh-CN"]')?.closest('.language-onboarding-option');
@@ -94,6 +95,29 @@ app.whenReady().then(async () => {
         && englishOption?.querySelector('small')?.textContent?.trim() === 'Default outside mainland China'
         && chineseOption?.querySelector('strong')?.textContent?.trim() === '简体中文'
         && chineseOption?.querySelector('small')?.textContent?.trim() === '中国大陆默认';
+      const englishCopy = newCard?.querySelector('#languageOnboardingTitle')?.textContent?.trim() === 'Choose your language'
+        && newCard?.querySelector('.language-onboarding-message')?.textContent?.trim() === "Terma selected a default from this device's region. You can change it before entering."
+        && newCard?.querySelector('.language-onboarding-note')?.textContent?.trim() === 'You can switch languages at any time from the language button.'
+        && newCard?.querySelector('button[type="submit"]')?.textContent?.trim() === 'Continue'
+        && newCard?.lang === 'en-US';
+      const chineseChoice = document.querySelector('input[name="terma-onboarding-language"][value="zh-CN"]');
+      chineseChoice?.click();
+      await new Promise(resolve => queueMicrotask(() => requestAnimationFrame(resolve)));
+      const selectedChineseCopy = newCard?.querySelector('#languageOnboardingTitle')?.textContent?.trim() === '选择界面语言'
+        && newCard?.querySelector('.language-onboarding-message')?.textContent?.trim() === 'Terma 已按当前设备地区预选语言，进入前可以修改。'
+        && newCard?.querySelector('.language-onboarding-note')?.textContent?.trim() === '之后可随时通过语言按钮切换。'
+        && newCard?.querySelector('button[type="submit"]')?.textContent?.trim() === '继续'
+        && newCard?.lang === 'zh-CN'
+        && chineseOption?.classList.contains('selected')
+        && !englishOption?.classList.contains('selected');
+      document.querySelector('input[name="terma-onboarding-language"][value="en-US"]')?.click();
+      await new Promise(resolve => queueMicrotask(() => requestAnimationFrame(resolve)));
+      const selectedEnglishCopy = newCard?.querySelector('#languageOnboardingTitle')?.textContent?.trim() === 'Choose your language'
+        && newCard?.querySelector('button[type="submit"]')?.textContent?.trim() === 'Continue'
+        && newCard?.lang === 'en-US'
+        && !/[\u3400-\u9fff]/.test(newCard?.querySelector('input[name="terma-onboarding-language"][value="en-US"]')?.closest('.language-onboarding-option')?.textContent || '')
+        && englishOption?.classList.contains('selected')
+        && !chineseOption?.classList.contains('selected');
       const coldStartChineseResourcesLoaded = window.i18next.hasResourceBundle('zh-CN', 'common')
         && window.i18next.hasResourceBundle('zh-CN', 'settings');
       const fitsNarrowViewport = Boolean(newRect
@@ -108,8 +132,18 @@ app.whenReady().then(async () => {
       await setTermaLanguage('zh-CN', {emit:false});
       await ensureTermaLanguageOnboarding();
       const existingUserKeepsLanguage = document.querySelector('input[name="terma-onboarding-language"]:checked')?.value === 'zh-CN';
+      const existingUserChineseCopy = document.querySelector('#languageOnboardingTitle')?.textContent?.trim() === '选择界面语言'
+        && document.querySelector('.language-onboarding-message')?.textContent?.trim() === '请选择要继续使用的 Terma 界面语言。'
+        && document.querySelector('.language-onboarding-note')?.textContent?.trim() === '之后可随时通过语言按钮切换。'
+        && document.querySelector('.language-onboarding button[type="submit"]')?.textContent?.trim() === '继续'
+        && document.querySelector('.language-onboarding')?.lang === 'zh-CN';
       const englishChoice = document.querySelector('input[name="terma-onboarding-language"][value="en-US"]');
-      if (englishChoice) englishChoice.checked = true;
+      englishChoice?.click();
+      const existingUserEnglishCopy = document.querySelector('#languageOnboardingTitle')?.textContent?.trim() === 'Choose your language'
+        && document.querySelector('.language-onboarding-message')?.textContent?.trim() === 'Choose the Terma interface language to continue.'
+        && document.querySelector('.language-onboarding-note')?.textContent?.trim() === 'You can switch languages at any time from the language button.'
+        && document.querySelector('.language-onboarding button[type="submit"]')?.textContent?.trim() === 'Continue'
+        && document.querySelector('.language-onboarding')?.lang === 'en-US';
       api = async (path, options={}) => {
         if (path !== '/api/runtime-settings' || options.method !== 'PUT') throw new Error('Unexpected language onboarding request');
         savedPayload = JSON.parse(options.body || '{}');
@@ -120,8 +154,13 @@ app.whenReady().then(async () => {
         regionDefaults,
         newUserDefaultsEnglish,
         nativeChoiceCopy,
+        englishCopy,
+        selectedChineseCopy,
+        selectedEnglishCopy,
         coldStartNativeChoice:Boolean(coldStartMissingChineseResources && coldStartChineseResourcesLoaded && nativeChoiceCopy),
         existingUserKeepsLanguage,
+        existingUserChineseCopy,
+        existingUserEnglishCopy,
         fitsNarrowViewport,
         saved:Boolean(saved && savedPayload?.language === 'en-US' && savedPayload?.language_onboarding_version === 1),
         closed:document.querySelector('.language-onboarding') === null
@@ -2910,6 +2949,15 @@ app.whenReady().then(async () => {
       const dotsAfterRead = updateDotIds.map(id => ({id, found:Boolean(document.getElementById(id)), hidden:document.getElementById(id)?.hidden}));
       const storedReadVersion = sessionStorage.getItem(UPDATE_NOTICE_SESSION_KEY);
       const sameVersionStaysRead = !shouldShowUpdateNotice();
+      updateSettings = {...updateSettings, latest_version:'1.0.9', update_available:false, republished_available:true, release_revision:2, update_ignored:false};
+      updateNoticeReadVersion = '';
+      sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY);
+      syncUpdateNoticeDots();
+      const republishedShowsNotice = shouldShowUpdateNotice() && updateDotIds.every(id => document.getElementById(id)?.hidden === false);
+      tools.querySelector('[data-explorer-section="settings-about"]')?.click();
+      await Promise.resolve();
+      const republishedStoredReadVersion = sessionStorage.getItem(UPDATE_NOTICE_SESSION_KEY);
+      const republishedReadMarksNotice = republishedStoredReadVersion === '1.0.9:r2' && !shouldShowUpdateNotice();
       tools.querySelector('[data-explorer-section="settings-basic"]')?.click();
       await Promise.resolve();
       const sessionUi = {
@@ -3007,6 +3055,8 @@ app.whenReady().then(async () => {
         sameVersionStaysRead,
         ignoredVersionHidesNotice,
         newerAfterIgnoredShowsNotice,
+        republishedShowsNotice,
+        republishedReadMarksNotice,
         newerVersionShowsAgain,
         sessionUi,
         authPolicyUi,
@@ -9810,7 +9860,7 @@ app.whenReady().then(async () => {
   const sessionUiFailed = sessionUi.ttl !== '720' || sessionUi.max !== '1000' || sessionUi.cleanup !== '10' || !sessionUi.active || !sessionUi.save;
   const activityUiFailed = result.activity.count !== 11 || !result.activity.iconCentered || !result.activity.centersAligned || !result.activity.insideColumn || !result.activity.resizable || !result.activityUtilities;
   const appearanceEffectsUiFailed = Object.values(appearanceEffectsUi).some(value => value !== true);
-  const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || i18nUi.language !== 'en-US' || i18nUi.settingsTitle !== 'General' || i18nUi.activityTitle !== 'Switch to Simplified Chinese' || i18nUi.mobileTitle !== 'Switch to Simplified Chinese' || !i18nUi.activityOrder || !i18nUi.persisted || !i18nUi.settingsSelectorRemoved || i18nUi.visibleHan?.length || thirdPartyLiveSwitchFailed || !i18nUi.resumeButton || !i18nUi.pauseButton || !i18nUi.tasksPreserved || !i18nUi.tabsPreserved || !navigationUi.themeUi?.entryHidden || !navigationUi.themeUi?.controlsHidden || !navigationUi.themeUi?.oldConfigIgnored || !navigationUi.themeUi?.clearPreset || !navigationUi.themeUi?.noEffects || !navigationUi.themeUi?.zeroBlur || !navigationUi.cacheUi?.selected || !navigationUi.cacheUi?.panel || navigationUi.cacheUi?.categories !== 6 || !navigationUi.cacheUi?.beforeAbout || !navigationUi.cacheUi?.absentFromGeneral || !navigationUi.storageAlignmentUi?.found || !navigationUi.storageAlignmentUi?.topAligned || !navigationUi.storageAlignmentUi?.bottomAligned || !navigationUi.storageMigrationUi?.controlsFound || !navigationUi.storageMigrationUi?.threeChoices || !navigationUi.storageMigrationUi?.cancelBlockedRequest || !navigationUi.storageMigrationUi?.oneMigrationRequest || !navigationUi.storageMigrationUi?.migrationRequested || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || !authPolicyUi.redundantCheckboxRemoved || !authPolicyUi.localOnlyLabel || !authPolicyUi.alwaysLabel || !authPolicyUi.directDefinition || !localDirectUi.control || !localDirectUi.defaultOff || !localDirectUi.policyCopy || !localDirectUi.enabled || !localDirectUi.proxyBlocked || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.newerVersionShowsAgain;
+  const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || i18nUi.language !== 'en-US' || i18nUi.settingsTitle !== 'General' || i18nUi.activityTitle !== 'Switch to Simplified Chinese' || i18nUi.mobileTitle !== 'Switch to Simplified Chinese' || !i18nUi.activityOrder || !i18nUi.persisted || !i18nUi.settingsSelectorRemoved || i18nUi.visibleHan?.length || thirdPartyLiveSwitchFailed || !i18nUi.resumeButton || !i18nUi.pauseButton || !i18nUi.tasksPreserved || !i18nUi.tabsPreserved || !navigationUi.themeUi?.entryHidden || !navigationUi.themeUi?.controlsHidden || !navigationUi.themeUi?.oldConfigIgnored || !navigationUi.themeUi?.clearPreset || !navigationUi.themeUi?.noEffects || !navigationUi.themeUi?.zeroBlur || !navigationUi.cacheUi?.selected || !navigationUi.cacheUi?.panel || navigationUi.cacheUi?.categories !== 6 || !navigationUi.cacheUi?.beforeAbout || !navigationUi.cacheUi?.absentFromGeneral || !navigationUi.storageAlignmentUi?.found || !navigationUi.storageAlignmentUi?.topAligned || !navigationUi.storageAlignmentUi?.bottomAligned || !navigationUi.storageMigrationUi?.controlsFound || !navigationUi.storageMigrationUi?.threeChoices || !navigationUi.storageMigrationUi?.cancelBlockedRequest || !navigationUi.storageMigrationUi?.oneMigrationRequest || !navigationUi.storageMigrationUi?.migrationRequested || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || !authPolicyUi.redundantCheckboxRemoved || !authPolicyUi.localOnlyLabel || !authPolicyUi.alwaysLabel || !authPolicyUi.directDefinition || !localDirectUi.control || !localDirectUi.defaultOff || !localDirectUi.policyCopy || !localDirectUi.enabled || !localDirectUi.proxyBlocked || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.republishedShowsNotice || !navigationUi.republishedReadMarksNotice || !navigationUi.newerVersionShowsAgain;
   const aboutUiFailed = Boolean(aboutUi.error) || !aboutUi.found || !aboutUi.aboutSelected || aboutUi.duplicateSettingsNav !== 0 || !aboutUi.versionMatches || !aboutUi.licenseMetadata || !aboutUi.sourceLink || !aboutUi.modalOpen || !aboutUi.accessible || !aboutUi.fullText || !aboutUi.textScrollable || !aboutUi.cardWithinViewport || !aboutUi.closeFocused || !aboutUi.backdropIgnored || !aboutUi.closedByEscape || !aboutUi.focusReturned || !aboutUi.followupBackdropClean || !aboutUi.followupResolved || !aboutUi.updateUi;
   const hostTrustUiFailed = !hostTrustUi.unknown?.open
     || !hostTrustUi.unknown?.fingerprint
@@ -9914,7 +9964,7 @@ app.whenReady().then(async () => {
     || !directoryActionsUi.duplicateDirectoryStateIsolated
     || !directoryActionsUi.duplicateHistoryIsolated
     || !directoryActionsUi.duplicateShellMatchesTab;
-  const languageOnboardingFailed = !languageOnboardingUi.regionDefaults || !languageOnboardingUi.newUserDefaultsEnglish || !languageOnboardingUi.nativeChoiceCopy || !languageOnboardingUi.coldStartNativeChoice || !languageOnboardingUi.existingUserKeepsLanguage || !languageOnboardingUi.fitsNarrowViewport || !languageOnboardingUi.saved || !languageOnboardingUi.closed;
+  const languageOnboardingFailed = !languageOnboardingUi.regionDefaults || !languageOnboardingUi.newUserDefaultsEnglish || !languageOnboardingUi.nativeChoiceCopy || !languageOnboardingUi.englishCopy || !languageOnboardingUi.selectedChineseCopy || !languageOnboardingUi.selectedEnglishCopy || !languageOnboardingUi.coldStartNativeChoice || !languageOnboardingUi.existingUserKeepsLanguage || !languageOnboardingUi.existingUserChineseCopy || !languageOnboardingUi.existingUserEnglishCopy || !languageOnboardingUi.fitsNarrowViewport || !languageOnboardingUi.saved || !languageOnboardingUi.closed;
   const forwardTemplateLayoutFailed = forwardTemplateLayoutUi.rows !== 2 || forwardTemplateLayoutUi.buttons !== 6 || !forwardTemplateLayoutUi.singleLine || !forwardTemplateLayoutUi.insideRows || !forwardTemplateLayoutUi.noOverlap;
   const code = errors.length || cspViolations.length || languageOnboardingFailed || forwardTemplateLayoutFailed || !noVncModuleUi.loaded || !noVncModuleUi.prototype || !zmodemModuleUi.loaded || !zmodemModuleUi.browser || !zmodemModuleUi.abortSequence || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceTabCloseUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || appearanceEffectsUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.quickConnectionLauncher || !result.quickSshCandidates || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
   if (code) console.error("UI smoke failure summary:", JSON.stringify({

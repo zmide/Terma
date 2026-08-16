@@ -2,7 +2,7 @@ import { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
 
 interface UpdateCheckerLike {
-  packageInfo: { version?: string };
+  packageInfo: { version?: string; releaseRevision?: number };
   status(): unknown;
   check(options: { force: boolean }): Promise<unknown>;
   setIgnoredCurrentVersion(enabled: boolean): unknown;
@@ -37,6 +37,7 @@ export async function handleUpdateRoutes(
       current_version: String(checker.packageInfo.version || "").replace(/^v/i, ""),
       latest_version: "",
       update_available: false,
+      republished_available: false,
       checked_at: "",
       from_cache: true,
       source: "github"

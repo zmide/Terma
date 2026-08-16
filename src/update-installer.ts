@@ -14,6 +14,7 @@ export interface UpdateRelease {
   current_version?: string;
   latest_version: string;
   update_available: boolean;
+  republished_available?: boolean;
   assets: UpdateAsset[];
 }
 
@@ -324,7 +325,8 @@ export class UpdateInstaller {
     let selectedPackageType = "";
     const currentVersion = normalizeVersion(release?.current_version);
     const latestVersion = normalizeVersion(release?.latest_version);
-    const runningWithoutUpdate = Boolean(currentVersion && latestVersion && release?.update_available === false);
+    const releaseAvailable = Boolean(release?.update_available || release?.republished_available);
+    const runningWithoutUpdate = Boolean(currentVersion && latestVersion && !releaseAvailable);
     if (state.state !== "idle" && runningWithoutUpdate && !this.inFlight) {
       state = writeState(this.stateFile, {
         schema_version: 1,
@@ -335,7 +337,7 @@ export class UpdateInstaller {
       });
       this.liveState = state;
     }
-    if (release?.update_available) {
+    if (release && releaseAvailable) {
       try {
         selected = selectUpdateAsset(release.assets, this.platform, this.arch, this.windowsPackageType);
         selectedPackageType = packageTypeForAsset(selected, this.platform);
@@ -370,7 +372,7 @@ export class UpdateInstaller {
       platform: this.platform,
       arch: this.arch
     };
-    if (release?.update_available) {
+    if (release && releaseAvailable) {
       try {
         selected ||= selectUpdateAsset(release.assets, this.platform, this.arch, this.windowsPackageType);
         result.selected_asset_name = selected.name;
@@ -392,8 +394,8 @@ export class UpdateInstaller {
   }
 
   async verifyDownloaded(release?: UpdateRelease): Promise<UpdateDownloadState> {
-    if (release && (!release.update_available || !release.latest_version)) {
-      throw new Error("当前没有可打开的新版本安装包");
+    if (release && (!(release.update_available || release.republished_available) || !release.latest_version)) {
+      throw new Error("当前没有可打开的更新安装包");
     }
     const state = this.status(release);
     if (state.state !== "downloaded" || !state.file || !state.digest) throw new Error("没有已下载并校验的更新安装包");
@@ -658,7 +660,7 @@ export class UpdateInstaller {
   }
 
   private async performDownload(release: UpdateRelease): Promise<UpdateDownloadState> {
-    if (!release?.update_available || !release.latest_version) throw new Error("当前没有可下载的新版本");
+    if (!(release?.update_available || release?.republished_available) || !release.latest_version) throw new Error("当前没有可下载的更新");
     const asset = selectUpdateAsset(release.assets, this.platform, this.arch, this.windowsPackageType);
     const expectedDigest = parseSha256(String(asset.digest || ""));
     if (!Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > 4 * 1024 * 1024 * 1024) {

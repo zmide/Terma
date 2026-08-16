@@ -121,7 +121,7 @@ async function check(name, callback) {
     assert.equal(requests.length, 1);
     assert.equal(fs.existsSync(path.join(project.dataDir, "update-check.json")), true);
     const cache = JSON.parse(fs.readFileSync(path.join(project.dataDir, "update-check.json"), "utf8"));
-    assert.equal(cache.schema_version, 4);
+    assert.equal(cache.schema_version, 5);
     assert.equal(cache.repository_key, "zmide/terma");
   });
 
@@ -286,6 +286,32 @@ async function check(name, callback) {
     assert.deepEqual(notified, ["1.0.8", "1.0.9"]);
     const state = JSON.parse(fs.readFileSync(path.join(project.dataDir, "update-check.json"), "utf8"));
     assert.equal(state.notified_latest_version, "1.0.9");
+  });
+
+  await check("same-version republished releases are surfaced and notified once", async () => {
+    const project = temporaryProject("1.0.8");
+    const packageInfo = JSON.parse(fs.readFileSync(project.packagePath, "utf8"));
+    fs.writeFileSync(project.packagePath, JSON.stringify({ ...packageInfo, releaseRevision: 1 }), "utf8");
+    const notified = [];
+    const body = "<!-- terma-release-revision: 2 -->\n\nRefreshed build";
+    const checker = createUpdateChecker({
+      ...project,
+      fetch: async () => response(200, [release("v1.0.8", { body })]),
+      onUpdate: result => notified.push({ version:result.latest_version, republished:result.republished_available, revision:result.release_revision })
+    });
+    const result = await checker.check({ force: true });
+    assert.equal(result.update_available, false);
+    assert.equal(result.republished_available, true);
+    assert.equal(result.release_revision, 2);
+    assert.deepEqual(notified, [{version:"1.0.8", republished:true, revision:2}]);
+    const restarted = createUpdateChecker({
+      ...project,
+      fetch: async () => response(200, [release("v1.0.8", { body })]),
+      onUpdate: value => notified.push({ version:value.latest_version, republished:value.republished_available, revision:value.release_revision })
+    });
+    const second = await restarted.check({ force: true });
+    assert.equal(second.republished_available, true);
+    assert.equal(notified.length, 1);
   });
 
   await check("ignored version suppresses update notifications and expires for a newer version", async () => {

@@ -80,9 +80,11 @@ function createServerRuntime(options: any = {}) {
       notifyEvent({
         type:"update",
         level:"info",
-        key:`update:${result.latest_version}`,
-        title:"发现 Terma 新版本",
-        message:`当前版本 ${result.current_version}，最新版本 ${result.latest_version}${result.name ? `（${result.name}）` : ""}。`,
+        key:result.republished_available ? `update-republished:${result.latest_version}:${result.release_revision || 0}` : `update:${result.latest_version}`,
+        title:result.republished_available ? "Terma 当前版本已重新发布" : "发现 Terma 新版本",
+        message:result.republished_available
+          ? `Terma ${result.latest_version} 已重新发布，请在更新页面点击“重新下载”。`
+          : `当前版本 ${result.current_version}，最新版本 ${result.latest_version}${result.name ? `（${result.name}）` : ""}。`,
         action:{url:result.release_url}
       }, {cooldown_ms:0});
     }

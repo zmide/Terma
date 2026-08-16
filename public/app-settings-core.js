@@ -50,12 +50,16 @@ function normalizeSettingsSection(id) {
 }
 
 function currentUpdateNoticeVersion() {
-  return String(updateSettings?.latest_version || "").trim().replace(/^v/i, "");
+  const version = String(updateSettings?.latest_version || "").trim().replace(/^v/i, "");
+  if (!version) return "";
+  return updateSettings?.republished_available
+    ? `${version}:r${Math.max(0, Number(updateSettings?.release_revision || 0))}`
+    : version;
 }
 
 function shouldShowUpdateNotice() {
   const latestVersion = currentUpdateNoticeVersion();
-  return Boolean(updateSettings?.update_available && !updateSettings?.update_ignored && latestVersion && latestVersion !== updateNoticeReadVersion);
+  return Boolean((updateSettings?.update_available || updateSettings?.republished_available) && !updateSettings?.update_ignored && latestVersion && latestVersion !== updateNoticeReadVersion);
 }
 
 function syncUpdateNoticeDots() {
@@ -68,14 +72,14 @@ function syncUpdateNoticeDots() {
 
 function markUpdateNoticeRead() {
   const latestVersion = currentUpdateNoticeVersion();
-  if (!latestVersion || !updateSettings?.update_available) return;
+  if (!latestVersion || !(updateSettings?.update_available || updateSettings?.republished_available)) return;
   updateNoticeReadVersion = latestVersion;
   try { sessionStorage.setItem(UPDATE_NOTICE_SESSION_KEY, latestVersion); } catch {}
   syncUpdateNoticeDots();
 }
 
 function syncUpdateNoticeForCurrentSection() {
-  if (activeView === "settings" && activeSettingsSection === "settings-about" && updateSettings?.update_available) {
+  if (activeView === "settings" && activeSettingsSection === "settings-about" && (updateSettings?.update_available || updateSettings?.republished_available)) {
     markUpdateNoticeRead();
   } else {
     syncUpdateNoticeDots();

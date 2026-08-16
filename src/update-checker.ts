@@ -4,7 +4,8 @@ const path = require("node:path");
 const DEFAULT_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_TIMEOUT_MS = 10 * 1000;
 const CACHE_FILENAME = "update-check.json";
-const CACHE_SCHEMA_VERSION = 4;
+const CACHE_SCHEMA_VERSION = 5;
+const RELEASE_REVISION_PATTERN = /<!--\s*terma-release-revision\s*:\s*(\d+)\s*-->/i;
 
 function parseVersion(value) {
   const text = String(value || "").trim().replace(/^v(?=\d)/i, "");
@@ -94,6 +95,11 @@ function formalReleases(value) {
     });
 }
 
+function releaseRevision(value) {
+  const match = String(value || "").match(RELEASE_REVISION_PATTERN);
+  return match ? Math.max(0, Number(match[1])) : 0;
+}
+
 function releaseResult(packageInfo, releaseInput, checkedAt, fromCache) {
   const current = parseVersion(packageInfo.version);
   const releases = formalReleases(releaseInput);
@@ -104,10 +110,14 @@ function releaseResult(packageInfo, releaseInput, checkedAt, fromCache) {
   if (!latest || !release) {
     throw new Error("GitHub Releases 返回的正式版本数据无效");
   }
+  const currentRevision = Math.max(0, Number(packageInfo.releaseRevision || 0));
+  const latestRevision = releaseRevision(release.body);
   return {
     current_version: current.normalized,
     latest_version: latest.normalized,
     update_available: compareVersions(latest.normalized, current.normalized) > 0,
+    republished_available: latest.normalized === current.normalized && latestRevision > currentRevision,
+    release_revision: latestRevision,
     release_url: String(release.html_url),
     name: String(release.name || release.tag_name || latest.normalized),
     published_at: release.published_at || "",
@@ -140,11 +150,14 @@ function cachedResult(cache, packageInfo) {
   if (!current) throw new Error(`当前版本号无效：${packageInfo?.version || "空"}`);
   if (!latest) return null;
   const updateAvailable = compareVersions(latest.normalized, current.normalized) > 0;
+  const cachedRevision = Math.max(0, Number(cache.result.release_revision || 0));
+  const currentRevision = Math.max(0, Number(packageInfo?.releaseRevision || 0));
   return {
     ...cache.result,
     current_version: current.normalized,
     latest_version: latest.normalized,
     update_available: updateAvailable,
+    republished_available: latest.normalized === current.normalized && cachedRevision > currentRevision,
     ignored_version: ignored?.normalized || "",
     update_ignored: Boolean(updateAvailable && ignored?.normalized === latest.normalized),
     from_cache: true,
@@ -183,12 +196,18 @@ function createUpdateChecker(options: any = {}) {
   }
 
   async function notifyOnce(result) {
-    if (!result.update_available || !onUpdate) return;
+    if ((!result.update_available && !result.republished_available) || !onUpdate) return;
     const cache = readCache();
     const ignored = parseVersion(cache.ignored_latest_version);
-    if (ignored?.normalized === result.latest_version) return;
-    if (cache.notified_latest_version === result.latest_version) return;
-    saveCache({ ...cache, notified_latest_version: result.latest_version });
+    if (result.update_available && ignored?.normalized === result.latest_version) return;
+    if (result.republished_available) {
+      const marker = `${result.latest_version}:${Number(result.release_revision || 0)}`;
+      if (String(cache.notified_republished_release || "") === marker) return;
+      saveCache({ ...cache, notified_republished_release: marker });
+    } else {
+      if (cache.notified_latest_version === result.latest_version) return;
+      saveCache({ ...cache, notified_latest_version: result.latest_version });
+    }
     await onUpdate(result);
   }
 
@@ -301,5 +320,6 @@ module.exports = {
   createUpdateChecker,
   parseGitHubRepository,
   parseVersion,
+  releaseRevision,
   releaseResult
 };
