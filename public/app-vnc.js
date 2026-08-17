@@ -699,6 +699,7 @@ function renderEmbeddedVnc(profile, key, diagnostics=null, targetView=null, deta
     session.presentation = "viewer";
     session.profile = profile;
     session.clipboardAutoSyncImages = profile.options?.auto_sync_images !== false;
+    if (session.rfb) session.rfb.qualityLevel = Math.max(0, Math.min(9, Number(profile.options?.quality ?? 8)));
     const sourceConnection = currentConnection(Number(profile.options?.source_ssh_connection_id || profile.options?.ssh_connection_id || 0));
     const sourcePlatform = String(sourceConnection?.terminal_program_platform || "").toLowerCase();
     session.vncServerDiagnostics = diagnostics || session.vncServerDiagnostics || null;
@@ -1247,6 +1248,7 @@ async function launchRemoteDesktop(id, key="", button=null) {
       }
     }
     const result = await api(`/api/remote-profiles/${id}/launch`, {method:"POST", body:"{}"});
+    if (result?.canceled) return null;
     const status = $("remoteDesktopStatus");
     if (status) {
       status.className = "connection-test-status success";

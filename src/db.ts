@@ -87,6 +87,7 @@ const remoteProfileRepository = createRemoteProfileRepository({
 const productivityRepository = createProductivityRepository({ all, get, run, now });
 
 function cleanForward(data) { return forwardRepository.cleanForward(data); }
+function databaseRevision() { return Number(get("SELECT revision FROM ui_state_revision WHERE id=1")?.revision || 0); }
 function listConnections() { return connectionRepository.listConnections(); }
 function getConnection(id) { return connectionRepository.getConnection(id); }
 function getForward(id) { return forwardRepository.getForward(id); }
@@ -166,6 +167,7 @@ module.exports = {
   validatePort,
   validateSortOrder,
   pidRunning,
+  databaseRevision,
   cleanConnection,
   cleanTerminalStartup,
   cleanForward,

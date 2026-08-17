@@ -68,8 +68,13 @@ function createRemoteClientAdapter(options = {}) {
   const runtimeShell = options.shell;
   const runtimeWindowsRdpCredentialLaunch = options.launchWindowsRdpWithCredential || launchWindowsRdpWithCredential;
   const existsSync = options.existsSync || fs.existsSync;
+  const statSync = options.statSync || fs.statSync;
+  const accessSync = options.accessSync || fs.accessSync;
   const getDataDir = options.getDataDir || (() => options.dataDir || process.cwd());
   const getXServerDiagnostics = options.getXServerDiagnostics || (() => null);
+  const getVncClientPath = typeof options.getVncClientPath === "function"
+    ? options.getVncClientPath
+    : () => options.vncClientPath || "";
   const getLanguage = languageGetter(options, environment);
   const text = (chinese, english) => desktopUiText(getLanguage(), chinese, english);
   const normalizeHost = value => normalizeRemoteClientHost(value, getLanguage());
@@ -97,6 +102,76 @@ function createRemoteClientAdapter(options = {}) {
     return "";
   }
 
+  function canSelectVncClient() {
+    return typeof options.canSelectVncClient === "function"
+      ? Boolean(options.canSelectVncClient())
+      : Boolean(options.canSelectVncClient);
+  }
+
+  function validateVncClientPath(value) {
+    const raw = String(value || "").trim();
+    if (!raw || raw.includes("\0") || !clientPath.isAbsolute(raw)) throw new Error(text(
+      "请选择 VNC 客户端的完整路径",
+      "Select the full path to the VNC client"
+    ));
+    const executable = clientPath.normalize(raw);
+    let stat;
+    try {
+      if (!existsSync(executable)) throw new Error("missing");
+      stat = statSync(executable);
+    } catch {
+      throw new Error(text("选择的 VNC 客户端不存在", "The selected VNC client does not exist"));
+    }
+    const macApplication = platform === "darwin" && stat.isDirectory() && /\.app$/i.test(executable);
+    if (!stat.isFile() && !macApplication) throw new Error(text(
+      "选择的路径不是 VNC 客户端程序",
+      "The selected path is not a VNC client application"
+    ));
+    if (platform === "win32" && !/\.exe$/i.test(executable)) throw new Error(text(
+      "Windows VNC 客户端必须是 .exe 程序",
+      "A Windows VNC client must be an .exe application"
+    ));
+    if (platform !== "win32" && !macApplication) {
+      try { accessSync(executable, fs.constants.X_OK); }
+      catch { throw new Error(text("选择的 VNC 客户端没有执行权限", "The selected VNC client is not executable")); }
+    }
+    return executable;
+  }
+
+  function configuredVncClientPath() {
+    try {
+      const configured = String(getVncClientPath() || "").trim();
+      return configured ? validateVncClientPath(configured) : "";
+    } catch {
+      return "";
+    }
+  }
+
+  function vncClientDetails(executable, configured = false) {
+    if (!executable) return {client:"", executable:"", mode:"", application:"", configured:false};
+    const name = clientPath.basename(executable);
+    if (platform === "darwin" && /\.app$/i.test(executable)) {
+      return {
+        client:clientPath.basename(executable, ".app"),
+        executable:"/usr/bin/open",
+        mode:"application",
+        application:executable,
+        configured
+      };
+    }
+    return {
+      client:name,
+      executable,
+      mode:/remmina(?:\.exe)?$/i.test(name)
+        ? "remmina"
+        : /gvncviewer(?:\.exe)?$/i.test(name)
+          ? "gvncviewer"
+          : "vncviewer",
+      application:"",
+      configured
+    };
+  }
+
   function windowsVncUriHandler() {
     if (platform !== "win32") return false;
     const keys = ["HKCU\\Software\\Classes\\vnc\\shell\\open\\command", "HKCR\\vnc\\shell\\open\\command"];
@@ -112,15 +187,25 @@ function createRemoteClientAdapter(options = {}) {
   function diagnostics() {
     let rdp = {available:false, client:"", executable:"", mode:"", application:""};
     let vnc = {available:false, client:"", executable:"", mode:"", application:""};
+    const configuredVnc = configuredVncClientPath();
     if (platform === "win32") {
       const mstsc = findExecutable([clientPath.join(environment.SystemRoot || "C:\\Windows", "System32", "mstsc.exe")]);
       const vncViewer = findExecutable([
+        configuredVnc,
         "vncviewer.exe",
         clientPath.join(environment.ProgramFiles || "", "TigerVNC", "vncviewer.exe"),
         clientPath.join(environment.ProgramFiles || "", "RealVNC", "VNC Viewer", "vncviewer.exe"),
-        clientPath.join(environment.ProgramFiles || "", "TightVNC", "tvnviewer.exe")
+        clientPath.join(environment.ProgramFiles || "", "TightVNC", "tvnviewer.exe"),
+        clientPath.join(environment.ProgramFiles || "", "uvnc bvba", "UltraVNC", "vncviewer.exe"),
+        clientPath.join(environment["ProgramFiles(x86)"] || "", "TigerVNC", "vncviewer.exe"),
+        clientPath.join(environment["ProgramFiles(x86)"] || "", "RealVNC", "VNC Viewer", "vncviewer.exe"),
+        clientPath.join(environment["ProgramFiles(x86)"] || "", "TightVNC", "tvnviewer.exe"),
+        clientPath.join(environment["ProgramFiles(x86)"] || "", "uvnc bvba", "UltraVNC", "vncviewer.exe"),
+        clientPath.join(environment.LOCALAPPDATA || "", "Programs", "RealVNC", "VNC Viewer", "vncviewer.exe")
       ]);
       const uri = windowsVncUriHandler();
+      const details = vncClientDetails(vncViewer, Boolean(configuredVnc && vncViewer === configuredVnc));
+      const selectable = !vncViewer && !uri && canSelectVncClient();
       rdp = {
         available:Boolean(mstsc),
         client:mstsc ? text("远程桌面连接", "Remote Desktop Connection") : "",
@@ -132,10 +217,17 @@ function createRemoteClientAdapter(options = {}) {
       };
       vnc = {
         available:Boolean(vncViewer || uri),
-        client:vncViewer ? clientPath.basename(vncViewer) : uri ? text("系统 VNC 客户端", "System VNC client") : "",
-        executable:vncViewer,
-        mode:vncViewer ? "executable" : uri ? "uri" : "",
-        application:""
+        launchable:Boolean(vncViewer || uri || selectable),
+        client:vncViewer ? details.client : uri ? text("系统 VNC 客户端", "System VNC client") : "",
+        executable:details.executable,
+        mode:vncViewer ? details.mode : uri ? "uri" : "",
+        application:details.application,
+        configured:details.configured,
+        requires_selection:selectable,
+        reason_code:selectable ? "vnc_client_selection_required" : "",
+        reason:selectable
+          ? text("未找到系统 VNC 客户端；打开时请选择 VNC Viewer 程序", "No system VNC client was found. Select a VNC Viewer application when opening the connection.")
+          : ""
       };
     } else if (platform === "darwin") {
       const rdpApp = macApplication(["Windows App.app", "Microsoft Remote Desktop.app"]);
@@ -146,6 +238,8 @@ function createRemoteClientAdapter(options = {}) {
       const freeRdpNeedsXServer = Boolean(freeRdp && !freeRdpDisplayReady);
       const freeRdpCanStartXServer = Boolean(freeRdpNeedsXServer && xServer?.installed);
       const screenSharing = ["/System/Applications/Utilities/Screen Sharing.app", "/Applications/Utilities/Screen Sharing.app"].find(file => existsSync(file)) || "";
+      const details = vncClientDetails(configuredVnc || screenSharing, Boolean(configuredVnc));
+      const selectable = !configuredVnc && !screenSharing && canSelectVncClient();
       rdp = {
         available:Boolean(rdpApp || (freeRdp && freeRdpDisplayReady)),
         launchable:Boolean(rdpApp || (freeRdp && (freeRdpDisplayReady || freeRdpCanStartXServer))),
@@ -172,21 +266,30 @@ function createRemoteClientAdapter(options = {}) {
               : text("macOS 未检测到 RDP 客户端；可安装 Windows App 后重试", "No RDP client was detected on macOS. Install Windows App and try again.")
       };
       vnc = {
-        available:Boolean(screenSharing),
-        client:screenSharing ? text("屏幕共享", "Screen Sharing") : "",
-        executable:screenSharing ? "/usr/bin/open" : "",
-        mode:"uri",
-        application:screenSharing
+        available:Boolean(configuredVnc || screenSharing),
+        launchable:Boolean(configuredVnc || screenSharing || selectable),
+        client:configuredVnc ? details.client : screenSharing ? text("屏幕共享", "Screen Sharing") : "",
+        executable:configuredVnc ? details.executable : screenSharing ? "/usr/bin/open" : "",
+        mode:configuredVnc ? details.mode : screenSharing ? "uri" : "",
+        application:configuredVnc ? details.application : screenSharing,
+        configured:Boolean(configuredVnc),
+        requires_selection:selectable,
+        reason_code:selectable ? "vnc_client_selection_required" : "",
+        reason:selectable
+          ? text("未找到系统 VNC 客户端；打开时请选择 VNC Viewer 应用", "No system VNC client was found. Select a VNC Viewer application when opening the connection.")
+          : ""
       };
     } else {
       const rdpClient = findExecutable(["xfreerdp3", "xfreerdp", "wlfreerdp", "remmina"]);
-      const vncClient = findExecutable(["vncviewer", "gvncviewer", "remmina"]);
+      const vncClient = findExecutable([configuredVnc, "vncviewer", "gvncviewer", "remmina"]);
       const rdpName = clientPath.basename(rdpClient || "");
       const vncName = clientPath.basename(vncClient || "");
       const rdpDisplayReady = /^wlfreerdp/i.test(rdpName)
         ? Boolean(environment.WAYLAND_DISPLAY || environment.DISPLAY)
         : Boolean(environment.DISPLAY);
       const vncDisplayReady = Boolean(environment.DISPLAY || environment.WAYLAND_DISPLAY);
+      const vncDetails = vncClientDetails(vncClient, Boolean(configuredVnc && vncClient === configuredVnc));
+      const vncSelectable = !vncClient && vncDisplayReady && canSelectVncClient();
       rdp = {
         available:Boolean(rdpClient && rdpDisplayReady),
         client:rdpName,
@@ -205,12 +308,18 @@ function createRemoteClientAdapter(options = {}) {
       };
       vnc = {
         available:Boolean(vncClient && vncDisplayReady),
-        client:vncName,
-        executable:vncClient,
-        mode:/remmina$/i.test(vncClient) ? "remmina" : /gvncviewer$/i.test(vncClient) ? "gvncviewer" : "vncviewer",
-        application:"",
+        launchable:Boolean((vncClient || vncSelectable) && vncDisplayReady),
+        client:vncDetails.client || vncName,
+        executable:vncDetails.executable,
+        mode:vncDetails.mode,
+        application:vncDetails.application,
+        configured:vncDetails.configured,
+        requires_selection:vncSelectable,
+        reason_code:vncSelectable ? "vnc_client_selection_required" : "",
         reason:!vncClient
-          ? text("未找到系统 VNC 客户端", "No system VNC client was found")
+          ? vncSelectable
+            ? text("未找到系统 VNC 客户端；打开时请选择 VNC Viewer 程序", "No system VNC client was found. Select a VNC Viewer application when opening the connection.")
+            : text("未找到系统 VNC 客户端", "No system VNC client was found")
           : vncDisplayReady
             ? ""
             : text("当前 Terma 没有可用的图形桌面 DISPLAY", "No graphical desktop DISPLAY is available to Terma")
@@ -546,7 +655,8 @@ function createRemoteClientAdapter(options = {}) {
     if (item.mode === "uri") {
       if (!runtimeShell?.openExternal) throw new Error(text("当前桌面环境不能打开 VNC 链接", "The current desktop environment cannot open VNC links"));
       await runtimeShell.openExternal(uri);
-    } else if (item.mode === "remmina") await spawnDetached(item.executable, ["-c", uri]);
+    } else if (item.mode === "application") await spawnDetached("/usr/bin/open", ["-a", item.application, uri]);
+    else if (item.mode === "remmina") await spawnDetached(item.executable, ["-c", uri]);
     else if (item.mode === "gvncviewer") await spawnDetached(item.executable, [endpoint(profile.host, port)]);
     else if (/tvnviewer(?:\.exe)?$/i.test(item.executable)) await spawnDetached(item.executable, [`-host=${normalizeHost(profile.host)}`, `-port=${port}`]);
     else {
@@ -591,7 +701,7 @@ function createRemoteClientAdapter(options = {}) {
     return {ok:true, protocol, client:installed.rdp.client, offline:!downloaded, cached_package:true, restart_required:false};
   }
 
-  return {cacheInfo, clearCache, diagnostics, findExecutable, install, open, writeRdpFile};
+  return {cacheInfo, clearCache, diagnostics, findExecutable, install, open, validateVncClientPath, writeRdpFile};
 }
 
 module.exports = {MAC_WINDOWS_APP_PACKAGE_URL, MAC_WINDOWS_APP_URL, createRemoteClientAdapter};

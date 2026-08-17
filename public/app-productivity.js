@@ -15,6 +15,7 @@ function installProductivityHeaderButton() {
 }
 
 let xServerQuickStatusTimer = 0;
+let xServerQuickStatusVisibilityBound = false;
 
 function xServerQuickIcon() {
   return '<svg class="xserver-x-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8.8" ry="5.2" transform="rotate(-10 12 12)"></ellipse><path d="M7.5 5.5 16.5 18.5M16.5 5.5 7.5 18.5"></path></svg>';
@@ -34,9 +35,31 @@ function installXServerQuickAction(host = document.getElementById("workspaceQuic
   }
   refreshXServerQuickAction();
   if (!xServerQuickStatusTimer) {
-    xServerQuickStatusTimer = window.setInterval(() => {
-      if (!document.hidden) refreshXServerQuickAction();
-    }, 8000);
+    const schedule = delay => {
+      clearTimeout(xServerQuickStatusTimer);
+      xServerQuickStatusTimer = window.setTimeout(async () => {
+        if (!document.hidden) await refreshXServerQuickAction();
+        schedule(30000);
+      }, Math.max(0, Number(delay || 0)));
+    };
+    schedule(30000);
+    if (!xServerQuickStatusVisibilityBound) {
+      xServerQuickStatusVisibilityBound = true;
+      window.addEventListener("focus", () => {
+        clearTimeout(xServerQuickStatusTimer);
+        xServerQuickStatusTimer = 0;
+        void refreshXServerQuickAction();
+        schedule(30000);
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+          clearTimeout(xServerQuickStatusTimer);
+          xServerQuickStatusTimer = 0;
+          void refreshXServerQuickAction();
+          schedule(30000);
+        }
+      });
+    }
   }
 }
 
@@ -53,17 +76,22 @@ async function refreshXServerQuickAction() {
         ? tr("remote:xserver.running_unauthorized")
         : tr("remote:xserver.browser_unauthorized")
       : diagnostics?.available ? tr("remote:xserver.ready") : diagnostics?.running ? tr("remote:xserver.running") : tr("remote:xserver.stopped");
-    button.className = `icon-button xserver-quick-button ${state}`;
-    button.title = `${label}${diagnostics?.display ? ` · ${diagnostics.display}` : ""}${localDirectAuthorized ? ` · ${tr("remote:xserver.local_direct_authorized")}` : ""}${authorizationRequired ? ` · ${tr("remote:xserver.request_authorization")}` : ""}`;
-    button.setAttribute("aria-label", button.title);
-    button.innerHTML = xServerQuickIcon();
-    refreshIcons();
+    const className = `icon-button xserver-quick-button ${state}`;
+    const title = `${label}${diagnostics?.display ? ` · ${diagnostics.display}` : ""}${localDirectAuthorized ? ` · ${tr("remote:xserver.local_direct_authorized")}` : ""}${authorizationRequired ? ` · ${tr("remote:xserver.request_authorization")}` : ""}`;
+    if (button.className !== className) button.className = className;
+    if (button.title !== title) {
+      button.title = title;
+      button.setAttribute("aria-label", title);
+    }
+    if (!button.querySelector(".xserver-x-icon")) button.innerHTML = xServerQuickIcon();
   } catch {
-    button.className = "icon-button xserver-quick-button error";
-    button.title = tr("remote:xserver.unavailable");
-    button.setAttribute("aria-label", button.title);
-    button.innerHTML = xServerQuickIcon();
-    refreshIcons();
+    const title = tr("remote:xserver.unavailable");
+    if (button.className !== "icon-button xserver-quick-button error") button.className = "icon-button xserver-quick-button error";
+    if (button.title !== title) {
+      button.title = title;
+      button.setAttribute("aria-label", title);
+    }
+    if (!button.querySelector(".xserver-x-icon")) button.innerHTML = xServerQuickIcon();
   }
 }
 

@@ -294,4 +294,20 @@ COMMIT;
   run("CREATE INDEX IF NOT EXISTS idx_command_snippets_sort ON command_snippets(favorite,last_used_at,updated_at)");
   run("CREATE INDEX IF NOT EXISTS idx_command_snippets_quick_sort ON command_snippets(quick_visible,quick_sort_order,created_at,id)");
   run("CREATE INDEX IF NOT EXISTS idx_named_workspaces_recent ON named_workspaces(last_used_at,updated_at)");
+
+  // Keep the frequent UI refresh probe scoped to data that can change the
+  // connection explorer, running forwards, or remote-profile views. Unrelated
+  // writes such as SFTP jobs, notifications, and logs must not wake those
+  // views while a terminal or VNC canvas is rendering.
+  run("CREATE TABLE IF NOT EXISTS ui_state_revision(id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL DEFAULT 0)");
+  run("INSERT OR IGNORE INTO ui_state_revision(id,revision) VALUES(1,0)");
+  for (const table of ["connections", "connection_groups", "connection_forwards", "remote_profiles", "forward_templates"]) {
+    for (const action of ["INSERT", "UPDATE", "DELETE"]) {
+      database.exec(`CREATE TRIGGER IF NOT EXISTS terma_ui_state_${table}_${action.toLowerCase()}
+        AFTER ${action} ON ${table}
+        BEGIN
+          UPDATE ui_state_revision SET revision=revision+1 WHERE id=1;
+        END;`);
+    }
+  }
 }

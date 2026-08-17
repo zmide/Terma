@@ -2,7 +2,7 @@
 
 const assert = require("node:assert/strict");
 const net = require("node:net");
-const { connectVncSocket } = require("../dist/vnc-handshake");
+const { connectVncSocket, VNC_BANNER_STABILITY_MS } = require("../dist/vnc-handshake");
 
 function listen(server) {
   return new Promise((resolve, reject) => {
@@ -43,7 +43,33 @@ async function main() {
       error => error?.code === "EVNCHANDSHAKETIMEOUT"
     );
     assert.ok(Date.now() - started < 1000, "silent ports must fail within the configured RFB deadline");
-    console.log("VNC RFB handshake checks passed: valid, invalid and silent endpoints are separated");
+
+    let transientAttempts = 0;
+    const transient = net.createServer(socket => {
+      transientAttempts += 1;
+      if (transientAttempts === 1) return socket.destroy();
+      socket.write("RFB 003.008\n");
+    });
+    const transientPort = await listen(transient);
+    const retried = await connectVncSocket("127.0.0.1", transientPort, 250, {retries:1, retryDelayMs:10});
+    assert.equal(retried.banner.toString("ascii"), "RFB 003.008\n");
+    retried.socket.destroy();
+    await close(transient);
+
+    let rejectedAttempts = 0;
+    const rejected = net.createServer(socket => {
+      rejectedAttempts += 1;
+      socket.end("RFB 003.003\n");
+    });
+    const rejectedPort = await listen(rejected);
+    await assert.rejects(
+      connectVncSocket("127.0.0.1", rejectedPort, 500, {retries:1, retryDelayMs:10}),
+      error => error?.code === "EVNCPREMATURECLOSE"
+    );
+    assert.equal(rejectedAttempts, 1, "an immediate post-banner close must not trigger another unauthenticated VNC attempt");
+    assert.ok(VNC_BANNER_STABILITY_MS > 0 && VNC_BANNER_STABILITY_MS < 250);
+    await close(rejected);
+    console.log("VNC RFB handshake checks passed: valid, invalid, silent, transient and immediate-close endpoints are separated");
   } finally {
     await Promise.all([valid, invalid, silent].map(close));
   }

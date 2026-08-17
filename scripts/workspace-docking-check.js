@@ -141,6 +141,7 @@ function loadDockingModel() {
       setTabs:value => { tabs = value; },
       getTabs:() => tabs,
       setWorkspaceGroups:(value, activeId) => { workspaceGroups = value; activeWorkspaceGroupId = activeId; },
+      setWorkspacePaneNode:(paneId, node) => workspacePaneNodes.set(paneId, node),
       getWorkspaceGroups:() => workspaceGroups,
       getActiveWorkspaceGroupId:() => activeWorkspaceGroupId,
       getWorkspaceGroupSelectionMode:() => workspaceGroupSelectionMode,
@@ -281,6 +282,22 @@ function runWorkspaceDockingChecks({silent=false}={}) {
     api.setTabs([{key:"activity-tab", title:"Activity", kind:"terminal", closable:true, activityState:"output"}]);
     api.setLayout(activePane);
     api.setFocusedPane(activePane.id);
+    const tabClasses = new Set(["tab", "activity-output"]);
+    const tabButton = {
+      dataset:{tabKey:"activity-tab"},
+      classList:{
+        [Symbol.iterator]:() => tabClasses[Symbol.iterator](),
+        contains:name => tabClasses.has(name),
+        remove:(...names) => names.forEach(name => tabClasses.delete(name)),
+        toggle:(name, enabled) => enabled ? tabClasses.add(name) : tabClasses.delete(name)
+      },
+      setAttribute:() => {}
+    };
+    api.setWorkspacePaneNode(activePane.id, {
+      classList:{toggle:() => {}},
+      querySelector:() => null,
+      querySelectorAll:selector => selector === ".tabs .tab[data-tab-key]" ? [tabButton] : []
+    });
     let groupRenders = 0;
     const previousGroupRender = sandbox.renderWorkspaceGroupBar;
     sandbox.renderWorkspaceGroupBar = () => { groupRenders += 1; };
@@ -290,6 +307,8 @@ function runWorkspaceDockingChecks({silent=false}={}) {
       sandbox.renderWorkspaceGroupBar = previousGroupRender;
     }
     assert.equal(api.getTabs()[0].activityState, "");
+    assert.equal(tabClasses.has("activity-output"), false, "the active tab DOM must clear its current activity marker immediately");
+    assert.equal(tabClasses.has("active"), true, "the activated tab must remain visually selected");
     assert.equal(groupRenders, 1, "clearing tab activity must refresh the group activity marker");
   });
 

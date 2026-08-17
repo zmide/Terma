@@ -248,6 +248,17 @@ function openQuickTerminal(connection, quickToken, updateTab=true, existingKey="
   return openTerminalConnection(c, updateTab, key, existingTitle || tr("terminal:tabs.quick", {name:c.name, defaultValue:`${c.name} · 快速终端`}));
 }
 
+function terminalSessionNeedsAutomaticConnection(session) {
+  return Boolean(session) && !session.socket && Number(session.connectionAttempt || 0) === 0;
+}
+
+function terminalSessionConnectionStatus(session) {
+  const socketState = session?.socket?.readyState;
+  if (session?.connected || socketState === WebSocket.OPEN) return "connected";
+  if (session?.connectionPending || socketState === WebSocket.CONNECTING) return "connecting";
+  return "disconnected";
+}
+
 function restoreQuickTerminalTab(tab) {
   const connection = quickTerminalConnections.get(tab?.key) || terminalSessions.get(tab?.key)?.connection;
   if (!connection) return renderWelcome();
@@ -363,7 +374,7 @@ async function attachTerminal(c, key) {
     });
     const fit = createTerminalFitAddon(term);
     term.loadAddon(fit);
-    session = {term, fit, socket:null, connected:false, id:c.id, logId:createTerminalLogId(), terminalEncoding:c.terminal_encoding || "utf8", fontLayoutMobile:isMobileLayout(), currentDirectory:"", currentDirectoryKnown:false, quickToken:c.quick_connection ? String(c.quick_token || "") : ""};
+    session = {term, fit, socket:null, connected:false, connectionAttempt:0, connectionPending:false, id:c.id, logId:createTerminalLogId(), terminalEncoding:c.terminal_encoding || "utf8", fontLayoutMobile:isMobileLayout(), currentDirectory:"", currentDirectoryKnown:false, quickToken:c.quick_connection ? String(c.quick_token || "") : ""};
     terminalSessions.set(key, session);
     registerTerminalDirectoryTracking(session);
   }
@@ -384,9 +395,9 @@ async function attachTerminal(c, key) {
     try { session.fit.fit(); } catch {}
     try { session.term.refresh?.(0, Math.max(0, session.term.rows - 1)); } catch {}
     if (!isMobileLayout()) try { session.term.focus(); } catch {}
-    if (!session.socket) connectTerminal(c, key);
+    if (terminalSessionNeedsAutomaticConnection(session)) void connectTerminal(c, key);
     else {
-      updateTerminalConnectionStatus(c, key, session.connected ? "connected" : "disconnected");
+      updateTerminalConnectionStatus(c, key, terminalSessionConnectionStatus(session));
       updateTerminalLatencyDisplay(key);
     }
     scheduleTerminalFit();
@@ -474,7 +485,6 @@ function sendMobileTerminalInput(key) {
   const session = terminalSessions.get(key);
   const connection = session ? currentConnection(session.id) : null;
   if (session && connection) void trackTerminalDirectoryCommand(session, connection, key, command);
-  if (typeof noteTerminalCommandStarted === "function") noteTerminalCommandStarted(key);
   sendTerminalData(key, `${command}\r`);
   saveRecentTerminalCommand(command);
   input.value = "";
@@ -1094,6 +1104,19 @@ async function repairTerminalCredentials(connection, key) {
 async function connectTerminal(c, key) {
   const session = terminalSessions.get(key);
   if (!session) return;
+  const attempt = Number(session.connectionAttempt || 0) + 1;
+  session.connectionAttempt = attempt;
+  session.connectionPending = true;
+  try {
+    return await connectTerminalAttempt(c, key, session, attempt);
+  } finally {
+    if (terminalSessions.get(key) === session && session.connectionAttempt === attempt) {
+      session.connectionPending = false;
+    }
+  }
+}
+
+async function connectTerminalAttempt(c, key, session, attempt) {
   const quick = Boolean(c.quick_connection);
   if (quick && !String(session.quickToken || c.quick_token || "")) {
     updateTerminalConnectionStatus(c, key, "authentication");
@@ -1103,8 +1126,6 @@ async function connectTerminal(c, key) {
     }
     return;
   }
-  const attempt = Number(session.connectionAttempt || 0) + 1;
-  session.connectionAttempt = attempt;
   session.authenticationFailed = false;
   session.authenticationFailureWindow = "";
   const previousSocket = session.socket;
@@ -1265,7 +1286,6 @@ async function connectTerminal(c, key) {
     const beforeCtrl = terminalCtrlArmed || terminalCtrlLocked;
     const outgoing = transformTerminalInputForCtrl(key, preparedData);
     if (!beforeCtrl) trackTerminalCommand(session, data);
-    if ((data.includes("\r") || data.includes("\n")) && typeof noteTerminalCommandStarted === "function") noteTerminalCommandStarted(key);
     if (socket.readyState === WebSocket.OPEN) {
       startTerminalLatencySample(session);
       if (!(typeof handleTerminalBroadcastInput === "function" && handleTerminalBroadcastInput(key, outgoing, data))) socket.send(outgoing);
@@ -1317,6 +1337,7 @@ function disconnectTerminal(key) {
   const session = terminalSessions.get(key);
   if (!session) return;
   session.connectionAttempt = Number(session.connectionAttempt || 0) + 1;
+  session.connectionPending = false;
   const socket = session.socket;
   session.connected = false;
   session.latencyPendingAt = 0;
@@ -1328,6 +1349,6 @@ function disconnectTerminal(key) {
 
 function toggleTerminalConnection(id, key=`terminal-${id}-1`) {
   const session = terminalSessions.get(key);
-  if (session?.connected || session?.socket?.readyState === WebSocket.CONNECTING) disconnectTerminal(key);
+  if (session?.connected || session?.connectionPending || session?.socket?.readyState === WebSocket.CONNECTING) disconnectTerminal(key);
   else reconnectTerminal(id, key);
 }

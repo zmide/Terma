@@ -312,8 +312,7 @@ body.operation-pane-resizing, body.operation-pane-resizing * { cursor:col-resize
 .terminal-broadcast-bar + .workspace-quick-actions { margin-left:0; }
 .tab .tab-pin { width:12px; display:inline-grid; place-items:center; color:var(--accent2); }
 .tab .tab-pin svg { width:11px; height:11px; }
-.tab.activity-output::after, .tab.activity-complete::after { content:""; width:6px; height:6px; flex:0 0 6px; border-radius:50%; background:var(--accent2); }
-.tab.activity-complete::after { background:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent); }
+.tab.activity-output::after { content:""; width:6px; height:6px; flex:0 0 6px; border-radius:50%; background:var(--accent2); }
 @media (max-width:760px) {
   .quick-panel { padding:8px; align-items:stretch; }
   .quick-panel-dialog { width:100%; max-height:none; height:calc(var(--app-vh,1vh) * 100 - 16px); }
@@ -1431,6 +1430,13 @@ body.sftp-task-center-resizing, body.sftp-task-center-resizing * { cursor:nesw-r
 .settings-vnc-toolbar-field label { margin:0; }
 .settings-vnc-toolbar-field select { min-width:0; max-width:420px; }
 .settings-vnc-toolbar-field > span { color:var(--muted); font-size:11px; line-height:1.4; overflow-wrap:anywhere; }
+.background-refresh-settings { min-width:0; }
+.background-refresh-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 14px; margin:10px 0; }
+.background-refresh-field { min-width:0; display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:10px; margin:0; }
+.background-refresh-field > span:first-child { min-width:0; color:var(--text); overflow-wrap:anywhere; }
+.background-refresh-field > span:last-child { display:grid; grid-template-columns:72px auto; align-items:center; gap:6px; color:var(--muted); }
+.background-refresh-field input { min-width:0; width:72px; }
+.background-refresh-field small { font-size:11px; }
 .runtime-security-note { min-width:0; display:flex; gap:9px; align-items:flex-start; padding:10px; border:1px solid color-mix(in srgb,var(--warn) 40%,var(--line)); border-radius:5px; background:color-mix(in srgb,var(--warn) 7%,var(--field)); }
 .runtime-security-note > svg { width:18px; height:18px; flex:0 0 18px; margin-top:1px; color:var(--warn); }
 .runtime-security-note strong, .runtime-security-note span { display:block; }
@@ -3052,6 +3058,7 @@ details.advanced-settings > :not(summary) { margin-left:12px; margin-right:12px;
   .runtime-port-field { grid-template-columns:1fr; }
   .runtime-port-field label, .runtime-port-field > span { grid-column:1; }
   .settings-vnc-toolbar-field select { max-width:none; }
+  .background-refresh-grid { grid-template-columns:minmax(0,1fr); }
   .runtime-config-actions { grid-template-columns:1fr; }
   .runtime-feedback { align-items:flex-start; flex-wrap:wrap; }
   .runtime-feedback > button { width:100%; }

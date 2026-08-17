@@ -1,8 +1,20 @@
 {
   "general": {
-    "description": "Manage desktop behavior and workspace restoration.",
+    "description": "Manage desktop behavior, workspace restoration, and background refresh.",
     "save": "Save general settings",
     "title": "General"
+  },
+  "background_refresh": {
+    "title": "Background sync and refresh intervals",
+    "description": "Set the base intervals used while Terma is in the foreground. Checks slow down automatically when the window is hidden or graphics rendering is busy.",
+    "ui_state": "Global data change check",
+    "sftp_active": "Active SFTP tab status check",
+    "sftp_background": "Other SFTP tab status check",
+    "vnc_local_image": "Local VNC image fallback check",
+    "vnc_remote_image": "Remote VNC image check",
+    "seconds": "sec",
+    "hint": "Remote VNC images are checked every 3 seconds by default. The full image is read only after its fingerprint changes. Connection keepalive, disconnect detection, and protocol timeouts are not changed here.",
+    "interval_invalid": "The refresh interval must be a whole number from 1 to 60 seconds."
   },
   "subtitle": "Access protection, notifications, runtime information, and open-source licenses.",
   "title": "Settings",
@@ -532,6 +544,9 @@
     "check_again": "Check again",
     "check_failed": "Update check failed",
     "check_unavailable": "Update information is temporarily unavailable",
+    "invalid_release_data": "GitHub Releases returned invalid release data",
+    "check_timeout": "The update check timed out. Try again later",
+    "no_formal_release": "This GitHub repository does not have a formal release yet",
     "failed": "Failed",
     "current_unknown": "Current version unknown",
     "auto_refresh_hint": "This page refreshes the update status automatically",

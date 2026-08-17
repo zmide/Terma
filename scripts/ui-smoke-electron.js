@@ -2024,6 +2024,19 @@ app.whenReady().then(async () => {
       if (!generalVncFullscreenToolbar || JSON.stringify([...generalVncFullscreenToolbar.options].map(option => option.value)) !== JSON.stringify(['always','never','edge'])) {
         throw new Error('VNC fullscreen toolbar preference is missing from general settings');
       }
+      const backgroundIntervalDefaults = {
+        generalUiRefreshIntervalSeconds:'4',
+        generalSftpActiveStatusIntervalSeconds:'5',
+        generalSftpBackgroundStatusIntervalSeconds:'15',
+        generalVncLocalImageIntervalSeconds:'5',
+        generalVncRemoteImageIntervalSeconds:'3'
+      };
+      for (const [id, value] of Object.entries(backgroundIntervalDefaults)) {
+        const input = document.querySelector('#settings-general #' + id);
+        if (!input || input.value !== value || input.min !== '1' || input.max !== '60') {
+          throw new Error(id + ' background interval preference is missing or invalid');
+        }
+      }
       if (document.querySelector('#settings-runtime #runtimeVncFullscreenToolbar')) {
         throw new Error('VNC fullscreen toolbar preference is still present in listener settings');
       }
@@ -2557,7 +2570,7 @@ app.whenReady().then(async () => {
           collectVisibleHan(protocol + '-form-immediate', true, view);
           const formText = view?.innerText || '';
           if (protocol === 'ftp' && (!formText.includes('Transfer security') || !formText.includes('Explicit FTPS'))) throw new Error('FTP options were not generated in English');
-          if (protocol === 'vnc' && (!formText.includes('Open with') || !formText.includes('Image quality'))) throw new Error('VNC options were not generated in English');
+          if (protocol === 'vnc' && (!formText.includes('Open with') || !formText.includes('Image quality') || !formText.includes('Performance preset') || !view.querySelector('#remote_vnc_performance_preset'))) throw new Error('VNC options were not generated in English');
           if (protocol === 'xdmcp' && (!formText.includes('Connection mode') || !formText.includes('LAN broadcast'))) throw new Error('XDMCP options were not generated in English');
           if (protocol === 'telnet' && (!formText.includes('Terminal type') || !formText.includes('does not encrypt'))) throw new Error('Telnet options were not generated in English');
           if (protocol === 'serial' && (!formText.includes('Serial device') || !formText.includes('Baud rate'))) throw new Error('serial options were not generated in English');
@@ -2661,28 +2674,6 @@ app.whenReady().then(async () => {
         } finally {
           hideActionMenu();
           terminalSessions.delete(key);
-        }
-      });
-      await runI18nScenario('command-complete-notification', async () => {
-        const key = 'language-command-complete';
-        const tab = {key,title:'Language Terminal',kind:'terminal',id:Number(languageRemoteConnection.id),notificationsMuted:false,activityState:''};
-        const originalNotify = notify;
-        const originalDesktop = showDesktopNotification;
-        const captured = [];
-        tabs.push(tab);
-        terminalSessions.set(key, {id:Number(languageRemoteConnection.id),smartCommandStartedAt:Date.now()-6200,smartHadOutput:true});
-        notify = (message, type) => captured.push({kind:'toast',message,type});
-        showDesktopNotification = event => captured.push({kind:'desktop',event});
-        try {
-          markTerminalCommandComplete(key, 'shell');
-          const desktop = captured.find(item => item.kind === 'desktop')?.event;
-          if (desktop?.title !== 'Command completed' || !/^Language Terminal · 6s$/.test(desktop?.message || '')) throw new Error('command completion notification was not generated in English');
-        } finally {
-          notify = originalNotify;
-          showDesktopNotification = originalDesktop;
-          terminalSessions.delete(key);
-          const index = tabs.findIndex(item => item.key === key);
-          if (index >= 0) tabs.splice(index, 1);
         }
       });
       await runI18nScenario('download-complete-notification', async () => {
@@ -3074,6 +3065,10 @@ app.whenReady().then(async () => {
           && document.querySelectorAll('.terma-liquid-lens, .terma-liquid-track').length === 0,
         zeroBlur:getComputedStyle(document.documentElement).getPropertyValue('--terma-frosted-backdrop-blur').trim() === '0px'
       };
+      updateSettings = {current_version:'1.0.8',latest_version:'1.0.9',update_available:true,update_ignored:false};
+      updateNoticeReadVersion = '';
+      sessionStorage.removeItem(UPDATE_NOTICE_SESSION_KEY);
+      syncUpdateNoticeDots();
       const updateDotIds = ['navSettingsUpdateDot','mobileSettingsUpdateDot','settingsExplorerUpdateDot'];
       const dotsBeforeRead = updateDotIds.map(id => ({id, found:Boolean(document.getElementById(id)), hidden:document.getElementById(id)?.hidden}));
       updateSettings = {...updateSettings, update_ignored:true};
@@ -8755,12 +8750,11 @@ app.whenReady().then(async () => {
     const visibleSplitClearsPriorActivity=!splitTab.activityState&&!visibleSplitHtml.includes('activity-output');
     const hiddenBinaryKey='__smoke-hidden-binary-output';
     tabs.push({key:hiddenBinaryKey,kind:'terminal',title:'Hidden tail output'});
-    terminalSessions.set(hiddenBinaryKey,{smartHadOutput:false,smartOutputTail:''});
+    terminalSessions.set(hiddenBinaryKey,{smartOutputTail:''});
     workspaceVisiblePanes=()=>[{activeTabKey:broadcastKeys[0]}];
     updateTerminalSmartState(hiddenBinaryKey,new Uint8Array([116,97,105,108,32,111,117,116,112,117,116,10]));
     const hiddenBinarySession=terminalSessions.get(hiddenBinaryKey);
     const hiddenBinaryOutputMarked=tabs.find(tab=>tab.key===hiddenBinaryKey).activityState==='output'
-      && hiddenBinarySession.smartHadOutput===true
       && hiddenBinarySession.smartOutputTail.includes('tail output');
     workspaceVisiblePanes=previousWorkspaceVisiblePanes;
     const broadcastFromEither=handleTerminalBroadcastInput(broadcastKeys[0],'A','A')&&handleTerminalBroadcastInput(broadcastKeys[1],'B','B')&&broadcastSentA.join('')==='AB'&&broadcastSentB.join('')==='AB';
@@ -8793,7 +8787,8 @@ app.whenReady().then(async () => {
     const syncRows=document.querySelectorAll('.sftp-sync-plan-row').length;
     const conflictSafe=Boolean(document.querySelector('.sftp-sync-plan-row.conflict input:disabled')&&!document.querySelector('.sftp-sync-plan-row.conflict input:checked'));
     const namedWorkspaceTools=typeof importNamedWorkspaceData==='function'&&typeof exportNamedWorkspace==='function'&&typeof repairNamedWorkspace==='function';
-    const terminalTools=typeof toggleTabNotifications==='function'&&typeof openTerminalPathInSftp==='function';
+    const terminalTools=typeof openTerminalPathInSftp==='function'
+      && !document.querySelector('.tab.activity-complete');
     const quickCommandUi=await (async()=>{
     let previousQuickSnippets;
     let previousQuickVisible;

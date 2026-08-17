@@ -643,6 +643,9 @@ const serverSource = readSources(path.join(__dirname, ".."), [
 ]);
 assert.match(serverSource, /startRemoteComponentCommandTask/);
 assert.match(serverSource, /runSshCommandForConnectionStreaming\(connection, buildRemotePosixCommand\(normalized\), timeoutMs, onChunk\)/);
+const vncManagerSource = fs.readFileSync(path.join(__dirname, "..", "src", "vnc-server-manager.ts"), "utf8");
+assert.doesNotMatch(vncManagerSource, /connectVncSocket/, "VNC service diagnostics must not create unauthenticated RFB sessions that can trigger server blacklisting");
+assert.match(vncManagerSource, /reason_code:"vnc_service_ready_authentication_pending"/);
 
 const connection = {id:77, name:"Linux fixture", ssh_host:"192.0.2.77", ssh_port:22, ssh_user:"root"};
 const profile = {id:7, protocol:"vnc", host:"192.0.2.77", port:5900, options:{source_ssh_connection_id:77}};

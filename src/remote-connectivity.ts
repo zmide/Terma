@@ -3,7 +3,7 @@ const dgram = require("node:dgram");
 const dns = require("node:dns");
 const { normalizeRemoteHost } = require("./remote-host");
 
-const TCP_PROTOCOLS = new Set(["rdp", "vnc"]);
+const TCP_PROTOCOLS = new Set(["rdp"]);
 
 type ConnectivityReasonParams = Record<string, string | number | boolean>;
 
@@ -134,6 +134,22 @@ async function inspectRemoteProfileConnectivity(profile: any) {
     }
     const result = await probeXdmcpEndpoint(host, port);
     return {protocol, host, port, supported:true, method:"xdmcp-query", ...result};
+  }
+  if (protocol === "vnc") {
+    // A standalone TCP/RFB preflight is not harmless: authenticated VNC
+    // servers such as TigerVNC count it as an unauthenticated attempt and can
+    // temporarily blacklist the Terma host. The real VNC client connection is
+    // therefore the connectivity check; SSH diagnostics remain available for
+    // managed Linux profiles without touching the RFB listener.
+    return {
+      protocol,
+      host,
+      port,
+      supported:false,
+      method:"authenticated-vnc-session",
+      ok:false,
+      ...connectivityReason("vnc_authenticated_session_required")
+    };
   }
   if (!TCP_PROTOCOLS.has(protocol)) {
     return {

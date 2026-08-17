@@ -223,6 +223,38 @@ async function main() {
   assert.equal(windowsDiagnostics.rdp.password_transfer_mode, "windows-credential-manager");
   assert.match(windowsDiagnostics.password_policy, /临时凭据存储.*不会进入命令行/);
 
+  let selectedVncClientPath = "";
+  const selectableVncPath = "C:\\Tools\\CustomVNC\\vncviewer.exe";
+  const selectableWindows = createRemoteClientAdapter({
+    platform:"win32",
+    environment:{SystemRoot:"C:\\Windows",ProgramFiles:"C:\\Program Files"},
+    getVncClientPath:()=>selectedVncClientPath,
+    canSelectVncClient:true,
+    existsSync:file => String(file).toLowerCase() === selectableVncPath.toLowerCase(),
+    statSync:()=>({isFile:()=>true,isDirectory:()=>false}),
+    spawn:fakeSpawn,
+    spawnSync:unavailableCommand
+  });
+  const selectableDiagnostics = selectableWindows.diagnostics().vnc;
+  assert.equal(selectableDiagnostics.available, false);
+  assert.equal(selectableDiagnostics.launchable, true);
+  assert.equal(selectableDiagnostics.requires_selection, true);
+  assert.equal(selectableDiagnostics.reason_code, "vnc_client_selection_required");
+  assert.throws(() => selectableWindows.validateVncClientPath("C:\\Tools\\not-a-viewer.txt"), /不存在/);
+  selectedVncClientPath = selectableWindows.validateVncClientPath(selectableVncPath);
+  const configuredDiagnostics = selectableWindows.diagnostics().vnc;
+  assert.equal(configuredDiagnostics.available, true);
+  assert.equal(configuredDiagnostics.configured, true);
+  assert.equal(configuredDiagnostics.requires_selection, false);
+  assert.equal(configuredDiagnostics.client, "vncviewer.exe");
+  await selectableWindows.open({id:20,protocol:"vnc",host:"selected.example",port:5902,options:{quality:6}});
+  assert.equal(launches.at(-1).executable, selectableVncPath);
+  assert.deepEqual(launches.at(-1).args, ["selected.example::5902", "-QualityLevel=6"]);
+  assert.match(mainSource, /getVncClientPath:[\s\S]*?readSettings\(\)\.vncClientPath/);
+  assert.match(mainSource, /chooseVncClientExecutable[\s\S]*?dialog\.showOpenDialog[\s\S]*?validateVncClientPath[\s\S]*?vncClientPath:executable/);
+  assert.match(serverSource, /if \(result\?\.canceled\)[\s\S]*?sendJson\(response, result\)[\s\S]*?return true/);
+  assert.match(remoteUiSource, /if \(result\?\.canceled\) return null/);
+
   const windowsRdpResult = await windows.open({id:1,protocol:"rdp",host:"rdp.example",port:3389,username:"alice",password:"must-not-leak",options:{fullscreen:false,width:1280,height:720,clipboard:true,allow_password_transfer:true}});
   const windowsCredentialLaunch = windowsCredentialLaunches.at(-1);
   assert.match(windowsCredentialLaunch.executable, /mstsc\.exe$/i);
@@ -411,6 +443,8 @@ async function main() {
   assert.match(connectivitySource, /function probeTcpEndpoint\(host: unknown, port: unknown, timeoutMs = 2200\)/);
   assert.match(connectivitySource, /function probeXdmcpEndpoint\(host: unknown, port: unknown, timeoutMs = 2200\)/);
   assert.match(connectivitySource, /method:"xdmcp-query"/);
+  assert.match(connectivitySource, /protocol === "vnc"[\s\S]*?method:"authenticated-vnc-session"[\s\S]*?reason_code.*vnc_authenticated_session_required|protocol === "vnc"[\s\S]*?connectivityReason\("vnc_authenticated_session_required"\)/, "VNC diagnostics must not create standalone unauthenticated TCP/RFB attempts");
+  assert.doesNotMatch(connectivitySource, /new Set\(\["rdp", "vnc"\]\)/, "generic TCP probing must exclude VNC because authenticated servers can blacklist it");
   assert.match(connectivitySource, /reason_code:reasonCode/);
   assert.match(connectivitySource, /reason_params:reasonParams/);
   assert.match(connectivitySource, /raw_error:normalizedRawError/);

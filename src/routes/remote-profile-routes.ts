@@ -31,6 +31,8 @@ interface RemoteProfileRouteDependencies {
   remoteOfflineTasks: any;
   resolveManagementConnection(profile: any, dependencies: any): any;
   runRemotePrivilegeCommand(connection: any, command: string, options: any): Promise<any>;
+  runPersistentSshCommandForConnection(connection: any, command: string, timeoutMs?: number): Promise<any>;
+  runPersistentSshCommandForConnectionStreaming(connection: any, command: string, timeoutMs?: number, onChunk?: any, options?: any): Promise<any>;
   runSshCommandForConnection(connection: any, command: string, timeoutMs?: number): Promise<any>;
   runSshCommandForConnectionStreaming(connection: any, command: string, timeoutMs?: number, onChunk?: any, options?: any): Promise<any>;
   send(response: ServerResponse, status: number, data: unknown, headers?: Record<string, string>): void;
@@ -109,7 +111,7 @@ export async function handleRemoteProfileRoutes(
       getConnection:dependencies.getConnection,
       listConnections:dependencies.listConnections,
       repairManagementConnection:(item: any, connectionId: number) => dependencies.repairRemoteProfileManagementConnection(item.id, connectionId),
-      runSshCommandForConnection:dependencies.runSshCommandForConnection
+      runSshCommandForConnection:dependencies.runPersistentSshCommandForConnection
     };
     if (method === "GET") {
       dependencies.sendJson(response, await dependencies.readVncRemoteClipboard(profile, clipboardDependencies));
@@ -127,8 +129,8 @@ export async function handleRemoteProfileRoutes(
       getConnection:dependencies.getConnection,
       listConnections:dependencies.listConnections,
       repairManagementConnection:(item: any, connectionId: number) => dependencies.repairRemoteProfileManagementConnection(item.id, connectionId),
-      runSshCommandForConnection:dependencies.runSshCommandForConnection,
-      runSshCommandForConnectionStreaming:dependencies.runSshCommandForConnectionStreaming
+      runSshCommandForConnection:dependencies.runPersistentSshCommandForConnection,
+      runSshCommandForConnectionStreaming:dependencies.runPersistentSshCommandForConnectionStreaming
     };
     if (method === "GET") {
       const result = await dependencies.readVncRemoteClipboardImage(profile, clipboardDependencies);
@@ -158,7 +160,7 @@ export async function handleRemoteProfileRoutes(
         getConnection:dependencies.getConnection,
         listConnections:dependencies.listConnections,
         repairManagementConnection:(item: any, connectionId: number) => dependencies.repairRemoteProfileManagementConnection(item.id, connectionId),
-        runSshCommandForConnection:dependencies.runSshCommandForConnection
+        runSshCommandForConnection:dependencies.runPersistentSshCommandForConnection
       }));
       return true;
     }
@@ -353,6 +355,10 @@ export async function handleRemoteProfileRoutes(
       failure.publicParams = {protocol:String(profile.protocol || "remote").toUpperCase()};
       failure.statusCode = 500;
       throw failure;
+    }
+    if (result?.canceled) {
+      dependencies.sendJson(response, result);
+      return true;
     }
     dependencies.updateRemoteProfileUsage(id);
     dependencies.sendJson(response, result);

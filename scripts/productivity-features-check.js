@@ -21,7 +21,6 @@ for (const contract of [
   /repairNamedWorkspace/,
   /openTerminalBroadcastPicker/,
   /restoreRecentlyClosedTab/,
-  /toggleTabNotifications/,
   /openTerminalPathInSftp/
 ]) assert.match(productivity, contract);
 assert.match(productivity, /workspace_groups_version/);
@@ -36,7 +35,7 @@ assert.match(docking, /showWorkspaceTabsContextMenu/);
 assert.match(docking, /beginWorkspaceGroupDrag/);
 assert.match(productivity, /tab\?\.kind === "local-files"[\s\S]*localFilesAvailable/);
 assert.match(docking, /tab\.pinned/);
-assert.match(docking, /toggleTabNotifications/);
+assert.doesNotMatch(docking, /toggleTabNotifications/);
 assert.match(terminal, /在 SFTP 打开/);
 assert.match(actions, /registerAppAction/);
 assert.match(productivity, /runAppAction\(action\.id/);
@@ -57,6 +56,7 @@ assert.match(productivity, /function isTerminalBroadcastTarget/);
 assert.match(productivity, /function isWorkspaceTabCurrentlyVisible/);
 assert.match(productivity, /!isWorkspaceTabCurrentlyVisible\(key\)/);
 assert.match(productivity, /renderTabsPreservingTerminalFocus/);
+assert.doesNotMatch(productivity, /markTerminalCommandComplete|activityState\s*=\s*"complete"|command_duration/);
 assert.match(docking, /broadcast-selected/);
 assert.match(docking, /multi-selected/);
 assert.match(docking, /createWorkspaceGroupFromSelection/);
@@ -71,7 +71,8 @@ assert.match(docking, /if \(pane\.activeTabKey\) revealWorkspaceTab\(pane\.activ
 assert.match(styles, /\.tab\.broadcast-selected/);
 assert.match(styles, /\.workspace-group-bar/);
 assert.match(styles, /\.tab\.active\.multi-selected/);
+assert.doesNotMatch(styles, /\.tab\.activity-complete/);
 assert.match(productivity, /terminal-broadcast-exit/);
 assert.match(index, /id="workspaceQuickActions"/);
 assert.match(styles, /\.workspace-quick-actions/);
-console.log("效率功能契约检查通过：快速面板、片段、工作区、广播、标签恢复、静音和 SFTP 路径联动均已注册");
+console.log("效率功能契约检查通过：快速面板、片段、工作区、广播、标签恢复、未读输出提示和 SFTP 路径联动均已注册");

@@ -49,6 +49,8 @@ function createX11ClipboardImageBridge(options = {}) {
   const x11Module = options.x11Module || null;
   const readClipboardPng = typeof options.readClipboardPng === "function" ? options.readClipboardPng : null;
   const readClipboardFormats = typeof options.readClipboardFormats === "function" ? options.readClipboardFormats : null;
+  const readClipboardRevision = typeof options.readClipboardRevision === "function" ? options.readClipboardRevision : null;
+  const deferClaimUntilFocused = options.deferClaimUntilFocused === true;
   const onDiagnostic = typeof options.onDiagnostic === "function" ? options.onDiagnostic : null;
   const now = typeof options.now === "function" ? options.now : Date.now;
   const pollIntervalMs = Number.isFinite(Number(options.pollIntervalMs))
@@ -56,6 +58,7 @@ function createX11ClipboardImageBridge(options = {}) {
     : POLL_INTERVAL_MS;
   let client = null;
   let ownerWindow = 0;
+  let rootWindow = 0;
   let atoms = null;
   let timer = null;
   let stopped = false;
@@ -69,6 +72,9 @@ function createX11ClipboardImageBridge(options = {}) {
   let ready = false;
   let startPromise = null;
   let lastReadDiagnostic = "";
+  let lastProcessedClipboardRevision = 0;
+  let lastFocusActive = null;
+  let focusCheckPromise = null;
 
   const diagnostic = (event, details = {}) => {
     if (!onDiagnostic) return;
@@ -84,6 +90,23 @@ function createX11ClipboardImageBridge(options = {}) {
     if (!client || !ownerWindow || !atoms?.clipboard || !ownsClipboard) return;
     try { client.SetSelectionOwner(0, atoms.clipboard, 0); } catch {}
     ownsClipboard = false;
+  };
+
+  const x11FocusActive = async () => {
+    if (!deferClaimUntilFocused || !client?.GetInputFocus) return true;
+    if (focusCheckPromise) return focusCheckPromise;
+    focusCheckPromise = new Promise(resolve => {
+      try {
+        client.GetInputFocus((error, result) => {
+          if (error) return resolve(true);
+          const focus = Number(result?.focus ?? 0);
+          resolve(Boolean(focus > 1 && focus !== rootWindow && focus !== ownerWindow));
+        });
+      } catch {
+        resolve(true);
+      }
+    }).finally(() => { focusCheckPromise = null; });
+    return focusCheckPromise;
   };
 
   const sendSelectionNotify = (event, property) => {
@@ -178,9 +201,19 @@ function createX11ClipboardImageBridge(options = {}) {
   const refreshClipboard = async () => {
     if (stopped || !ready || (!readClipboardPng && !readClipboardFormats)) return;
     try {
+      const focusActive = await x11FocusActive();
+      if (lastFocusActive !== focusActive) {
+        lastFocusActive = focusActive;
+        diagnostic("focus-state", {active:focusActive});
+      }
+      if (!focusActive && ownsClipboard) release();
+      const clipboardRevision = Math.max(0, Number(await readClipboardRevision?.() || 0));
+      const ownershipRecoveryRequired = Boolean(focusActive && !ownsClipboard && currentHash && suppressedHash !== currentHash);
+      if (clipboardRevision > 0 && clipboardRevision === lastProcessedClipboardRevision && !ownershipRecoveryRequired && (focusActive || !ownsClipboard)) return;
       const readResult = readClipboardFormats
         ? await readClipboardFormats()
         : {png:await readClipboardPng()};
+      if (clipboardRevision > 0) lastProcessedClipboardRevision = clipboardRevision;
       const nextImage = validPng(readResult?.png);
       const nextBmp = validBmp(readResult?.bmp) || Buffer.alloc(0);
       if (!nextImage) {
@@ -197,7 +230,7 @@ function createX11ClipboardImageBridge(options = {}) {
           && now() - localImageChangedAt <= LOCAL_CLIPBOARD_SETTLE_MS
         );
         if (transientLocalImage) {
-          if (!ownsClipboard && claimAttempts < MAX_SETTLE_CLAIMS) claimImage(image);
+          if (focusActive && !ownsClipboard && claimAttempts < MAX_SETTLE_CLAIMS) claimImage(image);
           return;
         }
         // A later X11 owner may have replaced our selection. Keep the cached
@@ -222,11 +255,13 @@ function createX11ClipboardImageBridge(options = {}) {
         suppressedHash = "";
         localImageChangedAt = now();
         claimAttempts = 0;
+        image = nextImage;
+        currentHash = nextHash;
         imageBmp = nextBmp.length ? nextBmp : null;
-        claimImage(nextImage);
+        if (focusActive) claimImage(nextImage);
       } else if (!ownsClipboard && suppressedHash !== nextHash) {
         imageBmp = nextBmp.length ? nextBmp : imageBmp;
-        claimImage(nextImage);
+        if (focusActive) claimImage(nextImage);
       } else if (!ownsClipboard) {
         image = nextImage;
         imageBmp = nextBmp.length ? nextBmp : imageBmp;
@@ -261,6 +296,7 @@ function createX11ClipboardImageBridge(options = {}) {
           diagnostic("connected", {display});
           try {
             const root = displayInfo.screen?.[0]?.root;
+            rootWindow = Number(root || 0);
             ownerWindow = client.AllocID();
             client.CreateWindow(ownerWindow, root, 0, 0, 1, 1, 0, 0, 0, 0, {});
             const [clipboard, targets, imagePng, imageBmpAtom, qtImage, utf8String, string, textAtom, compoundText] = await Promise.all([

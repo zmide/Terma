@@ -1,10 +1,21 @@
+function localizedUpdateStatusError(value) {
+  const message = String(value || "").trim();
+  if (!message) return tr("settings:updates.check_unavailable");
+  if (!String(document.documentElement.lang || "zh-CN").toLowerCase().startsWith("en")) return message;
+  if (/正式版本数据无效|返回的数据无法解析/.test(message)) return tr("settings:updates.invalid_release_data");
+  if (/超时/.test(message)) return tr("settings:updates.check_timeout");
+  if (/尚未发布正式版本/.test(message)) return tr("settings:updates.no_formal_release");
+  if (/[\u3400-\u9fff]/.test(message)) return tr("settings:updates.github_connection_failed");
+  return message;
+}
+
 function updateStatusHtml() {
   const update = updateSettings;
   if (!update) {
     return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:updates.reading_version"))}</span></div><div class="update-status checking"><div><strong>${esc(tr("settings:updates.checking"))}</strong><span>${esc(tr("settings:updates.reading_releases"))}</span></div><span class="status-pill">${esc(tr("settings:updates.checking_short"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("settings:updates.check_again"))}</span></button></div></div>`;
   }
   if (update.error) {
-    return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:updates.check_failed"))}</span></div><div class="update-status failed"><div><strong>${esc(tr("settings:updates.check_unavailable"))}</strong><span>${esc(update.error)}</span></div><span class="status-pill failed">${esc(tr("settings:updates.failed"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("common:actions.retry"))}</span></button></div></div>`;
+    return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:updates.check_failed"))}</span></div><div class="update-status failed"><div><strong>${esc(tr("settings:updates.check_unavailable"))}</strong><span>${esc(localizedUpdateStatusError(update.error))}</span></div><span class="status-pill failed">${esc(tr("settings:updates.failed"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("common:actions.retry"))}</span></button></div></div>`;
   }
   const currentVersion = update.current_version ? `v${String(update.current_version).replace(/^v/i, "")}` : tr("settings:updates.current_unknown");
   if (!update.latest_version) {
@@ -312,7 +323,7 @@ async function refreshUpdateStatus(force=false) {
       renderUpdateStatus();
       syncUpdateNoticeForCurrentSection();
     });
-    if (force) notify(updateSettings.error, "error");
+    if (force) notify(localizedUpdateStatusError(updateSettings.error), "error");
   } finally {
     inPane(() => setButtonBusy(button, false));
   }

@@ -152,10 +152,16 @@ async function testRemoteProfile(id, button=null, options={}) {
     const fallback = result.ok
       ? tr("remote:notifications.test_passed", {defaultValue:"连接测试通过"})
       : tr("remote:notifications.test_failed", {defaultValue:"连接测试失败"});
-    const message = result.message && typeof localizedTermaUiPhrase === "function"
+    const vncReason = result.reason_code === "vnc_service_ready_authentication_pending"
+      ? tr("remote:notifications.vnc_service_ready_authentication_pending", {defaultValue:"VNC 服务已就绪；连接密码需要在打开 VNC 客户端时验证。"})
+      : result.reason_code === "vnc_authenticated_session_required"
+        ? tr("remote:notifications.vnc_authenticated_session_required", {defaultValue:"为避免 VNC 服务因连续未认证探测而临时限制连接，请直接打开内置或系统 VNC 客户端完成验证。"})
+        : "";
+    const message = vncReason || (result.message && typeof localizedTermaUiPhrase === "function"
       ? localizedTermaUiPhrase(result.message)
-      : result.message || fallback;
-    notify(message || fallback, result.ok ? "success" : "error");
+      : result.message || fallback);
+    const noticeType = result.reason_code === "vnc_authenticated_session_required" ? "info" : result.ok ? "success" : "error";
+    notify(message || fallback, noticeType);
     return result;
   } catch (error) {
     const profile = remoteProfileById(id);
@@ -272,6 +278,35 @@ function applyRemoteResolutionPreset(prefix) {
 function syncRemoteQualityValue(input) {
   const output = $("remote_quality_value");
   if (output) output.textContent = String(Math.max(0, Math.min(9, Number(input?.value ?? 8))));
+  syncVncPerformancePreset();
+}
+
+const VNC_PERFORMANCE_PRESETS = Object.freeze({
+  balanced:{quality:8},
+  smooth:{quality:6}
+});
+
+function vncPerformancePreset(options={}) {
+  const quality = Math.max(0, Math.min(9, Number(options.quality ?? 8)));
+  if (quality === VNC_PERFORMANCE_PRESETS.smooth.quality) return "smooth";
+  if (quality === VNC_PERFORMANCE_PRESETS.balanced.quality) return "balanced";
+  return "custom";
+}
+
+function syncVncPerformancePreset() {
+  const select = $("remote_vnc_performance_preset");
+  const quality = $("remote_quality");
+  if (!select || !quality) return;
+  const preset = vncPerformancePreset({quality:quality.value});
+  select.value = preset;
+}
+
+function applyVncPerformancePreset(value) {
+  const preset = VNC_PERFORMANCE_PRESETS[String(value || "")];
+  const quality = $("remote_quality");
+  if (!preset || !quality) return syncVncPerformancePreset();
+  quality.value = String(preset.quality);
+  syncRemoteQualityValue(quality);
 }
 
 function remoteDesktopProtocolGuideMarkup(protocol, diagnostics=null, profile=null) {
@@ -301,7 +336,8 @@ function remoteProtocolOptionsMarkup(protocol, options={}) {
   if (protocol === "vnc") {
     const displayMode = ["scale","original","resize"].includes(String(options.display_mode)) ? String(options.display_mode) : "scale";
     const quality = Math.max(0, Math.min(9, Number(options.quality ?? 8)));
-    return `<div class="grid3 remote-display-grid"><div><label>${esc(tr("remote:auto.open_method", {defaultValue:"打开方式"}))}</label><select id="remote_vnc_client_mode"><option value="auto" ${!["embedded","system"].includes(options.client_mode) ? "selected" : ""}>${esc(tr("remote:auto.auto_embedded", {defaultValue:"自动（优先内置）"}))}</option><option value="embedded" ${options.client_mode === "embedded" ? "selected" : ""}>${esc(tr("remote:auto.terma_embedded", {defaultValue:"Terma 内置"}))}</option><option value="system" ${options.client_mode === "system" ? "selected" : ""}>${esc(tr("remote:auto.system_client", {defaultValue:"系统客户端"}))}</option></select></div><div><label>${esc(tr("remote:auto.display_mode", {defaultValue:"显示方式"}))}</label><select id="remote_vnc_display_mode"><option value="scale" ${displayMode === "scale" ? "selected" : ""}>${esc(tr("remote:auto.fit_window", {defaultValue:"适应窗口（推荐）"}))}</option><option value="original" ${displayMode === "original" ? "selected" : ""}>${esc(tr("remote:auto.original_pixels", {defaultValue:"原始像素"}))}</option><option value="resize" ${displayMode === "resize" ? "selected" : ""}>${esc(tr("remote:auto.follow_window", {defaultValue:"跟随窗口（服务器支持时）"}))}</option></select></div><div><label>${esc(tr("remote:auto.mouse_mode", {defaultValue:"鼠标模式"}))}</label><select id="remote_vnc_cursor_mode"><option value="auto" ${!["show","hide"].includes(options.cursor_mode) ? "selected" : ""}>${esc(tr("remote:auto.mouse_auto", {defaultValue:"自动（按远端平台）"}))}</option><option value="show" ${options.cursor_mode === "show" ? "selected" : ""}>${esc(tr("remote:auto.mouse_show", {defaultValue:"手动显示本地光标"}))}</option><option value="hide" ${options.cursor_mode === "hide" ? "selected" : ""}>${esc(tr("remote:auto.mouse_hide", {defaultValue:"手动隐藏本地光标"}))}</option></select></div></div><div class="remote-quality-setting"><div class="remote-quality-heading"><label for="remote_quality">${esc(tr("remote:auto.quality", {defaultValue:"画质"}))}</label><output id="remote_quality_value" for="remote_quality">${quality}</output></div><input id="remote_quality" type="range" min="0" max="9" step="1" value="${quality}" oninput="syncRemoteQualityValue(this)"><div class="remote-quality-scale"><span>${esc(tr("remote:auto.quality_low", {defaultValue:"0 · 更省流量"}))}</span><span>${esc(tr("remote:auto.quality_high", {defaultValue:"9 · 更清晰"}))}</span></div></div><div class="remote-display-help">${esc(tr("remote:auto.vnc_quality_hint", {defaultValue:"画质控制 JPEG 压缩质量，与分辨率不是同一项；两者越高通常越占带宽。VNC 由服务器按变化发送画面，没有通用且可靠的固定帧率设置。"}))}</div><div class="check-grid"><label class="checkline"><input id="remote_shared" type="checkbox" ${options.shared !== false ? "checked" : ""}>${esc(tr("remote:auto.shared_session", {defaultValue:"共享会话"}))}</label><label class="checkline"><input id="remote_view_only" type="checkbox" ${options.view_only ? "checked" : ""}>${esc(tr("remote:auto.view_only", {defaultValue:"仅查看"}))}</label><label class="checkline"><input id="remote_vnc_auto_sync_images" type="checkbox" ${options.auto_sync_images !== false ? "checked" : ""}>${esc(tr("remote:auto.auto_sync_images", {defaultValue:"自动双向同步图片"}))}</label></div><div class="remote-display-help">${esc(tr("remote:auto.auto_sync_images_hint", {defaultValue:"默认开启；仅在剪贴板自动同步开启、Terma 位于前台且 SSH 辅助支持图片时生效。"}))}</div>${remoteDesktopProtocolGuideMarkup("vnc")}<div class="grid remote-vnc-helper-grid"><div><label>${esc(tr("remote:auto.ssh_clipboard_helper", {defaultValue:"SSH 剪贴板辅助"}))}</label><select id="remote_vnc_ssh_connection"><option value="0">${esc(tr("remote:auto.match_same_host", {defaultValue:"自动匹配同主机"}))}</option>${xdmcpManagementConnectionOptions(options.source_ssh_connection_id)}</select></div><div class="connection-test-status remote-vnc-helper-note">${esc(tr("remote:auto.ssh_clipboard_hint", {defaultValue:"用于可靠传输中文剪贴板；Linux 还需 xclip/xsel 或 wl-clipboard。"}))}</div></div>`;
+    const performancePreset = vncPerformancePreset({quality});
+    return `<div class="grid3 remote-display-grid"><div><label>${esc(tr("remote:auto.open_method", {defaultValue:"打开方式"}))}</label><select id="remote_vnc_client_mode"><option value="auto" ${!["embedded","system"].includes(options.client_mode) ? "selected" : ""}>${esc(tr("remote:auto.auto_embedded", {defaultValue:"自动（优先内置）"}))}</option><option value="embedded" ${options.client_mode === "embedded" ? "selected" : ""}>${esc(tr("remote:auto.terma_embedded", {defaultValue:"Terma 内置"}))}</option><option value="system" ${options.client_mode === "system" ? "selected" : ""}>${esc(tr("remote:auto.system_client", {defaultValue:"系统客户端"}))}</option></select></div><div><label>${esc(tr("remote:auto.display_mode", {defaultValue:"显示方式"}))}</label><select id="remote_vnc_display_mode"><option value="scale" ${displayMode === "scale" ? "selected" : ""}>${esc(tr("remote:auto.fit_window", {defaultValue:"适应窗口（推荐）"}))}</option><option value="original" ${displayMode === "original" ? "selected" : ""}>${esc(tr("remote:auto.original_pixels", {defaultValue:"原始像素"}))}</option><option value="resize" ${displayMode === "resize" ? "selected" : ""}>${esc(tr("remote:auto.follow_window", {defaultValue:"跟随窗口（服务器支持时）"}))}</option></select></div><div><label>${esc(tr("remote:auto.mouse_mode", {defaultValue:"鼠标模式"}))}</label><select id="remote_vnc_cursor_mode"><option value="auto" ${!["show","hide"].includes(options.cursor_mode) ? "selected" : ""}>${esc(tr("remote:auto.mouse_auto", {defaultValue:"自动（按远端平台）"}))}</option><option value="show" ${options.cursor_mode === "show" ? "selected" : ""}>${esc(tr("remote:auto.mouse_show", {defaultValue:"手动显示本地光标"}))}</option><option value="hide" ${options.cursor_mode === "hide" ? "selected" : ""}>${esc(tr("remote:auto.mouse_hide", {defaultValue:"手动隐藏本地光标"}))}</option></select></div></div><div class="grid remote-vnc-performance-setting"><div><label for="remote_vnc_performance_preset">${esc(tr("remote:auto.performance_preset", {defaultValue:"性能预设"}))}</label><select id="remote_vnc_performance_preset" onchange="applyVncPerformancePreset(this.value)"><option value="balanced" ${performancePreset === "balanced" ? "selected" : ""}>${esc(tr("remote:auto.performance_balanced", {defaultValue:"平衡（画质 8）"}))}</option><option value="smooth" ${performancePreset === "smooth" ? "selected" : ""}>${esc(tr("remote:auto.performance_smooth", {defaultValue:"流畅优先（画质 6）"}))}</option><option value="custom" ${performancePreset === "custom" ? "selected" : ""}>${esc(tr("remote:auto.performance_custom", {defaultValue:"自定义"}))}</option></select></div><div class="remote-display-help">${esc(tr("remote:auto.performance_preset_hint", {defaultValue:"流畅优先会把 JPEG 画质降到 6，减少带宽和解码压力；不会关闭剪贴板，也不会修改远端分辨率。"}))}</div></div><div class="remote-quality-setting"><div class="remote-quality-heading"><label for="remote_quality">${esc(tr("remote:auto.quality", {defaultValue:"画质"}))}</label><output id="remote_quality_value" for="remote_quality">${quality}</output></div><input id="remote_quality" type="range" min="0" max="9" step="1" value="${quality}" oninput="syncRemoteQualityValue(this)"><div class="remote-quality-scale"><span>${esc(tr("remote:auto.quality_low", {defaultValue:"0 · 更省流量"}))}</span><span>${esc(tr("remote:auto.quality_high", {defaultValue:"9 · 更清晰"}))}</span></div></div><div class="remote-display-help">${esc(tr("remote:auto.vnc_quality_hint", {defaultValue:"画质控制 JPEG 压缩质量，与分辨率不是同一项；两者越高通常越占带宽。VNC 由服务器按变化发送画面，没有通用且可靠的固定帧率设置。"}))}</div><div class="check-grid"><label class="checkline"><input id="remote_shared" type="checkbox" ${options.shared !== false ? "checked" : ""}>${esc(tr("remote:auto.shared_session", {defaultValue:"共享会话"}))}</label><label class="checkline"><input id="remote_view_only" type="checkbox" ${options.view_only ? "checked" : ""}>${esc(tr("remote:auto.view_only", {defaultValue:"仅查看"}))}</label><label class="checkline"><input id="remote_vnc_auto_sync_images" type="checkbox" ${options.auto_sync_images !== false ? "checked" : ""}>${esc(tr("remote:auto.auto_sync_images", {defaultValue:"自动双向同步图片"}))}</label></div><div class="remote-display-help">${esc(tr("remote:auto.auto_sync_images_hint", {defaultValue:"默认开启；仅在剪贴板自动同步开启、Terma 位于前台且 SSH 辅助支持图片时生效。"}))}</div>${remoteDesktopProtocolGuideMarkup("vnc")}<div class="grid remote-vnc-helper-grid"><div><label>${esc(tr("remote:auto.ssh_clipboard_helper", {defaultValue:"SSH 剪贴板辅助"}))}</label><select id="remote_vnc_ssh_connection"><option value="0">${esc(tr("remote:auto.match_same_host", {defaultValue:"自动匹配同主机"}))}</option>${xdmcpManagementConnectionOptions(options.source_ssh_connection_id)}</select></div><div class="connection-test-status remote-vnc-helper-note">${esc(tr("remote:auto.ssh_clipboard_hint", {defaultValue:"用于可靠传输中文剪贴板；Linux 还需 xclip/xsel 或 wl-clipboard。"}))}</div></div>`;
   }
   if (protocol === "xdmcp") {
     const windowMode = normalizedXdmcpWindowMode(options);

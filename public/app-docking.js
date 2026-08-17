@@ -551,6 +551,8 @@ renderTabs = function(options={}) {
 };
 
 function syncWorkspaceTabActivation(pane, key) {
+  const tab = tabs.find(item => item.key === key);
+  if (tab) tab.activityState = "";
   for (const visiblePane of workspaceVisiblePanes()) {
     const paneElement = workspacePaneElement(visiblePane.id);
     if (!paneElement) continue;
@@ -559,11 +561,13 @@ function syncWorkspaceTabActivation(pane, key) {
       const active = button.dataset.tabKey === visiblePane.activeTabKey;
       button.classList.toggle("active", active);
       button.setAttribute("aria-selected", String(active));
-      if (active) button.classList.remove("activity-info", "activity-success", "activity-error");
+      if (active) {
+        for (const className of [...button.classList]) {
+          if (className.startsWith("activity-")) button.classList.remove(className);
+        }
+      }
     }
   }
-  const tab = tabs.find(item => item.key === key);
-  if (tab) tab.activityState = "";
   syncWorkspaceLegacyTabIds();
   renderWorkspaceGroupBar();
   revealWorkspaceTab(key);
@@ -1186,7 +1190,6 @@ showTabContextMenu = function(event, key) {
     ...(editConnectionAction ? [[tr("common:command_palette.edit_connection", {defaultValue:"Edit connection"}), () => { hideTabContextMenu(); editConnectionAction(); }, true, "pencil"]] : []),
     [tr("navigation:auto.combine_workspace", {defaultValue:"Combine into workspace"}), () => beginWorkspaceGroupSelection(key), true, "combine"],
     [tr(tab.pinned ? "common:auto.unpin_tab" : "common:auto.pin_tab", {defaultValue:tab.pinned ? "Unpin tab" : "Pin tab"}), () => toggleWorkspaceTabPinned(key), true, "pin"],
-    ...(tab.kind === "terminal" ? [[tr(tab.notificationsMuted ? "navigation:auto.enable_tab_notifications" : "navigation:auto.mute_tab_notifications", {defaultValue:tab.notificationsMuted ? "Enable notifications for this tab" : "Mute notifications for this tab"}), () => toggleTabNotifications(key), true, tab.notificationsMuted ? "bell" : "bell-off"]] : []),
     [tr("common:auto.duplicate_tab", {defaultValue:"Duplicate tab"}), () => duplicateWorkspaceTab(key), workspaceCanDuplicateTab(tab), "copy"],
     [tr("common:auto.move_left", {defaultValue:"Move left"}), () => moveWorkspaceTab(key, -1), index > 0, "arrow-left"],
     [tr("common:auto.move_right", {defaultValue:"Move right"}), () => moveWorkspaceTab(key, 1), index < paneTabs.length - 1, "arrow-right"],

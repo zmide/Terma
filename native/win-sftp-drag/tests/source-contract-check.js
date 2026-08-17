@@ -58,7 +58,9 @@ assert.match(
 );
 assert.match(source, /\{"startX11WindowGuard", nullptr, StartX11WindowGuard/);
 assert.match(source, /\{"stopX11WindowGuard", nullptr, StopX11WindowGuard/);
+assert.match(source, /\{"getClipboardSequenceNumber"[\s\S]*GetClipboardSequenceNumber\(\)/);
 assert.match(entry, /withX11WindowGuardFallback[\s\S]*startX11WindowGuard[\s\S]*stopX11WindowGuard/);
+assert.match(entry, /getClipboardSequenceNumber/);
 assert.match(
   entry,
   /compatibleFallback[\s\S]*typeof loaded\.startX11WindowGuard === "function"[\s\S]*typeof loaded\.stopX11WindowGuard === "function"/,
@@ -67,6 +69,7 @@ assert.match(
 assert.match(types, /startX11WindowGuard\(processId: number\): boolean/);
 assert.match(types, /stopX11WindowGuard\(\): boolean/);
 assert.match(types, /getX11WindowGuardDiagnostics\(\): WindowsX11WindowGuardDiagnostics/);
+assert.match(types, /getClipboardSequenceNumber\(\): number/);
 
 assert.match(
   source,

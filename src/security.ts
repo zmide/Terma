@@ -839,6 +839,15 @@ function securityDiagnostics() {
   };
 }
 
+function securitySettingsRevision() {
+  try {
+    const stat = fs.statSync(SECURITY_FILE);
+    return `${Math.round(stat.mtimeMs)}:${stat.size}`;
+  } catch {
+    return "0:0";
+  }
+}
+
 function applySessionManagementSettings(settings) {
   sessions.configure({
     ttlMs: normalizeBoundedInteger(settings?.session_ttl_minutes, DEFAULT_SESSION_TTL_MINUTES, SESSION_LIMITS.ttl_minutes) * 60 * 1000,
@@ -899,6 +908,7 @@ module.exports = {
   webSocketOriginAllowed,
   secureHeaders,
   securityDiagnostics,
+  securitySettingsRevision,
   sessionCookie,
   setDesktopAuthToken,
   setDesktopCapabilityRuntimeListenHosts,

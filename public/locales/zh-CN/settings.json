@@ -1,8 +1,20 @@
 {
   "general": {
-    "description": "管理桌面端行为和工作区恢复。",
+    "description": "管理桌面端行为、工作区恢复和后台刷新。",
     "save": "保存通用设置",
     "title": "通用设置"
+  },
+  "background_refresh": {
+    "title": "后台同步与刷新间隔",
+    "description": "设置前台使用时的基础检查间隔；窗口隐藏或图形渲染繁忙时会自动降低频率。",
+    "ui_state": "全局数据变化检查",
+    "sftp_active": "SFTP 当前标签状态检查",
+    "sftp_background": "SFTP 其他标签状态检查",
+    "vnc_local_image": "VNC 本机图片兜底检查",
+    "vnc_remote_image": "VNC 远端图片检查",
+    "seconds": "秒",
+    "hint": "VNC 远端图片默认每 3 秒检查一次；只在图片指纹变化后读取完整图片。连接保活、断线检测和协议超时不受这里影响。",
+    "interval_invalid": "刷新间隔必须是 1-60 秒之间的整数。"
   },
   "subtitle": "访问保护、通知、运行信息与开源许可。",
   "title": "设置",
@@ -532,6 +544,9 @@
     "check_again": "重新检查",
     "check_failed": "更新检查失败",
     "check_unavailable": "暂时无法获取更新信息",
+    "invalid_release_data": "GitHub Releases 返回的正式版本数据无效",
+    "check_timeout": "检查更新超时，请稍后重试",
+    "no_formal_release": "GitHub 仓库尚未发布正式版本",
     "failed": "失败",
     "current_unknown": "当前版本未知",
     "auto_refresh_hint": "页面会自动刷新更新状态",

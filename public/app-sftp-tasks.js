@@ -4,6 +4,11 @@ const SFTP_TASK_CENTER_MIN_HEIGHT = 240;
 const SFTP_TASK_CENTER_VIEWPORT_GAP = 12;
 const SFTP_TASK_CENTER_SIZE_STORAGE_KEY = "sftpTaskCenterSizeV1";
 let sftpTaskCenterResize = null;
+let sftpBackgroundRefreshInFlight = false;
+let sftpBackgroundVisibilityBound = false;
+let sftpLastJobsPollAt = 0;
+let sftpLastActiveSessionStatusPollAt = 0;
+let sftpLastAllSessionStatusPollAt = 0;
 
 function savedSftpTaskCenterSize() {
   try {
@@ -148,10 +153,62 @@ function handleSftpTaskCenterResizeKey(event) {
 
 function startSftpJobsTimer() {
   if (sftpJobsTimer) return;
-  sftpJobsTimer = setInterval(() => {
-    if (!document.hidden) refreshSftpJobs();
-    void refreshActiveSftpSessionStatus();
-  }, 3000);
+  const schedule = delay => {
+    clearTimeout(sftpJobsTimer);
+    sftpJobsTimer = setTimeout(run, Math.max(0, Number(delay || 0)));
+  };
+  const run = async () => {
+    if (sftpBackgroundRefreshInFlight) return schedule(1000);
+    sftpBackgroundRefreshInFlight = true;
+    let nextDelay = 10000;
+    try {
+      const now = Date.now();
+      const drawer = document.getElementById("sftpTaskCenterDrawer");
+      const hasActiveJobs = sftpLatestJobs.some(job => SFTP_ACTIVE_JOB_STATUSES.has(job.status));
+      const drawerOpen = Boolean(drawer && !drawer.hidden);
+      const vncRendering = typeof hasActiveEmbeddedVncRendering === "function" && hasActiveEmbeddedVncRendering();
+      const activeSftpTab = !document.hidden && tabs.find(tab => tab.key === activeTabKey && tab.kind === "sftp");
+      const jobsInterval = hasActiveJobs ? 2000 : drawerOpen ? 3000 : vncRendering ? 15000 : 10000;
+      const activeSessionInterval = typeof runtimeConfiguredBackgroundIntervalMs === "function"
+        ? runtimeConfiguredBackgroundIntervalMs("sftp_active_status_poll_interval_ms", 5000)
+        : 5000;
+      const allSessionsInterval = typeof runtimeConfiguredBackgroundIntervalMs === "function"
+        ? runtimeConfiguredBackgroundIntervalMs("sftp_background_status_poll_interval_ms", 15000)
+        : 15000;
+      nextDelay = document.hidden ? 30000 : Math.min(jobsInterval, activeSftpTab ? activeSessionInterval : allSessionsInterval);
+      const tasks = [];
+      if (!document.hidden && now - sftpLastJobsPollAt >= jobsInterval) {
+        sftpLastJobsPollAt = now;
+        tasks.push(Promise.resolve(refreshSftpJobs()).catch(() => {}));
+      }
+      const allSessionsDue = !document.hidden && now - sftpLastAllSessionStatusPollAt >= allSessionsInterval;
+      const activeSessionDue = activeSftpTab && now - sftpLastActiveSessionStatusPollAt >= activeSessionInterval;
+      if (allSessionsDue) {
+        sftpLastAllSessionStatusPollAt = now;
+        if (activeSftpTab) sftpLastActiveSessionStatusPollAt = now;
+        tasks.push(Promise.resolve(refreshActiveSftpSessionStatus()).catch(() => {}));
+      } else if (activeSessionDue) {
+        sftpLastActiveSessionStatusPollAt = now;
+        tasks.push(Promise.resolve(refreshActiveSftpSessionStatus(activeSftpTab.key)).catch(() => {}));
+      }
+      if (tasks.length) await Promise.allSettled(tasks);
+    } finally {
+      sftpBackgroundRefreshInFlight = false;
+      schedule(nextDelay);
+    }
+  };
+  if (!sftpBackgroundVisibilityBound) {
+    sftpBackgroundVisibilityBound = true;
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) {
+        sftpLastJobsPollAt = 0;
+        sftpLastActiveSessionStatusPollAt = 0;
+        sftpLastAllSessionStatusPollAt = 0;
+        schedule(0);
+      }
+    });
+  }
+  schedule(3000);
 }
 
 function sftpJobProgress(job) {
@@ -508,7 +565,7 @@ function bindSftpTaskLogViewStates(root=document.getElementById("sftpTaskCenterL
 function renderSftpTaskCenterDrawer(jobs=sftpLatestJobs) {
   const drawer = document.getElementById("sftpTaskCenterDrawer");
   const list = document.getElementById("sftpTaskCenterList");
-  if (!drawer || !list) return;
+  if (!drawer || !list || drawer.hidden) return;
   captureSftpTaskLogViewStates(list);
   const {current, failed, history, activeCount, failedCount} = sftpTaskCollections(jobs);
   const showingHistory = sftpTaskCenterView === "history";

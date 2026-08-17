@@ -3,6 +3,16 @@ function noVncRfbClass() {
   return noVncRfbPromise;
 }
 
+function hasActiveEmbeddedVncRendering() {
+  if (window.termaVncDetached) return true;
+  for (const session of vncSessions.values()) {
+    if (!session?.rfb || (!session.connected && !session.connecting)) continue;
+    if (session.presentation !== "viewer") continue;
+    if (session.screen?.isConnected || session.workspace?.isConnected) return true;
+  }
+  return false;
+}
+
 function normalizeVncRemotePlatform(value="") {
   const platform = String(value || "").trim().toLowerCase();
   if (["darwin", "mac", "macos", "osx"].includes(platform)) return "macos";

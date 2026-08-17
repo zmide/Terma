@@ -7,12 +7,56 @@ const productivityState = {
   broadcastTargets:new Set(),
   broadcastPaused:false,
   externalEditTimers:new Map(),
+  externalEditPollGenerations:new Map(),
   externalEditPrompts:new Set(),
   externalEditPromptQueue:[],
   externalEditPromptActive:false,
   externalEditPromptSignatures:new Map(),
   externalEditObserved:new Map()
 };
+
+const SFTP_EXTERNAL_EDIT_POLL_INTERVAL_MS = 1200;
+const SFTP_EXTERNAL_EDIT_VNC_POLL_INTERVAL_MS = 3000;
+const SFTP_EXTERNAL_EDIT_HIDDEN_POLL_INTERVAL_MS = 8000;
+
+function sftpExternalEditPollDelay() {
+  if (typeof document !== "undefined" && document.hidden) return SFTP_EXTERNAL_EDIT_HIDDEN_POLL_INTERVAL_MS;
+  if (typeof hasActiveEmbeddedVncRendering === "function" && hasActiveEmbeddedVncRendering()) return SFTP_EXTERNAL_EDIT_VNC_POLL_INTERVAL_MS;
+  return SFTP_EXTERNAL_EDIT_POLL_INTERVAL_MS;
+}
+
+function stopSftpExternalEditPolling(id) {
+  const key = String(id || "");
+  if (!key) return;
+  const timer = productivityState.externalEditTimers.get(key);
+  if (timer) clearTimeout(timer);
+  productivityState.externalEditTimers.delete(key);
+  productivityState.externalEditPollGenerations.set(key, Number(productivityState.externalEditPollGenerations.get(key) || 0) + 1);
+}
+
+function scheduleSftpExternalEditPoll(id, generation, delay=sftpExternalEditPollDelay()) {
+  const key = String(id || "");
+  if (!key || generation !== Number(productivityState.externalEditPollGenerations.get(key) || 0)) return;
+  const timer = setTimeout(async () => {
+    productivityState.externalEditTimers.delete(key);
+    if (generation !== Number(productivityState.externalEditPollGenerations.get(key) || 0)) return;
+    let keepPolling = true;
+    try { keepPolling = await pollSftpExternalEdit(key); }
+    catch { keepPolling = true; }
+    if (!keepPolling || generation !== Number(productivityState.externalEditPollGenerations.get(key) || 0)) return;
+    scheduleSftpExternalEditPoll(key, generation);
+  }, Math.max(0, Number(delay || 0)));
+  productivityState.externalEditTimers.set(key, timer);
+}
+
+function startSftpExternalEditPolling(id) {
+  const key = String(id || "");
+  if (!key) return;
+  stopSftpExternalEditPolling(key);
+  const generation = Number(productivityState.externalEditPollGenerations.get(key) || 0) + 1;
+  productivityState.externalEditPollGenerations.set(key, generation);
+  scheduleSftpExternalEditPoll(key, generation, SFTP_EXTERNAL_EDIT_POLL_INTERVAL_MS);
+}
 
 function externalEditorSettings() {
   return {
@@ -49,17 +93,15 @@ async function openSftpExternalEdit(connectionId, remotePath) {
   progress.finish(externalEditSavePolicy().save_rule === "overwrite"
     ? tr("sftp:external_edit.opened_overwrite", {defaultValue:"外部编辑器已打开；保存后会自动覆盖远端"})
     : tr("sftp:external_edit.opened_prompt", {defaultValue:"外部编辑器已打开；保存后会询问是否上传到远端"}), 3500);
-  const timer = setInterval(() => pollSftpExternalEdit(session.id), 1200);
-  productivityState.externalEditTimers.set(session.id, timer);
+  startSftpExternalEditPolling(session.id);
 }
 
 async function pollSftpExternalEdit(id) {
   let session;
   try { session = await api(`/api/sftp/external-edits/${id}`); }
   catch {
-    clearInterval(productivityState.externalEditTimers.get(id));
-    productivityState.externalEditTimers.delete(id);
-    return;
+    stopSftpExternalEditPolling(id);
+    return false;
   }
   if (session.status === "synced") {
     const signature = `${session.status}:${session.updated_at || ""}`;
@@ -72,8 +114,9 @@ async function pollSftpExternalEdit(id) {
       }
     }
   }
-  if (!new Set(["modified", "conflict"]).has(session.status)) return;
+  if (!new Set(["modified", "conflict"]).has(session.status)) return true;
   await promptSftpExternalEdit(session);
+  return true;
 }
 
 async function promptSftpExternalEdit(session, force=false) {
@@ -195,8 +238,7 @@ function sftpExternalEditStatusLabel(status) {
 
 async function stopSftpExternalEdit(id) {
   await api(`/api/sftp/external-edits/${encodeURIComponent(id)}`, {method:"DELETE"});
-  clearInterval(productivityState.externalEditTimers.get(id));
-  productivityState.externalEditTimers.delete(id);
+  stopSftpExternalEditPolling(id);
   productivityState.externalEditPromptSignatures.delete(id);
   productivityState.externalEditPrompts.delete(id);
   productivityState.externalEditPromptQueue = productivityState.externalEditPromptQueue.filter(session => String(session?.id || "") !== String(id));

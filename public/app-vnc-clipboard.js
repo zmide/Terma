@@ -533,11 +533,15 @@ function stopVncClipboardPolling(session) {
   if (!session) return;
   session.clipboardPollGeneration = Number(session.clipboardPollGeneration || 0) + 1;
   if (session.clipboardPollTimer) clearInterval(session.clipboardPollTimer);
-  if (session.clipboardImagePollTimer) clearTimeout(session.clipboardImagePollTimer);
-  if (session.clipboardImageIdleHandle && typeof cancelIdleCallback === "function") cancelIdleCallback(session.clipboardImageIdleHandle);
+  if (session.clipboardLocalImagePollTimer) clearTimeout(session.clipboardLocalImagePollTimer);
+  if (session.clipboardRemoteImagePollTimer) clearTimeout(session.clipboardRemoteImagePollTimer);
+  if (session.clipboardLocalImageIdleHandle && typeof cancelIdleCallback === "function") cancelIdleCallback(session.clipboardLocalImageIdleHandle);
+  if (session.clipboardRemoteImageIdleHandle && typeof cancelIdleCallback === "function") cancelIdleCallback(session.clipboardRemoteImageIdleHandle);
   session.clipboardPollTimer = null;
-  session.clipboardImagePollTimer = null;
-  session.clipboardImageIdleHandle = null;
+  session.clipboardLocalImagePollTimer = null;
+  session.clipboardRemoteImagePollTimer = null;
+  session.clipboardLocalImageIdleHandle = null;
+  session.clipboardRemoteImageIdleHandle = null;
 }
 
 function resetVncClipboardBridgeWriteState(session) {
@@ -551,6 +555,8 @@ function resetVncClipboardBridgeWriteState(session) {
   session.clipboardImageRemoteReadInFlight = false;
   session.clipboardImageLocalReadInFlight = false;
   session.clipboardImageLastSeenLocalHash = "";
+  session.clipboardImageLastObservedRevision = "";
+  session.clipboardImageLastProcessedRevision = "";
   session.remoteClipboardImageHash = "";
 }
 
@@ -648,6 +654,7 @@ async function readVncLocalClipboardSnapshot(includeImage=false) {
       textAvailable:payload?.text_available === true,
       text:payload?.text_available === true ? String(payload.text ?? "") : "",
       imageAvailable:payload?.image_available === true,
+      imageRevision:String(payload?.image_revision || ""),
       image
     };
   }
@@ -669,9 +676,9 @@ async function readVncLocalClipboardSnapshot(includeImage=false) {
         text = await (await item.getType(textType)).text();
       }
     }
-    return {textAvailable, text, imageAvailable, image};
+    return {textAvailable, text, imageAvailable, imageRevision:"", image};
   }
-  return {textAvailable:true, text:await readVncLocalClipboard(), imageAvailable:false, image:null};
+  return {textAvailable:true, text:await readVncLocalClipboard(), imageAvailable:false, imageRevision:"", image:null};
 }
 
 async function sendVncClipboardImageBytes(session, value, announce=false, knownHash="") {
@@ -767,7 +774,7 @@ function vncClipboardAutomaticImageSyncEnabled(session) {
     && vncClipboardSessionVisible(session));
 }
 
-async function syncVncClipboardImageFromLocal(session) {
+async function syncVncClipboardImageFromLocal(session, options={}) {
   if (!vncClipboardAutomaticImageSyncEnabled(session) || session.clipboardImageLocalReadInFlight) return false;
   const readToken = Number(session.clipboardImageLocalReadToken || 0) + 1;
   session.clipboardImageLocalReadToken = readToken;
@@ -775,12 +782,23 @@ async function syncVncClipboardImageFromLocal(session) {
   try {
     const transport = await ensureVncClipboardTransport(session);
     if (!vncClipboardImageTransportAvailable({...session, clipboardTransport:transport})) return false;
+    const metadata = options.metadata || await readVncLocalClipboardSnapshot(false);
+    const revision = String(metadata.imageRevision || "");
+    session.clipboardImageLastObservedRevision = revision;
+    if (!metadata.imageAvailable) {
+      session.clipboardImageLastSeenLocalHash = "";
+      session.clipboardImageLastProcessedRevision = revision;
+      return false;
+    }
+    if (!options.forceContentRead && revision && revision === session.clipboardImageLastProcessedRevision) return false;
     const snapshot = await readVncLocalClipboardSnapshot(true);
     if (!snapshot.imageAvailable || !snapshot.image) {
       session.clipboardImageLastSeenLocalHash = "";
+      session.clipboardImageLastProcessedRevision = String(snapshot.imageRevision || revision);
       return false;
     }
     const hash = await vncClipboardImageSha256(snapshot.image);
+    session.clipboardImageLastProcessedRevision = String(snapshot.imageRevision || revision);
     if (hash === session.clipboardImageLastSeenLocalHash) return false;
     session.clipboardImageLastSeenLocalHash = hash;
     if (hash === session.remoteClipboardImageHash) return false;
@@ -1018,7 +1036,14 @@ async function syncVncClipboardFromLocal(session) {
   session.clipboardReadInFlight = true;
   try {
     const snapshot = await readVncLocalClipboardSnapshot(false);
-    if (snapshot.imageAvailable) return false;
+    if (snapshot.imageAvailable) {
+      const revision = String(snapshot.imageRevision || "");
+      if (session.clipboardAutoSyncImages && (!revision || revision !== session.clipboardImageLastObservedRevision)) {
+        session.clipboardImageLastObservedRevision = revision;
+        void syncVncClipboardImageFromLocal(session, {metadata:snapshot});
+      }
+      return false;
+    }
     session.clipboardImageLastSeenLocalHash = "";
     if (!snapshot.textAvailable) return false;
     const text = snapshot.text;
@@ -1053,34 +1078,82 @@ function startVncClipboardPolling(session) {
     void syncVncClipboardFromLocal(session);
     void pollVncRemoteClipboardBridge(session);
   }, VNC_CLIPBOARD_POLL_INTERVAL_MS);
-  if (session.clipboardAutoSyncImages) scheduleVncClipboardImagePoll(session, VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS, generation);
+  if (session.clipboardAutoSyncImages) {
+    scheduleVncClipboardLocalImagePoll(session, vncClipboardLocalImagePollIntervalMs(), generation);
+    scheduleVncClipboardRemoteImagePoll(session, vncClipboardRemoteImagePollIntervalMs(), generation);
+  }
 }
 
-function scheduleVncClipboardImagePoll(session, delay=VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS, generation=Number(session?.clipboardPollGeneration || 0)) {
+function vncClipboardLocalImagePollIntervalMs() {
+  return typeof runtimeConfiguredBackgroundIntervalMs === "function"
+    ? runtimeConfiguredBackgroundIntervalMs("vnc_local_image_poll_interval_ms", VNC_CLIPBOARD_LOCAL_IMAGE_POLL_INTERVAL_MS)
+    : VNC_CLIPBOARD_LOCAL_IMAGE_POLL_INTERVAL_MS;
+}
+
+function vncClipboardRemoteImagePollIntervalMs() {
+  return typeof runtimeConfiguredBackgroundIntervalMs === "function"
+    ? runtimeConfiguredBackgroundIntervalMs("vnc_remote_image_poll_interval_ms", VNC_CLIPBOARD_REMOTE_IMAGE_POLL_INTERVAL_MS)
+    : VNC_CLIPBOARD_REMOTE_IMAGE_POLL_INTERVAL_MS;
+}
+
+function scheduleVncClipboardLocalImagePoll(session, delay=vncClipboardLocalImagePollIntervalMs(), generation=Number(session?.clipboardPollGeneration || 0)) {
   if (!session?.clipboardAutoSyncImages || !session.clipboardAutoSync || !session.connected || generation !== Number(session.clipboardPollGeneration || 0)) return;
-  if (session.clipboardImagePollTimer) clearTimeout(session.clipboardImagePollTimer);
-  session.clipboardImagePollTimer = setTimeout(() => {
-    session.clipboardImagePollTimer = null;
+  if (session.clipboardLocalImagePollTimer) clearTimeout(session.clipboardLocalImagePollTimer);
+  session.clipboardLocalImagePollTimer = setTimeout(() => {
+    session.clipboardLocalImagePollTimer = null;
     const recentlyActiveFor = Date.now() - Number(session.lastInteractionAt || 0);
     if (recentlyActiveFor < VNC_CLIPBOARD_IMAGE_INPUT_IDLE_MS) {
-      scheduleVncClipboardImagePoll(session, VNC_CLIPBOARD_IMAGE_INPUT_IDLE_MS - recentlyActiveFor, generation);
+      scheduleVncClipboardLocalImagePoll(session, VNC_CLIPBOARD_IMAGE_INPUT_IDLE_MS - recentlyActiveFor, generation);
       return;
     }
     const run = async () => {
-      session.clipboardImageIdleHandle = null;
+      session.clipboardLocalImageIdleHandle = null;
       try {
-        const sent = await syncVncClipboardImageFromLocal(session);
-        if (!sent) await pollVncRemoteClipboardImageBridge(session);
+        await syncVncClipboardImageFromLocal(session);
       } finally {
-        scheduleVncClipboardImagePoll(session, VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS, generation);
+        scheduleVncClipboardLocalImagePoll(session, vncClipboardLocalImagePollIntervalMs(), generation);
       }
     };
     if (typeof requestIdleCallback === "function") {
-      session.clipboardImageIdleHandle = requestIdleCallback(() => { void run(); }, {timeout:2500});
+      session.clipboardLocalImageIdleHandle = requestIdleCallback(() => { void run(); }, {timeout:1000});
     } else {
       void run();
     }
   }, Math.max(0, Number(delay || 0)));
+}
+
+function scheduleVncClipboardRemoteImagePoll(session, delay=vncClipboardRemoteImagePollIntervalMs(), generation=Number(session?.clipboardPollGeneration || 0)) {
+  if (!session?.clipboardAutoSyncImages || !session.clipboardAutoSync || !session.connected || generation !== Number(session.clipboardPollGeneration || 0)) return;
+  if (session.clipboardRemoteImagePollTimer) clearTimeout(session.clipboardRemoteImagePollTimer);
+  session.clipboardRemoteImagePollTimer = setTimeout(() => {
+    session.clipboardRemoteImagePollTimer = null;
+    const run = async () => {
+      session.clipboardRemoteImageIdleHandle = null;
+      try {
+        await pollVncRemoteClipboardImageBridge(session);
+      } finally {
+        scheduleVncClipboardRemoteImagePoll(session, vncClipboardRemoteImagePollIntervalMs(), generation);
+      }
+    };
+    void run();
+  }, Math.max(0, Number(delay || 0)));
+}
+
+function refreshVncClipboardImagePollingIntervals() {
+  if (typeof vncSessions === "undefined" || !vncSessions?.values) return;
+  for (const session of vncSessions.values()) {
+    if (!session?.connected || !session.clipboardAutoSync || !session.clipboardAutoSyncImages) continue;
+    startVncClipboardPolling(session);
+  }
+}
+
+async function syncVncClipboardImagesAfterFocus() {
+  const tasks = [];
+  for (const session of vncSessions.values()) {
+    if (!vncClipboardAutomaticImageSyncEnabled(session)) continue;
+    tasks.push(syncVncClipboardImageFromLocal(session));
+  }
+  if (tasks.length) await Promise.allSettled(tasks);
 }
 
 async function pollVncRemoteClipboardBridge(session, force=false) {

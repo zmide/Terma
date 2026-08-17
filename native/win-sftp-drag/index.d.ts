@@ -95,6 +95,7 @@ export interface WindowsX11WindowGuardDiagnostics {
 }
 
 export function probe(): WindowsSftpDragProbe;
+export function getClipboardSequenceNumber(): number;
 export function startX11WindowGuard(processId: number): boolean;
 export function stopX11WindowGuard(): boolean;
 export function getX11WindowGuardDiagnostics(): WindowsX11WindowGuardDiagnostics;

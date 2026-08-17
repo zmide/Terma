@@ -3812,6 +3812,14 @@ napi_value Initialize(napi_env env, napi_value exports) {
   napi_property_descriptor properties[] = {
       {"probe", nullptr, Probe, nullptr, nullptr, nullptr, napi_default,
        nullptr},
+      {"getClipboardSequenceNumber", nullptr,
+       [](napi_env callback_env, napi_callback_info) -> napi_value {
+         napi_value result;
+         napi_create_uint32(callback_env, GetClipboardSequenceNumber(),
+                            &result);
+         return result;
+       },
+       nullptr, nullptr, nullptr, napi_default, nullptr},
       {"startX11WindowGuard", nullptr, StartX11WindowGuard, nullptr, nullptr,
        nullptr, napi_default, nullptr},
       {"stopX11WindowGuard", nullptr, StopX11WindowGuard, nullptr, nullptr,

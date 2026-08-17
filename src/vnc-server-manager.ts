@@ -1,7 +1,6 @@
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { publicError } = require("./public-error");
 const { componentInstallCommand, componentInstallPlan } = require("./remote-component-installer");
-const { connectVncSocket } = require("./vnc-handshake");
 const { XRDP_RENDER_PROBE_SCRIPT, createVncRenderingDiagnostics } = require("./remote-graphics-rendering");
 const { selectRemoteProbeLines } = require("./remote-probe-protocol");
 const { formatRemoteEndpoint } = require("./remote-host");
@@ -1974,7 +1973,7 @@ async function testVncProfile(id: number, dependencies: any = {}) {
   if (!profile) throw publicError("VNC_PROFILE_NOT_FOUND", "VNC 连接不存在");
   const port = numericPort(profile.port);
   const endpoint = formatRemoteEndpoint(profile.host, port);
-  const diagnosticsPromise = detectVncServer(profile, dependencies).catch(error => ({
+  const diagnostics: any = await detectVncServer(profile, dependencies).catch(error => ({
     diagnostics_available:false,
     platform:"unknown",
     port,
@@ -1984,35 +1983,31 @@ async function testVncProfile(id: number, dependencies: any = {}) {
     ssh_error:String(error?.message || error),
     guide:manualGuide({platform:"unknown"}, port)
   }));
-  const tcpPromise = connectVncSocket(profile.host, port);
-  try {
-    const connection = await tcpPromise;
-    connection.socket.destroy();
+  const serviceReady = diagnostics?.listening === true || diagnostics?.status === "ready";
+  if (serviceReady) {
     dependencies.updateRemoteProfileUsage?.(profile.id);
-    void diagnosticsPromise.catch(() => {});
     return {
       ok:true,
       protocol:"vnc",
       endpoint,
       client:"Terma 内置 VNC",
       status:"reachable",
-      diagnostics:{diagnostics_available:false, status:"reachable", port}
-    };
-  } catch (error) {
-    const diagnostics: any = await diagnosticsPromise;
-    const serviceReady = diagnostics?.listening === true || diagnostics?.status === "ready";
-    const blocked = serviceReady && String(diagnostics?.firewall || "").toLowerCase() === "active";
-    const status = blocked ? "blocked" : diagnostics?.status === "unknown" ? "unreachable" : diagnostics?.status;
-    const resolvedDiagnostics = blocked ? {...diagnostics, status:"blocked", recommended_action:"firewall"} : diagnostics;
-    return {
-      ok:false,
-      protocol:"vnc",
-      endpoint,
-      status,
-      message:String(error?.message || "VNC 服务不可访问"),
-      diagnostics:resolvedDiagnostics
+      reason_code:"vnc_service_ready_authentication_pending",
+      diagnostics
     };
   }
+  const status = diagnostics?.status === "unknown" ? "unverified" : diagnostics?.status;
+  return {
+    ok:false,
+    protocol:"vnc",
+    endpoint,
+    status,
+    reason_code:diagnostics?.diagnostics_available === false
+      ? "vnc_authenticated_session_required"
+      : "",
+    message:String(diagnostics?.ssh_error || ""),
+    diagnostics
+  };
 }
 
 module.exports = {

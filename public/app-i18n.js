@@ -515,6 +515,7 @@ const TERMA_I18N_SKIP_SELECTOR = [
   "script", "style", "code", "pre",
   ".xterm", ".terminal-box", ".log-content", ".log-line", ".ace_editor",
   ".sftp-name-cell", ".local-files-name-cell", ".connection-name",
+  ".vnc-screen", ".vnc-viewport", ".vnc-rfb",
   "[data-i18n-skip]"
 ].join(",");
 let termaI18nObserver = null;
@@ -750,7 +751,7 @@ function queueTermaAutomaticTranslations(root=document) {
     const roots = [...termaI18nPendingRoots];
     termaI18nPendingRoots.clear();
     if (!termaI18nInitialized) return;
-    if (roots.includes(document) || roots.length > 32) applyTermaAutomaticTranslations(document);
+    if (roots.includes(document) || roots.length > 128) applyTermaAutomaticTranslations(document);
     else roots.forEach(item => applyTermaAutomaticTranslations(item));
   });
 }

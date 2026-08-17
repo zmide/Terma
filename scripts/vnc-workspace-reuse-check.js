@@ -114,6 +114,8 @@ assert.match(connectEmbeddedVnc, /vnc-credential[\s\S]*?if \(!isCurrentConnectio
 assert.match(connectEmbeddedVnc, /addEventListener\("connect"[\s\S]*?!isCurrentConnection\(\)/, "an obsolete noVNC connection event must be ignored");
 assert.match(connectEmbeddedVnc, /catch \(error\) \{\s*if \(!isCurrentConnection\(\)\) return;/, "an obsolete connection failure must not alter the replacement tab");
 assert.match(connectEmbeddedVnc, /applyVncDisplayMode\(session, rfb\)/, "new noVNC sessions must apply the saved scale or remote-resize policy");
+assert.doesNotMatch(source, /scheduleInitialVncReconnect|initialReconnectTimer|initialReconnectUsed/, "VNC failures must not launch blind unauthenticated retries that can trigger a server blacklist");
+assert.match(connectEmbeddedVnc, /addEventListener\("disconnect"[\s\S]*?diagnoseEmbeddedVncDisconnect\(profile, key\)/, "a failed noVNC connection must move directly to diagnostics and wait for an explicit retry");
 
 assert.match(fullscreenSource, /document\.documentElement\.requestFullscreen\(\)/, "fullscreen must keep noVNC's body-level cursor overlay inside the fullscreen tree");
 assert.match(fullscreenSource, /document\.addEventListener\("fullscreenchange", syncVncFullscreenPresentation\)/, "fullscreen exit must restore the regular VNC presentation");

@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const path = require("node:path");
 const net = require("node:net");
 const os = require("node:os");
@@ -8,7 +9,9 @@ const { SSH_BIN, SSH_DIR, USER_SSH_DIR, LOG_DIR, DATA_DIR } = require("./config"
 const { all, getConnection, getForward, run, now, pidRunning } = require("./db");
 const { notifyIssue, notifyRecovery } = require("./notifications");
 const {
+  connectSsh,
   ensureConnectionHostTrusted,
+  normalizeSshTransportError,
   runPasswordCommand,
   shouldUseBuiltinSsh,
   startPasswordForward,
@@ -28,6 +31,194 @@ let healthMonitorTimer: any = null;
 let healthMonitorBusy = false;
 let healthMonitorTask: Promise<any> | null = null;
 const ssh2Forwards = new Map();
+const persistentSshCommandSessions = new Map();
+const PERSISTENT_SSH_COMMAND_IDLE_MS = 60 * 1000;
+const PERSISTENT_SSH_COMMAND_OUTPUT_LIMIT = 60000;
+
+function persistentSshCommandSessionKey(connection) {
+  const id = Number(connection?.id || 0);
+  return Number.isSafeInteger(id) && id !== 0
+    ? `id:${id}`
+    : `endpoint:${String(connection?.ssh_user || "")}@${String(connection?.ssh_host || "")}:${Number(connection?.ssh_port || 22)}`;
+}
+
+function persistentSshCommandFingerprint(connection) {
+  let identityRevision = "";
+  const identityFile = String(connection?.identity_file || "").trim();
+  if (identityFile) {
+    try {
+      const stat = fs.statSync(identityFile);
+      identityRevision = `${stat.size}:${stat.mtimeMs}`;
+    } catch {}
+  }
+  return crypto.createHash("sha256").update(JSON.stringify([
+    connection?.ssh_host,
+    Number(connection?.ssh_port || 22),
+    connection?.ssh_user,
+    connection?.auth_type || "key",
+    identityFile,
+    identityRevision,
+    connection?.ssh_password || "",
+    connection?.private_key_passphrase || "",
+    connection?.ssh_agent_mode || "auto",
+    Number(connection?.jump_connection_id || 0),
+    connection?.extra_args || "",
+    Number(connection?.connect_timeout_seconds || 10),
+    Number(connection?.keepalive_interval_seconds ?? 60),
+    Number(connection?.keepalive_count_max || 3)
+  ])).digest("hex");
+}
+
+function closePersistentSshCommandEntry(entry) {
+  if (!entry || entry.closed) return;
+  entry.closed = true;
+  clearTimeout(entry.idleTimer);
+  entry.idleTimer = null;
+  try { entry.client?.end(); } catch {}
+}
+
+function invalidatePersistentSshCommandEntry(key, entry) {
+  if (persistentSshCommandSessions.get(key) === entry) persistentSshCommandSessions.delete(key);
+  closePersistentSshCommandEntry(entry);
+}
+
+function schedulePersistentSshCommandIdleClose(key, entry) {
+  clearTimeout(entry.idleTimer);
+  if (entry.closed || entry.active > 0) return;
+  entry.idleTimer = setTimeout(() => invalidatePersistentSshCommandEntry(key, entry), PERSISTENT_SSH_COMMAND_IDLE_MS);
+  entry.idleTimer.unref?.();
+}
+
+async function persistentSshCommandEntry(connection) {
+  const key = persistentSshCommandSessionKey(connection);
+  const fingerprint = persistentSshCommandFingerprint(connection);
+  let entry: any = persistentSshCommandSessions.get(key);
+  if (entry && (entry.closed || entry.fingerprint !== fingerprint)) {
+    invalidatePersistentSshCommandEntry(key, entry);
+    entry = null;
+  }
+  if (!entry) {
+    entry = {
+      key,
+      fingerprint,
+      client:null,
+      promise:null,
+      active:0,
+      idleTimer:null,
+      closed:false
+    };
+    entry.promise = connectSsh(connection).then((client) => {
+      if (entry.closed || persistentSshCommandSessions.get(key) !== entry) {
+        try { client.end(); } catch {}
+        throw new Error("SSH 剪贴板会话已取消");
+      }
+      entry.client = client;
+      entry.promise = null;
+      const invalidate = () => invalidatePersistentSshCommandEntry(key, entry);
+      client.once("close", invalidate);
+      client.once("end", invalidate);
+      schedulePersistentSshCommandIdleClose(key, entry);
+      return client;
+    }).catch((error) => {
+      if (persistentSshCommandSessions.get(key) === entry) persistentSshCommandSessions.delete(key);
+      entry.closed = true;
+      entry.promise = null;
+      throw error;
+    });
+    persistentSshCommandSessions.set(key, entry);
+  }
+  clearTimeout(entry.idleTimer);
+  entry.idleTimer = null;
+  const client = entry.client || await entry.promise;
+  entry.active += 1;
+  let released = false;
+  return {
+    client,
+    release() {
+      if (released) return;
+      released = true;
+      entry.active = Math.max(0, entry.active - 1);
+      schedulePersistentSshCommandIdleClose(key, entry);
+    },
+    invalidate() {
+      invalidatePersistentSshCommandEntry(key, entry);
+    }
+  };
+}
+
+function appendSshOutputTail(current, chunk) {
+  const next = Buffer.concat([current, Buffer.from(chunk)]);
+  return next.length > PERSISTENT_SSH_COMMAND_OUTPUT_LIMIT
+    ? next.subarray(next.length - PERSISTENT_SSH_COMMAND_OUTPUT_LIMIT)
+    : next;
+}
+
+function runPersistentSshClientCommand(client, connection, command, timeoutMs, onChunk = null, options: any = {}) {
+  return new Promise((resolve) => {
+    let stdout = Buffer.alloc(0);
+    let stderr = Buffer.alloc(0);
+    let channel: any = null;
+    let settled = false;
+    const finish = (status, error = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        status,
+        stdout:decodeSshOutput(stdout, connection?.terminal_encoding),
+        stderr:decodeSshOutput(stderr, connection?.terminal_encoding),
+        error
+      });
+    };
+    const timer = setTimeout(() => {
+      try { channel?.close(); } catch {}
+      finish(null, new Error("SSH command timed out"));
+    }, timeoutMs);
+    client.exec(String(command || ""), (error, openedChannel) => {
+      if (error) return finish(null, normalizeSshTransportError(error, connection));
+      channel = openedChannel;
+      openedChannel.on("data", (chunk) => {
+        stdout = appendSshOutputTail(stdout, chunk);
+        onChunk?.(chunk, "stdout");
+      });
+      openedChannel.stderr?.on("data", (chunk) => {
+        stderr = appendSshOutputTail(stderr, chunk);
+        onChunk?.(chunk, "stderr");
+      });
+      openedChannel.on("error", (channelError) => finish(null, normalizeSshTransportError(channelError, connection)));
+      openedChannel.once("close", (code) => finish(code));
+      if (options.input !== undefined && options.input !== null) openedChannel.end(options.input);
+      else openedChannel.end();
+    });
+  });
+}
+
+function persistentSshRetryable(error) {
+  return /not connected|connection (?:closed|lost)|socket (?:closed|disconnected)|no existing session|econnreset/i.test(String(error?.message || error || ""));
+}
+
+async function runPersistentSshCommand(connection, command, timeoutMs = 60000, onChunk = null, options: any = {}) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const lease: any = await persistentSshCommandEntry(connection);
+    try {
+      const result: any = await runPersistentSshClientCommand(lease.client, connection, command, timeoutMs, onChunk, options);
+      if (isHostTrustError(result.error)) throw result.error;
+      if (attempt === 0 && result.error && persistentSshRetryable(result.error)) {
+        lease.invalidate();
+        continue;
+      }
+      return result;
+    } finally {
+      lease.release();
+    }
+  }
+  return {status:null, stdout:"", stderr:"", error:new Error("SSH 连接已断开")};
+}
+
+function closePersistentSshCommandSessions() {
+  for (const entry of persistentSshCommandSessions.values()) closePersistentSshCommandEntry(entry);
+  persistentSshCommandSessions.clear();
+}
 
 function forwardFailureDetails(message: unknown, fallbackCode = "ssh_failed", preserveMessage = true) {
   const raw = String(message || "").trim();
@@ -1236,6 +1427,16 @@ async function runSshCommandForConnectionStreaming(connection, command, timeoutM
   });
 }
 
+async function runPersistentSshCommandForConnection(connection, command, timeoutMs = 60000) {
+  if (!shouldUseBuiltinSsh(connection)) return runSshCommandForConnection(connection, command, timeoutMs);
+  return runPersistentSshCommand(connection, command, timeoutMs);
+}
+
+async function runPersistentSshCommandForConnectionStreaming(connection, command, timeoutMs = 60000, onChunk = null, options: any = {}) {
+  if (!shouldUseBuiltinSsh(connection)) return runSshCommandForConnectionStreaming(connection, command, timeoutMs, onChunk, options);
+  return runPersistentSshCommand(connection, command, timeoutMs, onChunk, options);
+}
+
 async function batchRunCommands(ids, command, options: any = {}) {
   const cleanIds = [...new Set((ids || []).map(Number).filter(Boolean))];
   const text = String(command || "").trim();
@@ -1302,6 +1503,9 @@ module.exports = {
   stopForwardHealthMonitor,
   testSsh,
   batchRunCommands,
+  closePersistentSshCommandSessions,
   runSshCommandForConnection,
-  runSshCommandForConnectionStreaming
+  runSshCommandForConnectionStreaming,
+  runPersistentSshCommandForConnection,
+  runPersistentSshCommandForConnectionStreaming
 };

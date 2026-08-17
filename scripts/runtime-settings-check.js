@@ -7,6 +7,11 @@ const { spawn } = require("node:child_process");
 const { readFrontendDomain } = require("./frontend-source");
 const {
   DEFAULT_NOTIFICATION_DISPLAY,
+  DEFAULT_UI_REFRESH_INTERVAL_MS,
+  DEFAULT_SFTP_ACTIVE_STATUS_POLL_INTERVAL_MS,
+  DEFAULT_SFTP_BACKGROUND_STATUS_POLL_INTERVAL_MS,
+  DEFAULT_VNC_LOCAL_IMAGE_POLL_INTERVAL_MS,
+  DEFAULT_VNC_REMOTE_IMAGE_POLL_INTERVAL_MS,
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,
   normalizeListenHosts,
@@ -93,7 +98,12 @@ async function main() {
     "toolbarPlacementSplitTerminal",
     "toolbarPlacementSplitSftp",
     "generalRemoteDesktopQuickOpen",
-    "generalVncQuickOpenNewWindow"
+    "generalVncQuickOpenNewWindow",
+    "generalUiRefreshIntervalSeconds",
+    "generalSftpActiveStatusIntervalSeconds",
+    "generalSftpBackgroundStatusIntervalSeconds",
+    "generalVncLocalImageIntervalSeconds",
+    "generalVncRemoteImageIntervalSeconds"
   ]) assert.equal(settingsFrontend.includes(`id=\"${controlId}\"`), true, `${controlId} setting is missing`);
   assert.equal(settingsFrontend.includes("syncWorkspaceToolbarPlacements()"), true);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.url_links_enabled, true);
@@ -105,10 +115,15 @@ async function main() {
   assert.match(DEFAULT_TERMINAL_SETTINGS.font_family, /monospace/);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 16,
+    schema_version: 17,
     language: "zh-CN",
     language_onboarding_version: 0,
     vnc_fullscreen_toolbar: "always",
+    ui_refresh_interval_ms: DEFAULT_UI_REFRESH_INTERVAL_MS,
+    sftp_active_status_poll_interval_ms: DEFAULT_SFTP_ACTIVE_STATUS_POLL_INTERVAL_MS,
+    sftp_background_status_poll_interval_ms: DEFAULT_SFTP_BACKGROUND_STATUS_POLL_INTERVAL_MS,
+    vnc_local_image_poll_interval_ms: DEFAULT_VNC_LOCAL_IMAGE_POLL_INTERVAL_MS,
+    vnc_remote_image_poll_interval_ms: DEFAULT_VNC_REMOTE_IMAGE_POLL_INTERVAL_MS,
     listen_hosts: ["127.0.0.1", "127.0.0.2"],
     listen_port: 8123,
     sftp_recycle_bin_enabled: false,
@@ -153,6 +168,10 @@ async function main() {
   assert.equal(normalizeRuntimeSettings({language:"invalid"}).language, "zh-CN");
   assert.equal(normalizeRuntimeSettings({vnc_fullscreen_toolbar:"edge"}).vnc_fullscreen_toolbar, "edge");
   assert.equal(normalizeRuntimeSettings({vnc_fullscreen_toolbar:"invalid"}).vnc_fullscreen_toolbar, "always");
+  assert.equal(normalizeRuntimeSettings({vnc_remote_image_poll_interval_ms:3000}).vnc_remote_image_poll_interval_ms, 3000);
+  assert.equal(normalizeRuntimeSettings({vnc_local_image_poll_interval_ms:9000}).vnc_local_image_poll_interval_ms, 9000);
+  assert.throws(() => normalizeRuntimeSettings({ui_refresh_interval_ms:500}), /全局数据检查间隔/);
+  assert.throws(() => normalizeRuntimeSettings({sftp_background_status_poll_interval_ms:61000}), /SFTP 后台标签状态检查间隔/);
   assert.equal(normalizeRuntimeSettings(
     {notification_display:{progress:{success_duration_ms:null}}},
     {notification_display:{progress:{enabled:true, success_duration_ms:5000, error_duration_ms:8000}}}
@@ -417,12 +436,26 @@ async function main() {
 
     const generalSaved = await request(base, "/api/runtime-settings", {
       method: "PUT",
-      body: JSON.stringify({ sftp_max_open_file_size_mb: 12, sftp_download_directory:path.join(temporaryRoot, "downloads"), restore_workspace_tabs: false })
+      body: JSON.stringify({
+        sftp_max_open_file_size_mb: 12,
+        sftp_download_directory:path.join(temporaryRoot, "downloads"),
+        restore_workspace_tabs: false,
+        ui_refresh_interval_ms:6000,
+        sftp_active_status_poll_interval_ms:7000,
+        sftp_background_status_poll_interval_ms:18000,
+        vnc_local_image_poll_interval_ms:4000,
+        vnc_remote_image_poll_interval_ms:3000
+      })
     });
     assert.equal(generalSaved.response.ok, true);
     assert.equal(generalSaved.body.saved.sftp_max_open_file_size_mb, 12);
     assert.equal(generalSaved.body.saved.sftp_download_directory, path.join(temporaryRoot, "downloads"));
     assert.equal(generalSaved.body.saved.restore_workspace_tabs, false);
+    assert.equal(generalSaved.body.saved.ui_refresh_interval_ms, 6000);
+    assert.equal(generalSaved.body.saved.sftp_active_status_poll_interval_ms, 7000);
+    assert.equal(generalSaved.body.saved.sftp_background_status_poll_interval_ms, 18000);
+    assert.equal(generalSaved.body.saved.vnc_local_image_poll_interval_ms, 4000);
+    assert.equal(generalSaved.body.saved.vnc_remote_image_poll_interval_ms, 3000);
     assert.equal(generalSaved.body.saved.sftp_recycle_bin_enabled, false);
     assert.equal(generalSaved.body.saved.sftp_floating_progress_enabled, false);
     console.log("PASS workspace restore and SFTP open limit save independently");

@@ -6,6 +6,45 @@ if (window.termaVncDetached) {
   document.body.classList.add("vnc-detached-window-body");
 }
 
+function autoRefreshDataChanged(previous, next) {
+  if (previous === next) return false;
+  try {
+    return JSON.stringify(previous ?? null) !== JSON.stringify(next ?? null);
+  } catch {
+    return true;
+  }
+}
+
+let autoRefreshRevision = "";
+let autoRefreshRevisionInFlight = false;
+let autoRefreshTimer = 0;
+let notificationPollTimer = 0;
+
+function uiStateRefreshIntervalMs() {
+  return typeof runtimeConfiguredBackgroundIntervalMs === "function"
+    ? runtimeConfiguredBackgroundIntervalMs("ui_refresh_interval_ms", 4000)
+    : 4000;
+}
+
+async function refreshUiStateIfChanged(options={}) {
+  if (autoRefreshRevisionInFlight || document.hidden) return false;
+  autoRefreshRevisionInFlight = true;
+  try {
+    const result = await api("/api/ui-state/revision");
+    const revision = String(result?.revision || "");
+    const first = !autoRefreshRevision;
+    const changed = Boolean(revision && revision !== autoRefreshRevision);
+    if (revision) autoRefreshRevision = revision;
+    if (options.force === true || (!first && changed)) await loadAll({silent:true});
+    return changed;
+  } catch {
+    await loadAll({silent:true});
+    return true;
+  } finally {
+    autoRefreshRevisionInFlight = false;
+  }
+}
+
 async function loadAll(options={}){
   if (refreshInFlight) return;
   refreshInFlight = true;
@@ -17,13 +56,18 @@ async function loadAll(options={}){
       api("/api/forward-templates").catch(() => forwardTemplates),
       editingSettings ? Promise.resolve(securitySettings) : api("/api/security").catch(() => securitySettings)
     ]);
+    const connectionsChanged = autoRefreshDataChanged(connections, connectionRows);
+    const remoteProfilesChanged = autoRefreshDataChanged(remoteProfiles, remoteRows || []);
+    const forwardTemplatesChanged = autoRefreshDataChanged(forwardTemplates, templateRows || []);
+    const renderUnchanged = options.silent !== true || options.forceRender === true;
     connections = connectionRows;
     remoteProfiles = remoteRows || [];
     forwardTemplates = templateRows || [];
     if (!editingSettings) securitySettings = security;
-    if (["connections", "remote"].includes(primaryView)) renderConnections();
-    else if (primaryView === "running") renderRunningForwards();
-    if (activeView === "forwards") renderForwards();
+    if (primaryView === "connections" && (renderUnchanged || connectionsChanged)) renderConnections();
+    else if (primaryView === "remote" && (renderUnchanged || connectionsChanged || remoteProfilesChanged)) renderConnections();
+    else if (primaryView === "running" && (renderUnchanged || connectionsChanged)) renderRunningForwards();
+    if (activeView === "forwards" && (renderUnchanged || connectionsChanged || forwardTemplatesChanged)) renderForwards();
     if (activeView === "welcome") renderStartupSummary();
   } catch (error) {
     if (!options.silent) throw error;
@@ -32,21 +76,31 @@ async function loadAll(options={}){
   }
 }
 function startAutoRefresh() {
-  [800, 1800, 3200, 5200, 8000].forEach(delay => {
-    setTimeout(() => {
-      if (!document.hidden) loadAll({silent:true});
-    }, delay);
-  });
-  setInterval(() => {
-    if (!document.hidden) loadAll({silent:true});
-  }, 4000);
-  setInterval(() => {
-    if (!window.termaDesktop && !document.hidden) pollNotifications();
-  }, 5000);
+  const scheduleRefresh = delay => {
+    clearTimeout(autoRefreshTimer);
+    autoRefreshTimer = setTimeout(async () => {
+      if (!document.hidden) await refreshUiStateIfChanged();
+      scheduleRefresh(document.hidden ? 15000 : uiStateRefreshIntervalMs());
+    }, Math.max(0, Number(delay || 0)));
+  };
+  const scheduleNotifications = delay => {
+    if (window.termaDesktop) return;
+    clearTimeout(notificationPollTimer);
+    notificationPollTimer = setTimeout(async () => {
+      if (!document.hidden) await pollNotifications();
+      scheduleNotifications(document.hidden ? 15000 : 5000);
+    }, Math.max(0, Number(delay || 0)));
+  };
+  setTimeout(() => { if (!document.hidden) void refreshUiStateIfChanged({force:true}); }, 800);
+  setTimeout(() => { if (!document.hidden) void refreshUiStateIfChanged(); }, 2500);
+  scheduleRefresh(uiStateRefreshIntervalMs());
+  scheduleNotifications(5000);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
-      loadAll({silent:true});
+      void refreshUiStateIfChanged();
       if (!window.termaDesktop) pollNotifications();
+      scheduleRefresh(uiStateRefreshIntervalMs());
+      scheduleNotifications(5000);
     }
   });
 }
@@ -59,6 +113,9 @@ function scheduleTerminalWindowResumeRefresh() {
     requestAnimationFrame(() => {
       if (typeof refreshTerminalSessionsAfterWindowResume === "function") refreshTerminalSessionsAfterWindowResume();
     });
+    if (typeof syncVncClipboardImagesAfterFocus === "function") {
+      setTimeout(() => { void syncVncClipboardImagesAfterFocus(); }, 120);
+    }
   }, 0);
 }
 window.workspaceRestorePending = true;
@@ -133,8 +190,10 @@ Promise.all([loadAll(), loadRuntimeSettings()]).then(async () => {
   window.workspaceRestorePending = false;
   notify(e.message,"error");
 });
-startAutoRefresh();
-if (!window.termaDesktop) pollNotifications();
-refreshSftpJobs();
-startSftpJobsTimer();
-initProductivityFeatures();
+if (!window.termaVncDetached) {
+  startAutoRefresh();
+  if (!window.termaDesktop) pollNotifications();
+  refreshSftpJobs();
+  startSftpJobsTimer();
+  initProductivityFeatures();
+}

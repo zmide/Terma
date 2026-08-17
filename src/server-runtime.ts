@@ -42,6 +42,7 @@ const { closeAllSftpSessions } = require("./sftp-session");
 const { stopAllExternalEdits } = require("./sftp-external-edit");
 const {
   autostartConnections,
+  closePersistentSshCommandSessions,
   restorePreviousForwards,
   startForwardHealthMonitor,
   stopAllForwards,
@@ -509,6 +510,7 @@ function createServerRuntime(options: any = {}) {
         closeAllSftpSessions();
         stopAllExternalEdits();
         closeJumpConnectionPool();
+        closePersistentSshCommandSessions();
         stopAllForwards({preserveRestoreState:true});
         closeDatabase();
       } catch (error) {

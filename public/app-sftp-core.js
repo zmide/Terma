@@ -1135,11 +1135,10 @@ async function refreshActiveSftpSessionStatus(tabKey="") {
   for (const id of ids.filter(Boolean)) {
     try {
       const result = await api(`/api/connections/${id}/sftp/session`, {skipSftpConnect:true});
-      const manuallyDisconnected = sftpTabKeysForConnection(id).some(key => sftpDisconnectedTabs.has(key));
-      if (!result.connected && !manuallyDisconnected) {
-        await ensureSftpConnection(id, {force:true, tabKey:sftpTabKeysForConnection(id)[0]});
-        continue;
-      }
+      // Background status checks must remain observational. Normal SFTP API
+      // requests already reconnect through ensureSftpConnection, while a
+      // permanently unreachable host must not trigger another SSH attempt on
+      // every status interval.
       updateSftpConnectionUi(id, result.connected ? "connected" : "disconnected", result.error || "");
     } catch (error) {
       updateSftpConnectionUi(id, "disconnected", error.message || tr("sftp:auto.status_check_failed"));

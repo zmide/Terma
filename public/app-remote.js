@@ -35,7 +35,8 @@ const vncSessions = new Map();
 let vncFullscreenSessionKey = "";
 let remoteDesktopRenderSerial = 0;
 const VNC_CLIPBOARD_POLL_INTERVAL_MS = 900;
-const VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS = 8000;
+const VNC_CLIPBOARD_LOCAL_IMAGE_POLL_INTERVAL_MS = 5000;
+const VNC_CLIPBOARD_REMOTE_IMAGE_POLL_INTERVAL_MS = 3000;
 const VNC_CLIPBOARD_IMAGE_INPUT_IDLE_MS = 1400;
 const VNC_CLIPBOARD_ECHO_GUARD_MS = 3000;
 const remoteAdminGrantCache = new Map();
@@ -393,6 +394,9 @@ function localizedRemoteClientReason(item={}, diagnostics={}, protocol="") {
   const protocolLabel = typeof remoteProtocolLabel === "function" ? remoteProtocolLabel(protocol) : String(protocol || "").toUpperCase();
   if (diagnostics?.authorization_required) {
     return tr("remote:clients.authorization_required", {protocol:protocolLabel, defaultValue:`${protocolLabel} 客户端需要临时桌面集成授权。`});
+  }
+  if (item?.reason_code === "vnc_client_selection_required") {
+    return tr("remote:clients.reason_vnc_selection_required", {defaultValue:"未找到系统 VNC 客户端；打开连接时请选择 VNC Viewer 程序"});
   }
   const reasons = {
     "未找到 FreeRDP 或 Remmina":["remote:clients.reason_rdp_missing", "未找到 FreeRDP 或 Remmina"],

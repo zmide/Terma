@@ -320,6 +320,7 @@ function createXServerRuntime(options = {}) {
   const detectWindowsProcess = typeof options.detectWindowsProcess === "function" ? options.detectWindowsProcess : null;
   const readClipboardPng = typeof options.readClipboardPng === "function" ? options.readClipboardPng : null;
   const readClipboardFormats = typeof options.readClipboardFormats === "function" ? options.readClipboardFormats : null;
+  const readClipboardRevision = typeof options.readClipboardRevision === "function" ? options.readClipboardRevision : null;
   const getLanguage = languageGetter(options, environment);
   const text = (chinese, english) => desktopUiText(getLanguage(), chinese, english);
   const projectRoot = options.projectRoot || path.resolve(__dirname, "..");
@@ -344,6 +345,11 @@ function createXServerRuntime(options = {}) {
       authCookie,
       readClipboardPng,
       readClipboardFormats,
+      readClipboardRevision,
+      // VcXsrv's clipboard worker continuously mirrors an owned X11 image
+      // back to Windows. Only claim the image while an X11 window is focused;
+      // otherwise keep it cached so normal Windows paste remains untouched.
+      deferClaimUntilFocused:true,
       onDiagnostic:info => {
         const event = info && typeof info === "object" ? info.event : "unknown";
         const detail = info && typeof info === "object" ? {...info} : {};

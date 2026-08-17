@@ -51,6 +51,7 @@ const {
   decryptStoredConnectionSecrets,
   validateSortOrder,
   all,
+  databaseRevision,
   closeDatabase,
   reopenDatabase,
   exportDatabaseFile
@@ -75,6 +76,8 @@ const {
   allConnectionsHealth,
   testSsh,
   batchRunCommands,
+  runPersistentSshCommandForConnection,
+  runPersistentSshCommandForConnectionStreaming,
   runSshCommandForConnection,
   runSshCommandForConnectionStreaming,
   clearConnectionHealthCache
@@ -156,6 +159,8 @@ const {
   revokeDesktopBrowserGrant,
   sameOrigin,
   secureHeaders,
+  securityDiagnostics,
+  securitySettingsRevision,
   sessionCookie,
   setPassword,
   setToken,
@@ -217,6 +222,7 @@ const { formatRemoteEndpoint } = require("./remote-host");
 const { handleStorageRoutes } = require("./routes/storage-routes");
 const { handleSystemRoutes } = require("./routes/system-routes");
 const { handleUpdateRoutes } = require("./routes/update-routes");
+const { handleUiStateRoutes } = require("./routes/ui-state-routes");
 const { createProgramCacheManager } = require("./program-cache");
 const { createStorageRestoreHelpers } = require("./storage-restore");
 const {
@@ -357,6 +363,9 @@ async function handleApi(req, res, pathname) {
   if (await handlePublicAuthRoutes(req, res, pathname, securityRouteDependencies)) return;
   if (!isAuthenticated(req)) return sendJson(res, { error: "Unauthorized" }, 401);
   if (await handleSecurityRoutes(req, res, pathname, securityRouteDependencies)) return;
+  if (await handleUiStateRoutes(req, res, pathname, {
+    databaseRevision, securityDiagnostics, securitySettingsRevision, sendJson
+  })) return;
   if (await handleDesktopIntegrationRoutes(req, res, pathname, {
     createDesktopBrowserGrant, desktopBrowserGrantCookie, desktopBrowserGrantStatus,
     getDesktopIntegration, hasAuthenticatedWebSession,
@@ -515,7 +524,8 @@ async function handleApi(req, res, pathname) {
     readBody, readJson, readVncRemoteClipboard, readVncRemoteClipboardImage, inspectVncRemoteClipboardImage,
     releaseRemoteAdminGrant, remoteOfflineTasks, resolveManagementConnection,
     repairRemoteProfileManagementConnection,
-    runRemotePrivilegeCommand, runSshCommandForConnection, runSshCommandForConnectionStreaming,
+    runRemotePrivilegeCommand, runPersistentSshCommandForConnection, runPersistentSshCommandForConnectionStreaming,
+    runSshCommandForConnection, runSshCommandForConnectionStreaming,
     send, sendJson, startRemoteComponentCommandTask, testFtpProfile, testRemoteTerminalProfile,
     testVncProfile, updateRemoteProfile, updateRemoteProfileFlags, updateRemoteProfileUsage,
     updateVncProfileCredential, writeVncRemoteClipboard, writeVncRemoteClipboardImage,

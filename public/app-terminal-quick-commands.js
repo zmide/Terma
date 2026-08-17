@@ -217,7 +217,6 @@ async function runTerminalQuickCommand(key, id, action="") {
   const sent = sendTerminalData(key, mode === "execute" ? `${command}\r` : command);
   if (!sent) return;
   if (mode === "execute") {
-    if (typeof noteTerminalCommandStarted === "function") noteTerminalCommandStarted(key);
     saveRecentTerminalCommand(command);
     if (connection) void trackTerminalDirectoryCommand(session, connection, key, command);
   }

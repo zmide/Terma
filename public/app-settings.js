@@ -87,7 +87,7 @@ function renderSettings() {
     <div class="workspace-head"><div><h2>${esc(tr("settings:title", {defaultValue:"设置"}))}</h2><div class="subtitle">${esc(tr("settings:subtitle", {defaultValue:"访问保护、通知、运行信息与开源许可。"}))}</div></div></div>
     <div class="settings-layout"><div class="settings-groups">
       <div class="settings-group" id="settings-general">
-        <div class="settings-group-head"><h3>${esc(tr("settings:general.title", {defaultValue:"通用设置"}))}</h3><span>${esc(tr("settings:general.description", {defaultValue:"管理桌面端行为和工作区恢复。"}))}</span></div>
+        <div class="settings-group-head"><h3>${esc(tr("settings:general.title", {defaultValue:"通用设置"}))}</h3><span>${esc(tr("settings:general.description", {defaultValue:"管理桌面端行为、工作区恢复和后台刷新。"}))}</span></div>
         <div class="settings-grid single">
           ${storageSettingsPanelHtml()}
           ${desktopBehaviorPanelHtml()}
@@ -135,6 +135,18 @@ function renderSettings() {
               <option value="tab" ${toolbarPlacement.split.sftp === "tab" ? "selected" : ""}>${esc(tr("settings:auto.toolbar_in_tab"))}</option>
               <option value="header" ${toolbarPlacement.split.sftp === "header" ? "selected" : ""}>${esc(tr("settings:auto.toolbar_in_header"))}</option>
             </select>
+          </section>
+          <section class="background-refresh-settings">
+            <h3>${esc(tr("settings:background_refresh.title", {defaultValue:"后台同步与刷新间隔"}))}</h3>
+            <div class="muted">${esc(tr("settings:background_refresh.description", {defaultValue:"设置前台使用时的基础检查间隔；窗口隐藏或图形渲染繁忙时会自动降低频率。"}))}</div>
+            <div class="background-refresh-grid">
+              <label class="background-refresh-field" for="generalUiRefreshIntervalSeconds"><span>${esc(tr("settings:background_refresh.ui_state", {defaultValue:"全局数据变化检查"}))}</span><span><input id="generalUiRefreshIntervalSeconds" type="number" min="1" max="60" step="1" value="${runtimeBackgroundIntervalSeconds("ui_refresh_interval_ms", 4000)}"><small>${esc(tr("settings:background_refresh.seconds", {defaultValue:"秒"}))}</small></span></label>
+              <label class="background-refresh-field" for="generalSftpActiveStatusIntervalSeconds"><span>${esc(tr("settings:background_refresh.sftp_active", {defaultValue:"SFTP 当前标签状态检查"}))}</span><span><input id="generalSftpActiveStatusIntervalSeconds" type="number" min="1" max="60" step="1" value="${runtimeBackgroundIntervalSeconds("sftp_active_status_poll_interval_ms", 5000)}"><small>${esc(tr("settings:background_refresh.seconds", {defaultValue:"秒"}))}</small></span></label>
+              <label class="background-refresh-field" for="generalSftpBackgroundStatusIntervalSeconds"><span>${esc(tr("settings:background_refresh.sftp_background", {defaultValue:"SFTP 其他标签状态检查"}))}</span><span><input id="generalSftpBackgroundStatusIntervalSeconds" type="number" min="1" max="60" step="1" value="${runtimeBackgroundIntervalSeconds("sftp_background_status_poll_interval_ms", 15000)}"><small>${esc(tr("settings:background_refresh.seconds", {defaultValue:"秒"}))}</small></span></label>
+              <label class="background-refresh-field" for="generalVncLocalImageIntervalSeconds"><span>${esc(tr("settings:background_refresh.vnc_local_image", {defaultValue:"VNC 本机图片兜底检查"}))}</span><span><input id="generalVncLocalImageIntervalSeconds" type="number" min="1" max="60" step="1" value="${runtimeBackgroundIntervalSeconds("vnc_local_image_poll_interval_ms", 5000)}"><small>${esc(tr("settings:background_refresh.seconds", {defaultValue:"秒"}))}</small></span></label>
+              <label class="background-refresh-field" for="generalVncRemoteImageIntervalSeconds"><span>${esc(tr("settings:background_refresh.vnc_remote_image", {defaultValue:"VNC 远端图片检查"}))}</span><span><input id="generalVncRemoteImageIntervalSeconds" type="number" min="1" max="60" step="1" value="${runtimeBackgroundIntervalSeconds("vnc_remote_image_poll_interval_ms", 3000)}"><small>${esc(tr("settings:background_refresh.seconds", {defaultValue:"秒"}))}</small></span></label>
+            </div>
+            <div class="muted">${esc(tr("settings:background_refresh.hint", {defaultValue:"VNC 远端图片默认每 3 秒检查一次；只在图片指纹变化后读取完整图片。连接保活、断线检测和协议超时不受这里影响。"}))}</div>
             <div class="actions"><button id="restoreWorkspaceTabsSave" class="primary" type="button" onclick="saveWorkspaceSettings()">${icon("save")}<span>${esc(tr("settings:general.save", {defaultValue:"保存通用设置"}))}</span></button></div>
           </section>
         </div>

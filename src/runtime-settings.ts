@@ -13,6 +13,11 @@ const DEFAULT_LANGUAGE = "zh-CN";
 const SUPPORTED_LANGUAGES = new Set(["zh-CN", "en-US"]);
 const DEFAULT_VNC_FULLSCREEN_TOOLBAR = "always";
 const VNC_FULLSCREEN_TOOLBAR_MODES = new Set(["always", "never", "edge"]);
+const DEFAULT_UI_REFRESH_INTERVAL_MS = 4000;
+const DEFAULT_SFTP_ACTIVE_STATUS_POLL_INTERVAL_MS = 5000;
+const DEFAULT_SFTP_BACKGROUND_STATUS_POLL_INTERVAL_MS = 15000;
+const DEFAULT_VNC_LOCAL_IMAGE_POLL_INTERVAL_MS = 5000;
+const DEFAULT_VNC_REMOTE_IMAGE_POLL_INTERVAL_MS = 3000;
 const DEFAULT_NOTIFICATION_DISPLAY = Object.freeze({
   info: Object.freeze({ enabled: true, duration_ms: 3500 }),
   success: Object.freeze({ enabled: true, duration_ms: 3500 }),
@@ -205,12 +210,21 @@ function normalizeLanguage(value, fallback = DEFAULT_LANGUAGE) {
   return SUPPORTED_LANGUAGES.has(language) ? language : DEFAULT_LANGUAGE;
 }
 
+function normalizeBackgroundInterval(value, fallback, label) {
+  const candidate = value === undefined || value === null || String(value).trim() === "" ? fallback : value;
+  const interval = Number(candidate);
+  if (!Number.isInteger(interval) || interval < 1000 || interval > 60000) {
+    throw new Error(`${label}必须是 1-60 秒之间的毫秒整数`);
+  }
+  return interval;
+}
+
 function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
   const hostsValue = value.listen_hosts !== undefined ? value.listen_hosts
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 16,
+    schema_version: 17,
     language: normalizeLanguage(value.language, fallback.language),
     language_onboarding_version: Math.max(0, Math.min(1, Number.isInteger(Number(value.language_onboarding_version ?? fallback.language_onboarding_version))
       ? Number(value.language_onboarding_version ?? fallback.language_onboarding_version)
@@ -218,6 +232,31 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     vnc_fullscreen_toolbar: VNC_FULLSCREEN_TOOLBAR_MODES.has(String(value.vnc_fullscreen_toolbar ?? fallback.vnc_fullscreen_toolbar ?? DEFAULT_VNC_FULLSCREEN_TOOLBAR))
       ? String(value.vnc_fullscreen_toolbar ?? fallback.vnc_fullscreen_toolbar ?? DEFAULT_VNC_FULLSCREEN_TOOLBAR)
       : DEFAULT_VNC_FULLSCREEN_TOOLBAR,
+    ui_refresh_interval_ms: normalizeBackgroundInterval(
+      value.ui_refresh_interval_ms,
+      fallback.ui_refresh_interval_ms ?? DEFAULT_UI_REFRESH_INTERVAL_MS,
+      "全局数据检查间隔"
+    ),
+    sftp_active_status_poll_interval_ms: normalizeBackgroundInterval(
+      value.sftp_active_status_poll_interval_ms,
+      fallback.sftp_active_status_poll_interval_ms ?? DEFAULT_SFTP_ACTIVE_STATUS_POLL_INTERVAL_MS,
+      "SFTP 当前标签状态检查间隔"
+    ),
+    sftp_background_status_poll_interval_ms: normalizeBackgroundInterval(
+      value.sftp_background_status_poll_interval_ms,
+      fallback.sftp_background_status_poll_interval_ms ?? DEFAULT_SFTP_BACKGROUND_STATUS_POLL_INTERVAL_MS,
+      "SFTP 后台标签状态检查间隔"
+    ),
+    vnc_local_image_poll_interval_ms: normalizeBackgroundInterval(
+      value.vnc_local_image_poll_interval_ms,
+      fallback.vnc_local_image_poll_interval_ms ?? DEFAULT_VNC_LOCAL_IMAGE_POLL_INTERVAL_MS,
+      "VNC 本机图片检查间隔"
+    ),
+    vnc_remote_image_poll_interval_ms: normalizeBackgroundInterval(
+      value.vnc_remote_image_poll_interval_ms,
+      fallback.vnc_remote_image_poll_interval_ms ?? DEFAULT_VNC_REMOTE_IMAGE_POLL_INTERVAL_MS,
+      "VNC 远端图片检查间隔"
+    ),
     listen_hosts: normalizeListenHosts(hostsValue, hostsValue === undefined ? (fallback.listen_hosts ?? DEFAULT_LISTEN_HOSTS) : null),
     listen_port: normalizeListenPort(portValue, portValue === undefined ? (fallback.listen_port ?? DEFAULT_LISTEN_PORT) : null),
     sftp_recycle_bin_enabled: value.sftp_recycle_bin_enabled === undefined
@@ -389,6 +428,11 @@ module.exports = {
   DEFAULT_LANGUAGE,
   DEFAULT_VNC_FULLSCREEN_TOOLBAR,
   VNC_FULLSCREEN_TOOLBAR_MODES,
+  DEFAULT_UI_REFRESH_INTERVAL_MS,
+  DEFAULT_SFTP_ACTIVE_STATUS_POLL_INTERVAL_MS,
+  DEFAULT_SFTP_BACKGROUND_STATUS_POLL_INTERVAL_MS,
+  DEFAULT_VNC_LOCAL_IMAGE_POLL_INTERVAL_MS,
+  DEFAULT_VNC_REMOTE_IMAGE_POLL_INTERVAL_MS,
   DEFAULT_NOTIFICATION_DISPLAY,
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,

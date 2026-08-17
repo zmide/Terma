@@ -118,6 +118,10 @@ async function checkFrontendPromptQueue() {
   const promptResolvers = [];
   const resolvedSessionIds = [];
   const source = fs.readFileSync(path.join(__dirname, "..", "public", "app-sftp-sync.js"), "utf8");
+  assert.doesNotMatch(source, /setInterval\(\(\) => pollSftpExternalEdit/);
+  assert.match(source, /SFTP_EXTERNAL_EDIT_VNC_POLL_INTERVAL_MS = 3000/);
+  assert.match(source, /SFTP_EXTERNAL_EDIT_HIDDEN_POLL_INTERVAL_MS = 8000/);
+  assert.match(source, /scheduleSftpExternalEditPoll/);
   const context = {
     api:async url => {
       const match = String(url).match(/\/api\/sftp\/external-edits\/([^/]+)\/resolve$/);

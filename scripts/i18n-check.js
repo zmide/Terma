@@ -554,7 +554,7 @@ const apiAt = html.indexOf('/app-api.js');
 assert.ok(vendorAt >= 0 && bootstrapAt > vendorAt && apiAt > bootstrapAt, "i18next vendor and bootstrap scripts must load before application modules");
 assert.ok(staticContent.includes('["/vendor/i18next/i18next.min.js", vendorFile("i18next", "dist/umd/i18next.min.js")]'));
 const runtimeSettings = read("src/runtime-settings.ts");
-assert.ok(runtimeSettings.includes("schema_version: 16") && runtimeSettings.includes("language: normalizeLanguage") && runtimeSettings.includes("language_onboarding_version") && runtimeSettings.includes("vnc_fullscreen_toolbar"));
+assert.ok(runtimeSettings.includes("schema_version: 17") && runtimeSettings.includes("language: normalizeLanguage") && runtimeSettings.includes("language_onboarding_version") && runtimeSettings.includes("vnc_fullscreen_toolbar") && runtimeSettings.includes("vnc_remote_image_poll_interval_ms"));
 const i18nBootstrap = read("public/app-i18n.js");
 const frontend = `${i18nBootstrap}\n${read("public/app-settings-runtime.js")}\n${read("public/app-settings.js")}`;
 for (const token of ["setTermaLanguage", "registerTermaI18nRenderer", "toggleTermaLanguage", "syncTermaLanguageControls", "termaI18nPhraseTemplates"]) {
@@ -566,7 +566,8 @@ assert.match(html, /id="mobileLanguageToggle"[^>]*data-action="static-language-t
 assert.ok(html.indexOf('id="languageToggle"') < html.indexOf('id="themeToggle"'), "desktop language toggle must be above the theme toggle");
 assert.ok(html.indexOf('id="mobileLanguageToggle"') < html.indexOf('class="mobile-brand-action theme-toggle'), "mobile language toggle must precede the theme toggle");
 assert.match(read("public/app-static-actions.js"), /registerTermaAction\("static-language-toggle", \(\) => toggleTermaLanguage\(\)\)/);
-assert.match(read("public/app-i18n.js"), /roots\.includes\(document\) \|\| roots\.length > 32/);
+assert.match(read("public/app-i18n.js"), /roots\.includes\(document\) \|\| roots\.length > 128/);
+assert.match(read("public/app-i18n.js"), /\.vnc-screen[\s\S]*\.vnc-viewport[\s\S]*\.vnc-rfb/, "automatic translation must skip the VNC rendering subtree");
 assert.match(read("public/app-i18n.js"), /termaI18nSkipped\(candidate\)/);
 assert.match(read("public/app-i18n.js"), /\[data-i18n-aria-label\]/, "explicit aria-label translations must be supported");
 assert.match(i18nBootstrap, /async function ensureTermaI18nResourceBundles\(/, "native language choices must be able to load a missing locale bundle on demand");
@@ -602,7 +603,7 @@ assert.ok(uiSmoke.includes("scenario:'third-party-live-language-switch'"), "Engl
 assert.ok(uiSmoke.includes("['title','aria-label','placeholder','aria-roledescription']"), "third-party live-switch smoke must inspect accessibility chrome directly");
 assert.ok(uiSmoke.includes("zmodemUserTextPreserved"), "third-party live-switch smoke must preserve Chinese ZMODEM filenames as user content");
 assert.ok(uiSmoke.includes("coldStartNativeChoice"), "language onboarding smoke must simulate an English cold start without cached Chinese resources");
-for (const scenario of ["file-picker-language-switch", "connection-health-diagnosis", "third-party-components", "welcome", "sftp-view", "sftp-settings", "connected-tab-close", "workspace-tab-menu", "sftp-context-menu", "sftp-clipboard-actions", "local-files-shortcuts", "remote-explorer-menu", "terminal-startup-dialog", "connection-terminal-startup-form", "terminal-x11-menu", "terminal-context-menu", "command-snippet-manager", "ssh-extra-args-validation", "command-complete-notification", "download-complete-notification", "progress-notification-controls", "forward-runtime", "task-confirmations", "batch-log-label", "quick-open-notice", "quick-panel", "ssh-key-wizard", "rdp-form", "remote-protocol-forms", "xclip-local-offline", "xclip-no-plan-notification", "named-workspaces", "forward-list", "connection-controls", "connection-row-menu", "remote-profile-menu", "quick-connection", "linux-desktop-empty", "migration-snapshots", "storage-update-status"]) {
+for (const scenario of ["file-picker-language-switch", "connection-health-diagnosis", "third-party-components", "welcome", "sftp-view", "sftp-settings", "connected-tab-close", "workspace-tab-menu", "sftp-context-menu", "sftp-clipboard-actions", "local-files-shortcuts", "remote-explorer-menu", "terminal-startup-dialog", "connection-terminal-startup-form", "terminal-x11-menu", "terminal-context-menu", "command-snippet-manager", "ssh-extra-args-validation", "download-complete-notification", "progress-notification-controls", "forward-runtime", "task-confirmations", "batch-log-label", "quick-open-notice", "quick-panel", "ssh-key-wizard", "rdp-form", "remote-protocol-forms", "xclip-local-offline", "xclip-no-plan-notification", "named-workspaces", "forward-list", "connection-controls", "connection-row-menu", "remote-profile-menu", "quick-connection", "linux-desktop-empty", "migration-snapshots", "storage-update-status"]) {
   assert.ok(uiSmoke.includes(`runI18nScenario('${scenario}'`), `English UI smoke is missing the ${scenario} scenario`);
 }
 const notificationSource = read("src/notifications.ts");

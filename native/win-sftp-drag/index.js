@@ -4,6 +4,13 @@ const path = require("node:path");
 
 function withX11WindowGuardFallback(target) {
   if (!target) return target;
+  if (typeof target.getClipboardSequenceNumber !== "function") {
+    Object.defineProperty(target, "getClipboardSequenceNumber", {
+      value() {
+        return 0;
+      },
+    });
+  }
   if (typeof target.startX11WindowGuard !== "function") {
     Object.defineProperty(target, "startX11WindowGuard", {
       value() {
@@ -106,6 +113,9 @@ module.exports = binding || withX11WindowGuardFallback({
       delayed: true,
       reason: "Windows native drag module is unavailable on this platform",
     };
+  },
+  getClipboardSequenceNumber() {
+    return 0;
   },
   startDrag() {
     throw new Error("Windows native drag module is unavailable on this platform");

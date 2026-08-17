@@ -37,6 +37,9 @@ function listen(server) {
 async function run() {
   db = require("../dist/db");
   proxy = require("../dist/vnc-proxy");
+  const proxySource = fs.readFileSync(path.join(__dirname, "..", "src", "vnc-proxy.ts"), "utf8");
+  assert.match(proxySource, /handshakeIncomplete = session\.clientBytes === 0 \|\| session\.serverBytes <= session\.initialServerBytes/);
+  assert.match(proxySource, /closeVncSession\(session, 1011, "VNC 服务在握手期间关闭连接"\)/);
   let targetReceivedResolve;
   const targetReceived = new Promise(resolve => { targetReceivedResolve = resolve; });
   fixture = net.createServer(socket => {
@@ -82,7 +85,7 @@ async function run() {
   client.write(maskedBinary("client-to-vnc"));
   assert.equal((await targetReceived).toString(), "client-to-vnc");
   client.destroy();
-  console.log("VNC 代理检查通过：WebSocket 握手与 RFB 双向二进制透传");
+  console.log("VNC 代理检查通过：WebSocket 双向透传及上游握手提前关闭识别有效");
 }
 
 run().finally(async () => {

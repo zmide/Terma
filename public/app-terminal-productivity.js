@@ -104,7 +104,6 @@ function sendBroadcastPayload(sourceKey, outgoing, raw="") {
   const keys = terminalBroadcastKeys();
   for (const key of keys) {
     const session = terminalSessions.get(key);
-    if (key !== sourceKey && /[\r\n]/.test(raw) && typeof noteTerminalCommandStarted === "function") noteTerminalCommandStarted(key);
     if (session?.socket?.readyState === WebSocket.OPEN) session.socket.send(outgoing);
   }
 }
@@ -148,14 +147,6 @@ function handleTerminalBroadcastInput(sourceKey, outgoing, raw) {
   return true;
 }
 
-function noteTerminalCommandStarted(key) {
-  const session = terminalSessions.get(key);
-  if (!session) return;
-  session.smartCommandStartedAt = Date.now();
-  session.smartHadOutput = false;
-  clearTimeout(session.smartCompletionTimer);
-}
-
 function isWorkspaceTabCurrentlyVisible(key) {
   if (typeof workspaceVisiblePanes === "function") {
     return workspaceVisiblePanes().some(pane => pane.activeTabKey === key);
@@ -192,39 +183,10 @@ function updateTerminalSmartState(key, chunk) {
   }
   session.smartOutputTail = `${session.smartOutputTail || ""}${text}`.slice(-500);
   session.sensitiveInput = /(?:password|passphrase|口令|密码)\s*[:：]?\s*$/i.test(session.smartOutputTail);
-  if (hasOutput) session.smartHadOutput = true;
   const tab = typeof workspaceTabByKey === "function" ? workspaceTabByKey(key) : tabs.find(item => item.key === key);
   if (hasOutput && tab && !isWorkspaceTabCurrentlyVisible(key) && tab.activityState !== "output") {
     tab.activityState = "output";
     renderTabsPreservingTerminalFocus();
-  }
-  const oscComplete = /\x1b\]133;D(?:;\d+)?(?:\x07|\x1b\\)/.test(text);
-  if (oscComplete) return markTerminalCommandComplete(key, "shell");
-  if (!session.smartCommandStartedAt || !session.smartHadOutput) return;
-  clearTimeout(session.smartCompletionTimer);
-  session.smartCompletionTimer = setTimeout(() => markTerminalCommandComplete(key, "idle"), 1400);
-}
-
-function markTerminalCommandComplete(key, source="idle") {
-  const session = terminalSessions.get(key);
-  if (!session?.smartCommandStartedAt) return;
-  const elapsed = Date.now() - session.smartCommandStartedAt;
-  session.smartCommandStartedAt = 0;
-  clearTimeout(session.smartCompletionTimer);
-  const tab = typeof workspaceTabByKey === "function" ? workspaceTabByKey(key) : tabs.find(item => item.key === key);
-  if (!tab || isWorkspaceTabCurrentlyVisible(key)) return;
-  tab.activityState = "complete";
-  renderTabsPreservingTerminalFocus();
-  const connection = currentConnection(session.id);
-  if (elapsed >= 5000 && !connection?.notifications_muted && !tab.notificationsMuted) {
-    const seconds = Math.max(1, Math.round(elapsed / 1000));
-    const event = {
-      title:tr("terminal:notifications.command_complete", {defaultValue:"命令已完成"}),
-      message:tr("terminal:notifications.command_duration", {title:tab.title, seconds, defaultValue:`${tab.title} · ${seconds} 秒`}),
-      action:{type:"tab", key}
-    };
-    notify(event.message, "success");
-    if (typeof showDesktopNotification === "function") showDesktopNotification(event);
   }
 }
 
@@ -232,25 +194,6 @@ function markWorkspaceTabViewed(key) {
   const tab = typeof workspaceTabByKey === "function" ? workspaceTabByKey(key) : tabs.find(item => item.key === key);
   if (!tab?.activityState) return;
   tab.activityState = "";
-}
-
-async function toggleConnectionNotifications(id) {
-  const connection = currentConnection(Number(id));
-  if (!connection) return;
-  const muted = connection.notifications_muted ? 0 : 1;
-  await api(`/api/connections/${id}/flags`, {method:"POST", body:JSON.stringify({favorite:Number(connection.favorite || 0), notifications_muted:muted})});
-  connection.notifications_muted = muted;
-  notify(tr(muted ? "terminal:notifications.connection_muted" : "terminal:notifications.connection_enabled"), "success");
-}
-
-function toggleTabNotifications(key) {
-  const tab = typeof workspaceTabByKey === "function" ? workspaceTabByKey(key) : tabs.find(item => item.key === key);
-  if (!tab || tab.kind !== "terminal") return;
-  tab.notificationsMuted = !tab.notificationsMuted;
-  if (typeof hideTabContextMenu === "function") hideTabContextMenu();
-  saveTabsState();
-  renderTabs();
-  notify(tr(tab.notificationsMuted ? "terminal:notifications.tab_muted" : "terminal:notifications.tab_enabled"), "success");
 }
 
 function terminalSftpPath(key) {

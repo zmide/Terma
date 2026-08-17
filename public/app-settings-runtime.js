@@ -51,6 +51,16 @@ function normalizeNotificationDisplay(value={}) {
   };
 }
 
+function runtimeBackgroundIntervalMs(value, fallback) {
+  const interval = Number(value);
+  return Number.isInteger(interval) && interval >= 1000 && interval <= 60000 ? interval : fallback;
+}
+
+function runtimeConfiguredBackgroundIntervalMs(key, fallback) {
+  const saved = runtimeSettings?.saved || runtimeSettings || {};
+  return runtimeBackgroundIntervalMs(saved[key], fallback);
+}
+
 function normalizeRuntimeSettingsResponse(value={}) {
   const source = value && typeof value === "object" ? value : {};
   const savedSource = source.saved && typeof source.saved === "object" ? source.saved : source;
@@ -98,6 +108,11 @@ function normalizeRuntimeSettingsResponse(value={}) {
     language:normalizeTermaLanguage(savedSource.language),
     language_onboarding_version:Math.max(0, Number(savedSource.language_onboarding_version || 0)),
     vnc_fullscreen_toolbar:["always", "never", "edge"].includes(savedSource.vnc_fullscreen_toolbar) ? savedSource.vnc_fullscreen_toolbar : "always",
+    ui_refresh_interval_ms:runtimeBackgroundIntervalMs(savedSource.ui_refresh_interval_ms, 4000),
+    sftp_active_status_poll_interval_ms:runtimeBackgroundIntervalMs(savedSource.sftp_active_status_poll_interval_ms, 5000),
+    sftp_background_status_poll_interval_ms:runtimeBackgroundIntervalMs(savedSource.sftp_background_status_poll_interval_ms, 15000),
+    vnc_local_image_poll_interval_ms:runtimeBackgroundIntervalMs(savedSource.vnc_local_image_poll_interval_ms, 5000),
+    vnc_remote_image_poll_interval_ms:runtimeBackgroundIntervalMs(savedSource.vnc_remote_image_poll_interval_ms, 3000),
     settings_persisted:source.settings_persisted === true,
     sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
     sftp_floating_progress_enabled: savedSource.sftp_floating_progress_enabled !== false,
@@ -118,6 +133,11 @@ function normalizeRuntimeSettingsResponse(value={}) {
       language:normalizeTermaLanguage(savedSource.language),
       language_onboarding_version:Math.max(0, Number(savedSource.language_onboarding_version || 0)),
       vnc_fullscreen_toolbar:["always", "never", "edge"].includes(savedSource.vnc_fullscreen_toolbar) ? savedSource.vnc_fullscreen_toolbar : "always",
+      ui_refresh_interval_ms:runtimeBackgroundIntervalMs(savedSource.ui_refresh_interval_ms, 4000),
+      sftp_active_status_poll_interval_ms:runtimeBackgroundIntervalMs(savedSource.sftp_active_status_poll_interval_ms, 5000),
+      sftp_background_status_poll_interval_ms:runtimeBackgroundIntervalMs(savedSource.sftp_background_status_poll_interval_ms, 15000),
+      vnc_local_image_poll_interval_ms:runtimeBackgroundIntervalMs(savedSource.vnc_local_image_poll_interval_ms, 5000),
+      vnc_remote_image_poll_interval_ms:runtimeBackgroundIntervalMs(savedSource.vnc_remote_image_poll_interval_ms, 3000),
       listen_hosts: savedHosts.length ? savedHosts : ["127.0.0.1"],
       listen_port: runtimePortValue(savedSource.listen_port ?? savedSource.port),
       sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
@@ -581,6 +601,39 @@ function syncWorkspaceToolbarPlacementInputs(value) {
   }
 }
 
+const BACKGROUND_INTERVAL_FIELDS = Object.freeze({
+  generalUiRefreshIntervalSeconds:["ui_refresh_interval_ms", 4000],
+  generalSftpActiveStatusIntervalSeconds:["sftp_active_status_poll_interval_ms", 5000],
+  generalSftpBackgroundStatusIntervalSeconds:["sftp_background_status_poll_interval_ms", 15000],
+  generalVncLocalImageIntervalSeconds:["vnc_local_image_poll_interval_ms", 5000],
+  generalVncRemoteImageIntervalSeconds:["vnc_remote_image_poll_interval_ms", 3000]
+});
+
+function runtimeBackgroundIntervalSeconds(key, fallbackMs) {
+  return runtimeConfiguredBackgroundIntervalMs(key, fallbackMs) / 1000;
+}
+
+function backgroundPollingSettingsFormValue() {
+  const result = {};
+  for (const [id, [key, fallbackMs]] of Object.entries(BACKGROUND_INTERVAL_FIELDS)) {
+    const input = $(id);
+    const seconds = Number(input?.value ?? fallbackMs / 1000);
+    if (!Number.isInteger(seconds) || seconds < 1 || seconds > 60) {
+      throw new Error(tr("settings:background_refresh.interval_invalid", {defaultValue:"刷新间隔必须是 1-60 秒之间的整数。"}));
+    }
+    result[key] = seconds * 1000;
+  }
+  return result;
+}
+
+function syncBackgroundPollingInputs(value=runtimeSettings?.saved) {
+  const saved = value || {};
+  for (const [id, [key, fallbackMs]] of Object.entries(BACKGROUND_INTERVAL_FIELDS)) {
+    const input = $(id);
+    if (input) input.value = String(runtimeBackgroundIntervalMs(saved[key], fallbackMs) / 1000);
+  }
+}
+
 async function saveWorkspaceSettings() {
   const inPane = captureSettingsPane();
   const input = $("restoreWorkspaceTabs");
@@ -589,6 +642,7 @@ async function saveWorkspaceSettings() {
   setButtonBusy(button, true, tr("settings:auto.saving", {defaultValue:"保存中"}));
   try {
     const workspace_toolbar_placement = workspaceToolbarPlacementFormValue();
+    const backgroundIntervals = backgroundPollingSettingsFormValue();
     const vnc_fullscreen_toolbar = ["always", "never", "edge"].includes($("generalVncFullscreenToolbar")?.value)
       ? $("generalVncFullscreenToolbar").value
       : "always";
@@ -601,7 +655,8 @@ async function saveWorkspaceSettings() {
         remote_desktop_quick_open_enabled,
         vnc_quick_open_new_window,
         workspace_toolbar_placement,
-        vnc_fullscreen_toolbar
+        vnc_fullscreen_toolbar,
+        ...backgroundIntervals
       })
     });
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
@@ -611,6 +666,7 @@ async function saveWorkspaceSettings() {
     inPane(() => {
       renderSettings();
       if (typeof syncWorkspaceToolbarPlacements === "function") syncWorkspaceToolbarPlacements();
+      if (typeof refreshVncClipboardImagePollingIntervals === "function") refreshVncClipboardImagePollingIntervals();
     });
     notify(tr("settings:auto.workspace_saved", {defaultValue:"工作区设置已保存"}), "success");
   } catch (error) {
@@ -623,6 +679,7 @@ async function saveWorkspaceSettings() {
       if (quickOpen) quickOpen.checked = remoteDesktopQuickOpen;
       const newWindow = $("generalVncQuickOpenNewWindow");
       if (newWindow) newWindow.checked = runtimeSettings?.saved?.vnc_quick_open_new_window !== false;
+      syncBackgroundPollingInputs(runtimeSettings?.saved);
     });
     notify(error.message || tr("settings:auto.workspace_save_failed", {defaultValue:"工作区设置保存失败"}), "error");
   } finally {

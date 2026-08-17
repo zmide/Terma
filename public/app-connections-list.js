@@ -50,9 +50,6 @@ function showConnectionMenu(event, id) {
     {label:tr("connections:actions.sftp_files", {defaultValue:"SFTP 文件"}), icon:"folder-open", run:()=>runAppAction("connection.sftp", {connectionId:id})},
     {label:tr("connections:actions.server_dashboard", {defaultValue:"服务器仪表盘"}), icon:"gauge", run:()=>openServerDashboard(id)},
     {label:tr("connections:actions.health_check", {defaultValue:"健康检查"}), icon:"activity", run:()=>checkConnectionHealth(id)},
-    {label:c.notifications_muted
-      ? tr("connections:actions.enable_command_notifications", {defaultValue:"开启命令通知"})
-      : tr("connections:actions.mute_command_notifications", {defaultValue:"静音命令通知"}), icon:c.notifications_muted ? "bell" : "bell-off", run:()=>toggleConnectionNotifications(id)},
     {label:c.x11_mode && c.x11_mode !== "off"
       ? tr("connections:actions.x11_terminal_enabled", {defaultValue:"X11 图形终端（默认已开启）"})
       : tr("connections:actions.x11_terminal", {defaultValue:"X11 图形终端"}), icon:"x11", children:()=>x11LaunchActions(id)},

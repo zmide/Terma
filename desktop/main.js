@@ -26,6 +26,11 @@ const LEGACY_APP_USER_MODEL_ID = "com.zmide.tunneldesk";
 const TOAST_ACTIVATOR_CLSID = "{75F75A3C-FD87-47D7-B50D-15D5C636B26E}";
 const BRAND_MIGRATION_VERSION = 2;
 
+let windowsDesktopNative = null;
+if (process.platform === "win32") {
+  try { windowsDesktopNative = require("../native/win-sftp-drag"); } catch {}
+}
+
 app.setName(PRODUCT_NAME);
 
 let startServer = null;
@@ -91,6 +96,8 @@ const remoteClientAdapter = displayClientMode ? null : createRemoteClientAdapter
   getDataDir:()=>DATA_DIR,
   shell,
   getXServerDiagnostics:()=>xServerRuntime?.diagnostics?.() || null,
+  getVncClientPath:()=>String(readSettings().vncClientPath || ""),
+  canSelectVncClient:()=>true,
   getLanguage:()=>desktopInterfaceLanguage
 });
 
@@ -114,6 +121,7 @@ let desktopNotificationCursor = 0;
 let desktopNotificationCursorInitialized = false;
 let desktopNotificationPreferences = null;
 let desktopNotificationPreferencesReadAt = 0;
+let trayUiRevision = "";
 let desktopInterfaceLanguage = normalizeDesktopNotificationLanguage(process.env[DESKTOP_INTERFACE_LANGUAGE_ENV]);
 let trayState = { runningConnections: 0, runningForwards: 0, failedForwards: 0, totalForwards: 0, online: false };
 let pendingStorageMigrationNotice = "";
@@ -642,7 +650,8 @@ if (!displayClientMode) {
       return result.ok
         ? {png:result.png, bmp:result.bmp}
         : {png:Buffer.alloc(0), bmp:Buffer.alloc(0)};
-    }
+    },
+    readClipboardRevision:() => Number(windowsDesktopNative?.getClipboardSequenceNumber?.() || 0)
   });
 }
 configureWindowsAppIdentity();
@@ -683,7 +692,8 @@ function defaultDesktopSettings() {
     minimizeToTray: true,
     startMinimizedToTray: false,
     showStartupNotification: true,
-    xServerAutoStart: true
+    xServerAutoStart: true,
+    vncClientPath: ""
   };
 }
 
@@ -2139,8 +2149,17 @@ async function fetchJson(pathname, options = {}) {
   return res.json();
 }
 
-async function updateTrayState() {
+async function updateTrayState(options={}) {
   if (!webUrl) return;
+  if (options.force !== true) {
+    try {
+      const revision = String((await fetchJson("/api/ui-state/revision"))?.revision || "");
+      if (revision && revision === trayUiRevision) return;
+      if (revision) trayUiRevision = revision;
+    } catch {}
+  } else {
+    try { trayUiRevision = String((await fetchJson("/api/ui-state/revision"))?.revision || trayUiRevision); } catch {}
+  }
   const connections = await fetchJson("/api/connections");
   const forwards = connections.flatMap(connection => connection.forwards || []);
   trayState = {
@@ -2165,7 +2184,7 @@ async function startAllForwards() {
   for (const connection of connections.filter(item => (item.forwards || []).length)) {
     await fetchJson(`/api/connections/${connection.id}/start-forwards`, { method: "POST" });
   }
-  await updateTrayState().catch(() => {});
+  await updateTrayState({force:true}).catch(() => {});
   notify(desktopUiText("已启动全部连接转发", "Started forwarding for all connections"));
 }
 
@@ -2179,7 +2198,7 @@ async function stopAllConnectionForwards() {
   for (const connection of connections.filter(item => (item.forwards || []).some(forwardNeedsStop))) {
     await fetchJson(`/api/connections/${connection.id}/stop-forwards`, { method: "POST" });
   }
-  await updateTrayState().catch(() => {});
+  await updateTrayState({force:true}).catch(() => {});
   notify(desktopUiText("已停止全部连接转发", "Stopped forwarding for all connections"));
 }
 
@@ -2255,7 +2274,7 @@ function desktopUiText(chinese, english) {
 
 async function readDesktopNotificationPreferences(force=false) {
   const now = Date.now();
-  if (!force && desktopNotificationPreferences && now - desktopNotificationPreferencesReadAt < 5000) {
+  if (!force && desktopNotificationPreferences && now - desktopNotificationPreferencesReadAt < 30000) {
     return desktopNotificationPreferences;
   }
   const [security, runtime] = await Promise.all([
@@ -2314,7 +2333,7 @@ function showBackendSystemNotification(event) {
 
 async function pollDesktopNotifications() {
   if (!webUrl || quitting) return;
-  const preferences = await readDesktopNotificationPreferences(true);
+  const preferences = await readDesktopNotificationPreferences(false);
   const events = await fetchJson(`/api/notifications?since=${encodeURIComponent(desktopNotificationCursor)}&language=${encodeURIComponent(preferences.language)}`);
   if (!desktopNotificationCursorInitialized) {
     desktopNotificationCursor = Array.isArray(events)
@@ -2338,16 +2357,21 @@ async function pollDesktopNotifications() {
 }
 
 function startDesktopNotificationBridge() {
-  if (desktopNotificationTimer) clearInterval(desktopNotificationTimer);
+  if (desktopNotificationTimer) clearTimeout(desktopNotificationTimer);
   desktopNotificationCursorInitialized = false;
-  void pollDesktopNotifications().catch(error => console.warn(`notification bridge initialization failed: ${error.message}`));
-  desktopNotificationTimer = setInterval(() => {
-    void pollDesktopNotifications().catch(error => console.warn(`notification bridge poll failed: ${error.message}`));
-  }, 2500);
+  const poll = async () => {
+    try { await pollDesktopNotifications(); }
+    catch (error) { console.warn(`notification bridge poll failed: ${error.message}`); }
+    if (!quitting) {
+      desktopNotificationTimer = setTimeout(poll, desktopWindowIsBackground() ? 2500 : 8000);
+      desktopNotificationTimer.unref?.();
+    }
+  };
+  void poll();
 }
 
 function stopDesktopNotificationBridge() {
-  if (desktopNotificationTimer) clearInterval(desktopNotificationTimer);
+  if (desktopNotificationTimer) clearTimeout(desktopNotificationTimer);
   desktopNotificationTimer = null;
 }
 
@@ -2421,9 +2445,10 @@ function timestampName() {
 
 function desktopSettingsView() {
   const settings = readSettings();
+  const {vncClientPath:_vncClientPath, ...publicSettings} = settings;
   const paths = resolveRuntimePaths(settings);
   return {
-    settings,
+    settings:publicSettings,
     paths,
     xserver:xServerDiagnostics(),
     project_mode_available: !app.isPackaged || isWindowsPortable(),
@@ -2623,7 +2648,34 @@ function remoteClientDiagnostics() {
   return remoteClientAdapter.diagnostics();
 }
 
+async function chooseVncClientExecutable() {
+  await readDesktopNotificationPreferences(true).catch(() => null);
+  const configured = String(readSettings().vncClientPath || "").trim();
+  const result = await dialog.showOpenDialog(mainWindow || undefined, {
+    title:desktopUiText("选择 VNC Viewer 客户端", "Select a VNC Viewer client"),
+    defaultPath:configured && fs.existsSync(configured) ? configured : app.getPath("home"),
+    properties:["openFile"],
+    ...(process.platform === "win32"
+      ? {filters:[
+        {name:desktopUiText("VNC 客户端程序", "VNC client applications"), extensions:["exe"]},
+        {name:desktopUiText("所有文件", "All files"), extensions:["*"]}
+      ]}
+      : {})
+  });
+  if (result.canceled || !result.filePaths[0]) return "";
+  const executable = remoteClientAdapter.validateVncClientPath(result.filePaths[0]);
+  writeSettings({...readSettings(), vncClientPath:executable});
+  return executable;
+}
+
 async function openRemoteClient(profile={}) {
+  if (profile.protocol === "vnc") {
+    const current = remoteClientAdapter.diagnostics().vnc;
+    if (!current.available && current.requires_selection) {
+      const executable = await chooseVncClientExecutable();
+      if (!executable) return {ok:false, canceled:true, protocol:"vnc", client:""};
+    }
+  }
   if (process.platform === "darwin" && profile.protocol === "rdp") {
     const current = remoteClientAdapter.diagnostics().rdp;
     const passwordTransferNeedsXServer = Boolean(
@@ -2733,7 +2785,7 @@ async function openUpdateDirectory(file) {
 
 function quitApp() {
   quitting = true;
-  if (trayStateTimer) clearInterval(trayStateTimer);
+  if (trayStateTimer) clearTimeout(trayStateTimer);
   stopDesktopNotificationBridge();
   try { setNativeSftpDragCancelHandler?.(null); } catch {}
   try { nativeSftpDrag?.dispose?.(); } catch {}
@@ -2829,8 +2881,12 @@ function readDesktopClipboardFormats() {
 
 function readDesktopClipboardSnapshot(options={}) {
   const formats = clipboard.availableFormats().map(value => String(value || "").toLowerCase());
-  const image = clipboard.readImage();
-  const imageAvailable = Boolean(image && !image.isEmpty());
+  const imageAvailable = formats.some(format => format.startsWith("image/")
+    || format === "cf_dib"
+    || format === "cf_dibv5"
+    || format === "public.tiff"
+    || format === "public.png");
+  const sequence = Number(windowsDesktopNative?.getClipboardSequenceNumber?.() || 0);
   const textAvailable = formats.some(format => format === "text"
     || format === "string"
     || format === "utf8_string"
@@ -2839,7 +2895,13 @@ function readDesktopClipboardSnapshot(options={}) {
   const result = {
     text_available:textAvailable,
     text:textAvailable ? clipboard.readText() : "",
-    image_available:imageAvailable
+    image_available:imageAvailable,
+    // Windows exposes a monotonic clipboard sequence number, so the renderer
+    // can detect changes without decoding the image. Other platforms do not
+    // currently expose an equivalent reliable content revision through
+    // Electron; an empty revision keeps their existing content-read fallback
+    // instead of treating an unchanged MIME list as unchanged image data.
+    image_revision:sequence > 0 ? `win32:${sequence}` : ""
   };
   if (imageAvailable && options?.include_image === true) result.image = readDesktopClipboardImage();
   return result;
@@ -3026,7 +3088,7 @@ app.whenReady().then(async () => {
       desktopAuthToken,
       onShutdown: () => {
         quitting = true;
-        if (trayStateTimer) clearInterval(trayStateTimer);
+        if (trayStateTimer) clearTimeout(trayStateTimer);
         trayStateTimer = null;
         stopDesktopNotificationBridge();
         setTimeout(() => app.quit(), 0);
@@ -3096,8 +3158,16 @@ app.whenReady().then(async () => {
   startDesktopNotificationBridge();
   desktopStartupInProgress = false;
   if (pendingStorageMigrationNotice) setTimeout(() => notify(pendingStorageMigrationNotice), 1200);
-  updateTrayState().catch(() => {});
-  trayStateTimer = setInterval(() => updateTrayState().catch(() => {}), 10000);
+  updateTrayState({force:true}).catch(() => {});
+  const scheduleTrayState = delay => {
+    if (trayStateTimer) clearTimeout(trayStateTimer);
+    trayStateTimer = setTimeout(async () => {
+      await updateTrayState().catch(() => {});
+      scheduleTrayState(15000);
+    }, delay);
+    trayStateTimer.unref?.();
+  };
+  scheduleTrayState(10000);
   const settings = readSettings();
   if (settings.showStartupNotification) {
     setTimeout(async () => {

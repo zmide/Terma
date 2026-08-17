@@ -57,7 +57,16 @@ function handleVncUpgrade(req, socket) {
     ].join("\r\n"));
     socket.setNoDelay?.(true);
     upgraded = true;
-    session = {socket, profile, transport:null, closed:false};
+    session = {
+      socket,
+      profile,
+      transport:null,
+      closed:false,
+      openedAt:Date.now(),
+      clientBytes:0,
+      serverBytes:0,
+      initialServerBytes:0
+    };
     sessions.add(session);
 
     const parser = new WebSocketFrameParser({maxFrameSize:16 * 1024 * 1024, maxMessageSize:32 * 1024 * 1024});
@@ -66,7 +75,10 @@ function handleVncUpgrade(req, socket) {
         parser.push(chunk, (opcode, payload) => {
           if (opcode === 8) return closeVncSession(session);
           if (opcode === 9) return sendWebSocketFrame(socket, payload, 10);
-          if ((opcode === 1 || opcode === 2) && session.transport && !session.transport.destroyed) session.transport.write(payload);
+          if ((opcode === 1 || opcode === 2) && session.transport && !session.transport.destroyed) {
+            session.clientBytes += payload.length;
+            session.transport.write(payload);
+          }
         });
       } catch (error) {
         appendSystemLog(`VNC WebSocket 数据错误：${profile.name} · ${error.message}`);
@@ -80,13 +92,27 @@ function handleVncUpgrade(req, socket) {
       const transport = result.socket;
       if (session.closed) return transport.destroy();
       session.transport = transport;
+      session.initialServerBytes = result.initial_data.length;
+      session.serverBytes = result.initial_data.length;
       updateRemoteProfileUsage(profile.id);
-      transport.on("data", chunk => sendWebSocketFrame(socket, chunk, 2));
+      transport.on("data", chunk => {
+        session.serverBytes += chunk.length;
+        sendWebSocketFrame(socket, chunk, 2);
+      });
       transport.on("error", error => {
         appendSystemLog(`VNC 连接错误：${profile.name} · ${error.message}`);
         closeVncSession(session, 1011, "VNC 连接失败");
       });
-      transport.on("close", () => closeVncSession(session, 1000, "VNC 会话已结束"));
+      transport.on("close", () => {
+        if (session.closed) return;
+        const elapsedMs = Math.max(0, Date.now() - session.openedAt);
+        const handshakeIncomplete = session.clientBytes === 0 || session.serverBytes <= session.initialServerBytes;
+        if (handshakeIncomplete) {
+          appendSystemLog(`VNC 服务在握手阶段关闭连接：${profile.name} · ${elapsedMs}ms · client=${session.clientBytes}B · server=${session.serverBytes}B`);
+          return closeVncSession(session, 1011, "VNC 服务在握手期间关闭连接");
+        }
+        closeVncSession(session, 1000, "VNC 会话已结束");
+      });
       sendWebSocketFrame(socket, result.initial_data, 2);
       transport.resume();
       appendSystemLog(`内置 VNC 会话已启动：${profile.name}`);
