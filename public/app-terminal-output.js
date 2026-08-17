@@ -1,14 +1,13 @@
 const TERMINAL_OUTPUT_FRAME_BUDGET = 128 * 1024;
+const TERMINAL_OUTPUT_DRAIN_DELAY_MS = 16;
 
 function scheduleTerminalOutputDrain(session) {
   if (session.terminalOutputFrame) return;
-  if (document.hidden) {
-    session.terminalOutputFrameKind = "timeout";
-    session.terminalOutputFrame = setTimeout(() => drainTerminalOutput(session), 16);
-    return;
-  }
-  session.terminalOutputFrameKind = "animation";
-  session.terminalOutputFrame = requestAnimationFrame(() => drainTerminalOutput(session));
+  // Terminal parsing must not depend on a compositor frame. Chromium can keep
+  // document.visibilityState as visible when Electron background throttling is
+  // disabled, while Windows still stops presenting frames for a minimized window.
+  session.terminalOutputFrameKind = "timeout";
+  session.terminalOutputFrame = setTimeout(() => drainTerminalOutput(session), TERMINAL_OUTPUT_DRAIN_DELAY_MS);
 }
 
 function terminalOutputLength(value) {
@@ -58,6 +57,22 @@ function queueTerminalOutput(session, output) {
   if (!session.pendingTerminalOutput) session.pendingTerminalOutput = [];
   session.pendingTerminalOutput.push(output);
   scheduleTerminalOutputDrain(session);
+}
+
+function refreshTerminalSessionsAfterWindowResume() {
+  for (const session of terminalSessions.values()) {
+    if (session.pendingTerminalOutput?.length && !session.terminalOutputWriting) {
+      if (session.terminalOutputFrame) {
+        if (session.terminalOutputFrameKind === "animation") cancelAnimationFrame(session.terminalOutputFrame);
+        else clearTimeout(session.terminalOutputFrame);
+      }
+      session.terminalOutputFrame = 0;
+      session.terminalOutputFrameKind = "";
+      drainTerminalOutput(session);
+    }
+    try { session.term?.refresh?.(0, Math.max(0, session.term.rows - 1)); } catch {}
+  }
+  if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
 }
 
 function cancelTerminalOutputQueue(session) {

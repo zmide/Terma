@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { componentInstallPlan } = require("./remote-component-installer");
 const { remoteProbeValue, selectRemoteProbeLines } = require("./remote-probe-protocol");
@@ -8,6 +9,7 @@ const CAPABILITY_TTL_MS = 5 * 60 * 1000;
 const CLIPBOARD_COMMAND_TIMEOUT_MS = 8000;
 const CLIPBOARD_IMAGE_COMMAND_TIMEOUT_MS = 25 * 1000;
 const CLIPBOARD_IMAGE_READY_MARKER = "TERMA_VNC_CLIPBOARD_IMAGE_READY";
+const CLIPBOARD_TEXT_UNAVAILABLE_STATUS = 44;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const capabilityCache = new Map();
 
@@ -423,9 +425,9 @@ function clipboardEnvironment(capability) {
 function clipboardReadCommand(capability) {
   const env = clipboardEnvironment(capability);
   if (capability.transport === "ssh-macos") return "LANG=en_US.UTF-8 LC_CTYPE=UTF-8 /usr/bin/pbpaste -Prefer txt";
-  if (capability.transport === "ssh-linux-wayland") return `${env}wl-paste --no-newline --type text 2>/dev/null || ${env}wl-paste --no-newline`;
+  if (capability.transport === "ssh-linux-wayland") return `( td_types=$(${env}wl-paste --list-types 2>/dev/null) || exit ${CLIPBOARD_TEXT_UNAVAILABLE_STATUS}; td_type=""; for td_candidate in 'text/plain;charset=utf-8' 'text/plain' 'UTF8_STRING' 'STRING'; do if printf '%s\n' "$td_types" | grep -Fx -- "$td_candidate" >/dev/null 2>&1; then td_type=$td_candidate; break; fi; done; [ -n "$td_type" ] || exit ${CLIPBOARD_TEXT_UNAVAILABLE_STATUS}; timeout 2 ${env}wl-paste --no-newline --type "$td_type" )`;
   if (capability.transport === "ssh-linux-x11" && capability.tool === "xsel") return `timeout 2 ${env}xsel --clipboard --output`;
-  if (capability.transport === "ssh-linux-x11") return `timeout 2 ${env}xclip -selection clipboard -o`;
+  if (capability.transport === "ssh-linux-x11") return `( td_targets=$(timeout 2 ${env}xclip -selection clipboard -target TARGETS -o 2>/dev/null) || exit ${CLIPBOARD_TEXT_UNAVAILABLE_STATUS}; td_target=""; for td_candidate in 'UTF8_STRING' 'text/plain;charset=utf-8' 'text/plain' 'STRING' 'COMPOUND_TEXT'; do if printf '%s\n' "$td_targets" | grep -Fx -- "$td_candidate" >/dev/null 2>&1; then td_target=$td_candidate; break; fi; done; [ -n "$td_target" ] || exit ${CLIPBOARD_TEXT_UNAVAILABLE_STATUS}; timeout 2 ${env}xclip -selection clipboard -target "$td_target" -o )`;
   throw new Error(capability.reason || "远端剪贴板辅助通道不可用");
 }
 
@@ -446,6 +448,13 @@ function clipboardImageReadCommand(capability) {
   const env = clipboardEnvironment(capability);
   if (capability.transport === "ssh-linux-wayland") return `timeout 4 ${env}wl-paste --no-newline --type image/png`;
   if (capability.transport === "ssh-linux-x11" && capability.tool === "xclip") return `timeout 4 ${env}xclip -selection clipboard -target image/png -o`;
+  throw new Error("当前远端剪贴板工具不支持 PNG 图片；X11 请安装 xclip，Wayland 请安装 wl-clipboard");
+}
+
+function clipboardImageTargetCheckCommand(capability) {
+  const env = clipboardEnvironment(capability);
+  if (capability.transport === "ssh-linux-wayland") return `( td_types=$(${env}wl-paste --list-types 2>/dev/null) || exit ${CLIPBOARD_TEXT_UNAVAILABLE_STATUS}; printf '%s\n' "$td_types" | grep -Fx -- 'image/png' >/dev/null 2>&1 )`;
+  if (capability.transport === "ssh-linux-x11" && capability.tool === "xclip") return `( td_targets=$(timeout 2 ${env}xclip -selection clipboard -target TARGETS -o 2>/dev/null) || exit ${CLIPBOARD_TEXT_UNAVAILABLE_STATUS}; printf '%s\n' "$td_targets" | grep -Fx -- 'image/png' >/dev/null 2>&1 )`;
   throw new Error("当前远端剪贴板工具不支持 PNG 图片；X11 请安装 xclip，Wayland 请安装 wl-clipboard");
 }
 
@@ -498,6 +507,7 @@ async function readVncRemoteClipboardImage(profile, dependencies) {
   const capability = await detectVncClipboardBridge(profile, dependencies);
   if (!capability.available) throw new Error(capability.reason || "远端剪贴板辅助通道不可用");
   const readCommand = clipboardImageReadCommand(capability);
+  const targetCheckCommand = clipboardImageTargetCheckCommand(capability);
   const { connection } = bridgeContext(profile, dependencies);
   const chunks: Buffer[] = [];
   let total = 0;
@@ -507,7 +517,10 @@ async function readVncRemoteClipboardImage(profile, dependencies) {
     "td_clip=$(mktemp /tmp/terma-vnc-clipboard-read.XXXXXX) || exit 21",
     "td_clip_err=$(mktemp /tmp/terma-vnc-clipboard-read-error.XXXXXX) || { rm -f \"$td_clip\"; exit 21; }",
     "trap 'rm -f \"$td_clip\" \"$td_clip_err\"' EXIT HUP INT TERM",
-    `${readCommand} > \"$td_clip\" 2>\"$td_clip_err\"`,
+    `${targetCheckCommand} 2>\"$td_clip_err\"`,
+    "td_target_status=$?",
+    `if [ \"$td_target_status\" -ne 0 ]; then printf '远端剪贴板中没有 PNG 图片\\n' >&2; exit ${CLIPBOARD_TEXT_UNAVAILABLE_STATUS}; fi`,
+    `( ${readCommand} ) 2>\"$td_clip_err\" | head -c ${MAX_CLIPBOARD_IMAGE_BYTES + 1} > \"$td_clip\"`,
     "td_status=$?",
     "if [ \"$td_status\" -ne 0 ]; then cat \"$td_clip_err\" >&2; exit \"$td_status\"; fi",
     "td_size=$(wc -c < \"$td_clip\" | tr -d ' ') || exit 22",
@@ -541,10 +554,58 @@ async function readVncRemoteClipboardImage(profile, dependencies) {
   };
 }
 
+async function inspectVncRemoteClipboardImage(profile, dependencies) {
+  const capability = await detectVncClipboardBridge(profile, dependencies);
+  if (!capability.available) throw new Error(capability.reason || "远端剪贴板辅助通道不可用");
+  const targetCheckCommand = clipboardImageTargetCheckCommand(capability);
+  const readCommand = clipboardImageReadCommand(capability);
+  const { connection } = bridgeContext(profile, dependencies);
+  const script = [
+    "set +e",
+    "umask 077",
+    "td_clip=$(mktemp /tmp/terma-vnc-clipboard-metadata.XXXXXX) || exit 21",
+    "td_clip_err=$(mktemp /tmp/terma-vnc-clipboard-metadata-error.XXXXXX) || { rm -f \"$td_clip\"; exit 21; }",
+    "trap 'rm -f \"$td_clip\" \"$td_clip_err\"' EXIT HUP INT TERM",
+    `${targetCheckCommand} 2>"$td_clip_err"`,
+    "td_target_status=$?",
+    "if [ \"$td_target_status\" -ne 0 ]; then printf 'TERMA_IMAGE_AVAILABLE=0\n'; exit 0; fi",
+    `( ${readCommand} ) 2>"$td_clip_err" | head -c ${MAX_CLIPBOARD_IMAGE_BYTES + 1} > "$td_clip"`,
+    "td_status=$?",
+    "if [ \"$td_status\" -ne 0 ]; then printf 'TERMA_IMAGE_AVAILABLE=0\n'; exit 0; fi",
+    "td_size=$(wc -c < \"$td_clip\" | tr -d ' ') || exit 22",
+    `if [ "$td_size" -gt ${MAX_CLIPBOARD_IMAGE_BYTES} ]; then printf 'TERMA_IMAGE_AVAILABLE=1\nTERMA_IMAGE_TOO_LARGE=1\nTERMA_IMAGE_BYTES=%s\n' "$td_size"; exit 0; fi`,
+    "td_signature=$(dd if=\"$td_clip\" bs=8 count=1 2>/dev/null | od -An -tx1 | tr -d ' \\r\\n')",
+    "if [ \"$td_signature\" != '89504e470d0a1a0a' ]; then printf 'TERMA_IMAGE_AVAILABLE=0\n'; exit 0; fi",
+    "if command -v sha256sum >/dev/null 2>&1; then td_hash=$(sha256sum \"$td_clip\" | awk '{print $1}'); elif command -v openssl >/dev/null 2>&1; then td_hash=$(openssl dgst -sha256 \"$td_clip\" | awk '{print $NF}'); else printf '无法计算远端剪贴板图片摘要\n' >&2; exit 24; fi",
+    "printf 'TERMA_IMAGE_AVAILABLE=1\nTERMA_IMAGE_TOO_LARGE=0\nTERMA_IMAGE_BYTES=%s\nTERMA_IMAGE_SHA256=%s\n' \"$td_size\" \"$td_hash\""
+  ].join("\n");
+  const result = await dependencies.runSshCommandForConnection(connection, buildRemotePosixCommand(script), CLIPBOARD_IMAGE_COMMAND_TIMEOUT_MS);
+  if (result?.status !== 0) throw new Error(commandFailure(result, "读取远端图片剪贴板摘要失败"));
+  const output = String(result.stdout || "");
+  const available = remoteProbeValue(output, "IMAGE_AVAILABLE") === "1";
+  const tooLarge = remoteProbeValue(output, "IMAGE_TOO_LARGE") === "1";
+  const bytes = Number(remoteProbeValue(output, "IMAGE_BYTES") || 0);
+  const sha256 = String(remoteProbeValue(output, "IMAGE_SHA256") || "").toLowerCase();
+  if (available && !tooLarge && !/^[0-9a-f]{64}$/.test(sha256)) throw new Error("远端剪贴板图片摘要无效");
+  return {
+    available,
+    transport:capability.transport,
+    connection_id:capability.connection_id,
+    connection_name:capability.connection_name,
+    platform:capability.platform,
+    tool:capability.tool,
+    bytes,
+    sha256:available && !tooLarge ? sha256 : "",
+    too_large:tooLarge,
+    max_bytes:MAX_CLIPBOARD_IMAGE_BYTES
+  };
+}
+
 async function writeVncRemoteClipboardImage(profile, value, dependencies) {
   const capability = await detectVncClipboardBridge(profile, dependencies);
   if (!capability.available) throw new Error(capability.reason || "远端剪贴板辅助通道不可用");
   const image = validateVncClipboardImage(value);
+  const imageHash = crypto.createHash("sha256").update(image).digest("hex");
   const { connection } = bridgeContext(profile, dependencies);
   const command = buildRemotePosixCommand(clipboardImageWriteScript(capability));
   return new Promise((resolve, reject) => {
@@ -571,7 +632,8 @@ async function writeVncRemoteClipboardImage(profile, value, dependencies) {
             connection_name:capability.connection_name,
             platform:capability.platform,
             tool:capability.tool,
-            bytes:image.length
+            bytes:image.length,
+            sha256:imageHash
           });
         }
       },
@@ -580,7 +642,7 @@ async function writeVncRemoteClipboardImage(profile, value, dependencies) {
     Promise.resolve(task).then(result => {
       if (settled) return;
       if (String(result?.stdout || "").includes(CLIPBOARD_IMAGE_READY_MARKER)) {
-        finish(resolve, {ok:true, available:true, transport:capability.transport, connection_id:capability.connection_id, connection_name:capability.connection_name, platform:capability.platform, tool:capability.tool, bytes:image.length});
+        finish(resolve, {ok:true, available:true, transport:capability.transport, connection_id:capability.connection_id, connection_name:capability.connection_name, platform:capability.platform, tool:capability.tool, bytes:image.length, sha256:imageHash});
       } else {
         finish(reject, new Error(commandFailure(result, "写入远端图片剪贴板失败")));
       }
@@ -596,25 +658,43 @@ async function readVncRemoteClipboard(profile, dependencies) {
   const base64Command = capability.transport === "ssh-macos" ? "/usr/bin/base64" : "base64";
   const emptySelectionAllowed = capability.transport === "ssh-linux-x11";
   const script = [
+    "td_text_available=1",
     "td_clip=$(mktemp /tmp/terma-vnc-clipboard.XXXXXX)",
     "td_clip_err=$(mktemp /tmp/terma-vnc-clipboard-error.XXXXXX)",
     "trap 'rm -f \"$td_clip\" \"$td_clip_err\"' EXIT HUP INT TERM",
     `${readCommand} > "$td_clip" 2>"$td_clip_err"`,
     "td_status=$?",
     emptySelectionAllowed
-      ? `if [ "$td_status" -ne 0 ]; then if [ "$td_status" -eq 124 ] || grep -qiE 'target .* not available|no selection|selection .* not available' "$td_clip_err"; then : > "$td_clip"; else cat "$td_clip_err" >&2; exit "$td_status"; fi; fi`
-      : `if [ "$td_status" -ne 0 ]; then cat "$td_clip_err" >&2; exit "$td_status"; fi`,
+      ? `if [ "$td_status" -ne 0 ]; then if [ "$td_status" -eq ${CLIPBOARD_TEXT_UNAVAILABLE_STATUS} ] || [ "$td_status" -eq 124 ] || grep -qiE 'target .* not available|no selection|selection .* not available' "$td_clip_err"; then td_text_available=0; : > "$td_clip"; else cat "$td_clip_err" >&2; exit "$td_status"; fi; fi`
+      : `if [ "$td_status" -ne 0 ]; then if [ "$td_status" -eq ${CLIPBOARD_TEXT_UNAVAILABLE_STATUS} ]; then td_text_available=0; : > "$td_clip"; else cat "$td_clip_err" >&2; exit "$td_status"; fi; fi`,
     "td_size=$(wc -c < \"$td_clip\" | tr -d ' ')",
-    "printf 'TERMA_SIZE=%s\\nTERMA_DATA=' \"$td_size\"",
+    "printf 'TERMA_TEXT_AVAILABLE=%s\\nTERMA_SIZE=%s\\nTERMA_DATA=' \"$td_text_available\" \"$td_size\"",
     `dd if="$td_clip" bs=${MAX_CLIPBOARD_BYTES} count=1 2>/dev/null | ${base64Command} | tr -d '\\r\\n'`,
     "printf '\\n'"
   ].join("\n");
   const result = await dependencies.runSshCommandForConnection(connection, buildRemotePosixCommand(script), CLIPBOARD_COMMAND_TIMEOUT_MS);
   if (result?.status !== 0) throw new Error(commandFailure(result, "读取远端系统剪贴板失败"));
   const output = String(result.stdout || "");
+  let textAvailable = remoteProbeValue(output, "TEXT_AVAILABLE") !== "0";
   const size = Number(remoteProbeValue(output, "SIZE") || 0);
   const encoded = remoteProbeValue(output, "DATA");
-  const text = Buffer.from(encoded, "base64").toString("utf8");
+  const data = Buffer.from(encoded, "base64");
+  let text = "";
+  if (textAvailable && data.length >= PNG_SIGNATURE.length && data.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    textAvailable = false;
+  }
+  if (textAvailable) {
+    try {
+      text = new TextDecoder("utf-8", {fatal:true}).decode(data);
+      if (text.includes("\0")) {
+        textAvailable = false;
+        text = "";
+      }
+    } catch {
+      textAvailable = false;
+      text = "";
+    }
+  }
   return {
     available:true,
     transport:capability.transport,
@@ -623,6 +703,7 @@ async function readVncRemoteClipboard(profile, dependencies) {
     resolved_by:capability.resolved_by,
     platform:capability.platform,
     tool:capability.tool,
+    text_available:textAvailable,
     text,
     bytes:size,
     truncated:size > MAX_CLIPBOARD_BYTES,
@@ -667,6 +748,7 @@ module.exports = {
   clearVncClipboardCapabilityCache,
   detectVncClipboardBridge,
   inspectVncClipboardHelper,
+  inspectVncRemoteClipboardImage,
   parseClipboardDetection,
   readVncRemoteClipboard,
   readVncRemoteClipboardImage,

@@ -17,6 +17,7 @@ interface RemoteProfileRouteDependencies {
   getVncProfileCredential(id: number): any;
   insertRemoteProfile(data: any): number;
   inspectVncClipboardHelperForProfile(profile: any): Promise<any>;
+  inspectVncRemoteClipboardImage(profile: any, dependencies: any): Promise<any>;
   inspectVncServerForProfile(profile: any): Promise<any>;
   isDesktopCapabilityRequest(request: IncomingMessage, capability: string): boolean;
   listConnections(): any[];
@@ -146,6 +147,19 @@ export async function handleRemoteProfileRoutes(
       }
       const image = await dependencies.readBody(request, 25 * 1024 * 1024 + 1);
       dependencies.sendJson(response, await dependencies.writeVncRemoteClipboardImage(profile, image, clipboardDependencies));
+      return true;
+    }
+  }
+  if (parts.length === 6 && parts[3] === "vnc-clipboard" && parts[4] === "image" && parts[5] === "metadata") {
+    response.setHeader("Cache-Control", "no-store");
+    const profile = dependencies.getRemoteProfile(id);
+    if (method === "GET") {
+      dependencies.sendJson(response, await dependencies.inspectVncRemoteClipboardImage(profile, {
+        getConnection:dependencies.getConnection,
+        listConnections:dependencies.listConnections,
+        repairManagementConnection:(item: any, connectionId: number) => dependencies.repairRemoteProfileManagementConnection(item.id, connectionId),
+        runSshCommandForConnection:dependencies.runSshCommandForConnection
+      }));
       return true;
     }
   }
@@ -322,15 +336,24 @@ export async function handleRemoteProfileRoutes(
         throw new Error(`无法从本机连接 RDP 服务 ${dependencies.formatRemoteEndpoint(profile.host, profile.port || 3389)}（${endpoint.error || "端口不可达"}）。请检查远端服务、防火墙和网络路由。`);
       }
     }
-    const result = await Promise.resolve(launcher({
-      id:profile.id,
-      protocol:profile.protocol,
-      host:profile.host,
-      port:profile.port,
-      username:profile.username,
-      password:profile.password,
-      options:profile.options
-    }));
+    let result: any;
+    try {
+      result = await Promise.resolve(launcher({
+        id:profile.id,
+        protocol:profile.protocol,
+        host:profile.host,
+        port:profile.port,
+        username:profile.username,
+        password:profile.password,
+        options:profile.options
+      }));
+    } catch (error) {
+      const failure: any = new Error(error instanceof Error ? error.message : "系统远程桌面客户端启动失败");
+      failure.publicCode = "remote_client_launch_failed";
+      failure.publicParams = {protocol:String(profile.protocol || "remote").toUpperCase()};
+      failure.statusCode = 500;
+      throw failure;
+    }
     dependencies.updateRemoteProfileUsage(id);
     dependencies.sendJson(response, result);
     return true;

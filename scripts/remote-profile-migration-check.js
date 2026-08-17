@@ -38,6 +38,7 @@ VALUES('legacy-vnc','迁移测试','vnc','127.0.0.1',5900,'',NULL,1,123,'desktop
   assert.equal(migrated.favorite, 1);
   assert.equal(migrated.options.client_mode, "system");
   assert.equal(migrated.options.quality, 6);
+  assert.equal(migrated.options.auto_sync_images, true, "旧 VNC 配置应默认启用图片双向自动同步");
   const schema = db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='remote_profiles'");
   assert.doesNotMatch(schema.sql, /CHECK\s*\(\s*protocol\s+IN/i);
 

@@ -26,6 +26,7 @@
   "backend": {
     "request_failed": "请求失败，请重试",
     "remote_output": "远端命令执行失败",
+    "remote_client_launch_failed": "无法启动 {{protocol}} 系统客户端，请确认客户端已正确安装并与系统关联。",
     "ssh_authentication_failed": "SSH 认证失败，请检查用户名、密码、私钥或代理设置",
     "auth_login_failed": "登录失败",
     "auth_login_rate_limited": "登录尝试过多，请在 {{seconds}} 秒后重试",

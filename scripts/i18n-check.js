@@ -554,7 +554,7 @@ const apiAt = html.indexOf('/app-api.js');
 assert.ok(vendorAt >= 0 && bootstrapAt > vendorAt && apiAt > bootstrapAt, "i18next vendor and bootstrap scripts must load before application modules");
 assert.ok(staticContent.includes('["/vendor/i18next/i18next.min.js", vendorFile("i18next", "dist/umd/i18next.min.js")]'));
 const runtimeSettings = read("src/runtime-settings.ts");
-assert.ok(runtimeSettings.includes("schema_version: 14") && runtimeSettings.includes("language: normalizeLanguage") && runtimeSettings.includes("language_onboarding_version"));
+assert.ok(runtimeSettings.includes("schema_version: 15") && runtimeSettings.includes("language: normalizeLanguage") && runtimeSettings.includes("language_onboarding_version") && runtimeSettings.includes("vnc_fullscreen_toolbar"));
 const i18nBootstrap = read("public/app-i18n.js");
 const frontend = `${i18nBootstrap}\n${read("public/app-settings-runtime.js")}\n${read("public/app-settings.js")}`;
 for (const token of ["setTermaLanguage", "registerTermaI18nRenderer", "toggleTermaLanguage", "syncTermaLanguageControls", "termaI18nPhraseTemplates"]) {
@@ -652,6 +652,7 @@ const uncoveredStaticPhrases = [...staticPhrases].filter(value => (
 ));
 assert.deepEqual(uncoveredStaticPhrases, [], `static UI phrases missing from locale resources: ${uncoveredStaticPhrases.join(" | ")}`);
 assert.ok(read("src/third-party-components.ts").includes('name:"i18next", version:"26.3.6"'));
+assert.ok(read("src/third-party-components.ts").includes('name:"node-x11", version:"3.9.1"'));
 assert.doesNotMatch(read("src/third-party-components.ts"), /\buse:\s*["'`][^"'`]*[\u3400-\u9fff]/, "third-party component purposes must use stable locale-independent codes");
 assert.ok(read("THIRD_PARTY_NOTICES.md").includes("## i18next\n\n- Project: https://github.com/i18next/i18next\n- Version: 26.3.6"));
 require("./sftp-job-i18n-check");

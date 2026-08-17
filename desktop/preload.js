@@ -22,8 +22,25 @@ contextBridge.exposeInMainWorld("termaDesktop", {
   readClipboardImage() {
     return ipcRenderer.invoke("terma:clipboard-read-image");
   },
+  readClipboardSnapshot(options={}) {
+    return ipcRenderer.invoke("terma:clipboard-read-snapshot", {include_image:options?.includeImage === true});
+  },
   writeClipboardImage(data) {
     return ipcRenderer.invoke("terma:clipboard-write-image", data);
+  },
+  openVncWindow(profileId, options={}) {
+    return ipcRenderer.invoke("terma:vnc-open-window", {
+      profileId:Number(profileId || 0),
+      key:String(options?.key || "")
+    });
+  },
+  closeVncWindowForProfile(profileId) {
+    return ipcRenderer.invoke("terma:vnc-close-profile-window", {
+      profileId:Number(profileId || 0)
+    });
+  },
+  closeVncWindow() {
+    return ipcRenderer.invoke("terma:vnc-window-close");
   },
   startSftpDrag(payload, requestId) {
     ipcRenderer.send("terma:sftp-start-drag", {

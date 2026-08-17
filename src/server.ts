@@ -100,6 +100,7 @@ const {
 const { handleRemoteTerminalUpgrade, listSerialPorts, testRemoteTerminalProfile } = require("./remote-terminal");
 const { handleVncUpgrade, testVncProfile } = require("./vnc-proxy");
 const {
+  inspectVncRemoteClipboardImage,
   readVncRemoteClipboard,
   readVncRemoteClipboardImage,
   writeVncRemoteClipboard,
@@ -511,7 +512,7 @@ async function handleApi(req, res, pathname) {
     getDesktopIntegration, getRemoteProfile, getVncProfileCredential,
     insertRemoteProfile, inspectVncClipboardHelperForProfile, inspectVncServerForProfile,
     isDesktopCapabilityRequest, listConnections, listRemoteProfiles, probeTcpEndpoint,
-    readBody, readJson, readVncRemoteClipboard, readVncRemoteClipboardImage,
+    readBody, readJson, readVncRemoteClipboard, readVncRemoteClipboardImage, inspectVncRemoteClipboardImage,
     releaseRemoteAdminGrant, remoteOfflineTasks, resolveManagementConnection,
     repairRemoteProfileManagementConnection,
     runRemotePrivilegeCommand, runSshCommandForConnection, runSshCommandForConnectionStreaming,

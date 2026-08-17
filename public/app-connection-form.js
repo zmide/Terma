@@ -170,7 +170,8 @@ function wireConnectionForm() {
   const form = $("connectionForm");
   form.addEventListener("submit", async e => {
     e.preventDefault();
-    await saveConnectionForm(false, e.submitter);
+    const action = String(e.submitter?.dataset.saveAction || "");
+    await saveConnectionForm(false, e.submitter, action === "open", action === "close" || action === "open");
   });
   form.addEventListener("invalid", event => {
     if (event.target?.closest?.("#connAdvancedOptions")) openConnectionAdvancedOptions(form);
@@ -190,7 +191,7 @@ function wireConnectionForm() {
   });
 }
 
-async function saveConnectionForm(clearAfterSave=false, trigger=null, connectAfterSave=false) {
+async function saveConnectionForm(clearAfterSave=false, trigger=null, connectAfterSave=false, closeAfterSave=false) {
   if (!requireConfigEncryptionUnlocked(tr("connections:form.save_context", {defaultValue:"保存 SSH 连接"}))) return;
   const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
   const form = $("connectionForm");
@@ -232,9 +233,18 @@ async function saveConnectionForm(clearAfterSave=false, trigger=null, connectAft
     saveGroupState();
     await loadAll();
     if (connectAfterSave && savedConnectionId) {
-      if (sourceTabKey && tabs.some(tab => tab.key === sourceTabKey)) closeTabsByKey([sourceTabKey], sourceTabKey);
+      const sourceTab = sourceTabKey ? tabs.find(tab => tab.key === sourceTabKey) : null;
+      if (sourceTab) {
+        sourceTab.pinned = false;
+        closeTabsByKey([sourceTabKey], sourceTabKey);
+      }
       openTerminal(savedConnectionId);
-      notify(tr("connections:form.saved_opening_terminal", {defaultValue:"连接已保存，正在打开终端"}), "success");
+    } else if (closeAfterSave && p.id) {
+      const sourceTab = sourceTabKey ? tabs.find(tab => tab.key === sourceTabKey) : null;
+      if (sourceTab) {
+        sourceTab.pinned = false;
+        closeTabsByKey([sourceTabKey], sourceTabKey);
+      }
     } else if (clearAfterSave && !p.id) {
       let keyLoad = Promise.resolve();
       inPane(() => {

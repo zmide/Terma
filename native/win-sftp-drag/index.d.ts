@@ -72,9 +72,32 @@ export interface WindowsSftpDragStartResult {
   accepted: true;
 }
 
+export interface WindowsX11WindowGuardDiagnostics {
+  running: boolean;
+  hookInstalled: boolean;
+  hookError: number;
+  processId: number;
+  lastWindow: string;
+  lastEventId: number;
+  lastAction: number;
+  lastMouseX: number;
+  lastMouseY: number;
+  lastHitTest: number;
+  beforeIconic: boolean;
+  beforeZoomed: boolean;
+  afterIconic: boolean;
+  afterZoomed: boolean;
+  currentWindowValid: boolean;
+  currentIconic: boolean;
+  currentZoomed: boolean;
+  currentRect?: {left:number; top:number; right:number; bottom:number};
+  currentStyle?: number;
+}
+
 export function probe(): WindowsSftpDragProbe;
 export function startX11WindowGuard(processId: number): boolean;
 export function stopX11WindowGuard(): boolean;
+export function getX11WindowGuardDiagnostics(): WindowsX11WindowGuardDiagnostics;
 export function startDrag(
   spec: WindowsSftpDragSpec,
   onRead: ((request: unknown) => void) | undefined | null,

@@ -65,6 +65,11 @@ assert.equal(planWindowsX11WindowCorrection({}, {}, workArea), null);
 const fallbackScript = windowsX11WindowGuardScript(4321);
 assert.match(fallbackScript, /\$SWP_ASYNCWINDOWPOS = 0x4000/);
 assert.match(fallbackScript, /\$setWindowFlags =[^\r\n]*\$SWP_ASYNCWINDOWPOS/);
+const wpsCompatibilityScript = windowsX11WindowGuardScript(4321, {enableWpsCompatibility:true});
+assert.match(wpsCompatibilityScript, /\$enableWpsCompatibility = \$true/);
+assert.match(wpsCompatibilityScript, /WPS\(\?: Office\)\?/);
+assert.match(wpsCompatibilityScript, /WM_NCLBUTTONDOWN/);
+assert.match(wpsCompatibilityScript, /ShowWindow/);
 
 const nativeSource = fs.readFileSync(
   path.join(__dirname, "..", "native", "win-sftp-drag", "src", "addon.cc"),

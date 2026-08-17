@@ -29,7 +29,25 @@ function editConnection(id, updateTab=true){
   form.dataset.identityFileStatus = String(c.identity_file_status || "none");
   form.dataset.identityFileMessage = connectionIdentityWarningMessage(c);
   $("conn_id").value=c.id;
-  if ($("connSaveAndConnect")) $("connSaveAndConnect").hidden = true;
+  const saveOnly = $("connSaveOnly");
+  if (saveOnly) {
+    saveOnly.hidden = false;
+    saveOnly.dataset.i18n = "connections:auto.save_only";
+    saveOnly.textContent = tr("connections:auto.save_only", {defaultValue:"仅保存"});
+  }
+  const primarySave = $("connPrimarySave");
+  if (primarySave) {
+    primarySave.dataset.saveAction = "close";
+    primarySave.dataset.i18n = "connections:auto.save_close";
+    primarySave.textContent = tr("connections:auto.save_close", {defaultValue:"保存并关闭"});
+  }
+  const saveAndOpen = $("connSaveAndConnect");
+  if (saveAndOpen) {
+    saveAndOpen.hidden = false;
+    saveAndOpen.dataset.closeAfterSave = "1";
+    saveAndOpen.dataset.i18n = "connections:auto.save_open";
+    saveAndOpen.textContent = tr("connections:auto.save_open", {defaultValue:"保存并打开"});
+  }
   if ($("connSaveAndClear")) $("connSaveAndClear").hidden = true;
   if ($("connRemoteGenerationLine")) $("connRemoteGenerationLine").hidden = true;
   $("conn_name").value=c.name;

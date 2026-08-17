@@ -26,6 +26,7 @@
   "backend": {
     "request_failed": "The request failed. Try again.",
     "remote_output": "The remote command failed.",
+    "remote_client_launch_failed": "Could not start the {{protocol}} system client. Make sure it is installed and registered with the operating system.",
     "ssh_authentication_failed": "SSH authentication failed. Check the username, password, private key, or agent settings.",
     "auth_login_failed": "Sign-in failed.",
     "auth_login_rate_limited": "Too many sign-in attempts. Try again in {{seconds}} seconds.",

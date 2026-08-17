@@ -14,6 +14,8 @@ const OPERATION_PANE_WIDTH_MAX = 520;
 let operationPaneWidth = OPERATION_PANE_WIDTH_DEFAULT;
 let operationPaneResize = null;
 const OPERATION_PANE_PRIMARY_VIEWS = ["connections", "remote", "running", "command", "import", "logs", "settings"];
+const WORKSPACE_SSH_CONNECTION_TAB_KINDS = new Set(["terminal", "sftp", "forwards", "dashboard", "linux-desktop"]);
+const WORKSPACE_REMOTE_CONNECTION_TAB_KINDS = new Set(["remote-desktop", "remote-terminal", "ftp"]);
 const OPERATION_PANE_PINNED_STORAGE_KEY = "operationPanePinnedByViewV1";
 const OPERATION_PANE_PIN_GUIDE_STORAGE_KEY = "operationPanePinGuideSeenV3";
 let operationPanePinGuideShown = false;
@@ -690,6 +692,14 @@ function hideTabContextMenu() {
   $("tabContextMenu")?.remove();
 }
 
+function workspaceTabConnectionEditAction(tab) {
+  const id = Number(tab?.id || 0);
+  if (!Number.isInteger(id) || id <= 0 || tab?.quick_connection || tab?.transient) return null;
+  if (WORKSPACE_SSH_CONNECTION_TAB_KINDS.has(tab.kind)) return () => editConnection(id);
+  if (WORKSPACE_REMOTE_CONNECTION_TAB_KINDS.has(tab.kind)) return () => editRemoteProfile(id);
+  return null;
+}
+
 function showTabContextMenu(event, key) {
   event.preventDefault();
   event.stopPropagation();
@@ -697,7 +707,9 @@ function showTabContextMenu(event, key) {
   const tab = tabs.find(item => item.key === key);
   const index = tabs.findIndex(item => item.key === key);
   if (!tab || index < 0) return;
+  const editConnectionAction = workspaceTabConnectionEditAction(tab);
   const options = [
+    ...(editConnectionAction ? [[tr("common:command_palette.edit_connection", {defaultValue:"编辑连接"}), () => { hideTabContextMenu(); editConnectionAction(); }, true]] : []),
     [tr("common:auto.move_left", {defaultValue:"向左移动"}), () => moveWorkspaceTab(key, -1), index > 0],
     [tr("common:auto.move_right", {defaultValue:"向右移动"}), () => moveWorkspaceTab(key, 1), index < tabs.length - 1],
     [tr("common:auto.close_current_tab", {defaultValue:"关闭当前标签"}), () => closeTabsByMode("current", key), Boolean(tab.closable)],

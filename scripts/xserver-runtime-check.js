@@ -122,8 +122,11 @@ async function main() {
     assert.match(source, /"-listen", "tcp"/);
     assert.match(source, /"-multiwindow",[\s\S]*"-compositewm",[\s\S]*"-swcursor"/);
     assert.doesNotMatch(source, /"-nodecoration"/);
-    assert.match(source, /startWindowsX11WindowGuard\(processHandle, \{environment\}\)/);
+    assert.match(source, /startWindowsX11WindowGuard\(processHandle, \{[\s\S]*enableWpsCompatibility:true[\s\S]*\}\)/);
     assert.match(source, /stopWindowsX11WindowGuard\(activeWindowGuard\)/);
+    assert.match(source, /startWindowsClipboardBridge\(processHandle, display, Buffer\.from\(cookie, "hex"\)\)/);
+    assert.match(source, /startWindowsClipboardBridge\(processHandle, `127\.0\.0\.1:\$\{displayNumber\}\.0`\)/);
+    assert.match(source, /stopWindowsClipboardBridges\(\)/);
     assert.match(source, /"-swcursor"/);
     assert.match(source, /"-lesspointer"/);
     assert.match(source, /"-wgl"/);
@@ -296,7 +299,7 @@ async function main() {
     const guardCalls = [];
     const guardChild = {
       exitCode:null,
-      once(event, callback) { guardCalls.push({kind:"once", event, callbackType:typeof callback}); },
+      once(event, callback) { guardCalls.push({kind:"once", event, callbackType:typeof callback, callback}); },
       unref() { guardCalls.push({kind:"unref"}); },
       kill() { guardCalls.push({kind:"kill"}); this.exitCode = 0; }
     };
@@ -311,12 +314,14 @@ async function main() {
     assert.equal(startedGuard, guardChild);
     const guardSpawn = guardCalls.find(item => item.kind === "spawn");
     assert.match(guardSpawn.command, /WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe$/i);
-    assert.deepEqual(guardSpawn.args.slice(0, 6), ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand"]);
+    assert.deepEqual(guardSpawn.args.slice(0, 6), ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"]);
+    assert.match(guardSpawn.args[6], /terma-x11-window-guard-4321-\d+\.ps1$/i);
     assert.equal(guardSpawn.options.windowsHide, true);
     assert.equal(guardSpawn.options.stdio, "ignore");
     assert.equal(guardCalls.some(item => item.kind === "unref"), true);
     assert.equal(stopWindowsX11WindowGuard(guardChild), true);
     assert.equal(guardCalls.some(item => item.kind === "kill"), true);
+    guardCalls.find(item => item.kind === "once" && item.event === "exit")?.callback();
 
     const xdmcpFixture = dgram.createSocket("udp4");
     await new Promise((resolve, reject) => {

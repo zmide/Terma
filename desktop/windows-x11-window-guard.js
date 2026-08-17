@@ -1,5 +1,7 @@
 "use strict";
 
+const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
 
@@ -59,11 +61,13 @@ function planWindowsX11WindowCorrection(rectValue, clientOriginValue, workAreaVa
   return nextLeft === left && nextTop === top ? null : {left:nextLeft, top:nextTop};
 }
 
-function windowsX11WindowGuardScript(serverProcessId) {
+function windowsX11WindowGuardScript(serverProcessId, options = {}) {
   const pid = Number(serverProcessId);
   if (!Number.isInteger(pid) || pid < 1) throw new Error("X Server process ID is invalid");
+  const enableWpsCompatibility = options.enableWpsCompatibility === true;
   return String.raw`
 $serverProcessId = ${pid}
+$enableWpsCompatibility = ${enableWpsCompatibility ? "$true" : "$false"}
 $source = @"
 using System;
 using System.Text;
@@ -109,8 +113,38 @@ public static class TermaX11WindowGuardNative {
     [DllImport("user32.dll")]
     public static extern bool IsZoomed(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    public static extern bool GetCursorPos(out POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern short GetAsyncKeyState(int virtualKey);
+
+    [DllImport("user32.dll")]
+    public static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern bool ReleaseCapture();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessage(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int command);
+
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int index);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder title, int maxCount);
 
     [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
@@ -152,6 +186,16 @@ $SWP_NOZORDER = 0x0004
 $SWP_NOACTIVATE = 0x0010
 $SWP_ASYNCWINDOWPOS = 0x4000
 $setWindowFlags = $SWP_NOSIZE -bor $SWP_NOZORDER -bor $SWP_NOACTIVATE -bor $SWP_ASYNCWINDOWPOS
+$WM_CLOSE = 0x0010
+$WM_NCLBUTTONDOWN = 0x00A1
+$HTCAPTION = 2
+$SW_MINIMIZE = 6
+$SW_MAXIMIZE = 3
+$SW_RESTORE = 9
+$VK_LBUTTON = 0x01
+$SM_CXSIZE = 30
+$SM_CYSIZE = 31
+$wpsMouseStates = @{}
 
 while ($true) {
     try {
@@ -168,12 +212,73 @@ while ($true) {
         [TermaX11WindowGuardNative]::GetWindowThreadProcessId($hWnd, [ref]$windowProcessId) | Out-Null
         if ($windowProcessId -ne $serverProcessId) { return $true }
         if (-not [TermaX11WindowGuardNative]::IsWindowVisible($hWnd)) { return $true }
-        if ([TermaX11WindowGuardNative]::IsIconic($hWnd) -or [TermaX11WindowGuardNative]::IsZoomed($hWnd)) { return $true }
-        if (([TermaX11WindowGuardNative]::GetWindowStyle($hWnd) -band $WS_CAPTION) -eq 0) { return $true }
 
         $className = New-Object System.Text.StringBuilder 128
         [TermaX11WindowGuardNative]::GetClassName($hWnd, $className, $className.Capacity) | Out-Null
         if (-not $className.ToString().StartsWith("vcxsrv/x X", [StringComparison]::OrdinalIgnoreCase)) { return $true }
+
+        if ($enableWpsCompatibility) {
+            $windowTitle = New-Object System.Text.StringBuilder 256
+            [TermaX11WindowGuardNative]::GetWindowText($hWnd, $windowTitle, $windowTitle.Capacity) | Out-Null
+            $isWpsWindow = $windowTitle.ToString() -match '(?i)\bWPS(?: Office)?\b|\bwpsoffice\b'
+            if ($isWpsWindow -and -not [TermaX11WindowGuardNative]::IsIconic($hWnd) -and [TermaX11WindowGuardNative]::GetForegroundWindow() -eq $hWnd) {
+                $clientRect = New-Object TermaX11WindowGuardNative+RECT
+                $windowRect = New-Object TermaX11WindowGuardNative+RECT
+                $cursor = New-Object TermaX11WindowGuardNative+POINT
+                $leftDown = (([TermaX11WindowGuardNative]::GetAsyncKeyState($VK_LBUTTON) -band 0x8000) -ne 0)
+                if ([TermaX11WindowGuardNative]::GetClientRect($hWnd, [ref]$clientRect) -and [TermaX11WindowGuardNative]::GetWindowRect($hWnd, [ref]$windowRect) -and [TermaX11WindowGuardNative]::GetCursorPos([ref]$cursor)) {
+                    $key = $hWnd.ToInt64().ToString()
+                    $state = if ($wpsMouseStates.ContainsKey($key)) { $wpsMouseStates[$key] } else { $null }
+                    if ($leftDown -and -not $state) {
+                        # WPS draws its tab/title controls at the very top of the
+                        # X11 window. They may be in the native non-client area,
+                        # so ScreenToClient() can produce a negative Y here.
+                        # Use screen coordinates relative to the full window for
+                        # both native and client-drawn caption variants.
+                        $width = $windowRect.Right - $windowRect.Left
+                        $relativeX = $cursor.X - $windowRect.Left
+                        $relativeY = $cursor.Y - $windowRect.Top
+                        $captionButtonWidth = [TermaX11WindowGuardNative]::GetSystemMetrics($SM_CXSIZE)
+                        if ($captionButtonWidth -lt 24 -or $captionButtonWidth -gt 160) { $captionButtonWidth = 48 }
+                        $captionButtonHeight = [TermaX11WindowGuardNative]::GetSystemMetrics($SM_CYSIZE)
+                        if ($captionButtonHeight -lt 20 -or $captionButtonHeight -gt 120) { $captionButtonHeight = 48 }
+                        $inTopBar = $relativeY -ge 0 -and $relativeY -le ([Math]::Max(56, $captionButtonHeight + 8))
+                        $action = ""
+                        $minCenter = $width - ($captionButtonWidth * 2.5)
+                        $maxCenter = $width - ($captionButtonWidth * 1.5)
+                        $closeCenter = $width - ($captionButtonWidth * 0.5)
+                        $captionLeft = $width - ($captionButtonWidth * 3.4)
+                        if ($inTopBar -and $relativeX -ge $captionLeft) {
+                            $minDistance = [Math]::Abs($relativeX - $minCenter)
+                            $maxDistance = [Math]::Abs($relativeX - $maxCenter)
+                            $closeDistance = [Math]::Abs($relativeX - $closeCenter)
+                            if ($closeDistance -le $maxDistance -and $closeDistance -le $minDistance) { $action = "close" }
+                            elseif ($maxDistance -le $minDistance) { $action = "maximize" }
+                            else { $action = "minimize" }
+                        }
+                        elseif ($relativeX -ge 240 -and $relativeX -lt ($width - 160) -and $relativeY -ge 0 -and $relativeY -le 28) {
+                            [TermaX11WindowGuardNative]::ReleaseCapture() | Out-Null
+                            [TermaX11WindowGuardNative]::SendMessage($hWnd, $WM_NCLBUTTONDOWN, [IntPtr]$HTCAPTION, [IntPtr]::Zero) | Out-Null
+                            $action = "drag"
+                        }
+                        if ($action) { $wpsMouseStates[$key] = $action }
+                    } elseif (-not $leftDown -and $state) {
+                        $wpsMouseStates.Remove($key) | Out-Null
+                        if ($state -eq "close") {
+                            [TermaX11WindowGuardNative]::SendMessage($hWnd, $WM_CLOSE, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+                        } elseif ($state -eq "maximize") {
+                            $command = if ([TermaX11WindowGuardNative]::IsZoomed($hWnd)) { $SW_RESTORE } else { $SW_MAXIMIZE }
+                            [TermaX11WindowGuardNative]::ShowWindow($hWnd, $command) | Out-Null
+                        } elseif ($state -eq "minimize") {
+                            [TermaX11WindowGuardNative]::ShowWindow($hWnd, $SW_MINIMIZE) | Out-Null
+                        }
+                    }
+                }
+            }
+        }
+
+        if ([TermaX11WindowGuardNative]::IsIconic($hWnd) -or [TermaX11WindowGuardNative]::IsZoomed($hWnd)) { return $true }
+        if (([TermaX11WindowGuardNative]::GetWindowStyle($hWnd) -band $WS_CAPTION) -eq 0) { return $true }
 
         $rect = New-Object TermaX11WindowGuardNative+RECT
         if (-not [TermaX11WindowGuardNative]::GetWindowRect($hWnd, [ref]$rect)) { return $true }
@@ -218,7 +323,10 @@ while ($true) {
         return $true
     }, [IntPtr]::Zero) | Out-Null
 
-    Start-Sleep -Milliseconds 250
+    # The previous 250 ms poll could miss a normal quick click. Keep this
+    # lightweight guard responsive enough to observe mouse-down and mouse-up
+    # without changing non-WPS window behavior.
+    Start-Sleep -Milliseconds 35
 }
 `;
 }
@@ -226,41 +334,89 @@ while ($true) {
 function startWindowsX11WindowGuard(serverProcess, options = {}) {
   const pid = Number(serverProcess?.pid);
   if (!Number.isInteger(pid) || pid < 1) return null;
+  const environment = options.environment || process.env;
   const nativeModule = loadWindowsX11WindowGuardNative(options);
   try {
     if (nativeModule?.startX11WindowGuard?.(pid)) {
-      return {kind:"native", nativeModule};
+      const guard = {kind:"native", nativeModule, debugTimer:null};
+      if (String(environment.TERMA_X11_WINDOW_GUARD_DEBUG || "") === "1"
+          && typeof nativeModule.getX11WindowGuardDiagnostics === "function") {
+        let lastSignature = "";
+        const report = () => {
+          try {
+            const diagnostics = nativeModule.getX11WindowGuardDiagnostics();
+            const rect = diagnostics?.currentRect || {};
+            const signature = [
+              diagnostics?.running,
+              diagnostics?.hookInstalled,
+              diagnostics?.hookError,
+              diagnostics?.lastEventId,
+              diagnostics?.currentWindowValid,
+              diagnostics?.currentIconic,
+              diagnostics?.currentZoomed,
+              rect.left,
+              rect.top,
+              rect.right,
+              rect.bottom
+            ].join(":");
+            if (signature === lastSignature) return;
+            lastSignature = signature;
+            console.warn("[x11-window-guard]", diagnostics);
+          } catch {}
+        };
+        report();
+        guard.debugTimer = setInterval(report, 100);
+        guard.debugTimer.unref?.();
+      }
+      return guard;
     }
   } catch {}
-
-  const environment = options.environment || process.env;
   const runtimeSpawn = options.spawn || spawn;
   const systemRoot = String(environment.SystemRoot || environment.WINDIR || "C:\\Windows");
   const executable = path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-  const encodedCommand = Buffer.from(windowsX11WindowGuardScript(pid), "utf16le").toString("base64");
+  let scriptPath = "";
   try {
+    const temporaryRoot = String(environment.TEMP || environment.TMP || os.tmpdir());
+    scriptPath = path.join(temporaryRoot, `terma-x11-window-guard-${pid}-${Date.now()}.ps1`);
+    // The compatibility script is intentionally kept in a temporary file.
+    // Passing the whole script through -EncodedCommand can exceed Windows'
+    // command-line length limit once WPS support is enabled.
+    fs.writeFileSync(scriptPath, windowsX11WindowGuardScript(pid, options), {encoding:"utf8", mode:0o600});
     const child = runtimeSpawn(executable, [
       "-NoLogo",
       "-NoProfile",
       "-NonInteractive",
       "-ExecutionPolicy", "Bypass",
-      "-EncodedCommand", encodedCommand
+      "-File", scriptPath
     ], {
       detached:false,
       windowsHide:true,
       stdio:"ignore",
       env:environment
     });
-    child.once?.("error", () => {});
+    const cleanup = () => {
+      if (!scriptPath) return;
+      try { fs.rmSync(scriptPath, {force:true}); } catch {}
+      scriptPath = "";
+    };
+    child.once?.("error", cleanup);
+    child.once?.("exit", cleanup);
     child.unref?.();
     return child;
   } catch {
+    if (scriptPath) {
+      try { fs.rmSync(scriptPath, {force:true}); } catch {}
+    }
     return null;
   }
 }
 
 function stopWindowsX11WindowGuard(child) {
   if (child?.kind === "native") {
+    if (child.debugTimer) {
+      clearInterval(child.debugTimer);
+      child.debugTimer = null;
+    }
     try {
       return Boolean(child.nativeModule?.stopX11WindowGuard?.());
     } catch {

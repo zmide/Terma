@@ -10,6 +10,7 @@ const { spawn, spawnSync } = require("node:child_process");
 const { pipeline } = require("node:stream/promises");
 const { Readable } = require("node:stream");
 const { startWindowsX11WindowGuard, stopWindowsX11WindowGuard } = require("./windows-x11-window-guard");
+const { createX11ClipboardImageBridge } = require("./x11-clipboard-image-bridge");
 
 const WINDOWS_SERVER_NAMES = ["vcxsrv.exe", "xming.exe", "xwin.exe", "x410.exe"];
 const XQUARTZ_VERSION = "2.8.6";
@@ -317,6 +318,8 @@ function createXServerRuntime(options = {}) {
   const platform = options.platform || process.platform;
   const environment = options.environment || process.env;
   const detectWindowsProcess = typeof options.detectWindowsProcess === "function" ? options.detectWindowsProcess : null;
+  const readClipboardPng = typeof options.readClipboardPng === "function" ? options.readClipboardPng : null;
+  const readClipboardFormats = typeof options.readClipboardFormats === "function" ? options.readClipboardFormats : null;
   const getLanguage = languageGetter(options, environment);
   const text = (chinese, english) => desktopUiText(getLanguage(), chinese, english);
   const projectRoot = options.projectRoot || path.resolve(__dirname, "..");
@@ -331,7 +334,41 @@ function createXServerRuntime(options = {}) {
   let lastError = "";
   let macStartedByTerma = false;
   let windowsWindowGuard = null;
+  const windowsClipboardBridges = new Map();
   let xQuartzInstallerBusy = false;
+
+  function startWindowsClipboardBridge(processHandle, display, authCookie = Buffer.alloc(0)) {
+    if (platform !== "win32" || (!readClipboardPng && !readClipboardFormats) || !processHandle || !display) return null;
+    const bridge = createX11ClipboardImageBridge({
+      display,
+      authCookie,
+      readClipboardPng,
+      readClipboardFormats,
+      onDiagnostic:info => {
+        const event = info && typeof info === "object" ? info.event : "unknown";
+        const detail = info && typeof info === "object" ? {...info} : {};
+        delete detail.event;
+        let suffix = "";
+        try { suffix = Object.keys(detail).length ? ` ${JSON.stringify(detail)}` : ""; } catch {}
+        console.warn(`[x11-clipboard-image] ${display} ${event}${suffix}`);
+      }
+    });
+    windowsClipboardBridges.set(processHandle, bridge);
+    void bridge.start();
+    processHandle.once?.("exit", () => {
+      if (windowsClipboardBridges.get(processHandle) !== bridge) return;
+      windowsClipboardBridges.delete(processHandle);
+      bridge.stop();
+    });
+    return bridge;
+  }
+
+  function stopWindowsClipboardBridges() {
+    for (const [processHandle, bridge] of windowsClipboardBridges) {
+      windowsClipboardBridges.delete(processHandle);
+      bridge.stop();
+    }
+  }
 
   function xQuartzInstallerPath() {
     return path.join(runtimeDataDir, `XQuartz-${XQUARTZ_VERSION}.pkg`);
@@ -759,8 +796,12 @@ function createXServerRuntime(options = {}) {
     }
 
     child = processHandle;
-    const windowGuard = startWindowsX11WindowGuard(processHandle, {environment});
+    const windowGuard = startWindowsX11WindowGuard(processHandle, {
+      environment,
+      enableWpsCompatibility:true
+    });
     windowsWindowGuard = windowGuard;
+    startWindowsClipboardBridge(processHandle, display, Buffer.from(cookie, "hex"));
     authorityFile = attemptAuthorityFile;
     managedDisplay = display;
     lastError = "";
@@ -940,6 +981,7 @@ function createXServerRuntime(options = {}) {
     }
     if (platform === "win32") {
       await terminateTrackedXdmcpChildren(xdmcpChildren, reservedDisplayNumbers, {platform});
+      stopWindowsClipboardBridges();
       const activeWindowGuard = windowsWindowGuard;
       windowsWindowGuard = null;
       stopWindowsX11WindowGuard(activeWindowGuard);
@@ -1154,6 +1196,7 @@ function createXServerRuntime(options = {}) {
       launchError = launchError || readLogTail(launchLogFile);
       throw new Error(xdmcpLaunchFailureMessage(launchError, displayNumber, localAddress, getLanguage()));
     }
+    startWindowsClipboardBridge(processHandle, `127.0.0.1:${displayNumber}.0`);
     return {
       ok:true,
       protocol:"xdmcp",

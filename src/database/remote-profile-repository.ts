@@ -79,6 +79,7 @@ export function createRemoteProfileRepository(dependencies: RemoteProfileReposit
         server_session_mode:serverSessionMode,
         server_display:serverSessionMode === "shared" ? serverDisplay : "",
         view_only:bool("view_only"),
+        auto_sync_images:bool("auto_sync_images", true),
         shared:bool("shared", true),
         quality:integer("quality", 8, 0, 9)
       });

@@ -45,6 +45,7 @@ app.whenReady().then(async () => {
     height:800,
     webPreferences:{
       contextIsolation:true,
+      backgroundThrottling:false,
       preload:path.join(__dirname, "ui-smoke-preload.js")
     }
   });
@@ -1994,6 +1995,13 @@ app.whenReady().then(async () => {
         await new Promise(resolve => setTimeout(resolve, 0));
         collectVisibleHan(section);
       }
+      const generalVncFullscreenToolbar = document.querySelector('#settings-general #generalVncFullscreenToolbar');
+      if (!generalVncFullscreenToolbar || JSON.stringify([...generalVncFullscreenToolbar.options].map(option => option.value)) !== JSON.stringify(['always','never','edge'])) {
+        throw new Error('VNC fullscreen toolbar preference is missing from general settings');
+      }
+      if (document.querySelector('#settings-runtime #runtimeVncFullscreenToolbar')) {
+        throw new Error('VNC fullscreen toolbar preference is still present in listener settings');
+      }
       for (const name of ['connections','remote','running','command','logs','import']) {
         showPrimary(name);
         await new Promise(resolve => setTimeout(resolve, 0));
@@ -2018,8 +2026,54 @@ app.whenReady().then(async () => {
         closeXServerManager();
         renderEmbeddedVnc(languageVncProfile, languageVncKey, {platform:'linux'});
         await new Promise(resolve => setTimeout(resolve, 0));
+        const vncToolbar = document.querySelector('#view-remote-desktop .vnc-toolbar-actions');
+        if (!vncToolbar?.querySelector('[data-vnc-fullscreen-toggle]')) throw new Error('VNC fullscreen toggle is missing');
+        if (vncToolbar?.querySelector('[data-vnc-window-maximize]')) throw new Error('VNC native maximize toggle should use the Electron title bar instead');
+        if (![...vncToolbar.querySelectorAll('button')].some(button => button.title === 'Open in new window')) throw new Error('VNC detached-window action is missing');
+        if (!document.querySelector('#view-remote-desktop .vnc-fullscreen-toolbar-edge-zone')) throw new Error('VNC fullscreen top-edge target is missing');
+        const originalSetTimeout = window.setTimeout;
+        let fullscreenToolbarHideDelay = null;
+        try {
+          window.setTimeout = (callback, delay, ...args) => {
+            fullscreenToolbarHideDelay = Number(delay);
+            return originalSetTimeout(callback, 0, ...args);
+          };
+          document.documentElement.classList.add('vnc-fullscreen-toolbar-edge-visible');
+          hideVncFullscreenEdgeToolbar();
+        } finally {
+          window.setTimeout = originalSetTimeout;
+        }
+        await new Promise(resolve => originalSetTimeout(resolve, 0));
+        if (fullscreenToolbarHideDelay !== 500) throw new Error('VNC fullscreen toolbar hide delay should be 500ms, got ' + fullscreenToolbarHideDelay);
+        if (document.documentElement.classList.contains('vnc-fullscreen-toolbar-edge-visible')) throw new Error('VNC fullscreen toolbar hide timer did not collapse the toolbar');
         collectVisibleHan('vnc');
         collectVisibleHan('document', true);
+        const vncWindowBridgeDescriptor = Object.getOwnPropertyDescriptor(window, 'termaDesktop');
+        const vncWindowLifecycle = [];
+        try {
+          Object.defineProperty(window, 'termaDesktop', {
+            configurable:true,
+            writable:true,
+            value:{
+              async openVncWindow(profileId) {
+                vncWindowLifecycle.push({action:'open-detached',profileId,embeddedActive:vncSessions.has(languageVncKey)});
+                return {ok:true,profileId,reused:false};
+              },
+              async closeVncWindowForProfile(profileId) {
+                vncWindowLifecycle.push({action:'close-detached',profileId});
+                return {ok:true,profileId,closed:true};
+              }
+            }
+          });
+          const detachedOpened = await openVncInNewWindow(languageVncProfile.id, languageVncKey);
+          const embeddedPrepared = await prepareEmbeddedVncWindowSwitch(languageVncProfile.id);
+          if (!detachedOpened || vncSessions.has(languageVncKey)) throw new Error('Opening a detached VNC window did not close the built-in session');
+          if (vncWindowLifecycle[0]?.action !== 'open-detached' || vncWindowLifecycle[0]?.embeddedActive) throw new Error('Detached VNC opened before the built-in session was closed');
+          if (!embeddedPrepared || vncWindowLifecycle[1]?.action !== 'close-detached') throw new Error('Switching to built-in VNC did not close the detached window');
+        } finally {
+          if (vncWindowBridgeDescriptor) Object.defineProperty(window, 'termaDesktop', vncWindowBridgeDescriptor);
+          else delete window.termaDesktop;
+        }
       } finally {
         closeXServerManager();
         vncSessions.delete(languageVncKey);
@@ -2155,9 +2209,11 @@ app.whenReady().then(async () => {
         }
       });
       await runI18nScenario('rdp-form', async () => {
-        renderRemoteProfileForm({protocol:'rdp',name:'Language RDP',group_name:'Default',options:{display_mode:'dynamic',clipboard:true}});
+        renderRemoteProfileForm({id:910099,protocol:'rdp',name:'Language RDP',group_name:'Default',options:{display_mode:'dynamic',clipboard:true}});
         await new Promise(resolve => setTimeout(resolve, 0));
         applyTermaTranslations(document.getElementById('view-edit'));
+        const editActions = [...document.querySelectorAll('#remoteProfileForm button[type="submit"]')].map(button => button.textContent.trim());
+        if (!['Save only','Save and close','Save and open'].every(label => editActions.includes(label))) throw new Error('remote connection edit save actions were not generated in English');
         collectVisibleHan('rdp-form-open', true, document.getElementById('view-edit'));
       });
       await runI18nScenario('quick-panel', async () => {
@@ -3658,12 +3714,23 @@ app.whenReady().then(async () => {
     const connectVisible=Boolean(connectButton&&!connectButton.hidden&&getComputedStyle(connectButton).display!=='none');
     connectButton?.click();
     await new Promise(resolve=>setTimeout(resolve,25));
+    const editFixture={id:9903,name:'edit-save-actions',group_name:TERMA_DEFAULT_CONNECTION_GROUP,ssh_user:'root',ssh_host:'edit.example.test',ssh_port:22,sort_order:1,auth_type:'key',identity_file:'',ssh_agent_mode:'auto',jump_connection_id:null,connect_timeout_seconds:10,keepalive_interval_seconds:60,keepalive_count_max:3,tcp_keepalive:1,x11_mode:'off',tags:'',autostart_forwards:0,extra_args:'',forwards:[]};
+    connections.push(editFixture);
+    editConnection(editFixture.id);
+    const sshEditActions=[...document.querySelectorAll('#connectionForm .actions button')].filter(item=>!item.hidden).map(item=>item.textContent.trim());
+    const sshEditSaveActions=['仅保存','保存并关闭','保存并打开'].every(label=>sshEditActions.includes(label))&&document.querySelector('#connSaveAndClear')?.hidden===true;
+    connections.splice(connections.indexOf(editFixture),1);
+    renderRemoteProfileForm({id:9904,protocol:'rdp',name:'remote-edit-save-actions',group_name:TERMA_DEFAULT_CONNECTION_GROUP,host:'rdp.example.test',port:3389,username:'',options:{display_mode:'dynamic'}});
+    const remoteEditActions=[...document.querySelectorAll('#remoteProfileForm button[type="submit"]')].map(item=>item.textContent.trim());
+    const remoteEditSaveActions=['仅保存','保存并关闭','保存并打开'].every(label=>remoteEditActions.includes(label));
     const result={
       ...clearResult,
       saveConnectVisible:connectVisible,
       saveConnectOpens:openedConnectionId===9902,
       saveConnectClosesSource:closedSourceTab,
-      saveConnectReadyAgain:connectButton?.disabled===false&&connectButton?.textContent.trim()==='保存并连接'
+      saveConnectReadyAgain:connectButton?.disabled===false&&connectButton?.textContent.trim()==='保存并连接',
+      sshEditSaveActions,
+      remoteEditSaveActions
     };
     api=originalApi;
     loadAll=originalLoadAll;
@@ -3897,6 +3964,28 @@ app.whenReady().then(async () => {
       cols:80, rows:24, options:{fontSize:13}, buffer:{active:{length:0,cursorX:0,cursorY:0}}
     };
     terminalSessions.set(key,{term:fakeTerm,fit:{fit:()=>{}},id:first.id,logId:'1700000000000-terminaluismoke'});
+    const inactiveOutputKey = 'terminal-ui-smoke-inactive-output';
+    const inactiveOutputWrites = [];
+    let inactiveOutputRefreshes = 0;
+    const inactiveOutputSession = {
+      id:first.id,
+      term:{
+        write(data, callback){ inactiveOutputWrites.push(String(data || '')); callback?.(); },
+        refresh(){ inactiveOutputRefreshes += 1; },
+        rows:24,
+        buffer:{active:{length:0,cursorX:0,cursorY:0}}
+      }
+    };
+    terminalSessions.set(inactiveOutputKey, inactiveOutputSession);
+    queueTerminalOutput(inactiveOutputSession, 'inactive-tab-output');
+    await new Promise(resolve=>setTimeout(resolve,25));
+    refreshTerminalSessionsAfterWindowResume();
+    const inactiveTerminalOutputContinues = activeTabKey !== inactiveOutputKey
+      && inactiveOutputWrites.join('').includes('inactive-tab-output')
+      && !inactiveOutputSession.pendingTerminalOutput?.length
+      && !inactiveOutputSession.terminalOutputWriting
+      && inactiveOutputRefreshes > 0;
+    terminalSessions.delete(inactiveOutputKey);
     const OriginalWebSocket = window.WebSocket;
     class FakeWebSocket extends EventTarget {
       static OPEN = 1;
@@ -4800,7 +4889,7 @@ app.whenReady().then(async () => {
     terminalLatencyVisible = previousLatencyVisible;
     if (previousLatencyStored === null) localStorage.removeItem('terminalLatencyVisible');
     else localStorage.setItem('terminalLatencyVisible', previousLatencyStored);
-    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,x11DefaultFallsBack,x11ScopeMenu,ctrlVImageIntercepted,ctrlVEmptyFallsThrough,ctrlVDiagnostics,enterReconnect,reconnectPreservesOutput,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,terminalToolbarScrollable,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,zmodemPanelUi,zmodemPanelMetrics,terminalSettingsUi};
+    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,x11DefaultFallsBack,x11ScopeMenu,ctrlVImageIntercepted,ctrlVEmptyFallsThrough,ctrlVDiagnostics,enterReconnect,reconnectPreservesOutput,inactiveTerminalOutputContinues,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,terminalToolbarScrollable,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,zmodemPanelUi,zmodemPanelMetrics,terminalSettingsUi};
   })()`);
   const terminalStartupOriginalContentSize = window.getContentSize();
   window.setContentSize(1000, 600);
@@ -8912,7 +9001,10 @@ app.whenReady().then(async () => {
         && document.getElementById('remote_vnc_display_mode')?.value==='scale'
         && document.getElementById('remote_quality')?.type==='range'
         && document.getElementById('remote_quality_value')?.textContent==='7'
+        && document.getElementById('remote_vnc_auto_sync_images')?.checked===true
       );
+      renderRemoteProfileForm({...vnc,options:{...vnc.options,auto_sync_images:false}});
+      const vncImageSyncOptOut=document.getElementById('remote_vnc_auto_sync_images')?.checked===false;
       renderRemoteProfileForm({...vnc,id:0,name:'',has_password:false});
       const vncPasswordForm=Boolean(
         !document.getElementById('remotePasswordField')?.hidden
@@ -9683,7 +9775,7 @@ app.whenReady().then(async () => {
       const narrowAddSshButton=document.querySelector('#explorerTools .explorer-main-action');
       const narrowAddSshTextFits=Boolean(narrowAddSshButton?.textContent.includes('添加 SSH')
         && narrowAddSshButton.scrollWidth<=narrowAddSshButton.clientWidth+1);
-      return {rdpDisplayForm,vncModePersisted,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncNoPassword,sshCredentialRepairUi,quickTerminalCredentialRepairUi,ftpCredentialRepairUi,vncServiceDiagnosisUi,vncServiceActionDebounced,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,xdmcpAuthorizationLayout,standaloneRdpFallback,standaloneRdpStatusHidden,standaloneVncFallback,standaloneXdmcpFallback,standaloneXdmcpStatusHidden,standaloneFallbackDetails,remoteDiagnosticAlignment,graphicsRendering:renderingUi,renderingCopyInteraction,vncSourceSelection,vncSourceRefreshInPlace,remoteLayoutUi,vncFailureRecovery,vncComponentManagementUi,vncComponentDiagnostics:{missingTigerUi,rawTigerUi,missingTigerText,rawTigerText,missingTigerButtons,rawTigerButtons},xdmcpWorkspaceText,macVncBypassesLinuxDesktop,macVncWorkspaceText,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,remoteNameDoubleClickOpens,remoteDesktopSwitchAvailable,remoteDesktopSwitchProfiles:remoteDesktopSwitchProfiles(derived.id).map(profile=>profile.name),remoteDesktopSingleDisabled,remoteDesktopSwitchMenuComplete,remoteDesktopSwitchMenu,sshActivitySeparated,x11AppLauncher,x11InstalledDialog,xServerRemoteUninstall,xServerClipboardLayout,xServerImmediateLoading,xServerManager,quickXServerManager,xServerDesktopIntegrationUnavailable,xServerBrowserAuthorization,xServerLocalDirectAuthorization,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,healthIconOnly,narrowBrandActionsFit,expandedBrandNameVisible,defaultAddSshTextFits,narrowAddSshTextFits};
+      return {rdpDisplayForm,vncModePersisted,vncImageSyncOptOut,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncNoPassword,sshCredentialRepairUi,quickTerminalCredentialRepairUi,ftpCredentialRepairUi,vncServiceDiagnosisUi,vncServiceActionDebounced,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,xdmcpAuthorizationLayout,standaloneRdpFallback,standaloneRdpStatusHidden,standaloneVncFallback,standaloneXdmcpFallback,standaloneXdmcpStatusHidden,standaloneFallbackDetails,remoteDiagnosticAlignment,graphicsRendering:renderingUi,renderingCopyInteraction,vncSourceSelection,vncSourceRefreshInPlace,remoteLayoutUi,vncFailureRecovery,vncComponentManagementUi,vncComponentDiagnostics:{missingTigerUi,rawTigerUi,missingTigerText,rawTigerText,missingTigerButtons,rawTigerButtons},xdmcpWorkspaceText,macVncBypassesLinuxDesktop,macVncWorkspaceText,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,remoteNameDoubleClickOpens,remoteDesktopSwitchAvailable,remoteDesktopSwitchProfiles:remoteDesktopSwitchProfiles(derived.id).map(profile=>profile.name),remoteDesktopSingleDisabled,remoteDesktopSwitchMenuComplete,remoteDesktopSwitchMenu,sshActivitySeparated,x11AppLauncher,x11InstalledDialog,xServerRemoteUninstall,xServerClipboardLayout,xServerImmediateLoading,xServerManager,quickXServerManager,xServerDesktopIntegrationUnavailable,xServerBrowserAuthorization,xServerLocalDirectAuthorization,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,healthIconOnly,narrowBrandActionsFit,expandedBrandNameVisible,defaultAddSshTextFits,narrowAddSshTextFits};
     } finally {
       applyOperationPaneWidth(previousOperationWidth,{fit:false});
       api=previousApi;
@@ -9892,7 +9984,7 @@ app.whenReady().then(async () => {
   const terminalDropUi = terminalSettingsUi.drop || {};
   const mobileTerminalSettingsUi = mobile.terminalGlobalSettings || {};
   const terminalStartupUiFailed = !terminalStartupUi.found || !Object.values(terminalStartupUi).every(Boolean);
-  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.x11ScopeMenu || !terminalUi.ctrlVImageIntercepted || !terminalUi.ctrlVEmptyFallsThrough || !terminalUi.enterReconnect || !terminalUi.reconnectPreservesOutput || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.terminalToolbarScrollable || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalFontChangeKeepsWheelContinuity || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalUi.zmodemPanelUi || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.fontInheritance || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.pasteCommandHistory || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
+  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.x11ScopeMenu || !terminalUi.ctrlVImageIntercepted || !terminalUi.ctrlVEmptyFallsThrough || !terminalUi.enterReconnect || !terminalUi.reconnectPreservesOutput || !terminalUi.inactiveTerminalOutputContinues || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.terminalToolbarScrollable || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalFontChangeKeepsWheelContinuity || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalUi.zmodemPanelUi || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.fontInheritance || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.pasteCommandHistory || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
   const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || !logSettingsUi.days || !logSettingsUi.fileMb || !logSettingsUi.totalMb || !logSettingsUi.rotations || !logSettingsUi.cleanup || !logSettingsUi.save || !logSettingsUi.closed || !logSettingsUi.fullTerminalTime || !logSettingsUi.defaultsToLatest || !logSettingsUi.followsTheme;
   const productivityUiFailed = !productivityUi.quickVisible || productivityUi.actionCount < 7 || !productivityUi.quickConnectionActionsInline || !productivityUi.quickPanelDirect || !productivityUi.workspaceSearchable || !productivityUi.workspacePreviewOpens || !productivityUi.quickButtonPlacement || !productivityUi.quickButtonLightning || !productivityUi.xServerQuickUsesX11 || !productivityUi.xServerUnauthorizedWarning || !productivityUi.xServerLocalDirectReady || !productivityUi.broadcastFromEither || !productivityUi.broadcastTabMarked || !productivityUi.broadcastHeaderGrouped || !productivityUi.broadcastExitCompact || !productivityUi.visibleSplitHasNoActivity || !productivityUi.visibleSplitClearsPriorActivity || !productivityUi.hiddenBinaryOutputMarked || productivityUi.syncRows !== 3 || !productivityUi.conflictSafe || !productivityUi.namedWorkspaceTools || !productivityUi.terminalTools || !productivityUi.quickToolbarIconVisible || !productivityUi.quickToggleStateVisible || !productivityUi.quickCompactWidths || !productivityUi.quickCommandExecutes || !productivityUi.quickContextMenu || !productivityUi.quickDoubleClickCreates || !productivityUi.quickEditorBackCloses || !productivityUi.quickManagerPolished || !productivityUi.quickOrderPersists || !productivityUi.quickHeightAdjustable || !productivityUi.quickToggleHides || !productivityUi.quickWheelScrolls || !productivityUi.quickResponsive;
   const remoteAdminUiFailed = Boolean(remoteAdminUi.desktop?.error)
@@ -9942,7 +10034,7 @@ app.whenReady().then(async () => {
   const remoteRenderingProtocols = ['rdp','vnc','xdmcp'];
   const remoteRenderingUiFailed = remoteRenderingProtocols.some(protocol => !remoteAccessUi.graphicsRendering?.[protocol]?.warning || !remoteAccessUi.graphicsRendering?.[protocol]?.copyButtons || !remoteAccessUi.graphicsRendering?.[protocol]?.noHorizontalOverflow) || !remoteAccessUi.renderingCopyInteraction?.success || !remoteAccessUi.renderingCopyInteraction?.failure || !remoteAccessUi.narrowRendering?.ok;
   const remoteLayoutUiFailed = remoteRenderingProtocols.some(protocol => !remoteAccessUi.remoteLayoutUi?.[protocol]?.ok);
-  const remoteAccessUiFailed = !remoteAccessUi.rdpDisplayForm || !remoteAccessUi.vncModePersisted || !remoteAccessUi.vncPasswordForm || !remoteAccessUi.vncRetryPrompt || !remoteAccessUi.vncRetryValue || !remoteAccessUi.vncNoPassword || !remoteAccessUi.sshCredentialRepairUi || !remoteAccessUi.quickTerminalCredentialRepairUi || !remoteAccessUi.ftpCredentialRepairUi || !remoteAccessUi.vncServiceDiagnosisUi || !remoteAccessUi.vncServiceActionDebounced || !remoteAccessUi.xdmcpForm || !remoteAccessUi.xdmcpMenuAvailable || !remoteAccessUi.xdmcpSessionSemantics || !remoteAccessUi.xdmcpAuthorizationLayout || !remoteAccessUi.standaloneRdpFallback || !remoteAccessUi.standaloneRdpStatusHidden || !remoteAccessUi.standaloneVncFallback || !remoteAccessUi.standaloneXdmcpFallback || !remoteAccessUi.standaloneXdmcpStatusHidden || !remoteAccessUi.remoteDiagnosticAlignment || remoteRenderingUiFailed || remoteLayoutUiFailed || !remoteAccessUi.vncSourceSelection || !remoteAccessUi.vncSourceRefreshInPlace || !remoteAccessUi.vncFailureRecovery || !remoteAccessUi.vncComponentManagementUi || !remoteAccessUi.macVncBypassesLinuxDesktop || !remoteAccessUi.macVncSetupGuidance || !remoteAccessUi.remoteActivitySeparated || !remoteAccessUi.remoteHostStickyStyle || !remoteAccessUi.remoteHostStickyFollowsOuter || !remoteAccessUi.derivedSourcePresentation || !remoteAccessUi.remoteNameDoubleClickOpens || !remoteAccessUi.remoteDesktopSwitchAvailable || !remoteAccessUi.remoteDesktopSingleDisabled || !remoteAccessUi.remoteDesktopSwitchMenuComplete || !remoteAccessUi.sshActivitySeparated || !remoteAccessUi.x11AppLauncher || !remoteAccessUi.x11InstalledDialog || !remoteAccessUi.xServerRemoteUninstall || !remoteAccessUi.xServerClipboardLayout || !remoteAccessUi.xServerImmediateLoading || !remoteAccessUi.xServerManager || !remoteAccessUi.quickXServerManager || !remoteAccessUi.xServerDesktopIntegrationUnavailable || !remoteAccessUi.xServerBrowserAuthorization || !remoteAccessUi.xServerLocalDirectAuthorization || !remoteAccessUi.adaptiveModal || !remoteAccessUi.modalHeaderControlsAligned || !remoteAccessUi.modalBackdropLocked || !remoteAccessUi.healthIconOnly || !remoteAccessUi.narrowBrandActionsFit || !remoteAccessUi.expandedBrandNameVisible || !remoteAccessUi.defaultAddSshTextFits || !remoteAccessUi.narrowAddSshTextFits;
+  const remoteAccessUiFailed = !remoteAccessUi.rdpDisplayForm || !remoteAccessUi.vncModePersisted || !remoteAccessUi.vncImageSyncOptOut || !remoteAccessUi.vncPasswordForm || !remoteAccessUi.vncRetryPrompt || !remoteAccessUi.vncRetryValue || !remoteAccessUi.vncNoPassword || !remoteAccessUi.sshCredentialRepairUi || !remoteAccessUi.quickTerminalCredentialRepairUi || !remoteAccessUi.ftpCredentialRepairUi || !remoteAccessUi.vncServiceDiagnosisUi || !remoteAccessUi.vncServiceActionDebounced || !remoteAccessUi.xdmcpForm || !remoteAccessUi.xdmcpMenuAvailable || !remoteAccessUi.xdmcpSessionSemantics || !remoteAccessUi.xdmcpAuthorizationLayout || !remoteAccessUi.standaloneRdpFallback || !remoteAccessUi.standaloneRdpStatusHidden || !remoteAccessUi.standaloneVncFallback || !remoteAccessUi.standaloneXdmcpFallback || !remoteAccessUi.standaloneXdmcpStatusHidden || !remoteAccessUi.remoteDiagnosticAlignment || remoteRenderingUiFailed || remoteLayoutUiFailed || !remoteAccessUi.vncSourceSelection || !remoteAccessUi.vncSourceRefreshInPlace || !remoteAccessUi.vncFailureRecovery || !remoteAccessUi.vncComponentManagementUi || !remoteAccessUi.macVncBypassesLinuxDesktop || !remoteAccessUi.macVncSetupGuidance || !remoteAccessUi.remoteActivitySeparated || !remoteAccessUi.remoteHostStickyStyle || !remoteAccessUi.remoteHostStickyFollowsOuter || !remoteAccessUi.derivedSourcePresentation || !remoteAccessUi.remoteNameDoubleClickOpens || !remoteAccessUi.remoteDesktopSwitchAvailable || !remoteAccessUi.remoteDesktopSingleDisabled || !remoteAccessUi.remoteDesktopSwitchMenuComplete || !remoteAccessUi.sshActivitySeparated || !remoteAccessUi.x11AppLauncher || !remoteAccessUi.x11InstalledDialog || !remoteAccessUi.xServerRemoteUninstall || !remoteAccessUi.xServerClipboardLayout || !remoteAccessUi.xServerImmediateLoading || !remoteAccessUi.xServerManager || !remoteAccessUi.quickXServerManager || !remoteAccessUi.xServerDesktopIntegrationUnavailable || !remoteAccessUi.xServerBrowserAuthorization || !remoteAccessUi.xServerLocalDirectAuthorization || !remoteAccessUi.adaptiveModal || !remoteAccessUi.modalHeaderControlsAligned || !remoteAccessUi.modalBackdropLocked || !remoteAccessUi.healthIconOnly || !remoteAccessUi.narrowBrandActionsFit || !remoteAccessUi.expandedBrandNameVisible || !remoteAccessUi.defaultAddSshTextFits || !remoteAccessUi.narrowAddSshTextFits;
   const expectedSftpToolActions = ['收藏当前目录','新建文件夹','新建文件','上传文件','SFTP 回收站','搜索当前目录','打开此连接的终端','刷新目录','SFTP 全局设置'];
   const directoryActionsUi = sftpUi.directoryActionsUi || {};
   const connectionSessionUi = sftpUi.connectionSessionUi || {};

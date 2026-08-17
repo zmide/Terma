@@ -18,8 +18,28 @@ assert.match(
 );
 assert.match(
   source,
-  /GetWindowThreadProcessId\(window, &window_process_id\)[\s\S]*IsWindowVisible\(window\)[\s\S]*IsIconic\(window\)[\s\S]*IsZoomed\(window\)[\s\S]*style & WS_CAPTION[\s\S]*GetClassNameW[\s\S]*kVcXsrvWindowClassPrefix/,
+  /bool IsTargetVcXsrvWindow\(HWND window, DWORD target_process_id,[\s\S]*require_visible[\s\S]*IsWindowVisible\(window\)[\s\S]*GetWindowThreadProcessId\(window, &window_process_id\)[\s\S]*GetClassNameW[\s\S]*kVcXsrvWindowClassPrefix[\s\S]*GuardX11Window[\s\S]*style & WS_CAPTION/,
   "The X11 guard must only inspect visible decorated VcXsrv windows owned by the requested PID"
+);
+assert.match(
+  source,
+  /void ApplyWpsCaptionAction[\s\S]*SW_FORCEMINIMIZE[\s\S]*g_x11_window_guard_restore_rects[\s\S]*SetWindowPos[\s\S]*WM_CLOSE/,
+  "The native X11 guard must intercept WPS caption buttons and title-bar dragging"
+);
+assert.match(
+  source,
+  /X11WindowGuardMouseHook[\s\S]*WM_LBUTTONDOWN[\s\S]*g_x11_window_guard_drag_start_point[\s\S]*WM_MOUSEMOVE[\s\S]*SetWindowPos[\s\S]*WM_LBUTTONUP/
+);
+assert.match(source, /SetWindowsHookExW\(WH_MOUSE_LL, X11WindowGuardMouseHook/);
+assert.match(
+  source,
+  /kWmNcHitTest[\s\S]*kHtMinButton[\s\S]*kHtMaxButton[\s\S]*kHtClose/
+);
+assert.match(source, /GetX11WindowGuardDiagnostics/);
+assert.match(
+  source,
+  /X11MinimizeState[\s\S]*observed_iconic[\s\S]*SW_FORCEMINIMIZE[\s\S]*GuardX11Window[\s\S]*restore_rect[\s\S]*SetWindowPos/,
+  "Minimized WPS windows must return to their pre-minimize geometry"
 );
 assert.match(
   source,
@@ -46,6 +66,7 @@ assert.match(
 );
 assert.match(types, /startX11WindowGuard\(processId: number\): boolean/);
 assert.match(types, /stopX11WindowGuard\(\): boolean/);
+assert.match(types, /getX11WindowGuardDiagnostics\(\): WindowsX11WindowGuardDiagnostics/);
 
 assert.match(
   source,

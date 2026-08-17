@@ -93,7 +93,13 @@ function renderVncClipboardControls(session) {
   if (syncButton) {
     syncButton.classList.toggle("active", Boolean(session.clipboardAutoSync));
     syncButton.setAttribute("aria-pressed", session.clipboardAutoSync ? "true" : "false");
-    syncButton.title = session.clipboardAutoSync ? tr("remote:clipboard.disable_auto_sync", {defaultValue:"关闭剪贴板自动同步"}) : tr("remote:clipboard.enable_auto_sync", {defaultValue:"开启剪贴板自动同步"});
+    syncButton.title = session.clipboardAutoSync
+      ? session.clipboardAutoSyncImages
+        ? tr("remote:clipboard.disable_auto_sync_with_images", {defaultValue:"关闭文本和图片自动同步"})
+        : tr("remote:clipboard.disable_auto_sync", {defaultValue:"关闭剪贴板自动同步"})
+      : session.clipboardAutoSyncImages
+        ? tr("remote:clipboard.enable_auto_sync_with_images", {defaultValue:"开启文本和图片自动同步"})
+        : tr("remote:clipboard.enable_auto_sync", {defaultValue:"开启剪贴板自动同步"});
     syncButton.setAttribute("aria-label", syncButton.title);
   }
   const helperButton = session.clipboardHelperButton;
@@ -516,9 +522,11 @@ async function configureVncClipboardSsh(key) {
 }
 
 function stopVncClipboardPolling(session) {
-  if (!session?.clipboardPollTimer) return;
-  clearInterval(session.clipboardPollTimer);
+  if (!session) return;
+  if (session.clipboardPollTimer) clearInterval(session.clipboardPollTimer);
+  if (session.clipboardImagePollTimer) clearInterval(session.clipboardImagePollTimer);
   session.clipboardPollTimer = null;
+  session.clipboardImagePollTimer = null;
 }
 
 function resetVncClipboardBridgeWriteState(session) {
@@ -526,6 +534,13 @@ function resetVncClipboardBridgeWriteState(session) {
   session.clipboardBridgeWriteRevision = Number(session.clipboardBridgeWriteRevision || 0) + 1;
   session.clipboardBridgeWritePendingRevision = 0;
   session.clipboardBridgeEchoGuard = null;
+  session.clipboardImageWriteRevision = Number(session.clipboardImageWriteRevision || 0) + 1;
+  session.clipboardImageRemoteReadToken = Number(session.clipboardImageRemoteReadToken || 0) + 1;
+  session.clipboardImageLocalReadToken = Number(session.clipboardImageLocalReadToken || 0) + 1;
+  session.clipboardImageRemoteReadInFlight = false;
+  session.clipboardImageLocalReadInFlight = false;
+  session.clipboardImageLastSeenLocalHash = "";
+  session.remoteClipboardImageHash = "";
 }
 
 function vncClipboardSendUnavailableReason(session) {
@@ -602,6 +617,88 @@ async function writeVncLocalClipboardImage(value) {
   throw new Error(tr("remote:clipboard.local_image_write_unsupported", {defaultValue:"当前环境不支持自动写入本机图片剪贴板"}));
 }
 
+async function vncClipboardImageSha256(value) {
+  const bytes = validateVncClipboardImageBytes(value);
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) throw new Error(tr("remote:clipboard.image_hash_unavailable", {defaultValue:"当前环境无法安全识别剪贴板图片变化"}));
+  const digest = new Uint8Array(await subtle.digest("SHA-256", bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)));
+  return Array.from(digest, item => item.toString(16).padStart(2, "0")).join("");
+}
+
+async function readVncLocalClipboardSnapshot(includeImage=false) {
+  if (window.termaDesktop?.readClipboardSnapshot) {
+    const payload = await window.termaDesktop.readClipboardSnapshot({includeImage});
+    let image = null;
+    if (includeImage && payload?.image_available) {
+      if (!payload?.image?.ok) throw new Error(payload?.image?.error || tr("remote:clipboard.local_image_read_failed", {defaultValue:"无法读取本机剪贴板图片"}));
+      image = validateVncClipboardImageBytes(payload.image);
+    }
+    return {
+      textAvailable:payload?.text_available === true,
+      text:payload?.text_available === true ? String(payload.text ?? "") : "",
+      imageAvailable:payload?.image_available === true,
+      image
+    };
+  }
+  if (navigator.clipboard?.read) {
+    const items = await navigator.clipboard.read();
+    let textAvailable = false;
+    let text = "";
+    let imageAvailable = false;
+    let image = null;
+    for (const item of items) {
+      const imageType = item.types.find(value => String(value || "").toLowerCase() === "image/png");
+      if (imageType) {
+        imageAvailable = true;
+        if (includeImage && !image) image = validateVncClipboardImageBytes(await (await item.getType(imageType)).arrayBuffer());
+      }
+      const textType = item.types.find(value => String(value || "").toLowerCase().startsWith("text/plain"));
+      if (textType && !textAvailable) {
+        textAvailable = true;
+        text = await (await item.getType(textType)).text();
+      }
+    }
+    return {textAvailable, text, imageAvailable, image};
+  }
+  return {textAvailable:true, text:await readVncLocalClipboard(), imageAvailable:false, image:null};
+}
+
+async function sendVncClipboardImageBytes(session, value, announce=false, knownHash="") {
+  const unavailable = vncClipboardSendUnavailableReason(session);
+  if (unavailable) {
+    if (announce) notify(unavailable, "info");
+    return false;
+  }
+  const transport = await ensureVncClipboardTransport(session);
+  if (!vncClipboardImageTransportAvailable({...session, clipboardTransport:transport})) {
+    throw new Error(tr("remote:clipboard.image_requires_helper", {defaultValue:"图片剪贴板需要 SSH 辅助和远端 xclip/wl-clipboard"}));
+  }
+  const bytes = validateVncClipboardImageBytes(value);
+  const hash = knownHash || await vncClipboardImageSha256(bytes);
+  const writeRevision = Number(session.clipboardImageWriteRevision || 0) + 1;
+  const operationId = Number(session.clipboardRemoteOperationId || 0);
+  const rfb = session.rfb;
+  session.clipboardImageWriteRevision = writeRevision;
+  const result = await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/image`, {
+    method:"POST",
+    headers:{"Content-Type":"image/png"},
+    body:bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    responseType:"json"
+  });
+  if (
+    session.clipboardImageWriteRevision !== writeRevision
+    || operationId !== Number(session.clipboardRemoteOperationId || 0)
+    || session.rfb !== rfb
+    || !session.connected
+  ) return false;
+  const remoteHash = /^[0-9a-f]{64}$/i.test(String(result?.sha256 || "")) ? String(result.sha256).toLowerCase() : hash;
+  session.clipboardImageLastSeenLocalHash = hash;
+  session.remoteClipboardImageHash = remoteHash;
+  setVncClipboardStatus(session, tr("remote:clipboard.image_synced_remote", {defaultValue:"图片已同步到远端"}), "success", 2600);
+  if (announce) notify(tr("remote:clipboard.local_image_synced", {defaultValue:"本机剪贴板图片已同步到远端 VNC 桌面"}), "success");
+  return true;
+}
+
 async function sendVncClipboardImage(key, announce=false) {
   const session = vncSessions.get(key);
   const unavailable = vncClipboardSendUnavailableReason(session);
@@ -610,24 +707,12 @@ async function sendVncClipboardImage(key, announce=false) {
     return false;
   }
   try {
-    const transport = await ensureVncClipboardTransport(session);
-    if (!vncClipboardImageTransportAvailable({...session, clipboardTransport:transport})) {
-      throw new Error(tr("remote:clipboard.image_requires_helper", {defaultValue:"图片剪贴板需要 SSH 辅助和远端 xclip/wl-clipboard"}));
-    }
     const bytes = await readVncLocalClipboardImage();
     if (!bytes) {
       if (announce) notify(tr("remote:clipboard.local_png_missing", {defaultValue:"本机剪贴板中没有 PNG 图片"}), "info");
       return false;
     }
-    await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/image`, {
-      method:"POST",
-      headers:{"Content-Type":"image/png"},
-      body:bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-      responseType:"json"
-    });
-    setVncClipboardStatus(session, tr("remote:clipboard.image_synced_remote", {defaultValue:"图片已同步到远端"}), "success", 2600);
-    if (announce) notify(tr("remote:clipboard.local_image_synced", {defaultValue:"本机剪贴板图片已同步到远端 VNC 桌面"}), "success");
-    return true;
+    return await sendVncClipboardImageBytes(session, bytes, announce);
   } catch (error) {
     setVncClipboardStatus(session, tr("remote:clipboard.image_sync_failed", {defaultValue:"图片剪贴板同步失败"}), "error");
     if (announce) notify(error.message || tr("remote:clipboard.local_image_send_failed", {defaultValue:"发送本机剪贴板图片失败"}), "error");
@@ -648,7 +733,11 @@ async function receiveVncClipboardImage(key, announce=false) {
       throw new Error(tr("remote:clipboard.image_requires_helper", {defaultValue:"图片剪贴板需要 SSH 辅助和远端 xclip/wl-clipboard"}));
     }
     const result = await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/image`, {responseType:"arrayBuffer"});
-    await writeVncLocalClipboardImage(result.data);
+    const bytes = validateVncClipboardImageBytes(result.data);
+    const hash = await vncClipboardImageSha256(bytes);
+    await writeVncLocalClipboardImage(bytes);
+    session.remoteClipboardImageHash = hash;
+    session.clipboardImageLastSeenLocalHash = hash;
     setVncClipboardStatus(session, tr("remote:clipboard.remote_image_read", {defaultValue:"已读取远端图片"}), "success", 2600);
     if (announce) notify(tr("remote:clipboard.remote_image_written", {defaultValue:"远端 VNC 剪贴板图片已写入本机剪贴板"}), "success");
     return true;
@@ -656,6 +745,102 @@ async function receiveVncClipboardImage(key, announce=false) {
     setVncClipboardStatus(session, tr("remote:clipboard.remote_image_read_failed", {defaultValue:"读取远端图片失败"}), "error");
     if (announce) notify(error.message || tr("remote:clipboard.remote_clipboard_image_failed", {defaultValue:"读取远端剪贴板图片失败"}), "error");
     return false;
+  }
+}
+
+function vncClipboardAutomaticImageSyncEnabled(session) {
+  return Boolean(session?.clipboardAutoSync
+    && session?.clipboardAutoSyncImages
+    && session?.connected
+    && !vncClipboardSendUnavailableReason(session)
+    && vncClipboardSessionVisible(session));
+}
+
+async function syncVncClipboardImageFromLocal(session) {
+  if (!vncClipboardAutomaticImageSyncEnabled(session) || session.clipboardImageLocalReadInFlight) return false;
+  const readToken = Number(session.clipboardImageLocalReadToken || 0) + 1;
+  session.clipboardImageLocalReadToken = readToken;
+  session.clipboardImageLocalReadInFlight = true;
+  try {
+    const transport = await ensureVncClipboardTransport(session);
+    if (!vncClipboardImageTransportAvailable({...session, clipboardTransport:transport})) return false;
+    const snapshot = await readVncLocalClipboardSnapshot(true);
+    if (!snapshot.imageAvailable || !snapshot.image) {
+      session.clipboardImageLastSeenLocalHash = "";
+      return false;
+    }
+    const hash = await vncClipboardImageSha256(snapshot.image);
+    if (hash === session.clipboardImageLastSeenLocalHash) return false;
+    session.clipboardImageLastSeenLocalHash = hash;
+    if (hash === session.remoteClipboardImageHash) return false;
+    if (!vncClipboardAutomaticImageSyncEnabled(session)) return false;
+    return await sendVncClipboardImageBytes(session, snapshot.image, false, hash);
+  } catch (error) {
+    if (vncClipboardAutomaticImageSyncEnabled(session)) {
+      setVncClipboardStatus(session, error?.message || tr("remote:clipboard.image_sync_failed", {defaultValue:"图片剪贴板同步失败"}), "error", 3200);
+    }
+    return false;
+  } finally {
+    if (session.clipboardImageLocalReadToken === readToken) session.clipboardImageLocalReadInFlight = false;
+  }
+}
+
+async function pollVncRemoteClipboardImageBridge(session, force=false) {
+  if (!session?.connected || session.clipboardImageRemoteReadInFlight) return false;
+  if (!force && !vncClipboardAutomaticImageSyncEnabled(session)) return false;
+  const transport = await ensureVncClipboardTransport(session);
+  if (!vncClipboardImageTransportAvailable({...session, clipboardTransport:transport})) return false;
+  const readRevision = Number(session.clipboardImageWriteRevision || 0);
+  const readToken = Number(session.clipboardImageRemoteReadToken || 0) + 1;
+  session.clipboardImageRemoteReadToken = readToken;
+  const operationId = Number(session.clipboardRemoteOperationId || 0);
+  const rfb = session.rfb;
+  session.clipboardImageRemoteReadInFlight = true;
+  try {
+    const metadata = await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/image/metadata`);
+    if (
+      readRevision !== Number(session.clipboardImageWriteRevision || 0)
+      || operationId !== Number(session.clipboardRemoteOperationId || 0)
+      || session.rfb !== rfb
+      || !session.connected
+      || (!force && !vncClipboardAutomaticImageSyncEnabled(session))
+    ) return false;
+    if (metadata?.too_large) {
+      const size = Math.max(1, Math.ceil(Number(metadata.bytes || metadata.max_bytes || 0) / (1024 * 1024)));
+      setVncClipboardStatus(session, tr("remote:clipboard.remote_image_too_large", {size, defaultValue:`远端剪贴板图片超过 ${size} MB，未自动同步`}), "warning");
+      return false;
+    }
+    if (!metadata?.available) {
+      session.remoteClipboardImageHash = "";
+      return false;
+    }
+    const expectedHash = String(metadata.sha256 || "").toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(expectedHash) || expectedHash === session.remoteClipboardImageHash) return false;
+    if (expectedHash === session.clipboardImageLastSeenLocalHash) {
+      session.remoteClipboardImageHash = expectedHash;
+      return false;
+    }
+    const result = await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/image`, {responseType:"arrayBuffer"});
+    const bytes = validateVncClipboardImageBytes(result.data);
+    const actualHash = await vncClipboardImageSha256(bytes);
+    if (actualHash !== expectedHash) return false;
+    if (
+      readRevision !== Number(session.clipboardImageWriteRevision || 0)
+      || operationId !== Number(session.clipboardRemoteOperationId || 0)
+      || session.rfb !== rfb
+      || !session.connected
+      || (!force && !vncClipboardAutomaticImageSyncEnabled(session))
+    ) return false;
+    await writeVncLocalClipboardImage(bytes);
+    session.remoteClipboardImageHash = actualHash;
+    session.clipboardImageLastSeenLocalHash = actualHash;
+    setVncClipboardStatus(session, tr("remote:clipboard.image_synced_from_remote", {defaultValue:"已从远端同步图片"}), "success", 2600);
+    return true;
+  } catch (error) {
+    if (force) throw error;
+    return false;
+  } finally {
+    if (session.clipboardImageRemoteReadToken === readToken) session.clipboardImageRemoteReadInFlight = false;
   }
 }
 
@@ -719,10 +904,17 @@ async function ensureVncClipboardTransport(session) {
         session.clipboardBridgeConnectionName = String(result.connection_name || "");
         session.clipboardBridgeTool = String(result.tool || "");
         session.clipboardBridgeResolvedBy = String(result.resolved_by || "");
-        session.remoteClipboardBridgeLastSeen = normalizeVncClipboardText(result.text ?? "");
-        session.remoteClipboardAvailable = true;
-        session.remoteClipboardPending = false;
-        session.remoteClipboardText = session.remoteClipboardBridgeLastSeen;
+        if (result?.text_available === false) {
+          session.remoteClipboardBridgeLastSeen = undefined;
+          session.remoteClipboardAvailable = false;
+          session.remoteClipboardPending = false;
+          session.remoteClipboardText = "";
+        } else {
+          session.remoteClipboardBridgeLastSeen = normalizeVncClipboardText(result.text ?? "");
+          session.remoteClipboardAvailable = true;
+          session.remoteClipboardPending = false;
+          session.remoteClipboardText = session.remoteClipboardBridgeLastSeen;
+        }
         session.clipboardBridgeError = "";
       } else {
         session.clipboardBridgeConnectionId = Number(result?.connection_id || session.clipboardBridgeConnectionId || 0);
@@ -814,7 +1006,11 @@ async function syncVncClipboardFromLocal(session) {
   if (vncClipboardSendUnavailableReason(session)) return false;
   session.clipboardReadInFlight = true;
   try {
-    const text = await readVncLocalClipboard();
+    const snapshot = await readVncLocalClipboardSnapshot(false);
+    if (snapshot.imageAvailable) return false;
+    session.clipboardImageLastSeenLocalHash = "";
+    if (!snapshot.textAvailable) return false;
+    const text = snapshot.text;
     if (text === session.clipboardLastSeenLocal) return false;
     session.clipboardLastSeenLocal = text;
     if (session.remoteClipboardAvailable && text === session.remoteClipboardText) return false;
@@ -845,6 +1041,13 @@ function startVncClipboardPolling(session) {
     void syncVncClipboardFromLocal(session);
     void pollVncRemoteClipboardBridge(session);
   }, VNC_CLIPBOARD_POLL_INTERVAL_MS);
+  if (session.clipboardAutoSyncImages) {
+    const pollImages = () => {
+      void syncVncClipboardImageFromLocal(session).then(sent => sent ? false : pollVncRemoteClipboardImageBridge(session));
+    };
+    pollImages();
+    session.clipboardImagePollTimer = setInterval(pollImages, VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS);
+  }
 }
 
 async function pollVncRemoteClipboardBridge(session, force=false) {
@@ -867,6 +1070,14 @@ async function pollVncRemoteClipboardBridge(session, force=false) {
     ) return false;
     if (result?.truncated) {
       setVncClipboardStatus(session, tr("remote:clipboard.remote_too_large", {size:Math.round(Number(result.max_bytes || 0) / 1024), defaultValue:`远端剪贴板超过 ${Math.round(Number(result.max_bytes || 0) / 1024)} KiB，未自动同步`}), "warning");
+      return false;
+    }
+    if (result?.text_available === false) {
+      session.remoteClipboardBridgeLastSeen = undefined;
+      session.remoteClipboardAvailable = false;
+      session.remoteClipboardPending = false;
+      session.remoteClipboardText = "";
+      renderVncClipboardControls(session);
       return false;
     }
     const value = normalizeVncClipboardText(result?.text ?? "");

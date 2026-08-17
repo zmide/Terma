@@ -173,11 +173,48 @@ async function main() {
   const linuxScripts = linuxCommands.map(decodeRemotePosixPayload);
   assert.match(linuxScripts[0], /\[x\]11vnc/);
   assert.match(linuxScripts[0], /-rfbport/);
-  assert.match(linuxScripts.find(script => script.includes("xclip -selection clipboard -o")) || "", /timeout 2/);
-  assert.match(linuxScripts.find(script => script.includes("xclip -selection clipboard -o")) || "", /target \.[*] not available|target \.* not available|no selection/i);
+  const linuxReadScript = linuxScripts.find(script => script.includes("xclip -selection clipboard -target TARGETS -o")) || "";
+  assert.match(linuxReadScript, /timeout 2/);
+  assert.match(linuxReadScript, /UTF8_STRING/);
+  assert.match(linuxReadScript, /text\/plain;charset=utf-8/);
+  assert.match(linuxReadScript, /TERMA_TEXT_AVAILABLE/);
+  assert.doesNotMatch(linuxReadScript, /xclip -selection clipboard -o(?:\s|$)/, "X11 文本读取不得使用无类型的 xclip 默认输出");
   const linuxWriteScript = linuxScripts.find(script => script.includes("xclip -selection clipboard -i")) || "";
   assert.match(linuxWriteScript, /td_clip_error=\$\(mktemp\)/);
   assert.match(linuxWriteScript, />\/dev\/null 2>"\$td_clip_error"/);
+
+  clearVncClipboardCapabilityCache();
+  let noTextStep = 0;
+  const noText = await readVncRemoteClipboard(linuxProfile, {
+    listConnections:() => [linuxConnection],
+    getConnection:id => Number(id) === 74 ? linuxConnection : null,
+    async runSshCommandForConnection() {
+      noTextStep += 1;
+      if (noTextStep === 1) return {status:0, stdout:[
+        "TERMA_VNC_CLIPBOARD_MODE=linux-x11",
+        "TERMA_VNC_CLIPBOARD_TOOL=xclip",
+        "TERMA_VNC_CLIPBOARD_OS=Linux"
+      ].join("\n") + "\n", stderr:""};
+      return {status:0, stdout:"TERMA_TEXT_AVAILABLE=0\nTERMA_SIZE=0\nTERMA_DATA=\n", stderr:""};
+    }
+  });
+  assert.equal(noText.text_available, false, "图片等非文本 selection 必须明确返回文本不可用");
+  assert.equal(noText.text, "", "非文本 selection 不得把 PNG 字节解码为文本");
+
+  clearVncClipboardCapabilityCache();
+  let mislabeledStep = 0;
+  const mislabeledPng = Buffer.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4]);
+  const mislabeled = await readVncRemoteClipboard(linuxProfile, {
+    listConnections:() => [linuxConnection],
+    getConnection:id => Number(id) === 74 ? linuxConnection : null,
+    async runSshCommandForConnection() {
+      mislabeledStep += 1;
+      if (mislabeledStep === 1) return {status:0, stdout:"TERMA_VNC_CLIPBOARD_MODE=linux-x11\nTERMA_VNC_CLIPBOARD_TOOL=xsel\nTERMA_VNC_CLIPBOARD_OS=Linux\n", stderr:""};
+      return {status:0, stdout:`TERMA_TEXT_AVAILABLE=1\nTERMA_SIZE=${mislabeledPng.length}\nTERMA_DATA=${mislabeledPng.toString("base64")}\n`, stderr:""};
+    }
+  });
+  assert.equal(mislabeled.text_available, false, "错误标记为文本的 PNG 仍必须被二次签名校验拒绝");
+  assert.equal(mislabeled.text, "");
 
   clearVncClipboardCapabilityCache();
   const missingLinuxHelper = await inspectVncClipboardHelper(linuxProfile, {

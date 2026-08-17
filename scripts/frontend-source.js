@@ -74,6 +74,7 @@ const FRONTEND_DOMAINS = Object.freeze({
     "app-vnc-core.js",
     "app-vnc-clipboard.js",
     "app-vnc.js",
+    "app-vnc-window.js",
     "app-remote-credentials.js",
     "app-remote-ftp.js",
     "app-remote-terminal.js",

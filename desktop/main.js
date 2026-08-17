@@ -95,6 +95,8 @@ const remoteClientAdapter = displayClientMode ? null : createRemoteClientAdapter
 });
 
 let mainWindow = null;
+const auxiliaryDesktopWindows = new Set();
+const detachedVncWindows = new Map();
 let startupWindow = null;
 const desktopBrowserAuthorizationPromptGate = createDesktopBrowserAuthorizationPromptGate();
 let tray = null;
@@ -630,7 +632,17 @@ if (!displayClientMode) {
     resourcesPath:process.resourcesPath,
     projectRoot:path.resolve(__dirname, ".."),
     userDataPath:app.getPath("userData"),
-    getLanguage:()=>desktopInterfaceLanguage
+    getLanguage:()=>desktopInterfaceLanguage,
+    readClipboardPng:() => {
+      const result = readDesktopClipboardImage();
+      return result.ok ? result.data : Buffer.alloc(0);
+    },
+    readClipboardFormats:() => {
+      const result = readDesktopClipboardFormats();
+      return result.ok
+        ? {png:result.png, bmp:result.bmp}
+        : {png:Buffer.alloc(0), bmp:Buffer.alloc(0)};
+    }
   });
 }
 configureWindowsAppIdentity();
@@ -1116,6 +1128,7 @@ function createWindow(options = {}) {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
       preload: path.join(__dirname, "preload.js")
     }
   });
@@ -1225,6 +1238,112 @@ function createWindow(options = {}) {
   }
 }
 
+function desktopWindowForSender(event) {
+  const sender = event?.sender;
+  if (!sender || sender.isDestroyed?.()) return null;
+  if (mainWindow && !mainWindow.isDestroyed() && sender === mainWindow.webContents) return mainWindow;
+  for (const window of auxiliaryDesktopWindows) {
+    if (!window.isDestroyed() && sender === window.webContents) return window;
+  }
+  return null;
+}
+
+function sanitizeAuxiliaryWindowTitle(value, fallback = PRODUCT_NAME) {
+  const title = String(value || "").replace(/[\0\r\n]/g, " ").replace(/\s+/g, " ").trim().slice(0, 180);
+  return title || fallback;
+}
+
+function configureAuxiliaryDesktopWindow(window) {
+  if (!window || window.isDestroyed()) return;
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^(https?|ftp|ssh|telnet):\/\//i.test(url)) shell.openExternal(url);
+    return {action:"deny"};
+  });
+  window.webContents.on?.("will-navigate", (event, url) => {
+    if (urlBelongsToDesktop(url)) return;
+    event.preventDefault();
+    if (/^(https?|ftp|ssh|telnet):\/\//i.test(url)) shell.openExternal(url);
+  });
+  window.webContents.on?.("render-process-gone", () => cancelNativeSftpDragSessionsForSender(window.webContents, desktopUiText(
+    "VNC 窗口进程已结束，拖出任务已取消",
+    "The VNC window renderer ended; the drag-out task was cancelled"
+  )));
+  window.once("closed", () => auxiliaryDesktopWindows.delete(window));
+}
+
+function activeDetachedVncWindow(profileId) {
+  const id = Number(profileId);
+  const window = detachedVncWindows.get(id);
+  if (!window || window.isDestroyed()) {
+    detachedVncWindows.delete(id);
+    return null;
+  }
+  return window;
+}
+
+function closeDetachedVncWindowForProfile(profileId) {
+  const id = Number(profileId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error(desktopUiText("VNC 连接编号无效", "The VNC profile ID is invalid"));
+  const window = activeDetachedVncWindow(id);
+  if (!window) return Promise.resolve({ok:true, profileId:id, closed:false});
+  return new Promise(resolve => {
+    window.once("closed", () => resolve({ok:true, profileId:id, closed:true}));
+    window.close();
+  });
+}
+
+async function createDetachedVncWindow(profileId) {
+  const id = Number(profileId);
+  if (!Number.isInteger(id) || id <= 0) throw new Error(desktopUiText("VNC 连接编号无效", "The VNC profile ID is invalid"));
+  const profiles = await fetchJson("/api/remote-profiles");
+  const profile = Array.isArray(profiles) ? profiles.find(item => Number(item?.id) === id) : null;
+  if (!profile || profile.protocol !== "vnc") throw new Error(desktopUiText("VNC 连接不存在", "The VNC profile does not exist"));
+  const existing = activeDetachedVncWindow(id);
+  if (existing) {
+    if (existing.isMinimized()) existing.restore();
+    if (!existing.isVisible()) existing.show();
+    existing.focus();
+    return {ok:true, profileId:id, reused:true};
+  }
+  const title = sanitizeAuxiliaryWindowTitle(`${profile.name || `VNC ${id}`}-vnc-${PRODUCT_NAME}`, `${PRODUCT_NAME}-vnc-${id}`);
+  const window = new BrowserWindow({
+    width:1280,
+    height:820,
+    minWidth:720,
+    minHeight:480,
+    title,
+    icon:iconPath(),
+    show:false,
+    backgroundColor:"#111",
+    webPreferences:{contextIsolation:true,nodeIntegration:false,preload:path.join(__dirname,"preload.js")}
+  });
+  auxiliaryDesktopWindows.add(window);
+  detachedVncWindows.set(id, window);
+  window.once("closed", () => {
+    if (detachedVncWindows.get(id) === window) detachedVncWindows.delete(id);
+  });
+  if (process.platform === "win32") {
+    window.setAppDetails({appId:APP_USER_MODEL_ID,appIconPath:iconPath("icon.ico"),appIconIndex:0,relaunchDisplayName:PRODUCT_NAME});
+  }
+  configureAuxiliaryDesktopWindow(window);
+  window.on("page-title-updated", event => {
+    event.preventDefault();
+    if (!window.isDestroyed()) window.setTitle(title);
+  });
+  window.webContents.on("did-finish-load", () => { if (!window.isDestroyed()) window.setTitle(title); });
+  window.once("ready-to-show", () => { if (!window.isDestroyed()) window.show(); });
+  const target = new URL(webUrl);
+  target.searchParams.set("termaVncWindow", String(id));
+  try {
+    await loadWindowWithDesktopCookie(window, target.href);
+  } catch (error) {
+    auxiliaryDesktopWindows.delete(window);
+    if (!window.isDestroyed()) window.destroy();
+    throw error;
+  }
+  return {ok:true, profileId:id, reused:false};
+}
+
 function applyDesktopTheme(theme) {
   if (theme !== "dark" && theme !== "light") return;
   nativeTheme.themeSource = theme;
@@ -1281,11 +1400,11 @@ async function confirmDesktopBrowserAuthorization(request = {}) {
   }).then(result => result.response === 1));
 }
 
-async function loadWindowWithDesktopCookie(window) {
+async function loadWindowWithDesktopCookie(window, targetUrl=webUrl) {
   if (!window || window.isDestroyed()) return;
-  if (!String(webUrl || "").trim()) return;
+  if (!String(targetUrl || "").trim()) return;
   if (desktopAuthToken) {
-    const target = new URL(webUrl);
+    const target = new URL(targetUrl);
     await window.webContents.session.cookies.set({
       url:`${target.origin}/`,
       name:"td_desktop",
@@ -1296,7 +1415,7 @@ async function loadWindowWithDesktopCookie(window) {
       secure:target.protocol === "https:"
     });
   }
-  if (!window.isDestroyed()) await window.loadURL(webUrl);
+  if (!window.isDestroyed()) await window.loadURL(targetUrl);
 }
 
 function rendererBelongsToDesktop(event) {
@@ -1315,11 +1434,14 @@ function handleDesktopInterfaceLanguage(event, language) {
 }
 
 function handleDesktopCapabilities(event) {
-  const allowed = Boolean(mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents && rendererBelongsToDesktop(event));
+  const sourceWindow = desktopWindowForSender(event);
+  const allowed = Boolean(sourceWindow && rendererBelongsToDesktop(event));
   event.returnValue = allowed
     ? displayClientMode
       ? {platform:process.platform, sftpExternalDrag:false, displayClient:true}
-      : nativeSftpDrag?.capabilities?.() || {platform:process.platform, sftpExternalDrag:"staged"}
+      : sourceWindow !== mainWindow
+        ? {platform:process.platform, sftpExternalDrag:false, detachedVnc:true}
+        : nativeSftpDrag?.capabilities?.() || {platform:process.platform, sftpExternalDrag:"staged"}
     : {platform:process.platform, sftpExternalDrag:false};
 }
 
@@ -2591,7 +2713,7 @@ function quitApp() {
 }
 
 function assertDesktopClipboardSender(event) {
-  if (!mainWindow || mainWindow.isDestroyed() || event?.sender !== mainWindow.webContents || !rendererBelongsToDesktop(event)) {
+  if (!desktopWindowForSender(event) || !rendererBelongsToDesktop(event)) {
     throw new Error(desktopUiText("剪贴板请求来源无效", "The clipboard request source is invalid"));
   }
 }
@@ -2600,6 +2722,34 @@ const DESKTOP_CLIPBOARD_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
 const DESKTOP_CLIPBOARD_IMAGE_MAX_DIMENSION = 16384;
 const DESKTOP_CLIPBOARD_IMAGE_MAX_PIXELS = 64 * 1024 * 1024;
 const DESKTOP_CLIPBOARD_PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+function encodeDesktopClipboardBmp(image, width, height) {
+  if (!image || !width || !height) return Buffer.alloc(0);
+  const pixels = image.toBitmap();
+  const rowBytes = width * 4;
+  const pixelBytes = rowBytes * height;
+  const headerBytes = 14 + 40;
+  if (!pixels || pixels.length < pixelBytes || headerBytes + pixelBytes > DESKTOP_CLIPBOARD_IMAGE_MAX_BYTES) return Buffer.alloc(0);
+  const bmp = Buffer.alloc(headerBytes + pixelBytes);
+  bmp.writeUInt16LE(0x4d42, 0);
+  bmp.writeUInt32LE(bmp.length, 2);
+  bmp.writeUInt32LE(headerBytes, 10);
+  bmp.writeUInt32LE(40, 14);
+  bmp.writeInt32LE(width, 18);
+  bmp.writeInt32LE(height, 22);
+  bmp.writeUInt16LE(1, 26);
+  bmp.writeUInt16LE(32, 28);
+  bmp.writeUInt32LE(0, 30);
+  bmp.writeUInt32LE(pixelBytes, 34);
+  bmp.writeInt32LE(2835, 38);
+  bmp.writeInt32LE(2835, 42);
+  for (let row = 0; row < height; row += 1) {
+    const sourceStart = row * rowBytes;
+    const targetStart = headerBytes + (height - row - 1) * rowBytes;
+    pixels.copy(bmp, targetStart, sourceStart, sourceStart + rowBytes);
+  }
+  return bmp;
+}
 
 function readDesktopClipboardImage() {
   const image = clipboard.readImage();
@@ -2627,6 +2777,38 @@ function readDesktopClipboardImage() {
     };
   }
   return {ok:true, mime_type:"image/png", width, height, byte_length:data.length, data};
+}
+
+function readDesktopClipboardFormats() {
+  const imageResult = readDesktopClipboardImage();
+  if (!imageResult.ok) return {ok:false, reason:imageResult.reason || "empty"};
+  const image = clipboard.readImage();
+  const bmp = encodeDesktopClipboardBmp(image, imageResult.width, imageResult.height);
+  return {
+    ok:true,
+    width:imageResult.width,
+    height:imageResult.height,
+    png:imageResult.data,
+    bmp
+  };
+}
+
+function readDesktopClipboardSnapshot(options={}) {
+  const formats = clipboard.availableFormats().map(value => String(value || "").toLowerCase());
+  const image = clipboard.readImage();
+  const imageAvailable = Boolean(image && !image.isEmpty());
+  const textAvailable = formats.some(format => format === "text"
+    || format === "string"
+    || format === "utf8_string"
+    || format === "public.utf8-plain-text"
+    || format.startsWith("text/plain"));
+  const result = {
+    text_available:textAvailable,
+    text:textAvailable ? clipboard.readText() : "",
+    image_available:imageAvailable
+  };
+  if (imageAvailable && options?.include_image === true) result.image = readDesktopClipboardImage();
+  return result;
 }
 
 function writeDesktopClipboardImage(value) {
@@ -2679,9 +2861,31 @@ function registerDesktopClipboardHandlers() {
     assertDesktopClipboardSender(event);
     return readDesktopClipboardImage();
   });
+  ipcMain.handle("terma:clipboard-read-snapshot", (event, options) => {
+    assertDesktopClipboardSender(event);
+    return readDesktopClipboardSnapshot(options && typeof options === "object" ? options : {});
+  });
   ipcMain.handle("terma:clipboard-write-image", (event, data) => {
     assertDesktopClipboardSender(event);
     return writeDesktopClipboardImage(data);
+  });
+  ipcMain.handle("terma:vnc-open-window", async (event, payload={}) => {
+    if (!desktopWindowForSender(event) || !rendererBelongsToDesktop(event)) {
+      throw new Error(desktopUiText("VNC 窗口请求来源无效", "The VNC window request source is invalid"));
+    }
+    return createDetachedVncWindow(Number(payload?.profileId || 0));
+  });
+  ipcMain.handle("terma:vnc-close-profile-window", (event, payload={}) => {
+    if (desktopWindowForSender(event) !== mainWindow || !rendererBelongsToDesktop(event)) {
+      throw new Error(desktopUiText("VNC 窗口切换请求来源无效", "The VNC window switch request source is invalid"));
+    }
+    return closeDetachedVncWindowForProfile(Number(payload?.profileId || 0));
+  });
+  ipcMain.handle("terma:vnc-window-close", event => {
+    const window = desktopWindowForSender(event);
+    if (!window || window === mainWindow) return {ok:false};
+    if (!window.isDestroyed()) window.close();
+    return {ok:true};
   });
 }
 

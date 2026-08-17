@@ -103,9 +103,10 @@ async function main() {
   assert.match(DEFAULT_TERMINAL_SETTINGS.font_family, /monospace/);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 14,
+    schema_version: 15,
     language: "zh-CN",
     language_onboarding_version: 0,
+    vnc_fullscreen_toolbar: "always",
     listen_hosts: ["127.0.0.1", "127.0.0.2"],
     listen_port: 8123,
     sftp_recycle_bin_enabled: false,
@@ -146,6 +147,8 @@ async function main() {
   });
   assert.equal(normalizeRuntimeSettings({language:"en-US"}).language, "en-US");
   assert.equal(normalizeRuntimeSettings({language:"invalid"}).language, "zh-CN");
+  assert.equal(normalizeRuntimeSettings({vnc_fullscreen_toolbar:"edge"}).vnc_fullscreen_toolbar, "edge");
+  assert.equal(normalizeRuntimeSettings({vnc_fullscreen_toolbar:"invalid"}).vnc_fullscreen_toolbar, "always");
   assert.equal(normalizeRuntimeSettings(
     {notification_display:{progress:{success_duration_ms:null}}},
     {notification_display:{progress:{enabled:true, success_duration_ms:5000, error_duration_ms:8000}}}

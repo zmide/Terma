@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const nodeCrypto = require("node:crypto");
 const vm = require("node:vm");
 const { readFrontendDomain } = require("./frontend-source");
 
@@ -19,6 +20,9 @@ assert.match(remoteSource, /data-vnc-clipboard-send-image/);
 assert.match(remoteSource, /data-vnc-clipboard-receive-image/);
 assert.match(remoteSource, /sendVncClipboardImage/);
 assert.match(remoteSource, /receiveVncClipboardImage/);
+assert.match(remoteSource, /readVncLocalClipboardSnapshot/);
+assert.match(remoteSource, /pollVncRemoteClipboardImageBridge/);
+assert.match(remoteSource, /auto_sync_images/);
 assert.match(remoteSource, /data-vnc-clipboard-helper/);
 assert.match(remoteSource, /configureVncClipboardSsh/);
 assert.match(remoteSource, /vncClipboardMatchingConnections/);
@@ -29,17 +33,23 @@ assert.match(cssSource, /\.vnc-clipboard-status/);
 assert.match(cssSource, /\.vnc-toolbar-actions \.icon-button\.active/);
 assert.match(mainSource, /ipcMain\.handle\("terma:clipboard-read"/);
 assert.match(mainSource, /ipcMain\.handle\("terma:clipboard-write"/);
-assert.match(mainSource, /event\?\.sender !== mainWindow\.webContents/);
+assert.match(mainSource, /function desktopWindowForSender[\s\S]*?auxiliaryDesktopWindows/);
+assert.match(mainSource, /function assertDesktopClipboardSender[\s\S]*?!desktopWindowForSender\(event\)/);
 assert.match(mainSource, /!rendererBelongsToDesktop\(event\)/);
 assert.match(mainSource, /renderer\.on\?\.\("will-navigate"/);
 assert.match(preloadSource, /ipcRenderer\.invoke\("terma:clipboard-read"/);
 assert.match(preloadSource, /ipcRenderer\.invoke\("terma:clipboard-write"/);
+assert.match(mainSource, /ipcMain\.handle\("terma:clipboard-read-snapshot"/);
+assert.match(preloadSource, /ipcRenderer\.invoke\("terma:clipboard-read-snapshot"/);
 assert.match(remoteSource, /session\.clipboardLastSeenLocal = undefined/);
 assert.match(remoteSource, /vnc-clipboard/);
 assert.match(remoteSource, /responseType:"arrayBuffer"/);
 assert.match(remoteSource, /已发送（服务端未确认）/);
 
-const clipboard = {read:"", browserWrites:[], desktopWrites:[]};
+const clipboard = {read:"", browserWrites:[], desktopWrites:[], imageWrites:[]};
+const imagePng = Uint8Array.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,1,2,3,4]);
+const remoteImagePng = Uint8Array.from([0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,5,6,7,8]);
+let desktopSnapshot = {text_available:true, text:"desktop clipboard", image_available:false};
 const notifications = [];
 const intervals = new Set();
 const bridgeCalls = [];
@@ -85,6 +95,7 @@ const context = vm.createContext({
     }
   },
   window:{termaDesktop:null},
+  crypto:nodeCrypto.webcrypto,
   document:{
     visibilityState:"visible",
     hasFocus:() => true,
@@ -115,6 +126,10 @@ vm.runInContext(`globalThis.__vncClipboard = {
   handleVncRemoteClipboard,
   ensureVncClipboardTransport,
   pollVncRemoteClipboardBridge,
+  readVncLocalClipboardSnapshot,
+  sendVncClipboardImageBytes,
+  syncVncClipboardImageFromLocal,
+  pollVncRemoteClipboardImageBridge,
   normalizeVncClipboardText,
   startVncClipboardPolling,
   stopVncClipboardPolling
@@ -221,11 +236,49 @@ const makeSession = rfb => ({
 
   context.window.termaDesktop = {
     readClipboardText:async () => "desktop clipboard",
-    writeClipboardText:async text => clipboard.desktopWrites.push(String(text))
+    writeClipboardText:async text => clipboard.desktopWrites.push(String(text)),
+    readClipboardSnapshot:async () => ({...desktopSnapshot, image:desktopSnapshot.image_available ? {ok:true, data:desktopSnapshot.image} : undefined}),
+    writeClipboardImage:async data => {
+      const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+      clipboard.imageWrites.push(bytes);
+      desktopSnapshot = {text_available:false, text:"", image_available:true, image:bytes};
+    }
   };
   assert.equal(await api.readVncLocalClipboard(), "desktop clipboard");
   await api.writeVncLocalClipboard("桌面写入", false);
   assert.deepEqual(clipboard.desktopWrites, ["桌面写入"]);
+
+  desktopSnapshot = {text_available:true, text:"�PNG", image_available:true, image:imagePng};
+  const imageSession = makeSession(makeRfb());
+  imageSession.profile = {id:88, name:"Linux image VNC", options:{view_only:false, source_ssh_connection_id:74, auto_sync_images:true}};
+  imageSession.clipboardTransport = "ssh-linux-x11";
+  imageSession.clipboardTransportChecked = true;
+  imageSession.clipboardBridgeTool = "xclip";
+  imageSession.clipboardAutoSyncImages = true;
+  let remoteImage = imagePng;
+  bridgeApiOverride = async (requestPath, options={}) => {
+    const pathValue = String(requestPath);
+    if (pathValue.endsWith("/vnc-clipboard/image") && String(options.method || "GET") === "POST") {
+      return {ok:true, available:true, transport:"ssh-linux-x11", sha256:await api.readHash(imagePng)};
+    }
+    if (pathValue.endsWith("/vnc-clipboard/image/metadata")) {
+      return {available:true, sha256:await api.readHash(remoteImage), bytes:remoteImage.byteLength, too_large:false};
+    }
+    if (pathValue.endsWith("/vnc-clipboard/image")) return {data:Array.from(remoteImage)};
+    return {available:true, transport:"ssh-linux-x11", text:"", text_available:false, truncated:false, max_bytes:32768};
+  };
+  api.readHash = async bytes => {
+    const digest = new Uint8Array(await nodeCrypto.webcrypto.subtle.digest("SHA-256", bytes));
+    return Array.from(digest, item => item.toString(16).padStart(2, "0")).join("");
+  };
+  assert.equal(await api.syncVncClipboardImageFromLocal(imageSession), true, "本机图片变化应自动发送到远端");
+  assert.equal(await api.syncVncClipboardImageFromLocal(imageSession), false, "相同本机图片不得重复发送");
+  assert.equal(await api.syncVncClipboardFromLocal(imageSession), false, "图片剪贴板不得被 PNG 二进制误读为文本");
+  remoteImage = remoteImagePng;
+  assert.equal(await api.pollVncRemoteClipboardImageBridge(imageSession, true), true, "远端图片变化应自动写入本机");
+  assert.equal(clipboard.imageWrites.length, 1);
+  assert.deepEqual(Array.from(clipboard.imageWrites[0]), Array.from(remoteImagePng));
+  bridgeApiOverride = null;
 
   const macBridge = makeSession(makeRfb());
   macBridge.profile = {id:7, name:"macOS VNC", options:{view_only:false, source_ssh_connection_id:73}};

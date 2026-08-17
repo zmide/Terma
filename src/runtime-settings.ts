@@ -11,6 +11,8 @@ const DEFAULT_SFTP_LIGHT_EDITOR_THRESHOLD_MB = 10;
 const DEFAULT_SFTP_TRANSFER_CONCURRENCY = 3;
 const DEFAULT_LANGUAGE = "zh-CN";
 const SUPPORTED_LANGUAGES = new Set(["zh-CN", "en-US"]);
+const DEFAULT_VNC_FULLSCREEN_TOOLBAR = "always";
+const VNC_FULLSCREEN_TOOLBAR_MODES = new Set(["always", "never", "edge"]);
 const DEFAULT_NOTIFICATION_DISPLAY = Object.freeze({
   info: Object.freeze({ enabled: true, duration_ms: 3500 }),
   success: Object.freeze({ enabled: true, duration_ms: 3500 }),
@@ -208,11 +210,14 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 14,
+    schema_version: 15,
     language: normalizeLanguage(value.language, fallback.language),
     language_onboarding_version: Math.max(0, Math.min(1, Number.isInteger(Number(value.language_onboarding_version ?? fallback.language_onboarding_version))
       ? Number(value.language_onboarding_version ?? fallback.language_onboarding_version)
       : 0)),
+    vnc_fullscreen_toolbar: VNC_FULLSCREEN_TOOLBAR_MODES.has(String(value.vnc_fullscreen_toolbar ?? fallback.vnc_fullscreen_toolbar ?? DEFAULT_VNC_FULLSCREEN_TOOLBAR))
+      ? String(value.vnc_fullscreen_toolbar ?? fallback.vnc_fullscreen_toolbar ?? DEFAULT_VNC_FULLSCREEN_TOOLBAR)
+      : DEFAULT_VNC_FULLSCREEN_TOOLBAR,
     listen_hosts: normalizeListenHosts(hostsValue, hostsValue === undefined ? (fallback.listen_hosts ?? DEFAULT_LISTEN_HOSTS) : null),
     listen_port: normalizeListenPort(portValue, portValue === undefined ? (fallback.listen_port ?? DEFAULT_LISTEN_PORT) : null),
     sftp_recycle_bin_enabled: value.sftp_recycle_bin_enabled === undefined
@@ -376,6 +381,8 @@ function availableListenHosts(interfaces: any = os.networkInterfaces()) {
 
 module.exports = {
   DEFAULT_LANGUAGE,
+  DEFAULT_VNC_FULLSCREEN_TOOLBAR,
+  VNC_FULLSCREEN_TOOLBAR_MODES,
   DEFAULT_NOTIFICATION_DISPLAY,
   DEFAULT_TERMINAL_SETTINGS,
   DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,

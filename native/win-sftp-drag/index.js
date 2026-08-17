@@ -18,6 +18,13 @@ function withX11WindowGuardFallback(target) {
       },
     });
   }
+  if (typeof target.getX11WindowGuardDiagnostics !== "function") {
+    Object.defineProperty(target, "getX11WindowGuardDiagnostics", {
+      value() {
+        return {running:false, hookInstalled:false, hookError:0, processId:0};
+      },
+    });
+  }
   return target;
 }
 

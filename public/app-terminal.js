@@ -382,6 +382,7 @@ async function attachTerminal(c, key) {
   enableTerminalFontWheel(session, key);
   setTimeout(()=>{
     try { session.fit.fit(); } catch {}
+    try { session.term.refresh?.(0, Math.max(0, session.term.rows - 1)); } catch {}
     if (!isMobileLayout()) try { session.term.focus(); } catch {}
     if (!session.socket) connectTerminal(c, key);
     else {

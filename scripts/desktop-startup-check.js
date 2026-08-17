@@ -541,6 +541,7 @@ check("Desktop window uses the isolated native-theme bridge", () => {
   const window = state.windows[0];
   assert.equal(window.options.webPreferences.contextIsolation, true);
   assert.equal(window.options.webPreferences.nodeIntegration, false);
+  assert.equal(window.options.webPreferences.backgroundThrottling, false);
   assert.equal(window.options.webPreferences.preload, path.join(root, "desktop", "preload.js"));
 });
 

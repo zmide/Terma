@@ -44,6 +44,7 @@ function thirdPartyUseLabel(value) {
     case "builtin_vnc": return tr("settings:third_party_uses.builtin_vnc", {defaultValue:"内置 VNC 客户端"});
     case "zmodem_transfer": return tr("settings:third_party_uses.zmodem_transfer", {defaultValue:"终端 sz/rz 文件传输"});
     case "ssh_sftp_transport": return tr("settings:third_party_uses.ssh_sftp_transport", {defaultValue:"SSH/SFTP 通信"});
+    case "x11_protocol_client": return tr("settings:third_party_uses.x11_protocol_client", {defaultValue:"X11 图片剪贴板协议桥接"});
     case "interface_i18n": return tr("settings:third_party_uses.interface_i18n", {defaultValue:"界面国际化与语言资源管理"});
     case "interface_icons": return tr("settings:third_party_uses.interface_icons", {defaultValue:"界面图标"});
     case "desktop_runtime": return tr("settings:third_party_uses.desktop_runtime", {defaultValue:"桌面应用运行时"});
@@ -70,6 +71,9 @@ function renderSettings() {
     return `<div class="about-third-party-row" role="row"><span role="cell">${nameHtml}</span><code role="cell">${esc(version)}</code><span role="cell">${esc(license)}</span><span role="cell">${esc(purpose)}</span></div>`;
   }).join("");
   const toolbarPlacement = normalizeWorkspaceToolbarPlacement(runtimeSettings?.saved?.workspace_toolbar_placement);
+  const vncFullscreenToolbar = ["always", "never", "edge"].includes(runtimeSettings?.saved?.vnc_fullscreen_toolbar)
+    ? runtimeSettings.saved.vnc_fullscreen_toolbar
+    : "always";
   const notificationDisplay = normalizeNotificationDisplay(runtimeSettings?.saved?.notification_display);
   const unknownValue = tr("settings:auto.unknown_value", {defaultValue:"未知"});
   const aboutLoadError = about.load_error || about.license_error
@@ -96,6 +100,15 @@ function renderSettings() {
             <h3>${esc(tr("settings:auto.workspace"))}</h3>
             <label class="check-row"><input id="restoreWorkspaceTabs" type="checkbox" ${runtimeSettings?.saved?.restore_workspace_tabs !== false ? "checked" : ""}> ${esc(tr("settings:auto.restore_tabs"))}</label>
             <div class="muted">${esc(tr("settings:auto.restore_tabs_hint"))}</div>
+            <div class="settings-vnc-toolbar-field">
+              <label for="generalVncFullscreenToolbar">${esc(tr("settings:auto.vnc_fullscreen_toolbar", {defaultValue:"VNC 内部全屏快捷栏"}))}</label>
+              <select id="generalVncFullscreenToolbar">
+                <option value="always" ${vncFullscreenToolbar === "always" ? "selected" : ""}>${esc(tr("settings:auto.vnc_fullscreen_toolbar_always", {defaultValue:"始终显示"}))}</option>
+                <option value="never" ${vncFullscreenToolbar === "never" ? "selected" : ""}>${esc(tr("settings:auto.vnc_fullscreen_toolbar_never", {defaultValue:"始终隐藏（按 Esc 退出）"}))}</option>
+                <option value="edge" ${vncFullscreenToolbar === "edge" ? "selected" : ""}>${esc(tr("settings:auto.vnc_fullscreen_toolbar_edge", {defaultValue:"鼠标移到顶部边界时显示"}))}</option>
+              </select>
+              <span>${esc(tr("settings:auto.vnc_fullscreen_toolbar_hint", {defaultValue:"控制 VNC 内容全屏时快捷栏的显示方式。"}))}</span>
+            </div>
             <h3>${esc(tr("settings:auto.action_location"))}</h3>
             <div class="muted">${esc(tr("settings:auto.action_location_hint"))}</div>
             <label for="toolbarPlacementUnsplitTerminal">${esc(tr("settings:auto.single_terminal"))}</label>

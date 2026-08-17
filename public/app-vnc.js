@@ -660,6 +660,7 @@ async function openEmbeddedVncDesktop(profileId, key=`remote-desktop-${profileId
   const renderScope = captureRemoteDesktopRenderScope(profile.id, key, view);
   const existingSession = vncSessions.get(key);
   if (existingSession?.workspace && (existingSession.connected || existingSession.connecting)) {
+    if (!await prepareEmbeddedVncWindowSwitch(profile.id)) return null;
     existingSession.presentation = "viewer";
     return withRemoteDesktopRenderScope(renderScope, () => {
       renderEmbeddedVnc(profile, key);
@@ -676,6 +677,8 @@ async function openEmbeddedVncDesktop(profileId, key=`remote-desktop-${profileId
       withRemoteDesktopRenderScope(renderScope, () => renderLinuxDesktopMissingWorkspace(profile, key, desktopDiagnostics));
       return null;
     }
+    if (!withRemoteDesktopRenderScope(renderScope, () => true)) return null;
+    if (!await prepareEmbeddedVncWindowSwitch(profile.id)) return null;
     return withRemoteDesktopRenderScope(renderScope, () => {
       renderEmbeddedVnc(profile, key, diagnostics || desktopDiagnostics);
       return true;
@@ -688,13 +691,14 @@ async function openEmbeddedVncDesktop(profileId, key=`remote-desktop-${profileId
   }
 }
 
-function renderEmbeddedVnc(profile, key, diagnostics=null) {
-  const view = $("view-remote-desktop");
+function renderEmbeddedVnc(profile, key, diagnostics=null, targetView=null, detached=isDetachedVncWindow()) {
+  const view = targetView || $("view-remote-desktop");
   let session = vncSessions.get(key);
   if (session?.workspace) {
     view.replaceChildren(session.workspace);
     session.presentation = "viewer";
     session.profile = profile;
+    session.clipboardAutoSyncImages = profile.options?.auto_sync_images !== false;
     const sourceConnection = currentConnection(Number(profile.options?.source_ssh_connection_id || profile.options?.ssh_connection_id || 0));
     const sourcePlatform = String(sourceConnection?.terminal_program_platform || "").toLowerCase();
     session.vncServerDiagnostics = diagnostics || session.vncServerDiagnostics || null;
@@ -741,16 +745,19 @@ function renderEmbeddedVnc(profile, key, diagnostics=null) {
   const clipboardEmptyRemoteLabel = tr("remote:clipboard.remote_not_sent", {defaultValue:"远端尚未发送剪贴板"});
   const clipboardReceiveImageLabel = tr("remote:clipboard.read_remote_image", {defaultValue:"读取远端剪贴板图片"});
   const cursorAutoLabel = tr("remote:vnc_ui.cursor_auto", {defaultValue:"鼠标模式：自动"});
-  const fullscreenLabel = tr("remote:vnc_ui.fullscreen", {defaultValue:"全屏"});
+  const fullscreenLabel = tr("remote:vnc_ui.enter_fullscreen", {defaultValue:"进入内部全屏"});
+  const newWindowLabel = tr("remote:vnc_ui.open_new_window", {defaultValue:"在新窗口打开"});
+  const closeWindowLabel = tr("remote:vnc_ui.close_new_window", {defaultValue:"关闭此 VNC 窗口"});
   const serviceManagementLabel = tr("remote:vnc_ui.service_management", {defaultValue:"VNC 服务管理"});
   const reconnectLabel = tr("remote:vnc_status.reconnect", {defaultValue:"重新连接"});
   const systemClientLabel = tr("remote:vnc_ui.use_system_client", {defaultValue:"改用系统客户端"});
   const connectionSettingsLabel = tr("remote:actions.connection_settings", {defaultValue:"连接设置"});
   view.innerHTML = `<div class="vnc-workspace" data-vnc-key="${escAttr(key)}">
+    <div class="vnc-fullscreen-toolbar-edge-zone" aria-hidden="true"></div>
     <div class="vnc-toolbar">
       <div class="vnc-toolbar-status"><span class="terminal-connection-dot"></span><span id="vncStatus" class="vnc-status connecting">${esc(connectingLabel)}</span><button id="vncClipboardStatus" class="vnc-clipboard-status clickable" type="button" onclick="configureVncClipboardSsh('${escAttr(key)}')" role="status" aria-live="polite">${esc(clipboardManualLabel)}</button></div>
       <div class="vnc-toolbar-actions">
-        <button class="icon-button" onclick="showVncManagement(${profile.id},'${escAttr(key)}')" title="${escAttr(backLabel)}" aria-label="${escAttr(backLabel)}">${icon("arrow-left")}</button>
+        ${detached ? "" : `<button class="icon-button" onclick="showVncManagement(${profile.id},'${escAttr(key)}')" title="${escAttr(backLabel)}" aria-label="${escAttr(backLabel)}">${icon("arrow-left")}</button>`}
         <button class="icon-button" onclick="sendVncCtrlAltDelete('${escAttr(key)}')" title="${escAttr(ctrlAltDeleteLabel)}" aria-label="${escAttr(ctrlAltDeleteLabel)}">${icon("keyboard")}</button>
         <button class="vnc-clipboard-helper-button" data-vnc-clipboard-helper onclick="configureVncClipboardSsh('${escAttr(key)}')" title="${escAttr(clipboardHelperLabel)}" aria-label="${escAttr(clipboardHelperLabel)}">${icon("link-2")}<span>${esc(clipboardHelperShort)}</span></button>
         <button class="icon-button" data-vnc-clipboard-sync onclick="toggleVncClipboardSync('${escAttr(key)}')" title="${escAttr(clipboardSyncLabel)}" aria-label="${escAttr(clipboardSyncLabel)}" aria-pressed="false">${icon("clipboard-check")}</button>
@@ -759,22 +766,23 @@ function renderEmbeddedVnc(profile, key, diagnostics=null) {
         <button class="icon-button" data-vnc-clipboard-receive onclick="copyVncClipboardFromRemote('${escAttr(key)}')" title="${escAttr(clipboardEmptyRemoteLabel)}" aria-label="${escAttr(clipboardEmptyRemoteLabel)}" disabled>${icon("clipboard-copy")}</button>
         <button class="icon-button" data-vnc-clipboard-receive-image onclick="receiveVncClipboardImage('${escAttr(key)}',true)" title="${escAttr(clipboardReceiveImageLabel)}" aria-label="${escAttr(clipboardReceiveImageLabel)}">${icon("image-down")}</button>
         <button class="icon-button" data-vnc-cursor-mode onclick="showVncCursorModeMenu(event,'${escAttr(key)}')" title="${escAttr(cursorAutoLabel)}" aria-label="${escAttr(cursorAutoLabel)}" aria-pressed="false">${icon("mouse-pointer-2")}</button>
-        <button class="icon-button" onclick="toggleVncFullscreen('${escAttr(key)}')" title="${escAttr(fullscreenLabel)}" aria-label="${escAttr(fullscreenLabel)}">${icon("maximize-2")}</button>
-        <button class="icon-button" onclick="openVncSetupGuide(${profile.id})" title="${escAttr(serviceManagementLabel)}" aria-label="${escAttr(serviceManagementLabel)}">${icon("server-cog")}</button>
+        <button class="icon-button" data-vnc-fullscreen-toggle onclick="toggleVncFullscreen('${escAttr(key)}')" title="${escAttr(fullscreenLabel)}" aria-label="${escAttr(fullscreenLabel)}">${icon("maximize-2")}</button>
+        ${detached ? "" : `<button class="icon-button" onclick="openVncInNewWindow(${profile.id},'${escAttr(key)}')" title="${escAttr(newWindowLabel)}" aria-label="${escAttr(newWindowLabel)}">${icon("panel-top-open")}</button>`}
+        ${detached ? "" : `<button class="icon-button" onclick="openVncSetupGuide(${profile.id})" title="${escAttr(serviceManagementLabel)}" aria-label="${escAttr(serviceManagementLabel)}">${icon("server-cog")}</button>`}
         <button class="icon-button" onclick="reconnectEmbeddedVnc(${profile.id},'${escAttr(key)}')" title="${escAttr(reconnectLabel)}" aria-label="${escAttr(reconnectLabel)}">${icon("refresh-cw")}</button>
-        <button class="icon-button" onclick="launchRemoteDesktop(${profile.id},'${escAttr(key)}',this)" title="${escAttr(systemClientLabel)}" aria-label="${escAttr(systemClientLabel)}">${icon("external-link")}</button>
-        <button class="icon-button" onclick="editRemoteProfile(${profile.id})" title="${escAttr(connectionSettingsLabel)}" aria-label="${escAttr(connectionSettingsLabel)}">${icon("settings-2")}</button>
+        ${detached ? "" : `<button class="icon-button" onclick="launchRemoteDesktop(${profile.id},'${escAttr(key)}',this)" title="${escAttr(systemClientLabel)}" aria-label="${escAttr(systemClientLabel)}">${icon("external-link")}</button>`}
+        ${detached ? `<button class="icon-button" onclick="closeDetachedVncWindow('${escAttr(key)}')" title="${escAttr(closeWindowLabel)}" aria-label="${escAttr(closeWindowLabel)}">${icon("x")}</button>` : `<button class="icon-button" onclick="editRemoteProfile(${profile.id})" title="${escAttr(connectionSettingsLabel)}" aria-label="${escAttr(connectionSettingsLabel)}">${icon("settings-2")}</button>`}
       </div>
     </div>
     <div id="vncViewport" class="vnc-viewport" tabindex="0"><div id="vncConnectionHelp" class="vnc-connection-help" hidden></div></div>
   </div>`;
-  if (typeof remoteWorkspaceJumpButtonsHtml === "function") {
+  if (!detached && typeof remoteWorkspaceJumpButtonsHtml === "function") {
     const jumpButtons = remoteWorkspaceJumpButtonsHtml(profile);
     if (jumpButtons) view.querySelector(".vnc-toolbar-actions")?.insertAdjacentHTML("afterbegin", jumpButtons);
   }
   const viewport = view.querySelector("#vncViewport");
   if (!session) {
-    session = {key, profile, rfb:null, screen:document.createElement("div"), status:null, statusText:"", statusState:"connecting", connecting:false, connected:false, clipboardAutoSync:!profile.options?.view_only, remoteClipboardAvailable:false, remoteClipboardPending:false, managementNodes};
+    session = {key, profile, rfb:null, screen:document.createElement("div"), status:null, statusText:"", statusState:"connecting", connecting:false, connected:false, clipboardAutoSync:!profile.options?.view_only, clipboardAutoSyncImages:profile.options?.auto_sync_images !== false, remoteClipboardAvailable:false, remoteClipboardPending:false, managementNodes};
     session.screen.className = "vnc-screen";
     vncSessions.set(key, session);
   } else if (!session.managementNodes?.length && managementNodes.length) {
@@ -783,6 +791,7 @@ function renderEmbeddedVnc(profile, key, diagnostics=null) {
   session.workspace = view.querySelector(".vnc-workspace");
   session.presentation = "viewer";
   session.profile = profile;
+  session.clipboardAutoSyncImages = profile.options?.auto_sync_images !== false;
   session.vncServerDiagnostics = diagnostics || session.vncServerDiagnostics || null;
   const sourceConnection = currentConnection(Number(profile.options?.source_ssh_connection_id || profile.options?.ssh_connection_id || 0));
   const sourcePlatform = String(sourceConnection?.terminal_program_platform || "").toLowerCase();
@@ -1160,15 +1169,22 @@ async function toggleVncClipboardSync(key) {
     return;
   }
   try {
-    const text = await readVncLocalClipboard();
+    const snapshot = await readVncLocalClipboardSnapshot(Boolean(session.clipboardAutoSyncImages));
     session.clipboardPermissionBlocked = false;
     session.clipboardPermissionNoticeShown = false;
     session.clipboardAutoSync = true;
-    if (!session.remoteClipboardAvailable || text !== session.remoteClipboardText) await sendVncClipboardText(session, text, false);
-    else session.clipboardLastSeenLocal = text;
+    if (snapshot.imageAvailable && session.clipboardAutoSyncImages && snapshot.image) {
+      await sendVncClipboardImageBytes(session, snapshot.image, false);
+    } else if (!snapshot.imageAvailable && snapshot.textAvailable) {
+      const text = snapshot.text;
+      if (!session.remoteClipboardAvailable || text !== session.remoteClipboardText) await sendVncClipboardText(session, text, false);
+      else session.clipboardLastSeenLocal = text;
+    }
     startVncClipboardPolling(session);
     setVncClipboardStatus(session, tr("remote:clipboard.auto_sync", {defaultValue:"剪贴板：自动同步"}), "active");
-    notify(tr("remote:clipboard.auto_sync_enabled", {defaultValue:"已开启 VNC 剪贴板自动同步；仅在 Terma 位于前台时读取本机剪贴板"}), "success");
+    notify(session.clipboardAutoSyncImages
+      ? tr("remote:clipboard.auto_sync_enabled_with_images", {defaultValue:"已开启 VNC 文本和图片自动同步；仅在 Terma 位于前台时读取本机剪贴板"})
+      : tr("remote:clipboard.auto_sync_enabled", {defaultValue:"已开启 VNC 剪贴板自动同步；仅在 Terma 位于前台时读取本机剪贴板"}), "success");
   } catch (error) {
     session.clipboardAutoSync = false;
     session.clipboardPermissionBlocked = true;
@@ -1181,51 +1197,20 @@ async function toggleVncClipboardSync(key) {
   }
 }
 
-function syncVncFullscreenPresentation() {
-  const session = vncSessions.get(vncFullscreenSessionKey);
-  const active = document.fullscreenElement === document.documentElement && Boolean(session?.viewport?.isConnected);
-  for (const item of vncSessions.values()) item.viewport?.classList.toggle("vnc-fullscreen-active", active && item === session);
-  document.documentElement.classList.toggle("vnc-fullscreen-document", active);
-  if (!active) {
-    if (!document.fullscreenElement || document.fullscreenElement === document.documentElement) vncFullscreenSessionKey = "";
-    return;
-  }
-  requestAnimationFrame(() => {
-    try { applyVncDisplayMode(session); } catch {}
-    focusEmbeddedVnc(session);
-  });
-}
-
-if (typeof document !== "undefined") document.addEventListener("fullscreenchange", syncVncFullscreenPresentation);
-
-async function toggleVncFullscreen(key) {
-  const session = vncSessions.get(key);
-  if (!session?.viewport) return;
-  if (document.fullscreenElement) {
-    await document.exitFullscreen?.();
-    return;
-  }
-  if (!document.documentElement.requestFullscreen) return notify(tr("remote:vnc_ui.fullscreen_unsupported", {defaultValue:"当前环境不支持全屏显示"}), "info");
-  // noVNC may render its software cursor as a body-level overlay. Keeping the
-  // whole document in the fullscreen tree prevents that cursor from vanishing.
-  vncFullscreenSessionKey = key;
-  session.viewport.classList.add("vnc-fullscreen-active");
-  try {
-    await document.documentElement.requestFullscreen();
-    syncVncFullscreenPresentation();
-  } catch (error) {
-    session.viewport.classList.remove("vnc-fullscreen-active");
-    vncFullscreenSessionKey = "";
-    notify(error.message || tr("remote:vnc_ui.fullscreen_failed", {defaultValue:"无法进入全屏"}), "error");
-  }
-}
-
 async function launchRemoteDesktop(id, key="", button=null) {
   if (button) setButtonBusy(button, true, tr("remote:vnc_ui.starting", {defaultValue:"启动中..."}));
   try {
     const profile = remoteProfileById(id);
+    if (!profile) throw new Error(tr("remote:vnc_ui.detached_profile_missing", {defaultValue:"远程连接不存在"}));
     const scopes = profile?.protocol === "xdmcp" ? ["remote-client", "xserver"] : ["remote-client"];
     if (!await ensureDesktopIntegrationAuthorized(scopes)) return null;
+    if (["rdp", "vnc"].includes(profile.protocol)) {
+      const diagnostics = await api("/api/remote-clients/diagnostics");
+      const client = diagnostics?.[profile.protocol] || {};
+      if (!client.available && !client.launchable) {
+        throw new Error(localizedRemoteClientReason(client, diagnostics, profile.protocol));
+      }
+    }
     if (profile?.protocol === "rdp") {
       // The launch API performs a fresh TCP preflight. SSH/Linux diagnostics are
       // optional management information and must never block a reachable RDP service.

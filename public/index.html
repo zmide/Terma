@@ -276,7 +276,8 @@
         </div>
       </div>
       <div class="actions">
-        <button class="primary" type="submit" data-i18n="connections:auto.save_connection">保存连接</button>
+        <button id="connSaveOnly" type="submit" hidden data-i18n="connections:auto.save_only">仅保存</button>
+        <button id="connPrimarySave" class="primary" type="submit" data-i18n="connections:auto.save_connection">保存连接</button>
         <button id="connSaveAndConnect" type="button" data-action="static-connection-save-connect" data-i18n="connections:auto.save_connect">保存并连接</button>
         <button id="connSaveAndClear" type="button" data-action="static-connection-save-clear" data-i18n="connections:auto.save_clear">保存并清空</button>
         <button id="connTestBtn" type="button" data-action="static-connection-test" data-i18n="connections:auto.test_ssh">测试 SSH</button>
@@ -438,6 +439,7 @@
 <script src="/app-vnc-core.js?v=__TERMA_VERSION__"></script>
 <script src="/app-vnc-clipboard.js?v=__TERMA_VERSION__"></script>
 <script src="/app-vnc.js?v=__TERMA_VERSION__"></script>
+<script src="/app-vnc-window.js?v=__TERMA_VERSION__"></script>
 <script src="/app-remote-credentials.js?v=__TERMA_VERSION__"></script>
 <script src="/app-remote-ftp.js?v=__TERMA_VERSION__"></script>
 <script src="/app-remote-terminal.js?v=__TERMA_VERSION__"></script>

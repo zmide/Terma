@@ -7,6 +7,7 @@ const { readFrontendDomain } = require("./frontend-source");
 const source = readFrontendDomain(path.resolve(__dirname, ".."), "remote");
 const utilsSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-utils.js"), "utf8");
 const apiSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-api.js"), "utf8");
+const vncWindowSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-vnc-window.js"), "utf8");
 const openStart = source.indexOf("async function openRemoteDesktop(");
 const openEnd = source.indexOf("\nfunction renderRdpServerState", openStart);
 const openRemoteDesktop = source.slice(openStart, openEnd);
@@ -28,9 +29,7 @@ const vncFocus = source.slice(focusStart, focusEnd);
 const connectStart = source.indexOf("async function connectEmbeddedVnc(");
 const connectEnd = source.indexOf("\nasync function saveVncCredential", connectStart);
 const connectEmbeddedVnc = source.slice(connectStart, connectEnd);
-const fullscreenStart = source.indexOf("function syncVncFullscreenPresentation(");
-const fullscreenEnd = source.indexOf("\nasync function launchRemoteDesktop", fullscreenStart);
-const fullscreenSource = source.slice(fullscreenStart, fullscreenEnd);
+const fullscreenSource = vncWindowSource;
 const cursorPolicyStart = source.indexOf("function normalizeVncRemotePlatform(");
 const cursorPolicyEnd = source.indexOf("\nfunction vncClipboardDefaultStatus", cursorPolicyStart);
 const cursorPolicy = source.slice(cursorPolicyStart, cursorPolicyEnd);
@@ -64,7 +63,7 @@ assert.ok(managementControlsStart >= 0 && managementControlsEnd > managementCont
 assert.ok(managementStart >= 0 && managementEnd > managementStart, "showVncManagement source must be available");
 assert.ok(focusStart >= 0 && focusEnd > focusStart, "VNC focus guard source must be available");
 assert.ok(connectStart >= 0 && connectEnd > connectStart, "connectEmbeddedVnc source must be available");
-assert.ok(fullscreenStart >= 0 && fullscreenEnd > fullscreenStart, "VNC fullscreen source must be available");
+assert.ok(fullscreenSource.includes("function syncVncFullscreenPresentation(") && fullscreenSource.includes("async function toggleVncFullscreen("), "VNC fullscreen source must be available");
 assert.ok(cursorPolicyStart >= 0 && cursorPolicyEnd > cursorPolicyStart, "VNC cursor policy source must be available");
 assert.ok(taskWatcherStart >= 0 && taskWatcherEnd > taskWatcherStart, "remote component task watcher source must be available");
 assert.ok(actionStart >= 0 && actionEnd > actionStart, "VNC server action source must be available");
@@ -92,6 +91,9 @@ assert.doesNotMatch(cachedBranch, /inspectLinuxDesktopForRemoteProfile|connectEm
 assert.match(renderEmbeddedVnc, /managementNodes[\s\S]*?Array\.from\(view\.childNodes\)/, "opening the embedded viewer must preserve the probe and management DOM");
 assert.match(renderEmbeddedVnc, /showVncManagement\([^)]*\)/, "the VNC toolbar must expose a return-to-management command");
 assert.match(renderEmbeddedVnc, /const backLabel = tr\("remote:vnc_ui\.back_management"/, "the VNC toolbar return command must use an i18n label");
+assert.match(renderEmbeddedVnc, /openVncInNewWindow\(\$\{profile\.id\}/, "the connected VNC toolbar must expose a detached-window action beside fullscreen");
+assert.doesNotMatch(renderEmbeddedVnc, /data-vnc-window-maximize|toggleVncWindowMaximize/, "detached VNC maximization must use the Electron title bar instead of a duplicate toolbar action");
+assert.match(renderEmbeddedVnc, /closeDetachedVncWindow\('\$\{escAttr\(key\)\}'\)/, "a detached VNC workspace must expose an explicit close action");
 assert.match(renderEmbeddedVnc, /session\.presentation = "viewer"/, "attaching the desktop must remember the viewer presentation");
 assert.match(openEmbeddedVncDesktop, /captureRemoteDesktopRenderScope\(profile\.id, key, view\)[\s\S]*?withRemoteDesktopRenderScope\(renderScope/, "late embedded VNC probes must be scoped to the view that requested them");
 assert.match(openEmbeddedVncDesktop, /finally \{\s*if \(button\) setButtonBusy\(button, false\);\s*\}/, "the cached launch button must leave its busy state even after it is detached from the document");
@@ -116,8 +118,15 @@ assert.match(connectEmbeddedVnc, /applyVncDisplayMode\(session, rfb\)/, "new noV
 assert.match(fullscreenSource, /document\.documentElement\.requestFullscreen\(\)/, "fullscreen must keep noVNC's body-level cursor overlay inside the fullscreen tree");
 assert.match(fullscreenSource, /document\.addEventListener\("fullscreenchange", syncVncFullscreenPresentation\)/, "fullscreen exit must restore the regular VNC presentation");
 assert.match(fullscreenSource, /applyVncDisplayMode\(session\)/, "fullscreen changes must restore the selected VNC display policy");
+assert.match(fullscreenSource, /vnc-fullscreen-toolbar-always[\s\S]*?vnc-fullscreen-toolbar-never[\s\S]*?vnc-fullscreen-toolbar-edge/, "VNC content fullscreen must support always-visible, hidden, and top-edge toolbar modes");
+assert.match(fullscreenSource, /workspace\?\.classList\.toggle\("vnc-fullscreen-active"/, "content fullscreen must retain the entire VNC workspace so the toolbar remains available");
+assert.match(fullscreenSource, /syncVncFullscreenToolbarLabel/, "the fullscreen control must change to an exit action while active");
+assert.match(renderEmbeddedVnc, /vnc-fullscreen-toolbar-edge-zone/, "top-edge mode must include a pointer target above the noVNC canvas");
+assert.match(fullscreenSource, /addEventListener\("pointerover", handleVncFullscreenEdgePointer, true\)/, "top-edge mode must observe captured pointer entry even when noVNC owns the canvas");
 assert.doesNotMatch(fullscreenSource, /viewport\.requestFullscreen/, "the VNC viewport alone must not enter fullscreen because noVNC's fallback cursor lives under document.body");
 assert.match(css, /html\.vnc-fullscreen-document:fullscreen \.vnc-viewport\.vnc-fullscreen-active \{[^}]*position:fixed;[^}]*inset:0;[^}]*z-index:60000;/s, "the active VNC viewport must cover the fullscreen document without covering noVNC's software cursor layer");
+assert.match(css, /\.vnc-workspace\.vnc-fullscreen-active \{[^}]*position:fixed;[^}]*inset:0;/s, "the fullscreen workspace must include the toolbar and viewport");
+assert.match(css, /vnc-fullscreen-toolbar-edge-visible[\s\S]*?transform:translateY\(0\)/, "the top-edge toolbar mode must reveal the toolbar without leaving fullscreen");
 
 assert.match(cursorPolicy, /\["auto", "show", "hide"\]/, "VNC cursor mode must support automatic and both manual overrides");
 assert.match(cursorPolicy, /mode === "hide" \|\| \(mode === "auto" && vncUsesFramebufferCursor\(session\)\)/, "automatic mode must hide the duplicate local cursor only for framebuffer cursor servers");
@@ -260,6 +269,7 @@ async function checkEmbeddedVncPresentationScope() {
   let currentScope = null;
   let diagnosticsCalls = 0;
   let renders = 0;
+  let windowSwitchCalls = 0;
   const context = {
     Map,
     Promise,
@@ -277,6 +287,7 @@ async function checkEmbeddedVncPresentationScope() {
     inspectLinuxDesktopForRemoteProfile:async () => ({platform_supported:true, has_desktop:true}),
     renderLinuxDesktopMissingWorkspace:() => { throw new Error("unexpected missing desktop render"); },
     renderEmbeddedVnc:() => { renders += 1; },
+    prepareEmbeddedVncWindowSwitch:async () => { windowSwitchCalls += 1; return true; },
     tr:(key, options={}) => options.defaultValue || key,
     notify:() => {}
   };
@@ -285,6 +296,7 @@ async function checkEmbeddedVncPresentationScope() {
   const staleResult = await context.testOpenEmbeddedVnc(7, "remote-desktop-7", {});
   assert.equal(staleResult, null, "a stale asynchronous open must not replace the newly selected view");
   assert.equal(renders, 0);
+  assert.equal(windowSwitchCalls, 0, "a stale asynchronous open must not close or switch another VNC window");
   assert.deepEqual(busyStates, [true, false], "a detached launch button must always leave its busy state");
 
   const retained = {workspace:{}, connected:true, connecting:false, presentation:"management"};
@@ -293,6 +305,7 @@ async function checkEmbeddedVncPresentationScope() {
   assert.equal(reopened, true);
   assert.equal(retained.presentation, "viewer", "re-entering a retained session must select the viewer presentation");
   assert.equal(renders, 1);
+  assert.equal(windowSwitchCalls, 1, "re-entering built-in VNC must close the matching detached window first");
   assert.equal(diagnosticsCalls, 1, "re-entering a live desktop must stay local instead of probing again");
 }
 

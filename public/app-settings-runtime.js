@@ -97,6 +97,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
     ...source,
     language:normalizeTermaLanguage(savedSource.language),
     language_onboarding_version:Math.max(0, Number(savedSource.language_onboarding_version || 0)),
+    vnc_fullscreen_toolbar:["always", "never", "edge"].includes(savedSource.vnc_fullscreen_toolbar) ? savedSource.vnc_fullscreen_toolbar : "always",
     settings_persisted:source.settings_persisted === true,
     sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
     sftp_floating_progress_enabled: savedSource.sftp_floating_progress_enabled !== false,
@@ -114,6 +115,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
       ...savedSource,
       language:normalizeTermaLanguage(savedSource.language),
       language_onboarding_version:Math.max(0, Number(savedSource.language_onboarding_version || 0)),
+      vnc_fullscreen_toolbar:["always", "never", "edge"].includes(savedSource.vnc_fullscreen_toolbar) ? savedSource.vnc_fullscreen_toolbar : "always",
       listen_hosts: savedHosts.length ? savedHosts : ["127.0.0.1"],
       listen_port: runtimePortValue(savedSource.listen_port ?? savedSource.port),
       sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
@@ -579,11 +581,15 @@ async function saveWorkspaceSettings() {
   setButtonBusy(button, true, tr("settings:auto.saving", {defaultValue:"保存中"}));
   try {
     const workspace_toolbar_placement = workspaceToolbarPlacementFormValue();
+    const vnc_fullscreen_toolbar = ["always", "never", "edge"].includes($("generalVncFullscreenToolbar")?.value)
+      ? $("generalVncFullscreenToolbar").value
+      : "always";
     const result = await api("/api/runtime-settings", {
       method:"PUT",
       body:JSON.stringify({
         restore_workspace_tabs:input.checked,
-        workspace_toolbar_placement
+        workspace_toolbar_placement,
+        vnc_fullscreen_toolbar
       })
     });
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
@@ -597,6 +603,8 @@ async function saveWorkspaceSettings() {
     inPane(() => {
       input.checked = runtimeSettings?.saved?.restore_workspace_tabs !== false;
       syncWorkspaceToolbarPlacementInputs(runtimeSettings?.saved?.workspace_toolbar_placement);
+      const vncToolbar = $("generalVncFullscreenToolbar");
+      if (vncToolbar) vncToolbar.value = runtimeSettings?.saved?.vnc_fullscreen_toolbar || "always";
     });
     notify(error.message || tr("settings:auto.workspace_save_failed", {defaultValue:"工作区设置保存失败"}), "error");
   } finally {

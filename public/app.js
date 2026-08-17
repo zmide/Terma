@@ -1,3 +1,11 @@
+const termaVncWindowParams = new URLSearchParams(location.search);
+const termaVncDetachedProfileId = Number(termaVncWindowParams.get("termaVncWindow") || 0);
+window.termaVncDetached = Number.isInteger(termaVncDetachedProfileId) && termaVncDetachedProfileId > 0;
+if (window.termaVncDetached) {
+  document.documentElement.classList.add("vnc-detached-window");
+  document.body.classList.add("vnc-detached-window-body");
+}
+
 async function loadAll(options={}){
   if (refreshInFlight) return;
   refreshInFlight = true;
@@ -42,6 +50,17 @@ function startAutoRefresh() {
     }
   });
 }
+let terminalWindowResumeRefreshTimer = 0;
+function scheduleTerminalWindowResumeRefresh() {
+  clearTimeout(terminalWindowResumeRefreshTimer);
+  terminalWindowResumeRefreshTimer = setTimeout(() => {
+    terminalWindowResumeRefreshTimer = 0;
+    if (typeof refreshTerminalSessionsAfterWindowResume === "function") refreshTerminalSessionsAfterWindowResume();
+    requestAnimationFrame(() => {
+      if (typeof refreshTerminalSessionsAfterWindowResume === "function") refreshTerminalSessionsAfterWindowResume();
+    });
+  }, 0);
+}
 window.workspaceRestorePending = true;
 applyTheme(preferredTheme());
 renderExplorerTools();
@@ -53,7 +72,12 @@ window.visualViewport?.addEventListener("resize", syncViewportHeight);
 window.visualViewport?.addEventListener("scroll", syncViewportHeight);
 window.addEventListener("resize", () => { syncViewportHeight(); syncResponsivePane(); });
 window.addEventListener("orientationchange", () => setTimeout(syncViewportHeight, 250));
+window.addEventListener("focus", scheduleTerminalWindowResumeRefresh);
+window.addEventListener("pageshow", scheduleTerminalWindowResumeRefresh);
 window.addEventListener("focusout", () => setTimeout(syncViewportHeight, 120));
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) scheduleTerminalWindowResumeRefresh();
+});
 window.restoringTabs = true;
 renderWelcome();
 window.restoringTabs = false;
@@ -93,6 +117,12 @@ window.termaDesktop?.onNotification?.(payload => {
 });
 window.termaDesktop?.onNotificationAction?.(action => handleNotificationAction(action));
 Promise.all([loadAll(), loadRuntimeSettings()]).then(async () => {
+  if (window.termaVncDetached) {
+    await setTermaLanguage(runtimeSettings?.saved?.language || document.documentElement.lang, {render:false, emit:false});
+    await initDetachedVncWindow(termaVncDetachedProfileId);
+    window.workspaceRestorePending = false;
+    return;
+  }
   await ensureTermaLanguageOnboarding();
   const restored = restoreTabsState();
   if (!restored) renderWelcome();

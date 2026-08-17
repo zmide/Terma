@@ -1155,7 +1155,9 @@ showTabContextMenu = function(event, key) {
   const index = paneTabs.indexOf(key);
   if (!tab || !pane || index < 0) return;
   focusWorkspacePane(pane.id);
+  const editConnectionAction = workspaceTabConnectionEditAction(tab);
   const options = [
+    ...(editConnectionAction ? [[tr("common:command_palette.edit_connection", {defaultValue:"Edit connection"}), () => { hideTabContextMenu(); editConnectionAction(); }, true, "pencil"]] : []),
     [tr("navigation:auto.combine_workspace", {defaultValue:"Combine into workspace"}), () => beginWorkspaceGroupSelection(key), true, "combine"],
     [tr(tab.pinned ? "common:auto.unpin_tab" : "common:auto.pin_tab", {defaultValue:tab.pinned ? "Unpin tab" : "Pin tab"}), () => toggleWorkspaceTabPinned(key), true, "pin"],
     ...(tab.kind === "terminal" ? [[tr(tab.notificationsMuted ? "navigation:auto.enable_tab_notifications" : "navigation:auto.mute_tab_notifications", {defaultValue:tab.notificationsMuted ? "Enable notifications for this tab" : "Mute notifications for this tab"}), () => toggleTabNotifications(key), true, tab.notificationsMuted ? "bell" : "bell-off"]] : []),

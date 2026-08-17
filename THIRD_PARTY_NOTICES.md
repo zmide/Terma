@@ -26,6 +26,14 @@ Terma includes or integrates the following third-party components in addition to
 - Use: SSH and SFTP transport
 - Copyright: Copyright Brian White. All rights reserved.
 
+## node-x11
+
+- Project: https://github.com/sidorares/node-x11
+- Version: 3.9.1
+- License: MIT License
+- Use: X11 selection protocol client for PNG clipboard bridging
+- Copyright: Copyright (c) 2011-2012 Andrey Sidorov
+
 ## i18next
 
 - Project: https://github.com/i18next/i18next

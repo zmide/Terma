@@ -35,6 +35,7 @@ const vncSessions = new Map();
 let vncFullscreenSessionKey = "";
 let remoteDesktopRenderSerial = 0;
 const VNC_CLIPBOARD_POLL_INTERVAL_MS = 900;
+const VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS = 2600;
 const VNC_CLIPBOARD_ECHO_GUARD_MS = 3000;
 const remoteAdminGrantCache = new Map();
 let noVncRfbPromise = null;

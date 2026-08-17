@@ -108,36 +108,364 @@ constexpr DWORD kX11WindowGuardIntervalMs = 250;
 constexpr LONG kX11WindowGuardMinimumVisibleWidth = 96;
 constexpr wchar_t kVcXsrvWindowClassPrefix[] = L"vcxsrv/x X";
 
+enum class X11CaptionAction {
+  kNone,
+  kMinimize,
+  kMaximize,
+  kClose,
+};
+
+constexpr UINT kWmNcHitTest = 0x0084;
+constexpr LRESULT kHtCaption = 2;
+constexpr LRESULT kHtMinButton = 8;
+constexpr LRESULT kHtMaxButton = 9;
+constexpr LRESULT kHtClose = 20;
+
 std::mutex g_x11_window_guard_lifecycle_mutex;
 std::mutex g_x11_window_guard_wait_mutex;
 std::condition_variable g_x11_window_guard_wait_cv;
 std::thread g_x11_window_guard_worker;
 std::atomic<bool> g_x11_window_guard_stop{false};
+std::atomic<DWORD> g_x11_window_guard_process_id{0};
+std::atomic<bool> g_x11_window_guard_hook_installed{false};
+std::atomic<DWORD> g_x11_window_guard_hook_error{0};
+std::atomic<uintptr_t> g_x11_window_guard_last_window{0};
+std::atomic<int> g_x11_window_guard_last_action{0};
+std::atomic<LONG> g_x11_window_guard_last_mouse_x{0};
+std::atomic<LONG> g_x11_window_guard_last_mouse_y{0};
+std::atomic<bool> g_x11_window_guard_last_before_iconic{false};
+std::atomic<bool> g_x11_window_guard_last_before_zoomed{false};
+std::atomic<bool> g_x11_window_guard_last_after_iconic{false};
+std::atomic<bool> g_x11_window_guard_last_after_zoomed{false};
+std::atomic<DWORD> g_x11_window_guard_last_hit_test{0};
+std::atomic<uint64_t> g_x11_window_guard_last_event_id{0};
+HWND g_x11_window_guard_pending_window = nullptr;
+X11CaptionAction g_x11_window_guard_pending_action = X11CaptionAction::kNone;
+std::unordered_map<uintptr_t, RECT> g_x11_window_guard_restore_rects;
+struct X11MinimizeState {
+  RECT restore_rect{};
+  bool observed_iconic = false;
+};
+std::unordered_map<uintptr_t, X11MinimizeState>
+    g_x11_window_guard_minimize_states;
+HWND g_x11_window_guard_drag_window = nullptr;
+POINT g_x11_window_guard_drag_start_point{};
+RECT g_x11_window_guard_drag_start_rect{};
 
-BOOL CALLBACK GuardX11Window(HWND window, LPARAM parameter) {
-  const DWORD target_process_id =
-      static_cast<DWORD>(static_cast<uintptr_t>(parameter));
+bool IsTargetVcXsrvWindow(HWND window, DWORD target_process_id,
+                          bool require_visible = true) {
+  if (window == nullptr || !IsWindow(window) ||
+      (require_visible && !IsWindowVisible(window))) {
+    return false;
+  }
   DWORD window_process_id = 0;
   GetWindowThreadProcessId(window, &window_process_id);
-  if (window_process_id != target_process_id || !IsWindowVisible(window) ||
-      IsIconic(window) || IsZoomed(window)) {
-    return TRUE;
-  }
-
-  const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
-  if ((style & WS_CAPTION) == 0) return TRUE;
+  if (window_process_id != target_process_id) return false;
 
   wchar_t class_name[128]{};
   if (GetClassNameW(window, class_name,
                     static_cast<int>(sizeof(class_name) / sizeof(wchar_t))) <=
       0) {
-    return TRUE;
+    return false;
   }
   constexpr size_t prefix_length =
       (sizeof(kVcXsrvWindowClassPrefix) / sizeof(wchar_t)) - 1;
-  if (_wcsnicmp(class_name, kVcXsrvWindowClassPrefix, prefix_length) != 0) {
+  return _wcsnicmp(class_name, kVcXsrvWindowClassPrefix, prefix_length) == 0;
+}
+
+bool IsWpsX11Window(HWND window, DWORD target_process_id) {
+  if (!IsTargetVcXsrvWindow(window, target_process_id)) return false;
+  wchar_t title[256]{};
+  if (GetWindowTextW(window, title,
+                     static_cast<int>(sizeof(title) / sizeof(wchar_t))) <= 0) {
+    return false;
+  }
+  std::wstring normalized(title);
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                 [](wchar_t value) {
+                   return static_cast<wchar_t>(std::towlower(value));
+                 });
+  return normalized.find(L"wps office") != std::wstring::npos ||
+         normalized.find(L"wpsoffice") != std::wstring::npos ||
+         normalized.rfind(L"wps", 0) == 0;
+}
+
+UINT WindowDpi(HWND window) {
+  using GetDpiForWindowFunction = UINT(WINAPI*)(HWND);
+  static const auto get_dpi_for_window =
+      reinterpret_cast<GetDpiForWindowFunction>(GetProcAddress(
+          GetModuleHandleW(L"user32.dll"), "GetDpiForWindow"));
+  const UINT dpi = get_dpi_for_window ? get_dpi_for_window(window) : 96;
+  return dpi >= 96 && dpi <= 768 ? dpi : 96;
+}
+
+int SystemMetricForWindow(HWND window, int metric) {
+  using GetSystemMetricsForDpiFunction = int(WINAPI*)(int, UINT);
+  static const auto get_system_metrics_for_dpi =
+      reinterpret_cast<GetSystemMetricsForDpiFunction>(GetProcAddress(
+          GetModuleHandleW(L"user32.dll"), "GetSystemMetricsForDpi"));
+  const UINT dpi = WindowDpi(window);
+  const int value = get_system_metrics_for_dpi
+                        ? get_system_metrics_for_dpi(metric, dpi)
+                        : GetSystemMetrics(metric);
+  return value;
+}
+
+X11CaptionAction WpsCaptionActionAtPoint(HWND window, POINT point,
+                                         bool* is_drag_area) {
+  if (is_drag_area) *is_drag_area = false;
+  RECT rect{};
+  if (!GetWindowRect(window, &rect)) return X11CaptionAction::kNone;
+  const LONG width = rect.right - rect.left;
+  const LONG relative_x = point.x - rect.left;
+  const LONG relative_y = point.y - rect.top;
+  if (width <= 0 || relative_x < 0 || relative_x >= width || relative_y < 0) {
+    return X11CaptionAction::kNone;
+  }
+
+  const UINT dpi = WindowDpi(window);
+  const int raw_button_width = SystemMetricForWindow(window, SM_CXSIZE);
+  const int raw_button_height = SystemMetricForWindow(window, SM_CYSIZE);
+  const double button_width = static_cast<double>(
+      raw_button_width >= 24 && raw_button_width <= 160
+          ? raw_button_width
+          : MulDiv(48, static_cast<int>(dpi), 96));
+  const LONG top_bar_height = std::max<LONG>(
+      MulDiv(56, static_cast<int>(dpi), 96),
+      (raw_button_height >= 20 && raw_button_height <= 120
+           ? raw_button_height
+           : MulDiv(48, static_cast<int>(dpi), 96)) +
+          MulDiv(8, static_cast<int>(dpi), 96));
+  if (relative_y > top_bar_height) return X11CaptionAction::kNone;
+
+  // Rootless VcXsrv windows normally expose the real Windows caption hit
+  // target even though the X11 application owns the title text. Prefer that
+  // result over geometry so custom DPI/scaling and non-standard button widths
+  // cannot turn a maximize click into close.
+  const LPARAM hit_test_point =
+      MAKELPARAM(static_cast<short>(point.x), static_cast<short>(point.y));
+  const LRESULT native_hit =
+      SendMessageW(window, kWmNcHitTest, 0, hit_test_point);
+  g_x11_window_guard_last_hit_test.store(
+      static_cast<DWORD>(native_hit >= 0 ? native_hit : 0));
+  if (native_hit == kHtMinButton) return X11CaptionAction::kMinimize;
+  if (native_hit == kHtMaxButton) return X11CaptionAction::kMaximize;
+  if (native_hit == kHtClose) return X11CaptionAction::kClose;
+  if (native_hit == kHtCaption) {
+    if (is_drag_area) *is_drag_area = true;
+    return X11CaptionAction::kNone;
+  }
+
+  const double min_center = width - button_width * 2.5;
+  const double max_center = width - button_width * 1.5;
+  const double close_center = width - button_width * 0.5;
+  const double caption_left = width - button_width * 3.4;
+  if (relative_x >= caption_left) {
+    const double min_distance = std::abs(relative_x - min_center);
+    const double max_distance = std::abs(relative_x - max_center);
+    const double close_distance = std::abs(relative_x - close_center);
+    if (close_distance <= max_distance && close_distance <= min_distance) {
+      return X11CaptionAction::kClose;
+    }
+    if (max_distance <= min_distance) return X11CaptionAction::kMaximize;
+    return X11CaptionAction::kMinimize;
+  }
+
+  const LONG drag_left = MulDiv(240, static_cast<int>(dpi), 96);
+  const LONG drag_height = MulDiv(32, static_cast<int>(dpi), 96);
+  if (relative_x >= drag_left && relative_x < caption_left &&
+      relative_y <= drag_height) {
+    if (is_drag_area) *is_drag_area = true;
+  }
+  return X11CaptionAction::kNone;
+}
+
+void ApplyWpsCaptionAction(HWND window, X11CaptionAction action) {
+  if (!IsWindow(window)) return;
+  const bool before_iconic = IsIconic(window) != FALSE;
+  const bool before_zoomed = IsZoomed(window) != FALSE;
+  g_x11_window_guard_last_before_iconic.store(before_iconic);
+  g_x11_window_guard_last_before_zoomed.store(before_zoomed);
+  switch (action) {
+    case X11CaptionAction::kMinimize:
+      // VcXsrv's rootless WPS windows draw these controls inside HTCLIENT and
+      // ignore SC_MINIMIZE. SW_FORCEMINIMIZE asks the window manager to apply
+      // the state even though the target belongs to another process.
+      {
+        RECT restore_rect{};
+        if (GetWindowRect(window, &restore_rect)) {
+          g_x11_window_guard_minimize_states[
+              reinterpret_cast<uintptr_t>(window)] =
+              X11MinimizeState{restore_rect, false};
+        }
+        ShowWindowAsync(window, SW_FORCEMINIMIZE);
+      }
+      break;
+    case X11CaptionAction::kMaximize: {
+      RECT current{};
+      MONITORINFO monitor_info{};
+      monitor_info.cbSize = sizeof(monitor_info);
+      HMONITOR monitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+      if (!GetWindowRect(window, &current) || monitor == nullptr ||
+          !GetMonitorInfoW(monitor, &monitor_info)) {
+        break;
+      }
+      const RECT& work = monitor_info.rcWork;
+      const RECT& screen = monitor_info.rcMonitor;
+      auto fills = [&current](const RECT& target) {
+        constexpr LONG tolerance = 8;
+        return std::abs(current.left - target.left) <= tolerance &&
+               std::abs(current.top - target.top) <= tolerance &&
+               std::abs(current.right - target.right) <= tolerance &&
+               std::abs(current.bottom - target.bottom) <= tolerance;
+      };
+      const uintptr_t key = reinterpret_cast<uintptr_t>(window);
+      RECT target{};
+      const auto saved = g_x11_window_guard_restore_rects.find(key);
+      if (saved != g_x11_window_guard_restore_rects.end()) {
+        target = saved->second;
+        g_x11_window_guard_restore_rects.erase(saved);
+      } else if (fills(work) || fills(screen)) {
+        const LONG work_width = work.right - work.left;
+        const LONG work_height = work.bottom - work.top;
+        const LONG target_width = std::max<LONG>(800, work_width * 4 / 5);
+        const LONG target_height = std::max<LONG>(600, work_height * 4 / 5);
+        target.left = work.left + (work_width - target_width) / 2;
+        target.top = work.top + (work_height - target_height) / 2;
+        target.right = target.left + target_width;
+        target.bottom = target.top + target_height;
+      } else {
+        g_x11_window_guard_restore_rects[key] = current;
+        target = work;
+      }
+      SetWindowPos(window, nullptr, target.left, target.top,
+                   target.right - target.left, target.bottom - target.top,
+                   SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED |
+                       SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS);
+      break;
+    }
+    case X11CaptionAction::kClose:
+      PostMessageW(window, WM_CLOSE, 0, 0);
+      break;
+    default:
+      break;
+  }
+  g_x11_window_guard_last_after_iconic.store(IsIconic(window) != FALSE);
+  g_x11_window_guard_last_after_zoomed.store(IsZoomed(window) != FALSE);
+}
+
+LRESULT CALLBACK X11WindowGuardMouseHook(int code, WPARAM message,
+                                         LPARAM parameter) {
+  if (code < 0) return CallNextHookEx(nullptr, code, message, parameter);
+  const DWORD process_id = g_x11_window_guard_process_id.load();
+  if (process_id == 0 || parameter == 0) {
+    return CallNextHookEx(nullptr, code, message, parameter);
+  }
+  const auto* mouse = reinterpret_cast<const MSLLHOOKSTRUCT*>(parameter);
+  if (message == WM_LBUTTONDOWN) {
+    HWND window = GetAncestor(WindowFromPoint(mouse->pt), GA_ROOT);
+    if (!IsWpsX11Window(window, process_id)) {
+      return CallNextHookEx(nullptr, code, message, parameter);
+    }
+    bool is_drag_area = false;
+    const X11CaptionAction action =
+        WpsCaptionActionAtPoint(window, mouse->pt, &is_drag_area);
+    if (action != X11CaptionAction::kNone) {
+      g_x11_window_guard_pending_window = window;
+      g_x11_window_guard_pending_action = action;
+      g_x11_window_guard_last_window.store(
+          reinterpret_cast<uintptr_t>(window));
+      g_x11_window_guard_last_action.store(static_cast<int>(action));
+      g_x11_window_guard_last_mouse_x.store(mouse->pt.x);
+      g_x11_window_guard_last_mouse_y.store(mouse->pt.y);
+      g_x11_window_guard_last_event_id.fetch_add(1);
+      return 1;
+    }
+    if (is_drag_area) {
+      RECT drag_rect{};
+      if (!GetWindowRect(window, &drag_rect)) {
+        return CallNextHookEx(nullptr, code, message, parameter);
+      }
+      g_x11_window_guard_last_window.store(
+          reinterpret_cast<uintptr_t>(window));
+      g_x11_window_guard_last_action.store(4);
+      g_x11_window_guard_last_mouse_x.store(mouse->pt.x);
+      g_x11_window_guard_last_mouse_y.store(mouse->pt.y);
+      g_x11_window_guard_last_event_id.fetch_add(1);
+      g_x11_window_guard_restore_rects.erase(
+          reinterpret_cast<uintptr_t>(window));
+      g_x11_window_guard_drag_window = window;
+      g_x11_window_guard_drag_start_point = mouse->pt;
+      g_x11_window_guard_drag_start_rect = drag_rect;
+      return 1;
+    }
+  } else if (message == WM_MOUSEMOVE &&
+             g_x11_window_guard_drag_window != nullptr) {
+    HWND window = g_x11_window_guard_drag_window;
+    if (!IsWpsX11Window(window, process_id)) {
+      g_x11_window_guard_drag_window = nullptr;
+      return CallNextHookEx(nullptr, code, message, parameter);
+    }
+    const LONG next_left = g_x11_window_guard_drag_start_rect.left +
+                           mouse->pt.x - g_x11_window_guard_drag_start_point.x;
+    const LONG next_top = g_x11_window_guard_drag_start_rect.top +
+                          mouse->pt.y - g_x11_window_guard_drag_start_point.y;
+    SetWindowPos(window, nullptr, next_left, next_top, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_ASYNCWINDOWPOS);
+    return 1;
+  } else if (message == WM_LBUTTONUP &&
+             g_x11_window_guard_drag_window != nullptr) {
+    g_x11_window_guard_drag_window = nullptr;
+    return 1;
+  } else if (message == WM_LBUTTONUP &&
+             g_x11_window_guard_pending_action != X11CaptionAction::kNone) {
+    HWND window = g_x11_window_guard_pending_window;
+    const X11CaptionAction pending_action =
+        g_x11_window_guard_pending_action;
+    g_x11_window_guard_pending_window = nullptr;
+    g_x11_window_guard_pending_action = X11CaptionAction::kNone;
+    if (IsWpsX11Window(window, process_id)) {
+      bool ignored_drag_area = false;
+      const X11CaptionAction release_action =
+          WpsCaptionActionAtPoint(window, mouse->pt, &ignored_drag_area);
+      if (release_action == pending_action) {
+        ApplyWpsCaptionAction(window, pending_action);
+      }
+    }
+    return 1;
+  }
+  return CallNextHookEx(nullptr, code, message, parameter);
+}
+
+BOOL CALLBACK GuardX11Window(HWND window, LPARAM parameter) {
+  const DWORD target_process_id =
+      static_cast<DWORD>(static_cast<uintptr_t>(parameter));
+  if (!IsTargetVcXsrvWindow(window, target_process_id, false)) {
     return TRUE;
   }
+
+  const uintptr_t window_key = reinterpret_cast<uintptr_t>(window);
+  const auto minimized = g_x11_window_guard_minimize_states.find(window_key);
+  if (minimized != g_x11_window_guard_minimize_states.end()) {
+    if (IsIconic(window)) {
+      minimized->second.observed_iconic = true;
+      return TRUE;
+    }
+    if (minimized->second.observed_iconic) {
+      const RECT restore = minimized->second.restore_rect;
+      g_x11_window_guard_minimize_states.erase(minimized);
+      SetWindowPos(window, nullptr, restore.left, restore.top,
+                   restore.right - restore.left, restore.bottom - restore.top,
+                   SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED |
+                       SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS);
+      return TRUE;
+    }
+  }
+  if (IsIconic(window) || IsZoomed(window)) return TRUE;
+
+  const LONG_PTR style = GetWindowLongPtrW(window, GWL_STYLE);
+  if ((style & WS_CAPTION) == 0) return TRUE;
 
   RECT window_rect{};
   POINT client_origin{};
@@ -202,14 +530,45 @@ BOOL CALLBACK GuardX11Window(HWND window, LPARAM parameter) {
 }
 
 void RunX11WindowGuard(DWORD process_id) {
+  g_x11_window_guard_process_id.store(process_id);
+  g_x11_window_guard_pending_window = nullptr;
+  g_x11_window_guard_pending_action = X11CaptionAction::kNone;
+  g_x11_window_guard_restore_rects.clear();
+  g_x11_window_guard_minimize_states.clear();
+  g_x11_window_guard_drag_window = nullptr;
+  HHOOK mouse_hook =
+      SetWindowsHookExW(WH_MOUSE_LL, X11WindowGuardMouseHook,
+                        GetModuleHandleW(nullptr), 0);
+  g_x11_window_guard_hook_installed.store(mouse_hook != nullptr);
+  g_x11_window_guard_hook_error.store(mouse_hook == nullptr ? GetLastError() : 0);
+  auto next_correction = std::chrono::steady_clock::now();
   while (!g_x11_window_guard_stop.load()) {
-    EnumWindows(GuardX11Window, static_cast<LPARAM>(process_id));
-    std::unique_lock<std::mutex> lock(g_x11_window_guard_wait_mutex);
-    g_x11_window_guard_wait_cv.wait_for(
-        lock, std::chrono::milliseconds(kX11WindowGuardIntervalMs), []() {
-          return g_x11_window_guard_stop.load();
-        });
+    MSG message{};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+      if (message.message == WM_QUIT) {
+        g_x11_window_guard_stop.store(true);
+        break;
+      }
+      TranslateMessage(&message);
+      DispatchMessageW(&message);
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (now >= next_correction) {
+      EnumWindows(GuardX11Window, static_cast<LPARAM>(process_id));
+      next_correction =
+          now + std::chrono::milliseconds(kX11WindowGuardIntervalMs);
+    }
+    MsgWaitForMultipleObjectsEx(0, nullptr, 25, QS_ALLINPUT,
+                                MWMO_INPUTAVAILABLE);
   }
+  if (mouse_hook != nullptr) UnhookWindowsHookEx(mouse_hook);
+  g_x11_window_guard_hook_installed.store(false);
+  g_x11_window_guard_pending_window = nullptr;
+  g_x11_window_guard_pending_action = X11CaptionAction::kNone;
+  g_x11_window_guard_restore_rects.clear();
+  g_x11_window_guard_minimize_states.clear();
+  g_x11_window_guard_drag_window = nullptr;
+  g_x11_window_guard_process_id.store(0);
 }
 
 bool StopX11WindowGuardLocked() {
@@ -3171,6 +3530,82 @@ napi_value StopX11WindowGuard(napi_env env, napi_callback_info) {
   return result;
 }
 
+napi_value GetX11WindowGuardDiagnostics(napi_env env, napi_callback_info) {
+  napi_value result;
+  napi_create_object(env, &result);
+  NapiSetBool(env, result, "running", g_x11_window_guard_process_id.load() != 0);
+  NapiSetBool(env, result, "hookInstalled",
+              g_x11_window_guard_hook_installed.load());
+  napi_value hook_error;
+  napi_create_uint32(env, g_x11_window_guard_hook_error.load(), &hook_error);
+  napi_set_named_property(env, result, "hookError", hook_error);
+  napi_value process_id_value;
+  napi_create_uint32(env, g_x11_window_guard_process_id.load(),
+                     &process_id_value);
+  napi_set_named_property(env, result, "processId", process_id_value);
+  const uintptr_t last_window_value = g_x11_window_guard_last_window.load();
+  NapiSetString(env, result, "lastWindow",
+                std::to_string(static_cast<uint64_t>(last_window_value)));
+  napi_value event_id;
+  napi_create_double(
+      env, static_cast<double>(g_x11_window_guard_last_event_id.load()),
+      &event_id);
+  napi_set_named_property(env, result, "lastEventId", event_id);
+  napi_value action;
+  napi_create_int32(env, g_x11_window_guard_last_action.load(), &action);
+  napi_set_named_property(env, result, "lastAction", action);
+  napi_value mouse_x;
+  napi_create_int32(env, g_x11_window_guard_last_mouse_x.load(), &mouse_x);
+  napi_set_named_property(env, result, "lastMouseX", mouse_x);
+  napi_value mouse_y;
+  napi_create_int32(env, g_x11_window_guard_last_mouse_y.load(), &mouse_y);
+  napi_set_named_property(env, result, "lastMouseY", mouse_y);
+  napi_value hit_test;
+  napi_create_uint32(env, g_x11_window_guard_last_hit_test.load(), &hit_test);
+  napi_set_named_property(env, result, "lastHitTest", hit_test);
+  NapiSetBool(env, result, "beforeIconic",
+              g_x11_window_guard_last_before_iconic.load());
+  NapiSetBool(env, result, "beforeZoomed",
+              g_x11_window_guard_last_before_zoomed.load());
+  NapiSetBool(env, result, "afterIconic",
+              g_x11_window_guard_last_after_iconic.load());
+  NapiSetBool(env, result, "afterZoomed",
+              g_x11_window_guard_last_after_zoomed.load());
+  HWND last_window = reinterpret_cast<HWND>(last_window_value);
+  const bool current_window_valid =
+      last_window != nullptr && IsWindow(last_window) != FALSE;
+  NapiSetBool(env, result, "currentWindowValid", current_window_valid);
+  NapiSetBool(env, result, "currentIconic",
+              current_window_valid && IsIconic(last_window) != FALSE);
+  NapiSetBool(env, result, "currentZoomed",
+              current_window_valid && IsZoomed(last_window) != FALSE);
+  RECT current_rect{};
+  if (current_window_valid && GetWindowRect(last_window, &current_rect)) {
+    napi_value rect;
+    napi_create_object(env, &rect);
+    napi_value left;
+    napi_create_int32(env, current_rect.left, &left);
+    napi_set_named_property(env, rect, "left", left);
+    napi_value top;
+    napi_create_int32(env, current_rect.top, &top);
+    napi_set_named_property(env, rect, "top", top);
+    napi_value right;
+    napi_create_int32(env, current_rect.right, &right);
+    napi_set_named_property(env, rect, "right", right);
+    napi_value bottom;
+    napi_create_int32(env, current_rect.bottom, &bottom);
+    napi_set_named_property(env, rect, "bottom", bottom);
+    napi_set_named_property(env, result, "currentRect", rect);
+    napi_value style;
+    napi_create_double(
+        env, static_cast<double>(static_cast<uintptr_t>(
+                 GetWindowLongPtrW(last_window, GWL_STYLE))),
+        &style);
+    napi_set_named_property(env, result, "currentStyle", style);
+  }
+  return result;
+}
+
 napi_value StartDrag(napi_env env, napi_callback_info info) {
   ReapFinishedSessions();
   if (g_shutting_down.load()) {
@@ -3381,6 +3816,9 @@ napi_value Initialize(napi_env env, napi_value exports) {
        nullptr, napi_default, nullptr},
       {"stopX11WindowGuard", nullptr, StopX11WindowGuard, nullptr, nullptr,
        nullptr, napi_default, nullptr},
+      {"getX11WindowGuardDiagnostics", nullptr,
+       GetX11WindowGuardDiagnostics, nullptr, nullptr, nullptr, napi_default,
+       nullptr},
       {"startDrag", nullptr, StartDrag, nullptr, nullptr, nullptr,
        napi_default, nullptr},
       {"activateDrag", nullptr, ActivateDrag, nullptr, nullptr, nullptr,
