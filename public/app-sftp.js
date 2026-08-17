@@ -615,8 +615,42 @@ const sftpTextEncodingOptions = [
   ["big5","Big5"], ["shift_jis","Shift_JIS"], ["euc-kr","EUC-KR"], ["latin1","ISO-8859-1"]
 ];
 
+const sftpTextLineEndingOptions = [
+  ["lf","LF (Unix/Linux)"], ["crlf","CRLF (Windows)"], ["cr","CR (Classic Mac)"]
+];
+
 function sftpTextEncodingLabel(value) {
   return sftpTextEncodingOptions.find(([encoding]) => encoding === value)?.[1] || String(value || "UTF-8");
+}
+
+function sftpTextLineEnding(value) {
+  return ["lf", "crlf", "cr"].includes(value) ? value : "lf";
+}
+
+function isSftpUnixScript(title, content="") {
+  const basename = String(title || "").replace(/\\/g, "/").split("/").pop().toLowerCase();
+  if (/\.(?:sh|bash|zsh|ksh|dash|fish)$/.test(basename)) return true;
+  if ([".bashrc", ".bash_profile", ".profile", ".zshrc", ".zprofile", ".kshrc"].includes(basename)) return true;
+  return /^\uFEFF?#!/.test(String(content || ""));
+}
+
+function prepareSftpEditorSave(title, content, encoding="utf8", lineEnding="lf") {
+  const originalContent = String(content || "");
+  const originalEncoding = String(encoding || "utf8");
+  const unixScript = isSftpUnixScript(title, originalContent);
+  const selectedLineEnding = unixScript ? "lf" : sftpTextLineEnding(lineEnding);
+  let value = (unixScript ? originalContent.replace(/^\uFEFF/, "") : originalContent).replace(/\r\n|\r|\n/g, "\n");
+  if (selectedLineEnding === "crlf") value = value.replace(/\n/g, "\r\n");
+  else if (selectedLineEnding === "cr") value = value.replace(/\n/g, "\r");
+  if (unixScript && value && !value.endsWith("\n")) value += "\n";
+  const selectedEncoding = unixScript && originalEncoding === "utf8bom" ? "utf8" : originalEncoding;
+  return {
+    content:value,
+    encoding:selectedEncoding,
+    lineEnding:selectedLineEnding,
+    unixScript,
+    changed:value !== originalContent || selectedEncoding !== originalEncoding || selectedLineEnding !== sftpTextLineEnding(lineEnding)
+  };
 }
 
 const sftpEditorLanguageOptions = [
@@ -774,6 +808,14 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
   return new Promise((resolve) => {
     const modal = $("modal");
     const detectedLanguage = sftpEditorLanguageForFile(title);
+    const unixScript = isSftpUnixScript(title, content);
+    const scriptNeedsFormatRepair = unixScript && Boolean(
+      diffOptions.bom
+      || (diffOptions.lineEnding && diffOptions.lineEnding !== "lf")
+      || (content && diffOptions.finalNewline === false)
+    );
+    if (unixScript && encoding === "utf8bom") encoding = "utf8";
+    const initialLineEnding = unixScript ? "lf" : sftpTextLineEnding(diffOptions.lineEnding || "lf");
     const wrapEnabled = localStorage.getItem("sftpEditorWordWrap") !== "0";
     let versions = Array.isArray(diffOptions.versions) ? diffOptions.versions.slice(0, 10) : [];
     const historyLoading = typeof diffOptions.loadVersions === "function";
@@ -781,7 +823,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       ? versions.map((version, index) => `<option value="${index}">${esc(sftpDiffDisplayTime(version.changed_at || Number(version.mtime || 0) * 1000))} · ${esc(formatBytes(version.size || 0))}</option>`).join("")
       : `<option value="">${esc(tr(historyLoading ? "sftp:editor.loading_backups" : "sftp:editor.no_comparable_backups", {defaultValue:historyLoading ? "正在读取备份..." : "没有可比较的备份"}))}</option>`;
     const fileLimit = tr("sftp:editor.file_limit", {size:formatBytes(size), limit:formatBytes(limit), defaultValue:`${formatBytes(size)} · 上限 ${formatBytes(limit)}`});
-    modal.innerHTML = `<div class="modal-card wide sftp-editor-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(title)}</h2><span>${esc(fileLimit)}</span></div><div class="sftp-editor-controls"><label>${esc(tr("sftp:editor.text_encoding", {defaultValue:"文本编码"}))}<select id="sftpTextEncoding">${sftpTextEncodingOptions.map(([value,label]) => `<option value="${value}" ${value === encoding ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>${esc(tr("sftp:editor.language", {defaultValue:"语言"}))}<select id="sftpEditorLanguage"><option value="auto">${esc(tr("sftp:editor.automatic_language", {language:sftpEditorLanguageLabel(detectedLanguage), defaultValue:`自动（${sftpEditorLanguageLabel(detectedLanguage)}）`}))}</option>${sftpEditorLanguageOptions.map(([value]) => `<option value="${value}">${esc(sftpEditorLanguageLabel(value))}</option>`).join("")}</select></label><label class="check-row compact"><input id="sftpEditorWordWrap" type="checkbox" ${wrapEnabled ? "checked" : ""}> ${esc(tr("sftp:editor.word_wrap", {defaultValue:"自动换行"}))}</label><span id="sftpEditorStats"></span></div></div><div id="sftpEditorWorkspace" class="sftp-editor-workspace"><div id="sftpTextEditor" class="sftp-code-editor" aria-label="${escAttr(tr("sftp:editor.editor_aria", {defaultValue:"SFTP 文本编辑器"}))}"></div><div id="sftpEditorSplit" class="sftp-editor-splitter" role="separator" aria-orientation="horizontal" aria-label="${escAttr(tr("sftp:editor.resize_diff_aria", {defaultValue:"调整编辑与差异区域比例"}))}" tabindex="0" hidden></div><div id="sftpDiffPreview" class="sftp-diff-preview" hidden></div></div><div class="sftp-editor-options"><label class="check-row"><input id="sftpBackupBeforeSave" type="checkbox" checked> ${esc(tr("sftp:editor.backup_before_save", {defaultValue:"保存前备份远程文件"}))}</label><label class="check-row"><input id="sftpPersistEncoding" type="checkbox" ${preferredEncoding === encoding ? "checked" : ""}> ${esc(tr("sftp:editor.persist_encoding", {defaultValue:"设为此连接默认文本编码"}))}</label><label class="sftp-diff-history-control"><span>${esc(tr("sftp:editor.compare_version", {defaultValue:"比较版本"}))}</span><select id="sftpDiffHistory" disabled>${historyOptions}</select><small id="sftpDiffHistoryCount">${esc(historyLoading ? tr("sftp:editor.loading_backups", {defaultValue:"正在读取备份..."}) : tr("sftp:editor.recent_backups", {count:versions.length, defaultValue:`最近 ${versions.length} / 10 个备份`}))}</small></label></div><div class="actions"><button id="sftpTextFormatJson" hidden>${icon("braces")}<span>${esc(tr("sftp:editor.format_json", {defaultValue:"格式化 JSON"}))}</span></button><button id="sftpTextDiff" disabled>${esc(tr("sftp:editor.preview_diff", {defaultValue:"预览差异"}))}</button><button class="primary" id="sftpTextSave">${esc(tr("sftp:editor.save", {defaultValue:"保存"}))} <span class="shortcut-hint">Ctrl+S</span></button><button id="sftpTextClose">${esc(tr("sftp:editor.close", {defaultValue:"关闭"}))}</button></div></div>`;
+    modal.innerHTML = `<div class="modal-card wide sftp-editor-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(title)}</h2><span>${esc(fileLimit)}</span></div><div class="sftp-editor-controls"><label>${esc(tr("sftp:editor.text_encoding", {defaultValue:"文本编码"}))}<select id="sftpTextEncoding">${sftpTextEncodingOptions.map(([value,label]) => `<option value="${value}" ${value === encoding ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>${esc(tr("sftp:editor.line_ending", {defaultValue:"换行符"}))}<select id="sftpLineEnding" ${unixScript ? "disabled" : ""}>${sftpTextLineEndingOptions.map(([value,label]) => `<option value="${value}" ${value === initialLineEnding ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>${esc(tr("sftp:editor.language", {defaultValue:"语言"}))}<select id="sftpEditorLanguage"><option value="auto">${esc(tr("sftp:editor.automatic_language", {language:sftpEditorLanguageLabel(detectedLanguage), defaultValue:`自动（${sftpEditorLanguageLabel(detectedLanguage)}）`}))}</option>${sftpEditorLanguageOptions.map(([value]) => `<option value="${value}">${esc(sftpEditorLanguageLabel(value))}</option>`).join("")}</select></label><label class="check-row compact"><input id="sftpEditorWordWrap" type="checkbox" ${wrapEnabled ? "checked" : ""}> ${esc(tr("sftp:editor.word_wrap", {defaultValue:"自动换行"}))}</label><span id="sftpEditorStats"></span></div></div><div id="sftpEditorWorkspace" class="sftp-editor-workspace"><div id="sftpTextEditor" class="sftp-code-editor" aria-label="${escAttr(tr("sftp:editor.editor_aria", {defaultValue:"SFTP 文本编辑器"}))}"></div><div id="sftpEditorSplit" class="sftp-editor-splitter" role="separator" aria-orientation="horizontal" aria-label="${escAttr(tr("sftp:editor.resize_diff_aria", {defaultValue:"调整编辑与差异区域比例"}))}" tabindex="0" hidden></div><div id="sftpDiffPreview" class="sftp-diff-preview" hidden></div></div><div class="sftp-editor-options"><label class="check-row"><input id="sftpBackupBeforeSave" type="checkbox" checked> ${esc(tr("sftp:editor.backup_before_save", {defaultValue:"保存前备份远程文件"}))}</label><label class="check-row"><input id="sftpPersistEncoding" type="checkbox" ${preferredEncoding === encoding ? "checked" : ""}> ${esc(tr("sftp:editor.persist_encoding", {defaultValue:"设为此连接默认文本编码"}))}</label><label class="sftp-diff-history-control"><span>${esc(tr("sftp:editor.compare_version", {defaultValue:"比较版本"}))}</span><select id="sftpDiffHistory" disabled>${historyOptions}</select><small id="sftpDiffHistoryCount">${esc(historyLoading ? tr("sftp:editor.loading_backups", {defaultValue:"正在读取备份..."}) : tr("sftp:editor.recent_backups", {count:versions.length, defaultValue:`最近 ${versions.length} / 10 个备份`}))}</small></label></div><div class="actions"><button id="sftpTextFormatJson" hidden>${icon("braces")}<span>${esc(tr("sftp:editor.format_json", {defaultValue:"格式化 JSON"}))}</span></button><button id="sftpTextDiff" disabled>${esc(tr("sftp:editor.preview_diff", {defaultValue:"预览差异"}))}</button><button class="primary" id="sftpTextSave">${esc(tr("sftp:editor.save", {defaultValue:"保存"}))} <span class="shortcut-hint">Ctrl+S</span></button><button id="sftpTextClose">${esc(tr("sftp:editor.close", {defaultValue:"关闭"}))}</button></div></div>`;
     modal.hidden = false;
     modal.onclick = null;
     let finished = false;
@@ -1045,8 +1087,9 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     };
     $("sftpTextSave").onclick = () => {
       const value = getValue();
-      if (!updateStats(true, value)) return notify(tr("sftp:editor.content_too_large", {limit:formatBytes(limit), defaultValue:`在线编辑内容不能超过 ${formatBytes(limit)}`}), "error");
-      finish({action:"save", content:value, changed:contentModified, backup:$("sftpBackupBeforeSave").checked, encoding:$("sftpTextEncoding").value, persist_default:$("sftpPersistEncoding").checked});
+      const prepared = prepareSftpEditorSave(title, value, $("sftpTextEncoding").value, $("sftpLineEnding").value);
+      if (!updateStats(true, prepared.content)) return notify(tr("sftp:editor.content_too_large", {limit:formatBytes(limit), defaultValue:`在线编辑内容不能超过 ${formatBytes(limit)}`}), "error");
+      finish({action:"save", content:prepared.content, changed:contentModified || prepared.changed || scriptNeedsFormatRepair, backup:$("sftpBackupBeforeSave").checked, encoding:prepared.encoding, line_ending:prepared.lineEnding, normalized_script:prepared.unixScript, persist_default:$("sftpPersistEncoding").checked});
     };
     $("sftpTextClose").onclick = async () => {
       if (contentModified && !await confirmModal(
@@ -1105,6 +1148,9 @@ async function previewSftpText(id, path) {
       const editorPromise = sftpTextModal(path, data.content || "", data.size || 0, data.limit || 50*1024*1024, data.encoding || "utf8", data.preferred_encoding || "auto", {
         editorKind:data.editor_kind || "ace",
         lineCount:data.line_count,
+        lineEnding:data.line_ending,
+        finalNewline:data.final_newline,
+        bom:data.bom,
         loadVersions:() => api(`/api/connections/${id}/sftp/versions?path=${encodeURIComponent(path)}&limit=10`).catch(() => ({versions:[]})),
         onReady:() => data.progress?.finish(tr("sftp:editor.opened", {size:formatBytes(data.size || 0), defaultValue:`已打开 · ${formatBytes(data.size || 0)}`})),
         loadVersion:async (version, versionEncoding) => {
@@ -1121,14 +1167,17 @@ async function previewSftpText(id, path) {
         continue;
       }
       if (!next.changed && !(next.persist_default && data.preferred_encoding !== next.encoding)) return notify(tr("sftp:editor.no_changes", {defaultValue:"文件内容没有变化"}), "info");
-      await api(`/api/connections/${id}/sftp/write`, {method:"POST", body:JSON.stringify({path, content:next.content, backup:next.backup, encoding:next.encoding, persist_default:next.persist_default})});
+      const saved = await api(`/api/connections/${id}/sftp/write`, {method:"POST", body:JSON.stringify({path, content:next.content, backup:next.backup, encoding:next.encoding, line_ending:next.line_ending, persist_default:next.persist_default})});
       const connection = connections.find(item => item.id === id);
-      if (connection && next.persist_default) connection.sftp_text_encoding = next.encoding;
+      const savedEncoding = saved?.encoding || next.encoding;
+      if (connection && next.persist_default) connection.sftp_text_encoding = savedEncoding;
       if (typeof queueSftpDirectoryRefresh === "function") {
         queueSftpDirectoryRefresh(id);
         flushPendingSftpDirectoryRefresh();
       }
-      notify(tr("sftp:editor.saved_with_encoding", {encoding:sftpTextEncodingLabel(next.encoding), defaultValue:`文件已按 ${sftpTextEncodingLabel(next.encoding)} 保存`}), "success");
+      notify(saved?.normalized_script || next.normalized_script
+        ? tr("sftp:editor.saved_shell_script", {encoding:sftpTextEncodingLabel(savedEncoding), defaultValue:`脚本已按 ${sftpTextEncodingLabel(savedEncoding)}、Unix LF、无 BOM 保存`})
+        : tr("sftp:editor.saved_with_encoding", {encoding:sftpTextEncodingLabel(savedEncoding), defaultValue:`文件已按 ${sftpTextEncodingLabel(savedEncoding)} 保存`}), "success");
       return;
     }
   } catch (error) {

@@ -522,11 +522,11 @@ function workspaceTabHtml(tab, pane) {
   return `<button class="tab ${tab.key === pane.activeTabKey ? "active" : ""}${multiSelected ? " multi-selected" : ""}${tab.pinned ? " pinned" : ""}${broadcastSelected ? " broadcast-selected" : ""}${tab.activityState ? ` activity-${escAttr(tab.activityState)}` : ""}" role="tab" aria-selected="${tab.key === pane.activeTabKey}" aria-checked="${multiSelected}" data-tab-key="${escAttr(tab.key)}" data-kind="${escAttr(tab.kind || "")}" title="${esc(fullTitle)}" aria-label="${esc(ariaLabel)}" data-pointerdown-action="workspace-tab-drag-start" data-action="workspace-tab-activate" data-contextmenu-action="workspace-tab-menu" data-dragover-action="workspace-tab-sftp-drag-over" data-dragleave-action="workspace-tab-sftp-drag-leave" data-drop-action="workspace-tab-sftp-drop">${connectionDot}${presentation.icon}${tab.pinned ? `<span class="tab-pin" aria-hidden="true">${icon("pin")}</span>` : ""}<span class="tab-title">${esc(presentation.title)}</span>${tab.closable && !tab.pinned ? `<span class="tab-close" title="${escAttr(closeText)}" aria-label="${escAttr(closeText)}" data-tab-key="${escAttr(tab.key)}" data-pointerdown-action="workspace-event-stop" data-action="workspace-tab-close">x</span>` : ""}</button>`;
 }
 
-renderTabs = function() {
+renderTabs = function(options={}) {
   if (!workspaceDockElement()) return legacyWorkspaceApi.renderTabs();
   if (typeof syncSftpTabTitles === "function") syncSftpTabTitles();
   reconcileWorkspaceLayoutTabs();
-  renderWorkspaceLayout();
+  if (options.rebuildLayout !== false) renderWorkspaceLayout();
   for (const pane of workspaceVisiblePanes()) {
     const paneElement = workspacePaneElement(pane.id);
     if (!paneElement) continue;
@@ -549,6 +549,25 @@ renderTabs = function() {
   });
   if (!window.restoringTabs) saveTabsState();
 };
+
+function syncWorkspaceTabActivation(pane, key) {
+  for (const visiblePane of workspaceVisiblePanes()) {
+    const paneElement = workspacePaneElement(visiblePane.id);
+    if (!paneElement) continue;
+    paneElement.classList.toggle("focused", visiblePane.id === focusedPaneId);
+    for (const button of paneElement.querySelectorAll(".tabs .tab[data-tab-key]")) {
+      const active = button.dataset.tabKey === visiblePane.activeTabKey;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", String(active));
+      if (active) button.classList.remove("activity-info", "activity-success", "activity-error");
+    }
+  }
+  const tab = tabs.find(item => item.key === key);
+  if (tab) tab.activityState = "";
+  syncWorkspaceLegacyTabIds();
+  revealWorkspaceTab(key);
+  if (!window.restoringTabs) saveTabsState();
+}
 
 updateWorkspaceTabScrollControls = function(paneId=currentWorkspacePaneId()) {
   const pane = workspacePaneElement(paneId);
@@ -818,8 +837,7 @@ activateTab = function(key) {
   activeTabKey = key;
   activeView = tab.viewName || tab.kind || "welcome";
   if (typeof restoreSftpRuntimeForTab === "function" && tab.kind === "sftp") restoreSftpRuntimeForTab(tab.key);
-  renderTabs();
-  revealWorkspaceTab(key);
+  syncWorkspaceTabActivation(pane, key);
   renderWorkspacePaneContent(pane.id);
   syncFocusedWorkspaceClasses();
   syncWorkspaceToolbarPlacements();
@@ -969,11 +987,13 @@ closeTabsByKey = function(keys, anchorKey="") {
     trimWorkspacePaneTabHistory(pane);
     if (pane.activeTabKey) rememberWorkspacePaneTab(pane, pane.activeTabKey, pane.activeTabKey);
   }
+  const paneIdsBeforeNormalize = workspaceLeaves().map(pane => pane.id).join("\0");
   normalizeWorkspaceLayoutAfterMutation(anchorPane?.id || focusedPaneId);
+  const paneIdsAfterNormalize = workspaceLeaves().map(pane => pane.id).join("\0");
   const focusedPane = workspaceFindPane(focusedPaneId) || workspaceLeaves()[0];
   focusedPaneId = focusedPane.id;
   activeTabKey = focusedPane.activeTabKey || "";
-  renderTabs();
+  renderTabs({rebuildLayout:paneIdsBeforeNormalize !== paneIdsAfterNormalize});
   if (activeTabKey) {
     const tab = tabs.find(item => item.key === activeTabKey);
     activeView = tab?.viewName || tab?.kind || "welcome";

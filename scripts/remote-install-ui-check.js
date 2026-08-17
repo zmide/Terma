@@ -7,6 +7,7 @@ const { readSources } = require("./backend-source");
 
 const root = path.resolve(__dirname, "..");
 const remote = readFrontendDomain(root, "remote");
+const settings = readFrontendDomain(root, "settings");
 const app = ["app-state.js", "app.js"]
   .map(file => fs.readFileSync(path.join(root, "public", file), "utf8"))
   .join("\n");
@@ -67,10 +68,12 @@ assert.match(remote, /3389 未监听/);
 assert.match(remote, /remoteDesktopProtocolGuideMarkup\("rdp", diagnostics, profile\)/, "RDP status must explain the desktop login account and preferred backend");
 assert.match(remote, /xrdp 使用 Xorg\/xorgxrdp/);
 assert.match(remote, /临时管理员授权(?:的 root )?密码、VNC 密码(?:或|和) Windows 当前账号/);
-assert.match(app, /remoteDesktopQuickOpen = localStorage\.getItem\("remoteDesktopQuickOpen"\) === "1"/, "remote desktop quick open must default to off");
-assert.match(workspace, /function toggleRemoteDesktopQuickOpen\(\)[\s\S]*?localStorage\.setItem\("remoteDesktopQuickOpen"/, "quick open preference must persist");
+assert.match(app, /remoteDesktopQuickOpen = localStorage\.getItem\("remoteDesktopQuickOpen"\) === "1"/, "legacy quick open preference must remain available for migration");
+assert.match(settings, /remoteDesktopQuickOpen = legacyQuickOpen === null[\s\S]*?remote_desktop_quick_open_enabled/, "global quick open preference must load with the legacy fallback");
+assert.match(workspace, /async function toggleRemoteDesktopQuickOpen\(\)[\s\S]*?\/api\/runtime-settings[\s\S]*?remote_desktop_quick_open_enabled/, "quick open preference must persist in global runtime settings");
 assert.match(workspace, /quickOpenButton[\s\S]*?aria-pressed[\s\S]*?icon\("zap"\)/, "Other Connections toolbar must expose a stateful quick-open button");
 assert.match(remote, /updateTab && remoteDesktopQuickOpen && clientLaunchable/, "automatic launch must be gated by the quick-open preference");
+assert.match(remote, /vncQuickOpenUsesNewWindow\(\)[\s\S]*?openVncInNewWindow\(profile\.id, key, \{closeDetectionTab:true\}\)/, "VNC quick open must honor the global new-window preference and close the detection tab");
 assert.match(remote, /async function openRemoteDesktop[\s\S]*?captureRemoteDesktopRenderScope\(profile\.id, key, view\)[\s\S]*?await withRemoteDesktopRenderScope\(renderScope,[\s\S]*?catch \(error\) \{[\s\S]*?withRemoteDesktopRenderScope\(renderScope,/, "remote desktop diagnostics must ignore stale async results instead of touching a missing status element");
 assert.match(workspace, /tab\.kind === "linux-desktop"[\s\S]{0,220}openLinuxDesktopManager\(connectionId, false\)/, "legacy workspace restoration must render Linux desktop manager tabs");
 assert.match(remote, /id="vncServerState"[\s\S]*?正在探测远端 VNC 服务/, "VNC must enter the shared detection workspace before connecting");

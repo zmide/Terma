@@ -815,7 +815,10 @@ function syncWorkspaceDocumentTitle(title, subtitle, viewName, key=viewName, met
     "remote-desktop":protocol || tr("remote:auto.remote_desktop", {defaultValue:"远程桌面"})
   }[kind] || "";
   const endpoint = workspaceDocumentEndpoint(subtitle || tab.subtitle || "");
-  document.title = label && endpoint ? `Terma · ${endpoint} · ${label}` : "Terma";
+  const resource = String(title || tab.title || "").trim();
+  const parts = ["Terma", endpoint, label, resource && resource !== endpoint && resource !== label ? resource : ""].filter(Boolean);
+  document.title = parts.join(" · ");
+  window.termaDesktop?.setWindowTitle?.(document.title);
 }
 
 function setWorkspace(title, subtitle, viewName, key=viewName, updateTab=true, closable=true, meta={}) {
@@ -1103,15 +1106,25 @@ function renderExplorerTools() {
     </div>`;
 }
 
-function toggleRemoteDesktopQuickOpen() {
-  remoteDesktopQuickOpen = !remoteDesktopQuickOpen;
-  localStorage.setItem("remoteDesktopQuickOpen", remoteDesktopQuickOpen ? "1" : "0");
-  renderExplorerTools();
-  notify(tr(remoteDesktopQuickOpen ? "remote:auto.quick_open_enabled_notice" : "remote:auto.quick_open_disabled_notice", {
-    defaultValue:remoteDesktopQuickOpen
-      ? "已开启快捷打开：远程桌面探测通过后会自动启动"
-      : "已关闭快捷打开：远程桌面默认停留在探测界面"
-  }), "info");
+async function toggleRemoteDesktopQuickOpen() {
+  const nextValue = !remoteDesktopQuickOpen;
+  try {
+    const result = await api("/api/runtime-settings", {
+      method:"PUT",
+      body:JSON.stringify({remote_desktop_quick_open_enabled:nextValue})
+    });
+    runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
+    remoteDesktopQuickOpen = runtimeSettings.saved.remote_desktop_quick_open_enabled === true;
+    localStorage.removeItem("remoteDesktopQuickOpen");
+    renderExplorerTools();
+    notify(tr(remoteDesktopQuickOpen ? "remote:auto.quick_open_enabled_notice" : "remote:auto.quick_open_disabled_notice", {
+      defaultValue:remoteDesktopQuickOpen
+        ? "已开启快捷打开：远程桌面探测通过后会自动启动"
+        : "已关闭快捷打开：远程桌面默认停留在探测界面"
+    }), "info");
+  } catch (error) {
+    notify(error.message || tr("settings:auto.workspace_save_failed", {defaultValue:"工作区设置保存失败"}), "error");
+  }
 }
 
 function showConnectionExplorerMenu(event) {

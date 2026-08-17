@@ -100,6 +100,10 @@ function renderSettings() {
             <h3>${esc(tr("settings:auto.workspace"))}</h3>
             <label class="check-row"><input id="restoreWorkspaceTabs" type="checkbox" ${runtimeSettings?.saved?.restore_workspace_tabs !== false ? "checked" : ""}> ${esc(tr("settings:auto.restore_tabs"))}</label>
             <div class="muted">${esc(tr("settings:auto.restore_tabs_hint"))}</div>
+            <label class="check-row"><input id="generalRemoteDesktopQuickOpen" type="checkbox" ${remoteDesktopQuickOpen ? "checked" : ""}> ${esc(tr("settings:auto.remote_desktop_quick_open", {defaultValue:"远程桌面探测通过后自动打开"}))}</label>
+            <div class="muted">${esc(tr("settings:auto.remote_desktop_quick_open_hint", {defaultValue:"终端、SFTP 和远程连接列表中的远程桌面入口使用同一设置。"}))}</div>
+            <label class="check-row"><input id="generalVncQuickOpenNewWindow" type="checkbox" ${runtimeSettings?.saved?.vnc_quick_open_new_window !== false ? "checked" : ""}> ${esc(tr("settings:auto.vnc_quick_open_new_window", {defaultValue:"VNC 快速打开时使用独立窗口"}))}</label>
+            <div class="muted">${esc(tr("settings:auto.vnc_quick_open_new_window_hint", {defaultValue:"先进入探测界面，确认服务可用后打开独立 VNC 窗口并关闭探测标签。"}))}</div>
             <div class="settings-vnc-toolbar-field">
               <label for="generalVncFullscreenToolbar">${esc(tr("settings:auto.vnc_fullscreen_toolbar", {defaultValue:"VNC 内部全屏快捷栏"}))}</label>
               <select id="generalVncFullscreenToolbar">

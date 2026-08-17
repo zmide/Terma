@@ -33,6 +33,11 @@ assert.match(serverSource, /xdmcp\.configure/);
 assert.match(serverSource, /x11\.remote-install/);
 assert.match(serverSource, /vnc\.server\.\$\{action\}/);
 assert.match(remoteFrontend, /requestRemoteAdminAuthorization/);
+assert.match(remoteFrontend, /vnc\.clipboard-helper\.\$\{action\}/);
+assert.match(remoteFrontend, /vnc\.server\.\$\{action\}/);
+assert.match(remoteFrontend, /rdp\.server\.\$\{action\}/);
+assert.match(remoteFrontend, /linux-desktop\.install-local-offline/);
+assert.match(remoteFrontend, /linux-desktop\.uninstall/);
 assert.match(remoteFrontend, /临时授权后/);
 assert.match(remoteFrontend, /installVncServer/);
 

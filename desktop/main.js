@@ -2848,6 +2848,12 @@ function writeDesktopClipboardImage(value) {
 }
 
 function registerDesktopClipboardHandlers() {
+  ipcMain.on("terma:set-window-title", (event, value) => {
+    const window = desktopWindowForSender(event);
+    if (!window || window !== mainWindow || window.isDestroyed()) return;
+    const title = sanitizeAuxiliaryWindowTitle(String(value || PRODUCT_NAME), PRODUCT_NAME);
+    window.setTitle(title);
+  });
   ipcMain.handle("terma:clipboard-read", event => {
     assertDesktopClipboardSender(event);
     return clipboard.readText();

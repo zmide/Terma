@@ -40,7 +40,7 @@ async function closeVncDetachedWindowForProfile(profileId) {
   return {ok:true, profileId:id, closed:true};
 }
 
-async function openVncInNewWindow(profileId, key="") {
+async function openVncInNewWindow(profileId, key="", options={}) {
   const id = Number(profileId || 0);
   if (!Number.isInteger(id) || id <= 0) return notify(tr("remote:vnc_ui.detached_profile_missing", {defaultValue:"VNC 连接不存在"}), "error");
   try {
@@ -48,6 +48,7 @@ async function openVncInNewWindow(profileId, key="") {
     if (window.termaDesktop?.openVncWindow) {
       await window.termaDesktop.openVncWindow(id, {key});
       await managementReady;
+      if (options.closeDetectionTab && key && tabs.some(tab => tab.key === key)) closeTabsByKey([key], key);
       return true;
     }
     const url = new URL(location.href);
@@ -56,12 +57,14 @@ async function openVncInNewWindow(profileId, key="") {
     if (child && !child.closed) {
       child.focus();
       await managementReady;
+      if (options.closeDetectionTab && key && tabs.some(tab => tab.key === key)) closeTabsByKey([key], key);
       return true;
     }
     child = window.open(url.href, `terma-vnc-${id}`, "popup,width=1280,height=820");
     if (!child) throw new Error(tr("remote:vnc_ui.detached_open_failed", {defaultValue:"无法打开新窗口，请检查浏览器弹窗权限"}));
     browserDetachedVncWindows.set(id, child);
     await managementReady;
+    if (options.closeDetectionTab && key && tabs.some(tab => tab.key === key)) closeTabsByKey([key], key);
     return true;
   } catch (error) {
     notify(window.termaDesktop?.openVncWindow

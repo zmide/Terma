@@ -571,7 +571,7 @@ async function runVncServerActionImpl(profileId, key, action, button=null) {
   if (!await confirmModal(message, actionLabel, confirmLabel, tr("remote:vnc_ui.cancel", {defaultValue:"取消"}), uninstall || stop)) return null;
   let adminAuth = null;
   if (diagnostics.privileged !== true) {
-    adminAuth = await requestRemoteAdminAuthorization(sourceId, actionLabel);
+    adminAuth = await requestRemoteAdminAuthorization(sourceId, actionLabel, `vnc.server.${action}`);
     if (!adminAuth) return null;
   }
   if (button) setButtonBusy(button, true, isInstall ? tr("remote:vnc_ui.installing_mode", {mode:installModeLabel, defaultValue:`${installModeLabel}安装中...`}) : uninstall ? tr("remote:vnc_ui.uninstalling", {defaultValue:"卸载中..."}) : stop ? tr("remote:vnc_ui.stopping", {defaultValue:"停止中..."}) : tr("remote:vnc_ui.starting", {defaultValue:"启动中..."}));
@@ -705,6 +705,7 @@ function renderEmbeddedVnc(profile, key, diagnostics=null, targetView=null, deta
     session.remotePlatform = diagnostics?.platform || diagnostics?.os_id || (["macos", "darwin"].includes(sourcePlatform) ? "macos" : "") || session.remotePlatform || "";
     session.viewport = session.workspace.querySelector("#vncViewport");
     session.screen = session.workspace.querySelector(".vnc-screen") || session.screen;
+    bindVncInteractionTracking(session);
     applyVncDisplayMode(session);
     applyVncCursorPolicy(session);
     session.status = session.workspace.querySelector("#vncStatus");
@@ -814,12 +815,24 @@ function renderEmbeddedVnc(profile, key, diagnostics=null, targetView=null, deta
   session.viewport = viewport;
   session.help = viewport.querySelector("#vncConnectionHelp");
   viewport.appendChild(session.screen);
+  bindVncInteractionTracking(session);
   applyVncDisplayMode(session);
   if (session.helpState) showVncConnectionHelp(session, session.helpState.serviceAvailable, session.helpState.detail, session.helpState.diagnostics);
   vncSessionStatus(session, session.statusText || tr("remote:vnc_ui.connecting_endpoint", {endpoint:remoteProfileEndpoint(profile), defaultValue:`正在连接 ${remoteProfileEndpoint(profile)}`}), session.statusState || "connecting");
   renderVncClipboardControls(session);
   refreshIcons();
   if (!session.rfb && !session.connecting) connectEmbeddedVnc(profile, key);
+}
+
+function bindVncInteractionTracking(session) {
+  const screen = session?.screen;
+  if (!screen || session.interactionTrackingScreen === screen) return;
+  session.interactionTrackingScreen = screen;
+  const markInteraction = () => { session.lastInteractionAt = Date.now(); };
+  screen.addEventListener("pointerdown", markInteraction, {passive:true});
+  screen.addEventListener("pointermove", markInteraction, {passive:true});
+  screen.addEventListener("wheel", markInteraction, {passive:true});
+  screen.addEventListener("keydown", markInteraction);
 }
 
 function syncEmbeddedVncManagementControls(session, view=$("view-remote-desktop")) {

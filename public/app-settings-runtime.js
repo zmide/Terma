@@ -110,6 +110,8 @@ function normalizeRuntimeSettingsResponse(value={}) {
     sftp_download_concurrency: Math.max(1, Math.min(8, Number(savedSource.sftp_download_concurrency) || 3)),
     sftp_upload_concurrency: Math.max(1, Math.min(8, Number(savedSource.sftp_upload_concurrency) || 3)),
     restore_workspace_tabs: savedSource.restore_workspace_tabs !== false,
+    remote_desktop_quick_open_enabled: savedSource.remote_desktop_quick_open_enabled === true,
+    vnc_quick_open_new_window: savedSource.vnc_quick_open_new_window !== false,
     workspace_toolbar_placement: normalizeWorkspaceToolbarPlacement(savedSource.workspace_toolbar_placement),
     saved: {
       ...savedSource,
@@ -130,6 +132,8 @@ function normalizeRuntimeSettingsResponse(value={}) {
       sftp_upload_concurrency: Math.max(1, Math.min(8, Number(savedSource.sftp_upload_concurrency) || 3)),
       sftp_download_directory: String(savedSource.sftp_download_directory || ""),
       restore_workspace_tabs: savedSource.restore_workspace_tabs !== false,
+      remote_desktop_quick_open_enabled: savedSource.remote_desktop_quick_open_enabled === true,
+      vnc_quick_open_new_window: savedSource.vnc_quick_open_new_window !== false,
       workspace_toolbar_placement: normalizeWorkspaceToolbarPlacement(savedSource.workspace_toolbar_placement)
     },
     effective: {
@@ -151,6 +155,10 @@ async function loadRuntimeSettings(refreshUi=false) {
   runtimeSettingsCheck = null;
   try {
     runtimeSettings = normalizeRuntimeSettingsResponse(await api("/api/runtime-settings"));
+    const legacyQuickOpen = localStorage.getItem("remoteDesktopQuickOpen");
+    remoteDesktopQuickOpen = legacyQuickOpen === null
+      ? runtimeSettings.saved.remote_desktop_quick_open_enabled === true
+      : legacyQuickOpen === "1";
     await setTermaLanguage(runtimeSettings.saved.language, {render:false, emit:false});
   } catch (error) {
     runtimeSettings = normalizeRuntimeSettingsResponse({error:error.message || tr("settings:auto.runtime_load_failed", {defaultValue:"监听配置加载失败"})});
@@ -584,15 +592,21 @@ async function saveWorkspaceSettings() {
     const vnc_fullscreen_toolbar = ["always", "never", "edge"].includes($("generalVncFullscreenToolbar")?.value)
       ? $("generalVncFullscreenToolbar").value
       : "always";
+    const remote_desktop_quick_open_enabled = $("generalRemoteDesktopQuickOpen")?.checked === true;
+    const vnc_quick_open_new_window = $("generalVncQuickOpenNewWindow")?.checked !== false;
     const result = await api("/api/runtime-settings", {
       method:"PUT",
       body:JSON.stringify({
         restore_workspace_tabs:input.checked,
+        remote_desktop_quick_open_enabled,
+        vnc_quick_open_new_window,
         workspace_toolbar_placement,
         vnc_fullscreen_toolbar
       })
     });
     runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
+    remoteDesktopQuickOpen = runtimeSettings.saved.remote_desktop_quick_open_enabled === true;
+    localStorage.removeItem("remoteDesktopQuickOpen");
     await setTermaLanguage(runtimeSettings.saved.language);
     inPane(() => {
       renderSettings();
@@ -605,6 +619,10 @@ async function saveWorkspaceSettings() {
       syncWorkspaceToolbarPlacementInputs(runtimeSettings?.saved?.workspace_toolbar_placement);
       const vncToolbar = $("generalVncFullscreenToolbar");
       if (vncToolbar) vncToolbar.value = runtimeSettings?.saved?.vnc_fullscreen_toolbar || "always";
+      const quickOpen = $("generalRemoteDesktopQuickOpen");
+      if (quickOpen) quickOpen.checked = remoteDesktopQuickOpen;
+      const newWindow = $("generalVncQuickOpenNewWindow");
+      if (newWindow) newWindow.checked = runtimeSettings?.saved?.vnc_quick_open_new_window !== false;
     });
     notify(error.message || tr("settings:auto.workspace_save_failed", {defaultValue:"工作区设置保存失败"}), "error");
   } finally {

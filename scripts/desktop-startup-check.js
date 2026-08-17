@@ -22,6 +22,8 @@ assert.match(desktopMainSource, /startDesktopNotificationBridge\(\)/, "desktop s
 assert.match(desktopMainSource, /terma:notification-event/, "desktop notification events must be forwarded to the renderer");
 assert.match(desktopPreloadSource, /onNotification\(callback\)/, "preload must expose the notification event bridge");
 assert.match(desktopPreloadSource, /onNotificationAction\(callback\)/, "preload must expose notification actions without Node access");
+assert.match(desktopPreloadSource, /setWindowTitle\(title\)[\s\S]*?terma:set-window-title/, "preload must expose the current resource title to the desktop window");
+assert.match(desktopMainSource, /terma:set-window-title[\s\S]*?window !== mainWindow[\s\S]*?window\.setTitle\(title\)/, "desktop window titles must stay scoped to the main renderer");
 assert.match(appSource, /if \(!window\.termaDesktop\) pollNotifications\(\)/, "desktop renderer must not duplicate the main-process notification poll");
 assert.match(desktopMainSource, /termaDisplaySession:\s*localLinuxDisplaySession/, "Linux second launches must report their graphical session with the Terma field");
 assert.match(desktopMainSource, /additionalData\?\.termaDisplaySession\s*\|\|\s*additionalData\?\.tunneldeskDisplaySession/, "Linux second launches must still accept the legacy TunnelDesk field");

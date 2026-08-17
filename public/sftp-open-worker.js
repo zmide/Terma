@@ -30,10 +30,37 @@ self.addEventListener("message", event => {
       content = new TextDecoder(labels[encoding] || encoding).decode(source);
     }
     let lineCount = 1;
+    let crlfCount = 0;
+    let lfCount = 0;
+    let crCount = 0;
     for (let index = 0; index < content.length; index += 1) {
-      if (content.charCodeAt(index) === 10) lineCount += 1;
+      const code = content.charCodeAt(index);
+      if (code === 13 && content.charCodeAt(index + 1) === 10) {
+        crlfCount += 1;
+        lineCount += 1;
+        index += 1;
+      } else if (code === 10) {
+        lfCount += 1;
+        lineCount += 1;
+      } else if (code === 13) {
+        crCount += 1;
+        lineCount += 1;
+      }
     }
-    self.postMessage({ok:true, content, encoding, bom:encoding === "utf8bom" && hasBom, line_count:lineCount});
+    const lineEnding = crlfCount >= lfCount && crlfCount >= crCount && crlfCount > 0
+      ? "crlf"
+      : crCount > lfCount && crCount > 0
+        ? "cr"
+        : "lf";
+    self.postMessage({
+      ok:true,
+      content,
+      encoding,
+      bom:hasBom,
+      line_count:lineCount,
+      line_ending:lineEnding,
+      final_newline:/[\r\n]$/.test(content)
+    });
   } catch (error) {
     self.postMessage({ok:false, error_code:error?.code || "decode_failed"});
   }

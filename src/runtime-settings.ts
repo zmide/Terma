@@ -210,7 +210,7 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 15,
+    schema_version: 16,
     language: normalizeLanguage(value.language, fallback.language),
     language_onboarding_version: Math.max(0, Math.min(1, Number.isInteger(Number(value.language_onboarding_version ?? fallback.language_onboarding_version))
       ? Number(value.language_onboarding_version ?? fallback.language_onboarding_version)
@@ -264,6 +264,12 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     restore_workspace_tabs: value.restore_workspace_tabs === undefined
       ? fallback.restore_workspace_tabs !== false
       : value.restore_workspace_tabs !== false,
+    remote_desktop_quick_open_enabled: value.remote_desktop_quick_open_enabled === undefined
+      ? fallback.remote_desktop_quick_open_enabled === true
+      : value.remote_desktop_quick_open_enabled === true,
+    vnc_quick_open_new_window: value.vnc_quick_open_new_window === undefined
+      ? fallback.vnc_quick_open_new_window !== false
+      : value.vnc_quick_open_new_window !== false,
     workspace_toolbar_placement: normalizeWorkspaceToolbarPlacement(
       value.workspace_toolbar_placement,
       fallback.workspace_toolbar_placement
