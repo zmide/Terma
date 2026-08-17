@@ -803,6 +803,14 @@ function workspaceDocumentEndpoint(subtitle="") {
   return address.replace(/^\w+:\/\//, "").replace(/\/$/, "");
 }
 
+function workspaceDocumentResourceIdentity(value="") {
+  let identity = String(value || "").trim().toLowerCase().replace(/^\w+:\/\//, "").replace(/\/$/, "");
+  if (identity.includes("@")) identity = identity.slice(identity.lastIndexOf("@") + 1);
+  if (/^\[[^\]]+\](?::\d+)?$/.test(identity)) return identity.replace(/^\[|\](?::\d+)?$/g, "");
+  if ((identity.match(/:/g) || []).length === 1) identity = identity.replace(/:\d+$/, "");
+  return identity;
+}
+
 function syncWorkspaceDocumentTitle(title, subtitle, viewName, key=viewName, meta={}) {
   const tab = tabs.find(item => item.key === key) || {};
   const kind = String(meta.kind || tab.kind || viewName || "");
@@ -815,8 +823,13 @@ function syncWorkspaceDocumentTitle(title, subtitle, viewName, key=viewName, met
     "remote-desktop":protocol || tr("remote:auto.remote_desktop", {defaultValue:"远程桌面"})
   }[kind] || "";
   const endpoint = workspaceDocumentEndpoint(subtitle || tab.subtitle || "");
-  const resource = String(title || tab.title || "").trim();
-  const parts = ["Terma", endpoint, label, resource && resource !== endpoint && resource !== label ? resource : ""].filter(Boolean);
+  const resource = workspaceTabPresentation({...tab, ...meta, kind, protocol:protocol.toLowerCase(), title:String(title || tab.title || "").trim()}).title.trim();
+  const uniqueResource = resource
+    && workspaceDocumentResourceIdentity(resource) !== workspaceDocumentResourceIdentity(endpoint)
+    && resource.toLowerCase() !== label.toLowerCase()
+    ? resource
+    : "";
+  const parts = ["Terma", endpoint, label, uniqueResource].filter(Boolean);
   document.title = parts.join(" · ");
   window.termaDesktop?.setWindowTitle?.(document.title);
 }
