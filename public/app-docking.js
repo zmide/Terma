@@ -565,6 +565,7 @@ function syncWorkspaceTabActivation(pane, key) {
   const tab = tabs.find(item => item.key === key);
   if (tab) tab.activityState = "";
   syncWorkspaceLegacyTabIds();
+  renderWorkspaceGroupBar();
   revealWorkspaceTab(key);
   if (!window.restoringTabs) saveTabsState();
 }
@@ -961,6 +962,7 @@ closeTabsByKey = function(keys, anchorKey="") {
   }
   if (typeof rememberClosedWorkspaceTabs === "function") rememberClosedWorkspaceTabs([...targets]);
   const anchorPane = workspaceFindPaneForTab(anchorKey) || workspaceFindPane(focusedPaneId);
+  const paneActiveKeysBeforeClose = new Map(workspaceLeaves().map(pane => [pane.id, pane.activeTabKey]));
   for (const key of targets) {
     const tab = tabs.find(item => item.key === key);
     closeTerminalSession(key);
@@ -994,6 +996,10 @@ closeTabsByKey = function(keys, anchorKey="") {
   focusedPaneId = focusedPane.id;
   activeTabKey = focusedPane.activeTabKey || "";
   renderTabs({rebuildLayout:paneIdsBeforeNormalize !== paneIdsAfterNormalize});
+  for (const pane of workspaceVisiblePanes()) {
+    if (pane.id === focusedPane.id || !pane.activeTabKey) continue;
+    if (paneActiveKeysBeforeClose.get(pane.id) !== pane.activeTabKey) renderWorkspacePaneContent(pane.id);
+  }
   if (activeTabKey) {
     const tab = tabs.find(item => item.key === activeTabKey);
     activeView = tab?.viewName || tab?.kind || "welcome";

@@ -37,6 +37,10 @@ assert.doesNotMatch(preload, /toggleVncWindowMaximize|terma:vnc-window-maximize/
 assert.match(app, /termaVncWindow[\s\S]*?initDetachedVncWindow\(termaVncDetachedProfileId\)/, "the detached query must initialize only the VNC workspace");
 assert.match(vncWindow, /function initDetachedVncWindow[\s\S]*?vnc-detached-root[\s\S]*?renderEmbeddedVnc\(profile, key, null, root, true\)/);
 assert.match(vncWindow, /prepareVncManagementForDetachedWindow[\s\S]*?closeRemoteProtocolSession\(key\)[\s\S]*?openRemoteDesktop\(id, false, true\)/, "switching to a detached window must close built-in VNC and restore the detection view");
+assert.match(vncWindow, /function reserveVncDetachedBrowserWindow[\s\S]*?window\.open\("", `terma-vnc-\$\{id\}`/, "web quick-open must reserve a popup synchronously while user activation is available");
+assert.match(vncWindow, /browserReservation[\s\S]*?child\.location\.replace\(url\.href\)/, "a reserved same-origin popup must navigate only after VNC probing succeeds");
+assert.match(remoteProfiles, /browserReservation = updateTab[\s\S]*?reserveVncDetachedBrowserWindow\(profile\.id\)[\s\S]*?await Promise\.all/, "VNC quick-open must reserve the browser window before asynchronous probing");
+assert.match(remoteProfiles, /openVncInNewWindow\(profile\.id, key, \{closeDetectionTab:true, browserReservation\}\)[\s\S]*?finally \{[\s\S]*?cancelReservedVncDetachedBrowserWindow\(browserReservation\)/, "failed or stale probes must close an unused reserved popup");
 assert.match(vncWindow, /closeVncDetachedWindowForProfile[\s\S]*?closeVncWindowForProfile/, "switching back to built-in VNC must close the matching detached window");
 assert.match(vnc, /openEmbeddedVncDesktop[\s\S]*?prepareEmbeddedVncWindowSwitch\(profile\.id\)/, "built-in VNC must close the detached window before rendering");
 assert.match(vnc, /function renderEmbeddedVnc\(profile, key, diagnostics=null, targetView=null, detached=isDetachedVncWindow\(\)\)/, "main and detached windows must reuse the same VNC renderer");

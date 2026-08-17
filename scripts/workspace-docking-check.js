@@ -131,6 +131,7 @@ function loadDockingModel() {
       addTab,
       setWorkspaceTabConnectionStatus,
       renderTabContent,
+      syncWorkspaceTabActivation,
       activateTab,
       closeTabsByKey,
       setLayout:value => { workspaceLayout = value; },
@@ -250,6 +251,46 @@ function runWorkspaceDockingChecks({silent=false}={}) {
     const nested = split("split-3", "column", pane("pane-4", ["terminal-2"]), layout.first);
     api.setLayout(api.workspaceReplacePaneWithSplit("pane-1", nested));
     assert.equal(api.workspaceLeaves().map(item => item.id).join(","), "pane-4,pane-1,pane-2,pane-3");
+  });
+
+  check("closing an inactive pane's active tab rerenders its replacement content", () => {
+    const left = pane("pane-close-left", ["close-left"]);
+    const right = pane("pane-close-right", ["close-right-a", "close-right-b"]);
+    right.activeTabKey = "close-right-a";
+    api.setTabs([
+      {key:"close-left", title:"Left", kind:"settings", closable:true},
+      {key:"close-right-a", title:"Right A", kind:"settings", closable:true},
+      {key:"close-right-b", title:"Right B", kind:"settings", closable:true}
+    ]);
+    api.setLayout(split("split-close", "row", left, right));
+    api.setFocusedPane(left.id);
+    const rendered = [];
+    const previousRenderPane = sandbox.renderWorkspacePaneContent;
+    sandbox.renderWorkspacePaneContent = paneId => rendered.push(paneId);
+    try {
+      api.closeTabsByKey(["close-right-a"], "close-right-a");
+    } finally {
+      sandbox.renderWorkspacePaneContent = previousRenderPane;
+    }
+    assert.equal(api.workspaceFindPane(right.id).activeTabKey, "close-right-b");
+    assert.ok(rendered.includes(right.id), "the non-focused pane must render its newly active tab");
+  });
+
+  check("incremental tab activation refreshes workspace group activity", () => {
+    const activePane = pane("pane-activity", ["activity-tab"]);
+    api.setTabs([{key:"activity-tab", title:"Activity", kind:"terminal", closable:true, activityState:"output"}]);
+    api.setLayout(activePane);
+    api.setFocusedPane(activePane.id);
+    let groupRenders = 0;
+    const previousGroupRender = sandbox.renderWorkspaceGroupBar;
+    sandbox.renderWorkspaceGroupBar = () => { groupRenders += 1; };
+    try {
+      api.syncWorkspaceTabActivation(activePane, "activity-tab");
+    } finally {
+      sandbox.renderWorkspaceGroupBar = previousGroupRender;
+    }
+    assert.equal(api.getTabs()[0].activityState, "");
+    assert.equal(groupRenders, 1, "clearing tab activity must refresh the group activity marker");
   });
 
   check("Linux desktop manager tabs restore their content and legacy connection id", () => {

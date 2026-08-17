@@ -653,6 +653,13 @@ function prepareSftpEditorSave(title, content, encoding="utf8", lineEnding="lf")
   };
 }
 
+function sftpEditorByteMeasurement(content, encoding="utf8") {
+  const selectedEncoding = String(encoding || "utf8").toLowerCase();
+  const exact = selectedEncoding === "utf8" || selectedEncoding === "utf8bom";
+  const bytes = new Blob([String(content || "")]).size + (selectedEncoding === "utf8bom" ? 3 : 0);
+  return {bytes, exact};
+}
+
 const sftpEditorLanguageOptions = [
   ["plain_text","纯文本"], ["yaml","YAML"], ["json","JSON"], ["xml","XML"], ["ini","INI / 配置"],
   ["properties","Properties"], ["toml","TOML"], ["sh","Shell"], ["batchfile","BAT / CMD"], ["powershell","PowerShell"],
@@ -965,14 +972,26 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       $("sftpTextFormatJson").hidden = useLightEditor || !isSftpJsonFileName(title) || selectedLanguage() !== "json";
     };
     let contentModified = false;
-    const updateStats = (force=false, providedValue=null) => {
+    const updateStats = (force=false, providedValue=null, providedEncoding="") => {
       if (useLightEditor && contentModified && !force) {
         $("sftpEditorStats").textContent = tr("sftp:editor.modified_check_size", {defaultValue:"已修改 · 保存时检查大小"});
+        $("sftpEditorStats").classList.remove("limit-exceeded");
+        saveButton.disabled = false;
         return true;
       }
       const initial = !contentModified;
       const value = initial && useLightEditor ? "" : (providedValue === null ? getValue() : providedValue);
-      const bytes = initial ? Number(size || 0) : new Blob([value]).size;
+      const measurement = initial
+        ? {bytes:Number(size || 0), exact:true}
+        : sftpEditorByteMeasurement(value, providedEncoding || $("sftpTextEncoding")?.value || encoding);
+      if (!measurement.exact) {
+        const stats = $("sftpEditorStats");
+        stats.textContent = tr("sftp:editor.modified_check_size", {defaultValue:"已修改 · 保存时检查大小"});
+        stats.classList.remove("limit-exceeded");
+        saveButton.disabled = false;
+        return true;
+      }
+      const bytes = measurement.bytes;
       const tooLarge = bytes > limit;
       const stats = $("sftpEditorStats");
       const lines = initial && Number(diffOptions.lineCount) > 0 ? Number(diffOptions.lineCount) : value.split("\n").length;
@@ -1088,7 +1107,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     $("sftpTextSave").onclick = () => {
       const value = getValue();
       const prepared = prepareSftpEditorSave(title, value, $("sftpTextEncoding").value, $("sftpLineEnding").value);
-      if (!updateStats(true, prepared.content)) return notify(tr("sftp:editor.content_too_large", {limit:formatBytes(limit), defaultValue:`在线编辑内容不能超过 ${formatBytes(limit)}`}), "error");
+      if (!updateStats(true, prepared.content, prepared.encoding)) return notify(tr("sftp:editor.content_too_large", {limit:formatBytes(limit), defaultValue:`在线编辑内容不能超过 ${formatBytes(limit)}`}), "error");
       finish({action:"save", content:prepared.content, changed:contentModified || prepared.changed || scriptNeedsFormatRepair, backup:$("sftpBackupBeforeSave").checked, encoding:prepared.encoding, line_ending:prepared.lineEnding, normalized_script:prepared.unixScript, persist_default:$("sftpPersistEncoding").checked});
     };
     $("sftpTextClose").onclick = async () => {

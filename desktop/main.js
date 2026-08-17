@@ -1253,6 +1253,40 @@ function sanitizeAuxiliaryWindowTitle(value, fallback = PRODUCT_NAME) {
   return title || fallback;
 }
 
+function desktopWindowTitleEndpointIdentity(value) {
+  let identity = String(value || "").trim().toLowerCase();
+  if (!identity) return "";
+  identity = identity.replace(/^\w+:\/\//, "").replace(/\/$/, "");
+  if (identity.includes("@")) identity = identity.slice(identity.lastIndexOf("@") + 1);
+  if (/^\[[^\]]+\](?::\d+)?$/.test(identity)) return identity.replace(/^\[|\](?::\d+)?$/g, "");
+  if ((identity.match(/:/g) || []).length === 1) identity = identity.replace(/:\d+$/, "");
+  return identity;
+}
+
+function normalizeMainWindowTitle(value) {
+  const sanitized = sanitizeAuxiliaryWindowTitle(value, PRODUCT_NAME);
+  const parts = sanitized.split(/\s*·\s*/).map(part => part.trim()).filter(Boolean);
+  if (parts.length < 4 || parts[0].toLowerCase() !== PRODUCT_NAME.toLowerCase()) return sanitized;
+
+  const [product, endpoint, originalLabel, ...originalResourceParts] = parts;
+  const resourceParts = [...originalResourceParts];
+  let label = originalLabel;
+  const generatedProtocolTitle = resourceParts.at(-1) || "";
+  const generatedProtocolMatch = generatedProtocolTitle.match(/^(.*?)(?:\s+#(\d+))?$/);
+  if (generatedProtocolMatch?.[1]?.trim().toLowerCase() === originalLabel.toLowerCase()) {
+    resourceParts.pop();
+    if (generatedProtocolMatch[2]) label = `${originalLabel} #${generatedProtocolMatch[2]}`;
+  }
+
+  const resource = resourceParts.join(" · ").trim();
+  const uniqueResource = resource
+    && desktopWindowTitleEndpointIdentity(resource) !== desktopWindowTitleEndpointIdentity(endpoint)
+    && resource.toLowerCase() !== label.toLowerCase()
+    ? resource
+    : "";
+  return sanitizeAuxiliaryWindowTitle([product, endpoint, label, uniqueResource].filter(Boolean).join(" · "), PRODUCT_NAME);
+}
+
 function configureAuxiliaryDesktopWindow(window) {
   if (!window || window.isDestroyed()) return;
   window.webContents.setWindowOpenHandler(({ url }) => {
@@ -2851,7 +2885,7 @@ function registerDesktopClipboardHandlers() {
   ipcMain.on("terma:set-window-title", (event, value) => {
     const window = desktopWindowForSender(event);
     if (!window || window !== mainWindow || window.isDestroyed()) return;
-    const title = sanitizeAuxiliaryWindowTitle(String(value || PRODUCT_NAME), PRODUCT_NAME);
+    const title = normalizeMainWindowTitle(value);
     window.setTitle(title);
   });
   ipcMain.handle("terma:clipboard-read", event => {

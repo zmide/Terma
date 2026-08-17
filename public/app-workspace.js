@@ -1079,7 +1079,7 @@ function renderExplorerTools() {
     const quickOpenTitle = tr(remoteDesktopQuickOpen ? "remote:auto.quick_open_enabled_title" : "remote:auto.quick_open_disabled_title", {
       defaultValue:remoteDesktopQuickOpen ? "快捷打开：已开启，探测通过后自动打开远程桌面" : "快捷打开：已关闭，只进入探测界面"
     });
-    const quickOpenButton = `<button class="icon-button${remoteDesktopQuickOpen ? " active" : ""}" data-action="workspace-remote-quick-open" title="${escAttr(quickOpenTitle)}" aria-label="${escAttr(tr("common:auto.quick_open_remote_desktop", {defaultValue:"快捷打开远程桌面"}))}" aria-pressed="${remoteDesktopQuickOpen ? "true" : "false"}">${icon("zap")}</button>`;
+    const quickOpenButton = `<button class="icon-button${remoteDesktopQuickOpen ? " active" : ""}" data-action="workspace-remote-quick-open" title="${escAttr(quickOpenTitle)}" aria-label="${escAttr(tr("common:auto.quick_open_remote_desktop", {defaultValue:"快捷打开远程桌面"}))}" aria-pressed="${remoteDesktopQuickOpen ? "true" : "false"}" aria-busy="${remoteDesktopQuickOpenTogglePending > 0 ? "true" : "false"}">${icon("zap")}</button>`;
     tools.innerHTML = `
       <div class="search-field">${icon("search")}<input id="remoteConnectionSearch" placeholder="${escAttr(remoteSearchLabel)}" value="${esc(remoteConnectionSearch)}" data-input-action="workspace-remote-search"></div>
       <div class="explorer-action-strip connection-action-strip">
@@ -1106,25 +1106,41 @@ function renderExplorerTools() {
     </div>`;
 }
 
+let remoteDesktopQuickOpenToggleQueue = Promise.resolve();
+let remoteDesktopQuickOpenToggleTarget = null;
+let remoteDesktopQuickOpenTogglePending = 0;
+
 async function toggleRemoteDesktopQuickOpen() {
-  const nextValue = !remoteDesktopQuickOpen;
-  try {
-    const result = await api("/api/runtime-settings", {
-      method:"PUT",
-      body:JSON.stringify({remote_desktop_quick_open_enabled:nextValue})
-    });
-    runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
-    remoteDesktopQuickOpen = runtimeSettings.saved.remote_desktop_quick_open_enabled === true;
-    localStorage.removeItem("remoteDesktopQuickOpen");
-    renderExplorerTools();
-    notify(tr(remoteDesktopQuickOpen ? "remote:auto.quick_open_enabled_notice" : "remote:auto.quick_open_disabled_notice", {
-      defaultValue:remoteDesktopQuickOpen
-        ? "已开启快捷打开：远程桌面探测通过后会自动启动"
-        : "已关闭快捷打开：远程桌面默认停留在探测界面"
-    }), "info");
-  } catch (error) {
-    notify(error.message || tr("settings:auto.workspace_save_failed", {defaultValue:"工作区设置保存失败"}), "error");
-  }
+  const nextValue = !(remoteDesktopQuickOpenToggleTarget ?? remoteDesktopQuickOpen);
+  remoteDesktopQuickOpenToggleTarget = nextValue;
+  remoteDesktopQuickOpenTogglePending += 1;
+  renderExplorerTools();
+  const operation = remoteDesktopQuickOpenToggleQueue.then(async () => {
+    try {
+      const result = await api("/api/runtime-settings", {
+        method:"PUT",
+        body:JSON.stringify({remote_desktop_quick_open_enabled:nextValue})
+      });
+      runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
+      remoteDesktopQuickOpen = runtimeSettings.saved.remote_desktop_quick_open_enabled === true;
+      localStorage.removeItem("remoteDesktopQuickOpen");
+      notify(tr(remoteDesktopQuickOpen ? "remote:auto.quick_open_enabled_notice" : "remote:auto.quick_open_disabled_notice", {
+        defaultValue:remoteDesktopQuickOpen
+          ? "已开启快捷打开：远程桌面探测通过后会自动启动"
+          : "已关闭快捷打开：远程桌面默认停留在探测界面"
+      }), "info");
+      return remoteDesktopQuickOpen;
+    } catch (error) {
+      notify(error.message || tr("settings:auto.workspace_save_failed", {defaultValue:"工作区设置保存失败"}), "error");
+      return remoteDesktopQuickOpen;
+    } finally {
+      remoteDesktopQuickOpenTogglePending = Math.max(0, remoteDesktopQuickOpenTogglePending - 1);
+      if (!remoteDesktopQuickOpenTogglePending) remoteDesktopQuickOpenToggleTarget = null;
+      renderExplorerTools();
+    }
+  });
+  remoteDesktopQuickOpenToggleQueue = operation.catch(() => {});
+  return operation;
 }
 
 function showConnectionExplorerMenu(event) {
