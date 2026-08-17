@@ -313,16 +313,16 @@ async function installRdpServerImpl(profileId, key, button=null, mode="online") 
       : tr("remote:rdp_status.confirm_online_install", {defaultValue:"将通过远端软件源在线安装 xrdp 和对应的 Xorg 后端。是否继续？"});
   const operationTitle = tr("remote:rdp_status.install_action_title", {mode:modeLabel, defaultValue:`${modeLabel}安装 RDP 服务`});
   if (!await confirmModal(message, operationTitle, tr("common:actions.install", {defaultValue:"安装"}), tr("common:actions.cancel", {defaultValue:"取消"}), true)) return null;
+  const action = normalizedMode === "local-offline" ? "install-local-offline" : normalizedMode === "offline" ? "install-offline" : "install";
   const sourceId = Number(diagnostics.connection?.id || linuxDesktopManagerConnectionIdForProfile(profile) || 0);
   let adminAuth = null;
   if (diagnostics.privileged !== true) {
     if (!sourceId) return notify(tr("remote:rdp_status.ssh_management_missing", {defaultValue:"该 RDP 连接没有关联的 SSH 管理连接"}), "error");
-    adminAuth = await requestRemoteAdminAuthorization(sourceId, operationTitle);
+    adminAuth = await requestRemoteAdminAuthorization(sourceId, operationTitle, `rdp.server.${action}`);
     if (!adminAuth) return null;
   }
   if (button && document.contains(button)) setButtonBusy(button, true, tr("common:auto.installing", {defaultValue:"安装中..."}));
   try {
-    const action = normalizedMode === "local-offline" ? "install-local-offline" : normalizedMode === "offline" ? "install-offline" : "install";
     const result = await api(`/api/remote-profiles/${Number(profileId)}/rdp/server`, {method:"POST", body:JSON.stringify({action, ...(adminAuth ? {admin_auth:adminAuth} : {})})});
     if (result.task) {
       const taskContainer = $("rdpServerState");
@@ -401,7 +401,7 @@ async function runRdpServerActionImpl(profileId, key, action, button=null) {
   let adminAuth = null;
   if (diagnostics.privileged !== true) {
     if (!sourceId) return notify(tr("remote:rdp_status.ssh_management_missing", {defaultValue:"该 RDP 连接没有关联的 SSH 管理连接"}), "error");
-    adminAuth = await requestRemoteAdminAuthorization(sourceId, label);
+    adminAuth = await requestRemoteAdminAuthorization(sourceId, label, `rdp.server.${action}`);
     if (!adminAuth) return null;
   }
   if (button && document.contains(button)) setButtonBusy(button, true, busyRdpServerActionLabel(action));

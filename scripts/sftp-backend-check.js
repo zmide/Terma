@@ -46,6 +46,21 @@ async function main() {
     const reread = server.prepareSftpWriteContent("a".repeat(1536 * 1024), "utf8");
     assert.equal(reread.maximum_bytes, 2 * 1024 * 1024, "runtime settings must be reread without restarting");
 
+    const shellScript = server.prepareSftpWriteContent(
+      "\uFEFF#!/bin/bash\r\necho restart",
+      "utf8bom",
+      "/tmp/restart_Pms.sh",
+      "crlf"
+    );
+    assert.equal(shellScript.encoding, "utf8", "shell scripts must not retain a UTF-8 BOM");
+    assert.equal(shellScript.line_ending, "lf", "shell scripts must use Unix line endings");
+    assert.equal(shellScript.normalized_script, true);
+    assert.equal(shellScript.content.toString("utf8"), "#!/bin/bash\necho restart\n", "shell scripts must end with an LF");
+    assert.notDeepEqual([...shellScript.content.subarray(0, 3)], [0xef, 0xbb, 0xbf], "shell scripts must not start with a BOM");
+
+    const windowsText = server.prepareSftpWriteContent("first\nsecond\n", "utf8", "/tmp/readme.txt", "crlf");
+    assert.equal(windowsText.content.toString("utf8"), "first\r\nsecond\r\n", "non-script files must honor the selected line ending");
+
     const dragRoot = path.join(dataDir, "sftp-drag");
     const oldDirectory = path.join(dragRoot, "old-stage");
     const recentDirectory = path.join(dragRoot, "recent-stage");

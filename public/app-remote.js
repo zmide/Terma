@@ -35,7 +35,8 @@ const vncSessions = new Map();
 let vncFullscreenSessionKey = "";
 let remoteDesktopRenderSerial = 0;
 const VNC_CLIPBOARD_POLL_INTERVAL_MS = 900;
-const VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS = 2600;
+const VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS = 8000;
+const VNC_CLIPBOARD_IMAGE_INPUT_IDLE_MS = 1400;
 const VNC_CLIPBOARD_ECHO_GUARD_MS = 3000;
 const remoteAdminGrantCache = new Map();
 let noVncRfbPromise = null;
@@ -44,6 +45,10 @@ let linuxDesktopManagerState = {connectionId:0, diagnostics:null, sshX11:null, e
 let linuxDesktopTaskLogView = {taskId:"", expanded:false, follow:true, scrollTop:0};
 const linuxDesktopTaskMonitors = new Map();
 let pendingRemoteGroupSelectValue = "默认分组";
+
+function vncQuickOpenUsesNewWindow() {
+  return runtimeSettings?.saved?.vnc_quick_open_new_window !== false;
+}
 
 function rdpServerActionKey(profileId) {
   return `rdp-server:${Number(profileId || 0)}`;

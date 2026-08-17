@@ -395,7 +395,11 @@ async function installVncClipboardHelper(key, mode="online", button=null) {
     await persistVncClipboardSshSelection(session, connectionId);
     session.clipboardHelperModalFinish?.({installing:true});
     if (!diagnostics.root) {
-      adminAuth = await requestRemoteAdminAuthorization(sourceId, tr("remote:clipboard.install_unicode_action", {mode:modeLabel, defaultValue:`${modeLabel}安装 Unicode 剪贴板辅助工具`}));
+      adminAuth = await requestRemoteAdminAuthorization(
+        sourceId,
+        tr("remote:clipboard.install_unicode_action", {mode:modeLabel, defaultValue:`${modeLabel}安装 Unicode 剪贴板辅助工具`}),
+        `vnc.clipboard-helper.${action}`
+      );
       if (!adminAuth) return;
     }
     const result = await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/helper`, {method:"POST", body:JSON.stringify({action, connection_id:connectionId, ...(adminAuth ? {admin_auth:adminAuth} : {})})});
@@ -456,7 +460,11 @@ async function uninstallVncClipboardHelper(key, button=null) {
     );
     if (!confirmed) return null;
     if (!diagnostics.root) {
-      adminAuth = await requestRemoteAdminAuthorization(sourceId, tr("remote:clipboard.uninstall_unicode_action", {defaultValue:"卸载 Unicode 剪贴板辅助工具"}));
+      adminAuth = await requestRemoteAdminAuthorization(
+        sourceId,
+        tr("remote:clipboard.uninstall_unicode_action", {defaultValue:"卸载 Unicode 剪贴板辅助工具"}),
+        "vnc.clipboard-helper.uninstall"
+      );
       if (!adminAuth) return null;
     }
     const result = await api(`/api/remote-profiles/${session.profile.id}/vnc-clipboard/helper`, {method:"POST", body:JSON.stringify({action:"uninstall", connection_id:connectionId, ...(adminAuth ? {admin_auth:adminAuth} : {})})});
@@ -523,10 +531,13 @@ async function configureVncClipboardSsh(key) {
 
 function stopVncClipboardPolling(session) {
   if (!session) return;
+  session.clipboardPollGeneration = Number(session.clipboardPollGeneration || 0) + 1;
   if (session.clipboardPollTimer) clearInterval(session.clipboardPollTimer);
-  if (session.clipboardImagePollTimer) clearInterval(session.clipboardImagePollTimer);
+  if (session.clipboardImagePollTimer) clearTimeout(session.clipboardImagePollTimer);
+  if (session.clipboardImageIdleHandle && typeof cancelIdleCallback === "function") cancelIdleCallback(session.clipboardImageIdleHandle);
   session.clipboardPollTimer = null;
   session.clipboardImagePollTimer = null;
+  session.clipboardImageIdleHandle = null;
 }
 
 function resetVncClipboardBridgeWriteState(session) {
@@ -1036,18 +1047,40 @@ async function syncVncClipboardFromLocal(session) {
 function startVncClipboardPolling(session) {
   stopVncClipboardPolling(session);
   if (!session?.clipboardAutoSync || !session.connected) return;
+  const generation = Number(session.clipboardPollGeneration || 0);
   void ensureVncClipboardTransport(session);
   session.clipboardPollTimer = setInterval(() => {
     void syncVncClipboardFromLocal(session);
     void pollVncRemoteClipboardBridge(session);
   }, VNC_CLIPBOARD_POLL_INTERVAL_MS);
-  if (session.clipboardAutoSyncImages) {
-    const pollImages = () => {
-      void syncVncClipboardImageFromLocal(session).then(sent => sent ? false : pollVncRemoteClipboardImageBridge(session));
+  if (session.clipboardAutoSyncImages) scheduleVncClipboardImagePoll(session, VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS, generation);
+}
+
+function scheduleVncClipboardImagePoll(session, delay=VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS, generation=Number(session?.clipboardPollGeneration || 0)) {
+  if (!session?.clipboardAutoSyncImages || !session.clipboardAutoSync || !session.connected || generation !== Number(session.clipboardPollGeneration || 0)) return;
+  if (session.clipboardImagePollTimer) clearTimeout(session.clipboardImagePollTimer);
+  session.clipboardImagePollTimer = setTimeout(() => {
+    session.clipboardImagePollTimer = null;
+    const recentlyActiveFor = Date.now() - Number(session.lastInteractionAt || 0);
+    if (recentlyActiveFor < VNC_CLIPBOARD_IMAGE_INPUT_IDLE_MS) {
+      scheduleVncClipboardImagePoll(session, VNC_CLIPBOARD_IMAGE_INPUT_IDLE_MS - recentlyActiveFor, generation);
+      return;
+    }
+    const run = async () => {
+      session.clipboardImageIdleHandle = null;
+      try {
+        const sent = await syncVncClipboardImageFromLocal(session);
+        if (!sent) await pollVncRemoteClipboardImageBridge(session);
+      } finally {
+        scheduleVncClipboardImagePoll(session, VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS, generation);
+      }
     };
-    pollImages();
-    session.clipboardImagePollTimer = setInterval(pollImages, VNC_CLIPBOARD_IMAGE_POLL_INTERVAL_MS);
-  }
+    if (typeof requestIdleCallback === "function") {
+      session.clipboardImageIdleHandle = requestIdleCallback(() => { void run(); }, {timeout:2500});
+    } else {
+      void run();
+    }
+  }, Math.max(0, Number(delay || 0)));
 }
 
 async function pollVncRemoteClipboardBridge(session, force=false) {

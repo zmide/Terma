@@ -29,7 +29,7 @@ interface SftpTransferRouteDependencies {
   moveRemotePaths(connectionId: number, paths: string[], target: string): Promise<any>;
   normalizeRemotePermissionRequest(paths: any, mode: any, recursive: any, owner: any, group: any): any;
   planRemoteUploads(connectionId: number, remotePath: string, filenames: string[]): Promise<any>;
-  prepareSftpWriteContent(content: string, encoding: string): {content: Buffer};
+  prepareSftpWriteContent(content: string, encoding: string, remotePath?: string, lineEnding?: string): {content: Buffer; encoding?: string; line_ending?: string | null; normalized_script?: boolean};
   readJson(request: IncomingMessage): Promise<any>;
   readRemoteBinaryFile(connectionId: number, remotePath: string, maximumBytes: number): Promise<any>;
   readRemoteDirectorySize(connectionId: number, remotePath: string): Promise<any>;
@@ -381,11 +381,11 @@ export async function handleSftpTransferRoutes(
     return true;
   }
   if (method === "POST" && parts[4] === "write") {
-    const {content} = dependencies.prepareSftpWriteContent(data.content, data.encoding || "utf8");
-    const result = await dependencies.writeRemoteFile(connectionId, data.path, content, {backup:Boolean(data.backup)});
-    if (data.persist_default) dependencies.updateSftpTextEncoding(connectionId, data.encoding || "utf8");
+    const prepared = dependencies.prepareSftpWriteContent(data.content, data.encoding || "utf8", data.path, data.line_ending);
+    const result = await dependencies.writeRemoteFile(connectionId, data.path, prepared.content, {backup:Boolean(data.backup)});
+    if (data.persist_default) dependencies.updateSftpTextEncoding(connectionId, prepared.encoding || data.encoding || "utf8");
     dependencies.invalidateRemoteDirectoryCache(connectionId);
-    dependencies.sendJson(response, {...result, encoding:data.encoding || "utf8"});
+    dependencies.sendJson(response, {...result, encoding:prepared.encoding || data.encoding || "utf8", line_ending:prepared.line_ending, normalized_script:prepared.normalized_script});
     return true;
   }
 

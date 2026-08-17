@@ -3,6 +3,68 @@ function isDetachedVncWindow() {
 }
 
 const browserDetachedVncWindows = new Map();
+const browserDetachedVncReservations = new Map();
+
+function activeVncDetachedBrowserReservation(profileId) {
+  const id = Number(profileId || 0);
+  const state = browserDetachedVncReservations.get(id);
+  if (!state || state.status !== "pending" || !state.child || state.child.closed) {
+    if (browserDetachedVncReservations.get(id) === state) browserDetachedVncReservations.delete(id);
+    return null;
+  }
+  return state;
+}
+
+function reserveVncDetachedBrowserWindow(profileId) {
+  const id = Number(profileId || 0);
+  if (!Number.isInteger(id) || id <= 0 || window.termaDesktop?.openVncWindow) return null;
+  const pending = activeVncDetachedBrowserReservation(id);
+  if (pending) {
+    const claim = {};
+    pending.claims.add(claim);
+    return {profileId:id, child:pending.child, created:false, blocked:false, pending:true, state:pending, claim};
+  }
+  const existing = browserDetachedVncWindows.get(id);
+  if (existing && !existing.closed) return {profileId:id, child:existing, created:false, blocked:false, pending:false, committed:true};
+  const child = window.open("", `terma-vnc-${id}`, "popup,width=1280,height=820");
+  if (!child) return {profileId:id, child:null, created:false, blocked:true};
+  const claim = {};
+  const state = {profileId:id, child, status:"pending", claims:new Set([claim])};
+  browserDetachedVncWindows.set(id, child);
+  browserDetachedVncReservations.set(id, state);
+  return {profileId:id, child, created:true, blocked:false, pending:true, state, claim};
+}
+
+function cancelReservedVncDetachedBrowserWindow(reservation) {
+  if (!reservation || reservation.released) return;
+  reservation.released = true;
+  const id = Number(reservation.profileId || 0);
+  const state = reservation.state;
+  if (!state) return;
+  state.claims.delete(reservation.claim);
+  if (state.status !== "pending" || state.claims.size > 0) return;
+  state.status = "cancelled";
+  if (browserDetachedVncReservations.get(id) === state) browserDetachedVncReservations.delete(id);
+  if (state.child && !state.child.closed) state.child.close();
+  if (browserDetachedVncWindows.get(id) === state.child) browserDetachedVncWindows.delete(id);
+}
+
+function commitReservedVncDetachedBrowserWindow(reservation, url) {
+  if (!reservation || reservation.blocked) return null;
+  const id = Number(reservation.profileId || 0);
+  const child = reservation.child;
+  if (!child || child.closed) return null;
+  const state = reservation.state;
+  if (state?.status === "pending") {
+    if (browserDetachedVncReservations.get(id) !== state) return null;
+    state.status = "committed";
+    browserDetachedVncReservations.delete(id);
+    child.location.replace(url);
+  } else if (state?.status === "cancelled") return null;
+  browserDetachedVncWindows.set(id, child);
+  reservation.committed = true;
+  return child;
+}
 
 function embeddedVncSessionKeysForProfile(profileId, preferredKey="") {
   const id = Number(profileId || 0);
@@ -33,37 +95,41 @@ async function closeVncDetachedWindowForProfile(profileId) {
   const child = browserDetachedVncWindows.get(id);
   if (!child || child.closed) {
     browserDetachedVncWindows.delete(id);
+    browserDetachedVncReservations.delete(id);
     return {ok:true, profileId:id, closed:false};
   }
+  const pending = browserDetachedVncReservations.get(id);
+  if (pending) pending.status = "cancelled";
+  browserDetachedVncReservations.delete(id);
   child.close();
   browserDetachedVncWindows.delete(id);
   return {ok:true, profileId:id, closed:true};
 }
 
-async function openVncInNewWindow(profileId, key="") {
+async function openVncInNewWindow(profileId, key="", options={}) {
   const id = Number(profileId || 0);
   if (!Number.isInteger(id) || id <= 0) return notify(tr("remote:vnc_ui.detached_profile_missing", {defaultValue:"VNC 连接不存在"}), "error");
+  let browserReservation = Number(options.browserReservation?.profileId || 0) === id ? options.browserReservation : null;
   try {
-    const managementReady = prepareVncManagementForDetachedWindow(id, key);
     if (window.termaDesktop?.openVncWindow) {
+      const managementReady = prepareVncManagementForDetachedWindow(id, key);
       await window.termaDesktop.openVncWindow(id, {key});
       await managementReady;
+      if (options.closeDetectionTab && key && tabs.some(tab => tab.key === key)) closeTabsByKey([key], key);
       return true;
     }
     const url = new URL(location.href);
     url.searchParams.set("termaVncWindow", String(id));
-    let child = browserDetachedVncWindows.get(id);
-    if (child && !child.closed) {
-      child.focus();
-      await managementReady;
-      return true;
-    }
-    child = window.open(url.href, `terma-vnc-${id}`, "popup,width=1280,height=820");
+    browserReservation ||= reserveVncDetachedBrowserWindow(id);
+    if (browserReservation?.blocked) throw new Error(tr("remote:vnc_ui.detached_open_failed", {defaultValue:"无法打开新窗口，请检查浏览器弹窗权限"}));
+    const child = commitReservedVncDetachedBrowserWindow(browserReservation, url.href);
     if (!child) throw new Error(tr("remote:vnc_ui.detached_open_failed", {defaultValue:"无法打开新窗口，请检查浏览器弹窗权限"}));
-    browserDetachedVncWindows.set(id, child);
-    await managementReady;
+    child.focus();
+    await prepareVncManagementForDetachedWindow(id, key);
+    if (options.closeDetectionTab && key && tabs.some(tab => tab.key === key)) closeTabsByKey([key], key);
     return true;
   } catch (error) {
+    cancelReservedVncDetachedBrowserWindow(browserReservation);
     notify(window.termaDesktop?.openVncWindow
       ? tr("remote:vnc_ui.detached_open_failed", {defaultValue:"无法打开 VNC 新窗口，请重试"})
       : error.message || tr("remote:vnc_ui.detached_open_failed", {defaultValue:"无法打开 VNC 新窗口"}), "error");

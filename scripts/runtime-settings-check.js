@@ -91,7 +91,9 @@ async function main() {
     "toolbarPlacementUnsplitTerminal",
     "toolbarPlacementUnsplitSftp",
     "toolbarPlacementSplitTerminal",
-    "toolbarPlacementSplitSftp"
+    "toolbarPlacementSplitSftp",
+    "generalRemoteDesktopQuickOpen",
+    "generalVncQuickOpenNewWindow"
   ]) assert.equal(settingsFrontend.includes(`id=\"${controlId}\"`), true, `${controlId} setting is missing`);
   assert.equal(settingsFrontend.includes("syncWorkspaceToolbarPlacements()"), true);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.url_links_enabled, true);
@@ -103,7 +105,7 @@ async function main() {
   assert.match(DEFAULT_TERMINAL_SETTINGS.font_family, /monospace/);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 15,
+    schema_version: 16,
     language: "zh-CN",
     language_onboarding_version: 0,
     vnc_fullscreen_toolbar: "always",
@@ -126,6 +128,8 @@ async function main() {
     sftp_upload_concurrency: 3,
     sftp_download_directory: "",
     restore_workspace_tabs: true,
+    remote_desktop_quick_open_enabled: false,
+    vnc_quick_open_new_window: true,
     workspace_toolbar_placement: {
       unsplit: {terminal:"header", sftp:"header"},
       split: {terminal:"header", sftp:"header"}
@@ -426,6 +430,8 @@ async function main() {
     const workspaceSaved = await request(base, "/api/runtime-settings", {
       method: "PUT",
       body: JSON.stringify({
+        remote_desktop_quick_open_enabled: true,
+        vnc_quick_open_new_window: false,
         workspace_toolbar_placement: {
           unsplit:{terminal:"tab", sftp:"header"},
           split:{terminal:"header", sftp:"tab"}
@@ -433,6 +439,8 @@ async function main() {
       })
     });
     assert.equal(workspaceSaved.response.ok, true);
+    assert.equal(workspaceSaved.body.saved.remote_desktop_quick_open_enabled, true);
+    assert.equal(workspaceSaved.body.saved.vnc_quick_open_new_window, false);
     assert.deepEqual(workspaceSaved.body.saved.workspace_toolbar_placement, {
       unsplit:{terminal:"tab", sftp:"header"},
       split:{terminal:"header", sftp:"tab"}

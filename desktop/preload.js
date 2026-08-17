@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld("termaDesktop", {
   setInterfaceLanguage(language) {
     if (language === "zh-CN" || language === "en-US") ipcRenderer.send("terma:set-interface-language", language);
   },
+  setWindowTitle(title) {
+    ipcRenderer.send("terma:set-window-title", String(title || "Terma"));
+  },
   readClipboardText() {
     return ipcRenderer.invoke("terma:clipboard-read");
   },

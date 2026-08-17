@@ -37,6 +37,12 @@ assert.doesNotMatch(preload, /toggleVncWindowMaximize|terma:vnc-window-maximize/
 assert.match(app, /termaVncWindow[\s\S]*?initDetachedVncWindow\(termaVncDetachedProfileId\)/, "the detached query must initialize only the VNC workspace");
 assert.match(vncWindow, /function initDetachedVncWindow[\s\S]*?vnc-detached-root[\s\S]*?renderEmbeddedVnc\(profile, key, null, root, true\)/);
 assert.match(vncWindow, /prepareVncManagementForDetachedWindow[\s\S]*?closeRemoteProtocolSession\(key\)[\s\S]*?openRemoteDesktop\(id, false, true\)/, "switching to a detached window must close built-in VNC and restore the detection view");
+assert.match(vncWindow, /function reserveVncDetachedBrowserWindow[\s\S]*?window\.open\("", `terma-vnc-\$\{id\}`/, "web quick-open must reserve a popup synchronously while user activation is available");
+assert.match(vncWindow, /const browserDetachedVncReservations = new Map\(\)[\s\S]*?pending\.claims\.add\(claim\)/, "concurrent quick-open requests must share and claim one pending popup");
+assert.match(vncWindow, /function cancelReservedVncDetachedBrowserWindow[\s\S]*?state\.claims\.delete[\s\S]*?state\.claims\.size > 0[\s\S]*?state\.child\.close\(\)/, "one stale quick-open request must not close a popup still claimed by another request");
+assert.match(vncWindow, /function commitReservedVncDetachedBrowserWindow[\s\S]*?state\.status = "committed"[\s\S]*?child\.location\.replace\(url\)/, "a shared reserved popup must navigate atomically only after one VNC probe succeeds");
+assert.match(remoteProfiles, /browserReservation = updateTab[\s\S]*?reserveVncDetachedBrowserWindow\(profile\.id\)[\s\S]*?await Promise\.all/, "VNC quick-open must reserve the browser window before asynchronous probing");
+assert.match(remoteProfiles, /openVncInNewWindow\(profile\.id, key, \{closeDetectionTab:true, browserReservation\}\)[\s\S]*?finally \{[\s\S]*?cancelReservedVncDetachedBrowserWindow\(browserReservation\)/, "failed or stale probes must close an unused reserved popup");
 assert.match(vncWindow, /closeVncDetachedWindowForProfile[\s\S]*?closeVncWindowForProfile/, "switching back to built-in VNC must close the matching detached window");
 assert.match(vnc, /openEmbeddedVncDesktop[\s\S]*?prepareEmbeddedVncWindowSwitch\(profile\.id\)/, "built-in VNC must close the detached window before rendering");
 assert.match(vnc, /function renderEmbeddedVnc\(profile, key, diagnostics=null, targetView=null, detached=isDetachedVncWindow\(\)\)/, "main and detached windows must reuse the same VNC renderer");

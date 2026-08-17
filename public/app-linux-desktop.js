@@ -433,7 +433,12 @@ async function installLinuxDesktop(desktopId, mode="", button=null) {
     if (!await confirmModal(message, operationTitle, tr("common:actions.install", {defaultValue:"安装"}), tr("common:actions.cancel", {defaultValue:"取消"}), true)) return null;
     let adminAuth = null;
     if (!linuxDesktopManagerState.diagnostics?.privileged) {
-      adminAuth = await requestRemoteAdminAuthorization(id, operationTitle);
+      const grantScope = normalizedMode === "local-offline"
+        ? "linux-desktop.install-local-offline"
+        : normalizedMode === "offline"
+          ? "linux-desktop.install-offline"
+          : "linux-desktop.install";
+      adminAuth = await requestRemoteAdminAuthorization(id, operationTitle, grantScope);
       if (!adminAuth) return null;
     }
     const task = await api(`/api/connections/${id}/linux-desktop/install`, {method:"POST", body:JSON.stringify({desktop_id:desktopId, mode:normalizedMode, ...(adminAuth ? {admin_auth:adminAuth} : {})})});
@@ -473,7 +478,11 @@ async function uninstallLinuxDesktop(desktopId, button=null) {
     )) return null;
     let adminAuth = null;
     if (!linuxDesktopManagerState.diagnostics?.privileged) {
-      adminAuth = await requestRemoteAdminAuthorization(id, tr("remote:linux_desktop.uninstall_title", {defaultValue:"卸载 Linux 桌面"}));
+      adminAuth = await requestRemoteAdminAuthorization(
+        id,
+        tr("remote:linux_desktop.uninstall_title", {defaultValue:"卸载 Linux 桌面"}),
+        "linux-desktop.uninstall"
+      );
       if (!adminAuth) return null;
     }
     const task = await api(`/api/connections/${id}/linux-desktop/uninstall`, {method:"POST", body:JSON.stringify({desktop_id:desktopId, ...(adminAuth ? {admin_auth:adminAuth} : {})})});

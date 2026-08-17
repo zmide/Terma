@@ -139,6 +139,8 @@ export async function handleStorageRoutes(
       sftp_upload_concurrency:data.sftp_upload_concurrency ?? current.sftp_upload_concurrency,
       sftp_download_directory:data.sftp_download_directory ?? current.sftp_download_directory,
       restore_workspace_tabs:data.restore_workspace_tabs ?? current.restore_workspace_tabs,
+      remote_desktop_quick_open_enabled:data.remote_desktop_quick_open_enabled ?? current.remote_desktop_quick_open_enabled,
+      vnc_quick_open_new_window:data.vnc_quick_open_new_window ?? current.vnc_quick_open_new_window,
       workspace_toolbar_placement:data.workspace_toolbar_placement ?? current.workspace_toolbar_placement,
       terminal: data.terminal ?? current.terminal
     });

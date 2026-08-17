@@ -803,6 +803,14 @@ function workspaceDocumentEndpoint(subtitle="") {
   return address.replace(/^\w+:\/\//, "").replace(/\/$/, "");
 }
 
+function workspaceDocumentResourceIdentity(value="") {
+  let identity = String(value || "").trim().toLowerCase().replace(/^\w+:\/\//, "").replace(/\/$/, "");
+  if (identity.includes("@")) identity = identity.slice(identity.lastIndexOf("@") + 1);
+  if (/^\[[^\]]+\](?::\d+)?$/.test(identity)) return identity.replace(/^\[|\](?::\d+)?$/g, "");
+  if ((identity.match(/:/g) || []).length === 1) identity = identity.replace(/:\d+$/, "");
+  return identity;
+}
+
 function syncWorkspaceDocumentTitle(title, subtitle, viewName, key=viewName, meta={}) {
   const tab = tabs.find(item => item.key === key) || {};
   const kind = String(meta.kind || tab.kind || viewName || "");
@@ -815,7 +823,15 @@ function syncWorkspaceDocumentTitle(title, subtitle, viewName, key=viewName, met
     "remote-desktop":protocol || tr("remote:auto.remote_desktop", {defaultValue:"远程桌面"})
   }[kind] || "";
   const endpoint = workspaceDocumentEndpoint(subtitle || tab.subtitle || "");
-  document.title = label && endpoint ? `Terma · ${endpoint} · ${label}` : "Terma";
+  const resource = workspaceTabPresentation({...tab, ...meta, kind, protocol:protocol.toLowerCase(), title:String(title || tab.title || "").trim()}).title.trim();
+  const uniqueResource = resource
+    && workspaceDocumentResourceIdentity(resource) !== workspaceDocumentResourceIdentity(endpoint)
+    && resource.toLowerCase() !== label.toLowerCase()
+    ? resource
+    : "";
+  const parts = ["Terma", endpoint, label, uniqueResource].filter(Boolean);
+  document.title = parts.join(" · ");
+  window.termaDesktop?.setWindowTitle?.(document.title);
 }
 
 function setWorkspace(title, subtitle, viewName, key=viewName, updateTab=true, closable=true, meta={}) {
@@ -1076,7 +1092,7 @@ function renderExplorerTools() {
     const quickOpenTitle = tr(remoteDesktopQuickOpen ? "remote:auto.quick_open_enabled_title" : "remote:auto.quick_open_disabled_title", {
       defaultValue:remoteDesktopQuickOpen ? "快捷打开：已开启，探测通过后自动打开远程桌面" : "快捷打开：已关闭，只进入探测界面"
     });
-    const quickOpenButton = `<button class="icon-button${remoteDesktopQuickOpen ? " active" : ""}" data-action="workspace-remote-quick-open" title="${escAttr(quickOpenTitle)}" aria-label="${escAttr(tr("common:auto.quick_open_remote_desktop", {defaultValue:"快捷打开远程桌面"}))}" aria-pressed="${remoteDesktopQuickOpen ? "true" : "false"}">${icon("zap")}</button>`;
+    const quickOpenButton = `<button class="icon-button${remoteDesktopQuickOpen ? " active" : ""}" data-action="workspace-remote-quick-open" title="${escAttr(quickOpenTitle)}" aria-label="${escAttr(tr("common:auto.quick_open_remote_desktop", {defaultValue:"快捷打开远程桌面"}))}" aria-pressed="${remoteDesktopQuickOpen ? "true" : "false"}" aria-busy="${remoteDesktopQuickOpenTogglePending > 0 ? "true" : "false"}">${icon("zap")}</button>`;
     tools.innerHTML = `
       <div class="search-field">${icon("search")}<input id="remoteConnectionSearch" placeholder="${escAttr(remoteSearchLabel)}" value="${esc(remoteConnectionSearch)}" data-input-action="workspace-remote-search"></div>
       <div class="explorer-action-strip connection-action-strip">
@@ -1103,15 +1119,41 @@ function renderExplorerTools() {
     </div>`;
 }
 
-function toggleRemoteDesktopQuickOpen() {
-  remoteDesktopQuickOpen = !remoteDesktopQuickOpen;
-  localStorage.setItem("remoteDesktopQuickOpen", remoteDesktopQuickOpen ? "1" : "0");
+let remoteDesktopQuickOpenToggleQueue = Promise.resolve();
+let remoteDesktopQuickOpenToggleTarget = null;
+let remoteDesktopQuickOpenTogglePending = 0;
+
+async function toggleRemoteDesktopQuickOpen() {
+  const nextValue = !(remoteDesktopQuickOpenToggleTarget ?? remoteDesktopQuickOpen);
+  remoteDesktopQuickOpenToggleTarget = nextValue;
+  remoteDesktopQuickOpenTogglePending += 1;
   renderExplorerTools();
-  notify(tr(remoteDesktopQuickOpen ? "remote:auto.quick_open_enabled_notice" : "remote:auto.quick_open_disabled_notice", {
-    defaultValue:remoteDesktopQuickOpen
-      ? "已开启快捷打开：远程桌面探测通过后会自动启动"
-      : "已关闭快捷打开：远程桌面默认停留在探测界面"
-  }), "info");
+  const operation = remoteDesktopQuickOpenToggleQueue.then(async () => {
+    try {
+      const result = await api("/api/runtime-settings", {
+        method:"PUT",
+        body:JSON.stringify({remote_desktop_quick_open_enabled:nextValue})
+      });
+      runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
+      remoteDesktopQuickOpen = runtimeSettings.saved.remote_desktop_quick_open_enabled === true;
+      localStorage.removeItem("remoteDesktopQuickOpen");
+      notify(tr(remoteDesktopQuickOpen ? "remote:auto.quick_open_enabled_notice" : "remote:auto.quick_open_disabled_notice", {
+        defaultValue:remoteDesktopQuickOpen
+          ? "已开启快捷打开：远程桌面探测通过后会自动启动"
+          : "已关闭快捷打开：远程桌面默认停留在探测界面"
+      }), "info");
+      return remoteDesktopQuickOpen;
+    } catch (error) {
+      notify(error.message || tr("settings:auto.workspace_save_failed", {defaultValue:"工作区设置保存失败"}), "error");
+      return remoteDesktopQuickOpen;
+    } finally {
+      remoteDesktopQuickOpenTogglePending = Math.max(0, remoteDesktopQuickOpenTogglePending - 1);
+      if (!remoteDesktopQuickOpenTogglePending) remoteDesktopQuickOpenToggleTarget = null;
+      renderExplorerTools();
+    }
+  });
+  remoteDesktopQuickOpenToggleQueue = operation.catch(() => {});
+  return operation;
 }
 
 function showConnectionExplorerMenu(event) {

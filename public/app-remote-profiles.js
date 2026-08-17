@@ -544,6 +544,10 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
   }
   const view = $("view-remote-desktop");
   if (!view) return;
+  const browserReservation = updateTab && !showManagement && remoteDesktopQuickOpen && embeddedVnc && vncQuickOpenUsesNewWindow()
+    ? reserveVncDetachedBrowserWindow(profile.id)
+    : null;
+  let browserReservationCommitted = false;
   const renderScope = captureRemoteDesktopRenderScope(profile.id, key, view);
   const embeddedXdmcp = profile.protocol === "xdmcp";
   const managedRdp = profile.protocol === "rdp";
@@ -652,7 +656,8 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
       if (embeddedVnc && existingVncSession?.presentation === "management") syncEmbeddedVncManagementControls(existingVncSession, activeView);
       const xdmcpDirectReady = !embeddedXdmcp || serverState?.ready_for_login || serverState?.management_available === false || Boolean(serverState?.error) || Boolean(serverState?.endpoint_probe?.ok);
       if (updateTab && remoteDesktopQuickOpen && clientLaunchable && xdmcpDirectReady && rdpEndpointReady && vncReadyForLaunch) {
-        if (embeddedVnc) await openEmbeddedVncDesktop(profile.id, key);
+        if (embeddedVnc && vncQuickOpenUsesNewWindow()) browserReservationCommitted = await openVncInNewWindow(profile.id, key, {closeDetectionTab:true, browserReservation});
+        else if (embeddedVnc) await openEmbeddedVncDesktop(profile.id, key);
         else await launchRemoteDesktop(profile.id, key);
       }
     });
@@ -663,5 +668,7 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
       status.className = "connection-test-status error";
       status.textContent = error.message;
     });
+  } finally {
+    if (!browserReservationCommitted) cancelReservedVncDetachedBrowserWindow(browserReservation);
   }
 }

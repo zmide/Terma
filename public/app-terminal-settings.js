@@ -215,6 +215,10 @@ function terminalSingleLinePaste(text) {
   return String(text || "").replace(/\r\n?/g, "\n").split("\n").map(line => line.trim()).filter(Boolean).join(" ");
 }
 
+function terminalPasteInput(text) {
+  return String(text || "").replace(/\r\n|\r|\n/g, "\r");
+}
+
 function editTerminalMultilinePaste(initialText) {
   return new Promise(resolve => {
     const modal = $("modal");
@@ -268,7 +272,7 @@ async function sendTerminalPasteText(key, text) {
   const lineCount = normalized.split("\n").length;
   const mode = currentTerminalGlobalSettings().multiline_paste_mode;
   if (lineCount <= 1 || mode === "paste") {
-    return sendTerminalData(key, value, {trackCommand:true});
+    return sendTerminalData(key, terminalPasteInput(value), {trackCommand:true});
   }
   if (mode === "single_line") {
     return sendTerminalData(key, terminalSingleLinePaste(value), {trackCommand:true});
@@ -283,7 +287,7 @@ async function sendTerminalPasteText(key, text) {
     focusTerminalSession(key);
     return false;
   }
-  return sendTerminalData(key, edited, {trackCommand:true});
+  return sendTerminalData(key, terminalPasteInput(edited), {trackCommand:true});
 }
 
 function terminalOpenLink(text) {
