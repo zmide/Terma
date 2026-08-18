@@ -163,6 +163,7 @@ beginWorkspaceTabDrag = function(event, key, tabElement=null) {
   if (workspaceTabDrag) finishWorkspaceTabDrag(null, true);
   const pane = workspaceFindPaneForTab(key);
   if (!pane) return;
+  const sourceActiveTabKey = pane.activeTabKey;
   if (pane.activeTabKey !== key || focusedPaneId !== pane.id) activateTab(key);
   const tabNode = tabElement?.closest?.(".tab")
     || workspacePaneElement(pane.id)?.querySelector(`.tab[data-tab-key="${workspaceCssEscape(key)}"]`);
@@ -170,6 +171,7 @@ beginWorkspaceTabDrag = function(event, key, tabElement=null) {
   workspaceTabDrag = {
     key,
     sourcePaneId:pane.id,
+    sourceActiveTabKey,
     tab:tabNode,
     pointerId:event.pointerId,
     startX:event.clientX,
@@ -238,7 +240,12 @@ function applyWorkspaceTabDrop(drag, target) {
   const sourceIndex = sourcePane.tabs.indexOf(drag.key);
   if (sourceIndex < 0) return false;
   sourcePane.tabs.splice(sourceIndex, 1);
-  if (!sourcePane.tabs.includes(sourcePane.activeTabKey)) sourcePane.activeTabKey = sourcePane.tabs[Math.min(sourceIndex, sourcePane.tabs.length - 1)] || sourcePane.tabs.at(-1) || "";
+  if (!sourcePane.tabs.includes(sourcePane.activeTabKey)) {
+    const rememberedActive = drag.sourceActiveTabKey && sourcePane.tabs.includes(drag.sourceActiveTabKey)
+      ? drag.sourceActiveTabKey
+      : "";
+    sourcePane.activeTabKey = rememberedActive || sourcePane.tabs[Math.min(sourceIndex, sourcePane.tabs.length - 1)] || sourcePane.tabs.at(-1) || "";
+  }
 
   let destinationPane = targetPane;
   if (edgeDrop) {

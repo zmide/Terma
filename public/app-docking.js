@@ -643,7 +643,7 @@ function focusWorkspacePane(paneId) {
     activeView = tab.viewName || tab.kind || "welcome";
     const connectionId = Number(tab.id);
     if (Number.isInteger(connectionId) && connectionId > 0 && typeof selectedId !== "undefined" && selectedId !== connectionId) {
-      if (typeof selectConnection === "function") selectConnection(connectionId);
+      if (typeof selectConnection === "function") selectConnection(connectionId, {render:false});
       else selectedId = connectionId;
     }
     if (typeof restoreSftpRuntimeForTab === "function" && tab.kind === "sftp") restoreSftpRuntimeForTab(tab.key);
@@ -773,7 +773,7 @@ setWorkspaceTabConnectionStatus = function(key, status) {
   });
 };
 
-renderTabContent = function(tab) {
+renderTabContent = function(tab, options={}) {
   if (tab.kind === "terminal") return openTerminal(tab.id, false, tab.key, tab.title);
   if (tab.kind === "quick-terminal") return restoreQuickTerminalTab(tab);
   if (tab.kind === "forwards") return openForwards(tab.id, false);
@@ -781,7 +781,7 @@ renderTabContent = function(tab) {
   if (tab.kind === "import") return showImport(false);
   if (tab.kind === "log") return openLog(tab.path, tab.title, false);
   if (tab.kind === "command") return openBatchCommand(false);
-  if (tab.kind === "sftp") return openSftp(tab.id, tab.path || ".", false, tab.key);
+  if (tab.kind === "sftp") return openSftp(tab.id, tab.path || ".", false, tab.key, {fast:Boolean(options.fast)});
   if (tab.kind === "dashboard") return openServerDashboard(tab.id, false);
   if (tab.kind === "remote-edit") return tab.id ? editRemoteProfile(tab.id, false) : newRemoteProfile(tab.protocol || "rdp");
   if (tab.kind === "remote-desktop") return openRemoteDesktop(tab.id, false);
@@ -795,7 +795,7 @@ renderTabContent = function(tab) {
   return setWorkspace(tab.title, tab.subtitle, tab.viewName, tab.key, false, tab.closable);
 };
 
-function renderWorkspacePaneContent(paneId) {
+function renderWorkspacePaneContent(paneId, options={}) {
   if (!workspaceDockElement()) return null;
   if (isMobileLayout() && paneId !== focusedPaneId) return null;
   const pane = workspaceFindPane(paneId);
@@ -808,7 +808,7 @@ function renderWorkspacePaneContent(paneId) {
   activeTabKey = tab.key;
   activeView = tab.viewName || tab.kind || "welcome";
   try {
-    const result = renderTabContent(tab);
+    const result = renderTabContent(tab, options);
     if (result?.catch) {
       result.catch(error => {
         const previousPane = workspaceExecutionPaneId;
@@ -843,16 +843,20 @@ activateTab = function(key) {
   activeView = tab.viewName || tab.kind || "welcome";
   if (typeof restoreSftpRuntimeForTab === "function" && tab.kind === "sftp") restoreSftpRuntimeForTab(tab.key);
   syncWorkspaceTabActivation(pane, key);
-  renderWorkspacePaneContent(pane.id);
+  const fastSftp = tab.kind === "sftp" && typeof sftpTabRuntimes !== "undefined" && sftpTabRuntimes.has(tab.key);
+  renderWorkspacePaneContent(pane.id, {fast:fastSftp});
   syncFocusedWorkspaceClasses();
-  syncWorkspaceToolbarPlacements();
+  if (!["terminal", "quick-terminal", "sftp"].includes(tab.kind)) syncWorkspaceToolbarPlacements();
 };
 
 setWorkspace = function(title, subtitle, viewName, key=viewName, updateTab=true, closable=true, meta={}) {
   if (!workspaceDockElement()) return legacyWorkspaceApi.setWorkspace(title, subtitle, viewName, key, updateTab, closable, meta);
+  const skipToolbarSync = meta?.skipToolbarSync === true;
+  const tabMeta = {...meta};
+  delete tabMeta.skipToolbarSync;
   const existingPane = workspaceFindPaneForTab(activeTabKey) || workspaceFindPaneForTab(key);
   const paneId = workspaceExecutionPaneId || existingPane?.id || focusedPaneId;
-  if (updateTab) addTab(key, title, subtitle, viewName, closable, meta);
+  if (updateTab) addTab(key, title, subtitle, viewName, closable, tabMeta);
   const resolvedPaneId = workspaceExecutionPaneId || workspaceFindPaneForTab(activeTabKey)?.id || paneId;
   const pane = ensureWorkspacePaneElement(resolvedPaneId);
   const workspace = pane.querySelector(".workspace");
@@ -870,13 +874,13 @@ setWorkspace = function(title, subtitle, viewName, key=viewName, updateTab=true,
     if (heading) heading.textContent = tr("navigation:auto.workspace", {defaultValue:"Workspace"});
     if (description) description.textContent = subtitle || "";
     activeView = viewName;
-    if (typeof syncWorkspaceDocumentTitle === "function") syncWorkspaceDocumentTitle(title, subtitle, viewName, key, meta);
+    if (typeof syncWorkspaceDocumentTitle === "function") syncWorkspaceDocumentTitle(title, subtitle, viewName, key, tabMeta);
     syncFocusedWorkspaceClasses();
   }
   const previousExecutionPane = workspaceExecutionPaneId;
   workspaceExecutionPaneId = resolvedPaneId;
   try {
-    syncWorkspaceToolbarPlacements();
+    if (!skipToolbarSync) syncWorkspaceToolbarPlacements();
   } finally {
     workspaceExecutionPaneId = previousExecutionPane;
   }
@@ -967,21 +971,7 @@ closeTabsByKey = function(keys, anchorKey="") {
   if (typeof rememberClosedWorkspaceTabs === "function") rememberClosedWorkspaceTabs([...targets]);
   const anchorPane = workspaceFindPaneForTab(anchorKey) || workspaceFindPane(focusedPaneId);
   const paneActiveKeysBeforeClose = new Map(workspaceLeaves().map(pane => [pane.id, pane.activeTabKey]));
-  for (const key of targets) {
-    const tab = tabs.find(item => item.key === key);
-    closeTerminalSession(key);
-    if (typeof closeRemoteProtocolSession === "function") closeRemoteProtocolSession(key);
-    if (typeof ftpProfileStates !== "undefined") ftpProfileStates.delete(key);
-    if (tab?.kind === "sftp" && typeof closeSftpSession === "function") closeSftpSession(key);
-    if (tab?.kind === "log" && typeof disposeLogViewerState === "function") disposeLogViewerState(key);
-    sftpDisconnectedTabs.delete(key);
-    sftpViewStates.delete(key);
-    if (typeof clearSftpDirectoryViewCache === "function") clearSftpDirectoryViewCache(key);
-    if (tab?.kind === "command") {
-      stopBatchCommand(key);
-      if (typeof resetBatchCommandDraft === "function") resetBatchCommandDraft(key);
-    }
-  }
+  const cleanupTabs = [...targets].map(key => ({key, tab:tabs.find(item => item.key === key)}));
   tabs = tabs.filter(tab => !targets.has(tab.key));
   for (const pane of workspaceLeaves()) {
     const previousIndex = Math.max(0, pane.tabs.findIndex(key => targets.has(key)));
@@ -1009,6 +999,28 @@ closeTabsByKey = function(keys, anchorKey="") {
     activeView = tab?.viewName || tab?.kind || "welcome";
     renderWorkspacePaneContent(focusedPane.id);
   } else renderWelcome();
+  const cleanup = () => {
+    for (const {key, tab} of cleanupTabs) {
+      closeTerminalSession(key);
+      if (typeof closeRemoteProtocolSession === "function") closeRemoteProtocolSession(key);
+      if (typeof ftpProfileStates !== "undefined") ftpProfileStates.delete(key);
+      if (tab?.kind === "sftp" && typeof closeSftpSession === "function") closeSftpSession(key);
+      if (tab?.kind === "log" && typeof disposeLogViewerState === "function") disposeLogViewerState(key);
+      sftpDisconnectedTabs.delete(key);
+      sftpViewStates.delete(key);
+      if (typeof clearSftpDirectoryViewCache === "function") clearSftpDirectoryViewCache(key);
+      if (tab?.kind === "command") {
+        stopBatchCommand(key);
+        if (typeof resetBatchCommandDraft === "function") resetBatchCommandDraft(key);
+      }
+    }
+  };
+  const deferCleanup = () => {
+    if (typeof setTimeout === "function") setTimeout(cleanup, 0);
+    else cleanup();
+  };
+  if (typeof requestAnimationFrame === "function") requestAnimationFrame(deferCleanup);
+  else deferCleanup();
 };
 
 closeTabsByMode = function(mode, key) {
@@ -1137,22 +1149,23 @@ function duplicateWorkspaceTab(key, options={}) {
     return duplicateKey;
   }
   if (tab.kind === "terminal") {
-    const openedKey = openTerminal(tab.id, true, duplicateKey, duplicateTitle);
-    if (!openedKey) {
-      if (typeof terminalStartupOverrides !== "undefined") terminalStartupOverrides.delete(duplicateKey);
+    const open = () => runInWorkspacePane(pane.id, () => {
+      const openedKey = openTerminal(tab.id, true, duplicateKey, duplicateTitle);
+      if (!openedKey && typeof terminalStartupOverrides !== "undefined") terminalStartupOverrides.delete(duplicateKey);
       if (options.result && typeof options.result === "object") {
-        Object.assign(options.result, {key:"", opened:false, split:false});
+        Object.assign(options.result, {key:openedKey || "", opened:Boolean(openedKey), split:false});
       }
-      return "";
-    }
-    if (options.result && typeof options.result === "object") {
-      Object.assign(options.result, {key:duplicateKey, opened:true, split:false});
-    }
+    });
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(open);
+    else open();
     return duplicateKey;
   }
   if (tab.kind === "sftp") {
-    if (typeof duplicateSftpTab === "function") return duplicateSftpTab(key);
-    return openSftp(tab.id, tab.path || ".", true, duplicateKey);
+    const sourceRuntime = typeof sftpTabRuntimes !== "undefined" ? sftpTabRuntimes.get(key) : null;
+    const open = () => runInWorkspacePane(pane.id, () => openSftp(tab.id, sourceRuntime?.state.path || tab.path || ".", true, duplicateKey));
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(open);
+    else open();
+    return duplicateKey;
   }
   if (tab.kind === "local-files" && typeof openLocalFiles === "function") {
     return openLocalFiles(tab.path || "", true, duplicateKey);

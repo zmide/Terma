@@ -58,6 +58,8 @@ function activateSftpEntry(event, id, path, name, type, tabKey=sftpTabKeyFromNod
   event?.stopPropagation();
   selectSftpEntry(event, id, path, name, type, tabKey);
   if (type === "dir") return navigateSftpPath(path, tabKey);
+  const saved = runtimeSettings?.saved || runtimeSettings || {};
+  if (saved.sftp_double_click_file_action === "external" && window.termaDesktop && typeof openSftpExternalEdit === "function") return openSftpExternalEdit(id, path);
   return isSftpImageName(name) ? previewSftpImage(id, path) : previewSftpText(id, path);
 }
 
@@ -278,13 +280,127 @@ async function extractSftpSelection(tabKey=activeTabKey) {
   const tab = tabs.find(item => item.key === tabKey);
   const paths = selectedSftpPaths(tabKey);
   if (!tab || paths.length !== 1) return notify(tr("sftp:operations.select_archive", {defaultValue:"请选择一个压缩包"}), "info");
-  const job = await api(`/api/connections/${tab.id}/sftp/extract`, {method:"POST", body:JSON.stringify({path:paths[0], target:runtime?.state.path || ".", background:true})});
+  const archive = await sftpArchiveOptionsModal({mode:"extract", connectionId:tab.id, path:paths[0], target:runtime?.state.path || "."});
+  if (!archive) return;
+  const job = await api(`/api/connections/${tab.id}/sftp/extract`, {method:"POST", body:JSON.stringify({path:paths[0], target:archive.target, encoding:archive.encoding, overwrite:archive.overwrite, background:true})});
   trackSftpMutationJob(job);
   refreshSftpJobs();
 }
 
 function sftpPathName(remotePath) {
   return String(remotePath || "").replace(/\\/g, "/").split("/").filter(Boolean).pop() || "archive";
+}
+
+function sftpArchiveBaseName(remotePath) {
+  return sftpPathName(remotePath).replace(/\.(?:tar\.gz|tgz|zip|tar)$/i, "") || "archive";
+}
+
+function sftpArchiveEncodingOptionsHtml(selected="default") {
+  const options = [["default", tr("sftp:archive.default_encoding", {defaultValue:"默认"})], ...sftpFilenameEncodingOptions];
+  return options.map(([value, label]) => `<option value="${escAttr(value)}" ${value === selected ? "selected" : ""}>${esc(label)}</option>`).join("");
+}
+
+function sftpArchiveOptionsModal(options={}) {
+  return new Promise(resolve => {
+    const mode = String(options.mode || "compress");
+    const extracting = mode === "extract";
+    const modal = $("modal");
+    const initialTarget = String(options.target || ".");
+    const archiveFolderName = sftpArchiveBaseName(options.path || options.filename || "archive");
+    const title = options.title || tr(extracting ? "sftp:archive.extract_title" : mode === "download" ? "sftp:archive.download_title" : "sftp:archive.compress_title", {
+      defaultValue:extracting ? "解压缩文件" : mode === "download" ? "打包下载" : "压缩文件"
+    });
+    const closeLabel = tr("common:actions.close", {defaultValue:"关闭"});
+    const confirmLabel = tr(extracting ? "sftp:menu.extract" : mode === "download" ? "sftp:transfer.download_archive" : "sftp:menu.compress", {
+      defaultValue:extracting ? "解压" : mode === "download" ? "打包下载" : "压缩"
+    });
+    modal.onclick = null;
+    modal.innerHTML = `<div class="modal-card sftp-archive-options-modal" role="dialog" aria-modal="true"><div class="sftp-modal-head"><div><h2>${esc(title)}</h2><span>${esc(options.path || "")}</span></div><button id="sftpArchiveCloseTop" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div><div class="sftp-archive-form">${extracting ? `<label>${esc(tr("sftp:archive.target_directory", {defaultValue:"解压到"}))}</label><div class="upload-line"><input id="sftpArchiveTarget" value="${escAttr(initialTarget)}"><button id="sftpArchiveBrowse" type="button" title="${escAttr(tr("sftp:archive.choose_remote_directory", {defaultValue:"选择远端目录"}))}" aria-label="${escAttr(tr("sftp:archive.choose_remote_directory", {defaultValue:"选择远端目录"}))}">${icon("folder-open")}<span>${esc(tr("sftp:archive.choose_directory", {defaultValue:"选择目录"}))}</span></button></div><div id="sftpArchiveBrowser" class="sftp-archive-browser" hidden><div class="sftp-archive-browser-head"><button id="sftpArchiveBrowserParent" class="icon-button" type="button" title="${escAttr(tr("sftp:auto.parent_directory", {defaultValue:"上一级"}))}" aria-label="${escAttr(tr("sftp:auto.parent_directory", {defaultValue:"上一级"}))}">${icon("corner-left-up")}</button><code id="sftpArchiveBrowserPath"></code><button id="sftpArchiveBrowserSelect" type="button">${icon("folder-check")}<span>${esc(tr("sftp:archive.select_current_directory", {defaultValue:"选择当前目录"}))}</span></button></div><div id="sftpArchiveBrowserList" class="sftp-archive-browser-list"></div></div><label>${esc(tr("sftp:archive.filename_encoding", {defaultValue:"文件名编码"}))}</label><select id="sftpArchiveEncoding">${sftpArchiveEncodingOptionsHtml()}</select><label class="check-row"><input id="sftpArchiveOverwrite" type="checkbox" checked> ${esc(tr("sftp:archive.overwrite_existing", {defaultValue:"覆盖已存在的文件"}))}</label><label class="check-row"><input id="sftpArchiveNamedFolder" type="checkbox"> ${esc(tr("sftp:archive.extract_named_folder", {defaultValue:"解压到同名文件夹"}))}</label>` : `<label>${esc(tr("sftp:dialogs.archive_name", {defaultValue:"压缩包名称"}))}</label><input id="sftpArchiveFilename" value="${escAttr(options.filename || "archive.tar.gz")}"><label>${esc(tr("sftp:archive.filename_encoding", {defaultValue:"文件名编码"}))}</label><select id="sftpArchiveEncoding">${sftpArchiveEncodingOptionsHtml()}</select>`}</div><div class="actions"><button id="sftpArchiveCancel" type="button">${esc(tr("common:actions.cancel", {defaultValue:"取消"}))}</button><button id="sftpArchiveConfirm" class="primary" type="button">${extracting ? icon("archive-restore") : icon("archive")}<span>${esc(confirmLabel)}</span></button></div></div>`;
+    modal.hidden = false;
+    let settled = false;
+    let baseTarget = initialTarget;
+    let browserPath = initialTarget;
+    const close = value => {
+      if (settled) return;
+      settled = true;
+      modal.hidden = true;
+      modal.innerHTML = "";
+      resolve(value);
+    };
+    const normalizedTarget = value => String(value || ".").replace(/\\/g, "/").replace(/\/{2,}/g, "/").replace(/\/$/, "") || "/";
+    const joinTarget = (directory, name) => directory === "/" ? `/${name}` : `${directory.replace(/\/$/, "")}/${name}`;
+    const syncTarget = () => {
+      const target = $("sftpArchiveTarget");
+      if (!target) return;
+      target.value = $("sftpArchiveNamedFolder")?.checked ? joinTarget(normalizedTarget(baseTarget), archiveFolderName) : normalizedTarget(baseTarget);
+    };
+    const loadBrowser = async nextPath => {
+      const list = $("sftpArchiveBrowserList");
+      const pathLabel = $("sftpArchiveBrowserPath");
+      browserPath = normalizedTarget(nextPath);
+      pathLabel.textContent = browserPath;
+      list.innerHTML = stateView("loading", tr("sftp:auto.loading_directory", {defaultValue:"正在读取目录"}), browserPath);
+      try {
+        const params = new URLSearchParams({path:browserPath, page:"1", page_size:"200", sort:"name", dir:"asc"});
+        const data = await api(`/api/connections/${Number(options.connectionId)}/sftp?${params.toString()}`);
+        browserPath = String(data.path || browserPath);
+        pathLabel.textContent = browserPath;
+        const directories = (data.entries || []).filter(item => ["dir", "directory"].includes(String(item.type || "")));
+        list.innerHTML = directories.length
+          ? directories.map(item => `<button type="button" data-sftp-archive-directory="${escAttr(item.name)}">${icon("folder")}<span>${esc(item.name)}</span>${icon("chevron-right")}</button>`).join("")
+          : `<div class="muted">${esc(tr("sftp:archive.no_subdirectories", {defaultValue:"当前目录没有子目录"}))}</div>`;
+        list.querySelectorAll("[data-sftp-archive-directory]").forEach(button => {
+          button.onclick = () => loadBrowser(joinRemotePath(browserPath, button.dataset.sftpArchiveDirectory));
+        });
+        refreshIcons();
+      } catch (error) {
+        list.innerHTML = `<div class="error-text">${esc(error.message || tr("sftp:archive.directory_read_failed", {defaultValue:"目录读取失败"}))}</div>`;
+      }
+    };
+    $("sftpArchiveCloseTop").onclick = () => close(null);
+    $("sftpArchiveCancel").onclick = () => close(null);
+    if (extracting) {
+      $("sftpArchiveTarget").addEventListener("input", event => {
+        const value = normalizedTarget(event.target.value);
+        baseTarget = $("sftpArchiveNamedFolder").checked && value.endsWith(`/${archiveFolderName}`)
+          ? value.slice(0, -archiveFolderName.length - 1) || "/"
+          : value;
+      });
+      $("sftpArchiveNamedFolder").onchange = syncTarget;
+      $("sftpArchiveBrowse").onclick = () => {
+        const browser = $("sftpArchiveBrowser");
+        browser.hidden = !browser.hidden;
+        if (!browser.hidden) void loadBrowser(baseTarget);
+      };
+      $("sftpArchiveBrowserParent").onclick = () => loadBrowser(parentRemotePath(browserPath));
+      $("sftpArchiveBrowserSelect").onclick = () => {
+        baseTarget = browserPath;
+        syncTarget();
+        $("sftpArchiveBrowser").hidden = true;
+      };
+    }
+    $("sftpArchiveConfirm").onclick = () => {
+      const encoding = $("sftpArchiveEncoding").value || "default";
+      if (extracting) {
+        const target = normalizedTarget($("sftpArchiveTarget").value);
+        if (!target) return notify(tr("sftp:archive.target_required", {defaultValue:"请输入解压目录"}), "error");
+        close({target, encoding, overwrite:$("sftpArchiveOverwrite").checked, namedFolder:$("sftpArchiveNamedFolder").checked});
+        return;
+      }
+      const filename = String($("sftpArchiveFilename").value || "").trim();
+      if (!filename) return notify(tr("sftp:archive.filename_required", {defaultValue:"请输入压缩包名称"}), "error");
+      close({filename, encoding});
+    };
+    modal.onkeydown = event => {
+      if (event.key === "Escape") close(null);
+      if (event.key === "Enter" && event.target?.tagName !== "BUTTON") {
+        event.preventDefault();
+        $("sftpArchiveConfirm").click();
+      }
+    };
+    $(extracting ? "sftpArchiveTarget" : "sftpArchiveFilename")?.focus();
+    refreshIcons();
+  });
 }
 
 function defaultSftpArchiveName(entries) {
@@ -298,10 +414,10 @@ async function compressSftpSelection(tabKey=activeTabKey) {
   const tab = tabs.find(item => item.key === tabKey);
   const entries = selectedSftpEntries(tabKey);
   if (!tab || !entries.length) return notify(tr("sftp:operations.select_compress_items", {defaultValue:"请选择要压缩的文件或目录"}), "info");
-  const name = await inputModal(tr("sftp:dialogs.compress_selected", {defaultValue:"压缩选中项目"}), tr("sftp:dialogs.archive_name", {defaultValue:"压缩包名称（自动使用 tar.gz）"}), defaultSftpArchiveName(entries));
-  if (!name) return;
+  const archive = await sftpArchiveOptionsModal({mode:"compress", title:tr("sftp:dialogs.compress_selected", {defaultValue:"压缩选中项目"}), filename:defaultSftpArchiveName(entries)});
+  if (!archive) return;
   try {
-    const job = await api(`/api/connections/${tab.id}/sftp/compress`, {method:"POST", body:JSON.stringify({paths:entries.map(item => item.path), target:runtime?.state.path || ".", filename:name})});
+    const job = await api(`/api/connections/${tab.id}/sftp/compress`, {method:"POST", body:JSON.stringify({paths:entries.map(item => item.path), target:runtime?.state.path || ".", filename:archive.filename, encoding:archive.encoding})});
     trackSftpMutationJob(job);
     refreshSftpJobs();
   } catch (error) {

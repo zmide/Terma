@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const ts = require("typescript");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const languages = ["zh-CN", "en-US"];
@@ -554,7 +555,7 @@ const apiAt = html.indexOf('/app-api.js');
 assert.ok(vendorAt >= 0 && bootstrapAt > vendorAt && apiAt > bootstrapAt, "i18next vendor and bootstrap scripts must load before application modules");
 assert.ok(staticContent.includes('["/vendor/i18next/i18next.min.js", vendorFile("i18next", "dist/umd/i18next.min.js")]'));
 const runtimeSettings = read("src/runtime-settings.ts");
-assert.ok(runtimeSettings.includes("schema_version: 17") && runtimeSettings.includes("language: normalizeLanguage") && runtimeSettings.includes("language_onboarding_version") && runtimeSettings.includes("vnc_fullscreen_toolbar") && runtimeSettings.includes("vnc_remote_image_poll_interval_ms"));
+assert.ok(runtimeSettings.includes("schema_version: 18") && runtimeSettings.includes("language: normalizeLanguage") && runtimeSettings.includes("language_onboarding_version") && runtimeSettings.includes("vnc_fullscreen_toolbar") && runtimeSettings.includes("vnc_remote_image_poll_interval_ms"));
 const i18nBootstrap = read("public/app-i18n.js");
 const frontend = `${i18nBootstrap}\n${read("public/app-settings-runtime.js")}\n${read("public/app-settings.js")}`;
 for (const token of ["setTermaLanguage", "registerTermaI18nRenderer", "toggleTermaLanguage", "syncTermaLanguageControls", "termaI18nPhraseTemplates"]) {
@@ -587,7 +588,7 @@ const connectionHealthFrontend = read("public/app-connection-health.js");
 assert.match(connectionHealthFrontend, /diagnosis\.reason_code/, "connection health must localize SSH failures by stable diagnosis code");
 assert.match(connectionHealthFrontend, /ssh\.preserve_raw_output === true/, "connection health must preserve only explicitly marked raw SSH output");
 assert.equal(connectionHealthFrontend.includes("diagnosis.display"), false, "connection health must not render the backend's fixed Chinese SSH diagnosis display directly");
-const aceFrontend = read("public/app-sftp.js");
+const aceFrontend = readFrontendDomain(root, "sftp");
 assert.ok(aceFrontend.includes("function syncTermaAceEditorChrome("), "Ace instances must expose a live localization refresh boundary");
 assert.ok(aceFrontend.includes("renderer?.updateFull?.(true)"), "Ace localization must redraw existing fold and annotation chrome");
 assert.ok(aceFrontend.includes("editor.textInput?.setAriaOptions?.({setLabel:true})"), "Ace localization must refresh existing accessibility labels");

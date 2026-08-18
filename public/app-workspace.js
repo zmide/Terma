@@ -8,6 +8,8 @@ const ACTIVITY_BAR_WIDTH_MAX = 64;
 let activityBarWidth = ACTIVITY_BAR_WIDTH_DEFAULT;
 let activityBarResize = null;
 let activityBarFitFrame = 0;
+let primaryViewRenderFrame = 0;
+let primaryViewRenderSequence = 0;
 const OPERATION_PANE_WIDTH_DEFAULT = 292;
 const OPERATION_PANE_WIDTH_MIN = 260;
 const OPERATION_PANE_WIDTH_MAX = 520;
@@ -773,7 +775,11 @@ function restoreTabsState() {
 
 function closeTerminalSession(key) {
   const session = terminalSessions.get(key);
-  if (!session) return;
+  if (!session) {
+    terminalSurfaceCache.get(key)?.remove?.();
+    terminalSurfaceCache.delete(key);
+    return;
+  }
   const quickConnectionId = session.connection?.quick_connection ? Number(session.connection.id || 0) : 0;
   session.connectionAttempt = Number(session.connectionAttempt || 0) + 1;
   if (typeof cancelTerminalCursorCopy === "function") cancelTerminalCursorCopy(session, key);
@@ -785,6 +791,8 @@ function closeTerminalSession(key) {
   try { session.globalSelectionDisposable?.dispose(); } catch {}
   if (typeof cancelTerminalOutputQueue === "function") cancelTerminalOutputQueue(session);
   try { session.term?.dispose(); } catch {}
+  terminalSurfaceCache.get(key)?.remove?.();
+  terminalSurfaceCache.delete(key);
   clearTimeout(session.latencyPendingTimer);
   clearTimeout(session.autoCopyTimer);
   terminalSessions.delete(key);
@@ -829,7 +837,7 @@ function syncWorkspaceDocumentTitle(title, subtitle, viewName, key=viewName, met
     && resource.toLowerCase() !== label.toLowerCase()
     ? resource
     : "";
-  const parts = ["Terma", endpoint, label, uniqueResource].filter(Boolean);
+  const parts = [endpoint, label, uniqueResource, "Terma"].filter(Boolean);
   document.title = parts.join(" · ");
   window.termaDesktop?.setWindowTitle?.(document.title);
 }
@@ -877,32 +885,41 @@ function showPrimary(name, togglePane=false) {
   $("mobileCommand").classList.toggle("active", name === "command");
   $("mobileLogs").classList.toggle("active", name === "logs");
   $("mobileSettings")?.classList.toggle("active", name === "settings");
-  if (typeof syncTermaLiquidNavigation === "function") syncTermaLiquidNavigation();
   if (shouldTogglePane) setOperationPaneCollapsed(nextPaneCollapsed);
+  const mobile = isMobileLayout();
+  if (mobile) showMobileExplorer();
+  else if (!["import", "command", "settings"].includes(name)) document.querySelector(".left-pane")?.classList.remove("mobile-hide");
   renderExplorerTools();
-  if (name === "import") {
-    if (isMobileLayout()) showMobileExplorer();
-    else if (activeView !== "import") showImport();
-    else showImportSection(activeImportSection, {moveToWorkspace:false});
-  } else if (name === "running") {
-    if (isMobileLayout()) showMobileExplorer();
-    renderRunningForwards();
-  } else if (name === "command") {
-    renderCommandTemplates().catch(e=>notify(e.message,"error"));
-    if (isMobileLayout()) showMobileExplorer();
-    else openBatchCommand();
-  } else if (name === "logs") {
-    if (isMobileLayout()) showMobileExplorer();
-    renderLogs().catch(e=>notify(e.message,"error"));
-  } else if (name === "settings") {
-    if (isMobileLayout()) showMobileExplorer();
-    else if (activeView !== "settings") openSettings();
-    else showSettingsSection(activeSettingsSection, {moveToWorkspace:false});
-  } else {
-    if (isMobileLayout()) showMobileExplorer();
-    else document.querySelector(".left-pane").classList.remove("mobile-hide");
-    renderConnections();
+  const sequence = ++primaryViewRenderSequence;
+  if (primaryViewRenderFrame) cancelAnimationFrame(primaryViewRenderFrame);
+  primaryViewRenderFrame = 0;
+  if (["import", "command", "settings"].includes(name)) {
+    if (typeof syncTermaLiquidNavigation === "function") syncTermaLiquidNavigation();
+    if (name === "import") {
+      if (!mobile && activeView !== "import") showImport();
+      else if (!mobile) showImportSection(activeImportSection, {moveToWorkspace:false});
+    } else if (name === "command") {
+      renderCommandTemplates().catch(e=>notify(e.message,"error"));
+      if (!mobile) openBatchCommand();
+    } else if (!mobile && activeView !== "settings") openSettings();
+    else if (!mobile) showSettingsSection(activeSettingsSection, {moveToWorkspace:false});
+    return;
   }
+  primaryViewRenderFrame = requestAnimationFrame(() => {
+    if (sequence !== primaryViewRenderSequence || primaryView !== name) return;
+    if (typeof syncTermaLiquidNavigation === "function") syncTermaLiquidNavigation();
+    primaryViewRenderFrame = requestAnimationFrame(() => {
+      primaryViewRenderFrame = 0;
+      if (sequence !== primaryViewRenderSequence || primaryView !== name) return;
+      if (name === "running") {
+        renderRunningForwards();
+      } else if (name === "logs") {
+        renderLogs().catch(e=>notify(e.message,"error"));
+      } else {
+        renderConnections();
+      }
+    });
+  });
 }
 
 function setExplorerSectionActive(sectionId) {

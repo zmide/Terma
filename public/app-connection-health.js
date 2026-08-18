@@ -240,7 +240,7 @@ async function repairServerDashboardCredentials(id) {
 async function openServerDashboard(id, updateTab=true, options={}) {
   const paneId = typeof currentWorkspacePaneId === "function" ? currentWorkspacePaneId() : "";
   const inPane = action => typeof runInWorkspacePane === "function" ? runInWorkspacePane(paneId, action) : action();
-  const c = selectConnection(id);
+  const c = selectConnection(id, {render:updateTab !== false});
   if (!c) return;
   let body = null;
   inPane(() => {

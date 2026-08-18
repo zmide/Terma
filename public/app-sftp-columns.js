@@ -1,6 +1,8 @@
 const SFTP_COLUMN_LAYOUT_STORAGE_KEY = "termaSftpColumnLayoutV1";
 const SFTP_COLUMN_KEYS = Object.freeze(["name", "size", "mtime", "access"]);
 const SFTP_ACTION_COLUMN_KEY = "actions";
+const SFTP_COLUMN_MIN_WEIGHT = .001;
+const SFTP_COLUMN_MIN_PIXELS = 3;
 const SFTP_ACTION_COLUMN_DEFAULT_WEIGHT = 3.6;
 const SFTP_COLUMN_DEFAULTS = Object.freeze({
   name:{weight:2.45,min:160},
@@ -32,9 +34,9 @@ function normalizeSftpColumnLayout(value) {
   for (const key of SFTP_COLUMN_KEYS) {
     const supplied = Number(value?.weights?.[key]);
     const migrated = legacyTotal > 0 ? (Math.max(0, Number(legacyWidths[key]) || 0) / legacyTotal) * 5.79 : 0;
-    weights[key] = Math.round(Math.max(.2, Math.min(8, Number.isFinite(supplied) ? supplied : migrated || fallback.weights[key])) * 1000) / 1000;
+    weights[key] = Math.round(Math.max(SFTP_COLUMN_MIN_WEIGHT, Math.min(8, Number.isFinite(supplied) ? supplied : migrated || fallback.weights[key])) * 1000) / 1000;
   }
-  const actionWeight = Math.round(Math.max(.2, Math.min(8, Number(value?.actionWeight) || fallback.actionWeight)) * 1000) / 1000;
+  const actionWeight = Math.round(Math.max(SFTP_COLUMN_MIN_WEIGHT, Math.min(8, Number(value?.actionWeight) || fallback.actionWeight)) * 1000) / 1000;
   return {order, weights, actionWeight};
 }
 
@@ -85,13 +87,14 @@ function sftpLayoutTrackKeys(list) {
 function sftpActionsColumnWidth(list, actionWeight=readSftpColumnLayout().actionWeight) {
   const width = Math.max(0, Number(list?.clientWidth || list?.getBoundingClientRect?.().width || 0));
   if (list?.classList.contains("sftp-actions-more-only")) return 54;
-  const ratio = Math.max(.2, Number(actionWeight || 0)) / SFTP_ACTION_COLUMN_DEFAULT_WEIGHT;
-  if (list?.classList.contains("sftp-actions-compact")) return Math.min(200, Math.max(116, Math.round(132 * ratio)));
+  const ratio = Math.max(SFTP_COLUMN_MIN_WEIGHT, Number(actionWeight || 0)) / SFTP_ACTION_COLUMN_DEFAULT_WEIGHT;
+  if (list?.classList.contains("sftp-actions-compact")) return Math.min(200, Math.max(SFTP_COLUMN_MIN_PIXELS, Math.round(132 * ratio)));
   if (list?.classList.contains("sftp-actions-medium")) {
     const base = Math.min(400, Math.max(250, Math.round(width * .4)));
-    return Math.min(480, Math.max(220, Math.round(base * ratio)));
+    return Math.min(480, Math.max(SFTP_COLUMN_MIN_PIXELS, Math.round(base * ratio)));
   }
-  return Math.min(560, Math.max(420, Math.round(width * .31)));
+  const base = Math.min(560, Math.max(420, Math.round(width * .31)));
+  return Math.min(560, Math.max(SFTP_COLUMN_MIN_PIXELS, Math.round(base * ratio)));
 }
 
 function sftpUsesFixedActionTrack(list) {
@@ -132,7 +135,7 @@ function lockSftpPixelColumnLayout(list, tracks, widths) {
   if (!list) return;
   list.dataset.sftpPixelColumns = "1";
   list.dataset.sftpPixelColumnsWidth = String(Math.max(0, Number(list.getBoundingClientRect?.().width || list.clientWidth || 0)));
-  list.style.setProperty("--sftp-grid-columns", ["36px", ...tracks.map(key => `${Math.max(0, Number(widths.get(key) || 0))}px`)].join(" "));
+  list.style.setProperty("--sftp-grid-columns", ["36px", ...tracks.map(key => `${Math.max(SFTP_COLUMN_MIN_PIXELS, Number(widths.get(key) || 0))}px`)].join(" "));
 }
 
 function refreshSftpColumnLayouts() {
@@ -173,12 +176,9 @@ function sftpResizePair(list, key) {
   const currentWidth = currentCell.getBoundingClientRect().width;
   const nextWidth = nextCell.getBoundingClientRect().width;
   const total = currentWidth + nextWidth;
-  if (total < 2) return null;
-  const currentMin = Math.min(SFTP_COLUMN_DEFAULTS[key].min, Math.max(28, total - 28));
-  const nextMinimum = nextKey === SFTP_ACTION_COLUMN_KEY
-    ? (list?.classList.contains("sftp-actions-more-only") ? 44 : list?.classList.contains("sftp-actions-compact") ? 116 : list?.classList.contains("sftp-actions-medium") ? 220 : 330)
-    : SFTP_COLUMN_DEFAULTS[nextKey].min;
-  const nextMin = Math.min(nextMinimum, Math.max(28, total - currentMin));
+  const currentMin = SFTP_COLUMN_MIN_PIXELS;
+  const nextMin = SFTP_COLUMN_MIN_PIXELS;
+  if (total < currentMin + nextMin) return null;
   const currentWeight = Number(layoutValueForSftpColumn(layout, key) || 0);
   const nextWeight = Number(layoutValueForSftpColumn(layout, nextKey) || 0);
   return {
@@ -191,7 +191,7 @@ function sftpResizePair(list, key) {
     nextMin,
     currentWeight,
     nextWeight,
-    totalWeight:Math.max(.4, currentWeight + nextWeight),
+    totalWeight:Math.max(SFTP_COLUMN_MIN_WEIGHT * 2, currentWeight + nextWeight),
     actionWidthBase:nextKey === SFTP_ACTION_COLUMN_KEY && sftpUsesFixedActionTrack(list) ? sftpActionColumnBaseWidth(list) : 0,
     dataPixelsPerWeight:currentWeight > 0 ? currentWidth / currentWeight : 0
   };
@@ -214,10 +214,10 @@ function rebaseSftpColumnLayout(list, source=readSftpColumnLayout()) {
   const weightedKeys = fixedActions ? tracks.filter(key => key !== SFTP_ACTION_COLUMN_KEY) : tracks;
   const widths = new Map(weightedKeys.map(key => [key, Math.max(0, Number(sftpTrackElement(list, key)?.getBoundingClientRect?.().width || 0))]));
   const totalWidth = [...widths.values()].reduce((total, width) => total + width, 0);
-  const totalWeight = weightedKeys.reduce((total, key) => total + Math.max(.2, Number(layoutValueForSftpColumn(layout, key) || 0)), 0);
+  const totalWeight = weightedKeys.reduce((total, key) => total + Math.max(SFTP_COLUMN_MIN_WEIGHT, Number(layoutValueForSftpColumn(layout, key) || 0)), 0);
   if (totalWidth > 0 && totalWeight > 0) {
     for (const key of weightedKeys) {
-      const value = Math.max(.2, widths.get(key) / totalWidth * totalWeight);
+      const value = Math.max(SFTP_COLUMN_MIN_WEIGHT, widths.get(key) / totalWidth * totalWeight);
       if (key === SFTP_ACTION_COLUMN_KEY) layout.actionWeight = value;
       else layout.weights[key] = value;
     }
@@ -238,14 +238,14 @@ function prepareSftpColumnResize(list, key) {
   const layout = rebaseSftpColumnLayout(list);
   pair.currentWeight = Number(layoutValueForSftpColumn(layout, pair.key) || 0);
   pair.nextWeight = Number(layoutValueForSftpColumn(layout, pair.nextKey) || 0);
-  pair.totalWeight = Math.max(.4, pair.currentWeight + pair.nextWeight);
+  pair.totalWeight = Math.max(SFTP_COLUMN_MIN_WEIGHT * 2, pair.currentWeight + pair.nextWeight);
   pair.dataPixelsPerWeight = pair.currentWeight > 0 ? pair.currentWidth / pair.currentWeight : 0;
   lockSftpPixelColumnLayout(list, tracks, widths);
   return {pair, layout, tracks, widths};
 }
 
 function setSftpColumnPairWidth(layout, pair, currentWidth) {
-  const minimum = Math.min(pair.currentMin, Math.max(28, pair.total - pair.nextMin));
+  const minimum = Math.min(pair.currentMin, Math.max(SFTP_COLUMN_MIN_PIXELS, pair.total - pair.nextMin));
   const maximum = Math.max(minimum, pair.total - pair.nextMin);
   const bounded = Math.max(minimum, Math.min(maximum, currentWidth));
   if (pair.nextKey === SFTP_ACTION_COLUMN_KEY && pair.actionWidthBase > 0) {

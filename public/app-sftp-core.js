@@ -203,7 +203,9 @@ function ensureSftpRuntime(tabKey, connectionId=0, remotePath=".", root=null) {
       requestController:null,
       searchTimer:null,
       resizeObserver:null,
-      resizeFrame:0
+      resizeFrame:0,
+      toolbar:null,
+      detachedView:null
     };
     sftpTabRuntimes.set(key, runtime);
   }
@@ -274,6 +276,8 @@ function disposeSftpRuntime(tabKey) {
   clearTimeout(runtime.searchTimer);
   runtime.resizeObserver?.disconnect?.();
   if (runtime.resizeFrame) cancelAnimationFrame(runtime.resizeFrame);
+  runtime.detachedView = null;
+  runtime.toolbar = null;
   sftpNavigationHistories.delete(key);
   sftpViewStates.delete(key);
   sftpPendingDirectoryRefreshes.delete(key);
@@ -919,18 +923,21 @@ function syncSftpToolbarPlacement(tabKey=activeTabKey) {
   const key = String(tabKey || "");
   const tab = tabs.find(item => item.key === key);
   if (tab?.kind !== "sftp") return;
+  const runtime = sftpTabRuntimes.get(key);
   const pane = typeof workspaceFindPaneForTab === "function" ? workspaceFindPaneForTab(key) : null;
   const view = sftpRuntimeRoot(key)
     || (pane && typeof workspacePaneElement === "function" ? workspacePaneElement(pane.id)?.querySelector("#view-sftp") : null);
   if (!view || (view.dataset.sftpTabKey && view.dataset.sftpTabKey !== key)) return;
   const mount = view.querySelector("#sftpToolbarMount");
   const escapedKey = typeof workspaceCssEscape === "function" ? workspaceCssEscape(key) : CSS.escape(key);
-  const toolbar = mount?.querySelector(":scope > .sftp-toolbar")
+  const toolbar = runtime?.toolbar
+    || mount?.querySelector(":scope > .sftp-toolbar")
     || document.querySelector(`.sftp-toolbar[data-workspace-tab-key="${escapedKey}"]`);
   if (!mount || !toolbar) return;
   view.dataset.workspaceTabKey = key;
   view.dataset.sftpTabKey = key;
   if (typeof registerWorkspaceToolbar === "function") registerWorkspaceToolbar("sftp", key, toolbar, mount);
+  if (runtime) runtime.toolbar = toolbar;
   if (typeof placeWorkspaceToolbar === "function") placeWorkspaceToolbar("sftp", key, toolbar, mount);
   else {
     mount.replaceChildren(toolbar);

@@ -813,6 +813,7 @@ registerTermaI18nRenderer(() => {
   if (typeof renderExplorerTools === "function") renderExplorerTools();
   if (typeof renderRunningForwards === "function") renderRunningForwards();
   if (typeof renderForwards === "function" && typeof activeView !== "undefined" && activeView === "forwards") renderForwards();
+  if (typeof renderUpdateStatus === "function" && document.getElementById("updateCheckArea")) renderUpdateStatus({icons:true});
   if (typeof tabs !== "undefined" && Array.isArray(tabs)) {
     for (const tab of tabs) {
       if (tab.key === "welcome" || tab.kind === "welcome") {

@@ -1122,17 +1122,19 @@ function saveSftpJobFile(id) {
 
 async function extractSingleSftp(id, path, tabKey=activeTabKey) {
   const runtime = sftpTabRuntimes.get(String(tabKey || ""));
-  const job = await api(`/api/connections/${id}/sftp/extract`, {method:"POST", body:JSON.stringify({path, target:runtime?.state.path || ".", background:true})});
+  const archive = await sftpArchiveOptionsModal({mode:"extract", connectionId:id, path, target:runtime?.state.path || "."});
+  if (!archive) return;
+  const job = await api(`/api/connections/${id}/sftp/extract`, {method:"POST", body:JSON.stringify({path, target:archive.target, encoding:archive.encoding, overwrite:archive.overwrite, background:true})});
   trackSftpMutationJob(job);
   refreshSftpJobs();
 }
 
 async function compressSingleSftp(id, path, tabKey=activeTabKey) {
   const runtime = sftpTabRuntimes.get(String(tabKey || ""));
-  const name = await inputModal(tr("sftp:dialogs.compress_remote", {defaultValue:"压缩远程项目"}), tr("sftp:dialogs.archive_name", {defaultValue:"压缩包名称（自动使用 tar.gz）"}), `${sftpPathName(path)}.tar.gz`);
-  if (!name) return;
+  const archive = await sftpArchiveOptionsModal({mode:"compress", title:tr("sftp:dialogs.compress_remote", {defaultValue:"压缩远程项目"}), filename:`${sftpPathName(path)}.tar.gz`});
+  if (!archive) return;
   try {
-    const job = await api(`/api/connections/${id}/sftp/compress`, {method:"POST", body:JSON.stringify({paths:[path], target:runtime?.state.path || ".", filename:name})});
+    const job = await api(`/api/connections/${id}/sftp/compress`, {method:"POST", body:JSON.stringify({paths:[path], target:runtime?.state.path || ".", filename:archive.filename, encoding:archive.encoding})});
     trackSftpMutationJob(job);
     refreshSftpJobs();
   } catch (error) {

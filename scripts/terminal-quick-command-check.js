@@ -32,7 +32,7 @@ for (const contract of [
 assert.doesNotMatch(quickCommands, /onclick\s*=/i, "new quick command interactions must use delegated listeners");
 assert.match(terminal, /terminalQuickCommandToolbarButton\(key\)/);
 assert.match(terminal, /renderTerminalQuickCommandBar\(key\)/);
-assert.match(terminal, /mountTerminalQuickCommandBar\(key, terminalView\)/);
+assert.match(terminal, /mountTerminalQuickCommandBar\(key, terminalSurface\)/);
 assert.match(index, /app-command-snippets\.js[^]*app-terminal-quick-commands\.js[^]*app-named-workspaces\.js/);
 assert.match(quickCommands, /icon\("list-checks"\)/);
 assert.doesNotMatch(quickCommands, /terminal-quick-command-head/);

@@ -3,7 +3,7 @@ const TERMA_STATE_OWNERS = Object.freeze({
   navigation:["activeView", "primaryView", "tabs", "activeTabKey"],
   connections:["connections", "selectedId", "connectionSearch", "connectionBulkMode", "selectedConnectionIds", "healthResults"],
   remote:["remoteProfiles", "selectedRemoteProfileId", "remoteConnectionSearch", "remoteDesktopQuickOpen"],
-  terminal:["terminalSessions", "terminalCounts", "terminalFontSize", "terminalGlobalSettings", "terminalKeysVisible"],
+  terminal:["terminalSessions", "terminalSurfaceCache", "terminalCounts", "terminalFontSize", "terminalGlobalSettings", "terminalKeysVisible"],
   sftp:["sftpState", "sftpClipboard", "sftpViewStates", "sftpFavorites", "sftpJobsTimer"],
   settings:["securitySettings", "operationPaneCollapsed", "operationPanePinnedByView"],
   logs:["logsData", "logSearch", "logViewerState", "logPage"]
@@ -30,6 +30,7 @@ let pendingGroup = "";
 let tabs = [];
 let activeTabKey = "";
 const terminalSessions = new Map();
+const terminalSurfaceCache = new Map();
 const terminalCounts = new Map();
 let terminalLatencyVisible = localStorage.getItem("terminalLatencyVisible") !== "0";
 let TerminalClass = null;
