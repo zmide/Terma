@@ -328,6 +328,14 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
         editorShelfItem = sftpFloatingEditorShelfItem(floatingLayer, {fileName, serverName, sourceLabel}, restoreFloatingEditor);
         refreshIcons();
       };
+      const clampCard = () => {
+        if (card.hidden || card.classList.contains("is-fullscreen")) return;
+        const rect = card.getBoundingClientRect();
+        const left = Math.max(8, Math.min(window.innerWidth - Math.min(rect.width, window.innerWidth - 16) - 8, rect.left));
+        const top = Math.max(8, Math.min(window.innerHeight - Math.min(rect.height, window.innerHeight - 16) - 8, rect.top));
+        card.style.left = `${left}px`;
+        card.style.top = `${top}px`;
+      };
       const syncFullscreen = enabled => {
         if (enabled && !card.classList.contains("is-fullscreen")) {
           const rect = card.getBoundingClientRect();
@@ -356,7 +364,10 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
         fullscreenButton.setAttribute("aria-label", label);
         fullscreenButton.innerHTML = icon(enabled ? "minimize-2" : "maximize");
         localStorage.setItem("sftpTextEditorFullscreen", enabled ? "1" : "0");
-        requestAnimationFrame(() => aceEditor?.resize(true));
+        requestAnimationFrame(() => {
+          if (!enabled) clampCard();
+          aceEditor?.resize(true);
+        });
       };
       fullscreenButton.onclick = event => {
         event.stopPropagation();
@@ -367,14 +378,6 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       const dragHandle = getEditor(".sftp-editor-head");
       dragHandle?.classList.add("sftp-editor-drag-handle");
       let dragState = null;
-      const clampCard = () => {
-        if (card.hidden || card.classList.contains("is-fullscreen")) return;
-        const rect = card.getBoundingClientRect();
-        const left = Math.max(8, Math.min(window.innerWidth - Math.min(rect.width, window.innerWidth - 16) - 8, rect.left));
-        const top = Math.max(8, Math.min(window.innerHeight - Math.min(rect.height, window.innerHeight - 16) - 8, rect.top));
-        card.style.left = `${left}px`;
-        card.style.top = `${top}px`;
-      };
       const moveFloatingEditor = event => {
         if (!dragState || event.pointerId !== dragState.pointerId) return;
         card.style.left = `${dragState.left + event.clientX - dragState.clientX}px`;
@@ -536,6 +539,11 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     let editorSearchQuery = "";
     let editorSearchMatches = [];
     let editorSearchIndex = -1;
+    const invalidateEditorSearchMatches = () => {
+      editorSearchQuery = "";
+      editorSearchMatches = [];
+      editorSearchIndex = -1;
+    };
     const closeEditorSearch = () => {
       searchBar.hidden = true;
       focusEditor();
@@ -553,26 +561,24 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       editorSearchMatches = [];
       editorSearchIndex = -1;
       if (!query) return;
-      const source = editorSearchSource().toLocaleLowerCase();
-      const needle = query.toLocaleLowerCase();
-      let offset = 0;
-      while (editorSearchMatches.length < 10000) {
-        const index = source.indexOf(needle, offset);
-        if (index < 0) break;
-        editorSearchMatches.push(index);
-        offset = index + Math.max(1, needle.length);
+      const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const expression = new RegExp(escapedQuery, "giu");
+      for (const match of editorSearchSource().matchAll(expression)) {
+        editorSearchMatches.push({start:match.index, length:match[0].length});
+        if (editorSearchMatches.length >= 10000) break;
       }
     };
     const selectEditorSearchMatch = index => {
       const query = String(searchInput.value || "");
       if (!query || index < 0) return;
-      const start = editorSearchMatches[index];
-      const end = start + query.length;
+      const match = editorSearchMatches[index];
+      const start = match.start;
+      const end = start + match.length;
       if (aceEditor) {
         const Range = ace.require("ace/range").Range;
-        const document = aceEditor.session.getDocument();
-        const startPosition = document.indexToPosition(start, 0);
-        const endPosition = document.indexToPosition(end, 0);
+        const aceDocument = aceEditor.session.getDocument();
+        const startPosition = aceDocument.indexToPosition(start, 0);
+        const endPosition = aceDocument.indexToPosition(end, 0);
         aceEditor.selection.setRange(new Range(startPosition.row, startPosition.column, endPosition.row, endPosition.column), false);
         aceEditor.scrollToLine(startPosition.row, true, true);
         aceEditor.focus();
@@ -647,13 +653,14 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     updateStats();
     syncFormatButton();
     if (aceEditor) {
-      aceEditor.session.on("change", () => { contentModified = true; updateStats(); });
+      aceEditor.session.on("change", () => { contentModified = true; invalidateEditorSearchMatches(); updateStats(); });
       aceEditor.commands.addCommand({name:"saveSftpFile", bindKey:{win:"Ctrl-S",mac:"Command-S"}, exec:()=>saveButton.click()});
     } else fallbackEditor.addEventListener("input", () => {
       if (useLightEditor) {
         commitLightPage();
         contentModified = lightPageEdits.size > 0;
       } else contentModified = true;
+      invalidateEditorSearchMatches();
       updateStats();
     });
     releaseEditorLayout = bindSftpEditorLayout(card, editorWorkspace, diffSplitter, () => aceEditor?.resize(true));
@@ -752,7 +759,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     getEditor("#sftpEditorSearchNext").onclick = () => stepEditorSearch(1);
     getEditor("#sftpEditorSearchClose").onclick = closeEditorSearch;
     searchInput.addEventListener("input", () => {
-      editorSearchQuery = "";
+      invalidateEditorSearchMatches();
       stepEditorSearch(1);
     });
     searchInput.addEventListener("keydown", event => {
@@ -817,4 +824,3 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     requestAnimationFrame(() => requestAnimationFrame(() => diffOptions.onReady?.()));
   });
 }
-

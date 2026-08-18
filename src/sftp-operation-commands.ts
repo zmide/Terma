@@ -47,9 +47,15 @@ function buildRemoteExtractCommand(connection: any, remotePath: string, targetDi
     const encodingOption = encoding === "default" ? "" : `-O ${shellQuote(unzipEncoding)} `;
     extract = `unzip ${overwrite ? "-o" : "-n"} ${encodingOption}${remotePathOperand(connection, archivePath)}`;
   } else if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
-    extract = `tar ${overwrite ? "" : "-k "}-xzf ${remotePathOperand(connection, archivePath)}`;
+    const archive = remotePathOperand(connection, archivePath);
+    extract = overwrite
+      ? `tar -xzf ${archive}`
+      : `if tar --version 2>/dev/null | grep -qi 'GNU tar'; then tar --skip-old-files -xzf ${archive}; else tar -k -xzf ${archive}; fi`;
   } else if (lower.endsWith(".tar")) {
-    extract = `tar ${overwrite ? "" : "-k "}-xf ${remotePathOperand(connection, archivePath)}`;
+    const archive = remotePathOperand(connection, archivePath);
+    extract = overwrite
+      ? `tar -xf ${archive}`
+      : `if tar --version 2>/dev/null | grep -qi 'GNU tar'; then tar --skip-old-files -xf ${archive}; else tar -k -xf ${archive}; fi`;
   } else throw new Error("暂只支持 zip、tar.gz、tgz、tar 解压");
   const command = `mkdir -p -- ${remotePathOperand(connection, target)} && cd ${remotePathOperand(connection, target)} && ${extract}`;
   return {archivePath, target, encoding, overwrite, command};

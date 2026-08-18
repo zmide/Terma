@@ -145,7 +145,7 @@ async function main() {
     assert.equal(hash(fs.readFileSync(growingResult.path)), hash(growingPayload), "an actively written file must preserve the snapshot received before EOF");
     const archived = jobs.startArchiveDownloadJob(connection.id, ["/fixture/folder"], {
       deliveryMode:"browser",
-      filename:"selected-files",
+      filename:"selected:files?",
       encoding:"euc-kr"
     });
     archiveJobId = archived.id;
@@ -153,7 +153,8 @@ async function main() {
     assert.equal(archiveStarting.resume_supported, true, "archive downloads must advertise checkpoint resume support");
     assert.equal(archiveStarting.can_pause, false, "the remote packing phase must not advertise pause support");
     assert.deepEqual(archiveStarting.archive_source_paths, ["/fixture/folder"]);
-    assert.equal(archiveStarting.download_name, "selected-files.tar.gz");
+    assert.equal(archiveStarting.download_name, "selected:files?.tar.gz");
+    if (process.platform === "win32") assert.doesNotMatch(path.basename(archiveStarting.temp_path), /[<>:"/\\|?*]/, "Windows 临时归档路径不能包含非法文件名字符");
     assert.equal(archiveStarting.archive_filename_encoding, "euc_kr");
     const archiveDownloading = await waitForJobState(jobs, archiveJobId, job => job.status === "running" && job.phase === "downloading" && job.transferred > 0);
     assert.equal(archiveDownloading.can_pause, true, "the archive download phase must allow pausing");
@@ -165,7 +166,7 @@ async function main() {
     assert.equal(jobs.listSftpJobs().find(item => item.id === archiveJobId).can_resume, false);
     assert.equal(jobs.listSftpJobs().find(item => item.id === archiveJobId).remote_archive_path, "", "completed archive downloads must clean the remote temporary file");
     const archive = jobs.getSftpJobFile(archiveJobId);
-    assert.equal(archive.name, "selected-files.tar.gz", "a browser archive download must keep the requested tar.gz filename");
+    assert.equal(archive.name, "selected:files?.tar.gz", "a browser archive download must keep the requested tar.gz filename");
     assert.match(archiveCreateCommand, /--format=posix --pax-option=hdrcharset=BINARY/, "archive creation must retain the selected filename encoding policy");
     assert.ok(fs.statSync(archive.path).size > 0, "the archive response must use the completed job artifact");
     console.log("SFTP download integrity check passed.");

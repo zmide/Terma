@@ -19,7 +19,7 @@ function sanitizeSftpSvgDocument(markup) {
   if (documentNode.querySelector("parsererror")) throw new Error(tr("sftp:editor.svg_parse_failed", {defaultValue:"SVG 内容无法解析"}));
   const root = documentNode.documentElement;
   if (!root || root.tagName.toLowerCase() !== "svg") throw new Error(tr("sftp:editor.svg_parse_failed", {defaultValue:"SVG 内容无法解析"}));
-  root.querySelectorAll("script,foreignObject,iframe,object,embed,video,audio").forEach(node => node.remove());
+  root.querySelectorAll("script,foreignObject,iframe,object,embed,video,audio,animate,set,animateTransform,animateMotion").forEach(node => node.remove());
   [root, ...root.querySelectorAll("*")].forEach(element => {
     [...element.attributes].forEach(attribute => {
       const name = attribute.name.toLowerCase();
@@ -52,7 +52,7 @@ async function previewSftpImage(id, path) {
     const zoomOutLabel = tr("sftp:editor.zoom_out", {defaultValue:"缩小"});
     const zoomInLabel = tr("sftp:editor.zoom_in", {defaultValue:"放大"});
     const zoomResetLabel = tr("sftp:editor.zoom_reset", {defaultValue:"适应窗口"});
-    modal.innerHTML = `<div class="modal-card wide sftp-image-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(path.split(/[\\/]/).pop() || path)}</h2><span>${esc(formatBytes(blob.size))}</span></div><div class="sftp-image-tools"><button id="sftpImageZoomOut" class="icon-button" type="button" title="${escAttr(zoomOutLabel)}" aria-label="${escAttr(zoomOutLabel)}">${icon("minus")}</button><span id="sftpImageZoomValue" class="sftp-image-zoom-value">100%</span><button id="sftpImageZoomReset" class="icon-button" type="button" title="${escAttr(zoomResetLabel)}" aria-label="${escAttr(zoomResetLabel)}">${icon("maximize-2")}</button><button id="sftpImageZoomIn" class="icon-button" type="button" title="${escAttr(zoomInLabel)}" aria-label="${escAttr(zoomInLabel)}">${icon("plus")}</button>${isSvg ? `<div class="sftp-svg-search"><label><span class="sr-only">${esc(searchLabel)}</span><input id="sftpSvgSearch" type="search" placeholder="${escAttr(searchLabel)}" autocomplete="off"></label><span id="sftpSvgSearchCount" aria-live="polite"></span><button id="sftpSvgSearchPrevious" class="icon-button" type="button" title="${escAttr(searchPreviousLabel)}" aria-label="${escAttr(searchPreviousLabel)}">${icon("arrow-up")}</button><button id="sftpSvgSearchNext" class="icon-button" type="button" title="${escAttr(searchNextLabel)}" aria-label="${escAttr(searchNextLabel)}">${icon("arrow-down")}</button></div>` : ""}<button id="sftpImageClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div></div><div id="sftpImageViewport" class="sftp-image-preview"><div id="sftpImageStageShell" class="sftp-image-stage-shell"><div id="sftpImageStage" class="sftp-image-stage"></div></div></div><div class="actions"><button onclick="downloadSftp(${id},'${escAttr(path)}')">${icon("download")}<span>${esc(tr("sftp:menu.download", {defaultValue:"下载"}))}</span></button><button id="sftpImageCloseBottom">${esc(closeLabel)}</button></div></div>`;
+    modal.innerHTML = `<div class="modal-card wide sftp-image-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(path.split(/[\\/]/).pop() || path)}</h2><span>${esc(formatBytes(blob.size))}</span></div><div class="sftp-image-tools"><button id="sftpImageZoomOut" class="icon-button" type="button" title="${escAttr(zoomOutLabel)}" aria-label="${escAttr(zoomOutLabel)}">${icon("minus")}</button><span id="sftpImageZoomValue" class="sftp-image-zoom-value">100%</span><button id="sftpImageZoomReset" class="icon-button" type="button" title="${escAttr(zoomResetLabel)}" aria-label="${escAttr(zoomResetLabel)}">${icon("maximize-2")}</button><button id="sftpImageZoomIn" class="icon-button" type="button" title="${escAttr(zoomInLabel)}" aria-label="${escAttr(zoomInLabel)}">${icon("plus")}</button>${isSvg ? `<div class="sftp-svg-search"><label><span class="sr-only">${esc(searchLabel)}</span><input id="sftpSvgSearch" type="search" placeholder="${escAttr(searchLabel)}" autocomplete="off"></label><span id="sftpSvgSearchCount" aria-live="polite"></span><button id="sftpSvgSearchPrevious" class="icon-button" type="button" title="${escAttr(searchPreviousLabel)}" aria-label="${escAttr(searchPreviousLabel)}">${icon("arrow-up")}</button><button id="sftpSvgSearchNext" class="icon-button" type="button" title="${escAttr(searchNextLabel)}" aria-label="${escAttr(searchNextLabel)}">${icon("arrow-down")}</button></div>` : ""}<button id="sftpImageClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div></div><div id="sftpImageViewport" class="sftp-image-preview"><div id="sftpImageStageShell" class="sftp-image-stage-shell"><div id="sftpImageStage" class="sftp-image-stage"></div></div></div><div class="actions"><button id="sftpImageDownload">${icon("download")}<span>${esc(tr("sftp:menu.download", {defaultValue:"下载"}))}</span></button><button id="sftpImageCloseBottom">${esc(closeLabel)}</button></div></div>`;
     modal.hidden = false;
     modal.onclick = null;
     const imageCard = modal.querySelector(".sftp-image-modal");
@@ -281,6 +281,7 @@ async function previewSftpImage(id, path) {
       updateZoom(scale * (event.deltaY < 0 ? 1.15 : 1 / 1.15), {clientX:event.clientX, clientY:event.clientY});
     };
     const onKeyDown = event => {
+      if (!modal.contains(event.target) && !modal.contains(document.activeElement)) return;
       if (event.key === "Escape") return close();
       if (isSvg && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
@@ -359,6 +360,7 @@ async function previewSftpImage(id, path) {
     $("sftpSvgSearch")?.addEventListener("input", () => { svgMatchIndex = -1; updateSvgSearch(1); });
     $("sftpSvgSearchPrevious")?.addEventListener("click", () => updateSvgSearch(-1));
     $("sftpSvgSearchNext")?.addEventListener("click", () => updateSvgSearch(1));
+    $("sftpImageDownload").onclick = () => downloadSftp(id, path);
     $("sftpImageClose").onclick = close;
     $("sftpImageCloseBottom").onclick = close;
     $("sftpImageClose").focus();
@@ -407,9 +409,8 @@ async function previewSftpText(id, path) {
       }
       if (!next.changed && !(next.persist_default && data.preferred_encoding !== next.encoding)) return notify(tr("sftp:editor.no_changes", {defaultValue:"文件内容没有变化"}), "info");
       const saved = next.savedResult || await api(`/api/connections/${id}/sftp/write`, {method:"POST", body:JSON.stringify({path, content:next.content, backup:next.backup, encoding:next.encoding, line_ending:next.line_ending, persist_default:next.persist_default})});
-      const connection = connections.find(item => item.id === id);
       const savedEncoding = saved?.encoding || next.encoding;
-      if (connection && next.persist_default) connection.sftp_text_encoding = savedEncoding;
+      if (editorConnection && next.persist_default) editorConnection.sftp_text_encoding = savedEncoding;
       if (typeof queueSftpDirectoryRefresh === "function") {
         queueSftpDirectoryRefresh(id);
         flushPendingSftpDirectoryRefresh();
@@ -423,4 +424,3 @@ async function previewSftpText(id, path) {
     notify(error.message || tr("sftp:editor.remote_read_failed", {defaultValue:"读取文件失败"}), "error");
   }
 }
-

@@ -267,7 +267,7 @@ function createSftpDownloadJobs(dependencies: any) {
     const id = crypto.randomUUID();
     const basename = path.posix.basename(String(remotePath || "").replace(/\\/g, "/")) || "download";
     fs.mkdirSync(downloadsDirectory, { recursive:true });
-    const tempPath = path.join(downloadsDirectory, `${id}-${basename}`);
+    const tempPath = path.join(downloadsDirectory, `${id}-${safeLocalFilename(basename)}`);
     const job: any = {
       id,
       connection_id:Number(connectionId),
@@ -546,7 +546,7 @@ function createSftpDownloadJobs(dependencies: any) {
     if (Buffer.byteLength(basename, "utf8") > 255) throw new Error("打包下载文件名过长");
     const filenameEncoding = normalizeArchiveFilenameEncoding(options.encoding);
     fs.mkdirSync(downloadsDirectory, {recursive:true});
-    const tempPath = path.join(downloadsDirectory, `${id}-${basename}`);
+    const tempPath = path.join(downloadsDirectory, `${id}-${safeLocalFilename(basename)}`);
     const job: any = {
       id,
       connection_id:Number(connectionId),

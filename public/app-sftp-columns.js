@@ -176,9 +176,9 @@ function sftpResizePair(list, key) {
   const currentWidth = currentCell.getBoundingClientRect().width;
   const nextWidth = nextCell.getBoundingClientRect().width;
   const total = currentWidth + nextWidth;
-  if (total < 2) return null;
   const currentMin = SFTP_COLUMN_MIN_PIXELS;
   const nextMin = SFTP_COLUMN_MIN_PIXELS;
+  if (total < currentMin + nextMin) return null;
   const currentWeight = Number(layoutValueForSftpColumn(layout, key) || 0);
   const nextWeight = Number(layoutValueForSftpColumn(layout, nextKey) || 0);
   return {

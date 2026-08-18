@@ -131,6 +131,8 @@ assert.match(sftpFrontendSource, /event\.ctrlKey.*event\.deltaY/s, "图片预览
 assert.match(sftpFrontendSource, /event\.key\.toLowerCase\(\) === "f"/, "SVG 预览必须支持 Ctrl+F 搜索");
 assert.match(sftpFrontendSource, /sanitizeSftpSvgDocument/, "SVG 预览必须在渲染前清理不安全内容");
 assert.match(sftpFrontendSource, /sftpSvgHasUnsafeCssResource/, "SVG 清理必须保留内部渐变、滤镜和裁剪引用并阻止外部资源");
+assert.match(sftpFrontendSource, /animateTransform,animateMotion/, "SVG 清理必须移除 SMIL 动画节点");
+assert.doesNotMatch(sftpFrontendSource, /onclick="downloadSftp\(/, "图片预览下载必须使用事件绑定而不是内联脚本");
 assert.match(sftpFrontendSource, /sftp-svg-match-marker/, "SVG 搜索结果必须显示独立定位标记");
 assert.match(sftpFrontendSource, /sftpImagePreviewFullscreen/, "图片预览必须记住全屏状态");
 assert.match(sftpFrontendSource, /sftpFloatingEditorShelfItem/, "浮动编辑器必须支持最小化暂存栏");
@@ -140,6 +142,7 @@ assert.match(sftpFrontendSource, /root\.style\.overflow = "visible"/, "SVG 预�
 const sftpColumnSource = fs.readFileSync(path.join(root, "public", "app-sftp-columns.js"), "utf8");
 assert.match(sftpColumnSource, /SFTP_COLUMN_MIN_PIXELS = 3/, "SFTP 列宽下限应为 3px");
 assert.match(sftpColumnSource, /const currentMin = SFTP_COLUMN_MIN_PIXELS/, "SFTP 列宽拖动应使用 3px 下限");
+assert.match(sftpColumnSource, /total < currentMin \+ nextMin/, "SFTP 相邻列拖动必须同时满足两列最小宽度");
 
 const permission = normalizeRemotePermissionRequest(["/srv/a b", "/srv/a b"], "640", true, "www", "www");
 assert.deepEqual(permission, {paths:["/srv/a b"], mode:"640", recursive:true, owner:"www", group:"www"});
@@ -366,9 +369,12 @@ const defaultZipExtract = buildRemoteExtractCommand(null, "/srv/archive.zip", "/
 assert.match(defaultZipExtract.command, /unzip -o '\/srv\/archive\.zip'$/);
 assert.doesNotMatch(defaultZipExtract.command, / -O /);
 const tarExtractWithoutOverwrite = buildRemoteExtractCommand(null, "/srv/archive.tar.gz", "/srv/output", {overwrite:false});
-assert.match(tarExtractWithoutOverwrite.command, /tar -k -xzf '\/srv\/archive\.tar\.gz'$/);
+assert.match(tarExtractWithoutOverwrite.command, /GNU tar/);
+assert.match(tarExtractWithoutOverwrite.command, /--skip-old-files -xzf '\/srv\/archive\.tar\.gz'/);
 const defaultTarExtract = buildRemoteExtractCommand(null, "/srv/archive.tar", "/srv/output");
 assert.match(defaultTarExtract.command, /tar -xf '\/srv\/archive\.tar'$/);
+const tarWithoutOverwrite = buildRemoteExtractCommand(null, "/srv/archive.tar", "/srv/output", {overwrite:false});
+assert.match(tarWithoutOverwrite.command, /--skip-old-files -xf '\/srv\/archive\.tar'/);
 assert.throws(() => normalizeCompressionRequest(["/srv/a", "/tmp/b"], "/srv", "bundle"), /同一目录/);
 assert.throws(() => normalizeCompressionRequest(["/srv/a"], "/srv", "nested/bundle"), /不能包含路径/);
 assert.throws(() => normalizeCompressionRequest(["/srv/a.tar.gz"], "/srv", "a.tar.gz"), /不能覆盖/);

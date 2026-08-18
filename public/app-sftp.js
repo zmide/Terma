@@ -60,6 +60,7 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
     view.dataset.workspaceTabKey = tabKey;
     view.dataset.sftpTabKey = tabKey;
     mountedTabKey = tabKey;
+    watchSftpListLayout(view.querySelector("#sftpList"), tabKey);
   }
   const mountedShell = view.querySelector(":scope > .sftp-shell");
   const preserveManualDisconnect = sftpTabKeysForConnection(connectionId).some(key => sftpDisconnectedTabs.has(key));

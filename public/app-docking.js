@@ -1149,20 +1149,20 @@ function duplicateWorkspaceTab(key, options={}) {
     return duplicateKey;
   }
   if (tab.kind === "terminal") {
-    const open = () => {
+    const open = () => runInWorkspacePane(pane.id, () => {
       const openedKey = openTerminal(tab.id, true, duplicateKey, duplicateTitle);
       if (!openedKey && typeof terminalStartupOverrides !== "undefined") terminalStartupOverrides.delete(duplicateKey);
       if (options.result && typeof options.result === "object") {
         Object.assign(options.result, {key:openedKey || "", opened:Boolean(openedKey), split:false});
       }
-    };
+    });
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(open);
     else open();
     return duplicateKey;
   }
   if (tab.kind === "sftp") {
     const sourceRuntime = typeof sftpTabRuntimes !== "undefined" ? sftpTabRuntimes.get(key) : null;
-    const open = () => openSftp(tab.id, sourceRuntime?.state.path || tab.path || ".", true, duplicateKey);
+    const open = () => runInWorkspacePane(pane.id, () => openSftp(tab.id, sourceRuntime?.state.path || tab.path || ".", true, duplicateKey));
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(open);
     else open();
     return duplicateKey;

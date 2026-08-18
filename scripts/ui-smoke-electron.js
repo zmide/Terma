@@ -7916,31 +7916,32 @@ app.whenReady().then(async () => {
     };
     const editorPromise = sftpTextModal('/tmp/gbk.txt', 'A', 1, 2, 'gbk', 'auto');
     await new Promise(resolve=>setTimeout(resolve,20));
-    const editorHost=document.querySelector('#sftpTextEditor');
-    const languageSelect=document.querySelector('#sftpEditorLanguage');
+    const editorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
+    const editorHost=editorWindow?.querySelector('#sftpTextEditor');
+    const languageSelect=editorWindow?.querySelector('#sftpEditorLanguage');
     const textEncodingUi={
-      opened:Boolean(document.querySelector('.sftp-editor-modal')),
+      opened:Boolean(editorWindow?.querySelector('.sftp-editor-modal')),
       aceLoaded:Boolean(editorHost?.classList.contains('ace_editor')),
-      selected:document.querySelector('#sftpTextEncoding')?.value||'',
-      options:[...document.querySelectorAll('#sftpTextEncoding option')].map(option=>option.value),
-      languageOptions:[...document.querySelectorAll('#sftpEditorLanguage option')].map(option=>option.value),
+      selected:editorWindow?.querySelector('#sftpTextEncoding')?.value||'',
+      options:[...(editorWindow?.querySelectorAll('#sftpTextEncoding option')||[])].map(option=>option.value),
+      languageOptions:[...(editorWindow?.querySelectorAll('#sftpEditorLanguage option')||[])].map(option=>option.value),
       manualLanguage:false,
       nonJsonFormattingHidden:false,
       jsonFormatting:false,
       jsonHiddenAfterLanguageChange:false,
       json5FormattingHidden:!isSftpJsonFileName('/tmp/example.json5'),
-      wordWrap:Boolean(document.querySelector('#sftpEditorWordWrap')?.checked),
-      persistDefault:Boolean(document.querySelector('#sftpPersistEncoding')),
-      backup:Boolean(document.querySelector('#sftpBackupBeforeSave')?.checked),
-      lineEndings:[...document.querySelectorAll('#sftpLineEnding option')].map(option=>option.value),
-      lineEndingLabelsLocalized:[...document.querySelectorAll('#sftpLineEnding option')].every(option=>option.textContent===sftpTextLineEndingOptions().find(([value])=>value===option.value)?.[1]),
+      wordWrap:Boolean(editorWindow?.querySelector('#sftpEditorWordWrap')?.checked),
+      persistDefault:Boolean(editorWindow?.querySelector('#sftpPersistEncoding')),
+      backup:Boolean(editorWindow?.querySelector('#sftpBackupBeforeSave')?.checked),
+      lineEndings:[...(editorWindow?.querySelectorAll('#sftpLineEnding option')||[])].map(option=>option.value),
+      lineEndingLabelsLocalized:[...(editorWindow?.querySelectorAll('#sftpLineEnding option')||[])].every(option=>option.textContent===sftpTextLineEndingOptions().find(([value])=>value===option.value)?.[1]),
       shellFormat:false
     };
     const gbkEditor=window.ace&&editorHost?ace.edit(editorHost):null;
     gbkEditor?.setValue('中',-1);
     await new Promise(resolve=>setTimeout(resolve,20));
-    textEncodingUi.nonUtf8SaveAllowed=Boolean(!document.querySelector('#sftpTextSave')?.disabled
-      && document.querySelector('#sftpEditorStats')?.textContent.includes('保存时检查大小'));
+    textEncodingUi.nonUtf8SaveAllowed=Boolean(!editorWindow?.querySelector('#sftpTextSave')?.disabled
+      && editorWindow?.querySelector('#sftpEditorStats')?.textContent.includes('保存时检查大小'));
     const utf8Measurement=sftpEditorByteMeasurement('中','utf8');
     const utf8BomMeasurement=sftpEditorByteMeasurement('A','utf8bom');
     textEncodingUi.utf8LimitEnforced=utf8Measurement.exact&&utf8Measurement.bytes===3&&utf8Measurement.bytes>2;
@@ -7953,19 +7954,20 @@ app.whenReady().then(async () => {
       languageSelect.value='json';
       languageSelect.dispatchEvent(new Event('change',{bubbles:true}));
       await new Promise(resolve=>setTimeout(resolve,20));
-      const nonJsonFormatButton=document.querySelector('#sftpTextFormatJson');
+      const nonJsonFormatButton=editorWindow?.querySelector('#sftpTextFormatJson');
       textEncodingUi.nonJsonFormattingHidden=Boolean(nonJsonFormatButton?.hidden)
         && getComputedStyle(nonJsonFormatButton).display==='none';
     }
-    document.querySelector('#sftpTextSave')?.click();
+    editorWindow?.querySelector('#sftpTextSave')?.click();
     const gbkSave=await editorPromise;
     textEncodingUi.nonUtf8SaveSubmitted=Boolean(gbkSave?.action==='save'&&gbkSave?.encoding==='gbk'&&gbkSave?.content==='中');
     const shellEditorPromise=sftpTextModal('/tmp/restart_Pms.sh','\uFEFF#!/bin/bash\\r\\necho restart',31,512*1024,'utf8bom','auto',{lineEnding:'crlf',bom:true,finalNewline:false});
     await new Promise(resolve=>setTimeout(resolve,20));
-    const shellLineEnding=document.querySelector('#sftpLineEnding');
-    const shellEncoding=document.querySelector('#sftpTextEncoding');
+    const shellEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
+    const shellLineEnding=shellEditorWindow?.querySelector('#sftpLineEnding');
+    const shellEncoding=shellEditorWindow?.querySelector('#sftpTextEncoding');
     const shellControlsReady=Boolean(shellLineEnding?.value==='lf'&&shellLineEnding.disabled&&shellEncoding?.value==='utf8');
-    document.querySelector('#sftpTextSave')?.click();
+    shellEditorWindow?.querySelector('#sftpTextSave')?.click();
     const shellSave=await shellEditorPromise;
     textEncodingUi.shellFormat=Boolean(shellControlsReady
       &&shellSave?.changed
@@ -7975,35 +7977,38 @@ app.whenReady().then(async () => {
       &&shellSave?.content==='#!/bin/bash\\necho restart\\n');
     const normalizationOnlyPromise=sftpTextModal('/tmp/normalize-only.sh','ab',2,2,'utf8','auto',{lineEnding:'lf',bom:false,finalNewline:false});
     await new Promise(resolve=>setTimeout(resolve,20));
-    document.querySelector('#sftpTextSave')?.click();
+    const normalizationEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
+    normalizationEditorWindow?.querySelector('#sftpTextSave')?.click();
     await new Promise(resolve=>setTimeout(resolve,20));
-    textEncodingUi.normalizationOnlyLimitEnforced=Boolean(document.querySelector('#sftpTextSave')?.disabled
-      &&document.querySelector('#sftpEditorStats')?.classList.contains('limit-exceeded'));
-    document.querySelector('#sftpTextClose')?.click();
+    textEncodingUi.normalizationOnlyLimitEnforced=Boolean(normalizationEditorWindow?.querySelector('#sftpTextSave')?.disabled
+      &&normalizationEditorWindow?.querySelector('#sftpEditorStats')?.classList.contains('limit-exceeded'));
+    normalizationEditorWindow?.querySelector('#sftpTextClose')?.click();
     await normalizationOnlyPromise;
     const lightFixture='x'.repeat(1024*1024+37);
     const lightEditorPromise=sftpTextModal('/tmp/large.log',lightFixture,lightFixture.length,2*1024*1024,'utf8','auto',{editorKind:'light',lineCount:1});
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-    const lightTextarea=document.querySelector('.sftp-light-editor-shell textarea');
-    const lightPager=document.querySelector('.sftp-light-editor-pager');
+    const lightEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
+    const lightTextarea=lightEditorWindow?.querySelector('.sftp-light-editor-shell textarea');
+    const lightPager=lightEditorWindow?.querySelector('.sftp-light-editor-pager');
     const lightPageInput=lightPager?.querySelector('input');
     const lightNextButton=lightPager?.querySelectorAll('button')?.[1];
     textEncodingUi.lightPaged=Boolean(lightTextarea
       && lightTextarea.value.length<=256*1024
       && Number(lightPageInput?.max||0)>=5
-      && document.querySelector('#sftpEditorLanguage')?.disabled
-      && document.querySelector('#sftpTextDiff')?.disabled);
+      && lightEditorWindow?.querySelector('#sftpEditorLanguage')?.disabled
+      && lightEditorWindow?.querySelector('#sftpTextDiff')?.disabled);
     lightNextButton?.click();
     textEncodingUi.lightNextPage=Boolean(lightTextarea?.value.length<=256*1024 && lightPageInput?.value==='2');
-    document.querySelector('#sftpTextClose')?.click();
+    lightEditorWindow?.querySelector('#sftpTextClose')?.click();
     await lightEditorPromise;
     const jsonEditorPromise=sftpTextModal('/tmp/config.json','{"name":"Terma","items":[1,2]}',36,512*1024,'utf8','auto');
     await new Promise(resolve=>setTimeout(resolve,20));
-    const jsonEditorHost=document.querySelector('#sftpTextEditor');
-    const jsonLanguageSelect=document.querySelector('#sftpEditorLanguage');
+    const jsonEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
+    const jsonEditorHost=jsonEditorWindow?.querySelector('#sftpTextEditor');
+    const jsonLanguageSelect=jsonEditorWindow?.querySelector('#sftpEditorLanguage');
     if (jsonLanguageSelect && window.ace && jsonEditorHost) {
       const jsonEditor=ace.edit(jsonEditorHost);
-      const formatButton=document.querySelector('#sftpTextFormatJson');
+      const formatButton=jsonEditorWindow?.querySelector('#sftpTextFormatJson');
       formatButton?.click();
       await new Promise(resolve=>setTimeout(resolve,20));
       textEncodingUi.jsonFormatting=!formatButton?.hidden
@@ -8016,7 +8021,7 @@ app.whenReady().then(async () => {
       textEncodingUi.jsonHiddenAfterLanguageChange=Boolean(formatButton?.hidden)
         && getComputedStyle(formatButton).display==='none';
     }
-    document.querySelector('#sftpTextSave')?.click();
+    jsonEditorWindow?.querySelector('#sftpTextSave')?.click();
     await jsonEditorPromise;
     const previousImageOpenFeedback=withSftpFileOpenFeedback;
     const previousImageReader=readSftpImageWithProgress;
@@ -8169,14 +8174,15 @@ app.whenReady().then(async () => {
       }
     });
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-    const historySelect = document.querySelector('#sftpDiffHistory');
+    const historyEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
+    const historySelect = historyEditorWindow?.querySelector('#sftpDiffHistory');
     const historyOptions = [...(historySelect?.options || [])];
-    document.querySelector('#sftpTextDiff')?.click();
+    historyEditorWindow?.querySelector('#sftpTextDiff')?.click();
     await new Promise(resolve=>setTimeout(resolve,40));
-    const editorCard = document.querySelector('.sftp-editor-modal');
-    const editorWorkspace = document.querySelector('#sftpEditorWorkspace');
-    const editorSplitter = document.querySelector('#sftpEditorSplit');
-    const editorDiff = document.querySelector('#sftpDiffPreview');
+    const editorCard = historyEditorWindow?.querySelector('.sftp-editor-modal');
+    const editorWorkspace = historyEditorWindow?.querySelector('#sftpEditorWorkspace');
+    const editorSplitter = historyEditorWindow?.querySelector('#sftpEditorSplit');
+    const editorDiff = historyEditorWindow?.querySelector('#sftpDiffPreview');
     const workspaceRect = editorWorkspace?.getBoundingClientRect();
     if (editorSplitter && workspaceRect) {
       editorSplitter.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,button:0,pointerId:31,clientY:workspaceRect.top+workspaceRect.height*.58}));
@@ -8201,14 +8207,15 @@ app.whenReady().then(async () => {
       && diffHeaderRect && editorDiffRect && diffHeaderRect.top >= editorDiffRect.top - 1
       && diffRowRect && diffRowRect.height <= 34
       && storedEditorLayout.split >= 64 && storedEditorLayout.split <= 68);
-    document.querySelector('#sftpTextClose')?.click();
+    historyEditorWindow?.querySelector('#sftpTextClose')?.click();
     await historyEditorPromise;
     const noHistoryEditorPromise = sftpTextModal('/tmp/no-history.txt', 'same\\n', 5, 1024, 'utf8', 'auto', {versions:[]});
     await new Promise(resolve=>requestAnimationFrame(resolve));
-    const noHistoryUi = Boolean(document.querySelector('#sftpTextDiff')?.disabled
-      && document.querySelector('#sftpDiffHistory')?.disabled
-      && document.querySelector('#sftpDiffHistory')?.textContent.includes('没有可比较的备份'));
-    document.querySelector('#sftpTextClose')?.click();
+    const noHistoryEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
+    const noHistoryUi = Boolean(noHistoryEditorWindow?.querySelector('#sftpTextDiff')?.disabled
+      && noHistoryEditorWindow?.querySelector('#sftpDiffHistory')?.disabled
+      && noHistoryEditorWindow?.querySelector('#sftpDiffHistory')?.textContent.includes('没有可比较的备份'));
+    noHistoryEditorWindow?.querySelector('#sftpTextClose')?.click();
     await noHistoryEditorPromise;
     if (previousEditorLayout === null) localStorage.removeItem(SFTP_EDITOR_LAYOUT_STORAGE_KEY);
     else localStorage.setItem(SFTP_EDITOR_LAYOUT_STORAGE_KEY, previousEditorLayout);
