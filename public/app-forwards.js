@@ -14,7 +14,7 @@ function captureForwardWorkspace(connectionId=selectedId) {
 }
 
 function openForwards(id, updateTab=true) {
-  const c = selectConnection(id);
+  const c = selectConnection(id, {render:updateTab !== false});
   if (!c) return;
   if (updateTab && typeof noteConnectionUsage === "function") noteConnectionUsage(c.id, "forwards");
   const rulesCount = tr("connections:forwards.rules_count", {count:c.forwards.length, defaultValue:`${c.forwards.length} forwarding rules`});

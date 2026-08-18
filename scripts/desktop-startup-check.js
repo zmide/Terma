@@ -1269,19 +1269,23 @@ check("Desktop resource titles remove only structural endpoint and protocol dupl
   const { api } = createHarness();
   assert.equal(
     api.normalizeMainWindowTitle("Terma · 210.10.1.134:22 · SFTP · 210.10.1.134 · SFTP"),
-    "Terma · 210.10.1.134:22 · SFTP"
+    "210.10.1.134:22 · SFTP · Terma"
   );
   assert.equal(
     api.normalizeMainWindowTitle("Terma · server.example:22 · SFTP · Production · SFTP #2"),
-    "Terma · server.example:22 · SFTP #2 · Production"
+    "server.example:22 · SFTP #2 · Production · Terma"
   );
   assert.equal(
     api.normalizeMainWindowTitle("Terma · 210.10.1.134:5900 · VNC · 210.10.1.134"),
-    "Terma · 210.10.1.134:5900 · VNC"
+    "210.10.1.134:5900 · VNC · Terma"
   );
   assert.equal(
     api.normalizeMainWindowTitle("Terma · server.example:22 · Terminal · Backup Backup"),
-    "Terma · server.example:22 · Terminal · Backup Backup"
+    "server.example:22 · Terminal · Backup Backup · Terma"
+  );
+  assert.equal(
+    api.normalizeMainWindowTitle("server.example:22 · SFTP · Production · Terma"),
+    "server.example:22 · SFTP · Production · Terma"
   );
 });
 

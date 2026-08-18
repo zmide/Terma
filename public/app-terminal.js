@@ -11,6 +11,8 @@ function terminalElementForKey(key, selector) {
     const element = workspaceElementForTab(key, selector);
     if (element) return element;
   }
+  const cachedElement = typeof terminalSurfaceCache !== "undefined" ? terminalSurfaceCache.get(key)?.querySelector(selector) : null;
+  if (cachedElement) return cachedElement;
   const escapedKey = typeof workspaceCssEscape === "function" ? workspaceCssEscape(key) : CSS.escape(String(key || ""));
   const toolbarElement = document.querySelector(`.terminal-toolbar[data-workspace-tab-key="${escapedKey}"]`)?.querySelector(selector);
   if (toolbarElement) return toolbarElement;
@@ -221,7 +223,7 @@ function releaseQuickConnectionIfUnused(connectionId) {
 }
 
 function openTerminal(id, updateTab=true, existingKey="", existingTitle="") {
-  const c = selectConnection(id);
+  const c = selectConnection(id, {render:false});
   if (!c) return;
   if (!c.quick_connection && updateTab && typeof noteConnectionUsage === "function") noteConnectionUsage(c.id, "terminal");
   return openTerminalConnection(c, updateTab, existingKey, existingTitle);
@@ -281,6 +283,37 @@ function openTerminalConnection(c, updateTab=true, existingKey="", existingTitle
     }
   }
   const connectionAddress = `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`;
+  const terminalView = $("view-terminal");
+  const cachedSurface = terminalSurfaceCache.get(key);
+  if (cachedSurface && terminalView && terminalSessions.has(key)) {
+    if (terminalView.firstElementChild !== cachedSurface) {
+      parkTerminalSurface(terminalView);
+      terminalView.replaceChildren(cachedSurface);
+    }
+    terminalView.dataset.workspaceTabKey = key;
+    terminalView.dataset.terminalTabKey = key;
+    const status = cachedSurface.querySelector("#terminalStatus");
+    if (status) {
+      status.dataset.connectionAddress = connectionAddress;
+      status.title = connectionAddress;
+    }
+    const session = terminalSessions.get(key);
+    session.connection = c;
+    session.mount = cachedSurface.querySelector("#terminalMount");
+    setWorkspace(title, `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`, "terminal", key, updateTab, true, {
+      kind:quick ? "quick-terminal" : "terminal",
+      id:c.id,
+      connectionStatus:terminalSessionConnectionStatus(session),
+      transient:quick,
+      quick_connection:quick,
+      skipToolbarSync:true
+    });
+    syncTerminalToolbarPlacement(key);
+    if (!quick) updateTerminalStartupButton(key, c);
+    updateTerminalConnectionStatus(c, key, terminalSessionConnectionStatus(session));
+    focusTerminalSession(key);
+    return key;
+  }
   const forwardButton = quick ? "" : connectionToggleButton(c)
     .replace("connection-forward-toggle", "connection-forward-toggle terminal-action-forward")
     .replace("<button ", "<button onpointerdown=\"keepTerminalKeyboardClosed(event)\" ");
@@ -297,7 +330,7 @@ function openTerminalConnection(c, updateTab=true, existingKey="", existingTitle
   const savedDisplayActions = `<button class="terminal-dropdown-button terminal-action-display terminal-action-encoding" title="${escAttr(changeEncodingText)}" aria-label="${escAttr(tr("terminal:toolbar.change_encoding_short", {defaultValue:"切换终端编码"}))}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalEncodingMenu(event,'${key}',${c.id})">${icon("earth")}<span>${esc(encodingLabel)}</span>${icon("chevron-down")}</button><button class="terminal-dropdown-button terminal-action-display" title="${escAttr(changeFontText)}" aria-label="${escAttr(changeFontText)}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalFontMenu(event,'${key}',${c.id})">${icon("type")}<span>${esc(fontText)}</span>${icon("chevron-down")}</button>${quick ? "" : `<button class="icon-button terminal-startup-button" title="${escAttr(startupText)}" aria-label="${escAttr(startupText)}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="showTerminalStartupSettings('${key}',${c.id})">${icon("command")}<span>${esc(configText)}</span></button>`}`;
   const quickCommandButton = typeof terminalQuickCommandToolbarButton === "function" ? terminalQuickCommandToolbarButton(key) : "";
   const quickCommandBar = typeof renderTerminalQuickCommandBar === "function" ? renderTerminalQuickCommandBar(key) : "";
-  const terminalView = $("view-terminal");
+  parkTerminalSurface(terminalView);
   const decreaseFontText = tr("terminal:toolbar.decrease_font", {defaultValue:"减小字体"});
   const increaseFontText = tr("terminal:toolbar.increase_font", {defaultValue:"增大字体"});
   const globalSettingsText = tr("terminal:toolbar.global_settings", {defaultValue:"全局终端设置"});
@@ -324,10 +357,16 @@ function openTerminalConnection(c, updateTab=true, existingKey="", existingTitle
   if (!quick && typeof localFilesToolbarButtonHtml === "function") {
     terminalView.querySelector(".terminal-action-sftp")?.insertAdjacentHTML("afterend", localFilesToolbarButtonHtml(key));
   }
+  const terminalSurface = document.createElement("div");
+  terminalSurface.className = "terminal-tab-surface";
+  terminalSurface.dataset.terminalTabKey = key;
+  while (terminalView.firstChild) terminalSurface.appendChild(terminalView.firstChild);
+  terminalSurfaceCache.set(key, terminalSurface);
+  terminalView.appendChild(terminalSurface);
   terminalView.dataset.workspaceTabKey = key;
   terminalView.dataset.terminalTabKey = key;
-  if (typeof mountTerminalQuickCommandBar === "function") mountTerminalQuickCommandBar(key, terminalView);
-  const toolbar = terminalView.querySelector(":scope > .terminal-toolbar");
+  if (typeof mountTerminalQuickCommandBar === "function") mountTerminalQuickCommandBar(key, terminalSurface);
+  const toolbar = terminalSurface.querySelector(":scope > .terminal-toolbar");
   const toolbarMount = document.createElement("div");
   toolbarMount.id = "terminalToolbarMount";
   toolbar.before(toolbarMount);
@@ -825,6 +864,7 @@ function scheduleTerminalPreferencesSave(connection) {
 function focusTerminalSession(key) {
   const session = terminalSessions.get(key);
   setTimeout(() => {
+    if (isMobileLayout() || activeTabKey !== key) return;
     try { session?.term.focus(); } catch {}
   }, 0);
 }

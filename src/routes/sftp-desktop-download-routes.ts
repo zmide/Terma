@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import path from "node:path";
 import { IncomingMessage, ServerResponse } from "node:http";
 
@@ -51,9 +52,12 @@ export async function handleSftpDesktopDownloadRoutes(
     const data = await dependencies.readJson(request);
     const job = data.job_id ? dependencies.listSftpJobs().find(item => String(item.id) === String(data.job_id)) : null;
     const saved = dependencies.readRuntimeSettings(dependencies.runtimeSettingsFile);
-    const directory = job?.delivery_status === "saved" && job.saved_path
-      ? path.dirname(job.saved_path)
-      : saved.sftp_download_directory || await Promise.resolve(desktopIntegration.getDownloadDirectory());
+    const savedPath = job?.delivery_status === "saved" && job.saved_path ? String(job.saved_path) : "";
+    let directory = saved.sftp_download_directory || await Promise.resolve(desktopIntegration.getDownloadDirectory());
+    if (savedPath) {
+      try { directory = fs.existsSync(savedPath) && fs.statSync(savedPath).isDirectory() ? savedPath : path.dirname(savedPath); }
+      catch { directory = path.dirname(savedPath); }
+    }
     dependencies.sendJson(response, await Promise.resolve(desktopIntegration.openDownloadDirectory(directory)));
     return true;
   }
@@ -69,6 +73,20 @@ export async function handleSftpDesktopDownloadRoutes(
       return true;
     }
     dependencies.sendJson(response, await Promise.resolve(desktopIntegration.openLocalPath(job.saved_path)));
+    return true;
+  }
+  if (method === "POST" && pathname === "/api/sftp/download-settings/delete-file") {
+    if (!dependencies.isDesktopRequest(request) || !desktopIntegration?.trashLocalPath) {
+      dependencies.sendJson(response, {error:"删除下载文件仅能在本机桌面端中使用"}, 403);
+      return true;
+    }
+    const data = await dependencies.readJson(request);
+    const job = dependencies.listSftpJobs().find(item => String(item.id) === String(data.job_id || ""));
+    if (!job || job.type !== "download" || job.delivery_status !== "saved" || !job.saved_path) {
+      dependencies.sendJson(response, {error:"下载文件不存在或已被清理"}, 404);
+      return true;
+    }
+    dependencies.sendJson(response, await Promise.resolve(desktopIntegration.trashLocalPath(job.saved_path)));
     return true;
   }
 

@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { remotePathOperand, shellQuote, spawnRemote } = require("./sftp-job-paths");
 const { clearSftpJobIssue, setSftpJobIssue } = require("./sftp-job-issues");
+const { archiveTarCreateOptions, normalizeArchiveFilenameEncoding } = require("./sftp-operation-commands");
 
 function codedSftpJobError(message: string, code: string, params: any = {}) {
   const error: any = new Error(message);
@@ -109,6 +110,29 @@ function createSftpDownloadJobs(dependencies: any) {
     }
   }
 
+  function savedDownloadIsFile(job: any) {
+    if (!job?.saved_path) return false;
+    try { return fs.statSync(job.saved_path).isFile(); }
+    catch { return false; }
+  }
+
+  function downloadCompletionAction(job: any) {
+    const hasSavedPath = Boolean(job?.saved_path);
+    const savedFile = savedDownloadIsFile(job);
+    return {
+      view:"sftp",
+      connection_id:job.connection_id,
+      download_job_id:job.id,
+      can_open_file:savedFile,
+      can_open_directory:hasSavedPath,
+      can_delete_file:savedFile
+    };
+  }
+
+  function downloadCompletionMessage(job: any) {
+    return job?.saved_path ? `已保存到 ${job.saved_path}` : `${job.connection_name} · ${job.label}`;
+  }
+
   function startLocalDeliveryJob(connectionId: number, remotePaths: unknown, targetDirectory: string, conflictMode = "rename", options: any = {}) {
     const connection = getSftpConnection(connectionId);
     const paths = Array.isArray(remotePaths) ? remotePaths.map(item => String(item || "")).filter(Boolean) : [];
@@ -204,8 +228,8 @@ function createSftpDownloadJobs(dependencies: any) {
           type:"sftp",
           level:"success",
           title:"SFTP 下载到本机已完成",
-          message:`${current.connection_name} · ${current.label}\n已保存到 ${current.saved_path}`,
-          action:{view:"sftp", connection_id:current.connection_id}
+          message:downloadCompletionMessage(current),
+          action:downloadCompletionAction(current)
         }, {cooldown_ms:0});
       } catch (error: any) {
         current.status = "failed";
@@ -364,8 +388,8 @@ function createSftpDownloadJobs(dependencies: any) {
               title:job.archive_download
                 ? (status === "done" ? "SFTP 打包下载已完成" : "SFTP 打包下载失败")
                 : (status === "done" ? "SFTP 下载已完成" : "SFTP 下载失败"),
-              message:`${job.connection_name} · ${job.label}${job.saved_path ? `\n已保存到 ${job.saved_path}` : ""}${job.warning ? `\n${job.warning}` : ""}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}${job.error ? `\n${job.error}` : ""}`,
-              action:{view:"sftp", connection_id:job.connection_id}
+              message:`${status === "done" ? downloadCompletionMessage(job) : `${job.connection_name} · ${job.label}`}${job.warning ? `\n${job.warning}` : ""}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}${job.error ? `\n${job.error}` : ""}`,
+              action:status === "done" ? downloadCompletionAction(job) : {view:"sftp", connection_id:job.connection_id}
             }, {cooldown_ms:0});
           }
         };
@@ -480,7 +504,7 @@ function createSftpDownloadJobs(dependencies: any) {
       if (job.archive_download) cleanupRemoteArchiveArtifact(job);
       releaseTransferSlot(job);
       persistJobs(true);
-      notifyEvent({type:"sftp", level:"success", title:job.archive_download ? "SFTP 打包下载已完成" : "SFTP 下载已完成", message:`${job.connection_name} · ${job.label}${job.saved_path ? `\n已保存到 ${job.saved_path}` : ""}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}`, action:{view:"sftp", connection_id:job.connection_id}}, {cooldown_ms:0});
+      notifyEvent({type:"sftp", level:"success", title:job.archive_download ? "SFTP 打包下载已完成" : "SFTP 下载已完成", message:`${downloadCompletionMessage(job)}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}`, action:downloadCompletionAction(job)}, {cooldown_ms:0});
     }
   }
 
@@ -515,7 +539,12 @@ function createSftpDownloadJobs(dependencies: any) {
     });
     const id = crypto.randomUUID();
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const basename = `terma-${timestamp}.tar.gz`;
+    const requestedName = String(options.filename || "").trim().replace(/\\/g, "/");
+    if (requestedName.includes("/") || requestedName.includes("\0")) throw new Error("打包下载文件名不能包含路径");
+    let basename = path.posix.basename(requestedName || `terma-${timestamp}.tar.gz`);
+    if (!/\.(?:tar\.gz|tgz)$/i.test(basename)) basename = `${basename}.tar.gz`;
+    if (Buffer.byteLength(basename, "utf8") > 255) throw new Error("打包下载文件名过长");
+    const filenameEncoding = normalizeArchiveFilenameEncoding(options.encoding);
     fs.mkdirSync(downloadsDirectory, {recursive:true});
     const tempPath = path.join(downloadsDirectory, `${id}-${basename}`);
     const job: any = {
@@ -528,6 +557,7 @@ function createSftpDownloadJobs(dependencies: any) {
       archive_source_paths:paths,
       archive_parent:parent,
       archive_names:names,
+      archive_filename_encoding:filenameEncoding,
       archive_ready:false,
       remote_archive_path:"",
       remote_paths:paths,
@@ -591,11 +621,12 @@ function createSftpDownloadJobs(dependencies: any) {
     const marker = `__TERMA_ARCHIVE_${crypto.randomBytes(12).toString("hex")}__:`;
     const parent = String(job.archive_parent || ".");
     const names = Array.isArray(job.archive_names) ? job.archive_names : [];
+    const tarOptions = archiveTarCreateOptions(normalizeArchiveFilenameEncoding(job.archive_filename_encoding));
     const command = [
       `td_archive=$(mktemp "\${TMPDIR:-/tmp}/terma-download-XXXXXXXX.tar.gz") || exit $?`,
       `trap 'rm -f -- "$td_archive"; exit 130' 1 2 3 15`,
       `printf '%s%s\\n' ${shellQuote(marker)} "$td_archive"`,
-      `if tar -C ${remotePathOperand(connection, parent)} -czf "$td_archive" -- ${names.map((name: string) => remotePathOperand(connection, name)).join(" ")}; then trap - 1 2 3 15; exit 0; else td_status=$?; trap - 1 2 3 15; rm -f -- "$td_archive"; exit "$td_status"; fi`
+      `if tar ${tarOptions}-C ${remotePathOperand(connection, parent)} -czf "$td_archive" -- ${names.map((name: string) => remotePathOperand(connection, name)).join(" ")}; then trap - 1 2 3 15; exit 0; else td_status=$?; trap - 1 2 3 15; rm -f -- "$td_archive"; exit "$td_status"; fi`
     ].join("; ");
     const child = spawnRemote(connection, command);
     job.child = child;

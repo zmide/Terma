@@ -67,7 +67,7 @@ async function retryCompletedSftpDownload(jobId, button=null) {
     if (job.archive_download && Array.isArray(job.archive_source_paths) && job.archive_source_paths.length) {
       result = await api(`/api/connections/${Number(job.connection_id)}/sftp/download-batch`, {
         method:"POST",
-        body:JSON.stringify({paths:job.archive_source_paths, mode:"archive"})
+        body:JSON.stringify({paths:job.archive_source_paths, mode:"archive", filename:job.download_name || "", encoding:job.archive_filename_encoding || "default"})
       });
     } else {
       result = await queueSftpDownload(Number(job.connection_id), String(job.remote_path || ""), "file");
@@ -143,13 +143,17 @@ async function downloadSftpSelection(tabKey=activeTabKey) {
       {label:tr("common:actions.cancel"), value:""}
     ]);
     if (!mode || !await confirmSftpDownloadNotice(settings)) return;
+    const archive = mode === "archive"
+      ? await sftpArchiveOptionsModal({mode:"download", title:tr("sftp:transfer.batch_download_title"), filename:defaultSftpArchiveName(entries)})
+      : null;
+    if (mode === "archive" && !archive) return;
     notify(tr(mode === "separate" ? "sftp:transfer.downloading_selected" : "sftp:transfer.creating_archive"), "info");
     if (mode === "separate" && browser) {
       for (const entry of entries) await queueSftpDownload(tab.id, entry.path, entry.type);
     } else {
       const result = await api(`/api/connections/${tab.id}/sftp/download-batch`, {
         method:"POST",
-        body:JSON.stringify({paths:entries.map(item => item.path), mode})
+        body:JSON.stringify({paths:entries.map(item => item.path), mode, filename:archive?.filename, encoding:archive?.encoding})
       });
       if (mode === "separate") {
         trackSftpMutationJob(result);

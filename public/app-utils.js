@@ -466,6 +466,23 @@ function removeToastElement(toast) {
   syncToastStackLayout();
 }
 
+function notificationToastActionList(action) {
+  if (!action || !action.download_job_id) return [];
+  const jobId = String(action.download_job_id);
+  const actions = [];
+  if (action.can_open_file) actions.push({kind:"open-file", label:tr("tasks:actions.open_file", {defaultValue:"打开文件"}), icon:"external-link"});
+  if (action.can_open_directory) actions.push({kind:"open-directory", label:tr("tasks:actions.open_directory", {defaultValue:"打开目录"}), icon:"folder-open"});
+  if (action.can_delete_file) actions.push({kind:"delete-file", label:tr("sftp:menu.delete_downloaded_file", {defaultValue:"删除文件"}), icon:"trash-2", danger:true});
+  return actions.map(item => ({...item, jobId}));
+}
+
+function runNotificationToastAction(item, button) {
+  if (!item?.jobId) return;
+  if (item.kind === "open-file" && typeof openSftpDownloadedFile === "function") return void openSftpDownloadedFile(item.jobId, button);
+  if (item.kind === "open-directory" && typeof openSftpDownloadDirectory === "function") return void openSftpDownloadDirectory(button, item.jobId);
+  if (item.kind === "delete-file" && typeof deleteSftpDownloadedFile === "function") return void deleteSftpDownloadedFile(item.jobId, button);
+}
+
 function dismissToast(target) {
   const stack = $("toast");
   if (!stack) return;
@@ -495,7 +512,7 @@ function dismissToast(target) {
   };
 }
 
-function notify(text, type="info") {
+function notify(text, type="info", options={}) {
   const n = $("notice");
   if (n) {
     n.textContent = "";
@@ -518,7 +535,15 @@ function notify(text, type="info") {
     toast.setAttribute("role", toastType === "error" ? "alert" : "status");
     toast.setAttribute("aria-atomic", "true");
     const closeLabel = tr("common:auto.close_hint", {defaultValue:"关闭提示"});
-    toast.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(iconName)}</span><div class="toast-copy"><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ""}</div><button type="button" class="icon-button" onclick="dismissToast(this.closest('.toast'))" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div>`;
+    const actionItems = notificationToastActionList(options.action);
+    toast.innerHTML = `<div class="toast-head"><span class="toast-icon">${icon(iconName)}</span><div class="toast-copy"><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ""}</div><button type="button" class="icon-button" onclick="dismissToast(this.closest('.toast'))" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div>${actionItems.length ? `<div class="toast-actions">${actionItems.map(item => `<button type="button" class="toast-action${item.danger ? " danger" : ""}" data-toast-action="${escAttr(item.kind)}" title="${escAttr(item.label)}">${icon(item.icon)}<span>${esc(item.label)}</span></button>`).join("")}</div>` : ""}`;
+    toast.querySelectorAll("[data-toast-action]").forEach(button => {
+      const item = actionItems.find(candidate => candidate.kind === button.dataset.toastAction);
+      button.addEventListener("click", event => {
+        event.stopPropagation();
+        runNotificationToastAction(item, button);
+      });
+    });
     stack.appendChild(toast);
     if (!prefersReducedToastMotion() && typeof toast.animate === "function") {
       toast.animate(
@@ -703,7 +728,7 @@ async function handleNotificationEvent(event, options={}) {
   const ignoredUpdate = event.type === "update" && updateSettings?.update_ignored;
   const allowed = !["off", "muted"].includes(securitySettings?.notification_mode);
   if (options.display !== false && !ignoredUpdate && allowed) {
-    notify(`${event.title}${event.message ? `\n${event.message}` : ""}`, event.level === "error" ? "error" : event.level === "success" ? "success" : "info");
+    notify(`${event.title}${event.message ? `\n${event.message}` : ""}`, event.level === "error" ? "error" : event.level === "success" ? "success" : "info", {action:event.action});
     if (!options.fromDesktop) showDesktopNotification(event);
   }
   localStorage.setItem("lastNotificationId", String(lastNotificationId));
@@ -942,15 +967,13 @@ function fitVisibleTerminals() {
   if (typeof terminalSessions === "undefined") return;
   for (const session of terminalSessions.values()) {
     const box = session.term?.element?.closest?.(".terminal-box");
+    if (!box?.isConnected) continue;
+    box.style.minHeight = "0px";
+    const rect = box.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) continue;
     const viewport = typeof captureTerminalViewport === "function" ? captureTerminalViewport(session) : null;
-    if (box) {
-      box.style.minHeight = "0px";
-      const rect = box.getBoundingClientRect();
-      if (rect.height > 0) {
-        session.lastBoxHeight = rect.height;
-        session.term.element.style.height = `${Math.floor(rect.height)}px`;
-      }
-    }
+    session.lastBoxHeight = rect.height;
+    session.term.element.style.height = `${Math.floor(rect.height)}px`;
     try { session.fit?.fit(); } catch {}
     try { session.term?.refresh?.(0, Math.max(0, session.term.rows - 1)); } catch {}
     if (typeof restoreTerminalViewport === "function") restoreTerminalViewport(session, viewport);
@@ -1059,6 +1082,10 @@ function stateView(kind, title, detail="", actionHtml="") {
 }
 
 async function writeClipboardText(text) {
+  if (window.termaDesktop?.writeClipboardText) {
+    await window.termaDesktop.writeClipboardText(String(text ?? ""));
+    return;
+  }
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);

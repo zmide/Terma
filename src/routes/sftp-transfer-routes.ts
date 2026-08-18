@@ -6,7 +6,7 @@ import { publicErrorBody } from "../public-error";
 interface SftpTransferRouteDependencies {
   authorizeConnectionId(request: IncomingMessage, value: string): number;
   clearRemoteRecycleItems(connectionId: number): Promise<any>;
-  compressJob(connectionId: number, paths: string[], target: string, filename: string): any;
+  compressJob(connectionId: number, paths: string[], target: string, filename: string, encoding?: string): any;
   connectSftpSession(connectionId: number, options: any): Promise<any>;
   copyJob(connectionId: number, paths: string[], target: string): any;
   copyRemotePaths(connectionId: number, paths: string[], target: string): Promise<any>;
@@ -16,8 +16,8 @@ interface SftpTransferRouteDependencies {
   deletePathsJob(connectionId: number, paths: string[], recycle: boolean): any;
   deleteRemoteRecycleItem(connectionId: number, id: string, storage: string): Promise<any>;
   disconnectSftpSession(connectionId: number, options: any): any;
-  extractJob(connectionId: number, remotePath: string, target: string): any;
-  extractRemoteArchive(connectionId: number, remotePath: string, target: string): Promise<any>;
+  extractJob(connectionId: number, remotePath: string, target: string, options?: any): any;
+  extractRemoteArchive(connectionId: number, remotePath: string, target: string, options?: any): Promise<any>;
   getDesktopIntegration(): any;
   invalidateRemoteDirectoryCache(connectionId: number): void;
   isDesktopRequest(request: IncomingMessage): boolean;
@@ -166,7 +166,9 @@ export async function handleSftpTransferRoutes(
     }
     dependencies.sendJson(response, dependencies.startArchiveDownloadJob(connectionId, paths, {
       deliveryMode:desktop ? "desktop" : "browser",
-      autoSaveDirectory:targetDirectory
+      autoSaveDirectory:targetDirectory,
+      filename:data.filename || "",
+      encoding:data.encoding || "default"
     }), 202);
     return true;
   }
@@ -355,15 +357,15 @@ export async function handleSftpTransferRoutes(
   }
   if (method === "POST" && parts[4] === "extract") {
     const result = data.background
-      ? dependencies.extractJob(connectionId, data.path, data.target)
-      : await dependencies.extractRemoteArchive(connectionId, data.path, data.target);
+      ? dependencies.extractJob(connectionId, data.path, data.target, {encoding:data.encoding, overwrite:data.overwrite})
+      : await dependencies.extractRemoteArchive(connectionId, data.path, data.target, {encoding:data.encoding, overwrite:data.overwrite});
     dependencies.invalidateRemoteDirectoryCache(connectionId);
     dependencies.sendJson(response, result);
     return true;
   }
   if (method === "POST" && parts[4] === "compress") {
     const paths = Array.isArray(data.paths) ? data.paths : [data.path];
-    const result = dependencies.compressJob(connectionId, paths, data.target, data.filename || data.name || "");
+    const result = dependencies.compressJob(connectionId, paths, data.target, data.filename || data.name || "", data.encoding || "default");
     dependencies.invalidateRemoteDirectoryCache(connectionId);
     dependencies.sendJson(response, result, 202);
     return true;

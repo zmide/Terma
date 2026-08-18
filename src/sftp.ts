@@ -10,6 +10,7 @@ const {
   remotePathOperand,
   shellQuote
 } = require("./sftp-encoding");
+const { buildRemoteExtractCommand } = require("./sftp-operation-commands");
 const DEFAULT_MAX_OPEN_FILE_SIZE = 50 * 1024 * 1024;
 const DEFAULT_DIRECTORY_PAGE_SIZE = 50;
 const MAX_DIRECTORY_PAGE_SIZE = 200;
@@ -870,15 +871,10 @@ async function moveRemotePaths(connectionId, paths, targetDir) {
   return { ok: true };
 }
 
-async function extractRemoteArchive(connectionId, remotePath, targetDir) {
+async function extractRemoteArchive(connectionId, remotePath, targetDir, options: any = {}) {
   const connection = getSftpConnection(connectionId);
-  const lower = String(remotePath || "").toLowerCase();
-  let command;
-  if (lower.endsWith(".zip")) command = `cd ${remotePathOperand(connection, targetDir)} && unzip -o ${remotePathOperand(connection, remotePath)}`;
-  else if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) command = `cd ${remotePathOperand(connection, targetDir)} && tar -xzf ${remotePathOperand(connection, remotePath)}`;
-  else if (lower.endsWith(".tar")) command = `cd ${remotePathOperand(connection, targetDir)} && tar -xf ${remotePathOperand(connection, remotePath)}`;
-  else throw new Error("暂只支持 zip、tar.gz、tgz、tar 解压");
-  await runRemote(connection, command, null, 120000);
+  const request = buildRemoteExtractCommand(connection, remotePath, targetDir, options);
+  await runRemote(connection, request.command, null, 120000);
   return { ok: true };
 }
 

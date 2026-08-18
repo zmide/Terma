@@ -115,7 +115,7 @@ async function main() {
   assert.match(DEFAULT_TERMINAL_SETTINGS.font_family, /monospace/);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 17,
+    schema_version: 18,
     language: "zh-CN",
     language_onboarding_version: 0,
     vnc_fullscreen_toolbar: "always",
@@ -136,6 +136,7 @@ async function main() {
     },
     sftp_max_open_file_size_mb: 50,
     sftp_text_editor_mode: "ace",
+    sftp_double_click_file_action: "internal",
     sftp_light_editor_threshold_mb: 10,
     sftp_external_edit_save_rule: "prompt",
     sftp_external_edit_backup_enabled: true,
@@ -179,6 +180,7 @@ async function main() {
   assert.throws(() => normalizeRuntimeSettings({notification_display:{error:{duration_ms:200}}}), /通知显示时长/);
   assert.equal(normalizeRuntimeSettings({ sftp_max_open_file_size_mb: 12 }).sftp_max_open_file_size_mb, 12);
   assert.equal(normalizeRuntimeSettings({ sftp_text_editor_mode: "light" }).sftp_text_editor_mode, "light");
+  assert.equal(normalizeRuntimeSettings({ sftp_double_click_file_action: "external" }).sftp_double_click_file_action, "external");
   assert.equal(normalizeRuntimeSettings({ sftp_light_editor_threshold_mb: 24 }).sftp_light_editor_threshold_mb, 24);
   assert.equal(normalizeRuntimeSettings({ sftp_external_edit_save_rule: "overwrite" }).sftp_external_edit_save_rule, "overwrite");
   assert.equal(normalizeRuntimeSettings({ sftp_external_edit_backup_enabled: false }).sftp_external_edit_backup_enabled, false);
@@ -238,7 +240,7 @@ async function main() {
   assert.equal(readRuntimeSettings(legacyRuntimeFile).sftp_max_open_file_size_mb, 50);
   fs.writeFileSync(legacyRuntimeFile, JSON.stringify({schema_version:8, sftp_max_open_file_size_mb:5}), "utf8");
   assert.equal(readRuntimeSettings(legacyRuntimeFile).sftp_max_open_file_size_mb, 5);
-  console.log("PASS legacy default SFTP open limit migrates to 50 MB without overriding v8 choices");
+  console.log("PASS legacy defaults migrate without overriding explicit v8 choices");
 
   let child = null;
   let startupBlocker = null;
@@ -417,6 +419,7 @@ async function main() {
       method: "PUT",
       body: JSON.stringify({
         sftp_text_editor_mode: "auto",
+        sftp_double_click_file_action: "external",
         sftp_light_editor_threshold_mb: 18,
         sftp_external_edit_save_rule: "overwrite",
         sftp_external_edit_backup_enabled: false,
@@ -426,6 +429,7 @@ async function main() {
     });
     assert.equal(editorPolicySaved.response.ok, true);
     assert.equal(editorPolicySaved.body.saved.sftp_text_editor_mode, "auto");
+    assert.equal(editorPolicySaved.body.saved.sftp_double_click_file_action, "external");
     assert.equal(editorPolicySaved.body.saved.sftp_light_editor_threshold_mb, 18);
     assert.equal(editorPolicySaved.body.saved.sftp_external_edit_save_rule, "overwrite");
     assert.equal(editorPolicySaved.body.saved.sftp_external_edit_backup_enabled, false);

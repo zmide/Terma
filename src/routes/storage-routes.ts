@@ -137,6 +137,7 @@ export async function handleStorageRoutes(
       notification_display:data.notification_display ?? current.notification_display,
       sftp_max_open_file_size_mb:data.sftp_max_open_file_size_mb ?? current.sftp_max_open_file_size_mb,
       sftp_text_editor_mode:data.sftp_text_editor_mode ?? current.sftp_text_editor_mode,
+      sftp_double_click_file_action:data.sftp_double_click_file_action ?? current.sftp_double_click_file_action,
       sftp_light_editor_threshold_mb:data.sftp_light_editor_threshold_mb ?? current.sftp_light_editor_threshold_mb,
       sftp_external_edit_save_rule:data.sftp_external_edit_save_rule ?? current.sftp_external_edit_save_rule,
       sftp_external_edit_backup_enabled:data.sftp_external_edit_backup_enabled ?? current.sftp_external_edit_backup_enabled,

@@ -6,22 +6,30 @@ function currentConnection(id=selectedId){
   return connections.find(x=>x.id===connectionId);
 }
 
-function selectConnection(id) {
+function syncSelectedConnectionRow() {
+  document.querySelectorAll(".conn-row[data-connection-id]").forEach(row => {
+    row.classList.toggle("active", Number(row.dataset.connectionId) === Number(selectedId));
+  });
+}
+
+function selectConnection(id, options={}) {
   const quick = typeof quickConnectionsById !== "undefined" ? quickConnectionsById.get(Number(id)) : null;
   if (quick) return quick;
   selectedId = id;
   const c = currentConnection();
   if (c) {
+    const wasOpen = groupOpen.has(c.group_name);
     groupOpen.add(c.group_name);
-    saveGroupState();
+    if (!wasOpen) saveGroupState();
   }
-  renderConnections();
+  if (options.render !== false) renderConnections();
+  else syncSelectedConnectionRow();
   return c;
 }
 
 function editConnection(id, updateTab=true){
   if (!requireConfigEncryptionUnlocked(tr("connections:form.edit_context", {defaultValue:"编辑 SSH 连接"}))) return;
-  const c = selectConnection(id);
+  const c = selectConnection(id, {render:updateTab !== false});
   if(!c) return;
   $("view-edit").innerHTML = $("connectionFormTpl").innerHTML;
   refreshIcons();

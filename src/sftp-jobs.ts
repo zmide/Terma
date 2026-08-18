@@ -11,7 +11,7 @@ const { createSftpDownloadCache } = require("./sftp-download-cache");
 const { createSftpDownloadJobs } = require("./sftp-download-jobs");
 const { filenameEncoding, remotePathOperand, shellQuote, spawnRemote } = require("./sftp-job-paths");
 const { createNativeSftpDragJobs } = require("./sftp-native-drag-jobs");
-const { buildCrossCopyOverwriteCommand, buildItemProgressJobCommand, normalizeCompressionRequest } = require("./sftp-operation-commands");
+const { buildCrossCopyOverwriteCommand, buildItemProgressJobCommand, buildRemoteExtractCommand, normalizeCompressionRequest } = require("./sftp-operation-commands");
 const { createSftpTransferScheduler } = require("./sftp-transfer-scheduler");
 const { createSftpUploadJobs } = require("./sftp-upload-jobs");
 const { clearSftpJobIssue, setSftpJobIssue } = require("./sftp-job-issues");
@@ -812,20 +812,15 @@ function moveJob(connectionId, paths, targetDir) {
   });
 }
 
-function extractJob(connectionId, remotePath, targetDir) {
+function extractJob(connectionId, remotePath, targetDir, options: any = {}) {
   const connection = getSftpConnection(connectionId);
-  const lower = String(remotePath || "").toLowerCase();
-  let command;
-  if (lower.endsWith(".zip")) command = `cd ${remotePathOperand(connection, targetDir)} && unzip -o ${remotePathOperand(connection, remotePath)}`;
-  else if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) command = `cd ${remotePathOperand(connection, targetDir)} && tar -xzf ${remotePathOperand(connection, remotePath)}`;
-  else if (lower.endsWith(".tar")) command = `cd ${remotePathOperand(connection, targetDir)} && tar -xf ${remotePathOperand(connection, remotePath)}`;
-  else throw new Error("暂只支持 zip、tar.gz、tgz、tar 解压");
-  return startSftpJob(connectionId, "extract", command, `解压 ${remotePath}`);
+  const request = buildRemoteExtractCommand(connection, remotePath, targetDir, options);
+  return startSftpJob(connectionId, "extract", request.command, `解压 ${remotePath}`);
 }
 
-function compressJob(connectionId, paths, targetDir = ".", archiveName = "") {
+function compressJob(connectionId, paths, targetDir = ".", archiveName = "", filenameEncoding = "default") {
   const connection = getSftpConnection(connectionId);
-  const request = normalizeCompressionRequest(paths, targetDir, archiveName, connection);
+  const request = normalizeCompressionRequest(paths, targetDir, archiveName, connection, filenameEncoding);
   return { ...startSftpJob(connectionId, "compress", request.command, `压缩 ${request.paths.length} 项为 ${request.name}`), output:request.output };
 }
 

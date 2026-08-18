@@ -18,6 +18,7 @@ for (let index = 0; index < payload.length; index += 1) payload[index] = (index 
 const growingPayload = Buffer.alloc(768 * 1024, 0x5a);
 const growingInitialSize = 256 * 1024;
 let growingSizeChecks = 0;
+let archiveCreateCommand = "";
 const archiveRemotePath = "/tmp/terma-download-check.tar.gz";
 const { privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength:2048 });
 const hostKey = privateKey.export({ type:"pkcs1", format:"pem" });
@@ -28,10 +29,11 @@ const sshServer = new Server({ hostKeys:[hostKey] }, client => {
     session.on("exec", (acceptExec, _reject, info) => {
       const stream = acceptExec();
       const command = decodeRemotePosixCommand(info?.command);
-      const supported = command.includes("wc -c") || command.includes("cat --") || command.includes("tail -c") || command.includes("tar -C") || command.includes("rm -f --");
+      const supported = command.includes("wc -c") || command.includes("cat --") || command.includes("tail -c") || (command.includes("tar") && command.includes(" -C ")) || command.includes("rm -f --");
       const growing = command.includes("growing.log");
       const archiveMarker = command.match(/(__TERMA_ARCHIVE_[a-f0-9]+__:)/i)?.[1] || "";
-      if (command.includes("tar -C") && archiveMarker) {
+      if (command.includes("tar") && command.includes(" -C ") && archiveMarker) {
+        archiveCreateCommand = command;
         stream.write(`${archiveMarker}${archiveRemotePath}\n`);
       } else if (command.includes("wc -c") && growing) {
         growingSizeChecks += 1;
@@ -141,12 +143,18 @@ async function main() {
     assert.equal(changed.source_changed, true);
     const growingResult = jobs.getSftpJobFile(growingJobId);
     assert.equal(hash(fs.readFileSync(growingResult.path)), hash(growingPayload), "an actively written file must preserve the snapshot received before EOF");
-    const archived = jobs.startArchiveDownloadJob(connection.id, ["/fixture/folder"], { deliveryMode:"browser" });
+    const archived = jobs.startArchiveDownloadJob(connection.id, ["/fixture/folder"], {
+      deliveryMode:"browser",
+      filename:"selected-files",
+      encoding:"euc-kr"
+    });
     archiveJobId = archived.id;
     const archiveStarting = jobs.listSftpJobs().find(item => item.id === archiveJobId);
     assert.equal(archiveStarting.resume_supported, true, "archive downloads must advertise checkpoint resume support");
     assert.equal(archiveStarting.can_pause, false, "the remote packing phase must not advertise pause support");
     assert.deepEqual(archiveStarting.archive_source_paths, ["/fixture/folder"]);
+    assert.equal(archiveStarting.download_name, "selected-files.tar.gz");
+    assert.equal(archiveStarting.archive_filename_encoding, "euc_kr");
     const archiveDownloading = await waitForJobState(jobs, archiveJobId, job => job.status === "running" && job.phase === "downloading" && job.transferred > 0);
     assert.equal(archiveDownloading.can_pause, true, "the archive download phase must allow pausing");
     jobs.pauseSftpJob(archiveJobId);
@@ -157,7 +165,8 @@ async function main() {
     assert.equal(jobs.listSftpJobs().find(item => item.id === archiveJobId).can_resume, false);
     assert.equal(jobs.listSftpJobs().find(item => item.id === archiveJobId).remote_archive_path, "", "completed archive downloads must clean the remote temporary file");
     const archive = jobs.getSftpJobFile(archiveJobId);
-    assert.match(archive.name, /^terma-.+\.tar\.gz$/, "a browser archive download must keep its tar.gz filename");
+    assert.equal(archive.name, "selected-files.tar.gz", "a browser archive download must keep the requested tar.gz filename");
+    assert.match(archiveCreateCommand, /--format=posix --pax-option=hdrcharset=BINARY/, "archive creation must retain the selected filename encoding policy");
     assert.ok(fs.statSync(archive.path).size > 0, "the archive response must use the completed job artifact");
     console.log("SFTP download integrity check passed.");
   } finally {

@@ -1276,9 +1276,10 @@ function desktopWindowTitleEndpointIdentity(value) {
 function normalizeMainWindowTitle(value) {
   const sanitized = sanitizeAuxiliaryWindowTitle(value, PRODUCT_NAME);
   const parts = sanitized.split(/\s*·\s*/).map(part => part.trim()).filter(Boolean);
-  if (parts.length < 4 || parts[0].toLowerCase() !== PRODUCT_NAME.toLowerCase()) return sanitized;
+  const productIndex = parts.findIndex(part => part.toLowerCase() === PRODUCT_NAME.toLowerCase());
+  if (parts.length < 4 || productIndex < 0) return sanitized;
 
-  const [product, endpoint, originalLabel, ...originalResourceParts] = parts;
+  const [endpoint, originalLabel, ...originalResourceParts] = parts.filter((_, index) => index !== productIndex);
   const resourceParts = [...originalResourceParts];
   let label = originalLabel;
   const generatedProtocolTitle = resourceParts.at(-1) || "";
@@ -1294,7 +1295,7 @@ function normalizeMainWindowTitle(value) {
     && resource.toLowerCase() !== label.toLowerCase()
     ? resource
     : "";
-  return sanitizeAuxiliaryWindowTitle([product, endpoint, label, uniqueResource].filter(Boolean).join(" · "), PRODUCT_NAME);
+  return sanitizeAuxiliaryWindowTitle([endpoint, label, uniqueResource, PRODUCT_NAME].filter(Boolean).join(" · "), PRODUCT_NAME);
 }
 
 function configureAuxiliaryDesktopWindow(window) {
@@ -1349,7 +1350,11 @@ async function createDetachedVncWindow(profileId) {
     existing.focus();
     return {ok:true, profileId:id, reused:true};
   }
-  const title = sanitizeAuxiliaryWindowTitle(`${profile.name || `VNC ${id}`}-vnc-${PRODUCT_NAME}`, `${PRODUCT_NAME}-vnc-${id}`);
+  const host = String(profile.host || "").trim();
+  const displayHost = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  const endpoint = displayHost ? `${displayHost}:${Number(profile.port || 5900)}` : "";
+  const titleInput = [PRODUCT_NAME, endpoint, "VNC", profile.name || `VNC ${id}`].filter(Boolean).join(" · ");
+  const title = normalizeMainWindowTitle(titleInput);
   const window = new BrowserWindow({
     width:1280,
     height:820,
@@ -2594,6 +2599,20 @@ async function openLocalPath(value) {
   return {ok:true, path:target};
 }
 
+async function trashLocalPath(value) {
+  const target = path.resolve(String(value || ""));
+  if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error(desktopUiText(
+    "本地下载文件不存在",
+    "The local downloaded file does not exist"
+  ));
+  if (typeof shell.trashItem !== "function") throw new Error(desktopUiText(
+    "当前系统不支持将文件移入回收站",
+    "This system cannot move files to the recycle bin"
+  ));
+  await shell.trashItem(target);
+  return {ok:true, path:target};
+}
+
 async function openVsCodeRemote(value={}) {
   const user = String(value.user || "").trim();
   const host = String(value.host || "").trim();
@@ -3107,6 +3126,7 @@ app.whenReady().then(async () => {
         chooseSyncDirectory,
         openDownloadDirectory,
         openLocalPath,
+        trashLocalPath,
         openVsCodeRemote,
         openExternalFile,
         remoteClientDiagnostics,

@@ -25,6 +25,7 @@ const DEFAULT_NOTIFICATION_DISPLAY = Object.freeze({
   progress: Object.freeze({ enabled: true, success_duration_ms: null, error_duration_ms: 8000 })
 });
 const SFTP_TEXT_EDITOR_MODES = new Set(["ace", "auto", "light"]);
+const SFTP_DOUBLE_CLICK_FILE_ACTIONS = new Set(["internal", "external"]);
 const SFTP_EXTERNAL_EDIT_SAVE_RULES = new Set(["prompt", "overwrite"]);
 const DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT = Object.freeze({
   unsplit: Object.freeze({ terminal: "header", sftp: "header" }),
@@ -224,7 +225,7 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 17,
+    schema_version: 18,
     language: normalizeLanguage(value.language, fallback.language),
     language_onboarding_version: Math.max(0, Math.min(1, Number.isInteger(Number(value.language_onboarding_version ?? fallback.language_onboarding_version))
       ? Number(value.language_onboarding_version ?? fallback.language_onboarding_version)
@@ -276,6 +277,10 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     sftp_text_editor_mode: normalizeSftpTextEditorMode(
       value.sftp_text_editor_mode,
       fallback.sftp_text_editor_mode
+    ),
+    sftp_double_click_file_action: normalizeSftpDoubleClickFileAction(
+      value.sftp_double_click_file_action,
+      fallback.sftp_double_click_file_action
     ),
     sftp_light_editor_threshold_mb: normalizeSftpLightEditorThreshold(
       value.sftp_light_editor_threshold_mb,
@@ -333,6 +338,11 @@ function normalizeSftpMaxOpenFileSize(value, fallback = DEFAULT_SFTP_MAX_OPEN_FI
 function normalizeSftpTextEditorMode(value, fallback = "ace") {
   const mode = String(value === undefined || value === null ? (fallback || "ace") : value).trim().toLowerCase();
   return SFTP_TEXT_EDITOR_MODES.has(mode) ? mode : "ace";
+}
+
+function normalizeSftpDoubleClickFileAction(value, fallback = "internal") {
+  const action = String(value === undefined || value === null ? (fallback || "internal") : value).trim().toLowerCase();
+  return SFTP_DOUBLE_CLICK_FILE_ACTIONS.has(action) ? action : "internal";
 }
 
 function normalizeSftpLightEditorThreshold(value, fallback = DEFAULT_SFTP_LIGHT_EDITOR_THRESHOLD_MB) {
@@ -451,6 +461,7 @@ module.exports = {
   normalizeRuntimeSettings,
   normalizeSftpDownloadDirectory,
   normalizeSftpExternalEditSaveRule,
+  normalizeSftpDoubleClickFileAction,
   normalizeSftpLightEditorThreshold,
   normalizeSftpMaxOpenFileSize,
   normalizeSftpTextEditorMode,

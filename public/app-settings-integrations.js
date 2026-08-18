@@ -2,11 +2,12 @@ async function saveSftpGlobalSettings() {
   const recycle = $("sftpRecycleBinEnabled");
   const sizeInput = $("sftpMaxOpenFileSizeMb");
   const editorMode = $("sftpTextEditorMode");
+  const doubleClickAction = $("sftpDoubleClickFileAction");
   const editorThreshold = $("sftpLightEditorThresholdMb");
   const downloadConcurrencyInput = $("sftpDownloadConcurrency");
   const uploadConcurrencyInput = $("sftpUploadConcurrency");
   const button = $("sftpGlobalSettingsSave");
-  if (!recycle || !sizeInput || !editorMode || !editorThreshold || !downloadConcurrencyInput || !uploadConcurrencyInput || !button) return;
+  if (!recycle || !sizeInput || !editorMode || !doubleClickAction || !editorThreshold || !downloadConcurrencyInput || !uploadConcurrencyInput || !button) return;
   const maximumSize = Number(sizeInput.value);
   const lightEditorThreshold = Number(editorThreshold.value);
   const downloadConcurrency = Number(downloadConcurrencyInput.value);
@@ -28,6 +29,7 @@ async function saveSftpGlobalSettings() {
         sftp_recycle_bin_enabled:recycle.checked,
         sftp_max_open_file_size_mb:maximumSize,
         sftp_text_editor_mode:editorMode.value,
+        sftp_double_click_file_action:doubleClickAction.value,
         sftp_light_editor_threshold_mb:lightEditorThreshold,
         sftp_download_concurrency:downloadConcurrency,
         sftp_upload_concurrency:uploadConcurrency,
@@ -42,6 +44,7 @@ async function saveSftpGlobalSettings() {
     recycle.checked = runtimeSettings.saved.sftp_recycle_bin_enabled;
     sizeInput.value = runtimeSettings.saved.sftp_max_open_file_size_mb;
     editorMode.value = runtimeSettings.saved.sftp_text_editor_mode;
+    doubleClickAction.value = runtimeSettings.saved.sftp_double_click_file_action;
     editorThreshold.value = runtimeSettings.saved.sftp_light_editor_threshold_mb;
     downloadConcurrencyInput.value = runtimeSettings.saved.sftp_download_concurrency;
     uploadConcurrencyInput.value = runtimeSettings.saved.sftp_upload_concurrency;
@@ -57,6 +60,7 @@ async function saveSftpGlobalSettings() {
     recycle.checked = runtimeSettings?.saved?.sftp_recycle_bin_enabled === true;
     sizeInput.value = runtimeSettings?.saved?.sftp_max_open_file_size_mb || 50;
     editorMode.value = runtimeSettings?.saved?.sftp_text_editor_mode || "ace";
+    doubleClickAction.value = runtimeSettings?.saved?.sftp_double_click_file_action || "internal";
     editorThreshold.value = runtimeSettings?.saved?.sftp_light_editor_threshold_mb || 10;
     downloadConcurrencyInput.value = runtimeSettings?.saved?.sftp_download_concurrency || 3;
     uploadConcurrencyInput.value = runtimeSettings?.saved?.sftp_upload_concurrency || 3;
@@ -86,7 +90,7 @@ async function showSftpGlobalSettings() {
         <div class="warning">${esc(tr("sftp:settings.recycle_warning"))}</div>
       </section>
       <section id="sftpSettingsPanelEditor" class="terminal-settings-panel" role="tabpanel" aria-labelledby="sftpSettingsTabEditor" hidden>
-        <div class="terminal-settings-grid"><div class="terminal-settings-section"><h3>${icon("file-code-2")}${esc(tr("sftp:settings.builtin_editor"))}</h3><label>${esc(tr("sftp:settings.text_editor"))}</label><select id="sftpTextEditorMode" onchange="toggleSftpLightEditorFields()"><option value="ace" ${saved.sftp_text_editor_mode !== "auto" && saved.sftp_text_editor_mode !== "light" ? "selected" : ""}>${esc(tr("sftp:settings.ace_always"))}</option><option value="auto" ${saved.sftp_text_editor_mode === "auto" ? "selected" : ""}>${esc(tr("sftp:settings.light_auto"))}</option><option value="light" ${saved.sftp_text_editor_mode === "light" ? "selected" : ""}>${esc(tr("sftp:settings.light_always"))}</option></select><div id="sftpLightEditorThresholdFields"><label>${esc(tr("sftp:settings.light_threshold"))}</label><input id="sftpLightEditorThresholdMb" type="number" min="1" max="100" step="1" value="${Number(saved.sftp_light_editor_threshold_mb || 10)}"></div><div class="muted">${esc(tr("sftp:settings.light_hint"))}</div></div>
+        <div class="terminal-settings-grid"><div class="terminal-settings-section"><h3>${icon("file-code-2")}${esc(tr("sftp:settings.builtin_editor"))}</h3><label>${esc(tr("sftp:settings.double_click_action", {defaultValue:"双击文件"}))}</label><select id="sftpDoubleClickFileAction"><option value="internal" ${saved.sftp_double_click_file_action !== "external" ? "selected" : ""}>${esc(tr("sftp:settings.double_click_internal", {defaultValue:"使用内部编辑器"}))}</option><option value="external" ${saved.sftp_double_click_file_action === "external" ? "selected" : ""}>${esc(tr("sftp:settings.double_click_external", {defaultValue:"使用外部编辑器"}))}</option></select><div class="muted">${esc(tr("sftp:settings.double_click_hint", {defaultValue:"外部编辑器仅在桌面版可用；Web 版会回退到内部编辑器或预览。"}))}</div><label>${esc(tr("sftp:settings.text_editor"))}</label><select id="sftpTextEditorMode" onchange="toggleSftpLightEditorFields()"><option value="ace" ${saved.sftp_text_editor_mode !== "auto" && saved.sftp_text_editor_mode !== "light" ? "selected" : ""}>${esc(tr("sftp:settings.ace_always"))}</option><option value="auto" ${saved.sftp_text_editor_mode === "auto" ? "selected" : ""}>${esc(tr("sftp:settings.light_auto"))}</option><option value="light" ${saved.sftp_text_editor_mode === "light" ? "selected" : ""}>${esc(tr("sftp:settings.light_always"))}</option></select><div id="sftpLightEditorThresholdFields"><label>${esc(tr("sftp:settings.light_threshold"))}</label><input id="sftpLightEditorThresholdMb" type="number" min="1" max="100" step="1" value="${Number(saved.sftp_light_editor_threshold_mb || 10)}"></div><div class="muted">${esc(tr("sftp:settings.light_hint"))}</div></div>
         <div class="terminal-settings-section"><h3>${icon("external-link")}${esc(tr("sftp:settings.external_editor"))}</h3>${sftpDownloadSettings.delivery_mode === "desktop" ? `<label>${esc(tr("sftp:settings.external_editor"))}</label><select id="sftpExternalEditorMode" onchange="toggleSftpExternalEditorFields()"><option value="system" ${localStorage.getItem("sftpExternalEditorMode") !== "vscode" && localStorage.getItem("sftpExternalEditorMode") !== "custom" ? "selected" : ""}>${esc(tr("sftp:settings.system_program"))}</option><option value="vscode" ${localStorage.getItem("sftpExternalEditorMode") === "vscode" ? "selected" : ""}>${esc(tr("sftp:settings.vscode"))}</option><option value="custom" ${localStorage.getItem("sftpExternalEditorMode") === "custom" ? "selected" : ""}>${esc(tr("sftp:settings.custom_program"))}</option></select><div id="sftpExternalEditorCustom"><label>${esc(tr("sftp:settings.program_path"))}</label><input id="sftpExternalEditorPath" value="${escAttr(localStorage.getItem("sftpExternalEditorPath") || "")}" placeholder="${escAttr(tr("sftp:settings.program_path_placeholder"))}"><label>${esc(tr("sftp:settings.launch_args"))}</label><input id="sftpExternalEditorArgs" value="${escAttr(localStorage.getItem("sftpExternalEditorArgs") || "")}" placeholder="${escAttr(tr("sftp:settings.launch_args_placeholder"))}"></div><label>${esc(tr("sftp:settings.save_rule"))}</label><select id="sftpExternalEditSaveRule" onchange="toggleSftpExternalSaveFields()"><option value="prompt" ${saved.sftp_external_edit_save_rule !== "overwrite" ? "selected" : ""}>${esc(tr("sftp:settings.save_prompt"))}</option><option value="overwrite" ${saved.sftp_external_edit_save_rule === "overwrite" ? "selected" : ""}>${esc(tr("sftp:settings.overwrite_remote"))}</option></select><label id="sftpExternalEditBackupFields" class="check-row"><input id="sftpExternalEditBackupEnabled" type="checkbox" ${saved.sftp_external_edit_backup_enabled !== false ? "checked" : ""}> ${esc(tr("sftp:settings.backup_before_overwrite"))}</label>` : `<div class="muted">${esc(tr("sftp:settings.desktop_only"))}</div>`}</div></div>
       </section>
       <section id="sftpSettingsPanelTransfer" class="terminal-settings-panel" role="tabpanel" aria-labelledby="sftpSettingsTabTransfer" hidden>
@@ -164,6 +168,19 @@ async function openSftpDownloadedFile(jobId, button=null) {
     await api("/api/sftp/download-settings/open-file", {method:"POST", body:JSON.stringify({job_id:jobId})});
   } catch (error) {
     notify(error.message ? localizedTermaUiPhrase(error.message, tr("sftp:settings.open_file_failed")) : tr("sftp:settings.open_file_failed"), "error");
+  } finally {
+    endUiAction(actionKey, button);
+  }
+}
+
+async function deleteSftpDownloadedFile(jobId, button=null) {
+  const actionKey = `sftp-task:delete-file:${String(jobId || "")}`;
+  if (!beginUiAction(actionKey, button)) return;
+  try {
+    await api("/api/sftp/download-settings/delete-file", {method:"POST", body:JSON.stringify({job_id:jobId})});
+    notify(tr("sftp:menu.downloaded_file_deleted", {defaultValue:"已删除下载文件"}), "success");
+  } catch (error) {
+    notify(error.message ? localizedTermaUiPhrase(error.message, tr("sftp:menu.downloaded_file_delete_failed", {defaultValue:"删除下载文件失败"})) : tr("sftp:menu.downloaded_file_delete_failed", {defaultValue:"删除下载文件失败"}), "error");
   } finally {
     endUiAction(actionKey, button);
   }

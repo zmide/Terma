@@ -73,7 +73,10 @@ async function checkSftpDesktopDownloadRoutes() {
   const calls = [];
   let desktopRequest = false;
   let json = {};
-  const jobs = [{id:"job-1", type:"download", delivery_status:"saved", saved_path:"C:/Downloads/fixture.txt"}];
+  const jobs = [
+    {id:"job-1", type:"download", delivery_status:"saved", saved_path:"C:/Downloads/fixture.txt"},
+    {id:"job-2", type:"download", delivery_status:"saved", saved_path:"C:/Downloads/batch"}
+  ];
   const desktopIntegration = {
     getDownloadDirectory:() => "C:/Users/demo/Downloads",
     chooseDownloadDirectory:() => "D:/Terma",
@@ -84,6 +87,10 @@ async function checkSftpDesktopDownloadRoutes() {
     openLocalPath:file => {
       calls.push(["open-file", file]);
       return {opened:file};
+    },
+    trashLocalPath:file => {
+      calls.push(["trash-file", file]);
+      return {trashed:file};
     }
   };
   const dependencies = {
@@ -124,6 +131,9 @@ async function checkSftpDesktopDownloadRoutes() {
   assert.equal(await handleSftpDesktopDownloadRoutes({method:"POST"}, output.response, "/api/sftp/download-settings/open-file", dependencies), true);
   assert.deepEqual(calls.shift(), ["open-file", "C:/Downloads/fixture.txt"]);
   assert.deepEqual(output.sent.pop(), {data:{opened:"C:/Downloads/fixture.txt"}, status:200});
+  assert.equal(await handleSftpDesktopDownloadRoutes({method:"POST"}, output.response, "/api/sftp/download-settings/delete-file", dependencies), true);
+  assert.deepEqual(calls.shift(), ["trash-file", "C:/Downloads/fixture.txt"]);
+  assert.deepEqual(output.sent.pop(), {data:{trashed:"C:/Downloads/fixture.txt"}, status:200});
 
   json = {job_id:"missing"};
   assert.equal(await handleSftpDesktopDownloadRoutes({method:"POST"}, output.response, "/api/sftp/download-settings/open-file", dependencies), true);

@@ -8,6 +8,20 @@ function syncTermaTerminalComponentMessages() {
   document.querySelectorAll(".xterm-helper-textarea").forEach(element => element.setAttribute("aria-label", promptLabel));
 }
 
+function parkTerminalSurface(view) {
+  const key = String(view?.dataset?.terminalTabKey || "");
+  const surface = terminalSurfaceCache.get(key);
+  const mount = surface?.querySelector("#terminalToolbarMount");
+  if (!key || !surface || !mount) return;
+  const escapedKey = typeof workspaceCssEscape === "function" ? workspaceCssEscape(key) : CSS.escape(key);
+  const toolbar = document.querySelector(`.terminal-toolbar[data-workspace-tab-key="${escapedKey}"]`)
+    || surface.querySelector(".terminal-toolbar");
+  if (!toolbar) return;
+  if (toolbar.parentElement !== mount) mount.appendChild(toolbar);
+  toolbar.hidden = true;
+  toolbar.classList.remove("terminal-toolbar-header");
+}
+
 if (typeof registerTermaI18nRenderer === "function") registerTermaI18nRenderer(syncTermaTerminalComponentMessages);
 
 async function ensureTerminalLibs() {

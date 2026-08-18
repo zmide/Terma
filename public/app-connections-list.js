@@ -397,7 +397,7 @@ function renderConnectionRow(c) {
     : tr("connections:actions.favorite", {defaultValue:"收藏连接"});
   const moreText = tr("connections:actions.more", {defaultValue:"更多操作"});
   const bulkCheck = connectionBulkMode ? `<label class="connection-bulk-check" title="${escAttr(selectConnectionText)}"><input type="checkbox" ${selectedConnectionIds.has(c.id) ? "checked" : ""} data-change-action="connection-select" data-connection-id="${c.id}"><span class="sr-only">${esc(selectConnectionText)}</span></label>` : "";
-  return `<div class="conn-row${active}${bulkClass}">
+  return `<div class="conn-row${active}${bulkClass}" data-connection-id="${c.id}">
     ${bulkCheck}
     <div class="conn-main"><span class="conn-name conn-name-open" title="${escAttr(tr("connections:actions.double_click_terminal", {defaultValue:"双击打开终端"}))}" data-dblclick-action="connection-open-terminal" data-connection-id="${c.id}">${esc(c.name)}</span><span class="conn-state"><span class="status-dot${running}"></span>${esc(running ? tr("connections:groups.running", {defaultValue:"运行中"}) : tr("connections:groups.stopped", {defaultValue:"已停止"}))}<span class="health-badge${healthClass}" title="${escAttr(healthStatusText)}" aria-label="${escAttr(healthStatusText)}">${icon(health?.ok ? "circle-check" : health ? "circle-alert" : "circle-help")}</span></span></div>
     <div class="conn-meta">${esc(c.ssh_user)}@${esc(c.ssh_host)}:${esc(c.ssh_port)}</div>

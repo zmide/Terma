@@ -112,6 +112,7 @@ function loadDockingModel() {
       serializeWorkspaceLayout,
       restoreWorkspaceLayoutNode,
       workspaceDropZoneAtPoint,
+      applyWorkspaceTabDrop,
       workspaceToolbarPlacementForTab,
       returnWorkspaceToolbarToMount,
       workspaceVisiblePanes,
@@ -514,6 +515,27 @@ function runWorkspaceDockingChecks({silent=false}={}) {
     assert.equal(api.workspaceDropZoneAtPoint(target, 50, 5).zone, "top");
     assert.equal(api.workspaceDropZoneAtPoint(target, 50, 95).zone, "bottom");
     assert.equal(api.workspaceDropZoneAtPoint(target, 50, 50).zone, "center");
+  });
+
+  check("splitting a background tab keeps the previously active tab in the source pane", () => {
+    api.resetSerials();
+    api.setTabs([
+      {key:"sftp-1", kind:"sftp"},
+      {key:"sftp-2", kind:"sftp"},
+      {key:"terminal-3", kind:"terminal"}
+    ]);
+    api.setLayout(pane("pane-source", ["sftp-1", "sftp-2", "terminal-3"]));
+    api.setFocusedPane("pane-source");
+    const applied = api.applyWorkspaceTabDrop(
+      {key:"sftp-2", sourcePaneId:"pane-source", sourceActiveTabKey:"sftp-1"},
+      {paneId:"pane-source", zone:"right"}
+    );
+    assert.equal(applied, true);
+    const source = api.workspaceLeaves().find(item => item.tabs.includes("sftp-1"));
+    const destination = api.workspaceLeaves().find(item => item.tabs.includes("sftp-2"));
+    assert.equal(source.activeTabKey, "sftp-1");
+    assert.deepEqual([...source.tabs], ["sftp-1", "terminal-3"]);
+    assert.equal(destination.activeTabKey, "sftp-2");
   });
 
   check("tab-strip drops resolve an exact insertion index", () => {
