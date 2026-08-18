@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const ts = require("typescript");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const languages = ["zh-CN", "en-US"];
@@ -587,7 +588,7 @@ const connectionHealthFrontend = read("public/app-connection-health.js");
 assert.match(connectionHealthFrontend, /diagnosis\.reason_code/, "connection health must localize SSH failures by stable diagnosis code");
 assert.match(connectionHealthFrontend, /ssh\.preserve_raw_output === true/, "connection health must preserve only explicitly marked raw SSH output");
 assert.equal(connectionHealthFrontend.includes("diagnosis.display"), false, "connection health must not render the backend's fixed Chinese SSH diagnosis display directly");
-const aceFrontend = read("public/app-sftp.js");
+const aceFrontend = readFrontendDomain(root, "sftp");
 assert.ok(aceFrontend.includes("function syncTermaAceEditorChrome("), "Ace instances must expose a live localization refresh boundary");
 assert.ok(aceFrontend.includes("renderer?.updateFull?.(true)"), "Ace localization must redraw existing fold and annotation chrome");
 assert.ok(aceFrontend.includes("editor.textInput?.setAriaOptions?.({setLabel:true})"), "Ace localization must refresh existing accessibility labels");
