@@ -330,6 +330,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       };
       const clampCard = () => {
         if (card.hidden || card.classList.contains("is-fullscreen")) return;
+        card.style.transform = "none";
         const rect = card.getBoundingClientRect();
         const left = Math.max(8, Math.min(window.innerWidth - Math.min(rect.width, window.innerWidth - 16) - 8, rect.left));
         const top = Math.max(8, Math.min(window.innerHeight - Math.min(rect.height, window.innerHeight - 16) - 8, rect.top));
