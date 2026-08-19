@@ -682,7 +682,10 @@ function pipeForwardSocket(client, source, host, port, onConnectionError: any = 
 }
 
 async function startLocalForward(client, forward, onError, onConnectionError = onError) {
+  const sockets = new Set<any>();
   const server = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
     pipeForwardSocket(client, socket, forward.target_host, forward.target_port, onConnectionError);
   });
   await new Promise((resolve, reject) => {
@@ -693,7 +696,11 @@ async function startLocalForward(client, forward, onError, onConnectionError = o
       resolve(null);
     });
   });
-  return server;
+  return {
+    get listening() { return server.listening; },
+    address: () => server.address(),
+    close: () => closeForwardListener(server, sockets)
+  };
 }
 
 async function startSocksForward(client, forward, onError, onConnectionError = onError) {
@@ -728,6 +735,11 @@ async function startSocksForward(client, forward, onError, onConnectionError = o
     );
   });
   const listener = server.server;
+  const sockets = new Set<any>();
+  listener.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
   server.address = () => listener.address();
   await new Promise((resolve, reject) => {
     listener.once("error", reject);
@@ -737,7 +749,34 @@ async function startSocksForward(client, forward, onError, onConnectionError = o
       resolve(null);
     });
   });
-  return server;
+  return {
+    get listening() { return listener.listening; },
+    address: () => listener.address(),
+    close: () => closeForwardListener(listener, sockets)
+  };
+}
+
+function closeForwardListener(listener, sockets = new Set<any>()) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(null);
+    };
+    const timer = setTimeout(finish, 2000);
+    timer.unref?.();
+    for (const socket of sockets) {
+      try { socket.destroy(); } catch {}
+    }
+    try {
+      if (!listener?.listening) return finish();
+      listener.close(finish);
+    } catch {
+      finish();
+    }
+  });
 }
 
 async function startRemoteForward(client, forward, onError, onConnectionError = onError) {
@@ -759,7 +798,16 @@ async function startRemoteForward(client, forward, onError, onConnectionError = 
   });
   return {
     close: () => new Promise((resolve) => {
-      client.unforwardIn(bindHost, bindPort, () => resolve(null));
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(null);
+      };
+      const timer = setTimeout(finish, 2000);
+      timer.unref?.();
+      try { client.unforwardIn(bindHost, bindPort, finish); } catch { finish(); }
     })
   };
 }
@@ -767,17 +815,29 @@ async function startRemoteForward(client, forward, onError, onConnectionError = 
 async function startPasswordForward(connection, forward, callbacks: any = {}) {
   const client: any = await connectPassword(connection);
   let closing = false;
+  let clientClosed = false;
+  let listener;
+  let closeTask: Promise<any> | null = null;
   const onError = (error) => reportForwardError(callbacks.onError, normalizeSshTransportError(error, connection));
   const onConnectionError = (error) => reportForwardError(callbacks.onConnectionError, normalizeSshTransportError(error, connection));
   client.on("error", onError);
   client.on("close", () => {
-    if (!closing) callbacks.onClose?.();
+    clientClosed = true;
+    if (closing || !listener) return;
+    closing = true;
+    closeTask = (async () => {
+      try { await Promise.resolve(listener?.close?.()).catch(() => {}); } catch {}
+      callbacks.onClose?.();
+    })();
   });
-  let listener;
   try {
     if (forward.mode === "local") listener = await startLocalForward(client, forward, onError, onConnectionError);
     else if (forward.mode === "remote") listener = await startRemoteForward(client, forward, onError, onConnectionError);
     else listener = await startSocksForward(client, forward, onError, onConnectionError);
+    if (clientClosed) {
+      try { await Promise.resolve(listener?.close?.()).catch(() => {}); } catch {}
+      throw new Error("SSH connection closed while the forward listener was starting");
+    }
   } catch (error) {
     try { client.end(); } catch {}
     throw normalizeSshTransportError(error, connection);
@@ -786,12 +846,13 @@ async function startPasswordForward(connection, forward, callbacks: any = {}) {
     client,
     listener,
     async close() {
-      closing = true;
-      try {
-        const result = listener?.close?.();
-        if (result && typeof result.then === "function") await result.catch(() => {});
-      } catch {}
-      try { client.end(); } catch {}
+      if (closeTask) return closeTask;
+      closeTask = (async () => {
+        closing = true;
+        try { await Promise.resolve(listener?.close?.()).catch(() => {}); } catch {}
+        try { client.end(); } catch {}
+      })();
+      return closeTask;
     }
   };
 }

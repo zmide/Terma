@@ -103,13 +103,17 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
       if (breadcrumb) breadcrumb.innerHTML = sftpBreadcrumbHtml(id, runtime.state.path || remotePath, tabKey);
       if (pathInput) pathInput.value = runtime.state.path || remotePath;
       refreshSftpDirectoryActions(tabKey);
-      renderSftpEntries(tabKey);
+      flushPendingSftpDirectoryRefresh(tabKey);
+      const list = sftpElement("sftpList", tabKey);
+      if (Number(runtime.renderedRequestSeq ?? -1) !== Number(runtime.state.requestSeq || 0) || !list?.querySelector(".sftp-head")) {
+        renderSftpEntries(tabKey);
+      }
     }
     if (options.fast) {
       if (preserveManualDisconnect && !updateTab) updateSftpConnectionUi(id, "disconnected");
       syncSftpToolbarPlacement(tabKey);
       refreshSftpDirectoryActions(tabKey);
-      refreshSftpJobs();
+      refreshSftpJobsIfStale();
       startSftpJobsTimer();
       if (preserveManualDisconnect && !updateTab) return true;
       requestAnimationFrame(() => void refreshActiveSftpSessionStatus(tabKey));
@@ -118,7 +122,7 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
     syncSftpToolbarPlacement(tabKey);
     refreshSftpDirectoryActions(tabKey);
     const refreshBackgroundSftpUi = () => {
-      refreshSftpJobs();
+      refreshSftpJobsIfStale();
       startSftpJobsTimer();
     };
     if (updateTab) refreshBackgroundSftpUi();
@@ -248,10 +252,11 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
   runtime.toolbar = toolbar || null;
   setWorkspace(title, sftpConnectionAddress(c), "sftp", tabKey, updateTab, true, {kind:"sftp", id:c.id, path:displayPath, connectionStatus:preserveManualDisconnect && !updateTab ? "disconnected" : "connecting", transient:quickConnection, quick_connection:quickConnection, skipToolbarSync:true});
   syncSftpToolbarPlacement(tabKey);
+  flushPendingSftpDirectoryRefresh(tabKey);
   restoreSftpDropFeedbackAfterRender(tabKey);
   rememberSftpNavigation(tabKey, displayPath);
   syncSftpNavigationButtons(tabKey);
-  refreshSftpJobs();
+  refreshSftpJobsIfStale();
   startSftpJobsTimer();
   if (preserveManualDisconnect && !updateTab) {
     updateSftpConnectionUi(id, "disconnected");
@@ -295,11 +300,41 @@ function awaitSftpDirectoryPageRequest(request, signal=null) {
   });
 }
 
+const SFTP_DIRECTORY_REQUEST_CONCURRENCY = 3;
+let sftpDirectoryRequestActive = 0;
+const sftpDirectoryRequestQueue = [];
+
+function drainSftpDirectoryRequestQueue() {
+  while (sftpDirectoryRequestActive < SFTP_DIRECTORY_REQUEST_CONCURRENCY && sftpDirectoryRequestQueue.length) {
+    const item = sftpDirectoryRequestQueue.shift();
+    if (item.signal?.aborted) {
+      item.reject(sftpDirectoryPageAbortError());
+      continue;
+    }
+    sftpDirectoryRequestActive += 1;
+    Promise.resolve()
+      .then(item.run)
+      .then(item.resolve, item.reject)
+      .finally(() => {
+        sftpDirectoryRequestActive = Math.max(0, sftpDirectoryRequestActive - 1);
+        drainSftpDirectoryRequestQueue();
+      });
+  }
+}
+
+function scheduleSftpDirectoryRequest(run, signal=null) {
+  if (signal?.aborted) return Promise.reject(sftpDirectoryPageAbortError());
+  return new Promise((resolve, reject) => {
+    sftpDirectoryRequestQueue.push({run, signal, resolve, reject});
+    drainSftpDirectoryRequestQueue();
+  });
+}
+
 function requestSftpDirectoryPage(connectionId, params, signal=null) {
   const requestPath = `/api/connections/${Number(connectionId)}/sftp?${params.toString()}`;
   let request = sftpDirectoryPageRequests.get(requestPath);
   if (!request) {
-    request = api(requestPath).finally(() => {
+    request = scheduleSftpDirectoryRequest(() => api(requestPath)).finally(() => {
       if (sftpDirectoryPageRequests.get(requestPath) === request) sftpDirectoryPageRequests.delete(requestPath);
     });
     sftpDirectoryPageRequests.set(requestPath, request);
@@ -386,6 +421,7 @@ async function loadSftpPage(options={}) {
     const contentChanged = !options.renderIfChangedOnly
       || sftpDirectoryContentSignature(runtime.state) !== sftpDirectoryContentSignature(nextState);
     runtime.state = nextState;
+    if (!contentChanged) runtime.renderedRequestSeq = requestSeq;
     if (sftpActiveRuntimeKey === tabKey) sftpState = nextState;
     for (const key of sftpTabKeysForConnection(id)) sftpDisconnectedTabs.delete(key);
     updateSftpConnectionUi(id, "connected");
@@ -401,7 +437,8 @@ async function loadSftpPage(options={}) {
       if (viewState) restoreSftpViewState(viewState, tabKey);
     }
     rememberSftpViewState(tabKey, remotePath);
-    saveTabsState();
+    if (typeof scheduleTabsStateSave === "function") scheduleTabsStateSave();
+    else saveTabsState();
     return true;
   } catch (error) {
     if (error?.name === "AbortError" || requestSeq !== runtime.state.requestSeq) return false;
@@ -661,6 +698,7 @@ function renderSftpEntries(tabKey=activeTabKey) {
   const pager = `<div class="sftp-pager-dock"><div class="pager sftp-pager"><button onclick="setSftpPage(${page - 1},'${escAttr(tabKey)}')" ${page <= 1 ? "disabled" : ""}>${esc(tr("sftp:auto.previous_page"))}</button><span class="pager-count"><span class="sftp-scroll-cue" title="${escAttr(tr("sftp:auto.more_below"))}" aria-hidden="true">${icon("chevron-down")}</span><span class="sftp-page-summary">${esc(tr(pageSummaryKey, {page,pages:totalPages,first,last,total,filter:filterSummary}))}</span><select aria-label="${escAttr(tr("sftp:auto.page_size"))}" onchange="setSftpPageSize(this.value,'${escAttr(tabKey)}')">${pageSizes}</select><label class="sftp-page-jump"><span>${esc(tr("sftp:auto.page_jump"))}</span><input type="number" min="1" max="${totalPages}" value="${page}" aria-label="${escAttr(tr("sftp:auto.page_jump"))}" onkeydown="if(event.key==='Enter'){event.preventDefault();jumpSftpPage(this,'${escAttr(tabKey)}')}" onchange="jumpSftpPage(this,'${escAttr(tabKey)}')"></label></span><button onclick="setSftpPage(${page + 1},'${escAttr(tabKey)}')" ${page >= totalPages ? "disabled" : ""}>${esc(tr("sftp:auto.next_page"))}</button></div></div>`;
   list.innerHTML = head + (rows || stateView("empty", state.query ? tr("sftp:auto.no_matches") : tr("sftp:auto.empty_directory"), state.query ? tr("sftp:auto.try_another_search") : tr("sftp:auto.empty_directory_hint"))) + pager;
   list.dataset.sftpTabKey = String(tabKey || "");
+  runtime.renderedRequestSeq = Number(state.requestSeq || 0);
   if (typeof bindSftpColumnControls === "function") bindSftpColumnControls(list);
   watchSftpListLayout(list, tabKey);
   updateSftpSelection(tabKey);

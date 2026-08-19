@@ -2157,12 +2157,15 @@ app.whenReady().then(async () => {
         api = previousLanguageApi;
       }
       const i18nScenarioErrors = [];
-      const runI18nScenario = async (name, action) => {
+      const runI18nScenario = async (name, action, options={}) => {
         try {
-          document.documentElement.dataset.uiSmokeStage = 'settings-i18n-' + name;
+          document.documentElement.dataset.uiSmokeStage = 'settings-i18n-' + name + '-action';
           await action();
+          if (options.translate === false) return;
+          document.documentElement.dataset.uiSmokeStage = 'settings-i18n-' + name + '-translations';
           await new Promise(resolve => setTimeout(resolve, 0));
           applyTermaTranslations(document);
+          document.documentElement.dataset.uiSmokeStage = 'settings-i18n-' + name + '-settle';
           await new Promise(resolve => setTimeout(resolve, 0));
         } catch (error) {
           i18nScenarioErrors.push(name + ': ' + (error?.message || error));
@@ -2910,7 +2913,7 @@ app.whenReady().then(async () => {
         const translated = localizedSystemLogText(source, {sourceTitle:'system-2026-08-15'});
         if (/[\u3400-\u9fff]/.test(translated)) throw new Error('known system log lines still contain Chinese: ' + translated);
         if (!translated.includes('Terma is shutting down') || !translated.includes('Saved to C:/Desktop')) throw new Error('known system log templates were not localized');
-      });
+      }, {translate:false});
       const terminalSystemSamples = [
         tr('terminal:system.connecting', {endpoint:'tester@127.0.0.1:22'}),
         tr('terminal:system.connected', {endpoint:'tester@127.0.0.1:22',pty:tr('terminal:system.pty_suffix'),startup:''}),
@@ -4527,6 +4530,38 @@ app.whenReady().then(async () => {
     const encodingLabels=[...document.querySelectorAll('#actionMenu button span')].map(item=>item.textContent.trim());
     const encodingMenuOpened=['UTF-8','GB18030','GBK','Big5','Shift_JIS','EUC-KR','ISO-8859-1'].every(label=>encodingLabels.includes(label));
     hideActionMenu();
+    const encodingApi=api;
+    const encodingNotify=notify;
+    const previousEncoding=first.terminal_encoding||'utf8';
+    const encodingRequests=[];
+    const encodingNotices=[];
+    const encodingActions=document.querySelector('.terminal-actions');
+    encodingActions?.insertAdjacentHTML('beforeend','<button class="terminal-action-encoding"><span>'+terminalEncodingLabel(first,key)+'</span></button>');
+    api=async (pathname,options={})=>{
+      if(pathname.endsWith('/terminal-preferences')) {
+        const body=JSON.parse(options.body||'{}');
+        encodingRequests.push(body.terminal_encoding);
+        await new Promise(resolve=>setTimeout(resolve,body.terminal_encoding==='gb18030'?20:1));
+        return body;
+      }
+      return encodingApi(pathname,options);
+    };
+    notify=(text,type='info')=>encodingNotices.push({text:String(text||''),type});
+    await Promise.all([
+      applyTerminalPreferences(key,first.id,{terminal_encoding:'gb18030'},'编码已切换为 GB18030'),
+      applyTerminalPreferences(key,first.id,{terminal_encoding:'gbk'},'编码已切换为 GBK')
+    ]);
+    const encodingSelectionUsesLatest=Boolean(
+      JSON.stringify(encodingRequests)===JSON.stringify(['gb18030','gbk'])
+      &&terminalSessions.get(key)?.terminalEncoding==='gbk'
+      &&document.querySelector('.terminal-action-encoding span')?.textContent==='GBK'
+      &&encodingNotices.at(-1)?.text.includes('GBK')
+      &&reconnectedFakeSocket.sent.some(value=>String(value).includes('"terminal-encoding"')&&String(value).includes('"gbk"'))
+    );
+    first.terminal_encoding=previousEncoding;
+    terminalSessions.get(key).terminalEncoding=previousEncoding;
+    api=encodingApi;
+    notify=encodingNotify;
     showTerminalFontMenu(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:180,clientY:100}),key,first.id);
     const fontLabels=[...document.querySelectorAll('#actionMenu button span')].map(item=>item.textContent.trim());
     const fontMenuOpened=['系统等宽','Cascadia','JetBrains Mono','Consolas','自定义字体…','紧凑行距 1.0','行距 1.4','常规字重','半粗字重','恢复终端显示默认值'].every(label=>fontLabels.includes(label));
@@ -4550,14 +4585,14 @@ app.whenReady().then(async () => {
     const terminalSettingsUi={
       open:Boolean(terminalSettingsCard&&!document.querySelector('#modal')?.hidden),
       globalScope:Boolean(terminalSettingsCard?.textContent.includes('应用到继承默认值的连接；连接独立设置优先')),
-      controls:['terminalSettingFontFamily','terminalSettingFontSize','terminalSettingBackgroundColor','terminalSettingMiddleMouse','terminalSettingRightMouse','terminalSettingCtrlClick','terminalSettingUrlLinks','terminalSettingWordSeparators','terminalSettingAutoCopy','terminalSettingMultilinePaste'].every(id=>Boolean(document.querySelector('#'+id))),
+      controls:['terminalSettingFontFamily','terminalSettingFontSize','terminalSettingScrollback','terminalSettingBackgroundColor','terminalSettingMiddleMouse','terminalSettingRightMouse','terminalSettingCtrlClick','terminalSettingUrlLinks','terminalSettingWordSeparators','terminalSettingAutoCopy','terminalSettingMultilinePaste'].every(id=>Boolean(document.querySelector('#'+id))),
       withinViewport:Boolean(terminalSettingsRect&&terminalSettingsRect.left>=-0.5&&terminalSettingsRect.right<=innerWidth+0.5&&terminalSettingsRect.top>=-0.5&&terminalSettingsRect.bottom<=innerHeight+0.5),
       compact:Boolean(terminalSettingsRect&&terminalSettingsRect.height<600),
       readableWidth:Boolean(terminalSettingsRect&&terminalSettingsRect.width>=Math.min(800,innerWidth-28)-1),
       noHorizontalOverflow:terminalSettingsNoHorizontalOverflow,
       tabs:[...document.querySelectorAll('.terminal-settings-tabs [role="tab"]')].map(tab=>tab.textContent.trim()),
       backgroundModes:[...document.querySelectorAll('input[name="terminalSettingBackgroundMode"]')].map(input=>input.value),
-      requestedDefaults:defaultTerminalGlobalSettings.font_size===13&&defaultTerminalGlobalSettings.font_family.includes('monospace')&&defaultTerminalGlobalSettings.background_mode==='theme'&&defaultTerminalGlobalSettings.url_links_enabled===true&&defaultTerminalGlobalSettings.auto_copy_selection===false&&defaultTerminalGlobalSettings.copy_include_trailing_newline===false,
+      requestedDefaults:defaultTerminalGlobalSettings.font_size===13&&defaultTerminalGlobalSettings.scrollback_lines===30000&&defaultTerminalGlobalSettings.font_family.includes('monospace')&&defaultTerminalGlobalSettings.background_mode==='theme'&&defaultTerminalGlobalSettings.url_links_enabled===true&&defaultTerminalGlobalSettings.auto_copy_selection===false&&defaultTerminalGlobalSettings.copy_include_trailing_newline===false,
       editablePasteSetting:document.querySelector('#terminalSettingMultilinePaste')?.selectedOptions[0]?.textContent.includes('可编辑命令窗口')
     };
     terminalSettingsUi.drop=terminalDropUi;
@@ -5001,7 +5036,7 @@ app.whenReady().then(async () => {
     terminalLatencyVisible = previousLatencyVisible;
     if (previousLatencyStored === null) localStorage.removeItem('terminalLatencyVisible');
     else localStorage.setItem('terminalLatencyVisible', previousLatencyStored);
-    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,x11DefaultFallsBack,x11ScopeMenu,ctrlVImageIntercepted,ctrlVEmptyFallsThrough,ctrlVDiagnostics,enterReconnect,reconnectPreservesOutput,inactiveTerminalOutputContinues,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,remoteDesktopTitleDedup,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,terminalToolbarScrollable,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,zmodemPanelUi,zmodemPanelMetrics,terminalSettingsUi};
+    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,x11DefaultFallsBack,x11ScopeMenu,ctrlVImageIntercepted,ctrlVEmptyFallsThrough,ctrlVDiagnostics,enterReconnect,reconnectPreservesOutput,inactiveTerminalOutputContinues,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,remoteDesktopTitleDedup,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,encodingSelectionUsesLatest,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,terminalToolbarScrollable,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,zmodemPanelUi,zmodemPanelMetrics,terminalSettingsUi};
   })()`);
   const terminalStartupOriginalContentSize = window.getContentSize();
   window.setContentSize(1000, 600);
@@ -5398,12 +5433,13 @@ app.whenReady().then(async () => {
     const sftpPageLoadOptions = [];
     let mutateStubbedSftpPaths = false;
     let rapidSftpOpen = false;
-    let rapidSftpOpenUi = {requested:0, created:0, runtimes:0, settled:0, loaded:0, sharedRequests:false, allSettled:false};
+    let rapidSftpOpenUi = {requested:0, created:0, runtimes:0, settled:0, loaded:0, truthyResults:0, loadCalls:0, stubLoaded:0, sharedRequests:false, allSettled:false};
     try {
       loadSftpPage = async options => {
         sftpPageLoads += 1;
         sftpPageLoadOptions.push({...options});
         if (rapidSftpOpen) {
+          rapidSftpOpenUi.loadCalls += 1;
           const key = String(options.tabKey || "");
           const runtime = sftpTabRuntimes.get(key);
           const path = String(options.path || ".");
@@ -5424,6 +5460,7 @@ app.whenReady().then(async () => {
               totalPages:1,
               unfilteredTotal:1
             };
+            rapidSftpOpenUi.stubLoaded += 1;
             if (sftpActiveRuntimeKey === key) sftpState = runtime.state;
           }
           return true;
@@ -5451,9 +5488,16 @@ app.whenReady().then(async () => {
       // request is still in flight.  The detached runtimes must all settle,
       // including the tabs that are no longer visible.
       const rapidSftpKeys = Array.from({length:16}, (_, index) => 'sftp-burst-' + connection.id + '-' + (index + 1));
+      // Use a directory that no earlier fixture has opened so every tab starts
+      // from the same in-flight request instead of an already populated cache.
+      const rapidSftpPath = '/Users/demo/Public/rapid-open';
       rapidSftpOpen = true;
-      const rapidResults = await Promise.all(rapidSftpKeys.map(key => openSftp(connection.id, '/Users/demo/Public', true, key)));
-      rapidSftpOpen = false;
+      let rapidResults;
+      try {
+        rapidResults = await Promise.all(rapidSftpKeys.map(key => openSftp(connection.id, rapidSftpPath, true, key)));
+      } finally {
+        rapidSftpOpen = false;
+      }
       const rapidRuntimes = rapidSftpKeys.map(key => sftpTabRuntimes.get(key));
       rapidSftpOpenUi = {
         requested:rapidSftpKeys.length,
@@ -5461,6 +5505,9 @@ app.whenReady().then(async () => {
         runtimes:rapidRuntimes.filter(Boolean).length,
         settled:rapidRuntimes.filter(runtime => runtime && runtime.state.loading === false).length,
         loaded:rapidRuntimes.filter(runtime => runtime?.state?.entries?.[0]?.name === 'burst-ready.txt').length,
+        truthyResults:rapidResults.filter(Boolean).length,
+        loadCalls:rapidSftpOpenUi.loadCalls,
+        stubLoaded:rapidSftpOpenUi.stubLoaded,
         allSettled:rapidResults.every(Boolean)
           && rapidSftpKeys.every(key => tabs.some(tab => tab.key === key && tab.kind === 'sftp'))
           && rapidRuntimes.every(runtime => runtime && runtime.state.loading === false && runtime.state.entries?.[0]?.name === 'burst-ready.txt')
@@ -10310,7 +10357,7 @@ app.whenReady().then(async () => {
   const terminalDropUi = terminalSettingsUi.drop || {};
   const mobileTerminalSettingsUi = mobile.terminalGlobalSettings || {};
   const terminalStartupUiFailed = !terminalStartupUi.found || !Object.values(terminalStartupUi).every(Boolean);
-  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.x11ScopeMenu || !terminalUi.ctrlVImageIntercepted || !terminalUi.ctrlVEmptyFallsThrough || !terminalUi.enterReconnect || !terminalUi.reconnectPreservesOutput || !terminalUi.inactiveTerminalOutputContinues || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.remoteDesktopTitleDedup || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.terminalToolbarScrollable || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalFontChangeKeepsWheelContinuity || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalUi.zmodemPanelUi || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.fontInheritance || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.pasteCommandHistory || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
+  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.x11ScopeMenu || !terminalUi.ctrlVImageIntercepted || !terminalUi.ctrlVEmptyFallsThrough || !terminalUi.enterReconnect || !terminalUi.reconnectPreservesOutput || !terminalUi.inactiveTerminalOutputContinues || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.remoteDesktopTitleDedup || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.encodingSelectionUsesLatest || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.terminalToolbarScrollable || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalFontChangeKeepsWheelContinuity || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalUi.zmodemPanelUi || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.fontInheritance || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.pasteCommandHistory || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
   const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || !logSettingsUi.days || !logSettingsUi.fileMb || !logSettingsUi.totalMb || !logSettingsUi.rotations || !logSettingsUi.cleanup || !logSettingsUi.save || !logSettingsUi.closed || !logSettingsUi.fullTerminalTime || !logSettingsUi.defaultsToLatest || !logSettingsUi.followsTheme;
   const productivityUiFailed = !productivityUi.quickVisible || productivityUi.actionCount < 7 || !productivityUi.quickConnectionActionsInline || !productivityUi.quickPanelDirect || !productivityUi.workspaceSearchable || !productivityUi.workspacePreviewOpens || !productivityUi.quickButtonPlacement || !productivityUi.quickButtonLightning || !productivityUi.xServerQuickUsesX11 || !productivityUi.xServerUnauthorizedWarning || !productivityUi.xServerLocalDirectReady || !productivityUi.broadcastFromEither || !productivityUi.broadcastTabMarked || !productivityUi.broadcastHeaderGrouped || !productivityUi.broadcastExitCompact || !productivityUi.visibleSplitHasNoActivity || !productivityUi.visibleSplitClearsPriorActivity || !productivityUi.hiddenBinaryOutputMarked || productivityUi.syncRows !== 3 || !productivityUi.conflictSafe || !productivityUi.namedWorkspaceTools || !productivityUi.terminalTools || !productivityUi.quickToolbarIconVisible || !productivityUi.quickToggleStateVisible || !productivityUi.quickCompactWidths || !productivityUi.quickCommandExecutes || !productivityUi.quickContextMenu || !productivityUi.quickDoubleClickCreates || !productivityUi.quickEditorBackCloses || !productivityUi.quickManagerPolished || !productivityUi.quickOrderPersists || !productivityUi.quickHeightAdjustable || !productivityUi.quickToggleHides || !productivityUi.quickWheelScrolls || !productivityUi.quickResponsive;
   const remoteAdminUiFailed = Boolean(remoteAdminUi.desktop?.error)
@@ -10388,6 +10435,7 @@ app.whenReady().then(async () => {
   const languageOnboardingFailed = !languageOnboardingUi.regionDefaults || !languageOnboardingUi.newUserDefaultsEnglish || !languageOnboardingUi.nativeChoiceCopy || !languageOnboardingUi.englishCopy || !languageOnboardingUi.selectedChineseCopy || !languageOnboardingUi.selectedEnglishCopy || !languageOnboardingUi.coldStartNativeChoice || !languageOnboardingUi.existingUserKeepsLanguage || !languageOnboardingUi.existingUserChineseCopy || !languageOnboardingUi.existingUserEnglishCopy || !languageOnboardingUi.fitsNarrowViewport || !languageOnboardingUi.saved || !languageOnboardingUi.closed;
   const forwardTemplateLayoutFailed = forwardTemplateLayoutUi.rows !== 2 || forwardTemplateLayoutUi.buttons !== 6 || !forwardTemplateLayoutUi.singleLine || !forwardTemplateLayoutUi.insideRows || !forwardTemplateLayoutUi.noOverlap;
   const code = errors.length || cspViolations.length || languageOnboardingFailed || forwardTemplateLayoutFailed || !noVncModuleUi.loaded || !noVncModuleUi.prototype || !zmodemModuleUi.loaded || !zmodemModuleUi.browser || !zmodemModuleUi.abortSequence || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceTabCloseUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || appearanceEffectsUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.quickConnectionLauncher || !result.quickSshCandidates || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
+  if (sftpTabIsolationFailed) console.error("SFTP tab isolation diagnostics:", JSON.stringify(directoryActionsUi));
   if (notificationUiFailed) console.error("Notification UI diagnostics:", JSON.stringify(notificationUi));
   if (imagePreviewUiFailed) console.error("Image preview UI diagnostics:", JSON.stringify(imagePreviewUi));
   if (code) console.error("UI smoke failure summary:", JSON.stringify({
@@ -10470,6 +10518,15 @@ app.whenReady().then(async () => {
       textEncodingUiFalse:Object.entries(textEncodingUi).filter(([, value]) => value === false).map(([name]) => name),
       reusedWithoutDirectoryReload:sftpUi.directoryActionsUi?.reusedWithoutDirectoryReload,
       directoryActionsFalse:Object.entries(sftpUi.directoryActionsUi || {}).filter(([, value]) => value === false).map(([name]) => name),
+      tabIsolationDiagnostics:sftpUi.directoryActionsUi ? {
+        rapidSftpOpenUi:sftpUi.directoryActionsUi.rapidSftpOpenUi,
+        sftpVisibleNumberingStable:sftpUi.directoryActionsUi.sftpVisibleNumberingStable,
+        activeShellMatchesTab:sftpUi.directoryActionsUi.activeShellMatchesTab,
+        parentNavigationStaysOnOwner:sftpUi.directoryActionsUi.parentNavigationStaysOnOwner,
+        duplicateDirectoryStateIsolated:sftpUi.directoryActionsUi.duplicateDirectoryStateIsolated,
+        duplicateHistoryIsolated:sftpUi.directoryActionsUi.duplicateHistoryIsolated,
+        duplicateShellMatchesTab:sftpUi.directoryActionsUi.duplicateShellMatchesTab
+      } : null,
       emptyFavoritesMetrics:sftpUi.directoryActionsUi?.emptyFavoritesMetrics,
       scalarExpectations:{
         stickyPosition:sftpUi.stickyPosition,

@@ -173,9 +173,9 @@ export function createConnectionRepository(dependencies: ConnectionRepositoryDep
     return { favorite, notifications_muted:notificationsMuted };
   }
 
-  function deleteConnection(id: number, stopForward: (id: number) => unknown) {
+  async function deleteConnection(id: number, stopForward: (id: number) => unknown) {
     for (const forward of all("SELECT id FROM connection_forwards WHERE connection_id=?", [Number(id)])) {
-      stopForward(forward.id);
+      await Promise.resolve(stopForward(forward.id));
     }
     run("DELETE FROM connection_forwards WHERE connection_id=?", [Number(id)]);
     run("UPDATE connections SET jump_connection_id=NULL WHERE jump_connection_id=?", [Number(id)]);

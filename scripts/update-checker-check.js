@@ -72,6 +72,38 @@ async function check(name, callback) {
     assert.match(settingsSource, /`\/api\/updates\/check\$\{force \? "\?force=1" : ""\}`/);
   });
 
+  await check("settings checks cancel stale requests and render unchanged release notes without blocking", async () => {
+    const settingsSource = fs.readFileSync(path.join(projectRoot, "public", "app-settings-updates.js"), "utf8");
+    const settingsCoreSource = fs.readFileSync(path.join(projectRoot, "public", "app-settings-core.js"), "utf8");
+    assert.match(settingsSource, /updateStatusAbortController\?\.abort\(\)/);
+    assert.match(settingsSource, /requestSequence !== updateStatusRefreshSequence/);
+    assert.match(settingsSource, /yieldBeforeUpdateRender\(\)/);
+    assert.match(settingsSource, /currentNotes\._updateNotesKey === nextNotesKey/);
+    assert.match(settingsSource, /nextNotes\._updateNotesKey = nextNotesKey/);
+    assert.match(settingsSource, /checking:options\.checking \?\? updateStatusChecking/);
+    assert.match(settingsSource, /renderDeferredUpdateReleaseNotes/);
+    assert.match(settingsSource, /await nextUpdateNotesFrame\(\)/);
+    assert.match(settingsSource, /updateStatusChecking = true/);
+    assert.match(settingsSource, /previousDownloadStatus/);
+    assert.match(settingsSource, /download_status:previousDownloadStatus/);
+    assert.match(settingsSource, /previousUpdateStatus\?\.latest_version/);
+    assert.match(settingsSource, /check_error:message/);
+    assert.match(settingsSource, /renderUpdateStatus\(\{deferNotes:true, checking:true\}\)/);
+    assert.match(settingsSource, /updateStatusChecking = false/);
+    assert.match(settingsSource, /renderUpdateStatus\(\{deferNotes:true, checking:false\}\)/);
+    assert.match(settingsCoreSource, /const refreshSequence = updateStatusRefreshSequence/);
+    assert.match(settingsCoreSource, /refreshSequence !== updateStatusRefreshSequence \|\| updateStatusChecking \|\| updateStatusAbortController/);
+    assert.match(settingsCoreSource, /renderUpdateStatus\(\{deferNotes:true\}\)/);
+  });
+
+  await check("update cache disk writes stay asynchronous during checks", async () => {
+    const checkerSource = fs.readFileSync(path.join(projectRoot, "src", "update-checker.ts"), "utf8");
+    assert.match(checkerSource, /let cacheMemory = readJson\(cachePath, \{\}\) \|\| \{\}/);
+    assert.match(checkerSource, /await saveCacheAsync\(cache\)/);
+    assert.match(checkerSource, /cacheWriteQueue = cacheWriteQueue[\s\S]*\.then\(async \(\) =>/);
+    assert.match(checkerSource, /if \(generation === cacheWriteGeneration\) cacheMemory = cacheCommitted/);
+  });
+
   await check("semantic versions handle prefixes, numeric fields, and prereleases", async () => {
     assert.equal(compareVersions("v1.10.0", "1.9.9"), 1);
     assert.equal(compareVersions("1.0", "v1.0.0"), 0);
@@ -321,7 +353,7 @@ async function check(name, callback) {
       fetch: async () => response(200, [release("v1.0.8"), release("v1.0.7")])
     });
     await setup.check({ force: true });
-    const ignored = setup.setIgnoredCurrentVersion(true);
+    const ignored = await setup.setIgnoredCurrentVersion(true);
     assert.equal(ignored.update_ignored, true);
     assert.equal(ignored.ignored_version, "1.0.8");
 
@@ -345,8 +377,64 @@ async function check(name, callback) {
     assert.equal(newerStatus.ignored_version, "1.0.8");
     assert.deepEqual(newerStatus.release_notes.map(item => item.version), ["1.0.9", "1.0.8"]);
     assert.deepEqual(notified, ["1.0.9"]);
-    const cleared = newer.setIgnoredCurrentVersion(false);
+    const cleared = await newer.setIgnoredCurrentVersion(false);
     assert.equal(cleared.ignored_version, "");
+  });
+
+  await check("ignore changes remain durable while an earlier cache write is in flight", async () => {
+    const project = temporaryProject();
+    const originalWriteFile = fs.promises.writeFile;
+    let releaseFirstWrite;
+    let announceFirstWrite;
+    const firstWriteStarted = new Promise(resolve => { announceFirstWrite = resolve; });
+    const firstWriteGate = new Promise(resolve => { releaseFirstWrite = resolve; });
+    let delayed = false;
+    fs.promises.writeFile = async function(...args) {
+      if (!delayed) {
+        delayed = true;
+        announceFirstWrite();
+        await firstWriteGate;
+      }
+      return originalWriteFile.apply(this, args);
+    };
+    try {
+      const checker = createUpdateChecker({
+        ...project,
+        fetch: async () => response(200, [release("v1.0.8")])
+      });
+      const checkPromise = checker.check({force:true});
+      await firstWriteStarted;
+      const ignorePromise = checker.setIgnoredCurrentVersion(true);
+      releaseFirstWrite();
+      await Promise.all([checkPromise, ignorePromise]);
+
+      const restarted = createUpdateChecker({
+        ...project,
+        fetch: async () => response(200, [release("v1.0.8")])
+      });
+      const status = restarted.status();
+      assert.equal(status.update_ignored, true);
+      assert.equal(status.ignored_version, "1.0.8");
+    } finally {
+      releaseFirstWrite?.();
+      fs.promises.writeFile = originalWriteFile;
+    }
+  });
+
+  await check("failed cache writes roll back the visible in-memory state", async () => {
+    const project = temporaryProject();
+    const originalWriteFile = fs.promises.writeFile;
+    fs.promises.writeFile = async () => { throw new Error("disk denied"); };
+    try {
+      const checker = createUpdateChecker({
+        ...project,
+        fetch: async () => response(200, [release("v1.0.8")])
+      });
+      await assert.rejects(checker.check({force:true}), /disk denied/);
+      assert.equal(checker.status(), null);
+    } finally {
+      fs.promises.writeFile = originalWriteFile;
+    }
   });
 
   console.log("GitHub Releases update checker passed.");

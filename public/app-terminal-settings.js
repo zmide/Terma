@@ -1,6 +1,7 @@
 const defaultTerminalGlobalSettings = Object.freeze({
   font_family:"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
   font_size:13,
+  scrollback_lines:30000,
   background_mode:"theme",
   background_color:"#0f1720",
   middle_mouse_action:"paste_clipboard",
@@ -26,6 +27,59 @@ const terminalMouseActionOptions = [
   ["send_enter", () => tr("terminal:settings.mouse_send_enter")],
   ["paste_selection", () => tr("terminal:settings.mouse_paste_selection")]
 ];
+const terminalPreferenceQueues = new Map();
+
+function enqueueTerminalPreferenceOperation(connectionId, operation) {
+  const id = Number(connectionId);
+  const previous = terminalPreferenceQueues.get(id) || Promise.resolve();
+  const next = previous.catch(() => {}).then(operation);
+  const tracked = next.then(() => {}, () => {}).finally(() => {
+    if (terminalPreferenceQueues.get(id) === tracked) terminalPreferenceQueues.delete(id);
+  });
+  terminalPreferenceQueues.set(id, tracked);
+  return next;
+}
+
+function applyTerminalPreferences(key, connectionId, changes, successText="") {
+  const id = Number(connectionId);
+  return enqueueTerminalPreferenceOperation(id, () => applyTerminalPreferencesNow(key, id, changes, successText));
+}
+
+const terminalPreferencesSaveTimers = new Map();
+
+function scheduleTerminalPreferencesSave(connection) {
+  if (connection?.quick_connection) return;
+  const id = Number(connection.id);
+  clearTimeout(terminalPreferencesSaveTimers.get(id));
+  terminalPreferencesSaveTimers.set(id, setTimeout(() => {
+    terminalPreferencesSaveTimers.delete(id);
+    const save = () => {
+      const latest = currentConnection(id) || connection;
+      // The endpoint merges omitted fields with the database row. Leaving the
+      // encoding out prevents a delayed font save from restoring an older
+      // encoding while an encoding change is still being persisted.
+      return api(`/api/connections/${id}/terminal-preferences`, {
+        method:"POST",
+        body:JSON.stringify({
+          terminal_font_family:latest.terminal_font_family,
+          terminal_font_family_inherit:latest.terminal_font_family_inherit,
+          terminal_font_size:latest.terminal_font_size,
+          terminal_font_size_inherit:latest.terminal_font_size_inherit,
+          terminal_mobile_font_size:latest.terminal_mobile_font_size,
+          terminal_mobile_font_size_inherit:latest.terminal_mobile_font_size_inherit,
+          terminal_line_height:latest.terminal_line_height ?? 1,
+          terminal_font_weight:latest.terminal_font_weight || "normal"
+        })
+      }).then(settings => {
+        const current = currentConnection(id) || latest;
+        Object.assign(latest, settings);
+        if (current !== latest) Object.assign(current, settings);
+        return settings;
+      });
+    };
+    enqueueTerminalPreferenceOperation(id, save).catch(error => notify(tr("terminal:notifications.settings_save_failed", {error:error.message, defaultValue:`终端设置保存失败：${error.message}`}), "error"));
+  }, 300));
+}
 
 function normalizeTerminalGlobalSettings(value={}) {
   const source = value && typeof value === "object" ? value : {};
@@ -34,13 +88,16 @@ function normalizeTerminalGlobalSettings(value={}) {
   const backgroundColorValue = String(source.background_color || defaultTerminalGlobalSettings.background_color).trim();
   const fontFamily = String(source.font_family || defaultTerminalGlobalSettings.font_family).trim();
   const fontSize = Number(source.font_size ?? defaultTerminalGlobalSettings.font_size);
+  const scrollbackLines = Number(source.scrollback_lines ?? defaultTerminalGlobalSettings.scrollback_lines);
   if (!fontFamily || fontFamily.length > 300 || /[\0\r\n]/.test(fontFamily)) throw new Error(tr("terminal:settings.invalid_font"));
   if (!Number.isInteger(fontSize) || fontSize < 10 || fontSize > 32) throw new Error(tr("terminal:settings.invalid_font_size"));
+  if (!Number.isInteger(scrollbackLines) || scrollbackLines < 1000 || scrollbackLines > 100000) throw new Error(tr("terminal:settings.invalid_scrollback"));
   const prefixes = (Array.isArray(source.url_prefixes) ? source.url_prefixes : String(source.url_prefixes || "").split(/[|,\s]+/))
     .map(item => String(item || "").trim()).filter(Boolean).slice(0, 10);
   return {
     font_family:fontFamily,
     font_size:fontSize,
+    scrollback_lines:scrollbackLines,
     background_mode:backgroundModes.has(source.background_mode) ? source.background_mode : defaultTerminalGlobalSettings.background_mode,
     background_color:/^#[0-9a-f]{6}$/i.test(backgroundColorValue) ? backgroundColorValue.toLowerCase() : defaultTerminalGlobalSettings.background_color,
     middle_mouse_action:mouseActions.has(source.middle_mouse_action) ? source.middle_mouse_action : defaultTerminalGlobalSettings.middle_mouse_action,
@@ -167,6 +224,7 @@ function applyTerminalGlobalSettingsToSession(session) {
   if (connection?.quick_connection || Number(connection?.[sizeInheritKey] || 0) === 1) {
     session.term.options.fontSize = currentTerminalGlobalSettings().font_size;
   }
+  session.term.options.scrollback = Number(currentTerminalGlobalSettings().scrollback_lines) || 30000;
   session.term.options.wordSeparator = terminalWordSeparator();
   session.term.options.minimumContrastRatio = 4.5;
   const theme = terminalThemeForSettings();
@@ -648,6 +706,7 @@ async function showTerminalGlobalSettings(key=activeTabKey) {
             <div class="terminal-settings-field-grid">
               <div><label for="terminalSettingFontFamily">${esc(tr("terminal:settings.font_family"))}</label><input id="terminalSettingFontFamily" list="terminalSettingFontOptions" value="${escAttr(settings.font_family)}"><datalist id="terminalSettingFontOptions">${terminalFontOptions.map(([value,label]) => `<option value="${escAttr(value)}">${esc(label)}</option>`).join("")}</datalist></div>
               <div><label for="terminalSettingFontSize">${esc(tr("terminal:settings.default_font_size"))}</label><input id="terminalSettingFontSize" type="number" min="10" max="32" step="1" value="${settings.font_size}"></div>
+              <div><label for="terminalSettingScrollback">${esc(tr("terminal:settings.scrollback_lines"))}</label><input id="terminalSettingScrollback" type="number" min="1000" max="100000" step="1000" value="${settings.scrollback_lines}"><div class="muted">${esc(tr("terminal:settings.scrollback_hint"))}</div></div>
             </div>
             <div class="muted">${esc(tr("terminal:settings.font_hint"))}</div>
           </div>
@@ -790,6 +849,7 @@ function fillTerminalGlobalSettingsForm(settings) {
   $("terminalSettingBackgroundColor").value = values.background_color;
   $("terminalSettingFontFamily").value = values.font_family;
   $("terminalSettingFontSize").value = String(values.font_size);
+  $("terminalSettingScrollback").value = String(values.scrollback_lines);
   $("terminalSettingMiddleMouse").value = values.middle_mouse_action;
   $("terminalSettingRightMouse").value = values.right_mouse_action;
   $("terminalSettingCtrlClick").checked = values.ctrl_left_click_moves_cursor;
@@ -816,6 +876,7 @@ function terminalGlobalSettingsFormValue() {
   return {
     font_family:$("terminalSettingFontFamily").value.trim(),
     font_size:Number($("terminalSettingFontSize").value),
+    scrollback_lines:Number($("terminalSettingScrollback").value),
     background_mode:selectedTerminalBackgroundMode(),
     background_color:$("terminalSettingBackgroundColor").value,
     middle_mouse_action:$("terminalSettingMiddleMouse").value,

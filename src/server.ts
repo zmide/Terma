@@ -120,7 +120,7 @@ const {
   stageSftpPaths
 } = require("./sftp-session");
 const { handleBatchCommandUpgrade } = require("./commands");
-const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemoteRecycleItem, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteFileVersions, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, renameRemotePath, resolveRemoteUploadTarget, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
+const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemoteRecycleItem, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteFileVersions, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, renameRemotePath, resolveRemoteDirectory, resolveRemoteUploadTarget, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
 const { clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, extractJob, listSftpJobs, moveJob, receiveUploadJobContent, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startUploadReceiveJob } = require("./sftp-jobs");
 const { getExternalEdit, getExternalEditComparison, listExternalEdits, resolveExternalEdit, startExternalEdit, stopExternalEdit, stopExternalEditsForConnection } = require("./sftp-external-edit");
 const { startSyncJob, startSyncPlanningJob } = require("./sftp-sync");
@@ -540,7 +540,7 @@ async function handleApi(req, res, pathname) {
     moveJob, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads,
     prepareSftpWriteContent, readJson, readRemoteBinaryFile, readRemoteDirectorySize,
     readRemoteTextFile, readRuntimeSettings, receiveUploadJobContent, renameRemotePath,
-    resolveRemoteUploadTarget, restoreRemoteRecycleItem, runtimeSettingsFile:RUNTIME_SETTINGS_FILE,
+    resolveRemoteDirectory, resolveRemoteUploadTarget, restoreRemoteRecycleItem, runtimeSettingsFile:RUNTIME_SETTINGS_FILE,
     safeUploadName, send, sendJson, setRemotePermissions, sftpSessionStatus, stageSftpPaths,
     startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startSyncJob,
     startSyncPlanningJob, startUploadReceiveJob, stopExternalEditsForConnection, streamRemoteFile,

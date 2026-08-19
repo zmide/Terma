@@ -11,6 +11,29 @@ function serializeWorkspaceLayout(node=workspaceLayout) {
   };
 }
 
+let workspaceTabsStateSaveTimer = 0;
+
+function flushScheduledTabsStateSave() {
+  if (!workspaceTabsStateSaveTimer) return;
+  clearTimeout(workspaceTabsStateSaveTimer);
+  workspaceTabsStateSaveTimer = 0;
+  saveTabsState();
+}
+
+function scheduleTabsStateSave(delay=80) {
+  if (window.workspaceRestorePending || window.restoringTabs) return;
+  clearTimeout(workspaceTabsStateSaveTimer);
+  workspaceTabsStateSaveTimer = setTimeout(() => {
+    workspaceTabsStateSaveTimer = 0;
+    saveTabsState();
+  }, Math.max(0, Number(delay) || 0));
+}
+
+window.addEventListener?.("pagehide", flushScheduledTabsStateSave);
+document.addEventListener?.("visibilitychange", () => {
+  if (document.hidden) flushScheduledTabsStateSave();
+});
+
 function serializeWorkspaceGroupsForPreset() {
   captureCurrentWorkspaceGroup();
   return workspaceGroups.map(group => ({
@@ -205,7 +228,7 @@ restoreTabsState = function() {
     activeTabKey = focusedPane.activeTabKey;
     const activeTab = tabs.find(tab => tab.key === activeTabKey);
     activeView = activeTab?.viewName || activeTab?.kind || "welcome";
-    renderTabs();
+    renderTabs({rebuildLayout:true});
     const leaves = workspaceVisiblePanes();
     for (const pane of leaves.filter(pane => pane.id !== focusedPaneId)) renderWorkspacePaneContent(pane.id);
     renderWorkspacePaneContent(focusedPaneId);
@@ -234,7 +257,7 @@ syncResponsivePane = function() {
   const wasMobile = responsiveLayoutMobile;
   legacyWorkspaceApi.syncResponsivePane();
   if (wasMobile !== isMobileLayout()) {
-    renderTabs();
+    renderTabs({rebuildLayout:true});
     const focusedPane = workspaceFindPane(focusedPaneId);
     for (const pane of workspaceVisiblePanes()) {
       if (pane.id !== focusedPane?.id && pane.activeTabKey) renderWorkspacePaneContent(pane.id);

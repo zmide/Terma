@@ -64,8 +64,8 @@ export function createForwardRepository(dependencies: ForwardRepositoryDependenc
     );
   }
 
-  function deleteForward(id: number, stopForward: (id: number) => unknown) {
-    stopForward(id);
+  async function deleteForward(id: number, stopForward: (id: number) => unknown) {
+    await Promise.resolve(stopForward(id));
     run("DELETE FROM connection_forwards WHERE id=?", [Number(id)]);
   }
 

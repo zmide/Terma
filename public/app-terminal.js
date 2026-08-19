@@ -1,11 +1,3 @@
-function terminalSessionEncoding(key, connection) {
-  return terminalSessions.get(key)?.terminalEncoding || connection?.terminal_encoding || "utf8";
-}
-
-function terminalEncodingLabel(connection, key="") {
-  return terminalEncodingOptions.find(([value]) => value === terminalSessionEncoding(key, connection))?.[1] || "UTF-8";
-}
-
 function terminalElementForKey(key, selector) {
   if (typeof workspaceElementForTab === "function") {
     const element = workspaceElementForTab(key, selector);
@@ -56,14 +48,6 @@ function syncTerminalToolbarPlacement(tabKey=activeTabKey) {
   if (typeof syncWorkspaceToolbarHostVisibility === "function") syncWorkspaceToolbarHostVisibility();
   updateTerminalStatusForLayout(key);
   scheduleTerminalFit();
-}
-
-function terminalConnectionStateLabel(state="connecting") {
-  if (state === "connected") return tr("terminal:connection_state.connected", {defaultValue:"已连接"});
-  if (state === "disconnected") return tr("terminal:connection_state.disconnected", {defaultValue:"已断开"});
-  if (state === "authentication") return tr("terminal:connection_state.authentication", {defaultValue:"等待认证"});
-  if (state === "authorization") return tr("terminal:connection_state.authorization", {defaultValue:"等待授权"});
-  return tr("terminal:connection_state.connecting", {defaultValue:"连接中"});
 }
 
 function updateTerminalConnectionStatus(connection, key, state="connecting") {
@@ -283,7 +267,7 @@ function openTerminalConnection(c, updateTab=true, existingKey="", existingTitle
     }
   }
   const connectionAddress = `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`;
-  const terminalView = $("view-terminal");
+  const terminalView = terminalViewForKey(key);
   const cachedSurface = terminalSurfaceCache.get(key);
   if (cachedSurface && terminalView && terminalSessions.has(key)) {
     if (terminalView.firstElementChild !== cachedSurface) {
@@ -372,13 +356,14 @@ function openTerminalConnection(c, updateTab=true, existingKey="", existingTitle
   toolbar.before(toolbarMount);
   toolbarMount.appendChild(toolbar);
   if (typeof registerWorkspaceToolbar === "function") registerWorkspaceToolbar("terminal", key, toolbar, toolbarMount);
-  const terminalStatus = $("terminalStatus");
+  const terminalStatus = terminalSurface.querySelector("#terminalStatus");
   terminalStatus.dataset.connectionAddress = connectionAddress;
   terminalStatus.dataset.connectionState = "connecting";
   setWorkspace(title, `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`, "terminal", key, updateTab, true, {kind:quick ? "quick-terminal" : "terminal", id:c.id, connectionStatus:"connecting", transient:quick, quick_connection:quick});
   syncTerminalToolbarPlacement(key);
   if (!quick) updateTerminalStartupButton(key, c);
-  attachTerminal(c, key).catch(error => {
+  const terminalMount = terminalSurface.querySelector("#terminalMount");
+  attachTerminal(c, key, terminalMount).catch(error => {
     const mount = terminalElementForKey(key, "#terminalMount");
     if (mount) mount.innerHTML = stateView(
       "error",
@@ -390,8 +375,7 @@ function openTerminalConnection(c, updateTab=true, existingKey="", existingTitle
   return key;
 }
 
-async function attachTerminal(c, key) {
-  const mount = $("terminalMount");
+async function attachTerminal(c, key, mount=terminalElementForKey(key, "#terminalMount")) {
   if (!mount) return;
   await ensureTerminalGlobalSettings();
   await ensureTerminalLibs();
@@ -401,7 +385,8 @@ async function attachTerminal(c, key) {
     const term = new TerminalClass({
       allowProposedApi:true,
       cursorBlink:true,
-      convertEol:true,
+      convertEol:false,
+      scrollback:Number(currentTerminalGlobalSettings().scrollback_lines) || 30000,
       minimumContrastRatio:4.5,
       overviewRuler:{width:8},
       fontFamily:terminalFontFamilyForConnection(c),
@@ -415,6 +400,7 @@ async function attachTerminal(c, key) {
     term.loadAddon(fit);
     session = {term, fit, socket:null, connected:false, connectionAttempt:0, connectionPending:false, id:c.id, logId:createTerminalLogId(), terminalEncoding:c.terminal_encoding || "utf8", fontLayoutMobile:isMobileLayout(), currentDirectory:"", currentDirectoryKnown:false, quickToken:c.quick_connection ? String(c.quick_token || "") : ""};
     terminalSessions.set(key, session);
+    bindTerminalInterruptKey(term, key);
     registerTerminalDirectoryTracking(session);
   }
   session.connection = c;
@@ -475,7 +461,15 @@ function observeTerminalBox(session) {
   if (!box || typeof ResizeObserver === "undefined") return;
   if (session.observedBox === box && session.resizeObserver) return;
   session.resizeObserver?.disconnect?.();
-  session.resizeObserver = new ResizeObserver(() => scheduleTerminalFit());
+  session.resizeObserver = new ResizeObserver(entries => {
+    const rect = entries?.[0]?.contentRect;
+    const width = Math.floor(Number(rect?.width || 0));
+    const height = Math.floor(Number(rect?.height || 0));
+    if (width > 0 && height > 0 && session.observedBoxWidth === width && session.observedBoxHeight === height) return;
+    session.observedBoxWidth = width;
+    session.observedBoxHeight = height;
+    scheduleTerminalFit();
+  });
   session.resizeObserver.observe(box);
   session.observedBox = box;
 }
@@ -518,7 +512,7 @@ function handleMobileTerminalInput(event, key) {
 }
 
 function sendMobileTerminalInput(key) {
-  const input = $("terminalMobileInput");
+  const input = terminalElementForKey(key, "#terminalMobileInput");
   const command = String(input?.value || "");
   if (!command.trim()) return;
   const session = terminalSessions.get(key);
@@ -545,11 +539,11 @@ function renderTerminalKeys(key) {
 }
 
 function rerenderTerminalKeys(key=activeTabKey) {
-  const box = $("terminalKeys");
+  const box = terminalElementForKey(key, "#terminalKeys");
   if (!box) return;
   const left = box.scrollLeft;
   box.outerHTML = renderTerminalKeys(key);
-  const next = $("terminalKeys");
+  const next = terminalElementForKey(key, "#terminalKeys");
   if (next) next.scrollLeft = left;
 }
 
@@ -802,7 +796,10 @@ function fitTerminalPreservingViewport(session, anchor=captureTerminalViewport(s
 function flushTerminalViewportFit(session) {
   if (session?.terminalViewportFitTask) runPendingTerminalViewportFit(session);
   cancelTerminalViewportTask(session?.terminalViewportRestoreTask);
-  if (session) session.terminalViewportRestoreTask = null;
+  if (session) {
+    session.terminalViewportRestoreTask = null;
+    if (typeof releaseScheduledTerminalViewportAnchor === "function") releaseScheduledTerminalViewportAnchor(session);
+  }
 }
 
 function syncTerminalResponsiveFontSizes() {
@@ -835,30 +832,6 @@ function changeTerminalFont(key, delta) {
   }
   fitTerminalPreservingViewport(session, viewport);
   focusTerminalSession(key);
-}
-
-const terminalPreferencesSaveTimers = new Map();
-
-function scheduleTerminalPreferencesSave(connection) {
-  if (connection?.quick_connection) return;
-  clearTimeout(terminalPreferencesSaveTimers.get(connection.id));
-  terminalPreferencesSaveTimers.set(connection.id, setTimeout(() => {
-    terminalPreferencesSaveTimers.delete(connection.id);
-    api(`/api/connections/${connection.id}/terminal-preferences`, {
-      method:"POST",
-      body:JSON.stringify({
-        terminal_encoding:connection.terminal_encoding || "utf8",
-        terminal_font_family:connection.terminal_font_family,
-        terminal_font_family_inherit:connection.terminal_font_family_inherit,
-        terminal_font_size:connection.terminal_font_size,
-        terminal_font_size_inherit:connection.terminal_font_size_inherit,
-        terminal_mobile_font_size:connection.terminal_mobile_font_size,
-        terminal_mobile_font_size_inherit:connection.terminal_mobile_font_size_inherit,
-        terminal_line_height:connection.terminal_line_height ?? 1,
-        terminal_font_weight:connection.terminal_font_weight || "normal"
-      })
-    }).catch(error => notify(tr("terminal:notifications.settings_save_failed", {error:error.message, defaultValue:`终端设置保存失败：${error.message}`}), "error"));
-  }, 300));
 }
 
 function focusTerminalSession(key) {
@@ -933,7 +906,7 @@ async function resetTerminalDisplayPreferences(key, connectionId) {
   }, tr("terminal:notifications.display_reset", {defaultValue:"终端字体和字号已恢复使用全局默认，行距与字重已重置"}));
 }
 
-async function applyTerminalPreferences(key, connectionId, changes, successText="") {
+async function applyTerminalPreferencesNow(key, connectionId, changes, successText="") {
   const connection = currentConnection(connectionId);
   if (!connection) return;
   try {
@@ -954,9 +927,13 @@ async function applyTerminalPreferences(key, connectionId, changes, successText=
           method:"POST",
           body:JSON.stringify(nextSettings)
         });
+    const current = currentConnection(connectionId) || connection;
     Object.assign(connection, settings);
+    if (current !== connection) Object.assign(current, settings);
     for (const [sessionKey, activeSession] of terminalSessions) {
       if (activeSession.id !== connectionId) continue;
+      if (activeSession.connection) Object.assign(activeSession.connection, settings);
+      activeSession.connection = current;
       const viewport = captureTerminalViewport(activeSession);
       activeSession.term.options.fontFamily = terminalFontFamilyForConnection(settings);
       activeSession.term.options.fontSize = terminalFontSizeForCurrentLayout(settings);
@@ -966,24 +943,28 @@ async function applyTerminalPreferences(key, connectionId, changes, successText=
       const readout = terminalElementForKey(sessionKey, ".terminal-font-size-readout");
       if (readout) readout.textContent = `${terminalFontSizeForCurrentLayout(settings)}px`;
       fitTerminalPreservingViewport(activeSession, viewport);
+      if (changes.terminal_encoding !== undefined) activeSession.terminalEncoding = settings.terminal_encoding;
       const encodingButton = terminalElementForKey(sessionKey, ".terminal-action-encoding span");
-      if (encodingButton) encodingButton.textContent = terminalEncodingLabel(connection, sessionKey);
+      if (encodingButton) encodingButton.textContent = terminalEncodingLabel(settings, sessionKey);
     }
     if (changes.terminal_encoding !== undefined) {
-      const activeSession = terminalSessions.get(key);
-      if (activeSession?.id === connectionId) {
-        activeSession.terminalEncoding = settings.terminal_encoding;
+      for (const activeSession of terminalSessions.values()) {
+        if (activeSession.id !== connectionId) continue;
         const socket = activeSession.socket;
-        const sendEncoding = () => {
-          if (activeSession.socket !== socket || activeSession.terminalEncoding !== settings.terminal_encoding) return;
-          if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({type:"terminal-encoding", encoding:settings.terminal_encoding}));
-        };
-        if (socket?.readyState === WebSocket.OPEN) sendEncoding();
+        if (socket?.readyState === WebSocket.OPEN) {
+          try { socket.send(JSON.stringify({type:"terminal-encoding", encoding:settings.terminal_encoding})); } catch {}
+        }
       }
     }
-    notify(connection.quick_connection
+    const encodingValue = changes.terminal_encoding !== undefined
+      ? terminalEncodingOptions.find(([value]) => value === settings.terminal_encoding)?.[1] || settings.terminal_encoding
+      : "";
+    const noticeText = connection.quick_connection
       ? tr("terminal:notifications.quick_preferences_applied", {defaultValue:"已应用到当前临时连接"})
-      : successText || tr("terminal:notifications.settings_saved", {defaultValue:"终端设置已保存"}), "success");
+      : encodingValue
+        ? tr("terminal:notifications.encoding_changed", {encoding:encodingValue, defaultValue:`编码已切换为 ${encodingValue}`})
+        : successText || tr("terminal:notifications.settings_saved", {defaultValue:"终端设置已保存"});
+    notify(noticeText, "success", encodingValue ? {replaceKey:`terminal-encoding-${connectionId}`} : {});
   } finally {
     focusTerminalSession(key);
   }
@@ -1168,6 +1149,7 @@ async function connectTerminalAttempt(c, key, session, attempt) {
   }
   session.authenticationFailed = false;
   session.authenticationFailureWindow = "";
+  if (typeof cancelTerminalDirectoryInitialization === "function") cancelTerminalDirectoryInitialization(session, true);
   const previousSocket = session.socket;
   session.socket = null;
   if (typeof closeTerminalZmodem === "function") closeTerminalZmodem(session);
@@ -1274,9 +1256,10 @@ async function connectTerminalAttempt(c, key, session, attempt) {
     if (session.socket !== socket) return;
     socketOpened = true;
     session.connected = true;
+    if (typeof syncTerminalOutputFlowForSocket === "function") syncTerminalOutputFlowForSocket(session);
     socket.send(JSON.stringify({type:"terminal-encoding", encoding:session.terminalEncoding || c.terminal_encoding || "utf8"}));
     updateTerminalConnectionStatus(c, key, "connected");
-    void initializeTerminalDirectory(session, c, key);
+    if (typeof scheduleTerminalDirectoryInitialization === "function") scheduleTerminalDirectoryInitialization(session, c, key, 1200);
   });
   socket.addEventListener("message", event => {
     if (session.socket !== socket) return;
@@ -1289,11 +1272,13 @@ async function connectTerminalAttempt(c, key, session, attempt) {
       return;
     }
     queueTerminalOutput(session, terminalOutput);
+    if (typeof scheduleTerminalDirectoryInitialization === "function") scheduleTerminalDirectoryInitialization(session, c, key);
     if (isMobileLayout()) scheduleTerminalFit();
   });
   socket.addEventListener("close", () => {
     if (session.socket !== socket) return;
     session.connected = false;
+    if (typeof cancelTerminalDirectoryInitialization === "function") cancelTerminalDirectoryInitialization(session, true);
     if (typeof closeTerminalZmodem === "function") closeTerminalZmodem(session);
     session.latencyPendingAt = 0;
     clearTimeout(session.latencyPendingTimer);

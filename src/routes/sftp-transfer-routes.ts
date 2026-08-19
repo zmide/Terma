@@ -37,6 +37,7 @@ interface SftpTransferRouteDependencies {
   readRuntimeSettings(file: string): any;
   receiveUploadJobContent(id: string, request: IncomingMessage): Promise<any>;
   renameRemotePath(connectionId: number, from: string, to: string): Promise<any>;
+  resolveRemoteDirectory(connectionId: number, remotePath: string): Promise<{path: string}>;
   resolveRemoteUploadTarget(connectionId: number, directory: string, filename: string, conflict: string): Promise<any>;
   restoreRemoteRecycleItem(connectionId: number, id: string, storage: string): Promise<any>;
   runtimeSettingsFile: string;
@@ -115,6 +116,11 @@ export async function handleSftpTransferRoutes(
       dependencies.sendJson(response, dependencies.disconnectSftpSession(connectionId, {remember:url.searchParams.get("forget") !== "1"}));
       return true;
     }
+  }
+  if (method === "GET" && parts.length === 5 && parts[4] === "resolve-directory") {
+    const url = new URL(request.url || pathname, "http://terma.invalid");
+    dependencies.send(response, 200, await dependencies.resolveRemoteDirectory(connectionId, url.searchParams.get("path") || "."), {"Cache-Control":"no-store"});
+    return true;
   }
   if (method === "GET" && parts.length === 5 && parts[4] === "versions") {
     const url = new URL(request.url || pathname, "http://terma.invalid");

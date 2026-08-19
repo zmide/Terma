@@ -34,6 +34,7 @@ const DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT = Object.freeze({
 const DEFAULT_TERMINAL_SETTINGS = Object.freeze({
   font_family: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
   font_size: 13,
+  scrollback_lines: 30000,
   background_mode: "theme",
   background_color: "#0f1720",
   middle_mouse_action: "paste_clipboard",
@@ -109,15 +110,20 @@ function normalizeTerminalSettings(value: any = {}, fallback: any = DEFAULT_TERM
   const wordSeparators = String(source.word_separators ?? base.word_separators ?? DEFAULT_TERMINAL_SETTINGS.word_separators).slice(0, 128);
   const fontFamily = String(source.font_family ?? base.font_family ?? DEFAULT_TERMINAL_SETTINGS.font_family).trim();
   const fontSize = Number(source.font_size ?? base.font_size ?? DEFAULT_TERMINAL_SETTINGS.font_size);
+  const scrollbackLines = Number(source.scrollback_lines ?? base.scrollback_lines ?? DEFAULT_TERMINAL_SETTINGS.scrollback_lines);
   if (!fontFamily || fontFamily.length > 300 || /[\0\r\n]/.test(fontFamily)) {
     throw new Error("默认终端字体长度必须在 1-300 个字符之间，且不能包含换行");
   }
   if (!Number.isInteger(fontSize) || fontSize < 10 || fontSize > 32) {
     throw new Error("默认终端字号必须是 10-32 之间的整数");
   }
+  if (!Number.isInteger(scrollbackLines) || scrollbackLines < 1000 || scrollbackLines > 100000) {
+    throw new Error("终端回滚行数必须是 1000-100000 之间的整数");
+  }
   return {
     font_family:fontFamily,
     font_size:fontSize,
+    scrollback_lines:scrollbackLines,
     background_mode: TERMINAL_BACKGROUND_MODES.has(backgroundMode) ? backgroundMode : DEFAULT_TERMINAL_SETTINGS.background_mode,
     background_color: backgroundColor,
     middle_mouse_action: TERMINAL_MOUSE_ACTIONS.has(middleMouseAction) ? middleMouseAction : DEFAULT_TERMINAL_SETTINGS.middle_mouse_action,
@@ -225,7 +231,7 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 18,
+    schema_version: 19,
     language: normalizeLanguage(value.language, fallback.language),
     language_onboarding_version: Math.max(0, Math.min(1, Number.isInteger(Number(value.language_onboarding_version ?? fallback.language_onboarding_version))
       ? Number(value.language_onboarding_version ?? fallback.language_onboarding_version)

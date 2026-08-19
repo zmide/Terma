@@ -86,6 +86,11 @@ assert.equal(secondPage.entries[0].name, "item-051");
 assert.equal(secondPage.page, 2);
 assert.equal(secondPage.total_pages, 5);
 
+const orderCache = new Map();
+paginateRemoteEntries(many, {page:1, page_size:50, sort:"mtime", dir:"asc"}, orderCache);
+paginateRemoteEntries(many, {page:2, page_size:50, sort:"mtime", dir:"asc"}, orderCache);
+assert.equal(orderCache.size, 1, "同一目录的后续分页必须复用已经排好的条目顺序");
+
 const clampedPage = paginateRemoteEntries(many, {page:99, page_size:50, sort:"mtime", dir:"asc"});
 assert.equal(clampedPage.page, 5);
 assert.equal(clampedPage.entries.length, 15);
@@ -127,7 +132,16 @@ assert.match(sftpFrontendSource, /runtime\.state = \{\.\.\.currentState, loading
 assert.match(sftpFrontendSource, /if \(sourceState\.loading\) return null;/, "加载中的 SFTP 占位状态不能写入连接级目录缓存");
 assert.match(sftpFrontendSource, /cached\?\.state && !cached\.needsReload/, "标记为需要重载的 SFTP 缓存不能当作已完成目录恢复");
 assert.match(sftpFrontendSource, /const sftpDirectoryPageRequests = new Map\(\)/, "SFTP 前端必须共享相同目录分页请求");
-assert.match(sftpFrontendSource, /request = api\(requestPath\)\.finally/, "共享 SFTP 目录请求必须在完成后自动释放");
+assert.match(sftpFrontendSource, /const SFTP_DIRECTORY_REQUEST_CONCURRENCY = 3/, "快速连续打开目录时必须限制共享 SSH 上的活跃请求数");
+assert.match(sftpFrontendSource, /request = scheduleSftpDirectoryRequest\(\(\) => api\(requestPath\)\)\.finally/, "共享 SFTP 目录请求必须通过有界队列并在完成后自动释放");
+assert.match(sftpFrontendSource, /if \(sftpJobsRefreshPromise\) \{\s*sftpJobsRefreshTrailing = true;/, "并发任务刷新必须合并为单一请求链");
+assert.match(sftpFrontendSource, /refreshSftpJobsIfStale\(maxAge=2000\)/, "普通 SFTP 激活不得重复刷新新鲜任务状态");
+assert.match(sftpFrontendSource, /await refreshSftp\(\{tabKey:selectedKey\}\)/, "任务完成后的目录刷新必须串行执行");
+assert.match(sftpFrontendSource, /list\._sftpTaskCenterRenderSignature !== renderSignature/, "任务中心内容未变化时不得生成并重建全部任务 DOM");
+
+const sftpBackendSource = fs.readFileSync(path.join(root, "src", "sftp.ts"), "utf8");
+assert.match(sftpBackendSource, /await yieldSftpWork\(\)/, "大目录元数据解析必须分批让出共享事件循环");
+assert.match(sftpBackendSource, /snapshot\.page_orders \|\| \(snapshot\.page_orders = new Map\(\)\)/, "目录分页必须复用排序结果");
 assert.match(sftpFrontendSource, /await requestSftpDirectoryPage\(id, params, controller\?\.signal \|\| null\)/, "SFTP 标签目录读取必须复用共享请求并保留标签级取消");
 assert.match(sftpFrontendSource, /directoryAccessError \? "connected" : "disconnected"/, "目录权限和不存在错误不能误报为 SFTP 连接断开");
 assert.match(sftpFrontendSource, /function jumpSftpPage\(/, "SFTP 分页必须支持直接跳转到指定页");
@@ -143,7 +157,9 @@ assert.match(sftpFrontendSource, /sftpImagePreviewFullscreen/, "图片预览必�
 assert.match(sftpFrontendSource, /const sourceViewBoxValid =/, "SVG 预览必须识别源文件提供的有效 viewBox");
 assert.match(sftpFrontendSource, /const shouldMeasureBounds = !sourceViewBoxValid/, "复杂 SVG 不能用不可靠的 getBBox 覆盖源 viewBox");
 assert.match(sftpFrontendSource, /if \(!sourceViewBoxValid && extent/, "SVG 内容边界测量只能作为无 viewBox 文件的兜底");
-assert.match(sftpFrontendSource, /const embeddedStyles = \[\.\.\.sanitizedRoot\.querySelectorAll\("style"\)\]/, "SVG 内嵌样式必须提升到 Shadow DOM 的有效样式层");
+assert.match(sftpFrontendSource, /const embeddedStyleTexts = \[\]/, "SVG 内嵌样式必须先脱离 XML 解析，避免触发内联 CSP");
+assert.match(sftpFrontendSource, /const markupWithoutStyles = source/, "SVG 解析前必须移除源 <style> 节点");
+assert.match(sftpFrontendSource, /__termaEmbeddedStyles/, "SVG 内嵌样式必须保存为清理后的 Shadow DOM 样式来源");
 assert.match(sftpFrontendSource, /previewStyle\.textContent = `\$\{embeddedStyles\}/, "SVG 控件和连接线必须继续使用清理后的源样式");
 const appCssSource = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 assert.match(appCssSource, /\.sftp-image-modal \{[^}]*height:min\(760px,calc\(100dvh - 32px\)\)/, "SVG 预览外层窗口必须使用独立固定高度");

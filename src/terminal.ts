@@ -37,6 +37,28 @@ function terminalSessionText(session, chinese, english) {
   return terminalUiText(session?.language, chinese, english);
 }
 
+function syncTerminalOutputFlow(session) {
+  const paused = Boolean(session?.outputClientPaused || session?.outputSocketBackpressured);
+  session?.outputSources?.forEach(source => {
+    try {
+      if (paused) source.pause?.();
+      else source.resume?.();
+    } catch {}
+  });
+}
+
+function setTerminalOutputFlow(session, paused) {
+  if (!session) return;
+  session.outputClientPaused = Boolean(paused);
+  syncTerminalOutputFlow(session);
+}
+
+function registerTerminalOutputSources(session, sources) {
+  if (!session) return;
+  session.outputSources = [...new Set((sources || []).filter(Boolean))];
+  syncTerminalOutputFlow(session);
+}
+
 function terminalClosureReason(language, reason, fallbackChinese, fallbackEnglish) {
   const source = String(reason || "").trim();
   if (!source || source === fallbackChinese) return terminalUiText(language, fallbackChinese, fallbackEnglish);
@@ -182,6 +204,14 @@ function handleTerminalUpgrade(req, socket, options: any = {}) {
     session.quickConnection = Boolean(quickToken);
     session.x11Mode = x11Mode;
     sessions.add(session);
+    session.outputClientPaused = Boolean(session.outputClientPaused);
+    session.outputSocketBackpressured = Boolean(session.outputSocketBackpressured);
+    syncTerminalOutputFlow(session);
+    socket.on("drain", () => {
+      if (!sessions.has(session)) return;
+      session.outputSocketBackpressured = false;
+      syncTerminalOutputFlow(session);
+    });
     bindDesktopBrowserGrant(session, options);
     const startupProfile = connection.terminal_profile_name || connection.terminal_program_path;
     const startupLabel = connection.terminal_startup_mode === "program"
@@ -232,7 +262,11 @@ function terminalEnv() {
 
 function emitTerminalOutput(session, data, opcode = 1) {
   if (!session.binaryMode) appendTerminalLog(session.logFile, data);
-  sendWebSocketFrame(session.socket, data, opcode);
+  const accepted = sendWebSocketFrame(session.socket, data, opcode);
+  if (!accepted && session.socket && !session.socket.destroyed) {
+    session.outputSocketBackpressured = true;
+    syncTerminalOutputFlow(session);
+  }
 }
 
 function flushSessionOutputDecoder(session) {
@@ -257,6 +291,7 @@ function sendTerminalOutput(session, data) {
 function startPlainTerminal(session, connection, args, cwd, log) {
   const child = spawn(SSH_BIN, args, { stdio: ["pipe", "pipe", "pipe"], cwd, env:terminalEnv() });
   session.child = child;
+  registerTerminalOutputSources(session, [child.stdout, child.stderr]);
   child.stdout.on("data", (chunk) => sendTerminalOutput(session, chunk));
   child.stderr.on("data", (chunk) => sendTerminalOutput(session, chunk));
   child.on("error", (error) => {
@@ -300,6 +335,7 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null, la
     client.on("error", (error) => sendTerminalOutput(session, `\r\n${terminalSessionText(session, "SSH 连接错误", "SSH connection error")}: ${normalizeSshTransportError(error, connection).message}\r\n`));
     stream.on("data", (chunk) => sendTerminalOutput(session, chunk));
     stream.stderr?.on("data", (chunk) => sendTerminalOutput(session, chunk));
+    registerTerminalOutputSources(session, [stream, stream.stderr]);
     stream.on("error", (error) => sendTerminalOutput(session, `\r\n${terminalSessionText(session, "终端错误", "Terminal error")}: ${normalizeSshTransportError(error, connection).message}\r\n`));
     stream.on("close", (code, signal) => {
       const detail = signal
@@ -365,6 +401,7 @@ function startTerminalProcess(connection, socket, cols, rows, title = "", logId 
       if (cwd) ptyOptions.cwd = cwd;
       const ptyProcess = pty.spawn(resolveTerminalBin(), args, ptyOptions);
       const session: any = { socket, ptyProcess, logFile: log.fullPath, language:normalizeTerminalLanguage(language) };
+      registerTerminalOutputSources(session, [ptyProcess]);
       setSessionEncoding(session, connection.terminal_encoding);
       ptyProcess.onData((data) => sendTerminalOutput(session, data));
       ptyProcess.onExit(({ exitCode, signal }) => {
@@ -412,6 +449,10 @@ function writeTerminalInput(session, payload) {
       }
       if (message?.type === "terminal-binary-mode") {
         setSessionBinaryMode(session, message.enabled);
+        return;
+      }
+      if (message?.type === "terminal-output-flow") {
+        setTerminalOutputFlow(session, message.paused === true);
         return;
       }
     } catch {}

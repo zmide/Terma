@@ -206,7 +206,8 @@ function ensureSftpRuntime(tabKey, connectionId=0, remotePath=".", root=null) {
       resizeObserver:null,
       resizeFrame:0,
       toolbar:null,
-      detachedView:null
+      detachedView:null,
+      renderedRequestSeq:-1
     };
     sftpTabRuntimes.set(key, runtime);
   }

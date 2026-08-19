@@ -34,6 +34,12 @@ const directoryAliases = new Map();
 const directorySnapshotRequests = new Map();
 const directoryCacheVersions = new Map();
 const directoryNameCollator = new Intl.Collator("zh-CN", { numeric: true, sensitivity: "base" });
+const DIRECTORY_PARSE_BATCH_SIZE = 256;
+const DIRECTORY_ORDER_CACHE_LIMIT = 12;
+
+function yieldSftpWork() {
+  return new Promise(resolve => setImmediate(resolve));
+}
 
 function permissionPathOperand(value) {
   const normalized = String(value || "").replace(/\\/g, "/");
@@ -101,34 +107,43 @@ function normalizeRemoteDirectoryListOptions(options: any = {}) {
   };
 }
 
-function paginateRemoteEntries(entries, options: any = {}) {
+function paginateRemoteEntries(entries, options: any = {}, orderCache: Map<string, any[]> | null = null) {
   const normalized = normalizeRemoteDirectoryListOptions(options);
   const source = Array.isArray(entries) ? entries : [];
   const query = normalized.query.toLowerCase();
   const direction = normalized.dir === "desc" ? -1 : 1;
-  const filtered = source
-    .map((entry, index) => ({ entry, index }))
-    .filter(({ entry }) => !query || String(entry?.name || "").toLowerCase().includes(query));
+  const orderKey = `${query}\0${normalized.sort}\0${normalized.dir}`;
+  let ordered = orderCache?.get(orderKey);
+  if (!ordered) {
+    const filtered = source
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => !query || String(entry?.name || "").toLowerCase().includes(query));
 
-  filtered.sort((left, right) => {
-    const leftDirectory = left.entry?.type === "dir";
-    const rightDirectory = right.entry?.type === "dir";
-    if (leftDirectory !== rightDirectory) return leftDirectory ? -1 : 1;
+    filtered.sort((left, right) => {
+      const leftDirectory = left.entry?.type === "dir";
+      const rightDirectory = right.entry?.type === "dir";
+      if (leftDirectory !== rightDirectory) return leftDirectory ? -1 : 1;
 
-    let comparison = 0;
-    if (normalized.sort === "size") comparison = (Number(left.entry?.size) || 0) - (Number(right.entry?.size) || 0);
-    else if (normalized.sort === "mtime") comparison = (Number(left.entry?.mtime) || 0) - (Number(right.entry?.mtime) || 0);
-    if (comparison === 0) comparison = directoryNameCollator.compare(String(left.entry?.name || ""), String(right.entry?.name || ""));
-    if (comparison !== 0) return comparison * direction;
-    return left.index - right.index;
-  });
+      let comparison = 0;
+      if (normalized.sort === "size") comparison = (Number(left.entry?.size) || 0) - (Number(right.entry?.size) || 0);
+      else if (normalized.sort === "mtime") comparison = (Number(left.entry?.mtime) || 0) - (Number(right.entry?.mtime) || 0);
+      if (comparison === 0) comparison = directoryNameCollator.compare(String(left.entry?.name || ""), String(right.entry?.name || ""));
+      if (comparison !== 0) return comparison * direction;
+      return left.index - right.index;
+    });
+    ordered = filtered.map(({entry}) => entry);
+    if (orderCache) {
+      orderCache.set(orderKey, ordered);
+      while (orderCache.size > DIRECTORY_ORDER_CACHE_LIMIT) orderCache.delete(orderCache.keys().next().value);
+    }
+  }
 
-  const total = filtered.length;
+  const total = ordered.length;
   const totalPages = Math.max(1, Math.ceil(total / normalized.page_size));
   const page = Math.min(normalized.page, totalPages);
   const offset = (page - 1) * normalized.page_size;
   return {
-    entries: filtered.slice(offset, offset + normalized.page_size).map(({ entry }) => entry),
+    entries: ordered.slice(offset, offset + normalized.page_size),
     page,
     page_size: normalized.page_size,
     total,
@@ -237,25 +252,25 @@ async function enumerateRemoteDir(connectionId, remotePath = ".") {
   );
   const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command));
   const {path:resolvedPath, rows} = parseRemoteDirectoryOutput(output);
-  return {
-    path: resolvedPath,
-    entries: rows.map((line) => {
-      const [name, type, meta = "", link = "0", linkSize = "0", linkMissing = "0"] = line.split("\t");
-      const [size, mtime, mode, owner, group] = meta.trim().split(/\s+/);
-      return {
-        name,
-        type: type === "d" ? "dir" : "file",
-        size: Number(size || 0),
-        mtime: Number(mtime || 0),
-        mode: String(mode || ""),
-        owner: String(owner || ""),
-        group: String(group || ""),
-        is_symlink:link === "1",
-        link_size:link === "1" ? Number(linkSize || 0) : 0,
-        link_target_missing:link === "1" && linkMissing === "1"
-      };
-    })
-  };
+  const entries = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const [name, type, meta = "", link = "0", linkSize = "0", linkMissing = "0"] = rows[index].split("\t");
+    const [size, mtime, mode, owner, group] = meta.trim().split(/\s+/);
+    entries.push({
+      name,
+      type: type === "d" ? "dir" : "file",
+      size: Number(size || 0),
+      mtime: Number(mtime || 0),
+      mode: String(mode || ""),
+      owner: String(owner || ""),
+      group: String(group || ""),
+      is_symlink:link === "1",
+      link_size:link === "1" ? Number(linkSize || 0) : 0,
+      link_target_missing:link === "1" && linkMissing === "1"
+    });
+    if ((index + 1) % DIRECTORY_PARSE_BATCH_SIZE === 0) await yieldSftpWork();
+  }
+  return {path:resolvedPath, entries};
 }
 
 function shouldFallbackToPagedDirectoryRead(error) {
@@ -364,6 +379,21 @@ function parseRemoteDirectoryHeader(lines) {
   return resolvedPath;
 }
 
+async function resolveRemoteDirectory(connectionId, remotePath = ".") {
+  const connection = getSftpConnection(connectionId);
+  const dir = remotePath || ".";
+  const command = buildRemoteDirectoryReadCommand(
+    remotePathOperand(connection, dir),
+    buildRemoteDirectoryHeaderCommand()
+  );
+  try {
+    const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command));
+    return {path:parseRemoteDirectoryHeader(remoteDirectoryOutputLines(output))};
+  } catch (error) {
+    throw normalizeRemoteDirectoryReadError(error, remotePath);
+  }
+}
+
 function parseRemoteDirectoryOutput(output) {
   const lines = remoteDirectoryOutputLines(output);
   return {path:parseRemoteDirectoryHeader(lines), rows:lines.slice(2)};
@@ -438,25 +468,24 @@ async function enumerateRemoteTree(connectionId, remotePath = ".") {
   const {path:resolvedPath, rows:allRows} = parseRemoteDirectoryOutput(output);
   const truncated = allRows.length > MAX_RECURSIVE_SEARCH_ENTRIES;
   const rows = allRows.slice(0, MAX_RECURSIVE_SEARCH_ENTRIES);
-  return {
-    path: resolvedPath,
-    truncated,
-    entries: rows.map((line) => {
-      const separator = line.lastIndexOf("\t");
-      const name = separator >= 0 ? line.slice(0, separator) : line;
-      const type = separator >= 0 ? line.slice(separator + 1) : "f";
-      return {
-        name,
-        type: type === "d" ? "dir" : "file",
-        size: 0,
-        mtime: 0,
-        mode: "",
-        owner: "",
-        group: "",
-        metadata_known: false
-      };
-    })
-  };
+  const entries = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const separator = rows[index].lastIndexOf("\t");
+    const name = separator >= 0 ? rows[index].slice(0, separator) : rows[index];
+    const type = separator >= 0 ? rows[index].slice(separator + 1) : "f";
+    entries.push({
+      name,
+      type: type === "d" ? "dir" : "file",
+      size: 0,
+      mtime: 0,
+      mode: "",
+      owner: "",
+      group: "",
+      metadata_known: false
+    });
+    if ((index + 1) % DIRECTORY_PARSE_BATCH_SIZE === 0) await yieldSftpWork();
+  }
+  return {path:resolvedPath, truncated, entries};
 }
 
 async function loadDirectorySnapshot(connectionId, remotePath, recursive, refresh) {
@@ -504,7 +533,11 @@ async function listRemoteDir(connectionId, remotePath = ".", options: any = {}) 
     path: snapshot.path,
     recursive,
     truncated:Boolean(snapshot.truncated),
-    ...paginateRemoteEntries(snapshot.entries, normalized)
+    ...paginateRemoteEntries(
+      snapshot.entries,
+      normalized,
+      snapshot.page_orders || (snapshot.page_orders = new Map())
+    )
   };
 }
 
@@ -1236,6 +1269,7 @@ async function setRemoteFileMtime(connectionId, remotePath, mtimeSeconds) {
 
 module.exports = {
   listRemoteDir,
+  resolveRemoteDirectory,
   listRemoteFileVersions,
   __remoteBackupVersionTimestamp:remoteBackupVersionTimestamp,
   __buildRemoteDirectoryEntriesCommand:buildRemoteDirectoryEntriesCommand,

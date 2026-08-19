@@ -39,7 +39,7 @@ async function attachRemoteTerminal(profile, key) {
   if (!view || !mount) return;
   let session = remoteTerminalSessions.get(key);
   if (!session) {
-    const term = new TerminalClass({cursorBlink:true,convertEol:true,fontFamily:"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",fontSize:Number(localStorage.getItem("terminalFontSize") || 13),theme:typeof terminalThemeForSettings === "function" ? terminalThemeForSettings() : undefined});
+    const term = new TerminalClass({cursorBlink:true,convertEol:false,fontFamily:"ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",fontSize:Number(localStorage.getItem("terminalFontSize") || 13),theme:typeof terminalThemeForSettings === "function" ? terminalThemeForSettings() : undefined});
     const fit = new FitAddonClass();
     term.loadAddon(fit);
     session = {key,profile,term,fit,socket:null,connected:false,logId:createTerminalLogId(),resizeObserver:null};

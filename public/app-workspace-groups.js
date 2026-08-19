@@ -230,7 +230,9 @@ function renderWorkspaceGroupBar() {
   bar.hidden = !show;
   document.body.classList.toggle("workspace-groups-visible", show);
   if (!show) {
-    bar.replaceChildren();
+    // Tab activation calls this helper frequently. When the group bar is hidden
+    // there is no visible DOM to rebuild; only clear stale children once.
+    if (bar.childElementCount) bar.replaceChildren();
     return;
   }
   const selectedCount = workspaceSelectedTabKeys.size;
@@ -363,7 +365,7 @@ function applyWorkspaceGroupState(group) {
     if (focusedPane?.tabs.includes(group.activeTabKey)) focusedPane.activeTabKey = group.activeTabKey;
     activeTabKey = focusedPane?.activeTabKey || tabs[0]?.key || "";
     activeView = tabs.find(tab => tab.key === activeTabKey)?.viewName || tabs.find(tab => tab.key === activeTabKey)?.kind || "welcome";
-    renderTabs();
+    renderTabs({rebuildLayout:true});
     const visiblePanes = workspaceVisiblePanes();
     for (const pane of visiblePanes.filter(pane => pane.id !== focusedPaneId)) renderWorkspacePaneContent(pane.id);
     if (activeTabKey) renderWorkspacePaneContent(focusedPaneId);

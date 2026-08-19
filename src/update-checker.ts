@@ -76,9 +76,9 @@ function readJson(file, fallback = null) {
   }
 }
 
-function writeJson(file, value) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(value, null, 2), "utf8");
+async function writeJsonAsync(file, value) {
+  await fs.promises.mkdir(path.dirname(file), { recursive: true });
+  await fs.promises.writeFile(file, JSON.stringify(value, null, 2), "utf8");
 }
 
 function formalReleases(value) {
@@ -181,18 +181,44 @@ function createUpdateChecker(options: any = {}) {
   const cachePath = options.cachePath || path.join(dataDir, CACHE_FILENAME);
   const onUpdate = typeof options.onUpdate === "function" ? options.onUpdate : null;
   let inFlight = null;
+  // The desktop HTTP server shares Electron's main process.  Keep the small
+  // update cache in memory after startup so checking GitHub never performs a
+  // synchronous disk read on that UI-sensitive process.
+  let cacheMemory = readJson(cachePath, {}) || {};
+  let cacheCommitted = cacheMemory;
+  let cacheWriteQueue = Promise.resolve();
+  let cacheWriteGeneration = 0;
 
   function readCache() {
-    const cache = readJson(cachePath, {}) || {};
+    const cache = cacheMemory || {};
     return String(cache.repository_key || "").toLowerCase() === repositoryCacheKey ? cache : {};
   }
 
-  function saveCache(cache) {
-    writeJson(cachePath, {
+  function normalizedCache(cache) {
+    return {
       ...cache,
       schema_version: CACHE_SCHEMA_VERSION,
       repository_key: repositoryCacheKey
-    });
+    };
+  }
+
+  function saveCacheAsync(cache) {
+    cacheMemory = normalizedCache(cache);
+    const snapshot = cacheMemory;
+    const generation = ++cacheWriteGeneration;
+    cacheWriteQueue = cacheWriteQueue
+      .catch(() => {})
+      .then(async () => {
+        try {
+          await writeJsonAsync(cachePath, snapshot);
+          cacheCommitted = snapshot;
+          if (generation === cacheWriteGeneration) cacheMemory = snapshot;
+        } catch (error) {
+          if (generation === cacheWriteGeneration) cacheMemory = cacheCommitted;
+          throw error;
+        }
+      });
+    return cacheWriteQueue;
   }
 
   async function notifyOnce(result) {
@@ -203,10 +229,10 @@ function createUpdateChecker(options: any = {}) {
     if (result.republished_available) {
       const marker = `${result.latest_version}:${Number(result.release_revision || 0)}`;
       if (String(cache.notified_republished_release || "") === marker) return;
-      saveCache({ ...cache, notified_republished_release: marker });
+      await saveCacheAsync({ ...cache, notified_republished_release: marker });
     } else {
       if (cache.notified_latest_version === result.latest_version) return;
-      saveCache({ ...cache, notified_latest_version: result.latest_version });
+      await saveCacheAsync({ ...cache, notified_latest_version: result.latest_version });
     }
     await onUpdate(result);
   }
@@ -260,8 +286,8 @@ function createUpdateChecker(options: any = {}) {
       const result = cachedResult(cache, packageInfo);
       if (!result) throw new Error("GitHub 返回未修改，但本地没有可用的更新缓存");
       result.checked_at = new Date(checkedAt).toISOString();
-      cache = { ...cache, checked_at_ms: checkedAt, result };
-      saveCache(cache);
+      cache = { ...readCache(), checked_at_ms: checkedAt, result };
+      await saveCacheAsync(cache);
       await notifyOnce(result);
       return result;
     }
@@ -277,8 +303,8 @@ function createUpdateChecker(options: any = {}) {
     }
     const result = releaseResult(packageInfo, releases, checkedAt, false);
     const etag = response.headers?.get?.("etag") || response.headers?.get?.("ETag") || "";
-    cache = { ...cache, checked_at_ms: checkedAt, etag, result };
-    saveCache(cache);
+    cache = { ...readCache(), checked_at_ms: checkedAt, etag, result };
+    await saveCacheAsync(cache);
     const stored = cachedResult(readCache(), packageInfo);
     const checkedResult = stored ? { ...stored, checked_at: result.checked_at, from_cache: false } : result;
     await notifyOnce(checkedResult);
@@ -296,13 +322,13 @@ function createUpdateChecker(options: any = {}) {
     return cachedResult(readCache(), packageInfo);
   }
 
-  function setIgnoredCurrentVersion(enabled) {
+  async function setIgnoredCurrentVersion(enabled) {
     const cache = readCache();
     const current = cachedResult(cache, packageInfo);
     if (enabled && (!current?.update_available || !current.latest_version)) {
       throw new Error("当前没有可忽略的新版本");
     }
-    saveCache({
+    await saveCacheAsync({
       ...cache,
       ignored_latest_version: enabled ? current.latest_version : ""
     });

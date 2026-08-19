@@ -27,7 +27,17 @@ function checkSourceContracts() {
   assert.doesNotMatch(docking, /isMobileLayout\(\) && event\.pointerType === "touch"\) return/);
   assert.match(docking, /drag\.pointerType === "touch" && Math\.abs\(deltaY\) > Math\.abs\(deltaX\)/);
   assert.match(docking, /if \(!record\.mount\?\.isConnected\) \{\s*toolbar\.remove\(\);\s*return;\s*\}/);
+  assert.match(docking, /function workspaceLayoutDomNeedsRebuild\(\)/);
+  assert.match(docking, /options\.rebuildLayout === true\s*\|\| \(options\.rebuildLayout !== false && workspaceLayoutDomNeedsRebuild\(\)\)/);
+  assert.doesNotMatch(docking, /if \(options\.rebuildLayout !== false\) renderWorkspaceLayout\(\)/);
+  assert.match(docking, /workspaceToolbarPlacementDirty/);
+  assert.match(docking, /workspaceToolbarPlacementStateSignature\(\)/);
+  assert.match(docking, /if \(changed && typeof scheduleTerminalFit === "function"\)/);
+  assert.ok((docking.match(/renderTabs\(\{rebuildLayout:true\}\)/g) || []).length >= 4, "layout-changing flows rebuild the workspace explicitly");
   assert.doesNotMatch(terminal, /function terminalElementForKey[\s\S]*?document\.querySelector\(selector\)[\s\S]*?\n\}/);
+  assert.match(terminal, /function terminalViewForKey\(key=""\)/);
+  assert.match(terminal, /attachTerminal\(c, key, terminalMount\)/);
+  assert.doesNotMatch(terminal, /async function attachTerminal\(c, key\) \{\s*const mount = \$\("terminalMount"\)/);
   assert.match(logs, /const logViewerStates = new Map\(\)/);
   assert.match(logs, /captureWorkspaceTab\(tabKey\)/);
   assert.match(settings, /function settingsQueryAll\(selector\)/);
@@ -45,6 +55,10 @@ function checkSourceContracts() {
   assert.match(workspace, /setTimeout\(\(\) => loadStartupSummary\(box\), 1200\)/);
   assert.match(sftp, /const mountedShell = view\.querySelector\(":scope > \.sftp-shell"\)/);
   assert.match(sftp, /const mounted = mountedTabKey === tabKey\s*&& mountedShell\?\.dataset\.sftpTabKey === tabKey\s*&& mountedToolbar\?\.dataset\.workspaceTabKey === tabKey/);
+  assert.match(sftp, /renderedRequestSeq:-1/);
+  assert.match(sftp, /Number\(runtime\.renderedRequestSeq \?\? -1\) !== Number\(runtime\.state\.requestSeq \|\| 0\)/);
+  assert.match(sftp, /runtime\.renderedRequestSeq = Number\(state\.requestSeq \|\| 0\)/);
+  assert.match(sftp, /if \(typeof scheduleTabsStateSave === "function"\) scheduleTabsStateSave\(\);\s*else saveTabsState\(\);/, "completed SFTP directory reads must coalesce workspace persistence");
   assert.match(sftp, /function navigateSftpPath\(remotePath, tabKey=activeTabKey, options=\{\}\)/);
 
   const runtimeRootStart = sftp.indexOf("function sftpRuntimeRoot(");
@@ -91,6 +105,36 @@ function checkTerminalElementIsolation() {
 
   assert.equal(sandbox.__terminalElementForKey("terminal-b", "#terminalStatus"), expected);
   assert.deepEqual(queries, ['.terminal-toolbar[data-workspace-tab-key="terminal-b"]']);
+}
+
+function checkTerminalViewIsolation() {
+  const terminal = read("public/app-terminal-core.js");
+  const start = terminal.indexOf("function terminalViewForKey(");
+  const end = terminal.indexOf("\nfunction updateTerminalDropOverlay", start);
+  assert.ok(start >= 0 && end > start, "terminalViewForKey source is available");
+
+  const expected = {owner:"pane-b-terminal"};
+  const stale = {owner:"global-terminal"};
+  const panes = new Map([
+    ["pane-a", {id:"pane-a"}],
+    ["pane-b", {id:"pane-b"}]
+  ]);
+  const sandbox = {
+    workspaceExecutionPaneId:"pane-a",
+    focusedPaneId:"pane-a",
+    workspaceFindPaneForTab:key => key === "terminal-b" ? panes.get("pane-b") : null,
+    workspaceFindPane:id => panes.get(id) || null,
+    workspacePaneElement:id => ({querySelector:selector => id === "pane-b" && selector === "#view-terminal" ? expected : null}),
+    $:id => id === "view-terminal" ? stale : null
+  };
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(
+    `${terminal.slice(start, end)}\n;globalThis.__terminalViewForKey = terminalViewForKey;`,
+    sandbox,
+    {filename:"public/app-terminal-core.js", timeout:5000}
+  );
+
+  assert.equal(sandbox.__terminalViewForKey("terminal-b"), expected, "the terminal view must come from the tab's owning pane");
 }
 
 function loadDockingModel() {
@@ -164,4 +208,5 @@ function checkCapturedExecution() {
 checkSourceContracts();
 checkCapturedExecution();
 checkTerminalElementIsolation();
+checkTerminalViewIsolation();
 console.log("Workspace pane async isolation checks passed");

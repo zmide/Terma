@@ -1,5 +1,9 @@
-const TERMINAL_OUTPUT_FRAME_BUDGET = 128 * 1024;
-const TERMINAL_OUTPUT_DRAIN_DELAY_MS = 16;
+const TERMINAL_OUTPUT_FRAME_BUDGET = 32 * 1024;
+const TERMINAL_OUTPUT_DRAIN_DELAY_MS = 8;
+const TERMINAL_OUTPUT_BACKGROUND_DRAIN_DELAY_MS = 48;
+const TERMINAL_OUTPUT_SCROLLBACK_DRAIN_DELAY_MS = 24;
+const TERMINAL_OUTPUT_HIGH_WATER_MARK = 128 * 1024;
+const TERMINAL_OUTPUT_LOW_WATER_MARK = 32 * 1024;
 
 function scheduleTerminalOutputDrain(session) {
   if (session.terminalOutputFrame) return;
@@ -7,23 +11,77 @@ function scheduleTerminalOutputDrain(session) {
   // document.visibilityState as visible when Electron background throttling is
   // disabled, while Windows still stops presenting frames for a minimized window.
   session.terminalOutputFrameKind = "timeout";
-  session.terminalOutputFrame = setTimeout(() => drainTerminalOutput(session), TERMINAL_OUTPUT_DRAIN_DELAY_MS);
+  const hidden = Boolean(globalThis.document?.hidden);
+  const buffer = session.term?.buffer?.active;
+  const viewingScrollback = Boolean(
+    session.term?.hasSelection?.()
+    || (buffer && Number(buffer.viewportY) < Number(buffer.baseY) - 1)
+  );
+  const delay = hidden
+    ? TERMINAL_OUTPUT_BACKGROUND_DRAIN_DELAY_MS
+    : viewingScrollback
+      ? TERMINAL_OUTPUT_SCROLLBACK_DRAIN_DELAY_MS
+      : TERMINAL_OUTPUT_DRAIN_DELAY_MS;
+  session.terminalOutputFrame = setTimeout(() => drainTerminalOutput(session), delay);
 }
 
 function terminalOutputLength(value) {
   return typeof value === "string" ? value.length : Number(value?.byteLength || 0);
 }
 
-function takeTerminalOutputChunk(session, budget) {
-  const chunk = session.pendingTerminalOutput[0];
-  const length = terminalOutputLength(chunk);
-  if (length <= budget) {
-    session.pendingTerminalOutput.shift();
-    return chunk;
+function terminalOutputFlowMessage(session, paused) {
+  if (!session?.socket || session.socket.readyState !== WebSocket.OPEN) return;
+  if (Boolean(session.terminalOutputFlowPaused) === Boolean(paused)) return;
+  try {
+    session.socket.send(JSON.stringify({type:"terminal-output-flow", paused:Boolean(paused)}));
+    session.terminalOutputFlowPaused = Boolean(paused);
+  } catch {}
+}
+
+function syncTerminalOutputFlowForSocket(session) {
+  if (!session) return;
+  session.terminalOutputFlowPaused = false;
+  if (Number(session.pendingTerminalOutputBytes || 0) >= TERMINAL_OUTPUT_HIGH_WATER_MARK) terminalOutputFlowMessage(session, true);
+}
+
+function accountTerminalOutputConsumed(session, amount) {
+  session.pendingTerminalOutputBytes = Math.max(0, Number(session.pendingTerminalOutputBytes || 0) - Math.max(0, Number(amount || 0)));
+  if (session.terminalOutputFlowPaused && session.pendingTerminalOutputBytes <= TERMINAL_OUTPUT_LOW_WATER_MARK) {
+    terminalOutputFlowMessage(session, false);
   }
-  const head = chunk.slice(0, budget);
-  session.pendingTerminalOutput[0] = chunk.slice(budget);
-  return head;
+}
+
+function takeTerminalOutputChunk(session, budget) {
+  const first = session.pendingTerminalOutput[0];
+  const binary = first instanceof Uint8Array;
+  const chunks = [];
+  let used = 0;
+  while (session.pendingTerminalOutput.length && used < budget) {
+    const chunk = session.pendingTerminalOutput[0];
+    if ((chunk instanceof Uint8Array) !== binary) break;
+    const remaining = budget - used;
+    const length = terminalOutputLength(chunk);
+    if (length <= remaining) {
+      chunks.push(session.pendingTerminalOutput.shift());
+      used += length;
+      accountTerminalOutputConsumed(session, length);
+      continue;
+    }
+    chunks.push(chunk.slice(0, remaining));
+    session.pendingTerminalOutput[0] = chunk.slice(remaining);
+    used += remaining;
+    accountTerminalOutputConsumed(session, remaining);
+    break;
+  }
+  if (!binary) return chunks.join("");
+  if (chunks.length === 1) return chunks[0];
+  const merged = new Uint8Array(used);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged;
 }
 
 function drainTerminalOutput(session) {
@@ -56,6 +114,8 @@ function queueTerminalOutput(session, output) {
   if (!output.length && !output.byteLength) return;
   if (!session.pendingTerminalOutput) session.pendingTerminalOutput = [];
   session.pendingTerminalOutput.push(output);
+  session.pendingTerminalOutputBytes = Number(session.pendingTerminalOutputBytes || 0) + terminalOutputLength(output);
+  if (session.pendingTerminalOutputBytes >= TERMINAL_OUTPUT_HIGH_WATER_MARK) terminalOutputFlowMessage(session, true);
   scheduleTerminalOutputDrain(session);
 }
 
@@ -86,4 +146,6 @@ function cancelTerminalOutputQueue(session) {
   session.terminalOutputGeneration = Number(session.terminalOutputGeneration || 0) + 1;
   session.terminalOutputWriting = false;
   session.pendingTerminalOutput = [];
+  session.pendingTerminalOutputBytes = 0;
+  session.terminalOutputFlowPaused = false;
 }

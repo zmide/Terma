@@ -5,7 +5,7 @@ interface UpdateCheckerLike {
   packageInfo: { version?: string; releaseRevision?: number };
   status(): unknown;
   check(options: { force: boolean }): Promise<unknown>;
-  setIgnoredCurrentVersion(enabled: boolean): unknown;
+  setIgnoredCurrentVersion(enabled: boolean): Promise<unknown>;
 }
 
 interface UpdateInstallerLike {
@@ -62,7 +62,7 @@ export async function handleUpdateRoutes(
       return true;
     }
     try {
-      sendJson(response, checker.setIgnoredCurrentVersion(enabled === "1"));
+      sendJson(response, await checker.setIgnoredCurrentVersion(enabled === "1"));
     } catch (error) {
       sendJson(response, { error: error instanceof Error ? error.message : String(error) }, 422);
     }

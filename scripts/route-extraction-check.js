@@ -527,6 +527,7 @@ async function checkSftpTransferRoutes() {
       if (cancelled) throw Object.assign(new Error("cancelled"), {code:"SFTP_UPLOAD_CANCELLED"});
       return {ok:true};
     },
+    resolveRemoteDirectory:async (_id, remotePath) => ({path:remotePath === "." ? "/home/test" : remotePath}),
     resolveRemoteUploadTarget:async (_id, _directory, filename) => ({exists:json.exists === true, name:filename, path:`/tmp/${filename}`, renamed:false}),
     runtimeSettingsFile:"runtime.json",
     safeUploadName:name => String(name).replace(/[^a-z0-9.]+/gi, "_"),
@@ -536,6 +537,11 @@ async function checkSftpTransferRoutes() {
   };
 
   assert.equal(await handleSftpTransferRoutes({method:"GET"}, response, "/api/about", dependencies), false);
+  assert.equal(
+    await handleSftpTransferRoutes({method:"GET", url:"/api/connections/7/sftp/resolve-directory?path=%2Fsrv%2Fdata"}, response, "/api/connections/7/sftp/resolve-directory", dependencies),
+    true
+  );
+  assert.deepEqual(sent.pop(), {status:200, data:{path:"/srv/data"}, headers:{"Cache-Control":"no-store"}});
   assert.equal(await handleSftpTransferRoutes({method:"POST"}, response, "/api/connections/7/sftp/native-drag", dependencies), true);
   assert.deepEqual(output.sent.pop(), {
     data:{

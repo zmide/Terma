@@ -14,6 +14,9 @@ let runtimeSettingsCheck = null;
 let licenseModalKeyHandler = null;
 let licenseModalTrigger = null;
 let updateDownloadPollingTimer = null;
+let updateStatusRefreshSequence = 0;
+let updateStatusAbortController = null;
+let updateStatusChecking = false;
 const SETTINGS_SECTION_META = {
   "settings-general": "settings:sections.general",
   "settings-basic": "settings:sections.security",
@@ -88,15 +91,18 @@ function syncUpdateNoticeForCurrentSection() {
 
 async function loadCachedUpdateStatus() {
   const inPane = captureSettingsPane();
+  const refreshSequence = updateStatusRefreshSequence;
+  if (updateStatusChecking || updateStatusAbortController) return;
   try {
     const [status, download] = await Promise.all([
       api("/api/updates/status"),
       api("/api/updates/download/status").catch(()=>null)
     ]);
+    if (refreshSequence !== updateStatusRefreshSequence || updateStatusChecking || updateStatusAbortController) return;
     if (status && typeof status === "object") updateSettings = status;
     if (updateSettings && download) updateSettings.download_status = download;
     inPane(() => {
-      renderUpdateStatus();
+      renderUpdateStatus({deferNotes:true});
       syncUpdateNoticeForCurrentSection();
     });
     if (download?.state === "downloading") startUpdateDownloadPolling(inPane);

@@ -511,7 +511,7 @@ function createServerRuntime(options: any = {}) {
         stopAllExternalEdits();
         closeJumpConnectionPool();
         closePersistentSshCommandSessions();
-        stopAllForwards({preserveRestoreState:true});
+        await stopAllForwards({preserveRestoreState:true});
         closeDatabase();
       } catch (error) {
         console.error(`stop forwards failed: ${error.message}`);

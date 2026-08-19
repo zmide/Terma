@@ -31,6 +31,7 @@ let healthMonitorTimer: any = null;
 let healthMonitorBusy = false;
 let healthMonitorTask: Promise<any> | null = null;
 const ssh2Forwards = new Map();
+const forwardOperations = new Map();
 const persistentSshCommandSessions = new Map();
 const PERSISTENT_SSH_COMMAND_IDLE_MS = 60 * 1000;
 const PERSISTENT_SSH_COMMAND_OUTPUT_LIMIT = 60000;
@@ -868,9 +869,13 @@ async function startForward(id) {
 }
 
 async function startForwardInternal(id, options: any = {}) {
+  return enqueueForwardOperation(id, () => performStartForwardInternal(id, options));
+}
+
+async function performStartForwardInternal(id, options: any = {}) {
   const forward = getForward(id);
   const connection = getConnection(forward.connection_id);
-  stopForward(id, { preserveRestoreState: true });
+  await stopForwardRuntime(id, { preserveRestoreState: true });
   if (["local", "socks"].includes(forward.mode)) {
     let usage = await diagnosePortUsage(forward.bind_host, forward.bind_port);
     if (usage.occupied && options.cleanupSshPortOwner) {
@@ -1003,7 +1008,7 @@ function connectionForwards(connectionId) {
 async function startConnectionForwards(connectionId, options: any = {}) {
   const forwards = connectionForwards(connectionId);
   if (!forwards.length) throw new Error("该连接没有转发配置");
-  stopConnectionForwards(connectionId, { preserveRestoreState: true });
+  await stopConnectionForwards(connectionId, { preserveRestoreState: true });
   const errors = [];
   for (const forward of forwards) {
     try {
@@ -1021,12 +1026,24 @@ async function startConnectionForwards(connectionId, options: any = {}) {
   }
 }
 
-function stopForward(id, options: any = {}) {
+async function enqueueForwardOperation(id, operation) {
+  const key = Number(id);
+  const previous = forwardOperations.get(key) || Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  forwardOperations.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (forwardOperations.get(key) === current) forwardOperations.delete(key);
+  }
+}
+
+async function stopForwardRuntime(id, options: any = {}) {
   const forward = getForward(id);
   const managed = ssh2Forwards.get(Number(id));
   if (managed) {
     ssh2Forwards.delete(Number(id));
-    managed.close().catch(() => {});
+    try { await managed.close(); } catch {}
   }
   const pid = Number(forward.pid || 0);
   if (pid) stopPid(pid);
@@ -1036,25 +1053,22 @@ function stopForward(id, options: any = {}) {
   if (!options.preserveRestoreState && !connectionRunning(forward.connection_id)) setRestoreConnection(forward.connection_id, false);
 }
 
-function stopConnectionForwards(connectionId, options: any = {}) {
-  const forwards = connectionForwards(connectionId);
-  for (const forward of forwards) {
-    const managed = ssh2Forwards.get(Number(forward.id));
-    if (managed) {
-      ssh2Forwards.delete(Number(forward.id));
-      managed.close().catch(() => {});
-    }
-  }
-  const pids = [...new Set(forwards.map((forward) => forward.pid).filter(Boolean))];
-  for (const pid of pids) stopPid(Number(pid));
-  const restore = options.preserveRestoreState ? 1 : 0;
-  run("UPDATE connection_forwards SET pid=NULL, status='stopped', restore=?, reconnect_count=0, started_at=NULL, updated_at=? WHERE connection_id=?", [restore, now(), Number(connectionId)]);
-  if (!options.preserveRestoreState) setRestoreConnection(connectionId, false);
+async function stopForward(id, options: any = {}) {
+  return enqueueForwardOperation(id, () => stopForwardRuntime(id, options));
 }
 
-function stopAllForwards(options: any = {}) {
+async function stopConnectionForwards(connectionId, options: any = {}) {
+  const forwards = connectionForwards(connectionId);
+  await Promise.all(forwards.map((forward) => stopForward(forward.id, options)));
+}
+
+async function stopAllForwards(options: any = {}) {
   const rows = all("SELECT DISTINCT connection_id FROM connection_forwards WHERE pid IS NOT NULL OR status = 'running'");
-  for (const row of rows) stopConnectionForwards(row.connection_id, options);
+  const connectionIds = new Set(rows.map((row) => Number(row.connection_id)));
+  for (const id of ssh2Forwards.keys()) {
+    try { connectionIds.add(Number(getForward(id).connection_id)); } catch {}
+  }
+  await Promise.all([...connectionIds].map((connectionId) => stopConnectionForwards(connectionId, options)));
 }
 
 async function autostartConnections() {

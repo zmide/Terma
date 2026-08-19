@@ -115,7 +115,7 @@ async function main() {
   assert.match(DEFAULT_TERMINAL_SETTINGS.font_family, /monospace/);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 18,
+    schema_version: 19,
     language: "zh-CN",
     language_onboarding_version: 0,
     vnc_fullscreen_toolbar: "always",

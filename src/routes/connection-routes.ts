@@ -11,8 +11,8 @@ interface ConnectionRouteDependencies {
   createConfigSnapshot(reason: string): any;
   createRemoteProfileFromConnection(id: number, protocol: string): any;
   defaultExtraArgs: string[];
-  deleteConnection(id: number, stopForward: (id: number) => any): any;
-  deleteForward(id: number, stopForward: (id: number) => any): any;
+  deleteConnection(id: number, stopForward: (id: number) => any): Promise<any> | any;
+  deleteForward(id: number, stopForward: (id: number) => any): Promise<any> | any;
   deployGeneratedPublicKey(id: number, publicPath: string): Promise<any>;
   duplicateConnection(id: number, defaultExtraArgs: string[]): any;
   forwardLogLabel(id: string | number): string;
@@ -34,9 +34,9 @@ interface ConnectionRouteDependencies {
   sendJson(response: ServerResponse, data: unknown, status?: number): void;
   startConnectionForwards(id: number): Promise<any>;
   startForward(id: number): Promise<any>;
-  stopConnectionForwards(id: number): any;
+  stopConnectionForwards(id: number): Promise<any> | any;
   stopExternalEditsForConnection(id: number): any;
-  stopForward(id: number): any;
+  stopForward(id: number): Promise<any> | any;
   terminalCapabilitiesForConnection(connection: any): Promise<any>;
   updateConnection(id: number, data: any, defaultExtraArgs: string[]): any;
   updateConnectionFlags(id: number, data: any): any;
@@ -86,7 +86,7 @@ export async function handleConnectionRoutes(
     dependencies.createConfigSnapshot("批量删除 SSH 连接前自动快照");
     for (const id of ids) {
       dependencies.stopExternalEditsForConnection(id);
-      dependencies.deleteConnection(id, dependencies.stopForward);
+      await dependencies.deleteConnection(id, dependencies.stopForward);
     }
     dependencies.sendJson(response, {ok:true, deleted:ids.length});
     return true;
@@ -105,7 +105,7 @@ export async function handleConnectionRoutes(
     if (!ids.length || ids.some(id => !existingIds.has(id))) throw new Error("部分 SSH 连接不存在，请刷新后重试");
     dependencies.createConfigSnapshot("批量修改 SSH 连接前自动快照");
     if (Object.prototype.hasOwnProperty.call(changes, "ssh_port") || changes.auth) {
-      for (const id of ids) dependencies.stopConnectionForwards(id);
+      for (const id of ids) await dependencies.stopConnectionForwards(id);
     }
     const result = dependencies.bulkUpdateConnections(ids, changes);
     ids.forEach(dependencies.clearConnectionHealthCache);
@@ -138,7 +138,7 @@ export async function handleConnectionRoutes(
   }
   if (method === "POST" && pathname === "/api/forwards/bulk-delete") {
     const data = await dependencies.readJson(request);
-    for (const id of data.ids || []) dependencies.deleteForward(id, dependencies.stopForward);
+    for (const id of data.ids || []) await dependencies.deleteForward(id, dependencies.stopForward);
     dependencies.sendJson(response, {ok:true});
     return true;
   }
@@ -249,7 +249,7 @@ export async function handleConnectionRoutes(
       }
     } else if (parts[3] === "stop-forwards") {
       const connection = dependencies.getConnection(Number(parts[2]));
-      dependencies.stopConnectionForwards(connection.id);
+      await dependencies.stopConnectionForwards(connection.id);
       dependencies.clearConnectionHealthCache(connection.id);
       dependencies.appendSystemLog(`已停止连接 ${connection.name} 的全部转发`);
     } else {
@@ -273,7 +273,7 @@ export async function handleConnectionRoutes(
       }
     } else if (parts[3] === "stop") {
       const forward = dependencies.getForward(Number(parts[2]));
-      dependencies.stopForward(Number(parts[2]));
+      await dependencies.stopForward(Number(parts[2]));
       dependencies.clearConnectionHealthCache(forward.connection_id);
       dependencies.appendSystemLog(`已停止转发：${dependencies.forwardLogLabel(parts[2])}`);
     } else if (parts[3] === "health") {
@@ -310,14 +310,14 @@ export async function handleConnectionRoutes(
   if (method === "DELETE" && parts.length === 3 && parts[1] === "connections") {
     const id = Number(parts[2]);
     dependencies.stopExternalEditsForConnection(id);
-    dependencies.deleteConnection(id, dependencies.stopForward);
+    await dependencies.deleteConnection(id, dependencies.stopForward);
     dependencies.clearConnectionHealthCache(id);
     dependencies.sendJson(response, {ok:true});
     return true;
   }
   if (method === "DELETE" && parts.length === 3 && parts[1] === "forwards") {
     const forward = dependencies.getForward(Number(parts[2]));
-    dependencies.deleteForward(Number(parts[2]), dependencies.stopForward);
+    await dependencies.deleteForward(Number(parts[2]), dependencies.stopForward);
     dependencies.clearConnectionHealthCache(forward.connection_id);
     dependencies.sendJson(response, {ok:true});
     return true;

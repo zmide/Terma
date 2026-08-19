@@ -1,3 +1,19 @@
+function terminalSessionEncoding(key, connection) {
+  return terminalSessions.get(key)?.terminalEncoding || connection?.terminal_encoding || "utf8";
+}
+
+function terminalEncodingLabel(connection, key="") {
+  return terminalEncodingOptions.find(([value]) => value === terminalSessionEncoding(key, connection))?.[1] || "UTF-8";
+}
+
+function terminalConnectionStateLabel(state="connecting") {
+  if (state === "connected") return tr("terminal:connection_state.connected", {defaultValue:"已连接"});
+  if (state === "disconnected") return tr("terminal:connection_state.disconnected", {defaultValue:"已断开"});
+  if (state === "authentication") return tr("terminal:connection_state.authentication", {defaultValue:"等待认证"});
+  if (state === "authorization") return tr("terminal:connection_state.authorization", {defaultValue:"等待授权"});
+  return tr("terminal:connection_state.connecting", {defaultValue:"连接中"});
+}
+
 function syncTermaTerminalComponentMessages() {
   const promptLabel = tr("terminal:a11y.prompt_label", {defaultValue:"终端输入"});
   const tooMuchOutput = tr("terminal:a11y.too_much_output", {defaultValue:"输出内容过多，无法由屏幕阅读器全部播报；请逐行导航阅读"});
@@ -228,6 +244,29 @@ function terminalDirectoryDropLabel(session) {
   return session?.currentDirectoryKnown ? String(session.currentDirectory || ".") : tr("terminal:drop.current_directory", {defaultValue:"当前目录"});
 }
 
+function bindTerminalInterruptKey(term, key) {
+  if (typeof term?.attachCustomKeyEventHandler !== "function") return;
+  term.attachCustomKeyEventHandler(event => {
+    if (event.type !== "keydown" || event.repeat || !event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || String(event.key || "").toLowerCase() !== "c") return true;
+    if (term.hasSelection?.()) return true;
+    event.preventDefault();
+    sendTerminalData(key, "\x03", {focus:false});
+    return false;
+  });
+}
+
+function terminalViewForKey(key="") {
+  const pane = typeof workspaceFindPaneForTab === "function"
+    ? workspaceFindPaneForTab(key)
+      || (typeof workspaceFindPane === "function" ? workspaceFindPane(workspaceExecutionPaneId) : null)
+      || (typeof workspaceFindPane === "function" ? workspaceFindPane(focusedPaneId) : null)
+    : null;
+  const paneView = pane && typeof workspacePaneElement === "function"
+    ? workspacePaneElement(pane.id)?.querySelector("#view-terminal")
+    : null;
+  return paneView || $("view-terminal");
+}
+
 function updateTerminalDropOverlay(session) {
   const overlay = session?.mount?.querySelector?.(".terminal-drop-overlay");
   if (!overlay || overlay.hidden) return;
@@ -291,8 +330,8 @@ async function probeTerminalDirectory(session, connection, directory, source="pr
   const requestId = Number(session.directoryProbeId || 0) + 1;
   session.directoryProbeId = requestId;
   try {
-    const query = new URLSearchParams({path, page:"1", page_size:"1", query:"", sort:"name", dir:"asc", refresh:"1"});
-    const result = await api(`/api/connections/${connection.id}/sftp?${query.toString()}`);
+    const query = new URLSearchParams({path});
+    const result = await api(`/api/connections/${connection.id}/sftp/resolve-directory?${query.toString()}`);
     if (session.directoryProbeId !== requestId) return "";
     const resolved = String(result?.path || path);
     if (!options.preserveCurrent) setTerminalCurrentDirectory(session, resolved, source);
@@ -304,13 +343,44 @@ async function probeTerminalDirectory(session, connection, directory, source="pr
 }
 
 async function initializeTerminalDirectory(session, connection, key) {
-  const startup = effectiveTerminalStartupConfig(connection, key);
-  const initial = startup.terminal_working_directory || session.currentDirectory || ".";
-  const resolved = await probeTerminalDirectory(session, connection, initial, "initial");
-  if (resolved && !session.homeDirectory && initial !== ".") {
-    session.homeDirectory = await probeTerminalDirectory(session, connection, ".", "home", {preserveCurrent:true});
+  if (!session || !connection) return "";
+  clearTimeout(session.directoryInitializationTimer);
+  session.directoryInitializationTimer = null;
+  if (session.directoryInitializationPending) return session.directoryInitializationPending;
+  const pending = (async () => {
+    const startup = effectiveTerminalStartupConfig(connection, key);
+    const initial = startup.terminal_working_directory || session.currentDirectory || ".";
+    const resolved = await probeTerminalDirectory(session, connection, initial, "initial");
+    if (resolved && !session.homeDirectory && initial !== ".") {
+      session.homeDirectory = await probeTerminalDirectory(session, connection, ".", "home", {preserveCurrent:true});
+    }
+    return resolved;
+  })();
+  session.directoryInitializationPending = pending;
+  try {
+    return await pending;
+  } finally {
+    if (session.directoryInitializationPending === pending) session.directoryInitializationPending = null;
   }
-  return resolved;
+}
+
+function scheduleTerminalDirectoryInitialization(session, connection, key, delay=900) {
+  if (!session || !connection || session.currentDirectoryKnown || session.directoryInitializationPending) return;
+  clearTimeout(session.directoryInitializationTimer);
+  const socket = session.socket;
+  const attempt = Number(session.connectionAttempt || 0);
+  session.directoryInitializationTimer = setTimeout(() => {
+    session.directoryInitializationTimer = null;
+    if (session.socket !== socket || Number(session.connectionAttempt || 0) !== attempt || !session.connected) return;
+    void initializeTerminalDirectory(session, connection, key);
+  }, Math.max(0, Number(delay) || 0));
+}
+
+function cancelTerminalDirectoryInitialization(session, invalidate=false) {
+  if (!session) return;
+  clearTimeout(session.directoryInitializationTimer);
+  session.directoryInitializationTimer = null;
+  if (invalidate) session.directoryProbeId = Number(session.directoryProbeId || 0) + 1;
 }
 
 async function trackTerminalDirectoryCommand(session, connection, key, command) {

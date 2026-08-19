@@ -33,8 +33,7 @@ function sendWebSocketFrame(socket, data, opcode = 1) {
     header.writeBigUInt64BE(BigInt(payload.length), 2);
   }
   try {
-    socket.write(Buffer.concat([header, payload]));
-    return true;
+    return socket.write(Buffer.concat([header, payload]) as any) !== false;
   } catch {
     return false;
   }

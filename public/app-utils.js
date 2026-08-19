@@ -596,10 +596,34 @@ function notify(text, type="info", options={}) {
     const preference = notificationDisplayPreferences()[toastType];
     if (preference?.enabled === false) return;
     const iconName = toastType === "success" ? "circle-check" : toastType === "error" ? "circle-alert" : "info";
+    const replaceKey = String(options.replaceKey || "").trim();
+    if (replaceKey) {
+      const existing = [...stack.querySelectorAll(".toast")].find(item => item.dataset.toastReplaceKey === replaceKey && !item.classList.contains("is-leaving"));
+      if (existing) {
+        const existingTitle = existing.querySelector(".toast-copy strong");
+        const existingDetail = existing.querySelector(".toast-copy span") || (() => {
+          const node = document.createElement("span");
+          existing.querySelector(".toast-copy")?.appendChild(node);
+          return node;
+        })();
+        existing.classList.remove("info", "success", "error");
+        existing.classList.add(toastType);
+        existing.querySelector(".toast-icon").innerHTML = icon(iconName);
+        if (existingTitle) existingTitle.textContent = title;
+        if (existingDetail) {
+          existingDetail.textContent = detail;
+          existingDetail.hidden = !detail;
+        }
+        scheduleToastDismiss(existing, preference.duration_ms);
+        syncToastStackLayout();
+        return;
+      }
+    }
     const toastId = `toast-${Date.now()}-${++toastSequence}`;
     const toast = document.createElement("div");
     toast.className = `toast ${toastType}`;
     toast.dataset.toastId = toastId;
+    if (replaceKey) toast.dataset.toastReplaceKey = replaceKey;
     toast.setAttribute("role", toastType === "error" ? "alert" : "status");
     toast.setAttribute("aria-atomic", "true");
     const closeLabel = tr("common:auto.close_hint", {defaultValue:"关闭提示"});
@@ -1027,17 +1051,52 @@ function syncViewportHeight(options={}) {
   scheduleTerminalFit();
 }
 
-function scheduleTerminalFit() {
-  fitVisibleTerminals();
-  clearTimeout(window.terminalViewportFitTimer);
-  window.terminalViewportFitTimer = setTimeout(fitVisibleTerminals, 80);
-  clearTimeout(window.terminalViewportFitLaterTimer);
-  window.terminalViewportFitLaterTimer = setTimeout(fitVisibleTerminals, 240);
-  clearTimeout(window.terminalViewportFitFinalTimer);
-  window.terminalViewportFitFinalTimer = setTimeout(fitVisibleTerminals, 700);
+function captureVisibleTerminalViewports() {
+  const anchors = new Map();
+  if (typeof terminalSessions === "undefined") return anchors;
+  for (const session of terminalSessions.values()) {
+    const box = session.term?.element?.closest?.(".terminal-box");
+    if (!box?.isConnected) continue;
+    const anchor = typeof captureTerminalViewport === "function" ? captureTerminalViewport(session) : null;
+    if (anchor) anchors.set(session, anchor);
+  }
+  return anchors;
 }
 
-function fitVisibleTerminals() {
+function rememberTerminalFitAnchors(anchors) {
+  if (!(anchors instanceof Map) || !anchors.size) return window.terminalViewportFitAnchors instanceof Map
+    ? window.terminalViewportFitAnchors
+    : new Map();
+  const pending = window.terminalViewportFitAnchors instanceof Map
+    ? window.terminalViewportFitAnchors
+    : new Map();
+  for (const [session, anchor] of anchors) {
+    if (!pending.has(session) && anchor) pending.set(session, anchor);
+  }
+  window.terminalViewportFitAnchors = pending;
+  return pending;
+}
+
+function releaseScheduledTerminalViewportAnchor(session) {
+  window.terminalViewportFitAnchors?.delete?.(session);
+}
+
+function scheduleTerminalFit(options={}) {
+  const suppliedAnchors = options?.anchors instanceof Map ? options.anchors : captureVisibleTerminalViewports();
+  const anchors = rememberTerminalFitAnchors(suppliedAnchors);
+  fitVisibleTerminals(anchors, {force:options?.force === true});
+  clearTimeout(window.terminalViewportFitTimer);
+  window.terminalViewportFitTimer = setTimeout(() => fitVisibleTerminals(anchors), 80);
+  clearTimeout(window.terminalViewportFitLaterTimer);
+  window.terminalViewportFitLaterTimer = setTimeout(() => fitVisibleTerminals(anchors), 240);
+  clearTimeout(window.terminalViewportFitFinalTimer);
+  window.terminalViewportFitFinalTimer = setTimeout(() => {
+    fitVisibleTerminals(anchors);
+    if (window.terminalViewportFitAnchors === anchors) window.terminalViewportFitAnchors = null;
+  }, 700);
+}
+
+function fitVisibleTerminals(anchors=null, options={}) {
   if (typeof terminalSessions === "undefined") return;
   for (const session of terminalSessions.values()) {
     const box = session.term?.element?.closest?.(".terminal-box");
@@ -1045,12 +1104,26 @@ function fitVisibleTerminals() {
     box.style.minHeight = "0px";
     const rect = box.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) continue;
-    const viewport = typeof captureTerminalViewport === "function" ? captureTerminalViewport(session) : null;
+    const width = Math.floor(rect.width);
+    const height = Math.floor(rect.height);
+    const heightStyle = `${height}px`;
+    const dimensionsChanged = Number(session.terminalFitWidth || 0) !== width
+      || Number(session.terminalFitHeight || 0) !== height
+      || session.term.element.style.height !== heightStyle;
+    if (!dimensionsChanged && options.force !== true) continue;
+    const viewport = anchors?.get?.(session)
+      || (typeof captureTerminalViewport === "function" ? captureTerminalViewport(session) : null);
     session.lastBoxHeight = rect.height;
-    session.term.element.style.height = `${Math.floor(rect.height)}px`;
-    try { session.fit?.fit(); } catch {}
-    try { session.term?.refresh?.(0, Math.max(0, session.term.rows - 1)); } catch {}
-    if (typeof restoreTerminalViewport === "function") restoreTerminalViewport(session, viewport);
+    session.terminalFitWidth = width;
+    session.terminalFitHeight = height;
+    if (session.term.element.style.height !== heightStyle) session.term.element.style.height = heightStyle;
+    if (typeof fitTerminalPreservingViewport === "function" && viewport) {
+      fitTerminalPreservingViewport(session, viewport);
+    } else {
+      try { session.fit?.fit(); } catch {}
+      try { session.term?.refresh?.(0, Math.max(0, session.term.rows - 1)); } catch {}
+      if (typeof restoreTerminalViewport === "function") restoreTerminalViewport(session, viewport);
+    }
   }
 }
 

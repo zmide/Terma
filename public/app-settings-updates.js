@@ -9,17 +9,106 @@ function localizedUpdateStatusError(value) {
   return message;
 }
 
-function updateStatusHtml() {
+const UPDATE_RELEASE_MARKUP_CACHE_LIMIT = 32;
+const UPDATE_RELEASE_NOTES_TEXT_LIMIT = 12000;
+const updateReleaseMarkupCache = new Map();
+const updateReleaseItemRenderCache = new WeakMap();
+
+function updateReleaseHistory(update) {
+  return Array.isArray(update?.release_notes) && update.release_notes.length
+    ? update.release_notes.slice(0, 10)
+    : update?.notes
+      ? [{version:update.latest_version, published_at:update.published_at, notes:update.notes}]
+      : [];
+}
+
+function updateReleaseNotesKey(update) {
+  const language = String(document.documentElement.lang || "zh-CN").toLowerCase();
+  const history = updateReleaseHistory(update);
+  if (!history.length) return "";
+  return JSON.stringify([language, history.map(item => [
+    String(item?.version || ""),
+    String(item?.published_at || ""),
+    updateReleaseRenderData(item).fingerprint
+  ])]);
+}
+
+function updateReleaseTextFingerprint(value) {
+  const source = String(value || "");
+  let first = 2166136261;
+  let second = 5381;
+  for (let index = 0; index < source.length; index += 1) {
+    const code = source.charCodeAt(index);
+    first = Math.imul(first ^ code, 16777619) >>> 0;
+    second = (Math.imul(second, 33) ^ code) >>> 0;
+  }
+  return `${source.length}:${first.toString(36)}:${second.toString(36)}`;
+}
+
+function updateReleaseRenderData(item) {
+  const language = String(document.documentElement.lang || "zh-CN").toLowerCase();
+  const source = String(item?.notes || "");
+  if (item && typeof item === "object") {
+    const cached = updateReleaseItemRenderCache.get(item);
+    if (cached?.language === language && cached.source === source) return cached;
+  }
+  const notes = localizedUpdateReleaseMarkdown(source).slice(0, UPDATE_RELEASE_NOTES_TEXT_LIMIT);
+  const rendered = {language, source, notes, fingerprint:updateReleaseTextFingerprint(notes)};
+  if (item && typeof item === "object") updateReleaseItemRenderCache.set(item, rendered);
+  return rendered;
+}
+
+function cachedUpdateReleaseMarkup(key, render) {
+  if (updateReleaseMarkupCache.has(key)) {
+    const cached = updateReleaseMarkupCache.get(key);
+    updateReleaseMarkupCache.delete(key);
+    updateReleaseMarkupCache.set(key, cached);
+    return cached;
+  }
+  const markup = render();
+  updateReleaseMarkupCache.set(key, markup);
+  while (updateReleaseMarkupCache.size > UPDATE_RELEASE_MARKUP_CACHE_LIMIT) {
+    updateReleaseMarkupCache.delete(updateReleaseMarkupCache.keys().next().value);
+  }
+  return markup;
+}
+
+function yieldBeforeUpdateRender() {
+  return new Promise(resolve => setTimeout(resolve, 0));
+}
+
+function nextUpdateNotesFrame() {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const timer = setTimeout(finish, 50);
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        clearTimeout(timer);
+        finish();
+      });
+    }
+  });
+}
+
+function updateStatusHtml(options={}) {
   const update = updateSettings;
+  const checking = Boolean(options.checking ?? updateStatusChecking);
+  const checkButtonState = checking ? ` disabled aria-busy="true"` : "";
+  const downloadButtonState = checking ? ` disabled aria-busy="true"` : "";
   if (!update) {
-    return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:updates.reading_version"))}</span></div><div class="update-status checking"><div><strong>${esc(tr("settings:updates.checking"))}</strong><span>${esc(tr("settings:updates.reading_releases"))}</span></div><span class="status-pill">${esc(tr("settings:updates.checking_short"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("settings:updates.check_again"))}</span></button></div></div>`;
+    return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:updates.reading_version"))}</span></div><div class="update-status checking"><div><strong>${esc(tr("settings:updates.checking"))}</strong><span>${esc(tr("settings:updates.reading_releases"))}</span></div><span class="status-pill">${esc(tr("settings:updates.checking_short"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)"${checkButtonState}>${icon("refresh-cw")}<span>${esc(tr(checking ? "settings:updates.checking_short" : "settings:updates.check_again"))}</span></button></div></div>`;
   }
   if (update.error) {
-    return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:updates.check_failed"))}</span></div><div class="update-status failed"><div><strong>${esc(tr("settings:updates.check_unavailable"))}</strong><span>${esc(localizedUpdateStatusError(update.error))}</span></div><span class="status-pill failed">${esc(tr("settings:updates.failed"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("common:actions.retry"))}</span></button></div></div>`;
+    return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:updates.check_failed"))}</span></div><div class="update-status failed"><div><strong>${esc(tr("settings:updates.check_unavailable"))}</strong><span>${esc(localizedUpdateStatusError(update.error))}</span></div><span class="status-pill failed">${esc(tr("settings:updates.failed"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)"${checkButtonState}>${icon("refresh-cw")}<span>${esc(tr(checking ? "settings:updates.checking_short" : "common:actions.retry"))}</span></button></div></div>`;
   }
   const currentVersion = update.current_version ? `v${String(update.current_version).replace(/^v/i, "")}` : tr("settings:updates.current_unknown");
   if (!update.latest_version) {
-    return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(currentVersion)}</span></div><div class="update-status"><div><strong>${esc(tr("settings:auto.update_not_checked"))}</strong><span>${esc(tr("settings:updates.auto_refresh_hint"))}</span></div><span class="status-pill">${esc(tr("settings:updates.pending_check"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("settings:updates.check_now"))}</span></button></div></div>`;
+    return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(currentVersion)}</span></div><div class="update-status"><div><strong>${esc(tr("settings:auto.update_not_checked"))}</strong><span>${esc(tr("settings:updates.auto_refresh_hint"))}</span></div><span class="status-pill">${esc(tr("settings:updates.pending_check"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)"${checkButtonState}>${icon("refresh-cw")}<span>${esc(tr(checking ? "settings:updates.checking_short" : "settings:updates.check_now"))}</span></button></div></div>`;
   }
   const latestVersion = update.latest_version ? `v${String(update.latest_version).replace(/^v/i, "")}` : tr("settings:auto.update_no_release");
   const republished = Boolean(update.republished_available);
@@ -65,7 +154,12 @@ function updateStatusHtml() {
       : releaseAvailable
         ? tr("settings:auto.select_fastest_route")
         : "";
-  const notes = updateReleaseNotesHtml(update);
+  const notes = options.preserveNotes || options.deferNotes
+    ? `<div data-update-notes-slot hidden></div>`
+    : updateReleaseNotesHtml(update);
+  const checkError = update.check_error
+    ? `<div class="warning">${esc(localizedUpdateStatusError(update.check_error))}</div>`
+    : "";
   const releaseUrl = safeGitHubReleaseUrl(update.release_url);
   const releaseLink = releaseUrl ? `<a class="button-link" href="${escAttr(releaseUrl)}" target="_blank" rel="noopener">${icon("external-link")}<span>${esc(tr("settings:updates.view_release"))}</span></a>` : "";
   const selectedAsset = Array.isArray(update.assets) ? update.assets.find(asset => asset?.name === (download.selected_asset_name || download.asset_name)) : null;
@@ -79,7 +173,7 @@ function updateStatusHtml() {
     ? `<button onclick="openDownloadedUpdateDirectory()">${icon("folder-open")}<span>${esc(tr("settings:updates.open_download_directory"))}</span></button>`
     : "";
   const redownloadAction = downloadedCurrent
-    ? `<button id="downloadUpdateBtn" onclick="downloadUpdatePackage(true)">${icon("download")}<span>${esc(tr("settings:auto.update_redownload"))}</span></button>`
+    ? `<button id="downloadUpdateBtn" onclick="downloadUpdatePackage(true)"${downloadButtonState}>${icon("download")}<span>${esc(tr("settings:auto.update_redownload"))}</span></button>`
     : "";
   const downloadAction = releaseAvailable
     ? downloadedCurrent
@@ -88,12 +182,12 @@ function updateStatusHtml() {
         : `${download.can_open ? `<button class="primary" onclick="openDownloadedUpdate()">${icon("package-open")}<span>${esc(tr("settings:updates.open_verified_package"))}</span></button>` : ""}${openDirectoryAction || (!download.can_open ? `<span class="muted">${esc(tr("settings:updates.installer_ready_hint"))}</span>` : "")}${redownloadAction}`
       : download.state === "downloading"
         ? `<button id="downloadUpdateBtn" disabled>${icon("download")}<span>${esc(tr(download.phase === "probing" ? "settings:auto.update_speed_test" : download.phase === "verifying" ? "settings:auto.update_verify" : "settings:auto.update_download"))}</span></button>`
-        : `<button id="downloadUpdateBtn" class="primary" onclick="downloadUpdatePackage()">${icon("download")}<span>${esc(tr(download.state === "failed" ? "settings:updates.redownload_verify" : "settings:auto.update_download_verify"))}</span></button>`
+        : `<button id="downloadUpdateBtn" class="primary" onclick="downloadUpdatePackage()"${downloadButtonState}>${icon("download")}<span>${esc(tr(download.state === "failed" ? "settings:updates.redownload_verify" : "settings:auto.update_download_verify"))}</span></button>`
     : "";
   const downloadError = download.state === "failed" && download.error ? `<div class="warning">${esc(tr("settings:updates.download_failed_detail", {error:download.error}))}</div>` : "";
   const republishedNotice = republished ? `<div class="warning">${esc(tr("settings:updates.republished_hint", {version:latestVersion}))}</div>` : "";
   const ignoreControl = update.update_available
-    ? `<label class="check-row update-ignore-row"><input id="updateIgnoreCurrentVersion" type="checkbox" ${update.update_ignored ? "checked" : ""} onchange="setUpdateVersionIgnored(this)"> ${esc(tr("settings:auto.ignore_version", {version:latestVersion}))}</label><div class="muted update-ignore-help">${esc(tr("settings:auto.ignore_version_hint"))}</div>`
+    ? `<label class="check-row update-ignore-row"><input id="updateIgnoreCurrentVersion" type="checkbox" ${update.update_ignored ? "checked" : ""}${checking ? " disabled" : ""} onchange="setUpdateVersionIgnored(this)"> ${esc(tr("settings:auto.ignore_version", {version:latestVersion}))}</label><div class="muted update-ignore-help">${esc(tr("settings:auto.ignore_version_hint"))}</div>`
     : "";
   return `<div class="update-card">
     <div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:auto.current_version", {version:currentVersion}))}</span></div>
@@ -104,8 +198,8 @@ function updateStatusHtml() {
       ${sourceText ? `<div><dt>${esc(tr("settings:auto.route"))}</dt><dd><strong>${esc(sourceText)}</strong><small>${esc(tr("settings:auto.route_fallback"))}</small></dd></div>` : ""}
       <div><dt>${esc(tr("settings:auto.progress"))}</dt><dd><strong>${esc(progressText)}</strong><div class="update-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(progress)}"><i style="width:${progress}%"></i></div></dd></div>
     </dl>
-    ${republishedNotice}${notes}${downloadError}
-    <div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)">${icon("refresh-cw")}<span>${esc(tr("settings:auto.check_updates"))}</span></button>${downloadAction}${releaseLink}</div>
+    ${republishedNotice}${checkError}${notes}${downloadError}
+    <div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)"${checkButtonState}>${icon("refresh-cw")}<span>${esc(tr(checking ? "settings:updates.checking_short" : "settings:auto.check_updates"))}</span></button>${downloadAction}${releaseLink}</div>
     ${ignoreControl}
     <div class="muted">${esc(tr("settings:auto.update_security_hint"))}</div>
   </div>`;
@@ -251,30 +345,80 @@ function localizedUpdateReleaseMarkdown(value) {
 }
 
 function updateReleaseNotesHtml(update) {
-  const history = Array.isArray(update?.release_notes) && update.release_notes.length
-    ? update.release_notes.slice(0, 10)
-    : update?.notes
-      ? [{version:update.latest_version, published_at:update.published_at, notes:update.notes}]
-      : [];
+  const history = updateReleaseHistory(update);
   if (!history.length) return "";
-  return `<div class="update-notes"><strong>${esc(tr("settings:auto.recent_release_notes", {defaultValue:"最近版本更新内容"}))}</strong><div class="update-release-list">${history.map((item, index) => {
-    const version = String(item?.version || "").replace(/^v/i, "");
-    const published = item?.published_at ? new Date(item.published_at).toLocaleDateString(document.documentElement.lang || "zh-CN") : "";
-    const releaseLabel = version ? `v${esc(version)}` : esc(tr(`settings:auto.${index === 0 ? "latest_release" : "previous_release"}`, {defaultValue:index === 0 ? "最新版本" : "上一版本"}));
-    return `<section class="update-release-entry"><div class="update-release-head"><b>${releaseLabel}</b>${index === 0 ? `<span class="status-pill running">${esc(tr("settings:auto.latest_badge", {defaultValue:"最新"}))}</span>` : ""}${published ? `<small>${esc(published)}</small>` : ""}</div><div class="update-release-markdown">${updateMarkdownHtml(localizedUpdateReleaseMarkdown(item?.notes), version)}</div></section>`;
-  }).join("")}</div></div>`;
+  return `${updateReleaseNotesShellHtml()}${history.map(updateReleaseEntryHtml).join("")}</div></div>`;
+}
+
+function updateReleaseNotesShellHtml() {
+  return `<div class="update-notes"><strong>${esc(tr("settings:auto.recent_release_notes", {defaultValue:"最近版本更新内容"}))}</strong><div class="update-release-list">`;
+}
+
+function updateReleaseEntryHtml(item, index) {
+  const version = String(item?.version || "").replace(/^v/i, "");
+  const published = item?.published_at ? new Date(item.published_at).toLocaleDateString(document.documentElement.lang || "zh-CN") : "";
+  const releaseLabel = version ? `v${esc(version)}` : esc(tr(`settings:auto.${index === 0 ? "latest_release" : "previous_release"}`, {defaultValue:index === 0 ? "最新版本" : "上一版本"}));
+  const renderData = updateReleaseRenderData(item);
+  const cacheKey = JSON.stringify([
+    renderData.language,
+    String(index),
+    String(item?.version || ""),
+    String(item?.published_at || ""),
+    renderData.fingerprint
+  ]);
+  return cachedUpdateReleaseMarkup(cacheKey, () => `<section class="update-release-entry"><div class="update-release-head"><b>${releaseLabel}</b>${index === 0 ? `<span class="status-pill running">${esc(tr("settings:auto.latest_badge", {defaultValue:"最新"}))}</span>` : ""}${published ? `<small>${esc(published)}</small>` : ""}</div><div class="update-release-markdown">${updateMarkdownHtml(renderData.notes, version)}</div></section>`);
 }
 
 let updateNotesScrollTop = 0;
+let updateNotesRenderSequence = 0;
+
+async function renderDeferredUpdateReleaseNotes(area, notesKey, history, renderSequence) {
+  const slot = area.querySelector("[data-update-notes-slot]");
+  if (!slot || !history.length) return;
+  const notes = document.createElement("div");
+  notes.className = "update-notes";
+  notes._updateNotesKey = notesKey;
+  notes._updateNotesRenderSequence = renderSequence;
+  notes.innerHTML = `<strong>${esc(tr("settings:auto.recent_release_notes", {defaultValue:"最近版本更新内容"}))}</strong><div class="update-release-list"></div>`;
+  slot.replaceWith(notes);
+  const list = notes.querySelector(".update-release-list");
+  for (let index = 0; index < history.length; index += 1) {
+    await nextUpdateNotesFrame();
+    if (renderSequence !== updateNotesRenderSequence || !notes.isConnected || notes._updateNotesKey !== notesKey) return;
+    list.insertAdjacentHTML("beforeend", updateReleaseEntryHtml(history[index], index));
+  }
+  notes.scrollTop = Math.min(updateNotesScrollTop, Math.max(0, notes.scrollHeight - notes.clientHeight));
+}
 
 function renderUpdateStatus(options={}) {
   const area = $("updateCheckArea");
   if (!area) return;
   const currentNotes = area.querySelector(".update-notes");
   if (currentNotes) updateNotesScrollTop = Math.max(0, currentNotes.scrollTop);
-  area.innerHTML = updateStatusHtml();
+  const nextNotesKey = updateReleaseNotesKey(updateSettings);
+  const preservedNotes = currentNotes && nextNotesKey && currentNotes._updateNotesKey === nextNotesKey
+    ? currentNotes
+    : null;
+  const deferredHistory = !preservedNotes && options.deferNotes ? updateReleaseHistory(updateSettings) : [];
+  const deferNotes = Boolean(nextNotesKey && deferredHistory.length);
+  const notesRenderSequence = preservedNotes
+    ? Number(preservedNotes._updateNotesRenderSequence || updateNotesRenderSequence)
+    : ++updateNotesRenderSequence;
+  preservedNotes?.remove();
+  area.innerHTML = updateStatusHtml({
+    preserveNotes:Boolean(preservedNotes),
+    deferNotes,
+    checking:options.checking ?? updateStatusChecking
+  });
+  if (preservedNotes) {
+    const slot = area.querySelector("[data-update-notes-slot]");
+    if (slot) slot.replaceWith(preservedNotes);
+  } else if (deferNotes) {
+    void renderDeferredUpdateReleaseNotes(area, nextNotesKey, deferredHistory, notesRenderSequence);
+  }
   const nextNotes = area.querySelector(".update-notes");
   if (nextNotes) {
+    nextNotes._updateNotesKey = nextNotesKey;
     nextNotes.scrollTop = Math.min(updateNotesScrollTop, Math.max(0, nextNotes.scrollHeight - nextNotes.clientHeight));
   } else {
     updateNotesScrollTop = 0;
@@ -300,16 +444,30 @@ function safeGitHubReleaseUrl(value) {
 }
 
 async function refreshUpdateStatus(force=false) {
+  const requestSequence = ++updateStatusRefreshSequence;
+  updateStatusAbortController?.abort();
+  const controller = typeof AbortController === "function" ? new AbortController() : null;
+  updateStatusAbortController = controller;
+  updateStatusChecking = true;
   const inPane = captureSettingsPane();
   const button = $("checkUpdateBtn");
+  const previousUpdateStatus = updateSettings && typeof updateSettings === "object" ? updateSettings : null;
   setButtonBusy(button, true, tr("settings:updates.checking_short"));
+  inPane(() => renderUpdateStatus({deferNotes:true, checking:true}));
+  const previousDownloadStatus = updateSettings?.download_status && typeof updateSettings.download_status === "object"
+    ? updateSettings.download_status
+    : null;
   try {
-    const status = await api(`/api/updates/check${force ? "?force=1" : ""}`);
-    const download = await api("/api/updates/download/status").catch(()=>null);
-    updateSettings = status;
-    if (download) updateSettings.download_status = download;
+    const requestOptions = controller ? {signal:controller.signal} : {};
+    const status = await api(`/api/updates/check${force ? "?force=1" : ""}`, requestOptions);
+    if (requestSequence !== updateStatusRefreshSequence || controller?.signal.aborted) return;
+    updateSettings = status && typeof status === "object"
+      ? {...status, ...(previousDownloadStatus ? {download_status:previousDownloadStatus} : {})}
+      : status;
+    await yieldBeforeUpdateRender();
+    if (requestSequence !== updateStatusRefreshSequence || controller?.signal.aborted) return;
     inPane(() => {
-      renderUpdateStatus();
+      renderUpdateStatus({deferNotes:true, checking:true});
       syncUpdateNoticeForCurrentSection();
     });
     if (force && !updateSettings.update_ignored) notify(updateSettings.republished_available
@@ -317,15 +475,37 @@ async function refreshUpdateStatus(force=false) {
       : updateSettings.update_available
         ? tr("settings:updates.new_version_found", {version:`v${String(updateSettings.latest_version || "").replace(/^v/i, "")}`})
         : tr("settings:updates.already_latest"), updateSettings.update_available || updateSettings.republished_available ? "info" : "success");
+    const download = await api("/api/updates/download/status", requestOptions).catch(() => null);
+    if (requestSequence !== updateStatusRefreshSequence || controller?.signal.aborted) return;
+    if (download && updateSettings && typeof updateSettings === "object") {
+      updateSettings.download_status = download;
+      await yieldBeforeUpdateRender();
+      if (requestSequence !== updateStatusRefreshSequence || controller?.signal.aborted) return;
+      inPane(() => renderUpdateStatus({deferNotes:true, checking:true}));
+    }
   } catch (error) {
-    updateSettings = { error:error.message || tr("settings:updates.github_connection_failed") };
+    if (requestSequence !== updateStatusRefreshSequence || controller?.signal.aborted || error?.name === "AbortError") return;
+    const message = error.message || tr("settings:updates.github_connection_failed");
+    updateSettings = previousUpdateStatus?.latest_version
+      ? {...previousUpdateStatus, check_error:message}
+      : {error:message, ...(previousDownloadStatus ? {download_status:previousDownloadStatus} : {})};
+    await yieldBeforeUpdateRender();
+    if (requestSequence !== updateStatusRefreshSequence || controller?.signal.aborted) return;
     inPane(() => {
-      renderUpdateStatus();
+      renderUpdateStatus({checking:true});
       syncUpdateNoticeForCurrentSection();
     });
-    if (force) notify(localizedUpdateStatusError(updateSettings.error), "error");
+    if (force) notify(localizedUpdateStatusError(message), "error");
   } finally {
-    inPane(() => setButtonBusy(button, false));
+    if (requestSequence === updateStatusRefreshSequence) {
+      if (updateStatusAbortController === controller) updateStatusAbortController = null;
+      updateStatusChecking = false;
+      inPane(() => {
+        renderUpdateStatus({deferNotes:true, checking:false});
+        syncUpdateNoticeForCurrentSection();
+      });
+      if (updateSettings?.download_status?.state === "downloading") startUpdateDownloadPolling(inPane);
+    }
   }
 }
 

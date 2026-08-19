@@ -19,6 +19,14 @@ const termaI18nTextState = new WeakMap();
 const termaI18nAttributeState = new WeakMap();
 const termaI18nPhraseKeys = new Map();
 const termaI18nPhraseTemplates = [];
+// Automatic translation runs for every newly-rendered text node. Keep its
+// expensive parameterized-phrase lookup bounded and indexed so large SFTP
+// lists do not make the main thread walk every locale template repeatedly.
+const termaI18nTemplateBuckets = new Map();
+const termaI18nTemplateFallbacks = [];
+const termaI18nPhraseCache = new Map();
+const TERMA_I18N_PHRASE_CACHE_LIMIT = 2048;
+const TERMA_I18N_PHRASE_CACHE_MAX_LENGTH = 512;
 const termaI18nRawPhrases = new Map();
 const TERMA_I18N_RAW_PHRASE_LIMIT = 512;
 const TERMA_I18N_RAW_PHRASE_TTL_MS = 30 * 1000;
@@ -617,6 +625,9 @@ function flattenTermaI18nValues(value, prefix="", result=[]) {
 function rebuildTermaI18nPhraseIndex(resources) {
   termaI18nPhraseKeys.clear();
   termaI18nPhraseTemplates.length = 0;
+  termaI18nTemplateBuckets.clear();
+  termaI18nTemplateFallbacks.length = 0;
+  termaI18nPhraseCache.clear();
   for (const namespace of TERMA_I18N_NAMESPACES) {
     const chinese = new Map(flattenTermaI18nValues(resources?.["zh-CN"]?.[namespace] || {}));
     const english = new Map(flattenTermaI18nValues(resources?.["en-US"]?.[namespace] || {}));
@@ -635,25 +646,89 @@ function rebuildTermaI18nPhraseIndex(resources) {
     right.literalLength - left.literalLength
     || right.expression.source.length - left.expression.source.length
   ));
+  termaI18nPhraseTemplates.forEach((template, rank) => {
+    template.rank = rank;
+    if (template.anchor.length < 2) {
+      termaI18nTemplateFallbacks.push(template);
+      return;
+    }
+    const bucketKey = template.anchor.slice(0, 2);
+    const bucket = termaI18nTemplateBuckets.get(bucketKey) || [];
+    bucket.push(template);
+    termaI18nTemplateBuckets.set(bucketKey, bucket);
+  });
 }
 
 function compileTermaI18nPhraseTemplate(value, key) {
   const source = String(value || "").trim();
   const tokenPattern = /{{-?\s*([a-z0-9_.-]+)\s*}}/gi;
   const names = [];
+  const literals = [];
   let expression = "";
   let offset = 0;
   for (const match of source.matchAll(tokenPattern)) {
-    expression += source.slice(offset, match.index).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const literal = source.slice(offset, match.index);
+    literals.push(literal);
+    expression += literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     expression += "(.+?)";
     names.push(match[1]);
     offset = Number(match.index) + match[0].length;
   }
   if (!names.length) return null;
-  expression += source.slice(offset).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const literalLength = source.replace(/{{-?\s*[a-z0-9_.-]+\s*}}/gi, "").length;
+  const trailingLiteral = source.slice(offset);
+  literals.push(trailingLiteral);
+  expression += trailingLiteral.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const literalLength = literals.reduce((total, literal) => total + literal.length, 0);
   if (literalLength < 2) return null;
-  return {key, names, literalLength, expression:new RegExp(`^${expression}$`)};
+  const anchor = literals.reduce((longest, literal) => literal.length > longest.length ? literal : longest, "");
+  return {key, names, literalLength, anchor, minLength:literalLength + names.length, expression:new RegExp(`^${expression}$`)};
+}
+
+function candidateTermaI18nPhraseTemplates(source) {
+  const candidates = new Set(termaI18nTemplateFallbacks);
+  const visitedBuckets = new Set();
+  for (let index = 0; index + 1 < source.length; index += 1) {
+    const bucketKey = source.slice(index, index + 2);
+    if (visitedBuckets.has(bucketKey)) continue;
+    visitedBuckets.add(bucketKey);
+    const bucket = termaI18nTemplateBuckets.get(bucketKey);
+    if (!bucket) continue;
+    for (const template of bucket) {
+      if (source.length >= template.minLength && source.includes(template.anchor)) candidates.add(template);
+    }
+  }
+  return [...candidates].sort((left, right) => left.rank - right.rank);
+}
+
+function cachedTermaI18nPhraseLookup(source) {
+  if (source.length > TERMA_I18N_PHRASE_CACHE_MAX_LENGTH) return null;
+  const cached = termaI18nPhraseCache.get(source);
+  if (!cached) return null;
+  termaI18nPhraseCache.delete(source);
+  termaI18nPhraseCache.set(source, cached);
+  return cached;
+}
+
+function cacheTermaI18nPhraseLookup(source, lookup) {
+  if (source.length > TERMA_I18N_PHRASE_CACHE_MAX_LENGTH) return lookup;
+  if (termaI18nPhraseCache.has(source)) termaI18nPhraseCache.delete(source);
+  termaI18nPhraseCache.set(source, lookup);
+  while (termaI18nPhraseCache.size > TERMA_I18N_PHRASE_CACHE_LIMIT) {
+    termaI18nPhraseCache.delete(termaI18nPhraseCache.keys().next().value);
+  }
+  return lookup;
+}
+
+function findTermaI18nPhraseLookup(source) {
+  const cached = cachedTermaI18nPhraseLookup(source);
+  if (cached) return cached;
+  const key = termaI18nPhraseKeys.get(source);
+  if (key) return cacheTermaI18nPhraseLookup(source, {kind:"key", key});
+  for (const template of candidateTermaI18nPhraseTemplates(source)) {
+    const match = source.match(template.expression);
+    if (match) return cacheTermaI18nPhraseLookup(source, {kind:"template", template, captures:match.slice(1)});
+  }
+  return cacheTermaI18nPhraseLookup(source, {kind:"miss"});
 }
 
 function translateTermaFallbackPhrase(value) {
@@ -671,14 +746,13 @@ function termaI18nSkipped(element) {
 function translatedTermaPhrase(value, depth=0) {
   const source = String(value || "").trim();
   if (isTermaRawUiPhrase(source)) return "";
-  const key = termaI18nPhraseKeys.get(source);
-  if (key) return tr(key, {defaultValue:source});
-  for (const template of termaI18nPhraseTemplates) {
-    const match = source.match(template.expression);
-    if (!match) continue;
+  const lookup = findTermaI18nPhraseLookup(source);
+  if (lookup.kind === "key") return tr(lookup.key, {defaultValue:source});
+  if (lookup.kind === "template") {
+    const {template, captures} = lookup;
     const options = {defaultValue:source};
     template.names.forEach((name, index) => {
-      const captured = match[index + 1];
+      const captured = captures[index];
       options[name] = depth < 2 ? translatedTermaPhrase(captured, depth + 1) || captured : captured;
     });
     return tr(template.key, options);

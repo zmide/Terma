@@ -9,6 +9,11 @@ let sftpBackgroundVisibilityBound = false;
 let sftpLastJobsPollAt = 0;
 let sftpLastActiveSessionStatusPollAt = 0;
 let sftpLastAllSessionStatusPollAt = 0;
+let sftpJobsRefreshPromise = null;
+let sftpJobsRefreshTrailing = false;
+let sftpDirectoryRefreshTimer = 0;
+let sftpDirectoryRefreshActive = false;
+let sftpPreferredDirectoryRefreshKey = "";
 
 function savedSftpTaskCenterSize() {
   try {
@@ -178,8 +183,7 @@ function startSftpJobsTimer() {
       nextDelay = document.hidden ? 30000 : Math.min(jobsInterval, activeSftpTab ? activeSessionInterval : allSessionsInterval);
       const tasks = [];
       if (!document.hidden && now - sftpLastJobsPollAt >= jobsInterval) {
-        sftpLastJobsPollAt = now;
-        tasks.push(Promise.resolve(refreshSftpJobs()).catch(() => {}));
+        tasks.push(Promise.resolve(refreshSftpJobsIfStale(jobsInterval)).catch(() => {}));
       }
       const allSessionsDue = !document.hidden && now - sftpLastAllSessionStatusPollAt >= allSessionsInterval;
       const activeSessionDue = activeSftpTab && now - sftpLastActiveSessionStatusPollAt >= activeSessionInterval;
@@ -561,12 +565,47 @@ function bindSftpTaskLogViewStates(root=document.getElementById("sftpTaskCenterL
     }
   });
 }
-
+function sftpTaskCenterRenderSignature(visible, view) {
+  const language = String(document.documentElement.lang || "zh-CN");
+  return JSON.stringify([language, view, visible.map(job => ({
+    id:job.id,
+    raw_sync_id:job.raw_sync_id,
+    raw_desktop_id:job.raw_desktop_id,
+    type:job.type,
+    label:job.label,
+    label_key:job.label_key,
+    label_params:job.label_params,
+    connection_id:job.connection_id,
+    connection_name:job.connection_name,
+    status:job.status,
+    phase:job.phase,
+    current:job.current,
+    current_key:job.current_key,
+    current_params:job.current_params,
+    size:job.size,
+    transferred:job.transferred,
+    progress:job.progress,
+    progress_unit:job.progress_unit,
+    progress_known:job.progress_known,
+    speed_bps:job.speed_bps,
+    average_bps:job.average_bps,
+    can_cancel:job.can_cancel,
+    can_pause:job.can_pause,
+    can_resume:job.can_resume,
+    resume_supported:job.resume_supported,
+    delivery_status:job.delivery_status,
+    saved_path:job.saved_path,
+    delivery_error:job.delivery_error,
+    warning:job.warning,
+    error:job.error,
+    finished_at:job.finished_at,
+    logs:Array.isArray(job.logs) ? job.logs.slice(-80) : []
+  }))]);
+}
 function renderSftpTaskCenterDrawer(jobs=sftpLatestJobs) {
   const drawer = document.getElementById("sftpTaskCenterDrawer");
   const list = document.getElementById("sftpTaskCenterList");
   if (!drawer || !list || drawer.hidden) return;
-  captureSftpTaskLogViewStates(list);
   const {current, failed, history, activeCount, failedCount} = sftpTaskCollections(jobs);
   const showingHistory = sftpTaskCenterView === "history";
   const showingFailed = sftpTaskCenterView === "failed";
@@ -586,10 +625,16 @@ function renderSftpTaskCenterDrawer(jobs=sftpLatestJobs) {
   if (currentCount) currentCount.textContent = String(current.length);
   if (failedCountNode) failedCountNode.textContent = String(failed.length);
   if (historyCount) historyCount.textContent = String(history.length);
-  list.innerHTML = visible.length
-    ? visible.map(renderSftpJob).join("")
-    : `<div class="sftp-task-empty">${esc(tr(showingHistory ? "tasks:auto.empty_history" : showingFailed ? "tasks:auto.empty_failed" : "tasks:auto.empty_current", {defaultValue:showingHistory ? "暂无已完成或已取消的任务" : showingFailed ? "暂无失败的任务" : "暂无进行中的任务"}))}</div>`;
-  bindSftpTaskLogViewStates(list);
+  const renderSignature = sftpTaskCenterRenderSignature(visible, sftpTaskCenterView);
+  if (list._sftpTaskCenterRenderSignature !== renderSignature) {
+    const nextMarkup = visible.length
+      ? visible.map(renderSftpJob).join("")
+      : `<div class="sftp-task-empty">${esc(tr(showingHistory ? "tasks:auto.empty_history" : showingFailed ? "tasks:auto.empty_failed" : "tasks:auto.empty_current", {defaultValue:showingHistory ? "暂无已完成或已取消的任务" : showingFailed ? "暂无失败的任务" : "暂无进行中的任务"}))}</div>`;
+    captureSftpTaskLogViewStates(list);
+    list.innerHTML = nextMarkup;
+    list._sftpTaskCenterRenderSignature = renderSignature;
+    bindSftpTaskLogViewStates(list);
+  }
   list.setAttribute("aria-labelledby", showingHistory ? "sftpTaskCenterHistoryTab" : showingFailed ? "sftpTaskCenterFailedTab" : "sftpTaskCenterCurrentTab");
   const summary = document.getElementById("sftpTaskCenterSummary");
   if (summary) summary.textContent = [
@@ -699,6 +744,14 @@ function settleSftpJobFromNotification(event) {
     job.progress = 100;
     if (Number(job.size || 0) > 0) job.transferred = Number(job.size || 0);
   }
+  // The notification can arrive before the next authoritative task poll.
+  // Queue the directory refresh here as well; otherwise recording the final
+  // status below makes the later status-diff pass believe nothing changed.
+  const connectionId = Number(job.connection_id || event?.action?.connection_id || 0);
+  if (connectionId && SFTP_MUTATING_JOB_TYPES.has(String(job.type || ""))) {
+    queueSftpDirectoryRefresh(connectionId);
+    flushPendingSftpDirectoryRefresh();
+  }
   sftpKnownJobStatuses.set(jobId, job.status);
   updateSftpTaskCenter(sftpLatestJobs);
   return true;
@@ -733,7 +786,24 @@ function queueSftpDirectoryRefresh(connectionId) {
 }
 
 function flushPendingSftpDirectoryRefresh(tabKey="") {
-  const keys = tabKey ? [String(tabKey)] : [...sftpPendingDirectoryRefreshes];
+  if (!sftpPendingDirectoryRefreshes.size) return;
+  const preferredKey = String(tabKey || "");
+  if (preferredKey && sftpPendingDirectoryRefreshes.has(preferredKey)) {
+    sftpPreferredDirectoryRefreshKey = preferredKey;
+  }
+  if (sftpDirectoryRefreshActive || sftpDirectoryRefreshTimer) return;
+  sftpDirectoryRefreshTimer = setTimeout(runPendingSftpDirectoryRefresh, 0);
+}
+
+async function runPendingSftpDirectoryRefresh() {
+  sftpDirectoryRefreshTimer = 0;
+  if (sftpDirectoryRefreshActive) return;
+  let selectedKey = "";
+  const preferredKey = sftpPreferredDirectoryRefreshKey;
+  sftpPreferredDirectoryRefreshKey = "";
+  const keys = preferredKey
+    ? [preferredKey, ...[...sftpPendingDirectoryRefreshes].filter(key => key !== preferredKey)]
+    : [...sftpPendingDirectoryRefreshes];
   for (const key of keys) {
     if (!sftpPendingDirectoryRefreshes.has(key)) continue;
     const runtime = sftpTabRuntimes.get(key);
@@ -742,12 +812,28 @@ function flushPendingSftpDirectoryRefresh(tabKey="") {
       continue;
     }
     if (runtime.state.loading || !sftpRuntimeRoot(key)?.isConnected) continue;
-    sftpPendingDirectoryRefreshes.delete(key);
-    void refreshSftp({tabKey:key});
+    selectedKey = key;
+    break;
+  }
+  if (!selectedKey) return;
+  sftpPendingDirectoryRefreshes.delete(selectedKey);
+  sftpDirectoryRefreshActive = true;
+  try {
+    await refreshSftp({tabKey:selectedKey});
+  } finally {
+    sftpDirectoryRefreshActive = false;
+    if (sftpPendingDirectoryRefreshes.size) flushPendingSftpDirectoryRefresh();
   }
 }
 
-async function refreshSftpJobs() {
+function refreshSftpJobsIfStale(maxAge=2000) {
+  if (sftpJobsRefreshPromise) return sftpJobsRefreshPromise;
+  const age = Date.now() - Number(sftpLastJobsPollAt || 0);
+  if (age >= 0 && age < Math.max(0, Number(maxAge || 0))) return Promise.resolve(sftpLatestJobs);
+  return refreshSftpJobs();
+}
+
+async function performSftpJobsRefresh() {
   const requestSeq = ++sftpJobsRequestSeq;
   const [transferJobs, syncJobs, desktopJobs, componentJobs] = await Promise.all([
     api("/api/sftp/jobs").catch(() => []),
@@ -838,6 +924,7 @@ async function refreshSftpJobs() {
   });
   })];
   if (requestSeq !== sftpJobsRequestSeq) return sftpLatestJobs;
+  sftpLastJobsPollAt = Date.now();
   const readyBrowserDownload = jobs.find(job => job.status === "done"
     && job.type === "download"
     && sftpPendingBrowserDownloads.has(job.id));
@@ -852,6 +939,29 @@ async function refreshSftpJobs() {
   flushPendingSftpDirectoryRefresh();
   if (jobs.some(job => ["running", "pending", "paused"].includes(job.status))) startSftpJobsTimer();
   return jobs;
+}
+
+function refreshSftpJobs() {
+  if (sftpJobsRefreshPromise) {
+    sftpJobsRefreshTrailing = true;
+    return sftpJobsRefreshPromise;
+  }
+  sftpJobsRefreshPromise = (async () => {
+    let jobs = sftpLatestJobs;
+    do {
+      sftpJobsRefreshTrailing = false;
+      jobs = await performSftpJobsRefresh();
+      // Let callers that arrived while the four task endpoints were being
+      // combined request one final fresh snapshot, without starting their own
+      // parallel refreshes.
+      await Promise.resolve();
+    } while (sftpJobsRefreshTrailing);
+    return jobs;
+  })().finally(() => {
+    sftpJobsRefreshPromise = null;
+    sftpJobsRefreshTrailing = false;
+  });
+  return sftpJobsRefreshPromise;
 }
 
 function renderSftpJob(job) {

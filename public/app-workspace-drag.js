@@ -272,7 +272,7 @@ function applyWorkspaceTabDrop(drag, target) {
   activeTabKey = drag.key;
   const tab = tabs.find(item => item.key === drag.key);
   activeView = tab?.viewName || tab?.kind || "welcome";
-  renderTabs();
+  renderTabs({rebuildLayout:true});
   const sourceAfter = workspaceFindPane(sourcePane.id);
   if (sourceAfter?.activeTabKey && sourceAfter.id !== destinationPane.id) renderWorkspacePaneContent(sourceAfter.id);
   renderWorkspacePaneContent(destinationPane.id);

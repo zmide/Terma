@@ -14,8 +14,29 @@ function sftpSvgHasUnsafeCssResource(value) {
   return false;
 }
 
+function sftpSvgEmbeddedStyleText(value) {
+  return String(value || "")
+    .replace(/^\s*<!\[CDATA\[/i, "")
+    .replace(/\]\]>\s*$/i, "")
+    .trim();
+}
+
 function sanitizeSftpSvgDocument(markup) {
-  const documentNode = new DOMParser().parseFromString(String(markup || ""), "image/svg+xml");
+  // Do not feed source <style> elements to DOMParser.  Chromium evaluates the
+  // inline style while parsing the detached SVG document, before we have a
+  // chance to sanitize it or attach the CSP nonce.  Besides producing a CSP
+  // violation, that makes the preview noisy in the UI smoke console.  Keep
+  // the CSS text separately and hoist only the sanitized rules into the
+  // nonce-bearing Shadow DOM stylesheet below.
+  const embeddedStyleTexts = [];
+  const source = String(markup || "");
+  const markupWithoutStyles = source
+    .replace(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi, (_match, css) => {
+      embeddedStyleTexts.push(String(css || ""));
+      return "";
+    })
+    .replace(/<style\b[^>]*\/\s*>/gi, "");
+  const documentNode = new DOMParser().parseFromString(markupWithoutStyles, "image/svg+xml");
   if (documentNode.querySelector("parsererror")) throw new Error(tr("sftp:editor.svg_parse_failed", {defaultValue:"SVG 内容无法解析"}));
   const root = documentNode.documentElement;
   if (!root || root.tagName.toLowerCase() !== "svg") throw new Error(tr("sftp:editor.svg_parse_failed", {defaultValue:"SVG 内容无法解析"}));
@@ -32,6 +53,13 @@ function sanitizeSftpSvgDocument(markup) {
   });
   root.querySelectorAll("style").forEach(element => {
     if (sftpSvgHasUnsafeCssResource(element.textContent || "")) element.remove();
+  });
+  Object.defineProperty(root, "__termaEmbeddedStyles", {
+    configurable: true,
+    value: embeddedStyleTexts
+      .map(sftpSvgEmbeddedStyleText)
+      .filter(css => css && !sftpSvgHasUnsafeCssResource(css))
+      .join("\n")
   });
   return root;
 }
@@ -80,10 +108,7 @@ async function previewSftpImage(id, path) {
     let baseHeight = 1;
     if (isSvg) {
       const sanitizedRoot = sanitizeSftpSvgDocument(await blob.text());
-      const embeddedStyles = [...sanitizedRoot.querySelectorAll("style")]
-        .map(element => String(element.textContent || ""))
-        .filter(css => css.trim() && !sftpSvgHasUnsafeCssResource(css))
-        .join("\n");
+      const embeddedStyles = String(sanitizedRoot.__termaEmbeddedStyles || "");
       const viewBox = String(sanitizedRoot.getAttribute("viewBox") || "").trim().split(/[\s,]+/).map(Number);
       const sourceViewBoxValid = viewBox.length >= 4
         && viewBox.slice(0, 4).every(Number.isFinite)

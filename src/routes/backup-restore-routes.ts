@@ -24,7 +24,7 @@ interface BackupRestoreRouteDependencies {
   restoreConfigSnapshotById(id: string): any;
   secureHeaders(headers?: Record<string, string | number>): Record<string, string | number>;
   sendJson(response: ServerResponse, data: unknown, status?: number): void;
-  stopAllForwards(): void;
+  stopAllForwards(): Promise<void> | void;
   writeSecuritySettings(settings: any): void;
 }
 
@@ -52,7 +52,7 @@ export async function handleBackupRestoreRoutes(
   if (method === "POST" && snapshotRestore) {
     dependencies.requireEncryptionUnlocked();
     dependencies.createConfigSnapshot("回滚前自动快照");
-    dependencies.stopAllForwards();
+    await dependencies.stopAllForwards();
     const result = dependencies.restoreConfigSnapshotById(snapshotRestore[1]);
     dependencies.clearConnectionHealthCache();
     dependencies.sendJson(response, result);
@@ -159,7 +159,7 @@ export async function handleBackupRestoreRoutes(
         Boolean(!stage.security && previousSecurity.encryption_enabled)
       );
       dependencies.createConfigSnapshot("恢复数据库前自动快照");
-      dependencies.stopAllForwards();
+      await dependencies.stopAllForwards();
       dependencies.closeDatabase();
       const backup = `${dependencies.dbPath}.bak-${Date.now()}`;
       const clearDatabaseSidecars = () => {

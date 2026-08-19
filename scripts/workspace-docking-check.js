@@ -16,6 +16,8 @@ function loadDockingModel() {
     Date,
     Math,
     JSON,
+    setTimeout:() => 1,
+    clearTimeout:noop,
     CSS:{escape:value => String(value)},
     tabs:[],
     activeTabKey:"",

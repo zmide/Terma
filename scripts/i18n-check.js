@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 const ts = require("typescript");
 const { readFrontendDomain } = require("./frontend-source");
 
@@ -555,7 +556,7 @@ const apiAt = html.indexOf('/app-api.js');
 assert.ok(vendorAt >= 0 && bootstrapAt > vendorAt && apiAt > bootstrapAt, "i18next vendor and bootstrap scripts must load before application modules");
 assert.ok(staticContent.includes('["/vendor/i18next/i18next.min.js", vendorFile("i18next", "dist/umd/i18next.min.js")]'));
 const runtimeSettings = read("src/runtime-settings.ts");
-assert.ok(runtimeSettings.includes("schema_version: 18") && runtimeSettings.includes("language: normalizeLanguage") && runtimeSettings.includes("language_onboarding_version") && runtimeSettings.includes("vnc_fullscreen_toolbar") && runtimeSettings.includes("vnc_remote_image_poll_interval_ms"));
+assert.ok(runtimeSettings.includes("schema_version: 19") && runtimeSettings.includes("language: normalizeLanguage") && runtimeSettings.includes("language_onboarding_version") && runtimeSettings.includes("vnc_fullscreen_toolbar") && runtimeSettings.includes("vnc_remote_image_poll_interval_ms") && runtimeSettings.includes("scrollback_lines"));
 const i18nBootstrap = read("public/app-i18n.js");
 const frontend = `${i18nBootstrap}\n${read("public/app-settings-runtime.js")}\n${read("public/app-settings.js")}`;
 for (const token of ["setTermaLanguage", "registerTermaI18nRenderer", "toggleTermaLanguage", "syncTermaLanguageControls", "termaI18nPhraseTemplates"]) {
@@ -574,8 +575,96 @@ assert.match(read("public/app-i18n.js"), /\[data-i18n-aria-label\]/, "explicit a
 assert.match(i18nBootstrap, /async function ensureTermaI18nResourceBundles\(/, "native language choices must be able to load a missing locale bundle on demand");
 assert.match(read("public/app-settings-runtime.js"), /ensureTermaI18nResourceBundles\(\["en-US", "zh-CN"\], \["common", "settings"\]\)/, "language onboarding must load both native choice resources before rendering");
 assert.match(i18nBootstrap, /right\.literalLength - left\.literalLength/, "parameterized phrases must prefer the most specific template");
+assert.match(i18nBootstrap, /function candidateTermaI18nPhraseTemplates\(/, "automatic translation must preselect parameterized templates");
+assert.match(i18nBootstrap, /source\.includes\(template\.anchor\)/, "parameterized template candidates must pass a literal-anchor filter before regex matching");
+assert.match(i18nBootstrap, /TERMA_I18N_PHRASE_CACHE_LIMIT\s*=\s*2048/, "automatic phrase lookup cache must remain bounded");
 assert.match(i18nBootstrap, /return \/\[\\u3400-\\u9fff\]\/\.test\(output\) \? source : output;/, "word fallback must not emit mixed Chinese-English text");
 assert.match(i18nBootstrap, /tab\.kind === "welcome"[\s\S]*common:workspace\.welcome_subtitle/, "the open welcome tab subtitle must refresh when the language changes");
+
+function automaticTranslationRuntime() {
+  const initializationOffset = i18nBootstrap.indexOf("window.termaI18nReady = (async () => {");
+  assert.ok(initializationOffset > 0, "unable to locate the automatic translation initialization boundary");
+  const runtimeResources = Object.fromEntries(languages.map(language => [
+    language,
+    Object.fromEntries(namespaces.map(namespace => [
+      namespace,
+      JSON.parse(read(path.join("public", "locales", language, `${namespace}.json`)))
+    ]))
+  ]));
+  const context = {console, Date, window:{}, runtimeResources, translationLanguage:"en-US"};
+  context.window.i18next = {
+    t(name, options={}) {
+      const separator = String(name || "").indexOf(":");
+      const namespace = separator >= 0 ? name.slice(0, separator) : "common";
+      const resourcePath = separator >= 0 ? name.slice(separator + 1) : name;
+      let output = context.runtimeResources[context.translationLanguage]?.[namespace];
+      for (const segment of String(resourcePath || "").split(".")) output = output?.[segment];
+      if (typeof output !== "string") return String(options.defaultValue || name);
+      return output.replace(/{{-?\s*([a-z0-9_.-]+)\s*}}/gi, (_match, key) => String(options[key] ?? ""));
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(i18nBootstrap.slice(0, initializationOffset), context, {filename:"public/app-i18n.js"});
+  vm.runInContext("rebuildTermaI18nPhraseIndex(runtimeResources); termaI18nInitialized = true;", context);
+  return {
+    context,
+    evaluate(expression, values={}) {
+      Object.assign(context, values);
+      return vm.runInContext(expression, context);
+    },
+    translate(value, language="en-US") {
+      context.translationValue = value;
+      context.translationLanguage = language;
+      return vm.runInContext("termaI18nLanguage = translationLanguage; translatedTermaPhrase(translationValue)", context);
+    }
+  };
+}
+
+const automaticRuntime = automaticTranslationRuntime();
+const indexedTemplateCount = automaticRuntime.evaluate("termaI18nPhraseTemplates.length");
+const unrelatedCandidateCount = automaticRuntime.evaluate("candidateTermaI18nPhraseTemplates(candidateSample).length", {candidateSample:"2048 KB"});
+const dynamicCandidateCount = automaticRuntime.evaluate("candidateTermaI18nPhraseTemplates(candidateSample).length", {candidateSample:"server · 转发列表"});
+const automaticTemplateSamples = [];
+for (const language of languages) {
+  for (const namespace of namespaces) {
+    for (const value of resources.get(`${language}/${namespace}`).values()) {
+      if (!value.includes("{{")) continue;
+      automaticTemplateSamples.push(value.trim().replace(/{{-?\s*[a-z0-9_.-]+\s*}}/gi, "sample"));
+    }
+  }
+}
+const indexedTemplateMismatchCount = automaticRuntime.evaluate(`
+  templateSamples.filter(sample => {
+    const fullMatch = termaI18nPhraseTemplates.find(template => sample.match(template.expression));
+    const indexedMatch = candidateTermaI18nPhraseTemplates(sample).find(template => sample.match(template.expression));
+    return fullMatch?.rank !== indexedMatch?.rank;
+  }).length;
+`, {templateSamples:automaticTemplateSamples});
+assert.ok(indexedTemplateCount > 1000, "the runtime fixture must cover the full parameterized phrase catalog");
+assert.equal(indexedTemplateMismatchCount, 0, "literal-anchor indexing must preserve full-catalog template matching order");
+assert.ok(unrelatedCandidateCount < indexedTemplateCount / 20, "unknown table text must not scan the full parameterized phrase catalog");
+assert.ok(dynamicCandidateCount < indexedTemplateCount / 20, "dynamic UI text must use a narrow literal-anchor candidate set");
+assert.equal(automaticRuntime.translate("server · 转发列表"), "server · Forwarding list", "Chinese parameterized text must still translate to English");
+assert.equal(automaticRuntime.translate("server · Forwarding list", "zh-CN"), "server · 转发列表", "English parameterized text must still translate to Chinese");
+assert.equal(
+  automaticRuntime.translate("目标目录已存在同名项目：秘密文件"),
+  "The target directory already contains an item with the same name: 秘密文件",
+  "the runtime fixture must cache a parameterized phrase lookup before testing its raw capture boundary"
+);
+automaticRuntime.evaluate("rememberTermaRawUiPhrase(rawCapture)", {rawCapture:"秘密文件"});
+assert.equal(
+  automaticRuntime.translate("目标目录已存在同名项目：秘密文件"),
+  "The target directory already contains an item with the same name: 秘密文件",
+  "cached template lookup must continue honoring newly registered raw captured text"
+);
+const boundedPhraseCacheSize = automaticRuntime.evaluate(`
+  for (let index = 0; index < TERMA_I18N_PHRASE_CACHE_LIMIT + 64; index += 1) {
+    findTermaI18nPhraseLookup(\`uncached automatic phrase \${index}\`);
+  }
+  termaI18nPhraseCache.size;
+`);
+assert.equal(boundedPhraseCacheSize, 2048, "automatic phrase lookup cache must evict its oldest entries");
+
 const themeFrontend = read("public/app-utils.js");
 assert.match(themeFrontend, /function syncThemeToggleControls\(/, "theme toggle labels must have a dedicated live localization boundary");
 assert.match(themeFrontend, /registerTermaI18nRenderer\(\(\) => syncThemeToggleControls\(\)\)/, "theme toggle labels must refresh when the language changes");

@@ -16,12 +16,13 @@ const BATCH_DIR = path.join(LOG_DIR, "batch");
 const LOG_SETTINGS_FILE = path.join(LOG_DIR, "log-settings.json");
 const logWriteQueues = new Map();
 let currentLogSettings = readLogSettings(LOG_SETTINGS_FILE);
+let logDirectoriesReady = false;
 
 function queueLogWrite(file, data) {
   const chunk = Buffer.isBuffer(data) ? data : Buffer.from(String(data), "utf8");
   let state = logWriteQueues.get(file);
   if (!state) {
-    state = { chunks: [], bytes: 0, timer: null, writing: null };
+    state = { chunks: [], bytes: 0, timer: null, writing: null, lastRotationCheckAt: 0 };
     logWriteQueues.set(file, state);
   }
   state.chunks.push(chunk);
@@ -43,7 +44,11 @@ function flushLogFile(file) {
   const body = Buffer.concat(state.chunks, state.bytes);
   state.chunks = [];
   state.bytes = 0;
-  try { rotateLogFile(file, body.length, currentLogSettings); } catch {}
+  const now = Date.now();
+  if (now - Number(state.lastRotationCheckAt || 0) >= 1000) {
+    state.lastRotationCheckAt = now;
+    try { rotateLogFile(file, body.length, currentLogSettings); } catch {}
+  }
   state.writing = fs.promises.appendFile(file, body).catch(() => {}).finally(() => {
     state.writing = null;
     if (state.chunks.length) flushLogFile(file);
@@ -109,9 +114,11 @@ function terminalLogIdentity(value) {
 }
 
 function ensureLogDirs() {
+  if (logDirectoriesReady) return;
   fs.mkdirSync(LOG_DIR, { recursive: true });
   fs.mkdirSync(TERMINAL_DIR, { recursive: true });
   fs.mkdirSync(BATCH_DIR, { recursive: true });
+  logDirectoriesReady = true;
 }
 
 function appendSystemLog(message) {

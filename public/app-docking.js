@@ -9,6 +9,20 @@ function workspaceLeaves(node=workspaceLayout, result=[]) {
 }
 
 const workspacePaneActivationSequences = new Map();
+// Toolbar placement is touched by several hot paths (tab activation, pane focus,
+// settings changes). Keep a tiny dirty/signature guard so repeated focus events
+// do not scan and reparent every terminal/SFTP toolbar when nothing changed.
+let workspaceToolbarPlacementDirty = true;
+let workspaceToolbarPlacementSignature = "";
+const workspaceToolbarKnownElements = new WeakMap();
+
+function workspaceToolbarPlacementStateSignature() {
+  const panes = workspaceLeaves().map(pane => `${pane.id}:${pane.activeTabKey}:${pane.tabs.join(",")}`).join("|");
+  let settings = "";
+  try { settings = JSON.stringify(workspaceToolbarSettingsValue()); } catch {}
+  const toolbarCount = document.querySelectorAll?.(".terminal-toolbar, .sftp-toolbar")?.length || 0;
+  return `${document.documentElement?.lang || ""}|${focusedPaneId}|${isMobileLayout() ? "mobile" : "desktop"}|${panes}|${toolbarCount}|${settings}`;
+}
 
 function beginWorkspacePaneActivation(paneId) {
   const key = String(paneId || "");
@@ -92,6 +106,11 @@ function workspaceToolbarMountElement(kind, tabKey) {
 
 function registerWorkspaceToolbar(kind, tabKey, toolbar, mount) {
   if (!toolbar || !tabKey || !["terminal", "sftp"].includes(kind)) return null;
+  const previous = workspaceToolbarKnownElements.get(toolbar);
+  if (!previous || previous.kind !== kind || previous.tabKey !== tabKey || previous.mount !== mount) {
+    workspaceToolbarPlacementDirty = true;
+  }
+  workspaceToolbarKnownElements.set(toolbar, {kind, tabKey, mount});
   toolbar.dataset.workspaceToolbarKind = kind;
   toolbar.dataset.workspaceTabKey = tabKey;
   if (mount) {
@@ -215,12 +234,17 @@ function syncWorkspaceToolbarHostVisibility() {
   }
 }
 
-function syncWorkspaceToolbarPlacements() {
+function syncWorkspaceToolbarPlacements(options={}) {
   if (!workspaceDockElement()) {
     if (typeof syncTerminalToolbarPlacement === "function") syncTerminalToolbarPlacement(activeTabKey);
     if (typeof syncSftpToolbarPlacement === "function") syncSftpToolbarPlacement(activeTabKey);
     return;
   }
+  const signature = workspaceToolbarPlacementStateSignature();
+  if (options.force !== true && !workspaceToolbarPlacementDirty && signature === workspaceToolbarPlacementSignature) return false;
+  // A toolbar discovered while this pass is running marks the next pass dirty;
+  // this keeps dynamically mounted SFTP/terminal surfaces from being skipped.
+  workspaceToolbarPlacementDirty = false;
   const discovered = [...document.querySelectorAll(".terminal-toolbar, .sftp-toolbar")]
     .map(workspaceToolbarRecord)
     .filter(Boolean);
@@ -242,18 +266,30 @@ function syncWorkspaceToolbarPlacements() {
     }
   }
   const records = [...owners.values()];
+  let changed = false;
   const ranked = records.map(record => ({
     ...record,
     destination:workspaceToolbarDestination(record.kind, record.tabKey, record.mount)
   })).sort((left, right) => Number(left.destination.visible) - Number(right.destination.visible));
-  for (const record of ranked) placeWorkspaceToolbar(record.kind, record.tabKey, record.toolbar, record.mount);
+  for (const record of ranked) {
+    const toolbar = record.toolbar;
+    const beforeParent = toolbar.parentElement;
+    const beforeHidden = toolbar.hidden;
+    const beforeHeader = toolbar.classList.contains("terminal-toolbar-header") || toolbar.classList.contains("sftp-toolbar-header");
+    placeWorkspaceToolbar(record.kind, record.tabKey, toolbar, record.mount);
+    changed = changed || beforeParent !== toolbar.parentElement
+      || beforeHidden !== toolbar.hidden
+      || beforeHeader !== (toolbar.classList.contains("terminal-toolbar-header") || toolbar.classList.contains("sftp-toolbar-header"));
+  }
   syncWorkspaceToolbarHostVisibility();
   for (const pane of workspaceVisiblePanes()) {
     const tab = tabs.find(item => item.key === pane.activeTabKey);
     if (["terminal", "quick-terminal"].includes(tab?.kind) && typeof updateTerminalStatusForLayout === "function") updateTerminalStatusForLayout(tab.key);
     if (tab?.kind === "sftp" && typeof syncSftpMobileToolbarState === "function") syncSftpMobileToolbarState(tab.key);
   }
-  if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
+  if (changed && typeof scheduleTerminalFit === "function") scheduleTerminalFit();
+  workspaceToolbarPlacementSignature = workspaceToolbarPlacementStateSignature();
+  return changed;
 }
 
 function runInWorkspacePane(paneId, action) {
@@ -430,6 +466,9 @@ function buildWorkspaceLayoutNode(node) {
 function renderWorkspaceLayout() {
   const dock = workspaceDockElement();
   if (!dock) return;
+  const terminalViewportAnchors = typeof captureVisibleTerminalViewports === "function"
+    ? captureVisibleTerminalViewports()
+    : null;
   let visibleLayout = workspaceLayout;
   if (isMobileLayout()) {
     visibleLayout = workspaceFindPane(focusedPaneId) || workspaceLeaves()[0] || workspaceLayout;
@@ -445,15 +484,36 @@ function renderWorkspaceLayout() {
     workspacePaneNodes.delete(paneId);
   }
   document.body.classList.toggle("workspace-is-split", workspaceLeaves().length > 1 && !isMobileLayout());
+  if (typeof scheduleTerminalFit === "function") scheduleTerminalFit({anchors:terminalViewportAnchors});
   requestAnimationFrame(() => {
     for (const pane of workspaceVisiblePanes()) updateWorkspaceTabScrollControls(pane.id);
-    if (typeof scheduleTerminalFit === "function") scheduleTerminalFit();
+    if (typeof scheduleTerminalFit === "function") scheduleTerminalFit({anchors:terminalViewportAnchors});
     if (typeof syncSftpListLayout === "function") {
       for (const pane of workspaceVisiblePanes()) {
         const list = workspacePaneElement(pane.id)?.querySelector("#sftpList");
         if (list) syncSftpListLayout(list);
       }
     }
+  });
+}
+
+function workspaceLayoutDomNeedsRebuild() {
+  const dock = workspaceDockElement();
+  if (!dock) return false;
+  let visibleLayout = workspaceLayout;
+  if (isMobileLayout()) {
+    visibleLayout = workspaceFindPane(focusedPaneId) || workspaceLeaves()[0] || workspaceLayout;
+  }
+  const root = dock.firstElementChild;
+  if (!root || !visibleLayout) return true;
+  if (visibleLayout.type === "pane") {
+    const paneElement = workspacePaneElement(visibleLayout.id);
+    return dock.children.length !== 1 || !paneElement || root !== paneElement || !dock.contains(paneElement);
+  }
+  if (dock.children.length !== 1 || root.dataset.splitId !== visibleLayout.id) return true;
+  return workspaceVisiblePanes().some(pane => {
+    const paneElement = workspacePaneElement(pane.id);
+    return !paneElement || !dock.contains(paneElement);
   });
 }
 
@@ -542,7 +602,9 @@ renderTabs = function(options={}) {
   if (!workspaceDockElement()) return legacyWorkspaceApi.renderTabs();
   if (typeof syncSftpTabTitles === "function") syncSftpTabTitles();
   reconcileWorkspaceLayoutTabs();
-  if (options.rebuildLayout !== false) renderWorkspaceLayout();
+  const rebuildLayout = options.rebuildLayout === true
+    || (options.rebuildLayout !== false && workspaceLayoutDomNeedsRebuild());
+  if (rebuildLayout) renderWorkspaceLayout();
   for (const pane of workspaceVisiblePanes()) {
     const paneElement = workspacePaneElement(pane.id);
     if (!paneElement) continue;
@@ -563,7 +625,10 @@ renderTabs = function(options={}) {
       if (pane.activeTabKey) revealWorkspaceTab(pane.activeTabKey);
     }
   });
-  if (!window.restoringTabs) saveTabsState();
+  if (!window.restoringTabs) {
+    if (typeof scheduleTabsStateSave === "function") scheduleTabsStateSave();
+    else saveTabsState();
+  }
 };
 
 function syncWorkspaceTabActivation(pane, key) {
@@ -587,7 +652,10 @@ function syncWorkspaceTabActivation(pane, key) {
   syncWorkspaceLegacyTabIds();
   renderWorkspaceGroupBar();
   revealWorkspaceTab(key);
-  if (!window.restoringTabs) saveTabsState();
+  if (!window.restoringTabs) {
+    if (typeof scheduleTabsStateSave === "function") scheduleTabsStateSave();
+    else saveTabsState();
+  }
 }
 
 updateWorkspaceTabScrollControls = function(paneId=currentWorkspacePaneId()) {
@@ -672,7 +740,8 @@ function focusWorkspacePane(paneId) {
   for (const node of workspacePaneNodes.values()) node.classList.toggle("focused", node.dataset.paneId === focusedPaneId);
   syncWorkspaceLegacyTabIds();
   syncWorkspaceToolbarPlacements();
-  saveTabsState();
+  if (typeof scheduleTabsStateSave === "function") scheduleTabsStateSave();
+  else saveTabsState();
 }
 
 function syncFocusedWorkspaceClasses() {
