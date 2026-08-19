@@ -19,6 +19,8 @@ let autoRefreshRevision = "";
 let autoRefreshRevisionInFlight = false;
 let autoRefreshTimer = 0;
 let notificationPollTimer = 0;
+const FOREGROUND_NOTIFICATION_POLL_MS = 1200;
+const BACKGROUND_NOTIFICATION_POLL_MS = 15000;
 
 function uiStateRefreshIntervalMs() {
   return typeof runtimeConfiguredBackgroundIntervalMs === "function"
@@ -88,19 +90,19 @@ function startAutoRefresh() {
     clearTimeout(notificationPollTimer);
     notificationPollTimer = setTimeout(async () => {
       if (!document.hidden) await pollNotifications();
-      scheduleNotifications(document.hidden ? 15000 : 5000);
+      scheduleNotifications(document.hidden ? BACKGROUND_NOTIFICATION_POLL_MS : FOREGROUND_NOTIFICATION_POLL_MS);
     }, Math.max(0, Number(delay || 0)));
   };
   setTimeout(() => { if (!document.hidden) void refreshUiStateIfChanged({force:true}); }, 800);
   setTimeout(() => { if (!document.hidden) void refreshUiStateIfChanged(); }, 2500);
   scheduleRefresh(uiStateRefreshIntervalMs());
-  scheduleNotifications(5000);
+  scheduleNotifications(FOREGROUND_NOTIFICATION_POLL_MS);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) {
       void refreshUiStateIfChanged();
       if (!window.termaDesktop) pollNotifications();
       scheduleRefresh(uiStateRefreshIntervalMs());
-      scheduleNotifications(5000);
+      scheduleNotifications(FOREGROUND_NOTIFICATION_POLL_MS);
     }
   });
 }

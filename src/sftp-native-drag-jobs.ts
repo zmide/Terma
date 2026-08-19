@@ -229,7 +229,7 @@ function createNativeSftpDragJobs(dependencies: any) {
       level:finalStatus === "done" ? "success" : finalStatus === "failed" ? "error" : "info",
       title:finalStatus === "done" ? "SFTP 拖出已完成" : finalStatus === "failed" ? "SFTP 拖出失败" : "SFTP 拖出已取消",
       message:`${job.connection_name} · ${job.label}${job.error ? `\n${job.error}` : ""}`,
-      action:{view:"sftp", connection_id:job.connection_id}
+      action:{view:"sftp", connection_id:job.connection_id, sftp_job_id:job.id}
     }, {cooldown_ms:0});
     return { ok:true, status:job.status };
   }

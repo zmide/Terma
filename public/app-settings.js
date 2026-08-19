@@ -3,22 +3,25 @@ async function openSettings(updateTab=true) {
   const inPane = action => typeof runInWorkspacePane === "function" ? runInWorkspacePane(paneId, action) : action();
   const currentTab = tabs.find(tab => tab.key === activeTabKey);
   const tabKey = !updateTab && currentTab?.kind === "settings" ? currentTab.key : "settings";
+  let reusedRenderedSettings = false;
   inPane(() => {
+    reusedRenderedSettings = Boolean($("view-settings")?.querySelector(".settings-panel"));
     setWorkspace(tr("settings:title", {defaultValue:"设置"}), tr("settings:subtitle", {defaultValue:"访问保护、通知、运行信息与开源许可。"}), "settings", tabKey, updateTab, true, {kind:"settings"});
-    $("view-settings").innerHTML = stateView("loading", tr("settings:auto.loading", {defaultValue:"正在加载设置"}), tr("settings:auto.loading_detail", {defaultValue:"正在读取访问保护、运行状态和程序信息。"}));
+    if (!reusedRenderedSettings) $("view-settings").innerHTML = stateView("loading", tr("settings:auto.loading", {defaultValue:"正在加载设置"}), tr("settings:auto.loading_detail", {defaultValue:"正在读取访问保护、运行状态和程序信息。"}));
+    else showSettingsSection(activeSettingsSection, {moveToWorkspace:false});
   });
   const inTab = typeof captureWorkspaceTab === "function" ? captureWorkspaceTab(tabKey) : inPane;
   try {
-    await loadSecuritySettings();
-    await loadTrustedSshHosts();
-    try {
-      await loadAboutSettings();
-    } catch (error) {
-      aboutSettings = { product_name:"Terma", repository_url:"https://github.com/zmide/Terma", load_error:error.message };
-    }
-    await loadRuntimeSettings();
-    await loadDesktopSettings();
-    await loadProgramCacheSettings().catch(() => { programCacheSettings = {bytes:0,reclaimable_bytes:0,categories:{}}; });
+    await Promise.all([
+      loadSecuritySettings(),
+      loadTrustedSshHosts(),
+      loadAboutSettings().catch(error => {
+        aboutSettings = { product_name:"Terma", repository_url:"https://github.com/zmide/Terma", load_error:error.message };
+      }),
+      loadRuntimeSettings(),
+      loadDesktopSettings(),
+      loadProgramCacheSettings().catch(() => { programCacheSettings = {bytes:0,reclaimable_bytes:0,categories:{}}; })
+    ]);
     inTab(() => {
       renderSettings();
       refreshUpdateStatus(false);

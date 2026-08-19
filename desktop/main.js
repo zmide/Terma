@@ -2368,7 +2368,7 @@ function startDesktopNotificationBridge() {
     try { await pollDesktopNotifications(); }
     catch (error) { console.warn(`notification bridge poll failed: ${error.message}`); }
     if (!quitting) {
-      desktopNotificationTimer = setTimeout(poll, desktopWindowIsBackground() ? 2500 : 8000);
+      desktopNotificationTimer = setTimeout(poll, desktopWindowIsBackground() ? 2500 : 1200);
       desktopNotificationTimer.unref?.();
     }
   };

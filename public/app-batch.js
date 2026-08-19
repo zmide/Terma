@@ -135,8 +135,8 @@ function showCommandContextMenu(event) {
   menu.style.top = `${Math.min(event.clientY, window.innerHeight - rect.height - 8)}px`;
 }
 
-async function renderCommandTemplates() {
-  await loadCommandTemplates();
+async function renderCommandTemplates(options={}) {
+  if (options.reload !== false || !commandTemplates.length) await loadCommandTemplates();
   $("connectionGroups").innerHTML = `<div class="command-template-manager">
     <div class="template-list">
       ${commandTemplates.map(template => renderTemplateRow(template)).join("") || stateView("empty", tr("terminal:batch.templates_empty_title"), tr("terminal:batch.templates_empty_hint"), `<button class="primary" onclick="newCommandTemplate()">${esc(tr("terminal:template_editor.add_title"))}</button>`)}
@@ -263,6 +263,13 @@ function openBatchCommand(updateTab=true) {
   const command = state.draft?.command || "";
   const templateId = state.draft?.templateId || "";
   const timeout = state.draft?.timeout || 60;
+  const existingRoot = $("view-command");
+  if (existingRoot?.querySelector(".command-panel") && existingRoot.dataset.batchTabKey === tabKey) {
+    setWorkspace(tr("terminal:batch.title"), tr("terminal:batch.workspace_subtitle"), "command", "command", updateTab, true, {kind:"command"});
+    renderCommandTemplateOptions(existingRoot);
+    renderBatchCommandResults(existingRoot);
+    return;
+  }
   $("view-command").innerHTML = `<div class="panel command-panel">
     <div class="workspace-head">
       <div>

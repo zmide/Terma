@@ -8,6 +8,22 @@ function workspaceLeaves(node=workspaceLayout, result=[]) {
   return result;
 }
 
+const workspacePaneActivationSequences = new Map();
+
+function beginWorkspacePaneActivation(paneId) {
+  const key = String(paneId || "");
+  const next = Number(workspacePaneActivationSequences.get(key) || 0) + 1;
+  workspacePaneActivationSequences.set(key, next);
+  return next;
+}
+
+function isWorkspacePaneActivationCurrent(paneId, tabKey, sequence) {
+  if (!sequence) return true;
+  const pane = workspaceFindPane(String(paneId || ""));
+  return Boolean(pane && pane.activeTabKey === String(tabKey || "")
+    && Number(workspacePaneActivationSequences.get(String(paneId || "")) || 0) === Number(sequence));
+}
+
 function workspaceFindPane(paneId, node=workspaceLayout) {
   if (!node) return null;
   if (node.type === "pane") return node.id === paneId ? node : null;
@@ -781,7 +797,7 @@ renderTabContent = function(tab, options={}) {
   if (tab.kind === "import") return showImport(false);
   if (tab.kind === "log") return openLog(tab.path, tab.title, false);
   if (tab.kind === "command") return openBatchCommand(false);
-  if (tab.kind === "sftp") return openSftp(tab.id, tab.path || ".", false, tab.key, {fast:Boolean(options.fast)});
+  if (tab.kind === "sftp") return openSftp(tab.id, tab.path || ".", false, tab.key, {fast:Boolean(options.fast), paneId:options.paneId, activationToken:options.activationToken});
   if (tab.kind === "dashboard") return openServerDashboard(tab.id, false);
   if (tab.kind === "remote-edit") return tab.id ? editRemoteProfile(tab.id, false) : newRemoteProfile(tab.protocol || "rdp");
   if (tab.kind === "remote-desktop") return openRemoteDesktop(tab.id, false);
@@ -808,7 +824,7 @@ function renderWorkspacePaneContent(paneId, options={}) {
   activeTabKey = tab.key;
   activeView = tab.viewName || tab.kind || "welcome";
   try {
-    const result = renderTabContent(tab, options);
+    const result = renderTabContent(tab, {...options, paneId});
     if (result?.catch) {
       result.catch(error => {
         const previousPane = workspaceExecutionPaneId;
@@ -841,10 +857,11 @@ activateTab = function(key) {
   pane.activeTabKey = key;
   activeTabKey = key;
   activeView = tab.viewName || tab.kind || "welcome";
+  const activationToken = beginWorkspacePaneActivation(pane.id);
   if (typeof restoreSftpRuntimeForTab === "function" && tab.kind === "sftp") restoreSftpRuntimeForTab(tab.key);
   syncWorkspaceTabActivation(pane, key);
   const fastSftp = tab.kind === "sftp" && typeof sftpTabRuntimes !== "undefined" && sftpTabRuntimes.has(tab.key);
-  renderWorkspacePaneContent(pane.id, {fast:fastSftp});
+  renderWorkspacePaneContent(pane.id, {fast:fastSftp, activationToken, paneId:pane.id});
   syncFocusedWorkspaceClasses();
   if (!["terminal", "quick-terminal", "sftp"].includes(tab.kind)) syncWorkspaceToolbarPlacements();
 };

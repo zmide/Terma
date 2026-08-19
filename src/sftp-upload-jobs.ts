@@ -157,7 +157,7 @@ function createSftpUploadJobs(dependencies: any) {
         level:status === "done" ? "success" : "error",
         title:status === "done" ? "SFTP 上传已完成" : "SFTP 上传失败",
         message:`${job.connection_name} · ${job.label}${job.error ? `\n${job.error}` : ""}`,
-        action:{ view:"sftp", connection_id:job.connection_id }
+        action:{ view:"sftp", connection_id:job.connection_id, sftp_job_id:job.id }
       }, { cooldown_ms:0 });
     }
   }

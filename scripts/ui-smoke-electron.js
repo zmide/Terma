@@ -3878,7 +3878,20 @@ app.whenReady().then(async () => {
     result.infoVisible = infoVisible;
     result.progressSuppressed = progressSuppressed;
     dismissToast();
+    await new Promise(resolve=>setTimeout(resolve,240));
+    runtimeSettings.saved.notification_display.info.duration_ms = 180;
+    notify('hovered notification','info');
+    const hoveredToast = document.querySelector('#toast .toast:last-child');
+    hoveredToast?.dispatchEvent(new Event('pointerenter'));
+    await new Promise(resolve=>setTimeout(resolve,260));
+    const pointerKeepsToast = Boolean(hoveredToast?.isConnected);
+    hoveredToast?.dispatchEvent(new Event('pointerleave'));
+    await new Promise(resolve=>setTimeout(resolve,700));
+    const pointerResumesToast = Boolean(hoveredToast && !hoveredToast.isConnected);
+    dismissToast();
     runtimeSettings = originalRuntimeSettings;
+    result.pointerKeepsToast = pointerKeepsToast;
+    result.pointerResumesToast = pointerResumesToast;
     return result;
   })()`);
   console.log("[ui-smoke] restore key modal");
@@ -5384,10 +5397,37 @@ app.whenReady().then(async () => {
     let sftpPageLoads = 0;
     const sftpPageLoadOptions = [];
     let mutateStubbedSftpPaths = false;
+    let rapidSftpOpen = false;
+    let rapidSftpOpenUi = {requested:0, created:0, runtimes:0, settled:0, loaded:0, sharedRequests:false, allSettled:false};
     try {
       loadSftpPage = async options => {
         sftpPageLoads += 1;
         sftpPageLoadOptions.push({...options});
+        if (rapidSftpOpen) {
+          const key = String(options.tabKey || "");
+          const runtime = sftpTabRuntimes.get(key);
+          const path = String(options.path || ".");
+          const requestSeq = Number(runtime?.state?.requestSeq || 0) + 1;
+          if (runtime) {
+            runtime.state = {...runtime.state, path, loading:true, requestSeq, entries:[]};
+            if (sftpActiveRuntimeKey === key) sftpState = runtime.state;
+          }
+          await new Promise(resolve => setTimeout(resolve, 18));
+          if (runtime && sftpTabRuntimes.has(key)) {
+            runtime.state = {
+              ...runtime.state,
+              path,
+              loading:false,
+              requestSeq,
+              entries:[{name:'burst-ready.txt',type:'file',size:1,mtime:1,mode:'644',owner:'demo',group:'demo'}],
+              total:1,
+              totalPages:1,
+              unfilteredTotal:1
+            };
+            if (sftpActiveRuntimeKey === key) sftpState = runtime.state;
+          }
+          return true;
+        }
         if (mutateStubbedSftpPaths) {
           const key = String(options.tabKey || "");
           const runtime = sftpTabRuntimes.get(key);
@@ -5406,6 +5446,58 @@ app.whenReady().then(async () => {
       activeTabKey = fixtureTabKey;
       activeView = 'sftp';
       await openSftp(connection.id, '/Users/demo/Public', true, fixtureTabKey);
+      // Exercise the same race as repeatedly clicking the connection-list
+      // action: every click creates a separate tab while its first directory
+      // request is still in flight.  The detached runtimes must all settle,
+      // including the tabs that are no longer visible.
+      const rapidSftpKeys = Array.from({length:16}, (_, index) => 'sftp-burst-' + connection.id + '-' + (index + 1));
+      rapidSftpOpen = true;
+      const rapidResults = await Promise.all(rapidSftpKeys.map(key => openSftp(connection.id, '/Users/demo/Public', true, key)));
+      rapidSftpOpen = false;
+      const rapidRuntimes = rapidSftpKeys.map(key => sftpTabRuntimes.get(key));
+      rapidSftpOpenUi = {
+        requested:rapidSftpKeys.length,
+        created:rapidSftpKeys.filter(key => tabs.some(tab => tab.key === key && tab.kind === 'sftp')).length,
+        runtimes:rapidRuntimes.filter(Boolean).length,
+        settled:rapidRuntimes.filter(runtime => runtime && runtime.state.loading === false).length,
+        loaded:rapidRuntimes.filter(runtime => runtime?.state?.entries?.[0]?.name === 'burst-ready.txt').length,
+        allSettled:rapidResults.every(Boolean)
+          && rapidSftpKeys.every(key => tabs.some(tab => tab.key === key && tab.kind === 'sftp'))
+          && rapidRuntimes.every(runtime => runtime && runtime.state.loading === false && runtime.state.entries?.[0]?.name === 'burst-ready.txt')
+      };
+      rapidSftpKeys.forEach(key => {
+        const pane = workspaceFindPaneForTab(key);
+        if (pane) {
+          pane.tabs = pane.tabs.filter(item => item !== key);
+          if (pane.activeTabKey === key) pane.activeTabKey = fixtureTabKey;
+        }
+        const tabIndex = tabs.findIndex(tab => tab.key === key);
+        if (tabIndex >= 0) tabs.splice(tabIndex, 1);
+        disposeSftpRuntime(key);
+      });
+      syncSftpTabTitles(connection.id);
+      activateTab(fixtureTabKey);
+      const directoryApi = api;
+      let sharedDirectoryCalls = 0;
+      try {
+        api = async path => {
+          if (!String(path).startsWith('/api/connections/' + connection.id + '/sftp?')) return {};
+          sharedDirectoryCalls += 1;
+          await new Promise(resolve => setTimeout(resolve, 18));
+          return {path:'/Users/demo/Public',entries:[{name:'shared.txt',type:'file'}]};
+        };
+        sftpDirectoryPageRequests.clear();
+        const sharedParams = new URLSearchParams({path:'/Users/demo/Public',page:'1',page_size:'50',query:'',sort:'name',dir:'asc'});
+        const sharedResults = await Promise.all(Array.from({length:16}, () => requestSftpDirectoryPage(connection.id, sharedParams)));
+        rapidSftpOpenUi.sharedRequests = sharedDirectoryCalls === 1
+          && sharedResults.length === 16
+          && sharedResults.every(result => result.entries?.[0]?.name === 'shared.txt')
+          && sftpDirectoryPageRequests.size === 0;
+        rapidSftpOpenUi.allSettled = rapidSftpOpenUi.allSettled && rapidSftpOpenUi.sharedRequests;
+      } finally {
+        api = directoryApi;
+        sftpDirectoryPageRequests.clear();
+      }
       setWorkspace('切换测试', 'UI', 'welcome', 'sftp-switch-fixture', false, true);
       activeTabKey = fixtureTabKey;
       activeView = 'sftp';
@@ -6872,6 +6964,7 @@ app.whenReady().then(async () => {
 
       directoryActionsUi = {
         found:Boolean(stickyTop && toolbar && navigationRow && breadcrumb && pathEditor && floatingSearch && dropOverlay),
+        rapidSftpOpenUi,
         recoveredMissingToolbar,
         duplicateSftpToolbarsFollowActiveTab,
         sftpVisibleNumberingStable,
@@ -7919,8 +8012,12 @@ app.whenReady().then(async () => {
     const editorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
     const editorHost=editorWindow?.querySelector('#sftpTextEditor');
     const languageSelect=editorWindow?.querySelector('#sftpEditorLanguage');
+    const initialEditorRect=editorWindow?.querySelector('.sftp-editor-modal')?.getBoundingClientRect();
     const textEncodingUi={
       opened:Boolean(editorWindow?.querySelector('.sftp-editor-modal')),
+      initialCentered:Boolean(initialEditorRect
+        && Math.abs(initialEditorRect.left + initialEditorRect.width / 2 - innerWidth / 2) <= 2
+        && Math.abs(initialEditorRect.top + initialEditorRect.height / 2 - innerHeight / 2) <= 2),
       aceLoaded:Boolean(editorHost?.classList.contains('ace_editor')),
       selected:editorWindow?.querySelector('#sftpTextEncoding')?.value||'',
       options:[...(editorWindow?.querySelectorAll('#sftpTextEncoding option')||[])].map(option=>option.value),
@@ -8028,28 +8125,69 @@ app.whenReady().then(async () => {
     const imagePreviewUi={};
     try {
       withSftpFileOpenFeedback=async (_connectionId,_remotePath,operation)=>operation();
-      readSftpImageWithProgress=async ()=>new Blob(['<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" onload="window.__unsafeSvg=true"><script>window.__unsafeSvg=true</script><rect id="target-node" data-kind="needle" x="20" y="20" width="120" height="80" fill="#2563eb"/></svg>'],{type:'image/svg+xml'});
+      readSftpImageWithProgress=async ()=>new Blob(['<svg xmlns="http://www.w3.org/2000/svg" xmlns:cge="http://iec.ch/TC57/2005/SVG-schema#" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="500" viewBox="0 0 1200 500" onload="window.__unsafeSvg=true"><defs><style>.fixture-line{fill:none;stroke:rgb(34,197,94)} symbol{overflow:visible}</style><symbol id="fixture-switch" viewBox="0 0 10 10"><line x1="-5" y1="5" x2="15" y2="5" stroke="#f97316"/></symbol></defs><script>window.__unsafeSvg=true</script><polyline id="styled-line" class="fixture-line" points="80,180 180,180"/><use id="styled-use" xlink:href="#fixture-switch" x="200" y="175" width="10" height="10"/><g id="line-to-PD_11100000_14419"><path d="M100 250H590" stroke="#ef4444"/><metadata><cge:GLink_Ref ObjectID="PD_11100000_14419"/></metadata></g><g id="neighbor-left"><rect x="280" y="220" width="40" height="60" fill="#64748b"/></g><g id="PD_11100000_14419" data-kind="needle"><rect x="590" y="230" width="20" height="40" fill="#2563eb"/><metadata><desc devId="PD_11100000_14419"/><cge:PSR_Ref ObjectID="PD_11100000_14419" ObjectName="needle"/><cge:GLink_Ref ObjectID="line-to-PD_11100000_14419"/></metadata></g><g id="TXT-PD_11100000_14419"><text x="600" y="300">needle</text><metadata><cge:PSR_Ref ObjectID="TXT-PD_11100000_14419"/></metadata></g><g id="neighbor-right"><rect x="880" y="220" width="40" height="60" fill="#64748b"/></g></svg>'],{type:'image/svg+xml'});
       await previewSftpImage(1,'/tmp/fixture.svg');
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const svgStage=document.querySelector('#sftpImageStage');
       const svgRoot=svgStage?.shadowRoot?.querySelector('svg');
+      const svgViewport=document.querySelector('#sftpImageViewport');
+      const svgImageCard=document.querySelector('.sftp-image-modal');
+      const svgOuterBefore=svgImageCard?.getBoundingClientRect();
+      const svgFitViewportRect=svgViewport?.getBoundingClientRect();
+      const svgFitStageRect=svgStage?.getBoundingClientRect();
       const svgZoomBefore=document.querySelector('#sftpImageZoomValue')?.textContent||'';
+      imagePreviewUi.svgFitsCanvas=Boolean(svgFitViewportRect && svgFitStageRect
+        && svgFitStageRect.left>=svgFitViewportRect.left-2
+        && svgFitStageRect.right<=svgFitViewportRect.right+2
+        && svgFitStageRect.top>=svgFitViewportRect.top-2
+        && svgFitStageRect.bottom<=svgFitViewportRect.bottom+2);
       document.querySelector('#sftpImageZoomIn')?.click();
       const svgZoomAfterButton=document.querySelector('#sftpImageZoomValue')?.textContent||'';
+      const svgOuterAfterButton=svgImageCard?.getBoundingClientRect();
       document.querySelector('#sftpImageViewport')?.dispatchEvent(new WheelEvent('wheel',{ctrlKey:true,deltaY:-100,bubbles:true,cancelable:true}));
       const svgZoomAfterWheel=document.querySelector('#sftpImageZoomValue')?.textContent||'';
+      const svgOuterAfterWheel=svgImageCard?.getBoundingClientRect();
       document.dispatchEvent(new KeyboardEvent('keydown',{key:'f',ctrlKey:true,bubbles:true,cancelable:true}));
       const svgSearch=document.querySelector('#sftpSvgSearch');
       if (svgSearch) {
-        svgSearch.value='needle';
+        svgSearch.value='PD_11100000_14419';
         svgSearch.dispatchEvent(new Event('input',{bubbles:true}));
       }
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const svgSearchZoom=Number.parseInt(document.querySelector('#sftpImageZoomValue')?.textContent||'',10);
+      const svgSearchViewportRect=svgViewport?.getBoundingClientRect();
+      const svgNeighborVisible=id=>{
+        const rect=svgRoot?.querySelector(id)?.getBoundingClientRect();
+        return Boolean(rect && svgSearchViewportRect && rect.right>svgSearchViewportRect.left && rect.left<svgSearchViewportRect.right && rect.bottom>svgSearchViewportRect.top && rect.top<svgSearchViewportRect.bottom);
+      };
       imagePreviewUi.svgOpened=Boolean(svgRoot);
       imagePreviewUi.svgSanitized=Boolean(svgRoot && !svgRoot.hasAttribute('onload') && !svgRoot.querySelector('script') && window.__unsafeSvg!==true);
+      imagePreviewUi.svgEmbeddedStyles=Boolean(svgRoot
+        && getComputedStyle(svgRoot.querySelector('#styled-line')).stroke==='rgb(34, 197, 94)'
+        && getComputedStyle(svgRoot.querySelector('#fixture-switch')).overflow==='visible');
+      imagePreviewUi.svgOuterWindowStable=Boolean(svgOuterBefore && svgOuterAfterButton && svgOuterAfterWheel
+        && Math.abs(svgOuterBefore.width-svgOuterAfterButton.width)<=1
+        && Math.abs(svgOuterBefore.height-svgOuterAfterButton.height)<=1
+        && Math.abs(svgOuterBefore.width-svgOuterAfterWheel.width)<=1
+        && Math.abs(svgOuterBefore.height-svgOuterAfterWheel.height)<=1);
       imagePreviewUi.svgZoomButtons=Boolean(svgZoomBefore && svgZoomAfterButton && svgZoomAfterButton!==svgZoomBefore);
       imagePreviewUi.svgCtrlWheel=Boolean(svgZoomAfterWheel && svgZoomAfterWheel!==svgZoomAfterButton);
       imagePreviewUi.svgSearchFocused=document.activeElement===svgSearch;
-      imagePreviewUi.svgSearchLocated=Boolean(svgRoot?.querySelector('#target-node.sftp-svg-search-current') && document.querySelector('#sftpSvgSearchCount')?.textContent==='1/1');
+      imagePreviewUi.svgSearchLocated=Boolean(svgRoot?.querySelector('#PD_11100000_14419.sftp-svg-search-current') && document.querySelector('#sftpSvgSearchCount')?.textContent==='1/1');
+      imagePreviewUi.svgSearchKeepsContext=Number.isFinite(svgSearchZoom) && svgSearchZoom<=400 && svgNeighborVisible('#neighbor-left') && svgNeighborVisible('#neighbor-right');
+      if (svgSearch) {
+        svgSearch.value='';
+        svgSearch.dispatchEvent(new Event('input',{bubbles:true}));
+      }
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const svgClearViewportRect=svgViewport?.getBoundingClientRect();
+      const svgClearStageRect=svgStage?.getBoundingClientRect();
+      imagePreviewUi.svgSearchClearFits=Boolean(svgClearViewportRect && svgClearStageRect
+        && svgClearStageRect.left>=svgClearViewportRect.left-2
+        && svgClearStageRect.right<=svgClearViewportRect.right+2
+        && svgClearStageRect.top>=svgClearViewportRect.top-2
+        && svgClearStageRect.bottom<=svgClearViewportRect.bottom+2
+        && document.querySelector('.sftp-svg-match-marker')?.hidden);
       document.querySelector('#sftpImageClose')?.click();
 
       const pngBytes=Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),character=>character.charCodeAt(0));
@@ -10117,7 +10255,7 @@ app.whenReady().then(async () => {
     || !connectionStartupUi.categories.includes('交互式语言')
     || !connectionStartupUi.categories.includes('会话工具');
   const saveAndClearUiFailed = !Object.values(saveAndClearUi).every(Boolean);
-  const notificationUiFailed = notificationUi.replayed !== 0 || !notificationUi.initialized || notificationUi.cursor !== notificationUi.stored || !notificationUi.categoryControls || !notificationUi.floatingUnderNotifications || !notificationUi.successSuppressed || !notificationUi.infoVisible || !notificationUi.progressSuppressed;
+  const notificationUiFailed = notificationUi.replayed !== 0 || !notificationUi.initialized || notificationUi.cursor !== notificationUi.stored || !notificationUi.categoryControls || !notificationUi.floatingUnderNotifications || !notificationUi.successSuppressed || !notificationUi.infoVisible || !notificationUi.progressSuppressed || !notificationUi.pointerKeepsToast || !notificationUi.pointerResumesToast;
   const restoreKeyUiFailed = !restoreKeyUi.opened || restoreKeyUi.rowCount !== 12 || JSON.stringify(restoreKeyUi.originalNames) !== JSON.stringify(['old-key-a','old-key-b']) || restoreKeyUi.candidates.length !== 3 || !restoreKeyUi.candidates.some(item=>item.includes('id_ed25519_demo')) || !restoreKeyUi.candidates.some(item=>item.includes('id_rsa_project')) || !restoreKeyUi.candidateValuePreserved || !restoreKeyUi.stagesWindowsPath || !restoreKeyUi.backdropIgnored || !restoreKeyUi.continuedWithUnbound || !restoreKeyUi.continuedAllUnbound || !restoreKeyUi.configAllowsUnbound || !restoreKeyUi.configSortEditable || !restoreKeyUi.acceptsAll || !restoreKeyUi.uploadDirectory || !restoreKeyUi.actions || !restoreKeyUi.statusReady || !restoreKeyUi.cardWithinViewport || !restoreKeyUi.closed;
   const restoreCredentialUiFailed = !restoreCredentialUi.opened || !restoreCredentialUi.backdropIgnored || !restoreCredentialUi.originalLabels.some(item=>item.includes('私钥：id_old')) || !restoreCredentialUi.originalLabels.some(item=>item.includes('备份含密码')) || !restoreCredentialUi.originalLabels.some(item=>item.includes('备份未包含密码')) || !restoreCredentialUi.initialStatuses.includes('保留备份密码') || !restoreCredentialUi.stagedStatuses.some(item=>item.includes('将绑定：id_key')) || !restoreCredentialUi.stagedStatuses.includes('将使用新密码') || !restoreCredentialUi.preservesSavedPassword || !restoreCredentialUi.replacesMissingPassword || !restoreCredentialUi.bindsKey || !restoreCredentialUi.sortFields || !restoreCredentialUi.updatesSort || !restoreCredentialUi.preservesSort || !restoreCredentialUi.cardWithinViewport || !restoreCredentialUi.closed;
   const settingsSectionsFailed = navigationUi.settingsChecks.some(item=>item.visible.length!==1||item.visible[0]!==item.requested||item.active.length!==1||item.active[0]!==item.requested) || navigationUi.aboutVisible?.length!==1 || navigationUi.aboutVisible?.[0]!=='settings-about' || navigationUi.aboutActive?.length!==1 || navigationUi.aboutActive?.[0]!=='settings-about';
@@ -10231,14 +10369,17 @@ app.whenReady().then(async () => {
   const directorySizeUi = sftpUi.directorySizeUi || {};
   const jobUi = sftpUi.jobUi || {};
   const textEncodingUi = sftpUi.textEncodingUi || {};
+  const imagePreviewUi = sftpUi.imagePreviewUi || {};
   const globalSettingsUi = sftpUi.globalSettingsUi || {};
   const downloadNoticeUi = sftpUi.downloadNoticeUi || {};
   const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingResumeAction || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.drawerDefaultCompact || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.failedOnly || !jobUi.failedActions || !jobUi.failedClearAvailable || !jobUi.currentProgress || !jobUi.drawerResizable || !jobUi.drawerResizeAdaptive || !jobUi.drawerResizePersists || !jobUi.drawerResizeReset || !jobUi.deleteDuplicateBlocked || !jobUi.deleteKeepsDrawerOpen || !jobUi.taskLogInitialOpen || !jobUi.taskLogInitialBottom || !jobUi.taskLogRefreshKeepsOpen || !jobUi.taskLogRefreshShowsLatest || !jobUi.taskLogRefreshFollowsBottom || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned || !jobUi.toastOrderPreserved || !jobUi.toastStackedDown || !jobUi.toastAvoidsFloatingTask || !jobUi.toastExitAnimated || !jobUi.toastReflowAnimated || !jobUi.toastMovedUp;
-  const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.nonUtf8SaveAllowed || !textEncodingUi.nonUtf8SaveSubmitted || !textEncodingUi.utf8LimitEnforced || !textEncodingUi.utf8BomIncludesPrefix || !textEncodingUi.normalizationOnlyLimitEnforced || !textEncodingUi.lineEndingLabelsLocalized || !textEncodingUi.lightPaged || !textEncodingUi.lightNextPage || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !textEncodingUi.shellFormat || !['lf','crlf','cr'].every(value=>textEncodingUi.lineEndings?.includes(value)) || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
+  const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.initialCentered || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.nonUtf8SaveAllowed || !textEncodingUi.nonUtf8SaveSubmitted || !textEncodingUi.utf8LimitEnforced || !textEncodingUi.utf8BomIncludesPrefix || !textEncodingUi.normalizationOnlyLimitEnforced || !textEncodingUi.lineEndingLabelsLocalized || !textEncodingUi.lightPaged || !textEncodingUi.lightNextPage || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !textEncodingUi.shellFormat || !['lf','crlf','cr'].every(value=>textEncodingUi.lineEndings?.includes(value)) || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
+  const imagePreviewUiFailed = !imagePreviewUi.svgOpened || !imagePreviewUi.svgSanitized || !imagePreviewUi.svgEmbeddedStyles || !imagePreviewUi.svgOuterWindowStable || !imagePreviewUi.svgFitsCanvas || !imagePreviewUi.svgZoomButtons || !imagePreviewUi.svgCtrlWheel || !imagePreviewUi.svgSearchFocused || !imagePreviewUi.svgSearchLocated || !imagePreviewUi.svgSearchKeepsContext || !imagePreviewUi.svgSearchClearFits || !imagePreviewUi.rasterOpened || !imagePreviewUi.rasterZoom;
   const nativeDragUiFailed = !nativeDragUi.found || !nativeDragUi.webExternalDragBlocked || !nativeDragUi.linuxFallbackNoticeOnce || !nativeDragUi.linuxFallbackUsesCompatibilityMode || !nativeDragUi.streamingPreparesOnPointerDown || !nativeDragUi.streamingThresholdActivatesOnce || !nativeDragUi.streamingCaptureCancelSurvives || !nativeDragUi.pointerUpCancelsPending || !nativeDragUi.streamingSkipsStage || !nativeDragUi.streamingNativeBlocksParallelBrowserDrag || !nativeDragUi.nativeIdleHintStable || !nativeDragUi.nativeOutsideHintStaysStable || !nativeDragUi.nativeMotionTargetsSftp || !nativeDragUi.nativeTransientMissKeepsTarget || !nativeDragUi.nativeFinalTransientMissKeepsTarget || !nativeDragUi.nativeReleasedClearsStaleTarget || !nativeDragUi.nativeResultCopiesOnce || !nativeDragUi.firstDragOnlyStages || !nativeDragUi.firstDragReset || !nativeDragUi.cacheReused || !nativeDragUi.cachedUnarmedStaysInternal || !nativeDragUi.sameWindowDropDoesNotArm || !nativeDragUi.armedDragStartsSynchronously || !nativeDragUi.failureRearmed || !nativeDragUi.successClearsState || !nativeDragUi.finderRenameNoticeShown;
-  const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.terminalTabPreviewActivated || !connectionSessionUi.invalidTerminalDropRestoresSource || !connectionSessionUi.invalidSftpDropRestoresSource || !connectionSessionUi.acceptedTerminalDropStays || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !globalSettingsUi.classicSurface || !globalSettingsUi.themedField || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !sftpUi.fileOpenFeedback?.interruptedRetry || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryCacheBehavior.permissionFailureRestored || !sftpUi.searchKeyboardUi?.opened || !sftpUi.searchKeyboardUi?.closed || !sftpUi.searchKeyboardUi?.recursive || !sftpUi.searchKeyboardUi?.feedback || !sftpUi.syncIndicatorFollowsScroll || !sftpUi.diffComparisonUi || !sftpUi.columnLayoutUi?.order || !sftpUi.columnLayoutUi?.persisted || !sftpUi.columnLayoutUi?.resized || !sftpUi.columnLayoutUi?.pointerStable || !sftpUi.columnLayoutUi?.pairOnly || !sftpUi.columnLayoutUi?.adjacentResizeStable || !sftpUi.columnLayoutUi?.dividerUniform || !sftpUi.columnLayoutUi?.localNarrowResizable || !sftpUi.columnLayoutUi?.openButtonStable || !sftpUi.columnLayoutUi?.selectionToolbarStable || !sftpUi.columnLayoutUi?.scrollbarUnified || !sftpUi.columnLayoutUi?.globalCss || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithoutDirectoryReload || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.emptyFavoritesCompact || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !directoryActionsUi.terminalJumpFirst || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/demo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.multiNameAddsSelection || !sftpUi.multiNameCancelsSelection || !sftpUi.singleNameReplacesSelection || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.dragSelectionSynchronized || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactHorizontalScroll || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.narrowHeaderNameVisible || !sftpUi.narrowHeaderSummaryVisible || !sftpUi.narrowCompactActions || !sftpUi.completedMutationDetected || !sftpUi.desktopPagerSingleRow || !sftpUi.pagerFloatsAtWorkspaceBottom || !sftpUi.pagerOpaqueAndElevated || !sftpUi.pagerDockSealsBottom || !sftpUi.pagerPinnedToViewport || !sftpUi.scrollCueVisibleAboveContent || !sftpUi.scrollCueHidesAtEnd || !sftpUi.narrowPagerWraps || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerJumpVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
+  const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.terminalTabPreviewActivated || !connectionSessionUi.invalidTerminalDropRestoresSource || !connectionSessionUi.invalidSftpDropRestoresSource || !connectionSessionUi.acceptedTerminalDropStays || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || imagePreviewUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !globalSettingsUi.classicSurface || !globalSettingsUi.themedField || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !sftpUi.fileOpenFeedback?.interruptedRetry || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryCacheBehavior.permissionFailureRestored || !sftpUi.searchKeyboardUi?.opened || !sftpUi.searchKeyboardUi?.closed || !sftpUi.searchKeyboardUi?.recursive || !sftpUi.searchKeyboardUi?.feedback || !sftpUi.syncIndicatorFollowsScroll || !sftpUi.diffComparisonUi || !sftpUi.columnLayoutUi?.order || !sftpUi.columnLayoutUi?.persisted || !sftpUi.columnLayoutUi?.resized || !sftpUi.columnLayoutUi?.pointerStable || !sftpUi.columnLayoutUi?.pairOnly || !sftpUi.columnLayoutUi?.adjacentResizeStable || !sftpUi.columnLayoutUi?.dividerUniform || !sftpUi.columnLayoutUi?.localNarrowResizable || !sftpUi.columnLayoutUi?.openButtonStable || !sftpUi.columnLayoutUi?.selectionToolbarStable || !sftpUi.columnLayoutUi?.scrollbarUnified || !sftpUi.columnLayoutUi?.globalCss || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithoutDirectoryReload || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.emptyFavoritesCompact || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !directoryActionsUi.terminalJumpFirst || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/demo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.multiNameAddsSelection || !sftpUi.multiNameCancelsSelection || !sftpUi.singleNameReplacesSelection || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.dragSelectionSynchronized || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactHorizontalScroll || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.narrowHeaderNameVisible || !sftpUi.narrowHeaderSummaryVisible || !sftpUi.narrowCompactActions || !sftpUi.completedMutationDetected || !sftpUi.desktopPagerSingleRow || !sftpUi.pagerFloatsAtWorkspaceBottom || !sftpUi.pagerOpaqueAndElevated || !sftpUi.pagerDockSealsBottom || !sftpUi.pagerPinnedToViewport || !sftpUi.scrollCueVisibleAboveContent || !sftpUi.scrollCueHidesAtEnd || !sftpUi.narrowPagerWraps || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerJumpVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
   const sftpToolbarRecoveryFailed = !directoryActionsUi.recoveredMissingToolbar || !directoryActionsUi.duplicateSftpToolbarsFollowActiveTab;
   const sftpTabIsolationFailed = !directoryActionsUi.sftpVisibleNumberingStable
+    || !directoryActionsUi.rapidSftpOpenUi?.allSettled
     || !directoryActionsUi.activeShellMatchesTab
     || !directoryActionsUi.parentNavigationStaysOnOwner
     || !directoryActionsUi.duplicateDirectoryStateIsolated
@@ -10247,6 +10388,8 @@ app.whenReady().then(async () => {
   const languageOnboardingFailed = !languageOnboardingUi.regionDefaults || !languageOnboardingUi.newUserDefaultsEnglish || !languageOnboardingUi.nativeChoiceCopy || !languageOnboardingUi.englishCopy || !languageOnboardingUi.selectedChineseCopy || !languageOnboardingUi.selectedEnglishCopy || !languageOnboardingUi.coldStartNativeChoice || !languageOnboardingUi.existingUserKeepsLanguage || !languageOnboardingUi.existingUserChineseCopy || !languageOnboardingUi.existingUserEnglishCopy || !languageOnboardingUi.fitsNarrowViewport || !languageOnboardingUi.saved || !languageOnboardingUi.closed;
   const forwardTemplateLayoutFailed = forwardTemplateLayoutUi.rows !== 2 || forwardTemplateLayoutUi.buttons !== 6 || !forwardTemplateLayoutUi.singleLine || !forwardTemplateLayoutUi.insideRows || !forwardTemplateLayoutUi.noOverlap;
   const code = errors.length || cspViolations.length || languageOnboardingFailed || forwardTemplateLayoutFailed || !noVncModuleUi.loaded || !noVncModuleUi.prototype || !zmodemModuleUi.loaded || !zmodemModuleUi.browser || !zmodemModuleUi.abortSequence || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceTabCloseUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || appearanceEffectsUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.quickConnectionLauncher || !result.quickSshCandidates || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
+  if (notificationUiFailed) console.error("Notification UI diagnostics:", JSON.stringify(notificationUi));
+  if (imagePreviewUiFailed) console.error("Image preview UI diagnostics:", JSON.stringify(imagePreviewUi));
   if (code) console.error("UI smoke failure summary:", JSON.stringify({
     failedChecks:Object.entries({
       overflow,
@@ -10288,6 +10431,7 @@ app.whenReady().then(async () => {
     }).filter(([, failed]) => Boolean(failed)).map(([name]) => name),
     workspaceTabCloseUi,
     runningActions,
+    notificationUi,
     restoreKeyUi,
     activityUi:{activity:result.activity, activityUtilities:result.activityUtilities},
     aboutUi,
@@ -10311,7 +10455,8 @@ app.whenReady().then(async () => {
       compactScrollMetrics:sftpUi.compactScrollMetrics,
       pagerLayoutMetrics:sftpUi.pagerLayoutMetrics,
       directoryCacheBehavior:sftpUi.directoryCacheBehavior,
-      componentFailures:{nativeDragUiFailed,jobUiFailed,textEncodingUiFailed},
+      componentFailures:{nativeDragUiFailed,jobUiFailed,textEncodingUiFailed,imagePreviewUiFailed},
+      imagePreviewUi,
       globalSettingsFalse:Object.entries(globalSettingsUi).filter(([, value]) => value === false).map(([name]) => name),
       directorySizeFalse:Object.entries(directorySizeUi).filter(([, value]) => value === false).map(([name]) => name),
       downloadNoticeFalse:Object.entries(downloadNoticeUi).filter(([, value]) => value === false).map(([name]) => name),

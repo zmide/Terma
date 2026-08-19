@@ -684,6 +684,26 @@ function trackSftpMutationJob(job) {
   if (job?.id) sftpKnownJobStatuses.set(String(job.id), String(job.status || "running"));
 }
 
+function settleSftpJobFromNotification(event) {
+  const jobId = String(event?.action?.sftp_job_id || event?.action?.download_job_id || "");
+  if (!jobId) return false;
+  const job = sftpLatestJobs.find(item => String(item?.id || "") === jobId);
+  if (!job || !SFTP_ACTIVE_JOB_STATUSES.has(job.status)) return false;
+  const failed = event?.level === "error";
+  job.status = failed ? "failed" : "done";
+  job.phase = "";
+  job.finished_at = job.finished_at || Date.now();
+  job.can_pause = false;
+  job.can_cancel = false;
+  if (!failed) {
+    job.progress = 100;
+    if (Number(job.size || 0) > 0) job.transferred = Number(job.size || 0);
+  }
+  sftpKnownJobStatuses.set(jobId, job.status);
+  updateSftpTaskCenter(sftpLatestJobs);
+  return true;
+}
+
 function completedSftpMutationForCurrentView(jobs) {
   const connectionsToRefresh = new Set();
   const visibleIds = new Set();

@@ -855,7 +855,10 @@ async function openSftpChannel(connectionId) {
   let lastError = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      await connectSftpSession(id, {force:attempt > 0});
+      // A channel failure must not tear down the shared SSH transport.  Several
+      // SFTP tabs can be opening channels at the same time; reconnecting with
+      // force=true here would invalidate the channels owned by the other tabs.
+      await connectSftpSession(id);
       const record = sessions.get(id);
       if (!record?.client || record.status !== "connected") throw new Error("SFTP 会话未连接");
       return await new Promise((resolve, reject) => {
@@ -864,7 +867,10 @@ async function openSftpChannel(connectionId) {
     } catch (error) {
       lastError = error;
       const record = sessions.get(id);
-      if (record && attempt === 0) {
+      // Only reset a session that has already been marked disconnected.  An
+      // isolated channel-open error on a healthy shared client is retried on
+      // that same client so parallel tabs keep their work intact.
+      if (record && (!record.client || record.status !== "connected")) {
         endSessionRecord(record);
         record.status = "disconnected";
         record.manualDisconnected = false;
@@ -1028,7 +1034,10 @@ function spawnSftpSessionCommand(connection, command) {
     let lastError = null;
     for (let attempt = 0; attempt < 2 && !child.killed; attempt += 1) {
       try {
-        await connectSftpSession(connection.id, {force:attempt > 0});
+        // Keep the connection shared across concurrent SFTP commands.  A
+        // failed exec channel is retried without force-reconnecting, which
+        // prevents one tab from interrupting other tabs' directory reads.
+        await connectSftpSession(connection.id);
         if (child.killed) return;
         const record = sessions.get(Number(connection.id));
         if (!record?.client || record.status !== "connected") throw new Error("SFTP 会话未连接");
@@ -1074,7 +1083,7 @@ function spawnSftpSessionCommand(connection, command) {
       } catch (error) {
         lastError = error;
         const record = sessions.get(Number(connection.id));
-        if (record && attempt === 0) {
+        if (record && (!record.client || record.status !== "connected")) {
           endSessionRecord(record);
           record.status = "disconnected";
           record.manualDisconnected = false;

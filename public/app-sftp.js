@@ -16,6 +16,11 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
     options = existingKey;
     existingKey = "";
   }
+  const paneId = String(options.paneId || (typeof currentWorkspacePaneId === "function" ? currentWorkspacePaneId() : focusedPaneId || ""));
+  // Each tab owns its own runtime/request controller.  Opening another tab
+  // must not invalidate the previous tab's directory request; inactive tabs
+  // continue loading into their detached view and render when activated.
+  options = {...options, paneId};
   const connectionId = Number(id);
   const quickConnection = currentConnection(connectionId)?.quick_connection === true;
   if (!quickConnection && updateTab && typeof noteConnectionUsage === "function") noteConnectionUsage(connectionId, "sftp");
@@ -88,17 +93,26 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
     runtime.root = view;
     setWorkspace(title, sftpConnectionAddress(c), "sftp", tabKey, updateTab, true, {kind:"sftp", id:c.id, path:runtime.state.path, connectionStatus:preserveManualDisconnect && !updateTab ? "disconnected" : "connecting", transient:quickConnection, quick_connection:quickConnection, skipToolbarSync:true});
     if (cached?.viewState) restoreSftpViewState(cached.viewState, tabKey);
+    // A tab can finish its directory request while detached from the shared
+    // SFTP view.  Reattaching it must repaint the completed runtime even when
+    // the activation path did not pass the optional fast flag (the legacy
+    // workspace activator does not provide that option).
+    if (!runtime.state.loading && Array.isArray(runtime.state.entries)) {
+      const breadcrumb = sftpElement("sftpBreadcrumb", tabKey);
+      const pathInput = sftpElement("sftpPathInput", tabKey);
+      if (breadcrumb) breadcrumb.innerHTML = sftpBreadcrumbHtml(id, runtime.state.path || remotePath, tabKey);
+      if (pathInput) pathInput.value = runtime.state.path || remotePath;
+      refreshSftpDirectoryActions(tabKey);
+      renderSftpEntries(tabKey);
+    }
     if (options.fast) {
       if (preserveManualDisconnect && !updateTab) updateSftpConnectionUi(id, "disconnected");
-      requestAnimationFrame(() => {
-        if (!sftpTabRuntimes.has(tabKey)) return;
-        syncSftpToolbarPlacement(tabKey);
-        refreshSftpDirectoryActions(tabKey);
-        refreshSftpJobs();
-        startSftpJobsTimer();
-        if (preserveManualDisconnect && !updateTab) return;
-        void refreshActiveSftpSessionStatus(tabKey);
-      });
+      syncSftpToolbarPlacement(tabKey);
+      refreshSftpDirectoryActions(tabKey);
+      refreshSftpJobs();
+      startSftpJobsTimer();
+      if (preserveManualDisconnect && !updateTab) return true;
+      requestAnimationFrame(() => void refreshActiveSftpSessionStatus(tabKey));
       return true;
     }
     syncSftpToolbarPlacement(tabKey);
@@ -119,7 +133,9 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
         page:runtime.state.page,
         tabKey,
         silent:true,
-        renderIfChangedOnly:true
+        renderIfChangedOnly:true,
+        paneId:options.paneId,
+        activationToken:options.activationToken
       });
     }
     if (updateTab) void refreshActiveSftpSessionStatus(tabKey);
@@ -127,7 +143,7 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
     return true;
   }
 
-  const restored = Boolean(cached?.state && String(cached.state.path || ".") === String(remotePath || "."))
+  const restored = Boolean(cached?.state && !cached.needsReload && String(cached.state.path || ".") === String(remotePath || "."))
     && restoreCachedSftpState(cached, runtime);
   if (!restored) {
     runtime.state = {...runtime.state, connectionId, path:remotePath, entries:[], selected:null, page:1, total:0, totalPages:1, unfilteredTotal:0};
@@ -253,7 +269,42 @@ async function openSftp(id, remotePath=".", updateTab=true, existingKey="", opti
     void refreshActiveSftpSessionStatus(tabKey);
     return true;
   }
-  return loadSftpPage({path:remotePath, page:1, tabKey});
+  return loadSftpPage({path:remotePath, page:1, tabKey, paneId:options.paneId, activationToken:options.activationToken});
+}
+
+function sftpDirectoryPageAbortError() {
+  const error = new Error("SFTP directory request aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function awaitSftpDirectoryPageRequest(request, signal=null) {
+  if (!signal) return request;
+  if (signal.aborted) return Promise.reject(sftpDirectoryPageAbortError());
+  return new Promise((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(sftpDirectoryPageAbortError());
+    };
+    signal.addEventListener("abort", onAbort, {once:true});
+    request.then(
+      value => { cleanup(); resolve(value); },
+      error => { cleanup(); reject(error); }
+    );
+  });
+}
+
+function requestSftpDirectoryPage(connectionId, params, signal=null) {
+  const requestPath = `/api/connections/${Number(connectionId)}/sftp?${params.toString()}`;
+  let request = sftpDirectoryPageRequests.get(requestPath);
+  if (!request) {
+    request = api(requestPath).finally(() => {
+      if (sftpDirectoryPageRequests.get(requestPath) === request) sftpDirectoryPageRequests.delete(requestPath);
+    });
+    sftpDirectoryPageRequests.set(requestPath, request);
+  }
+  return awaitSftpDirectoryPageRequest(request, signal);
 }
 
 async function loadSftpPage(options={}) {
@@ -308,7 +359,7 @@ async function loadSftpPage(options={}) {
   if (recursiveSearch) params.set("recursive", "1");
   if (options.refresh) params.set("refresh", "1");
   try {
-    const data = await api(`/api/connections/${id}/sftp?${params.toString()}`, controller ? {signal:controller.signal} : {});
+    const data = await requestSftpDirectoryPage(id, params, controller?.signal || null);
     if (!sftpTabRuntimes.has(tabKey) || requestSeq !== runtime.state.requestSeq) return false;
     const mounted = runtime.root?.isConnected && runtime.root.dataset.sftpTabKey === tabKey;
     const viewState = preserveView && mounted ? captureSftpViewState(tabKey) : null;
@@ -317,7 +368,7 @@ async function loadSftpPage(options={}) {
       ...runtime.state,
       connectionId:id,
       path:data.path,
-      entries:data.entries || [],
+      entries:(data.entries || []).map(entry => ({...entry})),
       selected:preserveView ? runtime.state.selected : null,
       page:Number(data.page || 1),
       pageSize:Number(data.page_size || pageSize),
@@ -464,13 +515,13 @@ function setSftpPage(page, tabKey=activeTabKey) {
   if (!runtime) return;
   clearTimeout(runtime.searchTimer);
   const target = Math.max(1, Math.min(Number(page) || 1, Number(runtime.state.totalPages || 1)));
-  if (target === runtime.state.page || runtime.state.loading) return;
+  if (target === runtime.state.page && !runtime.state.loading) return;
   loadSftpPage({page:target, tabKey});
 }
 
 function jumpSftpPage(input, tabKey=activeTabKey) {
   const runtime = restoreSftpRuntimeForTab(tabKey);
-  if (!runtime || runtime.state.loading) return;
+  if (!runtime) return;
   const value = Number(input?.value ?? input);
   if (!Number.isFinite(value)) return;
   const target = Math.max(1, Math.min(Math.trunc(value), Number(runtime.state.totalPages || 1)));
@@ -486,6 +537,9 @@ function setSftpPageSize(value, tabKey=activeTabKey) {
   if (![25,50,100,200].includes(pageSize) || pageSize === runtime.state.pageSize) return;
   runtime.state.pageSize = pageSize;
   runtime.state.page = 1;
+  const list = sftpElement("sftpList", tabKey);
+  const selector = list?.querySelector(".sftp-pager select");
+  if (selector) selector.value = String(pageSize);
   loadSftpPage({page:1, tabKey});
 }
 

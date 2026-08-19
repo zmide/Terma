@@ -3,6 +3,7 @@ const SFTP_COLUMN_KEYS = Object.freeze(["name", "size", "mtime", "access"]);
 const SFTP_ACTION_COLUMN_KEY = "actions";
 const SFTP_COLUMN_MIN_WEIGHT = .001;
 const SFTP_COLUMN_MIN_PIXELS = 3;
+const SFTP_COLUMN_SAFE_MIN_PIXELS = 24;
 const SFTP_ACTION_COLUMN_DEFAULT_WEIGHT = 3.6;
 const SFTP_COLUMN_DEFAULTS = Object.freeze({
   name:{weight:2.45,min:160},
@@ -88,13 +89,13 @@ function sftpActionsColumnWidth(list, actionWeight=readSftpColumnLayout().action
   const width = Math.max(0, Number(list?.clientWidth || list?.getBoundingClientRect?.().width || 0));
   if (list?.classList.contains("sftp-actions-more-only")) return 54;
   const ratio = Math.max(SFTP_COLUMN_MIN_WEIGHT, Number(actionWeight || 0)) / SFTP_ACTION_COLUMN_DEFAULT_WEIGHT;
-  if (list?.classList.contains("sftp-actions-compact")) return Math.min(200, Math.max(SFTP_COLUMN_MIN_PIXELS, Math.round(132 * ratio)));
+  if (list?.classList.contains("sftp-actions-compact")) return Math.min(200, Math.max(SFTP_COLUMN_SAFE_MIN_PIXELS, Math.round(132 * ratio)));
   if (list?.classList.contains("sftp-actions-medium")) {
     const base = Math.min(400, Math.max(250, Math.round(width * .4)));
-    return Math.min(480, Math.max(SFTP_COLUMN_MIN_PIXELS, Math.round(base * ratio)));
+    return Math.min(480, Math.max(SFTP_COLUMN_SAFE_MIN_PIXELS, Math.round(base * ratio)));
   }
   const base = Math.min(560, Math.max(420, Math.round(width * .31)));
-  return Math.min(560, Math.max(SFTP_COLUMN_MIN_PIXELS, Math.round(base * ratio)));
+  return Math.min(560, Math.max(SFTP_COLUMN_SAFE_MIN_PIXELS, Math.round(base * ratio)));
 }
 
 function sftpUsesFixedActionTrack(list) {
@@ -118,6 +119,17 @@ function applySftpColumnLayout(list) {
   });
   list.style.setProperty("--sftp-grid-columns", ["36px", ...columns].join(" "));
   list.style.removeProperty("--sftp-grid-min-width");
+  syncSftpColumnVisibility(list);
+}
+
+function syncSftpColumnVisibility(list) {
+  if (!list) return;
+  for (const key of SFTP_COLUMN_KEYS) {
+    const head = list.querySelector(`.sftp-head-cell[data-sftp-column="${key}"]`);
+    const width = Number(head?.getBoundingClientRect?.().width || 0);
+    const narrow = width > 0 && width < (key === "name" ? 92 : key === "access" ? 68 : 48);
+    list.querySelectorAll(`.sftp-column-${key}`).forEach(node => node.classList.toggle("is-too-narrow", narrow));
+  }
 }
 
 function releaseSftpPixelColumnLayout(list) {
@@ -135,7 +147,7 @@ function lockSftpPixelColumnLayout(list, tracks, widths) {
   if (!list) return;
   list.dataset.sftpPixelColumns = "1";
   list.dataset.sftpPixelColumnsWidth = String(Math.max(0, Number(list.getBoundingClientRect?.().width || list.clientWidth || 0)));
-  list.style.setProperty("--sftp-grid-columns", ["36px", ...tracks.map(key => `${Math.max(SFTP_COLUMN_MIN_PIXELS, Number(widths.get(key) || 0))}px`)].join(" "));
+  list.style.setProperty("--sftp-grid-columns", ["36px", ...tracks.map(key => `${Math.max(SFTP_COLUMN_SAFE_MIN_PIXELS, Number(widths.get(key) || 0))}px`)].join(" "));
 }
 
 function refreshSftpColumnLayouts() {
@@ -245,8 +257,10 @@ function prepareSftpColumnResize(list, key) {
 }
 
 function setSftpColumnPairWidth(layout, pair, currentWidth) {
-  const minimum = Math.min(pair.currentMin, Math.max(SFTP_COLUMN_MIN_PIXELS, pair.total - pair.nextMin));
-  const maximum = Math.max(minimum, pair.total - pair.nextMin);
+  const currentSafeMin = Math.max(pair.currentMin, SFTP_COLUMN_SAFE_MIN_PIXELS);
+  const nextSafeMin = Math.max(pair.nextMin, SFTP_COLUMN_SAFE_MIN_PIXELS);
+  const minimum = Math.min(currentSafeMin, Math.max(SFTP_COLUMN_SAFE_MIN_PIXELS, pair.total - nextSafeMin));
+  const maximum = Math.max(minimum, pair.total - nextSafeMin);
   const bounded = Math.max(minimum, Math.min(maximum, currentWidth));
   if (pair.nextKey === SFTP_ACTION_COLUMN_KEY && pair.actionWidthBase > 0) {
     const nextWidth = pair.total - bounded;
@@ -269,6 +283,7 @@ function applySftpColumnResize(list, prepared, currentWidth) {
   prepared.widths.set(prepared.pair.key, result.currentWidth);
   prepared.widths.set(prepared.pair.nextKey, result.nextWidth);
   lockSftpPixelColumnLayout(list, prepared.tracks, prepared.widths);
+  syncSftpColumnVisibility(list);
   writeSftpColumnLayout(prepared.layout);
   document.querySelectorAll(".sftp-list").forEach(other => {
     if (other !== list) applySftpColumnLayout(other);

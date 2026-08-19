@@ -357,10 +357,21 @@ async function runMobileScenario(window) {
       layout.about.closed=Boolean(modal?.hidden&&!modal.querySelector('.license-modal'));
       document.documentElement.dataset.uiSmokeStage='mobile-groups';
       showPrimary('connections');
-      if(!document.querySelector('.conn-row'))document.querySelector('.group-head')?.click();
-      const groupActionButton=document.querySelector('.connection-group-menu-button');
-      const groupDragHandle=document.querySelector('.connection-group-drag-handle');
-      const groupTitle=document.querySelector('.connection-group-head-row .group-head');
+      showMobileExplorer();
+      renderExplorerTools();
+      renderConnections();
+      for(let i=0;i<40;i+=1){
+        if(primaryView==='connections'&&document.querySelector('.left-pane')?.classList.contains('mobile-hide'))showMobileExplorer();
+        if(primaryView==='connections'&&document.querySelector('#connectionGroups')?.hidden){renderExplorerTools();renderConnections();}
+        const readyButton=[...document.querySelectorAll('.connection-group-menu-button')].find(button=>button.getBoundingClientRect().width>0);
+        if(readyButton&&!document.querySelector('.activity')?.classList.contains('activity-render-pending'))break;
+        await new Promise(resolve=>setTimeout(resolve,16));
+      }
+      const visibleGroupNode=selector=>[...document.querySelectorAll(selector)].find(node=>node.getBoundingClientRect().width>0&&node.getBoundingClientRect().height>0);
+      if(!visibleGroupNode('.conn-row'))visibleGroupNode('.group-head')?.click();
+      const groupActionButton=visibleGroupNode('.connection-group-menu-button');
+      const groupDragHandle=visibleGroupNode('.connection-group-drag-handle');
+      const groupTitle=visibleGroupNode('.connection-group-head-row .group-head');
       const actionRect=groupActionButton?.getBoundingClientRect();
       const dragRect=groupDragHandle?.getBoundingClientRect();
       const titleRect=groupTitle?.getBoundingClientRect();
@@ -379,7 +390,7 @@ async function runMobileScenario(window) {
       await new Promise(resolve=>setTimeout(resolve,30));
       layout.groupCancelDoesNotSave=!document.querySelector('.group-dragging')&&groupOrderSaveCalls===0;
       saveConnectionGroupOrder=previousSaveConnectionGroupOrder;
-      const refreshedGroupActionButton=document.querySelector('.connection-group-menu-button');
+      const refreshedGroupActionButton=visibleGroupNode('.connection-group-menu-button');
       layout.groupActionVisible=Boolean(refreshedGroupActionButton&&getComputedStyle(refreshedGroupActionButton).opacity==='1'&&refreshedGroupActionButton.getBoundingClientRect().width>0);
       refreshedGroupActionButton?.click();
       layout.groupActionMenuOpened=Boolean(document.querySelector('#actionMenu')?.textContent.includes('重命名分组')&&document.querySelector('#actionMenuBackdrop'));

@@ -37,6 +37,7 @@ const sftpUploadRequests = new Map();
 const sftpOpeningFiles = new Set();
 const sftpNavigationHistories = new Map();
 const sftpConnectionRequests = new Map();
+const sftpDirectoryPageRequests = new Map();
 const sftpConnectionVersions = new Map();
 const sftpDisconnectRequests = new Map();
 const sftpSessionCloseChecks = new Set();
@@ -423,6 +424,11 @@ function cacheSftpDirectoryView(tabKey=activeTabKey, requestedPath="", viewState
   const runtime = sftpTabRuntimes.get(String(tabKey || "")) || restoreSftpRuntimeForTab(tabKey);
   const sourceState = runtime?.state;
   if (!runtime || !Number(sourceState?.connectionId)) return null;
+  // An in-flight tab only has a loading placeholder, not a reusable directory
+  // snapshot.  Publishing that empty state into the connection-wide cache can
+  // make later rapid-open tabs believe the directory loaded successfully and
+  // remain empty forever.
+  if (sourceState.loading) return null;
   if (!requestedPath) requestedPath = sourceState.path;
   if (!viewState) viewState = captureSftpViewState(tabKey);
   const now = Date.now();

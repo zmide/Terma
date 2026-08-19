@@ -447,7 +447,7 @@ function createCheckpointTransfers(dependencies: any) {
         level:"success",
         title:"跨主机复制已完成",
         message:`${job.source_connection_name} → ${job.connection_name} · ${job.source_paths.length} 项`,
-        action:{view:"sftp", connection_id:job.target_connection_id}
+        action:{view:"sftp", connection_id:job.target_connection_id, sftp_job_id:job.id}
       }, {cooldown_ms:0});
     } catch (error: any) {
       if (job.status === "paused" || job.status === "cancelled") return;
@@ -467,7 +467,7 @@ function createCheckpointTransfers(dependencies: any) {
         level:"error",
         title:"跨主机复制失败",
         message:`${job.source_connection_name} → ${job.connection_name}\n${job.error}`,
-        action:{view:"sftp", connection_id:job.target_connection_id}
+        action:{view:"sftp", connection_id:job.target_connection_id, sftp_job_id:job.id}
       }, {cooldown_ms:0});
     } finally {
       closeChannel(sourceChannel);

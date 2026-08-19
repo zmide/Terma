@@ -80,11 +80,25 @@ async function previewSftpImage(id, path) {
     let baseHeight = 1;
     if (isSvg) {
       const sanitizedRoot = sanitizeSftpSvgDocument(await blob.text());
+      const embeddedStyles = [...sanitizedRoot.querySelectorAll("style")]
+        .map(element => String(element.textContent || ""))
+        .filter(css => css.trim() && !sftpSvgHasUnsafeCssResource(css))
+        .join("\n");
       const viewBox = String(sanitizedRoot.getAttribute("viewBox") || "").trim().split(/[\s,]+/).map(Number);
-      const viewX = Number.isFinite(viewBox[0]) ? viewBox[0] : 0;
-      const viewY = Number.isFinite(viewBox[1]) ? viewBox[1] : 0;
-      const viewWidth = Number.isFinite(viewBox[2]) && viewBox[2] > 0 ? viewBox[2] : 1024;
-      const viewHeight = Number.isFinite(viewBox[3]) && viewBox[3] > 0 ? viewBox[3] : 768;
+      const sourceViewBoxValid = viewBox.length >= 4
+        && viewBox.slice(0, 4).every(Number.isFinite)
+        && viewBox[2] > 0
+        && viewBox[3] > 0;
+      const viewX = sourceViewBoxValid ? viewBox[0] : 0;
+      const viewY = sourceViewBoxValid ? viewBox[1] : 0;
+      const viewWidth = sourceViewBoxValid ? viewBox[2] : 1024;
+      const viewHeight = sourceViewBoxValid ? viewBox[3] : 768;
+      const coordinateExtent = String(sanitizedRoot.getAttribute("coordinateExtent") || "")
+        .trim().split(/[\s,]+/).map(Number);
+      const coordinateExtentValid = coordinateExtent.length >= 4
+        && coordinateExtent.slice(0, 4).every(Number.isFinite)
+        && coordinateExtent[2] > coordinateExtent[0]
+        && coordinateExtent[3] > coordinateExtent[1];
       baseWidth = sftpSvgNumericDimension(sanitizedRoot.getAttribute("width"), viewWidth);
       baseHeight = sftpSvgNumericDimension(sanitizedRoot.getAttribute("height"), viewHeight);
       if (!sanitizedRoot.getAttribute("height") && sanitizedRoot.getAttribute("width") && viewWidth > 0) baseHeight = baseWidth * viewHeight / viewWidth;
@@ -100,22 +114,42 @@ async function previewSftpImage(id, path) {
       root.setAttribute("overflow", "visible");
       const shadow = stage.attachShadow({mode:"open"});
       const previewStyle = document.createElement("style");
-      previewStyle.textContent = `.sftp-svg-search-current{filter:drop-shadow(0 0 4px #ff3158) drop-shadow(0 0 8px #ffd43b)}`;
+      // Chromium does not activate <style> nodes kept inside an imported SVG
+      // when that SVG is mounted in a ShadowRoot.  Hoist the already-sanitized
+      // rules into the shadow stylesheet so class-based strokes/fills and
+      // symbol overflow behave exactly like the source SVG.
+      previewStyle.textContent = `${embeddedStyles}\n.sftp-svg-search-current{filter:drop-shadow(0 0 4px #ff3158) drop-shadow(0 0 8px #ffd43b)}`;
       shadow.append(previewStyle, root);
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       try {
-        let contentBounds = null;
-        try {
-          contentBounds = root.getBBox({fill:true, stroke:true, markers:true, clipped:false});
-        } catch {
-          contentBounds = root.getBBox();
-        }
-        if (contentBounds && Number.isFinite(contentBounds.width) && contentBounds.width > 0 && contentBounds.height > 0) {
+        // Large diagram SVGs often contain thousands of <use>/<symbol> nodes.
+        // A full getBBox() walk is both slow and unreliable for those files;
+        // prefer the producer-provided coordinateExtent and keep one stable
+        // intrinsic size so fitting cannot repeatedly shrink the preview.
+        const useCount = root.querySelectorAll("use,symbol").length;
+        // A producer-provided viewBox is the authoritative drawing canvas.
+        // Chromium's getBBox() is not reliable for large <use>/<symbol>
+        // diagrams and can return a partial box, which makes the whole image
+        // appear shrunk or drops controls/lines.  Only measure simple SVGs
+        // that do not provide a valid viewBox of their own.
+        const shouldMeasureBounds = !sourceViewBoxValid
+          && blob.size < 1_500_000
+          && useCount < 120;
+        const contentBounds = shouldMeasureBounds
+          ? (() => {
+              try { return root.getBBox({fill:true, stroke:true, markers:true, clipped:false}); }
+              catch { try { return root.getBBox(); } catch { return null; } }
+            })()
+          : null;
+        const extent = coordinateExtentValid
+          ? {x:coordinateExtent[0], y:coordinateExtent[1], width:coordinateExtent[2] - coordinateExtent[0], height:coordinateExtent[3] - coordinateExtent[1]}
+          : contentBounds;
+        if (!sourceViewBoxValid && extent && Number.isFinite(extent.width) && extent.width > 0 && extent.height > 0) {
           const padding = Math.max(1, Math.min(viewWidth, viewHeight) * .01);
-          const minX = Math.min(viewX, contentBounds.x) - padding;
-          const minY = Math.min(viewY, contentBounds.y) - padding;
-          const maxX = Math.max(viewX + viewWidth, contentBounds.x + contentBounds.width) + padding;
-          const maxY = Math.max(viewY + viewHeight, contentBounds.y + contentBounds.height) + padding;
+          const minX = Math.min(viewX, extent.x) - padding;
+          const minY = Math.min(viewY, extent.y) - padding;
+          const maxX = Math.max(viewX + viewWidth, extent.x + extent.width) + padding;
+          const maxY = Math.max(viewY + viewHeight, extent.y + extent.height) + padding;
           const expandedWidth = Math.max(1, maxX - minX);
           const expandedHeight = Math.max(1, maxY - minY);
           if (expandedWidth > viewWidth * 1.002 || expandedHeight > viewHeight * 1.002 || minX < viewX || minY < viewY) {
@@ -147,6 +181,7 @@ async function previewSftpImage(id, path) {
     stage.style.height = `${baseHeight}px`;
     let scale = 1;
     let fitMode = true;
+    let suppressResizeUntil = 0;
     let svgMatches = [];
     let svgMatchIndex = -1;
     let svgSearchQuery = "";
@@ -177,6 +212,7 @@ async function previewSftpImage(id, path) {
       const availableWidth = Math.max(120, viewport.clientWidth - 28);
       const availableHeight = Math.max(120, viewport.clientHeight - 28);
       const nextScale = Math.min(1, availableWidth / baseWidth, availableHeight / baseHeight);
+      suppressResizeUntil = (typeof performance !== "undefined" ? performance.now() : Date.now()) + 180;
       updateZoom(Math.max(0.05, nextScale));
       requestAnimationFrame(() => {
         viewport.scrollLeft = Math.max(0, (viewport.scrollWidth - viewport.clientWidth) / 2);
@@ -213,25 +249,57 @@ async function previewSftpImage(id, path) {
         matchMarker.hidden = true;
         return;
       }
-      const bounds = svgElementDocumentBounds(svgMatches[svgMatchIndex]);
+      const current = svgMatches[svgMatchIndex];
+      const bounds = svgElementDocumentBounds(current);
       if (!bounds) return;
-      const centerX = (bounds.x + bounds.width / 2) * scale;
-      const centerY = (bounds.y + bounds.height / 2) * scale;
-      const markerSize = 18;
+      const left = bounds.x * scale;
+      const top = bounds.y * scale;
       matchMarker.hidden = false;
-      matchMarker.style.left = `${Math.max(0, centerX - markerSize / 2)}px`;
-      matchMarker.style.top = `${Math.max(0, centerY - markerSize / 2)}px`;
-      matchMarker.style.width = `${markerSize}px`;
-      matchMarker.style.height = `${markerSize}px`;
+      matchMarker.style.left = `${Math.max(0, left)}px`;
+      matchMarker.style.top = `${Math.max(0, top)}px`;
+      matchMarker.style.width = `${Math.max(6, bounds.width * scale)}px`;
+      matchMarker.style.height = `${Math.max(6, bounds.height * scale)}px`;
       matchMarker.dataset.match = `${svgMatchIndex + 1}/${svgMatches.length}`;
+      const tag = String(current.localName || current.tagName || "element").toLowerCase();
+      const id = String(current.getAttribute?.("id") || "").trim();
+      const compactNumber = value => Number.isFinite(value) ? Number(value.toFixed(2)).toString() : "?";
+      matchMarker.dataset.label = `${tag}${id ? `#${id}` : ""} ${compactNumber(bounds.width)} × ${compactNumber(bounds.height)}`;
+    };
+    const svgDrawableTags = new Set(["g", "use", "path", "polyline", "polygon", "line", "rect", "circle", "ellipse", "text", "image"]);
+    const svgGroupHasDrawable = group => [...group.querySelectorAll("use,path,polyline,polygon,line,rect,circle,ellipse,text,image")]
+      .some(node => !node.closest("defs"));
+    const svgSearchTarget = source => {
+      let fallbackGroup = null;
+      let current = source;
+      while (current && current !== root) {
+        const tag = String(current.tagName || "").toLowerCase();
+        if (tag === "g" && svgGroupHasDrawable(current)) {
+          if (!fallbackGroup) fallbackGroup = current;
+          if (current.hasAttribute("id")) return current;
+        }
+        current = current.parentElement;
+      }
+      if (fallbackGroup) return fallbackGroup;
+      const sourceTag = String(source?.tagName || "").toLowerCase();
+      return svgDrawableTags.has(sourceTag) && !source.closest("defs") ? source : null;
+    };
+    const svgSearchSourceText = element => {
+      const attributes = [...(element?.attributes || [])]
+        .map(attribute => `${attribute.name}=${attribute.value}`).join(" ");
+      const directText = [...(element?.childNodes || [])]
+        .filter(node => node.nodeType === Node.TEXT_NODE)
+        .map(node => node.textContent || "").join(" ");
+      return `${element?.tagName || ""} ${attributes} ${directText}`.toLowerCase();
     };
     const focusSvgMatch = element => {
       const bounds = svgElementDocumentBounds(element);
       if (!bounds) return;
       fitMode = false;
-      const targetScale = Math.max(0.05, Math.min(6,
-        (viewport.clientWidth * 0.55) / Math.max(bounds.width, 24),
-        (viewport.clientHeight * 0.55) / Math.max(bounds.height, 24)
+      const contextWidth = Math.max(720, bounds.width * 3);
+      const contextHeight = Math.max(300, bounds.height * 3);
+      const targetScale = Math.max(0.05, Math.min(4,
+        (viewport.clientWidth * 0.86) / contextWidth,
+        (viewport.clientHeight * 0.78) / contextHeight
       ));
       updateZoom(targetScale);
       requestAnimationFrame(() => {
@@ -251,17 +319,25 @@ async function previewSftpImage(id, path) {
         svgMatchIndex = -1;
         svgSearchQuery = "";
         $("sftpSvgSearchCount").textContent = "";
+        matchMarker.hidden = true;
+        fit();
         return;
       }
       if (query !== svgSearchQuery) {
         svgSearchQuery = query;
         svgMatchIndex = -1;
-        const candidates = [root, ...root.querySelectorAll("*")];
-        svgMatches = candidates.filter(element => {
-          const attributes = [...element.attributes].map(attribute => `${attribute.name}=${attribute.value}`).join(" ");
-          const directText = [...element.childNodes].filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent || "").join(" ");
-          return `${element.tagName} ${attributes} ${directText}`.toLowerCase().includes(query);
-        });
+        const targets = new Set();
+        const exactTargets = new Set();
+        for (const source of root.querySelectorAll("*")) {
+          if (source.closest("defs") || !svgSearchSourceText(source).includes(query)) continue;
+          const sourceTag = String(source.localName || source.tagName || "").toLowerCase();
+          if (source.closest("metadata") && /(?:glink_ref|layer_ref)$/.test(sourceTag)) continue;
+          const target = svgSearchTarget(source);
+          if (!target) continue;
+          targets.add(target);
+          if (String(target.getAttribute("id") || "").trim().toLowerCase() === query) exactTargets.add(target);
+        }
+        svgMatches = [...(exactTargets.size ? exactTargets : targets)];
       }
       if (!svgMatches.length) {
         svgMatchIndex = -1;
@@ -326,6 +402,7 @@ async function previewSftpImage(id, path) {
       if (Math.abs(width - observedWidth) < 2 && Math.abs(height - observedHeight) < 2) return;
       observedWidth = width;
       observedHeight = height;
+      if ((typeof performance !== "undefined" ? performance.now() : Date.now()) < suppressResizeUntil) return;
       if (resizeFrame) cancelAnimationFrame(resizeFrame);
       resizeFrame = requestAnimationFrame(() => {
         resizeFrame = 0;
@@ -375,6 +452,8 @@ async function previewSftpImage(id, path) {
 }
 
 async function previewSftpText(id, path) {
+  const editorKey = typeof sftpTextEditorOpenKey === "function" ? sftpTextEditorOpenKey(id, path) : "";
+  if (editorKey && typeof activateSftpTextEditor === "function" && activateSftpTextEditor(editorKey)) return;
   try {
     const editorConnection = connections.find(item => Number(item.id) === Number(id));
     let requestedEncoding = "";
@@ -384,6 +463,7 @@ async function previewSftpText(id, path) {
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       if (data.is_cancelled?.()) return;
       const editorPromise = sftpTextModal(path, data.content || "", data.size || 0, data.limit || 50*1024*1024, data.encoding || "utf8", data.preferred_encoding || "auto", {
+        editorKey,
         editorKind:data.editor_kind || "ace",
         lineCount:data.line_count,
         lineEnding:data.line_ending,

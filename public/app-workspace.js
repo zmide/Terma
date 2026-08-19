@@ -24,6 +24,10 @@ let operationPanePinGuideShown = false;
 let mobilePaneView = "explorer";
 let responsiveLayoutMobile = isMobileLayout();
 
+function setActivityRenderPending(pending) {
+  document.querySelector(".activity")?.classList.toggle("activity-render-pending", Boolean(pending));
+}
+
 function clampActivityBarWidth(value) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return ACTIVITY_BAR_WIDTH_DEFAULT;
@@ -868,6 +872,7 @@ function showPrimary(name, togglePane=false) {
     ? (name === primaryView ? !operationPaneCollapsed : false)
     : operationPaneCollapsed;
   primaryView = name;
+  setActivityRenderPending(true);
   $("navConnections").classList.toggle("active", name === "connections");
   $("navRemote")?.classList.toggle("active", name === "remote");
   $("navImport").classList.toggle("active", name === "import");
@@ -899,10 +904,11 @@ function showPrimary(name, togglePane=false) {
       if (!mobile && activeView !== "import") showImport();
       else if (!mobile) showImportSection(activeImportSection, {moveToWorkspace:false});
     } else if (name === "command") {
-      renderCommandTemplates().catch(e=>notify(e.message,"error"));
+      renderCommandTemplates({reload:false}).catch(e=>notify(e.message,"error"));
       if (!mobile) openBatchCommand();
     } else if (!mobile && activeView !== "settings") openSettings();
     else if (!mobile) showSettingsSection(activeSettingsSection, {moveToWorkspace:false});
+    setActivityRenderPending(false);
     return;
   }
   primaryViewRenderFrame = requestAnimationFrame(() => {
@@ -918,6 +924,7 @@ function showPrimary(name, togglePane=false) {
       } else {
         renderConnections();
       }
+      setActivityRenderPending(false);
     });
   });
 }

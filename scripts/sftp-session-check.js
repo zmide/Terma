@@ -88,12 +88,17 @@ async function main() {
     assert.deepEqual(await runLargeCommand(session.spawnSftpSessionCommand, connection), largeOutput);
     await new Promise(resolve => setTimeout(resolve, 50));
     assert.deepEqual(await runLargeCommand(session.spawnSftpSessionCommand, connection), largeOutput);
+    const burstOutputs = await Promise.all(
+      Array.from({length:24}, (_, index) => runCommand(session.spawnSftpSessionCommand, connection, `burst-${index}`))
+    );
+    assert.equal(burstOutputs.length, 24, "parallel SFTP commands must all complete");
+    assert.ok(burstOutputs.every(value => /^command-\d+$/.test(value)), "parallel SFTP commands must keep their output intact");
     assert.equal(connections, 1, "commands in one SFTP workspace should reuse the SSH2 transport");
     assert.equal(session.sftpSessionStatus(connection.id).connected, true);
 
     session.disconnectSftpSession(connection.id, {remember:true});
     assert.equal(session.sftpSessionStatus(connection.id).connected, false);
-    assert.equal(await runCommand(session.spawnSftpSessionCommand, connection, "after-drop"), "command-5");
+    assert.match(await runCommand(session.spawnSftpSessionCommand, connection, "after-drop"), /^command-\d+$/);
     assert.equal(connections, 2, "the next SFTP operation should transparently reconnect after a manual disconnect");
     assert.equal(session.sftpSessionStatus(connection.id).connected, true);
     console.log("Persistent SFTP session check passed.");

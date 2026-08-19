@@ -203,6 +203,22 @@ function syncTermaAceLocalization(root=document) {
 
 if (typeof registerTermaI18nRenderer === "function") registerTermaI18nRenderer(() => syncTermaAceLocalization());
 
+const sftpFloatingEditorRegistry = new Map();
+
+function sftpTextEditorOpenKey(connectionId, remotePath) {
+  const normalizedPath = typeof normalizeSftpDirectoryCachePath === "function"
+    ? normalizeSftpDirectoryCachePath(remotePath)
+    : String(remotePath || ".").replace(/\\/g, "/").replace(/\/+$/, "") || ".";
+  return `${Number(connectionId || 0)}\0${normalizedPath}`;
+}
+
+function activateSftpTextEditor(editorKey) {
+  const record = sftpFloatingEditorRegistry.get(String(editorKey || ""));
+  if (!record) return false;
+  record.restore?.();
+  return true;
+}
+
 function sftpFloatingEditorLayer() {
   let layer = document.querySelector(".sftp-editor-floating-root");
   if (layer) return layer;
@@ -249,6 +265,8 @@ function sftpFloatingEditorShelfItem(layer, metadata, restore) {
 }
 
 function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8", preferredEncoding="auto", diffOptions={}) {
+  const editorKey = String(diffOptions.editorKey || "");
+  if (editorKey && activateSftpTextEditor(editorKey)) return Promise.resolve(null);
   return new Promise((resolve) => {
     const floatingLayer = sftpFloatingEditorLayer();
     const modal = document.createElement("div");
@@ -257,10 +275,13 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     const sourceLabel = String(diffOptions.sourceLabel || [serverName, title].filter(Boolean).join(" · "));
     modal.className = "sftp-editor-floating-window";
     modal.dataset.editorId = `sftp-editor-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    modal.dataset.editorKey = editorKey;
     modal.dataset.fileName = fileName;
     modal.dataset.serverName = serverName;
     modal.dataset.sourceLabel = sourceLabel;
     floatingLayer.appendChild(modal);
+    const editorRecord = editorKey ? {modal, restore:() => {}} : null;
+    if (editorRecord) sftpFloatingEditorRegistry.set(editorKey, editorRecord);
     refreshSftpFloatingEditorShelfLabels(floatingLayer);
     const detectedLanguage = sftpEditorLanguageForFile(title);
     const unixScript = isSftpUnixScript(title, content);
@@ -322,6 +343,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
           focusEditor();
         });
       };
+      if (editorRecord) editorRecord.restore = restoreFloatingEditor;
       minimizeButton.onclick = event => {
         event.stopPropagation();
         card.hidden = true;
@@ -330,8 +352,8 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       };
       const clampCard = () => {
         if (card.hidden || card.classList.contains("is-fullscreen")) return;
-        card.style.transform = "none";
         const rect = card.getBoundingClientRect();
+        card.style.transform = "none";
         const left = Math.max(8, Math.min(window.innerWidth - Math.min(rect.width, window.innerWidth - 16) - 8, rect.left));
         const top = Math.max(8, Math.min(window.innerHeight - Math.min(rect.height, window.innerHeight - 16) - 8, rect.top));
         card.style.left = `${left}px`;
@@ -608,6 +630,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       document.removeEventListener("keydown", onModalKeyDown, true);
       releaseEditorLayout();
       releaseFloatingEditor();
+      if (editorKey && sftpFloatingEditorRegistry.get(editorKey)?.modal === modal) sftpFloatingEditorRegistry.delete(editorKey);
       try { aceEditor?.destroy(); } catch {}
       lightSource = "";
       lightPageEdits.clear();

@@ -29,6 +29,16 @@ function localizedConfigSnapshotReason(reason) {
 
 function showImport(updateTab=true) {
   const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
+  const existingView = $("view-import");
+  if (existingView?.querySelector("#importMainPanel")) {
+    setWorkspace(tr("navigation:auto.import_export", {defaultValue:"导入导出"}), tr("settings:auto.import_migration", {defaultValue:"迁移 SSH config、数据库备份和连接配置快照。"}), "import", "import", updateTab, true, {kind:"import"});
+    renderBackupControls();
+    renderLegacyBrandMigration();
+    showImportSection(activeImportSection, {moveToWorkspace:false});
+    void renderConfigSnapshots();
+    void loadSecuritySettings().then(() => inPane(renderBackupControls)).catch(() => {});
+    return;
+  }
   $("view-import").innerHTML = $("importTpl").innerHTML;
   refreshIcons();
   setWorkspace(tr("navigation:auto.import_export", {defaultValue:"导入导出"}), tr("settings:auto.import_migration", {defaultValue:"迁移 SSH config、数据库备份和连接配置快照。"}), "import", "import", updateTab, true, {kind:"import"});

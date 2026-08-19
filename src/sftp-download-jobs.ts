@@ -122,6 +122,7 @@ function createSftpDownloadJobs(dependencies: any) {
     return {
       view:"sftp",
       connection_id:job.connection_id,
+      sftp_job_id:job.id,
       download_job_id:job.id,
       can_open_file:savedFile,
       can_open_directory:hasSavedPath,
@@ -247,7 +248,7 @@ function createSftpDownloadJobs(dependencies: any) {
           level:"error",
           title:"SFTP 下载到本机失败",
           message:`${current.connection_name} · ${current.label}\n${current.error}`,
-          action:{view:"sftp", connection_id:current.connection_id}
+          action:{view:"sftp", connection_id:current.connection_id, sftp_job_id:current.id}
         }, {cooldown_ms:0});
       }
     }, {phase:"local-saving", current:"正在下载到本机"});
@@ -389,7 +390,7 @@ function createSftpDownloadJobs(dependencies: any) {
                 ? (status === "done" ? "SFTP 打包下载已完成" : "SFTP 打包下载失败")
                 : (status === "done" ? "SFTP 下载已完成" : "SFTP 下载失败"),
               message:`${status === "done" ? downloadCompletionMessage(job) : `${job.connection_name} · ${job.label}`}${job.warning ? `\n${job.warning}` : ""}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}${job.error ? `\n${job.error}` : ""}`,
-              action:status === "done" ? downloadCompletionAction(job) : {view:"sftp", connection_id:job.connection_id}
+              action:status === "done" ? downloadCompletionAction(job) : {view:"sftp", connection_id:job.connection_id, sftp_job_id:job.id}
             }, {cooldown_ms:0});
           }
         };
@@ -479,7 +480,7 @@ function createSftpDownloadJobs(dependencies: any) {
         job.finished_at = Date.now();
         releaseTransferSlot(job);
         persistJobs(true);
-        notifyEvent({type:"sftp", level:"error", title:"SFTP 下载失败", message:`${job.connection_name} · ${job.label}\n${job.error}`, action:{view:"sftp", connection_id:job.connection_id}}, {cooldown_ms:0});
+        notifyEvent({type:"sftp", level:"error", title:"SFTP 下载失败", message:`${job.connection_name} · ${job.label}\n${job.error}`, action:{view:"sftp", connection_id:job.connection_id, sftp_job_id:job.id}}, {cooldown_ms:0});
       }
     })();
   }
@@ -610,7 +611,7 @@ function createSftpDownloadJobs(dependencies: any) {
       level:"error",
       title:"SFTP 打包下载失败",
       message:`${job.connection_name} · ${job.label}\n${job.error}`,
-      action:{view:"sftp", connection_id:job.connection_id}
+      action:{view:"sftp", connection_id:job.connection_id, sftp_job_id:job.id}
     }, {cooldown_ms:0});
   }
 

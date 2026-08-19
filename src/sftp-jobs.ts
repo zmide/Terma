@@ -358,7 +358,7 @@ function startSftpJob(connectionId, type, command, label, options: any = {}) {
       level: status === "done" ? "success" : "error",
       title: status === "done" ? "SFTP 任务已完成" : "SFTP 任务失败",
       message: `${job.connection_name} · ${job.label}${job.error ? `\n${job.error}` : ""}`,
-      action: { view: "sftp", connection_id: job.connection_id }
+      action: { view: "sftp", connection_id: job.connection_id, sftp_job_id: job.id }
     }, { cooldown_ms: 0 });
   };
   child.on("error", (error) => finish("failed", error.message));
@@ -505,7 +505,7 @@ function deletePathsJob(connectionId, paths, recycleEnabled = false) {
       level: status === "done" ? "success" : "error",
       title: status === "done" ? "SFTP 删除已完成" : "SFTP 删除失败",
       message: `${job.connection_name} · ${job.label}${partial}${job.error ? `\n${job.error}` : ""}`,
-      action: { view: "sftp", connection_id: job.connection_id }
+      action: { view: "sftp", connection_id: job.connection_id, sftp_job_id: job.id }
     }, { cooldown_ms: 0 });
   };
   child.stdout.on("data", (chunk) => {

@@ -391,8 +391,78 @@ function saveLogState() {
 }
 
 const toastTimers = new Map();
+const toastTimerState = new Map();
+const toastPauseReasons = new WeakMap();
 let toastSequence = 0;
 let toastLayoutFrame = 0;
+
+function clearToastDismissTimer(toast) {
+  const toastId = toast?.dataset?.toastId || "";
+  if (!toastId) return;
+  clearTimeout(toastTimers.get(toastId));
+  toastTimers.delete(toastId);
+  toastTimerState.delete(toastId);
+  toastPauseReasons.delete(toast);
+}
+
+function toastDismissPaused(toast) {
+  return Boolean(toastPauseReasons.get(toast)?.size);
+}
+
+function scheduleToastDismiss(toast, delayMs) {
+  const toastId = toast?.dataset?.toastId || "";
+  if (!toastId) return;
+  const delay = Math.max(0, Number(delayMs) || 0);
+  clearTimeout(toastTimers.get(toastId));
+  toastTimerState.set(toastId, {remaining:delay, startedAt:Date.now()});
+  if (toastDismissPaused(toast)) return;
+  toastTimers.set(toastId, setTimeout(() => {
+    toastTimers.delete(toastId);
+    toastTimerState.delete(toastId);
+    dismissToast(toast);
+  }, delay));
+}
+
+function pauseToastDismiss(toast, reason) {
+  const toastId = toast?.dataset?.toastId || "";
+  if (!toastId || !reason) return;
+  let reasons = toastPauseReasons.get(toast);
+  if (!reasons) {
+    reasons = new Set();
+    toastPauseReasons.set(toast, reasons);
+  }
+  if (reasons.has(reason)) return;
+  const wasPaused = reasons.size > 0;
+  reasons.add(reason);
+  if (wasPaused) return;
+  const state = toastTimerState.get(toastId);
+  if (!state) return;
+  const elapsed = Math.max(0, Date.now() - Number(state.startedAt || Date.now()));
+  state.remaining = Math.max(120, Number(state.remaining || 0) - elapsed);
+  clearTimeout(toastTimers.get(toastId));
+  toastTimers.delete(toastId);
+}
+
+function resumeToastDismiss(toast, reason) {
+  const reasons = toastPauseReasons.get(toast);
+  if (!reasons?.has(reason)) return;
+  reasons.delete(reason);
+  if (reasons.size) return;
+  toastPauseReasons.delete(toast);
+  const toastId = toast?.dataset?.toastId || "";
+  const state = toastTimerState.get(toastId);
+  if (state) scheduleToastDismiss(toast, Math.max(120, Number(state.remaining || 0)));
+}
+
+function wireToastInteractionPause(toast) {
+  if (!toast) return;
+  toast.addEventListener("pointerenter", () => pauseToastDismiss(toast, "pointer"));
+  toast.addEventListener("pointerleave", () => resumeToastDismiss(toast, "pointer"));
+  toast.addEventListener("focusin", () => pauseToastDismiss(toast, "focus"));
+  toast.addEventListener("focusout", () => queueMicrotask(() => {
+    if (!toast.contains(document.activeElement)) resumeToastDismiss(toast, "focus");
+  }));
+}
 
 function notificationDisplayPreferences() {
   const saved = typeof runtimeSettings !== "undefined" ? runtimeSettings?.saved?.notification_display : null;
@@ -492,9 +562,7 @@ function dismissToast(target) {
   }
   const toast = target instanceof Element ? target.closest(".toast") : null;
   if (!toast || toast.classList.contains("is-leaving")) return;
-  const toastId = toast.dataset.toastId || "";
-  clearTimeout(toastTimers.get(toastId));
-  toastTimers.delete(toastId);
+  clearToastDismissTimer(toast);
   toast.classList.add("is-leaving");
   const finish = () => removeToastElement(toast);
   if (prefersReducedToastMotion() || typeof toast.animate !== "function") return finish();
@@ -545,6 +613,7 @@ function notify(text, type="info", options={}) {
       });
     });
     stack.appendChild(toast);
+    wireToastInteractionPause(toast);
     if (!prefersReducedToastMotion() && typeof toast.animate === "function") {
       toast.animate(
         [
@@ -554,7 +623,7 @@ function notify(text, type="info", options={}) {
         {duration:240, easing:"cubic-bezier(.2,.8,.2,1)"}
       );
     }
-    toastTimers.set(toastId, setTimeout(() => dismissToast(toast), preference.duration_ms));
+    scheduleToastDismiss(toast, preference.duration_ms);
     syncToastStackLayout();
   }
 }
@@ -637,7 +706,7 @@ function createProgressToast(options={}) {
       track.setAttribute("aria-valuenow", "100");
       bar.style.width = "100%";
       const duration = preference.success_duration_ms === null ? linger : preference.success_duration_ms;
-      toastTimers.set(toastId, setTimeout(() => dismissToast(toast), duration));
+      scheduleToastDismiss(toast, duration);
     },
     fail(message="") {
       if (settled) return;
@@ -649,7 +718,7 @@ function createProgressToast(options={}) {
       detail.hidden = false;
       actions.hidden = true;
       track.hidden = true;
-      toastTimers.set(toastId, setTimeout(() => dismissToast(toast), preference.error_duration_ms));
+      scheduleToastDismiss(toast, preference.error_duration_ms);
     },
     dismiss() {
       if (!settled && typeof options.onCancel === "function") options.onCancel();
@@ -670,6 +739,7 @@ function createProgressToast(options={}) {
   cancelButton.addEventListener("click", () => controller.dismiss());
   toast.querySelector(".toast-progress-close").addEventListener("click", () => controller.dismiss());
   stack.appendChild(toast);
+  wireToastInteractionPause(toast);
   controller.update({progress:options.progress});
   syncToastStackLayout();
   return controller;
@@ -724,6 +794,10 @@ function currentNotificationLanguage() {
 async function handleNotificationEvent(event, options={}) {
   if (!event || typeof event !== "object") return;
   lastNotificationId = Math.max(lastNotificationId, Number(event.id || 0));
+  if (event.type === "sftp" && (event.action?.sftp_job_id || event.action?.download_job_id) && ["success", "error"].includes(String(event.level || ""))) {
+    if (typeof settleSftpJobFromNotification === "function") settleSftpJobFromNotification(event);
+    if (typeof refreshSftpJobs === "function") void refreshSftpJobs().catch(() => {});
+  }
   if (event.type === "update" && typeof loadCachedUpdateStatus === "function") await loadCachedUpdateStatus();
   const ignoredUpdate = event.type === "update" && updateSettings?.update_ignored;
   const allowed = !["off", "muted"].includes(securitySettings?.notification_mode);
