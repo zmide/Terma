@@ -322,6 +322,26 @@ export function createConnectionRepository(dependencies: ConnectionRepositoryDep
     return { ok:true, groups:requested.length };
   }
 
+  function reorderConnections(groupName: unknown, connectionIds: unknown[]) {
+    const group = String(groupName || "").trim();
+    if (!group || group.length > 100) throw new Error("分组名称长度必须在 1-100 个字符之间");
+    const requested = [...new Set((connectionIds || []).map(Number).filter(id => Number.isInteger(id) && id > 0))];
+    if (!requested.length || requested.length > 500) throw new Error("服务器顺序必须包含 1-500 个 SSH 连接");
+    const active = all("SELECT id FROM connections WHERE group_name=? ORDER BY sort_order,created_at,id", [group]).map(row => Number(row.id));
+    if (requested.length !== active.length || active.some(id => !requested.includes(id))) throw new Error("服务器列表已变化，请刷新后重试");
+    dependencies.exec("BEGIN IMMEDIATE");
+    try {
+      requested.forEach((id, index) => {
+        run("UPDATE connections SET sort_order=?,updated_at=? WHERE id=? AND group_name=?", [index + 1, now(), id, group]);
+      });
+      dependencies.exec("COMMIT");
+    } catch (error) {
+      dependencies.exec("ROLLBACK");
+      throw error;
+    }
+    return { ok:true, connections:requested.length };
+  }
+
   return {
     listConnections,
     getConnection,
@@ -339,6 +359,7 @@ export function createConnectionRepository(dependencies: ConnectionRepositoryDep
     updateSftpFilenameEncoding,
     bulkUpdateConnections,
     renameConnectionGroup,
-    reorderConnectionGroups
+    reorderConnectionGroups,
+    reorderConnections
   };
 }

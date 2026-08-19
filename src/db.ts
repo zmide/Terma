@@ -104,6 +104,7 @@ function updateSftpFilenameEncoding(id, value) { return connectionRepository.upd
 function bulkUpdateConnections(connectionIds, changes = {}) { return connectionRepository.bulkUpdateConnections(connectionIds, changes); }
 function renameConnectionGroup(currentName, nextName) { return connectionRepository.renameConnectionGroup(currentName, nextName); }
 function reorderConnectionGroups(names) { return connectionRepository.reorderConnectionGroups(names); }
+function reorderConnections(groupName, ids) { return connectionRepository.reorderConnections(groupName, ids); }
 function deleteConnection(id, stopForward) { return connectionRepository.deleteConnection(id, stopForward); }
 
 function insertForward(connectionId, data) { return forwardRepository.insertForward(connectionId, data); }
@@ -144,7 +145,7 @@ function duplicateNamedWorkspace(id) { return productivityRepository.duplicateNa
 function useNamedWorkspace(id) { return productivityRepository.useNamedWorkspace(id); }
 function deleteNamedWorkspace(id) { return productivityRepository.deleteNamedWorkspace(id); }
 
-const { exportConfigSnapshot, restoreConfigSnapshot } = createConfigSnapshotService({cleanRemoteProfile});
+const { exportConfigSnapshot, restoreConfigSnapshot } = createConfigSnapshotService({cleanRemoteProfile, cleanForward});
 
 ensureBuiltinForwardTemplates();
 
@@ -200,6 +201,7 @@ module.exports = {
   bulkUpdateConnections,
   renameConnectionGroup,
   reorderConnectionGroups,
+  reorderConnections,
   encryptStoredConnectionSecrets,
   decryptStoredConnectionSecrets,
   insertForward,

@@ -33,6 +33,27 @@ function quickPanelConnectionItem(connection) {
   };
 }
 
+function quickPanelForwardItem(connection, forward) {
+  const accessUrl = typeof quickForwardAccessUrl === "function" ? quickForwardAccessUrl(forward) : "";
+  const status = typeof quickForwardStatusLabel === "function" ? quickForwardStatusLabel(forward) : String(forward.status || "");
+  const rule = typeof quickForwardRuleText === "function" ? quickForwardRuleText(forward) : `${forward.bind_host}:${forward.bind_port}`;
+  const name = typeof quickForwardName === "function" ? quickForwardName(forward) : String(forward.service_name || "Forwarding");
+  const active = typeof quickForwardIsActive === "function" ? quickForwardIsActive(forward) : ["running", "reconnecting"].includes(String(forward.status || ""));
+  const toggleLabel = active
+    ? tr("connections:quick_open.stop_forward", {defaultValue:"停止转发"})
+    : tr("connections:quick_open.start_forward", {defaultValue:"启动转发"});
+  return {
+    kind:"forward",
+    icon:"route",
+    title:name,
+    detail:`${connection.name} · ${rule} · ${status}${accessUrl ? ` · ${accessUrl}` : ""}`,
+    search:typeof quickForwardSearchText === "function" ? quickForwardSearchText(connection, forward) : productivitySearchText(connection.name, connection.ssh_host, name, rule, status, accessUrl),
+    connection,
+    forward,
+    run:()=>openForwards(connection.id)
+  };
+}
+
 function quickPanelItems(query="") {
   const needle = String(query || "").trim().toLowerCase();
   const matches = item => !needle || productivitySearchText(item.title, item.detail, item.search).includes(needle);
@@ -87,6 +108,7 @@ function quickPanelItems(query="") {
     || Number(left.sort_order || 0) - Number(right.sort_order || 0)
   )) {
     if (!exactIds.has(Number(connection.id))) items.push(quickPanelConnectionItem(connection));
+    for (const forward of connection.forwards || []) items.push(quickPanelForwardItem(connection, forward));
   }
   for (const profile of [...remoteProfiles].sort((left, right) =>
     Number(right.favorite || 0) - Number(left.favorite || 0)
@@ -171,6 +193,15 @@ function ensureQuickPanel() {
   panel.addEventListener("pointerdown", event => {
     if (event.target === panel) closeQuickPanel();
   });
+  panel.querySelector("#quickPanelResults")?.addEventListener("pointermove", event => {
+    const item = event.target.closest?.(".quick-result[data-index]");
+    if (!item) return;
+    const index = Number(item.dataset.index);
+    if (Number.isInteger(index) && productivityState.quickIndex !== index) {
+      productivityState.quickIndex = index;
+      renderQuickPanel(input?.value || "", false);
+    }
+  });
   return panel;
 }
 
@@ -209,18 +240,23 @@ function renderQuickPanel(query="", reset=true) {
   productivityState.quickIndex = Math.min(productivityState.quickIndex, Math.max(0, productivityState.quickItems.length - 1));
   const results = panel.querySelector("#quickPanelResults");
   results.innerHTML = productivityState.quickItems.length ? productivityState.quickItems.map((item, index) => {
-    const actions = item.connection ? `<span class="quick-result-actions">
-      <button title="${escAttr(tr("common:command_palette.open_terminal", {defaultValue:"打开终端"}))}" aria-label="${escAttr(tr("common:command_palette.open_terminal", {defaultValue:"打开终端"}))}" onclick="event.stopPropagation();closeQuickPanel();runAppAction('connection.terminal',{connectionId:${Number(item.connection.id)}})">${icon("square-terminal")}</button>
-      <button title="${escAttr(tr("common:command_palette.open_sftp", {defaultValue:"打开 SFTP"}))}" aria-label="${escAttr(tr("common:command_palette.open_sftp", {defaultValue:"打开 SFTP"}))}" onclick="event.stopPropagation();closeQuickPanel();runAppAction('connection.sftp',{connectionId:${Number(item.connection.id)}})">${icon("folder-open")}</button>
-      <button title="${escAttr(tr("common:command_palette.manage_forwards", {defaultValue:"管理转发"}))}" aria-label="${escAttr(tr("common:command_palette.manage_forwards", {defaultValue:"管理转发"}))}" onclick="event.stopPropagation();closeQuickPanel();runAppAction('connection.forwards',{connectionId:${Number(item.connection.id)}})">${icon("route")}</button>
-    </span>` : item.remoteProfile ? (() => {
+    const actions = item.kind === "connection" ? `<span class="quick-result-actions">
+      <button data-action="quick-panel-connection-terminal" data-connection-id="${Number(item.connection.id)}" title="${escAttr(tr("common:command_palette.open_terminal", {defaultValue:"打开终端"}))}" aria-label="${escAttr(tr("common:command_palette.open_terminal", {defaultValue:"打开终端"}))}">${icon("square-terminal")}</button>
+      <button data-action="quick-panel-connection-sftp" data-connection-id="${Number(item.connection.id)}" title="${escAttr(tr("common:command_palette.open_sftp", {defaultValue:"打开 SFTP"}))}" aria-label="${escAttr(tr("common:command_palette.open_sftp", {defaultValue:"打开 SFTP"}))}">${icon("folder-open")}</button>
+      <button data-action="quick-panel-connection-forward" data-connection-id="${Number(item.connection.id)}" title="${escAttr(tr("common:command_palette.manage_forwards", {defaultValue:"管理转发"}))}" aria-label="${escAttr(tr("common:command_palette.manage_forwards", {defaultValue:"管理转发"}))}">${icon("route")}</button>
+    </span>` : item.kind === "forward" ? (() => {
+      const active = typeof quickForwardIsActive === "function" ? quickForwardIsActive(item.forward) : ["running", "reconnecting"].includes(String(item.forward.status || ""));
+      const accessUrl = typeof quickForwardAccessUrl === "function" ? quickForwardAccessUrl(item.forward) : "";
+      const toggleLabel = active ? tr("connections:quick_open.stop_forward", {defaultValue:"停止转发"}) : tr("connections:quick_open.start_forward", {defaultValue:"启动转发"});
+      return `<span class="quick-result-actions">${accessUrl ? `<a href="${escAttr(accessUrl)}" target="_blank" rel="noopener" data-action="quick-panel-stop-propagation" title="${escAttr(tr("connections:quick_open.open_forward_url", {defaultValue:"打开访问地址"}))}" aria-label="${escAttr(tr("connections:quick_open.open_forward_url", {defaultValue:"打开访问地址"}))}">${icon("external-link")}</a>` : ""}<button data-action="quick-forward-toggle" data-forward-id="${Number(item.forward.id)}" title="${escAttr(toggleLabel)}" aria-label="${escAttr(toggleLabel)}">${icon(active ? "square" : "play")}</button><button data-action="quick-panel-forward-open" data-connection-id="${Number(item.connection.id)}" data-forward-id="${Number(item.forward.id)}" title="${escAttr(tr("connections:quick_open.open_forward", {defaultValue:"打开转发规则"}))}" aria-label="${escAttr(tr("connections:quick_open.open_forward", {defaultValue:"打开转发规则"}))}">${icon("route")}</button></span>`;
+    })() : item.remoteProfile ? (() => {
       const openLabel = typeof remoteProtocolAction === "function"
         ? remoteProtocolAction(item.remoteProfile.protocol)
         : tr("common:auto.open", {defaultValue:"打开"});
-      return `<span class="quick-result-actions"><button title="${escAttr(openLabel)}" aria-label="${escAttr(openLabel)}" onclick="event.stopPropagation();runQuickPanelItem(${index})">${icon(REMOTE_PROTOCOL_META[item.remoteProfile.protocol]?.icon || "plug")}</button><button title="${escAttr(tr("common:command_palette.edit_connection", {defaultValue:"编辑连接"}))}" aria-label="${escAttr(tr("common:command_palette.edit_connection", {defaultValue:"编辑连接"}))}" onclick="event.stopPropagation();closeQuickPanel();editRemoteProfile(${Number(item.remoteProfile.id)})">${icon("pencil")}</button></span>`;
+      return `<span class="quick-result-actions"><button data-action="quick-panel-run" data-index="${index}" title="${escAttr(openLabel)}" aria-label="${escAttr(openLabel)}">${icon(REMOTE_PROTOCOL_META[item.remoteProfile.protocol]?.icon || "plug")}</button><button data-action="quick-panel-remote-edit" data-remote-profile-id="${Number(item.remoteProfile.id)}" title="${escAttr(tr("common:command_palette.edit_connection", {defaultValue:"编辑连接"}))}" aria-label="${escAttr(tr("common:command_palette.edit_connection", {defaultValue:"编辑连接"}))}">${icon("pencil")}</button></span>`;
     })() : "";
     const accessibleLabel = [item.title, item.detail].filter(Boolean).join(" · ");
-    return `<div class="quick-result${index === productivityState.quickIndex ? " active" : ""}" role="option" aria-selected="${index === productivityState.quickIndex}" aria-label="${escAttr(accessibleLabel)}" title="${escAttr(accessibleLabel)}" data-i18n-skip data-index="${index}" onclick="runQuickPanelItem(${index})" onpointermove="productivityState.quickIndex=${index}">
+    return `<div class="quick-result${index === productivityState.quickIndex ? " active" : ""}" role="option" aria-selected="${index === productivityState.quickIndex}" aria-label="${escAttr(accessibleLabel)}" title="${escAttr(accessibleLabel)}" data-i18n-skip data-index="${index}" data-action="quick-panel-run">
       <span class="quick-result-icon">${icon(item.icon)}</span><span class="quick-result-copy"><strong>${esc(item.title)}</strong><small>${esc(item.detail || "")}</small></span>${actions}
     </div>`;
   }).join("") : stateView("empty", tr("common:auto.no_matches", {defaultValue:"没有匹配结果"}), tr("common:command_palette.try_another", {defaultValue:"换一个关键词试试。"}));
@@ -233,6 +269,35 @@ function runQuickPanelItem(index) {
   if (!item) return;
   closeQuickPanel();
   Promise.resolve(item.run()).catch(error => notify(error.message, "error"));
+}
+
+if (typeof registerTermaAction === "function") {
+  registerTermaAction("quick-panel-run", ({event, element}) => {
+    if (event.target.closest("button, a")) return;
+    event.stopPropagation();
+    runQuickPanelItem(Number(element.dataset.index));
+  });
+  registerTermaAction("quick-panel-connection-terminal", ({event, element}) => {
+    event.stopPropagation(); closeQuickPanel(); runAppAction("connection.terminal", {connectionId:Number(element.dataset.connectionId)});
+  });
+  registerTermaAction("quick-panel-connection-sftp", ({event, element}) => {
+    event.stopPropagation(); closeQuickPanel(); runAppAction("connection.sftp", {connectionId:Number(element.dataset.connectionId)});
+  });
+  registerTermaAction("quick-panel-connection-forward", ({event, element}) => {
+    event.stopPropagation(); closeQuickPanel(); runAppAction("connection.forwards", {connectionId:Number(element.dataset.connectionId)});
+  });
+  registerTermaAction("quick-panel-forward-open", ({event, element}) => {
+    event.stopPropagation();
+    closeQuickPanel();
+    const connectionId = Number(element.dataset.connectionId || 0);
+    const forwardId = Number(element.dataset.forwardId || 0);
+    openForwards(connectionId);
+    requestAnimationFrame(() => document.querySelector(`.forward-card[data-forward-id="${forwardId}"]`)?.scrollIntoView({block:"center", behavior:"smooth"}));
+  });
+  registerTermaAction("quick-panel-remote-edit", ({event, element}) => {
+    event.stopPropagation(); closeQuickPanel(); editRemoteProfile(Number(element.dataset.remoteProfileId));
+  });
+  registerTermaAction("quick-panel-stop-propagation", ({event}) => event.stopPropagation());
 }
 
 if (typeof registerTermaI18nRenderer === "function") {

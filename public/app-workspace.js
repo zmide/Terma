@@ -273,7 +273,7 @@ function workspaceTabPresentation(tab) {
       icon:`<span class="tab-kind-icon remote-desktop remote-protocol-${escAttr(inferredProtocol)}" aria-hidden="true">${icon("monitor")}<span class="tab-protocol-letter">${remoteDesktopProtocol.letter}</span></span>`
     };
   }
-  const remoteIcons = {"remote-terminal":"square-terminal", "remote-desktop":"monitor", ftp:"folder-sync", "local-files":"hard-drive"};
+  const remoteIcons = {"remote-terminal":"square-terminal", "remote-desktop":"monitor", ftp:"folder-sync", "local-files":"hard-drive", "forward-manager":"route"};
   if (remoteIcons[tab?.kind]) return {title, icon:`<span class="tab-kind-icon ${escAttr(tab.kind)}" aria-hidden="true">${icon(remoteIcons[tab.kind])}</span>`};
   if (!["terminal", "quick-terminal", "sftp"].includes(tab?.kind)) return {title, icon:""};
   const terminal = ["terminal", "quick-terminal"].includes(tab.kind);
@@ -292,6 +292,7 @@ function localizedWorkspaceTabTitle(tab) {
   if (tab?.kind === "import") return tr("navigation:auto.import_export", {defaultValue:"导入导出"});
   if (tab?.kind === "settings") return tr("settings:title", {defaultValue:"设置"});
   if (tab?.kind === "command") return tr("terminal:batch.title", {defaultValue:"批量执行"});
+  if (tab?.kind === "forward-manager") return tr("connections:forward_manager.title", {defaultValue:"转发列表"});
   const terminalMarker = /\s*·\s*(?:终端|Terminal)(?=\s*(?:#\d+|·|$))/i;
   const quickTerminalMarker = /\s*·\s*(?:快速终端|Quick terminal)(?=\s*(?:#\d+|·|$))/i;
   const editMarker = /\s*·\s*(?:编辑|Edit)$/i;
@@ -613,6 +614,7 @@ function renderTabContent(tab) {
   if (tab.kind === "terminal") return openTerminal(tab.id, false, tab.key, tab.title);
   if (tab.kind === "quick-terminal") return restoreQuickTerminalTab(tab);
   if (tab.kind === "forwards") return openForwards(tab.id, false);
+  if (tab.kind === "forward-manager") return openGlobalForwardManager(false);
   if (tab.kind === "edit") return editConnection(tab.id, false);
   if (tab.kind === "import") return showImport(false);
   if (tab.kind === "log") return openLog(tab.path, tab.title, false);
@@ -832,6 +834,7 @@ function syncWorkspaceDocumentTitle(title, subtitle, viewName, key=viewName, met
     "remote-terminal":tr("navigation:auto.terminal", {defaultValue:"终端"}),
     sftp:"SFTP",
     ftp:"FTP",
+    "forward-manager":tr("connections:forward_manager.title", {defaultValue:"转发列表"}),
     "remote-desktop":protocol || tr("remote:auto.remote_desktop", {defaultValue:"远程桌面"})
   }[kind] || "";
   const endpoint = workspaceDocumentEndpoint(subtitle || tab.subtitle || "");
@@ -919,6 +922,7 @@ function showPrimary(name, togglePane=false) {
       if (sequence !== primaryViewRenderSequence || primaryView !== name) return;
       if (name === "running") {
         renderRunningForwards();
+        if (!mobile && typeof openGlobalForwardManager === "function") openGlobalForwardManager(true);
       } else if (name === "logs") {
         renderLogs().catch(e=>notify(e.message,"error"));
       } else {
@@ -1072,9 +1076,10 @@ function renderExplorerTools() {
   }
   if (primaryView === "running") {
     tools.classList.add("compact-mode");
+    const manageLabel = tr("connections:forward_manager.manage_all", {defaultValue:"管理全部转发"});
     const refreshLabel = tr("common:auto.refresh_status", {defaultValue:"刷新状态"});
     const restoreLabel = tr("connections:auto.restore_forwards", {defaultValue:"恢复转发"});
-    tools.innerHTML = `<div class="explorer-action-strip two-actions running-explorer-actions"><button class="primary" data-action="workspace-running-refresh" title="${escAttr(refreshLabel)}" aria-label="${escAttr(refreshLabel)}">${icon("refresh-cw")}<span>${esc(refreshLabel)}</span></button><button data-action="workspace-forwards-restore" title="${escAttr(restoreLabel)}" aria-label="${escAttr(restoreLabel)}">${icon("history")}<span>${esc(restoreLabel)}</span></button></div>`;
+    tools.innerHTML = `<div class="explorer-action-strip running-explorer-actions"><button class="primary explorer-main-action" data-action="workspace-forward-manager-open" title="${escAttr(manageLabel)}" aria-label="${escAttr(manageLabel)}">${icon("route")}<span>${esc(manageLabel)}</span></button><button data-action="workspace-running-refresh" title="${escAttr(refreshLabel)}" aria-label="${escAttr(refreshLabel)}">${icon("refresh-cw")}<span>${esc(refreshLabel)}</span></button><button data-action="workspace-forwards-restore" title="${escAttr(restoreLabel)}" aria-label="${escAttr(restoreLabel)}">${icon("history")}<span>${esc(restoreLabel)}</span></button></div>`;
     return;
   }
   if (primaryView === "command") {
@@ -1284,6 +1289,7 @@ registerTermaAction("workspace-log-today", () => openTodaySystemLog());
 registerTermaAction("workspace-log-settings", () => showLogSettings());
 registerTermaAction("workspace-log-cleanup", ({event}) => showLogCleanupMenu(event));
 registerTermaAction("workspace-running-refresh", () => loadAll().then(renderRunningForwards));
+registerTermaAction("workspace-forward-manager-open", () => openGlobalForwardManager());
 registerTermaAction("workspace-forwards-restore", () => restoreForwards());
 registerTermaAction("workspace-batch-open", () => openBatchCommand());
 registerTermaAction("workspace-command-template-new", () => newCommandTemplate());

@@ -1057,6 +1057,43 @@ async function stopForward(id, options: any = {}) {
   return enqueueForwardOperation(id, () => stopForwardRuntime(id, options));
 }
 
+async function reconfigureForwardRuntime(id, applyConfiguration, restoreConfiguration) {
+  return enqueueForwardOperation(id, async () => {
+    const before = getForward(id);
+    const wasRunning = ["running", "reconnecting"].includes(String(before?.status || ""))
+      || Boolean(Number(before?.pid || 0));
+    if (!wasRunning) {
+      applyConfiguration();
+      return {ok:true, was_running:false, restarted:false, rolled_back:false};
+    }
+
+    await stopForwardRuntime(id, {preserveRestoreState:true});
+    let updated = false;
+    try {
+      applyConfiguration();
+      updated = true;
+      await performStartForwardInternal(id, {});
+      return {ok:true, was_running:true, restarted:true, rolled_back:false};
+    } catch (error) {
+      const applyError = error?.message || String(error);
+      let rollbackError = "";
+      try {
+        if (updated) restoreConfiguration();
+        await performStartForwardInternal(id, {});
+      } catch (rollbackFailure) {
+        rollbackError = rollbackFailure?.message || String(rollbackFailure);
+      }
+      const message = rollbackError
+        ? `新配置启动失败，旧配置也未能恢复：${applyError}\n恢复失败：${rollbackError}`
+        : `新配置启动失败，已恢复并重新启动旧配置：${applyError}`;
+      const reconfigurationError: any = new Error(message);
+      reconfigurationError.statusCode = 409;
+      reconfigurationError.code = rollbackError ? "FORWARD_RECONFIGURE_ROLLBACK_FAILED" : "FORWARD_RECONFIGURE_ROLLED_BACK";
+      throw reconfigurationError;
+    }
+  });
+}
+
 async function stopConnectionForwards(connectionId, options: any = {}) {
   const forwards = connectionForwards(connectionId);
   await Promise.all(forwards.map((forward) => stopForward(forward.id, options)));
@@ -1500,6 +1537,7 @@ module.exports = {
   buildTerminalCommand,
   startForward,
   stopForward,
+  reconfigureForwardRuntime,
   startConnectionForwards,
   stopConnectionForwards,
   stopAllForwards,

@@ -443,28 +443,17 @@ async function buildLinuxManagementFixture() {
 }
 
 async function buildForwardingFixture() {
-  primaryView = "connections";
+  primaryView = "running";
   renderExplorerTools();
   renderConnections();
-  openForwards(101, true);
-  const fields = {
-    forward_mode:"local",
-    forward_bind_host:"127.0.0.1",
-    forward_bind_port:"18080",
-    forward_target_host:"127.0.0.1",
-    forward_target_port:"8080",
-    forward_service_name:"运营控制台",
-    forward_service_type:"web",
-    forward_service_note:"仅本机访问",
-    forward_url_scheme:"http"
-  };
-  Object.entries(fields).forEach(([id, value]) => {
-    const field = document.getElementById(id);
-    if (field) field.value = value;
-  });
-  toggleForwardLabels();
+  globalForwardManagerState.groupMode = "ssh";
+  globalForwardManagerState.query = "";
+  globalForwardManagerState.status = "all";
+  globalForwardManagerState.connectionId = 0;
+  openGlobalForwardManager(true);
+  renderGlobalForwardManager();
   refreshIcons();
-  return {cards:document.querySelectorAll(".forward-card").length};
+  return {cards:document.querySelectorAll(".global-forward-card").length, groups:document.querySelectorAll(".global-forward-group").length};
 }
 
 async function capture(window, filename) {
@@ -489,7 +478,7 @@ async function capture(window, filename) {
       "desktop-remote.png":visibleView?.id === "view-remote-desktop" && Boolean(visibleView.querySelector(".vnc-connection-help-panel")),
       "desktop-sftp.png":visibleView?.id === "view-sftp" && visibleView.querySelectorAll(".sftp-row").length >= 5,
       "desktop-linux-management.png":visibleView?.id === "view-linux-desktop" && visibleView.querySelectorAll(".linux-desktop-card").length >= 6,
-      "desktop-forwarding.png":visibleView?.id === "view-forwards" && visibleView.querySelectorAll(".forward-card").length >= 3
+      "desktop-forwarding.png":visibleView?.id === "view-forward-manager" && visibleView.querySelectorAll(".global-forward-card").length >= 3 && Boolean(visibleView.querySelector(".global-forward-grouped-list"))
     }[${JSON.stringify(filename)}];
     return {
       title:document.title,
@@ -507,7 +496,7 @@ async function capture(window, filename) {
       icon:document.querySelector('.brand-mark')?.getAttribute('src') || ''
     };
   })()`);
-  if (audit.title !== "Terma" || audit.brand !== "Terma" || !audit.icon.includes("terma-icon")) {
+  if (!(audit.title === "Terma" || audit.title.endsWith(" · Terma")) || audit.brand !== "Terma" || !audit.icon.includes("terma-icon")) {
     throw new Error(`${filename} 品牌核对失败：${JSON.stringify(audit)}`);
   }
   if (audit.overflow) throw new Error(`${filename} 出现页面横向溢出：${JSON.stringify(audit)}`);

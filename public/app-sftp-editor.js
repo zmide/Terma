@@ -19,6 +19,10 @@ function sftpTextLineEnding(value) {
   return ["lf", "crlf", "cr"].includes(value) ? value : "lf";
 }
 
+function sftpTextLineEndingLabel(value) {
+  return sftpTextLineEndingOptions().find(([lineEnding]) => lineEnding === sftpTextLineEnding(value))?.[1] || String(value || "LF");
+}
+
 function isSftpUnixScript(title, content="") {
   const basename = String(title || "").replace(/\\/g, "/").split("/").pop().toLowerCase();
   if (/\.(?:sh|bash|zsh|ksh|dash|fish)$/.test(basename)) return true;
@@ -30,18 +34,20 @@ function prepareSftpEditorSave(title, content, encoding="utf8", lineEnding="lf")
   const originalContent = String(content || "");
   const originalEncoding = String(encoding || "utf8");
   const unixScript = isSftpUnixScript(title, originalContent);
-  const selectedLineEnding = unixScript ? "lf" : sftpTextLineEnding(lineEnding);
+  const selectedLineEnding = sftpTextLineEnding(lineEnding);
   let value = (unixScript ? originalContent.replace(/^\uFEFF/, "") : originalContent).replace(/\r\n|\r|\n/g, "\n");
   if (selectedLineEnding === "crlf") value = value.replace(/\n/g, "\r\n");
   else if (selectedLineEnding === "cr") value = value.replace(/\n/g, "\r");
-  if (unixScript && value && !value.endsWith("\n")) value += "\n";
+  const finalLineEnding = {lf:"\n", crlf:"\r\n", cr:"\r"}[selectedLineEnding];
+  if (unixScript && value && !value.endsWith(finalLineEnding)) value += finalLineEnding;
   const selectedEncoding = unixScript && originalEncoding === "utf8bom" ? "utf8" : originalEncoding;
   return {
     content:value,
     encoding:selectedEncoding,
     lineEnding:selectedLineEnding,
     unixScript,
-    changed:value !== originalContent || selectedEncoding !== originalEncoding || selectedLineEnding !== sftpTextLineEnding(lineEnding)
+    unsafeScriptLineEnding:unixScript && selectedLineEnding !== "lf",
+    changed:value !== originalContent || selectedEncoding !== originalEncoding
   };
 }
 
@@ -287,11 +293,10 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     const unixScript = isSftpUnixScript(title, content);
     const scriptNeedsFormatRepair = unixScript && Boolean(
       diffOptions.bom
-      || (diffOptions.lineEnding && diffOptions.lineEnding !== "lf")
       || (content && diffOptions.finalNewline === false)
     );
     if (unixScript && encoding === "utf8bom") encoding = "utf8";
-    const initialLineEnding = unixScript ? "lf" : sftpTextLineEnding(diffOptions.lineEnding || "lf");
+    const initialLineEnding = sftpTextLineEnding(diffOptions.lineEnding || "lf");
     const wrapEnabled = localStorage.getItem("sftpEditorWordWrap") !== "0";
     let versions = Array.isArray(diffOptions.versions) ? diffOptions.versions.slice(0, 10) : [];
     const historyLoading = typeof diffOptions.loadVersions === "function";
@@ -306,7 +311,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     const minimizeLabel = tr("sftp:editor.minimize", {defaultValue:"最小化"});
     const fullscreenLabel = tr("sftp:editor.fullscreen", {defaultValue:"全屏"});
     const closeLabel = tr("sftp:editor.close", {defaultValue:"关闭"});
-    modal.innerHTML = `<div class="modal-card wide sftp-editor-modal floating" role="dialog" aria-modal="false"><div class="sftp-editor-head"><div class="sftp-editor-title"><h2>${esc(fileName)}</h2>${sourceLabel ? `<small class="sftp-editor-source" title="${escAttr(sourceLabel)}">${esc(sourceLabel)}</small>` : ""}<span id="sftpEditorStats">${esc(fileLimit)}</span></div><div class="sftp-editor-head-actions"><div class="sftp-editor-controls"><label>${esc(tr("sftp:editor.text_encoding", {defaultValue:"文本编码"}))}<select id="sftpTextEncoding">${sftpTextEncodingOptions.map(([value,label]) => `<option value="${value}" ${value === encoding ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>${esc(tr("sftp:editor.line_ending", {defaultValue:"换行符"}))}<select id="sftpLineEnding" ${unixScript ? "disabled" : ""}>${sftpTextLineEndingOptions().map(([value,label]) => `<option value="${value}" ${value === initialLineEnding ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label><label>${esc(tr("sftp:editor.language", {defaultValue:"语言"}))}<select id="sftpEditorLanguage"><option value="auto">${esc(tr("sftp:editor.automatic_language", {language:sftpEditorLanguageLabel(detectedLanguage), defaultValue:`自动（${sftpEditorLanguageLabel(detectedLanguage)}）`}))}</option>${sftpEditorLanguageOptions.map(([value]) => `<option value="${value}">${esc(sftpEditorLanguageLabel(value))}</option>`).join("")}</select></label><label class="check-row compact"><input id="sftpEditorWordWrap" type="checkbox" ${wrapEnabled ? "checked" : ""}> ${esc(tr("sftp:editor.word_wrap", {defaultValue:"自动换行"}))}</label></div><div class="sftp-editor-window-controls"><button id="sftpEditorSearchToggle" class="icon-button" type="button" title="${escAttr(searchLabel)}" aria-label="${escAttr(searchLabel)}">${icon("search")}</button><button id="sftpEditorMinimize" class="icon-button" type="button" title="${escAttr(minimizeLabel)}" aria-label="${escAttr(minimizeLabel)}">${icon("minus")}</button><button id="sftpEditorFullscreen" class="icon-button" type="button" title="${escAttr(fullscreenLabel)}" aria-label="${escAttr(fullscreenLabel)}">${icon("maximize")}</button><button id="sftpEditorCloseTop" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div></div></div><div id="sftpEditorWorkspace" class="sftp-editor-workspace"><div id="sftpEditorSearchBar" class="sftp-editor-search-bar" hidden><input id="sftpEditorSearchInput" type="search" placeholder="${escAttr(searchLabel)}" autocomplete="off"><span id="sftpEditorSearchCount" aria-live="polite"></span><button id="sftpEditorSearchPrevious" class="icon-button" type="button" title="${escAttr(previousLabel)}" aria-label="${escAttr(previousLabel)}">${icon("arrow-up")}</button><button id="sftpEditorSearchNext" class="icon-button" type="button" title="${escAttr(nextLabel)}" aria-label="${escAttr(nextLabel)}">${icon("arrow-down")}</button><button id="sftpEditorSearchClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div><div id="sftpTextEditor" class="sftp-code-editor" aria-label="${escAttr(tr("sftp:editor.editor_aria", {defaultValue:"SFTP 文本编辑器"}))}"></div><div id="sftpEditorSplit" class="sftp-editor-splitter" role="separator" aria-orientation="horizontal" aria-label="${escAttr(tr("sftp:editor.resize_diff_aria", {defaultValue:"调整编辑与差异区域比例"}))}" tabindex="0" hidden></div><div id="sftpDiffPreview" class="sftp-diff-preview" hidden></div></div><div class="sftp-editor-options"><label class="check-row"><input id="sftpBackupBeforeSave" type="checkbox" checked> ${esc(tr("sftp:editor.backup_before_save", {defaultValue:"保存前备份远程文件"}))}</label><label class="check-row"><input id="sftpPersistEncoding" type="checkbox" ${preferredEncoding === encoding ? "checked" : ""}> ${esc(tr("sftp:editor.persist_encoding", {defaultValue:"设为此连接默认文本编码"}))}</label><label class="sftp-diff-history-control"><span>${esc(tr("sftp:editor.compare_version", {defaultValue:"比较版本"}))}</span><select id="sftpDiffHistory" disabled>${historyOptions}</select><small id="sftpDiffHistoryCount">${esc(historyLoading ? tr("sftp:editor.loading_backups", {defaultValue:"正在读取备份..."}) : tr("sftp:editor.recent_backups", {count:versions.length, defaultValue:`最近 ${versions.length} / 10 个备份`}))}</small></label></div><div class="actions"><button id="sftpTextFormatJson" hidden>${icon("braces")}<span>${esc(tr("sftp:editor.format_json", {defaultValue:"格式化 JSON"}))}</span></button><button id="sftpTextDiff" disabled>${esc(tr("sftp:editor.preview_diff", {defaultValue:"预览差异"}))}</button><button class="primary" id="sftpTextSave">${esc(tr("sftp:editor.save", {defaultValue:"保存"}))} <span class="shortcut-hint">Ctrl+S</span></button><button id="sftpTextClose">${esc(closeLabel)}</button></div></div>`;
+    modal.innerHTML = `<div class="modal-card wide sftp-editor-modal floating" role="dialog" aria-modal="false"><div class="sftp-editor-head"><div class="sftp-editor-title"><h2>${esc(fileName)}</h2>${sourceLabel ? `<small class="sftp-editor-source" title="${escAttr(sourceLabel)}">${esc(sourceLabel)}</small>` : ""}<span id="sftpEditorStats">${esc(fileLimit)}</span></div><div class="sftp-editor-head-actions"><div class="sftp-editor-controls"><label>${esc(tr("sftp:editor.text_encoding", {defaultValue:"文本编码"}))}<select id="sftpTextEncoding">${sftpTextEncodingOptions.map(([value,label]) => `<option value="${value}" ${value === encoding ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>${esc(tr("sftp:editor.line_ending", {defaultValue:"换行符"}))}<select id="sftpLineEnding">${sftpTextLineEndingOptions().map(([value,label]) => `<option value="${value}" ${value === initialLineEnding ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label><label>${esc(tr("sftp:editor.language", {defaultValue:"语言"}))}<select id="sftpEditorLanguage"><option value="auto">${esc(tr("sftp:editor.automatic_language", {language:sftpEditorLanguageLabel(detectedLanguage), defaultValue:`自动（${sftpEditorLanguageLabel(detectedLanguage)}）`}))}</option>${sftpEditorLanguageOptions.map(([value]) => `<option value="${value}">${esc(sftpEditorLanguageLabel(value))}</option>`).join("")}</select></label><label class="check-row compact"><input id="sftpEditorWordWrap" type="checkbox" ${wrapEnabled ? "checked" : ""}> ${esc(tr("sftp:editor.word_wrap", {defaultValue:"自动换行"}))}</label></div><div class="sftp-editor-window-controls"><button id="sftpEditorSearchToggle" class="icon-button" type="button" title="${escAttr(searchLabel)}" aria-label="${escAttr(searchLabel)}">${icon("search")}</button><button id="sftpEditorMinimize" class="icon-button" type="button" title="${escAttr(minimizeLabel)}" aria-label="${escAttr(minimizeLabel)}">${icon("minus")}</button><button id="sftpEditorFullscreen" class="icon-button" type="button" title="${escAttr(fullscreenLabel)}" aria-label="${escAttr(fullscreenLabel)}">${icon("maximize")}</button><button id="sftpEditorCloseTop" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div></div></div><div id="sftpEditorWorkspace" class="sftp-editor-workspace"><div id="sftpEditorSearchBar" class="sftp-editor-search-bar" hidden><input id="sftpEditorSearchInput" type="search" placeholder="${escAttr(searchLabel)}" autocomplete="off"><span id="sftpEditorSearchCount" aria-live="polite"></span><button id="sftpEditorSearchPrevious" class="icon-button" type="button" title="${escAttr(previousLabel)}" aria-label="${escAttr(previousLabel)}">${icon("arrow-up")}</button><button id="sftpEditorSearchNext" class="icon-button" type="button" title="${escAttr(nextLabel)}" aria-label="${escAttr(nextLabel)}">${icon("arrow-down")}</button><button id="sftpEditorSearchClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div><div id="sftpTextEditor" class="sftp-code-editor" aria-label="${escAttr(tr("sftp:editor.editor_aria", {defaultValue:"SFTP 文本编辑器"}))}"></div><div id="sftpEditorSplit" class="sftp-editor-splitter" role="separator" aria-orientation="horizontal" aria-label="${escAttr(tr("sftp:editor.resize_diff_aria", {defaultValue:"调整编辑与差异区域比例"}))}" tabindex="0" hidden></div><div id="sftpDiffPreview" class="sftp-diff-preview" hidden></div></div><div class="sftp-editor-options"><label class="check-row"><input id="sftpBackupBeforeSave" type="checkbox" checked> ${esc(tr("sftp:editor.backup_before_save", {defaultValue:"保存前备份远程文件"}))}</label><label class="check-row"><input id="sftpPersistEncoding" type="checkbox" ${preferredEncoding === encoding ? "checked" : ""}> ${esc(tr("sftp:editor.persist_encoding", {defaultValue:"设为此连接默认文本编码"}))}</label><label class="sftp-diff-history-control"><span>${esc(tr("sftp:editor.compare_version", {defaultValue:"比较版本"}))}</span><select id="sftpDiffHistory" disabled>${historyOptions}</select><small id="sftpDiffHistoryCount">${esc(historyLoading ? tr("sftp:editor.loading_backups", {defaultValue:"正在读取备份..."}) : tr("sftp:editor.recent_backups", {count:versions.length, defaultValue:`最近 ${versions.length} / 10 个备份`}))}</small></label></div><div class="actions"><button id="sftpTextFormatJson" hidden>${icon("braces")}<span>${esc(tr("sftp:editor.format_json", {defaultValue:"格式化 JSON"}))}</span></button><button id="sftpTextDiff" disabled>${esc(tr("sftp:editor.preview_diff", {defaultValue:"预览差异"}))}</button><button class="primary" id="sftpTextSave">${esc(tr("sftp:editor.save", {defaultValue:"保存"}))} <span class="shortcut-hint">Ctrl+S</span></button><button id="sftpTextClose">${esc(closeLabel)}</button></div></div>`;
     modal.hidden = false;
     modal.onclick = null;
     let finished = false;
@@ -562,6 +567,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     let editorSearchQuery = "";
     let editorSearchMatches = [];
     let editorSearchIndex = -1;
+    let editorSearchTimer = 0;
     const invalidateEditorSearchMatches = () => {
       editorSearchQuery = "";
       editorSearchMatches = [];
@@ -624,9 +630,12 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       selectEditorSearchMatch(editorSearchIndex);
     };
     let releaseEditorLayout = () => {};
+    let editorStatsTimer = 0;
     const finish = (value) => {
       if (finished) return;
       finished = true;
+      clearTimeout(editorStatsTimer);
+      clearTimeout(editorSearchTimer);
       document.removeEventListener("keydown", onModalKeyDown, true);
       releaseEditorLayout();
       releaseFloatingEditor();
@@ -674,10 +683,17 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       saveButton.disabled = tooLarge;
       return !tooLarge;
     };
+    const scheduleEditorStats = () => {
+      clearTimeout(editorStatsTimer);
+      editorStatsTimer = setTimeout(() => {
+        editorStatsTimer = 0;
+        if (!finished) updateStats();
+      }, 120);
+    };
     updateStats();
     syncFormatButton();
     if (aceEditor) {
-      aceEditor.session.on("change", () => { contentModified = true; invalidateEditorSearchMatches(); updateStats(); });
+      aceEditor.session.on("change", () => { contentModified = true; invalidateEditorSearchMatches(); scheduleEditorStats(); });
       aceEditor.commands.addCommand({name:"saveSftpFile", bindKey:{win:"Ctrl-S",mac:"Command-S"}, exec:()=>saveButton.click()});
     } else fallbackEditor.addEventListener("input", () => {
       if (useLightEditor) {
@@ -685,7 +701,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
         contentModified = lightPageEdits.size > 0;
       } else contentModified = true;
       invalidateEditorSearchMatches();
-      updateStats();
+      scheduleEditorStats();
     });
     releaseEditorLayout = bindSftpEditorLayout(card, editorWorkspace, diffSplitter, () => aceEditor?.resize(true));
     const syncHistoryControls = () => {
@@ -784,18 +800,33 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     getEditor("#sftpEditorSearchClose").onclick = closeEditorSearch;
     searchInput.addEventListener("input", () => {
       invalidateEditorSearchMatches();
-      stepEditorSearch(1);
+      clearTimeout(editorSearchTimer);
+      editorSearchTimer = setTimeout(() => {
+        editorSearchTimer = 0;
+        if (!finished) stepEditorSearch(1);
+      }, 120);
     });
     searchInput.addEventListener("keydown", event => {
       if (event.key !== "Enter") return;
       event.preventDefault();
+      clearTimeout(editorSearchTimer);
+      editorSearchTimer = 0;
       stepEditorSearch(event.shiftKey ? -1 : 1);
     });
     getEditor("#sftpTextSave").onclick = async () => {
+      clearTimeout(editorStatsTimer);
+      editorStatsTimer = 0;
       const value = getValue();
       const prepared = prepareSftpEditorSave(title, value, getEditor("#sftpTextEncoding").value, getEditor("#sftpLineEnding").value);
+      if (prepared.unsafeScriptLineEnding && !await confirmModal(
+        tr("sftp:editor.shell_line_ending_warning", {lineEnding:sftpTextLineEndingLabel(prepared.lineEnding), defaultValue:`当前脚本将使用 ${sftpTextLineEndingLabel(prepared.lineEnding)} 保存，可能在 Unix/Linux 上出现 ^M 或无法执行。仍然保存？`}),
+        tr("sftp:editor.shell_line_ending_title", {defaultValue:"脚本换行符兼容性提醒"}),
+        tr("sftp:editor.save_anyway", {defaultValue:"仍然保存"}),
+        tr("sftp:editor.continue_editing", {defaultValue:"继续编辑"}),
+        true
+      )) return;
       if (!updateStats(true, prepared.content, prepared.encoding)) return notify(tr("sftp:editor.content_too_large", {limit:formatBytes(limit), defaultValue:`在线编辑内容不能超过 ${formatBytes(limit)}`}), "error");
-      const payload = {action:"save", content:prepared.content, changed:contentModified || prepared.changed || scriptNeedsFormatRepair, backup:getEditor("#sftpBackupBeforeSave").checked, encoding:prepared.encoding, line_ending:prepared.lineEnding, normalized_script:prepared.unixScript, persist_default:getEditor("#sftpPersistEncoding").checked};
+      const payload = {action:"save", content:prepared.content, changed:contentModified || prepared.changed || scriptNeedsFormatRepair, backup:getEditor("#sftpBackupBeforeSave").checked, encoding:prepared.encoding, line_ending:prepared.lineEnding, normalized_script:prepared.unixScript && prepared.lineEnding === "lf", persist_default:getEditor("#sftpPersistEncoding").checked};
       if (typeof diffOptions.onSave !== "function" || (!payload.changed && !(payload.persist_default && preferredEncoding !== payload.encoding))) return finish(payload);
       saveButton.disabled = true;
       saveButton.classList.add("busy");

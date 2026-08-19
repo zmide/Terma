@@ -38,7 +38,7 @@
           <div class="activity-top">
             <button id="navConnections" class="active" data-action="static-primary" data-primary="connections" data-explorer="true" title="连接列表" data-i18n-title="navigation:auto.connections" aria-label="连接列表" data-i18n-aria-label="navigation:auto.connections"><i data-lucide="server"></i></button>
             <button id="navRemote" data-action="static-primary" data-primary="remote" data-explorer="true" title="其他连接" data-i18n-title="navigation:auto.remote" aria-label="其他连接" data-i18n-aria-label="navigation:auto.remote"><i data-lucide="plug-zap"></i></button>
-            <button id="navRunning" data-action="static-primary" data-primary="running" data-explorer="true" title="正在转发" data-i18n-title="navigation:auto.running" aria-label="正在转发" data-i18n-aria-label="navigation:auto.running"><i data-lucide="route"></i></button>
+            <button id="navRunning" data-action="static-primary" data-primary="running" data-explorer="true" title="转发列表" data-i18n-title="navigation:auto.running" aria-label="转发列表" data-i18n-aria-label="navigation:auto.running"><i data-lucide="route"></i></button>
             <button id="navCommand" data-action="static-primary" data-primary="command" data-explorer="true" title="批量命令" data-i18n-title="navigation:auto.batch" aria-label="批量命令" data-i18n-aria-label="navigation:auto.batch"><i data-lucide="square-terminal"></i></button>
             <button id="navImport" data-action="static-primary" data-primary="import" data-explorer="true" title="导入导出" data-i18n-title="navigation:auto.import_export" aria-label="导入导出" data-i18n-aria-label="navigation:auto.import_export"><i data-lucide="arrow-left-right"></i></button>
             <button id="navLogs" data-action="static-primary" data-primary="logs" data-explorer="true" title="日志" data-i18n-title="navigation:auto.logs" aria-label="日志" data-i18n-aria-label="navigation:auto.logs"><i data-lucide="scroll-text"></i></button>
@@ -76,7 +76,7 @@
       <div class="mobile-back-bar"><button id="mobileBack" class="mobile-back" type="button" data-action="static-explorer-back" title="返回连接列表" data-i18n-title="common:auto.back_to_connections" aria-label="返回连接列表" data-i18n-aria-label="common:auto.back_to_connections"><i data-lucide="arrow-left"></i></button></div>
       <div class="topbar">
         <div class="workspace-heading">
-          <div class="workspace-heading-title"><strong id="workspaceTitle" data-i18n="common:auto.workspace">工作区</strong><button class="icon-button workspace-quick-connect-button" type="button" data-action="quick-connect-open" title="快速打开 SSH / SFTP" data-i18n-title="common:auto.quick_open" aria-label="快速打开 SSH / SFTP" data-i18n-aria-label="common:auto.quick_open"><i data-lucide="server"></i></button></div>
+          <div class="workspace-heading-title"><strong id="workspaceTitle" data-i18n="common:auto.workspace">工作区</strong><button class="icon-button workspace-quick-connect-button" type="button" data-action="quick-connect-open" title="快速打开连接 / 转发" data-i18n-title="common:auto.quick_open" aria-label="快速打开连接 / 转发" data-i18n-aria-label="common:auto.quick_open"><i data-lucide="server"></i></button></div>
           <div id="workspaceSubtitle" class="cmd" data-i18n-skip="true">选择左侧 SSH 后开始操作</div>
         </div>
         <div id="workspaceGlobalHeaderTools" class="workspace-header-tools workspace-global-header-tools" data-workspace-role="global-header-tools" hidden></div>
@@ -113,6 +113,7 @@
         <section id="view-welcome" class="view"></section>
         <section id="view-terminal" class="view" hidden></section>
         <section id="view-forwards" class="view" hidden></section>
+        <section id="view-forward-manager" class="view" hidden></section>
         <section id="view-edit" class="view" hidden></section>
         <section id="view-import" class="view" hidden></section>
         <section id="view-log" class="view" hidden></section>
@@ -132,7 +133,7 @@
   <nav class="mobile-tabs">
     <button id="mobileConnections" class="active" data-action="static-primary" data-primary="connections" title="连接列表" data-i18n-title="navigation:auto.connections" aria-label="连接列表" data-i18n-aria-label="navigation:auto.connections"><i data-lucide="server"></i><span class="mobile-tab-label" data-i18n="connections:title">连接</span></button>
     <button id="mobileRemote" data-action="static-primary" data-primary="remote" title="其他连接" data-i18n-title="navigation:auto.remote" aria-label="其他连接" data-i18n-aria-label="navigation:auto.remote"><i data-lucide="plug-zap"></i><span class="mobile-tab-label" data-i18n="common:auto.other">其他</span></button>
-    <button id="mobileRunning" data-action="static-primary" data-primary="running" title="正在转发" data-i18n-title="navigation:auto.running" aria-label="正在转发" data-i18n-aria-label="navigation:auto.running"><i data-lucide="route"></i><span class="mobile-tab-label" data-i18n="navigation:auto.forwards">转发</span></button>
+    <button id="mobileRunning" data-action="static-primary" data-primary="running" title="转发列表" data-i18n-title="navigation:auto.running" aria-label="转发列表" data-i18n-aria-label="navigation:auto.running"><i data-lucide="route"></i><span class="mobile-tab-label" data-i18n="navigation:auto.running">转发列表</span></button>
     <button id="mobileCommand" data-action="static-primary" data-primary="command" title="批量命令" data-i18n-title="navigation:auto.batch" aria-label="批量命令" data-i18n-aria-label="navigation:auto.batch"><i data-lucide="square-terminal"></i><span class="mobile-tab-label" data-i18n="navigation:auto.batch_short">批量</span></button>
     <button id="mobileImport" data-action="static-primary" data-primary="import" title="导入导出" data-i18n-title="navigation:auto.import_export" aria-label="导入导出" data-i18n-aria-label="navigation:auto.import_export"><i data-lucide="arrow-left-right"></i><span class="mobile-tab-label" data-i18n="navigation:auto.import">导入</span></button>
     <button id="mobileLogs" data-action="static-primary" data-primary="logs" title="日志" data-i18n-title="navigation:auto.logs" aria-label="日志" data-i18n-aria-label="navigation:auto.logs"><i data-lucide="scroll-text"></i><span class="mobile-tab-label" data-i18n="navigation:auto.logs">日志</span></button>
@@ -306,8 +307,9 @@
         <div><label data-i18n="connections:auto.service_type">服务类型</label><select id="forward_service_type"><option value="" data-i18n="common:auto.automatic">自动</option><option value="web">Web</option><option value="mysql">MySQL</option><option value="redis">Redis</option><option value="ssh">SSH</option><option value="socks">SOCKS5</option><option value="other" data-i18n="common:auto.other">其他</option></select></div>
         <div><label data-i18n="connections:auto.note">备注</label><input id="forward_service_note" placeholder="可选" data-i18n-placeholder="remote:auto.optional"></div>
       </div>
-      <div class="grid">
+      <div class="grid3 forward-access-grid">
         <div><label data-i18n="connections:auto.access_protocol">访问协议</label><select id="forward_url_scheme"><option value="" data-i18n="common:auto.automatic">自动</option><option value="http">http</option><option value="https">https</option></select></div>
+        <div><label data-i18n="connections:auto.url_path">URL 路径</label><input id="forward_url_path" maxlength="2048" spellcheck="false" placeholder="/admin" data-i18n-placeholder="connections:auto.url_path_example"></div>
         <div><label data-i18n="connections:auto.forward_template">转发模板</label><select id="forward_template_select" data-change-action="static-forward-template-apply"><option value="" data-i18n="connections:auto.choose_template">选择模板</option></select></div>
       </div>
       <div class="actions"><button class="primary" id="forwardSubmitBtn" type="submit" data-i18n="connections:auto.add_forward">添加转发</button><button type="button" data-action="static-forward-template-save" data-i18n="connections:auto.save_template">保存为模板</button><button type="button" data-action="static-forward-template-manage" data-i18n="connections:auto.manage_template">管理模板</button><button type="button" data-action="static-forward-port-recommend" data-i18n="connections:auto.recommend_port">推荐端口</button><button type="button" id="cancelForwardEditBtn" data-action="static-forward-edit-cancel" hidden data-i18n="connections:auto.cancel_edit">取消编辑</button><button type="button" id="bulkDeleteForwardsBtn" class="danger" data-action="static-forward-bulk-delete" hidden data-i18n="connections:auto.delete_selected_forwards">删除选中转发</button></div>
@@ -406,6 +408,7 @@
 <script src="/app-ssh-credentials.js?v=__TERMA_VERSION__"></script>
 <script src="/app-terminal-image-paste.js?v=__TERMA_VERSION__"></script>
 <script src="/app-forwards.js?v=__TERMA_VERSION__"></script>
+<script src="/app-global-forwards.js?v=__TERMA_VERSION__"></script>
 <script src="/app-import.js?v=__TERMA_VERSION__"></script>
 <script src="/app-sftp-core.js?v=__TERMA_VERSION__"></script>
 <script src="/app-sftp-columns.js?v=__TERMA_VERSION__"></script>

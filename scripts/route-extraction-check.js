@@ -378,13 +378,25 @@ async function checkConnectionRoutes() {
   const source = {id:7, name:"Primary"};
   const dependencies = {
     appendSystemLog:message => calls.push(["log", message]),
+    clearConnectionHealthCache:id => calls.push(["clear-health", id]),
+    createConfigSnapshot:reason => calls.push(["snapshot", reason]),
     defaultExtraArgs:["-o", "ConnectTimeout=8"],
     duplicateConnection:(id, args) => ({id:17, name:"Primary copy", source_id:id, args}),
     getConnection:() => source,
+    getForward:id => ({id, connection_id:7, mode:"local", bind_port:6001}),
     getDesktopIntegration:() => null,
+    forwardLogLabel:id => `forward-${id}`,
     isDesktopRequest:() => false,
     listConnections:() => [source],
     readJson:async () => json,
+    reconfigureForward:async (id, data) => {
+      calls.push(["reconfigure", id, data]);
+      return {ok:true, was_running:true, restarted:true, rolled_back:false};
+    },
+    reorderConnections:(groupName, ids) => {
+      calls.push(["reorder-connections", groupName, ids]);
+      return {ok:true, connections:ids.length};
+    },
     sendJson:output.sendJson
   };
 
@@ -399,6 +411,23 @@ async function checkConnectionRoutes() {
   json = {path:"/srv/app"};
   assert.equal(await handleConnectionRoutes({method:"POST"}, output.response, "/api/connections/7/external-tools/vscode", dependencies), true);
   assert.deepEqual(output.sent.pop(), {data:{error:"VS Code Remote SSH 只能在本机桌面端中使用"}, status:403});
+
+  json = {mode:"local", bind_host:"127.0.0.1", bind_port:6002, target_host:"127.0.0.1", target_port:80};
+  assert.equal(await handleConnectionRoutes({method:"PUT"}, output.response, "/api/forwards/11", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{ok:true, was_running:true, restarted:true, rolled_back:false}, status:200});
+  assert.deepEqual(calls.slice(-3), [
+    ["reconfigure", 11, json],
+    ["clear-health", 7],
+    ["log", "已更新转发：forward-11"]
+  ]);
+
+  json = {group_name:"Production", ids:[7, 9]};
+  assert.equal(await handleConnectionRoutes({method:"POST"}, output.response, "/api/connections/reorder", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{ok:true, connections:2}, status:200});
+  assert.deepEqual(calls.slice(-2), [
+    ["snapshot", "调整 SSH 连接顺序前自动快照"],
+    ["reorder-connections", "Production", [7, 9]]
+  ]);
 }
 
 async function checkRemoteTaskRoutes() {

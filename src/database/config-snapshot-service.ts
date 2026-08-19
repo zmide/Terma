@@ -24,7 +24,9 @@ function normalizeCommandSnippetBadge(value: any): string {
 
 function createConfigSnapshotService(options: any = {}) {
   const cleanRemoteProfile = options.cleanRemoteProfile;
+  const cleanForward = options.cleanForward;
   if (typeof cleanRemoteProfile !== "function") throw new Error("cleanRemoteProfile is required");
+  if (typeof cleanForward !== "function") throw new Error("cleanForward is required");
 
   function exportConfigSnapshot(): any {
     return {
@@ -81,6 +83,8 @@ function createConfigSnapshotService(options: any = {}) {
       ...source,
       password:normalizeSnapshotSecret(source.password, "remote_profiles.password", state)
     }));
+    const restoredForwards = snapshot.forwards.map((source: any) => ({...source, ...cleanForward(source)}));
+    const restoredForwardTemplates = snapshot.forward_templates.map((source: any) => ({...source, ...cleanForward(source)}));
     db.exec("BEGIN IMMEDIATE");
     try {
       run("DELETE FROM connection_forwards");
@@ -162,8 +166,8 @@ function createConfigSnapshotService(options: any = {}) {
           row.id,item.name,item.group_name,item.protocol,item.host,item.port,item.username,item.password,item.favorite,row.last_used_at || null,item.tags,item.options_json,row.created_at || now(),row.updated_at || now()
         ]);
       }
-      for (const row of snapshot.forwards) run("INSERT INTO connection_forwards(id,connection_id,mode,service_name,service_type,service_note,url_scheme,bind_host,bind_port,target_host,target_port,pid,status,restore,reconnect_count,last_error,last_error_code,started_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [row.id,row.connection_id,row.mode,row.service_name,row.service_type,row.service_note,row.url_scheme,row.bind_host,row.bind_port,row.target_host,row.target_port,null,"stopped",0,0,row.last_error || null,row.last_error_code || null,null,row.created_at,row.updated_at]);
-      for (const row of snapshot.forward_templates) run("INSERT INTO forward_templates(id,name,mode,service_name,service_type,service_note,url_scheme,bind_host,bind_port,target_host,target_port,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", [row.id,row.name,row.mode,row.service_name,row.service_type,row.service_note,row.url_scheme,row.bind_host,row.bind_port,row.target_host,row.target_port,row.created_at,row.updated_at]);
+      for (const row of restoredForwards) run("INSERT INTO connection_forwards(id,connection_id,mode,service_name,service_type,service_note,url_scheme,url_path,bind_host,bind_port,target_host,target_port,pid,status,restore,reconnect_count,last_error,last_error_code,started_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [row.id,row.connection_id,row.mode,row.service_name,row.service_type,row.service_note,row.url_scheme,row.url_path,row.bind_host,row.bind_port,row.target_host,row.target_port,null,"stopped",0,0,row.last_error || null,row.last_error_code || null,null,row.created_at,row.updated_at]);
+      for (const row of restoredForwardTemplates) run("INSERT INTO forward_templates(id,name,mode,service_name,service_type,service_note,url_scheme,url_path,bind_host,bind_port,target_host,target_port,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [row.id,row.name,row.mode,row.service_name,row.service_type,row.service_note,row.url_scheme,row.url_path,row.bind_host,row.bind_port,row.target_host,row.target_port,row.created_at,row.updated_at]);
       for (const row of snapshot.command_snippets || []) run("INSERT INTO command_snippets(id,name,group_name,command,description,tags,favorite,quick_visible,quick_action,quick_badge,quick_color,quick_sort_order,last_used_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [row.id,row.name,row.group_name || "默认分组",row.command,row.description || "",row.tags || "",Number(row.favorite || 0) ? 1 : 0,Number(row.quick_visible || 0) ? 1 : 0,["execute","insert"].includes(String(row.quick_action || "")) ? row.quick_action : "execute",normalizeCommandSnippetBadge(row.quick_badge),["blue","green","amber","red","cyan","gray","purple"].includes(String(row.quick_color || "")) ? row.quick_color : "blue",Math.max(0,Math.min(1000000,Math.trunc(Number(row.quick_sort_order || 0) || 0))),row.last_used_at || null,row.created_at || now(),row.updated_at || now()]);
       for (const row of snapshot.named_workspaces || []) run("INSERT INTO named_workspaces(id,name,description,layout_json,last_used_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", [row.id,row.name,row.description || "",row.layout_json || "{}",row.last_used_at || null,row.created_at || now(),row.updated_at || now()]);
       db.exec("COMMIT");

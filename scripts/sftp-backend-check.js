@@ -53,10 +53,15 @@ async function main() {
       "crlf"
     );
     assert.equal(shellScript.encoding, "utf8", "shell scripts must not retain a UTF-8 BOM");
-    assert.equal(shellScript.line_ending, "lf", "shell scripts must use Unix line endings");
-    assert.equal(shellScript.normalized_script, true);
-    assert.equal(shellScript.content.toString("utf8"), "#!/bin/bash\necho restart\n", "shell scripts must end with an LF");
+    assert.equal(shellScript.line_ending, "crlf", "shell scripts must honor an explicitly selected line ending");
+    assert.equal(shellScript.normalized_script, false);
+    assert.equal(shellScript.content.toString("utf8"), "#!/bin/bash\r\necho restart\r\n", "explicit CRLF scripts must retain CRLF and a final newline");
     assert.notDeepEqual([...shellScript.content.subarray(0, 3)], [0xef, 0xbb, 0xbf], "shell scripts must not start with a BOM");
+
+    const defaultShellScript = server.prepareSftpWriteContent("#!/bin/sh\r\necho default", "utf8", "/tmp/default.sh");
+    assert.equal(defaultShellScript.line_ending, "lf", "shell scripts must still default to Unix LF when no line ending is requested");
+    assert.equal(defaultShellScript.normalized_script, true);
+    assert.equal(defaultShellScript.content.toString("utf8"), "#!/bin/sh\necho default\n");
 
     const windowsText = server.prepareSftpWriteContent("first\nsecond\n", "utf8", "/tmp/readme.txt", "crlf");
     assert.equal(windowsText.content.toString("utf8"), "first\r\nsecond\r\n", "non-script files must honor the selected line ending");

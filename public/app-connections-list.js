@@ -377,17 +377,15 @@ function connectionLegacyIdentityOption(form) {
 
 function renderConnectionRow(c) {
   const active = c.id === selectedId ? " active" : "";
-  const running = connectionHasRunningForwards(c) ? " running" : "";
   const health = healthResults.get(c.id);
   const healthClass = health ? (health.ok ? " ok" : " bad") : "";
-  const healthText = health ? health.status : tr("connections:groups.health_not_checked", {defaultValue:"未检测"});
-  const localizedHealthText = health
-    ? (typeof translatedTermaPhrase === "function" ? translatedTermaPhrase(healthText) || healthText : healthText)
-    : tr("connections:groups.health_not_checked", {defaultValue:"未检测"});
+  const healthText = health?.status || "";
+  const localizedHealthText = health && typeof translatedTermaPhrase === "function" ? translatedTermaPhrase(healthText) || healthText : healthText;
   const identityWarning = connectionIdentityWarningMessage(c);
   const bulkClass = connectionBulkMode ? " bulk-mode" : "";
   const selectConnectionText = tr("connections:groups.select_connection", {name:c.name, defaultValue:`选择 ${c.name}`});
-  const healthStatusText = tr("connections:groups.health_status", {status:localizedHealthText, defaultValue:`健康状态：${localizedHealthText}`});
+  const healthStatusText = health ? tr("connections:groups.health_status", {status:localizedHealthText, defaultValue:`健康状态：${localizedHealthText}`}) : "";
+  const healthBadge = health ? `<span class="health-badge${healthClass}" title="${escAttr(healthStatusText)}" aria-label="${escAttr(healthStatusText)}">${icon(health.ok ? "circle-check" : "circle-alert")}</span>` : "";
   const quickActionsText = tr("connections:groups.quick_actions", {name:c.name, defaultValue:`${c.name} 快捷操作`});
   const openTerminalText = tr("connections:actions.open_terminal", {defaultValue:"打开终端"});
   const openSftpText = tr("connections:actions.open_sftp", {defaultValue:"打开 SFTP 文件管理"});
@@ -399,7 +397,7 @@ function renderConnectionRow(c) {
   const bulkCheck = connectionBulkMode ? `<label class="connection-bulk-check" title="${escAttr(selectConnectionText)}"><input type="checkbox" ${selectedConnectionIds.has(c.id) ? "checked" : ""} data-change-action="connection-select" data-connection-id="${c.id}"><span class="sr-only">${esc(selectConnectionText)}</span></label>` : "";
   return `<div class="conn-row${active}${bulkClass}" data-connection-id="${c.id}">
     ${bulkCheck}
-    <div class="conn-main"><span class="conn-name conn-name-open" title="${escAttr(tr("connections:actions.double_click_terminal", {defaultValue:"双击打开终端"}))}" data-dblclick-action="connection-open-terminal" data-connection-id="${c.id}">${esc(c.name)}</span><span class="conn-state"><span class="status-dot${running}"></span>${esc(running ? tr("connections:groups.running", {defaultValue:"运行中"}) : tr("connections:groups.stopped", {defaultValue:"已停止"}))}<span class="health-badge${healthClass}" title="${escAttr(healthStatusText)}" aria-label="${escAttr(healthStatusText)}">${icon(health?.ok ? "circle-check" : health ? "circle-alert" : "circle-help")}</span></span></div>
+    <div class="conn-main"><span class="conn-name conn-name-open" title="${escAttr(tr("connections:actions.double_click_terminal", {defaultValue:"双击打开终端"}))}" data-dblclick-action="connection-open-terminal" data-connection-id="${c.id}">${esc(c.name)}</span>${healthBadge}</div>
     <div class="conn-meta">${esc(c.ssh_user)}@${esc(c.ssh_host)}:${esc(c.ssh_port)}</div>
     ${c.tags ? `<div class="forward-tags">${String(c.tags).split(",").filter(Boolean).map(tag=>`<span>${esc(tag)}</span>`).join("")}</div>` : ""}
     <div class="conn-footer">

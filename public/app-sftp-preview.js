@@ -520,9 +520,9 @@ async function previewSftpText(id, path) {
         queueSftpDirectoryRefresh(id);
         flushPendingSftpDirectoryRefresh();
       }
-      notify(saved?.normalized_script || next.normalized_script
+      notify((saved?.normalized_script || next.normalized_script) && (saved?.line_ending || next.line_ending) === "lf"
         ? tr("sftp:editor.saved_shell_script", {encoding:sftpTextEncodingLabel(savedEncoding), defaultValue:`脚本已按 ${sftpTextEncodingLabel(savedEncoding)}、Unix LF、无 BOM 保存`})
-        : tr("sftp:editor.saved_with_encoding", {encoding:sftpTextEncodingLabel(savedEncoding), defaultValue:`文件已按 ${sftpTextEncodingLabel(savedEncoding)} 保存`}), "success");
+        : tr("sftp:editor.saved_with_encoding_and_line_ending", {encoding:sftpTextEncodingLabel(savedEncoding), lineEnding:sftpTextLineEndingLabel(saved?.line_ending || next.line_ending), defaultValue:`文件已按 ${sftpTextEncodingLabel(savedEncoding)}、${sftpTextLineEndingLabel(saved?.line_ending || next.line_ending)} 保存`}), "success");
       return;
     }
   } catch (error) {

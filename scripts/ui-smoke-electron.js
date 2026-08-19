@@ -231,6 +231,7 @@ app.whenReady().then(async () => {
         service_name: 'UI Smoke Web',
         service_type: 'web',
         url_scheme: 'http',
+        url_path: '/admin',
         bind_host: '127.0.0.1',
         bind_port: 18099,
         target_host: '127.0.0.1',
@@ -346,7 +347,7 @@ app.whenReady().then(async () => {
       quickConnectButton
       && quickConnectModal?.getBoundingClientRect().width >= Math.min(1000, innerWidth-40)
       && quickConnectRow
-      && document.querySelectorAll('.quick-connection-actions button').length === 3
+      && quickConnectRow.querySelectorAll('.quick-connection-actions button').length === 3
       && quickConnectCells.length === 5
       && quickConnectHeadingRects.length === 5
       && quickConnectHeadingRects.slice(0,4).every((rect,index)=>Math.abs(rect.left-quickConnectCells[index].left)<2)
@@ -356,7 +357,7 @@ app.whenReady().then(async () => {
     const quickConnectionLayout = {
       modalWidth: quickConnectModal?.getBoundingClientRect().width || 0,
       requiredWidth: Math.min(1000, innerWidth-40),
-      actionButtons: document.querySelectorAll('.quick-connection-actions button').length,
+      actionButtons: quickConnectRow?.querySelectorAll('.quick-connection-actions button').length || 0,
       rowCells: quickConnectCells.length,
       headingCells: quickConnectHeadingRects.length,
       headingDeltas: quickConnectHeadingRects.slice(0,4).map((rect,index)=>Math.abs(rect.left-(quickConnectCells[index]?.left || 0))),
@@ -365,6 +366,103 @@ app.whenReady().then(async () => {
       actionScrollMetrics: quickActionScrollMetrics
     };
     const quickConnectionSearch = document.querySelector('#quickConnectionSearch');
+    quickConnectionSearch.value = '/admin';
+    renderQuickConnectionRows(quickConnectionSearch.value);
+    const quickForwardRow = document.querySelector('.quick-forward-row');
+    const quickForwardSearch = Boolean(
+      quickForwardRow?.textContent.includes('UI Smoke Web')
+      && quickForwardRow?.textContent.includes('UI Smoke · 127.0.0.1')
+      && quickForwardRow?.textContent.includes('运行中')
+      && quickForwardRow?.textContent.includes('http://127.0.0.1:18099/admin')
+      && quickForwardRow?.querySelector('a[href="http://127.0.0.1:18099/admin"]')
+      && quickForwardRow?.querySelector('[data-action="quick-forward-toggle"][data-forward-id="900001"]')
+      && quickForwardRow?.dataset.forwardId === '900001'
+    );
+    renderQuickPanel('/admin');
+    const quickCommandForward = [...document.querySelectorAll('#quickPanelResults .quick-result')].find(row => row.textContent.includes('UI Smoke Web'));
+    const quickCommandForwardSearch = Boolean(
+      quickCommandForward
+      && quickCommandForward.textContent.includes('http://127.0.0.1:18099/admin')
+      && quickCommandForward.querySelector('[data-action="quick-forward-toggle"][data-forward-id="900001"]')
+      && quickCommandForward.querySelector('a[href="http://127.0.0.1:18099/admin"]')
+    );
+    closeQuickPanel();
+    const forwardFixture = connections[0]?.forwards?.[0];
+    const managerView = $('view-forward-manager');
+    const managerScope = currentWorkspaceDomScope();
+    const managerPreviousView = [...(managerScope?.querySelectorAll('.view') || [])].find(view => !view.hidden);
+    if (managerPreviousView) managerPreviousView.hidden = true;
+    if (managerView) managerView.hidden = false;
+    renderGlobalForwardManager();
+    const managerRunningCard = managerView?.querySelector('.global-forward-card[data-forward-id="900001"]');
+    const globalForwardManager = Boolean(
+      managerView
+      && managerView.querySelectorAll('.global-forward-stats > button').length === 5
+      && managerView.querySelector('.global-forward-toolbar input')
+      && managerView.querySelectorAll('.global-forward-toolbar select').length === 3
+      && managerRunningCard?.querySelector('a[href="http://127.0.0.1:18099/admin"]')
+      && managerRunningCard?.querySelectorAll('.global-forward-actions button').length === 4
+    );
+    const managerToolbarControls = [...(managerView?.querySelectorAll('.global-forward-toolbar > *') || [])].map(element => element.getBoundingClientRect());
+    const globalForwardToolbarAligned = managerToolbarControls.length === 4
+      && Math.max(...managerToolbarControls.map(rect => rect.height)) - Math.min(...managerToolbarControls.map(rect => rect.height)) <= 0.5;
+    let globalForwardWideGrid = false;
+    let singleForwardWideGrid = false;
+    let forwardCardActionsAligned = false;
+    if (forwardFixture) {
+      const wideGridFixture = document.createElement('div');
+      wideGridFixture.style.cssText = 'position:fixed;left:-10000px;top:0;width:900px;visibility:hidden;pointer-events:none;';
+      const secondForward = {...forwardFixture, id:900002, service_name:'UI Smoke Web 2', bind_port:18100};
+      wideGridFixture.innerHTML = '<div class="global-forward-list">'
+        + renderGlobalForwardCard(connections[0], forwardFixture)
+        + renderGlobalForwardCard(connections[0], secondForward)
+        + '</div><div class="forward-list">'
+        + renderForwardCard(forwardFixture)
+        + renderForwardCard(secondForward)
+        + '</div>';
+      document.body.appendChild(wideGridFixture);
+      const globalCards = [...wideGridFixture.querySelectorAll('.global-forward-card')].map(card => card.getBoundingClientRect());
+      const singleCards = [...wideGridFixture.querySelectorAll('.forward-card')].map(card => card.getBoundingClientRect());
+      const actionButtons = [...wideGridFixture.querySelectorAll('.global-forward-actions button, .forward-actions button')].map(button => button.getBoundingClientRect());
+      globalForwardWideGrid = globalCards.length === 2
+        && Math.abs(globalCards[0].top - globalCards[1].top) <= 0.5
+        && globalCards.every(rect => rect.width >= 400 && rect.width <= 450);
+      singleForwardWideGrid = singleCards.length === 2
+        && Math.abs(singleCards[0].top - singleCards[1].top) <= 0.5
+        && singleCards.every(rect => rect.width >= 400 && rect.width <= 450);
+      forwardCardActionsAligned = actionButtons.length === 14
+        && Math.max(...actionButtons.map(rect => rect.height)) - Math.min(...actionButtons.map(rect => rect.height)) <= 0.5;
+      wideGridFixture.remove();
+    }
+    const previousGroupMode = globalForwardManagerState.groupMode;
+    globalForwardManagerState.groupMode = 'ssh';
+    globalForwardManagerState.query = '';
+    globalForwardManagerState.status = 'all';
+    globalForwardManagerState.connectionId = 0;
+    renderGlobalForwardManager();
+    const groupedManager = Boolean(
+      managerView?.querySelector('.global-forward-grouped-list')
+      && managerView.querySelector('.global-forward-group')
+      && managerView.querySelector('.global-forward-connection')
+      && managerView.querySelector('[data-action="global-forward-add"][data-connection-id]')
+      && managerView.querySelectorAll('.global-forward-group-head .global-forward-drag-handle').length
+      && managerView.querySelectorAll('.global-forward-connection-head .global-forward-drag-handle').length
+      && getComputedStyle(managerView.querySelector('.global-forward-group-head')).position === 'sticky'
+      && getComputedStyle(managerView.querySelector('.global-forward-connection-head')).position === 'sticky'
+    );
+    globalForwardManagerState.groupMode = previousGroupMode;
+    renderGlobalForwardManager();
+    if (forwardFixture) forwardFixture.status = 'stopped';
+    renderGlobalForwardManager();
+    const managerStoppedCard = managerView?.querySelector('.global-forward-card[data-forward-id="900001"]');
+    const globalForwardStoppedHidesAccess = Boolean(
+      managerStoppedCard
+      && !managerStoppedCard.querySelector('.global-forward-access a')
+      && managerStoppedCard.querySelector('[data-action="global-forward-toggle"]')
+    );
+    if (forwardFixture) forwardFixture.status = 'running';
+    if (managerView) managerView.hidden = true;
+    if (managerPreviousView) managerPreviousView.hidden = false;
     quickConnectionSearch.value = 'tester@198.51.100.25:2200';
     renderQuickConnectionRows(quickConnectionSearch.value);
     const quickSshCandidates = Boolean(
@@ -575,6 +673,15 @@ app.whenReady().then(async () => {
       connectionHasSftpAction,
       quickConnectionLauncher,
       quickConnectionLayout,
+      quickForwardSearch,
+      quickCommandForwardSearch,
+      globalForwardManager,
+      globalForwardToolbarAligned,
+      globalForwardWideGrid,
+      singleForwardWideGrid,
+      forwardCardActionsAligned,
+      groupedManager,
+      globalForwardStoppedHidesAccess,
       quickSshCandidates,
       connectionNameDoubleClickOpens,
       operationPaneHorizontalScrollHidden:Boolean(explorerTree&&getComputedStyle(explorerTree).overflowX==='hidden'),
@@ -1773,7 +1880,7 @@ app.whenReady().then(async () => {
       const tools=document.querySelector('#explorerTools');
       const toolsRect=tools?.getBoundingClientRect();
       const expectedMode=['settings','import'].includes(name)?'section-mode':(['connections','remote'].includes(name)?'connection-mode':'compact-mode');
-      const maxToolHeight=name==='settings'?264:(name==='import'?220:(['connections','remote','logs'].includes(name)?96:58));
+      const maxToolHeight=name==='settings'?264:(name==='import'?220:(['connections','remote','logs','running'].includes(name)?104:58));
       const controls=[...(tools?.querySelectorAll('button')||[])].map(button=>button.getBoundingClientRect());
       rows.push({
         name,
@@ -2635,7 +2742,7 @@ app.whenReady().then(async () => {
           await collectTranslatedHan('forward-list-open', true, forwardView);
           await runI18nScenario('forward-runtime', async () => {
             await collectTranslatedHan('forward-runtime-open', true, forwardView);
-            const runtime = forwardView?.querySelector('.forward-status .conn-meta')?.textContent || '';
+            const runtime = forwardView?.querySelector('.forward-card-runtime')?.textContent || '';
             if (!runtime.includes('Running for') || !runtime.includes('Reconnected 2 times')) throw new Error('forward runtime was not localized');
           });
         } finally {
@@ -3562,6 +3669,7 @@ app.whenReady().then(async () => {
       service_name:'Running actions fixture',
       service_type:'web',
       url_scheme:'http',
+      url_path:'/admin?view=full#status',
       bind_host:'127.0.0.1',
       bind_port:18099,
       target_host:'127.0.0.1',
@@ -3579,9 +3687,9 @@ app.whenReady().then(async () => {
       const actions = document.querySelector('.running-actions');
       const open = actions?.querySelector('.open-forward-link');
       const buttons = [...(actions?.querySelectorAll('button') || [])];
-      const retry = buttons.find(button => button.getAttribute('onclick')?.includes('retryForwardFromRunning'));
-      const stop = buttons.find(button => button.getAttribute('onclick')?.includes('stopForwardFromRunning'));
-      const copy = buttons.find(button => button.getAttribute('onclick')?.includes('copyText'));
+      const retry = buttons.find(button => button.dataset.action === 'running-forward-retry');
+      const stop = buttons.find(button => button.dataset.action === 'running-forward-stop');
+      const copy = buttons.find(button => button.dataset.action === 'running-forward-copy');
       const overviewCards = [...document.querySelectorAll('.running-overview > span')];
       const overviewLabelsBelowNumbers = overviewCards.length === 3 && overviewCards.every(card => {
         const countRect = card.querySelector('strong')?.getBoundingClientRect();
@@ -3597,12 +3705,14 @@ app.whenReady().then(async () => {
       const openRect = open.getBoundingClientRect();
       const retryRect = retry.getBoundingClientRect();
       const buttonRects = [retry,stop,copy].map(button=>button.getBoundingClientRect());
+      const expectedUrl = 'http://127.0.0.1:18099/admin?view=full#status';
       return {
         found:true,
         fits:openRect.left>=actionsRect.left-0.5&&openRect.right<=actionsRect.right+0.5&&buttonRects.every(rect=>rect.left>=actionsRect.left-0.5&&rect.right<=actionsRect.right+0.5),
         compact:buttonRects.every(rect=>rect.width<=31&&rect.height<=31)&&openRect.height<=31,
         iconOnly:[retry,stop,copy].every(button=>!button.textContent.trim()),
         overviewLabelsBelowNumbers,
+        customPathApplied:open.getAttribute('href')===expectedUrl&&copy.dataset.copyText===expectedUrl,
         open:{width:openRect.width,height:openRect.height},
         retry:{width:retryRect.width,height:retryRect.height}
       };
@@ -8095,7 +8205,7 @@ app.whenReady().then(async () => {
     };
     const gbkEditor=window.ace&&editorHost?ace.edit(editorHost):null;
     gbkEditor?.setValue('中',-1);
-    await new Promise(resolve=>setTimeout(resolve,20));
+    await new Promise(resolve=>setTimeout(resolve,160));
     textEncodingUi.nonUtf8SaveAllowed=Boolean(!editorWindow?.querySelector('#sftpTextSave')?.disabled
       && editorWindow?.querySelector('#sftpEditorStats')?.textContent.includes('保存时检查大小'));
     const utf8Measurement=sftpEditorByteMeasurement('中','utf8');
@@ -8122,7 +8232,9 @@ app.whenReady().then(async () => {
     const shellEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
     const shellLineEnding=shellEditorWindow?.querySelector('#sftpLineEnding');
     const shellEncoding=shellEditorWindow?.querySelector('#sftpTextEncoding');
-    const shellControlsReady=Boolean(shellLineEnding?.value==='lf'&&shellLineEnding.disabled&&shellEncoding?.value==='utf8');
+    const shellControlsReady=Boolean(shellLineEnding?.value==='crlf'&&!shellLineEnding.disabled&&shellEncoding?.value==='utf8');
+    textEncodingUi.shellNonLfWarningPrepared=Boolean(prepareSftpEditorSave('/tmp/risky.sh','#!/bin/sh\\necho risky','utf8','crlf').unsafeScriptLineEnding);
+    if (shellLineEnding) shellLineEnding.value='lf';
     shellEditorWindow?.querySelector('#sftpTextSave')?.click();
     const shellSave=await shellEditorPromise;
     textEncodingUi.shellFormat=Boolean(shellControlsReady
@@ -10127,6 +10239,13 @@ app.whenReady().then(async () => {
       modal.onclick=null;
       modal.hidden=true;
       modal.innerHTML='';
+      healthResults.delete(Number(connections[0].id));
+      renderConnections();
+      const uncheckedHealthRow=[...document.querySelectorAll('.conn-row')].find(row=>row.querySelector('.conn-name')?.textContent===connections[0].name);
+      const uncheckedHealthHidden=Boolean(uncheckedHealthRow
+        &&!uncheckedHealthRow.querySelector('.health-badge')
+        &&!uncheckedHealthRow.querySelector('.status-dot')
+        &&!uncheckedHealthRow.querySelector('.conn-state'));
       healthResults.set(Number(connections[0].id),{ok:true,status:'正常'});
       renderConnections();
       const healthRow=[...document.querySelectorAll('.conn-row')].find(row=>row.querySelector('.conn-name')?.textContent===connections[0].name);
@@ -10159,7 +10278,7 @@ app.whenReady().then(async () => {
       const narrowAddSshButton=document.querySelector('#explorerTools .explorer-main-action');
       const narrowAddSshTextFits=Boolean(narrowAddSshButton?.textContent.includes('添加 SSH')
         && narrowAddSshButton.scrollWidth<=narrowAddSshButton.clientWidth+1);
-      return {rdpDisplayForm,vncModePersisted,vncImageSyncOptOut,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncNoPassword,sshCredentialRepairUi,quickTerminalCredentialRepairUi,ftpCredentialRepairUi,vncServiceDiagnosisUi,vncServiceActionDebounced,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,xdmcpAuthorizationLayout,standaloneRdpFallback,standaloneRdpStatusHidden,standaloneVncFallback,standaloneXdmcpFallback,standaloneXdmcpStatusHidden,standaloneFallbackDetails,remoteDiagnosticAlignment,graphicsRendering:renderingUi,renderingCopyInteraction,vncSourceSelection,vncSourceRefreshInPlace,remoteLayoutUi,vncFailureRecovery,vncComponentManagementUi,vncComponentDiagnostics:{missingTigerUi,rawTigerUi,missingTigerText,rawTigerText,missingTigerButtons,rawTigerButtons},xdmcpWorkspaceText,macVncBypassesLinuxDesktop,macVncWorkspaceText,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,remoteNameDoubleClickOpens,remoteDesktopSwitchAvailable,remoteDesktopSwitchProfiles:remoteDesktopSwitchProfiles(derived.id).map(profile=>profile.name),remoteDesktopSingleDisabled,remoteDesktopSwitchMenuComplete,remoteDesktopSwitchMenu,sshActivitySeparated,x11AppLauncher,x11InstalledDialog,xServerRemoteUninstall,xServerClipboardLayout,xServerImmediateLoading,xServerManager,quickXServerManager,xServerDesktopIntegrationUnavailable,xServerBrowserAuthorization,xServerLocalDirectAuthorization,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,healthIconOnly,narrowBrandActionsFit,expandedBrandNameVisible,defaultAddSshTextFits,narrowAddSshTextFits};
+      return {rdpDisplayForm,vncModePersisted,vncImageSyncOptOut,vncPasswordForm,vncRetryPrompt,vncRetryValue,vncNoPassword,sshCredentialRepairUi,quickTerminalCredentialRepairUi,ftpCredentialRepairUi,vncServiceDiagnosisUi,vncServiceActionDebounced,xdmcpForm,xdmcpMenuAvailable,xdmcpSessionSemantics,xdmcpAuthorizationLayout,standaloneRdpFallback,standaloneRdpStatusHidden,standaloneVncFallback,standaloneXdmcpFallback,standaloneXdmcpStatusHidden,standaloneFallbackDetails,remoteDiagnosticAlignment,graphicsRendering:renderingUi,renderingCopyInteraction,vncSourceSelection,vncSourceRefreshInPlace,remoteLayoutUi,vncFailureRecovery,vncComponentManagementUi,vncComponentDiagnostics:{missingTigerUi,rawTigerUi,missingTigerText,rawTigerText,missingTigerButtons,rawTigerButtons},xdmcpWorkspaceText,macVncBypassesLinuxDesktop,macVncWorkspaceText,macVncSetupGuidance,remoteActivitySeparated,remoteActivityChecks,remoteHostStickyStyle,remoteHostStickyFollowsOuter,derivedSourcePresentation,remoteNameDoubleClickOpens,remoteDesktopSwitchAvailable,remoteDesktopSwitchProfiles:remoteDesktopSwitchProfiles(derived.id).map(profile=>profile.name),remoteDesktopSingleDisabled,remoteDesktopSwitchMenuComplete,remoteDesktopSwitchMenu,sshActivitySeparated,x11AppLauncher,x11InstalledDialog,xServerRemoteUninstall,xServerClipboardLayout,xServerImmediateLoading,xServerManager,quickXServerManager,xServerDesktopIntegrationUnavailable,xServerBrowserAuthorization,xServerLocalDirectAuthorization,adaptiveModal,adaptiveModalMetrics,modalHeaderControlsAligned,modalBackdropLocked,uncheckedHealthHidden,healthIconOnly,narrowBrandActionsFit,expandedBrandNameVisible,defaultAddSshTextFits,narrowAddSshTextFits};
     } finally {
       applyOperationPaneWidth(previousOperationWidth,{fit:false});
       api=previousApi;
@@ -10307,7 +10426,7 @@ app.whenReady().then(async () => {
     || !workspaceHeaderResizeUi.doubleClickResets
     || !workspaceHeaderResizeUi.heightRestored
     || !workspaceHeaderResizeUi.tabStorageIndependent;
-  const runningActionsFailed = !runningActions.found || !runningActions.fits || !runningActions.compact || !runningActions.iconOnly || !runningActions.overviewLabelsBelowNumbers;
+  const runningActionsFailed = !runningActions.found || !runningActions.fits || !runningActions.compact || !runningActions.iconOnly || !runningActions.overviewLabelsBelowNumbers || !runningActions.customPathApplied;
   const authUiFailed = !authUi.found || !Object.values(authUi.passwordMode).every(Boolean) || !Object.values(authUi.keyMode).every(Boolean) || !authUi.passwordEyeToggle;
   const connectionStartupUiFailed = !Object.values(connectionStartupUi).every(value => Array.isArray(value) ? value.length > 0 : Boolean(value))
     || !connectionStartupUi.categories.includes('Shell')
@@ -10419,7 +10538,7 @@ app.whenReady().then(async () => {
   const remoteRenderingProtocols = ['rdp','vnc','xdmcp'];
   const remoteRenderingUiFailed = remoteRenderingProtocols.some(protocol => !remoteAccessUi.graphicsRendering?.[protocol]?.warning || !remoteAccessUi.graphicsRendering?.[protocol]?.copyButtons || !remoteAccessUi.graphicsRendering?.[protocol]?.noHorizontalOverflow) || !remoteAccessUi.renderingCopyInteraction?.success || !remoteAccessUi.renderingCopyInteraction?.failure || !remoteAccessUi.narrowRendering?.ok;
   const remoteLayoutUiFailed = remoteRenderingProtocols.some(protocol => !remoteAccessUi.remoteLayoutUi?.[protocol]?.ok);
-  const remoteAccessUiFailed = !remoteAccessUi.rdpDisplayForm || !remoteAccessUi.vncModePersisted || !remoteAccessUi.vncImageSyncOptOut || !remoteAccessUi.vncPasswordForm || !remoteAccessUi.vncRetryPrompt || !remoteAccessUi.vncRetryValue || !remoteAccessUi.vncNoPassword || !remoteAccessUi.sshCredentialRepairUi || !remoteAccessUi.quickTerminalCredentialRepairUi || !remoteAccessUi.ftpCredentialRepairUi || !remoteAccessUi.vncServiceDiagnosisUi || !remoteAccessUi.vncServiceActionDebounced || !remoteAccessUi.xdmcpForm || !remoteAccessUi.xdmcpMenuAvailable || !remoteAccessUi.xdmcpSessionSemantics || !remoteAccessUi.xdmcpAuthorizationLayout || !remoteAccessUi.standaloneRdpFallback || !remoteAccessUi.standaloneRdpStatusHidden || !remoteAccessUi.standaloneVncFallback || !remoteAccessUi.standaloneXdmcpFallback || !remoteAccessUi.standaloneXdmcpStatusHidden || !remoteAccessUi.remoteDiagnosticAlignment || remoteRenderingUiFailed || remoteLayoutUiFailed || !remoteAccessUi.vncSourceSelection || !remoteAccessUi.vncSourceRefreshInPlace || !remoteAccessUi.vncFailureRecovery || !remoteAccessUi.vncComponentManagementUi || !remoteAccessUi.macVncBypassesLinuxDesktop || !remoteAccessUi.macVncSetupGuidance || !remoteAccessUi.remoteActivitySeparated || !remoteAccessUi.remoteHostStickyStyle || !remoteAccessUi.remoteHostStickyFollowsOuter || !remoteAccessUi.derivedSourcePresentation || !remoteAccessUi.remoteNameDoubleClickOpens || !remoteAccessUi.remoteDesktopSwitchAvailable || !remoteAccessUi.remoteDesktopSingleDisabled || !remoteAccessUi.remoteDesktopSwitchMenuComplete || !remoteAccessUi.sshActivitySeparated || !remoteAccessUi.x11AppLauncher || !remoteAccessUi.x11InstalledDialog || !remoteAccessUi.xServerRemoteUninstall || !remoteAccessUi.xServerClipboardLayout || !remoteAccessUi.xServerImmediateLoading || !remoteAccessUi.xServerManager || !remoteAccessUi.quickXServerManager || !remoteAccessUi.xServerDesktopIntegrationUnavailable || !remoteAccessUi.xServerBrowserAuthorization || !remoteAccessUi.xServerLocalDirectAuthorization || !remoteAccessUi.adaptiveModal || !remoteAccessUi.modalHeaderControlsAligned || !remoteAccessUi.modalBackdropLocked || !remoteAccessUi.healthIconOnly || !remoteAccessUi.narrowBrandActionsFit || !remoteAccessUi.expandedBrandNameVisible || !remoteAccessUi.defaultAddSshTextFits || !remoteAccessUi.narrowAddSshTextFits;
+  const remoteAccessUiFailed = !remoteAccessUi.rdpDisplayForm || !remoteAccessUi.vncModePersisted || !remoteAccessUi.vncImageSyncOptOut || !remoteAccessUi.vncPasswordForm || !remoteAccessUi.vncRetryPrompt || !remoteAccessUi.vncRetryValue || !remoteAccessUi.vncNoPassword || !remoteAccessUi.sshCredentialRepairUi || !remoteAccessUi.quickTerminalCredentialRepairUi || !remoteAccessUi.ftpCredentialRepairUi || !remoteAccessUi.vncServiceDiagnosisUi || !remoteAccessUi.vncServiceActionDebounced || !remoteAccessUi.xdmcpForm || !remoteAccessUi.xdmcpMenuAvailable || !remoteAccessUi.xdmcpSessionSemantics || !remoteAccessUi.xdmcpAuthorizationLayout || !remoteAccessUi.standaloneRdpFallback || !remoteAccessUi.standaloneRdpStatusHidden || !remoteAccessUi.standaloneVncFallback || !remoteAccessUi.standaloneXdmcpFallback || !remoteAccessUi.standaloneXdmcpStatusHidden || !remoteAccessUi.remoteDiagnosticAlignment || remoteRenderingUiFailed || remoteLayoutUiFailed || !remoteAccessUi.vncSourceSelection || !remoteAccessUi.vncSourceRefreshInPlace || !remoteAccessUi.vncFailureRecovery || !remoteAccessUi.vncComponentManagementUi || !remoteAccessUi.macVncBypassesLinuxDesktop || !remoteAccessUi.macVncSetupGuidance || !remoteAccessUi.remoteActivitySeparated || !remoteAccessUi.remoteHostStickyStyle || !remoteAccessUi.remoteHostStickyFollowsOuter || !remoteAccessUi.derivedSourcePresentation || !remoteAccessUi.remoteNameDoubleClickOpens || !remoteAccessUi.remoteDesktopSwitchAvailable || !remoteAccessUi.remoteDesktopSingleDisabled || !remoteAccessUi.remoteDesktopSwitchMenuComplete || !remoteAccessUi.sshActivitySeparated || !remoteAccessUi.x11AppLauncher || !remoteAccessUi.x11InstalledDialog || !remoteAccessUi.xServerRemoteUninstall || !remoteAccessUi.xServerClipboardLayout || !remoteAccessUi.xServerImmediateLoading || !remoteAccessUi.xServerManager || !remoteAccessUi.quickXServerManager || !remoteAccessUi.xServerDesktopIntegrationUnavailable || !remoteAccessUi.xServerBrowserAuthorization || !remoteAccessUi.xServerLocalDirectAuthorization || !remoteAccessUi.adaptiveModal || !remoteAccessUi.modalHeaderControlsAligned || !remoteAccessUi.modalBackdropLocked || !remoteAccessUi.uncheckedHealthHidden || !remoteAccessUi.healthIconOnly || !remoteAccessUi.narrowBrandActionsFit || !remoteAccessUi.expandedBrandNameVisible || !remoteAccessUi.defaultAddSshTextFits || !remoteAccessUi.narrowAddSshTextFits;
   const expectedSftpToolActions = ['收藏当前目录','新建文件夹','新建文件','上传文件','SFTP 回收站','搜索当前目录','打开此连接的终端','刷新目录','SFTP 全局设置'];
   const directoryActionsUi = sftpUi.directoryActionsUi || {};
   const connectionSessionUi = sftpUi.connectionSessionUi || {};
@@ -10432,7 +10551,7 @@ app.whenReady().then(async () => {
   const globalSettingsUi = sftpUi.globalSettingsUi || {};
   const downloadNoticeUi = sftpUi.downloadNoticeUi || {};
   const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingResumeAction || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.drawerDefaultCompact || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.failedOnly || !jobUi.failedActions || !jobUi.failedClearAvailable || !jobUi.currentProgress || !jobUi.drawerResizable || !jobUi.drawerResizeAdaptive || !jobUi.drawerResizePersists || !jobUi.drawerResizeReset || !jobUi.deleteDuplicateBlocked || !jobUi.deleteKeepsDrawerOpen || !jobUi.taskLogInitialOpen || !jobUi.taskLogInitialBottom || !jobUi.taskLogRefreshKeepsOpen || !jobUi.taskLogRefreshShowsLatest || !jobUi.taskLogRefreshFollowsBottom || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned || !jobUi.toastOrderPreserved || !jobUi.toastStackedDown || !jobUi.toastAvoidsFloatingTask || !jobUi.toastExitAnimated || !jobUi.toastReflowAnimated || !jobUi.toastMovedUp;
-  const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.initialCentered || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.nonUtf8SaveAllowed || !textEncodingUi.nonUtf8SaveSubmitted || !textEncodingUi.utf8LimitEnforced || !textEncodingUi.utf8BomIncludesPrefix || !textEncodingUi.normalizationOnlyLimitEnforced || !textEncodingUi.lineEndingLabelsLocalized || !textEncodingUi.lightPaged || !textEncodingUi.lightNextPage || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !textEncodingUi.shellFormat || !['lf','crlf','cr'].every(value=>textEncodingUi.lineEndings?.includes(value)) || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
+  const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.initialCentered || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.nonUtf8SaveAllowed || !textEncodingUi.nonUtf8SaveSubmitted || !textEncodingUi.utf8LimitEnforced || !textEncodingUi.utf8BomIncludesPrefix || !textEncodingUi.normalizationOnlyLimitEnforced || !textEncodingUi.lineEndingLabelsLocalized || !textEncodingUi.lightPaged || !textEncodingUi.lightNextPage || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !textEncodingUi.shellFormat || !textEncodingUi.shellNonLfWarningPrepared || !['lf','crlf','cr'].every(value=>textEncodingUi.lineEndings?.includes(value)) || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
   const imagePreviewUiFailed = !imagePreviewUi.svgOpened || !imagePreviewUi.svgSanitized || !imagePreviewUi.svgEmbeddedStyles || !imagePreviewUi.svgOuterWindowStable || !imagePreviewUi.svgFitsCanvas || !imagePreviewUi.svgZoomButtons || !imagePreviewUi.svgCtrlWheel || !imagePreviewUi.svgSearchFocused || !imagePreviewUi.svgSearchLocated || !imagePreviewUi.svgSearchKeepsContext || !imagePreviewUi.svgSearchClearFits || !imagePreviewUi.rasterOpened || !imagePreviewUi.rasterZoom;
   const nativeDragUiFailed = !nativeDragUi.found || !nativeDragUi.webExternalDragBlocked || !nativeDragUi.linuxFallbackNoticeOnce || !nativeDragUi.linuxFallbackUsesCompatibilityMode || !nativeDragUi.streamingPreparesOnPointerDown || !nativeDragUi.streamingThresholdActivatesOnce || !nativeDragUi.streamingCaptureCancelSurvives || !nativeDragUi.pointerUpCancelsPending || !nativeDragUi.streamingSkipsStage || !nativeDragUi.streamingNativeBlocksParallelBrowserDrag || !nativeDragUi.nativeIdleHintStable || !nativeDragUi.nativeOutsideHintStaysStable || !nativeDragUi.nativeMotionTargetsSftp || !nativeDragUi.nativeTransientMissKeepsTarget || !nativeDragUi.nativeFinalTransientMissKeepsTarget || !nativeDragUi.nativeReleasedClearsStaleTarget || !nativeDragUi.nativeResultCopiesOnce || !nativeDragUi.firstDragOnlyStages || !nativeDragUi.firstDragReset || !nativeDragUi.cacheReused || !nativeDragUi.cachedUnarmedStaysInternal || !nativeDragUi.sameWindowDropDoesNotArm || !nativeDragUi.armedDragStartsSynchronously || !nativeDragUi.failureRearmed || !nativeDragUi.successClearsState || !nativeDragUi.finderRenameNoticeShown;
   const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.terminalTabPreviewActivated || !connectionSessionUi.invalidTerminalDropRestoresSource || !connectionSessionUi.invalidSftpDropRestoresSource || !connectionSessionUi.acceptedTerminalDropStays || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || imagePreviewUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !globalSettingsUi.classicSurface || !globalSettingsUi.themedField || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !sftpUi.fileOpenFeedback?.interruptedRetry || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryCacheBehavior.permissionFailureRestored || !sftpUi.searchKeyboardUi?.opened || !sftpUi.searchKeyboardUi?.closed || !sftpUi.searchKeyboardUi?.recursive || !sftpUi.searchKeyboardUi?.feedback || !sftpUi.syncIndicatorFollowsScroll || !sftpUi.diffComparisonUi || !sftpUi.columnLayoutUi?.order || !sftpUi.columnLayoutUi?.persisted || !sftpUi.columnLayoutUi?.resized || !sftpUi.columnLayoutUi?.pointerStable || !sftpUi.columnLayoutUi?.pairOnly || !sftpUi.columnLayoutUi?.adjacentResizeStable || !sftpUi.columnLayoutUi?.dividerUniform || !sftpUi.columnLayoutUi?.localNarrowResizable || !sftpUi.columnLayoutUi?.openButtonStable || !sftpUi.columnLayoutUi?.selectionToolbarStable || !sftpUi.columnLayoutUi?.scrollbarUnified || !sftpUi.columnLayoutUi?.globalCss || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithoutDirectoryReload || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.emptyFavoritesCompact || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !directoryActionsUi.terminalJumpFirst || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/demo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.multiNameAddsSelection || !sftpUi.multiNameCancelsSelection || !sftpUi.singleNameReplacesSelection || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.dragSelectionSynchronized || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactHorizontalScroll || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.narrowHeaderNameVisible || !sftpUi.narrowHeaderSummaryVisible || !sftpUi.narrowCompactActions || !sftpUi.completedMutationDetected || !sftpUi.desktopPagerSingleRow || !sftpUi.pagerFloatsAtWorkspaceBottom || !sftpUi.pagerOpaqueAndElevated || !sftpUi.pagerDockSealsBottom || !sftpUi.pagerPinnedToViewport || !sftpUi.scrollCueVisibleAboveContent || !sftpUi.scrollCueHidesAtEnd || !sftpUi.narrowPagerWraps || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerJumpVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
@@ -10446,7 +10565,8 @@ app.whenReady().then(async () => {
     || !directoryActionsUi.duplicateShellMatchesTab;
   const languageOnboardingFailed = !languageOnboardingUi.regionDefaults || !languageOnboardingUi.newUserDefaultsEnglish || !languageOnboardingUi.nativeChoiceCopy || !languageOnboardingUi.englishCopy || !languageOnboardingUi.selectedChineseCopy || !languageOnboardingUi.selectedEnglishCopy || !languageOnboardingUi.coldStartNativeChoice || !languageOnboardingUi.existingUserKeepsLanguage || !languageOnboardingUi.existingUserChineseCopy || !languageOnboardingUi.existingUserEnglishCopy || !languageOnboardingUi.fitsNarrowViewport || !languageOnboardingUi.saved || !languageOnboardingUi.closed;
   const forwardTemplateLayoutFailed = forwardTemplateLayoutUi.rows !== 2 || forwardTemplateLayoutUi.buttons !== 6 || !forwardTemplateLayoutUi.singleLine || !forwardTemplateLayoutUi.insideRows || !forwardTemplateLayoutUi.noOverlap;
-  const code = errors.length || cspViolations.length || languageOnboardingFailed || forwardTemplateLayoutFailed || !noVncModuleUi.loaded || !noVncModuleUi.prototype || !zmodemModuleUi.loaded || !zmodemModuleUi.browser || !zmodemModuleUi.abortSequence || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceTabCloseUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || appearanceEffectsUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.quickConnectionLauncher || !result.quickSshCandidates || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
+  const forwardLayoutUiFailed = !result.globalForwardManager || !result.globalForwardToolbarAligned || !result.globalForwardWideGrid || !result.singleForwardWideGrid || !result.forwardCardActionsAligned || !result.groupedManager || !result.globalForwardStoppedHidesAccess;
+  const code = errors.length || cspViolations.length || languageOnboardingFailed || forwardTemplateLayoutFailed || !noVncModuleUi.loaded || !noVncModuleUi.prototype || !zmodemModuleUi.loaded || !zmodemModuleUi.browser || !zmodemModuleUi.abortSequence || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceTabCloseUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || appearanceEffectsUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || forwardLayoutUiFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.quickConnectionLauncher || !result.quickForwardSearch || !result.quickCommandForwardSearch || !result.quickSshCandidates || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
   if (sftpTabIsolationFailed) console.error("SFTP tab isolation diagnostics:", JSON.stringify(directoryActionsUi));
   if (notificationUiFailed) console.error("Notification UI diagnostics:", JSON.stringify(notificationUi));
   if (imagePreviewUiFailed) console.error("Image preview UI diagnostics:", JSON.stringify(imagePreviewUi));
@@ -10487,6 +10607,7 @@ app.whenReady().then(async () => {
       sftpUiFailed,
       sftpToolbarRecoveryFailed,
       sftpTabIsolationFailed,
+      forwardLayoutUiFailed,
       clipboardUiFailed:!clipboardUi.ok
     }).filter(([, failed]) => Boolean(failed)).map(([name]) => name),
     workspaceTabCloseUi,

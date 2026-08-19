@@ -43,6 +43,7 @@ const {
   bulkUpdateConnections,
   renameConnectionGroup,
   reorderConnectionGroups,
+  reorderConnections,
   insertForward,
   updateForward,
   deleteConnection,
@@ -63,6 +64,7 @@ const {
   saveUploadedKey,
   startForward,
   stopForward,
+  reconfigureForwardRuntime,
   startConnectionForwards,
   stopConnectionForwards,
   stopAllForwards,
@@ -83,11 +85,13 @@ const {
   clearConnectionHealthCache
 } = require("./ssh");
 const { diagnoseSshError } = require("./ssh-diagnostics");
+const { createForwardReconfigurationService } = require("./services/forward-reconfiguration-service");
 const { publicErrorDetails } = require("./public-error");
 const { inspectExtraArgs } = require("./ssh-command");
 const { deployGeneratedPublicKey, generateSshKey } = require("./ssh-key-wizard");
 const { authorizeQuickConnectionId, createQuickTerminalTicket, revokeQuickTerminalTicket } = require("./quick-terminal");
 const { createTerminalStartupTicket } = require("./terminal-startup");
+const { reconfigureForward } = createForwardReconfigurationService({getForward, updateForward, reconfigureForwardRuntime});
 const { TERMINAL_CLIPBOARD_IMAGE_MAX_BYTES, writeTerminalClipboardImage } = require("./terminal-clipboard");
 const { x11RuntimeDiagnostics } = require("./x11");
 const { configureXdmcpServer, detectXdmcpServer, resolveManagementConnection } = require("./xdmcp-manager");
@@ -553,9 +557,9 @@ async function handleApi(req, res, pathname) {
     duplicateConnection, forwardLogLabel, getConnection, getDesktopIntegration,
     getForward, insertConnection, insertForward, inspectServer, invalidateRemoteDirectoryCache,
     isDesktopRequest, listConnections, listIdentityFiles, readJson, renameConnectionGroup,
-    reorderConnectionGroups, restorePreviousForwards, restoreStateSummary, sendJson,
+    reorderConnectionGroups, reorderConnections, restorePreviousForwards, restoreStateSummary, sendJson,
     startConnectionForwards, startForward, stopConnectionForwards, stopExternalEditsForConnection,
-    stopForward, terminalCapabilitiesForConnection, updateConnection, updateConnectionFlags,
+    stopForward, reconfigureForward, terminalCapabilitiesForConnection, updateConnection, updateConnectionFlags,
     updateConnectionUsage, updateConnectionX11Mode, updateForward, updateSftpFilenameEncoding,
     updateTerminalPreferences, updateTerminalStartup
   })) return;

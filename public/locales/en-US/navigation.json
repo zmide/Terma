@@ -4,7 +4,7 @@
   "auto": {
     "connections": "Connections",
     "remote": "Other Connections",
-    "running": "Active Tunnels",
+    "running": "Forwarding List",
     "batch": "Batch Commands",
     "import_export": "Import and Export",
     "logs": "Logs",

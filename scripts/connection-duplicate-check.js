@@ -21,7 +21,7 @@ const connectionFields = [
   "sftp_filename_encoding"
 ];
 const forwardFields = [
-  "mode", "service_name", "service_type", "service_note", "url_scheme", "bind_host", "bind_port",
+  "mode", "service_name", "service_type", "service_note", "url_scheme", "url_path", "bind_host", "bind_port",
   "target_host", "target_port"
 ];
 
@@ -64,6 +64,7 @@ try {
     service_type:"web",
     service_note:"仅本机访问",
     url_scheme:"https",
+    url_path:"admin?source=terma#status",
     bind_host:"127.0.0.1",
     bind_port:18443,
     target_host:"127.0.0.1",
@@ -87,6 +88,15 @@ try {
 
   const source = database.getConnection(sourceId);
   const sourceForwards = database.all("SELECT * FROM connection_forwards WHERE connection_id=? ORDER BY id", [sourceId]);
+  assert.equal(sourceForwards[0].url_path, "/admin?source=terma#status");
+  assert.throws(() => database.insertForward(sourceId, {
+    mode:"local", url_path:"https://example.invalid/admin", bind_host:"127.0.0.1", bind_port:19080,
+    target_host:"127.0.0.1", target_port:8080
+  }), /不能填写完整网址/);
+  assert.throws(() => database.insertForward(sourceId, {
+    mode:"local", url_path:"//example.invalid/admin", bind_host:"127.0.0.1", bind_port:19081,
+    target_host:"127.0.0.1", target_port:8080
+  }), /不能填写完整网址/);
   for (const result of [first, second, third]) {
     const duplicate = database.getConnection(result.id);
     assert.deepEqual(values(duplicate, connectionFields), values(source, connectionFields));

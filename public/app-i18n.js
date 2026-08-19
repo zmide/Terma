@@ -887,6 +887,7 @@ registerTermaI18nRenderer(() => {
   if (typeof renderExplorerTools === "function") renderExplorerTools();
   if (typeof renderRunningForwards === "function") renderRunningForwards();
   if (typeof renderForwards === "function" && typeof activeView !== "undefined" && activeView === "forwards") renderForwards();
+  if (typeof renderGlobalForwardManager === "function" && typeof activeView !== "undefined" && activeView === "forward-manager") renderGlobalForwardManager();
   if (typeof renderUpdateStatus === "function" && document.getElementById("updateCheckArea")) renderUpdateStatus({icons:true});
   if (typeof tabs !== "undefined" && Array.isArray(tabs)) {
     for (const tab of tabs) {
@@ -903,6 +904,11 @@ registerTermaI18nRenderer(() => {
       if (tab.kind === "settings") {
         tab.title = tr("settings:title", {defaultValue:"设置"});
         tab.subtitle = tr("settings:subtitle", {defaultValue:"访问保护、通知、运行信息与开源许可"});
+        continue;
+      }
+      if (tab.kind === "forward-manager") {
+        tab.title = tr("connections:forward_manager.title", {defaultValue:"转发列表"});
+        tab.subtitle = typeof globalForwardManagerSubtitle === "function" ? globalForwardManagerSubtitle() : "";
         continue;
       }
       if (tab.kind !== "forwards") continue;

@@ -5,7 +5,7 @@ function namedWorkspaceTabExists(tab) {
   if (SSH_WORKSPACE_TAB_KINDS.has(tab?.kind)) return Boolean(currentConnection(Number(tab.id)));
   if (REMOTE_WORKSPACE_TAB_KINDS.has(tab?.kind)) return Boolean(remoteProfileById(Number(tab.id)));
   if (tab?.kind === "local-files") return typeof localFilesAvailable === "function" && localFilesAvailable();
-  return ["settings", "import", "command", "log"].includes(tab?.kind);
+  return ["settings", "import", "command", "log", "forward-manager"].includes(tab?.kind);
 }
 
 function captureNamedWorkspaceLayout() {

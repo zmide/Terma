@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS connection_forwards (
   service_type TEXT,
   service_note TEXT,
   url_scheme TEXT,
+  url_path TEXT,
   bind_host TEXT NOT NULL DEFAULT '127.0.0.1',
   bind_port INTEGER NOT NULL,
   target_host TEXT,
@@ -138,6 +139,7 @@ CREATE TABLE IF NOT EXISTS forward_templates (
   service_type TEXT,
   service_note TEXT,
   url_scheme TEXT,
+  url_path TEXT,
   bind_host TEXT NOT NULL DEFAULT '127.0.0.1',
   bind_port INTEGER NOT NULL,
   target_host TEXT,
@@ -285,6 +287,10 @@ COMMIT;
   if (!forwardColumns.has("last_error_code")) run("ALTER TABLE connection_forwards ADD COLUMN last_error_code TEXT");
   if (!forwardColumns.has("started_at")) run("ALTER TABLE connection_forwards ADD COLUMN started_at INTEGER");
   if (!forwardColumns.has("url_scheme")) run("ALTER TABLE connection_forwards ADD COLUMN url_scheme TEXT");
+  if (!forwardColumns.has("url_path")) run("ALTER TABLE connection_forwards ADD COLUMN url_path TEXT");
+  const forwardTemplateColumns = new Set(all("PRAGMA table_info(forward_templates)").map((row: any) => row.name));
+  if (!forwardTemplateColumns.has("url_scheme")) run("ALTER TABLE forward_templates ADD COLUMN url_scheme TEXT");
+  if (!forwardTemplateColumns.has("url_path")) run("ALTER TABLE forward_templates ADD COLUMN url_path TEXT");
   run("CREATE INDEX IF NOT EXISTS idx_connection_forwards_connection_id ON connection_forwards(connection_id,id)");
   run("CREATE INDEX IF NOT EXISTS idx_connections_group_sort ON connections(group_name,sort_order,created_at,id)");
   run("CREATE INDEX IF NOT EXISTS idx_connection_groups_sort ON connection_groups(sort_order,name)");

@@ -88,8 +88,9 @@ Terma is a remote connection workspace for desktop and self-hosted Web environme
 ### Forwarding and batch operations
 
 - Local `-L`, remote `-R`, and SOCKS5 dynamic `-D` forwarding.
-- Start and stop each forwarding rule independently; use templates, automatic reconnection, and startup restoration.
-- The Running view collects service addresses, runtime state, and error information.
+- Start and stop each forwarding rule independently; use templates, optional URL paths, automatic reconnection, and startup restoration.
+- The Forwarding List manages rules across every SSH connection with search, status/server filters, ungrouped or per-SSH views, sticky group/server headers, drag ordering, and direct add/edit/delete/access actions.
+- Both Quick Open surfaces can find forwarding rules by connection, service, note, address, port, status, or URL path and start or stop them in place.
 - Copy local access addresses, proxy addresses, and target addresses, and quickly test connectivity.
 - Run commands on multiple hosts with reusable templates and TXT/JSON result export.
 

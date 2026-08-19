@@ -733,7 +733,7 @@
     "adjust_operation_pane_hint": "拖动调整操作区宽度，双击恢复默认",
     "adjust_workspace_header": "调整工作区标题栏高度",
     "adjust_workspace_header_hint": "拖动调整标题栏高度，双击恢复默认",
-    "quick_open": "快速打开 SSH / SFTP",
+    "quick_open": "快速打开连接 / 转发",
     "quick_open_shortcut": "快速打开（{{shortcut}}）",
     "new_version": "发现新版本",
     "server": "服务器",

@@ -52,6 +52,7 @@ CREATE TABLE connection_forwards (
   service_type TEXT,
   service_note TEXT,
   url_scheme TEXT,
+  url_path TEXT,
   bind_host TEXT NOT NULL,
   bind_port INTEGER NOT NULL,
   target_host TEXT,
@@ -79,7 +80,7 @@ CREATE TABLE remote_profiles (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
-CREATE TABLE forward_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, mode TEXT NOT NULL, bind_host TEXT, bind_port INTEGER, target_host TEXT, target_port INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE forward_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, mode TEXT NOT NULL, service_name TEXT, service_type TEXT, service_note TEXT, url_scheme TEXT, url_path TEXT, bind_host TEXT, bind_port INTEGER, target_host TEXT, target_port INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE command_snippets (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, group_name TEXT NOT NULL, command TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE named_workspaces (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, description TEXT NOT NULL DEFAULT '', layout_json TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE tunnels (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, mode TEXT NOT NULL, ssh_host TEXT NOT NULL, ssh_port INTEGER NOT NULL, ssh_user TEXT NOT NULL, identity_file TEXT, extra_args TEXT, bind_host TEXT NOT NULL, bind_port INTEGER NOT NULL, target_host TEXT, target_port INTEGER, pid INTEGER, status TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
@@ -95,11 +96,11 @@ function seedTarget() {
   db.prepare("INSERT INTO connection_groups(name,sort_order,created_at,updated_at) VALUES(?,?,?,?)").run("当前分组", 1, 1, 1);
   db.prepare("INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,tags,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(1, "共享连接", "当前分组", "current.example", 2200, "current-user", "key", null, "target-visible", 1, 20);
   db.prepare("INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,tags,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(2, "当前独有", "当前分组", "current-only.example", 22, "root", "key", null, "current-only", 1, 20);
-  db.prepare("INSERT INTO connection_forwards(id,connection_id,mode,service_name,bind_host,bind_port,target_host,target_port,status,restore,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(11, 1, "local", "当前名称", "127.0.0.1", 6001, "127.0.0.1", 6868, "stopped", 1, 1, 20);
+  db.prepare("INSERT INTO connection_forwards(id,connection_id,mode,service_name,url_scheme,url_path,bind_host,bind_port,target_host,target_port,status,restore,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(11, 1, "local", "当前名称", "http", "/current", "127.0.0.1", 6001, "127.0.0.1", 6868, "stopped", 1, 1, 20);
   db.prepare("INSERT INTO remote_profiles(id,name,group_name,protocol,host,port,username,password,options_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(21, "共享 VNC", "当前分组", "vnc", "current.example", 5900, "current-user", null, JSON.stringify({ target_only:true }), 1, 20);
   db.prepare("INSERT INTO named_workspaces(id,name,description,layout_json,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(31, "当前工作区", "", JSON.stringify({ version:1, tabs:[] }), 1, 20);
   db.prepare("INSERT INTO named_workspaces(id,name,description,layout_json,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(32, "共享工作区", "当前内容", JSON.stringify({ version:1, tabs:[] }), 1, 20);
-  db.prepare("INSERT INTO forward_templates(id,name,mode,bind_host,bind_port,target_host,target_port,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").run(41, "旧模板", "local", "127.0.0.1", 5432, "127.0.0.1", 5432, 1, 20);
+  db.prepare("INSERT INTO forward_templates(id,name,mode,url_scheme,url_path,bind_host,bind_port,target_host,target_port,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(41, "旧模板", "local", "http", "/target", "127.0.0.1", 5432, "127.0.0.1", 5432, 1, 20);
   db.prepare("INSERT INTO command_snippets(id,name,group_name,command,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(51, "共享命令", "当前分组", "echo target", 1, 20);
   db.prepare("INSERT INTO tunnels(id,name,mode,ssh_host,ssh_port,ssh_user,identity_file,bind_host,bind_port,target_host,target_port,pid,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(61, "旧隧道", "local", "current.example", 22, "root", null, "127.0.0.1", 9000, "127.0.0.1", 9001, null, "stopped", 1, 20);
   db.prepare("INSERT INTO app_meta(key,value) VALUES(?,?)").run("shared", "target-wins");
@@ -118,12 +119,12 @@ function seedSource() {
   db.prepare("INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,tags,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(101, "共享连接", "测试", "current.example", 2200, "current-user", "key", externalIdentity, "legacy-visible", 1, 10);
   db.prepare("INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,tags,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(102, "旧版测试连接", "测试", "test.example", 22, "root", "key", path.join(sourceSsh, "id_conflict"), "legacy-only", 1, 10);
   db.prepare("INSERT INTO connections(id,name,group_name,ssh_host,ssh_port,ssh_user,auth_type,identity_file,tags,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(103, "共享连接", "测试", "same-name-different-endpoint.example", 22, "root", "key", null, "legacy-conflict", 1, 10);
-  db.prepare("INSERT INTO connection_forwards(id,connection_id,mode,service_name,bind_host,bind_port,target_host,target_port,status,restore,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(201, 101, "local", "旧名称", "127.0.0.1", 6001, "127.0.0.1", 6868, "running", 0, 1, 10);
-  db.prepare("INSERT INTO connection_forwards(id,connection_id,mode,service_name,bind_host,bind_port,target_host,target_port,status,restore,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(202, 102, "local", "测试面板", "127.0.0.1", 8888, "127.0.0.1", 8080, "running", 0, 1, 10);
+  db.prepare("INSERT INTO connection_forwards(id,connection_id,mode,service_name,url_scheme,url_path,bind_host,bind_port,target_host,target_port,status,restore,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(201, 101, "local", "旧名称", "http", "/legacy", "127.0.0.1", 6001, "127.0.0.1", 6868, "running", 0, 1, 10);
+  db.prepare("INSERT INTO connection_forwards(id,connection_id,mode,service_name,url_scheme,url_path,bind_host,bind_port,target_host,target_port,status,restore,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run(202, 102, "local", "测试面板", "https", "/panel", "127.0.0.1", 8888, "127.0.0.1", 8080, "running", 0, 1, 10);
   db.prepare("INSERT INTO remote_profiles(id,name,group_name,protocol,host,port,username,password,options_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(301, "共享 VNC", "测试", "vnc", "current.example", 5900, "current-user", "legacy-password", JSON.stringify({ source_only:true, source_ssh_connection_id:101 }), 1, 10);
   db.prepare("INSERT INTO remote_profiles(id,name,group_name,protocol,host,port,username,password,options_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(302, "旧版 RDP", "测试", "rdp", "test.example", 3389, "root", null, JSON.stringify({ source_ssh_connection_id:102 }), 1, 10);
   db.prepare("INSERT INTO remote_profiles(id,name,group_name,protocol,host,port,username,password,options_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(303, "共享 VNC", "测试", "vnc", "different.example", 5902, "root", null, JSON.stringify({ source_ssh_connection_id:103 }), 1, 10);
-  db.prepare("INSERT INTO forward_templates(id,name,mode,bind_host,bind_port,target_host,target_port,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)").run(401, "旧模板", "local", "127.0.0.1", 3306, "127.0.0.1", 3306, 1, 10);
+  db.prepare("INSERT INTO forward_templates(id,name,mode,url_scheme,url_path,bind_host,bind_port,target_host,target_port,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(401, "旧模板", "local", "http", "/source", "127.0.0.1", 3306, "127.0.0.1", 3306, 1, 10);
   db.prepare("INSERT INTO command_snippets(id,name,group_name,command,created_at,updated_at) VALUES(?,?,?,?,?,?)").run(501, "共享命令", "当前分组", "echo source", 1, 10);
   const layout = {
     version:1,
@@ -197,8 +198,10 @@ try {
   assert.equal(JSON.parse(migratedProfile.options_json).source_ssh_connection_id, migratedConnection.id);
   const sharedForward = db.prepare("SELECT * FROM connection_forwards WHERE connection_id=1 AND bind_port=6001").get();
   assert.equal(sharedForward.service_name, "当前名称");
+  assert.equal(sharedForward.url_path, "/current");
   const migratedForward = db.prepare("SELECT * FROM connection_forwards WHERE connection_id=?").get(migratedConnection.id);
   assert.equal(migratedForward.status, "stopped");
+  assert.equal(migratedForward.url_path, "/panel");
   assert.equal(migratedForward.pid, null);
   const workspace = JSON.parse(db.prepare("SELECT layout_json FROM named_workspaces WHERE name='测试工作区'").get().layout_json);
   assert.equal(workspace.tabs[0].id, migratedConnection.id);

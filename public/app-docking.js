@@ -862,6 +862,7 @@ renderTabContent = function(tab, options={}) {
   if (tab.kind === "terminal") return openTerminal(tab.id, false, tab.key, tab.title);
   if (tab.kind === "quick-terminal") return restoreQuickTerminalTab(tab);
   if (tab.kind === "forwards") return openForwards(tab.id, false);
+  if (tab.kind === "forward-manager") return openGlobalForwardManager(false);
   if (tab.kind === "edit") return editConnection(tab.id, false);
   if (tab.kind === "import") return showImport(false);
   if (tab.kind === "log") return openLog(tab.path, tab.title, false);

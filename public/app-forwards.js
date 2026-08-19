@@ -7,6 +7,7 @@ function captureForwardWorkspace(connectionId=selectedId) {
     refresh() {
       inTab(() => {
         if (tab?.kind === "forwards" && Number(tab.id) === Number(connectionId)) openForwards(connectionId, false);
+        else if (tab?.kind === "forward-manager" && typeof openGlobalForwardManager === "function") openGlobalForwardManager(false);
         else if (tab?.kind === "terminal" && Number(tab.id) === Number(connectionId)) openTerminal(connectionId, false, tab.key, tab.title || "");
       });
     }
@@ -154,21 +155,14 @@ function wireForwardForm() {
     try {
       const id=Number($("forward_conn_id").value);
       if(!id) throw new Error(tr("connections:forwards.select_connection", {defaultValue:"Select a connection first"}));
-      const checkedPayload = await confirmForwardPortBeforeSave(forwardPayload(), editingForwardId);
+      const editingForward = editingForwardId ? currentForward(editingForwardId) : null;
+      const checkedPayload = await confirmForwardPortBeforeSave(forwardPayload(), editingForwardId, Boolean(editingForward && ["running", "reconnecting"].includes(editingForward.status)));
       if (!checkedPayload) return;
       if (editingForwardId) {
-        const forward = currentForward(editingForwardId);
-        await api(`/api/forwards/${editingForwardId}`, {method:"PUT", body:JSON.stringify(checkedPayload)});
-        if (forward?.status === "running" && await confirmModal(
-          tr("connections:forwards.restart_confirm", {defaultValue:"This forwarding rule is running. Restart it now to apply the changes?"}),
-          tr("connections:forwards.restart_title", {defaultValue:"Restart forwarding"}),
-          tr("connections:forwards.restart_now", {defaultValue:"Restart now"}),
-          tr("connections:forwards.restart_later", {defaultValue:"Later"})
-        )) {
-          await api(`/api/forwards/${editingForwardId}/stop`, {method:"POST"});
-          await api(`/api/forwards/${editingForwardId}/start`, {method:"POST"});
-        }
-        notify(tr("connections:forwards.saved", {defaultValue:"Forwarding rule saved"}), "success");
+        const result = await api(`/api/forwards/${editingForwardId}`, {method:"PUT", body:JSON.stringify({...checkedPayload, restart_if_running:true})});
+        notify(result.restarted
+          ? tr("connections:forwards.saved_restarted", {defaultValue:"Forwarding rule saved and restarted"})
+          : tr("connections:forwards.saved", {defaultValue:"Forwarding rule saved"}), "success");
         cancelForwardEdit();
       } else {
         await api(`/api/connections/${id}/forwards`,{method:"POST",body:JSON.stringify(checkedPayload)});
@@ -181,7 +175,8 @@ function wireForwardForm() {
   });
 }
 
-async function confirmForwardPortBeforeSave(payload, excludeId=0) {
+async function confirmForwardPortAvailability(payload, excludeId=0, onRecommended=null, skipWhenActive=false) {
+  if (skipWhenActive) return payload;
   if (!["local", "socks"].includes(payload.mode)) return payload;
   const result = await api("/api/ports/check-forward", {method:"POST", body:JSON.stringify({host:payload.bind_host, port:payload.bind_port, exclude_id:excludeId})});
   if (!result.configured && !result.usage?.occupied) return payload;
@@ -200,10 +195,16 @@ async function confirmForwardPortBeforeSave(payload, excludeId=0) {
   ]);
   if (choice === "save") return payload;
   if (choice === "recommend" && recommended) {
-    $("forward_bind_port").value = recommended;
+    onRecommended?.(recommended);
     return {...payload, bind_port:recommended};
   }
   return null;
+}
+
+async function confirmForwardPortBeforeSave(payload, excludeId=0, skipWhenActive=false) {
+  return confirmForwardPortAvailability(payload, excludeId, recommended => {
+    if ($("forward_bind_port")) $("forward_bind_port").value = recommended;
+  }, skipWhenActive);
 }
 
 function toggleForwardLabels(){
@@ -227,6 +228,7 @@ function forwardPayload(){
     service_type:$("forward_service_type").value.trim(),
     service_note:$("forward_service_note").value.trim(),
     url_scheme:$("forward_url_scheme").value.trim(),
+    url_path:$("forward_url_path").value.trim(),
     bind_host:$("forward_bind_host").value.trim()||"127.0.0.1",
     bind_port:Number($("forward_bind_port").value),
     target_host:$("forward_target_host").value.trim()||"127.0.0.1",
@@ -241,6 +243,7 @@ function clearForwardForm() {
   $("forward_service_type").value="";
   $("forward_service_note").value="";
   $("forward_url_scheme").value="";
+  $("forward_url_path").value="";
 }
 
 function editForward(id) {
@@ -256,6 +259,7 @@ function editForward(id) {
   $("forward_service_type").value = f.service_type || "";
   $("forward_service_note").value = f.service_note || "";
   $("forward_url_scheme").value = f.url_scheme || "";
+  $("forward_url_path").value = f.url_path || "";
   $("forwardSubmitBtn").textContent = tr("connections:auto.save_forward", {defaultValue:"Save forwarding rule"});
   $("cancelForwardEditBtn").hidden = false;
   toggleForwardLabels();
@@ -319,6 +323,7 @@ function applyForwardTemplate(id) {
   $("forward_service_type").value = t.service_type || "";
   $("forward_service_note").value = t.service_note || "";
   $("forward_url_scheme").value = t.url_scheme || "";
+  $("forward_url_path").value = t.url_path || "";
   toggleForwardLabels();
 }
 
@@ -401,14 +406,11 @@ function renderForwards(){
   const c=currentConnection();
   if(!c){$("forwardList").innerHTML=stateView("empty", tr("connections:forwards.no_connection_selected", {defaultValue:"No SSH connection selected"}), tr("connections:forwards.no_connection_selected_hint", {defaultValue:"Open the forwarding list from an SSH connection on the left."})); return;}
   $("forwardList").innerHTML = c.forwards.length ? `<div class="forward-bulk-toolbar">
-    <label class="checkline"><input id="forwardSelectAll" type="checkbox" onchange="toggleCheckGroup(this,'forward'); updateForwardBulkActions()"> ${esc(tr("connections:forwards.select_all", {defaultValue:"Select all forwarding rules"}))}</label>
+    <label class="checkline"><input id="forwardSelectAll" type="checkbox" data-change-action="forward-select-all"> ${esc(tr("connections:forwards.select_all", {defaultValue:"Select all forwarding rules"}))}</label>
+    <span class="muted">${esc(tr("connections:forwards.card_layout_hint", {defaultValue:"规则按卡片排列；窄屏自动切换为单列"}))}</span>
   </div><div class="forward-list">
-    <div class="forward-list-head">
-      <span>${esc(tr("connections:forwards.select", {defaultValue:"Select"}))}</span>
-      <span>${esc(tr("connections:forwards.rule", {defaultValue:"Rule"}))}</span><span>${esc(tr("connections:forwards.status", {defaultValue:"Status"}))}</span><span>${esc(tr("connections:forwards.service_entry", {defaultValue:"Service"}))}</span><span>${esc(tr("connections:forwards.actions", {defaultValue:"Actions"}))}</span>
-    </div>
     ${c.forwards.map(f=>renderForwardCard(f)).join("")}
-  </div>` : stateView("empty", tr("connections:forwards.empty", {defaultValue:"No forwarding rules"}), tr("connections:forwards.empty_hint", {defaultValue:"Use the form above to add your first local, remote, or SOCKS5 forwarding rule."}), `<button class="primary" onclick="$('forwardMode')?.focus()">${esc(tr("connections:auto.add_forward", {defaultValue:"Add forwarding rule"}))}</button>`);
+  </div>` : stateView("empty", tr("connections:forwards.empty", {defaultValue:"No forwarding rules"}), tr("connections:forwards.empty_hint", {defaultValue:"Use the form above to add your first local, remote, or SOCKS5 forwarding rule."}), `<button class="primary" data-action="forward-form-focus">${esc(tr("connections:auto.add_forward", {defaultValue:"Add forwarding rule"}))}</button>`);
   updateForwardBulkActions();
 }
 
@@ -428,24 +430,28 @@ function updateForwardBulkActions() {
 }
 
 function renderForwardCard(f) {
-  const access = forwardAccessInfo(f);
+  const access = forwardCanAccess(f) ? forwardAccessInfo(f) : null;
   const runtimeDetail = forwardQualityText(f);
   const failureTime = f.status === "failed" ? forwardEventTimeText(f.updated_at) : "";
   const startLabel = tr("common:auto.start", {defaultValue:"Start"});
   const stopLabel = tr("common:auto.stop", {defaultValue:"Stop"});
+  const editLabel = tr("common:actions.edit", {defaultValue:"Edit"});
+  const openLabel = tr("common:auto.open", {defaultValue:"Open"});
+  const copyLabel = tr("common:auto.copy", {defaultValue:"Copy"});
   const moreLabel = tr("connections:actions.more", {defaultValue:"More actions"});
-  return `<div class="forward-card">
-    <label class="checkline"><input class="forward-check" type="checkbox" value="${f.id}" onchange="updateForwardBulkActions()"><span>${esc(forwardDisplayName(f))}</span></label>
-    <div class="forward-rule"><div class="field-label">${esc(tr("connections:forwards.rule", {defaultValue:"Rule"}))}</div><div>${forwardText(f)}</div></div>
-    <div class="forward-status"><div class="field-label">${esc(tr("connections:forwards.status", {defaultValue:"Status"}))}</div><span class="status-pill ${escAttr(f.status || "stopped")}">${forwardStatusText(f.status)}</span>${runtimeDetail ? `<div class="conn-meta">${runtimeDetail}</div>` : ""}${failureTime ? `<div class="conn-meta">${esc(tr("connections:forwards.failed_at", {time:failureTime, defaultValue:`Failed at ${failureTime}`}))}</div>` : ""}${f.last_error ? `<div class="conn-meta error forward-error-detail">${esc(f.last_error).slice(0,500)}</div>` : ""}</div>
-    <div class="forward-service"><div class="field-label">${esc(tr("connections:forwards.service_entry", {defaultValue:"Service"}))}</div><div class="forward-tags"><span>${forwardModeText(f.mode)}</span>${f.service_type ? `<span>${serviceTypeText(f.service_type)}</span>` : ""}</div>${f.service_note ? `<div class="conn-meta">${esc(f.service_note)}</div>` : ""}${forwardAccessHtml(access)}${access.url ? `<div class="actions tight"><a class="open-forward-link" href="${esc(access.url)}" target="_blank" rel="noopener">${esc(tr("common:auto.open", {defaultValue:"Open"}))}</a><button onclick="copyText('${escAttr(access.url)}')">${esc(tr("common:auto.copy", {defaultValue:"Copy"}))}</button></div>` : `<span class="muted">${esc(tr("connections:forwards.no_address", {defaultValue:"No open address"}))}</span>`}</div>
-    <div class="forward-actions">${f.status === "running" ? `<button title="${escAttr(stopLabel)}" aria-label="${escAttr(stopLabel)}" onclick="stopSingleForward(${f.id},this)">${icon("square")}<span>${esc(stopLabel)}</span></button>` : `<button class="primary" title="${escAttr(startLabel)}" aria-label="${escAttr(startLabel)}" onclick="startSingleForward(${f.id},this)">${icon("play")}<span>${esc(startLabel)}</span></button>`}<button class="icon-button" title="${escAttr(moreLabel)}" aria-label="${escAttr(moreLabel)}" onclick="showForwardMenu(event,${f.id})">${icon("ellipsis")}</button></div>
+  return `<div class="forward-card" data-forward-id="${Number(f.id)}">
+    <div class="forward-card-head"><label class="checkline"><input class="forward-check" type="checkbox" value="${f.id}" data-change-action="forward-select"><span>${esc(forwardDisplayName(f))}</span></label><span class="status-pill ${escAttr(f.status || "stopped")}">${forwardStatusText(f.status)}</span></div>
+    <div class="forward-card-details"><div class="forward-rule"><small>${esc(tr("connections:forwards.rule", {defaultValue:"Rule"}))}</small><span>${forwardText(f)}</span></div><div class="forward-service"><small>${esc(tr("connections:forwards.service_entry", {defaultValue:"Service"}))}</small><div class="forward-tags"><span>${forwardModeText(f.mode)}</span>${f.service_type ? `<span>${serviceTypeText(f.service_type)}</span>` : ""}</div></div></div>
+    ${f.service_note ? `<div class="forward-card-note">${icon("notebook-text")}<span>${esc(f.service_note)}</span></div>` : ""}
+    ${runtimeDetail || failureTime || f.last_error ? `<div class="forward-card-runtime">${runtimeDetail ? `<span>${esc(runtimeDetail)}</span>` : ""}${failureTime ? `<span>${esc(tr("connections:forwards.failed_at", {time:failureTime, defaultValue:`Failed at ${failureTime}`}))}</span>` : ""}${f.last_error ? `<span class="error forward-error-detail">${esc(f.last_error).slice(0,500)}</span>` : ""}</div>` : ""}
+    ${access?.url ? `<div class="forward-card-access"><span>${icon("link")}<code title="${escAttr(access.url)}">${esc(access.url)}</code></span><div><a class="open-forward-link" href="${escAttr(access.url)}" target="_blank" rel="noopener">${icon("external-link")}<span>${esc(openLabel)}</span></a><button data-action="forward-card-copy" data-copy-text="${escAttr(access.url)}">${icon("copy")}<span>${esc(copyLabel)}</span></button></div></div>` : `<div class="forward-card-access is-empty"><span>${icon("link-2-off")}<span>${esc(tr("connections:forwards.no_address", {defaultValue:"启动后显示访问地址"}))}</span></span></div>`}
+    <div class="forward-actions">${forwardIsActive(f) ? `<button data-action="forward-card-toggle" data-forward-id="${Number(f.id)}" title="${escAttr(stopLabel)}" aria-label="${escAttr(stopLabel)}">${icon("square")}<span>${esc(stopLabel)}</span></button>` : `<button class="primary" data-action="forward-card-toggle" data-forward-id="${Number(f.id)}" title="${escAttr(startLabel)}" aria-label="${escAttr(startLabel)}">${icon("play")}<span>${esc(startLabel)}</span></button>`}<button data-action="forward-card-edit" data-forward-id="${Number(f.id)}" title="${escAttr(editLabel)}" aria-label="${escAttr(editLabel)}">${icon("pencil")}<span>${esc(editLabel)}</span></button><button data-action="forward-card-menu" data-forward-id="${Number(f.id)}" title="${escAttr(moreLabel)}" aria-label="${escAttr(moreLabel)}">${icon("ellipsis")}<span>${esc(moreLabel)}</span></button></div>
   </div>`;
 }
 
 function showForwardMenu(event, id) {
   const forward = currentForward(id);
-  const access = forward ? forwardAccessInfo(forward) : null;
+  const access = forward && forwardCanAccess(forward) ? forwardAccessInfo(forward) : null;
   showActionMenu(event, [
     {label:tr("navigation:menus.forward_edit_rule", {defaultValue:"Edit rule"}), icon:"pencil", run:()=>editForward(id)},
     {label:tr("navigation:menus.forward_copy_rule", {defaultValue:"Copy rule details"}), icon:"copy", run:()=>copyText(forwardText(forward))},
@@ -455,6 +461,20 @@ function showForwardMenu(event, id) {
     {separator:true},
     {label:tr("navigation:menus.forward_delete_rule", {defaultValue:"Delete rule"}), icon:"trash-2", danger:true, run:()=>deleteForward(id)}
   ]);
+}
+
+if (typeof registerTermaAction === "function") {
+  registerTermaAction("forward-select-all", ({element}) => { toggleCheckGroup(element, "forward"); updateForwardBulkActions(); });
+  registerTermaAction("forward-select", () => updateForwardBulkActions());
+  registerTermaAction("forward-form-focus", () => $("forward_mode")?.focus());
+  registerTermaAction("forward-card-copy", ({element}) => copyText(element.dataset.copyText || ""));
+  registerTermaAction("forward-card-toggle", ({element}) => {
+    const id = Number(element.dataset.forwardId || 0);
+    const forward = currentForward(id);
+    return forwardIsActive(forward) ? stopSingleForward(id, element) : startSingleForward(id, element);
+  });
+  registerTermaAction("forward-card-edit", ({element}) => editForward(Number(element.dataset.forwardId || 0)));
+  registerTermaAction("forward-card-menu", ({event, element}) => showForwardMenu(event, Number(element.dataset.forwardId || 0)));
 }
 
 function forwardModeText(mode){ return {local:tr("connections:forwards.local_forward", {defaultValue:"Local forwarding"}), remote:tr("connections:forwards.remote_forward", {defaultValue:"Remote forwarding"}), socks:"SOCKS5"}[mode] || esc(mode); }
@@ -493,7 +513,8 @@ function forwardAccessInfo(f) {
   const host = currentPageHostForForward(bindHost);
   const scheme = f.url_scheme || (f.service_type === "web" ? "http" : "http");
   const urlHost = String(host).includes(":") && !String(host).startsWith("[") ? `[${host}]` : host;
-  const url = `${scheme}://${urlHost}:${f.bind_port}`;
+  const path = String(f.url_path || "").trim();
+  const url = `${scheme}://${urlHost}:${f.bind_port}${path}`;
   const lanPage = !isLoopbackHost(location.hostname);
   let note = "";
   if (lanPage && isLoopbackHost(bindHost)) note = tr("connections:forwards.local_only_lan_warning", {defaultValue:"This forwarding rule listens only on this computer and cannot be opened directly from the LAN. Change the bind address to 0.0.0.0 and restart it."});
@@ -502,6 +523,14 @@ function forwardAccessInfo(f) {
     ? tr("connections:forwards.local_only", {defaultValue:"Local access only"})
     : tr("connections:forwards.bind_access", {defaultValue:"Available through the listener address"});
   return { url, note, localOnly: lanPage && isLoopbackHost(bindHost) };
+}
+
+function forwardIsActive(f) {
+  return ["running", "reconnecting"].includes(String(f?.status || ""));
+}
+
+function forwardCanAccess(f) {
+  return String(f?.status || "") === "running" && Boolean(forwardAccessInfo(f).url);
 }
 
 function forwardOpenUrl(f) {

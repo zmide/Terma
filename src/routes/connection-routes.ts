@@ -27,8 +27,10 @@ interface ConnectionRouteDependencies {
   listConnections(): any[];
   listIdentityFiles(): any[];
   readJson(request: IncomingMessage): Promise<any>;
+  reconfigureForward(id: number, data: any): Promise<any>;
   renameConnectionGroup(currentName: string, newName: string): any;
   reorderConnectionGroups(names: string[]): any;
+  reorderConnections(groupName: string, ids: number[]): any;
   restorePreviousForwards(): Promise<any>;
   restoreStateSummary(): any;
   sendJson(response: ServerResponse, data: unknown, status?: number): void;
@@ -134,6 +136,12 @@ export async function handleConnectionRoutes(
     const data = await dependencies.readJson(request);
     dependencies.createConfigSnapshot("调整 SSH 连接分组顺序前自动快照");
     dependencies.sendJson(response, dependencies.reorderConnectionGroups(data.names));
+    return true;
+  }
+  if (method === "POST" && pathname === "/api/connections/reorder") {
+    const data = await dependencies.readJson(request);
+    dependencies.createConfigSnapshot("调整 SSH 连接顺序前自动快照");
+    dependencies.sendJson(response, dependencies.reorderConnections(data.group_name, data.ids));
     return true;
   }
   if (method === "POST" && pathname === "/api/forwards/bulk-delete") {
@@ -295,10 +303,10 @@ export async function handleConnectionRoutes(
   }
   if (method === "PUT" && parts.length === 3 && parts[1] === "forwards") {
     const before = dependencies.getForward(Number(parts[2]));
-    dependencies.updateForward(Number(parts[2]), await dependencies.readJson(request));
+    const result = await dependencies.reconfigureForward(Number(parts[2]), await dependencies.readJson(request));
     dependencies.clearConnectionHealthCache(before.connection_id);
     dependencies.appendSystemLog(`已更新转发：${dependencies.forwardLogLabel(parts[2])}`);
-    dependencies.sendJson(response, {ok:true, was_running:Boolean(before.pid)});
+    dependencies.sendJson(response, result);
     return true;
   }
   if (method === "PUT" && parts.length === 3 && parts[1] === "connections") {

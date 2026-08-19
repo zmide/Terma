@@ -70,6 +70,7 @@ async function loadAll(options={}){
     else if (primaryView === "remote" && (renderUnchanged || connectionsChanged || remoteProfilesChanged)) renderConnections();
     else if (primaryView === "running" && (renderUnchanged || connectionsChanged)) renderRunningForwards();
     if (activeView === "forwards" && (renderUnchanged || connectionsChanged || forwardTemplatesChanged)) renderForwards();
+    if (activeView === "forward-manager" && (renderUnchanged || connectionsChanged || forwardTemplatesChanged) && typeof renderGlobalForwardManager === "function") renderGlobalForwardManager();
     if (activeView === "welcome") renderStartupSummary();
   } catch (error) {
     if (!options.silent) throw error;

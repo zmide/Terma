@@ -733,7 +733,7 @@
     "adjust_operation_pane_hint": "Drag to resize the operation pane; double-click to reset",
     "adjust_workspace_header": "Resize workspace header",
     "adjust_workspace_header_hint": "Drag to resize the header; double-click to reset",
-    "quick_open": "Quick open SSH / SFTP",
+    "quick_open": "Quick open connections / forwarding",
     "quick_open_shortcut": "Quick open ({{shortcut}})",
     "new_version": "New version available",
     "server": "Server",

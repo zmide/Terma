@@ -4,7 +4,7 @@
   "auto": {
     "connections": "连接列表",
     "remote": "其他连接",
-    "running": "正在转发",
+    "running": "转发列表",
     "batch": "批量命令",
     "import_export": "导入导出",
     "logs": "日志",
