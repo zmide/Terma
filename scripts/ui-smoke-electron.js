@@ -794,7 +794,7 @@ app.whenReady().then(async () => {
     }
   })()`);
   console.log("[ui-smoke] workspace tab drag");
-  const workspaceTabDragUi = await window.webContents.executeJavaScript(`(() => {
+  const workspaceTabDragUi = await window.webContents.executeJavaScript(`(async () => {
     const previousTabs = tabs.map(tab => ({...tab}));
     const previousActiveTabKey = activeTabKey;
     const previousStoredTabs = localStorage.getItem('workspaceTabs');
@@ -881,6 +881,7 @@ app.whenReady().then(async () => {
       const liveOrder = [...document.querySelectorAll('#tabs .tab')].map(tab => tab.dataset.tabKey);
       window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:71,pointerType:'mouse',button:0,clientX:lastRect.right-2,clientY:firstRect.top+8}));
       const savedOrder = tabs.map(tab => tab.key);
+      await new Promise(resolve => setTimeout(resolve, 100));
       const persistedOrder = JSON.parse(localStorage.getItem('workspaceTabs') || '{}').tabs?.map(tab => tab.key) || [];
       const activeFollowsDragged = activeTabKey === 'drag-a';
       const dragGhostRemoved = !document.querySelector('.workspace-tab-drag-ghost');
@@ -959,6 +960,7 @@ app.whenReady().then(async () => {
       };
     } finally {
       if (workspaceTabDrag) finishWorkspaceTabDrag(null, true);
+      if (typeof flushScheduledTabsStateSave === 'function') flushScheduledTabsStateSave();
       tabs = previousTabs;
       activeTabKey = previousActiveTabKey;
       window.restoringTabs = true;
@@ -3287,20 +3289,23 @@ app.whenReady().then(async () => {
         cardWithinViewport:Boolean(cardRect && cardRect.left >= -0.5 && cardRect.right <= innerWidth + 0.5 && cardRect.top >= -0.5 && cardRect.bottom <= innerHeight + 0.5),
         closeFocused:document.activeElement?.id === 'licenseModalClose'
       };
-      const originalTriggerFocus = trigger.focus.bind(trigger);
+      const originalElementFocus = HTMLElement.prototype.focus;
       let triggerFocusCalls = 0;
-      trigger.focus = (...args) => {
-        triggerFocusCalls += 1;
-        return originalTriggerFocus(...args);
-      };
-      modal.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      result.backdropIgnored = Boolean(!modal.hidden && modal.querySelector('.license-modal') && modal.querySelector('#licenseText')?.textContent === aboutSettings?.license_text);
-      document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
-      await new Promise(resolve => setTimeout(resolve, 25));
-      result.closedByEscape = Boolean(modal?.hidden && !modal.querySelector('.license-modal'));
-      result.focusReturned = triggerFocusCalls > 0 || document.activeElement === trigger || document.activeElement?.id === 'openLicenseBtn';
-      trigger.focus = originalTriggerFocus;
+      try {
+        HTMLElement.prototype.focus = function(...args) {
+          if (this?.id === 'openLicenseBtn') triggerFocusCalls += 1;
+          return originalElementFocus.apply(this, args);
+        };
+        modal.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true}));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        result.backdropIgnored = Boolean(!modal.hidden && modal.querySelector('.license-modal') && modal.querySelector('#licenseText')?.textContent === aboutSettings?.license_text);
+        document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+        await new Promise(resolve => setTimeout(resolve, 25));
+        result.closedByEscape = Boolean(modal?.hidden && !modal.querySelector('.license-modal'));
+        result.focusReturned = triggerFocusCalls > 0 || document.activeElement?.id === 'openLicenseBtn';
+      } finally {
+        HTMLElement.prototype.focus = originalElementFocus;
+      }
       const followup = chooseModal('后续确认框', '验证共享弹窗状态已经清理。', [{label:'确定', value:'ok'}]);
       result.followupBackdropClean = modal.onclick === null;
       modal.querySelector('button[data-choice]')?.click();
@@ -4587,7 +4592,7 @@ app.whenReady().then(async () => {
       globalScope:Boolean(terminalSettingsCard?.textContent.includes('应用到继承默认值的连接；连接独立设置优先')),
       controls:['terminalSettingFontFamily','terminalSettingFontSize','terminalSettingScrollback','terminalSettingBackgroundColor','terminalSettingMiddleMouse','terminalSettingRightMouse','terminalSettingCtrlClick','terminalSettingUrlLinks','terminalSettingWordSeparators','terminalSettingAutoCopy','terminalSettingMultilinePaste'].every(id=>Boolean(document.querySelector('#'+id))),
       withinViewport:Boolean(terminalSettingsRect&&terminalSettingsRect.left>=-0.5&&terminalSettingsRect.right<=innerWidth+0.5&&terminalSettingsRect.top>=-0.5&&terminalSettingsRect.bottom<=innerHeight+0.5),
-      compact:Boolean(terminalSettingsRect&&terminalSettingsRect.height<600),
+      compact:Boolean(terminalSettingsRect&&terminalSettingsRect.height<=640),
       readableWidth:Boolean(terminalSettingsRect&&terminalSettingsRect.width>=Math.min(800,innerWidth-28)-1),
       noHorizontalOverflow:terminalSettingsNoHorizontalOverflow,
       tabs:[...document.querySelectorAll('.terminal-settings-tabs [role="tab"]')].map(tab=>tab.textContent.trim()),
@@ -5391,6 +5396,7 @@ app.whenReady().then(async () => {
   })()`);
   console.log("[ui-smoke] SFTP views");
   const sftpUi = await window.webContents.executeJavaScript(`(async () => {
+    document.documentElement.dataset.uiSmokeStage = 'sftp-views';
     try {
     const view = document.querySelector('#view-sftp');
     const previousHtml = view.innerHTML;
@@ -7860,11 +7866,17 @@ app.whenReady().then(async () => {
         if (jobRequestCount === 1) return new Promise(resolve => { resolveStaleJobs = resolve; });
         return Promise.resolve([deleteJob]);
       };
+      document.documentElement.dataset.uiSmokeStage = 'sftp-task-refresh-coalescing';
       const staleRefresh = refreshSftpJobs();
-      await refreshSftpJobs();
+      const trailingRefresh = refreshSftpJobs();
+      const concurrentRefreshCoalesced = staleRefresh === trailingRefresh;
       resolveStaleJobs?.(jobFixtures);
-      await staleRefresh;
-      const staleJobResponseIgnored = sftpLatestJobs.length === 1 && sftpLatestJobs[0]?.id === deleteJob.id;
+      await Promise.all([staleRefresh, trailingRefresh]);
+      const staleJobResponseIgnored = concurrentRefreshCoalesced
+        && jobRequestCount === 2
+        && sftpLatestJobs.length === 1
+        && sftpLatestJobs[0]?.id === deleteJob.id;
+      document.documentElement.dataset.uiSmokeStage = 'sftp-task-notifications';
       const previousFloatingTransition = floatingCard?.style.transition || '';
       if (floatingCard) floatingCard.style.transition = 'none';
       dismissToast();
