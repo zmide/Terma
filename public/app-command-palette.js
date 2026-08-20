@@ -253,7 +253,7 @@ function renderQuickPanel(query="", reset=true) {
       const openLabel = typeof remoteProtocolAction === "function"
         ? remoteProtocolAction(item.remoteProfile.protocol)
         : tr("common:auto.open", {defaultValue:"打开"});
-      return `<span class="quick-result-actions"><button data-action="quick-panel-run" data-index="${index}" title="${escAttr(openLabel)}" aria-label="${escAttr(openLabel)}">${icon(REMOTE_PROTOCOL_META[item.remoteProfile.protocol]?.icon || "plug")}</button><button data-action="quick-panel-remote-edit" data-remote-profile-id="${Number(item.remoteProfile.id)}" title="${escAttr(tr("common:command_palette.edit_connection", {defaultValue:"编辑连接"}))}" aria-label="${escAttr(tr("common:command_palette.edit_connection", {defaultValue:"编辑连接"}))}">${icon("pencil")}</button></span>`;
+      return `<span class="quick-result-actions"><button data-action="quick-panel-remote-open" data-index="${index}" title="${escAttr(openLabel)}" aria-label="${escAttr(openLabel)}">${icon(REMOTE_PROTOCOL_META[item.remoteProfile.protocol]?.icon || "plug")}</button><button data-action="quick-panel-remote-edit" data-remote-profile-id="${Number(item.remoteProfile.id)}" title="${escAttr(tr("common:command_palette.edit_connection", {defaultValue:"编辑连接"}))}" aria-label="${escAttr(tr("common:command_palette.edit_connection", {defaultValue:"编辑连接"}))}">${icon("pencil")}</button></span>`;
     })() : "";
     const accessibleLabel = [item.title, item.detail].filter(Boolean).join(" · ");
     return `<div class="quick-result${index === productivityState.quickIndex ? " active" : ""}" role="option" aria-selected="${index === productivityState.quickIndex}" aria-label="${escAttr(accessibleLabel)}" title="${escAttr(accessibleLabel)}" data-i18n-skip data-index="${index}" data-action="quick-panel-run">
@@ -285,6 +285,10 @@ if (typeof registerTermaAction === "function") {
   });
   registerTermaAction("quick-panel-connection-forward", ({event, element}) => {
     event.stopPropagation(); closeQuickPanel(); runAppAction("connection.forwards", {connectionId:Number(element.dataset.connectionId)});
+  });
+  registerTermaAction("quick-panel-remote-open", ({event, element}) => {
+    event.stopPropagation();
+    runQuickPanelItem(Number(element.dataset.index));
   });
   registerTermaAction("quick-panel-forward-open", ({event, element}) => {
     event.stopPropagation();
