@@ -401,16 +401,43 @@ async function recommendForwardPort() {
   notify(tr("common:notifications.recommended_port", {port:result.recommended_port, defaultValue:`Recommended available port: ${result.recommended_port}`}), "success");
 }
 
+const FORWARD_LIST_PAGE_SIZES = [12,24,48,96];
+
+function forwardListPageSize() {
+  const value = Number(localStorage.getItem("connectionForwardPageSize") || 12);
+  return FORWARD_LIST_PAGE_SIZES.includes(value) ? value : 12;
+}
+
+function forwardListPage(connectionId, total, pageSize) {
+  const key = `connectionForwardPage:${Number(connectionId)}`;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const stored = Math.max(1, Number(localStorage.getItem(key) || 1));
+  const page = Math.min(stored, totalPages);
+  if (page !== stored) localStorage.setItem(key, String(page));
+  return {page, pageSize, totalPages, first:total ? (page - 1) * pageSize + 1 : 0, last:Math.min(page * pageSize, total), key};
+}
+
+function renderForwardListPagination(pagination) {
+  if (!pagination.total) return "";
+  const pageLabel = tr("connections:forwards.pagination.page", {page:pagination.page, pages:pagination.totalPages, defaultValue:`Page ${pagination.page} of ${pagination.totalPages}`});
+  const showingLabel = tr("connections:forwards.pagination.showing", {from:pagination.first, to:pagination.last, total:pagination.total, defaultValue:`Showing ${pagination.first}–${pagination.last} of ${pagination.total}`});
+  const sizes = FORWARD_LIST_PAGE_SIZES.map(size => `<option value="${size}"${size === pagination.pageSize ? " selected" : ""}>${size}</option>`).join("");
+  return `<div class="forward-pagination" aria-label="${escAttr(tr("connections:forwards.pagination.label", {defaultValue:"Forwarding list pagination"}))}"><button data-action="forward-page" data-page="${pagination.page - 1}"${pagination.page <= 1 ? " disabled" : ""}>${esc(tr("connections:forwards.pagination.previous", {defaultValue:"Previous"}))}</button><span class="pager-count"><span>${esc(showingLabel)}</span><strong>${esc(pageLabel)}</strong><label><span>${esc(tr("connections:forwards.pagination.page_size", {defaultValue:"Items per page"}))}</span><select data-change-action="forward-page-size" aria-label="${escAttr(tr("connections:forwards.pagination.page_size", {defaultValue:"Items per page"}))}">${sizes}</select></label></span><button data-action="forward-page" data-page="${pagination.page + 1}"${pagination.page >= pagination.totalPages ? " disabled" : ""}>${esc(tr("connections:forwards.pagination.next", {defaultValue:"Next"}))}</button></div>`;
+}
+
 function renderForwards(){
   if (!$("forwardList")) return;
   const c=currentConnection();
   if(!c){$("forwardList").innerHTML=stateView("empty", tr("connections:forwards.no_connection_selected", {defaultValue:"No SSH connection selected"}), tr("connections:forwards.no_connection_selected_hint", {defaultValue:"Open the forwarding list from an SSH connection on the left."})); return;}
+  const pageSize = forwardListPageSize();
+  const pagination = forwardListPage(c.id, c.forwards.length, pageSize);
+  const visibleForwards = c.forwards.slice((pagination.page - 1) * pageSize, pagination.page * pageSize);
   $("forwardList").innerHTML = c.forwards.length ? `<div class="forward-bulk-toolbar">
     <label class="checkline"><input id="forwardSelectAll" type="checkbox" data-change-action="forward-select-all"> ${esc(tr("connections:forwards.select_all", {defaultValue:"Select all forwarding rules"}))}</label>
     <span class="muted">${esc(tr("connections:forwards.card_layout_hint", {defaultValue:"规则按卡片排列；窄屏自动切换为单列"}))}</span>
   </div><div class="forward-list">
-    ${c.forwards.map(f=>renderForwardCard(f)).join("")}
-  </div>` : stateView("empty", tr("connections:forwards.empty", {defaultValue:"No forwarding rules"}), tr("connections:forwards.empty_hint", {defaultValue:"Use the form above to add your first local, remote, or SOCKS5 forwarding rule."}), `<button class="primary" data-action="forward-form-focus">${esc(tr("connections:auto.add_forward", {defaultValue:"Add forwarding rule"}))}</button>`);
+    ${visibleForwards.map(f=>renderForwardCard(f)).join("")}
+  </div>${renderForwardListPagination({...pagination, total:c.forwards.length})}` : stateView("empty", tr("connections:forwards.empty", {defaultValue:"No forwarding rules"}), tr("connections:forwards.empty_hint", {defaultValue:"Use the form above to add your first local, remote, or SOCKS5 forwarding rule."}), `<button class="primary" data-action="forward-form-focus">${esc(tr("connections:auto.add_forward", {defaultValue:"Add forwarding rule"}))}</button>`);
   updateForwardBulkActions();
 }
 
@@ -475,6 +502,20 @@ if (typeof registerTermaAction === "function") {
   });
   registerTermaAction("forward-card-edit", ({element}) => editForward(Number(element.dataset.forwardId || 0)));
   registerTermaAction("forward-card-menu", ({event, element}) => showForwardMenu(event, Number(element.dataset.forwardId || 0)));
+  registerTermaAction("forward-page", ({element}) => {
+    const c = currentConnection();
+    if (!c) return;
+    localStorage.setItem(`connectionForwardPage:${Number(c.id)}`, String(Math.max(1, Number(element.dataset.page || 1))));
+    renderForwards();
+  });
+  registerTermaAction("forward-page-size", ({element}) => {
+    const c = currentConnection();
+    if (!c) return;
+    const size = FORWARD_LIST_PAGE_SIZES.includes(Number(element.value)) ? Number(element.value) : 12;
+    localStorage.setItem("connectionForwardPageSize", String(size));
+    localStorage.setItem(`connectionForwardPage:${Number(c.id)}`, "1");
+    renderForwards();
+  });
 }
 
 function forwardModeText(mode){ return {local:tr("connections:forwards.local_forward", {defaultValue:"Local forwarding"}), remote:tr("connections:forwards.remote_forward", {defaultValue:"Remote forwarding"}), socks:"SOCKS5"}[mode] || esc(mode); }

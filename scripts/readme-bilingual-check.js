@@ -38,6 +38,10 @@ function assetSources(markdown) {
     .sort((left, right) => left.localeCompare(right, "en"));
 }
 
+function normalizedAssetSources(markdown) {
+  return assetSources(markdown).map(source => source.replace(/\.github\/assets\/screenshots\/(?:en-US|zh-CN)\//, ".github/assets/screenshots/")).sort((left, right) => left.localeCompare(right, "en"));
+}
+
 function linkDestinations(markdown) {
   const markdownLinks = [...markdown.matchAll(/!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g)].map(match => match[1]);
   const htmlLinks = [...markdown.matchAll(/<a\b[^>]*\bhref="([^"]+)"/g)].map(match => match[1]);
@@ -61,7 +65,9 @@ const englishBlocks = fencedBlocks(english);
 const chineseBlocks = fencedBlocks(chinese);
 assert.deepEqual(headingLevels(english), headingLevels(chinese), "中英文 README 标题层级必须保持一致");
 assert.deepEqual(technicalCode(english), technicalCode(chinese), "中英文 README 的行内命令、路径和技术标识必须保持一致");
-assert.deepEqual(assetSources(english), assetSources(chinese), "中英文 README 必须引用同一组截图");
+assert.deepEqual(normalizedAssetSources(english), normalizedAssetSources(chinese), "中英文 README 必须引用同一组截图");
+assert(assetSources(english).every(source => source.includes(".github/assets/screenshots/en-US/")), "英文 README 必须引用英文截图");
+assert(assetSources(chinese).every(source => source.includes(".github/assets/screenshots/zh-CN/")), "中文 README 必须引用中文截图");
 assert.deepEqual(linkDestinations(english), linkDestinations(chinese), "中英文 README 的外部链接和项目文件链接必须保持一致");
 assert.deepEqual(markdownTableShape(english), markdownTableShape(chinese), "中英文 README 的 Markdown 表格结构必须保持一致");
 assert.deepEqual(htmlTableShape(english), htmlTableShape(chinese), "中英文 README 的截图表格结构必须保持一致");

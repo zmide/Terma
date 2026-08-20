@@ -242,7 +242,15 @@
     "editor_hint": "保存后可直接在转发列表中启动。",
     "running_edit_hint": "保存后会自动安全重启，失败时恢复旧配置。",
     "delete_confirm": "删除转发“{{name}}”？正在运行时会先停止。",
-    "delete_title": "删除转发"
+    "delete_title": "删除转发",
+    "pagination": {
+      "label": "转发列表分页",
+      "previous": "上一页",
+      "next": "下一页",
+      "page": "第 {{page}} / {{pages}} 页",
+      "page_size": "每页数量",
+      "showing": "显示 {{from}}–{{to}} / 共 {{total}} 条"
+    }
   },
   "list": {
     "add_remote": "添加其他连接",
@@ -358,7 +366,7 @@
     "rules_count": "{{count}} 条转发规则",
     "short_count": "{{count}} 条转发",
     "workspace_title": "转发列表",
-    "select_all": "全选转发",
+    "select_all": "全选当前页",
     "select": "选择",
     "rule": "规则",
     "status": "状态",
@@ -388,6 +396,14 @@
     "empty_hint": "使用上方表单添加第一条本地、远程或 SOCKS5 转发。",
     "auth_failed_context": "启动端口转发时认证失败",
     "connection_start_failed": "{{name}} 启动转发失败：{{error}}",
+    "pagination": {
+      "label": "转发列表分页",
+      "previous": "上一页",
+      "next": "下一页",
+      "page": "第 {{page}} / {{pages}} 页",
+      "page_size": "每页数量",
+      "showing": "显示 {{from}}–{{to}} / 共 {{total}} 条"
+    },
     "select_connection": "请先选择连接",
     "restart_confirm": "该转发正在运行，是否立即重启以应用修改？",
     "restart_title": "重启转发",

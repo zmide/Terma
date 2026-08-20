@@ -9,24 +9,24 @@ Terma is a remote connection workspace for desktop and self-hosted Web environme
 [Download the latest release](https://github.com/zmide/Terma/releases/latest) · [View release history](https://github.com/zmide/Terma/releases) · [GPL-3.0 license](LICENSE)
 
 <p align="center">
-  <img src=".github/assets/screenshots/desktop-overview.png" alt="Terma connection management and server dashboard" width="100%">
+  <img src=".github/assets/screenshots/en-US/desktop-overview.png" alt="Terma connection management and server dashboard" width="100%">
 </p>
 
 ## Interface preview
 
 <table>
   <tr>
-    <td width="50%"><strong>Terminal sessions and runtime diagnostics</strong><br><img src=".github/assets/screenshots/desktop-terminal.png" alt="Terma terminal sessions and runtime diagnostics"></td>
-    <td width="50%"><strong>Remote desktops and other connections</strong><br><img src=".github/assets/screenshots/desktop-remote.png" alt="Terma remote desktops and other connections"></td>
+    <td width="50%"><strong>Terminal sessions and runtime diagnostics</strong><br><img src=".github/assets/screenshots/en-US/desktop-terminal.png" alt="Terma terminal sessions and runtime diagnostics"></td>
+    <td width="50%"><strong>Remote desktops and other connections</strong><br><img src=".github/assets/screenshots/en-US/desktop-remote.png" alt="Terma remote desktops and other connections"></td>
   </tr>
   <tr>
-    <td colspan="2"><strong>SFTP file management</strong><br><img src=".github/assets/screenshots/desktop-sftp.png" alt="Terma SFTP file management"></td>
+    <td colspan="2"><strong>SFTP file management</strong><br><img src=".github/assets/screenshots/en-US/desktop-sftp.png" alt="Terma SFTP file management"></td>
   </tr>
   <tr>
-    <td colspan="2"><strong>Linux desktop management</strong><br><img src=".github/assets/screenshots/desktop-linux-management.png" alt="Terma Linux desktop management"></td>
+    <td colspan="2"><strong>Linux desktop management</strong><br><img src=".github/assets/screenshots/en-US/desktop-linux-management.png" alt="Terma Linux desktop management"></td>
   </tr>
   <tr>
-    <td colspan="2"><strong>Port forwarding</strong><br><img src=".github/assets/screenshots/desktop-forwarding.png" alt="Terma port forwarding"></td>
+    <td colspan="2"><strong>Port forwarding</strong><br><img src=".github/assets/screenshots/en-US/desktop-forwarding.png" alt="Terma port forwarding"></td>
   </tr>
 </table>
 

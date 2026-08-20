@@ -265,16 +265,40 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Refuse to replace a published release
+      - name: Validate release version and revision
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          if state="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+          VERSION="$(node -p 'require("./package.json").version')"
+          REVISION="$(node -p 'Number(require("./package.json").releaseRevision || 0)')"
+          test "$GITHUB_REF_NAME" = "v$VERSION"
+          test "$REVISION" -ge 0
+          if release_json="$(gh release view "$GITHUB_REF_NAME" --json isDraft,body,tagName 2>/dev/null)"; then
+            state="$(printf '%s' "$release_json" | jq -r '.isDraft')"
+            tag_name="$(printf '%s' "$release_json" | jq -r '.tagName')"
+            body="$(printf '%s' "$release_json" | jq -r '.body // ""')"
+            remote_revision="$(printf '%s\n' "$body" | sed -nE 's/.*terma-release-revision[[:space:]]*:[[:space:]]*([0-9]+).*/\1/p' | head -n 1)"
+            remote_revision="${remote_revision:-0}"
+            test "$tag_name" = "$GITHUB_REF_NAME"
             if [ "$state" != "true" ]; then
-              echo "Release $GITHUB_REF_NAME is already public; refusing to replace it." >&2
-              exit 1
+              test "$REVISION" -gt "$remote_revision"
+              gh release edit "$GITHUB_REF_NAME" --draft=true
+              echo "Moved public $GITHUB_REF_NAME to draft for explicit same-version revision $REVISION (remote $remote_revision)."
+            else
+              test "$REVISION" -gt "$remote_revision"
             fi
+          fi
+
+      - name: Remove existing release assets before replacement
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --json isDraft >/dev/null 2>&1; then
+            gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
+              [ -z "$asset" ] || gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes
+            done
           fi
 
       - name: Generate CycloneDX SBOM

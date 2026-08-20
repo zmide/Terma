@@ -17,7 +17,13 @@ for (const token of [
   "draft: true",
   "Verify uploaded release assets",
   "npm sbom",
-  "SHA256SUMS"
+  "SHA256SUMS",
+  "Validate release version and revision",
+  "terma-release-revision",
+  "releaseRevision",
+  "gh release edit \"$GITHUB_REF_NAME\" --draft=true",
+  "Remove existing release assets before replacement",
+  "gh release delete-asset"
 ]) assert.ok(workflow.includes(token), `release workflow missing ${token}`);
 assert.match(
   publishReleaseJob,

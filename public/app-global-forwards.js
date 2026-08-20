@@ -16,6 +16,8 @@ const globalForwardManagerState = {
   status:localStorage.getItem("globalForwardStatus") || "all",
   connectionId:Number(localStorage.getItem("globalForwardConnection") || 0),
   groupMode:localStorage.getItem("globalForwardGroupMode") === "ssh" ? "ssh" : "flat",
+  page:Math.max(1, Number(localStorage.getItem("globalForwardPage") || 1)),
+  pageSize:[12,24,48,96].includes(Number(localStorage.getItem("globalForwardPageSize"))) ? Number(localStorage.getItem("globalForwardPageSize")) : 12,
   collapsedGroups:globalForwardStoredSet("globalForwardCollapsedGroups"),
   collapsedConnections:globalForwardStoredSet("globalForwardCollapsedConnections"),
   focusId:0
@@ -53,6 +55,27 @@ function globalForwardRows() {
 
 function globalForwardAllRows() {
   return connections.flatMap(connection => (connection.forwards || []).map(forward => ({connection, forward})));
+}
+
+function globalForwardPagination(rows) {
+  const total = rows.length;
+  const pageSize = [12,24,48,96].includes(Number(globalForwardManagerState.pageSize)) ? Number(globalForwardManagerState.pageSize) : 12;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, Number(globalForwardManagerState.page) || 1), totalPages);
+  if (page !== globalForwardManagerState.page) {
+    globalForwardManagerState.page = page;
+    localStorage.setItem("globalForwardPage", String(page));
+  }
+  const start = total ? (page - 1) * pageSize : 0;
+  return {rows:rows.slice(start, start + pageSize), total, page, pageSize, totalPages, first:total ? start + 1 : 0, last:Math.min(start + pageSize, total)};
+}
+
+function renderGlobalForwardPagination(pagination) {
+  if (!pagination.total) return "";
+  const pageLabel = tr("connections:forward_manager.pagination.page", {page:pagination.page, pages:pagination.totalPages, defaultValue:`Page ${pagination.page} of ${pagination.totalPages}`});
+  const showingLabel = tr("connections:forward_manager.pagination.showing", {from:pagination.first, to:pagination.last, total:pagination.total, defaultValue:`Showing ${pagination.first}–${pagination.last} of ${pagination.total}`});
+  const sizes = [12,24,48,96].map(size => `<option value="${size}"${size === pagination.pageSize ? " selected" : ""}>${size}</option>`).join("");
+  return `<div class="forward-pagination" aria-label="${escAttr(tr("connections:forward_manager.pagination.label", {defaultValue:"Forwarding list pagination"}))}"><button data-action="global-forward-page" data-page="${pagination.page - 1}"${pagination.page <= 1 ? " disabled" : ""}>${esc(tr("connections:forward_manager.pagination.previous", {defaultValue:"Previous"}))}</button><span class="pager-count"><span>${esc(showingLabel)}</span><strong>${esc(pageLabel)}</strong><label><span>${esc(tr("connections:forward_manager.pagination.page_size", {defaultValue:"Items per page"}))}</span><select data-change-action="global-forward-page-size" aria-label="${escAttr(tr("connections:forward_manager.pagination.page_size", {defaultValue:"Items per page"}))}">${sizes}</select></label></span><button data-action="global-forward-page" data-page="${pagination.page + 1}"${pagination.page >= pagination.totalPages ? " disabled" : ""}>${esc(tr("connections:forward_manager.pagination.next", {defaultValue:"Next"}))}</button></div>`;
 }
 
 function globalForwardManagerSubtitle() {
@@ -105,22 +128,28 @@ function renderGlobalForwardCard(connection, forward, options={}) {
 }
 
 function globalForwardSortingEnabled() {
+  const total = globalForwardRows().length;
   return !globalForwardManagerState.query.trim()
     && globalForwardManagerState.status === "all"
-    && !globalForwardManagerState.connectionId;
+    && !globalForwardManagerState.connectionId
+    && globalForwardManagerState.page === 1
+    && total <= globalForwardManagerState.pageSize;
 }
 
-function globalForwardGroupedConnections() {
+function globalForwardGroupedConnections(sourceRows=globalForwardRows()) {
   const filtered = Boolean(globalForwardManagerState.query.trim()) || globalForwardManagerState.status !== "all";
-  return connections
-    .filter(connection => !globalForwardManagerState.connectionId || Number(connection.id) === globalForwardManagerState.connectionId)
-    .map(connection => ({connection, rows:(connection.forwards || []).filter(forward => globalForwardMatches(connection, forward)).map(forward => ({connection, forward}))}))
-    .filter(item => !filtered || item.rows.length);
+  const grouped = new Map();
+  for (const item of sourceRows) {
+    const key = Number(item.connection.id);
+    if (!grouped.has(key)) grouped.set(key, {connection:item.connection, rows:[]});
+    grouped.get(key).rows.push(item);
+  }
+  return [...grouped.values()].filter(item => !filtered || item.rows.length);
 }
 
-function renderGlobalForwardGroupedList() {
+function renderGlobalForwardGroupedList(sourceRows) {
   const byGroup = new Map();
-  for (const item of globalForwardGroupedConnections()) {
+  for (const item of globalForwardGroupedConnections(sourceRows)) {
     const name = String(item.connection.group_name || TERMA_DEFAULT_CONNECTION_GROUP);
     if (!byGroup.has(name)) byGroup.set(name, []);
     byGroup.get(name).push(item);
@@ -240,6 +269,8 @@ function renderGlobalForwardManager() {
   const uiState = captureUiState(view);
   const allRows = globalForwardAllRows();
   const rows = globalForwardRows();
+  const pagination = globalForwardPagination(rows);
+  const visibleRows = pagination.rows;
   const running = allRows.filter(({forward}) => forward.status === "running").length;
   const reconnecting = allRows.filter(({forward}) => forward.status === "reconnecting").length;
   const failed = allRows.filter(({forward}) => forward.status === "failed").length;
@@ -271,8 +302,8 @@ function renderGlobalForwardManager() {
     <section class="panel global-forward-list-panel">
       <div class="global-forward-list-head"><strong>${esc(tr("connections:forward_manager.results", {count:rows.length, defaultValue:`${rows.length} 条结果`}))}</strong><span>${esc(tr("connections:forward_manager.running_access_hint", {defaultValue:"只有运行中的转发显示访问地址"}))}</span></div>
       ${globalForwardManagerState.groupMode === "ssh"
-        ? renderGlobalForwardGroupedList()
-        : `<div class="global-forward-list">${rows.length ? rows.map(({connection, forward}) => renderGlobalForwardCard(connection, forward)).join("") : stateView("empty", tr("connections:forward_manager.empty", {defaultValue:"没有匹配的转发规则"}), tr("connections:forward_manager.empty_hint", {defaultValue:"调整筛选条件，或新增一条转发规则。"}), `<button class="primary" data-action="global-forward-add">${esc(addLabel)}</button>`)}</div>`}
+        ? `${visibleRows.length ? renderGlobalForwardGroupedList(visibleRows) : stateView("empty", tr("connections:forward_manager.empty", {defaultValue:"没有匹配的转发规则"}), tr("connections:forward_manager.empty_hint", {defaultValue:"调整筛选条件，或新增一条转发规则。"}), `<button class="primary" data-action="global-forward-add">${esc(addLabel)}</button>`)}${renderGlobalForwardPagination(pagination)}`
+        : `<div class="global-forward-list">${visibleRows.length ? visibleRows.map(({connection, forward}) => renderGlobalForwardCard(connection, forward)).join("") : stateView("empty", tr("connections:forward_manager.empty", {defaultValue:"没有匹配的转发规则"}), tr("connections:forward_manager.empty_hint", {defaultValue:"调整筛选条件，或新增一条转发规则。"}), `<button class="primary" data-action="global-forward-add">${esc(addLabel)}</button>`)}</div>${renderGlobalForwardPagination(pagination)}`}
     </section>
   </div>`;
   refreshIcons();
@@ -416,11 +447,13 @@ if (typeof registerTermaAction === "function") {
   registerTermaAction("global-forward-save", ({event, element}) => { event.preventDefault(); return saveGlobalForwardEditor(element); });
   registerTermaAction("global-forward-refresh", async ({element}) => { setButtonBusy(element, true); try { await loadAll(); renderGlobalForwardManager(); } finally { setButtonBusy(element, false); } });
   registerTermaAction("global-forward-restore", ({element}) => restoreForwards(element));
-  registerTermaAction("global-forward-search", ({element}) => { globalForwardManagerState.query = element.value || ""; localStorage.setItem("globalForwardSearch", globalForwardManagerState.query); renderGlobalForwardManager(); });
-  registerTermaAction("global-forward-status-filter", ({element}) => { globalForwardManagerState.status = element.value || "all"; localStorage.setItem("globalForwardStatus", globalForwardManagerState.status); renderGlobalForwardManager(); });
-  registerTermaAction("global-forward-connection-filter", ({element}) => { globalForwardManagerState.connectionId = Number(element.value || 0); localStorage.setItem("globalForwardConnection", String(globalForwardManagerState.connectionId)); renderGlobalForwardManager(); });
-  registerTermaAction("global-forward-group-mode", ({element}) => { globalForwardManagerState.groupMode = element.value === "ssh" ? "ssh" : "flat"; localStorage.setItem("globalForwardGroupMode", globalForwardManagerState.groupMode); renderGlobalForwardManager(); });
-  registerTermaAction("global-forward-status-shortcut", ({element}) => { globalForwardManagerState.status = element.dataset.status || "all"; localStorage.setItem("globalForwardStatus", globalForwardManagerState.status); renderGlobalForwardManager(); });
+  registerTermaAction("global-forward-search", ({element}) => { globalForwardManagerState.query = element.value || ""; globalForwardManagerState.page = 1; localStorage.setItem("globalForwardSearch", globalForwardManagerState.query); localStorage.setItem("globalForwardPage", "1"); renderGlobalForwardManager(); });
+  registerTermaAction("global-forward-status-filter", ({element}) => { globalForwardManagerState.status = element.value || "all"; globalForwardManagerState.page = 1; localStorage.setItem("globalForwardStatus", globalForwardManagerState.status); localStorage.setItem("globalForwardPage", "1"); renderGlobalForwardManager(); });
+  registerTermaAction("global-forward-connection-filter", ({element}) => { globalForwardManagerState.connectionId = Number(element.value || 0); globalForwardManagerState.page = 1; localStorage.setItem("globalForwardConnection", String(globalForwardManagerState.connectionId)); localStorage.setItem("globalForwardPage", "1"); renderGlobalForwardManager(); });
+  registerTermaAction("global-forward-group-mode", ({element}) => { globalForwardManagerState.groupMode = element.value === "ssh" ? "ssh" : "flat"; globalForwardManagerState.page = 1; localStorage.setItem("globalForwardGroupMode", globalForwardManagerState.groupMode); localStorage.setItem("globalForwardPage", "1"); renderGlobalForwardManager(); });
+  registerTermaAction("global-forward-status-shortcut", ({element}) => { globalForwardManagerState.status = element.dataset.status || "all"; globalForwardManagerState.page = 1; localStorage.setItem("globalForwardStatus", globalForwardManagerState.status); localStorage.setItem("globalForwardPage", "1"); renderGlobalForwardManager(); });
+  registerTermaAction("global-forward-page", ({element}) => { globalForwardManagerState.page = Math.max(1, Number(element.dataset.page || 1)); localStorage.setItem("globalForwardPage", String(globalForwardManagerState.page)); renderGlobalForwardManager(); });
+  registerTermaAction("global-forward-page-size", ({element}) => { const size = [12,24,48,96].includes(Number(element.value)) ? Number(element.value) : 12; globalForwardManagerState.pageSize = size; globalForwardManagerState.page = 1; localStorage.setItem("globalForwardPageSize", String(size)); localStorage.setItem("globalForwardPage", "1"); renderGlobalForwardManager(); });
   registerTermaAction("global-forward-group-toggle", ({element}) => {
     const name = decodeURIComponent(element.dataset.groupName || "");
     if (globalForwardManagerState.collapsedGroups.has(name)) globalForwardManagerState.collapsedGroups.delete(name);

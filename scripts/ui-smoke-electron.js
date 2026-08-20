@@ -403,9 +403,38 @@ app.whenReady().then(async () => {
       && managerRunningCard?.querySelector('a[href="http://127.0.0.1:18099/admin"]')
       && managerRunningCard?.querySelectorAll('.global-forward-actions button').length === 4
     );
+    const managerStatsControls = [...(managerView?.querySelectorAll('.global-forward-stats > button') || [])].map(element => element.getBoundingClientRect());
+    const globalForwardStatsAligned = managerStatsControls.length === 5
+      && Math.max(...managerStatsControls.map(rect => rect.top)) - Math.min(...managerStatsControls.map(rect => rect.top)) <= 0.5
+      && Math.max(...managerStatsControls.map(rect => rect.bottom)) - Math.min(...managerStatsControls.map(rect => rect.bottom)) <= 0.5
+      && Math.max(...managerStatsControls.map(rect => rect.height)) - Math.min(...managerStatsControls.map(rect => rect.height)) <= 0.5;
     const managerToolbarControls = [...(managerView?.querySelectorAll('.global-forward-toolbar > *') || [])].map(element => element.getBoundingClientRect());
+    const managerToolbarSearch = managerView?.querySelector('.global-forward-toolbar .search-field');
+    const toolbarSearchStyle = managerToolbarSearch ? getComputedStyle(managerToolbarSearch) : null;
+    const managerToolbarHeightSpread = managerToolbarControls.length
+      ? Math.max(...managerToolbarControls.map(rect => rect.height)) - Math.min(...managerToolbarControls.map(rect => rect.height))
+      : Infinity;
     const globalForwardToolbarAligned = managerToolbarControls.length === 4
-      && Math.max(...managerToolbarControls.map(rect => rect.height)) - Math.min(...managerToolbarControls.map(rect => rect.height)) <= 0.5;
+      && managerToolbarHeightSpread <= 0.5
+      && toolbarSearchStyle?.marginTop === '0px'
+      && toolbarSearchStyle?.marginBottom === '0px';
+    let globalForwardToolbarWideAligned = false;
+    const toolbarFixture = document.createElement('div');
+    toolbarFixture.style.cssText = 'position:fixed;left:-10000px;top:0;width:1600px;visibility:hidden;pointer-events:none;';
+    const toolbarTemplate = managerView?.querySelector('.global-forward-toolbar');
+    if (toolbarTemplate) {
+      const toolbarClone = toolbarTemplate.cloneNode(true);
+      toolbarClone.style.gridTemplateColumns = 'minmax(280px,1fr) minmax(150px,180px) minmax(190px,240px) minmax(180px,230px)';
+      toolbarClone.querySelector('.search-field')?.style.setProperty('grid-column', 'auto');
+      toolbarFixture.appendChild(toolbarClone);
+      document.body.appendChild(toolbarFixture);
+      const wideToolbarControls = [...toolbarFixture.querySelectorAll('.global-forward-toolbar > *')].map(element => element.getBoundingClientRect());
+      globalForwardToolbarWideAligned = wideToolbarControls.length === 4
+        && Math.max(...wideToolbarControls.map(rect => rect.top)) - Math.min(...wideToolbarControls.map(rect => rect.top)) <= 0.5
+        && Math.max(...wideToolbarControls.map(rect => rect.bottom)) - Math.min(...wideToolbarControls.map(rect => rect.bottom)) <= 0.5
+        && Math.max(...wideToolbarControls.map(rect => rect.height)) - Math.min(...wideToolbarControls.map(rect => rect.height)) <= 0.5;
+      toolbarFixture.remove();
+    }
     let globalForwardWideGrid = false;
     let singleForwardWideGrid = false;
     let forwardCardActionsAligned = false;
@@ -460,6 +489,41 @@ app.whenReady().then(async () => {
       && !managerStoppedCard.querySelector('.global-forward-access a')
       && managerStoppedCard.querySelector('[data-action="global-forward-toggle"]')
     );
+    let forwardingPagination = false;
+    let connectionForwardPagination = false;
+    if (forwardFixture) {
+      const originalForwards = connections[0].forwards;
+      const paginationForwards = Array.from({length:13}, (_, index) => ({...forwardFixture, id:900100 + index, service_name:'UI Smoke Page ' + (index + 1), bind_port:18100 + index, status:index % 2 ? 'stopped' : 'running'}));
+      connections[0].forwards = paginationForwards;
+      globalForwardManagerState.groupMode = 'flat';
+      globalForwardManagerState.query = '';
+      globalForwardManagerState.status = 'all';
+      globalForwardManagerState.connectionId = 0;
+      globalForwardManagerState.page = 1;
+      globalForwardManagerState.pageSize = 12;
+      renderGlobalForwardManager();
+      const globalPager = managerView?.querySelector('.forward-pagination');
+      forwardingPagination = Boolean(
+        globalPager
+        && globalPager.querySelector('[data-action="global-forward-page"][data-page="2"]')
+        && globalPager.querySelector('[data-change-action="global-forward-page-size"]')
+        && managerView.querySelectorAll('.global-forward-card').length === 12
+      );
+      selectedId = connections[0].id;
+      openForwards(connections[0].id, false);
+      renderForwards();
+      const connectionPager = document.querySelector('#forwardList .forward-pagination');
+      connectionForwardPagination = Boolean(
+        connectionPager
+        && connectionPager.querySelector('[data-action="forward-page"][data-page="2"]')
+        && connectionPager.querySelector('[data-change-action="forward-page-size"]')
+        && document.querySelectorAll('#forwardList .forward-card').length === 12
+      );
+      connections[0].forwards = originalForwards;
+      globalForwardManagerState.page = 1;
+      renderGlobalForwardManager();
+      renderForwards();
+    }
     if (forwardFixture) forwardFixture.status = 'running';
     if (managerView) managerView.hidden = true;
     if (managerPreviousView) managerPreviousView.hidden = false;
@@ -676,12 +740,16 @@ app.whenReady().then(async () => {
       quickForwardSearch,
       quickCommandForwardSearch,
       globalForwardManager,
+      globalForwardStatsAligned,
       globalForwardToolbarAligned,
+      globalForwardToolbarWideAligned,
       globalForwardWideGrid,
       singleForwardWideGrid,
       forwardCardActionsAligned,
       groupedManager,
       globalForwardStoppedHidesAccess,
+      forwardingPagination,
+      connectionForwardPagination,
       quickSshCandidates,
       connectionNameDoubleClickOpens,
       operationPaneHorizontalScrollHidden:Boolean(explorerTree&&getComputedStyle(explorerTree).overflowX==='hidden'),
@@ -10565,7 +10633,7 @@ app.whenReady().then(async () => {
     || !directoryActionsUi.duplicateShellMatchesTab;
   const languageOnboardingFailed = !languageOnboardingUi.regionDefaults || !languageOnboardingUi.newUserDefaultsEnglish || !languageOnboardingUi.nativeChoiceCopy || !languageOnboardingUi.englishCopy || !languageOnboardingUi.selectedChineseCopy || !languageOnboardingUi.selectedEnglishCopy || !languageOnboardingUi.coldStartNativeChoice || !languageOnboardingUi.existingUserKeepsLanguage || !languageOnboardingUi.existingUserChineseCopy || !languageOnboardingUi.existingUserEnglishCopy || !languageOnboardingUi.fitsNarrowViewport || !languageOnboardingUi.saved || !languageOnboardingUi.closed;
   const forwardTemplateLayoutFailed = forwardTemplateLayoutUi.rows !== 2 || forwardTemplateLayoutUi.buttons !== 6 || !forwardTemplateLayoutUi.singleLine || !forwardTemplateLayoutUi.insideRows || !forwardTemplateLayoutUi.noOverlap;
-  const forwardLayoutUiFailed = !result.globalForwardManager || !result.globalForwardToolbarAligned || !result.globalForwardWideGrid || !result.singleForwardWideGrid || !result.forwardCardActionsAligned || !result.groupedManager || !result.globalForwardStoppedHidesAccess;
+  const forwardLayoutUiFailed = !result.globalForwardManager || !result.globalForwardStatsAligned || !result.globalForwardToolbarAligned || !result.globalForwardToolbarWideAligned || !result.globalForwardWideGrid || !result.singleForwardWideGrid || !result.forwardCardActionsAligned || !result.groupedManager || !result.globalForwardStoppedHidesAccess || !result.forwardingPagination || !result.connectionForwardPagination;
   const code = errors.length || cspViolations.length || languageOnboardingFailed || forwardTemplateLayoutFailed || !noVncModuleUi.loaded || !noVncModuleUi.prototype || !zmodemModuleUi.loaded || !zmodemModuleUi.browser || !zmodemModuleUi.abortSequence || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceTabCloseUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || appearanceEffectsUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || forwardLayoutUiFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.quickConnectionLauncher || !result.quickForwardSearch || !result.quickCommandForwardSearch || !result.quickSshCandidates || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
   if (sftpTabIsolationFailed) console.error("SFTP tab isolation diagnostics:", JSON.stringify(directoryActionsUi));
   if (notificationUiFailed) console.error("Notification UI diagnostics:", JSON.stringify(notificationUi));
@@ -10612,6 +10680,8 @@ app.whenReady().then(async () => {
     }).filter(([, failed]) => Boolean(failed)).map(([name]) => name),
     workspaceTabCloseUi,
     runningActions,
+    forwardingPagination:result.forwardingPagination,
+    connectionForwardPagination:result.connectionForwardPagination,
     notificationUi,
     restoreKeyUi,
     activityUi:{activity:result.activity, activityUtilities:result.activityUtilities},

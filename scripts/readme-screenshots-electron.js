@@ -13,8 +13,8 @@ app.setPath("userData", userData);
 
 const delay = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
-async function execute(window, callback) {
-  return window.webContents.executeJavaScript(`(${callback.toString()})()`);
+async function execute(window, callback, ...args) {
+  return window.webContents.executeJavaScript(`(${callback.toString()})(${args.map(arg => JSON.stringify(arg)).join(",")})`);
 }
 
 async function waitForApp(window) {
@@ -30,7 +30,7 @@ async function waitForApp(window) {
   throw new Error("README 截图页面初始化超时");
 }
 
-async function loadCleanPage(window) {
+async function loadCleanPage(window, language="zh-CN") {
   try {
     await session.defaultSession.clearStorageData({origins:[url]});
   } catch {}
@@ -39,11 +39,15 @@ async function loadCleanPage(window) {
   // Let the page's initial loadAll request settle before replacing it with fixtures.
   // Otherwise the real empty response can arrive after a fixture has rendered.
   await delay(2600);
-  await execute(window, prepareBaseFixture);
+  await execute(window, prepareBaseFixture, language);
   await delay(100);
 }
 
-function prepareBaseFixture() {
+async function prepareBaseFixture(language="zh-CN") {
+  if (typeof setTermaLanguage === "function") await setTermaLanguage(language, {render:false, emit:false});
+  const english = language === "en-US";
+  window.__readmeScreenshotLanguage = language;
+  const text = (zh, en) => english ? en : zh;
   const fixedNow = Math.floor(new Date("2026-08-05T10:00:00+08:00").getTime() / 1000);
   const forwarded = (id, values) => ({
     id,
@@ -88,29 +92,29 @@ function prepareBaseFixture() {
   connections = [
     {
       id:101,
-      name:"边缘网关",
-      group_name:"生产环境",
+      name:text("边缘网关", "Edge Gateway"),
+      group_name:text("生产环境", "Production"),
       ssh_host:"192.0.2.10",
       ssh_port:22,
       ssh_user:"ops",
-      tags:"Linux 网关",
+      tags:text("Linux 网关", "Linux Gateway"),
       sort_order:1,
       auth_type:"key",
       identity_file:"id_ed25519_ops",
       forwards:[
-        forwarded(1001, {mode:"local", service_name:"运营控制台", service_type:"web", service_note:"仅本机访问", url_scheme:"http", bind_host:"127.0.0.1", bind_port:18080, target_host:"127.0.0.1", target_port:8080, status:"running", pid:4201, started_at:fixedNow - 7260}),
-        forwarded(1002, {mode:"local", service_name:"数据分析库", service_type:"mysql", service_note:"只读维护通道", bind_host:"127.0.0.1", bind_port:13306, target_host:"198.51.100.24", target_port:3306, status:"running", pid:4202, started_at:fixedNow - 3610}),
-        forwarded(1003, {mode:"socks", service_name:"维护代理", service_type:"socks", service_note:"按需启动", bind_host:"127.0.0.1", bind_port:1080, target_host:"127.0.0.1", target_port:0, status:"stopped"})
+        forwarded(1001, {mode:"local", service_name:text("运营控制台", "Operations Console"), service_type:"web", service_note:text("仅本机访问", "Local access only"), url_scheme:"http", bind_host:"127.0.0.1", bind_port:18080, target_host:"127.0.0.1", target_port:8080, status:"running", pid:4201, started_at:fixedNow - 7260}),
+        forwarded(1002, {mode:"local", service_name:text("数据分析库", "Analytics Database"), service_type:"mysql", service_note:text("只读维护通道", "Read-only maintenance channel"), bind_host:"127.0.0.1", bind_port:13306, target_host:"198.51.100.24", target_port:3306, status:"running", pid:4202, started_at:fixedNow - 3610}),
+        forwarded(1003, {mode:"socks", service_name:text("维护代理", "Maintenance Proxy"), service_type:"socks", service_note:text("按需启动", "Start on demand"), bind_host:"127.0.0.1", bind_port:1080, target_host:"127.0.0.1", target_port:0, status:"stopped"})
       ]
     },
     {
       id:102,
-      name:"应用节点",
-      group_name:"生产环境",
+      name:text("应用节点", "Application Node"),
+      group_name:text("生产环境", "Production"),
       ssh_host:"198.51.100.24",
       ssh_port:22,
       ssh_user:"deploy",
-      tags:"Java 服务",
+      tags:text("Java 服务", "Java Service"),
       sort_order:2,
       auth_type:"key",
       identity_file:"id_ed25519_deploy",
@@ -118,12 +122,12 @@ function prepareBaseFixture() {
     },
     {
       id:103,
-      name:"macOS 构建机",
-      group_name:"研发环境",
+      name:text("macOS 构建机", "macOS Build Host"),
+      group_name:text("研发环境", "Development"),
       ssh_host:"203.0.113.18",
       ssh_port:22,
       ssh_user:"demo",
-      tags:"构建 签名",
+      tags:text("构建 签名", "Build Signing"),
       sort_order:1,
       auth_type:"key",
       identity_file:"id_ed25519_demo",
@@ -131,26 +135,26 @@ function prepareBaseFixture() {
     }
   ];
   remoteProfiles = [
-    {id:201, name:"边缘网关 · RDP", group_name:"生产环境", protocol:"rdp", host:"192.0.2.10", port:3389, username:"ops", tags:"Linux", has_password:false, options:{source_ssh_connection_id:101, display_mode:"dynamic"}},
-    {id:202, name:"边缘网关 · VNC", group_name:"生产环境", protocol:"vnc", host:"192.0.2.10", port:5900, username:"ops", tags:"Linux", has_password:true, options:{source_ssh_connection_id:101, client_mode:"system", server_session_mode:"shared", server_display:":10"}},
-    {id:203, name:"应用节点 · XDMCP", group_name:"生产环境", protocol:"xdmcp", host:"198.51.100.24", port:177, username:"", tags:"Linux", has_password:false, options:{source_ssh_connection_id:102, mode:"direct", window_mode:"windowed"}},
-    {id:204, name:"macOS 构建机 · VNC", group_name:"研发环境", protocol:"vnc", host:"203.0.113.18", port:5900, username:"demo", tags:"macOS", has_password:true, options:{source_ssh_connection_id:103, client_mode:"system"}}
+    {id:201, name:text("边缘网关 · RDP", "Edge Gateway · RDP"), group_name:text("生产环境", "Production"), protocol:"rdp", host:"192.0.2.10", port:3389, username:"ops", tags:"Linux", has_password:false, options:{source_ssh_connection_id:101, display_mode:"dynamic"}},
+    {id:202, name:text("边缘网关 · VNC", "Edge Gateway · VNC"), group_name:text("生产环境", "Production"), protocol:"vnc", host:"192.0.2.10", port:5900, username:"ops", tags:"Linux", has_password:true, options:{source_ssh_connection_id:101, client_mode:"system", server_session_mode:"shared", server_display:":0"}},
+    {id:203, name:text("应用节点 · XDMCP", "Application Node · XDMCP"), group_name:text("生产环境", "Production"), protocol:"xdmcp", host:"198.51.100.24", port:177, username:"", tags:"Linux", has_password:false, options:{source_ssh_connection_id:102, mode:"direct", window_mode:"windowed"}},
+    {id:204, name:text("macOS 构建机 · VNC", "macOS Build Host · VNC"), group_name:text("研发环境", "Development"), protocol:"vnc", host:"203.0.113.18", port:5900, username:"demo", tags:"macOS", has_password:true, options:{source_ssh_connection_id:103, client_mode:"system"}}
   ];
   selectedId = 101;
   selectedRemoteProfileId = null;
   primaryView = "connections";
   groupOpen.clear();
-  groupOpen.add("生产环境");
-  groupOpen.add("研发环境");
+  groupOpen.add(text("生产环境", "Production"));
+  groupOpen.add(text("研发环境", "Development"));
   remoteGroupOpen.clear();
-  remoteGroupOpen.add("生产环境");
-  remoteGroupOpen.add("研发环境");
+  remoteGroupOpen.add(text("生产环境", "Production"));
+  remoteGroupOpen.add(text("研发环境", "Development"));
   remoteHostOpen.clear();
   remoteProfiles.forEach(profile => remoteHostOpen.add(remoteHostKey(profile)));
   healthResults.clear();
-  healthResults.set(101, {id:101, ok:true, status:"正常"});
-  healthResults.set(102, {id:102, ok:true, status:"正常"});
-  healthResults.set(103, {id:103, ok:true, status:"正常"});
+  healthResults.set(101, {id:101, ok:true, status:text("正常", "Healthy")});
+  healthResults.set(102, {id:102, ok:true, status:text("正常", "Healthy")});
+  healthResults.set(103, {id:103, ok:true, status:text("正常", "Healthy")});
   if (typeof setOperationPanePinned === "function") setOperationPanePinned(true);
   if (typeof setOperationPaneCollapsed === "function") setOperationPaneCollapsed(false);
   if (typeof applyOperationPaneWidth === "function") applyOperationPaneWidth(338, {fit:false});
@@ -168,6 +172,10 @@ function prepareBaseFixture() {
   if (taskDrawer) taskDrawer.hidden = true;
   const taskFloat = document.querySelector("#sftpTaskFloat");
   if (taskFloat) taskFloat.hidden = true;
+  const taskSummary = document.querySelector("#sftpTaskCenterSummary");
+  if (taskSummary) taskSummary.textContent = text("暂无进行中的任务", "No active tasks");
+  const taskClear = document.querySelector("#sftpTaskCenterClearLabel");
+  if (taskClear) taskClear.textContent = text("清空历史", "Clear history");
   const style = document.createElement("style");
   style.id = "readmeScreenshotStyle";
   style.textContent = `
@@ -215,6 +223,7 @@ async function buildOverviewFixture() {
 }
 
 async function buildTerminalFixture() {
+  const readmeText = (zh, en) => window.__readmeScreenshotLanguage === "en-US" ? en : zh;
   primaryView = "connections";
   renderExplorerTools();
   renderConnections();
@@ -232,7 +241,7 @@ async function buildTerminalFixture() {
   terminal.connected = true;
   terminal.currentDirectory = "/srv/terma";
   terminal.currentDirectoryKnown = true;
-  updateTerminalConnectionStatus(connections[0], key, "已连接");
+  updateTerminalConnectionStatus(connections[0], key, readmeText("已连接", "Connected"));
   terminal.term.clear();
   const lines = [
     "\u001b[32mops@edge-gateway\u001b[0m:\u001b[34m/srv/terma\u001b[0m$ terma doctor",
@@ -296,27 +305,28 @@ async function buildSftpFixture() {
 }
 
 async function buildRemoteFixture() {
+  const readmeText = (zh, en) => window.__readmeScreenshotLanguage === "en-US" ? en : zh;
   const rendering = {
     visible:true,
-    state:"software",
+    state:"hardware",
     protocol:"vnc",
-    backend:"x11vnc -> xorgxrdp",
-    source_display:":10",
+    backend:"x11vnc -> Xorg",
+    source_display:":0",
     drm_device:"/dev/dri/renderD128",
-    drm_device_available:false,
-    software_rendering:true,
-    java_gui_risk:true,
-    summary:"Java GUI 可能白屏",
-    detail:"当前目标是 XRDP 软件渲染会话；可改用物理桌面或独立虚拟桌面，也可以复制兼容启动命令。",
+    drm_device_available:true,
+    software_rendering:false,
+    java_gui_risk:false,
+    summary:readmeText("远程桌面已准备就绪", "Remote desktop is ready"),
+    detail:readmeText("当前使用物理桌面会话，图形加速可用。", "The physical desktop session is active with hardware rendering available."),
     compatibility_commands:[
       {id:"java2d", label:"Java2D", command:"java -Dsun.java2d.xrender=false -Dsun.java2d.opengl=false -jar /srv/terma/demo.jar"},
-      {id:"java2d-safe", label:"Java2D 安全模式", command:"NO_J2D_MITSHM=true java -Dsun.java2d.xrender=false -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -jar /srv/terma/demo.jar"},
+      {id:"java2d-safe", label:readmeText("Java2D 安全模式", "Java2D safe mode"), command:"NO_J2D_MITSHM=true java -Dsun.java2d.xrender=false -Dsun.java2d.opengl=false -Dsun.java2d.pmoffscreen=false -jar /srv/terma/demo.jar"},
       {id:"javafx", label:"JavaFX", command:"java -Dprism.order=sw -jar /srv/terma/demo.jar"}
     ]
   };
   const selectedComponent = {
     id:"x11vnc",
-    label:"x11vnc 共享桌面",
+    label:readmeText("x11vnc", "x11vnc"),
     installed:true,
     running:true,
     listening:true,
@@ -343,8 +353,8 @@ async function buildRemoteFixture() {
     server_session_selection:{
       requested_mode:"shared",
       mode:"shared",
-      display:":10",
-      source:{kind:"xrdp", display:":10", user:"ops", desktop:"XFCE"},
+      display:":0",
+      source:{kind:"physical", display:":0", user:"ops", desktop:"XFCE"},
       source_available:true,
       requires_selection:false,
       component:"x11vnc",
@@ -353,19 +363,19 @@ async function buildRemoteFixture() {
     },
     selected_component:selectedComponent,
     running_component:selectedComponent,
-    server_session_selection_matches_running:false,
+    server_session_selection_matches_running:true,
     session_sources:[
       {kind:"physical", display:":0", user:"ops", desktop:"XFCE", state:"active"},
       {kind:"xrdp", display:":10", user:"ops", desktop:"XFCE", state:"active"}
     ],
-    xrdp_software_rendering:true,
+    xrdp_software_rendering:false,
     start_plan:{kind:"service", command:"systemctl restart terma-vnc.service", persistent:true},
-    ssh_connection:{id:101, name:"边缘网关"},
+    ssh_connection:{id:101, name:readmeText("边缘网关", "Edge Gateway")},
     graphics_rendering:rendering
   };
   api = async (pathname, options={}) => {
     const value = String(pathname);
-    if (value === "/api/remote-clients/diagnostics") return {vnc:{available:true, launchable:true, client:"系统 VNC 客户端"}, rdp:{available:true}, xdmcp:{available:true}};
+    if (value === "/api/remote-clients/diagnostics") return {vnc:{available:true, launchable:true, client:readmeText("系统 VNC 客户端", "System VNC client")}, rdp:{available:true}, xdmcp:{available:true}};
     if (value === "/api/remote-profiles/202/vnc/server") return diagnostics;
     if (value === "/api/connections/101/linux-desktop") return {platform_supported:true, os_id:"ubuntu", has_desktop:true, desktops:[{id:"xfce", name:"XFCE"}]};
     return window.__readmeBaseApi(pathname, options);
@@ -380,6 +390,7 @@ async function buildRemoteFixture() {
 }
 
 async function buildLinuxManagementFixture() {
+  const readmeText = (zh, en) => window.__readmeScreenshotLanguage === "en-US" ? en : zh;
   const diagnostics = {
     platform_supported:true,
     privileged:true,
@@ -387,7 +398,7 @@ async function buildLinuxManagementFixture() {
     package_manager:"apt",
     display_manager:"lightdm",
     has_desktop:true,
-    connection:{id:101, name:"边缘网关"},
+    connection:{id:101, name:readmeText("边缘网关", "Edge Gateway")},
     desktops:[{id:"xfce", name:"XFCE"}, {id:"plasma", name:"KDE Plasma"}],
     installable_desktops:["xfce", "gnome", "plasma", "mate", "cinnamon", "lxqt"],
     desktop_catalog:[
@@ -456,7 +467,7 @@ async function buildForwardingFixture() {
   return {cards:document.querySelectorAll(".global-forward-card").length, groups:document.querySelectorAll(".global-forward-group").length};
 }
 
-async function capture(window, filename) {
+async function capture(window, filename, language) {
   await delay(160);
   const audit = await window.webContents.executeJavaScript(`(() => {
     const pane = document.querySelector(".workspace-pane.focused")
@@ -472,6 +483,21 @@ async function capture(window, filename) {
       ["credential assignment", /(?:password|passphrase|token|secret)\\s*[:=]\\s*\\S+/i],
       ["legacy package", /tunneldesk-[0-9]/i]
     ].filter(([, pattern]) => pattern.test(visibleText)).map(([label]) => label);
+    const languageIssues = ${JSON.stringify(language)} === "en-US"
+      ? [...document.querySelectorAll("body *")].filter(node => {
+          if (node.closest(".xterm-screen")) return false;
+          const text = node.textContent || "";
+          return text && /[\u3400-\u9fff]/.test(text) && [...node.children].every(child => !child.textContent?.trim());
+        }).slice(0, 12).map(node => node.textContent.trim().slice(0, 80))
+      : [];
+    const chineseLanguageIssues = ${JSON.stringify(language)} === "zh-CN"
+      ? [...document.querySelectorAll("body *")].filter(node => {
+          if (node.closest(".xterm-screen")) return false;
+          const text = (node.textContent || "").trim();
+          if (!text || [...node.children].some(child => child.textContent?.trim())) return false;
+          return /\b(?:Workspace|Forwarding List|Manage all forwards|Refresh status|Restore tunnels|Add forwarding rule|Running|Reconnecting|Failed to start|Stopped|All statuses|All servers|Group by SSH connection|Search names|Server rules|Linux desktop management|Detect again|Remote desktop is ready|System VNC client|No active tasks|Clear history|Connected|Healthy|Previous|Next|Items per page)\b/i.test(text);
+        }).slice(0, 12).map(node => node.textContent.trim().slice(0, 80))
+      : [];
     const expected = {
       "desktop-overview.png":visibleView?.id === "view-dashboard" && visibleView.querySelectorAll(".dashboard-card").length >= 6,
       "desktop-terminal.png":visibleView?.id === "view-terminal" && Boolean(visibleView.querySelector(".xterm-screen")),
@@ -487,6 +513,8 @@ async function capture(window, filename) {
       bodyWidth:document.body.scrollWidth,
       overflow:document.body.scrollWidth > innerWidth + 1,
       forbidden,
+      languageIssues,
+      chineseLanguageIssues,
       expected,
       activeTabKey:typeof activeTabKey === "string" ? activeTabKey : "",
       activeView:typeof activeView === "string" ? activeView : "",
@@ -501,6 +529,8 @@ async function capture(window, filename) {
   }
   if (audit.overflow) throw new Error(`${filename} 出现页面横向溢出：${JSON.stringify(audit)}`);
   if (audit.forbidden.length) throw new Error(`${filename} 含不应出现在截图中的内容：${audit.forbidden.join(", ")}`);
+  if (audit.languageIssues.length) throw new Error(`${filename} 英文界面含中文残留：${audit.languageIssues.join(" | ")}`);
+  if (audit.chineseLanguageIssues.length) throw new Error(`${filename} 中文界面含英文残留：${audit.chineseLanguageIssues.join(" | ")}`);
   if (!audit.expected) throw new Error(`${filename} 未呈现预期功能界面：${JSON.stringify(audit)}`);
   window.webContents.invalidate();
   await delay(100);
@@ -509,7 +539,7 @@ async function capture(window, filename) {
   if (size.width < 1500 || size.height < 900) throw new Error(`${filename} 截图尺寸异常：${size.width}x${size.height}`);
   fs.mkdirSync(outputDirectory, {recursive:true});
   fs.writeFileSync(path.join(outputDirectory, filename), image.toPNG());
-  console.log(`[readme-screenshots] ${filename} ${size.width}x${size.height}`);
+  console.log(`[readme-screenshots] ${language}/${filename} ${size.width}x${size.height}`);
 }
 
 app.whenReady().then(async () => {
@@ -523,6 +553,7 @@ app.whenReady().then(async () => {
     webPreferences:{contextIsolation:true, offscreen:true, backgroundThrottling:false}
   });
   try {
+    const language = process.env.TERMA_README_SCREENSHOT_LANGUAGE || "zh-CN";
     const states = [
       ["desktop-overview.png", buildOverviewFixture],
       ["desktop-terminal.png", buildTerminalFixture],
@@ -532,10 +563,10 @@ app.whenReady().then(async () => {
       ["desktop-forwarding.png", buildForwardingFixture]
     ];
     for (const [filename, builder] of states) {
-      await loadCleanPage(window);
+      await loadCleanPage(window, language);
       const result = await execute(window, builder);
       console.log(`[readme-screenshots] rendered ${filename}: ${JSON.stringify(result)}`);
-      await capture(window, filename);
+      await capture(window, filename, language);
     }
     window.destroy();
     app.exit(0);

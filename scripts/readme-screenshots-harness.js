@@ -61,6 +61,10 @@ function verifyScreenshots(output) {
   }
 }
 
+function verifyLocaleScreenshots(output, locale) {
+  verifyScreenshots(path.join(output, locale));
+}
+
 async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-readme-screenshots-"));
   const port = await availablePort();
@@ -81,13 +85,17 @@ async function main() {
   server.stderr.on("data", chunk => serverOutput.push(chunk.toString()));
   try {
     await waitForServer(url, server);
-    await runElectron({
-      ...process.env,
-      TERMA_README_SCREENSHOT_URL:url,
-      TERMA_README_SCREENSHOT_DIR:output,
-      TERMA_README_SCREENSHOT_USER_DATA:path.join(root, "electron-user-data")
-    });
-    verifyScreenshots(output);
+    for (const locale of ["en-US", "zh-CN"]) {
+      const localeOutput = path.join(output, locale);
+      await runElectron({
+        ...process.env,
+        TERMA_README_SCREENSHOT_URL:url,
+        TERMA_README_SCREENSHOT_DIR:localeOutput,
+        TERMA_README_SCREENSHOT_USER_DATA:path.join(root, `electron-user-data-${locale}`),
+        TERMA_README_SCREENSHOT_LANGUAGE:locale
+      });
+      verifyLocaleScreenshots(output, locale);
+    }
   } catch (error) {
     if (serverOutput.length) console.error(serverOutput.join("").slice(-12000));
     throw error;

@@ -242,7 +242,15 @@
     "editor_hint": "Save the rule, then start it directly from the forwarding list.",
     "running_edit_hint": "Saving safely restarts it; the old configuration is restored if startup fails.",
     "delete_confirm": "Delete “{{name}}”? A running forward will be stopped first.",
-    "delete_title": "Delete forwarding rule"
+    "delete_title": "Delete forwarding rule",
+    "pagination": {
+      "label": "Forwarding list pagination",
+      "previous": "Previous",
+      "next": "Next",
+      "page": "Page {{page}} of {{pages}}",
+      "page_size": "Items per page",
+      "showing": "Showing {{from}}–{{to}} of {{total}}"
+    }
   },
   "list": {
     "add_remote": "Add another connection",
@@ -358,7 +366,7 @@
     "rules_count": "{{count}} forwarding rules",
     "short_count": "{{count}} forwards",
     "workspace_title": "Forwarding list",
-    "select_all": "Select all forwards",
+    "select_all": "Select all on this page",
     "select": "Select",
     "rule": "Rule",
     "status": "Status",
@@ -388,6 +396,14 @@
     "empty_hint": "Use the form above to add the first local, remote, or SOCKS5 tunnel.",
     "auth_failed_context": "Authentication failed while starting forwarding",
     "connection_start_failed": "{{name}} failed to start forwarding: {{error}}",
+    "pagination": {
+      "label": "Forwarding list pagination",
+      "previous": "Previous",
+      "next": "Next",
+      "page": "Page {{page}} of {{pages}}",
+      "page_size": "Items per page",
+      "showing": "Showing {{from}}–{{to}} of {{total}}"
+    },
     "select_connection": "Select a connection first",
     "restart_confirm": "This forwarding rule is running. Restart it now to apply the changes?",
     "restart_title": "Restart forwarding",

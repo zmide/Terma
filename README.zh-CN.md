@@ -9,24 +9,24 @@ Terma 是一个面向桌面端和自托管 Web 的远程连接工作台，用于
 [下载最新版本](https://github.com/zmide/Terma/releases/latest) · [查看版本记录](https://github.com/zmide/Terma/releases) · [GPL-3.0 许可](LICENSE)
 
 <p align="center">
-  <img src=".github/assets/screenshots/desktop-overview.png" alt="Terma 连接管理与服务器仪表盘" width="100%">
+  <img src=".github/assets/screenshots/zh-CN/desktop-overview.png" alt="Terma 连接管理与服务器仪表盘" width="100%">
 </p>
 
 ## 界面预览
 
 <table>
   <tr>
-    <td width="50%"><strong>终端会话与运行诊断</strong><br><img src=".github/assets/screenshots/desktop-terminal.png" alt="Terma 终端会话与运行诊断"></td>
-    <td width="50%"><strong>远程桌面与其他连接</strong><br><img src=".github/assets/screenshots/desktop-remote.png" alt="Terma 远程桌面与其他连接"></td>
+    <td width="50%"><strong>终端会话与运行诊断</strong><br><img src=".github/assets/screenshots/zh-CN/desktop-terminal.png" alt="Terma 终端会话与运行诊断"></td>
+    <td width="50%"><strong>远程桌面与其他连接</strong><br><img src=".github/assets/screenshots/zh-CN/desktop-remote.png" alt="Terma 远程桌面与其他连接"></td>
   </tr>
   <tr>
-    <td colspan="2"><strong>SFTP 文件管理</strong><br><img src=".github/assets/screenshots/desktop-sftp.png" alt="Terma SFTP 文件管理"></td>
+    <td colspan="2"><strong>SFTP 文件管理</strong><br><img src=".github/assets/screenshots/zh-CN/desktop-sftp.png" alt="Terma SFTP 文件管理"></td>
   </tr>
   <tr>
-    <td colspan="2"><strong>Linux 桌面管理</strong><br><img src=".github/assets/screenshots/desktop-linux-management.png" alt="Terma Linux 桌面管理"></td>
+    <td colspan="2"><strong>Linux 桌面管理</strong><br><img src=".github/assets/screenshots/zh-CN/desktop-linux-management.png" alt="Terma Linux 桌面管理"></td>
   </tr>
   <tr>
-    <td colspan="2"><strong>端口转发</strong><br><img src=".github/assets/screenshots/desktop-forwarding.png" alt="Terma 端口转发"></td>
+    <td colspan="2"><strong>端口转发</strong><br><img src=".github/assets/screenshots/zh-CN/desktop-forwarding.png" alt="Terma 端口转发"></td>
   </tr>
 </table>
 
