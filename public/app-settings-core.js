@@ -6,7 +6,8 @@ let sftpDownloadSettings = null;
 let programCacheSettings = null;
 let sshTrustedHosts = [];
 let sshTrustedHostsPage = 1;
-let sshTrustedHostsPageSize = 20;
+let sshTrustedHostsPageSize = 5;
+let sshTrustedHostsQuery = "";
 let sshTrustedHostsTotal = 0;
 let sshTrustedHostsTotalPages = 0;
 let runtimeSettingsMessage = null;
@@ -20,6 +21,7 @@ let updateStatusChecking = false;
 const SETTINGS_SECTION_META = {
   "settings-general": "settings:sections.general",
   "settings-basic": "settings:sections.security",
+  "settings-key-management": "settings:sections.key_management",
   "settings-notifications": "settings:sections.notifications",
   "settings-runtime": "settings:sections.runtime",
   "settings-cache": "settings:sections.cache",
@@ -114,9 +116,10 @@ async function loadSecuritySettings() {
   return securitySettings;
 }
 
-async function loadTrustedSshHosts(page = sshTrustedHostsPage) {
+async function loadTrustedSshHosts(page = sshTrustedHostsPage, query = sshTrustedHostsQuery) {
   const requestedPage = Math.max(1, Number(page) || 1);
-  const result = await api(`/api/ssh/trusted-hosts?page=${requestedPage}&page_size=${sshTrustedHostsPageSize}`, {skipSftpConnect:true, skipHostTrustPrompt:true});
+  sshTrustedHostsQuery = String(query || "").trim();
+  const result = await api(`/api/ssh/trusted-hosts?page=${requestedPage}&page_size=${sshTrustedHostsPageSize}&q=${encodeURIComponent(sshTrustedHostsQuery)}`, {skipSftpConnect:true, skipHostTrustPrompt:true});
   sshTrustedHosts = Array.isArray(result.hosts) ? result.hosts : [];
   sshTrustedHostsPage = Number(result.page || requestedPage);
   sshTrustedHostsPageSize = Number(result.page_size || sshTrustedHostsPageSize);
@@ -133,10 +136,17 @@ async function changeTrustedSshHostsPage(page) {
   await loadTrustedSshHosts(target);
 }
 
+async function searchTrustedSshHosts() {
+  const input = $("sshHostTrustSearch");
+  await loadTrustedSshHosts(1, input?.value || "");
+}
+
 function sshHostTrustPanelHtml() {
   const removeLabel = tr("settings:trust.remove_record");
   const previousLabel = tr("settings:trust.previous_page");
   const nextLabel = tr("settings:trust.next_page");
+  const searchLabel = tr("settings:trust.search");
+  const searchPlaceholder = tr("settings:trust.search_placeholder");
   const rows = sshTrustedHosts.map(item => `<div class="ssh-trust-record">
     <div class="ssh-trust-record-main"><strong>${esc(item.host_label || `${item.host}:${item.port}`)}</strong><span>${esc(item.key_type || tr("settings:trust.unknown_algorithm"))}</span><code>${esc(item.fingerprint || "")}</code></div>
     <div class="ssh-trust-record-side"><span>${item.updated_at ? esc(new Date(item.updated_at).toLocaleString(document.documentElement.lang || undefined, {hour12:false})) : ""}</span><button class="icon-button danger" type="button" title="${escAttr(removeLabel)}" aria-label="${escAttr(removeLabel)}" onclick="removeTrustedSshHost('${escAttr(item.id)}')">${icon("trash-2")}</button></div>
@@ -149,6 +159,7 @@ function sshHostTrustPanelHtml() {
   return `<section id="sshHostTrustPanel" class="ssh-trust-settings-section">
     <h3>${esc(tr("settings:auto.ssh_host_trust"))}</h3>
     <div class="muted">${esc(tr("settings:auto.ssh_host_trust_hint"))}</div>
+    <div class="ssh-trust-search"><input id="sshHostTrustSearch" type="search" value="${escAttr(sshTrustedHostsQuery)}" placeholder="${escAttr(searchPlaceholder)}" aria-label="${escAttr(searchLabel)}" onkeydown="if(event.key==='Enter') searchTrustedSshHosts()"><button class="icon-button" type="button" title="${escAttr(searchLabel)}" aria-label="${escAttr(searchLabel)}" onclick="searchTrustedSshHosts()">${icon("search")}</button></div>
     <div class="ssh-trust-records">${rows || `<div class="ui-state empty compact"><span class="ui-state-icon" aria-hidden="true"></span><strong>${esc(tr("settings:auto.no_trusted_hosts"))}</strong><span>${esc(tr("settings:auto.trusted_hosts_hint"))}</span></div>`}</div>
     ${pager}
   </section>`;

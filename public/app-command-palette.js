@@ -56,6 +56,7 @@ function quickPanelForwardItem(connection, forward) {
 
 function quickPanelItems(query="") {
   const needle = String(query || "").trim().toLowerCase();
+  const hasConnectionSearch = Boolean(needle);
   const matches = item => !needle || productivitySearchText(item.title, item.detail, item.search).includes(needle);
   const directTarget = parseQuickSshTarget(query);
   const exactConnections = quickSshExactConnections(directTarget);
@@ -102,43 +103,51 @@ function quickPanelItems(query="") {
       run:()=>activateTab(tab.key)
     });
   }
-  for (const connection of [...connections].sort((left, right) =>
-    Number(right.favorite || 0) - Number(left.favorite || 0)
-    || Number(right.last_used_at || 0) - Number(left.last_used_at || 0)
-    || Number(left.sort_order || 0) - Number(right.sort_order || 0)
-  )) {
-    if (!exactIds.has(Number(connection.id))) items.push(quickPanelConnectionItem(connection));
-    for (const forward of connection.forwards || []) items.push(quickPanelForwardItem(connection, forward));
+  // Connections are the largest result source. Keep the command window focused
+  // on commands, tabs and workspaces until the user actually searches.
+  if (hasConnectionSearch || directTarget) {
+    for (const connection of [...connections].sort((left, right) =>
+      Number(right.favorite || 0) - Number(left.favorite || 0)
+      || Number(right.last_used_at || 0) - Number(left.last_used_at || 0)
+      || Number(left.sort_order || 0) - Number(right.sort_order || 0)
+    )) {
+      if (!exactIds.has(Number(connection.id))) items.push(quickPanelConnectionItem(connection));
+      for (const forward of connection.forwards || []) items.push(quickPanelForwardItem(connection, forward));
+    }
+    for (const profile of [...remoteProfiles].sort((left, right) =>
+      Number(right.favorite || 0) - Number(left.favorite || 0)
+      || Number(right.last_used_at || 0) - Number(left.last_used_at || 0)
+      || String(left.name || "").localeCompare(String(right.name || ""), "zh-Hans-CN")
+    )) {
+      const meta = REMOTE_PROTOCOL_META[profile.protocol] || {icon:"plug"};
+      const protocolLabel = typeof remoteProtocolLabel === "function"
+        ? remoteProtocolLabel(profile.protocol)
+        : String(profile.protocol || "").toUpperCase();
+      items.push({
+        kind:"remote-profile",
+        icon:profile.favorite ? "star" : meta.icon,
+        title:profile.name,
+        detail:`${protocolLabel} · ${remoteProfileEndpoint(profile)}`,
+        search:productivitySearchText(profile.group_name, profile.tags, profile.protocol),
+        remoteProfile:profile,
+        run:()=>["rdp","vnc","xdmcp"].includes(profile.protocol) ? openRemoteDesktop(profile.id) : profile.protocol === "ftp" ? openFtpProfile(profile.id) : openRemoteTerminal(profile.id)
+      });
+    }
   }
-  for (const profile of [...remoteProfiles].sort((left, right) =>
-    Number(right.favorite || 0) - Number(left.favorite || 0)
-    || Number(right.last_used_at || 0) - Number(left.last_used_at || 0)
-    || String(left.name || "").localeCompare(String(right.name || ""), "zh-Hans-CN")
-  )) {
-    const meta = REMOTE_PROTOCOL_META[profile.protocol] || {icon:"plug"};
-    const protocolLabel = typeof remoteProtocolLabel === "function"
-      ? remoteProtocolLabel(profile.protocol)
-      : String(profile.protocol || "").toUpperCase();
-    items.push({
-      kind:"remote-profile",
-      icon:profile.favorite ? "star" : meta.icon,
-      title:profile.name,
-      detail:`${protocolLabel} · ${remoteProfileEndpoint(profile)}`,
-      search:productivitySearchText(profile.group_name, profile.tags, profile.protocol),
-      remoteProfile:profile,
-      run:()=>["rdp","vnc","xdmcp"].includes(profile.protocol) ? openRemoteDesktop(profile.id) : profile.protocol === "ftp" ? openFtpProfile(profile.id) : openRemoteTerminal(profile.id)
-    });
-  }
-  for (const snippet of productivityState.snippets) {
-    items.push({
-      kind:"snippet",
-      icon:"command",
-      title:snippet.name,
-      detail:snippet.group_name || tr("common:auto.command_snippets", {defaultValue:"命令片段"}),
-      search:productivitySearchText(snippet.tags, snippet.description, snippet.command),
-      snippet,
-      run:()=>openSnippetExecution(snippet)
-    });
+  // Command snippets can be numerous and are useful as search targets, but
+  // should not crowd the default command window view.
+  if (hasConnectionSearch) {
+    for (const snippet of productivityState.snippets) {
+      items.push({
+        kind:"snippet",
+        icon:"command",
+        title:snippet.name,
+        detail:snippet.group_name || tr("common:auto.command_snippets", {defaultValue:"命令片段"}),
+        search:productivitySearchText(snippet.tags, snippet.description, snippet.command),
+        snippet,
+        run:()=>openSnippetExecution(snippet)
+      });
+    }
   }
   for (const workspace of productivityState.workspaces) {
     items.push({
@@ -171,14 +180,14 @@ function ensureQuickPanel() {
   panel.id = "quickPanel";
   panel.className = "quick-panel";
   panel.hidden = true;
-  panel.innerHTML = `<div class="quick-panel-dialog" role="dialog" aria-modal="true" aria-label="${escAttr(tr("navigation:auto.quick_open", {defaultValue:"快速打开"}))}">
+  panel.innerHTML = `<div class="quick-panel-dialog" role="dialog" aria-modal="true" aria-label="${escAttr(tr("navigation:auto.command_window", {defaultValue:"命令窗口"}))}">
     <div class="quick-panel-search">${icon("search")}<input id="quickPanelInput" autocomplete="off" spellcheck="false" aria-label="${escAttr(tr("common:command_palette.search_placeholder", {defaultValue:"搜索内容，或输入 用户名@主机:端口"}))}" placeholder="${escAttr(tr("common:command_palette.search_placeholder", {defaultValue:"搜索内容，或输入 用户名@主机:端口"}))}"></div>
     <div id="quickPanelResults" class="quick-panel-results" role="listbox"></div>
   </div>`;
   document.body.appendChild(panel);
   syncQuickPanelLocalization(panel);
   const input = panel.querySelector("#quickPanelInput");
-  input.addEventListener("input", () => renderQuickPanel(input.value));
+  input.addEventListener("input", () => scheduleQuickPanelRender(input.value));
   input.addEventListener("keydown", event => {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -205,9 +214,21 @@ function ensureQuickPanel() {
   return panel;
 }
 
+let quickPanelRenderFrame = 0;
+let quickPanelPendingQuery = "";
+
+function scheduleQuickPanelRender(query="") {
+  quickPanelPendingQuery = String(query || "");
+  if (quickPanelRenderFrame) return;
+  quickPanelRenderFrame = requestAnimationFrame(() => {
+    quickPanelRenderFrame = 0;
+    renderQuickPanel(quickPanelPendingQuery);
+  });
+}
+
 function syncQuickPanelLocalization(panel=document.getElementById("quickPanel")) {
   if (!panel) return;
-  const title = tr("navigation:auto.quick_open", {defaultValue:"快速打开"});
+  const title = tr("navigation:auto.command_window", {defaultValue:"命令窗口"});
   const search = tr("common:command_palette.search_placeholder", {defaultValue:"搜索内容，或输入 用户名@主机:端口"});
   panel.querySelector(".quick-panel-dialog")?.setAttribute("aria-label", title);
   const input = panel.querySelector("#quickPanelInput");
@@ -223,9 +244,15 @@ async function openQuickPanel() {
   const input = panel.querySelector("#quickPanelInput");
   input.value = "";
   productivityState.quickIndex = 0;
-  await Promise.all([loadCommandSnippets(), loadNamedWorkspaces()]);
+  // Paint the command window immediately from the in-memory snapshot. The
+  // productivity lists are loaded during startup, but a cold opening should
+  // never wait on two API requests before the user can type a command.
   renderQuickPanel();
   input.focus();
+  void Promise.all([loadCommandSnippets(), loadNamedWorkspaces()]).then(() => {
+    if (panel.hidden) return;
+    renderQuickPanel(input.value || "", false);
+  });
 }
 
 function closeQuickPanel() {

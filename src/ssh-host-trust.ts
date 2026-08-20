@@ -274,10 +274,15 @@ function listTrustedHosts() {
 }
 
 function listTrustedHostsPage(options: any = {}) {
-  const all = sortedTrustedHosts();
+  const query = String(options.query || options.q || "").trim().toLocaleLowerCase();
+  const all = sortedTrustedHosts().filter((item) => {
+    if (!query) return true;
+    return [item.host, item.host_label, item.port, item.key_type, item.fingerprint]
+      .some((value) => String(value ?? "").toLocaleLowerCase().includes(query));
+  });
   const requestedPage = Number(options.page || 1);
-  const requestedPageSize = Number(options.page_size || options.pageSize || 20);
-  const pageSize = Number.isInteger(requestedPageSize) ? Math.max(1, Math.min(100, requestedPageSize)) : 20;
+  const requestedPageSize = Number(options.page_size || options.pageSize || 5);
+  const pageSize = Number.isInteger(requestedPageSize) ? Math.max(1, Math.min(100, requestedPageSize)) : 5;
   const total = all.length;
   const totalPages = total ? Math.ceil(total / pageSize) : 0;
   const page = totalPages ? Math.max(1, Math.min(totalPages, Number.isInteger(requestedPage) ? requestedPage : 1)) : 1;
@@ -286,6 +291,7 @@ function listTrustedHostsPage(options: any = {}) {
     hosts: all.slice(start, start + pageSize),
     page,
     page_size: pageSize,
+    query,
     total,
     total_pages: totalPages
   };

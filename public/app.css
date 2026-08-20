@@ -122,6 +122,7 @@ body.operation-pane-resizing, body.operation-pane-resizing * { cursor:col-resize
 .operation-pane-narrow .connection-action-strip .icon-button { flex:1 1 32px; width:auto; min-width:32px; }
 .tool-row { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
 .tree { overflow-y:auto; overflow-x:hidden; padding:0 0 18px; flex:1; }
+.tree.log-tree { padding-bottom:18px; scroll-padding-bottom:18px; }
 #connectionGroups { --connection-group-sticky-height:34px; }
 @media (min-width:761px) {
   .app.operation-pane-collapsed { grid-template-columns:var(--activity-bar-width) minmax(0,1fr); }
@@ -360,6 +361,19 @@ body.operation-pane-resizing, body.operation-pane-resizing * { cursor:col-resize
 .sftp-sync-plan-row.conflict .sftp-sync-direction { color:var(--danger); }
 .sftp-sync-conflict-direction { min-width:150px; }
 .danger-text { color:var(--danger) !important; }
+.log-maintenance-stats { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin:10px 0 14px; }
+.log-maintenance-stat { display:grid; gap:3px; min-width:0; padding:9px 10px; border:1px solid var(--line); border-radius:5px; background:var(--field); color:var(--muted); }
+.log-maintenance-stat strong { color:var(--text); font-size:15px; }
+.log-maintenance-history { display:grid; gap:7px; margin:4px 0 14px; }
+.log-maintenance-history-controls { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:7px; align-items:center; }
+.log-maintenance-history-controls input { min-width:0; }
+.log-maintenance-history-controls button { white-space:nowrap; }
+.log-maintenance-history .muted { margin:0; min-height:18px; }
+@media (max-width:700px) {
+  .log-maintenance-stats { grid-template-columns:1fr; }
+  .log-maintenance-history-controls { grid-template-columns:minmax(0,1fr) auto; }
+  .log-maintenance-history-controls .danger { grid-column:1 / -1; justify-self:start; }
+}
 .workspace-repair-list { display:grid; gap:8px; max-height:min(52vh, 520px); overflow:auto; }
 .workspace-repair-list label { display:grid; grid-template-columns:minmax(150px, .8fr) minmax(220px, 1.2fr); align-items:center; gap:12px; padding:9px 10px; margin:0; border:1px solid var(--line); border-radius:6px; }
 .workspace-repair-list label > span { min-width:0; display:grid; color:var(--text); font-weight:600; }
@@ -748,6 +762,9 @@ body.sftp-task-center-resizing, body.sftp-task-center-resizing * { cursor:nesw-r
 .tab-title { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .tab-close { flex:0 0 var(--workspace-tab-close-size); margin-left:0; color:var(--muted); cursor:pointer; touch-action:manipulation; }
 .workspace { padding:12px; overflow:auto; flex:1; min-height:0; background:var(--bg); }
+.workspace-pane[data-active-view="log"] > .workspace,
+.workspace > #view-log:not([hidden]) { display:flex; flex-direction:column; min-height:0; overflow:hidden; }
+.workspace > #view-log:not([hidden]) { flex:1 1 auto; }
 .workspace.terminal-workspace { overflow:hidden; display:flex; flex-direction:column; }
 .workspace.terminal-workspace #view-terminal { container-type:inline-size; container-name:terminal-view; flex:1; min-height:0; display:flex; flex-direction:column; }
 .workspace.terminal-workspace #view-terminal[hidden] { display:none; }
@@ -1082,8 +1099,25 @@ body.sftp-task-center-resizing, body.sftp-task-center-resizing * { cursor:nesw-r
 .log-item { display:grid; gap:2px; width:100%; min-width:0; border:0; border-radius:0; text-align:left; padding:7px 6px; color:var(--text); overflow:hidden; background:transparent; }
 .log-item-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .log-item-time { color:var(--muted); font:11px/1.35 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; white-space:nowrap; }
+.log-item-hit { display:-webkit-box; min-width:0; max-width:100%; overflow:hidden; color:var(--muted); font-size:11px; line-height:1.3; text-overflow:ellipsis; white-space:normal; -webkit-box-orient:vertical; -webkit-line-clamp:2; }
+.log-item-hit mark { background:color-mix(in srgb,var(--warn) 35%,transparent); color:var(--text); border-radius:2px; padding:0 1px; }
 .log-delete { padding:3px 6px; font-size:12px; border-color:transparent; }
-.log-view { margin:0; min-height:calc(100vh - 168px); white-space:pre-wrap; overflow:auto; background:var(--panel); color:var(--text); border-radius:4px; padding:14px; }
+.log-group .log-pager { box-sizing:border-box; position:relative; z-index:auto; width:calc(100% - 12px); max-width:calc(100% - 12px); margin:0 6px 12px; grid-template-columns:minmax(68px,1fr) minmax(44px,auto) minmax(68px,1fr); justify-content:stretch; gap:6px; padding:8px; overflow:hidden; border:1px solid color-mix(in srgb,var(--accent2) 24%,var(--line)); border-radius:6px; background:var(--sidebar); box-shadow:none; }
+.log-group .log-pager > button { width:100%; min-width:0; min-height:28px; display:inline-flex; align-items:center; justify-content:center; padding:4px 6px; overflow:visible; text-overflow:clip; white-space:nowrap; }
+.log-group .log-pager .pager-count { min-width:44px; white-space:nowrap; }
+
+.operation-pane-narrow .log-group .log-pager { grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:5px; padding:6px; }
+.operation-pane-narrow .log-group .log-pager .pager-count { grid-column:1 / -1; grid-row:1; min-width:0; padding:2px 0 1px; }
+.operation-pane-narrow .log-group .log-pager > button { grid-row:2; padding-inline:4px; font-size:11px; }
+.log-detail-search { position:relative; z-index:1; flex:0 0 auto; box-sizing:border-box; display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:8px; margin:0 0 10px; padding:8px; border:1px solid var(--line); border-radius:6px; background:color-mix(in srgb,var(--panel) 96%,var(--bg)); box-shadow:0 5px 14px color-mix(in srgb,var(--line) 42%,transparent); }
+.log-detail-search .search-field { min-width:0; margin:0; }
+.log-detail-search-count { min-width:42px; color:var(--muted); font:12px/1.2 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; text-align:center; font-variant-numeric:tabular-nums; }
+.log-detail-search-actions { display:flex; align-items:center; gap:4px; }
+.log-detail-search-actions .icon-button { width:30px; min-width:30px; height:30px; min-height:30px; padding:5px; }
+.log-detail-search-actions .icon-button:disabled { opacity:.45; cursor:default; }
+.log-view { flex:1 1 auto; min-height:0; margin:0; white-space:pre-wrap; overflow:auto; background:var(--panel); color:var(--text); border-radius:4px; padding:14px; }
+.log-view .log-line { scroll-margin-top:64px; }
+.log-line { display:block; min-height:1.45em; }
 .log-view mark { background:#f5d76e; color:#111827; border-radius:2px; padding:0 1px; }
 .compact-log-context { display:grid; gap:8px; }
 .compact-log-context span { color:var(--muted); font-size:12px; }
@@ -1359,9 +1393,13 @@ body.sftp-task-center-resizing, body.sftp-task-center-resizing * { cursor:nesw-r
 .settings-group-head h3 { margin:0 0 3px; }
 .settings-group-head span { color:var(--muted); font-size:12px; }
 .settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.settings-grid.settings-waterfall { display:block; column-count:2; column-gap:12px; }
+.settings-grid.settings-waterfall > section, .settings-grid.settings-waterfall > .ssh-trust-settings-section { break-inside:avoid; margin:0 0 12px; }
 .settings-grid.single { grid-template-columns:1fr; }
 .settings-grid section { padding:12px 0; border-top:1px solid var(--line); }
 .ssh-trust-settings-section { min-width:0; }
+.ssh-trust-search { display:grid; grid-template-columns:minmax(0,1fr) 32px; gap:6px; margin-top:10px; }
+.ssh-trust-search input { min-width:0; }
 .ssh-trust-records { display:grid; gap:7px; margin-top:10px; }
 .ssh-trust-record { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; padding:9px 10px; border:1px solid var(--line); border-radius:5px; background:var(--field); }
 .ssh-trust-record-main { display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 8px; min-width:0; }
@@ -1372,6 +1410,77 @@ body.sftp-task-center-resizing, body.sftp-task-center-resizing * { cursor:nesw-r
 .ssh-trust-pager { display:flex; align-items:center; justify-content:center; gap:8px; margin-top:10px; color:var(--muted); font-size:11px; }
 .ssh-trust-pager .icon-button { width:30px; min-width:30px; height:30px; min-height:30px; padding:0; }
 .ssh-trust-pager .icon-button svg { width:14px; height:14px; }
+.ssh-key-management-panel { display:grid; gap:12px; container-type:inline-size; }
+.ssh-key-management-toolbar, .ssh-key-management-scope { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:10px 12px; border:1px solid var(--line); border-radius:6px; background:color-mix(in srgb,var(--field) 65%,transparent); }
+.ssh-key-management-toolbar > div:first-child { min-width:0; display:grid; gap:3px; }
+.ssh-key-management-toolbar strong { font-size:13px; }
+.ssh-key-management-toolbar .actions { margin:0; flex-wrap:wrap; justify-content:flex-end; }
+.ssh-key-management-list { display:grid; gap:7px; }
+.ssh-managed-key-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; align-items:center; padding:10px 12px; border:1px solid var(--line); border-radius:6px; background:var(--panel); }
+.ssh-managed-key-main { min-width:0; display:grid; gap:3px; }
+.ssh-managed-key-main strong, .ssh-managed-key-main span, .ssh-managed-key-main code { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ssh-managed-key-main span { color:var(--muted); font-size:12px; }
+.ssh-managed-key-main code { font-size:11px; }
+.ssh-managed-key-actions { display:flex; gap:5px; }
+.ssh-key-management-title { display:flex; align-items:center; gap:10px; min-width:0; }
+.ssh-key-management-mark, .ssh-key-icon, .ssh-key-public-preview-icon { display:grid; place-items:center; flex:0 0 auto; }
+.ssh-key-management-mark { width:34px; height:34px; border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line)); border-radius:9px; color:var(--accent); background:color-mix(in srgb,var(--accent) 10%,var(--panel)); }
+.ssh-key-management-title > div:last-child { min-width:0; display:grid; gap:3px; }
+.ssh-key-management-scope { min-height:58px; }
+.ssh-key-management-scope > div { min-width:0; display:grid; gap:3px; }
+.ssh-key-management-scope strong { font-size:13px; }
+.switch-row { display:inline-flex; align-items:center; gap:8px; white-space:nowrap; cursor:pointer; }
+.switch-row input { position:absolute; opacity:0; pointer-events:none; }
+.switch-track { position:relative; width:36px; height:20px; border-radius:999px; background:var(--line); transition:.18s ease; }
+.switch-track::after { content:""; position:absolute; width:16px; height:16px; top:2px; left:2px; border-radius:50%; background:var(--panel); box-shadow:0 1px 3px rgba(0,0,0,.2); transition:.18s ease; }
+.switch-row input:checked + .switch-track { background:var(--accent); }
+.switch-row input:checked + .switch-track::after { transform:translateX(16px); }
+.ssh-key-table-head { display:grid; grid-template-columns:minmax(240px,1.7fr) minmax(115px,.7fr) minmax(150px,1fr) auto; gap:12px; align-items:center; padding:0 13px 7px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+.ssh-managed-key-row { display:grid; grid-template-columns:minmax(240px,1.7fr) minmax(115px,.7fr) minmax(150px,1fr) auto; gap:12px; min-height:62px; padding:9px 12px; border:1px solid var(--line); border-radius:7px; background:var(--panel); }
+.ssh-key-cell { min-width:0; display:flex; align-items:center; gap:9px; }
+.ssh-key-name-cell { min-width:0; }
+.ssh-key-icon { width:32px; height:32px; border-radius:8px; color:var(--accent); background:color-mix(in srgb,var(--accent) 10%,var(--field)); }
+.ssh-key-icon.encrypted { color:#a36a00; background:color-mix(in srgb,#d49a28 15%,var(--field)); }
+.ssh-key-name-text { min-width:0; display:grid; gap:3px; }
+.ssh-key-name-text strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ssh-key-name-text span, .ssh-key-scope-cell small { color:var(--muted); font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ssh-key-type-cell, .ssh-key-scope-cell { display:flex; align-items:center; gap:7px; min-width:0; }
+.ssh-key-scope-cell { display:grid; gap:3px; }
+.key-type-badge { width:max-content; padding:3px 7px; border:1px solid var(--line); border-radius:999px; font-size:11px; color:var(--text); background:var(--field); }
+.ssh-key-public-preview { display:flex; align-items:center; gap:10px; margin-top:14px; padding:11px 12px; border:1px solid var(--line); border-radius:7px; background:var(--field); }
+.ssh-key-public-preview-icon { width:30px; height:30px; color:var(--accent); }
+.ssh-key-public-preview > div:last-child { display:grid; gap:3px; }
+.ssh-key-public-preview span { color:var(--muted); font-size:12px; }
+.ssh-key-properties-modal { width:min(700px,calc(100vw - 32px)); }
+.ssh-key-properties-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-top:16px; }
+.ssh-key-properties-grid > div { display:grid; gap:5px; padding:10px; border:1px solid var(--line); border-radius:6px; background:var(--field); min-width:0; }
+.ssh-key-properties-grid span, .ssh-key-property-field label { color:var(--muted); font-size:11px; }
+.ssh-key-properties-grid strong { display:flex; align-items:center; gap:5px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.ssh-key-properties-grid .is-encrypted { color:#a36a00; }
+.ssh-key-properties-grid .is-open { color:var(--muted); }
+.ssh-key-property-fingerprint { display:grid; gap:5px; margin-top:8px; padding:10px; border:1px solid var(--line); border-radius:6px; background:var(--field); min-width:0; }
+.ssh-key-property-fingerprint > span { color:var(--muted); font-size:11px; }
+.ssh-key-property-fingerprint code { overflow-wrap:anywhere; word-break:break-word; font-size:12px; user-select:all; }
+.ssh-key-property-field { display:grid; gap:6px; margin-top:14px; }
+.ssh-key-passphrase-box { display:grid; gap:10px; margin-top:14px; padding:12px; border:1px solid var(--line); border-radius:7px; background:color-mix(in srgb,var(--field) 70%,transparent); }
+.ssh-key-passphrase-box > div { display:grid; gap:3px; }
+.ssh-key-passphrase-box > div span { color:var(--muted); font-size:11px; }
+.ssh-key-passphrase-box label { display:grid; grid-template-columns:130px minmax(0,1fr); align-items:center; gap:10px; color:var(--muted); font-size:12px; }
+.ssh-key-modal-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
+.ssh-key-public-modal { width:min(760px,calc(100vw - 32px)); }
+.ssh-key-public-head, .ssh-key-result-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.ssh-key-public-head h2, .ssh-key-result-head h2 { margin:0; }
+.ssh-key-public-modal textarea { min-height:150px; margin-top:14px; }
+.ssh-key-result-modal { width:min(780px,calc(100vw - 32px)); }
+.ssh-key-result-head > div { min-width:0; display:grid; gap:4px; }
+.ssh-key-result-head > div > span { color:var(--muted); font-size:12px; }
+.key-result-summary { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-top:14px; padding:10px 12px; border:1px solid var(--line); border-radius:6px; background:var(--field); }
+.key-result-summary > div { min-width:0; display:grid; gap:4px; }
+.key-result-summary > div > span { color:var(--muted); font-size:11px; }
+.key-result-summary code { display:block; max-width:100%; overflow-wrap:anywhere; font-size:12px; }
+.ssh-key-result-section { display:grid; gap:6px; margin-top:14px; }
+.ssh-key-result-section textarea { min-height:100px; }
+.ssh-key-result-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
 .settings-grid h3 { margin-top:0; }
 .check-row { display:flex; gap:8px; align-items:center; margin:10px 0; color:var(--text); }
 .notification-preference-list { display:grid; margin:8px 0; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
@@ -2096,6 +2205,21 @@ body.sftp-editor-split-resizing, body.sftp-editor-split-resizing * { cursor:ns-r
   .command-result-head { align-items:flex-start; flex-direction:column; }
 }
 
+@container (max-width: 760px) {
+  .ssh-key-table-head { display:none; }
+  .ssh-managed-key-row { grid-template-columns:minmax(0,1fr) auto; grid-template-areas:"name actions" "type actions" "scope actions"; gap:6px 10px; align-items:center; }
+  .ssh-key-name-cell { grid-area:name; }
+  .ssh-key-type-cell { grid-area:type; }
+  .ssh-key-scope-cell { grid-area:scope; }
+  .ssh-managed-key-actions { grid-area:actions; align-self:center; flex-wrap:wrap; justify-content:flex-end; max-width:144px; }
+  .ssh-key-type-cell, .ssh-key-scope-cell { justify-content:flex-start; }
+}
+
+@container (max-width: 470px) {
+  .ssh-managed-key-row { grid-template-columns:minmax(0,1fr); grid-template-areas:"name" "type" "scope" "actions"; }
+  .ssh-managed-key-actions { max-width:none; justify-content:flex-start; }
+}
+
 @container workspace-pane (max-width:480px) {
   .tab { min-width:56px; max-width:150px; font-size:var(--workspace-tab-font-size); }
   .workspace { padding:8px; }
@@ -2270,7 +2394,11 @@ body.sftp-editor-split-resizing, body.sftp-editor-split-resizing * { cursor:ns-r
   .command-run-box button { width:100%; }
   .command-targets { max-height:38dvh; }
   .command-result-head { align-items:flex-start; flex-direction:column; }
-  .log-view { min-height:calc(100dvh - 160px); font-size:12px; padding:10px; }
+  .log-detail-search { grid-template-columns:minmax(0,1fr) auto; gap:6px; }
+  .log-detail-search-count { grid-column:2; grid-row:1; }
+  .log-detail-search-actions { grid-column:1 / -1; grid-row:2; justify-content:flex-end; }
+  .log-detail-search-actions .icon-button { flex:1 1 0; }
+  .log-view { min-height:calc(100dvh - 222px); font-size:12px; padding:10px; }
   .notification-stack { top:10px; right:8px; width:min(390px,calc(100vw - 16px)); max-height:calc(100dvh - 20px); gap:6px; }
   .mobile-action-menu { position:fixed; left:8px !important; right:8px; top:auto !important; bottom:66px; width:auto; max-height:min(68dvh,calc(var(--app-height, 100dvh) - 88px)); overflow-y:auto; overscroll-behavior:contain; padding:6px; border-radius:8px; }
   body.mobile-terminal-active .mobile-action-menu { bottom:max(8px,env(safe-area-inset-bottom)); }
@@ -3359,6 +3487,16 @@ details.advanced-settings > :not(summary) { margin-left:12px; margin-right:12px;
   #view-sftp .sftp-list > .sftp-pager-dock { padding-inline:8px; }
   #view-sftp .sftp-pager .pager-count { overflow-wrap:anywhere; }
   .settings-grid section { padding:10px; }
+  .settings-grid.settings-waterfall { column-count:1; }
+  .ssh-key-management-toolbar, .ssh-key-management-scope, .key-result-summary { align-items:stretch; flex-direction:column; }
+  .ssh-key-table-head { display:none; }
+  .ssh-managed-key-row { grid-template-columns:minmax(0,1fr) auto; gap:9px; }
+  .ssh-key-type-cell, .ssh-key-scope-cell { grid-column:1; }
+  .ssh-managed-key-actions { grid-column:2; grid-row:1 / span 2; align-self:center; flex-wrap:wrap; justify-content:flex-end; }
+  .ssh-key-properties-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .ssh-key-passphrase-box label { grid-template-columns:1fr; gap:5px; }
+  .ssh-key-management-toolbar .actions, .ssh-key-result-actions { justify-content:flex-start; }
+  .ssh-managed-key-row { grid-template-columns:minmax(0,1fr); }
   .settings-layout { display:block; }
   .settings-group-head { padding-left:8px; }
   .notification-preference-row { grid-template-columns:1fr; gap:6px; }

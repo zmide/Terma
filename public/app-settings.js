@@ -91,7 +91,7 @@ function renderSettings() {
     <div class="settings-layout"><div class="settings-groups">
       <div class="settings-group" id="settings-general">
         <div class="settings-group-head"><h3>${esc(tr("settings:general.title", {defaultValue:"通用设置"}))}</h3><span>${esc(tr("settings:general.description", {defaultValue:"管理桌面端行为、工作区恢复和后台刷新。"}))}</span></div>
-        <div class="settings-grid single">
+        <div class="settings-grid settings-waterfall">
           ${storageSettingsPanelHtml()}
           ${desktopBehaviorPanelHtml()}
           <section>
@@ -156,7 +156,7 @@ function renderSettings() {
       </div>
       <div class="settings-group" id="settings-basic">
         <div class="settings-group-head"><h3>${esc(tr("settings:auto.security_settings"))}</h3><span>${esc(tr("settings:auto.security_description"))}</span></div>
-        <div class="settings-grid">
+        <div class="settings-grid settings-waterfall">
       ${sshHostTrustPanelHtml()}
       <section>
         <h3>${esc(tr("settings:auto.web_access"))}</h3>
@@ -212,7 +212,7 @@ function renderSettings() {
         <div class="muted">${esc(tr("settings:auto.session_hint"))}</div>
         <div class="actions"><button class="primary" onclick="saveSessionManagement()">${icon("save")}<span>${esc(tr("settings:auto.save_session"))}</span></button></div>
       </section>
-      <section>
+     <section>
         <h3>${esc(tr("settings:auto.passwords_tokens"))}</h3>
         <label>${esc(tr("settings:auto.set_web_password"))} <span id="securityPasswordState">${esc(tr(s.password_set ? "settings:auto.set" : "settings:auto.not_set"))}</span></label>
         <input id="securityPassword" type="password" placeholder="${escAttr(tr("settings:auto.web_password_placeholder"))}">
@@ -237,6 +237,10 @@ function renderSettings() {
         </details>
       </section>
         </div>
+      </div>
+      <div class="settings-group" id="settings-key-management">
+        <div class="settings-group-head"><h3>${esc(tr("settings:sections.key_management", {defaultValue:"用户密钥管理"}))}</h3><span>${esc(tr("settings:key_management.description", {defaultValue:"管理 Terma 密钥目录中的 SSH 私钥、公钥和部署操作。"}))}</span></div>
+        <div class="settings-grid single">${typeof sshKeyManagementHtml === "function" ? sshKeyManagementHtml(s) : ""}</div>
       </div>
       <div class="settings-group" id="settings-notifications">
         <div class="settings-group-head"><h3>${esc(tr("settings:auto.notification_settings"))}</h3><span>${esc(tr("settings:auto.notifications_description"))}</span></div>

@@ -88,7 +88,7 @@ const { diagnoseSshError } = require("./ssh-diagnostics");
 const { createForwardReconfigurationService } = require("./services/forward-reconfiguration-service");
 const { publicErrorDetails } = require("./public-error");
 const { inspectExtraArgs } = require("./ssh-command");
-const { deployGeneratedPublicKey, generateSshKey } = require("./ssh-key-wizard");
+const { deleteManagedKey, deployGeneratedPublicKey, generateSshKey, importManagedKey, listManagedKeys, managedKeyProperties, managedPublicKey, updateManagedKey } = require("./ssh-key-wizard");
 const { authorizeQuickConnectionId, createQuickTerminalTicket, revokeQuickTerminalTicket } = require("./quick-terminal");
 const { createTerminalStartupTicket } = require("./terminal-startup");
 const { reconfigureForward } = createForwardReconfigurationService({getForward, updateForward, reconfigureForwardRuntime});
@@ -131,13 +131,16 @@ const { startSyncJob, startSyncPlanningJob } = require("./sftp-sync");
 const {
   appendSystemLog,
   deleteLogs,
+  deleteLogsOlderThan,
   enforceConfiguredLogRetention,
   getLogSettings,
   listLogs,
   readLog,
   readLogWindow,
   readRawLog,
+  searchLogs,
   updateLogSettings
+  ,previewLogsOlderThan, resolveLogPath
 } = require("./logs");
 const { listNotifications } = require("./notifications");
 const {
@@ -380,7 +383,17 @@ async function handleApi(req, res, pathname) {
   })) return;
   if (await handleSshRoutes(req, res, pathname, {
     acceptHostTrust, allConnectionsHealth, appendSystemLog, configuredPortOwner, diagnosePortUsage,
-    ensureConnectionHostTrusted, generateSshKey, getConnection, getPart, identityPermissionStatus,
+    ensureConnectionHostTrusted,
+    generateSshKey:data => generateSshKey(data, Boolean(readSecuritySettings().manage_user_ssh_keys_enabled)),
+    listManagedKeys:enabled => listManagedKeys(Boolean(enabled)),
+    importManagedKey:(filename, data, scope, enabled) => importManagedKey(filename, data, scope, Boolean(enabled)),
+    deleteManagedKey:(file, scope, enabled, referenced) => deleteManagedKey(file, scope, Boolean(enabled), referenced),
+    managedKeyProperties:(file, scope, enabled) => managedKeyProperties(file, scope, Boolean(enabled)),
+    managedPublicKey:(file, scope, enabled) => managedPublicKey(file, scope, Boolean(enabled)),
+    updateManagedKey:(file, scope, enabled, data) => updateManagedKey(file, scope, Boolean(enabled), data),
+    manageUserSshKeysEnabled:() => Boolean(readSecuritySettings().manage_user_ssh_keys_enabled),
+    referencedIdentityPaths:() => listConnections().map(item => String(item.identity_file || "")).filter(Boolean),
+    getConnection, getPart, identityPermissionStatus,
     inspectExtraArgs, killPortOwner, listConnections, listIdentityFiles, listTrustedHostsPage,
     parseConfigText, projectSshDir:PROJECT_SSH_DIR, readBody, readJson, recommendPort,
     removeTrustedHost, repairIdentityFile, saveUploadedKey, sendJson, terminalCapabilitiesForConnection,
@@ -454,8 +467,8 @@ async function handleApi(req, res, pathname) {
     openDirectory:(file)=>Promise.resolve(getDesktopIntegration().openUpdateDirectory(file))
   })) return;
   if (await handleLogRoutes(req, res, pathname, {
-    deleteLogs, enforceConfiguredLogRetention, getLogSettings, listLogs, readJson, readLog, readLogWindow,
-    readRawLog, send, sendJson, updateLogSettings
+    deleteLogs, deleteLogsOlderThan, enforceConfiguredLogRetention, getLogSettings, getDesktopIntegration, isDesktopRequest, listLogs, previewLogsOlderThan, readJson, readLog, readLogWindow, searchLogs,
+    readRawLog, resolveLogPath, send, sendJson, updateLogSettings
   })) return;
   if (await handleSystemRoutes(req, res, pathname, {
     aboutInfo, batchRunCommands, getDesktopIntegration, getStartupStatus, isDesktopRequest, listNotifications,
@@ -553,7 +566,8 @@ async function handleApi(req, res, pathname) {
   if (await handleConnectionRoutes(req, res, pathname, {
     all, appendSystemLog, bulkUpdateConnections, clearConnectionHealthCache, connectionHealth,
     createAllRemoteProfilesFromConnection, createConfigSnapshot, createRemoteProfileFromConnection,
-    defaultExtraArgs:DEFAULT_EXTRA_ARGS, deleteConnection, deleteForward, deployGeneratedPublicKey,
+    defaultExtraArgs:DEFAULT_EXTRA_ARGS, deleteConnection, deleteForward,
+    deployGeneratedPublicKey:(id, publicPath) => deployGeneratedPublicKey(id, publicPath, Boolean(readSecuritySettings().manage_user_ssh_keys_enabled)),
     duplicateConnection, forwardLogLabel, getConnection, getDesktopIntegration,
     getForward, insertConnection, insertForward, inspectServer, invalidateRemoteDirectoryCache,
     isDesktopRequest, listConnections, listIdentityFiles, readJson, renameConnectionGroup,

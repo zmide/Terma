@@ -4,8 +4,8 @@ function installProductivityHeaderButton() {
     const button = document.createElement("button");
     button.id = "quickPanelButton";
     button.className = "icon-button quick-panel-button";
-    button.title = tr("common:auto.quick_open_shortcut", {shortcut:"Ctrl+K"});
-    button.setAttribute("aria-label", tr("common:auto.quick_open"));
+    button.title = tr("common:auto.command_window_shortcut", {shortcut:"Ctrl+K"});
+    button.setAttribute("aria-label", tr("common:auto.command_window"));
     button.innerHTML = icon("zap");
     button.onclick = openQuickPanel;
     if (host) host.appendChild(button);

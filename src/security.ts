@@ -99,6 +99,7 @@ function defaultSettings() {
     global_login_max_failures: 50,
     global_login_window_seconds: 5 * 60,
     global_login_lock_seconds: 60,
+    manage_user_ssh_keys_enabled: false,
     updated_at: Date.now()
   };
 }
@@ -222,7 +223,8 @@ function readSecuritySettings() {
       global_login_protection_enabled: stored?.global_login_protection_enabled !== false,
       global_login_max_failures: normalizeBoundedInteger(stored?.global_login_max_failures, 50, { ...LOGIN_PROTECTION_LIMITS.globalMaxFailures, min:1 }),
       global_login_window_seconds: normalizeBoundedInteger(stored?.global_login_window_seconds, 5 * 60, LOGIN_PROTECTION_LIMITS.globalWindowSeconds),
-      global_login_lock_seconds: normalizeBoundedInteger(stored?.global_login_lock_seconds, 60, LOGIN_PROTECTION_LIMITS.globalLockSeconds)
+      global_login_lock_seconds: normalizeBoundedInteger(stored?.global_login_lock_seconds, 60, LOGIN_PROTECTION_LIMITS.globalLockSeconds),
+      manage_user_ssh_keys_enabled: stored?.manage_user_ssh_keys_enabled === true
     };
   } catch {
     return defaultSettings();
@@ -266,7 +268,8 @@ function publicSecuritySettings(req = null) {
     },
     active_sessions: sessions.size(),
     auth_required: req ? authRequired(req) : null,
-    request_secure: req ? isRequestSecure(req) : null
+    request_secure: req ? isRequestSecure(req) : null,
+    manage_user_ssh_keys_enabled: Boolean(settings.manage_user_ssh_keys_enabled)
   };
 }
 
@@ -367,6 +370,7 @@ function updateSecurityOptions(data) {
   if (typeof data.global_login_max_failures !== "undefined") next.global_login_max_failures = requireBoundedInteger(data.global_login_max_failures, "全局失败次数", { ...LOGIN_PROTECTION_LIMITS.globalMaxFailures, min:1 });
   if (typeof data.global_login_window_seconds !== "undefined") next.global_login_window_seconds = requireBoundedInteger(data.global_login_window_seconds, "全局统计窗口", LOGIN_PROTECTION_LIMITS.globalWindowSeconds);
   if (typeof data.global_login_lock_seconds !== "undefined") next.global_login_lock_seconds = requireBoundedInteger(data.global_login_lock_seconds, "全局锁定时间", LOGIN_PROTECTION_LIMITS.globalLockSeconds);
+  if (typeof data.manage_user_ssh_keys_enabled !== "undefined") next.manage_user_ssh_keys_enabled = Boolean(data.manage_user_ssh_keys_enabled);
   const merged = { ...readSecuritySettings(), ...next };
   if (merged.trusted_proxy_enabled && !merged.trusted_proxy_addresses.length) {
     throw new Error("启用可信反向代理前至少填写一个代理 IP 地址");
@@ -401,7 +405,8 @@ function resetWebAccessSecurity() {
     global_login_protection_enabled: true,
     global_login_max_failures: 50,
     global_login_window_seconds: 5 * 60,
-    global_login_lock_seconds: 60
+    global_login_lock_seconds: 60,
+    manage_user_ssh_keys_enabled: false
   });
   sessions.clear();
   loginLimiter.clear();

@@ -13,6 +13,7 @@ fs.mkdirSync(process.env.TERMA_SSH_DIR, {recursive:true});
 const {
   acceptHostTrust,
   listTrustedHosts,
+  listTrustedHostsPage,
   probeHostKey,
   removeTrustedHost,
   systemHostKeyArgs,
@@ -143,6 +144,9 @@ async function main() {
   assert.equal(records.length, 1);
   assert.equal(records[0].key_type, "ssh-ed25519");
   assert.equal(Object.prototype.hasOwnProperty.call(records[0], "key_base64"), false);
+  const paged = listTrustedHostsPage({page:1});
+  assert.equal(paged.page_size, 5, "SSH 主机信任分页默认每页 5 条");
+  assert.equal(listTrustedHostsPage({page:1, query:"EXAMPLE"}).total, 1, "SSH 主机信任支持主机搜索");
 
   console.log("检查主机密钥变化、仅本次信任和永久更新...");
   const changed = challengeFor(connection, changedKey, "SSH_HOST_KEY_CHANGED");

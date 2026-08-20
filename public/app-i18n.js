@@ -111,7 +111,7 @@ const TERMA_I18N_FALLBACK_REPLACEMENTS = Object.freeze([
   ["关闭当前悬浮进度", "Close current floating progress"],
   ["任务中心：", "Task Center: "],
   ["项进行中", " running"],
-  ["快速打开（Ctrl+K）", "Quick open (Ctrl+K)"],
+  ["命令窗口（Ctrl+K）", "Command window (Ctrl+K)"],
   ["快捷打开远程桌面", "Quick open remote desktop"],
   ["X Server 未启动", "X Server is not running"],
   ["切换为暗色", "Switch to dark theme"],

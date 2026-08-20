@@ -1,4 +1,8 @@
 const logViewerStates = new Map();
+let logSearchResults = new Map();
+let logSearchRequestId = 0;
+function formatBytesForLogList(bytes) { const value=Number(bytes||0); if(value<1024)return `${value} B`; const units=["KB","MB","GB","TB"]; let size=value,index=-1; while(size>=1024&&index<units.length-1){size/=1024;index++;} return `${size.toFixed(size>=10?1:2)} ${units[index]}`; }
+function logGroupTitle(label, bytes, count) { return `${label} · ${formatBytesForLogList(bytes)} · ${count} files`; }
 
 function logInlineArgument(value) {
   return `'${escAttr(String(value ?? ""))}'`;
@@ -13,15 +17,33 @@ function disposeLogViewerState(tabKey) {
 }
 
 function setLogSearch(value) {
-  logSearch = value || "";
+  logSearch = String(value || "");
+  const query = logSearch.trim();
+  const requestId = ++logSearchRequestId;
+  logSearchResults = new Map();
   renderLogs().catch(e=>notify(e.message,"error"));
   clearTimeout(logSearchTimer);
   const tabKey = activeTabKey;
   const state = currentLogViewerState();
   const inPane = typeof captureWorkspacePane === "function" ? captureWorkspacePane() : action => action();
-  if (state?.path && activeView === "log") {
-    logSearchTimer = setTimeout(() => inPane(() => openLog(state.path, state.title, false, tabKey).catch(e=>notify(e.message,"error"))), 250);
-  }
+  logSearchTimer = setTimeout(async () => {
+    if (query) {
+      try {
+        const response = await api(`/api/logs/search?query=${encodeURIComponent(query)}`);
+        if (requestId !== logSearchRequestId || query !== logSearch.trim()) return;
+        logSearchResults = new Map((Array.isArray(response) ? response : []).map(item => [String(item.path || ""), item]));
+      } catch {
+        if (requestId !== logSearchRequestId || query !== logSearch.trim()) return;
+        logSearchResults = new Map();
+      }
+    }
+    if (requestId !== logSearchRequestId || query !== logSearch.trim()) return;
+    await renderLogs();
+    if (state?.path && activeView === "log" && tabKey === activeTabKey) {
+      const targetLine = Number(logSearchResults.get(String(state.path))?.matches?.[0]?.line || 0);
+      await inPane(() => openLog(state.path, state.sourceTitle || state.title, false, tabKey, query, targetLine));
+    }
+  }, 250);
 }
 
 function showLogCleanupMenu(event) {
@@ -36,20 +58,31 @@ function showLogCleanupMenu(event) {
 
 async function renderLogs(){
   const uiState = captureUiState($("connectionGroups") || document);
-  logsData = await api("/api/logs");
+  const queryAtStart = logSearch;
+  const nextLogsData = await api("/api/logs");
+  if (queryAtStart !== logSearch) return;
+  logsData = nextLogsData;
   const systemOpen = logOpen.has("system");
   const systemLogs = filterLogs(logsData.system || []);
-  const systemItems = systemOpen ? renderLogItems("system", systemLogs) : "";
-  const batchOpen = logOpen.has("batch");
   const batchLogs = filterLogs(logsData.batch || []);
+  const filteredServers = (logsData.connections || []).map(server => ({...server, logs:filterLogs(server.logs || [])}));
+  if (logSearch.trim()) {
+    if (systemLogs.length) logOpen.add("system");
+    if (batchLogs.length) logOpen.add("batch");
+    for (const server of filteredServers) if (server.logs.length) logOpen.add(`server:${server.name}`);
+  }
+  const effectiveSystemOpen = logOpen.has("system");
+  const systemItems = effectiveSystemOpen ? renderLogItems("system", systemLogs) : "";
+  const batchOpen = logOpen.has("batch");
   const batchItems = batchOpen ? renderLogItems("batch", batchLogs) : "";
-  const serverItems = (logsData.connections || []).map(server => {
+  const serverItems = filteredServers.map(server => {
     const key = `server:${server.name}`;
     const open = logOpen.has(key);
     const logs = filterLogs(server.logs || []);
     const deleteLabel = tr("navigation:menus.delete_server_logs", {name:server.name, defaultValue:`删除 ${server.name} 的日志`});
+    if (logSearch.trim() && !logs.length) return "";
     return `<div class="group log-group">
-      <div class="group-head-row"><button class="group-head" data-i18n-skip title="${escAttr(server.name)}" aria-label="${escAttr(server.name)}" onclick="toggleLogOpen(${logInlineArgument(key)})"><span class="chev">${open ? "▾" : "▸"}</span>${icon("server")}<span>${esc(server.name)}</span><span class="count">${logs.length}</span></button><button class="log-group-delete danger icon-button" data-i18n-skip title="${escAttr(deleteLabel)}" aria-label="${escAttr(deleteLabel)}" onclick="deleteLogGroup(${logInlineArgument(key)})">${icon("trash-2")}</button></div>
+      <div class="group-head-row"><button class="group-head" data-i18n-skip title="${escAttr(logGroupTitle(server.name, server.size_bytes, logs.length))}" aria-label="${escAttr(server.name)}" onclick="toggleLogOpen(${logInlineArgument(key)})"><span class="chev">${open ? "▾" : "▸"}</span>${icon("server")}<span>${esc(server.name)}</span><span class="count">${logs.length}</span></button><button class="log-group-delete danger icon-button" data-i18n-skip title="${escAttr(deleteLabel)}" aria-label="${escAttr(deleteLabel)}" onclick="deleteLogGroup(${logInlineArgument(key)})">${icon("trash-2")}</button></div>
       ${open ? renderLogItems(key, logs) : ""}
     </div>`;
   }).join("");
@@ -57,13 +90,22 @@ async function renderLogs(){
   const batchLabel = tr("common:auto.batch_logs", {defaultValue:"批量执行日志"});
   const deleteSystemLabel = tr("navigation:menus.delete_system_logs", {defaultValue:"删除系统日志"});
   const deleteBatchLabel = tr("navigation:menus.delete_batch_logs", {defaultValue:"删除批量日志"});
-  $("connectionGroups").innerHTML = `<div class="group log-group">
-    <div class="group-head-row"><button class="group-head" title="${escAttr(systemLabel)}" aria-label="${escAttr(systemLabel)}" onclick="toggleLogOpen('system')"><span class="chev">${systemOpen ? "▾" : "▸"}</span>${icon("monitor-cog")}<span>${esc(systemLabel)}</span><span class="count">${systemLogs.length}</span></button><button class="log-group-delete danger icon-button" title="${escAttr(deleteSystemLabel)}" aria-label="${escAttr(deleteSystemLabel)}" onclick="deleteLogGroup('system')">${icon("trash-2")}</button></div>
+  const systemBlock = !logSearch.trim() || systemLogs.length ? `<div class="group log-group">
+    <div class="group-head-row"><button class="group-head" title="${escAttr(logGroupTitle(systemLabel, (logsData.system || []).reduce((sum, item) => sum + Number(item.size_bytes || 0), 0), systemLogs.length))}" aria-label="${escAttr(systemLabel)}" onclick="toggleLogOpen('system')"><span class="chev">${effectiveSystemOpen ? "▾" : "▸"}</span>${icon("monitor-cog")}<span>${esc(systemLabel)}</span><span class="count">${systemLogs.length}</span></button><button class="log-group-delete danger icon-button" title="${escAttr(deleteSystemLabel)}" aria-label="${escAttr(deleteSystemLabel)}" onclick="deleteLogGroup('system')">${icon("trash-2")}</button></div>
     ${systemItems}
-  </div><div class="group log-group">
-    <div class="group-head-row"><button class="group-head" title="${escAttr(batchLabel)}" aria-label="${escAttr(batchLabel)}" onclick="toggleLogOpen('batch')"><span class="chev">${batchOpen ? "▾" : "▸"}</span>${icon("square-terminal")}<span>${esc(batchLabel)}</span><span class="count">${batchLogs.length}</span></button><button class="log-group-delete danger icon-button" title="${escAttr(deleteBatchLabel)}" aria-label="${escAttr(deleteBatchLabel)}" onclick="deleteLogGroup('batch')">${icon("trash-2")}</button></div>
+  </div>` : "";
+  const batchBlock = !logSearch.trim() || batchLogs.length ? `<div class="group log-group">
+    <div class="group-head-row"><button class="group-head" title="${escAttr(logGroupTitle(batchLabel, (logsData.batch || []).reduce((sum, item) => sum + Number(item.size_bytes || 0), 0), batchLogs.length))}" aria-label="${escAttr(batchLabel)}" onclick="toggleLogOpen('batch')"><span class="chev">${batchOpen ? "▾" : "▸"}</span>${icon("square-terminal")}<span>${esc(batchLabel)}</span><span class="count">${batchLogs.length}</span></button><button class="log-group-delete danger icon-button" title="${escAttr(deleteBatchLabel)}" aria-label="${escAttr(deleteBatchLabel)}" onclick="deleteLogGroup('batch')">${icon("trash-2")}</button></div>
     ${batchItems}
-  </div>${serverItems || stateView("empty", tr("common:auto.no_terminal_logs", {defaultValue:"暂无终端日志"}), tr("common:auto.terminal_logs_hint", {defaultValue:"打开终端或执行批量命令后，日志会按服务器保存在这里。"}))}`;
+  </div>` : "";
+  const content = `${systemBlock}${batchBlock}${serverItems}`;
+  $("connectionGroups").innerHTML = content || stateView(
+    "empty",
+    tr("common:auto.no_terminal_logs", {defaultValue:"暂无终端日志"}),
+    logSearch.trim()
+      ? tr("common:log_viewer.no_matches", {defaultValue:"正文中没有对应内容"})
+      : tr("common:auto.terminal_logs_hint", {defaultValue:"打开终端或执行批量命令后，日志会按服务器保存在这里。"})
+  );
   restoreUiState(uiState);
 }
 
@@ -73,7 +115,7 @@ function filterLogs(logs) {
   return logs.filter(log => {
     const original = String(log.label || "").toLowerCase();
     const localized = localizedLogLabel(log.label).toLowerCase();
-    return original.includes(q) || localized.includes(q);
+    return original.includes(q) || localized.includes(q) || logSearchResults.has(String(log.path || ""));
   });
 }
 
@@ -94,7 +136,10 @@ function localizedLogLabel(value) {
 }
 
 function renderLogItems(key, logs) {
-  const page = logPage.get(key) || 0;
+  const requestedPage = logPage.get(key) || 0;
+  const maxPage = Math.max(0, Math.ceil(logs.length / 10) - 1);
+  const page = Math.min(requestedPage, maxPage);
+  if (page !== requestedPage) logPage.set(key, page);
   const start = page * 10;
   const visible = logs.slice(start, start + 10);
   return visible.map(log => renderLogButton(log, key)).join("") + renderPager(key, logs.length, page);
@@ -116,8 +161,13 @@ function renderLogButton(log, key="") {
   const localizedLabel = localizedLogLabel(log.label);
   const presentation = terminal ? terminalLogPresentation(log) : {title:localizedLabel, time:""};
   const deleteLabel = tr("navigation:menus.delete_log", {name:localizedLabel, defaultValue:`删除日志：${localizedLabel}`});
+  const hit = logSearchResults.get(String(log.path || ""));
+  const hitText = hit?.matches?.[0]?.text ? String(hit.matches[0].text).split("\n").slice(0, 3).join(" ") : "";
+  const hitLine = Number(hit?.matches?.[0]?.line || 0);
+  const sizeTitle = tr("common:log_maintenance.log_size", {size:formatBytesForLogList(log.size_bytes), defaultValue:`Log size: ${formatBytesForLogList(log.size_bytes)}`});
+  const itemTitle = `${localizedLabel} · ${sizeTitle}`;
   return `<div class="log-row">
-    <button class="log-item" data-i18n-skip title="${escAttr(localizedLabel)}" onclick="openLog(${logInlineArgument(log.path)},${logInlineArgument(log.label)})"><span class="log-item-title">${esc(presentation.title)}</span>${presentation.time ? `<span class="log-item-time">${esc(presentation.time)}</span>` : ""}</button>
+    <button class="log-item" data-i18n-skip title="${escAttr(itemTitle)}" data-action="log-open-result" data-log-path="${escAttr(log.path)}" data-log-title="${escAttr(log.label)}" data-log-query="${escAttr(logSearch)}" data-log-line="${hitLine}"><span class="log-item-title">${esc(presentation.title)}</span>${presentation.time ? `<span class="log-item-time">${esc(presentation.time)}</span>` : ""}${hitText ? `<span class="log-item-hit">${highlightLogText(hitText, logSearch)}</span>` : ""}</button>
     <button class="log-delete danger icon-button" data-i18n-skip title="${escAttr(deleteLabel)}" aria-label="${escAttr(deleteLabel)}" onclick="deleteLog(${logInlineArgument(log.path)})">${icon("trash-2")}</button>
   </div>`;
 }
@@ -125,7 +175,18 @@ function renderLogButton(log, key="") {
 function renderPager(key, total, page) {
   if (total <= 10) return "";
   const maxPage = Math.ceil(total / 10) - 1;
-  return `<div class="pager"><button ${page<=0?"disabled":""} onclick="changeLogPage(${logInlineArgument(key)},-1)">${esc(tr("common:auto.previous_page", {defaultValue:"上一页"}))}</button><span class="pager-count">${page+1}/${maxPage+1}</span><button ${page>=maxPage?"disabled":""} onclick="changeLogPage(${logInlineArgument(key)},1)">${esc(tr("common:auto.next_page", {defaultValue:"下一页"}))}</button></div>`;
+  return `<div class="pager log-pager"><button ${page<=0?"disabled":""} onclick="changeLogPage(${logInlineArgument(key)},-1)">${esc(tr("common:auto.previous_page", {defaultValue:"上一页"}))}</button><span class="pager-count">${page+1}/${maxPage+1}</span><button ${page>=maxPage?"disabled":""} onclick="changeLogPage(${logInlineArgument(key)},1)">${esc(tr("common:auto.next_page", {defaultValue:"下一页"}))}</button></div>`;
+}
+
+if (typeof registerTermaAction === "function") {
+  registerTermaAction("log-open-result", ({element}) => openLog(
+    element.dataset.logPath || "",
+    element.dataset.logTitle || "",
+    true,
+    "",
+    element.dataset.logQuery || "",
+    Number(element.dataset.logLine || 0)
+  ));
 }
 
 function toggleLogOpen(key) {

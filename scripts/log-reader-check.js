@@ -16,15 +16,26 @@ async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-log-check-"));
   try {
     const settingsFile = path.join(root, "log-settings.json");
-    const settings = writeLogSettings(settingsFile, {
+  const settings = writeLogSettings(settingsFile, {
       retention_days: 30,
       max_file_size_mb: 1,
       max_total_size_mb: 10,
       rotation_files: 2
     });
-    assert.equal(readLogSettings(settingsFile).retention_days, 30);
+  assert.equal(readLogSettings(settingsFile).retention_days, 30);
+  assert.equal(normalizeLogSettings().retention_days, 0);
+  assert.equal(normalizeLogSettings().max_file_size_mb, 10);
+  assert.equal(normalizeLogSettings().max_total_size_mb, 0);
+  assert.equal(normalizeLogSettings().rotation_files, 0);
     assert.equal(normalizeLogSettings({ retention_days: -1 }).retention_days, 0);
-    assert.equal(settings.rotation_files, 2);
+  assert.equal(settings.rotation_files, 2);
+    const defaultsFile = path.join(root, "legacy-log-settings.json");
+    fs.writeFileSync(defaultsFile, JSON.stringify({schema_version:1, retention_days:7, max_file_size_mb:1, max_total_size_mb:10, rotation_files:2}), "utf8");
+    const migrated = readLogSettings(defaultsFile);
+    assert.equal(migrated.retention_days, 0);
+    assert.equal(migrated.max_file_size_mb, 10);
+    assert.equal(migrated.max_total_size_mb, 0);
+    assert.equal(migrated.rotation_files, 0);
     assert.throws(() => resolveLogFile(root, "../outside.log"), /路径无效/);
 
     const log = path.join(root, "large.log");
@@ -36,8 +47,17 @@ async function main() {
     assert.equal(tail.has_older, true);
     assert.ok(tail.text.includes("1200 ordinary"));
     assert.equal(tail.matches.length, 1);
+    const complete = await readLogWindow(root, "large.log");
+    assert.equal(complete.has_older, false);
+    assert.equal(complete.has_newer, false);
+    assert.equal(complete.offset, 0);
     assert.match(tail.matches[0].text, /needle/);
     assert.doesNotMatch(tail.matches[0].text, /\u001b/);
+    const focused = await readLogWindow(root, "large.log", { limitBytes: 4096, query: "needle", line: 518 });
+    assert.equal(focused.target_line, 518);
+    assert.equal(focused.start_line <= 518, true);
+    assert.equal(focused.start_line + focused.text.split("\n").length - 1 >= 518, true);
+    assert.match(focused.text, /needle/);
     const older = await readLogWindow(root, "large.log", { beforeOffset: tail.offset, limitBytes: 4096 });
     assert.ok(older.end_offset <= tail.offset);
 

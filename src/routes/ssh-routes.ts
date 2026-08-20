@@ -8,7 +8,7 @@ interface SshRouteDependencies {
   projectSshDir: string;
   getConnection(id: number): any;
   listConnections(): any[];
-  listTrustedHostsPage(options: {page: number; page_size: number}): unknown;
+  listTrustedHostsPage(options: {page: number; page_size: number; query?: string}): unknown;
   removeTrustedHost(id: unknown): unknown;
   acceptHostTrust(token: unknown, mode: unknown): unknown;
   ensureConnectionHostTrusted(connection: unknown): Promise<unknown>;
@@ -21,6 +21,14 @@ interface SshRouteDependencies {
   testSsh(connection: unknown): Promise<any>;
   terminalCapabilitiesForConnection(connection: unknown): Promise<unknown>;
   generateSshKey(data: unknown): unknown;
+  listManagedKeys(userKeysEnabled: boolean): unknown;
+  importManagedKey(filename: string, data: Buffer, scope: string, userKeysEnabled: boolean): unknown;
+  deleteManagedKey(path: string, scope: string, userKeysEnabled: boolean, referencedPaths: string[]): unknown;
+  managedKeyProperties(path: string, scope: string, userKeysEnabled: boolean): unknown;
+  updateManagedKey(path: string, scope: string, userKeysEnabled: boolean, data: unknown): Promise<unknown>;
+  managedPublicKey(path: string, scope: string, userKeysEnabled: boolean): unknown;
+  manageUserSshKeysEnabled(): boolean;
+  referencedIdentityPaths(): string[];
   allConnectionsHealth(options: {force: boolean}): Promise<unknown>;
   diagnosePortUsage(host: string, port: unknown): Promise<unknown>;
   recommendPort(host: string, port: number, excludeId: unknown): Promise<unknown>;
@@ -45,7 +53,8 @@ export async function handleSshRoutes(
     const query = new URL(request.url || pathname, "http://terma.invalid").searchParams;
     dependencies.sendJson(response, dependencies.listTrustedHostsPage({
       page:Number(query.get("page") || 1),
-      page_size:Number(query.get("page_size") || 20)
+      page_size:Number(query.get("page_size") || 5),
+      query:String(query.get("q") || "")
     }));
     return true;
   }
@@ -92,6 +101,39 @@ export async function handleSshRoutes(
     const body = await dependencies.readBody(request);
     const part = dependencies.getPart(request.headers["content-type"], body, "key");
     dependencies.sendJson(response, dependencies.saveUploadedKey(part.filename, part.data), 201);
+    return true;
+  }
+
+  if (method === "GET" && pathname === "/api/managed-keys") {
+    dependencies.sendJson(response, dependencies.listManagedKeys(dependencies.manageUserSshKeysEnabled()));
+    return true;
+  }
+  if (method === "POST" && pathname === "/api/managed-keys/import") {
+    const body = await dependencies.readBody(request);
+    const part = dependencies.getPart(request.headers["content-type"], body, "key");
+    const url = new URL(request.url || pathname, "http://terma.invalid");
+    const scope = String(url.searchParams.get("scope") || "project");
+    dependencies.sendJson(response, dependencies.importManagedKey(part.filename, part.data, scope, dependencies.manageUserSshKeysEnabled()), 201);
+    return true;
+  }
+  if (method === "POST" && pathname === "/api/managed-keys/properties") {
+    const data = await dependencies.readJson(request);
+    dependencies.sendJson(response, dependencies.managedKeyProperties(data.path || "", data.scope || "project", dependencies.manageUserSshKeysEnabled()));
+    return true;
+  }
+  if (method === "PUT" && pathname === "/api/managed-keys/properties") {
+    const data = await dependencies.readJson(request);
+    dependencies.sendJson(response, await dependencies.updateManagedKey(data.path || "", data.scope || "project", dependencies.manageUserSshKeysEnabled(), data));
+    return true;
+  }
+  if (method === "GET" && pathname === "/api/managed-keys/public") {
+    const url = new URL(request.url || pathname, "http://terma.invalid");
+    dependencies.sendJson(response, dependencies.managedPublicKey(url.searchParams.get("path") || "", url.searchParams.get("scope") || "project", dependencies.manageUserSshKeysEnabled()));
+    return true;
+  }
+  if (method === "DELETE" && pathname === "/api/managed-keys") {
+    const data = await dependencies.readJson(request);
+    dependencies.sendJson(response, dependencies.deleteManagedKey(data.path || "", data.scope || "project", dependencies.manageUserSshKeysEnabled(), dependencies.referencedIdentityPaths()));
     return true;
   }
 

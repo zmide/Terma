@@ -19,6 +19,7 @@ function showSettingsSection(id, options={}) {
     scope.querySelector(".workspace")?.scrollTo?.({top:0, behavior:"auto"});
     if (isMobileLayout()) showMobileWorkspace();
   }
+  if (next === "settings-key-management" && typeof loadManagedKeys === "function") loadManagedKeys().catch(() => {});
 }
 
 function scrollToSetting(id) {

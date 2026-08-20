@@ -53,9 +53,14 @@
     "matches_truncated": "共显示 {{count}} 处命中，更多结果已省略",
     "no_matches": "正文中没有对应内容",
     "search_context": "搜索上下文",
+    "search_current": "搜索当前日志",
+    "previous_match": "上一处",
+    "next_match": "下一处",
     "load_older": "加载更早内容",
     "chunk_hint": "按 256 KB 分段读取，不会一次载入整个大日志。",
     "no_system_log_date": "{{date}}没有对应系统日志"
+    ,"open_external": "用外部编辑器打开"
+    ,"open_external_failed": "无法打开外部编辑器"
   },
   "log_maintenance": {
     "title": "日志设置",
@@ -81,6 +86,17 @@
     "invalid_retention": "请输入有效保留天数",
     "delete_result": "已删除 {{count}} 条日志",
     "delete_result_with_errors": "已删除 {{deleted}} 条日志，失败 {{failed}} 条"
+    ,"current_usage": "当前占用"
+    ,"file_count": "{{count}} 个文件"
+    ,"file_count_label": "日志文件"
+    ,"cleanup_days": "删除多少天以前的日志"
+    ,"cleanup_preview": "预览"
+    ,"cleanup_preview_result": "{{files}} 个文件，预计释放 {{bytes}}"
+    ,"cleanup_loading": "正在计算..."
+    ,"cleanup_preview_failed": "无法计算清理预估"
+    ,"cleanup_selected": "清理历史日志"
+    ,"group_size": "分组大小：{{size}}"
+    ,"log_size": "日志大小：{{size}}"
   },
   "local_files": {
     "available_space": "{{free}} 可用 / {{total}}",
@@ -735,6 +751,8 @@
     "adjust_workspace_header_hint": "拖动调整标题栏高度，双击恢复默认",
     "quick_open": "快速打开连接 / 转发",
     "quick_open_shortcut": "快速打开（{{shortcut}}）",
+    "command_window": "命令窗口",
+    "command_window_shortcut": "命令窗口（{{shortcut}}）",
     "new_version": "发现新版本",
     "server": "服务器",
     "refresh_status": "刷新状态",

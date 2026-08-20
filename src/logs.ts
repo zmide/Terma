@@ -16,6 +16,10 @@ const BATCH_DIR = path.join(LOG_DIR, "batch");
 const LOG_SETTINGS_FILE = path.join(LOG_DIR, "log-settings.json");
 const logWriteQueues = new Map();
 let currentLogSettings = readLogSettings(LOG_SETTINGS_FILE);
+try {
+  const stored = fs.existsSync(LOG_SETTINGS_FILE) ? JSON.parse(fs.readFileSync(LOG_SETTINGS_FILE, "utf8")) : null;
+  if (!stored || Number(stored.schema_version || 0) < 3) currentLogSettings = writeLogSettings(LOG_SETTINGS_FILE, {});
+} catch {}
 let logDirectoriesReady = false;
 
 function queueLogWrite(file, data) {
@@ -191,17 +195,30 @@ function parseBatchFilename(name) {
   };
 }
 
+function addFileStats(fullPath, item) {
+  try {
+    const stat = fs.statSync(fullPath);
+    return { ...item, size_bytes: stat.size, modified_at: stat.mtimeMs };
+  } catch {
+    return { ...item, size_bytes: 0, modified_at: 0 };
+  }
+}
+
+function sumLogBytes(logs) {
+  return (logs || []).reduce((sum, item) => sum + Number(item.size_bytes || 0), 0);
+}
+
 function listLogs() {
   ensureLogDirs();
   const system = fs.readdirSync(LOG_DIR)
     .filter((name) => /^system-\d{4}-\d{2}-\d{2}\.log(?:\.\d+)?$/.test(name))
     .map((name) => {
       const match = name.match(/^system-(\d{4})-(\d{2})-(\d{2})\.log(?:\.(\d+))?$/);
-      return {
+      return addFileStats(path.join(LOG_DIR, name), {
         label: `system-${Number(match[1])}年${Number(match[2])}月${Number(match[3])}日${match[4] ? `（轮转 ${match[4]}）` : ""}`,
         path: name,
         time: new Date(`${match[1]}-${match[2]}-${match[3]}T00:00:00`).getTime()
-      };
+      });
     })
     .sort((a, b) => b.time - a.time);
 
@@ -209,7 +226,7 @@ function listLogs() {
   const batch = (fs.existsSync(BATCH_DIR) ? fs.readdirSync(BATCH_DIR).filter((name) => /\.log(?:\.\d+)?$/i.test(name)) : [])
     .map((name) => {
       const parsed = parseBatchFilename(name);
-      return { label: parsed.label, path: relativeLogPath(path.join(BATCH_DIR, name)), time: parsed.time };
+      return addFileStats(path.join(BATCH_DIR, name), { label: parsed.label, path: relativeLogPath(path.join(BATCH_DIR, name)), time: parsed.time });
     })
     .sort((a, b) => b.time - a.time);
   const byServer: Map<string, any> = new Map(listConnections().map((connection) => [connection.name, { id: connection.id, name: connection.name, logs: [] }]));
@@ -217,13 +234,40 @@ function listLogs() {
     const parsed = parseTerminalFilename(name);
     const serverName = parsed.label.split(" · ")[0].replace(/-\d{4}年.*$/, "");
     if (!byServer.has(serverName)) byServer.set(serverName, { id: null, name: serverName, logs: [] });
-    byServer.get(serverName).logs.push({ label: parsed.label, path: relativeLogPath(path.join(TERMINAL_DIR, name)), time: parsed.time });
+    byServer.get(serverName).logs.push(addFileStats(path.join(TERMINAL_DIR, name), { label: parsed.label, path: relativeLogPath(path.join(TERMINAL_DIR, name)), time: parsed.time }));
   }
   const connections = [...byServer.values()]
-    .map((item) => ({ ...item, logs: item.logs.sort((a, b) => b.time - a.time) }))
+    .map((item) => ({ ...item, logs: item.logs.sort((a, b) => b.time - a.time), size_bytes: sumLogBytes(item.logs) }))
     .filter((item) => item.logs.length)
     .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
-  return { system, batch, connections };
+  return { system, batch, connections, total_size_bytes: sumLogBytes(system) + sumLogBytes(batch) + connections.reduce((sum, item) => sum + Number(item.size_bytes || 0), 0) };
+}
+
+async function searchLogs(query) {
+  const value = String(query || "").trim().slice(0, 200);
+  if (!value) return [];
+  const listed = listLogs();
+  const entries = [
+    ...(listed.system || []).map(log => ({...log, category:"system", group_name:"system"})),
+    ...(listed.batch || []).map(log => ({...log, category:"batch", group_name:"batch"})),
+    ...(listed.connections || []).flatMap(server => (server.logs || []).map(log => ({...log, category:"connection", group_name:"connection", server_name:server.name})))
+  ];
+  const results = [];
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < entries.length) {
+      const index = cursor++;
+      const entry = entries[index];
+      try {
+        const result = await readLogWindow(entry.path, {query:value, limitBytes:4096, contextLines:1, maxMatches:3});
+        if (result.matches?.length) {
+          results[index] = {...entry, matches:result.matches.slice(0, 3), matches_truncated:Boolean(result.matches_truncated)};
+        }
+      } catch {}
+    }
+  };
+  await Promise.all(Array.from({length:Math.min(4, Math.max(1, entries.length))}, () => worker()));
+  return results.filter(Boolean);
 }
 
 function readLog(relPath) {
@@ -260,6 +304,35 @@ function deleteLogs(paths) {
     }
   }
   return { deleted, errors };
+}
+
+function cleanupCandidates(days) {
+  const age = Number(days);
+  if (!Number.isFinite(age) || age <= 0) throw new Error("days must be a positive number");
+  const cutoff = Date.now() - age * 24 * 60 * 60 * 1000;
+  const listed = listLogs();
+  const entries = [
+    ...(listed.system || []),
+    ...(listed.batch || []),
+    ...(listed.connections || []).flatMap(group => group.logs || [])
+  ];
+  const writing = new Set([...logWriteQueues.keys()].map(file => path.resolve(file)));
+  return entries.filter(item => {
+    if (!item?.path || writing.has(path.resolve(resolveLogPath(item.path)))) return false;
+    const modified = Number(item.modified_at || 0);
+    return modified > 0 && modified < cutoff;
+  }).map(item => ({path:item.path, bytes:Number(item.size_bytes || 0), modified_at:Number(item.modified_at || 0)}));
+}
+
+function previewLogsOlderThan(days) {
+  const candidates = cleanupCandidates(days);
+  return {days:Number(days), files:candidates.length, bytes:candidates.reduce((sum, item) => sum + item.bytes, 0), freed_bytes:candidates.reduce((sum, item) => sum + item.bytes, 0)};
+}
+
+function deleteLogsOlderThan(days) {
+  const candidates = cleanupCandidates(days);
+  const result = deleteLogs(candidates.map(item => item.path));
+  return {...result, days:Number(days), files:candidates.length, bytes:candidates.filter(item => result.deleted.includes(item.path)).reduce((sum, item) => sum + item.bytes, 0), freed_bytes:candidates.filter(item => result.deleted.includes(item.path)).reduce((sum, item) => sum + item.bytes, 0)};
 }
 
 function getLogSettings() {
@@ -303,7 +376,9 @@ module.exports = {
   updateLogSettings,
   enforceConfiguredLogRetention,
   readLogWindow,
+  searchLogs,
   readLog,
   readRawLog,
   deleteLogs
+  ,previewLogsOlderThan, deleteLogsOlderThan, resolveLogPath
 };

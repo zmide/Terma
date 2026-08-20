@@ -1058,6 +1058,7 @@ function renderExplorerTools() {
   const tools = $("explorerTools");
   const tree = $("connectionGroups");
   syncOperationPaneState();
+  tree?.classList.toggle("log-tree", primaryView === "logs");
   tools.classList.remove("log-mode", "section-mode", "connection-mode", "compact-mode");
   if (tree) tree.hidden = ["settings", "import"].includes(primaryView);
   if (primaryView === "logs") {
@@ -1101,6 +1102,7 @@ function renderExplorerTools() {
     const sections = [
       ["settings-general", "settings-2", "common:auto.general_settings", "通用设置"],
       ["settings-basic", "shield-check", "common:auto.security", "安全设置"],
+      ["settings-key-management", "key-round", "settings:sections.key_management", "用户密钥管理"],
       ["settings-notifications", "bell", "common:auto.notification_settings", "通知设置"],
       ["settings-runtime", "activity", "common:auto.startup_runtime", "启动与运行"],
       ["settings-cache", "hard-drive", "common:auto.cache_management", "缓存管理"],

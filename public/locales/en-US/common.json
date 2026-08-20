@@ -53,9 +53,14 @@
     "matches_truncated": "Showing {{count}} matches; more results were omitted",
     "no_matches": "No matching content was found in the log",
     "search_context": "Search context",
+    "search_current": "Search this log",
+    "previous_match": "Previous match",
+    "next_match": "Next match",
     "load_older": "Load earlier content",
     "chunk_hint": "Logs are read in 256 KB chunks instead of loading a large file all at once.",
     "no_system_log_date": "There is no system log for {{date}}"
+    ,"open_external": "Open in external editor"
+    ,"open_external_failed": "Unable to open external editor"
   },
   "log_maintenance": {
     "title": "Log settings",
@@ -81,6 +86,17 @@
     "invalid_retention": "Enter a valid retention period",
     "delete_result": "Deleted {{count}} logs",
     "delete_result_with_errors": "Deleted {{deleted}} logs; {{failed}} failed"
+    ,"current_usage": "Current usage"
+    ,"file_count": "{{count}} files"
+    ,"file_count_label": "Log files"
+    ,"cleanup_days": "Delete logs older than (days)"
+    ,"cleanup_preview": "Preview"
+    ,"cleanup_preview_result": "{{files}} files, expected to free {{bytes}}"
+    ,"cleanup_loading": "Calculating..."
+    ,"cleanup_preview_failed": "Unable to calculate cleanup preview"
+    ,"cleanup_selected": "Clean selected history"
+    ,"group_size": "Group size: {{size}}"
+    ,"log_size": "Log size: {{size}}"
   },
   "local_files": {
     "available_space": "{{free}} available / {{total}}",
@@ -735,6 +751,8 @@
     "adjust_workspace_header_hint": "Drag to resize the header; double-click to reset",
     "quick_open": "Quick open connections / forwarding",
     "quick_open_shortcut": "Quick open ({{shortcut}})",
+    "command_window": "Command window",
+    "command_window_shortcut": "Command window ({{shortcut}})",
     "new_version": "New version available",
     "server": "Server",
     "refresh_status": "Refresh status",

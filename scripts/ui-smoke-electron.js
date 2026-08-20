@@ -3214,7 +3214,7 @@ app.whenReady().then(async () => {
       const tools = document.querySelector('#explorerTools');
       const settingsButtons = [...tools.querySelectorAll(':scope > button[data-explorer-section]')];
       const settingsLabels = settingsButtons.map(button => button.querySelector('span')?.textContent.trim() || '');
-      const settingsExpected = ['通用设置','安全','通知设置','启动与运行','缓存管理','关于'];
+      const settingsExpected = ['通用设置','安全','用户密钥管理','通知设置','启动与运行','缓存管理','关于'];
       const settingsRects = settingsButtons.map(button => button.getBoundingClientRect());
       const settingsVertical = settingsRects.every((rect,index) => index === 0 || rect.top >= settingsRects[index-1].bottom - 0.5) && settingsRects.every(rect => Math.abs(rect.left-settingsRects[0].left)<1 && Math.abs(rect.width-settingsRects[0].width)<1);
       const settingsChecks = [];
@@ -3686,7 +3686,10 @@ app.whenReady().then(async () => {
     const settings={
       visible:Boolean(trustPanel&&getComputedStyle(trustPanel).display!=='none'),
       record:trustPanel?.textContent.includes('server.example:22')&&trustPanel?.textContent.includes('SHA256:TRUSTED'),
-      removeButton:Boolean(trustPanel?.querySelector('button[aria-label="删除信任记录"]'))
+      removeButton:Boolean(trustPanel?.querySelector('button[aria-label="删除信任记录"]')),
+      searchInput:Boolean(trustPanel?.querySelector('#sshHostTrustSearch')),
+      searchPlaceholder:Boolean(trustPanel?.querySelector('#sshHostTrustSearch')?.placeholder),
+      pageSizeDefault:sshTrustedHostsPageSize===5
     };
     fixture.remove();
     sshTrustedHosts=previousHosts;
@@ -5538,7 +5541,10 @@ app.whenReady().then(async () => {
       fileMb:document.querySelector('#logSettingFileMb')?.value,
       totalMb:document.querySelector('#logSettingTotalMb')?.value,
       rotations:document.querySelector('#logSettingRotations')?.value,
-      cleanup:Boolean(buttons.find(button=>button.textContent.includes('立即清理'))),
+      currentUsage:Boolean(document.querySelector('.log-maintenance-stats')),
+      cleanupPreview:Boolean(document.querySelector('#logCleanupPreview')),
+      cleanup:Boolean(buttons.find(button=>button.textContent.includes('清理历史日志'))),
+      immediateCleanup:Boolean(buttons.find(button=>button.textContent.includes('立即清理'))),
       save:Boolean(buttons.find(button=>button.textContent.includes('保存')))
     };
     closeModal();
@@ -5558,7 +5564,8 @@ app.whenReady().then(async () => {
     document.body.appendChild(logFixture);
     positionLogViewerScroll(logFixture,'end');
     await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-    result.defaultsToLatest=logFixture.scrollTop+logFixture.clientHeight>=logFixture.scrollHeight-1;
+    const logFixtureView=logFixture.querySelector('.log-view');
+    result.defaultsToLatest=Boolean(logFixtureView && logFixtureView.scrollTop+logFixtureView.clientHeight>=logFixtureView.scrollHeight-1);
     const previousTheme=document.documentElement.dataset.theme||'light';
     const panelProbe=document.createElement('div');
     panelProbe.style.background='var(--panel)';
@@ -5570,8 +5577,118 @@ app.whenReady().then(async () => {
     result.followsTheme=lightThemeMatches&&darkThemeMatches;
     applyTheme(previousTheme);
     logFixture.remove();
+    const previousLogSearch=logSearch;
+    const previousLogSearchResults=logSearchResults;
+    const previousLogPage=new Map(logPage);
+    const previousActiveView=activeView;
+    const previousPrimaryView=primaryView;
+    const previousActiveTabKey=activeTabKey;
+    const previousTabs=tabs.map(tab=>({...tab}));
+    const previousLogViewerStates=new Map(typeof logViewerStates !== 'undefined' ? logViewerStates : []);
+    const previousLogViewerState=typeof logViewerState !== 'undefined' ? logViewerState : null;
+    const previousLogViewHtml=document.querySelector('#view-log')?.innerHTML||'';
+    const previousLogViewHidden=document.querySelector('#view-log')?.hidden;
+    const searchFixture=document.createElement('div');
+    const pagerFixture=document.createElement('div');
+    let hadNarrowOperationPane=false;
+    try {
+      logSearch='needle';
+      logSearchResults=new Map([['system-2026-08-20.log',{path:'system-2026-08-20.log',matches:[{line:42,text:'before needle after'}]}]]);
+      searchFixture.style.cssText='position:fixed;left:-10000px;top:0;width:320px;';
+      searchFixture.innerHTML=renderLogButton({label:'system-2026年8月20日',path:'system-2026-08-20.log'},'system');
+      document.body.appendChild(searchFixture);
+      const searchHit=searchFixture.querySelector('.log-item-hit');
+      const searchButton=searchFixture.querySelector('.log-item');
+      result.searchContextHidden=Boolean(!document.querySelector('.compact-log-context')&&searchHit?.textContent.includes('before needle after')&&searchHit.querySelector('mark')?.textContent==='needle');
+      result.searchOpensWithQuery=Boolean(searchButton?.dataset.logQuery==='needle'&&searchButton?.dataset.logLine==='42');
+
+      logPage.clear();
+      pagerFixture.className='tree log-tree';
+      pagerFixture.style.cssText='position:fixed;left:-10000px;top:0;width:320px;height:180px;overflow:auto;';
+      hadNarrowOperationPane=document.documentElement.classList.contains('operation-pane-narrow');
+      document.documentElement.classList.add('operation-pane-narrow');
+      const pagerGroup=document.createElement('div');
+      pagerGroup.className='group log-group';
+      pagerGroup.innerHTML=renderLogItems('system',Array.from({length:25},(_,index)=>({label:'system-2026年8月'+String(index+1).padStart(2,'0'),path:'system-'+index+'.log'})));
+      pagerFixture.appendChild(pagerGroup);
+      document.body.appendChild(pagerFixture);
+      pagerFixture.scrollTop=pagerFixture.scrollHeight;
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const pager=pagerFixture.querySelector('.log-pager');
+      const pagerBox=pager?.getBoundingClientRect();
+      const pagerHostBox=pagerFixture.getBoundingClientRect();
+      const pagerStyle=pager?getComputedStyle(pager):null;
+      result.pagerVisible=Boolean(pager&&pagerBox&&pagerBox.height>0&&pagerBox.top>=pagerHostBox.top-1&&pagerBox.bottom<=pagerHostBox.bottom+1);
+      result.pagerPinned=Boolean(pagerStyle?.position!=='sticky'&&pagerStyle?.boxShadow==='none');
+      result.pagerFitsNarrow=Boolean(pager&&pagerBox&&pagerHostBox&&pagerBox.left>=pagerHostBox.left-1&&pagerBox.right<=pagerHostBox.right+1&&[...pager.querySelectorAll('button,.pager-count')].every(item=>{const box=item.getBoundingClientRect();return box.left>=pagerBox.left-1&&box.right<=pagerBox.right+1;}));
+      result.pagerLabelsReadable=Boolean(pager&&[...pager.querySelectorAll('button')].every(item=>{const itemBox=item.getBoundingClientRect();const range=document.createRange();range.selectNodeContents(item);const textBox=range.getBoundingClientRect();return textBox.left>=itemBox.left-1&&textBox.right<=itemBox.right+1&&item.scrollWidth<=item.clientWidth+1;}));
+
+      tabs=[...previousTabs,{key:'log-smoke',kind:'log',title:'日志测试'}];
+      activeTabKey='log-smoke';
+      activeView='log';
+      primaryView='logs';
+      renderExplorerTools();
+      let logView=document.querySelector('#view-log');
+      if (!logView) {
+        logView=document.createElement('section');
+        logView.id='view-log';
+        logView.className='view';
+        document.body.appendChild(logView);
+        result.createdLogViewFixture=true;
+      }
+      logView.hidden=false;
+      const detailState={path:'system-2026-08-20.log',title:'日志测试',sourceTitle:'system-2026年8月20日',query:'needle',offset:0,endOffset:100,text:'line 41\\nneedle line 42\\nline 43',matches:[{line:42,text:'needle line 42'}],matches_truncated:false,has_older:false,has_newer:false,startLine:41,targetLine:42,matchIndex:0};
+      if (typeof logViewerStates === 'undefined') throw new Error('logViewerStates is unavailable');
+      logViewerStates.set('log-smoke',detailState);
+      logViewerState=detailState;
+      renderLogViewer(detailState,'log-smoke','target');
+      const logInput=document.getElementById('logSearch');
+      const detailInput=logView.querySelector('[data-input-action="log-detail-search"]');
+      const detailSearchBar=logView.querySelector('.log-detail-search');
+      result.detailSearchHiddenInitially=Boolean(detailSearchBar?.hidden);
+      logInput?.blur();
+      detailInput?.blur();
+      document.dispatchEvent(new KeyboardEvent('keydown',{key:'f',code:'KeyF',ctrlKey:true,bubbles:true,cancelable:true}));
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      result.detailSearchVisible=Boolean(detailInput&&detailInput.id==='logDetailSearch'&&detailSearchBar&&!detailSearchBar.hidden);
+      result.ctrlF=Boolean(document.activeElement===detailInput&&detailInput?.id==='logDetailSearch'&&document.activeElement!==logInput);
+      result.detailSearchNavigation=Boolean(logView.querySelector('[data-action="log-detail-search-prev"]')&&logView.querySelector('[data-action="log-detail-search-next"]')&&logView.querySelector('[data-log-line="42"]'));
+      result.detailSearchClose=Boolean(logView.querySelector('[data-action="log-detail-search-close"]'));
+      const detailSearch=logView.querySelector('.log-detail-search');
+      const detailSearchStyle=detailSearch?getComputedStyle(detailSearch):null;
+      const logViewStyle=getComputedStyle(logView);
+      const logText=logView.querySelector('.log-view');
+      const logTextStyle=logText?getComputedStyle(logText):null;
+      result.detailSearchFloats=Boolean(detailSearch&&detailSearchStyle?.position==='relative'&&detailSearchStyle?.zIndex!=='auto');
+      result.detailSearchReservesTop=Boolean(logViewStyle?.display==='flex'&&logViewStyle?.flexDirection==='column'&&logTextStyle?.overflowY==='auto'&&logTextStyle?.minHeight==='0px');
+    } catch (error) {
+      result.detailError=String(error?.stack || error);
+    } finally {
+      searchFixture.remove();
+      pagerFixture.remove();
+      if (!hadNarrowOperationPane) document.documentElement.classList.remove('operation-pane-narrow');
+      logSearch=previousLogSearch;
+      logSearchResults=previousLogSearchResults;
+      logPage.clear();
+      for (const [key,value] of previousLogPage) logPage.set(key,value);
+      activeView=previousActiveView;
+      primaryView=previousPrimaryView;
+      activeTabKey=previousActiveTabKey;
+      tabs=previousTabs;
+      if (typeof logViewerStates !== 'undefined') {
+        logViewerStates.clear();
+        for (const [key,value] of previousLogViewerStates) logViewerStates.set(key,value);
+      }
+      if (typeof logViewerState !== 'undefined') logViewerState=previousLogViewerState;
+      const logView=document.querySelector('#view-log');
+      if (logView) {
+        if (result.createdLogViewFixture) logView.remove();
+        else { logView.innerHTML=previousLogViewHtml; logView.hidden=previousLogViewHidden; }
+      }
+      renderExplorerTools();
+    }
     return result;
-  })()`);
+  })()`).catch(error => ({executeError:String(error?.stack || error)}));
   console.log("[ui-smoke] SFTP views");
   const sftpUi = await window.webContents.executeJavaScript(`(async () => {
     document.documentElement.dataset.uiSmokeStage = 'sftp-views';
@@ -9113,6 +9230,15 @@ app.whenReady().then(async () => {
     ensureTermaActions();
     const panel=ensureQuickPanel();
     panel.hidden=false;
+    renderQuickPanel('');
+    const commandWindowDefaultHasConnections=productivityState.quickItems.some(item=>['connection','forward','remote-profile'].includes(item.kind));
+    const previousSnippets=productivityState.snippets;
+    productivityState.snippets=[{id:-987650,name:'UI smoke snippet',group_name:'Smoke',tags:'smoke',description:'Command window search fixture',command:'echo smoke'}];
+    renderQuickPanel('');
+    const commandWindowDefaultHasSnippets=productivityState.quickItems.some(item=>item.kind==='snippet');
+    renderQuickPanel('smoke');
+    const commandWindowSearchFindsSnippet=productivityState.quickItems.some(item=>item.kind==='snippet'&&item.title==='UI smoke snippet');
+    productivityState.snippets=previousSnippets;
     renderQuickPanel('工作区');
     const quickVisible=!panel.hidden&&Boolean(panel.querySelector('.quick-result'));
     const actionCount=listAppActions({surface:'quick-panel'}).length;
@@ -9139,6 +9265,7 @@ app.whenReady().then(async () => {
     const quickButton=document.getElementById('quickPanelButton');
     const quickButtonPlacement=quickButton?.parentElement?.id==='workspaceQuickActions';
     const quickButtonLightning=Boolean(quickButton?.querySelector('.lucide-zap'));
+    const commandWindowLabel=quickButton?.title||'';
     await refreshXServerQuickAction();
     const xServerQuickButton=document.getElementById('xServerQuickButton');
     const xServerQuickIcon=xServerQuickButton?.querySelector('.xserver-x-icon');
@@ -9401,7 +9528,7 @@ app.whenReady().then(async () => {
       applyTermaAppearanceSettings();
     } })();
     closeModal();
-    return {quickVisible,actionCount,quickConnectionActionsInline,quickPanelDirect,workspaceSearchable,workspacePreviewOpens,quickButtonPlacement,quickButtonLightning,xServerQuickUsesX11,xServerUnauthorizedWarning,xServerLocalDirectReady,broadcastFromEither,broadcastTabMarked,broadcastHeaderGrouped,broadcastExitCompact,visibleSplitHasNoActivity,visibleSplitClearsPriorActivity,hiddenBinaryOutputMarked,syncRows,conflictSafe,namedWorkspaceTools,terminalTools,...quickCommandUi};
+    return {quickVisible,actionCount,quickConnectionActionsInline,quickPanelDirect,workspaceSearchable,workspacePreviewOpens,quickButtonPlacement,quickButtonLightning,commandWindowDefaultHasConnections,commandWindowDefaultHasSnippets,commandWindowSearchFindsSnippet,commandWindowLabel,xServerQuickUsesX11,xServerUnauthorizedWarning,xServerLocalDirectReady,broadcastFromEither,broadcastTabMarked,broadcastHeaderGrouped,broadcastExitCompact,visibleSplitHasNoActivity,visibleSplitClearsPriorActivity,hiddenBinaryOutputMarked,syncRows,conflictSafe,namedWorkspaceTools,terminalTools,...quickCommandUi};
   })()`);
   console.log("[ui-smoke] quick commands", JSON.stringify({
     quickToolbarIconVisible:productivityUi.quickToolbarIconVisible,
@@ -10541,8 +10668,11 @@ app.whenReady().then(async () => {
     || !hostTrustUi.escapeCancelled
     || !hostTrustUi.settings?.visible
     || !hostTrustUi.settings?.record
-    || !hostTrustUi.settings?.removeButton;
-  const expectedSettingsActions = ['通用设置','安全','通知设置','启动与运行','缓存管理','关于'];
+    || !hostTrustUi.settings?.removeButton
+    || !hostTrustUi.settings?.searchInput
+    || !hostTrustUi.settings?.searchPlaceholder
+    || !hostTrustUi.settings?.pageSizeDefault;
+  const expectedSettingsActions = ['通用设置','安全','用户密钥管理','通知设置','启动与运行','缓存管理','关于'];
   const mobileResizeNavigationFailed = !mobile.workspaceResizeNavigation || !Object.values(mobile.workspaceResizeNavigation).every(Boolean);
   const mobileWorkspaceChromeResizeFailed = !mobile.workspaceChromeResize?.found
     || !mobile.workspaceChromeResize?.handlesHidden
@@ -10557,8 +10687,8 @@ app.whenReady().then(async () => {
   const mobileTerminalSettingsUi = mobile.terminalGlobalSettings || {};
   const terminalStartupUiFailed = !terminalStartupUi.found || !Object.values(terminalStartupUi).every(Boolean);
   const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.x11ScopeMenu || !terminalUi.ctrlVImageIntercepted || !terminalUi.ctrlVEmptyFallsThrough || !terminalUi.enterReconnect || !terminalUi.reconnectPreservesOutput || !terminalUi.inactiveTerminalOutputContinues || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.remoteDesktopTitleDedup || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.encodingSelectionUsesLatest || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.terminalToolbarScrollable || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalFontChangeKeepsWheelContinuity || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalUi.zmodemPanelUi || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.fontInheritance || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.pasteCommandHistory || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
-  const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || !logSettingsUi.days || !logSettingsUi.fileMb || !logSettingsUi.totalMb || !logSettingsUi.rotations || !logSettingsUi.cleanup || !logSettingsUi.save || !logSettingsUi.closed || !logSettingsUi.fullTerminalTime || !logSettingsUi.defaultsToLatest || !logSettingsUi.followsTheme;
-  const productivityUiFailed = !productivityUi.quickVisible || productivityUi.actionCount < 7 || !productivityUi.quickConnectionActionsInline || !productivityUi.quickPanelDirect || !productivityUi.workspaceSearchable || !productivityUi.workspacePreviewOpens || !productivityUi.quickButtonPlacement || !productivityUi.quickButtonLightning || !productivityUi.xServerQuickUsesX11 || !productivityUi.xServerUnauthorizedWarning || !productivityUi.xServerLocalDirectReady || !productivityUi.broadcastFromEither || !productivityUi.broadcastTabMarked || !productivityUi.broadcastHeaderGrouped || !productivityUi.broadcastExitCompact || !productivityUi.visibleSplitHasNoActivity || !productivityUi.visibleSplitClearsPriorActivity || !productivityUi.hiddenBinaryOutputMarked || productivityUi.syncRows !== 3 || !productivityUi.conflictSafe || !productivityUi.namedWorkspaceTools || !productivityUi.terminalTools || !productivityUi.quickToolbarIconVisible || !productivityUi.quickToggleStateVisible || !productivityUi.quickCompactWidths || !productivityUi.quickCommandExecutes || !productivityUi.quickContextMenu || !productivityUi.quickDoubleClickCreates || !productivityUi.quickEditorBackCloses || !productivityUi.quickManagerPolished || !productivityUi.quickOrderPersists || !productivityUi.quickHeightAdjustable || !productivityUi.quickToggleHides || !productivityUi.quickWheelScrolls || !productivityUi.quickResponsive;
+  const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || logSettingsUi.days !== "0" || logSettingsUi.fileMb !== "10" || logSettingsUi.totalMb !== "0" || logSettingsUi.rotations || !logSettingsUi.currentUsage || !logSettingsUi.cleanupPreview || !logSettingsUi.cleanup || logSettingsUi.immediateCleanup || !logSettingsUi.save || !logSettingsUi.closed || !logSettingsUi.fullTerminalTime || !logSettingsUi.defaultsToLatest || !logSettingsUi.followsTheme || !logSettingsUi.searchContextHidden || !logSettingsUi.searchOpensWithQuery || !logSettingsUi.pagerVisible || !logSettingsUi.pagerPinned || !logSettingsUi.pagerFitsNarrow || !logSettingsUi.pagerLabelsReadable || !logSettingsUi.detailSearchHiddenInitially || !logSettingsUi.detailSearchVisible || !logSettingsUi.detailSearchNavigation || !logSettingsUi.detailSearchClose || !logSettingsUi.ctrlF || !logSettingsUi.detailSearchFloats || !logSettingsUi.detailSearchReservesTop;
+  const productivityUiFailed = !productivityUi.quickVisible || productivityUi.actionCount < 7 || !productivityUi.quickConnectionActionsInline || !productivityUi.quickPanelDirect || !productivityUi.workspaceSearchable || !productivityUi.workspacePreviewOpens || !productivityUi.quickButtonPlacement || !productivityUi.quickButtonLightning || productivityUi.commandWindowDefaultHasConnections || productivityUi.commandWindowDefaultHasSnippets || !productivityUi.commandWindowSearchFindsSnippet || !productivityUi.commandWindowLabel.includes('命令窗口') || !productivityUi.xServerQuickUsesX11 || !productivityUi.xServerUnauthorizedWarning || !productivityUi.xServerLocalDirectReady || !productivityUi.broadcastFromEither || !productivityUi.broadcastTabMarked || !productivityUi.broadcastHeaderGrouped || !productivityUi.broadcastExitCompact || !productivityUi.visibleSplitHasNoActivity || !productivityUi.visibleSplitClearsPriorActivity || !productivityUi.hiddenBinaryOutputMarked || productivityUi.syncRows !== 3 || !productivityUi.conflictSafe || !productivityUi.namedWorkspaceTools || !productivityUi.terminalTools || !productivityUi.quickToolbarIconVisible || !productivityUi.quickToggleStateVisible || !productivityUi.quickCompactWidths || !productivityUi.quickCommandExecutes || !productivityUi.quickContextMenu || !productivityUi.quickDoubleClickCreates || !productivityUi.quickEditorBackCloses || !productivityUi.quickManagerPolished || !productivityUi.quickOrderPersists || !productivityUi.quickHeightAdjustable || !productivityUi.quickToggleHides || !productivityUi.quickWheelScrolls || !productivityUi.quickResponsive;
   const remoteAdminUiFailed = Boolean(remoteAdminUi.desktop?.error)
     || !remoteAdminUi.desktop?.viewportFit
     || !remoteAdminUi.desktop?.noHorizontalOverflow
@@ -10687,15 +10817,22 @@ app.whenReady().then(async () => {
     activityUi:{activity:result.activity, activityUtilities:result.activityUtilities},
     aboutUi,
     terminalUiFalse:Object.entries(terminalUi).filter(([, value]) => value === false).map(([name]) => name),
-    terminalUiScalars:{
+      terminalUiScalars:{
       found:terminalUi.found,
       desktopBackHidden:terminalUi.desktopBackHidden,
       desktopKeysHidden:terminalUi.desktopKeysHidden,
       binaryType:terminalUi.binaryType,
       labels:terminalUi.labels,
-      toolbarLabels:terminalUi.toolbarLabels
-    },
-    clipboardUi,
+        toolbarLabels:terminalUi.toolbarLabels
+      },
+      logSettingsUi,
+      productivityUiCommandWindow:{
+        defaultHasConnections:productivityUi.commandWindowDefaultHasConnections,
+        defaultHasSnippets:productivityUi.commandWindowDefaultHasSnippets,
+        searchFindsSnippet:productivityUi.commandWindowSearchFindsSnippet,
+        label:productivityUi.commandWindowLabel
+      },
+      clipboardUi,
     remoteAccessUiFalse:Object.entries(remoteAccessUi).filter(([, value]) => value === false).map(([name]) => name),
     remoteAccessUiDiagnostics:{xdmcpWorkspaceText:remoteAccessUi.xdmcpWorkspaceText,macVncWorkspaceText:remoteAccessUi.macVncWorkspaceText,vncComponentDiagnostics:remoteAccessUi.vncComponentDiagnostics,remoteDesktopSwitchProfiles:remoteAccessUi.remoteDesktopSwitchProfiles,remoteDesktopSwitchMenu:remoteAccessUi.remoteDesktopSwitchMenu,graphicsRendering:remoteAccessUi.graphicsRendering,renderingCopyInteraction:remoteAccessUi.renderingCopyInteraction,narrowRendering:remoteAccessUi.narrowRendering,remoteLayoutUi:remoteAccessUi.remoteLayoutUi},
     sftpUiDiagnostics:{

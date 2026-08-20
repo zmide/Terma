@@ -18,6 +18,7 @@ export interface LogWindowOptions {
   query?: string;
   contextLines?: number;
   maxMatches?: number;
+  line?: number;
 }
 
 export interface LogSearchMatch {
@@ -34,14 +35,16 @@ export interface LogWindowResult {
   has_newer: boolean;
   matches: LogSearchMatch[];
   matches_truncated: boolean;
+  start_line?: number;
+  target_line?: number;
 }
 
 export const DEFAULT_LOG_SETTINGS: LogSettings = {
-  schema_version: 1,
-  retention_days: 90,
-  max_file_size_mb: 50,
-  max_total_size_mb: 1024,
-  rotation_files: 3
+  schema_version: 3,
+  retention_days: 0,
+  max_file_size_mb: 10,
+  max_total_size_mb: 0,
+  rotation_files: 0
 };
 
 function clampInteger(value: unknown, fallback: number, minimum: number, maximum: number): number {
@@ -52,18 +55,22 @@ function clampInteger(value: unknown, fallback: number, minimum: number, maximum
 
 export function normalizeLogSettings(value: Partial<LogSettings> = {}): LogSettings {
   return {
-    schema_version: 1,
+    schema_version: 3,
     retention_days: clampInteger(value.retention_days, DEFAULT_LOG_SETTINGS.retention_days, 0, 3650),
     max_file_size_mb: clampInteger(value.max_file_size_mb, DEFAULT_LOG_SETTINGS.max_file_size_mb, 1, 2048),
-    max_total_size_mb: clampInteger(value.max_total_size_mb, DEFAULT_LOG_SETTINGS.max_total_size_mb, 10, 102400),
-    rotation_files: clampInteger(value.rotation_files, DEFAULT_LOG_SETTINGS.rotation_files, 1, 10),
+    max_total_size_mb: clampInteger(value.max_total_size_mb, DEFAULT_LOG_SETTINGS.max_total_size_mb, 0, 102400),
+    rotation_files: clampInteger(value.rotation_files, DEFAULT_LOG_SETTINGS.rotation_files, 0, 100000),
     ...(value.updated_at ? { updated_at: String(value.updated_at) } : {})
   };
 }
 
 export function readLogSettings(file: string): LogSettings {
   try {
-    return normalizeLogSettings(JSON.parse(fs.readFileSync(file, "utf8")) as Partial<LogSettings>);
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Partial<LogSettings>;
+    // Version 1 stored the previous defaults. Treat that untouched format as a
+    // migration to the new unlimited defaults; later versions preserve choices.
+    if (Number(parsed.schema_version || 0) < 3) return { ...DEFAULT_LOG_SETTINGS };
+    return normalizeLogSettings(parsed);
   } catch {
     return { ...DEFAULT_LOG_SETTINGS };
   }
@@ -193,24 +200,89 @@ export async function readLogWindow(
   const file = resolveLogFile(logDir, relativePath);
   const stat = await fs.promises.stat(file);
   const total = stat.size;
-  const limit = clampInteger(options.limitBytes, 256 * 1024, 4096, 1024 * 1024);
-  const end = options.beforeOffset === undefined
-    ? total
-    : Math.max(0, Math.min(total, Math.floor(Number(options.beforeOffset) || 0)));
-  const start = Math.max(0, end - limit);
-  const length = Math.max(0, end - start);
-  const handle = await fs.promises.open(file, "r");
-  let buffer = Buffer.alloc(length);
-  try {
-    if (length) {
-      const result = await handle.read(buffer, 0, length, start);
-      buffer = buffer.subarray(0, result.bytesRead);
+  const limit = options.limitBytes === undefined
+    ? Math.max(total, 1)
+    : clampInteger(options.limitBytes, 256 * 1024, 4096, Math.max(1024 * 1024, total));
+  let startLine: number | undefined;
+  let targetLine: number | undefined;
+  let start: number;
+  let end: number;
+  let buffer: Buffer;
+  const requestedLine = clampInteger(options.line, 0, 1, 100_000_000);
+  if (requestedLine > 0) {
+    // Explicit line navigation is infrequent and log files are capped at 50 MB by
+    // default, so an asynchronous full-file read keeps the byte/UTF-8 boundaries
+    // exact without blocking the server's event loop.
+    const full = await fs.promises.readFile(file);
+    let line = 1;
+    let targetStart = 0;
+    while (line < requestedLine) {
+      const newline = full.indexOf(0x0a, targetStart);
+      if (newline < 0) {
+        targetStart = full.length;
+        break;
+      }
+      targetStart = newline + 1;
+      line += 1;
     }
-  } finally {
-    await handle.close();
+    if (line === requestedLine && targetStart <= total) {
+      const targetEndMarker = full.indexOf(0x0a, targetStart);
+      const targetEnd = targetEndMarker < 0 ? total : targetEndMarker + 1;
+      start = Math.max(0, targetStart - Math.floor(limit / 2));
+      if (start > 0) {
+        const firstCompleteLine = full.indexOf(0x0a, start);
+        start = firstCompleteLine < 0 ? total : firstCompleteLine + 1;
+      }
+      if (start > targetStart) start = targetStart;
+      end = Math.min(total, start + limit);
+      if (end <= targetStart) {
+        start = targetStart;
+        end = Math.min(total, targetStart + limit);
+      }
+      // Keep the selected line visible even when it is unusually long.
+      if (targetEnd > end && targetStart === start) end = Math.min(total, targetEnd);
+      buffer = full.subarray(start, end);
+      startLine = 1;
+      for (let cursor = 0; cursor < start; cursor += 1) {
+        if (full[cursor] === 0x0a) startLine += 1;
+      }
+      targetLine = requestedLine;
+    } else {
+      end = options.beforeOffset === undefined
+        ? total
+        : Math.max(0, Math.min(total, Math.floor(Number(options.beforeOffset) || 0)));
+      start = Math.max(0, end - limit);
+      const length = Math.max(0, end - start);
+      const handle = await fs.promises.open(file, "r");
+      buffer = Buffer.alloc(length);
+      try {
+        if (length) {
+          const result = await handle.read(buffer, 0, length, start);
+          buffer = buffer.subarray(0, result.bytesRead);
+        }
+      } finally {
+        await handle.close();
+      }
+    }
+  } else {
+    end = options.beforeOffset === undefined
+      ? total
+      : Math.max(0, Math.min(total, Math.floor(Number(options.beforeOffset) || 0)));
+    start = Math.max(0, end - limit);
+    const length = Math.max(0, end - start);
+    const handle = await fs.promises.open(file, "r");
+    buffer = Buffer.alloc(length);
+    try {
+      if (length) {
+        const result = await handle.read(buffer, 0, length, start);
+        buffer = buffer.subarray(0, result.bytesRead);
+      }
+    } finally {
+      await handle.close();
+    }
   }
   let text = buffer.toString("utf8");
-  if (start > 0) {
+  if (start > 0 && startLine === undefined) {
     const firstLineEnd = text.indexOf("\n");
     if (firstLineEnd >= 0) text = text.slice(firstLineEnd + 1);
   }
@@ -230,7 +302,9 @@ export async function readLogWindow(
     has_older: start > 0,
     has_newer: end < total,
     matches: searched.matches,
-    matches_truncated: searched.truncated
+    matches_truncated: searched.truncated,
+    ...(startLine === undefined ? {} : { start_line: startLine }),
+    ...(targetLine === undefined ? {} : { target_line: targetLine })
   };
 }
 
@@ -252,6 +326,12 @@ export function rotateLogFile(file: string, incomingBytes: number, settings: Log
   if (!fs.existsSync(file)) return false;
   const maximum = settings.max_file_size_mb * 1024 * 1024;
   if (fs.statSync(file).size + incomingBytes <= maximum) return false;
+  if (settings.rotation_files === 0) {
+    let index = 1;
+    while (fs.existsSync(file + "." + index)) index += 1;
+    fs.renameSync(file, file + "." + index);
+    return true;
+  }
   for (let index = settings.rotation_files; index >= 1; index -= 1) {
     const current = index === 1 ? file : `${file}.${index - 1}`;
     const next = `${file}.${index}`;
@@ -284,8 +364,9 @@ export function enforceLogRetention(
     }
   }
   const remaining = files.filter(item => fs.existsSync(item.file)).sort((left, right) => left.stat.mtimeMs - right.stat.mtimeMs);
-  const maximumTotal = settings.max_total_size_mb * 1024 * 1024;
+  const maximumTotal = settings.max_total_size_mb > 0 ? settings.max_total_size_mb * 1024 * 1024 : 0;
   let total = remaining.reduce((sum, item) => sum + item.stat.size, 0);
+  if (!maximumTotal) return { deleted, freed_bytes: freed };
   for (const item of remaining) {
     if (total <= maximumTotal) break;
     if (skipFiles.has(path.resolve(item.file))) continue;
