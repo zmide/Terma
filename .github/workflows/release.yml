@@ -286,7 +286,7 @@ jobs:
               gh release edit "$GITHUB_REF_NAME" --draft=true
               echo "Moved public $GITHUB_REF_NAME to draft for explicit same-version revision $REVISION (remote $remote_revision)."
             else
-              test "$REVISION" -gt "$remote_revision"
+              test "$REVISION" -ge "$remote_revision"
             fi
           fi
 
@@ -296,8 +296,25 @@ jobs:
         shell: bash
         run: |
           if gh release view "$GITHUB_REF_NAME" --json isDraft >/dev/null 2>&1; then
-            gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | while IFS= read -r asset; do
-              [ -z "$asset" ] || gh release delete-asset "$GITHUB_REF_NAME" "$asset" --yes
+            gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[] | [(.apiUrl | split("/")[-1]), .name] | @tsv' | while IFS=$'\t' read -r asset_id asset_name; do
+              [ -z "$asset_id" ] && continue
+              deleted=false
+              for attempt in 1 2 3 4 5; do
+                if gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"; then
+                  deleted=true
+                  break
+                fi
+                if ! gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" >/dev/null 2>&1; then
+                  deleted=true
+                  break
+                fi
+                echo "Retrying deletion of $asset_name after GitHub API failure (attempt $attempt/5)." >&2
+                sleep $((attempt * 2))
+              done
+              if [ "$deleted" != "true" ]; then
+                echo "Failed to delete existing release asset: $asset_name ($asset_id)." >&2
+                exit 1
+              fi
             done
           fi
 

@@ -23,7 +23,11 @@ for (const token of [
   "releaseRevision",
   "gh release edit \"$GITHUB_REF_NAME\" --draft=true",
   "Remove existing release assets before replacement",
-  "gh release delete-asset"
+  "(.apiUrl | split(\"/\")[-1])",
+  "gh api --method DELETE \"repos/$GITHUB_REPOSITORY/releases/assets/$asset_id\"",
+  "for attempt in 1 2 3 4 5",
+  "test \"$REVISION\" -gt \"$remote_revision\"",
+  "test \"$REVISION\" -ge \"$remote_revision\""
 ]) assert.ok(workflow.includes(token), `release workflow missing ${token}`);
 assert.match(
   publishReleaseJob,
