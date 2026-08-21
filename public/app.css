@@ -1421,7 +1421,7 @@ body.sftp-task-center-resizing, body.sftp-task-center-resizing * { cursor:nesw-r
 .ssh-managed-key-main strong, .ssh-managed-key-main span, .ssh-managed-key-main code { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .ssh-managed-key-main span { color:var(--muted); font-size:12px; }
 .ssh-managed-key-main code { font-size:11px; }
-.ssh-managed-key-actions { display:flex; gap:5px; }
+.ssh-managed-key-actions { display:flex; justify-content:flex-end; gap:5px; min-width:0; }
 .ssh-key-management-title { display:flex; align-items:center; gap:10px; min-width:0; }
 .ssh-key-management-mark, .ssh-key-icon, .ssh-key-public-preview-icon { display:grid; place-items:center; flex:0 0 auto; }
 .ssh-key-management-mark { width:34px; height:34px; border:1px solid color-mix(in srgb,var(--accent) 28%,var(--line)); border-radius:9px; color:var(--accent); background:color-mix(in srgb,var(--accent) 10%,var(--panel)); }
@@ -1435,8 +1435,10 @@ body.sftp-task-center-resizing, body.sftp-task-center-resizing * { cursor:nesw-r
 .switch-track::after { content:""; position:absolute; width:16px; height:16px; top:2px; left:2px; border-radius:50%; background:var(--panel); box-shadow:0 1px 3px rgba(0,0,0,.2); transition:.18s ease; }
 .switch-row input:checked + .switch-track { background:var(--accent); }
 .switch-row input:checked + .switch-track::after { transform:translateX(16px); }
-.ssh-key-table-head { display:grid; grid-template-columns:minmax(240px,1.7fr) minmax(115px,.7fr) minmax(150px,1fr) auto; gap:12px; align-items:center; padding:0 13px 7px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
-.ssh-managed-key-row { display:grid; grid-template-columns:minmax(240px,1.7fr) minmax(115px,.7fr) minmax(150px,1fr) auto; gap:12px; min-height:62px; padding:9px 12px; border:1px solid var(--line); border-radius:7px; background:var(--panel); }
+.ssh-key-table-head, .ssh-managed-key-row { --ssh-key-actions-width:204px; grid-template-columns:minmax(240px,1.7fr) minmax(115px,.7fr) minmax(150px,1fr) var(--ssh-key-actions-width); gap:12px; }
+.ssh-key-table-head { display:grid; align-items:center; padding:0 13px 7px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+.ssh-key-table-head > span:last-child { text-align:right; }
+.ssh-managed-key-row { display:grid; min-height:62px; padding:9px 12px; border:1px solid var(--line); border-radius:7px; background:var(--panel); }
 .ssh-key-cell { min-width:0; display:flex; align-items:center; gap:9px; }
 .ssh-key-name-cell { min-width:0; }
 .ssh-key-icon { width:32px; height:32px; border-radius:8px; color:var(--accent); background:color-mix(in srgb,var(--accent) 10%,var(--field)); }
