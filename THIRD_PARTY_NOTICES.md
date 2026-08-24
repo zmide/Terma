@@ -37,7 +37,7 @@ Terma includes or integrates the following third-party components in addition to
 ## i18next
 
 - Project: https://github.com/i18next/i18next
-- Version: 26.3.6
+- Version: 26.4.0
 - License: MIT License
 - Use: interface internationalization and language resource management
 - Copyright: Copyright (c) 2011-present i18next

@@ -14,7 +14,7 @@ const THIRD_PARTY_COMPONENTS:ThirdPartyComponent[] = [
   {name:"ZMODEM.js", version:"0.1.10", license:"Apache-2.0", project_url:"https://github.com/FGasper/zmodemjs", use:"zmodem_transfer"},
   {name:"ssh2", version:"1.17.0", license:"MIT", project_url:"https://github.com/mscdex/ssh2", use:"ssh_sftp_transport"},
   {name:"node-x11", version:"3.9.1", license:"MIT", project_url:"https://github.com/sidorares/node-x11", use:"x11_protocol_client"},
-  {name:"i18next", version:"26.3.6", license:"MIT", project_url:"https://github.com/i18next/i18next", use:"interface_i18n"},
+  {name:"i18next", version:"26.4.0", license:"MIT", project_url:"https://github.com/i18next/i18next", use:"interface_i18n"},
   {name:"Lucide", version:"1.31.0", license:"ISC", project_url:"https://lucide.dev", use:"interface_icons"},
   {name:"Electron", version:"43.4.0", license:"MIT", project_url:"https://github.com/electron/electron", use:"desktop_runtime"},
   {name:"node-pty", version:"1.1.0", license:"MIT", project_url:"https://github.com/microsoft/node-pty", use:"desktop_pty"},
