@@ -71,6 +71,9 @@ for (const token of ["storage-settings-primary-row", "storage-settings-save", "c
 const sftp = readFrontendDomain(root, "sftp");
 if (!sftp.includes('ace.config.set("useStrictCSP", true)')) throw new Error("Ace 编辑器必须启用严格 CSP 模式");
 if (!sftp.includes("stylesReady")) throw new Error("Ace 样式失效时必须回退普通文本编辑器");
+for (const token of ["document.activeElement === searchInput", "if (!keepSearchFocus) aceEditor.focus();", "if (!keepSearchFocus) fallbackEditor.focus();"]) {
+  if (!sftp.includes(token)) throw new Error(`SFTP 编辑器搜索必须保留搜索框焦点：${token}`);
+}
 for (const token of ["/sftp/open?path=", "response.body.getReader()", "onPauseChange", "/sftp-open-worker.js", "50 * 1024 * 1024", "sftp-action-terminal", "sftpOpenTransportInterrupted", "sftp:editor.retrying_transfer", "sftpDiffViewerHtml", "openSftpExternalComparison", "/sftp/versions?path="]) {
   if (!sftp.includes(token)) throw new Error(`SFTP 流式打开边界缺少：${token}`);
 }

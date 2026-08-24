@@ -603,6 +603,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       const match = editorSearchMatches[index];
       const start = match.start;
       const end = start + match.length;
+      const keepSearchFocus = document.activeElement === searchInput;
       if (aceEditor) {
         const Range = ace.require("ace/range").Range;
         const aceDocument = aceEditor.session.getDocument();
@@ -610,12 +611,12 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
         const endPosition = aceDocument.indexToPosition(end, 0);
         aceEditor.selection.setRange(new Range(startPosition.row, startPosition.column, endPosition.row, endPosition.column), false);
         aceEditor.scrollToLine(startPosition.row, true, true);
-        aceEditor.focus();
+        if (!keepSearchFocus) aceEditor.focus();
       } else {
-        fallbackEditor.focus();
         fallbackEditor.setSelectionRange(start, end);
         const line = editorSearchSource().slice(0, start).split("\n").length - 1;
         fallbackEditor.scrollTop = Math.max(0, line * 20 - fallbackEditor.clientHeight / 2);
+        if (!keepSearchFocus) fallbackEditor.focus();
       }
     };
     const stepEditorSearch = direction => {

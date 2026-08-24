@@ -7,7 +7,7 @@
 <a id="english"></a>
 ### English
 
-> The next release draft is ready for user-visible changes after v1.5.4.
+> The next release draft is ready for user-visible changes after v1.5.5.
 
 #### Changes
 
@@ -16,11 +16,47 @@
 <a id="简体中文"></a>
 ### 简体中文
 
-> 下一版草稿用于记录 v1.5.4 之后的用户可见变化。
+> 下一版草稿用于记录 v1.5.5 之后的用户可见变化。
 
 #### 变更
 
 - 继续收集下一版本的用户可见变化。
+
+## v1.5.5
+
+<!-- terma-release-revision: 1 -->
+
+[English](#english) · [简体中文](#简体中文)
+
+<a id="english"></a>
+### English
+
+> This patch keeps the SFTP ACE editor search field active while you type.
+
+#### Important fixes
+
+- Fixed the SFTP ACE editor search box losing focus after the first typed character. Search navigation now updates the match without taking focus away from the search field.
+
+#### Changes in this release
+
+- No other user-visible changes are included in this patch.
+
+**Full Changelog**: [v1.5.4...v1.5.5](https://github.com/zmide/Terma/compare/v1.5.4...v1.5.5)
+
+<a id="简体中文"></a>
+### 简体中文
+
+> 本次补丁修复 SFTP ACE 编辑器搜索输入时焦点被移走的问题。
+
+#### 重要修复
+
+- 修复 SFTP ACE 编辑器搜索框输入第一个字符后失去焦点的问题。搜索导航现在只更新命中位置，不会把焦点从搜索框移走。
+
+#### 本次变更
+
+- 本补丁不包含其他用户可见变化。
+
+**完整变更**：[v1.5.4...v1.5.5](https://github.com/zmide/Terma/compare/v1.5.4...v1.5.5)
 
 ## v1.5.4
 
@@ -1298,4 +1334,3 @@
 - 自动恢复和自动重连只针对已经成功启动并记录到恢复状态的连接。
 - README 面向已发布功能；未发布内容优先记录在本文件和 `docs/Notes.md`。
 - 设置 `TUNNELDESK_WEB_ONLY=1` 时仍会强制后台 Web 模式，不会启动 Electron 桌面端。
-
