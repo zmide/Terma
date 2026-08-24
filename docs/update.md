@@ -7,7 +7,7 @@
 <a id="english"></a>
 ### English
 
-> The next release draft is ready for user-visible changes after v1.5.5.
+> The next release draft is ready for user-visible changes after v1.5.6.
 
 #### Changes
 
@@ -16,11 +16,47 @@
 <a id="简体中文"></a>
 ### 简体中文
 
-> 下一版草稿用于记录 v1.5.5 之后的用户可见变化。
+> 下一版草稿用于记录 v1.5.6 之后的用户可见变化。
 
 #### 变更
 
 - 继续收集下一版本的用户可见变化。
+
+## v1.5.6
+
+<!-- terma-release-revision: 1 -->
+
+[English](#english) · [简体中文](#简体中文)
+
+<a id="english"></a>
+### English
+
+> This patch fixes Chinese filenames being corrupted in Windows archive tools when SFTP servers use a non-UTF-8 locale.
+
+#### Important fixes
+
+- Fixed SFTP archive downloads and remote compression on servers whose login locale is GB18030 or another non-UTF-8 locale. Archive filenames now preserve the original Chinese names and include an explicit UTF-8 marker for compatible Windows tools.
+
+#### Changes in this release
+
+- Improved SFTP archive compatibility with Windows archive tools.
+
+**Full Changelog**: [v1.5.5...v1.5.6](https://github.com/zmide/Terma/compare/v1.5.5...v1.5.6)
+
+<a id="简体中文"></a>
+### 简体中文
+
+> 本次补丁修复 SFTP 服务器使用非 UTF-8 locale 时，Windows 压缩工具中的中文文件名乱码问题。
+
+#### 重要修复
+
+- 修复 GB18030 或其他非 UTF-8 locale 的服务器进行 SFTP 打包下载和远端压缩时文件名乱码的问题。现在归档会保留原始中文文件名，并写入兼容 Windows 压缩工具的 UTF-8 标记。
+
+#### 本次变更
+
+- 提升 SFTP 归档与 Windows 压缩工具的兼容性。
+
+**完整变更**：[v1.5.5...v1.5.6](https://github.com/zmide/Terma/compare/v1.5.5...v1.5.6)
 
 ## v1.5.5
 

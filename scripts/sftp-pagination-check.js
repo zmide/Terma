@@ -34,7 +34,7 @@ const {
   paginateRemoteEntries
 } = require("../dist/sftp");
 const { normalizeCompressionRequest } = require("../dist/sftp-jobs");
-const { buildRemoteExtractCommand, normalizeArchiveFilenameEncoding } = require("../dist/sftp-operation-commands");
+const { buildRemoteExtractCommand, normalizeArchiveFilenameEncoding, resolveArchiveFilenameEncoding } = require("../dist/sftp-operation-commands");
 
 function names(result) {
   return result.entries.map((entry) => entry.name);
@@ -138,6 +138,8 @@ assert.match(sftpFrontendSource, /if \(sftpJobsRefreshPromise\) \{\s*sftpJobsRef
 assert.match(sftpFrontendSource, /refreshSftpJobsIfStale\(maxAge=2000\)/, "普通 SFTP 激活不得重复刷新新鲜任务状态");
 assert.match(sftpFrontendSource, /await refreshSftp\(\{tabKey:selectedKey\}\)/, "任务完成后的目录刷新必须串行执行");
 assert.match(sftpFrontendSource, /list\._sftpTaskCenterRenderSignature !== renderSignature/, "任务中心内容未变化时不得生成并重建全部任务 DOM");
+assert.match(sftpFrontendSource, /function sftpArchiveEncodingOptionsHtml\(selected="utf8"\)/, "归档文件名编码默认必须使用 UTF-8");
+assert.match(sftpFrontendSource, /sftpArchiveEncodingOptionsHtml\(initialEncoding\)/, "归档编码下拉框必须跟随当前连接编码");
 
 const sftpBackendSource = fs.readFileSync(path.join(root, "src", "sftp.ts"), "utf8");
 assert.match(sftpBackendSource, /await yieldSftpWork\(\)/, "大目录元数据解析必须分批让出共享事件循环");
@@ -378,9 +380,12 @@ assert.throws(() => parseRemoteRecycleItems(`${recycleId}\tnot-base64!\t1\tfile`
 const singleArchive = normalizeCompressionRequest(["/srv/file.txt"], "/srv", "file-copy");
 assert.equal(singleArchive.name, "file-copy.tar.gz");
 assert.equal(singleArchive.output, "/srv/file-copy.tar.gz");
-assert.equal(singleArchive.filename_encoding, "default");
-assert.match(singleArchive.command, /tar -czf/);
+assert.equal(singleArchive.filename_encoding, "utf8");
+assert.match(singleArchive.command, /LC_ALL=C tar --format=posix --pax-option=hdrcharset=UTF-8 -czf/);
 assert.match(singleArchive.command, /'\.\/file\.txt'/);
+assert.match(require("../dist/sftp-operation-commands").archiveTarCreateOptions("default"), /hdrcharset=UTF-8/);
+assert.equal(resolveArchiveFilenameEncoding({sftp_filename_encoding:"gbk"}, "default"), "gbk");
+assert.throws(() => resolveArchiveFilenameEncoding({sftp_filename_encoding:"utf8"}, "gbk"), /必须与当前 SFTP 文件名编码一致/);
 const multiArchive = normalizeCompressionRequest(["/srv/folder", "/srv/-danger"], "/srv", "bundle.tar.gz", null, "utf-8");
 assert.equal(multiArchive.paths.length, 2);
 assert.equal(multiArchive.filename_encoding, "utf8");

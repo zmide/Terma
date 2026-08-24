@@ -26,9 +26,21 @@ function normalizeArchiveFilenameEncoding(value: unknown) {
   return encoding;
 }
 
+function resolveArchiveFilenameEncoding(connection: any, requested: unknown = "default") {
+  const selected = normalizeArchiveFilenameEncoding(requested);
+  const source = normalizeArchiveFilenameEncoding(connection?.sftp_filename_encoding || "utf8");
+  if (selected === "default") return source === "default" ? "utf8" : source;
+  if (selected !== source) {
+    throw new Error("压缩包文件名编码必须与当前 SFTP 文件名编码一致，请先切换连接编码");
+  }
+  return selected;
+}
+
 function archiveTarCreateOptions(encoding: string) {
-  if (encoding === "default") return "";
-  return encoding === "utf8"
+  // Keep the legacy "default" value for API compatibility, but always mark
+  // the default archive names as UTF-8. Callers prefix the command with
+  // LC_ALL=C so a GB18030 login locale cannot reinterpret UTF-8 argv bytes.
+  return encoding === "default" || encoding === "utf8"
     ? "--format=posix --pax-option=hdrcharset=UTF-8 "
     : "--format=posix --pax-option=hdrcharset=BINARY ";
 }
@@ -144,9 +156,9 @@ function normalizeCompressionRequest(paths: unknown, targetDir = ".", archiveNam
   if (normalizedPaths.includes(output)) throw new Error("压缩包不能覆盖被选中的源文件");
   const temporaryOutput = path.posix.join(target, `.terma-${crypto.randomUUID()}.tar.gz.part`);
   const names = normalizedPaths.map((item) => `./${path.posix.basename(item)}`);
-  const encoding = normalizeArchiveFilenameEncoding(filenameEncoding);
+  const encoding = resolveArchiveFilenameEncoding(connection, filenameEncoding);
   const tarOptions = archiveTarCreateOptions(encoding);
-  const command = `if [ -e ${remotePathOperand(connection, output)} ]; then echo "目标压缩包已存在" >&2; exit 1; fi; tar ${tarOptions}-czf ${remotePathOperand(connection, temporaryOutput)} -C ${remotePathOperand(connection, parent)} -- ${names.map((item) => remotePathOperand(connection, item)).join(" ")} && mv -- ${remotePathOperand(connection, temporaryOutput)} ${remotePathOperand(connection, output)} || { status=$?; rm -f -- ${remotePathOperand(connection, temporaryOutput)}; exit $status; }`;
+  const command = `if [ -e ${remotePathOperand(connection, output)} ]; then echo "目标压缩包已存在" >&2; exit 1; fi; LC_ALL=C tar ${tarOptions}-czf ${remotePathOperand(connection, temporaryOutput)} -C ${remotePathOperand(connection, parent)} -- ${names.map((item) => remotePathOperand(connection, item)).join(" ")} && mv -- ${remotePathOperand(connection, temporaryOutput)} ${remotePathOperand(connection, output)} || { status=$?; rm -f -- ${remotePathOperand(connection, temporaryOutput)}; exit $status; }`;
   return { paths:normalizedPaths, target, parent, name, output, temporary_output:temporaryOutput, filename_encoding:encoding, command };
 }
 
@@ -157,5 +169,6 @@ module.exports = {
   buildItemProgressJobCommand,
   crossCopyProgressEntries,
   normalizeArchiveFilenameEncoding,
+  resolveArchiveFilenameEncoding,
   normalizeCompressionRequest
 };

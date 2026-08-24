@@ -3,7 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { remotePathOperand, shellQuote, spawnRemote } = require("./sftp-job-paths");
 const { clearSftpJobIssue, setSftpJobIssue } = require("./sftp-job-issues");
-const { archiveTarCreateOptions, normalizeArchiveFilenameEncoding } = require("./sftp-operation-commands");
+const { archiveTarCreateOptions, normalizeArchiveFilenameEncoding, resolveArchiveFilenameEncoding } = require("./sftp-operation-commands");
 
 function codedSftpJobError(message: string, code: string, params: any = {}) {
   const error: any = new Error(message);
@@ -545,7 +545,7 @@ function createSftpDownloadJobs(dependencies: any) {
     let basename = path.posix.basename(requestedName || `terma-${timestamp}.tar.gz`);
     if (!/\.(?:tar\.gz|tgz)$/i.test(basename)) basename = `${basename}.tar.gz`;
     if (Buffer.byteLength(basename, "utf8") > 255) throw new Error("打包下载文件名过长");
-    const filenameEncoding = normalizeArchiveFilenameEncoding(options.encoding);
+    const filenameEncoding = resolveArchiveFilenameEncoding(connection, options.encoding);
     fs.mkdirSync(downloadsDirectory, {recursive:true});
     const tempPath = path.join(downloadsDirectory, `${id}-${safeLocalFilename(basename)}`);
     const job: any = {
@@ -627,7 +627,7 @@ function createSftpDownloadJobs(dependencies: any) {
       `td_archive=$(mktemp "\${TMPDIR:-/tmp}/terma-download-XXXXXXXX.tar.gz") || exit $?`,
       `trap 'rm -f -- "$td_archive"; exit 130' 1 2 3 15`,
       `printf '%s%s\\n' ${shellQuote(marker)} "$td_archive"`,
-      `if tar ${tarOptions}-C ${remotePathOperand(connection, parent)} -czf "$td_archive" -- ${names.map((name: string) => remotePathOperand(connection, name)).join(" ")}; then trap - 1 2 3 15; exit 0; else td_status=$?; trap - 1 2 3 15; rm -f -- "$td_archive"; exit "$td_status"; fi`
+      `if LC_ALL=C tar ${tarOptions}-C ${remotePathOperand(connection, parent)} -czf "$td_archive" -- ${names.map((name: string) => remotePathOperand(connection, name)).join(" ")}; then trap - 1 2 3 15; exit 0; else td_status=$?; trap - 1 2 3 15; rm -f -- "$td_archive"; exit "$td_status"; fi`
     ].join("; ");
     const child = spawnRemote(connection, command);
     job.child = child;

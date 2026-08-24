@@ -144,7 +144,7 @@ async function downloadSftpSelection(tabKey=activeTabKey) {
     ]);
     if (!mode || !await confirmSftpDownloadNotice(settings)) return;
     const archive = mode === "archive"
-      ? await sftpArchiveOptionsModal({mode:"download", title:tr("sftp:transfer.batch_download_title"), filename:defaultSftpArchiveName(entries)})
+      ? await sftpArchiveOptionsModal({mode:"download", connectionId:tab.id, title:tr("sftp:transfer.batch_download_title"), filename:defaultSftpArchiveName(entries)})
       : null;
     if (mode === "archive" && !archive) return;
     notify(tr(mode === "separate" ? "sftp:transfer.downloading_selected" : "sftp:transfer.creating_archive"), "info");

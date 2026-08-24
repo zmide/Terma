@@ -1261,7 +1261,7 @@ async function extractSingleSftp(id, path, tabKey=activeTabKey) {
 
 async function compressSingleSftp(id, path, tabKey=activeTabKey) {
   const runtime = sftpTabRuntimes.get(String(tabKey || ""));
-  const archive = await sftpArchiveOptionsModal({mode:"compress", title:tr("sftp:dialogs.compress_remote", {defaultValue:"压缩远程项目"}), filename:`${sftpPathName(path)}.tar.gz`});
+  const archive = await sftpArchiveOptionsModal({mode:"compress", connectionId:id, title:tr("sftp:dialogs.compress_remote", {defaultValue:"压缩远程项目"}), filename:`${sftpPathName(path)}.tar.gz`});
   if (!archive) return;
   try {
     const job = await api(`/api/connections/${id}/sftp/compress`, {method:"POST", body:JSON.stringify({paths:[path], target:runtime?.state.path || ".", filename:archive.filename, encoding:archive.encoding})});
