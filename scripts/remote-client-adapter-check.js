@@ -247,9 +247,23 @@ async function main() {
   assert.equal(configuredDiagnostics.configured, true);
   assert.equal(configuredDiagnostics.requires_selection, false);
   assert.equal(configuredDiagnostics.client, "vncviewer.exe");
+  assert.equal(configuredDiagnostics.mode, "generic", "未知系统 VNC 客户端必须使用安全的 endpoint-only 启动模式");
   await selectableWindows.open({id:20,protocol:"vnc",host:"selected.example",port:5902,options:{quality:6}});
   assert.equal(launches.at(-1).executable, selectableVncPath);
-  assert.deepEqual(launches.at(-1).args, ["selected.example::5902", "-QualityLevel=6"]);
+  assert.deepEqual(launches.at(-1).args, ["selected.example::5902"]);
+  const tigerVncPath = "C:\\Program Files\\TigerVNC\\vncviewer.exe";
+  const tigerVncWindows = createRemoteClientAdapter({
+    platform:"win32",
+    environment:{SystemRoot:"C:\\Windows",ProgramFiles:"C:\\Program Files"},
+    vncClientPath:tigerVncPath,
+    existsSync:file => String(file).toLowerCase() === tigerVncPath.toLowerCase(),
+    statSync:()=>({isFile:()=>true,isDirectory:()=>false}),
+    spawn:fakeSpawn,
+    spawnSync:unavailableCommand
+  });
+  assert.equal(tigerVncWindows.diagnostics().vnc.mode, "tigervnc");
+  await tigerVncWindows.open({id:23,protocol:"vnc",host:"tiger.example",port:5900,options:{quality:6,shared:true,view_only:true}});
+  assert.deepEqual(launches.at(-1).args, ["tiger.example::5900", "-QualityLevel=6", "-Shared", "-ViewOnly"]);
   const realVncPath = "C:\\Program Files\\RealVNC\\VNC Viewer\\vncviewer.exe";
   const realVncWindows = createRemoteClientAdapter({
     platform:"win32",

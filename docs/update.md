@@ -11,7 +11,7 @@
 
 #### Changes
 
-- Continue collecting user-visible changes for the next release.
+- No additional user-visible changes are pending after the v1.5.7 revision 2 release.
 
 <a id="简体中文"></a>
 ### 简体中文
@@ -20,11 +20,11 @@
 
 #### 变更
 
-- 继续收集下一版本的用户可见变化。
+- v1.5.7 revision 2 发布后暂无其他用户可见变化。
 
 ## v1.5.7
 
-<!-- terma-release-revision: 1 -->
+<!-- terma-release-revision: 2 -->
 
 [English](#english) · [简体中文](#简体中文)
 
@@ -37,7 +37,7 @@
 
 - Fixed built-in VNC diagnostics that could mistake an unavailable SSH management probe for an unreachable VNC port. Terma now keeps network, authentication, and RFB handshake failures separate and shows the server's reason, including `Too many security failures`.
 - Added a safe fallback for RealVNC authentication that noVNC cannot handle. In automatic mode Terma opens the configured system VNC Viewer; after a server lockout it stops without retrying or launching another client.
-- Fixed RealVNC Viewer installations saved under custom names such as `VNC-Viewer.exe`. Terma no longer passes TigerVNC-only switches to RealVNC and uses its supported `HOST::PORT` target.
+- Fixed system VNC viewer detection for custom or unknown executable names. Terma now sends TigerVNC-only switches only to positively identified TigerVNC; RealVNC and other viewers receive the portable `HOST::PORT` target instead of rejecting unsupported options.
 
 #### Important additions
 
@@ -59,7 +59,7 @@
 
 - 修复内置 VNC 把不可用的 SSH 管理探测误判成 VNC 端口不可访问的问题。现在会区分网络、认证和 RFB 握手失败，并显示服务端原因，包括 `Too many security failures`。
 - 增加对 noVNC 不支持的 RealVNC 认证方式的安全回退。自动模式会打开已配置的系统 VNC Viewer；服务端触发失败锁定后，Terma 会停止，不再继续重试或启动另一个客户端。
-- 修复自定义名称（例如 `VNC-Viewer.exe`）的 RealVNC Viewer 被误识别为 TigerVNC 的问题。Terma 不再传递 TigerVNC 专用参数，而是使用 RealVNC 支持的 `HOST::PORT` 目标。
+- 修复自定义或无法确认类型的系统 VNC 客户端识别。只有明确识别为 TigerVNC 才传递 TigerVNC 专用参数；RealVNC 和其他客户端只接收通用 `HOST::PORT` 目标，避免因不支持的选项启动失败。
 
 #### 重要新增
 

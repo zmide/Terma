@@ -159,17 +159,26 @@ function createRemoteClientAdapter(options = {}) {
         configured
       };
     }
+    const normalizedExecutable = String(executable).replaceAll("\\", "/");
+    const normalizedName = String(name).toLowerCase();
+    const normalizedPath = normalizedExecutable.toLowerCase();
+    const mode = /remmina(?:\.exe)?$/i.test(name)
+      ? "remmina"
+      : /gvncviewer(?:\.exe)?$/i.test(name)
+        ? "gvncviewer"
+        : /tvnviewer(?:\.exe)?$/i.test(name)
+          ? "tightvnc"
+          : /(?:^|\/)tigervnc(?:\/|$)/i.test(normalizedPath)
+            ? "tigervnc"
+            : (normalizedPath.includes("realvnc")
+              || /(?:^|\/)vnc viewer(?: [^/]+)?\/vncviewer(?:\.exe)?$/i.test(normalizedPath)
+              || /^vnc[-_ ]+viewer(?:\.exe)?$/i.test(normalizedName))
+              ? "realvnc"
+              : "generic";
     return {
       client:name,
       executable,
-      mode:/remmina(?:\.exe)?$/i.test(name)
-        ? "remmina"
-        : /gvncviewer(?:\.exe)?$/i.test(name)
-          ? "gvncviewer"
-          : (/(?:^|[\\/])vnc[-_ ]+viewer\.exe$/i.test(String(executable))
-            || /(?:^|[\\/])RealVNC[\\/](?:VNC Viewer[\\/])?vncviewer\.exe$/i.test(String(executable)))
-            ? "realvnc"
-          : "vncviewer",
+      mode,
       application:"",
       configured
     };
@@ -661,7 +670,14 @@ function createRemoteClientAdapter(options = {}) {
     } else if (item.mode === "application") await spawnDetached("/usr/bin/open", ["-a", item.application, uri]);
     else if (item.mode === "remmina") await spawnDetached(item.executable, ["-c", uri]);
     else if (item.mode === "gvncviewer") await spawnDetached(item.executable, [endpoint(profile.host, port)]);
-    else if (/tvnviewer(?:\.exe)?$/i.test(item.executable)) await spawnDetached(item.executable, [`-host=${normalizeHost(profile.host)}`, `-port=${port}`]);
+    else if (item.mode === "tightvnc") await spawnDetached(item.executable, [`-host=${normalizeHost(profile.host)}`, `-port=${port}`]);
+    else if (item.mode === "tigervnc") {
+      const host = normalizeHost(profile.host);
+      const args = [`${net.isIP(host) === 6 ? `[${host}]` : host}::${port}`, `-QualityLevel=${Number(value.quality ?? 8)}`];
+      if (value.shared) args.push("-Shared");
+      if (value.view_only) args.push("-ViewOnly");
+      await spawnDetached(item.executable, args);
+    }
     else if (item.mode === "realvnc") {
       // RealVNC Viewer does not accept TigerVNC-only switches. Its portable
       // target syntax is HOST::PORT.
@@ -669,10 +685,11 @@ function createRemoteClientAdapter(options = {}) {
       await spawnDetached(item.executable, [`${net.isIP(host) === 6 ? `[${host}]` : host}::${port}`]);
     } else {
       const host = normalizeHost(profile.host);
-      const args = [`${net.isIP(host) === 6 ? `[${host}]` : host}::${port}`, `-QualityLevel=${Number(value.quality ?? 8)}`];
-      if (value.shared) args.push("-Shared");
-      if (value.view_only) args.push("-ViewOnly");
-      await spawnDetached(item.executable, args);
+      // Unknown VNC clients are intentionally launched with the portable
+      // endpoint only. Client-specific switches can make a valid viewer fail
+      // before it opens, so only an explicitly identified TigerVNC receives
+      // TigerVNC flags above.
+      await spawnDetached(item.executable, [`${net.isIP(host) === 6 ? `[${host}]` : host}::${port}`]);
     }
     return {ok:true, protocol:"vnc", client:item.client, credentials:"prompt"};
   }

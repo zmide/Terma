@@ -1,7 +1,7 @@
 {
   "name": "terma",
   "version": "1.5.7",
-  "releaseRevision": 1,
+  "releaseRevision": 2,
   "private": true,
   "license": "GPL-3.0-only",
   "description": "Cross-platform remote operations workspace for SSH, terminals, SFTP, RDP, VNC, X11/XDMCP, files and tunnels",
