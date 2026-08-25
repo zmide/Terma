@@ -9,14 +9,6 @@ function vncSessionStatus(session, text, state="") {
   setWorkspaceTabConnectionStatus(session.key, state === "connected" ? "connected" : state === "connecting" ? "connecting" : "disconnected");
 }
 
-function vncServiceFailureDetail(message="") {
-  const value = String(message || "");
-  if (/ECONNREFUSED|refused|拒绝/i.test(value)) return tr("remote:vnc_status.failure_refused", {defaultValue:"远端拒绝了 5900 端口连接，VNC 服务可能尚未开启。"});
-  if (/ETIMEDOUT|timeout|超时/i.test(value)) return tr("remote:vnc_status.failure_timeout", {defaultValue:"连接远端 5900 端口超时，请同时检查网络和防火墙。"});
-  if (/ENOTFOUND|EAI_AGAIN|resolve|解析/i.test(value)) return tr("remote:vnc_status.failure_resolve", {defaultValue:"无法解析远端主机地址，请检查连接地址。"});
-  return tr("remote:vnc_status.failure_unreachable", {defaultValue:"远端 5900 端口当前不可访问。"});
-}
-
 function vncServerReady(diagnostics={}) {
   const selection = diagnostics?.server_session_selection || {};
   const selectedComponent = diagnostics?.selected_component || selection.component_state || null;
@@ -104,11 +96,35 @@ async function inspectVncServer(profileId, button=null, targetContainer=null) {
   }
 }
 
-function vncDiagnosticCopy(diagnostics, serviceAvailable, detail="") {
+function vncDiagnosticCopy(diagnostics, serviceAvailable, detail="", options={}) {
   const status = String(diagnostics?.status || "").toLowerCase();
+  if (options?.connectionAttempt === true) {
+    const rawReason = String(detail || "").trim();
+    const reasonMatch = rawReason.match(/reason:\s*(.*?)\)?\s*$/i);
+    const reason = String(reasonMatch?.[1] || rawReason).trim();
+    const failure = classifyVncFailure(reason);
+    if (failure.kind === "unsupported-security") return {
+      title:tr("remote:vnc_status.unsupported_security_title", {defaultValue:"内置 VNC 不支持远端认证方式"}),
+      summary:tr("remote:vnc_status.unsupported_security_summary", {types:failure.types, defaultValue:`该 RealVNC 服务端提供的认证类型（${failure.types}）不在 Terma 内置客户端支持范围内。请改用系统 VNC Viewer，或在服务端启用标准 VNC 密码认证。`})
+    };
+    if (failure.kind === "too-many-security-failures") return {
+      title:tr("remote:vnc_status.too_many_security_failures_title", {defaultValue:"远端暂时拒绝 Terma"}),
+      summary:tr("remote:vnc_status.too_many_security_failures_summary", {defaultValue:"远端返回 Too many security failures，说明服务端失败计数已触发。Terma 已停止继续尝试，请等待服务端解除限制或改用系统 VNC Viewer，不要连续重试。"})
+    };
+    return {
+      title:tr("remote:vnc_status.connection_failed_title", {defaultValue:"VNC 连接未完成"}),
+      summary:reason
+        ? tr("remote:vnc_status.connection_failed_with_detail", {detail:reason, defaultValue:`远端返回：“${reason}”。请根据该提示检查 VNC 服务端状态、失败计数和连接密码后重试。`})
+        : tr("remote:vnc_status.connection_failed_summary", {defaultValue:"远端在 VNC/RFB 握手阶段关闭或拒绝了 Terma 连接，常见原因是认证方式不兼容、连接密码不正确，或服务端限制了当前客户端。请检查密码后重试。"})
+    };
+  }
   if (serviceAvailable || status === "ready" || status === "reachable") return {
     title:tr("remote:vnc_status.accessible_title", {defaultValue:"VNC 服务可访问，但连接未完成"}),
     summary:tr("remote:vnc_status.accessible_summary", {defaultValue:"远端 VNC 端口可以访问，请检查认证方式和连接密码。"})
+  };
+  if (diagnostics?.diagnostics_available === false || status === "unknown" || status === "unmanaged") return {
+    title:tr("remote:vnc_status.probe_unavailable_title", {defaultValue:"无法完成远端 VNC 服务探测"}),
+    summary:tr("remote:vnc_status.probe_unavailable_connection_summary", {defaultValue:"Terma 没有把裸 TCP 探测当作 VNC 连接；当前 SSH 深度探测不可用，不能据此判断 5900 端口已关闭。请检查 VNC 认证方式和连接密码后重试。"})
   };
   const platform = String(diagnostics?.platform || "").toLowerCase();
   if (platform === "macos") return {title:tr("remote:vnc_status.macos_disabled_title", {defaultValue:"未开启 macOS 屏幕共享"}), summary:tr("remote:vnc_status.macos_disabled_summary", {defaultValue:"macOS 自带 VNC 服务，请在系统设置中开启“屏幕共享”或“远程管理”。"})};
@@ -274,7 +290,7 @@ function vncConnectionHelpMarkup(profile, platform="", serviceAvailable=false, d
       ? {title:tr("remote:vnc_status.selection_pending_title", {defaultValue:"所选桌面来源尚未生效"}), summary:tr("remote:vnc_status.selection_pending_summary", {defaultValue:"当前 VNC 服务仍在使用旧来源；请应用来源并重启，或先安装目标来源需要的组件。"})}
       : options.preflight && running
     ? {title:tr("remote:vnc_status.ready_title", {defaultValue:"VNC 服务已就绪"}), summary:tr("remote:vnc_status.ready_summary", {defaultValue:"远端 VNC 端口和服务探测通过，可以打开远程桌面。"})}
-    : vncDiagnosticCopy(diagnostics, serviceAvailable, detail);
+    : vncDiagnosticCopy(diagnostics, serviceAvailable, detail, options);
   const needsInstall = componentInstallRequired || status === "not-installed" || (["stopped", "not-listening"].includes(status) && !diagnostics?.start_plan && !installed);
   const installModes = needsInstall && !macos
     ? remoteInstallModesMarkup(installPlan, mode => `installVncServer(${Number(profile.id)},'${escAttr(reconnectKey)}',this,'${mode}')`, `openVncSetupGuide(${Number(profile.id)})`, actionKey)
@@ -343,7 +359,7 @@ function hideVncConnectionHelp(session) {
   }
 }
 
-function showVncConnectionHelp(session, serviceAvailable=false, detail="", diagnostics=null) {
+function showVncConnectionHelp(session, serviceAvailable=false, detail="", diagnostics=null, options={}) {
   if (!session) return;
   session.helpState = {serviceAvailable:Boolean(serviceAvailable), detail:String(detail || ""), diagnostics:diagnostics || null};
   if (diagnostics) {
@@ -352,21 +368,21 @@ function showVncConnectionHelp(session, serviceAvailable=false, detail="", diagn
     applyVncCursorPolicy(session);
   }
   if (!session.help) return;
-  session.help.innerHTML = vncConnectionHelpMarkup(session.profile, session.remotePlatform, serviceAvailable, detail, diagnostics, session.key);
+  session.help.innerHTML = vncConnectionHelpMarkup(session.profile, session.remotePlatform, serviceAvailable, detail, diagnostics, session.key, options);
   session.help.hidden = false;
   refreshIcons();
   const actionKey = vncServerActionKey(session.profile?.id);
   syncUiActionControls(actionKey, isUiActionInFlight(actionKey));
 }
 
-async function diagnoseEmbeddedVncDisconnect(profile, key) {
+async function diagnoseEmbeddedVncDisconnect(profile, key, disconnectDetail="") {
   const session = vncSessions.get(key);
   if (!session) return;
   const diagnosticToken = Number(session.diagnosticToken || 0) + 1;
   session.diagnosticToken = diagnosticToken;
   vncSessionStatus(session, tr("remote:vnc_ui.detecting_port", {defaultValue:"正在检测 VNC 端口..."}), "connecting");
   let serviceAvailable = false;
-  let detail = "";
+  let detail = String(disconnectDetail || "");
   let diagnostics = null;
   const stageTimer = setTimeout(() => {
     if (vncSessions.get(key) === session && session.diagnosticToken === diagnosticToken) vncSessionStatus(session, tr("remote:vnc_ui.checking_service_ssh", {defaultValue:"正在通过 SSH 检查服务..."}), "connecting");
@@ -378,15 +394,31 @@ async function diagnoseEmbeddedVncDisconnect(profile, key) {
     diagnostics = await api(`/api/remote-profiles/${profile.id}/vnc/server`);
     serviceAvailable = diagnostics?.status === "ready" || diagnostics?.status === "reachable" || diagnostics?.listening === true;
   } catch (error) {
-    detail = error.message || "";
+    detail ||= error.message || "";
   } finally {
     clearTimeout(stageTimer);
     clearTimeout(planTimer);
   }
   if (!vncSessions.has(key) || session.diagnosticToken !== diagnosticToken || session.rfb || session.connecting) return;
-  const copy = vncDiagnosticCopy(diagnostics, serviceAvailable, detail);
+  const copy = vncDiagnosticCopy(diagnostics, serviceAvailable, detail, {connectionAttempt:true});
   vncSessionStatus(session, copy.title, "error");
-  showVncConnectionHelp(session, serviceAvailable, detail, diagnostics);
+  showVncConnectionHelp(session, serviceAvailable, detail, diagnostics, {connectionAttempt:true});
+  const failure = classifyVncFailure(detail);
+  if (profile.options?.client_mode === "auto" && failure.kind === "unsupported-security" && !session.systemFallbackStarted) {
+    session.systemFallbackStarted = true;
+    const clients = await api("/api/remote-clients/diagnostics").catch(() => null);
+    if (vncSessions.get(key) !== session || session.rfb || session.connecting) return {detail, diagnostics, serviceAvailable, failure};
+    if (clients?.vnc?.available) {
+      vncSessionStatus(session, tr("remote:vnc_ui.fallback_system_client_unsupported", {defaultValue:"内置 VNC 不支持远端认证方式，正在改用系统客户端"}), "error");
+      notify(tr("remote:vnc_ui.fallback_system_client_unsupported", {defaultValue:"内置 VNC 不支持远端认证方式，正在改用系统客户端"}), "info");
+      await launchRemoteDesktop(profile.id, key).catch(error => notify(error.message || tr("remote:clients.launch_failed", {defaultValue:"远程桌面客户端启动失败"}), "error"));
+    }
+  } else if (failure.kind === "too-many-security-failures") {
+    session.systemFallbackStarted = true;
+    vncSessionStatus(session, tr("remote:vnc_ui.system_fallback_blocked_lockout", {defaultValue:"远端已触发安全失败锁定，Terma 不会自动启动系统客户端或继续重试"}), "error");
+    notify(tr("remote:vnc_ui.system_fallback_blocked_lockout", {defaultValue:"远端已触发安全失败锁定，Terma 不会自动启动系统客户端或继续重试"}), "warning");
+  }
+  return {detail, diagnostics, serviceAvailable, failure};
 }
 
 function closeVncSetupGuide() {
@@ -773,7 +805,7 @@ function renderEmbeddedVnc(profile, key, diagnostics=null, targetView=null, deta
         ${detached ? "" : `<button class="icon-button" onclick="openVncSetupGuide(${profile.id})" title="${escAttr(serviceManagementLabel)}" aria-label="${escAttr(serviceManagementLabel)}">${icon("server-cog")}</button>`}
         <button class="icon-button" onclick="reconnectEmbeddedVnc(${profile.id},'${escAttr(key)}')" title="${escAttr(reconnectLabel)}" aria-label="${escAttr(reconnectLabel)}">${icon("refresh-cw")}</button>
         ${detached ? "" : `<button class="icon-button" onclick="launchRemoteDesktop(${profile.id},'${escAttr(key)}',this)" title="${escAttr(systemClientLabel)}" aria-label="${escAttr(systemClientLabel)}">${icon("external-link")}</button>`}
-        ${detached ? `<button class="icon-button" onclick="closeDetachedVncWindow('${escAttr(key)}')" title="${escAttr(closeWindowLabel)}" aria-label="${escAttr(closeWindowLabel)}">${icon("x")}</button>` : `<button class="icon-button" onclick="editRemoteProfile(${profile.id})" title="${escAttr(connectionSettingsLabel)}" aria-label="${escAttr(connectionSettingsLabel)}">${icon("settings-2")}</button>`}
+        ${detached ? `<button type="button" class="icon-button" onclick="openDetachedVncConnectionSettings(${profile.id})" title="${escAttr(connectionSettingsLabel)}" aria-label="${escAttr(connectionSettingsLabel)}">${icon("settings-2")}</button><button type="button" class="icon-button" onclick="closeDetachedVncWindow('${escAttr(key)}')" title="${escAttr(closeWindowLabel)}" aria-label="${escAttr(closeWindowLabel)}">${icon("x")}</button>` : `<button type="button" class="icon-button" onclick="editRemoteProfile(${profile.id})" title="${escAttr(connectionSettingsLabel)}" aria-label="${escAttr(connectionSettingsLabel)}">${icon("settings-2")}</button>`}
       </div>
     </div>
     <div id="vncViewport" class="vnc-viewport" tabindex="0"><div id="vncConnectionHelp" class="vnc-connection-help" hidden></div></div>
@@ -908,6 +940,7 @@ async function connectEmbeddedVnc(profile, key) {
   session.clipboardTransportChecked = false;
   session.clipboardTransportPromise = null;
   session.remoteClipboardBridgeLastSeen = undefined;
+  session.failureDetail = "";
   resetVncClipboardBridgeWriteState(session);
   stopVncClipboardPolling(session);
   renderVncClipboardControls(session);
@@ -937,6 +970,17 @@ async function connectEmbeddedVnc(profile, key) {
     rfb.qualityLevel = Math.max(0, Math.min(9, Number(profile.options?.quality ?? 8)));
     applyVncCursorPolicy(session);
     rfb.background = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() || "#1e1e1e";
+    rfb.addEventListener("termafailure", event => {
+      if (!isCurrentConnection() || session.rfb !== rfb) return;
+      const detail = String(event.detail?.reason || "").trim();
+      if (!detail) return;
+      session.failureDetail = detail;
+      const failure = classifyVncFailure(detail);
+      if (failure.kind === "unsupported-security" || failure.kind === "too-many-security-failures") {
+        const copy = vncDiagnosticCopy(null, true, detail, {connectionAttempt:true});
+        vncSessionStatus(session, copy.title, "error");
+      }
+    });
     rfb.addEventListener("connect", () => {
       if (!isCurrentConnection() || session.rfb !== rfb) return rfb.disconnect();
       session.connecting = false;
@@ -958,6 +1002,9 @@ async function connectEmbeddedVnc(profile, key) {
         if (!isCurrentConnection() || session.rfb !== rfb) return rfb.disconnect();
       }
       rfb.sendCredentials(result.credentials);
+    });
+    rfb.addEventListener("serververification", event => {
+      void handleVncServerVerification(profile, key, rfb, event);
     });
     rfb.addEventListener("securityfailure", event => {
       if (!isCurrentConnection() || session.rfb !== rfb) return;
@@ -981,7 +1028,8 @@ async function connectEmbeddedVnc(profile, key) {
       stopVncClipboardPolling(session);
       if (session.authRetrying) return;
       if (event.detail?.clean) return vncSessionStatus(session, tr("remote:vnc_ui.session_ended", {defaultValue:"VNC 会话已结束"}));
-      void diagnoseEmbeddedVncDisconnect(profile, key);
+      const detail = event.detail?.reason || session.failureDetail || "";
+      void diagnoseEmbeddedVncDisconnect(profile, key, detail);
     });
   } catch (error) {
     if (!isCurrentConnection()) return;
@@ -1015,6 +1063,12 @@ async function saveVncCredential(profile, password) {
 async function handleVncSecurityFailure(profile, key, rfb, reason) {
   const session = vncSessions.get(key);
   if (!session || session.rfb !== rfb || session.authRetrying) return;
+  const failure = classifyVncFailure(reason);
+  if (failure.kind === "unsupported-security" || failure.kind === "too-many-security-failures") {
+    session.failureDetail = String(reason || "").trim();
+    const copy = vncDiagnosticCopy(null, true, session.failureDetail, {connectionAttempt:true});
+    return vncSessionStatus(session, copy.title, "error");
+  }
   session.authRetrying = true;
   vncSessionStatus(session, reason || tr("remote:vnc_ui.auth_failed", {defaultValue:"VNC 认证失败"}), "error");
   const result = await requestVncCredentials(profile, ["password"], {failureReason:reason, updateByDefault:true});
@@ -1036,6 +1090,41 @@ async function handleVncSecurityFailure(profile, key, rfb, reason) {
   session.nextCredentials = result.credentials;
   session.authRetrying = false;
   connectEmbeddedVnc(profile, key);
+}
+
+async function vncServerPublicKeyFingerprint(publicKey) {
+  const bytes = publicKey instanceof Uint8Array
+    ? publicKey
+    : publicKey instanceof ArrayBuffer
+      ? new Uint8Array(publicKey)
+      : new Uint8Array(publicKey?.buffer || []);
+  if (!bytes.length || !globalThis.crypto?.subtle) return "";
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, "0")).join(":").toUpperCase();
+}
+
+async function handleVncServerVerification(profile, key, rfb, event) {
+  const session = vncSessions.get(key);
+  if (!session || session.rfb !== rfb) return;
+  const fingerprint = await vncServerPublicKeyFingerprint(event?.detail?.publickey);
+  if (!vncSessions.has(key) || session.rfb !== rfb) return;
+  const message = tr("remote:vnc_ui.server_verification_message", {
+    endpoint:remoteProfileEndpoint(profile),
+    fingerprint:fingerprint || tr("common:auto.unknown", {defaultValue:"未知"}),
+    defaultValue:`远端 VNC 服务要求确认服务器公钥。请核对指纹后再继续连接。\n\n地址：${remoteProfileEndpoint(profile)}\nRSA 公钥 SHA-256：${fingerprint || "未知"}`
+  });
+  const accepted = await confirmModal(
+    message,
+    tr("remote:vnc_ui.server_verification_title", {defaultValue:"确认 VNC 服务器身份"}),
+    tr("remote:vnc_ui.server_verification_accept", {defaultValue:"信任并继续"}),
+    tr("common:actions.cancel", {defaultValue:"取消"})
+  );
+  if (!vncSessions.has(key) || session.rfb !== rfb) return;
+  if (accepted) {
+    rfb.approveServer?.();
+    return;
+  }
+  rfb.disconnect?.();
 }
 
 function requestVncCredentials(profile, types=[], options={}) {

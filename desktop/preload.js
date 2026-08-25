@@ -45,6 +45,17 @@ contextBridge.exposeInMainWorld("termaDesktop", {
   closeVncWindow() {
     return ipcRenderer.invoke("terma:vnc-window-close");
   },
+  openRemoteProfileSettings(profileId) {
+    return ipcRenderer.invoke("terma:remote-profile-settings", {
+      profileId:Number(profileId || 0)
+    });
+  },
+  onRemoteProfileSettings(callback) {
+    if (typeof callback !== "function") return () => {};
+    const handler = (_event, profileId) => callback(Number(profileId || 0));
+    ipcRenderer.on("terma:open-remote-profile-settings", handler);
+    return () => ipcRenderer.removeListener("terma:open-remote-profile-settings", handler);
+  },
   startSftpDrag(payload, requestId) {
     ipcRenderer.send("terma:sftp-start-drag", {
       ...(Array.isArray(payload)

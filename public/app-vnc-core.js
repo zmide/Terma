@@ -1,6 +1,36 @@
+function patchNoVncFailureEvents(RFB) {
+  if (!RFB?.prototype || RFB.prototype.__termaFailureEventPatched) return RFB;
+  const originalFail = RFB.prototype._fail;
+  if (typeof originalFail !== "function") return RFB;
+  RFB.prototype._fail = function(details) {
+    try {
+      this.dispatchEvent(new CustomEvent("termafailure", {detail:{reason:String(details || "")}}));
+    } catch {}
+    return originalFail.call(this, details);
+  };
+  Object.defineProperty(RFB.prototype, "__termaFailureEventPatched", {value:true, configurable:false, enumerable:false});
+  return RFB;
+}
+
 function noVncRfbClass() {
-  if (!noVncRfbPromise) noVncRfbPromise = import("/vendor/novnc/core/rfb.js").then(module => module.default);
+  if (!noVncRfbPromise) noVncRfbPromise = import("/vendor/novnc/core/rfb.js").then(module => patchNoVncFailureEvents(module.default));
   return noVncRfbPromise;
+}
+
+function vncServiceFailureDetail(message="") {
+  const value = String(message || "");
+  if (/ECONNREFUSED|refused|拒绝/i.test(value)) return tr("remote:vnc_status.failure_refused", {defaultValue:"远端拒绝了 5900 端口连接，VNC 服务可能尚未开启。"});
+  if (/ETIMEDOUT|timeout|超时/i.test(value)) return tr("remote:vnc_status.failure_timeout", {defaultValue:"连接远端 5900 端口超时，请同时检查网络和防火墙。"});
+  if (/ENOTFOUND|EAI_AGAIN|resolve|解析/i.test(value)) return tr("remote:vnc_status.failure_resolve", {defaultValue:"无法解析远端主机地址，请检查连接地址。"});
+  return tr("remote:vnc_status.failure_unreachable", {defaultValue:"远端 5900 端口当前不可访问。"});
+}
+
+function classifyVncFailure(detail="") {
+  const value = String(detail || "").trim();
+  const unsupported = value.match(/Unsupported security types\s*\(types:\s*([^)]*)\)/i);
+  if (unsupported) return {kind:"unsupported-security", types:String(unsupported[1] || "").trim()};
+  if (/Too many security failures/i.test(value)) return {kind:"too-many-security-failures"};
+  return {kind:"generic"};
 }
 
 function hasActiveEmbeddedVncRendering() {

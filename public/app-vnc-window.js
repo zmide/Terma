@@ -155,6 +155,30 @@ async function closeDetachedVncWindow(key="") {
   return {ok:true};
 }
 
+async function openDetachedVncConnectionSettings(profileId) {
+  const id = Number(profileId || 0);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  try {
+    if (window.termaDesktop?.openRemoteProfileSettings) {
+      const result = await window.termaDesktop.openRemoteProfileSettings(id);
+      if (result?.ok !== false) return true;
+      throw new Error(tr("remote:vnc_ui.connection_settings_failed", {defaultValue:"无法打开连接设置"}));
+    }
+    const opener = window.opener;
+    if (opener && !opener.closed) {
+      opener.focus?.();
+      if (typeof opener.editRemoteProfile === "function") {
+        opener.editRemoteProfile(id);
+        return true;
+      }
+    }
+  } catch (error) {
+    notify(error.message || tr("remote:vnc_ui.connection_settings_failed", {defaultValue:"无法打开连接设置"}), "error");
+  }
+  notify(tr("remote:vnc_ui.connection_settings_unavailable", {defaultValue:"无法定位主窗口，请先关闭此窗口后从连接列表打开设置"}), "info");
+  return false;
+}
+
 async function initDetachedVncWindow(profileId) {
   const id = Number(profileId || 0);
   const profile = remoteProfileById(id);

@@ -126,6 +126,15 @@ function desktopBehaviorPanelHtml() {
   if (!desktopSettings?.available) return "";
   const settings = desktopSettings.settings || {};
   const xserver = desktopSettings.xserver || {};
+  const vnc = desktopSettings.vnc_client || {};
+  const configuredVncPath = String(vnc.configured_path || "").trim();
+  const vncStatusIcon = vnc.available ? "circle-check" : vnc.requires_selection ? "circle-alert" : "circle-minus";
+  const vncStatus = configuredVncPath
+    ? tr("settings:auto.vnc_client_saved", {client:vnc.client || configuredVncPath, defaultValue:`已保存：${vnc.client || configuredVncPath}`})
+    : vnc.available
+      ? tr("settings:auto.vnc_client_detected", {client:vnc.client || tr("settings:auto.unknown_value", {defaultValue:"系统客户端"}), defaultValue:`自动检测：${vnc.client || "系统客户端"}`})
+      : tr("settings:auto.vnc_client_missing", {defaultValue:"尚未选择系统 VNC 客户端"});
+  const vncPath = configuredVncPath || String(vnc.executable || "").trim();
   const displaySuffix = xserver.display ? ` · ${xserver.display}` : "";
   const xserverState = xserver.available
     ? tr("settings:auto.xserver_ready", {display:displaySuffix, defaultValue:`已就绪${displaySuffix}`})
@@ -143,6 +152,8 @@ function desktopBehaviorPanelHtml() {
       </div>
     </div>
     <div class="desktop-runtime-row"><span>${icon(xserver.available ? "circle-check" : xserver.installed ? "circle-pause" : "circle-alert")}<b>X Server</b><small>${esc(xserverState)}</small></span><button type="button" onclick="openXServerManager()">${icon("x11")}<span>${esc(tr("settings:storage.manage"))}</span></button></div>
+    <div class="desktop-runtime-row desktop-vnc-client-row"><span>${icon(vncStatusIcon)}<b>${esc(tr("settings:auto.vnc_client_title", {defaultValue:"系统 VNC 客户端"}))}</b><small title="${escAttr(vncPath)}">${esc(vncStatus)}</small></span><button type="button" onclick="chooseDesktopVncClient()">${icon("folder-open")}<span>${esc(configuredVncPath ? tr("settings:auto.vnc_client_change", {defaultValue:"更改"}) : tr("settings:auto.vnc_client_choose", {defaultValue:"选择"}))}</span></button></div>
+    <div class="muted desktop-vnc-client-hint">${esc(tr("settings:auto.vnc_client_persistent_hint", {defaultValue:"首次选择后会持久化保存到 Terma 设置中；以后打开系统 VNC 客户端不会重复询问。需要更换时，请在这里修改。"}))}</div>
     <div class="actions"><button id="desktopSettingsSaveBtn" class="primary" type="button" onclick="saveDesktopSettings(this)">${icon("save")}<span>${esc(tr("settings:auto.save_desktop_behavior"))}</span></button></div>
   </section>`;
 }
@@ -161,6 +172,19 @@ async function chooseDesktopDataDirectory() {
       if (result.path && input) input.value = result.path;
     });
   } catch (error) { notify(error.message || tr("settings:auto.directory_choose_failed"), "error"); }
+}
+
+async function chooseDesktopVncClient() {
+  const inPane = captureSettingsPane();
+  try {
+    const result = await api("/api/desktop-settings/choose-vnc-client", {method:"POST", body:"{}"});
+    if (!result.path) return;
+    await loadDesktopSettings();
+    inPane(() => renderSettings());
+    notify(tr("settings:auto.vnc_client_saved_notice", {defaultValue:"系统 VNC 客户端路径已保存到 Terma 设置"}), "success");
+  } catch (error) {
+    notify(error.message || tr("settings:auto.vnc_client_choose_failed", {defaultValue:"系统 VNC 客户端选择失败"}), "error");
+  }
 }
 
 function desktopStoragePathChanged() {

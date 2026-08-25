@@ -30,6 +30,7 @@ async function main() {
     const accepted = await connectVncSocket("127.0.0.1", validPort, 1000);
     assert.equal(accepted.banner.toString("ascii"), "RFB 003.008\n");
     assert.equal(accepted.initial_data.toString("ascii"), "RFB 003.008\n");
+    assert.equal(VNC_BANNER_STABILITY_MS, 0, "real VNC sessions must forward the banner without an artificial delay");
     accepted.socket.destroy();
 
     await assert.rejects(
@@ -62,12 +63,11 @@ async function main() {
       socket.end("RFB 003.003\n");
     });
     const rejectedPort = await listen(rejected);
-    await assert.rejects(
-      connectVncSocket("127.0.0.1", rejectedPort, 500, {retries:1, retryDelayMs:10}),
-      error => error?.code === "EVNCPREMATURECLOSE"
-    );
+    const immediatelyClosed = await connectVncSocket("127.0.0.1", rejectedPort, 500, {retries:1, retryDelayMs:10});
+    assert.equal(immediatelyClosed.banner.toString("ascii"), "RFB 003.003\n");
+    immediatelyClosed.socket.destroy();
     assert.equal(rejectedAttempts, 1, "an immediate post-banner close must not trigger another unauthenticated VNC attempt");
-    assert.ok(VNC_BANNER_STABILITY_MS > 0 && VNC_BANNER_STABILITY_MS < 250);
+    assert.equal(VNC_BANNER_STABILITY_MS, 0, "real VNC sessions must not wait for an artificial banner stability delay");
     await close(rejected);
     console.log("VNC RFB handshake checks passed: valid, invalid, silent, transient and immediate-close endpoints are separated");
   } finally {

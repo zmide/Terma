@@ -2452,8 +2452,13 @@ function desktopSettingsView() {
   const settings = readSettings();
   const {vncClientPath:_vncClientPath, ...publicSettings} = settings;
   const paths = resolveRuntimePaths(settings);
+  const remoteClients = remoteClientDiagnostics();
   return {
     settings:publicSettings,
+    vnc_client:{
+      configured_path:String(settings.vncClientPath || ""),
+      ...(remoteClients?.vnc || {})
+    },
     paths,
     xserver:xServerDiagnostics(),
     project_mode_available: !app.isPackaged || isWindowsPortable(),
@@ -2667,8 +2672,22 @@ function remoteClientDiagnostics() {
   return remoteClientAdapter.diagnostics();
 }
 
-async function chooseVncClientExecutable() {
+async function chooseVncClientExecutable({firstUse=false} = {}) {
   await readDesktopNotificationPreferences(true).catch(() => null);
+  if (firstUse && !String(readSettings().vncClientPath || "").trim()) {
+    const notice = await dialog.showMessageBox(mainWindow || undefined, {
+      type:"info",
+      title:desktopUiText("选择系统 VNC 客户端", "Choose a system VNC client"),
+      message:desktopUiText(
+        "Terma 没有找到可用的系统 VNC 客户端。请选择 VNC Viewer 程序；选择结果会持久化保存到 Terma 设置中，之后不会重复询问。需要更换时，请到“设置 → 通用设置 → 桌面端行为”修改。",
+        "Terma could not find a usable system VNC client. Select a VNC Viewer application; your choice will be saved in Terma settings and will not be requested again. To change it later, use Settings → General → Desktop behavior."
+      ),
+      buttons:[desktopUiText("继续选择", "Choose now"), desktopUiText("取消", "Cancel")],
+      defaultId:0,
+      cancelId:1
+    });
+    if (notice.response !== 0) return "";
+  }
   const configured = String(readSettings().vncClientPath || "").trim();
   const result = await dialog.showOpenDialog(mainWindow || undefined, {
     title:desktopUiText("选择 VNC Viewer 客户端", "Select a VNC Viewer client"),
@@ -2687,11 +2706,19 @@ async function chooseVncClientExecutable() {
   return executable;
 }
 
+async function chooseVncClientForSettings() {
+  const executable = await chooseVncClientExecutable();
+  return {
+    path:executable,
+    vnc:remoteClientDiagnostics().vnc
+  };
+}
+
 async function openRemoteClient(profile={}) {
   if (profile.protocol === "vnc") {
     const current = remoteClientAdapter.diagnostics().vnc;
     if (!current.available && current.requires_selection) {
-      const executable = await chooseVncClientExecutable();
+      const executable = await chooseVncClientExecutable({firstUse:true});
       if (!executable) return {ok:false, canceled:true, protocol:"vnc", client:""};
     }
   }
@@ -3008,6 +3035,34 @@ function registerDesktopClipboardHandlers() {
     if (!window.isDestroyed()) window.close();
     return {ok:true};
   });
+  ipcMain.handle("terma:remote-profile-settings", (event, payload={}) => {
+    const sourceWindow = desktopWindowForSender(event);
+    if (!sourceWindow || !rendererBelongsToDesktop(event)) {
+      throw new Error(desktopUiText("连接设置请求来源无效", "The connection settings request source is invalid"));
+    }
+    const profileId = Number(payload?.profileId || 0);
+    if (!Number.isInteger(profileId) || profileId <= 0) {
+      throw new Error(desktopUiText("连接编号无效", "The connection ID is invalid"));
+    }
+    if (sourceWindow !== mainWindow) {
+      let detachedProfileId = 0;
+      try { detachedProfileId = Number(new URL(sourceWindow.webContents.getURL()).searchParams.get("termaVncWindow") || 0); } catch {}
+      if (detachedProfileId !== profileId || !detachedVncWindows.has(profileId)) {
+        throw new Error(desktopUiText("VNC 连接设置请求无效", "The detached VNC settings request is invalid"));
+      }
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      throw new Error(desktopUiText("Terma 主窗口不可用", "The main Terma window is unavailable"));
+    }
+    bringMainWindowToFront();
+    const send = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      mainWindow.webContents.send("terma:open-remote-profile-settings", profileId);
+    };
+    if (mainWindow.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
+    else setImmediate(send);
+    return {ok:true, profileId};
+  });
 }
 
 function failDisplayClientStartup(message) {
@@ -3119,6 +3174,7 @@ app.whenReady().then(async () => {
         getLegacyBrandMigration: inspectLegacyBrandMigration,
         migrateLegacyBrandData,
         chooseDataDir: chooseDesktopDataDir,
+        chooseVncClient: chooseVncClientForSettings,
         getDownloadDirectory: defaultDownloadDirectory,
         getDesktopDirectory: defaultDesktopDirectory,
         validateDownloadDirectory,

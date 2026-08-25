@@ -3,7 +3,10 @@ const net = require("node:net");
 const RFB_BANNER_LENGTH = 12;
 const VNC_HANDSHAKE_TIMEOUT_MS = 3500;
 const VNC_HANDSHAKE_RETRY_DELAY_MS = 220;
-const VNC_BANNER_STABILITY_MS = 40;
+// The banner is only accepted through the real WebSocket VNC session. Do not
+// delay forwarding it: RealVNC may close a client that does not answer with
+// its protocol version within a very short window.
+const VNC_BANNER_STABILITY_MS = 0;
 
 const TRANSIENT_HANDSHAKE_CODES = new Set([
   "ECONNREFUSED",
@@ -60,10 +63,11 @@ function connectVncSocketOnce(host, port, timeoutMs = VNC_HANDSHAKE_TIMEOUT_MS):
       socket.setKeepAlive(true, 30000);
       socket.pause();
       bannerReceived = true;
-      // TigerVNC still emits an RFB banner while temporarily blacklisting a
-      // client, then closes immediately. Give the socket one short turn to
-      // prove it remains usable before handing it to the WebSocket proxy.
-      stabilityTimer = setTimeout(() => finish({socket, banner, initial_data:pending}), VNC_BANNER_STABILITY_MS);
+      if (VNC_BANNER_STABILITY_MS > 0) {
+        stabilityTimer = setTimeout(() => finish({socket, banner, initial_data:pending}), VNC_BANNER_STABILITY_MS);
+      } else {
+        finish({socket, banner, initial_data:pending});
+      }
     };
     handshakeTimer = setTimeout(() => finish(null, handshakeError("VNC RFB 握手超时", "EVNCHANDSHAKETIMEOUT")), Math.max(250, Number(timeoutMs || VNC_HANDSHAKE_TIMEOUT_MS)));
     socket.on("data", onData);

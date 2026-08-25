@@ -29,13 +29,18 @@ assert.match(main, /function closeDetachedVncWindowForProfile[\s\S]*?activeDetac
 assert.match(main, /terma:vnc-open-window[\s\S]*?desktopWindowForSender\(event\)[\s\S]*?rendererBelongsToDesktop\(event\)/, "opening a detached window must validate the IPC sender");
 assert.match(main, /terma:vnc-close-profile-window[\s\S]*?desktopWindowForSender\(event\) !== mainWindow[\s\S]*?closeDetachedVncWindowForProfile/, "only the main Terma window may request a profile-window switch");
 assert.match(main, /terma:vnc-window-close[\s\S]*?window === mainWindow/, "the detached close command must not close the main Terma window");
+assert.match(main, /terma:remote-profile-settings[\s\S]*?desktopWindowForSender\(event\)[\s\S]*?rendererBelongsToDesktop\(event\)[\s\S]*?bringMainWindowToFront\(\)[\s\S]*?terma:open-remote-profile-settings/, "detached VNC settings must be routed to the focused main window through validated IPC");
+assert.match(main, /terma:remote-profile-settings[\s\S]*?detachedProfileId !== profileId[\s\S]*?detachedVncWindows\.has\(profileId\)/, "detached settings IPC must bind the request to the actual VNC window profile");
 assert.doesNotMatch(main, /terma:vnc-window-maximize/, "native maximize controls must come from the Electron title bar");
 assert.match(preload, /openVncWindow[\s\S]*?terma:vnc-open-window/);
 assert.match(preload, /closeVncWindowForProfile[\s\S]*?terma:vnc-close-profile-window/);
 assert.match(preload, /closeVncWindow[\s\S]*?terma:vnc-window-close/);
+assert.match(preload, /openRemoteProfileSettings[\s\S]*?terma:remote-profile-settings/);
+assert.match(preload, /onRemoteProfileSettings[\s\S]*?terma:open-remote-profile-settings/);
 assert.doesNotMatch(preload, /toggleVncWindowMaximize|terma:vnc-window-maximize/);
 assert.match(app, /termaVncWindow[\s\S]*?initDetachedVncWindow\(termaVncDetachedProfileId\)/, "the detached query must initialize only the VNC workspace");
 assert.match(vncWindow, /function initDetachedVncWindow[\s\S]*?vnc-detached-root[\s\S]*?renderEmbeddedVnc\(profile, key, null, root, true\)/);
+assert.match(vncWindow, /function openDetachedVncConnectionSettings[\s\S]*?openRemoteProfileSettings[\s\S]*?window\.opener/, "detached VNC windows must expose a desktop IPC and browser fallback for connection settings");
 assert.match(vncWindow, /prepareVncManagementForDetachedWindow[\s\S]*?closeRemoteProtocolSession\(key\)[\s\S]*?openRemoteDesktop\(id, false, true\)/, "switching to a detached window must close built-in VNC and restore the detection view");
 assert.match(vncWindow, /function reserveVncDetachedBrowserWindow[\s\S]*?window\.open\("", `terma-vnc-\$\{id\}`/, "web quick-open must reserve a popup synchronously while user activation is available");
 assert.match(vncWindow, /const browserDetachedVncReservations = new Map\(\)[\s\S]*?pending\.claims\.add\(claim\)/, "concurrent quick-open requests must share and claim one pending popup");

@@ -176,6 +176,15 @@ window.termaDesktop?.onNotification?.(payload => {
   void handleNotificationEvent(payload?.event, {fromDesktop:true, display:payload?.display !== false});
 });
 window.termaDesktop?.onNotificationAction?.(action => handleNotificationAction(action));
+window.termaDesktop?.onRemoteProfileSettings?.(profileId => {
+  const id = Number(profileId || 0);
+  if (!Number.isInteger(id) || id <= 0) return;
+  const open = () => {
+    if (typeof editRemoteProfile === "function") editRemoteProfile(id);
+    else setTimeout(open, 50);
+  };
+  open();
+});
 Promise.all([loadAll(), loadRuntimeSettings()]).then(async () => {
   if (window.termaVncDetached) {
     await setTermaLanguage(runtimeSettings?.saved?.language || document.documentElement.lang, {render:false, emit:false});

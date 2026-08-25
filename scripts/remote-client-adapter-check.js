@@ -250,6 +250,32 @@ async function main() {
   await selectableWindows.open({id:20,protocol:"vnc",host:"selected.example",port:5902,options:{quality:6}});
   assert.equal(launches.at(-1).executable, selectableVncPath);
   assert.deepEqual(launches.at(-1).args, ["selected.example::5902", "-QualityLevel=6"]);
+  const realVncPath = "C:\\Program Files\\RealVNC\\VNC Viewer\\vncviewer.exe";
+  const realVncWindows = createRemoteClientAdapter({
+    platform:"win32",
+    environment:{SystemRoot:"C:\\Windows",ProgramFiles:"C:\\Program Files"},
+    vncClientPath:realVncPath,
+    existsSync:file => String(file).toLowerCase() === realVncPath.toLowerCase(),
+    statSync:()=>({isFile:()=>true,isDirectory:()=>false}),
+    spawn:fakeSpawn,
+    spawnSync:unavailableCommand
+  });
+  assert.equal(realVncWindows.diagnostics().vnc.mode, "realvnc");
+  await realVncWindows.open({id:21,protocol:"vnc",host:"realvnc.example",port:5900,options:{quality:2,shared:true,view_only:true}});
+  assert.deepEqual(launches.at(-1).args, ["realvnc.example::5900"], "RealVNC Viewer must not receive TigerVNC-only switches");
+  const renamedRealVncPath = "E:\\Desktop\\VNC-Viewer.exe";
+  const renamedRealVncWindows = createRemoteClientAdapter({
+    platform:"win32",
+    environment:{SystemRoot:"C:\\Windows",ProgramFiles:"C:\\Program Files"},
+    vncClientPath:renamedRealVncPath,
+    existsSync:file => String(file).toLowerCase() === renamedRealVncPath.toLowerCase(),
+    statSync:()=>({isFile:()=>true,isDirectory:()=>false}),
+    spawn:fakeSpawn,
+    spawnSync:unavailableCommand
+  });
+  assert.equal(renamedRealVncWindows.diagnostics().vnc.mode, "realvnc");
+  await renamedRealVncWindows.open({id:22,protocol:"vnc",host:"renamed-realvnc.example",port:5900,options:{quality:2,shared:true,view_only:true}});
+  assert.deepEqual(launches.at(-1).args, ["renamed-realvnc.example::5900"], "renamed RealVNC Viewer must not receive TigerVNC-only switches");
   assert.match(mainSource, /getVncClientPath:[\s\S]*?readSettings\(\)\.vncClientPath/);
   assert.match(mainSource, /chooseVncClientExecutable[\s\S]*?dialog\.showOpenDialog[\s\S]*?validateVncClientPath[\s\S]*?vncClientPath:executable/);
   assert.match(serverSource, /if \(result\?\.canceled\)[\s\S]*?sendJson\(response, result\)[\s\S]*?return true/);

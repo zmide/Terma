@@ -5,6 +5,7 @@ const vm = require("node:vm");
 const { readFrontendDomain } = require("./frontend-source");
 
 const source = readFrontendDomain(path.resolve(__dirname, ".."), "remote");
+const vncCoreSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-vnc-core.js"), "utf8");
 const utilsSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-utils.js"), "utf8");
 const apiSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-api.js"), "utf8");
 const vncWindowSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-vnc-window.js"), "utf8");
@@ -94,6 +95,7 @@ assert.match(renderEmbeddedVnc, /const backLabel = tr\("remote:vnc_ui\.back_mana
 assert.match(renderEmbeddedVnc, /openVncInNewWindow\(\$\{profile\.id\}/, "the connected VNC toolbar must expose a detached-window action beside fullscreen");
 assert.doesNotMatch(renderEmbeddedVnc, /data-vnc-window-maximize|toggleVncWindowMaximize/, "detached VNC maximization must use the Electron title bar instead of a duplicate toolbar action");
 assert.match(renderEmbeddedVnc, /closeDetachedVncWindow\('\$\{escAttr\(key\)\}'\)/, "a detached VNC workspace must expose an explicit close action");
+assert.match(renderEmbeddedVnc, /openDetachedVncConnectionSettings\(\$\{profile\.id\}\)[\s\S]*?connectionSettingsLabel/, "a detached VNC workspace must expose connection settings beside close");
 assert.match(renderEmbeddedVnc, /session\.presentation = "viewer"/, "attaching the desktop must remember the viewer presentation");
 assert.match(openEmbeddedVncDesktop, /captureRemoteDesktopRenderScope\(profile\.id, key, view\)[\s\S]*?withRemoteDesktopRenderScope\(renderScope/, "late embedded VNC probes must be scoped to the view that requested them");
 assert.match(openEmbeddedVncDesktop, /finally \{\s*if \(button\) setButtonBusy\(button, false\);\s*\}/, "the cached launch button must leave its busy state even after it is detached from the document");
@@ -116,6 +118,16 @@ assert.match(connectEmbeddedVnc, /catch \(error\) \{\s*if \(!isCurrentConnection
 assert.match(connectEmbeddedVnc, /applyVncDisplayMode\(session, rfb\)/, "new noVNC sessions must apply the saved scale or remote-resize policy");
 assert.doesNotMatch(source, /scheduleInitialVncReconnect|initialReconnectTimer|initialReconnectUsed/, "VNC failures must not launch blind unauthenticated retries that can trigger a server blacklist");
 assert.match(connectEmbeddedVnc, /addEventListener\("disconnect"[\s\S]*?diagnoseEmbeddedVncDisconnect\(profile, key\)/, "a failed noVNC connection must move directly to diagnostics and wait for an explicit retry");
+assert.match(vncCoreSource, /patchNoVncFailureEvents[\s\S]*?dispatchEvent\(new CustomEvent\("termafailure"/, "noVNC internal failures must be exposed to Terma diagnostics");
+assert.match(connectEmbeddedVnc, /addEventListener\("termafailure"[\s\S]*?session\.failureDetail/, "noVNC failure details must be retained before the disconnect event");
+assert.match(source, /classifyVncFailure[\s\S]*?Unsupported security types[\s\S]*?Too many security failures/, "VNC authentication incompatibility and server lockout must be classified explicitly");
+assert.match(source, /fallback_system_client_unsupported/, "auto mode must offer the system VNC client for unsupported RealVNC authentication");
+assert.match(source, /failure\.kind === "unsupported-security"[\s\S]*?launchRemoteDesktop[\s\S]*?failure\.kind === "too-many-security-failures"[\s\S]*?system_fallback_blocked_lockout/, "server lockout must not trigger another system-client attempt");
+assert.match(source, /function vncDiagnosticCopy\(diagnostics, serviceAvailable, detail="", options=\{\}\)[\s\S]*?options\?\.connectionAttempt === true[\s\S]*?connection_failed_title/, "a failed VNC connection must not reuse the SSH probe-unavailable copy");
+assert.match(source, /connection_failed_with_detail[\s\S]*?远端返回/, "a VNC server handshake reason must be shown in the connection failure card");
+assert.match(connectEmbeddedVnc, /const detail = event\.detail\?\.reason \|\| session\.failureDetail \|\| "";[\s\S]*?diagnoseEmbeddedVncDisconnect\(profile, key, detail\)/, "the VNC disconnect reason must be retained for user-facing diagnostics");
+assert.match(source, /function handleVncServerVerification\(profile, key, rfb, event\)[\s\S]*?confirmModal[\s\S]*?rfb\.approveServer/, "RealVNC RSA/AES server verification must be explicitly confirmed before continuing");
+assert.match(connectEmbeddedVnc, /addEventListener\("serververification"[\s\S]*?handleVncServerVerification\(profile, key, rfb, event\)/, "noVNC server verification events must reach the VNC identity prompt");
 
 assert.match(fullscreenSource, /document\.documentElement\.requestFullscreen\(\)/, "fullscreen must keep noVNC's body-level cursor overlay inside the fullscreen tree");
 assert.match(fullscreenSource, /document\.addEventListener\("fullscreenchange", syncVncFullscreenPresentation\)/, "fullscreen exit must restore the regular VNC presentation");

@@ -37,9 +37,17 @@ function listen(server) {
 async function run() {
   db = require("../dist/db");
   proxy = require("../dist/vnc-proxy");
+  const securityFailureFixture = Buffer.concat([
+    Buffer.from("RFB 003.003\n"),
+    Buffer.alloc(4),
+    Buffer.from([0, 0, 0, 26]),
+    Buffer.from("Too many security failures")
+  ]);
+  assert.equal(proxy.extractVncSecurityFailureReason(securityFailureFixture), "Too many security failures");
   const proxySource = fs.readFileSync(path.join(__dirname, "..", "src", "vnc-proxy.ts"), "utf8");
   assert.match(proxySource, /handshakeIncomplete = session\.clientBytes === 0 \|\| session\.serverBytes <= session\.initialServerBytes/);
-  assert.match(proxySource, /closeVncSession\(session, 1011, "VNC 服务在握手期间关闭连接"\)/);
+  assert.match(proxySource, /extractVncSecurityFailureReason\(session\.serverData\)/);
+  assert.match(proxySource, /VNC 服务端拒绝连接：\$\{serverReason\}/);
   let targetReceivedResolve;
   const targetReceived = new Promise(resolve => { targetReceivedResolve = resolve; });
   fixture = net.createServer(socket => {

@@ -90,6 +90,15 @@ export async function handleStorageRoutes(
     return true;
   }
 
+  if (method === "POST" && pathname === "/api/desktop-settings/choose-vnc-client") {
+    if (!dependencies.isDesktopRequest(request) || !desktopIntegration?.chooseVncClient) {
+      dependencies.sendJson(response, { error:"VNC 客户端选择仅能在本机桌面版中使用" }, 403);
+      return true;
+    }
+    dependencies.sendJson(response, await Promise.resolve(desktopIntegration.chooseVncClient()));
+    return true;
+  }
+
   if (method === "GET" && pathname === "/api/storage/directories") {
     if (!dependencies.isDesktopRequest(request)
       && (desktopIntegration || (!dependencies.isDirectLoopbackRequest(request) && !dependencies.authRequired(request)))) {

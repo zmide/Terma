@@ -13,6 +13,35 @@ const { WebSocketFrameParser, closeWebSocket, sendWebSocketFrame, validateWebSoc
 
 const sessions = new Set<any>();
 
+function normalizeVncServerReason(value) {
+  return String(value || "")
+    .replace(/[\0-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
+}
+
+function extractVncSecurityFailureReason(data) {
+  const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data || []);
+  if (bytes.length < 20 || bytes.subarray(0, 4).toString("ascii") !== "RFB ") return "";
+  const version = bytes.subarray(4, 11).toString("ascii");
+  let offset = 12;
+  if (version === "003.003") {
+    if (bytes.length < offset + 4 || bytes.readUInt32BE(offset) !== 0) return "";
+    offset += 4;
+  } else if (/^003\.(007|008)$/.test(version)) {
+    if (bytes.length < offset + 1 || bytes[offset] !== 0) return "";
+    offset += 1;
+  } else {
+    return "";
+  }
+  if (bytes.length < offset + 4) return "";
+  const length = bytes.readUInt32BE(offset);
+  offset += 4;
+  if (!length || length > 1024 || bytes.length < offset + length) return "";
+  return normalizeVncServerReason(bytes.subarray(offset, offset + length).toString("utf8"));
+}
+
 function vncProfile(id) {
   const profile = getRemoteProfile(Number(id));
   if (profile.protocol !== "vnc") throw new Error("该连接不是 VNC 配置");
@@ -65,7 +94,8 @@ function handleVncUpgrade(req, socket) {
       openedAt:Date.now(),
       clientBytes:0,
       serverBytes:0,
-      initialServerBytes:0
+      initialServerBytes:0,
+      serverData:Buffer.alloc(0)
     };
     sessions.add(session);
 
@@ -94,9 +124,13 @@ function handleVncUpgrade(req, socket) {
       session.transport = transport;
       session.initialServerBytes = result.initial_data.length;
       session.serverBytes = result.initial_data.length;
+      session.serverData = Buffer.from(result.initial_data || []).subarray(0, 4096);
       updateRemoteProfileUsage(profile.id);
       transport.on("data", chunk => {
         session.serverBytes += chunk.length;
+        if (session.serverData.length < 4096) {
+          session.serverData = Buffer.concat([session.serverData, chunk]).subarray(0, 4096);
+        }
         sendWebSocketFrame(socket, chunk, 2);
       });
       transport.on("error", error => {
@@ -108,8 +142,10 @@ function handleVncUpgrade(req, socket) {
         const elapsedMs = Math.max(0, Date.now() - session.openedAt);
         const handshakeIncomplete = session.clientBytes === 0 || session.serverBytes <= session.initialServerBytes;
         if (handshakeIncomplete) {
-          appendSystemLog(`VNC 服务在握手阶段关闭连接：${profile.name} · ${elapsedMs}ms · client=${session.clientBytes}B · server=${session.serverBytes}B`);
-          return closeVncSession(session, 1011, "VNC 服务在握手期间关闭连接");
+          const serverReason = extractVncSecurityFailureReason(session.serverData);
+          const closeReason = serverReason ? `VNC 服务端拒绝连接：${serverReason}` : "VNC 服务在握手期间关闭连接";
+          appendSystemLog(`VNC 服务在握手阶段关闭连接：${profile.name} · ${elapsedMs}ms · client=${session.clientBytes}B · server=${session.serverBytes}B${serverReason ? ` · reason=${serverReason}` : ""}`);
+          return closeVncSession(session, 1011, closeReason);
         }
         closeVncSession(session, 1000, "VNC 会话已结束");
       });
@@ -136,4 +172,4 @@ function closeAllVncSessions() {
   for (const session of [...sessions]) closeVncSession(session, 1001, "Terma 正在关闭");
 }
 
-module.exports = { closeAllVncSessions, handleVncUpgrade, testVncProfile };
+module.exports = { closeAllVncSessions, extractVncSecurityFailureReason, handleVncUpgrade, testVncProfile };
