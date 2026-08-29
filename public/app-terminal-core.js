@@ -8,10 +8,56 @@ function terminalEncodingLabel(connection, key="") {
 
 function terminalConnectionStateLabel(state="connecting") {
   if (state === "connected") return tr("terminal:connection_state.connected", {defaultValue:"已连接"});
+  if (state === "reconnecting") return tr("terminal:connection_state.reconnecting", {defaultValue:"重连中"});
   if (state === "disconnected") return tr("terminal:connection_state.disconnected", {defaultValue:"已断开"});
   if (state === "authentication") return tr("terminal:connection_state.authentication", {defaultValue:"等待认证"});
   if (state === "authorization") return tr("terminal:connection_state.authorization", {defaultValue:"等待授权"});
   return tr("terminal:connection_state.connecting", {defaultValue:"连接中"});
+}
+
+const TERMINAL_AUTO_RECONNECT_DELAYS = [1000, 2000, 5000, 10000, 15000, 30000];
+
+function terminalSessionSupportsAutoReconnect(connection, session) {
+  return Boolean(session && connection && !connection.quick_connection
+    && String(connection.terminal_session_mode || "none") !== "persistent"
+    && session.reconnectToken
+    && session.everConnected
+    && !session.manualDisconnecting
+    && !session.authenticationFailed
+    && !session.remoteSessionEnded);
+}
+
+function cancelTerminalAutoReconnect(session) {
+  if (!session) return;
+  clearTimeout(session.autoReconnectTimer);
+  session.autoReconnectTimer = null;
+  session.autoReconnectPending = false;
+}
+
+function scheduleTerminalAutoReconnect(connection, key, session) {
+  if (!terminalSessionSupportsAutoReconnect(connection, session) || session.autoReconnectTimer) return false;
+  if (session.connectionPending) {
+    session.autoReconnectRequested = true;
+    return false;
+  }
+  const attempt = Number(session.autoReconnectAttempts || 0);
+  if (attempt >= TERMINAL_AUTO_RECONNECT_DELAYS.length) {
+    session.autoReconnectPending = false;
+    updateTerminalConnectionStatus(connection, key, "disconnected");
+    return false;
+  }
+  const delay = TERMINAL_AUTO_RECONNECT_DELAYS[attempt];
+  session.autoReconnectAttempts = attempt + 1;
+  session.autoReconnectPending = true;
+  updateTerminalConnectionStatus(connection, key, "reconnecting");
+  session.autoReconnectTimer = setTimeout(() => {
+    session.autoReconnectTimer = null;
+    session.autoReconnectPending = false;
+    session.autoReconnectRequested = false;
+    if (!terminalSessionSupportsAutoReconnect(connection, session)) return;
+    void connectTerminal(connection, key, {auto:true});
+  }, delay);
+  return true;
 }
 
 function syncTermaTerminalComponentMessages() {
@@ -126,6 +172,68 @@ const terminalStartupKinds = new Set(["shell", "repl", "session", "tool", "custo
 const terminalStartupPlatforms = new Set(["auto", "posix", "windows"]);
 let terminalStartupModalSerial = 0;
 const TERMINAL_GLYPH_SAFETY_GUTTER = 3;
+const TERMINAL_RECONNECT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{24,128}$/;
+
+function terminalReconnectStorageKey(key) {
+  return `terma:terminal-reconnect:${String(key || "")}`;
+}
+
+function terminalReconnectTokenForKey(key, enabled=true) {
+  if (!enabled) return {token:"", restored:false};
+  const storageKey = terminalReconnectStorageKey(key);
+  try {
+    const existing = String(sessionStorage.getItem(storageKey) || "");
+    if (TERMINAL_RECONNECT_TOKEN_PATTERN.test(existing)) return {token:existing, restored:true};
+  } catch {}
+  let token = "";
+  try {
+    if (globalThis.crypto?.randomUUID) token = globalThis.crypto.randomUUID();
+    else if (globalThis.crypto?.getRandomValues) {
+      const bytes = new Uint8Array(24);
+      globalThis.crypto.getRandomValues(bytes);
+      token = Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
+    }
+  } catch {}
+  if (!TERMINAL_RECONNECT_TOKEN_PATTERN.test(token)) token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+  try { sessionStorage.setItem(storageKey, token); } catch {}
+  return {token, restored:false};
+}
+
+function forgetTerminalReconnectToken(key) {
+  try { sessionStorage.removeItem(terminalReconnectStorageKey(key)); } catch {}
+}
+
+function prepareTerminalSessionClose(session, key="", options={}) {
+  if (!session) return;
+  session.manualDisconnecting = true;
+  cancelTerminalAutoReconnect(session);
+  session.autoReconnectAttempts = 0;
+  session.autoReconnectRequested = false;
+  const socket = session.socket;
+  if (socket?.readyState === WebSocket.OPEN) {
+    try { socket.send(JSON.stringify({type:"terminal-detach"})); } catch {}
+  }
+  if (options.forgetToken && key) forgetTerminalReconnectToken(key);
+}
+
+function enableTerminalPersistentWheelScroll(session, connection) {
+  const box = session.term?.element?.closest?.(".terminal-box");
+  if (!box || session.persistentWheelBox === box) return;
+  session.persistentWheelBox = box;
+  box.addEventListener("wheel", event => {
+    const tab = typeof workspaceTabByKey === "function"
+      ? workspaceTabByKey(session.key)
+      : tabs.find(item => item.key === session.key);
+    const currentConnection = session.connection || connection;
+    if (event.ctrlKey || String(tab?.sessionMode || currentConnection?.terminal_session_mode || "none") !== "persistent") return;
+    const delta = Number(event.deltaY || 0);
+    if (!delta) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const lines = Math.max(-12, Math.min(12, Math.round(delta / 28) || (delta > 0 ? 1 : -1)));
+    try { session.term.scrollLines(lines); } catch {}
+  }, {passive:false, capture:true});
+}
 
 function createTerminalFitAddon(term) {
   const fit = new FitAddonClass();
@@ -193,6 +301,13 @@ function effectiveTerminalStartupConfig(connection, key) {
   return terminalStartupOverrides.has(key)
     ? normalizeTerminalStartupConfig(terminalStartupOverrides.get(key))
     : terminalStartupConfigForConnection(connection);
+}
+
+function terminalSessionBackendForStartup(config) {
+  const value = normalizeTerminalStartupConfig(config || {});
+  if (value.terminal_startup_mode !== "program" || value.terminal_profile_kind !== "session") return "";
+  const name = String(value.terminal_program_path || "").split(/[\\/]/).pop()?.replace(/\.exe$/i, "").toLowerCase();
+  return name === "tmux" || name === "screen" ? name : "";
 }
 
 function normalizeTerminalDirectoryPath(value) {
@@ -320,6 +435,11 @@ function setTerminalCurrentDirectory(session, directory, source="tracked") {
   session.currentDirectory = normalized;
   session.currentDirectoryKnown = true;
   session.currentDirectorySource = source;
+  const tab = typeof workspaceTabByKey === "function" ? workspaceTabByKey(session.key || activeTabKey) : tabs.find(item => item.key === (session.key || activeTabKey));
+  if (tab?.kind === "terminal") {
+    tab.lastKnownCwd = normalized;
+    if (typeof saveTabsState === "function") saveTabsState();
+  }
   updateTerminalDropOverlay(session);
   return true;
 }
@@ -525,4 +645,229 @@ function terminalStartupProfileMatches(config, profile) {
     && String(config.terminal_program_path || "") === String(profile.path || "")
     && String(config.terminal_program_args || "") === String(profile.args || "")
     && String(config.terminal_working_directory || "") === String(profile.working_directory || "");
+}
+async function connectTerminalAttempt(c, key, session, attempt) {
+  const quick = Boolean(c.quick_connection);
+  if (quick && !String(session.quickToken || c.quick_token || "")) {
+    updateTerminalConnectionStatus(c, key, "authentication");
+    session.term.writeln(`\r\n${tr("terminal:system.quick_credentials_expired_connect", {defaultValue:"[临时连接凭据已失效，请重新认证后连接]"})}\r\n`);
+    if ($("modal")?.dataset.quickSshAuth !== "1") {
+      void startQuickSshConnection({user:c.ssh_user, host:c.ssh_host, port:c.ssh_port}, {reconnectKey:key, authType:c.auth_type});
+    }
+    return;
+  }
+  session.authenticationFailed = false;
+  session.authenticationFailureWindow = "";
+  if (typeof cancelTerminalDirectoryInitialization === "function") cancelTerminalDirectoryInitialization(session, true);
+  const previousSocket = session.socket;
+  session.socket = null;
+  if (typeof closeTerminalZmodem === "function") closeTerminalZmodem(session);
+  try { previousSocket?.close(); } catch {}
+  try { session.inputDisposable?.dispose(); } catch {}
+  try { session.resizeDisposable?.dispose(); } catch {}
+  const protocol = location.protocol === "https:" ? "wss" : "ws";
+  const tab = typeof workspaceTabByKey === "function" ? workspaceTabByKey(key) : tabs.find(item => item.key === key);
+  const title = tab?.title || tr("terminal:tabs.session", {name:c.name, suffix:"", defaultValue:`${c.name} · 终端`});
+  session.connected = false;
+  session.currentDirectory = "";
+  session.currentDirectoryKnown = false;
+  session.previousDirectory = "";
+  session.homeDirectory = "";
+  updateTerminalConnectionStatus(c, key, "connecting");
+  const endpoint = `${c.ssh_user}@${c.ssh_host}:${c.ssh_port}`;
+  session.term.writeln(tr("terminal:system.connecting", {endpoint, defaultValue:`连接 ${endpoint} ...`}));
+  if (!quick) try {
+    await api("/api/ssh/preflight", {
+      method:"POST",
+      body:JSON.stringify({connection_id:c.id})
+    });
+  } catch (error) {
+    if (session.connectionAttempt !== attempt || terminalSessions.get(key) !== session) return;
+    session.term.writeln(`\r\n${error.code === "SSH_HOST_TRUST_CANCELLED"
+      ? tr("terminal:system.host_trust_cancelled", {defaultValue:"[已取消连接]"})
+      : tr("terminal:system.host_trust_failed", {error:error.message, defaultValue:`[SSH 主机身份校验失败：${error.message}]`})}`);
+    updateTerminalConnectionStatus(c, key, "disconnected");
+    if (error.code !== "SSH_HOST_TRUST_CANCELLED") notify(error.message || tr("terminal:notifications.host_trust_failed", {defaultValue:"SSH 主机身份校验失败"}), "error");
+    if (session.everConnected && error.code !== "SSH_HOST_TRUST_CANCELLED" && !["SSH_HOST_KEY_UNKNOWN", "SSH_HOST_KEY_CHANGED"].includes(error.code)) {
+      session.autoReconnectRequested = true;
+    }
+    return;
+  }
+  let startupToken = "";
+  const startupOverride = terminalStartupOverrides.has(key) ? terminalStartupOverrides.get(key) : null;
+  let effectiveX11Mode = String(startupOverride?.x11_mode || c.x11_mode || "off");
+  const explicitX11Request = ["trusted", "untrusted"].includes(String(startupOverride?.x11_mode || ""));
+  try {
+    if (!quick && (startupOverride || ["trusted", "untrusted"].includes(effectiveX11Mode))) {
+      const ticket = await api("/api/terminal/startup-tickets", {
+        method:"POST",
+        body:JSON.stringify({
+          connection_id:c.id,
+          startup:startupOverride || {}
+        })
+      });
+      startupToken = ticket.token || "";
+    }
+  } catch (error) {
+    if (session.connectionAttempt !== attempt || terminalSessions.get(key) !== session) return;
+    if (error.code === "DESKTOP_INTEGRATION_AUTH_REQUIRED" && !explicitX11Request) {
+      try {
+        const fallbackTicket = await api("/api/terminal/startup-tickets", {
+          method:"POST",
+          body:JSON.stringify({
+            connection_id:c.id,
+            startup:{...(startupOverride || {}), x11_mode:"off"}
+          })
+        });
+        startupToken = fallbackTicket.token || "";
+        effectiveX11Mode = "off";
+        session.term.writeln(`\r\n${tr("terminal:system.x11_fallback", {defaultValue:"[X11] 当前浏览器没有桌面集成授权，已自动降级为普通 SSH 终端。"})}`);
+        notify(tr("terminal:notifications.x11_fallback", {defaultValue:"X11 未授权，本终端已自动改用普通 SSH"}), "info");
+      } catch (fallbackError) {
+        session.term.writeln(`\r\n${tr("terminal:system.ssh_fallback_failed", {error:fallbackError.message, defaultValue:`[普通 SSH 降级失败：${fallbackError.message}]`})}`);
+        updateTerminalConnectionStatus(c, key, "disconnected");
+        notify(fallbackError.message || tr("terminal:notifications.ssh_fallback_failed", {defaultValue:"普通 SSH 降级失败"}), "error");
+        return;
+      }
+    } else if (error.code === "DESKTOP_INTEGRATION_AUTH_REQUIRED") {
+      session.term.writeln(`\r\n[X11] ${error.message}`);
+      session.term.writeln(tr("terminal:system.x11_authorization_hint", {defaultValue:"[请在 X Server 窗口选择授权时长并申请授权，完成后点击重连]"}));
+      updateTerminalConnectionStatus(c, key, "authorization");
+      notify(error.message || tr("terminal:notifications.x11_authorization_required", {defaultValue:"当前浏览器没有 X11 桌面集成授权"}), "error");
+      if (typeof openXServerManager === "function") {
+        try { await openXServerManager(c.id, key); }
+        catch {}
+      }
+      return;
+    } else {
+      session.term.writeln(`\r\n${tr("terminal:system.startup_prepare_failed", {error:error.message, defaultValue:`[临时启动配置准备失败：${error.message}]`})}`);
+      updateTerminalConnectionStatus(c, key, "disconnected");
+      notify(error.message || tr("terminal:notifications.startup_prepare_failed", {defaultValue:"临时启动配置准备失败"}), "error");
+      return;
+    }
+  }
+  if (
+    session.connectionAttempt !== attempt
+    || terminalSessions.get(key) !== session
+    || !(typeof workspaceHasTabKey === "function" ? workspaceHasTabKey(key) : tabs.some(item => item.key === key))
+  ) return;
+  const startupQuery = startupToken ? `&startup_token=${encodeURIComponent(startupToken)}` : "";
+  const logQuery = session.logId ? `&log_id=${encodeURIComponent(session.logId)}` : "";
+  const encodingQuery = `&encoding=${encodeURIComponent(session.terminalEncoding || c.terminal_encoding || "utf8")}`;
+  const quickToken = quick ? String(session.quickToken || c.quick_token || "") : "";
+  const connectionQuery = quick ? `quick_token=${encodeURIComponent(quickToken)}` : `id=${encodeURIComponent(c.id)}`;
+  const reconnectTokenQuery = !quick && session.reconnectToken
+    ? `&reconnect_token=${encodeURIComponent(session.reconnectToken)}`
+    : "";
+  const quickX11Query = quick ? `&x11_mode=${encodeURIComponent(effectiveX11Mode)}` : "";
+  const replayLines = Math.max(100, Math.min(10000, Math.floor(Number(currentTerminalGlobalSettings().scrollback_lines) || 30000)));
+  const sessionModeQuery = !quick && String(c.terminal_session_mode || "none") === "persistent" ? `&session_mode=persistent&session_backend=${encodeURIComponent(c.terminal_session_backend || "auto")}&session_id=${encodeURIComponent(String(c.terminal_session_id || ""))}&session_replay=${session.everConnected ? "0" : "1"}&session_replay_lines=${replayLines}` : "";
+  const languageQuery = `&language=${encodeURIComponent(normalizeTermaLanguage(document.documentElement.lang))}`;
+  session.effectiveX11Mode = effectiveX11Mode;
+  const socket = new WebSocket(`${protocol}://${location.host}/ws/terminal?${connectionQuery}&cols=${session.term.cols || 80}&rows=${session.term.rows || 24}&title=${encodeURIComponent(title)}${encodingQuery}${logQuery}${startupQuery}${quickX11Query}${sessionModeQuery}${reconnectTokenQuery}${languageQuery}`);
+  socket.binaryType = "arraybuffer";
+  let socketOpened = false;
+  session.socket = socket;
+  if (typeof initializeTerminalZmodem === "function") initializeTerminalZmodem(session);
+  socket.addEventListener("open", () => {
+    if (session.socket !== socket) return;
+    socketOpened = true;
+    session.connected = true;
+    session.everConnected = true;
+    session.autoReconnectAttempts = 0;
+    session.autoReconnectPending = false;
+    session.remoteSessionEnded = false;
+    session.serverSessionState = "connected";
+    if (typeof syncTerminalOutputFlowForSocket === "function") syncTerminalOutputFlowForSocket(session);
+    socket.send(JSON.stringify({type:"terminal-encoding", encoding:session.terminalEncoding || c.terminal_encoding || "utf8"}));
+    updateTerminalConnectionStatus(c, key, "connected");
+    if (typeof scheduleTerminalDirectoryInitialization === "function") scheduleTerminalDirectoryInitialization(session, c, key, 1200);
+  });
+  socket.addEventListener("message", event => {
+    if (session.socket !== socket) return;
+    if (typeof event.data === "string" && event.data.startsWith("\0TERMA:")) {
+      try {
+        const control = JSON.parse(event.data.slice("\0TERMA:".length));
+        if (control?.type === "terminal-session") {
+          session.serverSessionState = String(control.state || "");
+          if (control.state === "reconnected") {
+            session.reconnectTokenRestored = false;
+            session.reconnectTokenStateHandled = true;
+            session.expectingReattach = false;
+            session.remoteSessionEnded = false;
+          } else if (control.state === "ended") {
+            session.remoteSessionEnded = true;
+          } else if (control.state === "created" && (session.reconnectTokenRestored || session.expectingReattach) && !session.reconnectTokenStateHandled) {
+            session.reconnectTokenStateHandled = true;
+            session.expectingReattach = false;
+            queueTerminalOutput(session, `\r\n${tr("terminal:system.reconnect_expired", {defaultValue:"[原普通 Shell 已过期，已新建普通 Shell]"})}\r\n`);
+          }
+        }
+      } catch {}
+      return;
+    }
+    finishTerminalLatencySample(session, key);
+    if (terminalAuthenticationFailureChunk(session, event.data)) session.authenticationFailed = true;
+    const terminalOutput = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : event.data;
+    if (typeof updateTerminalSmartState === "function") updateTerminalSmartState(key, terminalOutput);
+    if (typeof consumeTerminalZmodemOutput === "function" && consumeTerminalZmodemOutput(session, event.data)) {
+      if (isMobileLayout()) scheduleTerminalFit();
+      return;
+    }
+    queueTerminalOutput(session, terminalOutput);
+    if (typeof scheduleTerminalDirectoryInitialization === "function") scheduleTerminalDirectoryInitialization(session, c, key);
+    if (isMobileLayout()) scheduleTerminalFit();
+  });
+  socket.addEventListener("close", () => {
+    if (session.socket !== socket) return;
+    session.connected = false;
+    if (typeof cancelTerminalDirectoryInitialization === "function") cancelTerminalDirectoryInitialization(session, true);
+    if (typeof closeTerminalZmodem === "function") closeTerminalZmodem(session);
+    session.latencyPendingAt = 0;
+    clearTimeout(session.latencyPendingTimer);
+    const autoReconnect = terminalSessionSupportsAutoReconnect(c, session) && !session.remoteSessionEnded;
+    const announceAutoReconnect = autoReconnect && Number(session.autoReconnectAttempts || 0) === 0;
+    if (autoReconnect) session.expectingReattach = true;
+    if (!autoReconnect || announceAutoReconnect) {
+      queueTerminalOutput(session, `\r\n${tr(autoReconnect ? "terminal:system.closed_auto_reconnect" : "terminal:system.closed_reconnect", {defaultValue:autoReconnect ? "[连接已关闭，正在自动重连]" : "[连接已关闭，按 Enter 重新连接]"})}\r\n`);
+    }
+    if (autoReconnect) scheduleTerminalAutoReconnect(c, key, session);
+    else updateTerminalConnectionStatus(c, key, "disconnected");
+    if (quick && !socketOpened && !session.authenticationFailed) {
+      session.quickToken = "";
+      c.quick_token = "";
+      queueTerminalOutput(session, `${tr("terminal:system.quick_credentials_expired", {defaultValue:"[临时连接凭据已失效，请重新认证]"})}\r\n`);
+    }
+    if (session.authenticationFailed && session.credentialRepairPromptAttempt !== attempt) {
+      session.credentialRepairPromptAttempt = attempt;
+      queueTerminalOutput(session, quick
+        ? `${tr("terminal:system.quick_auth_repair_opening", {defaultValue:"[SSH 认证失败，正在打开临时凭据修复窗口]"})}\r\n`
+        : `${tr("terminal:system.auth_repair_opening", {defaultValue:"[SSH 认证失败，正在打开凭据修复窗口]"})}\r\n`);
+      queueMicrotask(() => {
+        if (terminalSessions.get(key) !== session) return;
+        if (typeof workspaceHasTabKey === "function" && !workspaceHasTabKey(key)) return;
+        void repairTerminalCredentials(c, key);
+      });
+    }
+  });
+  socket.addEventListener("error", () => {
+    if (session.socket === socket) queueTerminalOutput(session, `\r\n${tr("terminal:system.websocket_failed", {defaultValue:"[WebSocket 连接失败]"})}\r\n`);
+  });
+  session.inputDisposable = session.term.onData(data => {
+    if (typeof terminalZmodemPrepareInput === "function" && terminalZmodemPrepareInput(session, data)) return;
+    const preparedData = typeof terminalZmodemTakePreparedInput === "function" ? terminalZmodemTakePreparedInput(session, data) : data;
+    if (typeof interceptTerminalClipboardCtrlVInput === "function" && interceptTerminalClipboardCtrlVInput(key, c.id, preparedData)) return;
+    const beforeCtrl = terminalCtrlArmed || terminalCtrlLocked;
+    const outgoing = transformTerminalInputForCtrl(key, preparedData);
+    if (!beforeCtrl) trackTerminalCommand(session, data);
+    if (socket.readyState === WebSocket.OPEN) {
+      startTerminalLatencySample(session);
+      if (!(typeof handleTerminalBroadcastInput === "function" && handleTerminalBroadcastInput(key, outgoing, data))) socket.send(outgoing);
+    } else if (terminalReconnectInput(data) && session.socket === socket) {
+      reconnectTerminal(c.id, key);
+    }
+  });
+  session.resizeDisposable = session.term.onResize(size => {
+    if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({type:"resize", cols:size.cols, rows:size.rows}));
+  });
 }

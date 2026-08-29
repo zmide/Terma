@@ -982,6 +982,9 @@ closeTab = function(event, key) {
 function workspaceTabNeedsCloseConfirmation(tab) {
   if (!tab) return false;
   if (tab.kind === "remote-desktop" && tab.protocol !== "vnc") return false;
+  if (tab.kind === "terminal"
+    && String(tab.sessionMode || "none") === "persistent"
+    && Boolean(tab.persistentSessionId)) return true;
   if (["connected", "connecting"].includes(tab.connectionStatus)) return true;
   if (tab.connectionStatus === "disconnected") return false;
   const socketIsActive = socket => socket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(socket.readyState);
@@ -998,22 +1001,50 @@ function confirmWorkspaceConnectedTabClose(tabsToClose) {
   return new Promise(resolve => {
     const modal = $("modal");
     const multiple = tabsToClose.length > 1;
+    const persistentTabs = tabsToClose.filter(tab => tab.kind === "terminal"
+      && String(tab.sessionMode || "none") === "persistent"
+      && Boolean(tab.persistentSessionId));
+    const allPersistent = persistentTabs.length === tabsToClose.length;
     const currentTabTitle = tabsToClose[0].title || tr("common:dialogs.current_tab", {defaultValue:"Current tab"});
-    const currentStatus = tr(`common:auto.${tabsToClose[0].connectionStatus === "connecting" ? "connecting" : "connected"}`, {
-      defaultValue:tabsToClose[0].connectionStatus === "connecting" ? "Connecting" : "Connected"
+    const currentStatusKey = tabsToClose[0].connectionStatus === "connecting" ? "connecting" : tabsToClose[0].connectionStatus === "disconnected" ? "disconnected" : "connected";
+    const currentStatus = tr(`common:auto.${currentStatusKey}`, {
+      defaultValue:currentStatusKey === "connecting" ? "Connecting" : currentStatusKey === "disconnected" ? "Disconnected" : "Connected"
     });
-    const message = multiple
-      ? tr("common:dialogs.connected_tabs_many", {
+    const message = multiple && allPersistent
+      ? tr("common:dialogs.persistent_tabs_many", {
+        count:tabsToClose.length,
+        defaultValue:`${tabsToClose.length} recoverable tabs are still connected or connecting. Closing them only detaches Terma; their remote sessions and processes will continue running.`
+      })
+      : multiple && persistentTabs.length
+        ? tr("common:dialogs.connected_tabs_many_mixed", {
+          count:tabsToClose.length,
+          persistentCount:persistentTabs.length,
+          defaultValue:`${tabsToClose.length} tabs are still connected or connecting. Normal sessions will disconnect; ${persistentTabs.length} recoverable remote sessions will continue running.`
+        })
+        : multiple
+          ? tr("common:dialogs.connected_tabs_many", {
         count:tabsToClose.length,
         defaultValue:`${tabsToClose.length} tabs are still connected or connecting. Closing them will disconnect their sessions. Continue?`
       })
-      : tr("common:dialogs.connected_tab_one", {
-        title:currentTabTitle,
-        status:currentStatus,
-        defaultValue:`“${currentTabTitle}” is still ${currentStatus}. Closing it will disconnect the session. Continue?`
-      });
+          : allPersistent
+            ? tr("common:dialogs.persistent_tab_one", {
+              title:currentTabTitle,
+              status:currentStatus,
+              defaultValue:`“${currentTabTitle}” is still ${currentStatus}. Closing the tab only detaches Terma; the recoverable remote session and its processes will continue running.`
+            })
+            : tr("common:dialogs.connected_tab_one", {
+              title:currentTabTitle,
+              status:currentStatus,
+              defaultValue:`“${currentTabTitle}” is still ${currentStatus}. Closing it will disconnect the session. Continue?`
+            });
     const items = multiple
-      ? `<ul class="workspace-close-tabs-list">${tabsToClose.map(tab => `<li><strong data-i18n-skip>${esc(tab.title || tr("common:dialogs.unnamed_tab", {defaultValue:"Unnamed tab"}))}</strong><span>${esc(tr(`common:auto.${tab.connectionStatus === "connecting" ? "connecting" : "connected"}`, {defaultValue:tab.connectionStatus === "connecting" ? "Connecting" : "Connected"}))}</span></li>`).join("")}</ul>`
+      ? `<ul class="workspace-close-tabs-list">${tabsToClose.map(tab => {
+        const persistent = tab.kind === "terminal" && String(tab.sessionMode || "none") === "persistent" && Boolean(tab.persistentSessionId);
+        const statusKey = tab.connectionStatus === "connecting" ? "connecting" : tab.connectionStatus === "disconnected" ? "disconnected" : "connected";
+        const status = tr(`common:auto.${statusKey}`, {defaultValue:statusKey === "connecting" ? "Connecting" : statusKey === "disconnected" ? "Disconnected" : "Connected"});
+        const suffix = persistent ? ` · ${tr("common:dialogs.recoverable_session_continues", {defaultValue:"Recoverable session continues"})}` : "";
+        return `<li><strong data-i18n-skip>${esc(tab.title || tr("common:dialogs.unnamed_tab", {defaultValue:"Unnamed tab"}))}</strong><span>${esc(`${status}${suffix}`)}</span></li>`;
+      }).join("")}</ul>`
       : "";
     const finish = value => {
       modal.onclick = null;
@@ -1023,15 +1054,23 @@ function confirmWorkspaceConnectedTabClose(tabsToClose) {
       resolve(value);
     };
     modal.onclick = null;
+    const detachLabel = allPersistent
+      ? tr("common:dialogs.detach_close", {defaultValue:"Detach and close"})
+      : persistentTabs.length
+        ? tr("common:dialogs.close_tabs", {defaultValue:"Close tabs"})
+        : tr("common:dialogs.disconnect_close", {defaultValue:"Disconnect and close"});
+    const terminateLabel = tr("common:dialogs.terminate_persistent_close", {defaultValue:"Terminate recoverable sessions and close"});
     modal.innerHTML = `<div class="modal-card workspace-close-tabs-modal" role="alertdialog" aria-modal="true" aria-labelledby="workspaceCloseTabsTitle" aria-describedby="workspaceCloseTabsMessage">
       <h2 id="workspaceCloseTabsTitle">${esc(tr("common:dialogs.connected_tabs_title", {defaultValue:"Close connected tabs?"}))}</h2>
       <div id="workspaceCloseTabsMessage" class="modal-message">${esc(message)}</div>
       ${items}
-      <div class="actions"><button id="workspaceCloseTabsCancel" type="button">${esc(tr("common:actions.cancel", {defaultValue:"Cancel"}))}</button><button id="workspaceCloseTabsConfirm" class="danger" type="button">${icon("link-2-off")}<span>${esc(tr("common:dialogs.disconnect_close", {defaultValue:"Disconnect and close"}))}</span></button></div>
+      <div class="actions workspace-close-tabs-actions"><button id="workspaceCloseTabsCancel" type="button">${esc(tr("common:actions.cancel", {defaultValue:"Cancel"}))}</button>${persistentTabs.length ? `<button id="workspaceCloseTabsDetach" type="button">${icon(allPersistent ? "panel-top-close" : "link-2-off")}<span>${esc(detachLabel)}</span></button><button id="workspaceCloseTabsTerminate" class="danger" type="button">${icon("x-circle")}<span>${esc(terminateLabel)}</span></button>` : `<button id="workspaceCloseTabsConfirm" class="danger" type="button">${icon("link-2-off")}<span>${esc(detachLabel)}</span></button>`}</div>
     </div>`;
     modal.hidden = false;
     $("workspaceCloseTabsCancel").onclick = () => finish(false);
-    $("workspaceCloseTabsConfirm").onclick = () => finish(true);
+    $("workspaceCloseTabsConfirm")?.addEventListener("click", () => finish("detach"));
+    $("workspaceCloseTabsDetach")?.addEventListener("click", () => finish("detach"));
+    $("workspaceCloseTabsTerminate")?.addEventListener("click", () => finish("terminate"));
     modal.onkeydown = event => {
       if (event.key !== "Escape") return;
       event.preventDefault();
@@ -1045,7 +1084,23 @@ requestCloseTabsByKey = async function(keys, anchorKey="") {
   const activeTabs = [...new Set(keys)]
     .map(key => tabs.find(tab => tab.key === key))
     .filter(tab => tab?.closable && !tab.pinned && workspaceTabNeedsCloseConfirmation(tab));
-  if (activeTabs.length && !await confirmWorkspaceConnectedTabClose(activeTabs)) return;
+  const choice = activeTabs.length ? await confirmWorkspaceConnectedTabClose(activeTabs) : "detach";
+  if (!choice) return;
+  if (choice === "terminate") {
+    const persistentTabs = activeTabs.filter(tab => tab.kind === "terminal"
+      && String(tab.sessionMode || "none") === "persistent"
+      && Boolean(tab.persistentSessionId));
+    for (const tab of persistentTabs) {
+      try {
+        const terminated = await terminateTerminalPersistenceRecord(tab);
+        if (!terminated) return;
+      } catch (error) {
+        notify(error.message || tr("terminal:session.terminate_failed", {defaultValue:"终止远端会话失败"}), "error");
+        return;
+      }
+    }
+    saveTabsState();
+  }
   closeTabsByKey(keys, anchorKey);
 };
 

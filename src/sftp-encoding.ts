@@ -27,6 +27,30 @@ export function remotePathOperand(connection: SftpEncodingConnection | null | un
   return `"$(printf '%b' ${shellQuote(octal)})"`;
 }
 
+/**
+ * Build a shell operand from the exact bytes returned by the remote directory
+ * listing. This keeps filenames with invalid or mixed encodings addressable
+ * even when their display text contains replacement characters.
+ */
+export function remotePathBytesOperand(
+  connection: SftpEncodingConnection | null | undefined,
+  encodedValue: unknown,
+  expectedPath?: unknown
+): string {
+  const encoded = String(encodedValue || "").trim();
+  if (!encoded || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length > 16384) {
+    throw new Error("远程路径编码无效");
+  }
+  const bytes = Buffer.from(encoded, "base64");
+  if (!bytes.length || bytes.includes(0)) throw new Error("远程路径编码无效");
+  if (expectedPath !== undefined) {
+    const decoded = iconv.decode(bytes, filenameEncoding(connection));
+    if (decoded !== String(expectedPath)) throw new Error("远程路径编码与路径不匹配");
+  }
+  const octal = [...bytes].map(byte => `\\0${byte.toString(8).padStart(3, "0")}`).join("");
+  return `"$(printf '%b' ${shellQuote(octal)})"`;
+}
+
 export function decodeRemoteFilenameOutput(connection: SftpEncodingConnection | null | undefined, body: Buffer): string {
   return iconv.decode(body, filenameEncoding(connection));
 }

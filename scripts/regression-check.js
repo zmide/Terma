@@ -6,6 +6,7 @@ const { verifyMacIconPadding } = require("./mac-icon-padding-check");
 const runWorkspaceDockingChecks = require("./workspace-docking-check");
 const { indexScriptFiles, readFrontendDomain } = require("./frontend-source");
 const { readBackendSource, readSftpJobSource, readSources } = require("./backend-source");
+const { main: runAiBoundaryChecks } = require("./ai-check");
 
 const root = path.resolve(__dirname, "..");
 const checks = [];
@@ -109,6 +110,7 @@ async function verifyIsolatedRegressionTarget(base) {
 }
 
 async function main() {
+  await runAiBoundaryChecks();
   const packageJson = JSON.parse(read("package.json"));
   const licenseText = read("LICENSE");
   const thirdPartyNotices = read("THIRD_PARTY_NOTICES.md");
@@ -306,6 +308,9 @@ async function main() {
   const importFrontend = read("public/app-import.js");
   const terminalFrontend = readFrontendDomain(root, "terminal");
   const terminalOutputFrontend = read("public/app-terminal-output.js");
+  const terminalAiFrontend = read("public/app-terminal-ai-render.js") + "\n" + read("public/app-terminal-ai-mcp.js") + "\n" + read("public/app-terminal-ai.js") + "\n" + read("public/app-terminal-ai-actions.js");
+  const aiServiceSource = read("src/services/ai-service.ts");
+  const aiRoutesSource = read("src/routes/ai-routes.ts");
   const forwardsFrontend = read("public/app-forwards.js");
   const runningFrontend = read("public/app-running.js");
   const logsFrontend = readFrontendDomain(root, "logs");
@@ -398,7 +403,7 @@ async function main() {
   ok("SSH 登录方式隔离认证字段", frontend.includes('identity_file:passwordAuth ? ""') && frontend.includes('ssh_password:passwordAuth ?') && frontend.includes('control.disabled = password') && frontend.includes('control.disabled = !password'));
   ok("通知首次加载只建立游标", frontend.includes("initializeNotificationCursor") && frontend.includes('/api/notifications?since=0&language=') && frontend.includes("notificationCursorInitialized = true"));
   ok("SFTP 读取响应不缓存敏感内容", /"Cache-Control"\s*:\s*"no-store"/.test(serverSource));
-  ok("SFTP 删除由服务端设置决定是否进入回收站并使用后台任务", sftpTransferRoutesSource.includes("const recycleEnabled = dependencies.readRuntimeSettings(dependencies.runtimeSettingsFile).sftp_recycle_bin_enabled") && sftpTransferRoutesSource.includes("dependencies.deletePathsJob(connectionId, requestedPaths, recycleEnabled)") && sftpTransferRoutesSource.includes("Array.isArray(data.paths) ? data.paths : [data.path]") && sftpTransferRoutesSource.includes("dependencies.sendJson(response, result, 202)") && sftpJobsSource.includes('progress_unit: "items"') && sftpTransferRoutesSource.includes('parts[4] === "trash" && parts[5] === "restore"'));
+  ok("SFTP 删除由服务端设置决定是否进入回收站并使用后台任务", sftpTransferRoutesSource.includes("const recycleEnabled = dependencies.readRuntimeSettings(dependencies.runtimeSettingsFile).sftp_recycle_bin_enabled") && sftpTransferRoutesSource.includes("dependencies.deletePathsJob(connectionId, requestedPaths, recycleEnabled") && sftpTransferRoutesSource.includes("Array.isArray(data.paths) ? data.paths : [data.path]") && sftpTransferRoutesSource.includes("pathBytesB64") && sftpTransferRoutesSource.includes("dependencies.sendJson(response, result, 202)") && sftpJobsSource.includes('progress_unit: "items"') && sftpTransferRoutesSource.includes('parts[4] === "trash" && parts[5] === "restore"'));
   ok("关于页与开源许可弹窗已接入", settingsFrontend.includes('id="settings-about"') && settingsFrontend.includes("查看开源许可正文") && settingsFrontend.includes("showLicenseModal") && settingsFrontend.includes("about-third-party-list") && settingsFrontend.includes("third_party_components") && serverSource.includes('pathname === "/api/about"'));
   ok("设置页支持 GitHub Releases 更新检查", settingsFrontend.includes("refreshUpdateStatus") && settingsFrontend.includes('tr("settings:updates.view_release"') && updateRouteSource.includes('pathname === "/api/updates/check"'));
   ok("更新完成后按当前安装类型隔离状态并提供安全操作", settingsFrontend.includes("openDownloadedUpdateDirectory") && settingsFrontend.includes('tr("settings:updates.open_download_directory"') && settingsFrontend.includes('tr("settings:auto.update_redownload"') && settingsFrontend.includes('tr("settings:updates.open_package_confirm"') && settingsFrontend.includes("download.asset_name === download.selected_asset_name") && settingsFrontend.includes('download.package_type === "portable"') && updateRouteSource.includes('pathname === "/api/updates/open-directory"') && updateRouteSource.includes('state.package_type === "portable"') && desktopSource.includes("shell.showItemInFolder(target)") && read("src/update-installer.ts").includes("matchesCurrentTarget") && read("src/update-installer.ts").includes("cleanupInstalledPackage") && serverSource.includes("scheduleInstalledUpdateCleanup"));
@@ -433,10 +438,39 @@ async function main() {
   ok("SSH 连接菜单支持完整复制并按 copy 编号递增", frontend.includes('tr("connections:actions.duplicate"') && frontend.includes('run:()=>duplicateConnection(id)') && frontend.includes("/duplicate") && serverSource.includes('parts[3] === "duplicate"') && dbSource.includes("function duplicateConnection") && dbSource.includes("nextConnectionCopyName") && dbSource.includes("insertForward(connectionId, forward)"));
   ok("终端编码与字体使用独立下拉菜单并持久化", terminalFrontend.includes("showTerminalEncodingMenu") && terminalFrontend.includes("showTerminalFontMenu") && terminalFrontend.includes("applyTerminalPreferences") && terminalFrontend.includes("focusTerminalSession") && terminalFrontend.includes("terminal-preferences") && terminalFrontend.includes("terminalFontSizeField") && dbSource.includes("terminal_encoding TEXT NOT NULL DEFAULT 'utf8'") && dbSource.includes("terminal_font_size INTEGER NOT NULL DEFAULT 13") && dbSource.includes("terminal_mobile_font_size INTEGER NOT NULL DEFAULT 13"));
   const runtimeSettingsSource = read("src/runtime-settings.ts");
+  ok("终端与日志 AI 作为旁路能力接入并支持逐条 Agent 与内嵌审批",
+    runtimeSettingsSource.includes("DEFAULT_AI_SETTINGS")
+      && runtimeSettingsSource.includes("normalizeAiSettings")
+      && settingsFrontend.includes("terminalAiEnabled")
+      && settingsFrontend.includes("/api/ai/settings")
+      && terminalAiFrontend.includes("terminal-ai-toggle")
+      && terminalAiFrontend.includes("terminal-ai-insert-command")
+      && terminalAiFrontend.includes("terminalAiCommandRisk")
+      && terminalAiFrontend.includes("terminalAiReadOnlyFilePath")
+      && terminalAiFrontend.includes("terminalAiReadOnlyFind")
+      && terminalAiFrontend.includes("terminalAiToolCalls")
+       && terminalAiFrontend.includes("terminalAiNormalizeToolCalls")
+       && terminalAiFrontend.includes("waitForTerminalAiCommandCompletion")
+       && terminalAiFrontend.includes("terminalAiSplitShellCommands")
+       && terminalAiFrontend.includes("terminalAiResponseCommands(turn.answer)")
+       && terminalAiFrontend.includes("requestTerminalAiApproval")
+       && terminalAiFrontend.includes("terminalAiApprovalHtml")
+       && !terminalAiFrontend.includes("TERMINAL_AI_AGENT_MAX_COMMANDS")
+       && !terminalAiFrontend.includes("TERMINAL_AI_COMMAND_TIMEOUT_MS")
+       && terminalAiFrontend.includes('state.permission === "full"')
+       && aiServiceSource.includes('permission === "full"')
+      && terminalAiFrontend.includes("renderTerminalAiMarkdown")
+      && terminalAiFrontend.includes("log-ai-open")
+      && terminalAiFrontend.includes("/api/ai/chat")
+      && aiServiceSource.includes("redactAiText")
+      && aiServiceSource.includes('redirect:"manual"')
+      && !aiRoutesSource.includes("requireEncryptionUnlocked")
+      && aiRoutesSource.includes("api_key")
+      && serverSource.includes("handleAiRoutes"));
   ok("全局终端设置独立持久化并应用到当前和未来会话",
     runtimeSettingsSource.includes("DEFAULT_TERMINAL_SETTINGS")
       && runtimeSettingsSource.includes("normalizeTerminalSettings")
-      && runtimeSettingsSource.includes("schema_version: 19")
+      && runtimeSettingsSource.includes("schema_version: 21")
       && runtimeSettingsSource.includes("scrollback_lines")
       && runtimeSettingsSource.includes("language: normalizeLanguage")
       && runtimeSettingsSource.includes("language_onboarding_version")
@@ -531,7 +565,7 @@ async function main() {
   ok("数据库恢复后重新打开句柄并自动刷新", backupRestoreRoutesSource.includes("dependencies.reopenDatabase()") && backupRestoreRoutesSource.includes("database_reopened:true") && importFrontend.includes("数据库已恢复并自动刷新") && importFrontend.includes("await loadAll()"));
   ok("数据库迁移包同步启用或关闭加密状态", backupRestoreRoutesSource.includes("if (stage.security) {") && backupRestoreRoutesSource.includes("encryption_enabled:Boolean(stage.security.encryption_enabled)"));
   ok("导入导出按 SSH config 与数据库拆分", workspaceFrontend.includes("SSH config 导入导出") && workspaceFrontend.includes("数据库导入导出") && indexHtml.indexOf("导出 SSH config") < indexHtml.indexOf("数据库导入导出"));
-  ok("设置活动栏按职责重组并把缓存管理放在关于上方", workspaceFrontend.includes('"settings-general", "settings-2", "common:auto.general_settings"') && workspaceFrontend.includes('"settings-basic", "shield-check", "common:auto.security"') && workspaceFrontend.includes('"settings-cache", "hard-drive", "common:auto.cache_management"') && workspaceFrontend.indexOf('"settings-cache", "hard-drive", "common:auto.cache_management"') < workspaceFrontend.indexOf('"settings-about", "info", "common:auto.about"') && !workspaceFrontend.includes('"settings-advanced"') && settingsFrontend.indexOf("storageSettingsPanelHtml()") < settingsFrontend.indexOf('id="settings-basic"'));
+  ok("设置活动栏按职责重组并把缓存管理放在关于上方", workspaceFrontend.includes('"settings-general", "settings-2", "common:auto.general_settings"') && workspaceFrontend.includes('"settings-ai", "sparkles", "settings:sections.ai"') && workspaceFrontend.includes('"settings-basic", "shield-check", "common:auto.security"') && workspaceFrontend.includes('"settings-cache", "hard-drive", "common:auto.cache_management"') && workspaceFrontend.indexOf('"settings-general", "settings-2", "common:auto.general_settings"') < workspaceFrontend.indexOf('"settings-ai", "sparkles", "settings:sections.ai"') && workspaceFrontend.indexOf('"settings-cache", "hard-drive", "common:auto.cache_management"') < workspaceFrontend.indexOf('"settings-about", "info", "common:auto.about"') && !workspaceFrontend.includes('"settings-advanced"') && settingsFrontend.includes('id="settings-ai"') && settingsFrontend.indexOf("storageSettingsPanelHtml()") < settingsFrontend.indexOf('id="settings-basic"'));
   ok("桌面设置并入程序且菜单去重", settingsFrontend.includes("desktopBehaviorPanelHtml") && settingsFrontend.includes("storageSettingsPanelHtml") && settingsFrontend.includes("chooseDesktopVncClient") && storageRoutesSource.includes('pathname === "/api/desktop-settings"') && storageRoutesSource.includes('pathname === "/api/desktop-settings/choose-vnc-client"') && desktopSource.includes("vncClientPath") && desktopSource.includes("chooseVncClient") && desktopSource.includes("firstUse") && desktopSource.includes("会持久化保存到 Terma 设置中") && !appMenuSource.includes('{ label: "设置"') && !trayMenuSource.includes('{ label: "设置"') && !trayMenuSource.includes("备份配置数据库"));
   ok("桌面窗口隐藏原生菜单栏且保留托盘右键菜单", desktopSource.includes('const PRODUCT_NAME = "Terma"') && appMenuSource.includes("Menu.setApplicationMenu(null)") && trayMenuSource.includes('desktopUiText(`打开 ${PRODUCT_NAME}`, `Open ${PRODUCT_NAME}`)') && trayMenuSource.includes('desktopUiText("在浏览器打开", "Open in browser")') && trayMenuSource.includes('desktopUiText(`退出 ${PRODUCT_NAME}`, `Quit ${PRODUCT_NAME}`)'));
   ok("桌面原生标题栏与应用明暗主题同步", desktopSource.includes('preload: path.join(__dirname, "preload.js")') && desktopSource.includes("nativeTheme.themeSource = theme") && desktopSource.includes('ipcMain.on("terma:set-theme"') && read("desktop/preload.js").includes('ipcRenderer.send("terma:set-theme"') && read("public/app-utils.js").includes("window.termaDesktop?.setTheme?.(theme)"));

@@ -370,15 +370,17 @@ function startSftpJob(connectionId, type, command, label, options: any = {}) {
   return { id, status: job.status };
 }
 
-function buildDeleteJobRequest(connection, paths, recycleEnabled = false) {
+function buildDeleteJobRequest(connection, paths, recycleEnabled = false, pathBytesB64 = []) {
   const source = Array.isArray(paths) ? paths : [paths];
+  const rawPathBytes = Array.isArray(pathBytesB64) ? pathBytesB64 : [];
   if (!source.length) throw new Error("请选择要删除的文件或目录");
   if (source.length > 200) throw new Error("一次最多删除 200 个文件或目录");
   const prepared = [];
   const seen = new Set();
   let totalPathBytes = 0;
-  for (const remotePath of source) {
-    const request = buildDeleteRemotePathCommand(remotePath, connection);
+  for (let sourceIndex = 0; sourceIndex < source.length; sourceIndex += 1) {
+    const remotePath = source[sourceIndex];
+    const request = buildDeleteRemotePathCommand(remotePath, connection, rawPathBytes[sourceIndex] || "");
     if (seen.has(request.path)) continue;
     seen.add(request.path);
     totalPathBytes += Buffer.byteLength(request.path, "utf8");
@@ -394,7 +396,8 @@ function buildDeleteJobRequest(connection, paths, recycleEnabled = false) {
         request.path,
         `${(createdAt + index).toString(36)}-${crypto.randomBytes(8).toString("hex")}`,
         createdAt + index,
-        connection
+        connection,
+        request.path_bytes_b64
       )
       : request.command;
     return `(${operation}) && printf '%s\\n' ${shellQuote(`${markerPrefix}${index + 1}`)}`;
@@ -439,9 +442,9 @@ function consumeDeleteJobOutput(job, markerPrefix, state, chunk = "", flush = fa
   }
 }
 
-function deletePathsJob(connectionId, paths, recycleEnabled = false) {
+function deletePathsJob(connectionId, paths, recycleEnabled = false, pathBytesB64 = []) {
   const connection = getSftpConnection(connectionId);
-  const request = buildDeleteJobRequest(connection, paths, recycleEnabled);
+  const request = buildDeleteJobRequest(connection, paths, recycleEnabled, pathBytesB64);
   const id = crypto.randomUUID();
   const singleName = request.item_count === 1 ? path.posix.basename(request.paths[0]) : "";
   const action = request.recycled ? "移入回收站" : "删除";

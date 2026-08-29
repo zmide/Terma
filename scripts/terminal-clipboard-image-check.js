@@ -2,11 +2,12 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const imagePasteSource = fs.readFileSync(path.join(root, "public", "app-terminal-image-paste.js"), "utf8");
 const terminalSettingsSource = fs.readFileSync(path.join(root, "public", "app-terminal-settings.js"), "utf8");
-const terminalSource = fs.readFileSync(path.join(root, "public", "app-terminal.js"), "utf8");
+const terminalSource = readFrontendDomain(root, "terminal");
 const apiSource = fs.readFileSync(path.join(root, "public", "app-api.js"), "utf8");
 const desktopSource = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
 const preloadSource = fs.readFileSync(path.join(root, "desktop", "preload.js"), "utf8");

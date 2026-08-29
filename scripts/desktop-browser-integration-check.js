@@ -5,6 +5,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { createDesktopBrowserAuthorizationPromptGate } = require("../desktop/browser-authorization-prompt");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-desktop-browser-integration-"));
 const previousData = process.env.TERMA_DATA_DIR;
@@ -86,7 +87,7 @@ async function main() {
   const security = require("../dist/security");
   const terminalSource = fs.readFileSync(path.join(__dirname, "..", "src", "terminal.ts"), "utf8");
   const terminalRoutesSource = fs.readFileSync(path.join(__dirname, "..", "src", "routes", "terminal-routes.ts"), "utf8");
-  const terminalUiSource = fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal.js"), "utf8");
+  const terminalUiSource = readFrontendDomain(path.join(__dirname, ".."), "terminal");
   const serverSource = fs.readFileSync(path.join(__dirname, "..", "src", "server.ts"), "utf8");
   const desktopMainSource = fs.readFileSync(path.join(__dirname, "..", "desktop", "main.js"), "utf8");
   assert.match(terminalSource, /closeDesktopBrowserGrantTerminals/);

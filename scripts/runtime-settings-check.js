@@ -13,6 +13,7 @@ const {
   DEFAULT_VNC_LOCAL_IMAGE_POLL_INTERVAL_MS,
   DEFAULT_VNC_REMOTE_IMAGE_POLL_INTERVAL_MS,
   DEFAULT_TERMINAL_SETTINGS,
+  DEFAULT_AI_SETTINGS,
   DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,
   normalizeListenHosts,
   normalizeListenPort,
@@ -104,6 +105,10 @@ async function main() {
     "generalSftpBackgroundStatusIntervalSeconds",
     "generalVncLocalImageIntervalSeconds",
     "generalVncRemoteImageIntervalSeconds"
+    ,"terminalAiEnabled"
+    ,"terminalAiEndpoint"
+    ,"terminalAiModel"
+    ,"terminalAiSaveBtn"
   ]) assert.equal(settingsFrontend.includes(`id=\"${controlId}\"`), true, `${controlId} setting is missing`);
   assert.equal(settingsFrontend.includes("syncWorkspaceToolbarPlacements()"), true);
   assert.equal(DEFAULT_TERMINAL_SETTINGS.url_links_enabled, true);
@@ -113,9 +118,11 @@ async function main() {
   assert.equal(DEFAULT_TERMINAL_SETTINGS.background_color, "#0f1720");
   assert.equal(DEFAULT_TERMINAL_SETTINGS.font_size, 13);
   assert.match(DEFAULT_TERMINAL_SETTINGS.font_family, /monospace/);
+  assert.deepEqual(DEFAULT_AI_SETTINGS.skills_enabled, ["linux-diagnostics", "security-audit", "log-analysis", "service-troubleshooting"]);
+  assert.deepEqual(normalizeRuntimeSettings({ai:{skills_enabled:["security-audit", "invalid-skill", "security-audit"]}}).ai.skills_enabled, ["security-audit"]);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 19,
+    schema_version: 21,
     language: "zh-CN",
     language_onboarding_version: 0,
     vnc_fullscreen_toolbar: "always",
@@ -150,7 +157,8 @@ async function main() {
       unsplit: {terminal:"header", sftp:"header"},
       split: {terminal:"header", sftp:"header"}
     },
-    terminal: {...DEFAULT_TERMINAL_SETTINGS, url_prefixes:[...DEFAULT_TERMINAL_SETTINGS.url_prefixes]}
+    terminal: {...DEFAULT_TERMINAL_SETTINGS, url_prefixes:[...DEFAULT_TERMINAL_SETTINGS.url_prefixes]},
+    ai: {...DEFAULT_AI_SETTINGS}
   });
   assert.equal(normalizeRuntimeSettings({ sftp_recycle_bin_enabled: true }).sftp_recycle_bin_enabled, true);
   assert.equal(normalizeRuntimeSettings({}, { sftp_recycle_bin_enabled: true }).sftp_recycle_bin_enabled, true);
@@ -241,6 +249,12 @@ async function main() {
   fs.writeFileSync(legacyRuntimeFile, JSON.stringify({schema_version:8, sftp_max_open_file_size_mb:5}), "utf8");
   assert.equal(readRuntimeSettings(legacyRuntimeFile).sftp_max_open_file_size_mb, 5);
   console.log("PASS legacy defaults migrate without overriding explicit v8 choices");
+
+  fs.writeFileSync(legacyRuntimeFile, JSON.stringify({schema_version:20, ai:{...DEFAULT_AI_SETTINGS, context_tokens:4000, context_default_version:0}}), "utf8");
+  assert.equal(readRuntimeSettings(legacyRuntimeFile).ai.context_tokens, 1000000);
+  assert.equal(readRuntimeSettings(legacyRuntimeFile).ai.model, "");
+  assert.equal(readRuntimeSettings(legacyRuntimeFile).ai.terminal_ai_permission, "confirm");
+  console.log("PASS legacy AI 4K default migrates to 1M while the default model remains empty");
 
   let child = null;
   let startupBlocker = null;

@@ -68,6 +68,21 @@ async function main() {
     assert.match(terminalView.text, /host% ping 210\.10\.1\.7\nPING OK/);
     assert.doesNotMatch(terminalView.text, /192\.168\.31\.7|\x08/);
 
+    const tmuxLog = path.join(root, "tmux.log");
+    const tmuxCommand = 'i=0;while :;do ((i++));printf "\\n%d" "$i";sleep 1;done';
+    fs.writeFileSync(tmuxLog, [
+      "# tmux transcript\n\n",
+      "\x1b[?1049h\x1b[1;1H\x1b[2J\x1b[1;20r\x1b[1;1H",
+      "root@Test:~# cd 桌面\x1b[7Dls\x1b[K\b\b",
+      `${tmuxCommand}\r\n\r\n1\r\n2\r\n3\r\n`,
+      "\x1b[20;1H\x1b[30m\x1b[42m[terma-test:bash*                 Test 15:54]\x1b[0m",
+      "\x1b[?1049l[exited]\r\n"
+    ].join(""), "utf8");
+    const tmuxView = await readLogWindow(root, "tmux.log");
+    assert.match(tmuxView.text, new RegExp(tmuxCommand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.match(tmuxView.text, /\n1\n2\n3/);
+    assert.doesNotMatch(tmuxView.text, /cd 桌面|root@Test:~# ls|terma-test:bash|\x1b/);
+
     fs.writeFileSync(log, Buffer.alloc(1024 * 1024, 1));
     assert.equal(rotateLogFile(log, 1, settings), true);
     assert.equal(fs.existsSync(`${log}.1`), true);

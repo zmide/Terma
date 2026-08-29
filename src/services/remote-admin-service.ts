@@ -45,14 +45,22 @@ function normalizeRemoteAdminAuthorizationError(error) {
   const raw = String(error?.message || error || "").trim();
   const diagnosis = diagnoseSshError(raw);
   const lower = raw.toLowerCase();
+  if (/cannot parse privatekey|unsupported key format|invalid private key|bad decrypt|private key.*passphrase|privatekey.*encrypted/i.test(raw)) {
+    const normalized: any = new Error("私钥或私钥口令无效：请选择与该账号匹配的私钥，并检查私钥口令后再试。");
+    normalized.code = "REMOTE_ADMIN_KEY_INVALID";
+    normalized.publicCode = "remote_admin_key_invalid";
+    return normalized;
+  }
   if (/all configured authentication methods failed|no more authentication methods available|permission denied \(publickey|authentication failed/.test(lower)) {
     const normalized: any = new Error(`SSH 认证失败：请检查临时管理员 SSH 用户名、密码、私钥或 Agent。${diagnosis.suggestions?.[0] || "请重新检查认证信息后再试。"}`);
     normalized.code = "REMOTE_ADMIN_AUTH_FAILED";
+    normalized.publicCode = "remote_admin_auth_failed";
     return normalized;
   }
   if (/sudo:\s*(?:incorrect password|a password is required|authentication failure|sorry, try again|管理权限验证失败)/i.test(raw)) {
     const normalized: any = new Error("sudo 认证失败：sudo 密码不正确或当前账号没有免密 sudo 权限，请重新授权后再试。");
     normalized.code = "REMOTE_ADMIN_SUDO_FAILED";
+    normalized.publicCode = "remote_admin_sudo_failed";
     return normalized;
   }
   return error instanceof Error ? error : new Error(raw || "临时管理员授权失败");
@@ -60,16 +68,17 @@ function normalizeRemoteAdminAuthorizationError(error) {
 
 async function issueRemoteAdminGrant(connection, data: any = {}) {
   const requestedScope = String(data?.scope || "").trim() || "host:*";
-  const grant = createRemoteAdminGrant(connection, {admin_auth:data.admin_auth || data.authorization || data}, requestedScope);
-  if (!grant) throw new Error("请提供临时管理员 SSH 认证信息");
+  let grant = null;
   try {
+    grant = createRemoteAdminGrant(connection, {admin_auth:data.admin_auth || data.authorization || data}, requestedScope);
+    if (!grant) throw new Error("请提供临时管理员 SSH 认证信息");
     const probe = await runRemotePrivilegeCommand(connection, "true", {grant_id:grant.id, scope:requestedScope, timeout_ms:30000});
     if (probe?.status !== 0) {
       throw new Error(`${probe?.stderr || probe?.stdout || probe?.error?.message || "临时管理员 SSH 验证失败"}`.trim());
     }
     return {ok:true, admin_grant:adminGrantView(grant), admin_grant_id:grant.id};
   } catch (error) {
-    revokeRemotePrivilegeGrant(grant.id);
+    if (grant?.id) revokeRemotePrivilegeGrant(grant.id);
     throw normalizeRemoteAdminAuthorizationError(error);
   }
 }

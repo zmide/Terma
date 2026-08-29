@@ -20,6 +20,7 @@ let updateStatusAbortController = null;
 let updateStatusChecking = false;
 const SETTINGS_SECTION_META = {
   "settings-general": "settings:sections.general",
+  "settings-ai": "settings:sections.ai",
   "settings-basic": "settings:sections.security",
   "settings-key-management": "settings:sections.key_management",
   "settings-notifications": "settings:sections.notifications",

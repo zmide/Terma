@@ -125,6 +125,112 @@ function populateTerminalStartupCapabilities(capabilities, currentConfig) {
   syncTerminalStartupForm();
 }
 
+function terminalSessionComponentActionLabel(action) {
+  return {
+    online:tr("remote:install.online", {defaultValue:"在线安装"}),
+    offline:tr("remote:install.remote_cache", {defaultValue:"使用远端缓存"}),
+    "local-offline":tr("remote:install.local_offline", {defaultValue:"本机下载后离线安装"}),
+    install:tr("terminal:session.install_online", {defaultValue:"在线安装"}),
+    "install-offline":tr("terminal:session.install_offline", {defaultValue:"使用远端缓存"}),
+    "install-local-offline":tr("terminal:session.install_local", {defaultValue:"本机下载上传"}),
+    uninstall:tr("terminal:session.uninstall", {defaultValue:"卸载"})
+  }[action] || action;
+}
+
+function renderTerminalSessionComponents(data, key, connectionId) {
+  const target = $("terminalSessionComponents");
+  if (!target) return;
+  target.dataset.remoteRoot = data?.root ? "1" : "0";
+  if (!data?.supported) {
+    target.className = "terminal-startup-capability warning";
+    target.innerHTML = `<strong>${esc(tr("terminal:session.title", {defaultValue:"可恢复会话组件"}))}</strong><span>${esc(tr("terminal:session.unsupported", {defaultValue:"当前远端系统暂不支持自动管理 tmux/screen，请手动安装后再启用会话保活。"}))}</span>`;
+    return;
+  }
+  const components = data.components || {};
+  target.className = "terminal-session-components";
+  target.innerHTML = `<div class="terminal-session-components-head"><strong>${esc(tr("terminal:session.title", {defaultValue:"可恢复会话组件"}))}</strong><small>${esc(tr("terminal:session.install_hint", {defaultValue:"安装任务会显示在任务中心；没有可用方式时请按手动说明操作。"}))}</small></div><div class="terminal-session-component-list">${Object.entries(components).map(([id, item]) => {
+    const plan = item.install_plan || {};
+    const modes = ["online", "offline", "local-offline"].map(mode => plan[mode]).filter(mode => mode?.available);
+    const installButtons = item.installed ? "" : (typeof remoteInstallModesMarkup === "function"
+      ? remoteInstallModesMarkup(item.install_plan || {}, mode => `manageTerminalSessionComponent(${connectionId},'${escAttr(key)}','${escAttr(id)}',${mode === "local-offline" ? "'install-local-offline'" : mode === "offline" ? "'install-offline'" : "'install'"},this)`, "revealRemoteInstallManual(this)")
+      : modes.map(mode => `<button type="button" data-session-component="${escAttr(id)}" data-session-action="${escAttr(mode.id === "local-offline" ? "install-local-offline" : mode.id === "offline" ? "install-offline" : "install")}">${esc(terminalSessionComponentActionLabel(mode.id))}</button>`).join(""));
+    const uninstallButton = item.installed && item.uninstall_plan?.available ? `<button type="button" class="terminal-session-uninstall" data-session-component="${escAttr(id)}" data-session-action="uninstall">${icon("package-minus")}<span>${esc(terminalSessionComponentActionLabel("uninstall"))}</span></button>` : "";
+    const status = item.installed
+      ? tr("terminal:session.installed", {version:item.version ? ` · ${item.version}` : "", defaultValue:`已安装${item.version ? ` · ${item.version}` : ""}`})
+      : tr("terminal:session.not_installed", {defaultValue:"未安装"});
+    const activeSessions = Math.max(0, Number(item.active_sessions || 0) || 0);
+    const termaActiveSessions = Math.max(0, Number(item.terma_active_sessions || 0) || 0);
+    const activity = activeSessions
+      ? tr("terminal:session.active_sessions", {count:activeSessions, termaCount:termaActiveSessions, defaultValue:`活动会话 ${activeSessions} 个，其中 Terma ${termaActiveSessions} 个`})
+      : tr("terminal:session.no_active_sessions", {defaultValue:"无活动会话"});
+    const manual = plan.manual?.description || "";
+    const manualMarkup = typeof remoteInstallManualMarkup === "function"
+      ? remoteInstallManualMarkup(item.install_plan || {}, {steps:manual ? [manual] : [], note:tr("terminal:session.manual_note", {defaultValue:"安装完成后会重新检测组件；卸载前请先处理所有活动会话。"})})
+      : (manual ? `<details><summary>${esc(tr("terminal:session.manual", {defaultValue:"手动说明"}))}</summary><small>${esc(manual)}</small></details>` : "");
+    return `<section class="terminal-session-component-row"><div class="terminal-session-component-head"><span class="terminal-session-component-icon" aria-hidden="true">${icon(id === "screen" ? "panels-top-left" : "square-terminal")}</span><div class="terminal-session-component-copy"><div class="terminal-session-component-title"><b>${esc(item.label || id)}</b><span class="terminal-session-component-status ${item.installed ? "installed" : "missing"}">${esc(status)}</span></div><small>${esc(activity)}</small></div><div class="terminal-session-component-actions">${uninstallButton}</div></div>${installButtons}${manualMarkup}</section>`;
+  }).join("")}</div>`;
+  target.querySelectorAll("[data-session-component][data-session-action]").forEach(button => {
+    button.onclick = () => manageTerminalSessionComponent(connectionId, key, button.dataset.sessionComponent, button.dataset.sessionAction, button);
+  });
+}
+
+async function refreshTerminalSessionComponents(connectionId, key) {
+  const modal = $("modal");
+  const context = modal?._terminalStartupContext;
+  const target = $("terminalSessionComponents");
+  if (!target || !context || modal._terminalStartupKey !== key) return;
+  target.className = "terminal-startup-capability loading";
+  target.textContent = tr("terminal:session.detecting", {defaultValue:"正在检测 tmux 和 screen…"});
+  try {
+    const response = await api(`/api/connections/${connectionId}/terminal-session-components`);
+    if (!terminalStartupModalRequestIsCurrent(modal, context, modal._terminalStartupRequestId)) return;
+    renderTerminalSessionComponents(response, key, connectionId);
+  } catch (error) {
+    if (!terminalStartupModalRequestIsCurrent(modal, context, modal._terminalStartupRequestId)) return;
+    target.className = "terminal-startup-capability warning";
+    target.textContent = tr("terminal:session.detect_failed", {error:error.message, defaultValue:`会话组件检测失败：${error.message}`});
+  }
+}
+
+async function manageTerminalSessionComponent(connectionId, key, component, action, button) {
+  const modeLabel = terminalSessionComponentActionLabel(action);
+  const startupContext = $("modal")?._terminalStartupContext;
+  const remoteRoot = $("terminalSessionComponents")?.dataset?.remoteRoot === "1";
+  const restoreStartupModal = () => {
+    const modal = $("modal");
+    if (!startupContext || modal?._terminalStartupContext === startupContext) return button;
+    showTerminalStartupSettings(key, connectionId);
+    return $("modal")?.querySelector(`[data-session-component="${CSS.escape(String(component))}"][data-session-action="${CSS.escape(String(action))}"]`) || button;
+  };
+  if (action === "install-local-offline") {
+    const confirmed = await confirmModal(tr("terminal:session.local_confirm", {defaultValue:"Terma 将在本机下载匹配的软件包和依赖，再通过 SFTP 上传到远端安装。是否继续？"}), tr("terminal:session.title", {defaultValue:"可恢复会话组件"}), tr("common:actions.continue", {defaultValue:"继续"}), tr("common:actions.cancel", {defaultValue:"取消"}), true);
+    if (!confirmed) {
+      restoreStartupModal();
+      return;
+    }
+  }
+  let actionButton = restoreStartupModal();
+  const needsAuth = action === "uninstall" || action === "install" || action === "install-offline" || action === "install-local-offline";
+  const auth = needsAuth && !remoteRoot && typeof requestRemoteAdminAuthorization === "function"
+    ? await requestRemoteAdminAuthorization(connectionId, modeLabel, `terminal-session.${component}.${action}`)
+    : null;
+  if (needsAuth && !remoteRoot && !auth) return;
+  actionButton = restoreStartupModal();
+  setButtonBusy(actionButton, true, modeLabel);
+  try {
+    await api(`/api/connections/${connectionId}/terminal-session-components`, {
+      method:"POST",
+      body:JSON.stringify({component, action, ...(auth ? {admin_auth:auth} : {})})
+    });
+    notify(tr("terminal:session.task_started", {modeLabel, defaultValue:`${modeLabel}任务已开始`}), "success");
+    await refreshTerminalSessionComponents(connectionId, key);
+  } catch (error) {
+    notify(error.message || tr("terminal:session.operation_failed", {defaultValue:"终端会话组件操作失败"}), "error");
+  } finally {
+    setButtonBusy(actionButton, false);
+  }
+}
+
 function terminalStartupModalRequestIsCurrent(modal, context, requestId) {
   return $("modal") === modal
     && !modal.hidden
@@ -151,12 +257,14 @@ async function refreshTerminalStartupCapabilities(connectionId, key, button=null
     const current = terminalStartupFormDraft();
     populateTerminalStartupCapabilities(response.capabilities || response, current);
     if (connection && response.capabilities) connection.terminal_capabilities = response.capabilities;
+    void refreshTerminalSessionComponents(connectionId, key);
   } catch (error) {
     if (!terminalStartupModalRequestIsCurrent(modal, context, requestId)) return;
     if (status) {
       status.className = "terminal-startup-capability warning";
       status.textContent = tr("terminal:startup.detect_failed", {error:error.message, defaultValue:`暂时无法识别远端环境：${error.message}。仍可使用服务器默认 Shell 或手动填写。`});
     }
+    void refreshTerminalSessionComponents(connectionId, key);
   } finally {
     if (terminalStartupModalRequestIsCurrent(modal, context, requestId)) setButtonBusy(button, false);
   }
@@ -320,6 +428,7 @@ function showTerminalStartupSettings(key, connectionId) {
       <div id="terminalStartupCapabilitySummary" class="terminal-startup-capability loading">${esc(tr("terminal:startup.waiting_detection", {defaultValue:"等待检测远端环境"}))}</div>
       <button id="terminalStartupDetect" type="button">${icon("scan-search")}<span>${esc(tr("terminal:startup.detect_again", {defaultValue:"重新检测"}))}</span></button>
     </div>
+    <div id="terminalSessionComponents" class="terminal-startup-capability loading">${esc(tr("terminal:session.waiting", {defaultValue:"等待检测会话组件"}))}</div>
     <div id="terminalStartupProgramFields" class="terminal-startup-fields">
       <input id="terminalStartupKind" type="hidden" value="custom">
       <div class="grid">

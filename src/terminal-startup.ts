@@ -115,6 +115,10 @@ function buildWindowsStartupCommand(config: TerminalStartupConfig): string {
 function buildRemoteStartupCommand(value: any = {}): string {
   const config = normalizeTerminalStartup(value);
   if (config.terminal_startup_mode === "default") return "";
+  // tmux/screen are session backends in Terma. When selected from the
+  // startup profile picker, the persistent-session wrapper launches the
+  // server's normal login shell inside them instead of nesting the tool.
+  if (config.terminal_profile_kind === "session" && /(?:^|[\\/])(tmux|screen)(?:\.exe)?$/i.test(config.terminal_program_path)) return "";
   return inferredStartupPlatform(config) === "windows"
     ? buildWindowsStartupCommand(config)
     : buildPosixStartupCommand(config);

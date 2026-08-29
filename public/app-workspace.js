@@ -747,7 +747,10 @@ function showTabContextMenu(event, key) {
 }
 
 function persistableTabs() {
-  return tabs.filter(tab => tab.kind && !tab.transient && tab.kind !== "quick-terminal").map(({key,title,subtitle,viewName,closable,kind,id,path,protocol}) => ({key,title,subtitle,viewName,closable,kind,id,path,protocol}));
+  return tabs.filter(tab => tab.kind && !tab.transient && tab.kind !== "quick-terminal").map(({key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned,connectionStatus,sessionMode,sessionBackend,persistentSessionId,resumePolicy,lastKnownCwd}) => ({
+    key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned:Boolean(pinned),connectionStatus,
+    sessionMode,sessionBackend,persistentSessionId,resumePolicy,lastKnownCwd
+  }));
 }
 
 function saveTabsState() {
@@ -790,7 +793,8 @@ function closeTerminalSession(key) {
   session.connectionAttempt = Number(session.connectionAttempt || 0) + 1;
   if (typeof cancelTerminalCursorCopy === "function") cancelTerminalCursorCopy(session, key);
   if (typeof closeTerminalZmodem === "function") closeTerminalZmodem(session);
-  try { session.socket?.close(); } catch {}
+  if (typeof prepareTerminalSessionClose === "function") prepareTerminalSessionClose(session, key, {forgetToken:true});
+  else try { session.socket?.close(); } catch {}
   try { session.resizeDisposable?.dispose(); } catch {}
   try { session.resizeObserver?.disconnect(); } catch {}
   try { session.globalLinkDisposable?.dispose(); } catch {}
@@ -1101,6 +1105,7 @@ function renderExplorerTools() {
     const activeSection = typeof activeSettingsSection === "string" ? normalizeSettingsSection(activeSettingsSection) : "settings-general";
     const sections = [
       ["settings-general", "settings-2", "common:auto.general_settings", "通用设置"],
+      ["settings-ai", "sparkles", "settings:sections.ai", "AI 设置"],
       ["settings-basic", "shield-check", "common:auto.security", "安全设置"],
       ["settings-key-management", "key-round", "settings:sections.key_management", "用户密钥管理"],
       ["settings-notifications", "bell", "common:auto.notification_settings", "通知设置"],

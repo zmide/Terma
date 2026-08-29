@@ -7,6 +7,7 @@ const { Client, utils: ssh2Utils } = require("ssh2");
 const socks = require("@pondwader/socks5-server");
 const iconv = require("iconv-lite");
 const { buildRemoteStartupCommand } = require("./terminal-startup");
+const { buildTerminalSessionCommand } = require("./terminal-session");
 const { ensureHostTrusted, verifyHostKey } = require("./ssh-host-trust");
 const { builtinSshExtraOptions } = require("./ssh-command");
 const { connectionSettings, ssh2TimingOptions } = require("./ssh-connection");
@@ -462,7 +463,7 @@ async function openPasswordShell(connection, options: any = {}) {
       }
       resolve({ client, stream, x11Diagnostics });
     };
-    const startupCommand = buildRemoteStartupCommand(connection);
+    const startupCommand = buildTerminalSessionCommand(connection, buildRemoteStartupCommand(connection));
     const x11Mode = ["untrusted", "trusted"].includes(String(connection?.x11_mode || "off")) ? connection.x11_mode : "";
     let x11Options = null;
     if (x11Mode) {

@@ -60,9 +60,28 @@ function trackTerminalCommand(session, data, options={}) {
 
 function recordTerminalCommand(session, command) {
   const text = String(command || "").trim();
+  if (typeof resolveTerminalAiWaitingInput === "function" && resolveTerminalAiWaitingInput(session, text)) return;
   saveRecentTerminalCommand(text);
+  if (typeof captureTerminalAiBlockCommand === "function") captureTerminalAiBlockCommand(session, text);
   const connection = currentConnection(session.id);
   if (connection) void trackTerminalDirectoryCommand(session, connection, session.key || activeTabKey, text);
+}
+
+function resolveTerminalAiWaitingInput(session, input) {
+  if (!session || !String(input || "").trim() || typeof terminalAiStateForKey !== "function") return false;
+  const state = terminalAiStateForKey(session.key);
+  const waiting = state.agentWaitingForInput;
+  if (!waiting || String(waiting.blockId || "") !== String(session.aiActiveBlockId || "")) return false;
+  const block = state.blocks.find(item => String(item.id) === String(waiting.blockId));
+  if (block) {
+    block.waitingForInput = false;
+    block.inputProvidedAt = Date.now();
+    block.inputProvided = String(input).slice(0, 200);
+  }
+  state.agentWaitingForInput = null;
+  terminalAiPersistState(session.key, state);
+  if (state.open) renderTerminalAiPanel(session.key);
+  return true;
 }
 
 function markTerminalCommandScreenSync(session) {

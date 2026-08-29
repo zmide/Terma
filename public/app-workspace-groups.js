@@ -163,8 +163,8 @@ function workspaceGroupName() {
 
 function workspaceGroupPersistableTab(tab) {
   if (!tab?.kind || tab.transient || tab.kind === "quick-terminal") return null;
-  const {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned} = tab;
-  return {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned:Boolean(pinned)};
+  const {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned,connectionStatus,sessionMode,sessionBackend,persistentSessionId,resumePolicy,lastKnownCwd} = tab;
+  return {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned:Boolean(pinned),connectionStatus,sessionMode,sessionBackend,persistentSessionId,resumePolicy,lastKnownCwd};
 }
 
 function workspaceFilterLayout(node, allowedKeys) {

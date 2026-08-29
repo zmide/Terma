@@ -154,6 +154,10 @@ function renderSettings() {
           </section>
         </div>
       </div>
+      <div class="settings-group" id="settings-ai">
+        <div class="settings-group-head"><h3>${esc(tr("settings:sections.ai", {defaultValue:"AI 设置"}))}</h3><span>${esc(tr("settings:ai.section_description", {defaultValue:"配置终端与日志中的 AI 助手，不影响终端的正常连接和使用。"}))}</span></div>
+        <div class="settings-grid single">${typeof aiSettingsPanelHtml === "function" ? aiSettingsPanelHtml() : ""}</div>
+      </div>
       <div class="settings-group" id="settings-basic">
         <div class="settings-group-head"><h3>${esc(tr("settings:auto.security_settings"))}</h3><span>${esc(tr("settings:auto.security_description"))}</span></div>
         <div class="settings-grid settings-waterfall">
@@ -340,5 +344,6 @@ function renderSettings() {
   syncNotificationSettingControls();
   syncDesktopCustomDataMode();
   syncUpdateNoticeForCurrentSection();
+  if (typeof renderTerminalAiMcpTools === "function") renderTerminalAiMcpTools();
   refreshIcons();
 }

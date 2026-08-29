@@ -11,6 +11,18 @@ function installProductivityHeaderButton() {
     if (host) host.appendChild(button);
     else document.getElementById("sftpTaskCenter")?.before(button);
   }
+  if (!document.getElementById("terminalSessionManagerButton") && typeof openTerminalSessionManager === "function") {
+    const button = document.createElement("button");
+    button.id = "terminalSessionManagerButton";
+    button.className = "icon-button terminal-session-manager-quick-button";
+    const label = tr("terminal:session.manager.open_button", {defaultValue:"可恢复终端会话"});
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.innerHTML = icon("history");
+    button.onclick = () => openTerminalSessionManager();
+    if (host) host.appendChild(button);
+    else document.getElementById("sftpTaskCenter")?.before(button);
+  }
   installXServerQuickAction(host);
 }
 

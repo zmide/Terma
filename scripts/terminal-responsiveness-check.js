@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const read = file => fs.readFileSync(path.join(root, file), "utf8");
@@ -99,7 +100,7 @@ function checkOutputBatching() {
 }
 
 function checkLoginProbeDeferral() {
-  const terminal = read("public/app-terminal.js");
+  const terminal = readFrontendDomain(root, "terminal");
   const core = read("public/app-terminal-core.js");
   const connect = sourceBetween(terminal, "async function connectTerminalAttempt(", "\nfunction reconnectTerminal(");
   assert.doesNotMatch(connect, /void initializeTerminalDirectory\(session, c, key\)/, "SSH open must not start an SFTP directory probe immediately");

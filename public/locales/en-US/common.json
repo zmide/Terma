@@ -20,7 +20,9 @@
     "detect_again": "Detect again",
     "repair_credentials": "Repair SSH credentials",
     "repair_temporary_credentials": "Repair temporary SSH credentials",
-    "close_desktop": "Close desktop"
+    "close_desktop": "Close desktop",
+    "refresh": "Refresh",
+    "done": "Done"
   },
   "api": {
     "login_required": "Sign in first",
@@ -818,10 +820,17 @@
   "dialogs": {
     "connected_tabs_title": "Close connected tabs?",
     "connected_tabs_many": "{{count}} tabs are still connected or connecting. Closing them will disconnect their sessions. Continue?",
+    "connected_tabs_many_mixed": "{{count}} tabs are still connected or connecting. Normal sessions will disconnect; {{persistentCount}} recoverable remote sessions will continue running.",
+    "persistent_tabs_many": "{{count}} recoverable tabs are still connected or connecting. Closing them only detaches Terma; their remote sessions and processes will continue running.",
     "connected_tab_one": "“{{title}}” is still {{status}}. Closing it will disconnect the session. Continue?",
+    "persistent_tab_one": "“{{title}}” is still {{status}}. Closing the tab only detaches Terma; the recoverable remote session and its processes will continue running.",
     "current_tab": "Current tab",
     "unnamed_tab": "Unnamed tab",
+    "recoverable_session_continues": "Recoverable session continues",
     "disconnect_close": "Disconnect and close",
+    "detach_close": "Detach and close",
+    "close_tabs": "Close tabs",
+    "terminate_persistent_close": "Terminate recoverable sessions and close",
     "modify_encrypted_config": "modify encrypted configuration",
     "ssh_host_update_trust": "Update and trust permanently",
     "ssh_host_save_trust": "Trust and save",

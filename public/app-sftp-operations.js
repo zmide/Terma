@@ -194,21 +194,28 @@ function sftpDeleteConfirmation(enabled, count, remotePath="") {
   };
 }
 
+function sftpPathBytesForPath(path, tabKey=activeTabKey) {
+  const target = String(path || "");
+  return sftpElements(".sftp-check", tabKey).find(input => String(input.value) === target)?.dataset.pathBytes || "";
+}
+
 async function deleteSftp(id, path, tabKey=activeTabKey) {
   const confirmation = sftpDeleteConfirmation(await currentSftpRecycleBinEnabled(), 1, path);
   if (!await confirmModal(confirmation.message, confirmation.title, confirmation.confirm, tr("common:actions.cancel", {defaultValue:"取消"}), confirmation.danger)) return;
-  const job = await api(`/api/connections/${id}/sftp/delete`, {method:"POST", body:JSON.stringify({paths:[path]})});
+  const pathBytesB64 = sftpPathBytesForPath(path, tabKey);
+  const job = await api(`/api/connections/${id}/sftp/delete`, {method:"POST", body:JSON.stringify({paths:[path], path_bytes:pathBytesB64 ? [pathBytesB64] : []})});
   trackSftpMutationJob(job);
   refreshSftpJobs();
 }
 
 async function deleteSftpSelection(tabKey=activeTabKey) {
   const tab = tabs.find(item => item.key === tabKey);
-  const paths = selectedSftpPaths(tabKey);
+  const entries = selectedSftpEntries(tabKey);
+  const paths = entries.map(item => item.path);
   if (!tab || !paths.length) return notify(tr("sftp:operations.select_items", {defaultValue:"请选择文件或目录"}), "info");
   const confirmation = sftpDeleteConfirmation(await currentSftpRecycleBinEnabled(), paths.length);
   if (!await confirmModal(confirmation.message, confirmation.title, confirmation.confirm, tr("common:actions.cancel", {defaultValue:"取消"}), confirmation.danger)) return;
-  const job = await api(`/api/connections/${tab.id}/sftp/delete`, {method:"POST", body:JSON.stringify({paths})});
+  const job = await api(`/api/connections/${tab.id}/sftp/delete`, {method:"POST", body:JSON.stringify({paths, path_bytes:entries.map(item => item.pathBytesB64 || "")})});
   trackSftpMutationJob(job);
   refreshSftpJobs();
 }

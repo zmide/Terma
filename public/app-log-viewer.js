@@ -109,6 +109,7 @@ function renderLogViewer(state=currentLogViewerState(), tabKey=activeTabKey, scr
   const nextMatchLabel = tr("common:log_viewer.next_match", {defaultValue:"Next match"});
   const closeSearchLabel = tr("common:actions.close", {defaultValue:"Close"});
   const externalLabel = tr("common:log_viewer.open_external", {defaultValue:"Open in external editor"});
+  const aiLabel = tr("terminal:ai.log_open", {defaultValue:"使用 AI 分析日志"});
   const detailSearchOpen = state.detailSearchOpen === true;
   const detailSearch = `<div class="log-detail-search" role="search"${detailSearchOpen ? "" : " hidden"}>
     <label class="search-field">${icon("search")}<input id="logDetailSearch" type="search" autocomplete="off" spellcheck="false" value="${escAttr(query)}" placeholder="${escAttr(detailSearchLabel)}" aria-label="${escAttr(detailSearchLabel)}" data-input-action="log-detail-search" data-tab-key="${escAttr(tabKey)}"></label>
@@ -118,8 +119,8 @@ function renderLogViewer(state=currentLogViewerState(), tabKey=activeTabKey, scr
   const older = state.has_older
     ? `<div class="actions log-load-actions"><button onclick="loadOlderLog('${escAttr(tabKey)}')">${icon("chevrons-up")}${esc(tr("common:log_viewer.load_older", {defaultValue:"Load earlier content"}))}</button><span class="muted">${esc(tr("common:log_viewer.chunk_hint", {defaultValue:"Logs are read in 256 KB chunks instead of loading a large file all at once."}))}</span></div>`
     : "";
-  const external = window.termaDesktop ? `<div class="actions log-view-actions"><button type="button" data-action="log-open-external" data-tab-key="${escAttr(tabKey)}" title="${escAttr(externalLabel)}">${icon("external-link")}<span>${esc(externalLabel)}</span></button></div>` : "";
-  view.innerHTML = `${detailSearch}${external}${older}<pre class="log-view" data-i18n-skip>${renderLogTextLines(localizedSystemLogText(state.text || tr("common:log_display.empty", {defaultValue:"Log is empty"}), state), query, state)}</pre>`;
+  const logActions = `<div class="actions log-view-actions"><button type="button" data-action="log-ai-open" data-tab-key="${escAttr(tabKey)}" title="${escAttr(aiLabel)}">${icon("sparkles")}<span>${esc(aiLabel)}</span></button>${window.termaDesktop ? `<button type="button" data-action="log-open-external" data-tab-key="${escAttr(tabKey)}" title="${escAttr(externalLabel)}">${icon("external-link")}<span>${esc(externalLabel)}</span></button>` : ""}</div>`;
+  view.innerHTML = `${detailSearch}${logActions}${older}<pre class="log-view" data-i18n-skip>${renderLogTextLines(localizedSystemLogText(state.text || tr("common:log_display.empty", {defaultValue:"Log is empty"}), state), query, state)}</pre>`;
   refreshIcons();
   positionLogViewerScroll(logViewerScrollContainer(view), scrollMode, previousScroll);
   if (scrollMode === "target") scrollLogViewerTarget(state, view);

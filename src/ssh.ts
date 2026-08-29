@@ -21,6 +21,7 @@ const { effectiveExtraArgs, splitArgs } = require("./ssh-command");
 const { proxyJumpArgument, sshDestinationArgs, structuredOpenSshArgs } = require("./ssh-connection");
 const { diagnoseSshError } = require("./ssh-diagnostics");
 const { buildRemoteStartupCommand } = require("./terminal-startup");
+const { buildTerminalSessionCommand } = require("./terminal-session");
 const { isHostTrustError, systemHostKeyArgs } = require("./ssh-host-trust");
 const { allowedIdentityPath, assertAllowedIdentityPath, looksLikePrivateKeyData } = require("./identity-path");
 const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
@@ -519,10 +520,11 @@ function buildTerminalCommand(connection) {
     args.push("-i", connection.identity_file);
   }
   const startupCommand = buildRemoteStartupCommand(connection);
-  if (startupCommand) args.push("-o", "RemoteCommand=none");
+  const terminalCommand = buildTerminalSessionCommand(connection, startupCommand);
+  if (terminalCommand) args.push("-o", "RemoteCommand=none");
   args.push(...effectiveExtraArgs(connection.extra_args, connection));
   args.push(...sshDestinationArgs(connection));
-  if (startupCommand) args.push(startupCommand);
+  if (terminalCommand) args.push(terminalCommand);
   return args;
 }
 

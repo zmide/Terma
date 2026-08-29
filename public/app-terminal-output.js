@@ -101,6 +101,7 @@ function drainTerminalOutput(session) {
       session.terminalOutputWriting = false;
       if (typeof refreshTerminalCommandBufferFromScreen === "function") refreshTerminalCommandBufferFromScreen(session);
       if (typeof finalizePendingTerminalCommand === "function") finalizePendingTerminalCommand(session);
+      if (typeof finalizeTerminalAiBlockFromScreen === "function") finalizeTerminalAiBlockFromScreen(session);
       if (session.pendingTerminalOutput?.length) scheduleTerminalOutputDrain(session);
     });
   } catch {
@@ -112,6 +113,7 @@ function drainTerminalOutput(session) {
 function queueTerminalOutput(session, output) {
   if (!session?.term || (typeof output !== "string" && !(output instanceof Uint8Array))) return;
   if (!output.length && !output.byteLength) return;
+  if (typeof captureTerminalAiBlockOutput === "function") captureTerminalAiBlockOutput(session, output);
   if (!session.pendingTerminalOutput) session.pendingTerminalOutput = [];
   session.pendingTerminalOutput.push(output);
   session.pendingTerminalOutputBytes = Number(session.pendingTerminalOutputBytes || 0) + terminalOutputLength(output);

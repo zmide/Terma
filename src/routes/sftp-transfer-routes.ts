@@ -13,7 +13,7 @@ interface SftpTransferRouteDependencies {
   createNativeSftpDragTicket(connectionId: number, paths: string[], options: any): Promise<any>;
   createRemoteFile(connectionId: number, remotePath: string): Promise<any>;
   crossCopyJob(sourceId: number, targetId: number, paths: string[], target: string, conflict: string, entries: any[]): any;
-  deletePathsJob(connectionId: number, paths: string[], recycle: boolean): any;
+  deletePathsJob(connectionId: number, paths: string[], recycle: boolean, pathBytesB64?: string[]): any;
   deleteRemoteRecycleItem(connectionId: number, id: string, storage: string): Promise<any>;
   disconnectSftpSession(connectionId: number, options: any): any;
   extractJob(connectionId: number, remotePath: string, target: string, options?: any): any;
@@ -323,7 +323,8 @@ export async function handleSftpTransferRoutes(
   if (method === "POST" && parts[4] === "delete") {
     const recycleEnabled = dependencies.readRuntimeSettings(dependencies.runtimeSettingsFile).sftp_recycle_bin_enabled;
     const requestedPaths = Array.isArray(data.paths) ? data.paths : [data.path];
-    const result = dependencies.deletePathsJob(connectionId, requestedPaths, recycleEnabled);
+    const pathBytesB64 = Array.isArray(data.path_bytes) ? data.path_bytes : [];
+    const result = dependencies.deletePathsJob(connectionId, requestedPaths, recycleEnabled, pathBytesB64);
     dependencies.invalidateRemoteDirectoryCache(connectionId);
     dependencies.sendJson(response, result, 202);
     return true;

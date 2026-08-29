@@ -157,7 +157,8 @@ export async function handleStorageRoutes(
       remote_desktop_quick_open_enabled:data.remote_desktop_quick_open_enabled ?? current.remote_desktop_quick_open_enabled,
       vnc_quick_open_new_window:data.vnc_quick_open_new_window ?? current.vnc_quick_open_new_window,
       workspace_toolbar_placement:data.workspace_toolbar_placement ?? current.workspace_toolbar_placement,
-      terminal: data.terminal ?? current.terminal
+      terminal: data.terminal ?? current.terminal,
+      ai: current.ai
     });
     if (data.sftp_download_directory !== undefined && desktopIntegration) {
       if (!dependencies.isDesktopRequest(request) || !desktopIntegration?.validateDownloadDirectory) {

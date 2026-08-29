@@ -96,6 +96,12 @@ async function check(name, callback) {
     assert.match(settingsCoreSource, /renderUpdateStatus\(\{deferNotes:true\}\)/);
   });
 
+  await check("republished update confirmation interpolates the target version", async () => {
+    const settingsSource = fs.readFileSync(path.join(projectRoot, "public", "app-settings-updates.js"), "utf8");
+    assert.match(settingsSource, /const targetVersion = latestVersion \? `v\$\{latestVersion\}` : tr\("settings:updates\.current_unknown"\)/);
+    assert.match(settingsSource, /"settings:updates\.republished_confirm"[\s\S]{0,160}\{version:targetVersion\}/);
+  });
+
   await check("update cache disk writes stay asynchronous during checks", async () => {
     const checkerSource = fs.readFileSync(path.join(projectRoot, "src", "update-checker.ts"), "utf8");
     assert.match(checkerSource, /let cacheMemory = readJson\(cachePath, \{\}\) \|\| \{\}/);

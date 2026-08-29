@@ -5,6 +5,7 @@ const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const { main:runAiBoundaryCheck } = require("./ai-check");
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-security-boundary-"));
 const previousData = process.env.TERMA_DATA_DIR;
@@ -285,6 +286,8 @@ async function main() {
   } finally {
     await stopServer(child);
   }
+
+  await runAiBoundaryCheck();
 
   console.log("Security boundary check passed: direct local access, LAN auth, trusted proxies, Host allowlist, Origin checks, desktop token, and HTTP enforcement");
 }

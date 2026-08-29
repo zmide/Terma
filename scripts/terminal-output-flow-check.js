@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const read = file => fs.readFileSync(path.join(root, file), "utf8");
@@ -67,7 +68,7 @@ function checkServerFlowContract() {
   assert.match(source, /source\.resume\?\.\(\)/, "server must resume terminal output sources");
   assert.match(source, /outputSocketBackpressured/, "server must react to WebSocket backpressure");
   assert.match(read("src/websocket.ts"), /socket\.write\(Buffer\.concat\(\[header, payload\]\).*!== false/s, "WebSocket writes must report backpressure");
-  const terminalUi = read("public/app-terminal.js");
+  const terminalUi = readFrontendDomain(root, "terminal");
   assert.match(terminalUi, /convertEol:false/, "PTY output must retain remote carriage-return progress updates");
   assert.match(read("public/app-terminal-core.js"), /attachCustomKeyEventHandler[\s\S]*sendTerminalData\(key, "\\x03"/, "Ctrl+C without a selection must send an interrupt byte directly");
   assert.match(read("public/app-remote-terminal.js"), /convertEol:false/, "other terminal views must use the same remote newline behavior");

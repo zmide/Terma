@@ -2194,7 +2194,7 @@ app.whenReady().then(async () => {
         await new Promise(resolve => setTimeout(resolve, 0));
         collectVisibleHan(scope, includeHidden, root);
       };
-      for (const section of ['settings-general','settings-basic','settings-notifications','settings-runtime','settings-cache','settings-about']) {
+      for (const section of ['settings-general','settings-ai','settings-basic','settings-notifications','settings-runtime','settings-cache','settings-about']) {
         showSettingsSection(section, {moveToWorkspace:false});
         await new Promise(resolve => setTimeout(resolve, 0));
         collectVisibleHan(section);
@@ -3214,7 +3214,7 @@ app.whenReady().then(async () => {
       const tools = document.querySelector('#explorerTools');
       const settingsButtons = [...tools.querySelectorAll(':scope > button[data-explorer-section]')];
       const settingsLabels = settingsButtons.map(button => button.querySelector('span')?.textContent.trim() || '');
-      const settingsExpected = ['通用设置','安全','用户密钥管理','通知设置','启动与运行','缓存管理','关于'];
+      const settingsExpected = ['通用设置','AI 设置','安全','用户密钥管理','通知设置','启动与运行','缓存管理','关于'];
       const settingsRects = settingsButtons.map(button => button.getBoundingClientRect());
       const settingsVertical = settingsRects.every((rect,index) => index === 0 || rect.top >= settingsRects[index-1].bottom - 0.5) && settingsRects.every(rect => Math.abs(rect.left-settingsRects[0].left)<1 && Math.abs(rect.width-settingsRects[0].width)<1);
       const settingsChecks = [];
@@ -3622,14 +3622,37 @@ app.whenReady().then(async () => {
       const installerActionsReady = installerButtons.includes(tr('settings:updates.open_verified_package'))
         && installerButtons.includes(tr('settings:updates.open_download_directory'))
         && installerButtons.includes(tr('settings:auto.update_redownload'));
-      result.updateUiParts = {updateCardReady,probingStateReady,selectedRouteReady,verifyingStateReady,staleFailureCleared,portableActionsReady,installerActionsReady,portableButtons,installerButtons,text:updateArea.textContent.replace(/\s+/g,' ').trim()};
+      const previousConfirmModal = confirmModal;
+      let republishedConfirmation = '';
+      try {
+        confirmModal = async message => {
+          republishedConfirmation = String(message || '');
+          return false;
+        };
+        updateSettings = {
+          ...updateSettings,
+          current_version:'1.0.9',
+          latest_version:'1.0.9',
+          update_available:false,
+          republished_available:true,
+          release_revision:2,
+          download_status:{state:'idle'}
+        };
+        await downloadUpdatePackage();
+      } finally {
+        confirmModal = previousConfirmModal;
+      }
+      const republishedConfirmationReady = republishedConfirmation.includes('v1.0.9')
+        && !republishedConfirmation.includes('{{version}}');
+      result.updateUiParts = {updateCardReady,probingStateReady,selectedRouteReady,verifyingStateReady,staleFailureCleared,portableActionsReady,installerActionsReady,republishedConfirmationReady,republishedConfirmation,portableButtons,installerButtons,text:updateArea.textContent.replace(/\s+/g,' ').trim()};
       result.updateUi = updateCardReady
         && probingStateReady
         && selectedRouteReady
         && verifyingStateReady
         && staleFailureCleared
         && portableActionsReady
-        && installerActionsReady;
+        && installerActionsReady
+        && republishedConfirmationReady;
       updateSettings = previousUpdate;
       return result;
     } catch (error) {
@@ -4887,6 +4910,372 @@ app.whenReady().then(async () => {
     document.querySelector('#terminalPasteConfirm')?.click();
     const pasteSent=await pastePromise;
     terminalSettingsUi.editablePaste=Boolean(pasteBackdropIgnored&&pasteEditable&&pasteSummaryUpdated&&pasteModalRect&&pasteModalRect.left>=-0.5&&pasteModalRect.right<=innerWidth+0.5&&pasteModalRect.top>=-0.5&&pasteModalRect.bottom<=innerHeight+0.5&&pasteSent&&reconnectedFakeSocket.sent.at(-1)==='edited command\\rsecond command');
+    const previousMcpEditorDraft=terminalAiMcpEditorDraft;
+    const mcpSettingsFixture=document.createElement('div');
+    terminalAiMcpEditorDraft=null;
+    mcpSettingsFixture.innerHTML=terminalAiMcpEditorHtml();
+    document.body.appendChild(mcpSettingsFixture);
+    const mcpStdioFieldsVisible=Boolean(!mcpSettingsFixture.querySelector('#terminalAiMcpCommand')?.hidden&&!mcpSettingsFixture.querySelector('#terminalAiMcpArgs')?.hidden&&mcpSettingsFixture.querySelector('#terminalAiMcpUrl')?.hidden&&mcpSettingsFixture.querySelector('#terminalAiMcpHeaders')?.hidden);
+    terminalAiMcpEditorDraft={transport:'sse'};
+    mcpSettingsFixture.innerHTML=terminalAiMcpEditorHtml();
+    const mcpTransport=mcpSettingsFixture.querySelector('#terminalAiMcpTransport');
+    const mcpSseFieldsVisible=Boolean(mcpSettingsFixture.querySelector('#terminalAiMcpCommand')?.hidden&&mcpSettingsFixture.querySelector('#terminalAiMcpArgs')?.hidden&&!mcpSettingsFixture.querySelector('#terminalAiMcpUrl')?.hidden&&!mcpSettingsFixture.querySelector('#terminalAiMcpHeaders')?.hidden);
+    terminalAiMcpEditorDraft={id:'fixture-edit',name:'Fixture',transport:'streamable-http',url:'https://example.test/mcp',headers:{Authorization:''},enabled:true};
+    const mcpEditHtml=terminalAiMcpEditorHtml();
+    const mcpRowsBefore=terminalAiMcpServersDraft;
+    terminalAiMcpServersDraft=[{...terminalAiMcpEditorDraft,tools:[{name:'search',description:'Search',inputSchema:{},enabled:true,requires_approval:true}]}];
+    const mcpRowsHtml=terminalAiMcpRowsHtml();
+    const mcpToolsFixture=document.createElement('div');
+    mcpToolsFixture.innerHTML=terminalAiMcpToolsHtml(terminalAiMcpServersDraft[0],0);
+    const mcpToolsCollapsible=Boolean(mcpToolsFixture.querySelector('details.terminal-ai-mcp-tools')&&!mcpToolsFixture.querySelector('details.terminal-ai-mcp-tools').open);
+    terminalSettingsUi.mcpDiagnostics={stdio:mcpStdioFieldsVisible,sse:mcpSseFieldsVisible,streamableOption:Boolean(mcpTransport.querySelector('option[value="streamable-http"]')),editCancel:mcpEditHtml.includes('settings-ai-mcp-edit-cancel'),headerPlaceholder:mcpEditHtml.includes('Authorization'),editAction:mcpRowsHtml.includes('settings-ai-mcp-edit'),toolsCollapsible:mcpToolsCollapsible};
+    terminalSettingsUi.mcp=Object.values(terminalSettingsUi.mcpDiagnostics).every(Boolean);
+    terminalAiMcpServersDraft=mcpRowsBefore;
+    terminalAiMcpEditorDraft=previousMcpEditorDraft;
+    mcpSettingsFixture.remove();
+    const previousRuntimeSettingsForAi=runtimeSettings;
+    const previousTerminalAiLayout=localStorage.getItem(TERMINAL_AI_LAYOUT_STORAGE_KEY);
+    localStorage.removeItem(TERMINAL_AI_LAYOUT_STORAGE_KEY);
+    const aiKey='terminal-ai-ui-smoke';
+    const aiSurface=document.createElement('div');
+    aiSurface.className='terminal-tab-surface';
+    aiSurface.style.cssText='position:fixed;left:-10000px;top:0;width:900px;height:480px;display:flex;flex-direction:column;';
+    aiSurface.innerHTML='<div class="terminal-toolbar"><div class="actions terminal-actions"><button type="button" class="icon-button terminal-ai-button" aria-pressed="false" data-action="terminal-ai-toggle" data-terminal-ai-key="'+aiKey+'">'+icon('bot')+'</button></div></div><div class="terminal-main-row"><div class="terminal-box"></div>'+terminalAiPanelHtml(aiKey)+'</div>';
+    document.body.appendChild(aiSurface);
+    runtimeSettings={...runtimeSettings,ai:{...(runtimeSettings?.ai||{}),enabled:true,model:'fixture-model',context_tokens:1000000,terminal_ai_placement:'right',terminal_ai_permission:'confirm'},saved:{...(runtimeSettings?.saved||{}),ai:{...(runtimeSettings?.saved?.ai||{}),enabled:true,model:'fixture-model',context_tokens:1000000,terminal_ai_placement:'right',terminal_ai_permission:'confirm'}}};
+    const aiButton=aiSurface.querySelector('[data-action="terminal-ai-toggle"]');
+    const aiPanel=aiSurface.querySelector('.terminal-ai-panel');
+    const projectedAiButton=document.createElement('button');
+    projectedAiButton.className='terminal-ai-button';
+    projectedAiButton.dataset.terminalAiKey=aiKey;
+    projectedAiButton.setAttribute('aria-pressed','false');
+    document.body.appendChild(projectedAiButton);
+    const aiShortcutRendered=Boolean(aiButton?.querySelector('.lucide-bot')&&aiButton?.dataset.terminalAiKey===aiKey);
+    aiButton?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+    await new Promise(resolve=>requestAnimationFrame(resolve));
+    const aiMainRow=aiSurface.querySelector('.terminal-main-row');
+    const aiPanelRect=aiPanel?.getBoundingClientRect();
+    const aiSurfaceRect=aiSurface.getBoundingClientRect();
+    const aiPanelOpens=Boolean(aiPanel&&!aiPanel.hidden&&aiPanel.classList.contains('is-open'));
+    const aiRightPlacement=Boolean(aiSurface.classList.contains('terminal-ai-right')&&getComputedStyle(aiMainRow).flexDirection==='row'&&aiPanelRect?.width>0);
+    const aiPanelLayoutFits=Boolean(aiPanelRect&&aiSurfaceRect&&aiPanelRect.left>=aiSurfaceRect.left-0.5&&aiPanelRect.right<=aiSurfaceRect.right+0.5&&aiPanelRect.top>=aiSurfaceRect.top-0.5&&aiPanelRect.bottom<=aiSurfaceRect.bottom+0.5);
+    const aiState=terminalAiStateForKey(aiKey);
+    const aiFullPermissionOption=Boolean(aiPanel.querySelector('[data-change-action="terminal-ai-permission"] option[value="full"]'));
+    const aiInlineApprovalSlot=Boolean(aiPanel.querySelector('[data-terminal-ai-approval="'+aiKey+'"]'));
+    const aiModelControl=aiPanel.querySelector('[data-change-action="terminal-ai-model"]');
+    const aiReasoningControl=aiPanel.querySelector('[data-change-action="terminal-ai-reasoning"]');
+    const aiDeepThinkingControl=aiPanel.querySelector('[data-change-action="terminal-ai-deep-thinking"]');
+    const aiModelReasoningControlsAvailable=Boolean(aiModelControl&&aiReasoningControl&&aiDeepThinkingControl&&aiPanel.querySelector('.terminal-ai-ai-status')&&[...aiReasoningControl.options].some(option=>option.value==='high'));
+    const aiBinarySession={key:aiKey,sensitiveInput:false,aiActiveBlockId:''};
+    captureTerminalAiBlockCommand(aiBinarySession,'ls');
+    captureTerminalAiBlockOutput(aiBinarySession,new TextEncoder().encode('fixture-file\\n'));
+    const aiBinaryOutputCaptured=aiState.blocks.some(block=>block.command==='ls'&&block.output.includes('fixture-file'));
+    finalizeTerminalAiActiveBlock(aiBinarySession);
+    const aiPromptSession={term:{buffer:{active:{baseY:0,cursorY:0,cursorX:12,getLine:()=>({translateToString:()=> 'root@Test:~#'})}}}};
+    const aiTrailingPromptDetected=terminalPromptStateAtRow(aiPromptSession)?.command==='';
+    const aiEmptyOutputSession={key:aiKey,sensitiveInput:false,aiActiveBlockId:''};
+    captureTerminalAiBlockCommand(aiEmptyOutputSession,'true');
+    const aiEmptyOutputCompletes=finalizeTerminalAiBlockFromScreen({...aiEmptyOutputSession,term:aiPromptSession.term});
+    const markdownFence=String.fromCharCode(96).repeat(3);
+    const longTableValue='value-'.repeat(80);
+    aiState.turns=[{id:'fixture-turn',prompt:'检查当前目录',answer:['**结果**','','| 项目 | 当前值 |','| --- | --- |','| sshd | '+longTableValue+' |','',markdownFence+'shell',"printf '"+longTableValue+"'",markdownFence].join('\\n'),reasoning:'根据已捕获输出整理了只读检查步骤。',model:'fixture-model',usage:{input_tokens:20,output_tokens:30,total_tokens:50},busy:false,error:''}];
+    renderTerminalAiPanel(aiKey);
+    const aiComposer=aiPanel.querySelector('.terminal-ai-composer');
+    const aiComposerRect=aiComposer?.getBoundingClientRect();
+    const aiComposeActionsRect=aiPanel.querySelector('.terminal-ai-compose-actions')?.getBoundingClientRect();
+    const aiTextarea=aiPanel.querySelector('[data-terminal-ai-prompt]');
+    const aiComposerSettings=aiPanel.querySelector('.terminal-ai-composer-settings');
+    if(aiComposerSettings)aiComposerSettings.open=true;
+    await new Promise(resolve=>requestAnimationFrame(resolve));
+    const aiComposerPopoverRect=aiPanel.querySelector('.terminal-ai-composer-popover')?.getBoundingClientRect();
+    const aiDeepToggleRect=aiPanel.querySelector('.terminal-ai-deep-toggle')?.getBoundingClientRect();
+    const aiSendButton=aiPanel.querySelector('.terminal-ai-send-button');
+    const aiComposerControlsMoved=Boolean(aiModelReasoningControlsAvailable
+      &&aiComposer?.contains(aiModelControl)
+      &&aiComposer?.contains(aiReasoningControl)
+      &&aiComposer?.contains(aiDeepThinkingControl)
+      &&!aiPanel.querySelector('.terminal-ai-agent-bar')
+      &&aiComposerSettings
+      &&aiComposerPopoverRect
+      &&aiComposerPopoverRect.left>=aiPanelRect.left-0.5
+      &&aiComposerPopoverRect.right<=aiPanelRect.right+0.5
+      &&aiComposerPopoverRect.top>=aiPanelRect.top-0.5
+      &&aiDeepToggleRect
+      &&aiDeepToggleRect.bottom<=aiComposerRect.bottom+0.5
+      &&aiSendButton?.querySelector('.lucide-arrow-up'));
+    if(aiComposerSettings)aiComposerSettings.open=false;
+    const aiModelReasoningControls=aiComposerControlsMoved;
+    const aiTurns=aiPanel.querySelector('.terminal-ai-turns');
+    const aiTableWrap=aiPanel.querySelector('.terminal-ai-table-wrap');
+    const aiCodeView=aiPanel.querySelector('.terminal-ai-code');
+    const aiMarkdownRendered=Boolean(aiPanel.querySelector('.terminal-ai-response-content strong')&&aiPanel.querySelector('.terminal-ai-table')&&aiPanel.querySelector('.terminal-ai-code-block')&&aiPanel.querySelector('[data-action="terminal-ai-insert-command"]')&&aiPanel.querySelector('.terminal-ai-reasoning'));
+    const aiScopedHorizontalScroll=Boolean(aiTurns&&getComputedStyle(aiTurns).overflowX==='hidden'&&aiTableWrap&&getComputedStyle(aiTableWrap).overflowX==='auto'&&aiTableWrap.scrollWidth>aiTableWrap.clientWidth&&aiCodeView&&getComputedStyle(aiCodeView).overflowX==='auto'&&aiCodeView.scrollWidth>aiCodeView.clientWidth);
+    const enterEvent=new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true});
+    aiTextarea.value='';
+    aiTextarea.dispatchEvent(enterEvent);
+    const shiftEnterEvent=new KeyboardEvent('keydown',{key:'Enter',shiftKey:true,bubbles:true,cancelable:true});
+    aiTextarea.dispatchEvent(shiftEnterEvent);
+    const aiComposerKeyboard=enterEvent.defaultPrevented&&!shiftEnterEvent.defaultPrevented;
+    const toolCallFence=String.fromCharCode(96).repeat(3);
+    const aiToolCallAnswer='<tool_call><function=terminal><parameter=action>execute</parameter><parameter=command>find / -name "测试2.svg" -type f 2>/dev/null</parameter><parameter=description>查找 SVG 文件</parameter></function></tool_call>';
+    const aiToolCallCommands=terminalAiResponseCommands(aiToolCallAnswer);
+    const aiCompatibleToolCalls=[
+      '<tool_call><function=exec_command><parameter=command>uname -a</parameter><parameter=timeout>30</parameter></function></tool_call>',
+      '<tool_call><function=shell><parameter=command>whoami</parameter></function></tool_call>'
+    ];
+    const aiCompatibleToolCallCommands=aiCompatibleToolCalls.map(value => terminalAiResponseCommands(value)[0]);
+    const aiCompatibleToolCallRendered=aiCompatibleToolCalls.every(value => renderTerminalAiMarkdown(aiKey,value).includes('terminal-ai-code-block'));
+    const aiRejectedToolCalls=[
+      '<tool_call><function=delete_everything><parameter=command>rm -rf /tmp/example</parameter></function></tool_call>',
+      '<tool_call><function=shell><parameter=action>delete</parameter><parameter=command>whoami</parameter></function></tool_call>',
+      '<tool_call><function=exec_command><parameter=timeout>30</parameter></function></tool_call>'
+    ];
+    const aiCompatibleToolCallRejected=aiRejectedToolCalls.every(value => terminalAiResponseCommands(value).length===0);
+    const aiRejectedToolCallVisible=aiRejectedToolCalls.every(value => /未执行工具调用|Tool call not executed/i.test(renderTerminalAiMarkdown(aiKey,value)));
+    aiState.turns=[{id:'fixture-tool-call',prompt:'帮我找一下测试2.svg',answer:aiToolCallAnswer,reasoning:'',model:'fixture-model',usage:null,busy:false,error:''}];
+    renderTerminalAiPanel(aiKey);
+    const aiToolCallRendered=Boolean(aiToolCallCommands[0]==='find / -name "测试2.svg" -type f 2>/dev/null'&&JSON.stringify(aiCompatibleToolCallCommands)==='["uname -a","whoami"]'&&aiCompatibleToolCallRendered&&aiCompatibleToolCallRejected&&aiRejectedToolCallVisible&&aiPanel.querySelector('.terminal-ai-code-block')&&aiPanel.querySelector('[data-action="terminal-ai-insert-command"]')&&!aiPanel.textContent.includes('<tool_call>')&&!aiPanel.textContent.includes('<function=terminal>'));
+    const aiXmlAnswer='我先检查真实系统信息。<command>cat /etc/os-release &amp;&amp; uname -a</command><command>whoami</command>未经终端验证的安全报告';
+    const aiXmlCommands=terminalAiResponseCommands(aiXmlAnswer);
+    const aiAnswerThroughFirstCommand=terminalAiAnswerThroughFirstCommand(aiXmlAnswer);
+    aiState.turns=[{id:'fixture-xml-command',prompt:'检查系统',answer:aiAnswerThroughFirstCommand,reasoning:'',model:'fixture-model',usage:null,busy:false,error:''}];
+    renderTerminalAiPanel(aiKey);
+    const aiXmlCommandRendered=Boolean(aiXmlCommands[0]==='cat /etc/os-release && uname -a'&&aiPanel.querySelector('.terminal-ai-code-block code')?.textContent==='cat /etc/os-release && uname -a'&&!aiPanel.textContent.includes('<command>'));
+    const aiStopsAfterFirstCommand=aiAnswerThroughFirstCommand.includes('</command>')&&!aiAnswerThroughFirstCommand.includes('whoami')&&!aiAnswerThroughFirstCommand.includes('安全报告');
+    const aiMcpAnswer='我先查询当前资料。<mcp_call server="brave-search" tool="brave_web_search">{"query":"Terma"}</mcp_call>不应提前给结论';
+    const aiMcpCalls=terminalAiResponseMcpCalls(aiMcpAnswer);
+    const aiMcpCut=terminalAiAnswerThroughFirstCommand(aiMcpAnswer);
+    const aiMcpCatalogBefore=terminalAiMcpCatalogCache;
+    terminalAiMcpCatalogCache={expiresAt:Date.now()+60000,contexts:[],tools:[{server_id:'web-fetch',server_name:'Web Fetch',name:'tavily_search',description:'Search the web',inputSchema:{type:'object',properties:{query:{type:'string'}}},enabled:true,requires_approval:false}]};
+    const aiGenericMcpAnswer='<tool_call><function>tavily_search><parameter=query>Terma company what is</parameter></tool_call>';
+    const aiGenericMcpCalls=terminalAiResponseMcpCalls(aiGenericMcpAnswer);
+    const aiGenericMcpRendered=!renderTerminalAiMarkdown(aiKey,aiGenericMcpAnswer).includes('<tool_call>')&&!renderTerminalAiMarkdown(aiKey,aiGenericMcpAnswer).includes('<function');
+    const aiJsonMcpAnswer='<tool_call>{"name":"mcp_call","arguments":{"server":"web-fetch.tavily_search","tool":"search","query":"Terma software what is it"}}</tool_call>';
+    const aiJsonMcpCalls=terminalAiResponseMcpCalls(aiJsonMcpAnswer);
+    const aiJsonMcpRendered=!renderTerminalAiMarkdown(aiKey,aiJsonMcpAnswer).includes('<tool_call>')&&!renderTerminalAiMarkdown(aiKey,aiJsonMcpAnswer).includes('<function');
+    const aiMcpMarkerAnswer=[markdownFence+'xml','**MCP · web-fetch / tavily_search**',markdownFence].join('\\n');
+    const aiMcpMarkerCalls=terminalAiResponseMcpCalls(aiMcpMarkerAnswer);
+    const aiMcpMarkerResults=terminalAiTaskMcpResults([{answer:aiMcpMarkerAnswer,agentResults:[]}]);
+    const aiMcpMarkerWithReal=terminalAiTaskMcpResults([{answer:aiMcpMarkerAnswer,agentResults:[{kind:'mcp',server:'web-fetch',tool:'tavily_search',arguments:{query:'Terma'},output:'fixture result',status:'已完成'}]}]);
+    const aiMcpMarkerNormalized=terminalAiNormalizeToolCalls(aiMcpMarkerAnswer);
+    terminalAiMcpCatalogCache=aiMcpCatalogBefore;
+    aiState.turns=[{id:'fixture-mcp-call',prompt:'搜索 Terma',answer:aiMcpCut,reasoning:'',model:'fixture-model',usage:null,busy:false,error:''}];
+    renderTerminalAiPanel(aiKey);
+    const aiMcpInlineAnswer='开始查询 <mcp_call server="web-fetch" tool="tavily_search">{"query":"Terma"}</mcp_call> 查询完成';
+    const aiMcpInlineEntries=[{kind:'mcp',server:'web-fetch',tool:'tavily_search',arguments:{query:'Terma'},output:'fixture inline result',status:'已完成'}];
+    const aiMcpInlineRendered=terminalAiRenderAnswerWithMcp(aiKey,aiMcpInlineAnswer,aiMcpInlineEntries,new Set());
+    const aiMcpInlineCardIndex=aiMcpInlineRendered.indexOf('terminal-ai-mcp-result-card');
+    const aiMcpInlineBefore=aiMcpInlineRendered.indexOf('开始查询');
+    const aiMcpInlineAfter=aiMcpInlineRendered.indexOf('查询完成');
+    const aiMcpCallRendered=Boolean(aiMcpCalls.length===1&&aiMcpCalls[0].server==='brave-search'&&aiMcpCalls[0].tool==='brave_web_search'&&aiGenericMcpCalls.length===1&&aiGenericMcpCalls[0].server==='web-fetch'&&aiGenericMcpCalls[0].tool==='tavily_search'&&aiGenericMcpCalls[0].arguments.query==='Terma company what is'&&aiGenericMcpRendered&&aiJsonMcpCalls.length===1&&aiJsonMcpCalls[0].server==='web-fetch'&&aiJsonMcpCalls[0].tool==='tavily_search'&&JSON.stringify(aiJsonMcpCalls[0].arguments)==='{"query":"Terma software what is it"}'&&aiJsonMcpRendered&&aiMcpMarkerCalls.length===0&&aiMcpMarkerResults.length===1&&aiMcpMarkerWithReal.length===1&&aiMcpMarkerWithReal[0].output==='fixture result'&&!aiMcpMarkerNormalized.includes('MCP')&&!aiMcpMarkerNormalized.includes('xml')&&aiPanel.querySelector('.terminal-ai-mcp-result-card')&&!aiPanel.textContent.includes('<mcp_call')&&!aiMcpCut.includes('不应提前给结论')&&aiMcpInlineBefore>=0&&aiMcpInlineCardIndex>aiMcpInlineBefore&&aiMcpInlineCardIndex<aiMcpInlineAfter);
+    const aiMultiCommandQueue=JSON.stringify(terminalAiResponseCommands([markdownFence+'shell','uname -a','whoami',markdownFence,markdownFence+'shell','hostname',markdownFence].join('\\n')))==='["uname -a","whoami","hostname"]'
+      &&JSON.stringify(terminalAiResponseCommands([markdownFence+'shell','ls /etc 2>/dev/null && echo ready && hostname',markdownFence].join('\\n')))==='["ls /etc 2>/dev/null && echo ready && hostname"]';
+    const aiIncompleteCommandRecovery=terminalAiResponseCommands(['我先检查系统。',markdownFence+'shell','cat /etc/os-release 2>/dev/null'].join('\\n'),{allowIncomplete:true})[0]==='cat /etc/os-release 2>/dev/null'
+      &&terminalAiResponseCommands(['我先检查系统。',markdownFence+'shell','cat /etc/os-release 2>/'].join('\\n'),{allowIncomplete:true}).length===0
+      &&terminalAiCompleteRecoveredCommandAnswer(['我先检查系统。',markdownFence+'shell','uname -a'].join('\\n'),'uname -a').endsWith(markdownFence);
+    updateTerminalAiLayout(aiKey,{mode:'floating',width:520,minimized:false});
+    const aiFloatingLayout=terminalAiLayoutSettings();
+    const aiFloatingPersisted=Boolean(aiFloatingLayout.mode==='floating'&&aiFloatingLayout.width===520&&aiPanel.classList.contains('terminal-ai-layout-floating')&&aiPanel.style.getPropertyValue('--terminal-ai-width')==='520px');
+    updateTerminalAiLayout(aiKey,{mode:'floating',width:520,height:620,left:innerWidth+900,top:innerHeight+900});
+    clampTerminalAiLayoutsToViewport();
+    const aiClampedLayout=terminalAiLayoutSettings();
+    const aiFloatingViewportClamped=Boolean(aiClampedLayout.left<=Math.max(0,innerWidth-aiClampedLayout.width)&&aiClampedLayout.top<=Math.max(0,innerHeight-aiClampedLayout.height)&&aiClampedLayout.left>=0&&aiClampedLayout.top>=0);
+    const aiTurnsBeforeDrag=aiState.turns;
+    const aiBusyBeforeDrag=aiState.busy;
+    aiState.turns=[{id:'fixture-drag-scroll',prompt:'拖动面板时保持顶部',answer:Array.from({length:90},(_,index)=>'line '+index).join(String.fromCharCode(10)),reasoning:'',model:'fixture-model',usage:null,busy:true,error:''}];
+    aiState.busy=true;
+    updateTerminalAiLayout(aiKey,{mode:'floating',width:520,height:620,left:0,top:0,minimized:false});
+    const aiDragTurns=aiPanel.querySelector('.terminal-ai-turns');
+    if (aiDragTurns) aiDragTurns.scrollTop=0;
+    const aiDragHead=aiPanel.querySelector('.terminal-ai-head');
+    const aiDragRect=aiPanel.getBoundingClientRect();
+    terminalAiBeginPointer({target:aiDragHead,clientX:aiDragRect.left+20,clientY:aiDragRect.top+20,preventDefault(){},stopPropagation(){}},'drag');
+    terminalAiMovePointer({clientX:aiDragRect.left+44,clientY:aiDragRect.top+24,preventDefault(){}});
+    terminalAiEndPointer();
+    const aiDragTurnsAfter=aiPanel.querySelector('.terminal-ai-turns');
+    const aiDragScrollPreserved=Boolean(aiDragTurnsAfter&&aiDragTurnsAfter.scrollHeight>aiDragTurnsAfter.clientHeight&&aiDragTurnsAfter.scrollTop===0);
+    aiState.turns=aiTurnsBeforeDrag;
+    aiState.busy=aiBusyBeforeDrag;
+    updateTerminalAiLayout(aiKey,{mode:'floating',width:520,height:620,left:0,top:0,minimized:false});
+    const aiModalStackPromise=confirmModal('确认层级测试','启用完全访问','继续','取消');
+    await new Promise(resolve=>requestAnimationFrame(resolve));
+    const aiModal=document.querySelector('#modal');
+    const aiModalCard=aiModal?.querySelector('.modal-card');
+    const aiModalCardRect=aiModalCard?.getBoundingClientRect();
+    const aiModalAboveFloating=Boolean(aiModal&&!aiModal.hidden&&Number(getComputedStyle(aiModal).zIndex)>Number(getComputedStyle(aiPanel).zIndex)&&aiModalCardRect&&aiModalCardRect.top>=-0.5&&aiModalCardRect.bottom<=innerHeight+0.5);
+    aiModal?.querySelector('button[data-choice="1"]')?.click();
+    await aiModalStackPromise;
+    const floatingRect=aiPanel.getBoundingClientRect();
+    const floatingResizer=aiPanel.querySelector('.terminal-ai-floating-resizer');
+    terminalAiBeginPointer({target:floatingResizer,clientX:floatingRect.right,clientY:floatingRect.bottom,preventDefault(){},stopPropagation(){}},'floating-resize');
+    terminalAiMovePointer({clientX:floatingRect.right+36,clientY:floatingRect.bottom+24,preventDefault(){}});
+    terminalAiEndPointer();
+    const aiFloatingResizeDebug={before:{width:floatingRect.width,height:floatingRect.height,right:floatingRect.right,bottom:floatingRect.bottom},after:terminalAiLayoutSettings()};
+    const aiFloatingResizeDirection=aiFloatingResizeDebug.after.width===556
+      &&aiFloatingResizeDebug.after.height>floatingRect.height
+      &&aiPanel.getBoundingClientRect().bottom<=innerHeight+1;
+    updateTerminalAiLayout(aiKey,{minimized:true});
+    const aiFloatingMinimized=aiPanel.classList.contains('terminal-ai-layout-floating')&&aiPanel.classList.contains('is-minimized');
+    updateTerminalAiLayout(aiKey,{mode:'fixed',width:430,minimized:true});
+    const fixedMinimizedRect=aiPanel.getBoundingClientRect();
+    const mainRowRect=aiMainRow.getBoundingClientRect();
+    const aiFixedMinimized=Boolean(aiPanel.classList.contains('terminal-ai-layout-fixed')&&aiPanel.classList.contains('is-minimized')&&fixedMinimizedRect.width<=45&&fixedMinimizedRect.height>=mainRowRect.height-1);
+    updateTerminalAiLayout(aiKey,{minimized:false});
+    const fixedRect=aiPanel.getBoundingClientRect();
+    const fixedResizer=aiPanel.querySelector('.terminal-ai-fixed-resizer');
+    terminalAiBeginPointer({target:fixedResizer,clientX:fixedRect.left,clientY:fixedRect.top,preventDefault(){},stopPropagation(){}},'fixed-resize');
+    terminalAiMovePointer({clientX:fixedRect.left-35,clientY:fixedRect.top,preventDefault(){}});
+    terminalAiEndPointer();
+    const aiFixedBoundaryResize=terminalAiLayoutSettings().width===465;
+    const aiLayoutRestored=terminalAiLayoutSettings().minimized===false&&!aiPanel.classList.contains('is-minimized')&&aiPanel.style.getPropertyValue('--terminal-ai-width')==='465px';
+    const aiComposerFits=Boolean(aiTextarea&&!aiTextarea.disabled&&aiComposerRect&&aiComposeActionsRect&&aiPanelRect&&aiComposerRect.left>=aiPanelRect.left-0.5&&aiComposerRect.right<=aiPanelRect.right+0.5&&aiComposerRect.bottom<=aiPanelRect.bottom+0.5&&aiComposeActionsRect.bottom<=aiPanelRect.bottom+0.5);
+    const aiActiveState=aiButton?.getAttribute('aria-pressed')==='true'&&aiButton.classList.contains('active');
+    const aiProjectedActiveState=projectedAiButton.getAttribute('aria-pressed')==='true'&&projectedAiButton.classList.contains('active');
+    const aiControlledAllowsLowSensitivity=['pwd','ls -la','git status --short --branch'].every(command=>terminalAiCommandRisk(command).safe);
+    const aiControlledFindAllowed=terminalAiCommandRisk('find / -name "测试2.svg" -type f 2>/dev/null').safe;
+    const aiControlledConfirmsSensitive=['cat ~/.ssh/id_rsa','env','grep token .env','Get-Content $HOME/.ssh/id_rsa'].every(command=>!terminalAiCommandRisk(command).safe);
+    const aiExplicitFileReadAllowed=terminalAiCommandRisk('cat 日志.txt',{userPrompt:'帮我看一下日志.txt内容'}).safe
+      &&terminalAiCommandRisk('head -n 20 "应用 日志.txt"',{userPrompt:'检查应用 日志.txt'}).safe
+      &&terminalAiCommandRisk('Get-Content -LiteralPath C:\\\\logs\\\\app.log -Tail 50',{userPrompt:'分析 C:\\\\logs\\\\app.log'}).safe;
+    const aiUnrequestedFileReadAllowed=terminalAiCommandRisk('cat 其他.txt',{userPrompt:'帮我看一下日志.txt内容'}).safe;
+    const aiPathBoundaryAllowed=terminalAiCommandRisk('cat foo.txt',{userPrompt:'帮我看一下 foo.txt.bak'}).safe;
+    const aiSensitivePathUsesSensitiveRisk=terminalAiCommandRisk('cat ~/.ssh/id_rsa',{userPrompt:'读取 ~/.ssh/id_rsa'}).reason===tr('terminal:ai.risk_sensitive');
+    const aiAgentSent=[];
+    const aiAgentPayloads=[];
+    let aiAgentLoop=false;
+    aiState.permission='controlled';
+    aiState.blocks=[];
+    aiState.turns=[];
+    const aiAgentStream=async(payload,handlers={})=>{
+      aiAgentPayloads.push(payload);
+      const answer=aiAgentPayloads.length===1
+        ? '我先检查用户指定的日志文件。'
+        : aiAgentPayloads.length===2
+          ? ['现在读取真实内容。',markdownFence+'shell','cat 日志.txt',markdownFence].join('\\n')
+          : '**结论**：日志内容已读取并完成分析。';
+      handlers.onDelta?.(answer);
+      return {model:'fixture-model',usage:{input_tokens:10,output_tokens:10,total_tokens:20}};
+    };
+    const aiAgentExecute=async(_sentKey,command)=>{
+      aiAgentSent.push(command);
+      const block={id:createTerminalLogId(),command,output:'',startedAt:Date.now(),completedAt:0};
+      aiState.blocks.push(block);
+      setTimeout(()=>{
+        block.output='第一行日志\\n第二行日志\\n';
+        block.completedAt=Date.now();
+      },10);
+      return {sent:true,blockId:block.id,command};
+    };
+    await submitTerminalAiRequest(aiKey,'帮我看一下日志.txt内容',[],{agentTask:true,streamRequest:aiAgentStream,executeCommand:aiAgentExecute});
+    aiAgentLoop=aiAgentSent.length===1&&aiAgentSent[0]==='cat 日志.txt'
+      &&aiAgentPayloads.length===3
+      &&aiAgentPayloads[2].contexts?.[0]?.text.includes('第二行日志')
+      &&aiState.turns.at(-1)?.agentContinuation===true
+      &&aiState.turns.at(-1)?.answer.includes('完成分析')
+      &&aiState.busy===false;
+    renderTerminalAiPanel(aiKey);
+    const aiAgentGroupedReply=Boolean(aiPanel.querySelectorAll('.terminal-ai-task').length===1&&aiPanel.querySelectorAll('.terminal-ai-assistant-message').length===1&&aiPanel.querySelectorAll('.terminal-ai-response-phase').length===3&&aiPanel.textContent.includes('我先检查用户指定的日志文件')&&aiPanel.textContent.includes('cat 日志.txt')&&aiPanel.textContent.includes('完成分析'));
+    const aiAgentActionRecovery=Boolean(aiAgentPayloads[1]?.message?.includes('没有给出终端操作或完整结论'));
+    const aiInternalCutIsNotUserStop=Boolean(aiState.turns[1]?.streamCutForCommand===true&&Array.isArray(aiAgentPayloads[2]?.history)&&aiAgentPayloads[2].history.length===0);
+    const aiFullSent=[];
+    const aiFullPayloads=[];
+    let aiFullAccessLoop=false;
+    try {
+    aiState.permission='full';
+    aiState.blocks=[];
+    aiState.turns=[];
+    const aiFullStream=async(payload,handlers={})=>{
+      aiFullPayloads.push(payload);
+      const step=aiFullPayloads.length;
+      const answer=step===1
+        ? [markdownFence+'shell','printf first',markdownFence].join('\\n')
+        : step===2
+          ? [markdownFence+'shell','false',markdownFence].join('\\n')
+          : step===3
+            ? [markdownFence+'shell','printf third',markdownFence].join('\\n')
+            : '**结论**：三步任务已完成，第二步失败后已继续分析。';
+      handlers.onDelta?.(answer);
+      return {model:'fixture-model',usage:{input_tokens:8,output_tokens:8,total_tokens:16}};
+    };
+    const aiFullExecute=async(_sentKey,command)=>{
+      aiFullSent.push(command);
+      const block={id:createTerminalLogId(),command,output:'',startedAt:Date.now(),completedAt:0,exitCode:0};
+      aiState.blocks.push(block);
+      setTimeout(()=>{
+        block.output=command==='false'?'失败输出\\n':command+' 输出\\n';
+        block.exitCode=command==='false'?1:0;
+        block.completedAt=Date.now();
+      },5);
+      return {sent:true,blockId:block.id,command};
+    };
+    await submitTerminalAiRequest(aiKey,'连续执行并在失败后继续',[],{agentTask:true,streamRequest:aiFullStream,executeCommand:aiFullExecute});
+    aiFullAccessLoop=aiFullSent.join('|')==='printf first|false|printf third'
+      &&aiFullPayloads.length===4
+      &&aiFullPayloads[2].contexts?.[0]?.text.includes('失败输出')
+      &&aiState.turns.at(-1)?.answer.includes('第二步失败后已继续')
+      &&aiState.busy===false;
+    aiState.permission='confirm';
+    } catch (error) {
+      console.error('Full access Agent smoke error:', error?.stack || error);
+    }
+    const aiSearchApiBefore=api;
+    const aiSearchCatalogBefore=terminalAiMcpCatalogCache;
+    const aiSearchEvents=[];
+    const aiSearchQueries=[];
+    const aiSearchTools=[];
+    const aiSearchPayloads=[];
+    const aiSearchPrompt='你在网上搜索一下Terma看看是什么东西';
+    try {
+      runtimeSettings={...runtimeSettings,saved:{...(runtimeSettings?.saved||{}),ai:{...(runtimeSettings?.saved?.ai||{}),enabled:true,model:'fixture-model',terminal_ai_permission:'full',mcp_servers:[{id:'web-fetch',name:'Web Fetch',transport:'streamable-http',url:'https://example.test/mcp',enabled:true,tools:[{name:'tavily_search',description:'Search the web',inputSchema:{type:'object',properties:{query:{type:'string'}}},enabled:true,requires_approval:false},{name:'tavily_extract',description:'Extract a web page',inputSchema:{type:'object',properties:{urls:{type:'array',items:{type:'string'}},query:{type:'string'}},required:['urls']},enabled:true,requires_approval:false}]}]}}};
+      terminalAiMcpCatalogCache={expiresAt:Date.now()+60000,contexts:[{source:'mcp-tools',title:'MCP Web Fetch',text:'Server ID: web-fetch\\nAvailable tools:\\n- tavily_search\\n- tavily_extract'}],tools:[{server_id:'web-fetch',server_name:'Web Fetch',name:'tavily_search',description:'Search the web',inputSchema:{type:'object',properties:{query:{type:'string'}}},enabled:true,requires_approval:false},{server_id:'web-fetch',server_name:'Web Fetch',name:'tavily_extract',description:'Extract a web page',inputSchema:{type:'object',properties:{urls:{type:'array',items:{type:'string'}},query:{type:'string'}},required:['urls']},enabled:true,requires_approval:false}]};
+      api=async(pathname,options={})=>{
+        if(pathname==='/api/ai/mcp/call'){
+          aiSearchEvents.push('mcp');
+          const body=JSON.parse(options.body||'{}');
+          aiSearchTools.push(body.tool||'');
+          aiSearchQueries.push(JSON.stringify(body.arguments||{}));
+          return {content:[{type:'text',text:'Terma 是跨平台终端与远程管理工具。Source: https://example.test/terma'}],query:body.arguments?.query};
+        }
+        return aiSearchApiBefore(pathname,options);
+      };
+      aiState.permission='full';
+      aiState.turns=[{id:'old-audit',taskId:'old-task',prompt:'检查 Linux 安全加固',answer:'auditd 已启用。',reasoning:'',model:'fixture-model',usage:null,busy:false,error:'',agentContinuation:false}];
+      const aiSearchStream=async(payload,handlers={})=>{
+        aiSearchEvents.push('model');
+        aiSearchPayloads.push(payload);
+        handlers.onDelta?.('**Terma** 是一个跨平台终端与远程管理工具。来源：https://example.test/terma');
+        return {model:'fixture-model',usage:{input_tokens:20,output_tokens:12,total_tokens:32}};
+      };
+      await submitTerminalAiRequest(aiKey,aiSearchPrompt,[{source:'terminal-block',title:'旧审计命令',text:'$ auditctl -l\\n旧 Linux 审计输出'}],{agentTask:true,streamRequest:aiSearchStream});
+    } finally {
+      api=aiSearchApiBefore;
+      terminalAiMcpCatalogCache=aiSearchCatalogBefore;
+    }
+    const aiSearchPayload=aiSearchPayloads[0];
+    const aiSearchGroups=terminalAiTaskGroups(aiState.turns);
+    const aiSearchTaskSwitch=Boolean(aiSearchEvents.join('|')==='mcp|model'
+      &&aiSearchPayloads.length===1
+      &&aiSearchTools[0]==='tavily_search'
+      &&aiSearchQueries[0].includes('zmide/Terma')
+      &&aiSearchPayload.message.includes(aiSearchPrompt)
+      &&Array.isArray(aiSearchPayload.history)&&aiSearchPayload.history.length===0
+      &&aiSearchPayload.contexts.some(item=>item.source==='mcp-output'&&item.text.includes('跨平台终端'))
+      &&aiSearchPayload.contexts.some(item=>item.source==='application-identity'&&item.text.includes('github.com/zmide/Terma'))
+      &&!aiSearchPayload.contexts.some(item=>item.source==='terminal-block')
+      &&aiSearchGroups.at(-1)?.root?.prompt===aiSearchPrompt
+      &&aiState.turns.at(-1)?.answer.includes('跨平台终端'));
+    const aiHistorySessionBefore=aiState.sessionId;
+    terminalAiPersistState(aiKey,aiState);
+    terminalAiNewSession(aiKey);
+    const aiHistorySupported=aiState.sessionId!==aiHistorySessionBefore&&terminalAiListSessions(aiKey).some(item=>item.id===aiHistorySessionBefore);
+    terminalAiPersistState(aiKey,aiState);
+    terminalSettingsUi.ai={shortcutRendered:aiShortcutRendered,panelOpens:aiPanelOpens,rightPlacement:aiRightPlacement,panelLayoutFits:aiPanelLayoutFits,composerFits:aiComposerFits,composerKeyboard:aiComposerKeyboard,markdownRendered:aiMarkdownRendered,scopedHorizontalScroll:aiScopedHorizontalScroll,toolCallRendered:aiToolCallRendered,mcpCallRendered:aiMcpCallRendered,xmlCommandRendered:aiXmlCommandRendered,stopsAfterFirstCommand:aiStopsAfterFirstCommand,fullPermissionOption:aiFullPermissionOption,inlineApprovalSlot:aiInlineApprovalSlot,modelReasoningControls:aiModelReasoningControls,multiCommandQueue:aiMultiCommandQueue,incompleteCommandRecovery:aiIncompleteCommandRecovery,floatingPersisted:aiFloatingPersisted,floatingViewportClamped:aiFloatingViewportClamped,dragScrollPreserved:aiDragScrollPreserved,modalAboveFloating:aiModalAboveFloating,floatingResizeDirection:aiFloatingResizeDirection,floatingMinimized:aiFloatingMinimized,fixedMinimized:aiFixedMinimized,fixedBoundaryResize:aiFixedBoundaryResize,layoutRestored:aiLayoutRestored,activeState:aiActiveState,projectedActiveState:aiProjectedActiveState,binaryOutputCaptured:aiBinaryOutputCaptured,trailingPromptDetected:aiTrailingPromptDetected,emptyOutputCompletes:aiEmptyOutputCompletes,controlledAllowsLowSensitivity:aiControlledAllowsLowSensitivity,controlledFindAllowed:aiControlledFindAllowed,controlledConfirmsSensitive:aiControlledConfirmsSensitive,explicitFileReadAllowed:aiExplicitFileReadAllowed,unrequestedFileReadAllowed:aiUnrequestedFileReadAllowed,pathBoundaryAllowed:aiPathBoundaryAllowed,sensitivePathUsesSensitiveRisk:aiSensitivePathUsesSensitiveRisk,agentLoop:aiAgentLoop,fullAccessAgentLoop:aiFullAccessLoop,agentGroupedReply:aiAgentGroupedReply,agentActionRecovery:aiAgentActionRecovery,searchTaskSwitch:aiSearchTaskSwitch,internalCutIsNotUserStop:aiInternalCutIsNotUserStop,historySupported:aiHistorySupported};
+    try { localStorage.removeItem(terminalAiHistoryStorageKey(aiKey)); } catch {}
+    aiButton?.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
+    projectedAiButton.remove();
+    aiSurface.remove();
+    if(previousTerminalAiLayout===null)localStorage.removeItem(TERMINAL_AI_LAYOUT_STORAGE_KEY);else localStorage.setItem(TERMINAL_AI_LAYOUT_STORAGE_KEY,previousTerminalAiLayout);
+    runtimeSettings=previousRuntimeSettingsForAi;
     const toolbarFixture=document.createElement('div');
     toolbarFixture.className='terminal-toolbar';
     toolbarFixture.style.width='100%';
@@ -5222,8 +5611,8 @@ app.whenReady().then(async () => {
     terminalLatencyVisible = previousLatencyVisible;
     if (previousLatencyStored === null) localStorage.removeItem('terminalLatencyVisible');
     else localStorage.setItem('terminalLatencyVisible', previousLatencyStored);
-    return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,x11DefaultFallsBack,x11ScopeMenu,ctrlVImageIntercepted,ctrlVEmptyFallsThrough,ctrlVDiagnostics,enterReconnect,reconnectPreservesOutput,inactiveTerminalOutputContinues,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,remoteDesktopTitleDedup,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,encodingSelectionUsesLatest,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,terminalToolbarScrollable,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,zmodemPanelUi,zmodemPanelMetrics,terminalSettingsUi};
-  })()`);
+      return {found:true,labels,metrics,desktopBackHidden,desktopKeysHidden,binaryType,binaryWrite,stableLogId,x11DefaultFallsBack,x11ScopeMenu,ctrlVImageIntercepted,ctrlVEmptyFallsThrough,ctrlVDiagnostics,enterReconnect,reconnectPreservesOutput,inactiveTerminalOutputContinues,fontActionRestoresFocus,recentCommandsRestoreFocus,recentCommandSequenceVisible,resourceWindowTitle,remoteDesktopTitleDedup,numberingContinuesWithOpenTabs,numberingRestartsAfterAllClosed,encodingMenuOpened,encodingSelectionUsesLatest,fontMenuOpened,statusHoverShowsFull,desktopStatusAvoidsDuplicate,desktopToolbarInHeader,connectionToggleUsesLinkAction,activeToolbarReplacesPrevious,narrowToolbarFits,narrowToolbarLeftAligned,responsiveToolbarFits,terminalToolbarScrollable,startupCompactIconOnly,desktopActionsIconOnly,terminalToolbarIconSet,terminalFrameLowContrast,terminalFrameColors,terminalBackgroundColor,desktopCursorCopyHintVisible,desktopCursorCopyHintCleansUp,terminalCtrlWheelZooms,terminalCtrlWheelKeepsPosition,terminalPlainWheelScrolls,terminalFontChangePreservesMiddleScroll,terminalFontChangeKeepsWheelContinuity,terminalWheelMetrics,terminalCjkTextDoesNotClip,terminalCjkMetrics,latencyMeasured,latencyCanDisable,latencyCanEnable,zmodemPanelUi,zmodemPanelMetrics,terminalSettingsUi};
+   })()`).catch(error => ({executeError:String(error?.stack || error)}));
   const terminalStartupOriginalContentSize = window.getContentSize();
   window.setContentSize(1000, 600);
   await new Promise(resolve => setTimeout(resolve, 50));
@@ -10672,7 +11061,7 @@ app.whenReady().then(async () => {
     || !hostTrustUi.settings?.searchInput
     || !hostTrustUi.settings?.searchPlaceholder
     || !hostTrustUi.settings?.pageSizeDefault;
-  const expectedSettingsActions = ['通用设置','安全','用户密钥管理','通知设置','启动与运行','缓存管理','关于'];
+  const expectedSettingsActions = ['通用设置','AI 设置','安全','用户密钥管理','通知设置','启动与运行','缓存管理','关于'];
   const mobileResizeNavigationFailed = !mobile.workspaceResizeNavigation || !Object.values(mobile.workspaceResizeNavigation).every(Boolean);
   const mobileWorkspaceChromeResizeFailed = !mobile.workspaceChromeResize?.found
     || !mobile.workspaceChromeResize?.handlesHidden
@@ -10684,9 +11073,11 @@ app.whenReady().then(async () => {
   const terminalLabels = ['复制选中','光标复制','会话复制','粘贴','清屏','滚动到底部','终端配置','断开连接','全局终端设置'];
   const terminalSettingsUi = terminalUi.terminalSettingsUi || {};
   const terminalDropUi = terminalSettingsUi.drop || {};
+  const terminalAiUi = terminalSettingsUi.ai || {};
   const mobileTerminalSettingsUi = mobile.terminalGlobalSettings || {};
   const terminalStartupUiFailed = !terminalStartupUi.found || !Object.values(terminalStartupUi).every(Boolean);
-  const terminalUiFailed = !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.x11ScopeMenu || !terminalUi.ctrlVImageIntercepted || !terminalUi.ctrlVEmptyFallsThrough || !terminalUi.enterReconnect || !terminalUi.reconnectPreservesOutput || !terminalUi.inactiveTerminalOutputContinues || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.remoteDesktopTitleDedup || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.encodingSelectionUsesLatest || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.terminalToolbarScrollable || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalFontChangeKeepsWheelContinuity || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalUi.zmodemPanelUi || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.fontInheritance || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.pasteCommandHistory || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
+  const terminalAiUiFailed = !terminalSettingsUi.mcp || !terminalAiUi.shortcutRendered || !terminalAiUi.panelOpens || !terminalAiUi.rightPlacement || !terminalAiUi.panelLayoutFits || !terminalAiUi.composerFits || !terminalAiUi.composerKeyboard || !terminalAiUi.markdownRendered || !terminalAiUi.scopedHorizontalScroll || !terminalAiUi.toolCallRendered || !terminalAiUi.mcpCallRendered || !terminalAiUi.xmlCommandRendered || !terminalAiUi.stopsAfterFirstCommand || !terminalAiUi.fullPermissionOption || !terminalAiUi.inlineApprovalSlot || !terminalAiUi.modelReasoningControls || !terminalAiUi.multiCommandQueue || !terminalAiUi.incompleteCommandRecovery || !terminalAiUi.floatingPersisted || !terminalAiUi.floatingViewportClamped || !terminalAiUi.dragScrollPreserved || !terminalAiUi.modalAboveFloating || !terminalAiUi.floatingResizeDirection || !terminalAiUi.floatingMinimized || !terminalAiUi.fixedMinimized || !terminalAiUi.fixedBoundaryResize || !terminalAiUi.layoutRestored || !terminalAiUi.activeState || !terminalAiUi.projectedActiveState || !terminalAiUi.binaryOutputCaptured || !terminalAiUi.trailingPromptDetected || !terminalAiUi.emptyOutputCompletes || !terminalAiUi.controlledAllowsLowSensitivity || !terminalAiUi.controlledFindAllowed || !terminalAiUi.controlledConfirmsSensitive || !terminalAiUi.explicitFileReadAllowed || !terminalAiUi.unrequestedFileReadAllowed || !terminalAiUi.pathBoundaryAllowed || !terminalAiUi.sensitivePathUsesSensitiveRisk || !terminalAiUi.agentLoop || !terminalAiUi.agentGroupedReply || !terminalAiUi.agentActionRecovery || !terminalAiUi.searchTaskSwitch || !terminalAiUi.internalCutIsNotUserStop || !terminalAiUi.historySupported;
+  const terminalUiFailed = terminalAiUiFailed || !terminalUi.found || !terminalUi.desktopBackHidden || !terminalUi.desktopKeysHidden || terminalUi.binaryType !== 'arraybuffer' || !terminalUi.binaryWrite || !terminalUi.stableLogId || !terminalUi.x11DefaultFallsBack || !terminalUi.x11ScopeMenu || !terminalUi.ctrlVImageIntercepted || !terminalUi.ctrlVEmptyFallsThrough || !terminalUi.enterReconnect || !terminalUi.reconnectPreservesOutput || !terminalUi.inactiveTerminalOutputContinues || !terminalUi.fontActionRestoresFocus || !terminalUi.recentCommandsRestoreFocus || !terminalUi.recentCommandSequenceVisible || !terminalUi.resourceWindowTitle || !terminalUi.remoteDesktopTitleDedup || !terminalUi.numberingContinuesWithOpenTabs || !terminalUi.numberingRestartsAfterAllClosed || !terminalUi.encodingMenuOpened || !terminalUi.encodingSelectionUsesLatest || !terminalUi.fontMenuOpened || !terminalUi.statusHoverShowsFull || !terminalUi.desktopStatusAvoidsDuplicate || !terminalUi.desktopToolbarInHeader || !terminalUi.connectionToggleUsesLinkAction || !terminalUi.activeToolbarReplacesPrevious || !terminalUi.narrowToolbarFits || !terminalUi.narrowToolbarLeftAligned || !terminalUi.responsiveToolbarFits || !terminalUi.terminalToolbarScrollable || !terminalUi.startupCompactIconOnly || !terminalUi.desktopActionsIconOnly || !terminalUi.terminalToolbarIconSet || !terminalUi.terminalFrameLowContrast || !terminalUi.desktopCursorCopyHintVisible || !terminalUi.desktopCursorCopyHintCleansUp || !terminalUi.terminalCtrlWheelZooms || !terminalUi.terminalCtrlWheelKeepsPosition || !terminalUi.terminalPlainWheelScrolls || !terminalUi.terminalFontChangePreservesMiddleScroll || !terminalUi.terminalFontChangeKeepsWheelContinuity || !terminalUi.terminalCjkTextDoesNotClip || !terminalUi.latencyMeasured || !terminalUi.latencyCanDisable || !terminalUi.latencyCanEnable || !terminalUi.zmodemPanelUi || !terminalSettingsUi.open || !terminalSettingsUi.globalScope || !terminalSettingsUi.controls || !terminalSettingsUi.fontInheritance || !terminalDropUi.found || !terminalDropUi.copyFeedbackVisible || !terminalDropUi.sftpCopyToCurrentDirectory || !terminalDropUi.uploadFeedbackVisible || !terminalDropUi.localUploadToCurrentDirectory || !terminalDropUi.singleActiveDropTarget || !terminalDropUi.resizeFeedbackClears || !terminalDropUi.staleFeedbackClears || !terminalDropUi.completionNoticeNotDuplicated || !terminalSettingsUi.withinViewport || !terminalSettingsUi.compact || !terminalSettingsUi.readableWidth || !terminalSettingsUi.noHorizontalOverflow || JSON.stringify(terminalSettingsUi.tabs)!==JSON.stringify(['外观','鼠标与链接','选择与粘贴']) || JSON.stringify(terminalSettingsUi.backgroundModes)!==JSON.stringify(['theme','black','white','custom']) || !terminalSettingsUi.backgroundPreview || !terminalSettingsUi.requestedDefaults || !terminalSettingsUi.editablePasteSetting || !terminalSettingsUi.appliesToAllOpenSessions || !terminalSettingsUi.readableCustomPalette || !terminalSettingsUi.followsTheme || !terminalSettingsUi.copyFormatting || !terminalSettingsUi.singleLinePaste || !terminalSettingsUi.pasteCommandHistory || !terminalSettingsUi.linkProvider || !terminalSettingsUi.editablePaste || !mobileTerminalSettingsUi.buttonHidden || !mobile.terminalLongPress?.menuOnly || !mobile.terminalLongPress?.menuOpened || !mobile.terminalLongPress?.cursorHintStarted || !mobile.terminalLongPress?.cursorStartStored || !mobile.terminalLongPress?.cursorSelectionBlue || !mobile.terminalLongPress?.cursorCopyCompleted || !mobile.terminalLongPress?.clipboardFallback || !mobile.terminalSessionText?.open || !mobile.terminalSessionText?.withinViewport || !mobile.terminalSessionText?.selectable || !mobile.terminalSessionText?.scrollable || !mobile.terminalSessionText?.fullText || !mobile.terminalSessionText?.copyAll || !mobile.terminalSessionText?.copyAllWorks || !mobile.terminalSessionText?.backdropIgnored || !mobile.terminalPasteEditor?.open || !mobile.terminalPasteEditor?.withinViewport || !mobile.terminalPasteEditor?.editable || !mobile.terminalPasteEditor?.actionsVisible || !mobile.terminalPasteEditor?.backdropIgnored || !mobile.terminalPasteEditor?.cancelled || !mobile.terminalBack?.visible || !mobile.terminalBack?.shellOwned || !mobile.terminalBack?.reservedRow || !mobile.terminalBack?.compactToolbar || !mobile.terminalBack?.sftpTextFits || !mobile.terminalBack?.globalSettingsHidden || JSON.stringify(mobile.terminalBack?.priorityOrder)!==JSON.stringify(['reconnect','keys','forward-list','forward','sftp']) || !mobile.terminalBack?.returned || !mobile.terminalFontMenu?.opened || !mobile.terminalFontMenu?.withinViewport || !mobile.terminalFontMenu?.compact || !mobile.terminalFontMenu?.scrollable || !mobile.terminalFontMenu?.closeSticky || !mobile.terminalFontMenu?.touchTargets || !terminalLabels.every(label=>terminalUi.labels.includes(label)) || terminalUi.metrics.some(item=>Math.abs(item.buttonHeight-30)>0.5||Math.abs(item.iconWidth-14)>0.5||Math.abs(item.iconHeight-14)>0.5||item.centerDelta>0.5);
   const logSettingsUiFailed = !logSettingsUi.open || !logSettingsUi.accessible || logSettingsUi.days !== "0" || logSettingsUi.fileMb !== "10" || logSettingsUi.totalMb !== "0" || logSettingsUi.rotations || !logSettingsUi.currentUsage || !logSettingsUi.cleanupPreview || !logSettingsUi.cleanup || logSettingsUi.immediateCleanup || !logSettingsUi.save || !logSettingsUi.closed || !logSettingsUi.fullTerminalTime || !logSettingsUi.defaultsToLatest || !logSettingsUi.followsTheme || !logSettingsUi.searchContextHidden || !logSettingsUi.searchOpensWithQuery || !logSettingsUi.pagerVisible || !logSettingsUi.pagerPinned || !logSettingsUi.pagerFitsNarrow || !logSettingsUi.pagerLabelsReadable || !logSettingsUi.detailSearchHiddenInitially || !logSettingsUi.detailSearchVisible || !logSettingsUi.detailSearchNavigation || !logSettingsUi.detailSearchClose || !logSettingsUi.ctrlF || !logSettingsUi.detailSearchFloats || !logSettingsUi.detailSearchReservesTop;
   const productivityUiFailed = !productivityUi.quickVisible || productivityUi.actionCount < 7 || !productivityUi.quickConnectionActionsInline || !productivityUi.quickPanelDirect || !productivityUi.workspaceSearchable || !productivityUi.workspacePreviewOpens || !productivityUi.quickButtonPlacement || !productivityUi.quickButtonLightning || productivityUi.commandWindowDefaultHasConnections || productivityUi.commandWindowDefaultHasSnippets || !productivityUi.commandWindowSearchFindsSnippet || !productivityUi.commandWindowLabel.includes('命令窗口') || !productivityUi.xServerQuickUsesX11 || !productivityUi.xServerUnauthorizedWarning || !productivityUi.xServerLocalDirectReady || !productivityUi.broadcastFromEither || !productivityUi.broadcastTabMarked || !productivityUi.broadcastHeaderGrouped || !productivityUi.broadcastExitCompact || !productivityUi.visibleSplitHasNoActivity || !productivityUi.visibleSplitClearsPriorActivity || !productivityUi.hiddenBinaryOutputMarked || productivityUi.syncRows !== 3 || !productivityUi.conflictSafe || !productivityUi.namedWorkspaceTools || !productivityUi.terminalTools || !productivityUi.quickToolbarIconVisible || !productivityUi.quickToggleStateVisible || !productivityUi.quickCompactWidths || !productivityUi.quickCommandExecutes || !productivityUi.quickContextMenu || !productivityUi.quickDoubleClickCreates || !productivityUi.quickEditorBackCloses || !productivityUi.quickManagerPolished || !productivityUi.quickOrderPersists || !productivityUi.quickHeightAdjustable || !productivityUi.quickToggleHides || !productivityUi.quickWheelScrolls || !productivityUi.quickResponsive;
   const remoteAdminUiFailed = Boolean(remoteAdminUi.desktop?.error)
@@ -10766,6 +11157,7 @@ app.whenReady().then(async () => {
   const forwardLayoutUiFailed = !result.globalForwardManager || !result.globalForwardStatsAligned || !result.globalForwardToolbarAligned || !result.globalForwardToolbarWideAligned || !result.globalForwardWideGrid || !result.singleForwardWideGrid || !result.forwardCardActionsAligned || !result.groupedManager || !result.globalForwardStoppedHidesAccess || !result.forwardingPagination || !result.connectionForwardPagination;
   const code = errors.length || cspViolations.length || languageOnboardingFailed || forwardTemplateLayoutFailed || !noVncModuleUi.loaded || !noVncModuleUi.prototype || !zmodemModuleUi.loaded || !zmodemModuleUi.browser || !zmodemModuleUi.abortSequence || overflow || operationPagesFailed || darkFailed || menuFailed || refreshStateUiFailed || workspaceTabDragUiFailed || workspaceTabCloseUiFailed || workspaceDockingUiFailed || workspaceStartupRestoreUiFailed || workspaceTabVisibilityUiFailed || workspaceHeaderResizeUiFailed || runningActionsFailed || authUiFailed || connectionStartupUiFailed || saveAndClearUiFailed || notificationUiFailed || restoreKeyUiFailed || restoreCredentialUiFailed || activityUiFailed || appearanceEffectsUiFailed || navigationUiFailed || aboutUiFailed || hostTrustUiFailed || mobileNavigationFailed || mobileAboutFailed || terminalUiFailed || terminalStartupUiFailed || logSettingsUiFailed || productivityUiFailed || remoteAdminUiFailed || linuxDesktopToolbarUiFailed || remoteAccessUiFailed || sftpUiFailed || sftpToolbarRecoveryFailed || sftpTabIsolationFailed || forwardLayoutUiFailed || !clipboardUi.ok || mobile.contentVisible === "none" || !result.groups || !result.icons || !result.groupRenameMenu || !result.groupActionButton || !result.stickyGroupHeaders || !result.stickyGroupHeaderSealsTop || !result.operationPaneCollapsible || !result.operationPanePinBehavior || !result.operationPaneResizable || !result.operationPaneHorizontalScrollHidden || !result.compactDesktopHeader || !result.compactOperationPane || !result.compactConnectionTools || !result.compactConnectionRows || !result.connectionHasSftpAction || !result.quickConnectionLauncher || !result.quickForwardSearch || !result.quickCommandForwardSearch || !result.quickSshCandidates || !result.connectionNameDoubleClickOpens || !result.forwardToggleFits ? 1 : 0;
   if (sftpTabIsolationFailed) console.error("SFTP tab isolation diagnostics:", JSON.stringify(directoryActionsUi));
+  if (terminalUi.executeError) console.error("Terminal UI execute error:", terminalUi.executeError);
   if (notificationUiFailed) console.error("Notification UI diagnostics:", JSON.stringify(notificationUi));
   if (imagePreviewUiFailed) console.error("Image preview UI diagnostics:", JSON.stringify(imagePreviewUi));
   if (code) console.error("UI smoke failure summary:", JSON.stringify({

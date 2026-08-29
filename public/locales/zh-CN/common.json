@@ -20,7 +20,9 @@
     "detect_again": "重新检测",
     "repair_credentials": "修复 SSH 凭据",
     "repair_temporary_credentials": "修复临时 SSH 凭据",
-    "close_desktop": "关闭桌面"
+    "close_desktop": "关闭桌面",
+    "refresh": "刷新",
+    "done": "完成"
   },
   "api": {
     "login_required": "请先登录",
@@ -818,10 +820,17 @@
   "dialogs": {
     "connected_tabs_title": "关闭仍在连接的标签？",
     "connected_tabs_many": "以下 {{count}} 个标签仍在连接或连接中。关闭后会断开对应会话，确定继续吗？",
+    "connected_tabs_many_mixed": "以下 {{count}} 个标签仍在连接或连接中。普通会话会断开，其中 {{persistentCount}} 个可恢复远端会话会继续运行。",
+    "persistent_tabs_many": "以下 {{count}} 个可恢复标签仍在连接或连接中。关闭标签只会让 Terma 分离，远端会话及其中的进程会继续运行。",
     "connected_tab_one": "“{{title}}”仍处于{{status}}状态。关闭后会断开该会话，确定继续吗？",
+    "persistent_tab_one": "“{{title}}”仍处于{{status}}状态。关闭标签只会让 Terma 分离，可恢复远端会话及其中的进程会继续运行。",
     "current_tab": "当前标签",
     "unnamed_tab": "未命名标签",
+    "recoverable_session_continues": "可恢复会话继续运行",
     "disconnect_close": "断开并关闭",
+    "detach_close": "分离并关闭",
+    "close_tabs": "关闭标签",
+    "terminate_persistent_close": "终止保活并关闭",
     "modify_encrypted_config": "修改加密配置",
     "ssh_host_update_trust": "更新并永久信任",
     "ssh_host_save_trust": "信任并保存",

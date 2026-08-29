@@ -230,6 +230,7 @@ const { handleStorageRoutes } = require("./routes/storage-routes");
 const { handleSystemRoutes } = require("./routes/system-routes");
 const { handleUpdateRoutes } = require("./routes/update-routes");
 const { handleUiStateRoutes } = require("./routes/ui-state-routes");
+const { handleAiRoutes } = require("./routes/ai-routes");
 const { createProgramCacheManager } = require("./program-cache");
 const { createStorageRestoreHelpers } = require("./storage-restore");
 const {
@@ -257,6 +258,10 @@ const {
   x11ApplicationsForConnection,
   x11InstallPlanForConnection
 } = require("./services/x11-management-service");
+const {
+  configureTerminalSessionComponentForConnection,
+  inspectTerminalSessionComponentsForConnection
+} = require("./services/terminal-session-management-service");
 const {
   configureVncClipboardHelperForProfile,
   configureVncServerForProfile,
@@ -370,6 +375,16 @@ async function handleApi(req, res, pathname) {
   if (await handlePublicAuthRoutes(req, res, pathname, securityRouteDependencies)) return;
   if (!isAuthenticated(req)) return sendJson(res, { error: "Unauthorized" }, 401);
   if (await handleSecurityRoutes(req, res, pathname, securityRouteDependencies)) return;
+  if (await handleAiRoutes(req, res, pathname, {
+    isDesktopRequest,
+    isDirectLoopbackRequest,
+    normalizeRuntimeSettings,
+    readJson,
+    readRuntimeSettings,
+    runtimeSettingsFile:RUNTIME_SETTINGS_FILE,
+    sendJson,
+    writeRuntimeSettings
+  })) return;
   if (await handleUiStateRoutes(req, res, pathname, {
     databaseRevision, securityDiagnostics, securitySettingsRevision, sendJson
   })) return;
@@ -405,6 +420,9 @@ async function handleApi(req, res, pathname) {
     closeQuickConnectionTerminals, disconnectSftpSession, isDesktopCapabilityRequest, readBody, readJson, requestAuthenticationBinding,
     requireEncryptionUnlocked, revokeQuickTerminalTicket, sendJson,
     terminalClipboardImageMaxBytes:TERMINAL_CLIPBOARD_IMAGE_MAX_BYTES,
+    runSshCommandForConnection,
+    inspectTerminalSessionComponentsForConnection,
+    configureTerminalSessionComponentForConnection,
     writeTerminalClipboardImage:(connection, image, options) => writeTerminalClipboardImage(connection, image, {
       ...options,
       runCommand:runSshCommandForConnectionStreaming

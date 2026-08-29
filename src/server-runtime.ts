@@ -302,6 +302,21 @@ function createServerRuntime(options: any = {}) {
     };
   }
 
+  function publicAiSettings(value: any = {}) {
+    const source = value && typeof value === "object" ? value : {};
+    const {api_key: _apiKey, mcp_servers: mcpServers, ...safe} = source;
+    return {
+      ...safe,
+      mcp_servers:Array.isArray(mcpServers) ? mcpServers.map((item: any) => ({
+        ...item,
+        headers:item?.transport !== "stdio" && item?.headers && typeof item.headers === "object"
+          ? Object.fromEntries(Object.keys(item.headers).map(name => [name, ""]))
+          : undefined
+      })) : [],
+      api_key_configured:Boolean(String(_apiKey || ""))
+    };
+  }
+
   function runtimeSettingsView() {
     const settingsPersisted = fs.existsSync(RUNTIME_SETTINGS_FILE);
     const persisted = readRuntimeSettings(RUNTIME_SETTINGS_FILE);
@@ -309,7 +324,7 @@ function createServerRuntime(options: any = {}) {
     const actualPort = args.actual_port || args.port;
     const urls = activeServers.length ? urlsForHosts(actualHosts, actualPort) : {localUrl:"", lanUrls:[], urls:[]};
     const sources = runtimeSources();
-    const saved = {...persisted, listen_hosts:[...persisted.listen_hosts], listen_port:persisted.listen_port};
+    const saved = {...persisted, ai:publicAiSettings(persisted.ai), listen_hosts:[...persisted.listen_hosts], listen_port:persisted.listen_port};
     const effective = {listen_hosts:[...(actualHosts || [])], listen_port:actualPort, sources};
     return {
       ...saved,

@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const {
@@ -162,7 +163,7 @@ async function main() {
   assert.deepEqual(sent, {data:{ok:true, connection_id:-42}, status:undefined});
   console.log("PASS quick connection routes bind creation and revocation to the authenticated request");
 
-  const terminalSource = fs.readFileSync(path.join(root, "public", "app-terminal.js"), "utf8");
+  const terminalSource = readFrontendDomain(root, "terminal");
   const terminalBackendSource = fs.readFileSync(path.join(root, "src", "terminal.ts"), "utf8");
   const quickSshSource = fs.readFileSync(path.join(root, "public", "app-quick-ssh.js"), "utf8");
   const dockingSource = fs.readFileSync(path.join(root, "public", "app-docking.js"), "utf8");

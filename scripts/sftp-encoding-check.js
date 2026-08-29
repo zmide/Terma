@@ -1,6 +1,6 @@
 const assert = require("node:assert");
 const iconv = require("iconv-lite");
-const { decodeRemoteFilenameOutput, decodeRemoteText, encodeRemoteText, normalizeTextEncoding, remotePathOperand } = require("../dist/sftp");
+const { decodeRemoteFilenameOutput, decodeRemoteText, encodeRemoteText, normalizeTextEncoding, remotePathBytesOperand, remotePathOperand } = require("../dist/sftp");
 
 const sample = "你好，Terma\r\n";
 const samples = {
@@ -32,5 +32,9 @@ const gbkOperand = remotePathOperand({ sftp_filename_encoding:"gbk" }, `目录/$
 assert.match(gbkOperand, /printf '%b'/);
 assert.ok(!gbkOperand.includes(filenameSample), "non-UTF-8 path is emitted as bytes");
 assert.strictEqual(remotePathOperand({ sftp_filename_encoding:"utf8" }, "目录/a.txt"), "'目录/a.txt'");
+const rawFilenamePath = Buffer.from([0x2f, 0x74, 0x6d, 0x70, 0x2f, 0x31, 0x30, 0x6b, 0xff, 0xfe, 0x2e, 0x74, 0x78, 0x74]);
+const rawFilenameText = iconv.decode(rawFilenamePath, "utf8");
+assert.match(remotePathBytesOperand({ sftp_filename_encoding:"utf8" }, rawFilenamePath.toString("base64"), rawFilenameText), /printf '%b'/);
+assert.throws(() => remotePathBytesOperand({ sftp_filename_encoding:"utf8" }, rawFilenamePath.toString("base64"), "/tmp/not-the-same-name"), /不匹配/);
 
 console.log("SFTP 编码检查通过：文本 BOM/自动回退/8 种编码往返及文件名转码");

@@ -679,7 +679,7 @@ function renderSftpEntries(tabKey=activeTabKey) {
       access:`<span class="sftp-access sftp-column-access" title="${metadataKnown ? escAttr(tr("sftp:auto.permission_detail", {mode:entry.mode || tr("sftp:auto.unknown"), owner:entry.owner || tr("sftp:auto.unknown"), group:entry.group || tr("sftp:auto.unknown")})) : escAttr(tr("sftp:auto.metadata_unavailable"))}"><code>${metadataKnown ? esc(entry.mode || "---") : "--"}</code><span>${metadataKnown ? esc(entry.owner || tr("sftp:auto.unknown")) : esc(tr("sftp:auto.path_index"))}</span></span>`
     });
     return `<div class="sftp-row ${active ? "active" : ""}" draggable="${isMobileLayout() ? "false" : "true"}" onclick="selectSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" ondblclick="activateSftpEntry(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" oncontextmenu="showSftpEntryMenu(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" onpointerdown="primeSftpNativeDrag(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" ondragstart="beginSftpItemDrag(event, ${id}, '${escAttr(fullPath)}', '${escAttr(entry.name)}', '${escAttr(entry.type)}','${escAttr(tabKey)}')" ondragend="finishSftpItemDrag(event)">
-      <input class="sftp-check" type="checkbox" value="${esc(fullPath)}" data-name="${esc(entry.name)}" data-type="${esc(entry.type)}" data-size="${Math.max(0, Number(entry.size || 0))}" data-mtime="${Math.max(0, Number(entry.mtime || 0))}" data-metadata-known="${metadataKnown ? "1" : "0"}" data-mode="${esc(entry.mode || "")}" data-owner="${esc(entry.owner || "")}" data-group="${esc(entry.group || "")}" aria-label="${escAttr(tr("sftp:auto.select_item", {name:entry.name}))}" onclick="handleSftpCheckboxSelection(event,'${escAttr(fullPath)}','${escAttr(tabKey)}')">
+      <input class="sftp-check" type="checkbox" value="${esc(fullPath)}" data-path-bytes="${escAttr(entry.path_bytes_b64 || "")}" data-name="${esc(entry.name)}" data-type="${esc(entry.type)}" data-size="${Math.max(0, Number(entry.size || 0))}" data-mtime="${Math.max(0, Number(entry.mtime || 0))}" data-metadata-known="${metadataKnown ? "1" : "0"}" data-mode="${esc(entry.mode || "")}" data-owner="${esc(entry.owner || "")}" data-group="${esc(entry.group || "")}" aria-label="${escAttr(tr("sftp:auto.select_item", {name:entry.name}))}" onclick="handleSftpCheckboxSelection(event,'${escAttr(fullPath)}','${escAttr(tabKey)}')">
       ${columns}
       <div class="sftp-row-actions">${sftpRowActionsHtml(id, fullPath, entry.name, entry.type, tabKey)}</div>
     </div>`;
@@ -798,6 +798,7 @@ function selectedSftpPaths(tabKey=activeTabKey) {
 function selectedSftpEntries(tabKey=activeTabKey) {
   return sftpElements(".sftp-check:checked", tabKey).map(input => ({
     path: input.value,
+    pathBytesB64: input.dataset.pathBytes || "",
     name: input.dataset.name || input.value.split("/").pop() || input.value,
     type: input.dataset.type || "file",
     size: Math.max(0, Number(input.dataset.size || 0)),

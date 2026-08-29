@@ -4,6 +4,7 @@ const { LOG_DIR } = require("./config");
 const { listConnections } = require("./db");
 const {
   enforceLogRetention,
+  renderTerminalTranscript,
   readLogSettings,
   resolveLogFile,
   readLogWindow: readLogWindowFromFile,
@@ -271,7 +272,7 @@ async function searchLogs(query) {
 }
 
 function readLog(relPath) {
-  return stripAnsi(readRawLog(relPath));
+  return renderTerminalTranscript(readRawLog(relPath));
 }
 
 function readLogWindow(relPath, options = {}) {
@@ -357,13 +358,6 @@ logRetentionTimer.unref?.();
 setTimeout(() => {
   try { enforceConfiguredLogRetention(); } catch {}
 }, 1000).unref?.();
-
-function stripAnsi(text) {
-  return String(text || "")
-    .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[PX^_][\s\S]*?\x1B\\)/g, "")
-    .replace(/\r\n/g, "\n")
-    .replace(/\r/g, "\n");
-}
 
 module.exports = {
   appendSystemLog,

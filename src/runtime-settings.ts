@@ -52,11 +52,59 @@ const DEFAULT_TERMINAL_SETTINGS = Object.freeze({
   select_non_whitespace_block: false,
   multiline_paste_mode: "prompt"
 });
+const DEFAULT_AI_CONTEXT_TOKENS = 1000000;
+const AI_CONTEXT_DEFAULT_VERSION = 1;
+const AI_API_TYPES = new Set(["responses", "completions"]);
+const AI_PANEL_PLACEMENTS = new Set(["right", "bottom"]);
+const AI_PERMISSION_LEVELS = new Set(["suggest", "confirm", "controlled", "full"]);
+const AI_REASONING_EFFORTS = new Set(["none", "low", "medium", "high"]);
+const AI_DEFAULT_SKILLS = ["linux-diagnostics", "security-audit", "log-analysis", "service-troubleshooting"];
+const AI_BUILTIN_SKILLS = new Set([...AI_DEFAULT_SKILLS, "network-diagnostics", "performance-analysis", "container-troubleshooting", "git-workflow", "incident-response", "web-research"]);
+const AI_MAX_USER_SKILLS = 32;
+const AI_MAX_MCP_SERVERS = 24;
+const AI_MCP_TRANSPORTS = new Set(["stdio", "sse", "streamable-http"]);
+const AI_MCP_PROTECTED_HEADERS = new Set([
+  "accept", "connection", "content-length", "content-type", "host", "mcp-protocol-version",
+  "mcp-session-id", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "user-agent"
+]);
+const DEFAULT_AI_SETTINGS = Object.freeze({
+  enabled: false,
+  provider: "openai-compatible",
+  endpoint: "https://api.openai.com/v1",
+  model: "",
+  api_type: "responses",
+  reasoning_effort: "none",
+  deep_thinking: false,
+  timeout_seconds: 60,
+  context_tokens: DEFAULT_AI_CONTEXT_TOKENS,
+  context_default_version: AI_CONTEXT_DEFAULT_VERSION,
+  terminal_ai_placement: "right",
+  terminal_ai_permission: "confirm",
+  skills_enabled: [...AI_DEFAULT_SKILLS],
+  user_skills: [],
+  mcp_servers: [],
+  api_key: ""
+});
 const TERMINAL_MOUSE_ACTIONS = new Set(["none", "context_menu", "paste_clipboard", "open_settings", "send_enter", "paste_selection"]);
 const TERMINAL_MULTILINE_PASTE_MODES = new Set(["prompt", "paste", "single_line"]);
 const TERMINAL_URL_SCHEMES = new Set(["http", "https", "ftp", "ssh", "telnet"]);
 const TERMINAL_BACKGROUND_MODES = new Set(["theme", "black", "white", "custom"]);
 const WORKSPACE_TOOLBAR_PLACEMENTS = new Set(["tab", "header"]);
+
+function normalizeMcpHeaders(value: any): Record<string, string> {
+  if (value === undefined || value === null) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("MCP 请求头必须是 JSON 对象");
+  const headers: Record<string, string> = {};
+  for (const [rawName, rawValue] of Object.entries(value).slice(0, 32)) {
+    const name = String(rawName || "").trim();
+    const headerValue = typeof rawValue === "string" ? rawValue.trim() : "";
+    if (!name || !/^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,120}$/.test(name)) throw new Error("MCP 请求头名称无效");
+    if (AI_MCP_PROTECTED_HEADERS.has(name.toLowerCase())) throw new Error(`MCP 请求头 ${name} 由 Terma 管理，不能覆盖`);
+    if (!headerValue || headerValue.length > 4096 || /[\0\r\n]/.test(headerValue)) throw new Error(`MCP 请求头 ${name} 的值无效`);
+    headers[name] = headerValue;
+  }
+  return headers;
+}
 
 function splitListenHosts(value) {
   const source = Array.isArray(value) ? value : [value];
@@ -140,6 +188,82 @@ function normalizeTerminalSettings(value: any = {}, fallback: any = DEFAULT_TERM
     copy_trim_trailing_spaces: source.copy_trim_trailing_spaces === undefined ? base.copy_trim_trailing_spaces === true : source.copy_trim_trailing_spaces === true,
     select_non_whitespace_block: source.select_non_whitespace_block === undefined ? base.select_non_whitespace_block === true : source.select_non_whitespace_block === true,
     multiline_paste_mode: TERMINAL_MULTILINE_PASTE_MODES.has(multilinePasteMode) ? multilinePasteMode : DEFAULT_TERMINAL_SETTINGS.multiline_paste_mode
+  };
+}
+
+function normalizeAiSettings(value: any = {}, fallback: any = DEFAULT_AI_SETTINGS) {
+  const source = value && typeof value === "object" ? value : {};
+  const base = fallback && typeof fallback === "object" ? fallback : DEFAULT_AI_SETTINGS;
+  const endpoint = String(source.endpoint ?? base.endpoint ?? DEFAULT_AI_SETTINGS.endpoint).trim();
+  if (!endpoint || endpoint.length > 2048 || /[\0\r\n]/.test(endpoint)) throw new Error("AI 服务地址无效");
+  let parsed;
+  try { parsed = new URL(endpoint); } catch { throw new Error("AI 服务地址必须是有效的 HTTP 或 HTTPS 地址"); }
+  if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash) {
+    throw new Error("AI 服务地址只能使用 HTTP 或 HTTPS，且不能包含账号、密码或片段");
+  }
+  const model = String(source.model ?? base.model ?? DEFAULT_AI_SETTINGS.model).trim();
+  if (model.length > 200 || /[\0\r\n]/.test(model)) throw new Error("AI 模型名称无效");
+  const timeout = Number(source.timeout_seconds ?? base.timeout_seconds ?? DEFAULT_AI_SETTINGS.timeout_seconds);
+  if (!Number.isInteger(timeout) || timeout < 5 || timeout > 300) throw new Error("AI 请求超时必须是 5-300 秒之间的整数");
+  const legacyContextChars = source.context_tokens === undefined && source.context_chars !== undefined
+    ? Math.round(Number(source.context_chars) / 4)
+    : undefined;
+  const contextTokens = Number(source.context_tokens ?? legacyContextChars ?? base.context_tokens ?? DEFAULT_AI_SETTINGS.context_tokens);
+  if (!Number.isInteger(contextTokens) || contextTokens < 1000 || contextTokens > DEFAULT_AI_CONTEXT_TOKENS) throw new Error("AI 上下文长度必须是 1000-1000000 之间的整数");
+  const apiType = String(source.api_type ?? base.api_type ?? DEFAULT_AI_SETTINGS.api_type);
+  const reasoningEffort = String(source.reasoning_effort ?? base.reasoning_effort ?? DEFAULT_AI_SETTINGS.reasoning_effort).trim().toLowerCase();
+  const deepThinking = source.deep_thinking === undefined ? base.deep_thinking === true : source.deep_thinking === true;
+  const placement = String(source.terminal_ai_placement ?? base.terminal_ai_placement ?? DEFAULT_AI_SETTINGS.terminal_ai_placement);
+  const permission = String(source.terminal_ai_permission ?? base.terminal_ai_permission ?? DEFAULT_AI_SETTINGS.terminal_ai_permission);
+  const skillSource = Array.isArray(source.skills_enabled) ? source.skills_enabled : (Array.isArray(base.skills_enabled) ? base.skills_enabled : DEFAULT_AI_SETTINGS.skills_enabled);
+  const skillsEnabled = [...new Set(skillSource.map((item: any) => String(item || "").trim()).filter((item: string) => AI_BUILTIN_SKILLS.has(item)))];
+  const apiKey = String(source.api_key ?? base.api_key ?? "");
+  if (apiKey.length > 4096 || /[\0\r\n]/.test(apiKey)) throw new Error("AI API 密钥无效");
+  const userSkills = (Array.isArray(source.user_skills) ? source.user_skills : (Array.isArray(base.user_skills) ? base.user_skills : []))
+    .slice(0, AI_MAX_USER_SKILLS).flatMap((item: any) => {
+      const id = String(item?.id || "").trim().replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
+      const name = String(item?.name || "").replace(/[\0\r\n]/g, " ").trim().slice(0, 120);
+      const description = String(item?.description || "").replace(/[\0\r\n]/g, " ").trim().slice(0, 300);
+      const prompt = String(item?.prompt || "").replace(/\0/g, "").trim().slice(0, 12000);
+      return id && name && prompt ? [{id, name, description, prompt, enabled:item?.enabled !== false, updated_at:Number(item?.updated_at || Date.now())}] : [];
+    });
+  const mcpServers = (Array.isArray(source.mcp_servers) ? source.mcp_servers : (Array.isArray(base.mcp_servers) ? base.mcp_servers : []))
+    .slice(0, AI_MAX_MCP_SERVERS).flatMap((item: any) => {
+      const id = String(item?.id || "").trim().replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
+      const name = String(item?.name || id).replace(/[\0\r\n]/g, " ").trim().slice(0, 120);
+      const requestedTransport = item?.transport === "http" ? "streamable-http" : String(item?.transport || "stdio");
+      const transport = AI_MCP_TRANSPORTS.has(requestedTransport) ? requestedTransport : "stdio";
+      const command = String(item?.command || "").replace(/[\0\r\n]/g, " ").trim().slice(0, 300);
+      const args = Array.isArray(item?.args) ? item.args.map((arg: any) => String(arg || "").replace(/[\0\r\n]/g, " ").slice(0, 300)).filter(Boolean).slice(0, 32) : [];
+      const url = String(item?.url || "").replace(/[\0\r\n]/g, " ").trim().slice(0, 2048);
+      const headers = transport === "stdio" ? {} : normalizeMcpHeaders(item?.headers);
+      const tools = Array.isArray(item?.tools) ? item.tools.slice(0, 128).flatMap((tool: any) => {
+        const toolName = String(tool?.name || "").replace(/[\0\r\n]/g, " ").trim().slice(0, 120);
+        if (!toolName || !/^[a-zA-Z0-9_.:-]+$/.test(toolName)) return [];
+        const description = String(tool?.description || "").replace(/[\0\r\n]/g, " ").trim().slice(0, 500);
+        const inputSchema = tool?.inputSchema && typeof tool.inputSchema === "object" && !Array.isArray(tool.inputSchema) ? tool.inputSchema : {};
+        return [{name:toolName, description, inputSchema, enabled:tool?.enabled !== false, requires_approval:tool?.requires_approval !== false}];
+      }) : [];
+      const toolsUpdatedAt = Number(item?.tools_updated_at || 0);
+      return id && name && ((transport === "stdio" && command) || (transport !== "stdio" && url)) ? [{id, name, transport, command, args, url, headers, enabled:item?.enabled === true, timeout_ms:Number(item?.timeout_ms || 30000), tools, tools_updated_at:Number.isFinite(toolsUpdatedAt) ? Math.max(0, Math.round(toolsUpdatedAt)) : 0}] : [];
+    });
+  return {
+    enabled: source.enabled === undefined ? base.enabled !== false : source.enabled === true,
+    provider: "openai-compatible",
+    endpoint,
+    model,
+    api_type: AI_API_TYPES.has(apiType) ? apiType : DEFAULT_AI_SETTINGS.api_type,
+    reasoning_effort: AI_REASONING_EFFORTS.has(reasoningEffort) ? reasoningEffort : DEFAULT_AI_SETTINGS.reasoning_effort,
+    deep_thinking: deepThinking,
+    timeout_seconds: timeout,
+    context_tokens: contextTokens,
+    context_default_version: AI_CONTEXT_DEFAULT_VERSION,
+    terminal_ai_placement: AI_PANEL_PLACEMENTS.has(placement) ? placement : DEFAULT_AI_SETTINGS.terminal_ai_placement,
+    terminal_ai_permission: AI_PERMISSION_LEVELS.has(permission) ? permission : DEFAULT_AI_SETTINGS.terminal_ai_permission,
+    skills_enabled: skillsEnabled,
+    user_skills: userSkills,
+    mcp_servers: mcpServers,
+    api_key: apiKey
   };
 }
 
@@ -231,7 +355,7 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 19,
+    schema_version: 21,
     language: normalizeLanguage(value.language, fallback.language),
     language_onboarding_version: Math.max(0, Math.min(1, Number.isInteger(Number(value.language_onboarding_version ?? fallback.language_onboarding_version))
       ? Number(value.language_onboarding_version ?? fallback.language_onboarding_version)
@@ -324,7 +448,8 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
       value.workspace_toolbar_placement,
       fallback.workspace_toolbar_placement
     ),
-    terminal: normalizeTerminalSettings(value.terminal, fallback.terminal)
+    terminal: normalizeTerminalSettings(value.terminal, fallback.terminal),
+    ai: normalizeAiSettings(value.ai, fallback.ai)
   };
 }
 
@@ -375,6 +500,14 @@ function readRuntimeSettings(filePath) {
     const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
     if (Number(parsed.schema_version || 0) < 8 && Number(parsed.sftp_max_open_file_size_mb) === 5) {
       parsed.sftp_max_open_file_size_mb = DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB;
+    }
+    if (
+      parsed.ai
+      && typeof parsed.ai === "object"
+      && Number(parsed.ai.context_default_version || 0) < AI_CONTEXT_DEFAULT_VERSION
+      && Number(parsed.ai.context_tokens) === 4000
+    ) {
+      parsed.ai.context_tokens = DEFAULT_AI_CONTEXT_TOKENS;
     }
     return normalizeRuntimeSettings(parsed);
   } catch {
@@ -451,6 +584,7 @@ module.exports = {
   DEFAULT_VNC_REMOTE_IMAGE_POLL_INTERVAL_MS,
   DEFAULT_NOTIFICATION_DISPLAY,
   DEFAULT_TERMINAL_SETTINGS,
+  DEFAULT_AI_SETTINGS,
   DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT,
   DEFAULT_SFTP_MAX_OPEN_FILE_SIZE_MB,
   DEFAULT_SFTP_LIGHT_EDITOR_THRESHOLD_MB,
@@ -472,6 +606,7 @@ module.exports = {
   normalizeSftpMaxOpenFileSize,
   normalizeSftpTextEditorMode,
   normalizeTerminalSettings,
+  normalizeAiSettings,
   normalizeWorkspaceToolbarPlacement,
   readRuntimeSettings,
   resolveRuntimeSettings,

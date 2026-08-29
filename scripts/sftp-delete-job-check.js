@@ -129,6 +129,10 @@ async function main() {
     );
     const deduplicated = jobs.__buildDeleteJobRequest(connection, ["/tmp/a.txt", "/tmp/a.txt"], false);
     assert.equal(deduplicated.item_count, 1, "duplicate paths must only produce one delete step");
+    const windowsLookingName = jobs.__buildDeleteJobRequest(connection, ["/tmp/D:\\workplace\\autoGraphOriginfile"], false);
+    assert.equal(windowsLookingName.paths[0], "/tmp/D:\\workplace\\autoGraphOriginfile", "backslashes in a remote filename must be preserved");
+    assert.match(windowsLookingName.command, /D:\\workplace\\autoGraphOriginfile/);
+    assert.match(windowsLookingName.command, /远程项目删除后仍存在/);
 
     const recycledStart = jobs.deletePathsJob(connection.id, ["/tmp/回收 one.txt", "/tmp/recycle-two"], true);
     jobIds.push(recycledStart.id);

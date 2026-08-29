@@ -86,6 +86,7 @@ const expectedDirectFetchCounts = new Map([
   ["public/app-remote-ftp.js", 1],
   ["public/app-settings-storage.js", 1],
   ["public/app-sftp-open.js", 1],
+  ["public/app-terminal-ai.js", 1],
   ["public/login.js", 2]
 ]);
 const actualDirectFetchCounts = new Map();
@@ -556,7 +557,7 @@ const apiAt = html.indexOf('/app-api.js');
 assert.ok(vendorAt >= 0 && bootstrapAt > vendorAt && apiAt > bootstrapAt, "i18next vendor and bootstrap scripts must load before application modules");
 assert.ok(staticContent.includes('["/vendor/i18next/i18next.min.js", vendorFile("i18next", "dist/umd/i18next.min.js")]'));
 const runtimeSettings = read("src/runtime-settings.ts");
-assert.ok(runtimeSettings.includes("schema_version: 19") && runtimeSettings.includes("language: normalizeLanguage") && runtimeSettings.includes("language_onboarding_version") && runtimeSettings.includes("vnc_fullscreen_toolbar") && runtimeSettings.includes("vnc_remote_image_poll_interval_ms") && runtimeSettings.includes("scrollback_lines"));
+assert.ok(runtimeSettings.includes("schema_version: 21") && runtimeSettings.includes("language: normalizeLanguage") && runtimeSettings.includes("language_onboarding_version") && runtimeSettings.includes("vnc_fullscreen_toolbar") && runtimeSettings.includes("vnc_remote_image_poll_interval_ms") && runtimeSettings.includes("scrollback_lines") && runtimeSettings.includes("ai: normalizeAiSettings"));
 const i18nBootstrap = read("public/app-i18n.js");
 const frontend = `${i18nBootstrap}\n${read("public/app-settings-runtime.js")}\n${read("public/app-settings.js")}`;
 for (const token of ["setTermaLanguage", "registerTermaI18nRenderer", "toggleTermaLanguage", "syncTermaLanguageControls", "termaI18nPhraseTemplates"]) {

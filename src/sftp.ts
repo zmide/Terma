@@ -7,6 +7,7 @@ const {
   decodeRemoteText,
   encodeRemoteText,
   normalizeTextEncoding,
+  remotePathBytesOperand,
   remotePathOperand,
   shellQuote
 } = require("./sftp-encoding");
@@ -42,7 +43,9 @@ function yieldSftpWork() {
 }
 
 function permissionPathOperand(value) {
-  const normalized = String(value || "").replace(/\\/g, "/");
+  // A backslash is a valid POSIX filename character. Keep it intact so
+  // Windows-looking names shown by SFTP remain addressable on Unix hosts.
+  const normalized = String(value || "");
   if (normalized.startsWith("/") || normalized.startsWith("./")) return normalized;
   return `./${normalized}`;
 }
@@ -226,7 +229,7 @@ function buildRemoteRecursiveDirectoryEntriesCommand() {
     `-name ${shellQuote(".terma-upload-*.part")}`,
     `-name ${shellQuote(".tunneldesk-upload-*.part")}`
   ].join(" -o ");
-  return `find . ! -name . \\( \\( ${excluded} \\) -prune -o -exec sh -c 'for entry in "$@"; do if [ -d "$entry" ]; then type=d; else type=f; fi; name=\${entry#./}; printf "%s\\t%s\\n" "$name" "$type"; done' sh {} + \\)`;
+  return `find . ! -name . \\( \\( ${excluded} \\) -prune -o -exec sh -c 'for entry in "$@"; do if [ -d "$entry" ]; then type=d; else type=f; fi; name=\${entry#./}; raw_dir="$(pwd)"; if [ "$raw_dir" = "/" ]; then raw_path="/\${entry#./}"; else raw_path="$raw_dir/\${entry#./}"; fi; path_b64=$(printf "%s" "$raw_path" | base64 2>/dev/null | tr -d "\\r\\n"); if [ -z "$path_b64" ]; then path_b64=$(printf "%s" "$raw_path" | openssl base64 -A 2>/dev/null | tr -d "\\r\\n"); fi; printf "%s\\t%s\\t%s\\n" "$name" "$type" "$path_b64"; done' sh {} + \\)`;
 }
 
 function buildRemoteDirectoryEntriesCommand() {
@@ -238,7 +241,7 @@ function buildRemoteDirectoryEntriesCommand() {
     `else echo "远程系统缺少兼容的 stat 命令" >&2; exit 1`,
     `fi`,
     `export TERMA_STAT_STYLE`,
-    `find . ! -name . ! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(LEGACY_SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(".terma-upload-*.part")} ! -name ${shellQuote(".tunneldesk-upload-*.part")} -prune -exec sh -c 'for entry in "$@"; do terma_link=0; terma_link_size=0; terma_link_missing=0; if [ -L "$entry" ]; then terma_link=1; fi; if [ -d "$entry" ]; then type=d; else type=f; fi; if [ "$TERMA_STAT_STYLE" = gnu ]; then if [ "$terma_link" = 1 ]; then own_meta=$(stat -c "%s %Y %a %U %G" "$entry") || exit 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -c "%s %Y %a %U %G" "$entry") || exit 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -c "%s %Y %a %U %G" "$entry") || exit 1; fi; else if [ "$terma_link" = 1 ]; then own_meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; fi; fi; name=\${entry#./}; printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$name" "$type" "$meta" "$terma_link" "$terma_link_size" "$terma_link_missing"; done' sh {} +`
+    `find . ! -name . ! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(LEGACY_SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(".terma-upload-*.part")} ! -name ${shellQuote(".tunneldesk-upload-*.part")} -prune -exec sh -c 'for entry in "$@"; do terma_link=0; terma_link_size=0; terma_link_missing=0; if [ -L "$entry" ]; then terma_link=1; fi; if [ -d "$entry" ]; then type=d; else type=f; fi; if [ "$TERMA_STAT_STYLE" = gnu ]; then if [ "$terma_link" = 1 ]; then own_meta=$(stat -c "%s %Y %a %U %G" "$entry") || exit 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -c "%s %Y %a %U %G" "$entry") || exit 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -c "%s %Y %a %U %G" "$entry") || exit 1; fi; else if [ "$terma_link" = 1 ]; then own_meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || exit 1; fi; fi; name=\${entry#./}; raw_dir="$(pwd)"; if [ "$raw_dir" = "/" ]; then raw_path="/\${entry#./}"; else raw_path="$raw_dir/\${entry#./}"; fi; path_b64=$(printf "%s" "$raw_path" | base64 2>/dev/null | tr -d "\\r\\n"); if [ -z "$path_b64" ]; then path_b64=$(printf "%s" "$raw_path" | openssl base64 -A 2>/dev/null | tr -d "\\r\\n"); fi; printf "%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n" "$name" "$type" "$meta" "$terma_link" "$terma_link_size" "$terma_link_missing" "$path_b64"; done' sh {} +`
   ].join("; ");
 }
 
@@ -254,7 +257,7 @@ async function enumerateRemoteDir(connectionId, remotePath = ".") {
   const {path:resolvedPath, rows} = parseRemoteDirectoryOutput(output);
   const entries = [];
   for (let index = 0; index < rows.length; index += 1) {
-    const [name, type, meta = "", link = "0", linkSize = "0", linkMissing = "0"] = rows[index].split("\t");
+    const [name, type, meta = "", link = "0", linkSize = "0", linkMissing = "0", pathBytesB64 = ""] = rows[index].split("\t");
     const [size, mtime, mode, owner, group] = meta.trim().split(/\s+/);
     entries.push({
       name,
@@ -264,6 +267,7 @@ async function enumerateRemoteDir(connectionId, remotePath = ".") {
       mode: String(mode || ""),
       owner: String(owner || ""),
       group: String(group || ""),
+      path_bytes_b64:pathBytesB64,
       is_symlink:link === "1",
       link_size:link === "1" ? Number(linkSize || 0) : 0,
       link_target_missing:link === "1" && linkMissing === "1"
@@ -333,8 +337,8 @@ function buildRemotePagedDirectoryEntriesCommand(options: any = {}) {
   const metadataOrder = descending
     ? `LC_ALL=C sort -t "$TERMA_TAB" -k1,1n -k2,2nr -k3,3r`
     : `LC_ALL=C sort -t "$TERMA_TAB" -k1,1n -k2,2n -k3,3`;
-  const metadataEmitter = `terma_emit_metadata() { entry=$1; terma_link=0; terma_link_size=0; terma_link_missing=0; if [ -L "$entry" ]; then terma_link=1; fi; if [ -d "$entry" ]; then type=d; else type=f; fi; if [ "$TERMA_STAT_STYLE" = gnu ]; then if [ "$terma_link" = 1 ]; then own_meta=$(stat -c "%s %Y %a %U %G" "$entry") || return 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -c "%s %Y %a %U %G" "$entry") || return 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -c "%s %Y %a %U %G" "$entry") || return 1; fi; else if [ "$terma_link" = 1 ]; then own_meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || return 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -f "%z %m %Lp %Su %Sg" "$entry") || return 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || return 1; fi; fi; set -- $meta; name=\${entry#./}; printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$name" "$type" "$1" "$2" "$3" "$4" "$5" "$terma_link" "$terma_link_size" "$terma_link_missing"; }`;
-  const fastMetadataEmitter = `terma_emit_all_metadata() { if [ "$TERMA_FIND_STYLE" = gnu ]; then find . -mindepth 1 -maxdepth 1 ! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(LEGACY_SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(".terma-upload-*.part")} ! -name ${shellQuote(".tunneldesk-upload-*.part")} -printf '%f\\t%y\\t%s\\t%T@\\t%m\\t%u\\t%g\\n' | awk -F "$TERMA_TAB" -v q="$TERMA_QUERY" 'q == "" || index(tolower($1),tolower(q)) > 0' | while IFS="$TERMA_TAB" read -r name type size mtime mode owner group; do entry=./$name; if [ "$type" = l ]; then terma_emit_metadata "$entry" || exit 1; else if [ "$type" = d ]; then type=d; else type=f; fi; printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t0\\t0\\t0\\n' "$name" "$type" "$size" "$mtime" "$mode" "$owner" "$group"; fi; done; else terma_entries | while IFS= read -r entry; do terma_emit_metadata "$entry" || exit 1; done; fi; }`;
+  const metadataEmitter = `terma_emit_metadata() { entry=$1; terma_link=0; terma_link_size=0; terma_link_missing=0; if [ -L "$entry" ]; then terma_link=1; fi; if [ -d "$entry" ]; then type=d; else type=f; fi; if [ "$TERMA_STAT_STYLE" = gnu ]; then if [ "$terma_link" = 1 ]; then own_meta=$(stat -c "%s %Y %a %U %G" "$entry") || return 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -c "%s %Y %a %U %G" "$entry") || return 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -c "%s %Y %a %U %G" "$entry") || return 1; fi; else if [ "$terma_link" = 1 ]; then own_meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || return 1; terma_link_size=\${own_meta%% *}; if [ -e "$entry" ]; then meta=$(stat -L -f "%z %m %Lp %Su %Sg" "$entry") || return 1; else meta=$own_meta; terma_link_missing=1; fi; else meta=$(stat -f "%z %m %Lp %Su %Sg" "$entry") || return 1; fi; fi; set -- $meta; name=\${entry#./}; raw_path="$(pwd)/\${entry#./}"; path_b64=$(printf "%s" "$raw_path" | base64 2>/dev/null | tr -d "\\r\\n"); if [ -z "$path_b64" ]; then path_b64=$(printf "%s" "$raw_path" | openssl base64 -A 2>/dev/null | tr -d "\\r\\n"); fi; printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$name" "$type" "$1" "$2" "$3" "$4" "$5" "$terma_link" "$terma_link_size" "$terma_link_missing" "$path_b64"; }`;
+  const fastMetadataEmitter = `terma_emit_all_metadata() { if [ "$TERMA_FIND_STYLE" = gnu ]; then find . -mindepth 1 -maxdepth 1 ! -name ${shellQuote(SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(LEGACY_SFTP_RECYCLE_DIRECTORY)} ! -name ${shellQuote(".terma-upload-*.part")} ! -name ${shellQuote(".tunneldesk-upload-*.part")} -printf '%f\\t%y\\t%s\\t%T@\\t%m\\t%u\\t%g\\n' | awk -F "$TERMA_TAB" -v q="$TERMA_QUERY" 'q == "" || index(tolower($1),tolower(q)) > 0' | while IFS="$TERMA_TAB" read -r name type size mtime mode owner group; do entry=./$name; if [ "$type" = l ]; then terma_emit_metadata "$entry" || exit 1; else if [ "$type" = d ]; then type=d; else type=f; fi; raw_dir="$(pwd)"; if [ "$raw_dir" = "/" ]; then raw_path="/$name"; else raw_path="$raw_dir/$name"; fi; path_b64=$(printf "%s" "$raw_path" | base64 2>/dev/null | tr -d "\\r\\n"); if [ -z "$path_b64" ]; then path_b64=$(printf "%s" "$raw_path" | openssl base64 -A 2>/dev/null | tr -d "\\r\\n"); fi; printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t0\\t0\\t0\\t%s\\n' "$name" "$type" "$size" "$mtime" "$mode" "$owner" "$group" "$path_b64"; fi; done; else terma_entries | while IFS= read -r entry; do terma_emit_metadata "$entry" || exit 1; done; fi; }`;
   const selectedNamePage = `terma_entries | while IFS= read -r entry; do if [ -d "$entry" ]; then printf '0\\t%s\\n' "$entry"; else printf '1\\t%s\\n' "$entry"; fi; done | ${directoryOrder} | ${pageSlice} | cut -f2- | while IFS= read -r entry; do terma_emit_metadata "$entry" || exit 1; done`;
   const selectedMetadataPage = `terma_emit_all_metadata | awk -F '\\t' -v key=${shellQuote(sort)} '{ tier=($2 == "d" ? 0 : 1); value=(key == "size" ? $3 : $4); print tier "\\t" value "\\t" $1 "\\t" $0; }' | ${metadataOrder} | ${pageSlice} | cut -f4-`;
   return [
@@ -437,7 +441,7 @@ async function listRemoteDirPaged(connectionId, remotePath, options: any = {}) {
     sort,
     dir:sortDir,
     entries:rows.map(line => {
-      const [name, type, size = "0", mtime = "0", mode = "", owner = "", group = "", link = "0", linkSize = "0", linkMissing = "0"] = line.split("\t");
+      const [name, type, size = "0", mtime = "0", mode = "", owner = "", group = "", link = "0", linkSize = "0", linkMissing = "0", pathBytesB64 = ""] = line.split("\t");
       return {
         name,
         type:type === "d" ? "dir" : "file",
@@ -446,6 +450,7 @@ async function listRemoteDirPaged(connectionId, remotePath, options: any = {}) {
         mode:String(mode || ""),
         owner:String(owner || ""),
         group:String(group || ""),
+        path_bytes_b64:pathBytesB64,
         is_symlink:link === "1",
         link_size:link === "1" ? Number(linkSize || 0) : 0,
         link_target_missing:link === "1" && linkMissing === "1"
@@ -470,9 +475,10 @@ async function enumerateRemoteTree(connectionId, remotePath = ".") {
   const rows = allRows.slice(0, MAX_RECURSIVE_SEARCH_ENTRIES);
   const entries = [];
   for (let index = 0; index < rows.length; index += 1) {
-    const separator = rows[index].lastIndexOf("\t");
-    const name = separator >= 0 ? rows[index].slice(0, separator) : rows[index];
-    const type = separator >= 0 ? rows[index].slice(separator + 1) : "f";
+    const fields = rows[index].split("\t");
+    const pathBytesB64 = fields.pop() || "";
+    const type = fields.pop() || "f";
+    const name = fields.join("\t");
     entries.push({
       name,
       type: type === "d" ? "dir" : "file",
@@ -481,6 +487,7 @@ async function enumerateRemoteTree(connectionId, remotePath = ".") {
       mode: "",
       owner: "",
       group: "",
+      path_bytes_b64:pathBytesB64,
       metadata_known: false
     });
     if ((index + 1) % DIRECTORY_PARSE_BATCH_SIZE === 0) await yieldSftpWork();
@@ -657,7 +664,7 @@ async function createRemoteFile(connectionId, remotePath) {
 }
 
 function normalizeRemoteDeletePath(remotePath) {
-  const raw = String(remotePath || "").replace(/\\/g, "/");
+  const raw = String(remotePath || "");
   if (!raw || raw.includes("\0") || raw.length > 4096) throw new Error("远程路径无效或过长");
   const normalized = path.posix.normalize(raw);
   if (!normalized || ["/", ".", ".."].includes(normalized) || normalized.startsWith("../")) {
@@ -666,11 +673,15 @@ function normalizeRemoteDeletePath(remotePath) {
   return normalized;
 }
 
-function buildDeleteRemotePathCommand(remotePath, connection = null) {
+function buildDeleteRemotePathCommand(remotePath, connection = null, pathBytesB64 = "") {
   const normalizedPath = normalizeRemoteDeletePath(remotePath);
+  const operand = pathBytesB64
+    ? remotePathBytesOperand(connection, pathBytesB64, normalizedPath)
+    : remotePathOperand(connection, normalizedPath);
   return {
     path: normalizedPath,
-    command: `rm -rf -- ${remotePathOperand(connection, normalizedPath)}`
+    path_bytes_b64: pathBytesB64 || "",
+    command: `if [ ! -e ${operand} ] && [ ! -L ${operand} ]; then printf '%s\\n' '远程项目不存在' >&2; exit 1; fi; rm -rf -- ${operand}; if [ -e ${operand} ] || [ -L ${operand} ]; then printf '%s\\n' '远程项目删除后仍存在' >&2; exit 1; fi`
   };
 }
 
@@ -682,7 +693,7 @@ async function deleteRemotePath(connectionId, remotePath) {
 }
 
 function normalizeRemoteRecyclePath(remotePath) {
-  const raw = String(remotePath || "").replace(/\\/g, "/");
+  const raw = String(remotePath || "");
   if (!raw || raw.includes("\0") || raw.length > 4096) throw new Error("远程路径无效或过长");
   const normalized = path.posix.normalize(raw);
   if (!normalized || ["/", ".", ".."].includes(normalized) || normalized.startsWith("../")) {
@@ -710,19 +721,24 @@ function remoteRecycleRootAssignment(storage = "terma") {
   return `if [ -z "$HOME" ]; then echo "远端用户主目录不可用" >&2; exit 1; fi; terma_root="$HOME/${directory}"`;
 }
 
-function buildRecycleRemotePathCommand(remotePath, itemId, deletedAt = Date.now(), connection = null) {
+function buildRecycleRemotePathCommand(remotePath, itemId, deletedAt = Date.now(), connection = null, pathBytesB64 = "") {
   const source = normalizeRemoteRecyclePath(remotePath);
   const id = normalizeRemoteRecycleItemId(itemId);
   const encodedPath = Buffer.from(source, "utf8").toString("base64");
   const sourceOperand = permissionPathOperand(source);
+  const sourcePathOperand = pathBytesB64
+    ? remotePathBytesOperand(connection, pathBytesB64, source)
+    : remotePathOperand(connection, sourceOperand);
   return [
     remoteRecycleRootAssignment(),
     `terma_item="$terma_root/items/${id}"`,
-    `if [ ! -e ${remotePathOperand(connection, sourceOperand)} ] && [ ! -L ${remotePathOperand(connection, sourceOperand)} ]; then echo "远程项目不存在" >&2; exit 1; fi`,
+    `if [ ! -e ${sourcePathOperand} ] && [ ! -L ${sourcePathOperand} ]; then echo "远程项目不存在" >&2; exit 1; fi`,
     `mkdir -p "$terma_root/items" && mkdir "$terma_item"`,
     `printf '%s\\n' ${shellQuote(encodedPath)} > "$terma_item/path.b64"`,
     `printf '%s\\n' ${shellQuote(String(Number(deletedAt) || Date.now()))} > "$terma_item/deleted-at"`,
-    `if mv ${remotePathOperand(connection, sourceOperand)} "$terma_item/payload"; then :; else rm -rf "$terma_item"; exit 1; fi`
+    `if mv ${sourcePathOperand} "$terma_item/payload"; then :; else rm -rf "$terma_item"; exit 1; fi`,
+    `if [ -e ${sourcePathOperand} ] || [ -L ${sourcePathOperand} ]; then echo "远程项目移入回收站后仍存在" >&2; exit 1; fi`,
+    `if [ ! -e "$terma_item/payload" ] && [ ! -L "$terma_item/payload" ]; then echo "回收站项目写入失败" >&2; exit 1; fi`
   ].join("; ");
 }
 
@@ -1321,6 +1337,7 @@ module.exports = {
   encodeRemoteText,
   normalizeTextEncoding,
   planRemoteUploads,
+  remotePathBytesOperand,
   remotePathOperand,
   resolveRemoteUploadTarget,
   decodeRemoteFilenameOutput,

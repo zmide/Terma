@@ -9,7 +9,8 @@ const { appendSystemLog, appendTerminalLog, createTerminalLog } = require("./log
 const { normalizeSshTransportError, openSshShell, shouldUseBuiltinSsh } = require("./ssh2-client");
 const { loadNodePty } = require("./pty-runtime");
 const { WebSocketFrameParser, closeWebSocket, sendWebSocketFrame, validateWebSocketUpgrade, websocketAccept } = require("./websocket");
-const { consumeTerminalStartupTicket, mergeTerminalStartup } = require("./terminal-startup");
+const { consumeTerminalStartupTicket, inferredStartupPlatform, mergeTerminalStartup } = require("./terminal-startup");
+const { filterTerminalSessionOutput, normalizeTerminalSession, persistentSessionRequested } = require("./terminal-session");
 const { consumeQuickTerminalTicket } = require("./quick-terminal");
 const { requireEncryptionUnlocked } = require("./crypto-store");
 const { terminalX11Environment } = require("./x11");
@@ -23,6 +24,10 @@ try {
 }
 
 const sessions = new Set<any>();
+const detachedTerminalSessions = new Map<string, any>();
+const TERMINAL_RECONNECT_TOKEN_PATTERN = /^[A-Za-z0-9_-]{24,128}$/;
+const TERMINAL_RECONNECT_GRACE_MS = 5 * 60 * 1000;
+const TERMINAL_RECONNECT_OUTPUT_LIMIT = 1024 * 1024;
 const TERMINAL_ENCODINGS = new Set(["utf8", "gb18030", "gbk", "big5", "shift_jis", "euc-kr", "latin1"]);
 
 function normalizeTerminalLanguage(value) {
@@ -66,10 +71,187 @@ function terminalClosureReason(language, reason, fallbackChinese, fallbackEnglis
   return source;
 }
 
-function releaseTerminalSession(session) {
+function releaseTerminalSession(session, options: any = {}) {
   sessions.delete(session);
+  const token = String(session?.reconnectToken || "");
+  if (session?.reconnectTimer) clearTimeout(session.reconnectTimer);
+  session.reconnectTimer = null;
+  if (token && options.retainReconnect && TERMINAL_RECONNECT_TOKEN_PATTERN.test(token)) {
+    session.terminalEnded = true;
+    session.reconnectExpiresAt = Date.now() + TERMINAL_RECONNECT_GRACE_MS;
+    detachedTerminalSessions.set(token, session);
+    session.reconnectTimer = setTimeout(() => {
+      if (detachedTerminalSessions.get(token) !== session) return;
+      detachedTerminalSessions.delete(token);
+      session.reconnectExpiresAt = 0;
+      session.reconnectTimer = null;
+      session.reconnectToken = "";
+    }, TERMINAL_RECONNECT_GRACE_MS);
+    session.reconnectTimer.unref?.();
+  } else if (token && detachedTerminalSessions.get(token) === session) {
+    detachedTerminalSessions.delete(token);
+  }
   if (session.desktopGrantExpiryTimer) clearTimeout(session.desktopGrantExpiryTimer);
   session.desktopGrantExpiryTimer = null;
+}
+
+function terminalSessionProcessActive(session) {
+  if (!session) return false;
+  if (session.ptyProcess) return !session.ptyProcess.killed && !session.ptyExited;
+  if (session.child) return !session.child.killed && !session.childExited && session.child.exitCode === null;
+  return !session.remotePtyExited && Boolean(session.ssh2Stream || session.ssh2Client || session.remotePty);
+}
+
+function clearTerminalReconnectTimer(session) {
+  if (!session?.reconnectTimer) return;
+  clearTimeout(session.reconnectTimer);
+  session.reconnectTimer = null;
+}
+
+function detachedTerminalOutputBytes(value) {
+  return Buffer.isBuffer(value) ? value.length : Buffer.byteLength(String(value || ""), "utf8");
+}
+
+function bufferDetachedTerminalOutput(session, data, opcode = 1) {
+  if (!session || session.persistentSession || !session.reconnectToken) return;
+  const value = Buffer.isBuffer(data) ? Buffer.from(data) : String(data || "");
+  const bytes = detachedTerminalOutputBytes(value);
+  if (!bytes) return;
+  if (bytes > TERMINAL_RECONNECT_OUTPUT_LIMIT) {
+    session.detachedOutput = [];
+    session.detachedOutputBytes = 0;
+    session.detachedOutputTruncated = true;
+    return;
+  }
+  session.detachedOutput ||= [];
+  session.detachedOutputBytes = Number(session.detachedOutputBytes || 0);
+  while (session.detachedOutput.length && session.detachedOutputBytes + bytes > TERMINAL_RECONNECT_OUTPUT_LIMIT) {
+    const removed = session.detachedOutput.shift();
+    session.detachedOutputBytes = Math.max(0, session.detachedOutputBytes - Number(removed?.bytes || detachedTerminalOutputBytes(removed?.data)));
+    session.detachedOutputTruncated = true;
+  }
+  session.detachedOutput.push({data:value, opcode, bytes});
+  session.detachedOutputBytes += bytes;
+}
+
+function replayDetachedTerminalOutput(session, socket) {
+  if (!session || !socket) return;
+  if (session.detachedOutputTruncated) {
+    sendWebSocketFrame(socket, terminalSessionText(session, "\r\n[连接中断期间的部分输出未保留]\r\n", "\r\n[Some output produced while disconnected was not retained]\r\n"));
+  }
+  for (const item of session.detachedOutput || []) sendWebSocketFrame(socket, item.data, item.opcode);
+  session.detachedOutput = [];
+  session.detachedOutputBytes = 0;
+  session.detachedOutputTruncated = false;
+}
+
+function detachTerminalSession(session, socket) {
+  if (!session || session.socket !== socket || !sessions.has(session)) return;
+  if (session.persistentSession || session.explicitCloseRequested || !TERMINAL_RECONNECT_TOKEN_PATTERN.test(String(session.reconnectToken || "")) || !terminalSessionProcessActive(session)) {
+    closeTerminalSession(session);
+    return;
+  }
+  session.socket = null;
+  session.detachedAt = Date.now();
+  session.reconnectExpiresAt = session.detachedAt + TERMINAL_RECONNECT_GRACE_MS;
+  session.outputClientPaused = false;
+  session.outputSocketBackpressured = false;
+  syncTerminalOutputFlow(session);
+  clearTerminalReconnectTimer(session);
+  detachedTerminalSessions.set(session.reconnectToken, session);
+  session.reconnectTimer = setTimeout(() => {
+    if (detachedTerminalSessions.get(session.reconnectToken) !== session) return;
+    detachedTerminalSessions.delete(session.reconnectToken);
+    session.reconnectExpiresAt = 0;
+    closeTerminalSession(session);
+  }, TERMINAL_RECONNECT_GRACE_MS);
+  session.reconnectTimer.unref?.();
+  appendSystemLog(`普通终端已暂时分离，等待重连：${session.reconnectToken.slice(0, 8)}`);
+}
+
+function terminalSessionConnectionMatches(session, connection) {
+  if (!session || !connection) return false;
+  return Number(session.connectionId || 0) === Number(connection.id || 0)
+    && String(session.connectionHost || "") === String(connection.ssh_host || "")
+    && Number(session.connectionPort || 22) === Number(connection.ssh_port || 22)
+    && String(session.connectionUser || "") === String(connection.ssh_user || "")
+    && Number(session.jumpConnectionId || 0) === Number(connection.jump_connection_id || 0);
+}
+
+function sendTerminalControl(socket, value) {
+  if (!socket || !value) return false;
+  return sendWebSocketFrame(socket, `\0TERMA:${JSON.stringify(value)}`);
+}
+
+function sendTerminalSessionEndedControl(session) {
+  if (!session?.socket || !session.reconnectToken) return;
+  sendTerminalControl(session.socket, {type:"terminal-session", state:"ended"});
+}
+
+function bindTerminalSocket(session, socket, connection, cols, rows, language, options: any = {}) {
+  if (!session || !socket) return;
+  clearTerminalReconnectTimer(session);
+  if (session.reconnectToken) detachedTerminalSessions.delete(session.reconnectToken);
+  session.reconnectExpiresAt = 0;
+  if (!options.ended) session.terminalEnded = false;
+  session.socket = socket;
+  session.language = normalizeTerminalLanguage(language || session.language);
+  session.outputClientPaused = false;
+  session.outputSocketBackpressured = false;
+  syncTerminalOutputFlow(session);
+  socket.setNoDelay?.(true);
+  socket.on("drain", () => {
+    if (!sessions.has(session) || session.socket !== socket) return;
+    session.outputSocketBackpressured = false;
+    syncTerminalOutputFlow(session);
+  });
+  if (options.ended) {
+    sendTerminalControl(socket, {type:"terminal-session", state:"ended"});
+    replayDetachedTerminalOutput(session, socket);
+    sendWebSocketFrame(socket, terminalSessionText(session, "[普通 Shell 已结束]\r\n", "[The regular shell has ended]\r\n"));
+    closeWebSocket(socket);
+    releaseTerminalSession(session);
+    return;
+  }
+  if (options.reconnected) {
+    sendTerminalControl(socket, {type:"terminal-session", state:"reconnected"});
+    replayDetachedTerminalOutput(session, socket);
+  } else if (session.reconnectToken) {
+    sendTerminalControl(socket, {type:"terminal-session", state:"created"});
+  }
+  const endpoint = `${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}`;
+  const startupProfile = connection.terminal_profile_name || connection.terminal_program_path;
+  const startupLabel = connection.terminal_startup_mode === "program"
+    ? terminalUiText(language, `，启动 ${startupProfile}`, `, starting ${startupProfile}`)
+    : "";
+  const ptyLabel = session.ptyProcess || session.remotePty ? terminalUiText(language, "（PTY）", " (PTY)") : "";
+  const connectedMessage = options.reconnected
+    ? terminalUiText(language, "[普通 Shell 连接已恢复，原进程继续运行]\r\n", "[Regular shell connection restored; the original process is still running]\r\n")
+    : `${terminalUiText(language, `连接到 ${endpoint}`, `Connected to ${endpoint}`)}${ptyLabel}${startupLabel}\r\n`;
+  sendWebSocketFrame(socket, connectedMessage);
+  const parser = new WebSocketFrameParser({ maxFrameSize: 1024 * 1024, maxMessageSize: 2 * 1024 * 1024 });
+  socket.on("data", (chunk) => {
+    try {
+      parser.push(chunk, (opcode, payload) => {
+        if (opcode === 8) return closeTerminalSession(session);
+        if (opcode === 9) return sendWebSocketFrame(socket, payload, 10);
+        if (opcode === 1 || opcode === 2) writeTerminalInput(session, payload);
+      });
+    } catch (error) {
+      sendWebSocketFrame(socket, `\r\n${terminalUiText(language, "WebSocket 错误", "WebSocket error")}: ${error.message}\r\n`);
+      closeTerminalSession(session);
+    }
+  });
+  socket.on("close", () => {
+    if (session.socket !== socket) return;
+    if (session.explicitCloseRequested) closeTerminalSession(session);
+    else detachTerminalSession(session, socket);
+  });
+  socket.on("error", () => {
+    if (session.socket !== socket) return;
+    if (session.explicitCloseRequested) closeTerminalSession(session);
+    else detachTerminalSession(session, socket);
+  });
 }
 
 function scheduleDesktopGrantExpiry(session, expiresAtValue) {
@@ -158,6 +340,10 @@ function handleTerminalUpgrade(req, socket, options: any = {}) {
     language = normalizeTerminalLanguage(url.searchParams.get("language"));
     const id = Number(url.searchParams.get("id"));
     const quickToken = url.searchParams.get("quick_token") || "";
+    const reconnectToken = String(url.searchParams.get("reconnect_token") || "");
+    if (reconnectToken && !TERMINAL_RECONNECT_TOKEN_PATTERN.test(reconnectToken)) {
+      throw new Error(terminalUiText(language, "普通终端重连凭据无效", "The regular terminal reconnect credential is invalid"));
+    }
     if (!id && !quickToken) throw new Error(terminalUiText(language, "缺少连接 ID 或快速连接凭据", "A connection ID or quick-connect credential is required"));
     const storedConnection = quickToken
       ? consumeQuickTerminalTicket(quickToken, options.requestBinding)
@@ -174,6 +360,23 @@ function handleTerminalUpgrade(req, socket, options: any = {}) {
     if (quickToken && startupToken) throw new Error(terminalUiText(language, "快速连接不能使用已保存的终端启动配置", "Quick connect cannot use a saved terminal startup configuration"));
     const startupOverride = startupToken ? consumeTerminalStartupTicket(startupToken, id) : null;
     const connection = mergeTerminalStartup(storedConnection, startupOverride);
+    if (quickToken && url.searchParams.get("session_mode")) {
+      throw new Error(terminalUiText(language, "快速连接不能使用可恢复终端会话", "Quick connect cannot use a recoverable terminal session"));
+    }
+    const sessionConfig = normalizeTerminalSession({
+      terminal_session_mode:url.searchParams.get("session_mode") || "none",
+      terminal_session_backend:url.searchParams.get("session_backend") || "auto",
+      terminal_session_id:url.searchParams.get("session_id") || ""
+    });
+    Object.assign(connection, sessionConfig);
+    if (sessionConfig.terminal_session_mode === "persistent"
+      && connection.terminal_startup_mode === "program"
+      && inferredStartupPlatform(connection) === "windows") {
+      throw new Error(terminalUiText(language, "Windows OpenSSH 暂不支持 tmux/screen 可恢复会话，请改用普通终端", "Recoverable tmux/screen sessions are not supported for Windows OpenSSH yet; use a regular terminal"));
+    }
+    connection.terminal_session_replay = url.searchParams.get("session_replay") !== "0";
+    const replayLines = Number(url.searchParams.get("session_replay_lines") || 2000);
+    connection.terminal_session_replay_lines = Number.isFinite(replayLines) ? Math.max(100, Math.min(10000, Math.floor(replayLines))) : 2000;
     const x11Mode = String(connection.x11_mode || "off");
     if (["trusted", "untrusted"].includes(x11Mode) && !options.x11Authorized) {
       throw new Error(terminalUiText(language, "当前浏览器没有 X11 桌面集成授权，请重新申请授权后再打开 X11 终端", "This browser is not authorized for X11 desktop integration. Request authorization again before opening an X11 terminal"));
@@ -199,43 +402,38 @@ function handleTerminalUpgrade(req, socket, options: any = {}) {
     const rows = Number(url.searchParams.get("rows") || 24);
     const title = url.searchParams.get("title") || "";
     const logId = url.searchParams.get("log_id") || "";
-    const session: any = startTerminalProcess(connection, socket, cols, rows, title, logId, language);
-    session.connectionId = Number(connection.id || 0);
-    session.quickConnection = Boolean(quickToken);
-    session.x11Mode = x11Mode;
-    sessions.add(session);
-    session.outputClientPaused = Boolean(session.outputClientPaused);
-    session.outputSocketBackpressured = Boolean(session.outputSocketBackpressured);
-    syncTerminalOutputFlow(session);
-    socket.on("drain", () => {
-      if (!sessions.has(session)) return;
-      session.outputSocketBackpressured = false;
-      syncTerminalOutputFlow(session);
-    });
-    bindDesktopBrowserGrant(session, options);
-    const startupProfile = connection.terminal_profile_name || connection.terminal_program_path;
-    const startupLabel = connection.terminal_startup_mode === "program"
-      ? terminalUiText(language, `，启动 ${startupProfile}`, `, starting ${startupProfile}`)
-      : "";
-    const ptyLabel = session.ptyProcess || session.remotePty ? terminalUiText(language, "（PTY）", " (PTY)") : "";
-    const endpoint = `${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}`;
-    sendWebSocketFrame(socket, `${terminalUiText(language, `连接到 ${endpoint}`, `Connected to ${endpoint}`)}${ptyLabel}${startupLabel}\r\n`);
-
-    const parser = new WebSocketFrameParser({ maxFrameSize: 1024 * 1024, maxMessageSize: 2 * 1024 * 1024 });
-    socket.on("data", (chunk) => {
-      try {
-        parser.push(chunk, (opcode, payload) => {
-          if (opcode === 8) return closeTerminalSession(session);
-          if (opcode === 9) return sendWebSocketFrame(socket, payload, 10);
-          if (opcode === 1 || opcode === 2) writeTerminalInput(session, payload);
-        });
-      } catch (error) {
-        sendWebSocketFrame(socket, `\r\n${terminalUiText(language, "WebSocket 错误", "WebSocket error")}: ${error.message}\r\n`);
-        closeTerminalSession(session);
+    const persistent = persistentSessionRequested(connection);
+    let session: any = null;
+    let detached = !quickToken && !persistent && reconnectToken
+      ? detachedTerminalSessions.get(reconnectToken)
+      : null;
+    if (detached) {
+      if (detached.reconnectExpiresAt && detached.reconnectExpiresAt <= Date.now()) {
+        closeTerminalSession(detached);
+        detached = null;
+      } else if (!terminalSessionConnectionMatches(detached, connection)) {
+        throw new Error(terminalUiText(language, "普通终端重连凭据与当前连接不匹配", "The regular terminal reconnect credential does not match this connection"));
+      } else {
+        session = detached;
       }
-    });
-    socket.on("close", () => closeTerminalSession(session));
-    socket.on("error", () => closeTerminalSession(session));
+    }
+    if (!session) {
+      session = startTerminalProcess(connection, socket, cols, rows, title, logId, language);
+      session.connectionId = Number(connection.id || 0);
+      session.connectionHost = String(connection.ssh_host || "");
+      session.connectionPort = Number(connection.ssh_port || 22);
+      session.connectionUser = String(connection.ssh_user || "");
+      session.jumpConnectionId = Number(connection.jump_connection_id || 0);
+      session.quickConnection = Boolean(quickToken);
+      session.persistentSession = persistent;
+      session.terminalSessionBackend = connection.terminal_session_backend;
+      session.terminalSessionId = connection.terminal_session_id;
+      session.x11Mode = x11Mode;
+      session.reconnectToken = !quickToken && !persistent ? reconnectToken : "";
+      sessions.add(session);
+      bindDesktopBrowserGrant(session, options);
+    }
+    bindTerminalSocket(session, socket, connection, cols, rows, language, {reconnected:Boolean(detached && !detached.terminalEnded), ended:Boolean(detached?.terminalEnded)});
   } catch (error) {
     appendSystemLog(`终端 WebSocket 启动失败：${error.message}`);
     try {
@@ -262,7 +460,15 @@ function terminalEnv() {
 
 function emitTerminalOutput(session, data, opcode = 1) {
   if (!session.binaryMode) appendTerminalLog(session.logFile, data);
-  const accepted = sendWebSocketFrame(session.socket, data, opcode);
+  const output = session.persistentSession && !session.binaryMode
+    ? filterTerminalSessionOutput(session, data)
+    : data;
+  if (!output?.length) return;
+  if (!session.socket || session.socket.destroyed || session.socket.writableEnded || session.socket.writableDestroyed) {
+    bufferDetachedTerminalOutput(session, output, opcode);
+    return;
+  }
+  const accepted = sendWebSocketFrame(session.socket, output, opcode);
   if (!accepted && session.socket && !session.socket.destroyed) {
     session.outputSocketBackpressured = true;
     syncTerminalOutputFlow(session);
@@ -299,12 +505,15 @@ function startPlainTerminal(session, connection, args, cwd, log) {
     sendTerminalOutput(session, `\r\n${terminalSessionText(session, "终端启动失败", "Terminal startup failed")}: ${error.message}\r\n`);
   });
   child.on("exit", (code, signal) => {
+    session.childExited = true;
+    if (session.terminalClosing) return;
     const detail = signal
       ? terminalSessionText(session, `，信号 ${signal}`, `, signal ${signal}`)
       : terminalSessionText(session, `，退出码 ${code ?? ""}`, `, exit code ${code ?? ""}`);
     sendTerminalOutput(session, `\r\n${terminalSessionText(session, "SSH 会话已结束", "SSH session ended")}${detail}\r\n`);
-    releaseTerminalSession(session);
-    closeWebSocket(session.socket);
+    sendTerminalSessionEndedControl(session);
+    releaseTerminalSession(session, {retainReconnect:!session.socket});
+    if (session.socket) closeWebSocket(session.socket);
   });
   appendSystemLog(`终端已启动（普通）：${log.label}`);
   return session;
@@ -321,6 +530,9 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null, la
     language:normalizeTerminalLanguage(language),
     logFile: log.fullPath,
     terminalEncoding: encoding,
+    persistentSession:persistentSessionRequested(connection),
+    terminalSessionBackend:String(connection.terminal_session_backend || "auto"),
+    terminalSessionId:String(connection.terminal_session_id || ""),
     outputDecoder: encoding === "utf8" ? null : iconv.getDecoder(encoding)
   };
   openSshShell(connection, { term: "xterm-256color", cols, rows }).then(({ client, stream, x11Diagnostics }: any) => {
@@ -338,13 +550,16 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null, la
     registerTerminalOutputSources(session, [stream, stream.stderr]);
     stream.on("error", (error) => sendTerminalOutput(session, `\r\n${terminalSessionText(session, "终端错误", "Terminal error")}: ${normalizeSshTransportError(error, connection).message}\r\n`));
     stream.on("close", (code, signal) => {
+      session.remotePtyExited = true;
+      if (session.terminalClosing) return;
       const detail = signal
         ? terminalSessionText(session, `，信号 ${signal}`, `, signal ${signal}`)
         : terminalSessionText(session, `，退出码 ${code ?? ""}`, `, exit code ${code ?? ""}`);
       sendTerminalOutput(session, `\r\n${terminalSessionText(session, "SSH 会话已结束", "SSH session ended")}${detail}\r\n`);
-      releaseTerminalSession(session);
+      sendTerminalSessionEndedControl(session);
+      releaseTerminalSession(session, {retainReconnect:!session.socket});
       try { client.end(); } catch {}
-      closeWebSocket(socket);
+      if (session.socket) closeWebSocket(session.socket);
     });
     if (["trusted", "untrusted"].includes(String(connection.x11_mode || ""))) {
       const rawReason = String(x11Diagnostics?.reason || "");
@@ -365,6 +580,7 @@ function startRemotePty(connection, socket, cols, rows, log, fallback = null, la
     for (const pending of session.pendingInput.splice(0)) stream.write(pending);
     appendSystemLog(`终端已启动（内置 SSH PTY）：${log.label}`);
   }).catch((error) => {
+    if (session.terminalClosing || !sessions.has(session)) return;
     session.remotePty = false;
     appendSystemLog(`内置 SSH PTY 启动失败：${error.message}`);
     if (fallback && sessions.has(session)) {
@@ -400,17 +616,20 @@ function startTerminalProcess(connection, socket, cols, rows, title = "", logId 
       };
       if (cwd) ptyOptions.cwd = cwd;
       const ptyProcess = pty.spawn(resolveTerminalBin(), args, ptyOptions);
-      const session: any = { socket, ptyProcess, logFile: log.fullPath, language:normalizeTerminalLanguage(language) };
+      const session: any = { socket, ptyProcess, logFile: log.fullPath, language:normalizeTerminalLanguage(language), persistentSession:persistentSessionRequested(connection), terminalSessionBackend:String(connection.terminal_session_backend || "auto"), terminalSessionId:String(connection.terminal_session_id || "") };
       registerTerminalOutputSources(session, [ptyProcess]);
       setSessionEncoding(session, connection.terminal_encoding);
       ptyProcess.onData((data) => sendTerminalOutput(session, data));
       ptyProcess.onExit(({ exitCode, signal }) => {
+        session.ptyExited = true;
+        if (session.terminalClosing) return;
         const detail = signal
           ? terminalSessionText(session, `，信号 ${signal}`, `, signal ${signal}`)
           : terminalSessionText(session, `，退出码 ${exitCode ?? ""}`, `, exit code ${exitCode ?? ""}`);
         sendTerminalOutput(session, `\r\n${terminalSessionText(session, "SSH 会话已结束", "SSH session ended")}${detail}\r\n`);
-        releaseTerminalSession(session);
-        closeWebSocket(socket);
+        sendTerminalSessionEndedControl(session);
+        releaseTerminalSession(session, {retainReconnect:!session.socket});
+        if (session.socket) closeWebSocket(session.socket);
       });
       appendSystemLog(`终端已启动（PTY）：${log.label}`);
       return session;
@@ -428,7 +647,7 @@ function startTerminalProcess(connection, socket, cols, rows, title = "", logId 
     return startRemotePty(connection, socket, cols, rows, log, { args, cwd, input: [] }, language);
   }
 
-  const session: any = { socket, child: null, logFile: log.fullPath, language:normalizeTerminalLanguage(language) };
+  const session: any = { socket, child: null, logFile: log.fullPath, language:normalizeTerminalLanguage(language), persistentSession:persistentSessionRequested(connection), terminalSessionBackend:String(connection.terminal_session_backend || "auto"), terminalSessionId:String(connection.terminal_session_id || "") };
   setSessionEncoding(session, connection.terminal_encoding);
   return startPlainTerminal(session, connection, args, cwd, log);
 }
@@ -455,6 +674,11 @@ function writeTerminalInput(session, payload) {
         setTerminalOutputFlow(session, message.paused === true);
         return;
       }
+      if (message?.type === "terminal-detach") {
+        session.explicitCloseRequested = true;
+        closeTerminalSession(session);
+        return;
+      }
     } catch {}
   }
   const outgoing = !session.binaryMode && session.terminalEncoding && session.terminalEncoding !== "utf8"
@@ -468,8 +692,10 @@ function writeTerminalInput(session, payload) {
 
 function closeTerminalSession(session) {
   if (!sessions.has(session)) return;
+  session.terminalClosing = true;
+  const preserveRemoteSession = Boolean(session.persistentSession);
   releaseTerminalSession(session);
-  flushSessionOutputDecoder(session);
+  if (!preserveRemoteSession) flushSessionOutputDecoder(session);
   try { session.ptyProcess?.kill(); } catch {}
   try { session.child?.kill(); } catch {}
   try { session.ssh2Stream?.close(); } catch {}

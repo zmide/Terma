@@ -7,20 +7,82 @@
 <a id="english"></a>
 ### English
 
-> The next release draft is ready for user-visible changes after v1.5.7.
+> This draft tracks follow-up cross-platform acceptance and polish for recoverable terminal sessions after v1.5.8.
 
-#### Changes
+#### Other improvements
 
-- No additional user-visible changes are pending after the v1.5.7 revision 2 release.
+- Continue cross-platform acceptance for recoverable sessions, including Windows fallback, macOS package-manager edge cases, and real network/reload scenarios.
 
 <a id="简体中文"></a>
 ### 简体中文
 
-> 下一版草稿用于记录 v1.5.7 之后的用户可见变化。
+> 本草稿记录 v1.5.8 之后可恢复终端会话的跨平台验收和体验收尾。
 
-#### 变更
+#### 其他优化
 
-- v1.5.7 revision 2 发布后暂无其他用户可见变化。
+- 继续验收可恢复会话的跨平台场景，包括 Windows 降级、macOS 包管理器边界，以及真实断网和窗口重载场景。
+
+## v1.5.8
+
+<!-- terma-release-revision: 1 -->
+
+[English](#english) · [简体中文](#简体中文)
+
+<a id="english"></a>
+### English
+
+> This release adds optional terminal AI, lightweight reconnects for regular SSH terminals, and recoverable SSH sessions, while improving transcript rendering and SFTP deletion reliability.
+
+#### Important fixes
+
+- Improved terminal and log transcript rendering for cursor movement, alternate screens, overwritten lines, and multiline output.
+- Fixed SFTP deletion for remote names containing backslashes or non-UTF-8 bytes; deletion now verifies that the target existed and was removed.
+- Fixed same-version update confirmations that showed the `{{version}}` placeholder.
+
+#### Important additions
+
+- Added an optional terminal AI panel for OpenAI-compatible services. It supports streaming multi-turn answers, terminal and log context, model, reasoning, and deep-thinking settings, local session history, permission-controlled command execution, and a responsive layout that can be resized or minimized.
+- Added built-in and user Skills plus configurable MCP servers for terminal AI. MCP supports stdio, HTTP/SSE, and Streamable HTTP; calls remain approval-gated and sensitive context is redacted locally.
+- Added lightweight reconnects for regular SSH Shell tabs. After a window reload, brief network interruption, or WebSocket disconnect, Terma keeps the PTY for a bounded grace period, reconnects automatically, and replays a bounded amount of missed output; explicit disconnects and closed tabs still end the regular Shell.
+- Added recoverable SSH terminal tabs backed by tmux or GNU screen. Terma can restore the remote shell, running processes, current screen, and bounded scrollback after reconnects or app restarts, manage sessions whose tabs were closed, and detect, install, or uninstall the session components. Clear shell status, compact session controls, and scrollback controls are included. Root accounts do not need an extra temporary-admin prompt.
+
+#### Other improvements
+
+- Refined terminal, session-management, SFTP, log, settings, and bilingual UI flows to keep the new workflows responsive and consistent across desktop and narrow layouts.
+
+#### Changes in this release
+
+- No pull requests were merged after v1.5.7; all user-visible changes in this release were committed directly by the project maintainer.
+
+**Full Changelog**: [v1.5.7...v1.5.8](https://github.com/zmide/Terma/compare/v1.5.7...v1.5.8)
+
+<a id="简体中文"></a>
+### 简体中文
+
+> 本版新增可选的终端 AI、普通 SSH 终端的轻量重连和可恢复 SSH 会话，同时改进终端转录渲染和 SFTP 删除可靠性。
+
+#### 重要修复
+
+- 改进终端和日志转录内容的渲染，正确处理光标移动、备用屏幕、覆盖行和多行输出。
+- 修复删除包含反斜杠或非 UTF-8 字节的远端名称失败的问题；删除前后都会确认目标确实存在并已移除。
+- 修复同版本更新确认弹窗显示 `{{version}}` 占位符的问题。
+
+#### 重要新增
+
+- 新增可选的终端 AI 面板，支持 OpenAI 兼容服务、流式多轮回复、终端和日志上下文、模型、推理强度、深度思考、本地会话历史和按权限控制的命令执行，并支持响应式排版、调整大小和最小化。
+- 新增内置和用户 Skills，并支持配置 MCP 服务器。MCP 支持 stdio、HTTP/SSE 和 Streamable HTTP；工具调用继续受确认控制，敏感上下文会在本地脱敏。
+- 新增普通 SSH Shell 的轻量连接保活。窗口重载、短暂断网或 WebSocket 断开后，Terma 会在有限宽限期内保留 PTY、自动重连，并按上限补发断线期间的输出；显式断开和关闭标签仍会结束普通 Shell。
+- 新增基于 tmux 或 GNU screen 的可恢复 SSH 终端标签。重连或重新打开 Terma 后，可以恢复远端 Shell、运行中的进程、当前画面和有界滚动历史，也可以管理已关闭标签对应的会话，并探测、安装或卸载会话组件；同时提供清晰的 Shell 状态、紧凑的会话控件和滚动历史控件。root 用户不再需要额外的临时管理员授权。
+
+#### 其他优化
+
+- 优化终端、会话管理、SFTP、日志、设置和双语界面流程，让新增功能在桌面和窄屏布局下保持响应和一致。
+
+#### 本次变更
+
+- v1.5.7 之后没有合并新的 Pull Request；本版所有用户可见变化均由项目维护者直接提交。
+
+**完整变更**：[v1.5.7...v1.5.8](https://github.com/zmide/Terma/compare/v1.5.7...v1.5.8)
 
 ## v1.5.7
 

@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
 const { normalizeFtpTransportError } = require(path.join(root, "dist", "ftp.js"));
@@ -102,7 +103,7 @@ async function main() {
   });
 
   const sources = {
-    terminal:fs.readFileSync(path.join(root, "public", "app-terminal.js"), "utf8"),
+    terminal:readFrontendDomain(root, "terminal"),
     sftp:fs.readFileSync(path.join(root, "public", "app-sftp-core.js"), "utf8"),
     health:fs.readFileSync(path.join(root, "public", "app-connection-health.js"), "utf8"),
     x11:fs.readFileSync(path.join(root, "public", "app-x11.js"), "utf8"),

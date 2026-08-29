@@ -571,8 +571,13 @@ function formatUpdateSpeed(value) {
 async function downloadUpdatePackage(redownload=false) {
   const inPane = captureSettingsPane();
   const republished = Boolean(updateSettings?.republished_available);
+  const latestVersion = String(updateSettings?.latest_version || "").trim().replace(/^v/i, "");
+  const targetVersion = latestVersion ? `v${latestVersion}` : tr("settings:updates.current_unknown");
   if (!await confirmModal(
-    tr(redownload ? "settings:updates.redownload_confirm" : republished ? "settings:updates.republished_confirm" : "settings:updates.download_confirm"),
+    tr(
+      redownload ? "settings:updates.redownload_confirm" : republished ? "settings:updates.republished_confirm" : "settings:updates.download_confirm",
+      {version:targetVersion}
+    ),
     tr(redownload ? "settings:auto.update_redownload_action" : "settings:auto.update_download_verify"),
     tr(redownload ? "settings:auto.update_redownload" : "settings:auto.update_start"),
     tr("common:actions.cancel")

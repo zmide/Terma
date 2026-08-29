@@ -1,5 +1,8 @@
 import { IncomingMessage, ServerResponse } from "node:http";
 
+const { buildRemotePosixCommand } = require("../remote-posix");
+const { terminalSessionTerminateCommand } = require("../terminal-session");
+
 interface TerminalRouteDependencies {
   authorizeConnection(request: IncomingMessage, connectionId: number): any;
   createQuickTerminalTicket(value: unknown, requestBinding: string): unknown;
@@ -16,6 +19,9 @@ interface TerminalRouteDependencies {
   sendJson(response: ServerResponse, data: unknown, status?: number): void;
   terminalClipboardImageMaxBytes: number;
   writeTerminalClipboardImage(connection: any, value: Buffer, options?: any): Promise<any>;
+  runSshCommandForConnection?(connection: any, command: string, timeoutMs?: number): Promise<any>;
+  inspectTerminalSessionComponentsForConnection?(connection: any): Promise<any>;
+  configureTerminalSessionComponentForConnection?(connection: any, data: any): Promise<any>;
 }
 
 export async function handleTerminalRoutes(
@@ -49,6 +55,52 @@ export async function handleTerminalRoutes(
     const image = await dependencies.readBody(request, dependencies.terminalClipboardImageMaxBytes + 1);
     const result = await dependencies.writeTerminalClipboardImage(connection, image, {x11Mode:requestedX11Mode});
     dependencies.sendJson(response, result);
+    return true;
+  }
+  const sessionMatch = pathname.match(/^\/api\/connections\/(\d+)\/terminal-session$/);
+  if (request.method === "POST" && sessionMatch) {
+    const connectionId = Number(sessionMatch[1]);
+    const connection = dependencies.authorizeConnection(request, connectionId);
+    const data = await dependencies.readJson(request);
+    const action = String(data?.action || "").trim().toLowerCase();
+    if (action !== "terminate") {
+      dependencies.sendJson(response, {error:"可恢复终端会话操作无效"}, 400);
+      return true;
+    }
+    if (!dependencies.runSshCommandForConnection) {
+      dependencies.sendJson(response, {error:"当前服务不支持终端会话管理"}, 503);
+      return true;
+    }
+    const command = terminalSessionTerminateCommand({
+      terminal_session_backend:data?.backend || data?.terminal_session_backend,
+      terminal_session_id:data?.session_id || data?.terminal_session_id
+    });
+    const result = await dependencies.runSshCommandForConnection(connection, buildRemotePosixCommand(command), 30000);
+    if (result?.status !== 0) {
+      dependencies.sendJson(response, {error:String(result?.stderr || result?.stdout || result?.error?.message || "远端会话终止失败").trim(), result}, 502);
+      return true;
+    }
+    dependencies.sendJson(response, {ok:true, action:"terminate", result});
+    return true;
+  }
+  const componentMatch = pathname.match(/^\/api\/connections\/(\d+)\/terminal-session-components$/);
+  if ((request.method === "GET" || request.method === "POST") && componentMatch) {
+    const connectionId = Number(componentMatch[1]);
+    const connection = dependencies.authorizeConnection(request, connectionId);
+    if (request.method === "GET") {
+      if (!dependencies.inspectTerminalSessionComponentsForConnection) {
+        dependencies.sendJson(response, {error:"当前服务不支持终端会话组件管理"}, 503);
+        return true;
+      }
+      dependencies.sendJson(response, await dependencies.inspectTerminalSessionComponentsForConnection(connection));
+      return true;
+    }
+    const data = await dependencies.readJson(request);
+    if (!dependencies.configureTerminalSessionComponentForConnection) {
+      dependencies.sendJson(response, {error:"当前服务不支持终端会话组件管理"}, 503);
+      return true;
+    }
+    dependencies.sendJson(response, await dependencies.configureTerminalSessionComponentForConnection(connection, data || {}), 202);
     return true;
   }
   if (request.method === "POST" && pathname === "/api/terminal/quick-tickets") {

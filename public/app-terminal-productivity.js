@@ -32,6 +32,148 @@ function restoreRecentlyClosedTab() {
   notify(tr("terminal:productivity.tab_restored"), "success");
 }
 
+function isRecoverableTerminalTab(tab) {
+  return Boolean(tab?.kind === "terminal"
+    && String(tab.sessionMode || "none") === "persistent"
+    && String(tab.persistentSessionId || "").trim());
+}
+
+function recoverableTerminalIdentity(tab) {
+  if (!tab) return "";
+  return `${Number(tab.id || 0)}\u0000${String(tab.persistentSessionId || "").trim()}`;
+}
+
+function loadRecoverableTerminalRecords() {
+  loadClosedWorkspaceTabs();
+  const records = [];
+  const seen = new Set();
+  for (const tab of tabs.filter(isRecoverableTerminalTab)) {
+    const identity = recoverableTerminalIdentity(tab);
+    if (!identity || seen.has(identity)) continue;
+    seen.add(identity);
+    records.push({tab, open:true, identity});
+  }
+  for (const tab of productivityState.closedTabs.filter(isRecoverableTerminalTab)) {
+    const identity = recoverableTerminalIdentity(tab);
+    if (!identity || seen.has(identity)) continue;
+    seen.add(identity);
+    records.push({tab, open:false, identity});
+  }
+  return records;
+}
+
+function removeClosedRecoverableTerminalRecord(record) {
+  const identity = record?.identity || recoverableTerminalIdentity(record?.tab);
+  if (!identity) return;
+  productivityState.closedTabs = productivityState.closedTabs.filter(tab => recoverableTerminalIdentity(tab) !== identity);
+  localStorage.setItem("closedWorkspaceTabsV1", JSON.stringify(productivityState.closedTabs));
+}
+
+function recoverableTerminalStatus(record) {
+  if (record?.open) {
+    const tab = tabs.find(item => item.key === record.tab.key);
+    const status = tab?.connectionStatus || "disconnected";
+    return tr(`terminal:session.manager.status_${status}`, {
+      defaultValue:status === "connected" ? "已连接" : status === "connecting" ? "连接中" : "已断开"
+    });
+  }
+  return tr("terminal:session.manager.status_closed", {defaultValue:"标签已关闭，会话仍在远端运行"});
+}
+
+function recoverableTerminalConnectionLabel(tab) {
+  const connection = currentConnection(Number(tab?.id || 0));
+  if (connection) return `${connection.ssh_user || ""}@${connection.ssh_host || ""}:${connection.ssh_port || 22}`;
+  return tr("terminal:session.manager.connection_missing", {defaultValue:"连接已删除"});
+}
+
+async function restoreRecoverableTerminalRecord(record) {
+  if (!record?.tab) return;
+  if (record.open) {
+    activateTab(record.tab.key);
+    focusTerminalSession(record.tab.key);
+    closeModal();
+    return;
+  }
+  const connection = currentConnection(Number(record.tab.id || 0));
+  if (!connection) return notify(tr("terminal:session.manager.connection_missing", {defaultValue:"SSH 连接不存在，无法恢复会话"}), "error");
+  let key = String(record.tab.key || `terminal-${connection.id}-restored`);
+  if (tabs.some(item => item.key === key)) key = `${key}-restored-${Date.now()}`;
+  const restoredTab = {...record.tab, key, pinned:false, connectionStatus:"disconnected"};
+  removeClosedRecoverableTerminalRecord(record);
+  addTab(key, restoredTab.title || `${connection.name || connection.ssh_host} · Terminal`, restoredTab.subtitle || `${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port}`, "terminal", restoredTab.closable !== false, restoredTab);
+  renderTabContent(restoredTab);
+  closeModal();
+  notify(tr("terminal:session.manager.restored", {defaultValue:"可恢复会话已重新打开"}), "success");
+}
+
+async function terminateRecoverableTerminalRecord(record) {
+  if (!record?.tab) return;
+  const confirmed = await confirmModal(
+    tr("terminal:session.terminate_confirm", {defaultValue:"终止远端可恢复会话？其中的进程和终端历史将被清除。"}),
+    tr("terminal:session.manager.terminate_title", {defaultValue:"终止可恢复会话"}),
+    tr("terminal:session.manager.terminate", {defaultValue:"终止并清理"}),
+    tr("common:actions.cancel", {defaultValue:"取消"}),
+    true
+  );
+  if (!confirmed) return;
+  try {
+    if (record.open) {
+      const ok = await terminateTerminalPersistence(record.tab.key, {skipConfirm:true});
+      if (!ok) return;
+    } else {
+      await terminateTerminalPersistenceRecord(record.tab);
+      removeClosedRecoverableTerminalRecord(record);
+      notify(tr("terminal:session.terminated", {defaultValue:"远端可恢复会话已终止"}), "success");
+    }
+    saveTabsState();
+    openTerminalSessionManager();
+  } catch (error) {
+    notify(error.message || tr("terminal:session.terminate_failed", {defaultValue:"终止远端会话失败"}), "error");
+  }
+}
+
+function openTerminalSessionManager() {
+  const modal = $("modal");
+  if (!modal) return;
+  const records = loadRecoverableTerminalRecords();
+  const title = tr("terminal:session.manager.title", {defaultValue:"可恢复终端会话"});
+  const subtitle = tr("terminal:session.manager.subtitle", {count:records.length, defaultValue:`管理可恢复远端会话（${records.length}）`});
+  const empty = tr("terminal:session.manager.empty", {defaultValue:"当前没有可恢复的远端终端会话"});
+  modal.onclick = null;
+  modal.onkeydown = event => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    closeModal();
+  };
+  modal.innerHTML = `<div class="modal-card productivity-manager terminal-session-manager" role="dialog" aria-modal="true" aria-labelledby="terminalSessionManagerTitle">
+    <div class="productivity-manager-head"><div><h2 id="terminalSessionManagerTitle">${esc(title)}</h2><span>${esc(subtitle)}</span></div><button id="terminalSessionManagerClose" class="icon-button" type="button" title="${escAttr(tr("common:actions.close", {defaultValue:"关闭"}))}" aria-label="${escAttr(tr("common:actions.close", {defaultValue:"关闭"}))}">${icon("x")}</button></div>
+    <div class="productivity-list terminal-session-manager-list">${records.length ? records.map((record, index) => {
+      const tab = record.tab;
+      const openLabel = record.open ? tr("terminal:session.manager.open_active", {defaultValue:"定位"}) : tr("terminal:session.manager.open", {defaultValue:"重新打开"});
+      const status = recoverableTerminalStatus(record);
+      const backend = String(tab.sessionBackend || "auto").toLowerCase();
+      const connectionLabel = recoverableTerminalConnectionLabel(tab);
+      const canOpen = Boolean(currentConnection(Number(tab.id || 0)));
+      const compactStatus = record.open ? status : tr("terminal:session.manager.status_remote", {defaultValue:"远端运行"});
+      const backendLabel = tr("terminal:session.manager.backend", {backend, defaultValue:`后端：${backend}`});
+      const terminateLabel = tr("terminal:session.manager.terminate", {defaultValue:"终止并清理"});
+      return `<div class="productivity-row terminal-session-manager-row" data-session-manager-index="${index}"><span class="terminal-session-manager-icon" aria-hidden="true">${icon(record.open ? "terminal" : "history")}</span><div class="terminal-session-manager-copy"><div class="terminal-session-manager-title"><strong>${esc(tab.title || tr("common:dialogs.unnamed_tab", {defaultValue:"未命名标签"}))}</strong><span class="terminal-session-manager-status ${record.open ? "open" : "remote"}" title="${escAttr(status)}">${esc(compactStatus)}</span></div><small>${esc(connectionLabel)} · ${esc(backendLabel)}</small></div><div class="actions"><button type="button" class="icon-button terminal-session-manager-open" data-index="${index}" ${canOpen ? "" : "disabled"} title="${escAttr(openLabel)}" aria-label="${escAttr(openLabel)}">${icon(record.open ? "focus" : "folder-open")}</button><button type="button" class="icon-button danger terminal-session-manager-terminate" data-index="${index}" title="${escAttr(terminateLabel)}" aria-label="${escAttr(terminateLabel)}">${icon("x-circle")}</button></div></div>`;
+    }).join("") : `<div class="ui-state empty"><span class="ui-state-icon" aria-hidden="true"></span><strong>${esc(empty)}</strong></div>`}</div>
+    <div class="actions"><button id="terminalSessionManagerRefresh" type="button">${icon("refresh-cw")}<span>${esc(tr("common:actions.refresh", {defaultValue:"刷新"}))}</span></button><button id="terminalSessionManagerDone" class="primary" type="button">${esc(tr("common:actions.done", {defaultValue:"完成"}))}</button></div>
+  </div>`;
+  modal.hidden = false;
+  $("terminalSessionManagerClose").onclick = closeModal;
+  $("terminalSessionManagerDone").onclick = closeModal;
+  $("terminalSessionManagerRefresh").onclick = openTerminalSessionManager;
+  modal.querySelectorAll(".terminal-session-manager-open").forEach(button => {
+    button.onclick = () => restoreRecoverableTerminalRecord(records[Number(button.dataset.index)]);
+  });
+  modal.querySelectorAll(".terminal-session-manager-terminate").forEach(button => {
+    button.onclick = () => terminateRecoverableTerminalRecord(records[Number(button.dataset.index)]);
+  });
+  $("terminalSessionManagerDone")?.focus();
+}
+
 function openTerminalBroadcastPicker() {
   const terminalTabs = tabs.filter(tab => tab.kind === "terminal");
   if (terminalTabs.length < 2) return notify(tr("common:notifications.terminal_broadcast_minimum", {defaultValue:"至少打开两个终端后才能广播输入"}), "info");

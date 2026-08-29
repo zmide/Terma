@@ -4,12 +4,13 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createProductivityRepository } = require("../dist/database/productivity-repository");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.join(__dirname, "..");
 const read = file => fs.readFileSync(path.join(root, file), "utf8");
 const quickCommands = read("public/app-terminal-quick-commands.js");
 const commandSnippets = read("public/app-command-snippets.js");
-const terminal = read("public/app-terminal.js");
+const terminal = readFrontendDomain(root, "terminal");
 const styles = read("public/app.css");
 const migrations = read("src/database/migrations.ts");
 const database = ["src/db.ts", "src/database/config-snapshot-service.ts"].map(read).join("\n");

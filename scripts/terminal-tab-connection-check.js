@@ -4,9 +4,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
-const terminalSource = fs.readFileSync(path.join(root, "public", "app-terminal.js"), "utf8");
+const terminalSource = readFrontendDomain(root, "terminal");
 
 function sourceBetween(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
