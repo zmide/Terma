@@ -44,7 +44,7 @@
     "@types/node": "^26.2.0",
     "electron": "^43.4.1",
     "electron-builder": "^26.15.3",
-    "node-gyp": "^12.4.0",
+    "node-gyp": "^13.0.2",
     "typescript": "^6.0.3"
   },
   "dependencies": {
