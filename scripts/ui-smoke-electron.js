@@ -9587,7 +9587,7 @@ app.whenReady().then(async () => {
       await new Promise(resolve=>setTimeout(resolve,180));
     }
   } finally {
-    clipboard.writeText(previousClipboard);
+    clipboard.writeText(String(previousClipboard ?? ""));
   }
   if (notificationScreenshotEnabled) {
     window.setContentSize(1180, 760);
