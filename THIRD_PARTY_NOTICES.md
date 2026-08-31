@@ -45,7 +45,7 @@ Terma includes or integrates the following third-party components in addition to
 ## Lucide
 
 - Project: https://github.com/lucide-icons/lucide
-- Version: 1.33.0
+- Version: 1.35.0
 - License: ISC License; selected icons derived from Feather are under the MIT License
 - Use: interface icons
 - Copyright: Copyright (c) 2026 Lucide Icons and Contributors; Feather-derived icons Copyright (c) 2013-present Cole Bemis
