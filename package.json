@@ -59,7 +59,7 @@
     "iconv-lite": "^0.7.3",
     "lucide": "^1.33.0",
     "ssh2": "^1.17.0",
-    "x11": "^3.9.1",
+    "x11": "^4.1.0",
     "zmodem.js": "0.1.10"
   },
   "optionalDependencies": {
