@@ -22,6 +22,51 @@ export function createProductivityRepository(dependencies: ProductivityRepositor
     ["停", "stop"]
   ]);
   const quickColors = new Set(["blue", "green", "amber", "red", "cyan", "gray", "purple"]);
+  const workflowParameterTypes = new Set(["text", "path", "port", "boolean", "select"]);
+
+  function cleanWorkflow(value: any, command: string) {
+    let source: any = value;
+    if (typeof source === "string") {
+      if (!source.trim()) return "";
+      try { source = JSON.parse(source); } catch { throw publicError("COMMAND_SNIPPET_WORKFLOW_INVALID", "Workflow 配置格式无效"); }
+    }
+    if (!source || typeof source !== "object") return "";
+    const parameters = Array.isArray(source.parameters) ? source.parameters : [];
+    const steps = Array.isArray(source.steps) ? source.steps : [];
+    const cleanedParameters: any[] = [];
+    const names = new Set<string>();
+    for (const item of parameters.slice(0, 40)) {
+      const name = String(item?.name || "").trim();
+      if (!/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(name) || names.has(name)) continue;
+      names.add(name);
+      const type = workflowParameterTypes.has(String(item?.type || "text")) ? String(item.type) : "text";
+      const options = Array.isArray(item?.options)
+        ? item.options.map((option: any) => String(option || "").trim()).filter(Boolean).slice(0, 50)
+        : String(item?.options || "").split(/[,，\n]/).map((option: string) => option.trim()).filter(Boolean).slice(0, 50);
+      cleanedParameters.push({
+        name,
+        type,
+        required:item?.required !== false,
+        default:item?.secret === true ? "" : String(item?.default ?? "").slice(0, 200),
+        secret:item?.secret === true,
+        options:type === "select" ? options : []
+      });
+    }
+    const cleanedSteps = steps.slice(0, 40).map((item: any, index: number) => ({
+      id:String(item?.id || `step-${index + 1}`).slice(0, 64),
+      label:String(item?.label || `步骤 ${index + 1}`).trim().slice(0, 120),
+      command:String(item?.command || "").replace(/\r\n?/g, "\n").trim().slice(0, 100000)
+    })).filter((item: any) => item.command);
+    const result = {
+      version:Math.max(1, Math.min(100, Math.trunc(Number(source.version || 1) || 1))),
+      dryRun:source.dryRun === true,
+      parameters:cleanedParameters,
+      steps:cleanedSteps
+    };
+    if (!result.parameters.length && !result.steps.length && !result.dryRun) return "";
+    if (!result.steps.length && command) result.steps = [{id:"step-1", label:"执行命令", command:String(command).slice(0, 100000)}];
+    return JSON.stringify(result);
+  }
 
   function normalizeQuickBadge(value: any): string {
     const raw = String(value ?? "");
@@ -42,6 +87,7 @@ export function createProductivityRepository(dependencies: ProductivityRepositor
       command,
       description:String(data.description ?? existing?.description ?? "").trim().slice(0, 1000),
       tags:String(data.tags ?? existing?.tags ?? "").split(/[,，\s]+/).map((item: string) => item.trim()).filter(Boolean).join(","),
+      workflow_json:cleanWorkflow(data.workflow_json ?? data.workflow ?? existing?.workflow_json ?? "", command),
       favorite:Number(data.favorite ?? existing?.favorite ?? 0) ? 1 : 0,
       quick_visible:Number(data.quick_visible ?? existing?.quick_visible ?? 0) ? 1 : 0,
       quick_action:quickActions.has(String(data.quick_action ?? existing?.quick_action ?? "execute")) ? String(data.quick_action ?? existing?.quick_action ?? "execute") : "execute",
@@ -60,8 +106,8 @@ export function createProductivityRepository(dependencies: ProductivityRepositor
     const item = cleanCommandSnippet(data);
     const timestamp = now();
     const result = run(
-      "INSERT INTO command_snippets(name,group_name,command,description,tags,favorite,quick_visible,quick_action,quick_badge,quick_color,quick_sort_order,last_used_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)",
-      [item.name,item.group_name,item.command,item.description,item.tags,item.favorite,item.quick_visible,item.quick_action,item.quick_badge,item.quick_color,item.quick_sort_order,timestamp,timestamp]
+      "INSERT INTO command_snippets(name,group_name,command,description,tags,workflow_json,favorite,quick_visible,quick_action,quick_badge,quick_color,quick_sort_order,last_used_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?, ?,NULL,?,?)",
+      [item.name,item.group_name,item.command,item.description,item.tags,item.workflow_json,item.favorite,item.quick_visible,item.quick_action,item.quick_badge,item.quick_color,item.quick_sort_order,timestamp,timestamp]
     );
     return { id:Number(result.lastInsertRowid), ...item, last_used_at:null, created_at:timestamp, updated_at:timestamp };
   }
@@ -71,8 +117,8 @@ export function createProductivityRepository(dependencies: ProductivityRepositor
     if (!existing) throw publicError("COMMAND_SNIPPET_NOT_FOUND", "命令片段不存在");
     const item = cleanCommandSnippet(data, existing);
     const updatedAt = now();
-    run("UPDATE command_snippets SET name=?,group_name=?,command=?,description=?,tags=?,favorite=?,quick_visible=?,quick_action=?,quick_badge=?,quick_color=?,quick_sort_order=?,updated_at=? WHERE id=?",
-      [item.name,item.group_name,item.command,item.description,item.tags,item.favorite,item.quick_visible,item.quick_action,item.quick_badge,item.quick_color,item.quick_sort_order,updatedAt,Number(id)]);
+    run("UPDATE command_snippets SET name=?,group_name=?,command=?,description=?,tags=?,workflow_json=?,favorite=?,quick_visible=?,quick_action=?,quick_badge=?,quick_color=?,quick_sort_order=?,updated_at=? WHERE id=?",
+      [item.name,item.group_name,item.command,item.description,item.tags,item.workflow_json,item.favorite,item.quick_visible,item.quick_action,item.quick_badge,item.quick_color,item.quick_sort_order,updatedAt,Number(id)]);
     return { ...existing, ...item, id:Number(id), updated_at:updatedAt };
   }
 

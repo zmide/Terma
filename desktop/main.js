@@ -1105,14 +1105,16 @@ function createStartupWindow(settings = readSettings()) {
     resizable:false,
     show:false,
     alwaysOnTop:true,
-    skipTaskbar:false,
+    // The splash is transient UI. Keep it out of the Windows taskbar so its
+    // progress text cannot become the grouped application title.
+    skipTaskbar:true,
     center:true,
-    title:startupTitle,
+    title:PRODUCT_NAME,
     icon:iconPath(),
     backgroundColor:"#f4f6f8",
     webPreferences:{contextIsolation:true, nodeIntegration:false}
   });
-  const html = `<!doctype html><meta charset="utf-8"><title>${startupTitle}</title><style>html,body{width:100%;height:100%;margin:0}body{box-sizing:border-box;display:grid;grid-template-columns:48px minmax(0,1fr);align-items:center;gap:16px;padding:28px 30px;color:#18212b;background:#f4f6f8;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.mark{width:44px;height:44px;display:grid;place-items:center;border-radius:8px;color:#fff;background:#111827;font-size:20px;font-weight:700}.copy{min-width:0;display:grid;gap:7px}.copy strong,.copy span{min-width:0;overflow-wrap:anywhere}.copy strong{font-size:18px;line-height:1.2;letter-spacing:0}.copy span{color:#5f6b78;font-size:12px;line-height:1.35;letter-spacing:0}.line{height:3px;overflow:hidden;border-radius:2px;background:#d8dee6}.line i{display:block;width:42%;height:100%;background:#16825f;animation:load 1.1s ease-in-out infinite}@keyframes load{from{transform:translateX(-110%)}to{transform:translateX(250%)}}@media(prefers-color-scheme:dark){body{color:#eef2f6;background:#17202a}.mark{background:#0b1016}.copy span{color:#a6b0bb}.line{background:#34404c}}</style><div class="mark">T</div><div class="copy"><strong>${startupTitle}</strong><span>${startupMessage}</span><div class="line"><i></i></div></div>`;
+  const html = `<!doctype html><meta charset="utf-8"><title>${PRODUCT_NAME}</title><style>html,body{width:100%;height:100%;margin:0}body{box-sizing:border-box;display:grid;grid-template-columns:48px minmax(0,1fr);align-items:center;gap:16px;padding:28px 30px;color:#18212b;background:#f4f6f8;font-family:system-ui,-apple-system,"Segoe UI",sans-serif}.mark{width:44px;height:44px;display:grid;place-items:center;border-radius:8px;color:#fff;background:#111827;font-size:20px;font-weight:700}.copy{min-width:0;display:grid;gap:7px}.copy strong,.copy span{min-width:0;overflow-wrap:anywhere}.copy strong{font-size:18px;line-height:1.2;letter-spacing:0}.copy span{color:#5f6b78;font-size:12px;line-height:1.35;letter-spacing:0}.line{height:3px;overflow:hidden;border-radius:2px;background:#d8dee6}.line i{display:block;width:42%;height:100%;background:#16825f;animation:load 1.1s ease-in-out infinite}@keyframes load{from{transform:translateX(-110%)}to{transform:translateX(250%)}}@media(prefers-color-scheme:dark){body{color:#eef2f6;background:#17202a}.mark{background:#0b1016}.copy span{color:#a6b0bb}.line{background:#34404c}}</style><div class="mark">T</div><div class="copy"><strong>${startupTitle}</strong><span>${startupMessage}</span><div class="line"><i></i></div></div>`;
   let revealed = false;
   const reveal = () => {
     if (revealed || startupWindow !== window || window.isDestroyed?.()) return;

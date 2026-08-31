@@ -62,6 +62,7 @@ const AI_DEFAULT_SKILLS = ["linux-diagnostics", "security-audit", "log-analysis"
 const AI_BUILTIN_SKILLS = new Set([...AI_DEFAULT_SKILLS, "network-diagnostics", "performance-analysis", "container-troubleshooting", "git-workflow", "incident-response", "web-research"]);
 const AI_MAX_USER_SKILLS = 32;
 const AI_MAX_MCP_SERVERS = 24;
+const AI_MAX_PROVIDERS = 12;
 const AI_MCP_TRANSPORTS = new Set(["stdio", "sse", "streamable-http"]);
 const AI_MCP_PROTECTED_HEADERS = new Set([
   "accept", "connection", "content-length", "content-type", "host", "mcp-protocol-version",
@@ -70,6 +71,8 @@ const AI_MCP_PROTECTED_HEADERS = new Set([
 const DEFAULT_AI_SETTINGS = Object.freeze({
   enabled: false,
   provider: "openai-compatible",
+  active_provider_id: "default",
+  providers: [{id:"default", name:"默认供应商", default_name:true, provider:"openai-compatible", endpoint:"https://api.openai.com/v1", model:"", api_type:"responses", api_key:""}],
   endpoint: "https://api.openai.com/v1",
   model: "",
   api_type: "responses",
@@ -191,18 +194,50 @@ function normalizeTerminalSettings(value: any = {}, fallback: any = DEFAULT_TERM
   };
 }
 
-function normalizeAiSettings(value: any = {}, fallback: any = DEFAULT_AI_SETTINGS) {
-  const source = value && typeof value === "object" ? value : {};
-  const base = fallback && typeof fallback === "object" ? fallback : DEFAULT_AI_SETTINGS;
-  const endpoint = String(source.endpoint ?? base.endpoint ?? DEFAULT_AI_SETTINGS.endpoint).trim();
+function normalizeAiEndpoint(value: any, fallback: any = DEFAULT_AI_SETTINGS.endpoint) {
+  const endpoint = String(value ?? fallback ?? DEFAULT_AI_SETTINGS.endpoint).trim();
   if (!endpoint || endpoint.length > 2048 || /[\0\r\n]/.test(endpoint)) throw new Error("AI 服务地址无效");
   let parsed;
   try { parsed = new URL(endpoint); } catch { throw new Error("AI 服务地址必须是有效的 HTTP 或 HTTPS 地址"); }
   if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash) {
     throw new Error("AI 服务地址只能使用 HTTP 或 HTTPS，且不能包含账号、密码或片段");
   }
-  const model = String(source.model ?? base.model ?? DEFAULT_AI_SETTINGS.model).trim();
+  return endpoint;
+}
+
+function normalizeAiProviderId(value: any, fallback: any, index: number) {
+  const raw = String(value ?? fallback ?? "").trim().replace(/[^a-zA-Z0-9_-]/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+  return raw || `provider-${index + 1}`;
+}
+
+function normalizeAiProvider(value: any = {}, fallback: any = {}, index = 0) {
+  const source = value && typeof value === "object" ? value : {};
+  const base = fallback && typeof fallback === "object" ? fallback : {};
+  const name = String(source.name ?? base.name ?? `供应商 ${index + 1}`).replace(/[\0\r\n]/g, " ").trim().slice(0, 120) || `供应商 ${index + 1}`;
+  const endpoint = normalizeAiEndpoint(source.endpoint ?? base.endpoint);
+  const model = String(source.model ?? base.model ?? "").trim();
   if (model.length > 200 || /[\0\r\n]/.test(model)) throw new Error("AI 模型名称无效");
+  const apiType = String(source.api_type ?? base.api_type ?? DEFAULT_AI_SETTINGS.api_type);
+  const apiKey = String(source.api_key ?? base.api_key ?? "");
+  if (apiKey.length > 4096 || /[\0\r\n]/.test(apiKey)) throw new Error("AI API 密钥无效");
+  return {
+    id:normalizeAiProviderId(source.id, base.id, index),
+    name,
+    default_name:source.default_name === true || base.default_name === true,
+    provider:"openai-compatible",
+    endpoint,
+    model,
+    api_type:AI_API_TYPES.has(apiType) ? apiType : DEFAULT_AI_SETTINGS.api_type,
+    api_key:apiKey
+  };
+}
+
+function normalizeAiSettings(value: any = {}, fallback: any = DEFAULT_AI_SETTINGS) {
+  const source = value && typeof value === "object" ? value : {};
+  const base = fallback && typeof fallback === "object" ? fallback : DEFAULT_AI_SETTINGS;
+  const legacyEndpoint = normalizeAiEndpoint(source.endpoint ?? base.endpoint);
+  const legacyModel = String(source.model ?? base.model ?? DEFAULT_AI_SETTINGS.model).trim();
+  if (legacyModel.length > 200 || /[\0\r\n]/.test(legacyModel)) throw new Error("AI 模型名称无效");
   const timeout = Number(source.timeout_seconds ?? base.timeout_seconds ?? DEFAULT_AI_SETTINGS.timeout_seconds);
   if (!Number.isInteger(timeout) || timeout < 5 || timeout > 300) throw new Error("AI 请求超时必须是 5-300 秒之间的整数");
   const legacyContextChars = source.context_tokens === undefined && source.context_chars !== undefined
@@ -219,6 +254,40 @@ function normalizeAiSettings(value: any = {}, fallback: any = DEFAULT_AI_SETTING
   const skillsEnabled = [...new Set(skillSource.map((item: any) => String(item || "").trim()).filter((item: string) => AI_BUILTIN_SKILLS.has(item)))];
   const apiKey = String(source.api_key ?? base.api_key ?? "");
   if (apiKey.length > 4096 || /[\0\r\n]/.test(apiKey)) throw new Error("AI API 密钥无效");
+  const baseProviders = Array.isArray(base.providers) ? base.providers : [];
+  const sourceHasProviders = Array.isArray(source.providers);
+  const requestedActiveId = String(source.active_provider_id ?? base.active_provider_id ?? "").trim();
+  let providerCandidates: any[];
+  if (sourceHasProviders) {
+    const legacySingleProvider = source.providers.length === 1 && String(source.providers[0]?.id || "") === "default";
+    providerCandidates = source.providers.map((item: any) => {
+      if (String(item?.id || "") !== requestedActiveId) return item;
+      const merged = {...item};
+      for (const key of ["endpoint", "model", "api_type", "api_key"]) {
+        if ((legacySingleProvider || !Object.prototype.hasOwnProperty.call(merged, key)) && Object.prototype.hasOwnProperty.call(source, key)) merged[key] = source[key];
+      }
+      return merged;
+    });
+  } else if (baseProviders.length) {
+    const baseActiveId = requestedActiveId || String(baseProviders[0]?.id || "");
+    providerCandidates = baseProviders.map((item: any) => String(item?.id || "") === baseActiveId
+      ? {...item, endpoint:source.endpoint ?? item.endpoint, model:source.model ?? item.model, api_type:source.api_type ?? item.api_type, api_key:source.api_key ?? item.api_key}
+      : item);
+  } else {
+    providerCandidates = [{id:requestedActiveId || "default", name:"默认供应商", default_name:true, endpoint:legacyEndpoint, model:legacyModel, api_type:apiType, api_key:apiKey}];
+  }
+  const providers: any[] = [];
+  const providerIds = new Set<string>();
+  providerCandidates.slice(0, AI_MAX_PROVIDERS).forEach((item: any, index: number) => {
+    const fallbackProvider = baseProviders.find((candidate: any) => String(candidate?.id || "") === String(item?.id || ""));
+    const provider = normalizeAiProvider(item, fallbackProvider, index);
+    if (providerIds.has(provider.id)) provider.id = `provider-${index + 1}`;
+    if (providerIds.has(provider.id)) return;
+    providerIds.add(provider.id);
+    providers.push(provider);
+  });
+  if (!providers.length) providers.push(normalizeAiProvider({id:"default", name:"默认供应商", default_name:true, endpoint:legacyEndpoint, model:legacyModel, api_type:apiType, api_key:apiKey}, {}, 0));
+  const activeProvider = providers.find(item => item.id === requestedActiveId) || providers[0];
   const userSkills = (Array.isArray(source.user_skills) ? source.user_skills : (Array.isArray(base.user_skills) ? base.user_skills : []))
     .slice(0, AI_MAX_USER_SKILLS).flatMap((item: any) => {
       const id = String(item?.id || "").trim().replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80);
@@ -242,17 +311,20 @@ function normalizeAiSettings(value: any = {}, fallback: any = DEFAULT_AI_SETTING
         if (!toolName || !/^[a-zA-Z0-9_.:-]+$/.test(toolName)) return [];
         const description = String(tool?.description || "").replace(/[\0\r\n]/g, " ").trim().slice(0, 500);
         const inputSchema = tool?.inputSchema && typeof tool.inputSchema === "object" && !Array.isArray(tool.inputSchema) ? tool.inputSchema : {};
-        return [{name:toolName, description, inputSchema, enabled:tool?.enabled !== false, requires_approval:tool?.requires_approval !== false}];
+        const risk = ["read", "write", "external"].includes(String(tool?.risk)) ? String(tool.risk) : "read";
+        return [{name:toolName, description, inputSchema, risk, enabled:tool?.enabled !== false, requires_approval:tool?.requires_approval !== false}];
       }) : [];
       const toolsUpdatedAt = Number(item?.tools_updated_at || 0);
       return id && name && ((transport === "stdio" && command) || (transport !== "stdio" && url)) ? [{id, name, transport, command, args, url, headers, enabled:item?.enabled === true, timeout_ms:Number(item?.timeout_ms || 30000), tools, tools_updated_at:Number.isFinite(toolsUpdatedAt) ? Math.max(0, Math.round(toolsUpdatedAt)) : 0}] : [];
     });
   return {
     enabled: source.enabled === undefined ? base.enabled !== false : source.enabled === true,
-    provider: "openai-compatible",
-    endpoint,
-    model,
-    api_type: AI_API_TYPES.has(apiType) ? apiType : DEFAULT_AI_SETTINGS.api_type,
+    provider: activeProvider.provider,
+    active_provider_id: activeProvider.id,
+    providers,
+    endpoint:activeProvider.endpoint,
+    model:activeProvider.model,
+    api_type:activeProvider.api_type,
     reasoning_effort: AI_REASONING_EFFORTS.has(reasoningEffort) ? reasoningEffort : DEFAULT_AI_SETTINGS.reasoning_effort,
     deep_thinking: deepThinking,
     timeout_seconds: timeout,
@@ -263,7 +335,7 @@ function normalizeAiSettings(value: any = {}, fallback: any = DEFAULT_AI_SETTING
     skills_enabled: skillsEnabled,
     user_skills: userSkills,
     mcp_servers: mcpServers,
-    api_key: apiKey
+    api_key:activeProvider.api_key
   };
 }
 

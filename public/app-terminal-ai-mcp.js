@@ -20,7 +20,7 @@ async function terminalAiMcpContexts() {
         && list.findIndex(item => String(item?.name) === String(tool.name)) === index);
       if (!tools.length) return null;
       tools.forEach(tool => catalog.push({server_id:String(server.id), server_name:String(server.name || server.id), ...tool}));
-      const lines = tools.map(tool => `- ${tool.name}: ${tool.description || ""}\n  inputSchema: ${JSON.stringify(tool.inputSchema || {})}`);
+      const lines = tools.map(tool => `- ${tool.name}: ${tool.description || ""}\n  risk: ${tool.risk || "read"}\n  inputSchema: ${JSON.stringify(tool.inputSchema || {})}`);
       return {source:"mcp-tools", title:`MCP ${server.name} (${server.id})`, text:`Server ID: ${server.id}\nAvailable tools:\n${lines.join("\n")}`.slice(0, 16000)};
     } catch { return null; }
   }));

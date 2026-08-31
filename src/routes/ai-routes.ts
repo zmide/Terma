@@ -1,7 +1,7 @@
 import { IncomingMessage, ServerResponse } from "node:http";
 import { publicError } from "../public-error";
 import { publicAiSettings, redactAiText, requestAiChat, requestAiChatStream, requestAiModels } from "../services/ai-service";
-import { createMcpManager, normalizeServer } from "../services/mcp-service";
+import { createMcpManager, normalizeServer, validateMcpArguments } from "../services/mcp-service";
 
 interface AiRouteDependencies {
   readJson(request: IncomingMessage): Promise<any>;
@@ -49,13 +49,39 @@ function mergeMcpHeaderPlaceholders(currentServers: any[], requestedServers: any
   });
 }
 
+function mergeAiProviderKeyPlaceholders(currentProviders: any[], requestedProviders: any[], clearActiveKey = false, activeProviderId = ""): any[] {
+  const existing = Array.isArray(currentProviders) ? currentProviders : [];
+  return (Array.isArray(requestedProviders) ? requestedProviders : []).map(item => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    const id = String(item.id || "");
+    const previous = existing.find(provider => String(provider?.id || "") === id);
+    const requestedKey = String(item.api_key || "").trim();
+    const shouldClear = item.clear_api_key === true || (clearActiveKey && id === String(activeProviderId || ""));
+    if (shouldClear) return {...item, api_key:""};
+    if (requestedKey) return {...item, api_key:requestedKey};
+    return {...item, api_key:String(previous?.api_key || "")};
+  });
+}
+
 function requestAiSettings(current: any, data: any, normalizeRuntimeSettings: (value: any) => any) {
   const currentAi = current?.ai && typeof current.ai === "object" ? current.ai : {};
   const override = data?.ai && typeof data.ai === "object" && !Array.isArray(data.ai) ? data.ai : null;
   if (!override) return currentAi;
-  const preparedOverride = Object.prototype.hasOwnProperty.call(override, "mcp_servers")
-    ? {...override, mcp_servers:mergeMcpHeaderPlaceholders(currentAi.mcp_servers, override.mcp_servers)}
-    : override;
+  let preparedOverride = override;
+  if (Object.prototype.hasOwnProperty.call(override, "mcp_servers")) {
+    preparedOverride = {...preparedOverride, mcp_servers:mergeMcpHeaderPlaceholders(currentAi.mcp_servers, override.mcp_servers)};
+  }
+  if (Object.prototype.hasOwnProperty.call(override, "providers")) {
+    preparedOverride = {
+      ...preparedOverride,
+      providers:mergeAiProviderKeyPlaceholders(
+        currentAi.providers,
+        override.providers,
+        override.clear_api_key === true,
+        override.active_provider_id || currentAi.active_provider_id
+      )
+    };
+  }
   const merged = normalizeRuntimeSettings({ ...current, ai: { ...currentAi, ...preparedOverride } }).ai;
   // A temporary endpoint must never inherit the saved credential implicitly.
   // Settings tests can still send an explicitly entered key in the override.
@@ -91,9 +117,21 @@ export async function handleAiRoutes(
     const current = dependencies.readRuntimeSettings(dependencies.runtimeSettingsFile);
     const currentAi = current.ai || {};
     const source = data?.ai && typeof data.ai === "object" ? data.ai : (data || {});
-    const preparedSource = Object.prototype.hasOwnProperty.call(source, "mcp_servers")
-      ? {...source, mcp_servers:mergeMcpHeaderPlaceholders(currentAi.mcp_servers, source.mcp_servers)}
-      : source;
+    let preparedSource = source;
+    if (Object.prototype.hasOwnProperty.call(source, "mcp_servers")) {
+      preparedSource = {...preparedSource, mcp_servers:mergeMcpHeaderPlaceholders(currentAi.mcp_servers, source.mcp_servers)};
+    }
+    if (Object.prototype.hasOwnProperty.call(source, "providers")) {
+      preparedSource = {
+        ...preparedSource,
+        providers:mergeAiProviderKeyPlaceholders(
+          currentAi.providers,
+          source.providers,
+          data?.clear_api_key === true || source.clear_api_key === true,
+          source.active_provider_id || currentAi.active_provider_id
+        )
+      };
+    }
     if (Object.prototype.hasOwnProperty.call(preparedSource, "mcp_servers")
       && !dependencies.isDesktopRequest(request)
       && !dependencies.isDirectLoopbackRequest(request)) {
@@ -108,7 +146,16 @@ export async function handleAiRoutes(
     let apiKey = String(currentAi.api_key || "");
     if (clearKey) apiKey = "";
     if (hasKey && String(preparedSource.api_key || "").trim()) apiKey = String(preparedSource.api_key).trim();
-    const nextAi = dependencies.normalizeRuntimeSettings({
+    if (Array.isArray(preparedSource.providers)) {
+      const activeId = String(preparedSource.active_provider_id || currentAi.active_provider_id || preparedSource.providers[0]?.id || "");
+      preparedSource = {
+        ...preparedSource,
+        providers:preparedSource.providers.map((provider: any) => String(provider?.id || "") === activeId
+          ? {...provider, api_key:clearKey ? "" : (hasKey && String(preparedSource.api_key || "").trim() ? apiKey : provider.api_key)}
+          : provider)
+      };
+    }
+    let nextAi = dependencies.normalizeRuntimeSettings({
       ...current,
       ai:{
         ...currentAi,
@@ -116,6 +163,21 @@ export async function handleAiRoutes(
         api_key:apiKey
       }
     }).ai;
+    const activeProvider = Array.isArray(nextAi.providers)
+      ? nextAi.providers.find((provider: any) => String(provider?.id || "") === String(nextAi.active_provider_id || "")) || nextAi.providers[0]
+      : null;
+    if (activeProvider) {
+      nextAi = dependencies.normalizeRuntimeSettings({
+        ...current,
+        ai:{
+          ...nextAi,
+          endpoint:activeProvider.endpoint,
+          model:activeProvider.model,
+          api_type:activeProvider.api_type,
+          api_key:activeProvider.api_key
+        }
+      }).ai;
+    }
     dependencies.writeRuntimeSettings(dependencies.runtimeSettingsFile, dependencies.normalizeRuntimeSettings({...current, ai:nextAi}));
     dependencies.sendJson(response, publicAiSettings(nextAi));
     return true;
@@ -197,6 +259,7 @@ export async function handleAiRoutes(
         name:tool.name,
         description:tool.description || "",
         inputSchema:tool.inputSchema && typeof tool.inputSchema === "object" && !Array.isArray(tool.inputSchema) ? tool.inputSchema : {},
+        risk:tool.risk || "read",
         enabled:tool?.enabled !== false,
         requires_approval:tool?.requires_approval !== false
       })), tools_updated_at:Date.now()}
@@ -213,7 +276,10 @@ export async function handleAiRoutes(
     const server = (Array.isArray(settings.ai?.mcp_servers) ? settings.ai.mcp_servers : []).find((item: any) => String(item?.id) === String(data?.server_id || ""));
     if (!server) throw publicError("MCP_NOT_FOUND", "MCP 服务器不存在", {}, 404);
     const configuredTool = Array.isArray(server.tools) ? server.tools.find((tool: any) => String(tool?.name) === String(data?.tool || "")) : null;
+    if (!configuredTool) throw publicError("MCP_TOOL_NOT_DISCOVERED", "MCP 工具尚未发现，不能直接调用", {}, 409);
     if (configuredTool?.enabled === false) throw publicError("MCP_TOOL_DISABLED", "MCP 工具已禁用", {}, 409);
+    const validation = validateMcpArguments(configuredTool.inputSchema || {}, data?.arguments || {});
+    if (!validation.valid) throw publicError("MCP_ARGUMENTS_INVALID", `MCP 工具参数校验失败：${validation.errors.join("；")}`, {}, 400);
     dependencies.sendJson(response, await mcpManager.call(server, data?.tool, data?.arguments));
     return true;
   }
@@ -239,7 +305,7 @@ export async function handleAiRoutes(
       const abortController = new AbortController();
       request.once("aborted", () => abortController.abort());
       try {
-        const result = await requestAiChatStream({settings, apiKey, message:data?.message, contexts:data?.contexts, history:data?.history, locale:data?.locale, permission:data?.permission, signal:abortController.signal}, (delta, kind) => writeStreamEvent(response, kind === "reasoning" ? "reasoning" : "delta", {delta}));
+        const result = await requestAiChatStream({settings, apiKey, message:data?.message, contexts:data?.contexts, history:data?.history, locale:data?.locale, permission:data?.permission, mode:data?.mode, signal:abortController.signal}, (delta, kind) => writeStreamEvent(response, kind === "reasoning" ? "reasoning" : "delta", {delta}));
         writeStreamEvent(response, "done", {model:result.model, usage:result.usage});
       } catch (error) {
         if (!abortController.signal.aborted) writeStreamEvent(response, "error", {error:errorMessage(error), error_code:String((error as any)?.publicCode || "AI_REQUEST_FAILED")});
@@ -256,7 +322,8 @@ export async function handleAiRoutes(
         contexts:data?.contexts,
         history:data?.history,
         locale:data?.locale,
-        permission:data?.permission
+        permission:data?.permission,
+        mode:data?.mode
       }));
     } catch (error) {
       if ((error as any)?.publicCode) throw error;

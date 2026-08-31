@@ -754,9 +754,17 @@ function sendTerminalData(key, data, options={}) {
   }
   if (typeof terminalZmodemPrepareInput === "function" && terminalZmodemPrepareInput(session, data)) return true;
   const preparedData = typeof terminalZmodemTakePreparedInput === "function" ? terminalZmodemTakePreparedInput(session, data) : data;
+  const agentCapture = options.agentCommand
+    ? {
+        promptBefore:typeof terminalPromptStateAtRow === "function" ? terminalPromptStateAtRow(session) : null,
+        outputSequenceBefore:Number(session.terminalOutputSequence || 0),
+        sentAt:Date.now()
+      }
+    : null;
   startTerminalLatencySample(session);
   session.socket.send(preparedData);
-  if (options.trackCommand === true) trackTerminalCommand(session, preparedData, {preferCommandBuffer:true, source:"paste"});
+  if (options.agentCommand) recordTerminalAgentCommand(session, options.agentCommand, agentCapture || {});
+  else if (options.trackCommand === true) trackTerminalCommand(session, preparedData, {preferCommandBuffer:true, source:"paste"});
   const shouldFocus = options.focus ?? !isMobileLayout();
   if (shouldFocus) try { session.term.focus(); } catch {}
   return true;

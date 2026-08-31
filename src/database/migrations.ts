@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS command_snippets (
   command TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   tags TEXT NOT NULL DEFAULT '',
+  workflow_json TEXT NOT NULL DEFAULT '',
   favorite INTEGER NOT NULL DEFAULT 0,
   quick_visible INTEGER NOT NULL DEFAULT 0,
   quick_action TEXT NOT NULL DEFAULT 'execute',
@@ -255,6 +256,7 @@ COMMIT;
 
   const commandSnippetColumns = new Set(all("PRAGMA table_info(command_snippets)").map((row: any) => row.name));
   if (!commandSnippetColumns.has("quick_visible")) run("ALTER TABLE command_snippets ADD COLUMN quick_visible INTEGER NOT NULL DEFAULT 0");
+  if (!commandSnippetColumns.has("workflow_json")) run("ALTER TABLE command_snippets ADD COLUMN workflow_json TEXT NOT NULL DEFAULT ''");
   if (!commandSnippetColumns.has("quick_action")) run("ALTER TABLE command_snippets ADD COLUMN quick_action TEXT NOT NULL DEFAULT 'execute'");
   if (!commandSnippetColumns.has("quick_badge")) run("ALTER TABLE command_snippets ADD COLUMN quick_badge TEXT NOT NULL DEFAULT ''");
   if (!commandSnippetColumns.has("quick_color")) run("ALTER TABLE command_snippets ADD COLUMN quick_color TEXT NOT NULL DEFAULT 'blue'");

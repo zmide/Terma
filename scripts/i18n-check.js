@@ -86,7 +86,7 @@ const expectedDirectFetchCounts = new Map([
   ["public/app-remote-ftp.js", 1],
   ["public/app-settings-storage.js", 1],
   ["public/app-sftp-open.js", 1],
-  ["public/app-terminal-ai.js", 1],
+  ["public/app-terminal-ai-actions.js", 1],
   ["public/login.js", 2]
 ]);
 const actualDirectFetchCounts = new Map();
@@ -103,6 +103,7 @@ assert.deepEqual(
 );
 for (const relative of [
   "public/app-connection-form.js",
+  "public/app-terminal-ai-actions.js",
   "public/app-import.js",
   "public/app-remote-ftp.js",
   "public/app-settings-storage.js",

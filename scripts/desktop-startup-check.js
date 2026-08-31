@@ -467,6 +467,8 @@ check("Packaged startup window waits for rendered content before becoming visibl
   const window = api.createStartupWindow({startMinimizedToTray:false});
   assert.ok(window);
   assert.equal(window.options.show, false);
+  assert.equal(window.options.title, "Terma");
+  assert.equal(window.options.skipTaskbar, true);
   assert.equal(window.visible, false);
   assert.equal(window.showCount, 0);
   assert.match(window.loadedUrl, /^data:text\/html/);
@@ -483,9 +485,10 @@ check("Packaged startup window follows the persisted interface language", () => 
   api.setDesktopInterfaceLanguage("en-US", true);
   assert.equal(api.getDesktopInterfaceLanguage(), "en-US");
   const window = api.createStartupWindow({startMinimizedToTray:false, interfaceLanguage:"en-US"});
-  assert.equal(window.options.title, "Terma is starting");
+  assert.equal(window.options.title, "Terma");
   const html = decodeURIComponent(String(window.loadedUrl).split(",", 2)[1] || "");
   assert.match(html, />Terma is starting</);
+  assert.match(html, /<title>Terma<\/title>/);
   assert.match(html, />Preparing services and workspace\.\.\.</);
   assert.equal(JSON.parse(fs.readFileSync(state.settingsFile, "utf8")).interfaceLanguage, "en-US");
 });

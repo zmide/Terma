@@ -65,12 +65,39 @@ function normalizeAiSettingsResponse(value={}) {
   const source = value && typeof value === "object" ? value : {};
   const endpoint = String(source.endpoint || "https://api.openai.com/v1").trim() || "https://api.openai.com/v1";
   const model = String(source.model || "").trim();
+  const defaultProviderName = count => tr("settings:ai.provider_default_name", {count, defaultValue:`Provider ${count}`});
+  const rawProviders = Array.isArray(source.providers) ? source.providers : [];
+  const providers = rawProviders.map((item, index) => ({
+    id:String(item?.id || `provider-${index + 1}`).trim().replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 80),
+    name:String(item?.name || defaultProviderName(index + 1)).replace(/[\0\r\n]/g, " ").trim().slice(0, 120) || defaultProviderName(index + 1),
+    default_name:item?.default_name === true,
+    provider:"openai-compatible",
+    endpoint:String(item?.endpoint || endpoint).trim().slice(0, 2048),
+    model:String(item?.model || "").trim().slice(0, 200),
+    api_type:item?.api_type === "completions" ? "completions" : "responses",
+    api_key_configured:item?.api_key_configured === true || Boolean(item?.api_key),
+    ...(item?.api_key ? {api_key:String(item.api_key)} : {})
+  })).map((item, index) => item.default_name ? {...item, name:defaultProviderName(index + 1)} : item).filter(item => item.id && item.endpoint);
+  if (!providers.length) providers.push({
+    id:"default",
+    name:tr("settings:ai.provider_default_name", {count:1, defaultValue:"Provider 1"}),
+    provider:"openai-compatible",
+    endpoint,
+    model,
+    api_type:source.api_type === "completions" ? "completions" : "responses",
+    api_key_configured:source.api_key_configured === true || Boolean(source.api_key),
+    default_name:true
+  });
+  const activeProviderId = String(source.active_provider_id || providers[0].id);
+  const activeProvider = providers.find(item => item.id === activeProviderId) || providers[0];
   return {
     enabled:source.enabled === true,
-    provider:"openai-compatible",
-    endpoint:endpoint.slice(0, 2048),
-    model:model.slice(0, 200),
-    api_type:source.api_type === "completions" ? "completions" : "responses",
+    provider:activeProvider.provider,
+    active_provider_id:activeProvider.id,
+    providers,
+    endpoint:activeProvider.endpoint,
+    model:activeProvider.model,
+    api_type:activeProvider.api_type,
     reasoning_effort:["none", "low", "medium", "high"].includes(String(source.reasoning_effort || "").toLowerCase()) ? String(source.reasoning_effort).toLowerCase() : "none",
     deep_thinking:source.deep_thinking === true,
     timeout_seconds:Math.max(5, Math.min(300, Number(source.timeout_seconds) || 60)),
@@ -93,18 +120,21 @@ function normalizeAiSettingsResponse(value={}) {
         name:String(tool?.name || ""),
         description:String(tool?.description || ""),
         inputSchema:tool?.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : {},
+        risk:["read", "write", "external"].includes(String(tool?.risk)) ? String(tool.risk) : "read",
         enabled:tool?.enabled !== false,
         requires_approval:tool?.requires_approval !== false
       })).filter(tool => tool.name) : [],
       tools_updated_at:Number(item?.tools_updated_at || 0)
     })).filter(item => item.id && item.name) : [],
-    api_key_configured:source.api_key_configured === true || Boolean(source.api_key)
+    api_key_configured:activeProvider.api_key_configured === true || Boolean(source.api_key)
   };
 }
 
 let terminalAiAvailableModels = [];
 let terminalAiUserSkillsDraft = [];
 let terminalAiMcpServersDraft = [];
+let terminalAiProvidersDraft = [];
+let terminalAiActiveProviderId = "";
 let terminalAiSettingsDraftDirty = false;
 let terminalAiMcpEditorDraft = null;
 
@@ -140,6 +170,70 @@ function syncTerminalAiModelOptions(models, preferred="") {
   syncTerminalAiModelMode();
 }
 
+function terminalAiCurrentProvider() {
+  return terminalAiProvidersDraft.find(item => String(item?.id || "") === String(terminalAiActiveProviderId || "")) || terminalAiProvidersDraft[0] || null;
+}
+
+function terminalAiProviderOptionsHtml() {
+  const keyLabel = tr("settings:ai.provider_key_configured", {defaultValue:"已配置密钥"});
+  return terminalAiProvidersDraft.map(item => `<option value="${escAttr(item.id)}" ${String(item.id) === String(terminalAiActiveProviderId) ? "selected" : ""}>${esc(item.name)}${item.api_key_configured ? ` · ${esc(keyLabel)}` : ""}</option>`).join("");
+}
+
+function captureTerminalAiProviderForm() {
+  const provider = terminalAiCurrentProvider();
+  if (!provider) return null;
+  const endpoint = String($("terminalAiEndpoint")?.value || "").trim();
+  const model = terminalAiModelValue();
+  const apiKey = String($("terminalAiApiKey")?.value || "").trim();
+  const clearKey = $("terminalAiClearKey")?.checked === true;
+  provider.endpoint = endpoint;
+  provider.model = model;
+  provider.api_type = $("terminalAiApiType")?.value === "completions" ? "completions" : "responses";
+  if (apiKey) {
+    provider.api_key = apiKey;
+    provider.api_key_configured = true;
+  }
+  provider.clear_api_key = clearKey;
+  provider.name = String($("terminalAiProviderName")?.value || provider.name || "").trim().slice(0, 120) || provider.name;
+  return provider;
+}
+
+function terminalAiSwitchProvider(providerId) {
+  captureTerminalAiProviderForm();
+  const next = terminalAiProvidersDraft.find(item => String(item.id) === String(providerId));
+  if (!next) return;
+  terminalAiActiveProviderId = next.id;
+  terminalAiAvailableModels = [];
+  terminalAiSettingsDraftDirty = true;
+  renderSettings();
+}
+
+function terminalAiAddProvider() {
+  captureTerminalAiProviderForm();
+  if (terminalAiProvidersDraft.length >= 12) return notify(tr("settings:ai.provider_limit", {defaultValue:"最多添加 12 个 AI 供应商"}), "error");
+  const id = `provider-${Date.now().toString(36)}`;
+  const name = tr("settings:ai.provider_default_name", {count:terminalAiProvidersDraft.length + 1, defaultValue:`供应商 ${terminalAiProvidersDraft.length + 1}`});
+  terminalAiProvidersDraft.push({id, name, provider:"openai-compatible", endpoint:"https://api.openai.com/v1", model:"", api_type:"responses", api_key_configured:false, default_name:false});
+  terminalAiActiveProviderId = id;
+  terminalAiAvailableModels = [];
+  terminalAiSettingsDraftDirty = true;
+  renderSettings();
+  $("terminalAiProviderName")?.focus();
+}
+
+function terminalAiRemoveProvider() {
+  captureTerminalAiProviderForm();
+  if (terminalAiProvidersDraft.length <= 1) return notify(tr("settings:ai.provider_last", {defaultValue:"至少保留一个 AI 供应商"}), "error");
+  const index = terminalAiProvidersDraft.findIndex(item => String(item.id) === String(terminalAiActiveProviderId));
+  if (index < 0) return;
+  terminalAiProvidersDraft.splice(index, 1);
+  const next = terminalAiProvidersDraft[Math.max(0, index - 1)] || terminalAiProvidersDraft[0];
+  terminalAiActiveProviderId = next.id;
+  terminalAiAvailableModels = [];
+  terminalAiSettingsDraftDirty = true;
+  renderSettings();
+}
+
 function terminalAiMcpToolsHtml(server, serverIndex) {
   const tools = Array.isArray(server?.tools) ? server.tools : [];
   if (!tools.length) return `<div class="terminal-ai-mcp-tools-empty muted">${esc(tr("settings:ai.mcp_tools_empty", {defaultValue:"尚未发现工具，点击服务器右侧的搜索按钮获取。"}))}</div>`;
@@ -147,7 +241,9 @@ function terminalAiMcpToolsHtml(server, serverIndex) {
     const schema = tool?.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : {};
     const properties = schema.properties && typeof schema.properties === "object" ? Object.keys(schema.properties).slice(0, 6) : [];
     const schemaText = properties.length ? ` · ${properties.join(", ")}` : "";
-    return `<div class="terminal-ai-mcp-tool-row"><div class="terminal-ai-mcp-tool-copy"><strong>${icon(tool?.requires_approval === false ? "zap" : "shield-check")}${esc(tool.name)}</strong><small>${esc(String(tool.description || tr("settings:ai.mcp_tool_no_description", {defaultValue:"无描述"})))}${esc(schemaText)}</small></div><label class="check-row compact"><input type="checkbox" data-change-action="settings-ai-mcp-tool-enabled" data-mcp-index="${serverIndex}" data-mcp-tool-index="${toolIndex}" ${tool.enabled !== false ? "checked" : ""}>${esc(tr("settings:ai.mcp_tool_enabled", {defaultValue:"启用"}))}</label><label class="check-row compact"><input type="checkbox" data-change-action="settings-ai-mcp-tool-approval" data-mcp-index="${serverIndex}" data-mcp-tool-index="${toolIndex}" ${tool.requires_approval !== false ? "checked" : ""}>${esc(tr("settings:ai.mcp_tool_approval", {defaultValue:"调用需确认"}))}</label></div>`;
+    const risk = ["read", "write", "external"].includes(String(tool?.risk)) ? String(tool.risk) : "read";
+    const riskLabel = risk === "write" ? tr("settings:ai.mcp_risk_write", {defaultValue:"可能修改"}) : risk === "external" ? tr("settings:ai.mcp_risk_external", {defaultValue:"外部访问"}) : tr("settings:ai.mcp_risk_read", {defaultValue:"只读"});
+    return `<div class="terminal-ai-mcp-tool-row"><div class="terminal-ai-mcp-tool-copy"><strong>${icon(tool?.requires_approval === false ? "zap" : "shield-check")}${esc(tool.name)}<em class="terminal-ai-mcp-risk ${risk}">${esc(riskLabel)}</em></strong><small>${esc(String(tool.description || tr("settings:ai.mcp_tool_no_description", {defaultValue:"无描述"})))}${esc(schemaText)}</small></div><label class="check-row compact"><input type="checkbox" data-change-action="settings-ai-mcp-tool-enabled" data-mcp-index="${serverIndex}" data-mcp-tool-index="${toolIndex}" ${tool.enabled !== false ? "checked" : ""}>${esc(tr("settings:ai.mcp_tool_enabled", {defaultValue:"启用"}))}</label><label class="check-row compact"><input type="checkbox" data-change-action="settings-ai-mcp-tool-approval" data-mcp-index="${serverIndex}" data-mcp-tool-index="${toolIndex}" ${tool.requires_approval !== false ? "checked" : ""}>${esc(tr("settings:ai.mcp_tool_approval", {defaultValue:"调用需确认"}))}</label></div>`;
   }).join("")}</div></details>`;
 }
 
@@ -199,7 +295,7 @@ function renderTerminalAiMcpTools() {
   syncTerminalAiMcpTransportFields();
 }
 
-function aiSettingsPanelHtml() {
+function aiSettingsPanelHtmlLegacy() {
   const ai = normalizeAiSettingsResponse(runtimeSettings?.saved?.ai || runtimeSettings?.ai);
   if (!terminalAiSettingsDraftDirty) {
     terminalAiUserSkillsDraft = ai.user_skills.map(item => ({...item}));
@@ -256,7 +352,7 @@ function aiSettingsPanelHtml() {
   </section>`;
 }
 
-function aiSettingsFormValue(options={}) {
+function aiSettingsFormValueLegacy(options={}) {
   const endpoint = String($("terminalAiEndpoint")?.value || "").trim();
   const model = terminalAiModelValue();
   const timeout_seconds = Number($("terminalAiTimeout")?.value || 60);
@@ -275,6 +371,91 @@ function aiSettingsFormValue(options={}) {
   const apiKey = String($("terminalAiApiKey")?.value || "").trim();
   if (apiKey) ai.api_key = apiKey;
   return {ai, clear_api_key:Boolean($("terminalAiClearKey")?.checked)};
+}
+
+// The AI settings view keeps provider credentials and connection fields together.
+function aiSettingsPanelHtml() {
+  const ai = normalizeAiSettingsResponse(runtimeSettings?.saved?.ai || runtimeSettings?.ai);
+  if (!terminalAiSettingsDraftDirty) {
+    terminalAiProvidersDraft = ai.providers.map(item => ({...item}));
+    terminalAiActiveProviderId = ai.active_provider_id;
+    terminalAiUserSkillsDraft = ai.user_skills.map(item => ({...item}));
+    terminalAiMcpServersDraft = ai.mcp_servers.map(item => ({...item}));
+  }
+  if (!terminalAiProvidersDraft.length) terminalAiProvidersDraft = ai.providers.map(item => ({...item}));
+  if (!terminalAiActiveProviderId || !terminalAiProvidersDraft.some(item => String(item.id) === String(terminalAiActiveProviderId))) terminalAiActiveProviderId = terminalAiProvidersDraft[0]?.id || ai.active_provider_id;
+  const provider = terminalAiCurrentProvider() || ai.providers[0];
+  const keyHint = provider?.api_key_configured
+    ? tr("settings:ai.key_configured", {defaultValue:"已保存 API 密钥（不会显示原文）"})
+    : tr("settings:ai.key_not_configured", {defaultValue:"未保存 API 密钥；本地模型通常无需密钥。"});
+  const contextDisplay = ai.context_tokens >= 1000000
+    ? (ai.context_tokens / 1000000).toFixed(2).replace(/0+$/, "").replace(/\.$/, "")
+    : (ai.context_tokens / 1000).toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return `<section class="terminal-ai-settings">
+    <div class="settings-subsection-head"><div><h3>${esc(tr("settings:ai.title", {defaultValue:"终端 AI"}))}</h3></div><span class="status-pill ${ai.enabled ? "running" : "muted"}">${esc(tr(ai.enabled ? "settings:ai.enabled" : "settings:ai.disabled", {defaultValue:ai.enabled ? "已启用" : "未启用"}))}</span></div>
+    <label class="check-row"><input id="terminalAiEnabled" type="checkbox" ${ai.enabled ? "checked" : ""}> ${esc(tr("settings:ai.enable", {defaultValue:"启用终端 AI"}))}</label>
+    <div class="muted">${esc(tr("settings:ai.safe_hint", {defaultValue:"未启用、服务不可用或请求失败时，终端和日志仍按原流程工作。只发送你明确选择的上下文。"}))}</div>
+    <div class="terminal-ai-provider-toolbar">
+      <div class="terminal-ai-provider-picker"><label for="terminalAiProviderSelect">${esc(tr("settings:ai.provider", {defaultValue:"提供商"}))}</label><select id="terminalAiProviderSelect" data-change-action="settings-ai-provider-switch">${terminalAiProviderOptionsHtml()}</select></div>
+      <div class="terminal-ai-provider-actions"><button type="button" data-action="settings-ai-provider-add" title="${escAttr(tr("settings:ai.provider_add", {defaultValue:"添加供应商"}))}">${icon("plus")}<span>${esc(tr("settings:ai.provider_add", {defaultValue:"添加供应商"}))}</span></button><button type="button" class="icon-button danger" data-action="settings-ai-provider-remove" title="${escAttr(tr("settings:ai.provider_remove", {defaultValue:"删除当前供应商"}))}" aria-label="${escAttr(tr("settings:ai.provider_remove", {defaultValue:"删除当前供应商"}))}">${icon("trash-2")}</button></div>
+    </div>
+    <div class="terminal-ai-provider-meta"><label for="terminalAiProviderName">${esc(tr("settings:ai.provider_name", {defaultValue:"供应商名称"}))}</label><input id="terminalAiProviderName" value="${escAttr(provider?.name || "")}" maxlength="120" spellcheck="false"><small class="muted">${esc(tr("settings:ai.provider_type_hint", {defaultValue:"当前支持 OpenAI 兼容接口；每个供应商可以使用不同地址、模型和密钥。"}))}</small></div>
+    <div class="grid terminal-ai-settings-grid">
+      <div><label for="terminalAiEndpoint">${esc(tr("settings:ai.endpoint", {defaultValue:"API 地址"}))}</label><input id="terminalAiEndpoint" value="${escAttr(provider?.endpoint || "")}" maxlength="2048" spellcheck="false" placeholder="https://api.openai.com/v1"></div>
+      <div><label for="terminalAiModel">${esc(tr("settings:ai.model", {defaultValue:"模型"}))}</label><div class="terminal-ai-model-row"><select id="terminalAiModel" data-change-action="settings-ai-model-mode">${terminalAiModelOptionsHtml(provider?.model || "")}</select><button id="terminalAiModelsBtn" type="button" data-action="settings-ai-fetch-models" title="${escAttr(tr("settings:ai.fetch_models", {defaultValue:"从接口获取模型"}))}">${icon("refresh-cw")}<span>${esc(tr("settings:ai.fetch_models_short", {defaultValue:"获取"}))}</span></button></div><input id="terminalAiModelCustom" class="terminal-ai-model-custom" value="" maxlength="200" spellcheck="false" placeholder="${escAttr(tr("settings:ai.model_custom_placeholder", {defaultValue:"输入接口支持的模型名称"}))}" hidden disabled></div>
+    </div>
+    <div class="grid terminal-ai-settings-grid">
+      <div><label for="terminalAiApiType">${esc(tr("settings:ai.api_type", {defaultValue:"接口类型"}))}</label><select id="terminalAiApiType"><option value="responses" ${provider?.api_type === "responses" ? "selected" : ""}>${esc(tr("settings:ai.responses", {defaultValue:"Responses（默认）"}))}</option><option value="completions" ${provider?.api_type === "completions" ? "selected" : ""}>${esc(tr("settings:ai.completions", {defaultValue:"Chat Completions"}))}</option></select></div>
+      <div><label for="terminalAiApiKey">${esc(tr("settings:ai.api_key", {defaultValue:"API 密钥（可选）"}))}</label><input id="terminalAiApiKey" type="password" autocomplete="new-password" spellcheck="false" placeholder="${escAttr(provider?.api_key_configured ? tr("settings:ai.key_keep_placeholder", {defaultValue:"留空表示保持已保存密钥"}) : tr("settings:ai.key_placeholder", {defaultValue:"仅保存在本机设置中"}))}"><label class="check-row compact"><input id="terminalAiClearKey" type="checkbox"> ${esc(tr("settings:ai.clear_key", {defaultValue:"清除已保存的 API 密钥"}))}</label><small class="muted">${esc(keyHint)}</small></div>
+    </div>
+    <div class="grid terminal-ai-settings-grid">
+      <div><label for="terminalAiTimeout">${esc(tr("settings:ai.timeout", {defaultValue:"请求超时（秒）"}))}</label><input id="terminalAiTimeout" type="number" min="5" max="300" step="1" value="${ai.timeout_seconds}"></div>
+      <div><label for="terminalAiContextValue">${esc(tr("settings:ai.context_limit", {defaultValue:"Terma 上下文预算"}))}</label><div class="terminal-ai-context-row"><input id="terminalAiContextValue" type="number" min="1" max="1000" step="0.01" value="${contextDisplay}"><select id="terminalAiContextUnit"><option value="K" ${ai.context_tokens < 1000000 ? "selected" : ""}>K</option><option value="M" ${ai.context_tokens >= 1000000 ? "selected" : ""}>M</option></select><span>tokens</span></div><div class="muted terminal-ai-context-settings-hint">${esc(tr("settings:ai.context_limit_hint", {defaultValue:"Terma 按约 4 个字符折算 1 token 限制发送的终端和附件上下文；服务商实际上下文窗口以接口为准。"}))}</div></div>
+    </div>
+    <div class="grid terminal-ai-settings-grid terminal-ai-reasoning-settings">
+      <div><label for="terminalAiReasoningEffort">${esc(tr("settings:ai.reasoning_effort", {defaultValue:"推理强度"}))}</label><select id="terminalAiReasoningEffort"><option value="none" ${ai.reasoning_effort === "none" ? "selected" : ""}>${esc(tr("settings:ai.reasoning_none", {defaultValue:"关闭"}))}</option><option value="low" ${ai.reasoning_effort === "low" ? "selected" : ""}>${esc(tr("settings:ai.reasoning_low", {defaultValue:"低"}))}</option><option value="medium" ${ai.reasoning_effort === "medium" ? "selected" : ""}>${esc(tr("settings:ai.reasoning_medium", {defaultValue:"中"}))}</option><option value="high" ${ai.reasoning_effort === "high" ? "selected" : ""}>${esc(tr("settings:ai.reasoning_high", {defaultValue:"高"}))}</option></select><small class="muted">${esc(tr("settings:ai.reasoning_current", {effort:ai.reasoning_effort, defaultValue:`当前：${ai.reasoning_effort}`}))}</small></div>
+      <div><label class="check-row"><input id="terminalAiDeepThinking" type="checkbox" ${ai.deep_thinking ? "checked" : ""}> ${esc(tr("settings:ai.deep_thinking", {defaultValue:"深度思考"}))}</label><small class="muted">${esc(tr("settings:ai.deep_thinking_hint", {defaultValue:"开启后请求会优先使用高推理强度；是否生效取决于服务商。界面只显示服务商返回的推理摘要，不显示隐藏思维链。"}))}</small></div>
+    </div>
+    <div class="grid terminal-ai-settings-grid">
+      <div><label for="terminalAiPlacement">${esc(tr("settings:ai.placement", {defaultValue:"终端 AI 位置"}))}</label><select id="terminalAiPlacement"><option value="right" ${ai.terminal_ai_placement === "right" ? "selected" : ""}>${esc(tr("settings:ai.placement_right", {defaultValue:"右侧（默认）"}))}</option><option value="bottom" ${ai.terminal_ai_placement === "bottom" ? "selected" : ""}>${esc(tr("settings:ai.placement_bottom", {defaultValue:"下方"}))}</option></select></div>
+      <div><label for="terminalAiPermission">${esc(tr("settings:ai.permission", {defaultValue:"Agent 默认执行权限"}))}</label><select id="terminalAiPermission" data-change-action="settings-ai-permission" data-committed-permission="${escAttr(ai.terminal_ai_permission)}"><option value="suggest" ${ai.terminal_ai_permission === "suggest" ? "selected" : ""}>${esc(tr("settings:ai.permission_suggest", {defaultValue:"仅建议"}))}</option><option value="confirm" ${ai.terminal_ai_permission === "confirm" ? "selected" : ""}>${esc(tr("settings:ai.permission_confirm", {defaultValue:"逐步确认（默认）"}))}</option><option value="controlled" ${ai.terminal_ai_permission === "controlled" ? "selected" : ""}>${esc(tr("settings:ai.permission_controlled", {defaultValue:"受控自动"}))}</option><option value="full" ${ai.terminal_ai_permission === "full" ? "selected" : ""}>${esc(tr("settings:ai.permission_full", {defaultValue:"完全访问"}))}</option></select></div>
+    </div>
+    <div class="muted">${esc(tr("settings:ai.permission_hint", {defaultValue:"受控自动只会自动运行明确的只读命令；写入、删除、提权、安装、网络和服务变更仍需实时确认。"}))}</div>
+    <fieldset class="terminal-ai-skills"><legend>${esc(tr("settings:ai.skills", {defaultValue:"内置 Skills"}))}</legend><div class="terminal-ai-skills-grid">
+      <label class="check-row"><input type="checkbox" data-terminal-ai-skill="linux-diagnostics" ${ai.skills_enabled.includes("linux-diagnostics") ? "checked" : ""}> ${esc(tr("settings:ai.skill_linux", {defaultValue:"Linux 诊断"}))}</label><label class="check-row"><input type="checkbox" data-terminal-ai-skill="security-audit" ${ai.skills_enabled.includes("security-audit") ? "checked" : ""}> ${esc(tr("settings:ai.skill_security", {defaultValue:"安全审计"}))}</label><label class="check-row"><input type="checkbox" data-terminal-ai-skill="log-analysis" ${ai.skills_enabled.includes("log-analysis") ? "checked" : ""}> ${esc(tr("settings:ai.skill_logs", {defaultValue:"日志分析"}))}</label><label class="check-row"><input type="checkbox" data-terminal-ai-skill="service-troubleshooting" ${ai.skills_enabled.includes("service-troubleshooting") ? "checked" : ""}> ${esc(tr("settings:ai.skill_services", {defaultValue:"服务排障"}))}</label><label class="check-row"><input type="checkbox" data-terminal-ai-skill="network-diagnostics" ${ai.skills_enabled.includes("network-diagnostics") ? "checked" : ""}> ${esc(tr("settings:ai.skill_network", {defaultValue:"网络排障"}))}</label><label class="check-row"><input type="checkbox" data-terminal-ai-skill="performance-analysis" ${ai.skills_enabled.includes("performance-analysis") ? "checked" : ""}> ${esc(tr("settings:ai.skill_performance", {defaultValue:"性能分析"}))}</label><label class="check-row"><input type="checkbox" data-terminal-ai-skill="container-troubleshooting" ${ai.skills_enabled.includes("container-troubleshooting") ? "checked" : ""}> ${esc(tr("settings:ai.skill_containers", {defaultValue:"容器排障"}))}</label><label class="check-row"><input type="checkbox" data-terminal-ai-skill="git-workflow" ${ai.skills_enabled.includes("git-workflow") ? "checked" : ""}> ${esc(tr("settings:ai.skill_git", {defaultValue:"Git 工作流"}))}</label><label class="check-row"><input type="checkbox" data-terminal-ai-skill="incident-response" ${ai.skills_enabled.includes("incident-response") ? "checked" : ""}> ${esc(tr("settings:ai.skill_incident", {defaultValue:"故障应急"}))}</label><label class="check-row"><input type="checkbox" data-terminal-ai-skill="web-research" ${ai.skills_enabled.includes("web-research") ? "checked" : ""}> ${esc(tr("settings:ai.skill_web", {defaultValue:"联网检索"}))}</label>
+    </div><div class="muted">${esc(tr("settings:ai.skills_hint", {defaultValue:"选中的 Skills 会作为受信任的系统工作流参与每次终端与日志 AI 请求。"}))}</div></fieldset>
+    <fieldset class="terminal-ai-skills"><legend>${esc(tr("settings:ai.user_skills", {defaultValue:"用户 Skills"}))}</legend><div id="terminalAiUserSkillsList" class="terminal-ai-user-skills-list">${terminalAiUserSkillsDraft.map((item, index) => `<div class="terminal-ai-user-skill-row" data-user-skill-index="${index}"><label class="check-row"><input type="checkbox" data-user-skill-enabled ${item.enabled ? "checked" : ""}> <span>${esc(item.name)}</span></label><small>${esc(item.description || "")}</small><button type="button" class="icon-button danger" data-action="settings-ai-skill-remove" data-skill-index="${index}" title="${escAttr(tr("settings:ai.skill_remove", {defaultValue:"删除 Skill"}))}" aria-label="${escAttr(tr("settings:ai.skill_remove", {defaultValue:"删除 Skill"}))}">${icon("trash-2")}</button></div>`).join("")}</div><div class="terminal-ai-user-skill-editor"><input id="terminalAiSkillName" maxlength="120" placeholder="${escAttr(tr("settings:ai.skill_name", {defaultValue:"名称"}))}"><input id="terminalAiSkillDescription" maxlength="300" placeholder="${escAttr(tr("settings:ai.skill_description", {defaultValue:"说明（可选）"}))}"><textarea id="terminalAiSkillPrompt" maxlength="12000" rows="2" placeholder="${escAttr(tr("settings:ai.skill_prompt", {defaultValue:"提示内容"}))}"></textarea><button type="button" data-action="settings-ai-skill-add">${icon("plus")}<span>${esc(tr("settings:ai.skill_add", {defaultValue:"添加 Skill"}))}</span></button></div><div class="muted">${esc(tr("settings:ai.user_skills_hint", {defaultValue:"用户 Skill 只提供提示内容，不会获得额外命令或文件权限。"}))}</div></fieldset>
+    <fieldset class="terminal-ai-skills"><legend>${esc(tr("settings:ai.mcp", {defaultValue:"MCP 服务器"}))}</legend><div class="terminal-ai-mcp-presets"><span>${esc(tr("settings:ai.mcp_presets", {defaultValue:"常用预设"}))}</span>${Object.entries(TERMINAL_AI_MCP_PRESETS).map(([id, preset]) => `<button type="button" data-action="settings-ai-mcp-preset" data-mcp-preset="${escAttr(id)}">${esc(preset.name)}</button>`).join("")}</div><div id="terminalAiMcpList" class="terminal-ai-mcp-list">${terminalAiMcpRowsHtml()}</div>${terminalAiMcpEditorHtml()}<div class="muted">${esc(tr("settings:ai.mcp_hint", {defaultValue:"MCP 服务器默认禁用；启用后仍按 Agent 权限调用。stdio、HTTP / SSE 和 Streamable HTTP 会分别使用对应连接字段；连接失败不会影响普通终端。"}))}</div></fieldset>
+    <pre id="terminalAiTestResult" class="terminal-ai-test-result" hidden></pre>
+    <div class="actions terminal-ai-settings-actions"><button id="terminalAiSaveBtn" class="primary" type="button" data-action="settings-ai-save">${icon("save")}<span>${esc(tr("settings:ai.save", {defaultValue:"保存 AI 设置"}))}</span></button><button id="terminalAiTestBtn" type="button" data-action="settings-ai-test">${icon("message-circle")}<span>${esc(tr("settings:ai.test", {defaultValue:"测试（发送 hi）"}))}</span></button></div>
+  </section>`;
+}
+
+function aiSettingsFormValue(options={}) {
+  const provider = captureTerminalAiProviderForm();
+  const endpoint = String(provider?.endpoint || "").trim();
+  const model = String(provider?.model || "").trim();
+  const timeout_seconds = Number($("terminalAiTimeout")?.value || 60);
+  const contextValue = Number($("terminalAiContextValue")?.value || 1);
+  const contextUnit = $("terminalAiContextUnit")?.value === "K" ? "K" : "M";
+  const context_tokens = Math.round(contextValue * (contextUnit === "M" ? 1000000 : 1000));
+  if (!endpoint) throw new Error(tr("settings:ai.endpoint_required", {defaultValue:"请填写 AI 地址"}));
+  if (options.requireModel === true && !model) throw new Error(tr("settings:ai.model_required", {defaultValue:"请先选择或输入模型"}));
+  if (!Number.isInteger(timeout_seconds) || timeout_seconds < 5 || timeout_seconds > 300) throw new Error(tr("settings:ai.timeout_invalid", {defaultValue:"AI 请求超时必须是 5-300 秒之间的整数"}));
+  if (!Number.isFinite(contextValue) || contextValue <= 0 || context_tokens < 1000 || context_tokens > 1000000) throw new Error(tr("settings:ai.context_invalid", {defaultValue:"AI 上下文长度必须是 1K-1M tokens"}));
+  const permission = ["suggest", "confirm", "controlled", "full"].includes($("terminalAiPermission")?.value) ? $("terminalAiPermission").value : "confirm";
+  const skills_enabled = [...document.querySelectorAll("[data-terminal-ai-skill]:checked")].map(input => String(input.dataset.terminalAiSkill || "")).filter(Boolean);
+  const reasoning_effort = ["none", "low", "medium", "high"].includes($("terminalAiReasoningEffort")?.value) ? $("terminalAiReasoningEffort").value : "none";
+  const deep_thinking = Boolean($("terminalAiDeepThinking")?.checked);
+  const providers = terminalAiProvidersDraft.map(item => {
+    const next = {id:item.id, name:item.name, provider:"openai-compatible", endpoint:item.endpoint, model:item.model || "", api_type:item.api_type === "completions" ? "completions" : "responses"};
+    if (item.api_key) next.api_key = item.api_key;
+    if (item.clear_api_key) next.clear_api_key = true;
+    return next;
+  });
+  const ai = {enabled:Boolean($("terminalAiEnabled")?.checked), provider:"openai-compatible", active_provider_id:terminalAiActiveProviderId, providers, endpoint, model, api_type:provider?.api_type === "completions" ? "completions" : "responses", reasoning_effort, deep_thinking, terminal_ai_placement:$("terminalAiPlacement")?.value === "bottom" ? "bottom" : "right", terminal_ai_permission:permission, skills_enabled, user_skills:terminalAiUserSkillsDraft.map((item, index) => ({...item, enabled:document.querySelector(`[data-user-skill-index="${index}"] [data-user-skill-enabled]`)?.checked !== false})), mcp_servers:terminalAiMcpServersDraft, timeout_seconds, context_tokens};
+  if (provider?.api_key) ai.api_key = provider.api_key;
+  return {ai, clear_api_key:Boolean(provider?.clear_api_key)};
 }
 
 async function saveTerminalAiSettings() {
@@ -1002,6 +1183,9 @@ async function saveWorkspaceRestoreSetting() {
 
 if (typeof registerTermaAction === "function") {
   registerTermaAction("settings-ai-model-mode", () => syncTerminalAiModelMode());
+  registerTermaAction("settings-ai-provider-switch", ({element}) => terminalAiSwitchProvider(element.value));
+  registerTermaAction("settings-ai-provider-add", () => terminalAiAddProvider());
+  registerTermaAction("settings-ai-provider-remove", () => terminalAiRemoveProvider());
   registerTermaAction("settings-ai-permission", async ({element}) => {
     const allowed = ["suggest", "confirm", "controlled", "full"];
     const next = allowed.includes(element.value) ? element.value : "confirm";
@@ -1123,6 +1307,7 @@ if (typeof registerTermaAction === "function") {
         name:String(tool?.name || ""),
         description:String(tool?.description || ""),
         inputSchema:tool?.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : {},
+        risk:["read", "write", "external"].includes(String(tool?.risk)) ? String(tool.risk) : "read",
         enabled:tool?.enabled !== false,
         requires_approval:tool?.requires_approval !== false
       })).filter(tool => tool.name), tools_updated_at:Number(discoveredServer.tools_updated_at || Date.now())};

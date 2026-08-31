@@ -2,11 +2,132 @@
  * Rendering and context helpers for the terminal AI panel.
  * Loaded before app-terminal-ai.js; functions resolve shared state at call time.
  */
+const TERMINAL_AI_COMMAND_MAX_LENGTH = 100000;
+const TERMINAL_AI_SCREEN_MAX_LINES = 240;
+const TERMINAL_AI_SCREEN_MAX_CHARS = 24000;
+
+function terminalAiCommandText(value) {
+  return String(value || "").slice(0, TERMINAL_AI_COMMAND_MAX_LENGTH);
+}
+
+// Chat replies occasionally put a short command in inline Markdown instead of
+// a fenced shell block. Keep the fallback intentionally narrow so ordinary
+// prose such as "cat is..." does not become an executable-looking block.
+const TERMINAL_AI_INLINE_COMMAND_NAMES = new Set([
+  "apt", "apt-get", "awk", "bash", "cat", "cd", "chmod", "chown", "clear", "command", "cp", "curl",
+  "date", "df", "du", "docker", "echo", "env", "export", "file", "find", "findmnt", "free", "git",
+  "grep", "head", "history", "hostname", "id", "ip", "journalctl", "kill", "killall", "less", "ln",
+  "ls", "lsof", "mkdir", "mount", "mv", "node", "npm", "passwd", "ping", "podman", "printf", "ps",
+  "pwd", "python", "python3", "read", "rm", "screen", "sed", "seq", "sh", "sleep", "sort", "ss",
+  "stat", "systemctl", "tail", "tar", "test", "tmux", "top", "touch", "uname", "uptime", "wc", "wget",
+  "which", "whoami", "xargs", "yarn", "yum", "zsh"
+]);
+
+function terminalAiStandaloneCommandFromLine(value, options={}) {
+  const line = String(value || "").trim();
+  if (!line) return "";
+  const inline = line.match(/^`([^`\n]+)`$/);
+  const raw = inline ? inline[1].trim() : line;
+  if (!raw || /[。！？!?]$/.test(raw)) return "";
+  if (options.copy !== true) return "";
+  const command = raw.replace(/^\$\s+/, "").trim();
+  const first = command.match(/^(?:sudo\s+)?([a-zA-Z][a-zA-Z0-9_-]*)\b/);
+  if (!first || !TERMINAL_AI_INLINE_COMMAND_NAMES.has(first[1].toLowerCase())) return "";
+  // Only an explicit inline-code line is promoted unless the caller opts into
+  // raw-line recovery (used by Chat, where the model is instructed not to
+  // emit commands but may still return one for compatibility).
+  // For unmarked lines require a command-shaped argument: an option, path, or
+  // shell operator. This keeps prose such as "cat is a command name" as prose.
+  if (!inline && !/(?:^|\s)-[a-zA-Z0-9]|[|;&<>$]|(?:^|\s)\//.test(command.slice(first[0].length))) return "";
+  if (typeof terminalAiShellCommandLooksComplete === "function" && !terminalAiShellCommandLooksComplete(command)) return "";
+  return terminalAiCommandText(command);
+}
+
+function terminalAiFormatTokens(value) {
+  const count = Math.max(0, Number(value || 0));
+  if (count >= 1000000) return `${Number((count / 1000000).toFixed(2))}M`;
+  if (count >= 1000) return `${Number((count / 1000).toFixed(1))}K`;
+  return String(Math.round(count));
+}
+
+function terminalAiTurnUsage(turn) {
+  const usage = turn?.usage || {};
+  const input = Number(usage.input_tokens);
+  const output = Number(usage.output_tokens);
+  const total = Number(usage.total_tokens);
+  const available = [input, output, total].some(value => Number.isFinite(value) && value > 0);
+  return {
+    input:available && Number.isFinite(input) ? Math.max(0, Math.round(input)) : 0,
+    output:available && Number.isFinite(output) ? Math.max(0, Math.round(output)) : 0,
+    total:available && Number.isFinite(total) ? Math.max(0, Math.round(total)) : (available ? Math.max(0, Math.round(input || 0) + Math.round(output || 0)) : 0),
+    available,
+    estimated:false
+  };
+}
+
+function terminalAiPermissionHint(permission) {
+  if (permission === "full") return tr("terminal:ai.permission_full_hint", {defaultValue:"完全访问：Agent 可自动执行所有命令，包括风险操作"});
+  if (permission === "controlled") return tr("terminal:ai.permission_controlled_hint", {defaultValue:"只读命令可自动执行，风险操作仍会询问"});
+  if (permission === "suggest") return tr("terminal:ai.permission_suggest_hint", {defaultValue:"只提供命令，不自动执行"});
+  return tr("terminal:ai.permission_confirm_hint", {defaultValue:"每条命令执行前都要确认"});
+}
+
+function terminalAiReasoningLabel(value) {
+  const effort = ["none", "low", "medium", "high"].includes(String(value || "").toLowerCase()) ? String(value).toLowerCase() : "none";
+  return tr(`settings:ai.reasoning_${effort}`, {defaultValue:effort});
+}
+
+function terminalAiPanelModelOptions(state) {
+  const current = String(state?.model || terminalAiSettingsValue().model || "").trim();
+  const availableModels = typeof terminalAiAvailableModels !== "undefined" && Array.isArray(terminalAiAvailableModels) ? terminalAiAvailableModels : [];
+  const available = [...new Set([...(state?.modelCustom ? [] : [current]), ...availableModels].map(item => String(item || "").trim()).filter(Boolean))];
+  const known = !state?.modelCustom && available.includes(current);
+  return `<option value="" ${!current && !state?.modelCustom ? "selected" : ""}>${esc(tr("terminal:ai.model_select", {defaultValue:"选择模型"}))}</option>${available.map(model => `<option value="${escAttr(model)}" ${known && model === current ? "selected" : ""}>${esc(model)}</option>`).join("")}<option value="__custom__" ${state?.modelCustom || (!known && current) ? "selected" : ""}>${esc(tr("terminal:ai.model_custom", {defaultValue:"手动输入模型…"}))}</option>`;
+}
+
 function terminalAiStripControl(value) {
   return String(value || "")
     .replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, "")
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "")
     .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+}
+
+function terminalAiDecodeNumericEntities(value) {
+  return String(value || "").replace(/&#(?:x([0-9a-f]+)|([0-9]+));/gi, (full, hexadecimal, decimal) => {
+    const codePoint = Number.parseInt(hexadecimal || decimal, hexadecimal ? 16 : 10);
+    if (!Number.isFinite(codePoint) || codePoint <= 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return full;
+    try { return String.fromCodePoint(codePoint); } catch { return full; }
+  });
+}
+
+function terminalAiWaitingInputCopy(state) {
+  const waiting = state?.agentWaitingForInput || {};
+  const blocks = Array.isArray(state?.blocks) ? state.blocks : [];
+  const block = blocks.find(item => String(item?.id || "") === String(waiting.blockId || ""));
+  const output = terminalAiStripControl(block?.output || waiting.output || "").slice(-1600);
+  const command = String(waiting.command || block?.command || "");
+  const promptTail = output.split(/\n/).map(line => line.trim()).filter(Boolean).slice(-3).join("\n");
+  const passwordPrompt = /(?:password|passphrase|pass phrase|密码|口令)/i.test(promptTail);
+  const sshPrompt = /(?:yes\s*\/\s*no|fingerprint|continue\s+connecting|主机指纹|连接.*继续)/i.test(promptTail)
+    || (!passwordPrompt && /(?:fingerprint|主机指纹)/i.test(output));
+  const choicePrompt = /(?:\[[yYnN](?:\s*\/\s*[yYnN]){1,2}\]|\((?:y|n)(?:\s*\/\s*(?:y|n))?\)|\b(?:y\s*\/\s*n|Y\/n|y\/N)\b|(?:删除|覆盖|替换|确认|继续).{0,40}(?:[?？]|[yYnN]))/i.test(promptTail)
+    || /(?:\brm(?:\s+-[^\s]*)*\b|--interactive|overwrite|delete|remove|confirm)/i.test(command);
+  if (passwordPrompt) return {
+    hint:tr("terminal:ai.waiting_input_password_hint", {defaultValue:"请按终端提示输入密码或口令。Terma 已暂停 Agent，不会继续发送命令。"}),
+    placeholder:tr("terminal:ai.waiting_input_password_placeholder", {defaultValue:"输入密码或口令"})
+  };
+  if (sshPrompt) return {
+    hint:tr("terminal:ai.waiting_input_ssh_hint", {defaultValue:"请按提示输入 yes、no 或完整主机指纹。Terma 已暂停 Agent，不会继续发送命令。"}),
+    placeholder:tr("terminal:ai.waiting_input_ssh_placeholder", {defaultValue:"输入 yes、no 或主机指纹"})
+  };
+  if (choicePrompt) return {
+    hint:tr("terminal:ai.waiting_input_choice_hint", {defaultValue:"请按终端提示输入 y 或 n。Terma 已暂停 Agent，不会继续发送命令。"}),
+    placeholder:tr("terminal:ai.waiting_input_choice_placeholder", {defaultValue:"输入 y 或 n"})
+  };
+  return {
+    hint:tr("terminal:ai.waiting_input_hint", {defaultValue:"请按终端提示输入内容。Terma 已暂停 Agent，不会继续发送命令。"}),
+    placeholder:tr("terminal:ai.waiting_input_placeholder", {defaultValue:"输入终端所需内容"})
+  };
 }
 
 function terminalAiDeduplicateRepeatedText(value) {
@@ -31,16 +152,123 @@ function terminalAiDeduplicateRepeatedText(value) {
   return output.join("\n\n");
 }
 
-function terminalAiBlockHtml(key, block, selectedId="") {
+function terminalAiChatAutoContextHint() {
+  return tr("terminal:ai.chat_auto_context_hint", {
+    defaultValue:"请先在终端完成这项检查，然后直接再次提问；Terma 会自动读取最新终端内容并继续分析。"
+  });
+}
+
+function terminalAiChatRelayRequest(value) {
+  const source = String(value || "").trim();
+  if (!source) return false;
+  // Do not rewrite a sentence that is already explaining the read-only
+  // boundary. Only target imperative requests to return terminal data.
+  const prohibition = /(?:不要|无需|不会|不要求|禁止|never|don't|do not|without).{0,80}(?:发|发送|贴|粘贴|复制|提供|传|回传|send|paste|copy|share|provide|attach|post|relay).{0,80}(?:输出|结果|内容|日志|截图|output|result|log|screenshot)/i;
+  const requestLead = /(?:请|需要|可以|将|把|运行后|执行后|完成后|再次|然后|之后|please|run|after|once|then|you should|you need|could you|can you|if you need)/i;
+  if (prohibition.test(source) && !requestLead.test(source)) return false;
+  const chineseData = /(?:输出|结果|内容|日志|运行结果|终端输出|终端上下文|终端信息|截图)/i.test(source);
+  const chineseRelay = chineseData && /(?:发给我|发我|贴回|贴出来|粘贴(?:回来|到这里|给我)?|复制(?:回来|给我)?|发送(?:给我|到这里)?|提供(?:给我|回来|到这里)?|传给我|回传|附上|再次提供)/i.test(source)
+    && requestLead.test(source);
+  const englishData = /(?:output|result|terminal output|terminal context|terminal information|logs?|screenshots?)/i.test(source);
+  const englishRelay = englishData && /(?:send|paste|copy|share|provide|attach|post|relay|return).{0,100}(?:back|to me|here|again|with me|output|result|terminal context|logs?|screenshots?)/i.test(source)
+    && requestLead.test(source);
+  return chineseRelay || englishRelay;
+}
+
+function terminalAiNormalizeChatAnswer(value) {
+  const source = String(value || "").replace(/\r\n?/g, "\n");
+  if (!source || !terminalAiChatRelayRequest(source)) {
+    // Keep the fast path for normal answers and streaming deltas.
+    return source;
+  }
+  // Split only at sentence punctuation/newlines so command paths, decimals,
+  // and ordinary prose are preserved. A violating sentence is replaced as a
+  // whole, preventing the model from asking for a manual copy/paste roundtrip.
+  return source.replace(/[^\n。！？!?]+[。！？!?]?/g, segment => (
+    terminalAiChatRelayRequest(segment) ? terminalAiChatAutoContextHint() : segment
+  ));
+}
+
+function terminalAiNormalizeMarkdownEscapes(value) {
+  let source = terminalAiDecodeNumericEntities(String(value || "").replace(/\r\n?/g, "\n"));
+  if (!source) return "";
+
+  // A few gateways drop one backtick from a fenced shell opener (` ``sh`)
+  // while leaving the closing fence intact. Repair only a two-backtick opener
+  // followed by a known shell language marker; ordinary inline Markdown stays
+  // untouched.
+  const shellLanguage = "(?:shell|bash|sh|zsh|console|powershell|pwsh|cmd)?";
+  source = source.replace(new RegExp("(?<!\\\\`)\\\\`\\\\`(?!\\\\`)(?=" + shellLanguage + "[ \\t]*\\n)", "gi"), "```");
+  source = source.replace(new RegExp("(^|[^\\n`])([ \\t]*)``(?=" + shellLanguage + "[ \\t]*\\n)", "gmi"), "$1$2```");
+
+  // Some gateways escape every backtick and then append the fence directly
+  // after the preceding sentence (for example: "说明。\\`\\`\\`sh"). Split
+  // those inline fences into real Markdown lines before the normal renderer
+  // and command extractor inspect them.
+  const lines = [];
+  let inFence = false;
+  for (const rawLine of source.split("\n")) {
+    let line = rawLine
+      .replace(/\\`(?:\\`){2}/g, "```")
+      .replace(/\\`{3}/g, "```");
+    let cursor = 0;
+    let emitted = false;
+    while (cursor <= line.length) {
+      const fenceIndex = line.indexOf("```", cursor);
+      if (fenceIndex < 0) {
+        const remainder = line.slice(cursor);
+        if (remainder || !emitted) lines.push(remainder);
+        break;
+      }
+      const before = line.slice(cursor, fenceIndex);
+      if (inFence) {
+        if (before) lines.push(before);
+        lines.push("```");
+        inFence = false;
+        emitted = true;
+        cursor = fenceIndex + 3;
+        continue;
+      }
+      if (before) lines.push(before);
+      const info = line.slice(fenceIndex + 3).match(/^[^\s`]*/)?.[0] || "";
+      lines.push("```" + info);
+      inFence = true;
+      emitted = true;
+      cursor = fenceIndex + 3 + info.length;
+    }
+  }
+  let mappedInFence = false;
+  return lines.map(line => {
+    const fenceCandidate = line.replace(/\\`/g, "`").replace(/^(\s*)\\(`{3})/, "$1$2");
+    const fence = fenceCandidate.match(/^\s*```[^`]*$/);
+    if (fence) {
+      mappedInFence = !mappedInFence;
+      return fenceCandidate;
+    }
+    if (mappedInFence) return line;
+    // A few gateways escape Markdown punctuation before returning text. Decode
+    // that compatibility layer in prose and code, while leaving shell
+    // escapes such as \n, \t and \$ intact.
+    let normalized = line.replace(/\\([\\`*_{}\[\]()#+.!|>~-])/g, "$1");
+    normalized = normalized.replace(/^(\s*\d+)\\\.\s+/, "$1. ");
+    return normalized;
+  }).join("\n");
+}
+
+function terminalAiBlockHtml(key, block, selectedId="", options={}) {
   const selected = String(selectedId || "") === String(block.id);
   const output = terminalAiStripControl(block.output).trim();
   const summary = output ? output.split("\n").map(line => line.trim()).filter(Boolean).slice(-2).join(" · ") : tr("terminal:ai.waiting_output", {defaultValue:"等待输出"});
   const completed = Boolean(block.completedAt);
   const waiting = Boolean(block.waitingForInput);
   const timedOut = Boolean(block.timedOutAt);
+  const longCommand = String(block.command || "").length > 8000;
   const stateLabel = completed ? tr("terminal:ai.completed", {defaultValue:"已完成"}) : waiting ? tr("terminal:ai.waiting_input", {defaultValue:"等待终端输入"}) : timedOut ? tr("terminal:ai.timed_out", {defaultValue:"等待超时"}) : tr("terminal:ai.running", {defaultValue:"执行中"});
   const stateClass = completed ? "completed" : waiting || timedOut ? "waiting" : "running";
-  return `<article class="terminal-ai-block${selected ? " selected" : ""}" data-terminal-ai-block-id="${escAttr(block.id)}"><div class="terminal-ai-block-head"><button class="terminal-ai-block-select" type="button" data-action="terminal-ai-select-block" data-terminal-ai-key="${escAttr(key)}" data-block-id="${escAttr(block.id)}" aria-pressed="${selected ? "true" : "false"}"><span class="terminal-ai-block-index">${icon("square-terminal")}</span><code>${esc(block.command)}</code></button><span class="terminal-ai-block-state ${stateClass}">${esc(stateLabel)}</span></div><div class="terminal-ai-block-summary">${esc(summary)}</div><div class="terminal-ai-block-actions"><button type="button" data-action="terminal-ai-block-action" data-terminal-ai-key="${escAttr(key)}" data-block-id="${escAttr(block.id)}" data-ai-action="explain">${icon("message-circle-more")}<span>${esc(tr("terminal:ai.explain", {defaultValue:"解释"}))}</span></button><button type="button" data-action="terminal-ai-block-action" data-terminal-ai-key="${escAttr(key)}" data-block-id="${escAttr(block.id)}" data-ai-action="summarize">${icon("list")}<span>${esc(tr("terminal:ai.summarize", {defaultValue:"总结"}))}</span></button><button type="button" data-action="terminal-ai-block-action" data-terminal-ai-key="${escAttr(key)}" data-block-id="${escAttr(block.id)}" data-ai-action="fix">${icon("wrench")}<span>${esc(tr("terminal:ai.fix", {defaultValue:"修复建议"}))}</span></button>${completed || waiting || timedOut ? `<button type="button" data-action="terminal-ai-block-action" data-terminal-ai-key="${escAttr(key)}" data-block-id="${escAttr(block.id)}" data-ai-action="continue">${icon("step-forward")}<span>${esc(tr("terminal:ai.continue", {defaultValue:"继续分析"}))}</span></button>` : ""}</div></article>`;
+  const interrupt = !options.chatMode && !completed && !waiting ? `<button type="button" data-action="terminal-ai-block-stop" data-terminal-ai-key="${escAttr(key)}" data-block-id="${escAttr(block.id)}">${icon("square")}<span>${esc(tr("terminal:ai.stop_command", {defaultValue:"中止命令"}))}</span></button>` : "";
+  const lengthHint = longCommand ? `<span class="terminal-ai-block-length">${esc(tr("terminal:ai.long_command_hint", {length:String(block.command || "").length, defaultValue:`命令较长 · ${String(block.command || "").length} 字符，失败时建议拆分为多个步骤`}))}</span>` : "";
+  const actions = options.chatMode ? "" : `<div class="terminal-ai-block-actions"><button type="button" data-action="terminal-ai-block-action" data-terminal-ai-key="${escAttr(key)}" data-block-id="${escAttr(block.id)}" data-ai-action="explain">${icon("message-circle-more")}<span>${esc(tr("terminal:ai.explain", {defaultValue:"解释"}))}</span></button><button type="button" data-action="terminal-ai-block-action" data-terminal-ai-key="${escAttr(key)}" data-block-id="${escAttr(block.id)}" data-ai-action="summarize">${icon("list")}<span>${esc(tr("terminal:ai.summarize", {defaultValue:"总结"}))}</span></button><button type="button" data-action="terminal-ai-block-action" data-terminal-ai-key="${escAttr(key)}" data-block-id="${escAttr(block.id)}" data-ai-action="fix">${icon("wrench")}<span>${esc(tr("terminal:ai.fix", {defaultValue:"修复建议"}))}</span></button>${completed || waiting || timedOut ? `<button type="button" data-action="terminal-ai-block-action" data-terminal-ai-key="${escAttr(key)}" data-block-id="${escAttr(block.id)}" data-ai-action="continue">${icon("step-forward")}<span>${esc(tr("terminal:ai.continue", {defaultValue:"继续分析"}))}</span></button>` : ""}${interrupt}</div>`;
+  return `<article class="terminal-ai-block${selected ? " selected" : ""}" data-terminal-ai-block-id="${escAttr(block.id)}"><div class="terminal-ai-block-head"><button class="terminal-ai-block-select" type="button" data-action="terminal-ai-select-block" data-terminal-ai-key="${escAttr(key)}" data-block-id="${escAttr(block.id)}" aria-pressed="${selected ? "true" : "false"}"><span class="terminal-ai-block-index">${icon("square-terminal")}</span><code title="${escAttr(block.command)}">${esc(block.command)}</code></button><span class="terminal-ai-block-state ${stateClass}">${esc(stateLabel)}</span></div><div class="terminal-ai-block-summary">${esc(summary)}</div>${lengthHint}${actions}</article>`;
 }
 
 function terminalAiTaskGroups(turns) {
@@ -98,7 +326,7 @@ function terminalAiMcpResultIdentity(item) {
   return String(item?.server || "") + "\u0000" + String(item?.tool || "") + "\u0000" + JSON.stringify(args);
 }
 
-function terminalAiRenderAnswerWithMcp(key, answer, entries, used) {
+function terminalAiRenderAnswerWithMcp(key, answer, entries, used, options={}) {
   // Remove a protocol-only XML fence before locating the call. Otherwise the
   // opening and closing fence are handed to Markdown separately and become an
   // empty `xml` code block around the real MCP result card.
@@ -108,7 +336,7 @@ function terminalAiRenderAnswerWithMcp(key, answer, entries, used) {
   let last = 0;
   let match;
   while ((match = pattern.exec(source))) {
-    if (match.index > last) fragments.push(renderTerminalAiMarkdown(key, source.slice(last, match.index)));
+    if (match.index > last) fragments.push(renderTerminalAiMarkdown(key, source.slice(last, match.index), options));
     const raw = match[0];
     const call = terminalAiResponseMcpCalls(raw)[0];
     const marker = terminalAiResponseMcpMarkers(raw)[0];
@@ -134,16 +362,17 @@ function terminalAiRenderAnswerWithMcp(key, answer, entries, used) {
       if (!call && marker && !Object.keys(selectedArguments).length) {
         for (const duplicate of matchingEntries) used.add(terminalAiMcpResultIdentity(duplicate));
       }
-    } else if (!selected) fragments.push(renderTerminalAiMarkdown(key, raw));
+    } else if (!selected) fragments.push(renderTerminalAiMarkdown(key, raw, options));
     last = match.index + raw.length;
   }
-  if (last < source.length) fragments.push(renderTerminalAiMarkdown(key, source.slice(last)));
+  if (last < source.length) fragments.push(renderTerminalAiMarkdown(key, source.slice(last), options));
   return fragments.join("");
 }
 
 function terminalAiTaskAssistantHtml(key, group) {
   const steps = Array.isArray(group?.steps) ? group.steps : [];
   const turn = steps.at(-1) || group?.root || {};
+  const chatMode = steps.some(item => item?.mode === "chat");
   const usage = steps.reduce((sum, item) => {
     const current = terminalAiTurnUsage(item);
     if (!current.available) return sum;
@@ -158,20 +387,42 @@ function terminalAiTaskAssistantHtml(key, group) {
   const mcpEntries = terminalAiTaskMcpResults(steps);
   const usedMcp = new Set();
   const phases = steps.flatMap(item => {
-    const rendered = item?.answer ? terminalAiRenderAnswerWithMcp(key, item.answer, mcpEntries, usedMcp) : "";
+    const rawAnswer = String(item?.answer || "");
+    const answer = chatMode ? terminalAiNormalizeChatAnswer(rawAnswer) : rawAnswer;
+    const itemMcpResults = (Array.isArray(item?.agentResults) ? item.agentResults : [])
+      .filter(result => result?.kind === "mcp");
+    const hasMcpAnchor = Boolean(
+      terminalAiResponseMcpCalls(answer).length
+      || terminalAiResponseMcpMarkers(answer).length
+    );
+    const renderUnanchoredMcp = () => itemMcpResults
+      .filter(result => !usedMcp.has(terminalAiMcpResultIdentity(result)))
+      .map(result => {
+        usedMcp.add(terminalAiMcpResultIdentity(result));
+        return terminalAiMcpResultCardHtml(result);
+      }).join("");
+    // Preflight calls happen before the model's continuation turn and have no
+    // marker in its answer. Keep their result at the start of that phase;
+    // anchored calls are inserted by terminalAiRenderAnswerWithMcp instead.
+    const before = hasMcpAnchor ? "" : renderUnanchoredMcp();
+    const rendered = answer ? terminalAiRenderAnswerWithMcp(key, answer, mcpEntries, usedMcp, {actions:!chatMode, copy:true}) : "";
+    const after = hasMcpAnchor ? renderUnanchoredMcp() : "";
     const error = item?.error ? `<div class="terminal-ai-error">${icon("circle-alert")}<span>${esc(item.error)}</span></div>` : "";
     const streaming = item?.busy ? `<span class="terminal-ai-streaming">${esc(tr("terminal:ai.sending", {defaultValue:"正在生成…"}))}</span>` : "";
-    if (!rendered && !error && !streaming) return [];
-    return [`<div class="terminal-ai-response-phase" data-terminal-ai-phase-id="${escAttr(item.id || "")}">${rendered}${error}${streaming}</div>`];
+    if (!before && !rendered && !after && !error && !streaming) return [];
+    return [`<div class="terminal-ai-response-phase" data-terminal-ai-phase-id="${escAttr(item.id || "")}">${before}${rendered}${after}${error}${streaming}</div>`];
   }).join("");
   const reasoningText = [...new Set(steps.map(item => String(item?.reasoning || "").trim()).filter(Boolean))].join("\n\n");
   const reasoning = reasoningText ? `<details class="terminal-ai-reasoning"><summary>${icon("brain")}<span>${esc(tr("terminal:ai.reasoning_summary", {defaultValue:"思考摘要"}))}</span></summary><div>${renderTerminalAiMarkdown(key, reasoningText, {actions:false})}</div></details>` : "";
-  const mcpCards = mcpEntries.filter(item => !usedMcp.has(terminalAiMcpResultIdentity(item))).map(terminalAiMcpResultCardHtml).join("");
+  // A malformed or truncated answer can leave a recorded result without a
+  // matching marker. Show it at the beginning of the transcript rather than
+  // moving the tool call to the end of the assistant message.
+  const orphanMcpCards = mcpEntries.filter(item => !usedMcp.has(terminalAiMcpResultIdentity(item))).map(terminalAiMcpResultCardHtml).join("");
   const notices = [...new Set(steps.map(item => String(item?.agentNotice || "").trim()).filter(Boolean))];
   const notice = notices.map(item => `<div class="terminal-ai-agent-notice">${icon("info")}<span>${esc(item)}</span></div>`).join("");
   const model = [...steps].reverse().find(item => item?.model)?.model || "";
   const hasAnswer = steps.some(item => String(item?.answer || "").trim());
-  return `<div class="terminal-ai-task-step" data-terminal-ai-turn-id="${escAttr(turn.id || group?.root?.id || "")}"><div class="terminal-ai-assistant-message"><div class="terminal-ai-response-head"><span>${icon("bot")}<b>${esc(tr("terminal:ai.response", {defaultValue:"AI 回复"}))}</b></span><span>${esc(model)}</span></div><div class="terminal-ai-response-content">${phases}</div>${mcpCards}${notice}${reasoning}<div class="terminal-ai-turn-footer"><span>${esc(metrics)}</span>${hasAnswer ? `<button type="button" data-action="terminal-ai-copy-response" data-terminal-ai-key="${escAttr(key)}" data-turn-id="${escAttr(turn.id)}" title="${escAttr(tr("terminal:ai.copy_response", {defaultValue:"复制回复"}))}" aria-label="${escAttr(tr("terminal:ai.copy_response", {defaultValue:"复制回复"}))}">${icon("copy")}</button>` : ""}</div></div></div>`;
+  return `<div class="terminal-ai-task-step" data-terminal-ai-turn-id="${escAttr(turn.id || group?.root?.id || "")}"><div class="terminal-ai-assistant-message"><div class="terminal-ai-response-head"><span>${icon("bot")}<b>${esc(tr("terminal:ai.response", {defaultValue:"AI 回复"}))}</b></span><span>${esc(model)}</span></div><div class="terminal-ai-response-content">${orphanMcpCards}${phases}</div>${notice}${reasoning}<div class="terminal-ai-turn-footer"><span>${esc(metrics)}</span>${hasAnswer ? `<button type="button" data-action="terminal-ai-copy-response" data-terminal-ai-key="${escAttr(key)}" data-turn-id="${escAttr(turn.id)}" title="${escAttr(tr("terminal:ai.copy_response", {defaultValue:"复制回复"}))}" aria-label="${escAttr(tr("terminal:ai.copy_response", {defaultValue:"复制回复"}))}">${icon("copy")}</button>` : ""}</div></div></div>`;
 }
 
 function terminalAiTurnsHtml(key, turns) {
@@ -202,10 +453,11 @@ function terminalAiInlineMarkdown(value) {
 }
 
 function terminalAiCommandFromCodeBlock(value) {
-  const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n").map(line => line.trim()).filter(line => line && !line.startsWith("#"));
-  if (!lines.length) return "";
-  const command = lines[0].replace(/^\$\s*/, "").trim();
-  return command && !/[\r\n]/.test(command) ? command.slice(0, 2000) : "";
+  const source = String(value || "").replace(/\r\n?/g, "\n").trim();
+  if (!source) return "";
+  const lines = source.split("\n");
+  if (/^\s*\$\s+/.test(lines[0])) lines[0] = lines[0].replace(/^\s*\$\s+/, "");
+  return terminalAiCommandText(lines.join("\n").trim());
 }
 
 function terminalAiSplitShellCommands(value) {
@@ -217,7 +469,7 @@ function terminalAiSplitShellCommands(value) {
   let escaped = false;
   const flush = () => {
     const command = current.trim().replace(/^\$\s*/, "");
-    if (command) commands.push(command.slice(0, 2000));
+    if (command) commands.push(terminalAiCommandText(command));
     current = "";
   };
   for (let index = 0; index < source.length; index += 1) {
@@ -242,10 +494,36 @@ function terminalAiSplitShellCommands(value) {
 }
 
 function terminalAiCommandsFromCodeBlock(value) {
-  return String(value || "").replace(/\r\n?/g, "\n").split("\n")
-    .map(line => line.trim().replace(/^\$\s*/, ""))
-    .filter(line => line && !line.startsWith("#"))
-    .map(line => line.slice(0, 2000));
+  const source = terminalAiCommandFromCodeBlock(value);
+  if (!source) return [];
+  const lines = source.split("\n").map(line => line.trim()).filter(line => line && !line.startsWith("#"));
+  const hasScriptSyntax = lines.some(line => /^(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|function)\b/.test(line)
+    || /(?:&&|\|\||[|;&<>]|\$\(|`|\\\s*$)/.test(line));
+  // Keep a real script together, but retain the established UX for a block
+  // that is plainly just several independent one-line commands.
+  return lines.length > 1 && !hasScriptSyntax
+    ? lines.map(line => terminalAiCommandText(line))
+    : [source];
+}
+
+function terminalAiCommandSyntaxIssue(value) {
+  const source = String(value || "").trim();
+  if (!source) return "";
+  // `find` groups must escape parentheses for POSIX shells. Models often
+  // emit `find ... -type f ( -name ... )`, which makes bash exit with code 2
+  // before the Agent can inspect any result.
+  if (/^find(?:\s|$)/i.test(source)
+    && /\s\(\s*-(?:name|iname|path|type)\b/i.test(source)
+    && !/\\\(\s*-(?:name|iname|path|type)\b/i.test(source)) {
+    return tr("terminal:ai.command_syntax_find", {defaultValue:"find 条件分组缺少转义括号，命令未发送；请改为使用 \\( 和 \\)"});
+  }
+  // Bash treats a printf format beginning with `-` as an option unless the
+  // `--` separator is present. Reject the common generated form before it can
+  // terminate an otherwise valid diagnostic script with exit code 2.
+  if (/(?:^|[;|&\n])\s*printf\s+(?!--|-(?:v\b|\s))(['"])-/m.test(source)) {
+    return tr("terminal:ai.command_syntax_printf", {defaultValue:"printf 格式字符串以 - 开头，命令未发送；请改为使用 printf -- '--- ...' 或 printf '%s\\n' '--- ...'"});
+  }
+  return "";
 }
 
 function terminalAiDecodeXmlText(value) {
@@ -254,7 +532,12 @@ function terminalAiDecodeXmlText(value) {
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&amp;/gi, "&");
+    .replace(/&amp;/gi, "&")
+    .replace(/&#(?:x([0-9a-f]+)|([0-9]+));/gi, (full, hexadecimal, decimal) => {
+      const codePoint = Number.parseInt(hexadecimal || decimal, hexadecimal ? 16 : 10);
+      if (!Number.isFinite(codePoint) || codePoint <= 0 || codePoint > 0x10ffff || (codePoint >= 0xd800 && codePoint <= 0xdfff)) return full;
+      try { return String.fromCodePoint(codePoint); } catch { return full; }
+    });
 }
 
 function terminalAiToolCallParameters(value) {
@@ -465,8 +748,17 @@ function terminalAiCodeBlockHtml(key, code, language="", options={}) {
   const normalizedLanguage = String(language || "").toLowerCase();
   const shell = !normalizedLanguage || ["shell", "bash", "sh", "zsh", "console", "powershell", "pwsh", "cmd"].includes(normalizedLanguage);
   const command = shell ? terminalAiCommandFromCodeBlock(code) : "";
+  const snippetCommand = shell ? terminalAiCommandText(String(code || "").replace(/\r\n?/g, "\n").trim()) : "";
   const state = terminalAiStateForKey(key);
-  const actions = options.actions !== false ? `<div class="terminal-ai-code-actions"><button type="button" data-action="terminal-ai-copy-code" data-code="${escAttr(code)}">${icon("copy")}<span>${esc(tr("terminal:ai.copy_command", {defaultValue:"复制"}))}</span></button>${command ? `<button type="button" data-action="terminal-ai-insert-command" data-terminal-ai-key="${escAttr(key)}" data-command="${escAttr(command)}">${icon("arrow-down-to-line")}<span>${esc(tr("terminal:ai.insert_command", {defaultValue:"放入终端"}))}</span></button>${state.permission !== "suggest" ? `<button type="button" class="primary" data-action="terminal-ai-execute-command" data-terminal-ai-key="${escAttr(key)}" data-command="${escAttr(command)}">${icon("play")}<span>${esc(tr("terminal:ai.execute_command", {defaultValue:"执行"}))}</span></button>` : ""}` : ""}</div>` : "";
+  const actionButtons = [];
+  const showActions = options.actions !== false;
+  const showCopy = options.copy === true || showActions;
+  if (showCopy) actionButtons.push(`<button type="button" data-action="terminal-ai-copy-code" data-code="${escAttr(code)}">${icon("copy")}<span>${esc(tr("terminal:ai.copy_command", {defaultValue:"复制"}))}</span></button>`);
+  if (showActions) {
+    if (command) actionButtons.push(`<button type="button" data-action="terminal-ai-insert-command" data-terminal-ai-key="${escAttr(key)}" data-command="${escAttr(command)}">${icon("arrow-down-to-line")}<span>${esc(tr("terminal:ai.insert_command", {defaultValue:"放入终端"}))}</span></button>${state.permission !== "suggest" ? `<button type="button" class="primary" data-action="terminal-ai-execute-command" data-terminal-ai-key="${escAttr(key)}" data-command="${escAttr(command)}">${icon("play")}<span>${esc(tr("terminal:ai.execute_command", {defaultValue:"执行"}))}</span></button>` : ""}`);
+    if (snippetCommand) actionButtons.push(`<button type="button" data-action="terminal-ai-save-snippet" data-terminal-ai-key="${escAttr(key)}" data-command="${escAttr(snippetCommand)}">${icon("bookmark-plus")}<span>${esc(tr("terminal:ai.save_as_snippet", {defaultValue:"保存为命令片段"}))}</span></button>`);
+  }
+  const actions = actionButtons.length ? `<div class="terminal-ai-code-actions">${actionButtons.join("")}</div>` : "";
   return `<div class="terminal-ai-code-block"><div class="terminal-ai-code-head"><span>${esc(language || (shell ? "shell" : "code"))}</span></div><pre class="terminal-ai-code"><code>${esc(code)}</code></pre>${actions}</div>`;
 }
 
@@ -474,7 +766,7 @@ function renderTerminalAiMarkdown(key, value, options={}) {
   // Protocol-only fences can arrive as an empty XML block after a gateway
   // strips the MCP payload. Remove them before line parsing so the transcript
   // never shows a blank code panel above the real tool card.
-  const normalizedValue = terminalAiDeduplicateRepeatedText(terminalAiNormalizeToolCalls(value))
+  const normalizedValue = terminalAiDeduplicateRepeatedText(terminalAiNormalizeToolCalls(terminalAiNormalizeMarkdownEscapes(value)))
     .replace(/```[^\n`]*\n\s*```/g, "\n");
   const lines = normalizedValue.split("\n");
   const html = [];
@@ -538,6 +830,13 @@ function renderTerminalAiMarkdown(key, value, options={}) {
         return `<${tag}${style}>${terminalAiInlineMarkdown(cell || "")}</${tag}>`;
       };
       html.push(`<div class="terminal-ai-table-wrap"><table class="terminal-ai-table"><thead><tr>${headers.map((cell, cellIndex) => cellHtml(cell, "th", cellIndex)).join("")}</tr></thead><tbody>${rows.map(row => `<tr>${headers.map((_, cellIndex) => cellHtml(row[cellIndex] || "", "td", cellIndex)).join("")}</tr>`).join("")}</tbody></table></div>`);
+      continue;
+    }
+    const standaloneCommand = terminalAiStandaloneCommandFromLine(line, options);
+    if (standaloneCommand) {
+      flushParagraph();
+      flushList();
+      html.push(terminalAiCodeBlockHtml(key, standaloneCommand, "shell", {...options, copy:true}));
       continue;
     }
     const heading = line.match(/^(#{1,4})\s+(.+)$/);
@@ -609,46 +908,43 @@ function terminalAiIncompleteResponseCommand(value) {
 
 function terminalAiResponseCommands(value, options={}) {
   const commands = [];
-  const rawCommand = command => {
-    const normalized = terminalAiDecodeXmlText(command).replace(/\r\n?/g, "\n").trim();
-    const firstLine = normalized.split("\n").map(line => line.trim()).find(Boolean) || "";
-    const result = firstLine.replace(/^\$\s*/, "").trim();
-    if (result && !commands.includes(result)) commands.push(result.slice(0, 2000));
-  };
+  const rawCommand = command => addCommands(terminalAiDecodeXmlText(command));
   const addCommands = source => {
     for (const command of terminalAiCommandsFromCodeBlock(source)) {
       if (command && !commands.includes(command)) commands.push(command);
     }
   };
-  terminalAiToolCalls(value).forEach(item => addCommands(item.command));
+  const normalizedValue = terminalAiNormalizeMarkdownEscapes(value);
+  terminalAiToolCalls(normalizedValue).forEach(item => addCommands(item.command));
   const xmlPattern = /<command(?:\s[^>]*)?>([\s\S]*?)<\/command>/gi;
   let xmlMatch;
-  while ((xmlMatch = xmlPattern.exec(String(value || "")))) rawCommand(xmlMatch[1]);
+  while ((xmlMatch = xmlPattern.exec(normalizedValue))) rawCommand(xmlMatch[1]);
   const pattern = /```(?:shell|bash|sh|zsh|console|powershell|pwsh|cmd)?\s*\n([\s\S]*?)```/gi;
   let match;
-  while ((match = pattern.exec(String(value || "")))) {
+  while ((match = pattern.exec(normalizedValue))) {
     addCommands(match[1]);
   }
   if (!commands.length && options.allowIncomplete === true) {
-    const recovered = terminalAiIncompleteResponseCommand(value);
+    const recovered = terminalAiIncompleteResponseCommand(normalizedValue);
     if (recovered) commands.push(recovered);
   }
   return commands;
 }
 
 function terminalAiCompleteRecoveredCommandAnswer(value, command) {
-  const source = String(value || "");
+  const source = terminalAiNormalizeMarkdownEscapes(value);
   const fencePattern = /```(?:shell|bash|sh|zsh|console|powershell|pwsh|cmd)?\s*\n/gi;
   let lastFence = null;
   let match;
   while ((match = fencePattern.exec(source))) lastFence = {bodyStart:fencePattern.lastIndex};
   if (lastFence && !source.slice(lastFence.bodyStart).includes("```")) return `${source.replace(/\s+$/, "")}\n\`\`\``;
   const visible = terminalAiNormalizeToolCalls(source).trim();
+  if (terminalAiResponseCommands(visible).includes(String(command || "").trim())) return visible;
   return `${visible ? `${visible}\n\n` : ""}\`\`\`shell\n${String(command || "").trim()}\n\`\`\``;
 }
 
 function terminalAiAnswerThroughFirstCommand(value) {
-  const source = String(value || "");
+  const source = terminalAiNormalizeMarkdownEscapes(value);
   const matches = [];
   const patterns = [
     /<command(?:\s[^>]*)?>[\s\S]*?<\/command>/i,
@@ -665,22 +961,43 @@ function terminalAiAnswerThroughFirstCommand(value) {
   return source.slice(0, matches[0].end);
 }
 
-function terminalAiContextForKey(key) {
+function terminalAiCurrentBufferText(session) {
+  if (session?.sensitiveInput) return "";
+  const buffer = session?.term?.buffer?.active;
+  if (!buffer) return "";
+  const length = Math.max(0, Number(buffer.length) || 0);
+  const start = Math.max(0, length - TERMINAL_AI_SCREEN_MAX_LINES);
+  const lines = [];
+  for (let index = start; index < length; index += 1) {
+    lines.push(buffer.getLine(index)?.translateToString(true) || "");
+  }
+  let text = lines.join("\n").replace(/\s+$/, "");
+  if (text.length > TERMINAL_AI_SCREEN_MAX_CHARS) {
+    text = `[... ${tr("terminal:ai.current_context_older", {defaultValue:"更早的终端内容已省略"})} ...]\n${text.slice(-TERMINAL_AI_SCREEN_MAX_CHARS)}`;
+  }
+  return terminalAiRedactAttachment(text);
+}
+
+function terminalAiContextForKey(key, modeOverride="") {
   const state = terminalAiStateForKey(key);
   const session = terminalSessions.get(key);
   const selected = session?.term?.getSelection?.().trim() || "";
   const contexts = [];
-  if (selected) contexts.push({source:"terminal-selection", title:tr("terminal:ai.selected_context", {defaultValue:"已选终端内容"}), text:selected});
+  if (selected) contexts.push({source:"terminal-selection", title:tr("terminal:ai.selected_context", {defaultValue:"已选终端内容"}), text:terminalAiRedactAttachment(selected)});
+  const screenText = (modeOverride === "chat" || state.mode === "chat") ? terminalAiCurrentBufferText(session) : "";
+  if (screenText) contexts.push({source:"terminal-screen", title:tr("terminal:ai.current_context", {defaultValue:"当前终端内容"}), text:screenText});
   const block = state.blocks.find(item => String(item.id) === String(state.selectedBlockId));
-  if (block && !selected) contexts.push({source:"terminal-block", title:block.command, text:`$ ${block.command}\n${terminalAiStripControl(block.output || "")}`});
-  contexts.push(...state.attachments.map(item => ({source:"attachment", title:item.name, text:item.text})));
+  if (block && !selected && !screenText) contexts.push({source:"terminal-block", title:block.command, text:`$ ${block.command}\n${terminalAiStripControl(block.output || "")}`});
+  contexts.push(...(state.attachments || []).map(item => ({source:"attachment", title:item.name, text:item.text})));
   return contexts.slice(0, 8);
 }
 
 function terminalAiRedactAttachment(value) {
   return String(value || "")
     .replace(/-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----/gi, "[REDACTED PRIVATE KEY]")
+    .replace(/(authorization)\s*[:=]\s*[^\r\n]*/gi, "$1: [REDACTED]")
     .replace(/(password|passwd|passphrase|token|secret|api[_-]?key|cookie)\s*[:=]\s*[^\s,;]+/gi, "$1=[REDACTED]")
+    .replace(/(ssh-(?:rsa|ed25519|ecdsa)|-----BEGIN)[^\r\n]*/gi, "[REDACTED KEY]")
     .slice(0, 120000);
 }
 

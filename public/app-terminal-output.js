@@ -113,6 +113,7 @@ function drainTerminalOutput(session) {
 function queueTerminalOutput(session, output) {
   if (!session?.term || (typeof output !== "string" && !(output instanceof Uint8Array))) return;
   if (!output.length && !output.byteLength) return;
+  session.terminalOutputSequence = Number(session.terminalOutputSequence || 0) + 1;
   if (typeof captureTerminalAiBlockOutput === "function") captureTerminalAiBlockOutput(session, output);
   if (!session.pendingTerminalOutput) session.pendingTerminalOutput = [];
   session.pendingTerminalOutput.push(output);

@@ -57,6 +57,7 @@ const { assertPrivateStorage, ensurePrivateDirectory, ensurePrivateFile } = requ
 const { createUpdateChecker } = require("./update-checker");
 const { UpdateInstaller } = require("./update-installer");
 const { PACKAGE_ROOT, PACKAGE_VERSION } = require("./services/app-metadata-service");
+const { publicAiSettings: publicAiSettingsForRuntime } = require("./services/ai-service");
 
 function createServerRuntime(options: any = {}) {
   if (typeof options.createHttpListener !== "function") throw new Error("createHttpListener is required");
@@ -303,18 +304,7 @@ function createServerRuntime(options: any = {}) {
   }
 
   function publicAiSettings(value: any = {}) {
-    const source = value && typeof value === "object" ? value : {};
-    const {api_key: _apiKey, mcp_servers: mcpServers, ...safe} = source;
-    return {
-      ...safe,
-      mcp_servers:Array.isArray(mcpServers) ? mcpServers.map((item: any) => ({
-        ...item,
-        headers:item?.transport !== "stdio" && item?.headers && typeof item.headers === "object"
-          ? Object.fromEntries(Object.keys(item.headers).map(name => [name, ""]))
-          : undefined
-      })) : [],
-      api_key_configured:Boolean(String(_apiKey || ""))
-    };
+    return publicAiSettingsForRuntime(value);
   }
 
   function runtimeSettingsView() {

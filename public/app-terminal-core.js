@@ -797,6 +797,7 @@ async function connectTerminalAttempt(c, key, session, attempt) {
             session.remoteSessionEnded = false;
           } else if (control.state === "ended") {
             session.remoteSessionEnded = true;
+            if (typeof terminalAiMarkSessionEnded === "function") terminalAiMarkSessionEnded(session);
           } else if (control.state === "created" && (session.reconnectTokenRestored || session.expectingReattach) && !session.reconnectTokenStateHandled) {
             session.reconnectTokenStateHandled = true;
             session.expectingReattach = false;
@@ -821,6 +822,7 @@ async function connectTerminalAttempt(c, key, session, attempt) {
   socket.addEventListener("close", () => {
     if (session.socket !== socket) return;
     session.connected = false;
+    if (session.remoteSessionEnded && typeof terminalAiMarkSessionEnded === "function") terminalAiMarkSessionEnded(session);
     if (typeof cancelTerminalDirectoryInitialization === "function") cancelTerminalDirectoryInitialization(session, true);
     if (typeof closeTerminalZmodem === "function") closeTerminalZmodem(session);
     session.latencyPendingAt = 0;

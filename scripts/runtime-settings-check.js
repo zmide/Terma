@@ -119,6 +119,23 @@ async function main() {
   assert.equal(DEFAULT_TERMINAL_SETTINGS.font_size, 13);
   assert.match(DEFAULT_TERMINAL_SETTINGS.font_family, /monospace/);
   assert.deepEqual(DEFAULT_AI_SETTINGS.skills_enabled, ["linux-diagnostics", "security-audit", "log-analysis", "service-troubleshooting"]);
+  assert.equal(Array.isArray(DEFAULT_AI_SETTINGS.providers), true);
+  assert.equal(DEFAULT_AI_SETTINGS.active_provider_id, "default");
+  const multipleAi = normalizeRuntimeSettings({ai:{
+    enabled:true,
+    active_provider_id:"anthropic",
+    providers:[
+      {id:"openai", name:"OpenAI", endpoint:"https://api.openai.com/v1", model:"gpt-test", api_key:"secret-openai"},
+      {id:"anthropic", name:"Anthropic", endpoint:"https://api.anthropic.com/v1", model:"claude-test", api_type:"completions", api_key:"secret-anthropic"}
+    ]
+  }}).ai;
+  assert.equal(multipleAi.active_provider_id, "anthropic");
+  assert.equal(multipleAi.endpoint, "https://api.anthropic.com/v1");
+  assert.equal(multipleAi.model, "claude-test");
+  assert.equal(multipleAi.api_type, "completions");
+  assert.equal(multipleAi.api_key, "secret-anthropic");
+  assert.equal(multipleAi.providers[0].api_key, "secret-openai");
+  assert.equal(multipleAi.providers[1].api_key, "secret-anthropic");
   assert.deepEqual(normalizeRuntimeSettings({ai:{skills_enabled:["security-audit", "invalid-skill", "security-audit"]}}).ai.skills_enabled, ["security-audit"]);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {

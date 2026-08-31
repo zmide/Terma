@@ -58,11 +58,22 @@ function trackTerminalCommand(session, data, options={}) {
   }
 }
 
-function recordTerminalCommand(session, command) {
+function recordTerminalAgentCommand(session, command, metadata={}) {
+  const text = String(command || "").trim();
+  if (!text || session?.sensitiveInput) return;
+  session.commandBuffer = "";
+  session.commandCursor = 0;
+  session.commandBufferFromPaste = false;
+  session.commandBufferNeedsScreenSync = false;
+  session.commandScreenBeforeControl = null;
+  recordTerminalCommand(session, text, {...metadata, agent:true});
+}
+
+function recordTerminalCommand(session, command, metadata={}) {
   const text = String(command || "").trim();
   if (typeof resolveTerminalAiWaitingInput === "function" && resolveTerminalAiWaitingInput(session, text)) return;
   saveRecentTerminalCommand(text);
-  if (typeof captureTerminalAiBlockCommand === "function") captureTerminalAiBlockCommand(session, text);
+  if (typeof captureTerminalAiBlockCommand === "function") captureTerminalAiBlockCommand(session, text, metadata);
   const connection = currentConnection(session.id);
   if (connection) void trackTerminalDirectoryCommand(session, connection, session.key || activeTabKey, text);
 }
@@ -73,6 +84,7 @@ function resolveTerminalAiWaitingInput(session, input) {
   const waiting = state.agentWaitingForInput;
   if (!waiting || String(waiting.blockId || "") !== String(session.aiActiveBlockId || "")) return false;
   const block = state.blocks.find(item => String(item.id) === String(waiting.blockId));
+  const baselineOutput = String(block?.output || "");
   if (block) {
     block.waitingForInput = false;
     block.inputProvidedAt = Date.now();
@@ -81,6 +93,7 @@ function resolveTerminalAiWaitingInput(session, input) {
   state.agentWaitingForInput = null;
   terminalAiPersistState(session.key, state);
   if (state.open) renderTerminalAiPanel(session.key);
+  if (typeof terminalAiResumeAfterWaitingInput === "function" && waiting.taskId) terminalAiResumeAfterWaitingInput(session.key, waiting, baselineOutput);
   return true;
 }
 

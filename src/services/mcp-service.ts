@@ -14,7 +14,7 @@ type McpServerConfig = {
   timeout_ms: number;
 };
 
-type McpTool = {name: string; description?: string; inputSchema?: unknown; server_id: string; server_name: string};
+type McpTool = {name: string; description?: string; inputSchema?: unknown; risk?: "read" | "write" | "external"; server_id: string; server_name: string};
 
 const MCP_TIMEOUT_MS = 30000;
 const MCP_MAX_FRAME = 2_000_000;
@@ -68,6 +68,53 @@ function normalizeServer(value: any): McpServerConfig {
   try { parsed = new URL(url); } catch { throw publicError("MCP_CONFIG_INVALID", "MCP HTTP 地址无效", {}, 400); }
   if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password || parsed.hash) throw publicError("MCP_CONFIG_INVALID", "MCP HTTP 地址只能使用 HTTP 或 HTTPS，且不能包含凭据", {}, 400);
   return {id, name, transport, url:parsed.href, headers:normalizeHeaders(source.headers), enabled:source.enabled === true, timeout_ms:timeout};
+}
+
+function mcpToolRisk(tool: any): "read" | "write" | "external" {
+  const annotations = tool?.annotations && typeof tool.annotations === "object" ? tool.annotations : {};
+  if (annotations.readOnlyHint === true || annotations.read_only === true) return "read";
+  if (annotations.destructiveHint === true || annotations.destructive === true) return "write";
+  const name = `${tool?.name || ""} ${tool?.description || ""}`;
+  if (/(?:delete|remove|write|update|create|install|restart|stop|kill|send|publish|修改|删除|写入|安装|重启)/i.test(name)) return "write";
+  return /(?:http|web|search|fetch|browser|网络|网页|搜索)/i.test(name) ? "external" : "read";
+}
+
+function validateMcpArguments(schema: any, value: unknown, path = "$"): {valid: boolean; errors: string[]} {
+  const errors: string[] = [];
+  const visit = (definition: any, current: any, location: string, depth: number) => {
+    if (depth > 8) { errors.push(`${location}: schema nesting is too deep`); return; }
+    if (!definition || typeof definition !== "object" || Array.isArray(definition)) return;
+    if (Array.isArray(definition.enum) && definition.enum.length && !definition.enum.some(item => JSON.stringify(item) === JSON.stringify(current))) errors.push(`${location}: value is not allowed`);
+    const type = String(definition.type || "");
+    if (type === "object" || definition.properties) {
+      if (!current || typeof current !== "object" || Array.isArray(current)) { errors.push(`${location}: expected an object`); return; }
+      const properties = definition.properties && typeof definition.properties === "object" && !Array.isArray(definition.properties) ? definition.properties : {};
+      if (Object.keys(current).length > 64) errors.push(`${location}: too many properties`);
+      for (const required of Array.isArray(definition.required) ? definition.required.slice(0, 64) : []) if (typeof required === "string" && !Object.prototype.hasOwnProperty.call(current, required)) errors.push(`${location}.${required}: required`);
+      for (const [key, child] of Object.entries(current)) {
+        if (key === "__proto__" || key === "prototype" || key === "constructor") { errors.push(`${location}.${key}: invalid property`); continue; }
+        if (!Object.prototype.hasOwnProperty.call(properties, key)) {
+          if (definition.additionalProperties === false) errors.push(`${location}.${key}: unknown property`);
+          continue;
+        }
+        visit(properties[key], child, `${location}.${key}`, depth + 1);
+      }
+      return;
+    }
+    if (type === "array") {
+      if (!Array.isArray(current)) { errors.push(`${location}: expected an array`); return; }
+      if (current.length > 256) errors.push(`${location}: array is too long`);
+      current.slice(0, 256).forEach((item, index) => visit(definition.items, item, `${location}[${index}]`, depth + 1));
+      return;
+    }
+    if (type === "string" && typeof current !== "string") errors.push(`${location}: expected a string`);
+    if (type === "number" && (typeof current !== "number" || !Number.isFinite(current))) errors.push(`${location}: expected a number`);
+    if (type === "integer" && (!Number.isInteger(current))) errors.push(`${location}: expected an integer`);
+    if (type === "boolean" && typeof current !== "boolean") errors.push(`${location}: expected a boolean`);
+    if (typeof current === "string" && Number.isFinite(Number(definition.maxLength)) && current.length > Number(definition.maxLength)) errors.push(`${location}: string is too long`);
+  };
+  visit(schema, value, path, 0);
+  return {valid:errors.length === 0, errors:errors.slice(0, 8)};
 }
 
 function jsonRpcRequest(id: number, method: string, params: unknown = {}) {
@@ -331,7 +378,7 @@ export function createMcpManager() {
     const rawTools = Array.isArray(results.at(-1)?.tools) ? results.at(-1).tools : [];
     const tools = rawTools.slice(0, 128).flatMap((tool: any) => {
       const name = text(tool?.name, 120);
-      return name ? [{name, description:text(tool?.description, 500), inputSchema:tool?.inputSchema || {}, server_id:server.id, server_name:server.name}] : [];
+      return name ? [{name, description:text(tool?.description, 500), inputSchema:tool?.inputSchema || {}, risk:mcpToolRisk(tool), server_id:server.id, server_name:server.name}] : [];
     });
     return {server, tools};
   }
@@ -342,11 +389,16 @@ export function createMcpManager() {
     if (!tool || !/^[a-zA-Z0-9_.:-]+$/.test(tool)) throw publicError("MCP_TOOL_INVALID", "MCP 工具名称无效", {}, 400);
     if (!argumentsValue || typeof argumentsValue !== "object" || Array.isArray(argumentsValue)) throw publicError("MCP_ARGUMENTS_INVALID", "MCP 工具参数必须是 JSON 对象", {}, 400);
     const request = requestForTransport(server);
+    const runWithReconnect = async () => {
+      let lastError: any;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try { return await request(server, [{method:"initialize", params:{protocolVersion:"2025-06-18", capabilities:{}, clientInfo:{name:"Terma", version:"1.0"}}}, {method:"tools/call", params:{name:tool, arguments:argumentsValue}}]); }
+        catch (error) { lastError = error; if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 80)); }
+      }
+      throw lastError;
+    };
     try {
-      const result = await request(server, [
-        {method:"initialize", params:{protocolVersion:"2025-06-18", capabilities:{}, clientInfo:{name:"Terma", version:"1.0"}}},
-        {method:"tools/call", params:{name:tool, arguments:argumentsValue}}
-      ]);
+      const result = await runWithReconnect();
       calls.unshift({server_id:server.id, tool, at:Date.now(), ok:true});
       return result.at(-1) || {};
     } catch (error: any) {
@@ -357,4 +409,4 @@ export function createMcpManager() {
   return {discover, call, calls:() => calls.slice()};
 }
 
-export { normalizeServer };
+export { normalizeServer, mcpToolRisk, validateMcpArguments };

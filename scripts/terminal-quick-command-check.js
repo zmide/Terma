@@ -95,13 +95,30 @@ assert.equal(safe.quick_action, "execute");
 assert.equal(safe.quick_badge, "");
 assert.equal(safe.quick_color, "blue");
 assert.equal(safe.quick_sort_order, 1000000);
-assert.deepEqual(inserted.slice(5, 11), [1, 1, "execute", "", "blue", 1000000]);
+assert.equal(inserted[5], "");
+assert.deepEqual(inserted.slice(6, 12), [1, 1, "execute", "", "blue", 1000000]);
+assert.deepEqual(inserted.slice(12), [100, 100]);
+const workflowSnippet = repository.insertCommandSnippet({
+  name:"参数化工作流",
+  command:"echo ${path} && echo ${port} && echo ${token}",
+  workflow_json:{version:2, dryRun:true, parameters:[
+    {name:"path", type:"path", required:true, default:"/tmp/demo"},
+    {name:"port", type:"port", required:true, default:"8080"},
+    {name:"token", type:"text", required:true, secret:true, default:"do-not-save"}
+  ], steps:[{command:"echo ${path}"},{command:"echo ${port}"}]}
+});
+const workflow = JSON.parse(workflowSnippet.workflow_json);
+assert.equal(workflow.version, 2);
+assert.equal(workflow.dryRun, true);
+assert.equal(workflow.parameters.find(item => item.name === "token").default, "");
+assert.equal(workflow.steps.length, 2);
 const changed = repository.updateCommandSnippet(7, {quick_action:"insert", quick_badge:"库", quick_color:"purple", quick_sort_order:4});
 assert.equal(changed.quick_action, "insert");
 assert.equal(changed.quick_badge, "database");
 assert.equal(changed.quick_color, "purple");
 assert.equal(changed.quick_sort_order, 4);
-assert.deepEqual(updated.slice(5, 11), [1, 1, "insert", "database", "purple", 4]);
+assert.equal(updated[5], "");
+assert.deepEqual(updated.slice(6, 12), [1, 1, "insert", "database", "purple", 4]);
 assert.match(commandSnippets, /commandSnippetLegacyBadgeCodes/);
 assert.match(quickCommands, /commandSnippetBadgeGlyph\(item\.quick_badge\)/);
 assert.match(migrations, /WHEN '服' THEN 'service'/);
