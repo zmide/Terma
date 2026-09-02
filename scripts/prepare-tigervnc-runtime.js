@@ -23,7 +23,7 @@ const RELEASES = Object.freeze({
     file: `TigerVNC-${VERSION}.dmg`,
     url: `${SOURCE_ROOT}/TigerVNC-${VERSION}.dmg`,
     bytes: 6845311,
-    sha256: "aa0ef07e4ebf4e068cbf1118273459b5b616177cb6abf15a538af018ebfb5933"
+    sha256: "aa0ef07e4ebe4f068cbf1118273459b5b616177cb6abf15a538af018ebfb5933"
   },
   linux: {
     arch: "x64",
