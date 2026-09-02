@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const net = require("node:net");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { spawn, spawnSync } = require("node:child_process");
 const { pipeline } = require("node:stream/promises");
 const { Readable } = require("node:stream");
@@ -8,6 +9,25 @@ const { launchWindowsRdpWithCredential } = require("./windows-rdp-credentials");
 
 const MAC_WINDOWS_APP_URL = "macappstore://itunes.apple.com/app/id1295203466";
 const MAC_WINDOWS_APP_PACKAGE_URL = "https://go.microsoft.com/fwlink/?linkid=868963";
+
+// TigerVNC uses the standard VNC DES key with each key byte bit-reversed and
+// stores only an obfuscated, eight-byte password. The repeated-key 3DES form
+// is available in OpenSSL 3 (single DES is not) and is mathematically
+// equivalent to one DES pass.
+const VNC_PASSWORD_KEY = Buffer.from([23, 82, 107, 6, 35, 78, 88, 7].map(value => {
+  let reversed = 0;
+  for (let bit = 0; bit < 8; bit += 1) reversed = (reversed << 1) | ((value >> bit) & 1);
+  return reversed;
+}));
+
+function obfuscateVncPassword(password) {
+  const input = Buffer.alloc(8);
+  Buffer.from(String(password || ""), "utf8").copy(input, 0, 0, 8);
+  const key = Buffer.concat([VNC_PASSWORD_KEY, VNC_PASSWORD_KEY, VNC_PASSWORD_KEY]);
+  const cipher = crypto.createCipheriv("des-ede3", key, null);
+  cipher.setAutoPadding(false);
+  return Buffer.concat([cipher.update(input), cipher.final()]);
+}
 
 function normalizeDesktopLanguage(value) {
   return String(value || "") === "en-US" ? "en-US" : "zh-CN";
@@ -75,6 +95,9 @@ function createRemoteClientAdapter(options = {}) {
   const getVncClientPath = typeof options.getVncClientPath === "function"
     ? options.getVncClientPath
     : () => options.vncClientPath || "";
+  const getBundledVncRuntime = typeof options.getBundledVncRuntime === "function"
+    ? options.getBundledVncRuntime
+    : () => options.bundledVncRuntime || null;
   const getLanguage = languageGetter(options, environment);
   const text = (chinese, english) => desktopUiText(getLanguage(), chinese, english);
   const normalizeHost = value => normalizeRemoteClientHost(value, getLanguage());
@@ -145,6 +168,36 @@ function createRemoteClientAdapter(options = {}) {
     } catch {
       return "";
     }
+  }
+
+  function bundledVncClient() {
+    let runtime = null;
+    try { runtime = getBundledVncRuntime(); } catch { runtime = null; }
+    const executable = typeof runtime === "string" ? runtime : String(runtime?.executable || "").trim();
+    if (!executable) return {available:false, launchable:false, bundled:false, client:"", executable:"", mode:"", application:""};
+    try {
+      if (!existsSync(executable) || !statSync(executable).isFile()) return {available:false, launchable:false, bundled:false, client:"", executable:"", mode:"", application:""};
+      if (platform !== "win32") accessSync(executable, fs.constants.X_OK);
+    } catch {
+      return {available:false, launchable:false, bundled:false, client:"", executable:"", mode:"", application:""};
+    }
+    const application = platform === "darwin"
+      ? String(typeof runtime === "object" ? runtime.application || path.dirname(path.dirname(path.dirname(executable))) : "")
+      : "";
+    const details = vncClientDetails(executable, false);
+    return {
+      ...details,
+      client:text("Terma 内置 TigerVNC Viewer", "Terma bundled TigerVNC Viewer"),
+      // Launch the bundled viewer binary directly on every platform.  This
+      // keeps the TigerVNC `-passwd` option available on macOS too; opening
+      // the .app through `/usr/bin/open` cannot pass a password file.
+      executable,
+      mode:"tigervnc",
+      application,
+      bundled:true,
+      available:true,
+      launchable:true
+    };
   }
 
   function vncClientDetails(executable, configured = false) {
@@ -337,6 +390,23 @@ function createRemoteClientAdapter(options = {}) {
             : text("当前 Terma 没有可用的图形桌面 DISPLAY", "No graphical desktop DISPLAY is available to Terma")
       };
     }
+    const systemVnc = {...vnc};
+    const bundled = bundledVncClient();
+    vnc = {
+      ...systemVnc,
+      available:Boolean(bundled.available || systemVnc.available),
+      launchable:Boolean(bundled.available || systemVnc.launchable),
+      client:bundled.available ? bundled.client : systemVnc.client,
+      executable:bundled.available ? bundled.executable : systemVnc.executable,
+      mode:bundled.available ? bundled.mode : systemVnc.mode,
+      application:bundled.available ? bundled.application : systemVnc.application,
+      configured:bundled.available ? false : systemVnc.configured,
+      bundled_available:Boolean(bundled.available),
+      bundled,
+      system:systemVnc,
+      system_available:Boolean(systemVnc.available),
+      fallback_chain:["bundled-tigervnc", "embedded-novnc", "system"]
+    };
     return {
       platform,
       rdp,
@@ -437,6 +507,19 @@ function createRemoteClientAdapter(options = {}) {
     const directory = path.join(getDataDir(), "remote-client");
     fs.mkdirSync(directory, {recursive:true});
     return directory;
+  }
+
+  function temporaryVncPasswordFile(password) {
+    const directory = fs.mkdtempSync(path.join(temporaryDirectory(), ".vnc-pass-"));
+    const file = path.join(directory, "passwd");
+    fs.writeFileSync(file, obfuscateVncPassword(password), {mode:0o600});
+    try { fs.chmodSync(file, 0o600); } catch {}
+    return {
+      file,
+      cleanup:() => {
+        try { fs.rmSync(directory, {recursive:true, force:true}); } catch {}
+      }
+    };
   }
 
   function cacheInfo() {
@@ -676,7 +759,21 @@ function createRemoteClientAdapter(options = {}) {
       const args = [`${net.isIP(host) === 6 ? `[${host}]` : host}::${port}`, `-QualityLevel=${Number(value.quality ?? 8)}`];
       if (value.shared) args.push("-Shared");
       if (value.view_only) args.push("-ViewOnly");
-      await spawnDetached(item.executable, args);
+      const temporaryPassword = String(profile.temporary_password ? profile.password || "" : "");
+      const password = temporaryPassword || String(profile.password || "");
+      let passwordFile = null;
+      try {
+        if (password) {
+          passwordFile = temporaryVncPasswordFile(password);
+          args.push("-passwd", passwordFile.file);
+        }
+        await spawnDetached(item.executable, args);
+        if (passwordFile) setTimeout(passwordFile.cleanup, 60 * 1000).unref?.();
+      } catch (error) {
+        passwordFile?.cleanup();
+        throw error;
+      }
+      return {ok:true, protocol:"vnc", client:item.client, credentials:passwordFile ? (temporaryPassword ? "temporary-password" : "saved-password") : "prompt"};
     }
     else if (item.mode === "realvnc") {
       // RealVNC Viewer does not accept TigerVNC-only switches. Its portable
@@ -700,7 +797,16 @@ function createRemoteClientAdapter(options = {}) {
     const port = Number(profile.port);
     if (!host || !Number.isInteger(port) || port < 1 || port > 65535) throw new Error(text("远程桌面目标无效", "The remote-desktop target is invalid"));
     const state = diagnostics();
-    return profile.protocol === "rdp" ? openRdp(profile, state.rdp) : openVnc(profile, state.vnc);
+    if (profile.protocol === "rdp") return openRdp(profile, state.rdp);
+    const clientMode = String(profile.options?.client_mode || "auto");
+    const requestedSystem = clientMode === "system";
+    const requestedBundled = clientMode === "bundled";
+    const item = requestedSystem
+      ? (state.vnc.system || {available:false, launchable:false, reason:text("未找到系统 VNC 客户端", "No system VNC client was found")})
+      : requestedBundled
+        ? (state.vnc.bundled || {available:false, launchable:false, reason:text("未找到内置 TigerVNC Viewer", "Bundled TigerVNC Viewer is not available")})
+        : state.vnc;
+    return openVnc(profile, item);
   }
 
   async function install(protocol) {

@@ -28,7 +28,7 @@ const focusStart = source.indexOf("function vncSessionCanFocus(");
 const focusEnd = source.indexOf("\nasync function ensureVncClipboardTransport", focusStart);
 const vncFocus = source.slice(focusStart, focusEnd);
 const connectStart = source.indexOf("async function connectEmbeddedVnc(");
-const connectEnd = source.indexOf("\nasync function saveVncCredential", connectStart);
+const connectEnd = source.indexOf("\nasync function handleVncSecurityFailure", connectStart);
 const connectEmbeddedVnc = source.slice(connectStart, connectEnd);
 const fullscreenSource = vncWindowSource;
 const cursorPolicyStart = source.indexOf("function normalizeVncRemotePlatform(");
@@ -79,7 +79,7 @@ const desktopProbe = openRemoteDesktop.indexOf("inspectLinuxDesktopForRemoteProf
 assert.ok(cachedWorkspace >= 0, "VNC open path must detect an existing workspace");
 assert.ok(desktopProbe >= 0, "first VNC open must retain Linux desktop diagnostics");
 assert.ok(cachedWorkspace < desktopProbe, "an existing VNC workspace must be restored before any remote desktop probe");
-assert.match(openRemoteDesktop, /const existingVncSession = embeddedVnc \? vncSessions\.get\(key\) : null;[\s\S]*?if \(!showManagement && existingVncSession\?\.workspace && \(existingVncSession\.connected \|\| existingVncSession\.connecting\)\) \{[\s\S]*?existingVncSession\.presentation === "management"[\s\S]*?showVncManagement\(profile\.id, key, false\)[\s\S]*?return renderEmbeddedVnc\(profile, key\)/, "tab switching must preserve the user's management/viewer choice for a live VNC session");
+assert.match(openRemoteDesktop, /const existingVncSession = profile\.protocol === "vnc" \? vncSessions\.get\(key\) : null;[\s\S]*?if \(!showManagement && existingVncSession\?\.workspace && \(existingVncSession\.connected \|\| existingVncSession\.connecting\)\) \{[\s\S]*?existingVncSession\.presentation === "management"[\s\S]*?showVncManagement\(profile\.id, key, false\)[\s\S]*?return renderEmbeddedVnc\(profile, key\)/, "tab switching must preserve the user's management/viewer choice for a live VNC session");
 assert.match(openRemoteDesktop, /id="remoteDesktopCloseButton"[\s\S]*?closeEmbeddedVncDesktop\([^)]*\)[\s\S]*?关闭桌面/, "the probe page must include a close action for a retained embedded desktop");
 
 const cachedBranch = renderEmbeddedVnc.slice(

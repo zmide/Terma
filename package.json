@@ -1,6 +1,6 @@
 {
   "name": "terma",
-  "version": "1.5.9",
+  "version": "1.6.0",
   "releaseRevision": 1,
   "private": true,
   "license": "GPL-3.0-only",
@@ -24,13 +24,15 @@
     "icon:mac": "node scripts/generate-mac-icon.js",
     "xserver:prepare": "node scripts/prepare-xserver-runtime.js",
     "xserver:diagnose": "node scripts/prepare-xserver-runtime.js --diagnose",
-    "package": "npm run build && npm run native:build:required && npm run xserver:prepare && electron-builder --dir",
-    "dist": "npm run build && npm run native:build:required && npm run xserver:prepare && electron-builder",
+    "vnc:prepare": "node scripts/prepare-tigervnc-runtime.js",
+    "vnc:diagnose": "node scripts/prepare-tigervnc-runtime.js --diagnose",
+    "package": "npm run build && npm run native:build:required && npm run xserver:prepare && npm run vnc:prepare && electron-builder --dir",
+    "dist": "npm run build && npm run native:build:required && npm run xserver:prepare && npm run vnc:prepare && electron-builder",
     "start": "node dist/server.js",
     "check": "tsc --noEmit",
     "check:strict": "tsc -p tsconfig.strict.json",
     "mcp:check": "npm run build && node scripts/mcp-check.js",
-    "regression": "npm run build && npm run check:strict && node scripts/check-frontend.js && node scripts/i18n-check.js && node scripts/backend-public-error-check.js && node scripts/notification-i18n-check.js && node scripts/notification-source-i18n-check.js && node scripts/quick-terminal-check.js && node scripts/batch-command-check.js && node scripts/frontend-module-boundary-check.js && node scripts/update-markdown-check.js && node scripts/readme-bilingual-check.js && node scripts/release-bilingual-check.js && node scripts/workflow-action-pin-check.js && node scripts/release-publish-assets-check.js && node scripts/program-cache-check.js && node scripts/remote-install-ui-check.js && node scripts/remote-component-install-plans-check.js && node scripts/remote-privilege-check.js && node scripts/remote-protocol-check.js && node scripts/remote-probe-protocol-check.js && node scripts/remote-graphics-rendering-check.js && node scripts/remote-profile-migration-check.js && node scripts/remote-profile-from-ssh-check.js && node scripts/remote-host-group-check.js && node scripts/remote-client-adapter-check.js && node scripts/desktop-browser-integration-check.js && node scripts/remote-offline-installer-check.js && node scripts/remote-offline-tasks-check.js && node scripts/xserver-runtime-check.js && node scripts/x11-clipboard-image-bridge-check.js && node scripts/remote-posix-check.js && node scripts/x11-application-check.js && node scripts/x11-sshd-config-check.js && node scripts/x11-clipboard-helper-check.js && node scripts/linux-desktop-manager-check.js && node scripts/xdmcp-manager-check.js && node scripts/vnc-handshake-check.js && node scripts/vnc-proxy-check.js && node scripts/vnc-server-manager-check.js && node scripts/vnc-credential-check.js && node scripts/vnc-clipboard-check.js && node scripts/vnc-clipboard-bridge-check.js && node scripts/vnc-clipboard-image-check.js && node scripts/vnc-workspace-reuse-check.js && node scripts/vnc-detached-window-check.js && node scripts/vnc-performance-check.js && node scripts/ui-state-revision-check.js && node scripts/persistent-ssh-command-check.js && node scripts/productivity-features-check.js && node scripts/terminal-tab-connection-check.js && node scripts/terminal-responsiveness-check.js && node scripts/terminal-output-flow-check.js && node scripts/forward-restart-recovery-check.js && node scripts/forward-reconfigure-check.js && node scripts/forward-url-path-check.js && node scripts/terminal-quick-command-check.js && node scripts/sftp-sync-check.js && node scripts/sftp-external-edit-check.js && node scripts/ssh-key-wizard-check.js && node scripts/identity-path-security-check.js && node scripts/identity-compatibility-check.js && node scripts/storage-restore-encryption-check.js && node scripts/config-encryption-boundary-check.js && node scripts/config-encryption-http-check.js && node scripts/storage-permissions-check.js && node scripts/workspace-docking-check.js && node scripts/workspace-pane-isolation-check.js && node scripts/terminal-pty-check.js && node scripts/terminal-zmodem-check.js && node scripts/ssh-capabilities-check.js && node scripts/ssh-connection-check.js && node scripts/connection-health-check.js && node scripts/ssh-auth-matrix-check.js && node scripts/terminal-session-check.js && node scripts/terminal-startup-check.js && node scripts/terminal-startup-api-check.js && node scripts/terminal-drop-upload-check.js && node scripts/terminal-clipboard-image-check.js && node scripts/local-files-check.js && node scripts/local-files-ui-check.js && node scripts/route-extraction-check.js && node scripts/sftp-local-delivery-check.js && node scripts/terminal-log-session-check.js && node scripts/websocket-frame-check.js && node scripts/socks-forward-check.js && node scripts/port-kill-security-check.js && node scripts/auth-protection-check.js && node scripts/security-boundary-check.js && node scripts/web-auth-integration-check.js && node scripts/log-reader-check.js && node scripts/database-transfer-check.js && node scripts/connection-duplicate-check.js && node scripts/sftp-encoding-check.js && node scripts/sftp-session-check.js && node scripts/sftp-download-integrity-check.js && node scripts/sftp-job-lifecycle-check.js && node scripts/sftp-checkpoint-transfer-check.js && node scripts/sftp-job-range-check.js && node scripts/sftp-range-cache-check.js && node scripts/sftp-transfer-concurrency-check.js && node scripts/sftp-backend-check.js && node scripts/sftp-delete-job-check.js && node scripts/sftp-native-drag-check.js && node native/win-sftp-drag/tests/source-contract-check.js && node scripts/native-sftp-drag-desktop-check.js && node scripts/fault-injection-check.js && node scripts/dependency-state-check.js && node scripts/brand-data-migration-check.js && node scripts/desktop-storage-migration-check.js && node scripts/desktop-startup-check.js && node scripts/source-runtime-path-check.js && node scripts/sftp-pagination-check.js && node scripts/update-checker-check.js && node scripts/update-installer-check.js && node scripts/runtime-settings-check.js && node scripts/ai-check.js && node scripts/mcp-check.js && node scripts/database-reopen-check.js && node scripts/database-credential-backup-check.js && node scripts/ssh-host-trust-check.js && node scripts/ssh2-error-isolation-check.js && node scripts/web-regression-harness.js",
+    "regression": "npm run build && npm run check:strict && node scripts/check-frontend.js && node scripts/i18n-check.js && node scripts/backend-public-error-check.js && node scripts/notification-i18n-check.js && node scripts/notification-source-i18n-check.js && node scripts/quick-terminal-check.js && node scripts/batch-command-check.js && node scripts/frontend-module-boundary-check.js && node scripts/update-markdown-check.js && node scripts/readme-bilingual-check.js && node scripts/release-bilingual-check.js && node scripts/workflow-action-pin-check.js && node scripts/release-publish-assets-check.js && node scripts/program-cache-check.js && node scripts/remote-install-ui-check.js && node scripts/remote-component-install-plans-check.js && node scripts/remote-privilege-check.js && node scripts/remote-protocol-check.js && node scripts/remote-probe-protocol-check.js && node scripts/remote-graphics-rendering-check.js && node scripts/remote-profile-migration-check.js && node scripts/remote-profile-from-ssh-check.js && node scripts/remote-host-group-check.js && node scripts/remote-client-adapter-check.js && node scripts/tigervnc-runtime-check.js && node scripts/desktop-browser-integration-check.js && node scripts/remote-offline-installer-check.js && node scripts/remote-offline-tasks-check.js && node scripts/xserver-runtime-check.js && node scripts/x11-clipboard-image-bridge-check.js && node scripts/remote-posix-check.js && node scripts/x11-application-check.js && node scripts/x11-sshd-config-check.js && node scripts/x11-clipboard-helper-check.js && node scripts/linux-desktop-manager-check.js && node scripts/xdmcp-manager-check.js && node scripts/vnc-handshake-check.js && node scripts/vnc-proxy-check.js && node scripts/vnc-server-manager-check.js && node scripts/vnc-credential-check.js && node scripts/vnc-clipboard-check.js && node scripts/vnc-clipboard-bridge-check.js && node scripts/vnc-clipboard-image-check.js && node scripts/vnc-workspace-reuse-check.js && node scripts/vnc-detached-window-check.js && node scripts/vnc-performance-check.js && node scripts/ui-state-revision-check.js && node scripts/persistent-ssh-command-check.js && node scripts/productivity-features-check.js && node scripts/terminal-tab-connection-check.js && node scripts/terminal-responsiveness-check.js && node scripts/terminal-output-flow-check.js && node scripts/forward-restart-recovery-check.js && node scripts/forward-reconfigure-check.js && node scripts/forward-url-path-check.js && node scripts/terminal-quick-command-check.js && node scripts/sftp-sync-check.js && node scripts/sftp-external-edit-check.js && node scripts/ssh-key-wizard-check.js && node scripts/identity-path-security-check.js && node scripts/identity-compatibility-check.js && node scripts/storage-restore-encryption-check.js && node scripts/config-encryption-boundary-check.js && node scripts/config-encryption-http-check.js && node scripts/storage-permissions-check.js && node scripts/workspace-docking-check.js && node scripts/workspace-pane-isolation-check.js && node scripts/terminal-pty-check.js && node scripts/terminal-zmodem-check.js && node scripts/ssh-capabilities-check.js && node scripts/ssh-connection-check.js && node scripts/connection-health-check.js && node scripts/ssh-auth-matrix-check.js && node scripts/terminal-session-check.js && node scripts/terminal-startup-check.js && node scripts/terminal-startup-api-check.js && node scripts/terminal-drop-upload-check.js && node scripts/terminal-clipboard-image-check.js && node scripts/local-files-check.js && node scripts/local-files-ui-check.js && node scripts/route-extraction-check.js && node scripts/sftp-local-delivery-check.js && node scripts/terminal-log-session-check.js && node scripts/websocket-frame-check.js && node scripts/socks-forward-check.js && node scripts/port-kill-security-check.js && node scripts/auth-protection-check.js && node scripts/security-boundary-check.js && node scripts/web-auth-integration-check.js && node scripts/log-reader-check.js && node scripts/database-transfer-check.js && node scripts/connection-duplicate-check.js && node scripts/sftp-encoding-check.js && node scripts/sftp-session-check.js && node scripts/sftp-download-integrity-check.js && node scripts/sftp-job-lifecycle-check.js && node scripts/sftp-checkpoint-transfer-check.js && node scripts/sftp-job-range-check.js && node scripts/sftp-range-cache-check.js && node scripts/sftp-transfer-concurrency-check.js && node scripts/sftp-backend-check.js && node scripts/sftp-delete-job-check.js && node scripts/sftp-native-drag-check.js && node native/win-sftp-drag/tests/source-contract-check.js && node scripts/native-sftp-drag-desktop-check.js && node scripts/fault-injection-check.js && node scripts/dependency-state-check.js && node scripts/brand-data-migration-check.js && node scripts/desktop-storage-migration-check.js && node scripts/desktop-startup-check.js && node scripts/source-runtime-path-check.js && node scripts/sftp-pagination-check.js && node scripts/update-checker-check.js && node scripts/update-installer-check.js && node scripts/runtime-settings-check.js && node scripts/ai-check.js && node scripts/mcp-check.js && node scripts/database-reopen-check.js && node scripts/database-credential-backup-check.js && node scripts/ssh-host-trust-check.js && node scripts/ssh2-error-isolation-check.js && node scripts/web-regression-harness.js",
     "ui:smoke": "npm run build && node scripts/ui-smoke-harness.js",
     "graphics:acceptance": "npm run build && node scripts/remote-graphics-real-acceptance.js --confirm-real-graphics",
     "x11:acceptance": "npm run build && node scripts/x11-builtin-real-acceptance.js --confirm-real-x11",
@@ -85,11 +87,35 @@
       "native/macos-sftp-drag/index.js",
       "native/macos-sftp-drag/package.json",
       "native/macos-sftp-drag/prebuilds/**/*",
-      "package.json"
+      "package.json",
+      "!.codex-ui-*{,/**/*}",
+      "!.terma-*{,/**/*}",
+      "!.tmp-*{,/**/*}",
+      "!.worktrees{,/**/*}",
+      "!node_modules/ace-builds/src{,/**/*}",
+      "!node_modules/ace-builds/src-noconflict{,/**/*}",
+      "!node_modules/ace-builds/src-min{,/**/*}",
+      "!node_modules/ace-builds/types{,/**/*}",
+      "!node_modules/ace-builds/*.d.ts",
+      "!node_modules/lucide/dist{,/**/*}",
+      "node_modules/lucide/dist/umd/lucide.min.js",
+      "node_modules/lucide/LICENSE",
+      "node_modules/lucide/package.json",
+      "!dist/**/*.map"
+    ],
+    "electronLanguages": [
+      "en-US",
+      "zh-CN"
     ],
     "extraResources": [
-      "LICENSE",
-      "THIRD_PARTY_NOTICES.md"
+      {
+        "from": "LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      }
     ],
     "asarUnpack": [
       "node_modules/node-pty/**/*",
@@ -102,6 +128,10 @@
         {
           "from": "runtime/xserver/win32",
           "to": "xserver"
+        },
+        {
+          "from": "runtime/tigervnc/win32-x64",
+          "to": "tigervnc"
         }
       ],
       "target": [
@@ -126,6 +156,10 @@
         {
           "from": "native/linux-sftp-drag/prebuilds/linux-${arch}/terma-linux-sftp-dragfs",
           "to": "native/terma-linux-sftp-dragfs"
+        },
+        {
+          "from": "runtime/tigervnc/linux-x64",
+          "to": "tigervnc"
         }
       ],
       "target": [
@@ -153,6 +187,12 @@
     "mac": {
       "artifactName": "${productName}-${version}-macos-${arch}.${ext}",
       "icon": "desktop/assets/icon.icns",
+      "extraResources": [
+        {
+          "from": "runtime/tigervnc/darwin-universal",
+          "to": "tigervnc"
+        }
+      ],
       "target": [
         "dmg",
         "zip"

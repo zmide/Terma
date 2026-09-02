@@ -326,6 +326,23 @@ export async function handleRemoteProfileRoutes(
       return true;
     }
     if (!["rdp", "vnc", "xdmcp"].includes(profile.protocol)) throw new Error("该连接不是图形桌面配置");
+    const launchData = await dependencies.readJson(request);
+    const requestedClientMode = profile.protocol === "vnc" && launchData && Object.prototype.hasOwnProperty.call(launchData, "client_mode")
+      ? String(launchData.client_mode || "")
+      : "";
+    const hasRequestedVncPassword = Boolean(launchData && Object.prototype.hasOwnProperty.call(launchData, "vnc_password"));
+    if (hasRequestedVncPassword && typeof launchData.vnc_password !== "string") throw new Error("临时 VNC 密码必须是字符串");
+    const requestedVncPassword = hasRequestedVncPassword
+      ? String(launchData.vnc_password ?? "")
+      : "";
+    if (hasRequestedVncPassword && profile.protocol !== "vnc") throw new Error("临时 VNC 密码只能用于 VNC 连接");
+    if (hasRequestedVncPassword && !requestedVncPassword) throw new Error("临时 VNC 密码不能为空");
+    if (requestedVncPassword.length > 4096 || /[\0\r\n]/.test(requestedVncPassword)) {
+      throw new Error("临时 VNC 密码无效");
+    }
+    if (requestedClientMode && !["auto", "bundled", "embedded", "system"].includes(requestedClientMode)) {
+      throw new Error("无效的 VNC 客户端模式");
+    }
     const desktopIntegration = dependencies.getDesktopIntegration();
     const launcher = profile.protocol === "xdmcp" ? desktopIntegration?.openXdmcp : desktopIntegration?.openRemoteClient;
     if (!launcher) {
@@ -338,6 +355,9 @@ export async function handleRemoteProfileRoutes(
         throw new Error(`无法从本机连接 RDP 服务 ${dependencies.formatRemoteEndpoint(profile.host, profile.port || 3389)}（${endpoint.error || "端口不可达"}）。请检查远端服务、防火墙和网络路由。`);
       }
     }
+    const launchOptions = requestedClientMode
+      ? {...(profile.options || {}), client_mode:requestedClientMode}
+      : profile.options;
     let result: any;
     try {
       result = await Promise.resolve(launcher({
@@ -346,8 +366,9 @@ export async function handleRemoteProfileRoutes(
         host:profile.host,
         port:profile.port,
         username:profile.username,
-        password:profile.password,
-        options:profile.options
+        password:requestedVncPassword || profile.password,
+        temporary_password:Boolean(requestedVncPassword),
+        options:launchOptions
       }));
     } catch (error) {
       const failure: any = new Error(error instanceof Error ? error.message : "系统远程桌面客户端启动失败");

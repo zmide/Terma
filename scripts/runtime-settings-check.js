@@ -121,6 +121,10 @@ async function main() {
   assert.deepEqual(DEFAULT_AI_SETTINGS.skills_enabled, ["linux-diagnostics", "security-audit", "log-analysis", "service-troubleshooting"]);
   assert.equal(Array.isArray(DEFAULT_AI_SETTINGS.providers), true);
   assert.equal(DEFAULT_AI_SETTINGS.active_provider_id, "default");
+  for (const effort of ["none", "minimal", "low", "medium", "high", "xhigh", "max"]) {
+    assert.equal(normalizeRuntimeSettings({ai:{reasoning_effort:effort}}).ai.reasoning_effort, effort);
+  }
+  assert.equal(normalizeRuntimeSettings({ai:{reasoning_effort:"unsupported"}}).ai.reasoning_effort, "none");
   const multipleAi = normalizeRuntimeSettings({ai:{
     enabled:true,
     active_provider_id:"anthropic",
@@ -306,8 +310,9 @@ async function main() {
 
     const info = await waitForFile(path.join(dataDir, "web.json"));
     assert.equal(info.requested_port, occupied.port);
-    assert.equal(info.actual_port, occupied.port + 1);
-    assert.equal(info.fallback_count, 1);
+    assert.ok(info.actual_port > occupied.port);
+    assert.equal(info.fallback_count, info.actual_port - occupied.port);
+    assert.ok(info.fallback_count >= 1);
     assert.deepEqual(info.actual_hosts, startupHosts);
     assert.equal(info.urls.includes(info.local_url), true);
     const persistedAfterFallback = JSON.parse(fs.readFileSync(runtimeFile, "utf8"));

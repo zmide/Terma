@@ -113,7 +113,9 @@ async function main() {
     remote:fs.readFileSync(path.join(root, "public", "app-remote.js"), "utf8"),
     rdp:fs.readFileSync(path.join(root, "public", "app-remote-rdp.js"), "utf8"),
     xdmcp:fs.readFileSync(path.join(root, "public", "app-remote-xdmcp.js"), "utf8"),
-    vnc:fs.readFileSync(path.join(root, "public", "app-vnc.js"), "utf8"),
+    vnc:["app-vnc-management.js", "app-vnc.js"]
+      .map(file => fs.readFileSync(path.join(root, "public", file), "utf8"))
+      .join("\n"),
     vncClipboard:fs.readFileSync(path.join(root, "public", "app-vnc-clipboard.js"), "utf8"),
     quickSsh:fs.readFileSync(path.join(root, "public", "app-quick-ssh.js"), "utf8"),
     sshModal:fs.readFileSync(path.join(root, "public", "app-ssh-credentials.js"), "utf8"),

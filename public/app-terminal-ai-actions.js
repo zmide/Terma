@@ -364,7 +364,7 @@ if (typeof registerTermaAction === "function") {
   });
   registerTermaAction("terminal-ai-reasoning", ({element}) => {
     const key = element.dataset.terminalAiKey || activeTabKey;
-    terminalAiStateForKey(key).reasoning_effort = ["none", "low", "medium", "high"].includes(element.value) ? element.value : "none";
+    terminalAiStateForKey(key).reasoning_effort = ["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(element.value) ? element.value : "none";
     renderTerminalAiPanel(key);
   });
   registerTermaAction("terminal-ai-deep-thinking", ({element}) => {

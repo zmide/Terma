@@ -7,6 +7,7 @@ const { readSources } = require("./backend-source");
 const {
   DETECT_SCRIPT,
   buildVncStartCommand,
+  buildVncPasswordChangeCommand,
   buildDetectionScript,
   detectVncServer,
   manualGuide,
@@ -190,6 +191,14 @@ const passwordHeadlessStart = buildVncStartCommand(greeterOnly, "temporary-vnc-s
 assert.match(passwordHeadlessStart, /-SecurityTypes VncAuth -PasswordFile '\/home\/operator\/\.vnc\/passwd'/);
 assert.match(passwordHeadlessStart, /x11vnc -storepasswd/);
 assert.doesNotMatch(passwordHeadlessStart, /temporary-vnc-secret/);
+const passwordChange = buildVncPasswordChangeCommand({...greeterOnly, service_unit:"terma-tigervnc-1.service"}, "temporary-vnc-secret");
+assert.match(passwordChange, /x11vnc -storepasswd/);
+assert.match(passwordChange, /systemctl restart 'terma-tigervnc-1\.service'/);
+assert.doesNotMatch(passwordChange, /temporary-vnc-secret/, "修改 VNC 密码命令不得包含明文密码");
+const passwordlessChange = buildVncPasswordChangeCommand({...greeterOnly, service_unit:"terma-tigervnc-1.service"}, "", {allow_no_password:true});
+assert.match(passwordlessChange, /-SecurityTypes None --I-KNOW-THIS-IS-INSECURE/);
+assert.doesNotMatch(passwordlessChange, /-PasswordFile/);
+assert.match(passwordlessChange, /systemctl restart 'terma-tigervnc-1\.service'/);
 assert.equal(buildVncStartCommand(greeterOnly, "", {allow_no_password:true}), headlessStart, "重复生成的 TigerVNC 服务配置应保持幂等");
 const taintedTigerWrapper = {
   ...greeterOnly,

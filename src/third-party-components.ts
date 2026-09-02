@@ -11,6 +11,7 @@ const THIRD_PARTY_COMPONENTS:ThirdPartyComponent[] = [
   {name:"Ace Editor", version:"1.44.0", license:"BSD-3-Clause", project_url:"https://github.com/ajaxorg/ace-builds", use:"sftp_text_edit"},
   {name:"jsdiff", version:"9.0.0", license:"BSD-3-Clause", project_url:"https://github.com/kpdecker/jsdiff", use:"sftp_diff"},
   {name:"noVNC", version:"1.7.0", license:"MPL-2.0", project_url:"https://github.com/novnc/noVNC", use:"builtin_vnc"},
+  {name:"TigerVNC Viewer", version:"1.16.2", license:"GPL-2.0-or-later", project_url:"https://github.com/TigerVNC/tigervnc", use:"bundled_vnc_client"},
   {name:"ZMODEM.js", version:"0.1.10", license:"Apache-2.0", project_url:"https://github.com/FGasper/zmodemjs", use:"zmodem_transfer"},
   {name:"ssh2", version:"1.17.0", license:"MIT", project_url:"https://github.com/mscdex/ssh2", use:"ssh_sftp_transport"},
   {name:"node-x11", version:"3.9.1", license:"MIT", project_url:"https://github.com/sidorares/node-x11", use:"x11_protocol_client"},

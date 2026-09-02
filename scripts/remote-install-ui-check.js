@@ -72,15 +72,24 @@ assert.match(app, /remoteDesktopQuickOpen = localStorage\.getItem\("remoteDeskto
 assert.match(settings, /remoteDesktopQuickOpen = legacyQuickOpen === null[\s\S]*?remote_desktop_quick_open_enabled/, "global quick open preference must load with the legacy fallback");
 assert.match(workspace, /async function toggleRemoteDesktopQuickOpen\(\)[\s\S]*?\/api\/runtime-settings[\s\S]*?remote_desktop_quick_open_enabled/, "quick open preference must persist in global runtime settings");
 assert.match(workspace, /quickOpenButton[\s\S]*?aria-pressed[\s\S]*?icon\("zap"\)/, "Other Connections toolbar must expose a stateful quick-open button");
-assert.match(remote, /updateTab && remoteDesktopQuickOpen && clientLaunchable/, "automatic launch must be gated by the quick-open preference");
+assert.match(remote, /shouldAutoLaunch = updateTab && remoteDesktopQuickOpen && launchReady/, "automatic launch must be gated by the quick-open preference");
 assert.match(remote, /vncQuickOpenUsesNewWindow\(\)[\s\S]*?openVncInNewWindow\(profile\.id, key, \{closeDetectionTab:true, browserReservation\}\)/, "VNC quick open must honor the global new-window preference, reuse its reserved popup and close the detection tab");
 assert.match(remote, /async function openRemoteDesktop[\s\S]*?captureRemoteDesktopRenderScope\(profile\.id, key, view\)[\s\S]*?await withRemoteDesktopRenderScope\(renderScope,[\s\S]*?catch \(error\) \{[\s\S]*?withRemoteDesktopRenderScope\(renderScope,/, "remote desktop diagnostics must ignore stale async results instead of touching a missing status element");
 assert.match(workspace, /tab\.kind === "linux-desktop"[\s\S]{0,220}openLinuxDesktopManager\(connectionId, false\)/, "legacy workspace restoration must render Linux desktop manager tabs");
 assert.match(remote, /id="vncServerState"[\s\S]*?正在探测远端 VNC 服务/, "VNC must enter the shared detection workspace before connecting");
 assert.match(remote, /function openEmbeddedVncDesktop/, "embedded VNC launch must be a separate confirmed action");
-assert.match(remote, /allowNoPassword:startPlanSupportsNoPassword/, "VNC start must expose an explicit no-password choice");
+assert.match(remote, /openRemoteProfile\(profile, \{forceLaunch:true\}\)/, "saving a remote profile with Save and open must force the launch flow");
+assert.match(remote, /const forceLaunch = options\?\.forceLaunch === true/, "remote desktop opening must accept an explicit force-launch option");
+assert.match(remote, /allowNoPassword:startPlanSupportsNoPassword/, "VNC service actions must expose an explicit no-password choice");
 assert.match(remote, /id="vncCredentialNoPassword"/, "VNC credential dialog must expose no-password opt-in");
 assert.match(remote, /allow_no_password:allowNoPassword/, "VNC start request must carry the explicit no-password choice");
+assert.match(remote, /const changePassword = action === "change-password"[\s\S]*?if \(changePassword \|\| !Object\.keys\(diagnostics\)\.length\) diagnostics = await api\(/, "VNC password changes must refresh remote diagnostics before rendering credentials");
+assert.match(remote, /if \(changePassword && !requireConfigEncryptionUnlocked\(/, "VNC password changes must not proceed while the encrypted profile store is locked");
+assert.match(remote, /changePassword && !credentials\.update_saved_password && profile\.has_password === true/, "VNC password changes must clear stale saved credentials when the new password is not saved");
+assert.match(remote, /const forceLaunchReady = launchAllowed[\s\S]*?!vncEndpointBlocked/, "Save and open must not be reduced to probe-only by a stale VNC management snapshot");
+assert.match(remote, /shouldForceLaunch = updateTab && forceLaunch && forceLaunchReady/, "Save and open must launch after detection when the explicit TCP preflight did not fail");
+assert.match(remote, /const vncCredentialChanged = protocol === "vnc"[\s\S]*?closeRemoteProtocolSession\(`remote-desktop-\$\{savedId\}`\)/, "changing a VNC profile password must close the already-authenticated session");
+assert.match(remote, /closeVncDetachedWindowForProfile\(savedId\)/, "changing a VNC profile password must close a detached embedded VNC window");
 
 assert.match(remote, /remoteInstallModesMarkup\(installPlan,[\s\S]{0,240}installVncServer/, "VNC must reuse the shared install mode selector");
 for (const mode of ["online", "offline", "local-offline"]) {
@@ -100,6 +109,9 @@ assert.match(remote, /remoteInstallModesMarkup\(diagnostics\.install_plan/);
 assert.match(server, /configureVncClipboardHelperForProfile/);
 assert.match(server, /allow_no_password === true/);
 assert.match(server, /buildVncStartCommand\(before, savedPassword, \{allow_no_password:allowNoPassword\}\)/);
+assert.match(server, /buildVncPasswordChangeCommand\(before, password, \{allow_no_password:allowNoPassword\}\)/, "VNC service password changes must use the redacted password-file command builder");
+assert.match(server, /\"change-password\"/, "VNC service management must expose a password-change action");
+assert.match(remote, /runVncServerAction\([^\n]+['\"]change-password['\"]/, "VNC detection UI must expose changing the service password");
 assert.match(server, /vnc\.clipboard-helper\.install-local-offline/);
 assert.match(server, /install-local-offline", "uninstall"/);
 assert.match(server, /component:"vnc-clipboard-helper"[\s\S]*?startRemoteComponentCommandTask/);

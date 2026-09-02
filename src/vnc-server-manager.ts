@@ -1341,7 +1341,14 @@ function passwordSetupScript(diagnostics: any = {}, password = "", options: any 
   const passwordFile = String(diagnostics.password_file || `${sessionHome.replace(/\/$/, "")}/.vnc/passwd`);
   if (!passwordFile.startsWith("/")) throw publicError("VNC_PASSWORD_FILE_INVALID", "VNC 密码文件路径无效");
   const allowNoPassword = options.allow_no_password === true;
-  if (!password && allowNoPassword) return {sessionUser, sessionHome, passwordFile:"", command:"", noPassword:true};
+  if (!password && allowNoPassword) return {
+    sessionUser,
+    sessionHome,
+    passwordFile,
+    command:"",
+    cleanupCommand:`rm -f -- ${shellQuote(passwordFile)}`,
+    noPassword:true
+  };
   if (!password && diagnostics.password_file) return {sessionUser, sessionHome, passwordFile, command:"", noPassword:false};
   if (!password) throw publicError("VNC_PASSWORD_REQUIRED", "请提供 VNC 密码，或明确允许以无密码模式启动 VNC 服务");
   const commands = new Set((diagnostics.commands || []).map(value => String(value)));
@@ -1360,6 +1367,27 @@ function passwordSetupScript(diagnostics: any = {}, password = "", options: any 
     `chown -R ${shellQuote(sessionUser)} ${shellQuote(directory)}`
   ].join("\n");
   return {sessionUser, sessionHome, passwordFile, command, noPassword:false};
+}
+
+function buildVncPasswordChangeCommand(diagnostics: any = {}, password = "", options: any = {}) {
+  const selection = diagnostics.server_session_selection || null;
+  if (selection?.requires_selection || selection?.source_available === false) return "";
+  diagnostics = selection ? applyVncServerSessionSelection(diagnostics, selection) : diagnostics;
+  const allowNoPassword = options.allow_no_password === true;
+  if (allowNoPassword) {
+    // Managed Terma units must be regenerated so the server switches from
+    // VncAuth to an explicit passwordless security type; deleting passwd alone
+    // would leave the existing unit requiring authentication.
+    return buildVncStartCommand(diagnostics, "", {allow_no_password:true});
+  }
+  const setup = passwordSetupScript(diagnostics, password, {});
+  if (!setup.command) return "";
+  const unit = String(diagnostics.service_unit || "").trim();
+  const systemctl = systemctlExecutable(diagnostics);
+  const restart = unit && unit !== "com.apple.screensharing" && /^[-a-zA-Z0-9_@.:]+$/.test(unit)
+    ? `${systemctl} restart ${shellQuote(unit)}`
+    : "";
+  return ["set -eu", setup.command, restart].filter(Boolean).join("\n");
 }
 
 function vncPortProbeFunctions(port: number) {
@@ -1518,6 +1546,7 @@ function buildVncStartCommand(diagnostics: any = {}, password = "", options: any
       `${systemctl} reset-failed ${shellQuote(serviceName)} 2>/dev/null || true`,
       `${systemctl} restart ${shellQuote(serviceName)}`,
       firewall,
+      setup.cleanupCommand || "",
       ...migration.commit
     ].filter(Boolean).join("\n");
   }
@@ -1648,6 +1677,7 @@ function buildVncStartCommand(diagnostics: any = {}, password = "", options: any
       `${systemctl} reset-failed ${shellQuote(serviceName)} 2>/dev/null || true`,
       `${systemctl} restart ${shellQuote(serviceName)}`,
       firewall,
+      setup.cleanupCommand || "",
       ...migration.commit
     ].filter(Boolean).join("\n");
   }
@@ -2023,6 +2053,7 @@ module.exports = {
   componentPlanningDiagnostics,
   packagePlan,
   buildVncStartCommand,
+  buildVncPasswordChangeCommand,
   firewallPlan,
   startPlan,
   startPlanReason,

@@ -390,6 +390,34 @@ async function main() {
     assert.equal(responseBody.input[0].content.includes("at most one complete shell code block"), true);
     assert.equal(responseBody.input[0].content.includes("latest user message is the current task"), true);
 
+    await requestAiChat({
+      settings:{...DEFAULT_AI_SETTINGS, enabled:true, model:"fixture-model", endpoint:"http://127.0.0.1:39001/v1", reasoning_effort:"xhigh", deep_thinking:true},
+      message:"xhigh test"
+    });
+    const xhighResponseBody = JSON.parse(requestOptions.body);
+    assert.equal(xhighResponseBody.reasoning.effort, "xhigh");
+
+    await requestAiChat({
+      settings:{...DEFAULT_AI_SETTINGS, enabled:true, model:"fixture-model", endpoint:"http://127.0.0.1:39001/v1", reasoning_effort:"minimal"},
+      message:"minimal test"
+    });
+    const minimalResponseBody = JSON.parse(requestOptions.body);
+    assert.equal(minimalResponseBody.reasoning.effort, "minimal");
+
+    await requestAiChat({
+      settings:{...DEFAULT_AI_SETTINGS, enabled:true, model:"fixture-model", endpoint:"http://127.0.0.1:39001/v1", reasoning_effort:"max", deep_thinking:true},
+      message:"max test"
+    });
+    const maxResponseBody = JSON.parse(requestOptions.body);
+    assert.equal(maxResponseBody.reasoning.effort, "max");
+
+    await requestAiChat({
+      settings:{...DEFAULT_AI_SETTINGS, enabled:true, model:"fixture-model", endpoint:"http://127.0.0.1:39001/v1", reasoning_effort:"none", deep_thinking:true},
+      message:"deep thinking fallback test"
+    });
+    const deepThinkingBody = JSON.parse(requestOptions.body);
+    assert.equal(deepThinkingBody.reasoning.effort, "high");
+
     const chatResult = await requestAiChat({
       settings:{...DEFAULT_AI_SETTINGS, enabled:true, model:"fixture-model", endpoint:"http://127.0.0.1:39001/v1"},
       apiKey:"fixture-api-key",
@@ -432,6 +460,12 @@ async function main() {
     assert.equal(completionsResult.content, "Completions result");
     assert.equal(requestUrl, "http://127.0.0.1:39001/v1/chat/completions");
     assert.equal(JSON.parse(requestOptions.body).messages[0].role, "system");
+
+    await requestAiChat({
+      settings:{...DEFAULT_AI_SETTINGS, enabled:true, model:"fixture-completions", api_type:"completions", endpoint:"http://127.0.0.1:39001/v1", reasoning_effort:"max"},
+      message:"max completions test"
+    });
+    assert.equal(JSON.parse(requestOptions.body).reasoning_effort, "max");
 
     global.fetch = async (url) => {
       requestUrl = String(url);

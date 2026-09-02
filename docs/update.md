@@ -7,22 +7,80 @@
 <a id="english"></a>
 ### English
 
-> Follow-up work will focus on real-world cross-platform recovery, packaging acceptance, and terminal AI interoperability.
+> The next release will focus on real-world recoverable sessions, cross-platform desktop acceptance, and broader terminal AI interoperability.
 
 #### Planned
 
 - Complete real network and reload acceptance for recoverable sessions on Linux, macOS, Windows fallback, and browser mode.
 - Expand terminal AI interoperability tests with additional OpenAI-compatible gateways while keeping command execution and MCP approval boundaries unchanged.
+- Complete real TigerVNC/noVNC/system-client clipboard acceptance for text, Chinese and image transfer on all three desktop platforms.
+- Replace the documentation split preview with a same-window terminal + SFTP screenshot when a clean current-version capture is available.
 
 <a id="简体中文"></a>
 ### 简体中文
 
-> 后续继续完成可恢复会话的真实跨平台验收、安装包验收和终端 AI 兼容性测试。
+> 下一版本将继续完成可恢复会话的真实验收、跨平台远程桌面验收和更广泛的终端 AI 互操作测试。
 
 #### 计划
 
 - 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
+- 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
+- 如果能获得干净的当前版本实拍图，把文档首页分屏预览替换为同一窗口的终端 + SFTP 截图。
+
+## v1.6.0
+
+[English](#english) · [简体中文](#简体中文)
+
+<a id="english"></a>
+### English
+
+> This release adds a bundled TigerVNC desktop client, safer VNC credential handling, richer terminal AI controls, and a new documentation site with direct feature navigation.
+
+#### Important additions
+
+- Added the VitePress documentation site with feature guides, real interface screenshots, a platform-aware download table, GitHub direct downloads, and a built-in GitHub acceleration route.
+- Added a dedicated feature overview; the homepage now exposes clickable cards for each second-level guide instead of repeating long feature descriptions.
+- The documentation homepage now uses a larger terminal + SFTP split-workspace preview, and the SFTP guide documents search, online editing, conflict diff/backup, encoding, and SVG preview.
+- Added visible GitHub Issues feedback links to both the homepage and the documentation top navigation.
+- The desktop About panel now includes a direct Terma website button alongside the GitHub source and license links.
+- Desktop builds now bundle the official TigerVNC Viewer and use it as the automatic VNC client, with embedded noVNC and the system client as ordered fallbacks. Connection settings also expose all three choices.
+- The bundled runtime is pinned per platform, verified by size and SHA-256 before packaging, and checked again inside the final application resources.
+- Saved VNC passwords now reach TigerVNC through a short-lived protected password file instead of a command-line argument; the VNC management view also offers remote service-password changes and explains TigerVNC text-only clipboard limits.
+- When a VNC password is wrong or has changed on the server, the management view now offers “Use another password this time”. The password is used only for that launch by default.
+- TigerVNC password files now use the protocol's standard bit-reversed DES key, so saved passwords authenticate correctly with the bundled Viewer. Supported managed services can also clear the password and enable passwordless mode with a trusted-network warning.
+- Changing a saved VNC password now closes existing embedded sessions and detached noVNC windows before the next connection.
+- Terminal AI reasoning settings now include Minimal, Very high (`xhigh`), and Maximum (`max`) when the selected model supports them; deep thinking no longer downgrades an explicit higher setting.
+
+#### Other improvements
+
+- “Save and open” now forces the selected remote desktop client to launch after detection instead of stopping on the probe page.
+- The homepage feature cards are whole-card links with no default link underline, and the feedback entry is available both in the hero and the top navigation.
+
+<a id="简体中文"></a>
+### 简体中文
+
+> 本版新增内置 TigerVNC 远程桌面客户端、更安全的 VNC 凭据处理、更完整的终端 AI 控制，以及支持直接跳转功能的文档站。
+
+#### 重要新增
+
+- 新增 VitePress 文档站，覆盖完整功能指南、真实界面截图、按平台筛选的下载表格、GitHub 直连和内置 GitHub 加速线路。
+- 新增独立的“功能总览”页面；首页改为每项对应一张可跳转的功能卡片，不再重复展开长篇功能介绍。
+- 文档首页改用更大的终端 + SFTP 分屏工作区预览图；SFTP 指南补充搜索、在线编辑、冲突差异/备份、编码和 SVG 预览说明。
+- 首页和文档站顶部导航均新增跳转 GitHub Issues 的“问题反馈”入口。
+- 桌面端“关于”页面新增 Terma 官网按钮，与 GitHub 源码和许可证入口并列。
+- 桌面版现在随包提供官方 TigerVNC Viewer；VNC 自动模式按内置 TigerVNC、内置 noVNC、系统客户端顺序回退，连接设置也可以分别选择三种方式。
+- 内置运行时按平台固定版本，打包前校验字节数和 SHA-256，最终安装包内还会再次校验清单和可执行文件。
+- 已保存的 VNC 密码现在通过短时、受限权限的密码文件交给 TigerVNC，不再放进命令行；VNC 管理界面新增远端服务密码修改入口，并明确说明 TigerVNC 主要支持文本剪贴板。
+- VNC 密码错误或服务端密码已变化时，管理界面提供“本次使用其他密码”，默认只用于这次启动。
+- TigerVNC 密码文件现使用协议要求的逐字节位反转 DES 密钥，保存的密码可以正确通过内置 Viewer 认证；支持的受管服务还可以清除密码并启用无密码模式，同时显示可信网络警告。
+- 修改已保存的 VNC 密码后，Terma 会先关闭已有的内置会话和独立 noVNC 窗口，再进行下一次认证。
+- 终端 AI 推理强度新增“最低”、“极高”（`xhigh`）和“最大”（`max`）选项（前提是所选模型支持）；深度思考不会再把明确选择的更高档位降回“高”。
+
+#### 其他优化
+
+- “保存并打开”会在探测通过后强制启动所选远程桌面客户端，不再只停留在探测页。
+- 首页功能卡片改为整块可跳转且不带默认下划线；Hero 区和顶部导航均可进入问题反馈。
 
 ## v1.5.9
 

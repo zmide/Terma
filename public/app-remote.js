@@ -195,9 +195,9 @@ function remoteWorkspaceJumpButtonsHtml(profile) {
   </span>`;
 }
 
-function openRemoteProfile(profile) {
+function openRemoteProfile(profile, options={}) {
   if (!profile) return;
-  if (["rdp", "vnc", "xdmcp"].includes(profile.protocol)) return openRemoteDesktop(profile.id);
+  if (["rdp", "vnc", "xdmcp"].includes(profile.protocol)) return openRemoteDesktop(profile.id, true, false, options);
   if (profile.protocol === "ftp") return openFtpProfile(profile.id);
   return openRemoteTerminal(profile.id);
 }

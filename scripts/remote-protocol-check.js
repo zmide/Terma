@@ -59,6 +59,9 @@ try {
   assert.equal(db.getRemoteProfile(ids.get("vnc")).options.cursor_mode, "hide");
   assert.equal(db.getRemoteProfile(ids.get("vnc")).options.display_mode, "original");
   db.updateRemoteProfile(ids.get("vnc"), {options:{client_mode:"embedded", cursor_mode:"show", display_mode:"resize", quality:9}});
+  db.updateRemoteProfile(ids.get("vnc"), {options:{client_mode:"bundled"}});
+  assert.equal(db.getRemoteProfile(ids.get("vnc")).options.client_mode, "bundled");
+  db.updateRemoteProfile(ids.get("vnc"), {options:{client_mode:"embedded", cursor_mode:"show", display_mode:"resize", quality:9}});
   assert.equal(db.getRemoteProfile(ids.get("vnc")).options.cursor_mode, "show");
   assert.equal(db.getRemoteProfile(ids.get("vnc")).options.display_mode, "resize");
   db.updateRemoteProfile(ids.get("vnc"), {options:{cursor_mode:"invalid"}});

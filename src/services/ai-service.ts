@@ -9,7 +9,7 @@ const MAX_CONTEXT_TOTAL_CHARS = 4200000;
 const MAX_RESPONSE_CHARS = 30000;
 const AI_MAX_ATTEMPTS = 5;
 const AI_RETRY_BASE_DELAY_MS = 250;
-const AI_REASONING_EFFORTS = new Set(["none", "low", "medium", "high"]);
+const AI_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 function aiRetryableStatus(status: number): boolean {
   return [408, 409, 425, 429].includes(Number(status)) || Number(status) >= 500;
@@ -190,7 +190,9 @@ function aiReasoningFields(settings: any, apiType: "responses" | "completions"):
   const effort = AI_REASONING_EFFORTS.has(requested) ? requested : "none";
   const deepThinking = settings?.deep_thinking === true;
   if (!deepThinking && effort === "none") return {};
-  const effective = deepThinking ? "high" : effort;
+  // Deep thinking is a convenience toggle. It should raise an unset effort
+  // to high, but must never downgrade an explicitly selected xhigh/max value.
+  const effective = effort === "none" && deepThinking ? "high" : effort;
   return apiType === "responses" ? {reasoning:{effort:effective}} : {reasoning_effort:effective};
 }
 

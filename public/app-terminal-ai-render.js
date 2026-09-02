@@ -73,7 +73,7 @@ function terminalAiPermissionHint(permission) {
 }
 
 function terminalAiReasoningLabel(value) {
-  const effort = ["none", "low", "medium", "high"].includes(String(value || "").toLowerCase()) ? String(value).toLowerCase() : "none";
+  const effort = ["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(String(value || "").toLowerCase()) ? String(value).toLowerCase() : "none";
   return tr(`settings:ai.reasoning_${effort}`, {defaultValue:effort});
 }
 

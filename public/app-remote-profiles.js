@@ -70,7 +70,11 @@ function renderRemoteProfileRow(profile) {
   const capability = profile.protocol === "rdp"
     ? tr("remote:capabilities.local_rdp", {defaultValue:"本机 RDP"})
     : profile.protocol === "vnc"
-      ? (profile.options?.client_mode === "system" ? tr("remote:capabilities.system_client", {defaultValue:"系统客户端"}) : tr("remote:capabilities.embedded_desktop", {defaultValue:"内置桌面"}))
+      ? profile.options?.client_mode === "system"
+        ? tr("remote:capabilities.system_client", {defaultValue:"系统客户端"})
+        : profile.options?.client_mode === "embedded"
+          ? tr("remote:capabilities.embedded_novnc", {defaultValue:"内置 noVNC"})
+          : tr("remote:capabilities.bundled_tigervnc", {defaultValue:"内置 TigerVNC Viewer"})
       : profile.protocol === "xdmcp" ? tr("remote:capabilities.embedded_xdmcp", {defaultValue:"内置 XDMCP"})
       : profile.protocol === "ftp" ? tr("remote:capabilities.embedded_files", {defaultValue:"内置文件"}) : tr("remote:capabilities.embedded_terminal", {defaultValue:"内置终端"});
   const sourceConnection = connections.find(connection => Number(connection.id) === Number(profile.options?.source_ssh_connection_id));
@@ -337,7 +341,11 @@ function remoteProtocolOptionsMarkup(protocol, options={}) {
     const displayMode = ["scale","original","resize"].includes(String(options.display_mode)) ? String(options.display_mode) : "scale";
     const quality = Math.max(0, Math.min(9, Number(options.quality ?? 8)));
     const performancePreset = vncPerformancePreset({quality});
-    return `<div class="grid3 remote-display-grid"><div><label>${esc(tr("remote:auto.open_method", {defaultValue:"打开方式"}))}</label><select id="remote_vnc_client_mode"><option value="auto" ${!["embedded","system"].includes(options.client_mode) ? "selected" : ""}>${esc(tr("remote:auto.auto_embedded", {defaultValue:"自动（优先内置）"}))}</option><option value="embedded" ${options.client_mode === "embedded" ? "selected" : ""}>${esc(tr("remote:auto.terma_embedded", {defaultValue:"Terma 内置"}))}</option><option value="system" ${options.client_mode === "system" ? "selected" : ""}>${esc(tr("remote:auto.system_client", {defaultValue:"系统客户端"}))}</option></select></div><div><label>${esc(tr("remote:auto.display_mode", {defaultValue:"显示方式"}))}</label><select id="remote_vnc_display_mode"><option value="scale" ${displayMode === "scale" ? "selected" : ""}>${esc(tr("remote:auto.fit_window", {defaultValue:"适应窗口（推荐）"}))}</option><option value="original" ${displayMode === "original" ? "selected" : ""}>${esc(tr("remote:auto.original_pixels", {defaultValue:"原始像素"}))}</option><option value="resize" ${displayMode === "resize" ? "selected" : ""}>${esc(tr("remote:auto.follow_window", {defaultValue:"跟随窗口（服务器支持时）"}))}</option></select></div><div><label>${esc(tr("remote:auto.mouse_mode", {defaultValue:"鼠标模式"}))}</label><select id="remote_vnc_cursor_mode"><option value="auto" ${!["show","hide"].includes(options.cursor_mode) ? "selected" : ""}>${esc(tr("remote:auto.mouse_auto", {defaultValue:"自动（按远端平台）"}))}</option><option value="show" ${options.cursor_mode === "show" ? "selected" : ""}>${esc(tr("remote:auto.mouse_show", {defaultValue:"手动显示本地光标"}))}</option><option value="hide" ${options.cursor_mode === "hide" ? "selected" : ""}>${esc(tr("remote:auto.mouse_hide", {defaultValue:"手动隐藏本地光标"}))}</option></select></div></div><div class="grid remote-vnc-performance-setting"><div><label for="remote_vnc_performance_preset">${esc(tr("remote:auto.performance_preset", {defaultValue:"性能预设"}))}</label><select id="remote_vnc_performance_preset" onchange="applyVncPerformancePreset(this.value)"><option value="balanced" ${performancePreset === "balanced" ? "selected" : ""}>${esc(tr("remote:auto.performance_balanced", {defaultValue:"平衡（画质 8）"}))}</option><option value="smooth" ${performancePreset === "smooth" ? "selected" : ""}>${esc(tr("remote:auto.performance_smooth", {defaultValue:"流畅优先（画质 6）"}))}</option><option value="custom" ${performancePreset === "custom" ? "selected" : ""}>${esc(tr("remote:auto.performance_custom", {defaultValue:"自定义"}))}</option></select></div><div class="remote-display-help">${esc(tr("remote:auto.performance_preset_hint", {defaultValue:"流畅优先会把 JPEG 画质降到 6，减少带宽和解码压力；不会关闭剪贴板，也不会修改远端分辨率。"}))}</div></div><div class="remote-quality-setting"><div class="remote-quality-heading"><label for="remote_quality">${esc(tr("remote:auto.quality", {defaultValue:"画质"}))}</label><output id="remote_quality_value" for="remote_quality">${quality}</output></div><input id="remote_quality" type="range" min="0" max="9" step="1" value="${quality}" oninput="syncRemoteQualityValue(this)"><div class="remote-quality-scale"><span>${esc(tr("remote:auto.quality_low", {defaultValue:"0 · 更省流量"}))}</span><span>${esc(tr("remote:auto.quality_high", {defaultValue:"9 · 更清晰"}))}</span></div></div><div class="remote-display-help">${esc(tr("remote:auto.vnc_quality_hint", {defaultValue:"画质控制 JPEG 压缩质量，与分辨率不是同一项；两者越高通常越占带宽。VNC 由服务器按变化发送画面，没有通用且可靠的固定帧率设置。"}))}</div><div class="check-grid"><label class="checkline"><input id="remote_shared" type="checkbox" ${options.shared !== false ? "checked" : ""}>${esc(tr("remote:auto.shared_session", {defaultValue:"共享会话"}))}</label><label class="checkline"><input id="remote_view_only" type="checkbox" ${options.view_only ? "checked" : ""}>${esc(tr("remote:auto.view_only", {defaultValue:"仅查看"}))}</label><label class="checkline"><input id="remote_vnc_auto_sync_images" type="checkbox" ${options.auto_sync_images !== false ? "checked" : ""}>${esc(tr("remote:auto.auto_sync_images", {defaultValue:"自动双向同步图片"}))}</label></div><div class="remote-display-help">${esc(tr("remote:auto.auto_sync_images_hint", {defaultValue:"默认开启；仅在剪贴板自动同步开启、Terma 位于前台且 SSH 辅助支持图片时生效。"}))}</div>${remoteDesktopProtocolGuideMarkup("vnc")}<div class="grid remote-vnc-helper-grid"><div><label>${esc(tr("remote:auto.ssh_clipboard_helper", {defaultValue:"SSH 剪贴板辅助"}))}</label><select id="remote_vnc_ssh_connection"><option value="0">${esc(tr("remote:auto.match_same_host", {defaultValue:"自动匹配同主机"}))}</option>${xdmcpManagementConnectionOptions(options.source_ssh_connection_id)}</select></div><div class="connection-test-status remote-vnc-helper-note">${esc(tr("remote:auto.ssh_clipboard_hint", {defaultValue:"用于可靠传输中文剪贴板；Linux 还需 xclip/xsel 或 wl-clipboard。"}))}</div></div>`;
+    const bundledClipboardMode = String(options.client_mode || "auto") === "bundled";
+    const clipboardHint = bundledClipboardMode
+      ? tr("remote:auto.bundled_clipboard_hint", {defaultValue:"内置 TigerVNC Viewer 使用 VNC 原生文本剪贴板；中文是否可用取决于服务端，图片同步请改用 Terma 内置 noVNC 并关联 SSH 剪贴板辅助。"})
+      : tr("remote:auto.auto_sync_images_hint", {defaultValue:"默认开启；仅在剪贴板自动同步开启、Terma 位于前台且 SSH 辅助支持图片时生效。"});
+    return `<div class="grid3 remote-display-grid"><div><label>${esc(tr("remote:auto.open_method", {defaultValue:"打开方式"}))}</label><select id="remote_vnc_client_mode"><option value="auto" ${!["bundled","embedded","system"].includes(options.client_mode) ? "selected" : ""}>${esc(tr("remote:auto.auto_vnc_clients", {defaultValue:"自动（TigerVNC Viewer → noVNC → 系统）"}))}</option><option value="bundled" ${options.client_mode === "bundled" ? "selected" : ""}>${esc(tr("remote:auto.bundled_tigervnc", {defaultValue:"内置 TigerVNC Viewer"}))}</option><option value="embedded" ${options.client_mode === "embedded" ? "selected" : ""}>${esc(tr("remote:auto.terma_novnc", {defaultValue:"Terma 内置 noVNC"}))}</option><option value="system" ${options.client_mode === "system" ? "selected" : ""}>${esc(tr("remote:auto.system_client", {defaultValue:"系统客户端"}))}</option></select></div><div><label>${esc(tr("remote:auto.display_mode", {defaultValue:"显示方式"}))}</label><select id="remote_vnc_display_mode"><option value="scale" ${displayMode === "scale" ? "selected" : ""}>${esc(tr("remote:auto.fit_window", {defaultValue:"适应窗口（推荐）"}))}</option><option value="original" ${displayMode === "original" ? "selected" : ""}>${esc(tr("remote:auto.original_pixels", {defaultValue:"原始像素"}))}</option><option value="resize" ${displayMode === "resize" ? "selected" : ""}>${esc(tr("remote:auto.follow_window", {defaultValue:"跟随窗口（服务器支持时）"}))}</option></select></div><div><label>${esc(tr("remote:auto.mouse_mode", {defaultValue:"鼠标模式"}))}</label><select id="remote_vnc_cursor_mode"><option value="auto" ${!["show","hide"].includes(options.cursor_mode) ? "selected" : ""}>${esc(tr("remote:auto.mouse_auto", {defaultValue:"自动（按远端平台）"}))}</option><option value="show" ${options.cursor_mode === "show" ? "selected" : ""}>${esc(tr("remote:auto.mouse_show", {defaultValue:"手动显示本地光标"}))}</option><option value="hide" ${options.cursor_mode === "hide" ? "selected" : ""}>${esc(tr("remote:auto.mouse_hide", {defaultValue:"手动隐藏本地光标"}))}</option></select></div></div><div class="grid remote-vnc-performance-setting"><div><label for="remote_vnc_performance_preset">${esc(tr("remote:auto.performance_preset", {defaultValue:"性能预设"}))}</label><select id="remote_vnc_performance_preset" onchange="applyVncPerformancePreset(this.value)"><option value="balanced" ${performancePreset === "balanced" ? "selected" : ""}>${esc(tr("remote:auto.performance_balanced", {defaultValue:"平衡（画质 8）"}))}</option><option value="smooth" ${performancePreset === "smooth" ? "selected" : ""}>${esc(tr("remote:auto.performance_smooth", {defaultValue:"流畅优先（画质 6）"}))}</option><option value="custom" ${performancePreset === "custom" ? "selected" : ""}>${esc(tr("remote:auto.performance_custom", {defaultValue:"自定义"}))}</option></select></div><div class="remote-display-help">${esc(tr("remote:auto.performance_preset_hint", {defaultValue:"流畅优先会把 JPEG 画质降到 6，减少带宽和解码压力；不会关闭剪贴板，也不会修改远端分辨率。"}))}</div></div><div class="remote-quality-setting"><div class="remote-quality-heading"><label for="remote_quality">${esc(tr("remote:auto.quality", {defaultValue:"画质"}))}</label><output id="remote_quality_value" for="remote_quality">${quality}</output></div><input id="remote_quality" type="range" min="0" max="9" step="1" value="${quality}" oninput="syncRemoteQualityValue(this)"><div class="remote-quality-scale"><span>${esc(tr("remote:auto.quality_low", {defaultValue:"0 · 更省流量"}))}</span><span>${esc(tr("remote:auto.quality_high", {defaultValue:"9 · 更清晰"}))}</span></div></div><div class="remote-display-help">${esc(tr("remote:auto.vnc_quality_hint", {defaultValue:"画质控制 JPEG 压缩质量，与分辨率不是同一项；两者越高通常越占带宽。VNC 由服务器按变化发送画面，没有通用且可靠的固定帧率设置。"}))}</div><div class="check-grid"><label class="checkline"><input id="remote_shared" type="checkbox" ${options.shared !== false ? "checked" : ""}>${esc(tr("remote:auto.shared_session", {defaultValue:"共享会话"}))}</label><label class="checkline"><input id="remote_view_only" type="checkbox" ${options.view_only ? "checked" : ""}>${esc(tr("remote:auto.view_only", {defaultValue:"仅查看"}))}</label><label class="checkline"><input id="remote_vnc_auto_sync_images" type="checkbox" ${options.auto_sync_images !== false ? "checked" : ""} ${bundledClipboardMode ? "disabled" : ""}>${esc(tr("remote:auto.auto_sync_images", {defaultValue:"自动双向同步图片"}))}</label></div><div class="remote-display-help">${esc(clipboardHint)}</div>${remoteDesktopProtocolGuideMarkup("vnc")}<div class="grid remote-vnc-helper-grid"><div><label>${esc(tr("remote:auto.ssh_clipboard_helper", {defaultValue:"SSH 剪贴板辅助"}))}</label><select id="remote_vnc_ssh_connection"><option value="0">${esc(tr("remote:auto.match_same_host", {defaultValue:"自动匹配同主机"}))}</option>${xdmcpManagementConnectionOptions(options.source_ssh_connection_id)}</select></div><div class="connection-test-status remote-vnc-helper-note">${esc(tr("remote:auto.ssh_clipboard_hint", {defaultValue:"用于可靠传输中文剪贴板；Linux 还需 xclip/xsel 或 wl-clipboard。"}))}</div></div>`;
   }
   if (protocol === "xdmcp") {
     const windowMode = normalizedXdmcpWindowMode(options);
@@ -379,7 +387,7 @@ function renderRemoteProfileForm(profile={}) {
     <div class="grid3"><div><label>${esc(tr("remote:auto.protocol", {defaultValue:"协议"}))}</label><select id="remote_protocol" onchange="changeRemoteProfileProtocol()">${Object.keys(REMOTE_PROTOCOL_META).map(value => `<option value="${value}" ${protocol === value ? "selected" : ""}>${esc(remoteProtocolLabel(value))}</option>`).join("")}</select></div><div><label>${esc(tr("remote:auto.name", {defaultValue:"名称"}))}</label><input id="remote_name" required value="${escAttr(profile.name || "")}" placeholder="${escAttr(tr("remote:auto.protocol_connection", {protocol:protocolLabel, defaultValue:`${protocolLabel} 连接`}))}"></div><div><label>${esc(tr("remote:auto.group", {defaultValue:"分组"}))}</label><select id="remote_group" onchange="handleRemoteGroupSelectChange(this)">${groupNames(selectedGroup, "remote").map(name => `<option value="${escAttr(name)}" ${name === selectedGroup ? "selected" : ""}>${esc(groupLabel(name))}</option>`).join("")}<option value="__new_group__">${esc(tr("remote:auto.new_group", {defaultValue:"新增分组..."}))}</option></select></div></div>
     <div id="remoteNetworkFields" class="grid" ${protocol === "serial" ? "hidden" : ""}><div><label>${esc(tr("remote:auto.target_host", {defaultValue:"目标主机"}))}</label><input id="remote_host" value="${escAttr(profile.host || "")}" placeholder="example.com"></div><div><label>${esc(tr("remote:auto.port", {defaultValue:"端口"}))}</label><input id="remote_port" type="number" min="1" max="65535" value="${Number(profile.port || meta.port || 0) || ""}"></div></div>
     <div id="remoteCredentialFields" class="grid" ${["telnet","serial","xdmcp"].includes(protocol) ? "hidden" : ""}><div><label>${esc(tr("remote:auto.username_optional", {defaultValue:"用户名（可选）"}))}</label><input id="remote_username" value="${escAttr(profile.username || (protocol === "ftp" ? "anonymous" : ""))}" autocomplete="username"></div><div id="remotePasswordField"><label>${esc(tr("remote:auto.password_optional", {defaultValue:"密码（可选）"}))}</label><input id="remote_password" type="password" autocomplete="new-password" placeholder="${escAttr(passwordHint)}"><label class="checkline" ${profile.has_password ? "" : "hidden"}><input id="remote_clear_password" type="checkbox">${esc(tr("remote:auto.clear_password", {defaultValue:"清除已保存密码"}))}</label><label id="remoteRdpPasswordTransferField" class="checkline remote-password-transfer-warning" ${protocol === "rdp" ? "" : "hidden"}><input id="remote_rdp_password_transfer" type="checkbox" ${profile.options?.allow_password_transfer ? "checked" : ""}><span>${esc(tr("remote:auto.rdp_password_consent", {defaultValue:"我了解风险，允许 Terma 把已保存密码交给 RDP 客户端"}))}</span></label></div></div>
-    <div id="remoteDesktopCredentialNote" class="connection-test-status" ${["rdp","vnc"].includes(protocol) ? "" : "hidden"}>${esc(tr(protocol === "vnc" ? "remote:auto.vnc_password_hint" : "remote:auto.rdp_password_hint", {defaultValue:protocol === "vnc" ? "VNC 密码可选保存并加密存储；留空时会在连接时询问。" : "RDP 用户名和密码都可留空。默认由客户端询问；勾选警告后，Windows 使用临时凭据、FreeRDP 使用标准输入。macOS Windows App 不提供密码接口，Terma 会改用已安装的 FreeRDP。"}))}</div>
+    <div id="remoteDesktopCredentialNote" class="connection-test-status" ${["rdp","vnc"].includes(protocol) ? "" : "hidden"}>${esc(tr(protocol === "vnc" ? "remote:auto.vnc_password_hint" : "remote:auto.rdp_password_hint", {defaultValue:protocol === "vnc" ? "VNC 密码可选加密保存；保存后 Terma 会自动传给内置 TigerVNC Viewer 或 noVNC，留空时才会在连接时询问。TigerVNC 原生剪贴板主要传输文本，图片同步请使用 Terma 内置 noVNC。" : "RDP 用户名和密码都可留空。默认由客户端询问；勾选警告后，Windows 使用临时凭据、FreeRDP 使用标准输入。macOS Windows App 不提供密码接口，Terma 会改用已安装的 FreeRDP。"}))}</div>
     <label>${esc(tr("remote:auto.tags", {defaultValue:"标签"}))}</label><input id="remote_tags" value="${escAttr(profile.tags || "")}" placeholder="${escAttr(tr("remote:auto.tags_example", {defaultValue:"例如：办公 内网 图形桌面"}))}">
     <fieldset><legend>${esc(tr("remote:auto.protocol_options", {protocol:protocolLabel, defaultValue:`${protocolLabel} 选项`}))}</legend><div id="remoteProtocolOptions">${remoteProtocolOptionsMarkup(protocol, profile.options || {})}</div></fieldset>
     <div class="actions">${profile.id
@@ -448,7 +456,7 @@ function changeRemoteProfileProtocol() {
   if (["rdp","vnc"].includes(protocol)) {
     $("remoteDesktopCredentialNote").textContent = tr(protocol === "vnc" ? "remote:auto.vnc_password_hint" : "remote:auto.rdp_password_hint", {
       defaultValue:protocol === "vnc"
-        ? "VNC 密码可选保存并加密存储；留空时会在连接时询问。"
+        ? "VNC 密码可选加密保存；保存后 Terma 会自动传给内置 TigerVNC Viewer 或 noVNC，留空时才会在连接时询问。TigerVNC 原生剪贴板主要传输文本，图片同步请使用 Terma 内置 noVNC。"
         : "RDP 用户名和密码都可留空。默认由客户端询问；勾选警告后，Windows 使用临时凭据、FreeRDP 使用标准输入。macOS Windows App 不提供密码接口，Terma 会改用已安装的 FreeRDP。"
     });
   }
@@ -488,6 +496,8 @@ async function saveRemoteProfileForm(event) {
   const sourceTabKey = String(activeTabKey || "");
   const protocol = $("remote_protocol").value;
   const id = Number($("remote_id").value || 0);
+  const vncCredentialChanged = protocol === "vnc" && id > 0
+    && (Boolean($("remote_clear_password")?.checked) || Boolean($("remote_password")?.value));
   const payload = {
     protocol,
     name:$("remote_name").value.trim(),
@@ -511,6 +521,16 @@ async function saveRemoteProfileForm(event) {
       ? await api(`/api/remote-profiles/${id}`, {method:"PUT", body:JSON.stringify(payload)})
       : await api("/api/remote-profiles", {method:"POST", body:JSON.stringify(payload)});
     const savedId = Number(id || saved?.id || 0);
+    if (vncCredentialChanged && savedId && typeof closeRemoteProtocolSession === "function") {
+      // A connected VNC session has already authenticated with the old
+      // credential. Close it before the profile is reopened so a new click
+      // cannot appear to accept a stale password.
+      closeRemoteProtocolSession(`remote-desktop-${savedId}`);
+      setWorkspaceTabConnectionStatus(`remote-desktop-${savedId}`, "disconnected");
+      if (typeof closeVncDetachedWindowForProfile === "function") {
+        await closeVncDetachedWindowForProfile(savedId).catch(() => {});
+      }
+    }
     remoteGroupOpen.add(payload.group_name);
     saveRemoteGroupState();
     await loadAll();
@@ -523,7 +543,7 @@ async function saveRemoteProfileForm(event) {
       }
       if (saveAction === "open") {
         const profile = remoteProfileById(savedId);
-        if (profile) openRemoteProfile(profile);
+        if (profile) openRemoteProfile(profile, {forceLaunch:true});
       }
     } else if (clearAfterSave && !id) {
       renderRemoteProfileForm({protocol, group_name:payload.group_name, options:{}});
@@ -553,15 +573,18 @@ async function loadRemoteSerialPorts() {
   return result;
 }
 
-async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
+async function openRemoteDesktop(id, updateTab=true, showManagement=false, options={}) {
   const profile = remoteProfileById(id);
   if (!profile || !["rdp","vnc","xdmcp"].includes(profile.protocol)) return;
   selectedRemoteProfileId = profile.id;
   revealRemoteProfile(profile);
   const meta = REMOTE_PROTOCOL_META[profile.protocol];
   const key = `remote-desktop-${profile.id}`;
-  const embeddedVnc = profile.protocol === "vnc" && profile.options?.client_mode !== "system";
-  const existingVncSession = embeddedVnc ? vncSessions.get(key) : null;
+  const vncClientMode = String(profile.options?.client_mode || "auto");
+  const embeddedVnc = profile.protocol === "vnc" && vncClientMode === "embedded";
+  const bundledVnc = profile.protocol === "vnc" && vncClientMode === "bundled";
+  const automaticVnc = profile.protocol === "vnc" && vncClientMode === "auto";
+  const existingVncSession = profile.protocol === "vnc" ? vncSessions.get(key) : null;
   const connectionStatus = existingVncSession?.connected || existingVncSession?.statusState === "connected"
     ? "connected"
     : existingVncSession?.connecting || existingVncSession?.statusState === "connecting"
@@ -594,11 +617,15 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
   const launchHandler = embeddedVnc
     ? `openEmbeddedVncDesktop(${profile.id},'${escAttr(key)}',this)`
     : `launchRemoteDesktop(${profile.id},'${escAttr(key)}',this)`;
-  const launchIcon = embeddedXdmcp ? "panels-top-left" : embeddedVnc ? "monitor-play" : "external-link";
+  const launchIcon = embeddedXdmcp ? "panels-top-left" : embeddedVnc || bundledVnc || automaticVnc ? "monitor-play" : "external-link";
   const launchLabel = embeddedXdmcp
     ? tr("remote:actions.new_graphical_login", {defaultValue:"新建图形登录"})
     : embeddedVnc
       ? tr("remote:actions.open_embedded_vnc", {defaultValue:"打开内置 VNC"})
+      : bundledVnc
+        ? tr("remote:actions.open_bundled_tigervnc", {defaultValue:"打开内置 TigerVNC Viewer"})
+      : automaticVnc
+        ? tr("remote:actions.open_bundled_tigervnc", {defaultValue:"打开内置 TigerVNC Viewer"})
       : tr("remote:actions.open_client", {protocol:meta.label, defaultValue:`打开 ${meta.label} 客户端`});
   const serverStateMarkup = embeddedXdmcp
     ? `<div id="xdmcpServerState" class="xdmcp-server-state"><div class="xdmcp-server-loading">${icon("loader-circle")}<span>${esc(tr("remote:auto.probe_graphical_login", {defaultValue:"正在探测远端图形登录服务"}))}</span></div></div>`
@@ -614,8 +641,8 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
     ? tr("remote:auto.xdmcp_launch_help", {defaultValue:"Terma 负责启动本机 XDMCP 窗口；XDMCP 本身不依赖 SSH，关联 SSH 只用于探测和管理远端显示服务。需要共享当前桌面时请使用 VNC。"})
     : managedRdp
       ? tr("remote:auto.rdp_launch_help", {defaultValue:"Terma 会先检查本机客户端和目标 TCP 端口；SSH 只用于 Linux xrdp、桌面会话和安装管理，不会阻止 Windows 或独立 RDP 服务。"})
-      : tr("remote:auto.vnc_launch_help", {mode:embeddedVnc ? tr("remote:auto.embedded", {defaultValue:"内置"}) : tr("remote:auto.system", {defaultValue:"系统"}), defaultValue:`Terma 会先检查目标端口和 VNC 服务；SSH 只用于 Linux 服务与桌面管理，不会阻止独立${embeddedVnc ? "内置" : "系统"} VNC 连接。`});
-  const localClientLabel = embeddedVnc ? tr("remote:capabilities.embedded_vnc", {defaultValue:"内置 VNC"}) : embeddedXdmcp ? "XDMCP" : meta.label;
+      : tr("remote:auto.vnc_launch_help", {mode:embeddedVnc ? tr("remote:auto.embedded_novnc", {defaultValue:"内置 noVNC"}) : bundledVnc || automaticVnc ? tr("remote:auto.bundled_tigervnc", {defaultValue:"内置 TigerVNC Viewer"}) : tr("remote:auto.system", {defaultValue:"系统"}), defaultValue:`Terma 会先检查目标端口和 VNC 服务；SSH 只用于 Linux 服务与桌面管理，不会阻止${embeddedVnc ? "内置 noVNC" : bundledVnc || automaticVnc ? "内置 TigerVNC Viewer" : "系统"} VNC 连接。`});
+  const localClientLabel = embeddedVnc ? tr("remote:capabilities.embedded_novnc", {defaultValue:"内置 noVNC"}) : bundledVnc || automaticVnc ? tr("remote:capabilities.bundled_tigervnc", {defaultValue:"内置 TigerVNC Viewer"}) : embeddedXdmcp ? "XDMCP" : meta.label;
   const detachedOpenButton = embeddedVnc
     ? `<button id="remoteDesktopNewWindowButton" onclick="openVncInNewWindow(${profile.id},'${escAttr(key)}')" title="${escAttr(tr("remote:vnc_ui.open_new_window", {defaultValue:"在新窗口打开"}))}">${icon("panel-top-open")}<span>${esc(tr("remote:vnc_ui.open_new_window", {defaultValue:"在新窗口打开"}))}</span></button>`
     : "";
@@ -632,7 +659,7 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
   }
   try {
     const [diagnostics, serverState, desktopDiagnostics] = await Promise.all([
-      embeddedVnc ? Promise.resolve({vnc:{available:true, launchable:true, client:tr("remote:clients.terma_embedded_vnc", {defaultValue:"Terma 内置 VNC"})}}) : api("/api/remote-clients/diagnostics"),
+      embeddedVnc ? Promise.resolve({vnc:{available:true, launchable:true, client:tr("remote:clients.terma_embedded_vnc", {defaultValue:"Terma 内置 noVNC"})}}) : api("/api/remote-clients/diagnostics"),
       embeddedXdmcp
         ? inspectXdmcpServer(profile.id).catch(error => ({management_available:Boolean(managementConnectionId), error:error.message || tr("remote:xdmcp_status.probe_failed", {defaultValue:"XDMCP 服务探测失败"}), code:error.code || "", connectionId:Number(error.connectionId || managementConnectionId)}))
         : managedRdp
@@ -642,6 +669,18 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
     ]);
     const item = diagnostics[profile.protocol] || {};
     const clientLaunchable = Boolean(item.available || item.launchable);
+    const explicitSystemVnc = profile.protocol === "vnc" && vncClientMode === "system";
+    const explicitBundledVnc = profile.protocol === "vnc" && vncClientMode === "bundled";
+    const launchAllowed = embeddedVnc || automaticVnc || Boolean(explicitBundledVnc
+      ? item.bundled_available
+      : explicitSystemVnc
+        ? Object.prototype.hasOwnProperty.call(item, "system_available") ? item.system_available : clientLaunchable
+        : clientLaunchable);
+    const statusAvailable = explicitBundledVnc
+      ? Boolean(item.bundled_available)
+      : explicitSystemVnc
+        ? Object.prototype.hasOwnProperty.call(item, "system_available") ? Boolean(item.system_available) : clientLaunchable
+        : Boolean(item.available);
     const vncStatus = String(serverState?.status || "").toLowerCase();
     const vncEndpointBlocked = managedVnc && serverState?.endpoint_probe?.supported && !serverState.endpoint_probe.ok;
     const vncServiceBlocked = vncEndpointBlocked || (managedVnc && serverState?.diagnostics_available !== false && !vncServerReady(serverState) && (serverState?.server_session_configurable === true || ["not-installed", "stopped", "not-listening", "blocked"].includes(vncStatus)));
@@ -658,12 +697,24 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
           remoteProfileId:profile.id
         });
       }
-      activeView.dataset.remoteClientAvailable = clientLaunchable ? "1" : "0";
-      status.className = `connection-test-status ${item.available ? "success" : clientLaunchable ? "warning" : "error"}`;
+      activeView.dataset.remoteClientAvailable = launchAllowed ? "1" : "0";
+      status.className = `connection-test-status ${statusAvailable ? "success" : clientLaunchable ? "warning" : "error"}`;
       const clientLabel = localizedRemoteClientLabel(item.client || meta.label, profile.protocol);
-      status.textContent = item.available
-        ? tr("remote:capabilities.client_detected", {client:clientLabel, defaultValue:`已检测到 ${clientLabel} 客户端`})
-        : localizedRemoteClientReason(item, diagnostics, profile.protocol);
+      status.textContent = automaticVnc
+        ? item.bundled_available
+          ? tr("remote:capabilities.client_detected", {client:clientLabel, defaultValue:`已检测到 ${clientLabel} 客户端`})
+          : tr("remote:capabilities.bundled_unavailable_fallback", {defaultValue:"内置 TigerVNC Viewer 不可用，将回退到 noVNC；仍可在连接设置中选择系统客户端"})
+        : explicitBundledVnc
+          ? item.bundled_available
+            ? tr("remote:capabilities.client_detected", {client:tr("remote:capabilities.bundled_tigervnc", {defaultValue:"内置 TigerVNC Viewer"}), defaultValue:"已检测到内置 TigerVNC Viewer"})
+            : tr("remote:capabilities.bundled_tigervnc_unavailable", {defaultValue:"未检测到内置 TigerVNC Viewer，请重新准备运行时或选择其他打开方式"})
+        : explicitSystemVnc
+          ? item.system_available
+            ? tr("remote:capabilities.client_detected", {client:localizedRemoteClientLabel(item.system?.client || meta.label, profile.protocol), defaultValue:`已检测到系统 ${meta.label} 客户端`})
+            : localizedRemoteClientReason(item.system || item, diagnostics, profile.protocol)
+        : item.available
+          ? tr("remote:capabilities.client_detected", {client:clientLabel, defaultValue:`已检测到 ${clientLabel} 客户端`})
+          : localizedRemoteClientReason(item, diagnostics, profile.protocol);
       const launchButton = activeView.querySelector("#remoteDesktopLaunchButton");
       const installButton = activeView.querySelector("#remoteDesktopInstallButton");
       const xServerButton = activeView.querySelector("#remoteDesktopXServerButton");
@@ -677,7 +728,7 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
         const label = xServerButton.querySelector("span");
         if (label) label.textContent = item.xserver_installed ? tr("remote:auto.start_xquartz", {defaultValue:"启动 XQuartz"}) : tr("remote:auto.install_xquartz", {defaultValue:"安装 XQuartz"});
       }
-      if (!embeddedXdmcp && launchButton) launchButton.disabled = !clientLaunchable || !rdpEndpointReady || vncServiceBlocked;
+      if (!embeddedXdmcp && launchButton) launchButton.disabled = !launchAllowed || !rdpEndpointReady || vncServiceBlocked;
       if (embeddedXdmcp && serverState) {
         renderXdmcpServerState(serverState, profile.id, activeView.querySelector("#xdmcpServerState"));
         if ((serverState.management_available === false || serverState.error) && launchButton) {
@@ -691,7 +742,16 @@ async function openRemoteDesktop(id, updateTab=true, showManagement=false) {
       if (managedVnc && serverState) renderVncServerState(serverState, profile.id, key, activeView.querySelector("#vncServerState"));
       if (embeddedVnc && existingVncSession?.presentation === "management") syncEmbeddedVncManagementControls(existingVncSession, activeView);
       const xdmcpDirectReady = !embeddedXdmcp || serverState?.ready_for_login || serverState?.management_available === false || Boolean(serverState?.error) || Boolean(serverState?.endpoint_probe?.ok);
-      if (updateTab && remoteDesktopQuickOpen && clientLaunchable && xdmcpDirectReady && rdpEndpointReady && vncReadyForLaunch) {
+      const forceLaunch = options?.forceLaunch === true;
+      // "Save and open" is an explicit user command. A stale or incomplete
+      // server-management snapshot must not turn it into "save and probe";
+      // only an explicit failed TCP probe should block the selected client.
+      const forceLaunchReady = launchAllowed && xdmcpDirectReady && rdpEndpointReady
+        && (!managedVnc || !vncEndpointBlocked);
+      const launchReady = launchAllowed && xdmcpDirectReady && rdpEndpointReady && vncReadyForLaunch;
+      const shouldAutoLaunch = updateTab && remoteDesktopQuickOpen && launchReady;
+      const shouldForceLaunch = updateTab && forceLaunch && forceLaunchReady;
+      if (shouldAutoLaunch || shouldForceLaunch) {
         if (embeddedVnc && vncQuickOpenUsesNewWindow()) browserReservationCommitted = await openVncInNewWindow(profile.id, key, {closeDetectionTab:true, browserReservation});
         else if (embeddedVnc) await openEmbeddedVncDesktop(profile.id, key);
         else await launchRemoteDesktop(profile.id, key);

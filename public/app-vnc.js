@@ -1,75 +1,3 @@
-function vncSessionStatus(session, text, state="") {
-  if (!session) return;
-  session.statusText = text;
-  session.statusState = state;
-  if (session.status) {
-    session.status.textContent = text;
-    session.status.className = `vnc-status${state ? ` ${state}` : ""}`;
-  }
-  setWorkspaceTabConnectionStatus(session.key, state === "connected" ? "connected" : state === "connecting" ? "connecting" : "disconnected");
-}
-
-function vncServerReady(diagnostics={}) {
-  const selection = diagnostics?.server_session_selection || {};
-  const selectedComponent = diagnostics?.selected_component || selection.component_state || null;
-  if (diagnostics?.server_session_configurable === true) {
-    if (selection.requires_selection || selection.source_available === false || diagnostics?.server_session_selection_matches_running === false) return false;
-    if (selectedComponent) return selectedComponent.install_required !== true && selectedComponent.listening === true;
-  }
-  const status = String(diagnostics?.status || "").toLowerCase();
-  return diagnostics?.listening === true || ["ready", "reachable"].includes(status);
-}
-
-function renderVncServerState(diagnostics, profileId=selectedRemoteProfileId, key=`remote-desktop-${profileId}`, targetContainer=null) {
-  const container = targetContainer || $("vncServerState");
-  const profile = remoteProfileById(profileId);
-  if (!container || !profile) return;
-  const actionKey = vncServerActionKey(profileId);
-  container.dataset.remoteProfileId = String(profileId);
-  const operationError = String(diagnostics?.error || diagnostics?.operation_error || "").trim();
-  const lastGoodDiagnostics = container._vncLastGoodDiagnostics || {};
-  const effectiveDiagnostics = operationError && Object.keys(lastGoodDiagnostics).length
-    ? {...lastGoodDiagnostics, operation_error:operationError}
-    : diagnostics || {};
-  if (!operationError && !effectiveDiagnostics.error) container._vncLastGoodDiagnostics = effectiveDiagnostics;
-  setRemoteComponentTaskHost(container, false);
-  container._vncDiagnostics = effectiveDiagnostics;
-  if (effectiveDiagnostics?.error && !effectiveDiagnostics?.status) {
-    const repair = remoteManagementCredentialRepairMarkup(profileId, effectiveDiagnostics, "vnc");
-    container.innerHTML = `${remoteEndpointProbeMarkup(profile, effectiveDiagnostics.endpoint_probe || {})}${remoteDiagnosticStatusMarkup(effectiveDiagnostics.error, {tone:"warning", icon:"server-off", title:tr("remote:diagnostics.ssh_probe_unavailable", {defaultValue:"SSH 深度探测不可用"}), actions:repair})}`;
-  } else {
-    const sshProbeFailed = ["ssh-unreachable", "probe-failed"].includes(String(effectiveDiagnostics?.status || "").toLowerCase());
-    const sshAuthFailed = sshProbeFailed && typeof sshAuthenticationFailure === "function" && sshAuthenticationFailure({
-      code:effectiveDiagnostics?.code || "",
-      message:effectiveDiagnostics?.ssh_error || ""
-    });
-    const repair = sshAuthFailed ? remoteManagementCredentialRepairMarkup(profileId, {
-      code:effectiveDiagnostics?.code || "SSH_AUTHENTICATION_FAILED",
-      message:effectiveDiagnostics?.ssh_error || tr("remote:vnc_status.ssh_auth_failed", {defaultValue:"SSH 认证失败"}),
-      connectionId:Number(effectiveDiagnostics?.connection_id || effectiveDiagnostics?.ssh_connection?.id || 0)
-    }, "vnc") : "";
-    const managementNotice = effectiveDiagnostics?.diagnostics_available === false && !effectiveDiagnostics?.ssh_connection
-      ? remoteManagementUnavailableMarkup(profile, tr("remote:vnc_status.ssh_management_optional", {defaultValue:"VNC 会先按端口与 RFB 协议连接；关联 SSH 后可管理 Linux VNC 服务和图形会话。"}))
-      : sshAuthFailed
-        ? remoteDiagnosticStatusMarkup(effectiveDiagnostics.ssh_error || tr("remote:vnc_status.ssh_auth_failed", {defaultValue:"SSH 认证失败"}), {tone:"warning", icon:"key-round", title:tr("remote:vnc_status.ssh_probe_auth_failed", {defaultValue:"SSH 深度探测认证失败"}), actions:repair})
-        : "";
-    const unmanaged = effectiveDiagnostics?.diagnostics_available === false && !effectiveDiagnostics?.ssh_connection;
-    const connectionHelp = unmanaged
-      ? ""
-      : vncConnectionHelpMarkup(profile, effectiveDiagnostics?.platform || "", vncServerReady(effectiveDiagnostics), "", effectiveDiagnostics, key, {preflight:true, showConnect:false});
-    container.innerHTML = `${remoteEndpointProbeMarkup(profile, effectiveDiagnostics.endpoint_probe || {})}${managementNotice}${connectionHelp}`;
-  }
-  const status = String(effectiveDiagnostics?.status || "").toLowerCase();
-  const selectedManagementBlocked = effectiveDiagnostics?.server_session_configurable === true && !vncServerReady(effectiveDiagnostics);
-  const endpointBlocked = effectiveDiagnostics?.endpoint_probe?.supported && !effectiveDiagnostics.endpoint_probe.ok;
-  const blocked = endpointBlocked || (effectiveDiagnostics?.diagnostics_available !== false && (selectedManagementBlocked || ["not-installed", "stopped", "not-listening", "blocked"].includes(status)));
-  const launchButton = remoteWorkspaceQuery(container, "#remoteDesktopLaunchButton", "remoteDesktopLaunchButton");
-  const view = remoteWorkspaceQuery(container, "#view-remote-desktop", "view-remote-desktop");
-  if (launchButton) launchButton.disabled = view?.dataset.remoteClientAvailable !== "1" || blocked;
-  refreshIcons();
-  syncUiActionControls(actionKey, isUiActionInFlight(actionKey));
-}
-
 async function inspectVncServer(profileId, button=null, targetContainer=null) {
   const container = targetContainer || $("vncServerState");
   if (button) setButtonBusy(button, true, tr("remote:diagnostics.detecting", {defaultValue:"探测中..."}));
@@ -303,7 +231,7 @@ function vncConnectionHelpMarkup(profile, platform="", serviceAvailable=false, d
     : !startButton && diagnostics?.start_plan
       ? `<button type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="runVncServerAction(${Number(profile.id)},'${escAttr(reconnectKey)}','start',this)">${icon("circle-play")}<span>${esc(tr("remote:vnc_status.start_service", {defaultValue:"启动服务"}))}</span></button>`
       : "";
-  const serviceActions = installed && !macos ? `${toggleButton}<button class="danger" type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="runVncServerAction(${Number(profile.id)},'${escAttr(reconnectKey)}','uninstall',this)">${icon("package-minus")}<span>${esc(tr("remote:vnc_status.uninstall_service", {defaultValue:"卸载服务"}))}</span></button>` : "";
+  const serviceActions = installed && !macos ? `${toggleButton}<button type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="runVncServerAction(${Number(profile.id)},'${escAttr(reconnectKey)}','change-password',this)">${icon("key-round")}<span>${esc(tr("remote:vnc_status.change_password", {defaultValue:"修改服务密码"}))}</span></button><button class="danger" type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="runVncServerAction(${Number(profile.id)},'${escAttr(reconnectKey)}','uninstall',this)">${icon("package-minus")}<span>${esc(tr("remote:vnc_status.uninstall_service", {defaultValue:"卸载服务"}))}</span></button>` : "";
   const restartForSelection = currentRunning && diagnostics?.start_plan && diagnostics?.server_session_configurable && diagnostics?.server_session_selection_matches_running === false
     ? `<button class="primary" type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="runVncServerAction(${Number(profile.id)},'${escAttr(reconnectKey)}','restart',this)">${icon("refresh-cw")}<span>${esc(tr("remote:vnc_status.apply_source_restart", {defaultValue:"应用来源并重启"}))}</span></button>`
     : "";
@@ -315,15 +243,21 @@ function vncConnectionHelpMarkup(profile, platform="", serviceAvailable=false, d
   const listenerName = listenerProcess
     ? (listenerProcess.match(/(?:^|\/)\b(Xtigervnc|Xvnc|x11vnc|wayvnc|gnome-remote-desktop)\b/i)?.[1] || tr("remote:vnc_status.listener_process", {defaultValue:"VNC 监听进程"}))
     : "";
-  const embedded = profile.options?.client_mode !== "system";
+  const clientMode = String(profile.options?.client_mode || "auto");
+  const embedded = clientMode === "embedded";
+  const bundled = clientMode === "bundled";
+  const automatic = clientMode === "auto";
   const reconnecting = Boolean(activeSession?.workspace) || (!options.preflight && !running);
   const connectAction = embedded
     ? activeSession?.workspace
       ? `reconnectEmbeddedVnc(${Number(profile.id)},'${escAttr(reconnectKey)}')`
       : `openEmbeddedVncDesktop(${Number(profile.id)},'${escAttr(reconnectKey)}',this)`
     : `launchRemoteDesktop(${Number(profile.id)},'${escAttr(reconnectKey)}',this)`;
-  const connectLabel = tr(reconnecting ? "remote:vnc_status.reconnect" : embedded ? "remote:actions.open_embedded_vnc" : "remote:vnc_status.open_system_client", {defaultValue:reconnecting ? "重新连接" : embedded ? "打开内置 VNC" : "打开系统客户端"});
-  const connectButton = options.showConnect === false ? "" : `<button class="primary" type="button" onclick="${connectAction}">${icon(reconnecting ? "refresh-cw" : embedded ? "monitor" : "external-link")}<span>${connectLabel}</span></button>`;
+  const connectLabel = tr(reconnecting ? "remote:vnc_status.reconnect" : embedded ? "remote:actions.open_embedded_vnc" : bundled || automatic ? "remote:actions.open_bundled_tigervnc" : "remote:vnc_status.open_system_client", {defaultValue:reconnecting ? "重新连接" : embedded ? "打开内置 noVNC" : bundled || automatic ? "打开内置 TigerVNC Viewer" : "打开系统客户端"});
+  const connectButton = options.showConnect === false ? "" : `<button class="primary" type="button" onclick="${connectAction}">${icon(reconnecting ? "refresh-cw" : embedded ? "monitor" : bundled || automatic ? "monitor-play" : "external-link")}<span>${connectLabel}</span></button>`;
+  const temporaryPasswordButton = !embedded && options.showTemporaryPassword !== false
+    ? `<button type="button" onclick="launchVncWithTemporaryPassword(${Number(profile.id)},'${escAttr(reconnectKey)}',this,'${escAttr(clientMode)}')">${icon("key-round")}<span>${esc(tr("remote:vnc_ui.use_other_password", {defaultValue:"本次使用其他密码"}))}</span></button>`
+    : "";
   return `<div class="remote-service-state vnc-connection-help-panel">
     <div class="remote-service-head vnc-connection-help-head"><span class="remote-service-icon ${running ? "ready" : status === "not-installed" ? "error" : "warning"}">${icon(running ? "circle-check" : status === "not-installed" ? "package-x" : "monitor-off")}</span><div class="vnc-connection-help-copy">
       <strong>${esc(copy.title)}</strong>
@@ -344,7 +278,7 @@ function vncConnectionHelpMarkup(profile, platform="", serviceAvailable=false, d
     <div class="remote-service-actions">
       ${restartForSelection}${startButton}${serviceActions}
       ${options.preflight ? "" : `<button type="button" onclick="openVncSetupGuide(${Number(profile.id)})">${icon("book-open-check")}<span>${esc(tr("remote:auto.manual_install", {defaultValue:"手动安装/配置说明"}))}</span></button>`}
-      ${connectButton}
+      ${connectButton}${temporaryPasswordButton}
       ${options.preflight ? "" : `<button type="button" onclick="editRemoteProfile(${Number(profile.id)})">${icon("settings-2")}<span>${esc(tr("remote:actions.connection_settings", {defaultValue:"连接设置"}))}</span></button>`}
     </div>
   </div>`;
@@ -497,7 +431,7 @@ async function openVncSetupGuide(profileId) {
       : startAvailable
         ? `<button type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="runVncServerAction(${Number(profileId)},'${escAttr(key)}','start',this)">${icon("circle-play")}<span>${esc(tr("remote:vnc_status.start_service", {defaultValue:"启动服务"}))}</span></button>`
         : "";
-    const serviceActions = installed && diagnostics.platform !== "macos" ? `${serviceToggle}<button class="danger" type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="runVncServerAction(${Number(profileId)},'${escAttr(key)}','uninstall',this)">${icon("package-minus")}<span>${esc(tr("remote:vnc_status.uninstall_service", {defaultValue:"卸载服务"}))}</span></button>` : "";
+    const serviceActions = installed && diagnostics.platform !== "macos" ? `${serviceToggle}<button type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="runVncServerAction(${Number(profileId)},'${escAttr(key)}','change-password',this)">${icon("key-round")}<span>${esc(tr("remote:vnc_status.change_password", {defaultValue:"修改服务密码"}))}</span></button><button class="danger" type="button" data-ui-action-key="${escAttr(actionKey)}" onclick="runVncServerAction(${Number(profileId)},'${escAttr(key)}','uninstall',this)">${icon("package-minus")}<span>${esc(tr("remote:vnc_status.uninstall_service", {defaultValue:"卸载服务"}))}</span></button>` : "";
     const closeLabel = tr("remote:vnc_ui.close", {defaultValue:"关闭"});
     modal.innerHTML = `<div class="modal-card wide x11-install-guide vnc-setup-guide" role="dialog" aria-modal="true" aria-labelledby="vncSetupGuideTitle">
       <div class="modal-title-row"><div><h2 id="vncSetupGuideTitle">${esc(title)}</h2><span class="muted">${esc(diagnostics.ssh_connection?.name || diagnostics.platform || tr("remote:vnc_ui.remote_host", {defaultValue:"远端主机"}))}</span></div><button class="icon-button" type="button" onclick="closeVncSetupGuide()" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div>
@@ -528,6 +462,8 @@ async function runVncServerAction(profileId, key, action, button=null) {
   const actionKey = vncServerActionKey(profileId);
   const busyLabel = action === "stop" || action === "disable"
     ? tr("remote:vnc_ui.stopping", {defaultValue:"停止中..."})
+    : action === "change-password"
+      ? tr("remote:vnc_ui.changing_password", {defaultValue:"修改密码中..."})
     : action === "uninstall"
       ? tr("remote:vnc_ui.uninstalling", {defaultValue:"卸载中..."})
       : action === "install" || action === "install-offline" || action === "install-local-offline"
@@ -548,10 +484,15 @@ async function runVncServerActionImpl(profileId, key, action, button=null) {
   const profile = remoteProfileById(profileId);
   if (!profile) return notify(tr("remote:vnc_status.connection_missing", {defaultValue:"VNC 连接不存在"}), "error");
   const session = vncSessions.get(key);
+  const changePassword = action === "change-password";
   let diagnostics = session?.helpState?.diagnostics || {};
-  if (!Object.keys(diagnostics).length) diagnostics = await api(`/api/remote-profiles/${Number(profileId)}/vnc/server`);
+  // Password changes alter the remote service configuration. Never reuse the
+  // session's older help snapshot here: it can hide newly available options,
+  // especially the explicit passwordless mode for Terma-managed services.
+  if (changePassword || !Object.keys(diagnostics).length) diagnostics = await api(`/api/remote-profiles/${Number(profileId)}/vnc/server`);
   const sourceId = Number(profile.options?.source_ssh_connection_id || profile.options?.ssh_connection_id || diagnostics.ssh_connection?.id || 0);
   if (!sourceId) return notify(tr("remote:vnc_ui.no_ssh_management", {defaultValue:"该 VNC 连接没有关联的 SSH 管理连接"}), "error");
+  if (changePassword && !requireConfigEncryptionUnlocked(tr("remote:vnc_ui.change_service_password", {defaultValue:"修改 VNC 服务密码"}))) return null;
   const isInstall = action === "install" || action === "install-offline" || action === "install-local-offline";
   const uninstall = action === "uninstall";
   const stop = action === "stop" || action === "disable";
@@ -565,30 +506,49 @@ async function runVncServerActionImpl(profileId, key, action, button=null) {
   let transientVncPassword = "";
   let allowNoPassword = false;
   let saveVncPasswordAfterConfirm = false;
+  let clearVncPasswordAfterConfirm = false;
   let refreshAfterError = false;
   const startsVncService = ["start", "restart", "enable"].includes(action);
   const startPlanSupportsNoPassword = diagnostics?.start_plan?.supports_no_password === true;
   const startPlanRequiresPassword = diagnostics?.start_plan?.requires_vnc_password === true;
-  if (startsVncService && !profile.has_password && !diagnostics?.password_file && (startPlanSupportsNoPassword || startPlanRequiresPassword)) {
+  if (changePassword || (startsVncService && !profile.has_password && !diagnostics?.password_file && (startPlanSupportsNoPassword || startPlanRequiresPassword))) {
     const credentials = await requestVncCredentials(profile, ["password"], {
-      failureReason:startPlanSupportsNoPassword
+      failureReason:changePassword
+        ? tr("remote:vnc_ui.change_password_hint", {defaultValue:"这会替换远端 VNC 服务密码，并在服务重启后生效。"})
+        : startPlanSupportsNoPassword
         ? tr("remote:vnc_ui.password_missing_optional", {defaultValue:"当前连接没有保存 VNC 服务密码。默认请设置密码；仅在可信网络中明确选择无密码访问。"})
         : tr("remote:vnc_ui.password_missing_required", {defaultValue:"当前连接没有保存 VNC 服务密码，请先设置一个服务密码。"}),
       allowNoPassword:startPlanSupportsNoPassword,
+      noPasswordLabel:changePassword
+        ? tr("remote:vnc_ui.clear_service_password", {defaultValue:"清除服务密码，启用无密码模式"})
+        : "",
+      passwordStorageHint:changePassword
+        ? tr("remote:vnc_ui.change_password_storage_hint", {defaultValue:"勾选“更新保存密码”会同步替换 Terma 中保存的连接密码；取消勾选不会保存新密码，并会清除旧密码，下一次连接时再询问。"})
+        : "",
       updateByDefault:true,
-      title:startPlanSupportsNoPassword ? tr("remote:vnc_ui.set_service_auth", {defaultValue:"设置 VNC 服务认证"}) : tr("remote:vnc_ui.set_service_password", {defaultValue:"设置 VNC 服务密码"}),
-      submitLabel:tr("remote:vnc_ui.save_continue", {defaultValue:"保存并继续"})
+      title:changePassword
+        ? tr("remote:vnc_ui.change_service_password", {defaultValue:"修改 VNC 服务密码"})
+        : startPlanSupportsNoPassword ? tr("remote:vnc_ui.set_service_auth", {defaultValue:"设置 VNC 服务认证"}) : tr("remote:vnc_ui.set_service_password", {defaultValue:"设置 VNC 服务密码"}),
+      submitLabel:changePassword
+        ? tr("remote:vnc_ui.save_and_change", {defaultValue:"保存并修改"})
+        : tr("remote:vnc_ui.save_continue", {defaultValue:"保存并继续"})
     });
     if (!credentials) return null;
     allowNoPassword = credentials.allow_no_password === true;
     if (!credentials.credentials?.password && !allowNoPassword) return null;
     transientVncPassword = String(credentials.credentials.password);
-    saveVncPasswordAfterConfirm = Boolean(credentials.update_saved_password && transientVncPassword);
+    saveVncPasswordAfterConfirm = Boolean(!allowNoPassword && credentials.update_saved_password && transientVncPassword);
+    clearVncPasswordAfterConfirm = allowNoPassword === true
+      || (changePassword && !credentials.update_saved_password && profile.has_password === true);
   }
   const message = isInstall
     ? localOfflineInstall
       ? tr("remote:vnc_ui.confirm_local_offline_install", {defaultValue:"Terma 将根据远端 Debian/Ubuntu 或兼容 APT/.deb 系统的软件包索引，在本机下载匹配架构的软件包和依赖，再通过 SFTP 上传并使用临时管理员权限安装。是否继续？"})
       : tr("remote:vnc_ui.confirm_remote_install", {mode:offlineInstall ? tr("remote:vnc_ui.cache_offline", {defaultValue:"缓存离线"}) : tr("remote:vnc_ui.online", {defaultValue:"在线"}), defaultValue:`Terma 将在远端执行${offlineInstall ? "缓存离线" : "在线"}安装。安装不会自动覆盖现有 VNC 配置，是否继续？`})
+    : changePassword
+      ? allowNoPassword
+        ? tr("remote:vnc_ui.confirm_change_passwordless", {defaultValue:"将清除远端 VNC 服务密码，切换为无密码访问并重启当前服务。无密码模式只适用于可信网络，现有 VNC 会话可能会短暂断开。是否继续？"})
+        : tr("remote:vnc_ui.confirm_change_password", {defaultValue:"将替换远端 VNC 服务密码并重启当前服务，现有 VNC 会话可能会短暂断开。是否继续？"})
     : uninstall
       ? tr("remote:vnc_ui.confirm_uninstall", {defaultValue:"将停止并卸载远端 VNC Server 与剪贴板辅助软件包。不会卸载 Linux 桌面环境，但现有 VNC 会话会立即断开。是否继续？"})
       : stop
@@ -596,25 +556,26 @@ async function runVncServerActionImpl(profileId, key, action, button=null) {
         : tr("remote:vnc_ui.confirm_start", {defaultValue:"Terma 将尝试启动检测到的 VNC 服务单元，是否继续？"});
   const actionLabel = isInstall
     ? tr("remote:vnc_ui.install_service_action", {mode:installModeLabel, defaultValue:`${installModeLabel}安装 VNC 服务`})
+    : changePassword ? tr("remote:vnc_ui.change_password_action", {defaultValue:"修改 VNC 服务密码"})
     : uninstall ? tr("remote:vnc_ui.uninstall_service_action", {defaultValue:"卸载 VNC 服务"})
       : stop ? tr("remote:vnc_ui.stop_service_action", {defaultValue:"停止 VNC 服务"})
         : tr("remote:vnc_ui.start_service_action", {defaultValue:"启动 VNC 服务"});
-  const confirmLabel = isInstall ? tr("remote:vnc_ui.install", {defaultValue:"安装"}) : uninstall ? tr("remote:vnc_ui.uninstall", {defaultValue:"卸载"}) : stop ? tr("remote:vnc_ui.stop", {defaultValue:"停止"}) : tr("remote:vnc_ui.start", {defaultValue:"启动"});
+  const confirmLabel = isInstall ? tr("remote:vnc_ui.install", {defaultValue:"安装"}) : changePassword ? tr("remote:vnc_ui.save_and_change", {defaultValue:"保存并修改"}) : uninstall ? tr("remote:vnc_ui.uninstall", {defaultValue:"卸载"}) : stop ? tr("remote:vnc_ui.stop", {defaultValue:"停止"}) : tr("remote:vnc_ui.start", {defaultValue:"启动"});
   if (!await confirmModal(message, actionLabel, confirmLabel, tr("remote:vnc_ui.cancel", {defaultValue:"取消"}), uninstall || stop)) return null;
   let adminAuth = null;
   if (diagnostics.privileged !== true) {
     adminAuth = await requestRemoteAdminAuthorization(sourceId, actionLabel, `vnc.server.${action}`);
     if (!adminAuth) return null;
   }
-  if (button) setButtonBusy(button, true, isInstall ? tr("remote:vnc_ui.installing_mode", {mode:installModeLabel, defaultValue:`${installModeLabel}安装中...`}) : uninstall ? tr("remote:vnc_ui.uninstalling", {defaultValue:"卸载中..."}) : stop ? tr("remote:vnc_ui.stopping", {defaultValue:"停止中..."}) : tr("remote:vnc_ui.starting", {defaultValue:"启动中..."}));
-  if (session) vncSessionStatus(session, isInstall ? tr("remote:vnc_ui.installing_service", {mode:installModeLabel, defaultValue:`正在${installModeLabel}安装 VNC 服务...`}) : uninstall ? tr("remote:vnc_ui.uninstalling_service", {defaultValue:"正在卸载 VNC 服务..."}) : stop ? tr("remote:vnc_ui.stopping_service", {defaultValue:"正在停止 VNC 服务..."}) : tr("remote:vnc_ui.configuring_starting", {defaultValue:"正在配置并启动 VNC 服务..."}), "connecting");
+  if (button) setButtonBusy(button, true, isInstall ? tr("remote:vnc_ui.installing_mode", {mode:installModeLabel, defaultValue:`${installModeLabel}安装中...`}) : changePassword ? tr("remote:vnc_ui.changing_password", {defaultValue:"修改密码中..."}) : uninstall ? tr("remote:vnc_ui.uninstalling", {defaultValue:"卸载中..."}) : stop ? tr("remote:vnc_ui.stopping", {defaultValue:"停止中..."}) : tr("remote:vnc_ui.starting", {defaultValue:"启动中..."}));
+  if (session) vncSessionStatus(session, isInstall ? tr("remote:vnc_ui.installing_service", {mode:installModeLabel, defaultValue:`正在${installModeLabel}安装 VNC 服务...`}) : changePassword ? tr("remote:vnc_ui.changing_service_password", {defaultValue:"正在修改 VNC 服务密码..."}) : uninstall ? tr("remote:vnc_ui.uninstalling_service", {defaultValue:"正在卸载 VNC 服务..."}) : stop ? tr("remote:vnc_ui.stopping_service", {defaultValue:"正在停止 VNC 服务..."}) : tr("remote:vnc_ui.configuring_starting", {defaultValue:"正在配置并启动 VNC 服务..."}), "connecting");
   try {
     const result = await api(`/api/remote-profiles/${Number(profileId)}/vnc/server`, {method:"POST", body:JSON.stringify({action, allow_no_password:allowNoPassword === true, ...(transientVncPassword ? {vnc_password:transientVncPassword} : {}), ...(adminAuth ? {admin_auth:adminAuth} : {})})});
-    if (saveVncPasswordAfterConfirm && !result.task_conflict) {
+    if ((saveVncPasswordAfterConfirm || clearVncPasswordAfterConfirm) && !result.task_conflict) {
       try {
-        await saveVncCredential(profile, transientVncPassword);
+        await saveVncCredential(profile, clearVncPasswordAfterConfirm ? "" : transientVncPassword);
       } catch (error) {
-        notify(tr("remote:vnc_ui.password_save_failed_after_submit", {error:error.message, defaultValue:`服务请求已提交，但密码未能保存，将仅用于本次启动：${error.message}`}), "info");
+        notify(tr("remote:vnc_ui.password_save_failed_after_submit", {error:error.message, defaultValue:`服务请求已提交，但连接密码未能同步，将仅用于本次启动：${error.message}`}), "info");
       }
     }
     if (result.task) {
@@ -655,7 +616,7 @@ async function runVncServerActionImpl(profileId, key, action, button=null) {
       showVncConnectionHelp(session, available, result.output || "", after);
     }
     if ($("vncServerState")) renderVncServerState(after, profileId, key);
-    notify(isInstall ? tr("remote:vnc_ui.install_complete", {defaultValue:"VNC 服务组件安装完成，可继续配置并启动"}) : uninstall ? tr("remote:vnc_ui.uninstall_complete", {defaultValue:"VNC 服务卸载完成"}) : stop ? tr("remote:vnc_ui.stop_complete", {defaultValue:"VNC 服务已停止"}) : tr("remote:vnc_ui.configure_start_complete", {defaultValue:"VNC 服务配置/启动命令已执行"}), "success");
+    notify(isInstall ? tr("remote:vnc_ui.install_complete", {defaultValue:"VNC 服务组件安装完成，可继续配置并启动"}) : changePassword ? tr("remote:vnc_ui.change_password_complete", {defaultValue:"VNC 服务密码已修改"}) : uninstall ? tr("remote:vnc_ui.uninstall_complete", {defaultValue:"VNC 服务卸载完成"}) : stop ? tr("remote:vnc_ui.stop_complete", {defaultValue:"VNC 服务已停止"}) : tr("remote:vnc_ui.configure_start_complete", {defaultValue:"VNC 服务配置/启动命令已执行"}), "success");
     return result;
   } catch (error) {
     refreshAfterError = true;
@@ -1047,17 +1008,10 @@ async function connectEmbeddedVnc(profile, key) {
       if (!isCurrentConnection()) return;
       if (diagnostics?.vnc?.available) {
         notify(tr("remote:vnc_ui.fallback_system_client", {defaultValue:"内置 VNC 不可用，正在改用系统客户端"}), "info");
-        await launchRemoteDesktop(profile.id, key).catch(fallbackError => notify(fallbackError.message, "error"));
+        await launchRemoteDesktop(profile.id, key, null, "system").catch(fallbackError => notify(fallbackError.message, "error"));
       }
     }
   }
-}
-
-async function saveVncCredential(profile, password) {
-  if (!requireConfigEncryptionUnlocked(tr("remote:vnc_ui.save_password", {defaultValue:"保存 VNC 密码"}))) throw new Error(tr("remote:vnc_ui.encryption_locked", {defaultValue:"配置加密已锁定"}));
-  const result = await api(`/api/remote-profiles/${profile.id}/vnc-credential`, {method:"PUT", body:JSON.stringify({password})});
-  profile.has_password = Boolean(result.has_password);
-  return result;
 }
 
 async function handleVncSecurityFailure(profile, key, rfb, reason) {
@@ -1138,9 +1092,9 @@ function requestVncCredentials(profile, types=[], options={}) {
       ${required.has("username") ? `<label>${esc(tr("remote:vnc_ui.username", {defaultValue:"用户名"}))}</label><input id="vncCredentialUsername" autocomplete="username" value="${escAttr(profile.username || "")}">` : ""}
       ${required.has("target") ? `<label>${esc(tr("remote:vnc_ui.target_session", {defaultValue:"目标会话"}))}</label><input id="vncCredentialTarget" autocomplete="off">` : ""}
       <label>${esc(tr("remote:vnc_ui.vnc_password", {defaultValue:"VNC 密码"}))}</label><input id="vncCredentialPassword" type="password" autocomplete="current-password" autofocus required>
-      ${allowNoPassword ? `<label class="checkline"><input id="vncCredentialNoPassword" type="checkbox">${esc(tr("remote:vnc_ui.allow_no_password", {defaultValue:"允许无密码访问（仅限可信网络）"}))}</label>` : ""}
+      ${allowNoPassword ? `<label class="checkline"><input id="vncCredentialNoPassword" type="checkbox">${esc(options.noPasswordLabel || tr("remote:vnc_ui.allow_no_password", {defaultValue:"允许无密码访问（仅限可信网络）"}))}</label><div class="muted vnc-no-password-warning">${esc(tr("remote:vnc_ui.no_password_warning", {defaultValue:"无密码模式仅适用于可信网络；公网或不可信网络不要启用。"}))}</div>` : ""}
       <label class="checkline"><input id="vncCredentialSave" type="checkbox" ${options.updateByDefault ? "checked" : ""}>${esc(profile.has_password ? tr("remote:vnc_ui.update_saved_password", {defaultValue:"更新保存密码"}) : tr("remote:vnc_ui.save_password", {defaultValue:"保存密码"}))}</label>
-      <div class="muted">${esc(tr("remote:vnc_ui.password_storage_hint", {defaultValue:"密码会加密存储；取消勾选时只用于本次 VNC 会话。无密码模式不会保存密码。"}))}</div>
+      <div class="muted">${esc(options.passwordStorageHint || tr("remote:vnc_ui.password_storage_hint", {defaultValue:"密码会加密存储；取消勾选时只用于本次 VNC 会话。无密码模式不会保存密码。"}))}</div>
       <div class="actions"><button type="button" data-vnc-cancel>${esc(tr("remote:vnc_ui.cancel", {defaultValue:"取消"}))}</button><button class="primary" type="submit">${esc(options.submitLabel || tr("remote:vnc_ui.connect", {defaultValue:"连接"}))}</button></div></form>`;
     enhancePasswordInputs(modal);
     const passwordInput = modal.querySelector("#vncCredentialPassword");
@@ -1300,17 +1254,46 @@ async function toggleVncClipboardSync(key) {
   }
 }
 
-async function launchRemoteDesktop(id, key="", button=null) {
+async function launchRemoteDesktop(id, key="", button=null, clientModeOverride="", temporaryCredentials={}) {
   if (button) setButtonBusy(button, true, tr("remote:vnc_ui.starting", {defaultValue:"启动中..."}));
   try {
     const profile = remoteProfileById(id);
     if (!profile) throw new Error(tr("remote:vnc_ui.detached_profile_missing", {defaultValue:"远程连接不存在"}));
+    const effectiveClientMode = ["auto", "bundled", "embedded", "system"].includes(String(clientModeOverride))
+      ? String(clientModeOverride)
+      : String(profile.options?.client_mode || "auto");
+    const automaticVnc = profile.protocol === "vnc" && effectiveClientMode === "auto";
+    const temporaryVncPassword = profile.protocol === "vnc" && temporaryCredentials && Object.prototype.hasOwnProperty.call(temporaryCredentials, "password")
+      ? String(temporaryCredentials.password || "")
+      : "";
+    if (temporaryVncPassword && /[\0\r\n]/.test(temporaryVncPassword)) {
+      throw new Error(tr("remote:vnc_ui.password_invalid", {defaultValue:"VNC 密码包含无效控制字符"}));
+    }
+    const fallbackKey = key || `remote-desktop-${id}`;
+    const prepareTemporaryEmbeddedCredentials = () => {
+      if (!temporaryVncPassword) return;
+      const session = vncSessions.get(fallbackKey) || {key:fallbackKey};
+      session.nextCredentials = {username:profile.username || "", password:temporaryVncPassword};
+      vncSessions.set(fallbackKey, session);
+    };
     const scopes = profile?.protocol === "xdmcp" ? ["remote-client", "xserver"] : ["remote-client"];
     if (!await ensureDesktopIntegrationAuthorized(scopes)) return null;
     if (["rdp", "vnc"].includes(profile.protocol)) {
       const diagnostics = await api("/api/remote-clients/diagnostics");
       const client = diagnostics?.[profile.protocol] || {};
-      if (!client.available && !client.launchable) {
+      if (automaticVnc && !client.bundled_available) {
+        prepareTemporaryEmbeddedCredentials();
+        const fallback = await openEmbeddedVncDesktop(profile.id, fallbackKey);
+        if (fallback !== null) return {ok:true, protocol:"vnc", client:tr("remote:clients.terma_embedded_vnc", {defaultValue:"Terma 内置 noVNC"}), fallback:"embedded-novnc"};
+      }
+      const clientAvailable = profile.protocol === "vnc"
+        ? effectiveClientMode === "system"
+          ? Boolean(client.system_available)
+          : effectiveClientMode === "bundled"
+            ? Boolean(client.bundled_available)
+            : Boolean(client.available || client.launchable)
+        : Boolean(client.available || client.launchable);
+      if (!clientAvailable) {
         throw new Error(localizedRemoteClientReason(client, diagnostics, profile.protocol));
       }
     }
@@ -1336,13 +1319,23 @@ async function launchRemoteDesktop(id, key="", button=null) {
         if (serverState.session_conflict) throw new Error(tr("remote:xdmcp_setup.conflict_cleanup_incomplete", {defaultValue:"旧的 Plasma 图形会话仍未完全退出，请稍后重新探测再启动"}));
       }
     }
-    const result = await api(`/api/remote-profiles/${id}/launch`, {method:"POST", body:"{}"});
+    const launchPayload = {};
+    if (effectiveClientMode !== String(profile.options?.client_mode || "auto")) launchPayload.client_mode = effectiveClientMode;
+    if (temporaryVncPassword) launchPayload.vnc_password = temporaryVncPassword;
+    const result = await api(`/api/remote-profiles/${id}/launch`, {
+      method:"POST",
+      body:JSON.stringify(launchPayload)
+    });
     if (result?.canceled) return null;
     const status = $("remoteDesktopStatus");
     if (status) {
       status.className = "connection-test-status success";
       status.textContent = result.protocol === "xdmcp"
         ? tr("remote:clients.opened_in", {client:result.client || "X Server", defaultValue:`已在 ${result.client || "X Server"} 打开`})
+        : result.protocol === "vnc" && result.credentials === "temporary-password"
+          ? tr("remote:clients.opened_vnc_temporary_password", {client:result.client || tr("remote:capabilities.bundled_tigervnc", {defaultValue:"TigerVNC Viewer"}), defaultValue:`已交给 ${result.client || "TigerVNC Viewer"} 打开，仅使用本次输入的 VNC 密码`})
+        : result.protocol === "vnc" && result.credentials === "saved-password"
+          ? tr("remote:clients.opened_vnc_saved_password", {client:result.client || tr("remote:capabilities.bundled_tigervnc", {defaultValue:"TigerVNC Viewer"}), defaultValue:`已交给 ${result.client || "TigerVNC Viewer"} 打开，已通过一次性密码文件传递保存的 VNC 密码`})
         : result.protocol === "rdp" && result.credentials === "stdin"
           ? tr("remote:clients.opened_password_stdin", {client:result.client || "FreeRDP", defaultValue:`已交给 ${result.client || "FreeRDP"} 打开，已通过标准输入传递保存的密码`})
           : result.protocol === "rdp" && result.credentials === "windows-credential-manager"
@@ -1351,12 +1344,24 @@ async function launchRemoteDesktop(id, key="", button=null) {
             ? tr("remote:clients.opened_prefill_unsupported", {client:result.client || tr("remote:clients.system_client", {defaultValue:"系统客户端"}), defaultValue:`已交给 ${result.client || "系统客户端"} 打开；该客户端不支持安全预填充，仍会显示凭据窗口`})
             : tr("remote:clients.opened_client_prompts", {client:result.client || tr("remote:clients.system_client", {defaultValue:"系统客户端"}), defaultValue:`已交给 ${result.client || "系统客户端"} 打开，凭据由客户端提示`});
     }
-    notify(result.protocol === "xdmcp" ? tr("remote:clients.xdmcp_started", {defaultValue:"已启动 XDMCP 图形桌面"}) : tr("remote:clients.system_client_opened", {defaultValue:"已打开系统远程桌面客户端"}), "success");
+    notify(result.protocol === "xdmcp"
+      ? tr("remote:clients.xdmcp_started", {defaultValue:"已启动 XDMCP 图形桌面"})
+      : result.fallback === "embedded-novnc"
+        ? tr("remote:clients.novnc_fallback_opened", {defaultValue:"内置 TigerVNC Viewer 不可用，已回退到 noVNC"})
+        : tr("remote:clients.system_client_opened", {defaultValue:"已打开远程桌面客户端"}), "success");
   } catch (error) {
     const status = $("remoteDesktopStatus");
     if (status) {
       status.className = "connection-test-status error";
       status.textContent = error.message || tr("remote:clients.launch_failed", {defaultValue:"远程桌面客户端启动失败"});
+    }
+    if (automaticVnc) {
+      prepareTemporaryEmbeddedCredentials();
+      const fallback = await openEmbeddedVncDesktop(id, fallbackKey);
+      if (fallback !== null) {
+        notify(tr("remote:clients.novnc_fallback_opened", {defaultValue:"内置 TigerVNC Viewer 启动失败，已回退到 noVNC"}), "info");
+        return {ok:true, protocol:"vnc", client:tr("remote:clients.terma_embedded_vnc", {defaultValue:"Terma 内置 noVNC"}), fallback:"embedded-novnc", error:error.message};
+      }
     }
     notify(error.message || tr("remote:clients.launch_failed", {defaultValue:"远程桌面客户端启动失败"}), "error");
     return null;

@@ -7,6 +7,7 @@ const net = require("node:net");
 const {EventEmitter} = require("node:events");
 const {MAC_WINDOWS_APP_PACKAGE_URL, MAC_WINDOWS_APP_URL, createRemoteClientAdapter} = require("../desktop/remote-clients");
 const {launchWindowsRdpWithCredential, windowsRdpCredentialTarget, windowsRdpCredentialTargets} = require("../desktop/windows-rdp-credentials");
+const {handleRemoteProfileRoutes} = require("../dist/routes/remote-profile-routes");
 const { readFrontendDomain } = require("./frontend-source");
 const { readSources } = require("./backend-source");
 
@@ -53,6 +54,37 @@ async function main() {
     __xServerDiagnosticsWithoutDesktopIntegration,
     __xdmcpTaskResourceKey
   } = require("../dist/server");
+
+  const launchProfile = {id:70, protocol:"vnc", host:"vnc.example", port:5900, username:"", password:"saved-password", options:{client_mode:"bundled"}};
+  const routeLaunches = [];
+  const routeResponse = {
+    headers:{},
+    setHeader(name, value) { this.headers[name] = value; },
+    end(value) { this.body = value; }
+  };
+  const routeDependencies = {
+    getRemoteProfile:id => id === 70 ? launchProfile : null,
+    isDesktopCapabilityRequest:() => true,
+    readJson:async () => ({vnc_password:"temporary-password"}),
+    getDesktopIntegration:() => ({openRemoteClient:async profile => { routeLaunches.push(profile); return {ok:true, protocol:"vnc", credentials:"temporary-password"}; }}),
+    updateRemoteProfileUsage:() => {},
+    sendJson:(response, data, status=200) => { response.statusCode = status; response.body = JSON.stringify(data); },
+    formatRemoteEndpoint:(host, port) => `${host}:${port}`
+  };
+  await handleRemoteProfileRoutes({method:"POST"}, routeResponse, "/api/remote-profiles/70/launch", routeDependencies);
+  assert.equal(routeLaunches[0].password, "temporary-password", "路由应把一次性 VNC 密码传给桌面启动器");
+  assert.equal(routeLaunches[0].temporary_password, true);
+  assert.equal(launchProfile.password, "saved-password", "一次性 VNC 密码不得改写连接配置");
+  const nonVncDependencies = {...routeDependencies, getRemoteProfile:() => ({id:71, protocol:"rdp", host:"rdp.example", port:3389, password:"saved", options:{}})};
+  await assert.rejects(
+    () => handleRemoteProfileRoutes({method:"POST"}, {...routeResponse}, "/api/remote-profiles/71/launch", nonVncDependencies),
+    /临时 VNC 密码只能用于 VNC 连接/
+  );
+  const emptyPasswordDependencies = {...routeDependencies, readJson:async () => ({vnc_password:""})};
+  await assert.rejects(
+    () => handleRemoteProfileRoutes({method:"POST"}, {...routeResponse}, "/api/remote-profiles/70/launch", emptyPasswordDependencies),
+    /临时 VNC 密码不能为空/
+  );
   const {probeTcpEndpoint, probeXdmcpEndpoint, xdmcpQueryPacket} = require("../dist/remote-connectivity");
   const tcpResponder = net.createServer(socket => socket.end());
   await new Promise((resolve, reject) => {
@@ -222,6 +254,34 @@ async function main() {
   assert.equal(windowsDiagnostics.vnc.available, true);
   assert.equal(windowsDiagnostics.rdp.password_transfer_mode, "windows-credential-manager");
   assert.match(windowsDiagnostics.password_policy, /临时凭据存储.*不会进入命令行/);
+  await assert.rejects(
+    () => windows.open({id:23,protocol:"vnc",host:"bundled-missing.example",port:5900,options:{client_mode:"bundled"}}),
+    /No usable VNC client|未找到可用的 VNC 客户端/,
+    "显式内置模式不可用时不得悄悄切换到系统客户端"
+  );
+
+  const bundledWindowsPath = "C:\\Terma\\resources\\tigervnc\\vncviewer.exe";
+  const bundledSystemWindowsPath = "C:\\Program Files\\TigerVNC\\vncviewer.exe";
+  const bundledWindows = createRemoteClientAdapter({
+    platform:"win32",
+    environment:{SystemRoot:"C:\\Windows",ProgramFiles:"C:\\Program Files"},
+    getBundledVncRuntime:()=>({executable:bundledWindowsPath}),
+    existsSync:file => [bundledWindowsPath, bundledSystemWindowsPath, "C:\\Windows\\System32\\mstsc.exe"].includes(String(file)),
+    statSync:()=>({isFile:()=>true,isDirectory:()=>false}),
+    spawn:fakeSpawn,
+    spawnSync:unavailableCommand
+  });
+  const bundledWindowsDiagnostics = bundledWindows.diagnostics().vnc;
+  assert.equal(bundledWindowsDiagnostics.bundled_available, true);
+  assert.equal(bundledWindowsDiagnostics.bundled.bundled, true);
+  assert.equal(bundledWindowsDiagnostics.system_available, true);
+  assert.equal(bundledWindowsDiagnostics.mode, "tigervnc");
+  await bundledWindows.open({id:24,protocol:"vnc",host:"bundled.example",port:5900,options:{client_mode:"auto"}});
+  assert.equal(launches.at(-1).executable, bundledWindowsPath, "自动模式必须优先启动随包 TigerVNC");
+  await bundledWindows.open({id:26,protocol:"vnc",host:"bundled-explicit.example",port:5900,options:{client_mode:"bundled"}});
+  assert.equal(launches.at(-1).executable, bundledWindowsPath, "显式内置模式必须启动随包 TigerVNC");
+  await bundledWindows.open({id:25,protocol:"vnc",host:"system.example",port:5900,options:{client_mode:"system"}});
+  assert.equal(launches.at(-1).executable, bundledSystemWindowsPath, "显式系统模式必须绕过随包 TigerVNC");
 
   let selectedVncClientPath = "";
   const selectableVncPath = "C:\\Tools\\CustomVNC\\vncviewer.exe";
@@ -339,8 +399,22 @@ async function main() {
   await windows.open({id:2,protocol:"vnc",host:"vnc.example",port:5901,password:"must-not-leak",options:{quality:7,shared:true,view_only:true}});
   const vncLaunch = launches.at(-1);
   assert.match(vncLaunch.executable, /vncviewer\.exe$/i);
-  assert.deepEqual(vncLaunch.args, ["vnc.example::5901","-QualityLevel=7","-Shared","-ViewOnly"]);
+  assert.deepEqual(vncLaunch.args.slice(0, 4), ["vnc.example::5901","-QualityLevel=7","-Shared","-ViewOnly"]);
+  assert.equal(vncLaunch.args[4], "-passwd");
+  assert.equal(fs.readFileSync(vncLaunch.args[5]).toString("hex").toUpperCase(), "C2EF735D19090434");
   assert.doesNotMatch(JSON.stringify(vncLaunch), /must-not-leak/);
+  const vncResult = await windows.open({id:3,protocol:"vnc",host:"vnc.example",port:5901,password:"12345678",options:{quality:7}});
+  const vncSavedLaunch = launches.at(-1);
+  assert.equal(vncResult.credentials, "saved-password");
+  assert.equal(vncSavedLaunch.args.includes("-passwd"), true);
+  const vncPasswordIndex = vncSavedLaunch.args.indexOf("-passwd");
+  assert.equal(fs.readFileSync(vncSavedLaunch.args[vncPasswordIndex + 1]).toString("hex").toUpperCase(), "F0E43164F6C2E373");
+
+  const vncTemporaryResult = await windows.open({id:4,protocol:"vnc",host:"vnc.example",port:5901,password:"temporary-only",temporary_password:true,options:{quality:7}});
+  const vncTemporaryLaunch = launches.at(-1);
+  assert.equal(vncTemporaryResult.credentials, "temporary-password", "临时 VNC 密码必须标记为仅本次使用");
+  assert.equal(vncTemporaryLaunch.args.includes("-passwd"), true);
+  assert.doesNotMatch(JSON.stringify(vncTemporaryLaunch), /temporary-only/, "临时 VNC 密码不得进入进程参数或日志对象");
 
   await windows.open({id:12,protocol:"vnc",host:"2001:db8::12",port:5901,password:"",options:{quality:7}});
   assert.deepEqual(launches.at(-1).args, ["[2001:db8::12]::5901", "-QualityLevel=7"]);
@@ -497,7 +571,11 @@ async function main() {
   assert.match(xserverSource, /dns\.lookup\(host/);
   assert.match(serverSource, /profile\.protocol === "rdp"[\s\S]*?await dependencies\.probeTcpEndpoint\(profile\.host, profile\.port \|\| 3389\)/, "RDP 启动前必须从保存的远程连接探测目标端口");
   assert.match(serverSource, /无法从本机连接 RDP 服务/, "RDP 端口不可达时必须阻止启动并给出明确提示");
-  assert.match(serverSource, /password:profile\.password/, "RDP 启动必须把已解密密码限定在桌面适配器边界内");
+  assert.match(serverSource, /password:(?:profile\.password|requestedVncPassword \|\| profile\.password)/, "启动必须把已解密密码限定在桌面适配器边界内");
+  assert.match(serverSource, /requestedClientMode[\s\S]*\["auto", "bundled", "embedded", "system"\]/, "VNC 临时回退只允许固定客户端模式");
+  assert.match(serverSource, /hasRequestedVncPassword[\s\S]*临时 VNC 密码只能用于 VNC 连接/, "临时 VNC 密码必须限制在 VNC 启动请求");
+  assert.match(serverSource, /temporary_password:Boolean\(requestedVncPassword\)/, "临时 VNC 密码必须只作为本次启动标记传递");
+  assert.match(remoteUiSource, /function launchVncWithTemporaryPassword[\s\S]*updateByDefault:false[\s\S]*saveVncCredential[\s\S]*vnc_password/, "VNC 界面必须支持不覆盖保存配置的临时密码");
 
   const linux = createRemoteClientAdapter({
     platform:"linux",

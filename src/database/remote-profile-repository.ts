@@ -73,7 +73,7 @@ export function createRemoteProfileRepository(dependencies: RemoteProfileReposit
       const serverDisplay = text("server_display", "", 32);
       if (serverDisplay && !/^:[0-9]+(?:\.[0-9]+)?$/.test(serverDisplay)) throw new Error("VNC 服务端显示编号无效");
       return withSource({
-        client_mode:new Set(["auto", "embedded", "system"]).has(String(value.client_mode)) ? String(value.client_mode) : "auto",
+        client_mode:new Set(["auto", "bundled", "embedded", "system"]).has(String(value.client_mode)) ? String(value.client_mode) : "auto",
         cursor_mode:new Set(["auto", "show", "hide"]).has(String(value.cursor_mode)) ? String(value.cursor_mode) : "auto",
         display_mode:new Set(["scale", "original", "resize"]).has(String(value.display_mode)) ? String(value.display_mode) : "scale",
         server_session_mode:serverSessionMode,

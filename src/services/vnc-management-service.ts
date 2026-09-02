@@ -3,6 +3,7 @@ const { componentInstallCommand } = require("../remote-component-installer");
 const { runSshCommandForConnection } = require("../ssh");
 const {
   buildVncStartCommand,
+  buildVncPasswordChangeCommand,
   detectVncServer,
   validateVncServerComponent,
   vncServerStartValidation,
@@ -50,7 +51,7 @@ function waitMs(timeoutMs) {
 }
 
 async function waitForVncServerAction(profile, targetComponent, action, initial = null) {
-  const starting = ["start", "restart", "enable"].includes(action);
+  const starting = ["start", "restart", "enable", "change-password"].includes(action);
   let latest = initial;
   const attempts = starting ? 12 : 8;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -68,7 +69,7 @@ async function waitForVncServerAction(profile, targetComponent, action, initial 
 
 async function configureVncServerForProfile(profile, data: any = {}) {
   const action = String(data.action || "guide").trim().toLowerCase();
-  if (!["guide", "install", "install-offline", "install-local-offline", "uninstall", "start", "stop", "restart", "enable", "disable"].includes(action)) throw new Error("VNC 服务操作无效");
+  if (!["guide", "install", "install-offline", "install-local-offline", "uninstall", "start", "stop", "restart", "enable", "disable", "change-password"].includes(action)) throw new Error("VNC 服务操作无效");
   const before = await inspectVncServerForProfile(profile);
   const targetComponent = String(before.server_session_selection?.component || before.selected_component?.key || "").trim();
   const targetComponentLabel = String(before.selected_component?.label || "VNC 服务");
@@ -116,6 +117,15 @@ async function configureVncServerForProfile(profile, data: any = {}) {
       : "";
     if (!command) throw new Error(before.start_plan?.requires_vnc_password ? "请先在 VNC 连接设置中保存连接密码，再配置并启动服务" : "没有检测到可自动配置/启动的 VNC 服务方案，请打开手动配置说明");
     mode = "service";
+  } else if (action === "change-password") {
+    if (String(before.platform || "").toLowerCase() !== "linux") throw new Error("当前仅支持修改 Linux VNC 服务密码；macOS 屏幕共享密码请在系统设置中修改");
+    const password = String(data.vnc_password || data.password || "");
+    const allowNoPassword = data.allow_no_password === true;
+    if (!password && !allowNoPassword) throw new Error("请提供新的 VNC 服务密码，或明确启用无密码模式");
+    if (allowNoPassword && before.start_plan?.supports_no_password !== true) throw new Error("当前 VNC 服务方案不支持明确的无密码模式");
+    command = buildVncPasswordChangeCommand(before, password, {allow_no_password:allowNoPassword});
+    if (!command) throw new Error("当前没有可自动管理的 VNC 服务密码文件，请打开手动配置说明");
+    mode = "service";
   } else if (["stop", "disable"].includes(action)) {
     const selected = before.service_actions?.[action] || before.package_plan?.service_actions?.[action];
     command = String(selected?.command || "").trim();
@@ -157,7 +167,7 @@ async function configureVncServerForProfile(profile, data: any = {}) {
   }
   const actionLabels = {
     install:"在线安装", "install-offline":"使用远端缓存安装", uninstall:"卸载",
-    start:"启动", stop:"停止", restart:"重新启动", enable:"启用并启动", disable:"停止并禁用"
+    start:"启动", stop:"停止", restart:"重新启动", enable:"启用并启动", disable:"停止并禁用", "change-password":"修改服务密码"
   };
   const task = startRemoteComponentCommandTask({
     connection,
@@ -174,7 +184,7 @@ async function configureVncServerForProfile(profile, data: any = {}) {
     timeoutMs:action === "install" || action === "install-offline" || action === "uninstall" ? 20 * 60 * 1000 : 120000,
     directRoot:Boolean(before.root),
     normalizeResult:normalizeVncRemoteCommandResult,
-    verify:() => ["start", "restart", "enable", "stop", "disable"].includes(action)
+    verify:() => ["start", "restart", "enable", "stop", "disable", "change-password"].includes(action)
       ? waitForVncServerAction(profile, targetComponent, action)
       : inspectVncServerForProfile(profile),
     validate:after => {
@@ -187,6 +197,9 @@ async function configureVncServerForProfile(profile, data: any = {}) {
       if (["start", "restart", "enable"].includes(action)) return targetComponent
         ? vncServerStartValidation(after, targetComponent)
         : vncComponentListening(after, targetComponent) || "VNC 服务命令已结束，但目标端口仍未监听";
+      if (action === "change-password") return targetComponent
+        ? (selectedVncComponentState(after, targetComponent)?.listening === true || "VNC 服务密码已写入，但目标服务未保持监听")
+        : vncComponentListening(after, targetComponent) || "VNC 服务密码已写入，但目标服务未保持监听";
       return targetComponent
         ? vncServerStopValidation(after, targetComponent)
         : !vncComponentListening(after, targetComponent) || "VNC 服务命令已结束，但目标端口仍在监听";

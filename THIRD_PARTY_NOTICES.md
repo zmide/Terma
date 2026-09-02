@@ -98,6 +98,15 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 - License: Mozilla Public License 2.0
 - Use: built-in VNC viewer
 
+## TigerVNC Viewer
+
+- Project: https://github.com/TigerVNC/tigervnc
+- Binary release: https://sourceforge.net/projects/tigervnc/files/stable/1.16.2/
+- Version: 1.16.2
+- License: GNU General Public License v2.0 or later
+- Use: bundled desktop VNC viewer; the platform package includes only the viewer runtime
+- Copyright: Copyright (C) 1999-2026 TigerVNC Team and contributors
+
 ## VcXsrv
 
 - Project: https://sourceforge.net/projects/vcxsrv/

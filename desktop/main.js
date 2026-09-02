@@ -95,6 +95,18 @@ let xServerRuntime = null;
 const remoteClientAdapter = displayClientMode ? null : createRemoteClientAdapter({
   getDataDir:()=>DATA_DIR,
   shell,
+  getBundledVncRuntime:() => {
+    const runtimeDirectory = app.isPackaged
+      ? path.join(process.resourcesPath, "tigervnc")
+      : path.join(__dirname, "..", "runtime", "tigervnc", process.platform === "darwin" ? "darwin-universal" : process.platform === "win32" ? "win32-x64" : "linux-x64");
+    if (process.platform === "darwin") {
+      return {
+        executable:path.join(runtimeDirectory, "TigerVNC.app", "Contents", "MacOS", "vncviewer"),
+        application:path.join(runtimeDirectory, "TigerVNC.app")
+      };
+    }
+    return {executable:path.join(runtimeDirectory, process.platform === "win32" ? "vncviewer.exe" : "vncviewer")};
+  },
   getXServerDiagnostics:()=>xServerRuntime?.diagnostics?.() || null,
   getVncClientPath:()=>String(readSettings().vncClientPath || ""),
   canSelectVncClient:()=>true,

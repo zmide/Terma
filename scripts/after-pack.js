@@ -1,10 +1,12 @@
 "use strict";
 
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
 const childProcess = require("node:child_process");
 const { assertNativeArchitecture } = require("./native-binary-check");
+const { VERSION: TIGERVNC_VERSION } = require("./prepare-tigervnc-runtime");
 const { verifyMacIconPadding } = require("./mac-icon-padding-check");
 
 function resourcesDir(context) {
@@ -144,10 +146,39 @@ function verifyBundledXServer(context) {
   }
 }
 
+function verifyBundledTigerVnc(context) {
+  const platform = context.electronPlatformName;
+  const runtime = path.join(resourcesDir(context), "tigervnc");
+  const executable = platform === "darwin"
+    ? path.join(runtime, "TigerVNC.app", "Contents", "MacOS", "vncviewer")
+    : path.join(runtime, platform === "win32" ? "vncviewer.exe" : "vncviewer");
+  const manifestPath = path.join(runtime, "terma-tigervnc.json");
+  verifyFile(executable, `${platform} bundled TigerVNC Viewer`);
+  verifyFile(manifestPath, `${platform} bundled TigerVNC manifest`);
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const relativeExecutable = path.relative(runtime, executable).replaceAll(path.sep, "/");
+  const executableSha256 = crypto.createHash("sha256").update(fs.readFileSync(executable)).digest("hex");
+  if (manifest.name !== "TigerVNC Viewer" || manifest.version !== TIGERVNC_VERSION || manifest.platform !== platform) {
+    throw new Error(`Bundled TigerVNC manifest identity mismatch: ${manifestPath}`);
+  }
+  if (manifest.executable !== relativeExecutable || manifest.executable_sha256 !== executableSha256) {
+    throw new Error(`Bundled TigerVNC manifest does not match its executable: ${manifestPath}`);
+  }
+  if (platform !== "win32") fs.chmodSync(executable, 0o755);
+  const arch = buildArchName(context.arch);
+  if (arch && arch !== "universal") {
+    assertNativeArchitecture(executable, arch, `${platform} bundled TigerVNC Viewer`);
+  }
+  if (fs.existsSync(path.join(runtime, "tunneldesk-tigervnc.json"))) {
+    throw new Error(`Bundled TigerVNC runtime contains a legacy manifest: ${runtime}`);
+  }
+}
+
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName === "darwin") verifyMacIcon(context);
   verifyNativeSftpDrag(context);
   verifyBundledXServer(context);
+  verifyBundledTigerVnc(context);
   if (!["darwin", "linux"].includes(context.electronPlatformName)) return;
 
   const nodePtyDir = path.join(resourcesDir(context), "app.asar.unpacked", "node_modules", "node-pty");
