@@ -3437,7 +3437,8 @@ app.whenReady().then(async () => {
       const section = [...document.querySelectorAll('#settings-about')].find(item=>!item.hidden&&item.getClientRects().length)
         || document.querySelector('#settings-about');
       const visibleGroups = [...document.querySelectorAll('#view-settings .settings-group')].filter(group => !group.hidden).map(group => group.id);
-      const sourceLink = section?.querySelector('.about-actions a');
+      const sourceLink = [...(section?.querySelectorAll('.about-actions a') || [])]
+        .find(link => link.href === aboutSettings?.repository_url);
       const trigger = [...document.querySelectorAll('#openLicenseBtn')].find(item=>item.getClientRects().length)
         || document.querySelector('#openLicenseBtn');
       if (!section || !trigger) return {found:false, visibleGroups};
