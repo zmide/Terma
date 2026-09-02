@@ -57,6 +57,18 @@ function remoteDesktopSize(options = {}) {
   };
 }
 
+function vncDisplayMode(options = {}) {
+  const mode = String(options.display_mode || "").trim().toLowerCase();
+  return ["scale", "original", "resize"].includes(mode) ? mode : "scale";
+}
+
+function tigerVncDisplayArgs(options = {}) {
+  // TigerVNC has no client-side scaling mode.  Both fit-to-window and
+  // follow-window therefore request SetDesktopSize when the server supports
+  // it; original-pixel mode deliberately keeps the server's native size.
+  return [`-RemoteResize=${vncDisplayMode(options) === "original" ? 0 : 1}`];
+}
+
 function normalizeRemoteClientHost(value, language = process.env.TERMA_INTERFACE_LANGUAGE) {
   const raw = String(value ?? "").trim();
   const host = raw.startsWith("[") && raw.endsWith("]") ? raw.slice(1, -1) : raw;
@@ -405,7 +417,7 @@ function createRemoteClientAdapter(options = {}) {
       bundled,
       system:systemVnc,
       system_available:Boolean(systemVnc.available),
-      fallback_chain:["bundled-tigervnc", "embedded-novnc", "system"]
+      fallback_chain:["bundled-tigervnc", "system"]
     };
     return {
       platform,
@@ -756,7 +768,11 @@ function createRemoteClientAdapter(options = {}) {
     else if (item.mode === "tightvnc") await spawnDetached(item.executable, [`-host=${normalizeHost(profile.host)}`, `-port=${port}`]);
     else if (item.mode === "tigervnc") {
       const host = normalizeHost(profile.host);
-      const args = [`${net.isIP(host) === 6 ? `[${host}]` : host}::${port}`, `-QualityLevel=${Number(value.quality ?? 8)}`];
+      const args = [
+        `${net.isIP(host) === 6 ? `[${host}]` : host}::${port}`,
+        `-QualityLevel=${Number(value.quality ?? 8)}`,
+        ...tigerVncDisplayArgs(value)
+      ];
       if (value.shared) args.push("-Shared");
       if (value.view_only) args.push("-ViewOnly");
       const temporaryPassword = String(profile.temporary_password ? profile.password || "" : "");

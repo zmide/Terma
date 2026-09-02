@@ -45,17 +45,15 @@ function vncClipboardBridgeCandidate(session) {
 
 function normalizeVncClipboardText(text="") {
   const value = String(text ?? "");
-  if (!/^(?:(?:\\u[0-9a-f]{4})|(?:\\U[0-9a-f]{8}))+$/i.test(value)) return value;
-  try {
-    const jsonEscaped = value.replace(/\\U([0-9a-f]{8})/gi, (_match, digits) => {
-      const point = Number.parseInt(digits, 16);
-      if (!Number.isInteger(point) || point < 0 || point > 0x10ffff) return _match;
-      return String.fromCodePoint(point).split("").map(unit => `\\u${unit.charCodeAt(0).toString(16).padStart(4, "0")}`).join("");
-    });
-    return JSON.parse(`"${jsonEscaped}"`);
-  } catch {
-    return value;
-  }
+  // Some VNC servers expose Unicode as a literal escape sequence, sometimes
+  // mixed into otherwise normal text. Decode only a single backslash escape;
+  // a double backslash is usually intentional source text and must survive.
+  return value.replace(/(?<!\\)\\U([0-9a-f]{8})|(?<!\\)\\u([0-9a-f]{4})/gi, (match, digits8, digits4) => {
+    const digits = digits4 ?? digits8;
+    const point = Number.parseInt(digits, 16);
+    if (!Number.isInteger(point) || point < 0 || point > 0x10ffff) return match;
+    return String.fromCodePoint(point);
+  });
 }
 
 function refreshVncClipboardControlRefs(session) {

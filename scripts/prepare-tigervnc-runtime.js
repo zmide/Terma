@@ -212,7 +212,7 @@ function extractLinuxArchive(archive, target) {
 async function prepare(platform = process.platform, arch = process.arch) {
   const release = platformRelease(platform, arch);
   if (!release) {
-    console.log(`TigerVNC bundled runtime is not prepared for ${platform}; noVNC/system fallback remains available.`);
+    console.log(`TigerVNC bundled runtime is not prepared for ${platform}; system fallback remains available, and noVNC can be selected manually.`);
     return;
   }
   if (verifiedRuntime(platform, arch)) {

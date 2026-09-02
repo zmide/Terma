@@ -16,7 +16,7 @@
 - Windows 桌面包内置并管理 X Server 和 TigerVNC Viewer。
 - macOS 使用 XQuartz；Linux 使用当前图形桌面和 Xephyr。
 - macOS X11/XDMCP 需要 XQuartz；Linux X11 需要 `DISPLAY`、`xauth` 和 Xephyr。
-- RDP 使用系统原生客户端，VNC 依次支持 TigerVNC、内置 noVNC 和系统客户端。
+- RDP 使用系统原生客户端；VNC 自动模式使用 TigerVNC 并回退系统客户端，内置 noVNC 可按连接手动选择。
 
 ## 无图形环境
 

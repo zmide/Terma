@@ -31,7 +31,7 @@ assert.equal(runtime.targetDirectory("win32", "x64"), path.join(path.resolve(__d
 assert.throws(() => runtime.platformRelease("win32", "ia32"), /x64 only/);
 assert.equal(runtime.platformRelease("freebsd", "x64"), null);
 assert.match(adapterSource, /getBundledVncRuntime/);
-assert.match(adapterSource, /fallback_chain:\["bundled-tigervnc", "embedded-novnc", "system"\]/);
+assert.match(adapterSource, /fallback_chain:\["bundled-tigervnc", "system"\]/);
 assert.match(adapterSource, /requestedSystem/);
 assert.match(mainSource, /process\.resourcesPath, "tigervnc"/);
 assert.ok(packageJson.scripts["vnc:prepare"]);

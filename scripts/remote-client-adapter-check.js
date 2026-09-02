@@ -323,7 +323,11 @@ async function main() {
   });
   assert.equal(tigerVncWindows.diagnostics().vnc.mode, "tigervnc");
   await tigerVncWindows.open({id:23,protocol:"vnc",host:"tiger.example",port:5900,options:{quality:6,shared:true,view_only:true}});
-  assert.deepEqual(launches.at(-1).args, ["tiger.example::5900", "-QualityLevel=6", "-Shared", "-ViewOnly"]);
+  assert.deepEqual(launches.at(-1).args, ["tiger.example::5900", "-QualityLevel=6", "-RemoteResize=1", "-Shared", "-ViewOnly"]);
+  await tigerVncWindows.open({id:231,protocol:"vnc",host:"tiger-original.example",port:5900,options:{display_mode:"original"}});
+  assert.ok(launches.at(-1).args.includes("-RemoteResize=0"), "TigerVNC 原始像素模式不得请求远端调整分辨率");
+  await tigerVncWindows.open({id:232,protocol:"vnc",host:"tiger-resize.example",port:5900,options:{display_mode:"resize"}});
+  assert.ok(launches.at(-1).args.includes("-RemoteResize=1"), "TigerVNC 跟随窗口模式必须请求远端调整分辨率");
   const realVncPath = "C:\\Program Files\\RealVNC\\VNC Viewer\\vncviewer.exe";
   const realVncWindows = createRemoteClientAdapter({
     platform:"win32",
@@ -399,9 +403,9 @@ async function main() {
   await windows.open({id:2,protocol:"vnc",host:"vnc.example",port:5901,password:"must-not-leak",options:{quality:7,shared:true,view_only:true}});
   const vncLaunch = launches.at(-1);
   assert.match(vncLaunch.executable, /vncviewer\.exe$/i);
-  assert.deepEqual(vncLaunch.args.slice(0, 4), ["vnc.example::5901","-QualityLevel=7","-Shared","-ViewOnly"]);
-  assert.equal(vncLaunch.args[4], "-passwd");
-  assert.equal(fs.readFileSync(vncLaunch.args[5]).toString("hex").toUpperCase(), "C2EF735D19090434");
+  assert.deepEqual(vncLaunch.args.slice(0, 5), ["vnc.example::5901","-QualityLevel=7","-RemoteResize=1","-Shared","-ViewOnly"]);
+  assert.equal(vncLaunch.args[5], "-passwd");
+  assert.equal(fs.readFileSync(vncLaunch.args[6]).toString("hex").toUpperCase(), "C2EF735D19090434");
   assert.doesNotMatch(JSON.stringify(vncLaunch), /must-not-leak/);
   const vncResult = await windows.open({id:3,protocol:"vnc",host:"vnc.example",port:5901,password:"12345678",options:{quality:7}});
   const vncSavedLaunch = launches.at(-1);
@@ -417,7 +421,7 @@ async function main() {
   assert.doesNotMatch(JSON.stringify(vncTemporaryLaunch), /temporary-only/, "临时 VNC 密码不得进入进程参数或日志对象");
 
   await windows.open({id:12,protocol:"vnc",host:"2001:db8::12",port:5901,password:"",options:{quality:7}});
-  assert.deepEqual(launches.at(-1).args, ["[2001:db8::12]::5901", "-QualityLevel=7"]);
+  assert.deepEqual(launches.at(-1).args, ["[2001:db8::12]::5901", "-QualityLevel=7", "-RemoteResize=1"]);
 
   const mac = createRemoteClientAdapter({
     platform:"darwin",

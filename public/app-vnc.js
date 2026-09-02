@@ -247,6 +247,10 @@ function vncConnectionHelpMarkup(profile, platform="", serviceAvailable=false, d
   const embedded = clientMode === "embedded";
   const bundled = clientMode === "bundled";
   const automatic = clientMode === "auto";
+  const sharedDesktop = ["shared-x11", "shared-wayland"].includes(String(diagnostics?.server_mode || "").toLowerCase());
+  const externalClipboardHint = sharedDesktop && !embedded
+    ? `<div class="connection-test-status warning">${icon("info")}<span>${esc(tr("remote:vnc_status.shared_tigervnc_clipboard_hint", {defaultValue:"当前服务共享已有 X11/Wayland 桌面（通常是 x11vnc/wayvnc）。TigerVNC Viewer 只能使用服务端提供的 VNC 剪贴板，中文可能变成 \\uXXXX 或乱码；Terma 无法仅靠 Viewer 参数修复。需要可靠中文复制，请将目标来源切换为“独立 TigerVNC 虚拟桌面”，或改用 Terma 内置 noVNC 并关联 SSH 剪贴板辅助。"}))}</span></div>`
+    : "";
   const reconnecting = Boolean(activeSession?.workspace) || (!options.preflight && !running);
   const connectAction = embedded
     ? activeSession?.workspace
@@ -275,6 +279,7 @@ function vncConnectionHelpMarkup(profile, platform="", serviceAvailable=false, d
     ${vncServerSessionSourceMarkup(profile, diagnostics || {}, reconnectKey)}
     ${installModes}
     ${remoteGraphicsRenderingMarkup(diagnostics || {})}
+    ${externalClipboardHint}
     <div class="remote-service-actions">
       ${restartForSelection}${startButton}${serviceActions}
       ${options.preflight ? "" : `<button type="button" onclick="openVncSetupGuide(${Number(profile.id)})">${icon("book-open-check")}<span>${esc(tr("remote:auto.manual_install", {defaultValue:"手动安装/配置说明"}))}</span></button>`}
@@ -1270,22 +1275,11 @@ async function launchRemoteDesktop(id, key="", button=null, clientModeOverride="
       throw new Error(tr("remote:vnc_ui.password_invalid", {defaultValue:"VNC 密码包含无效控制字符"}));
     }
     const fallbackKey = key || `remote-desktop-${id}`;
-    const prepareTemporaryEmbeddedCredentials = () => {
-      if (!temporaryVncPassword) return;
-      const session = vncSessions.get(fallbackKey) || {key:fallbackKey};
-      session.nextCredentials = {username:profile.username || "", password:temporaryVncPassword};
-      vncSessions.set(fallbackKey, session);
-    };
     const scopes = profile?.protocol === "xdmcp" ? ["remote-client", "xserver"] : ["remote-client"];
     if (!await ensureDesktopIntegrationAuthorized(scopes)) return null;
     if (["rdp", "vnc"].includes(profile.protocol)) {
       const diagnostics = await api("/api/remote-clients/diagnostics");
       const client = diagnostics?.[profile.protocol] || {};
-      if (automaticVnc && !client.bundled_available) {
-        prepareTemporaryEmbeddedCredentials();
-        const fallback = await openEmbeddedVncDesktop(profile.id, fallbackKey);
-        if (fallback !== null) return {ok:true, protocol:"vnc", client:tr("remote:clients.terma_embedded_vnc", {defaultValue:"Terma 内置 noVNC"}), fallback:"embedded-novnc"};
-      }
       const clientAvailable = profile.protocol === "vnc"
         ? effectiveClientMode === "system"
           ? Boolean(client.system_available)
@@ -1346,9 +1340,7 @@ async function launchRemoteDesktop(id, key="", button=null, clientModeOverride="
     }
     notify(result.protocol === "xdmcp"
       ? tr("remote:clients.xdmcp_started", {defaultValue:"已启动 XDMCP 图形桌面"})
-      : result.fallback === "embedded-novnc"
-        ? tr("remote:clients.novnc_fallback_opened", {defaultValue:"内置 TigerVNC Viewer 不可用，已回退到 noVNC"})
-        : tr("remote:clients.system_client_opened", {defaultValue:"已打开远程桌面客户端"}), "success");
+      : tr("remote:clients.system_client_opened", {defaultValue:"已打开远程桌面客户端"}), "success");
   } catch (error) {
     const status = $("remoteDesktopStatus");
     if (status) {
@@ -1356,12 +1348,13 @@ async function launchRemoteDesktop(id, key="", button=null, clientModeOverride="
       status.textContent = error.message || tr("remote:clients.launch_failed", {defaultValue:"远程桌面客户端启动失败"});
     }
     if (automaticVnc) {
-      prepareTemporaryEmbeddedCredentials();
-      const fallback = await openEmbeddedVncDesktop(id, fallbackKey);
-      if (fallback !== null) {
-        notify(tr("remote:clients.novnc_fallback_opened", {defaultValue:"内置 TigerVNC Viewer 启动失败，已回退到 noVNC"}), "info");
-        return {ok:true, protocol:"vnc", client:tr("remote:clients.terma_embedded_vnc", {defaultValue:"Terma 内置 noVNC"}), fallback:"embedded-novnc", error:error.message};
-      }
+      try {
+        const systemFallback = await launchRemoteDesktop(id, fallbackKey, null, "system", temporaryCredentials);
+        if (systemFallback) {
+          notify(tr("remote:clients.system_fallback_opened", {defaultValue:"内置 TigerVNC Viewer 启动失败，已改用系统 VNC 客户端"}), "info");
+          return {...systemFallback, fallback:"system", error:error.message};
+        }
+      } catch {}
     }
     notify(error.message || tr("remote:clients.launch_failed", {defaultValue:"远程桌面客户端启动失败"}), "error");
     return null;

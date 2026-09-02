@@ -160,8 +160,10 @@ const makeSession = rfb => ({
 
   assert.equal(api.normalizeVncClipboardText(String.raw`\u554a\u554a\u554a`), "啊啊啊");
   assert.equal(api.normalizeVncClipboardText(String.raw`\U0000554a\U0000554a`), "啊啊");
-  assert.equal(api.normalizeVncClipboardText(String.raw`const value = "\u554a";`), String.raw`const value = "\u554a";`);
-  assert.equal(api.normalizeVncClipboardText(String.raw`\u554a\n`), String.raw`\u554a\n`);
+  assert.equal(api.normalizeVncClipboardText(String.raw`const value = "\u554a";`), `const value = "啊";`);
+  assert.equal(api.normalizeVncClipboardText(String.raw`前缀 \u554a / \U0001F600 后缀`), "前缀 啊 / 😀 后缀");
+  assert.equal(api.normalizeVncClipboardText(String.raw`const value = "\\u554a";`), String.raw`const value = "\\u554a";`);
+  assert.equal(api.normalizeVncClipboardText(String.raw`\u554a\n`), "啊\\n");
   assert.equal(api.normalizeVncClipboardText(String.raw`C:\users\test`), String.raw`C:\users\test`);
 
   await api.handleVncRemoteClipboard(session, rfb, "远端\nclipboard");
