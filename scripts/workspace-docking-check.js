@@ -9,6 +9,7 @@ const root = path.resolve(__dirname, "..");
 function loadDockingModel() {
   const storage = new Map();
   const noop = () => {};
+  const titleCalls = [];
   const sandbox = {
     console,
     Map,
@@ -20,6 +21,7 @@ function loadDockingModel() {
     clearTimeout:noop,
     CSS:{escape:value => String(value)},
     tabs:[],
+    titleCalls,
     activeTabKey:"",
     activeView:"welcome",
     selectedId:null,
@@ -64,6 +66,7 @@ function loadDockingModel() {
     openSettings:noop,
     syncTerminalToolbarPlacement:noop,
     syncSftpToolbarPlacement:noop,
+    syncWorkspaceDocumentTitle:(...args) => titleCalls.push(args),
     showMobileWorkspace:noop,
     renderTabs:noop,
     updateWorkspaceTabScrollControls:noop,
@@ -148,6 +151,7 @@ function loadDockingModel() {
       getWorkspaceGroups:() => workspaceGroups,
       getActiveWorkspaceGroupId:() => activeWorkspaceGroupId,
       getWorkspaceGroupSelectionMode:() => workspaceGroupSelectionMode,
+      getTitleCalls:() => titleCalls,
       getWorkspaceSelectedTabKeys:() => [...workspaceSelectedTabKeys],
       resetSerials:() => { workspacePaneSerial = 1; workspaceSplitSerial = 0; }
     };`;
@@ -297,6 +301,7 @@ function runWorkspaceDockingChecks({silent=false}={}) {
       setAttribute:() => {}
     };
     api.setWorkspacePaneNode(activePane.id, {
+      dataset:{paneId:activePane.id},
       classList:{toggle:() => {}},
       querySelector:() => null,
       querySelectorAll:selector => selector === ".tabs .tab[data-tab-key]" ? [tabButton] : []
@@ -538,6 +543,60 @@ function runWorkspaceDockingChecks({silent=false}={}) {
     assert.equal(source.activeTabKey, "sftp-1");
     assert.deepEqual([...source.tabs], ["sftp-1", "terminal-3"]);
     assert.equal(destination.activeTabKey, "sftp-2");
+  });
+
+  check("splitting the active middle tab returns the source pane to its left neighbor", () => {
+    api.resetSerials();
+    api.setTabs([
+      {key:"terminal-1", kind:"terminal"},
+      {key:"sftp-1", kind:"sftp"},
+      {key:"terminal-2", kind:"terminal"}
+    ]);
+    const layout = pane("pane-source", ["terminal-1", "sftp-1", "terminal-2"]);
+    layout.activeTabKey = "sftp-1";
+    api.setLayout(layout);
+    api.setFocusedPane("pane-source");
+    const applied = api.applyWorkspaceTabDrop(
+      {key:"sftp-1", sourcePaneId:"pane-source", sourceActiveTabKey:"sftp-1"},
+      {paneId:"pane-source", zone:"right"}
+    );
+    assert.equal(applied, true);
+    const source = api.workspaceLeaves().find(item => item.tabs.includes("terminal-1"));
+    const destination = api.workspaceLeaves().find(item => item.tabs.includes("sftp-1"));
+    assert.deepEqual([...source.tabs], ["terminal-1", "terminal-2"]);
+    assert.equal(source.activeTabKey, "terminal-1");
+    assert.equal(destination.activeTabKey, "sftp-1");
+  });
+
+  check("focusing another split pane updates the native workspace title", () => {
+    api.setTabs([
+      {key:"terminal-left", kind:"terminal", viewName:"terminal", title:"Linux图形界面测试", subtitle:"root@192.168.31.77:22"},
+      {key:"terminal-right", kind:"terminal", viewName:"terminal", title:"Linux图形界面测试", subtitle:"root@192.168.31.76:22"}
+    ]);
+    api.setLayout({
+      type:"split",
+      id:"split-title",
+      direction:"row",
+      ratio:0.5,
+      first:pane("pane-title-left", ["terminal-left"]),
+      second:pane("pane-title-right", ["terminal-right"])
+    });
+    for (const paneId of ["pane-title-left", "pane-title-right"]) {
+      api.setWorkspacePaneNode(paneId, {
+        dataset:{paneId},
+        classList:{toggle:() => {}},
+        querySelector:() => null
+      });
+    }
+    api.setFocusedPane("pane-title-left");
+    const calls = api.getTitleCalls();
+    calls.length = 0;
+    api.focusWorkspacePane("pane-title-right");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], "Linux图形界面测试");
+    assert.equal(calls[0][1], "root@192.168.31.76:22");
+    assert.equal(calls[0][3], "terminal-right");
+    assert.equal(calls[0][4].kind, "terminal");
   });
 
   check("tab-strip drops resolve an exact insertion index", () => {

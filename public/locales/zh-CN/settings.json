@@ -906,6 +906,7 @@
     "desktop_runtime": "桌面应用运行时",
     "desktop_pty": "桌面端 PTY 会话",
     "windows_x_server": "Windows X Server 运行时",
+    "svg_pdf_cjk_font": "SVG PDF 导出的中文字体",
     "other": "运行时组件"
   }
 }

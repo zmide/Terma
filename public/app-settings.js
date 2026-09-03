@@ -52,7 +52,8 @@ function thirdPartyUseLabel(value) {
     case "interface_icons": return tr("settings:third_party_uses.interface_icons", {defaultValue:"界面图标"});
     case "desktop_runtime": return tr("settings:third_party_uses.desktop_runtime", {defaultValue:"桌面应用运行时"});
     case "desktop_pty": return tr("settings:third_party_uses.desktop_pty", {defaultValue:"桌面端 PTY 会话"});
-    case "windows_x_server": return tr("settings:third_party_uses.windows_x_server", {defaultValue:"Windows X Server 运行时"});
+  case "windows_x_server": return tr("settings:third_party_uses.windows_x_server", {defaultValue:"Windows X Server 运行时"});
+    case "svg_pdf_cjk_font": return tr("settings:third_party_uses.svg_pdf_cjk_font", {defaultValue:"SVG PDF 导出的中文字体"});
     default: return tr("settings:third_party_uses.other", {defaultValue:"运行时组件"});
   }
 }

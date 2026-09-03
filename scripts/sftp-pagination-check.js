@@ -36,6 +36,8 @@ const {
 const { normalizeCompressionRequest } = require("../dist/sftp-jobs");
 const { buildRemoteExtractCommand, normalizeArchiveFilenameEncoding, resolveArchiveFilenameEncoding } = require("../dist/sftp-operation-commands");
 
+const read = file => fs.readFileSync(file, "utf8");
+
 function names(result) {
   return result.entries.map((entry) => entry.name);
 }
@@ -155,6 +157,26 @@ assert.match(sftpFrontendSource, /sftpSvgHasUnsafeCssResource/, "SVG 清理必�
 assert.match(sftpFrontendSource, /animateTransform,animateMotion/, "SVG 清理必须移除 SMIL 动画节点");
 assert.doesNotMatch(sftpFrontendSource, /onclick="downloadSftp\(/, "图片预览下载必须使用事件绑定而不是内联脚本");
 assert.match(sftpFrontendSource, /sftp-svg-match-marker/, "SVG 搜索结果必须显示独立定位标记");
+assert.match(sftpFrontendSource, /downloadSftpSvgAsPdf/, "SVG 预览必须提供矢量 PDF 导出");
+assert.match(sftpFrontendSource, /createSftpSvgPdfBlob/, "SVG PDF 导出必须在浏览器中生成 PDF");
+assert.match(sftpFrontendSource, /stripSftpSvgPdfFontDeclarations/, "SVG PDF 导出必须对不兼容字体声明提供兼容重试");
+assert.match(sftpFrontendSource, /stripSftpSvgPdfStyles/, "SVG PDF 导出必须对仍不兼容的样式提供最终兼容重试");
+assert.match(sftpFrontendSource, /loadExternalStyleSheets: false/, "SVG PDF 导出不得加载外部样式表");
+assert.match(sftpFrontendSource, /pdf\.output\("blob"\)/, "SVG PDF 导出必须下载生成的 Blob");
+assert.match(sftpFrontendSource, /orientation: exportDimensions\.width >= exportDimensions\.height \? "landscape" : "portrait"/, "SVG PDF 页面方向必须跟随画布比例");
+assert.match(sftpFrontendSource, /id=\"sftpImageExportPdf\"/, "SVG 预览必须显示导出 PDF 操作");
+assert.doesNotMatch(sftpFrontendSource, /canvas\.toDataURL|toDataURL\(/, "SVG PDF 导出不得退化为截图或栅格导出");
+assert.match(read(path.join(root, "public", "app-sftp-menus.js")), /convert_svg_pdf|downloadSftpSvgAsPdf/, "SVG 右键菜单必须提供 PDF 导出入口");
+assert.match(read(path.join(root, "public", "index.html")), /vendor\/jspdf\/jspdf\.umd\.min\.js/);
+assert.match(read(path.join(root, "public", "index.html")), /vendor\/svg2pdf\/svg2pdf\.umd\.min\.js/);
+assert.match(sftpFrontendSource, /loadSftpSvgPdfFontBinary/);
+assert.match(sftpFrontendSource, /addFileToVFS\(SFTP_SVG_PDF_FONT_FILE/);
+assert.match(sftpFrontendSource, /font-family\", SFTP_SVG_PDF_FONT_NAME/);
+assert.match(sftpFrontendSource, /sftpSvgPdfFlattenSymbols/);
+assert.match(sftpFrontendSource, /The <use> transform is applied in the parent coordinate system/);
+assert.match(sftpFrontendSource, /sftpSvgPdfExpandViewBox/);
+assert.match(sftpFrontendSource, /sftpSvgPdfContentBounds/);
+assert.ok(fs.existsSync(path.join(root, "public", "fonts", "NotoSansSC-Regular.ttf")), "SVG PDF 导出必须随应用提供中文字体");
 assert.match(sftpFrontendSource, /sftpImagePreviewFullscreen/, "图片预览必须记住全屏状态");
 assert.match(sftpFrontendSource, /const sourceViewBoxValid =/, "SVG 预览必须识别源文件提供的有效 viewBox");
 assert.match(sftpFrontendSource, /const shouldMeasureBounds = !sourceViewBoxValid/, "复杂 SVG 不能用不可靠的 getBBox 覆盖源 viewBox");

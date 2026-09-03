@@ -241,10 +241,15 @@ function applyWorkspaceTabDrop(drag, target) {
   if (sourceIndex < 0) return false;
   sourcePane.tabs.splice(sourceIndex, 1);
   if (!sourcePane.tabs.includes(sourcePane.activeTabKey)) {
-    const rememberedActive = drag.sourceActiveTabKey && sourcePane.tabs.includes(drag.sourceActiveTabKey)
+    // When the dragged tab was active, prefer the tab immediately to its left.
+    // Falling back to the same index would select the tab that followed it,
+    // unexpectedly switching a terminal pane after opening a split.
+    const previousTab = sourcePane.tabs[sourceIndex - 1] || "";
+    const rememberedActive = drag.sourceActiveTabKey && drag.sourceActiveTabKey !== drag.key && sourcePane.tabs.includes(drag.sourceActiveTabKey)
       ? drag.sourceActiveTabKey
       : "";
-    sourcePane.activeTabKey = rememberedActive || sourcePane.tabs[Math.min(sourceIndex, sourcePane.tabs.length - 1)] || sourcePane.tabs.at(-1) || "";
+    const activeFallback = drag.sourceActiveTabKey === drag.key ? previousTab : "";
+    sourcePane.activeTabKey = rememberedActive || activeFallback || sourcePane.tabs[Math.min(sourceIndex, sourcePane.tabs.length - 1)] || sourcePane.tabs.at(-1) || "";
   }
 
   let destinationPane = targetPane;

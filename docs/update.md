@@ -9,24 +9,50 @@
 
 > The next release will focus on real-world recoverable sessions, cross-platform desktop acceptance, and broader terminal AI interoperability.
 
+#### Important fixes
+
+- Fixed Windows startup incorrectly reporting that the Terma data directory does not support secure permissions when the computer or account domain name contains non-English characters. Permission setup and verification now use the account security identifier instead of localized names.
+- Fixed dragging an active middle tab into a split selecting the following tab in the original pane; the source pane now returns to the tab immediately before the moved tab.
+- Fixed the native Terma window title staying on the previous connection when focus moves between split panes; it now follows the focused pane immediately.
+- Fixed SFTP SVG PDF export failing with a raw `Parse error` on some font or style declarations; export now retries with compatible declarations and shows a clear message only when the SVG syntax itself remains unsupported.
+- Fixed rotated CAD symbols in SFTP SVG PDF exports being displaced when `<use>/<symbol>` instances were expanded; the original parent-coordinate transform is now preserved.
+- Fixed `<use>/<symbol>` instances with non-square viewports being stretched or misaligned; export now honors SVG `preserveAspectRatio` modes (`meet`, `slice`, and `none`).
+- Fixed landscape SVG exports opening as portrait pages with large blank areas; PDF orientation now follows the SVG canvas ratio.
+
+#### Important additions
+
+- Added local vector PDF export for SFTP SVG previews. Use the preview action bar or the SVG file context menu to download a PDF without rasterizing paths and text.
+
 #### Planned
 
 - Complete real network and reload acceptance for recoverable sessions on Linux, macOS, Windows fallback, and browser mode.
 - Expand terminal AI interoperability tests with additional OpenAI-compatible gateways while keeping command execution and MCP approval boundaries unchanged.
 - Complete real TigerVNC/noVNC/system-client clipboard acceptance for text, Chinese and image transfer on all three desktop platforms.
-- Replace the documentation split preview with a same-window terminal + SFTP screenshot when a clean current-version capture is available.
 
 <a id="简体中文"></a>
 ### 简体中文
 
 > 下一版本将继续完成可恢复会话的真实验收、跨平台远程桌面验收和更广泛的终端 AI 互操作测试。
 
+#### 重要修复
+
+- 修复 Windows 计算机名或账户域包含中文等非英文字符时，启动过程错误提示 Terma 数据目录不支持安全权限的问题；权限设置与复核现在使用账户安全标识符，不再依赖本地化账户名。
+- 修复将当前激活的中间标签拖入分屏后，原窗口错误切换到后一个标签的问题；现在会回到被移动标签前面的标签。
+- 修复在分屏之间切换焦点时 Terma 原生窗口标题仍停留在上一个连接的问题；现在会立即跟随当前获得焦点的分屏。
+- 修复部分 SVG 字体或样式声明导致 SFTP 导出 PDF 直接显示 `Parse error` 的问题；现在会先用兼容声明重试，只有 SVG 语法仍不支持时才显示明确提示。
+- 修复展开 `<use>/<symbol>` 后带旋转的 CAD 图形在 SFTP 导出 PDF 中发生偏移的问题；现在保留原始父坐标系变换。
+- 修复非方形视口的 `<use>/<symbol>` 图形被拉伸或错位的问题；导出现在遵循 SVG 的 `preserveAspectRatio`（`meet`、`slice` 和 `none`）设置。
+- 修复横向 SVG 导出后被当成纵向 PDF、出现大块空白的问题；PDF 页面方向现在跟随 SVG 画布比例。
+
+#### 重要新增
+
+- SFTP SVG 预览新增本地矢量 PDF 导出；可从预览操作栏或 SVG 文件右键菜单下载 PDF，路径和文字不会被栅格化。
+
 #### 计划
 
 - 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
-- 如果能获得干净的当前版本实拍图，把文档首页分屏预览替换为同一窗口的终端 + SFTP 截图。
 
 ## v1.6.1
 
@@ -45,12 +71,11 @@
 
 #### Other improvements
 
-- VNC diagnostics, connection settings, and the documentation now explain when TigerVNC may show scrollbars and when built-in noVNC is the better fit-to-window option.
-- Added an X11 forwarding guide to the terminal documentation, including platform requirements and the security boundary between X11 and full remote desktop sessions.
+- VNC diagnostics and connection settings now explain when TigerVNC may show scrollbars and when built-in noVNC is the better fit-to-window option.
 
 #### Changes in this release
 
-- No pull requests were merged after v1.6.0; this release contains direct maintainer fixes and documentation updates.
+- No pull requests were merged after v1.6.0; this release contains direct maintainer client fixes.
 
 **Full Changelog**: [v1.6.0...v1.6.1](https://github.com/zmide/Terma/compare/v1.6.0...v1.6.1)
 
@@ -67,12 +92,11 @@
 
 #### 其他优化
 
-- VNC 探测、连接设置和文档现在会说明 TigerVNC 何时可能出现滚动条，以及何时应改用内置 noVNC 适应窗口。
-- 终端文档新增 X11 转发指南，说明平台依赖，以及 X11 与完整远程桌面之间的安全边界。
+- VNC 探测和连接设置现在会说明 TigerVNC 何时可能出现滚动条，以及何时应改用内置 noVNC 适应窗口。
 
 #### 本次变更
 
-- v1.6.0 之后没有合并新的 Pull Request；本版包含维护者直接完成的修复和文档更新。
+- v1.6.0 之后没有合并新的 Pull Request；本版包含维护者直接完成的客户端修复。
 
 **完整变更**：[v1.6.0...v1.6.1](https://github.com/zmide/Terma/compare/v1.6.0...v1.6.1)
 
@@ -83,14 +107,10 @@
 <a id="english"></a>
 ### English
 
-> This release adds a bundled TigerVNC desktop client, safer VNC credential handling, richer terminal AI controls, and a new documentation site with direct feature navigation.
+> This release adds a bundled TigerVNC desktop client, safer VNC credential handling, and richer terminal AI controls.
 
 #### Important additions
 
-- Added the VitePress documentation site with feature guides, real interface screenshots, a platform-aware download table, GitHub direct downloads, and a built-in GitHub acceleration route.
-- Added a dedicated feature overview; the homepage now exposes clickable cards for each second-level guide instead of repeating long feature descriptions.
-- The documentation homepage now uses a larger terminal + SFTP split-workspace preview, and the SFTP guide documents search, online editing, conflict diff/backup, encoding, and SVG preview.
-- Added visible GitHub Issues feedback links to both the homepage and the documentation top navigation.
 - The desktop About panel now includes a direct Terma website button alongside the GitHub source and license links.
 - Desktop builds now bundle the official TigerVNC Viewer and use it as the automatic VNC client, with embedded noVNC and the system client as ordered fallbacks. Connection settings also expose all three choices.
 - The bundled runtime is pinned per platform, verified by size and SHA-256 before packaging, and checked again inside the final application resources.
@@ -103,19 +123,14 @@
 #### Other improvements
 
 - “Save and open” now forces the selected remote desktop client to launch after detection instead of stopping on the probe page.
-- The homepage feature cards are whole-card links with no default link underline, and the feedback entry is available both in the hero and the top navigation.
 
 <a id="简体中文"></a>
 ### 简体中文
 
-> 本版新增内置 TigerVNC 远程桌面客户端、更安全的 VNC 凭据处理、更完整的终端 AI 控制，以及支持直接跳转功能的文档站。
+> 本版新增内置 TigerVNC 远程桌面客户端、更安全的 VNC 凭据处理和更完整的终端 AI 控制。
 
 #### 重要新增
 
-- 新增 VitePress 文档站，覆盖完整功能指南、真实界面截图、按平台筛选的下载表格、GitHub 直连和内置 GitHub 加速线路。
-- 新增独立的“功能总览”页面；首页改为每项对应一张可跳转的功能卡片，不再重复展开长篇功能介绍。
-- 文档首页改用更大的终端 + SFTP 分屏工作区预览图；SFTP 指南补充搜索、在线编辑、冲突差异/备份、编码和 SVG 预览说明。
-- 首页和文档站顶部导航均新增跳转 GitHub Issues 的“问题反馈”入口。
 - 桌面端“关于”页面新增 Terma 官网按钮，与 GitHub 源码和许可证入口并列。
 - 桌面版现在随包提供官方 TigerVNC Viewer；VNC 自动模式按内置 TigerVNC、内置 noVNC、系统客户端顺序回退，连接设置也可以分别选择三种方式。
 - 内置运行时按平台固定版本，打包前校验字节数和 SHA-256，最终安装包内还会再次校验清单和可执行文件。
@@ -128,7 +143,6 @@
 #### 其他优化
 
 - “保存并打开”会在探测通过后强制启动所选远程桌面客户端，不再只停留在探测页。
-- 首页功能卡片改为整块可跳转且不带默认下划线；Hero 区和顶部导航均可进入问题反馈。
 
 ## v1.5.9
 

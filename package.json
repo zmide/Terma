@@ -59,8 +59,10 @@
     "diff": "^9.0.0",
     "i18next": "26.4.0",
     "iconv-lite": "^0.7.3",
+    "jspdf": "^4.2.1",
     "lucide": "^1.35.0",
     "ssh2": "^1.17.0",
+    "svg2pdf.js": "^2.8.1",
     "x11": "^4.1.0",
     "zmodem.js": "0.1.10"
   },
@@ -101,6 +103,12 @@
       "node_modules/lucide/dist/umd/lucide.min.js",
       "node_modules/lucide/LICENSE",
       "node_modules/lucide/package.json",
+      "node_modules/jspdf/dist/jspdf.umd.min.js",
+      "node_modules/jspdf/LICENSE",
+      "node_modules/jspdf/package.json",
+      "node_modules/svg2pdf.js/dist/svg2pdf.umd.min.js",
+      "node_modules/svg2pdf.js/LICENSE",
+      "node_modules/svg2pdf.js/package.json",
       "!dist/**/*.map"
     ],
     "electronLanguages": [

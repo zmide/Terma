@@ -1,9 +1,17 @@
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const securedWindowsPaths = new Set();
 const permissionFailures = new Map();
+const windowsSddlAliases = new Map([
+  ["SY", "S-1-5-18"],
+  ["BA", "S-1-5-32-544"],
+  ["AU", "S-1-5-11"],
+  ["BU", "S-1-5-32-545"],
+  ["WD", "S-1-1-0"]
+]);
 
 function storagePermissionFailureKind(detail, platform = process.platform) {
   const text = String(detail || "").trim();
@@ -16,25 +24,72 @@ function storagePermissionFailureKind(detail, platform = process.platform) {
   return "acl-error";
 }
 
-function windowsAccount() {
-  try {
-    const result = spawnSync("whoami", [], {encoding:"utf8", windowsHide:true});
-    const account = result.status === 0 ? String(result.stdout || "").trim() : "";
-    if (account) return account;
-  } catch {}
-  const username = String(process.env.USERNAME || "").trim();
-  const domain = String(process.env.USERDOMAIN || "").trim();
-  return username ? (domain ? `${domain}\\${username}` : username) : "";
+function windowsSystemExecutable(name) {
+  const windowsRoot = String(process.env.SystemRoot || process.env.WINDIR || "").trim();
+  const executable = windowsRoot ? path.join(windowsRoot, "System32", name) : "";
+  return executable && fs.existsSync(executable) ? executable : (name.includes("\\") ? path.basename(name) : name);
 }
 
-function windowsAclPrincipals(output, target) {
+function windowsUserSidFromOutput(output) {
+  const text = Buffer.isBuffer(output) ? output.toString("latin1") : String(output || "");
+  return text.match(/\bS-\d-(?:\d+-)+\d+\b/i)?.[0]?.toUpperCase() || "";
+}
+
+function windowsUserSid() {
+  try {
+    const result = spawnSync(windowsSystemExecutable("WindowsPowerShell\\v1.0\\powershell.exe"), [
+      "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+      "[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value"
+    ], {encoding:"utf8", windowsHide:true});
+    const sid = result.status === 0 ? windowsUserSidFromOutput(result.stdout) : "";
+    if (sid) return sid;
+  } catch {}
+  try {
+    const result = spawnSync(windowsSystemExecutable("whoami.exe"), ["/user", "/fo", "csv", "/nh"], {windowsHide:true});
+    const sid = result.status === 0 ? windowsUserSidFromOutput(result.stdout) : "";
+    if (sid) return sid;
+  } catch {}
+  return "";
+}
+
+function windowsAclSidsFromSddl(output) {
+  const text = String(output || "").replace(/^\uFEFF/, "");
+  const sids = [];
+  for (const match of text.matchAll(/\([^()]*;;;([^()]+)\)/g)) {
+    const principal = String(match[1] || "").trim().toUpperCase();
+    const sid = windowsSddlAliases.get(principal) || principal;
+    if (sid) sids.push(sid);
+  }
+  return [...new Set(sids)];
+}
+
+function windowsAclSids(target) {
   const resolved = path.resolve(target);
-  return String(output || "").split(/\r?\n/).map((line) => {
-    let acl = line.trim();
-    if (!acl) return "";
-    if (acl.toLowerCase().startsWith(resolved.toLowerCase())) acl = acl.slice(resolved.length).trim();
-    return acl.match(/^(.+?):(?:\([^)]+\))+/)?.[1]?.trim() || "";
-  }).filter(Boolean);
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "terma-acl-"));
+  const aclFile = path.join(temporaryDirectory, "acl.txt");
+  try {
+    const result = spawnSync(windowsSystemExecutable("icacls.exe"), [resolved, "/save", aclFile, "/c"], {windowsHide:true});
+    if (result.error || result.status !== 0) {
+      throw new Error(windowsCommandFailure(result, "读取 Windows ACL"));
+    }
+    const data = fs.readFileSync(aclFile);
+    const text = data.includes(0) ? data.toString("utf16le") : data.toString("utf8");
+    const sids = windowsAclSidsFromSddl(text);
+    if (!sids.length) throw new Error("无法读取 Windows ACL SID");
+    return sids;
+  } finally {
+    fs.rmSync(temporaryDirectory, {recursive:true, force:true});
+  }
+}
+
+function windowsCommandFailure(result, operation) {
+  if (result?.error?.message) return `${operation}失败：${result.error.message}`;
+  const output = Buffer.concat([
+    Buffer.isBuffer(result?.stderr) ? result.stderr : Buffer.from(String(result?.stderr || "")),
+    Buffer.isBuffer(result?.stdout) ? result.stdout : Buffer.from(String(result?.stdout || ""))
+  ]).toString("utf8").trim();
+  if (output && !output.includes("\uFFFD")) return output;
+  return `${operation}失败（退出码 ${result?.status ?? "unknown"}）`;
 }
 
 function permissionError(target, detail, options: any = {}) {
@@ -64,40 +119,30 @@ function ensurePrivateWindowsPath(target, directory, options: any = {}) {
   const resolved = path.resolve(target);
   const cacheKey = `${directory ? "d" : "f"}:${resolved.toLowerCase()}`;
   if (securedWindowsPaths.has(cacheKey)) return true;
-  const account = windowsAccount();
-  if (!account) return permissionError(resolved, "无法识别当前 Windows 用户", options);
+  const userSid = windowsUserSid();
+  if (!userSid) return permissionError(resolved, "无法识别当前 Windows 用户 SID", options);
   const rights = directory ? "(OI)(CI)F" : "F";
   const allowed = new Set([
-    account,
-    String(process.env.USERNAME || ""),
-    "nt authority\\system",
-    "builtin\\administrators",
-    "s-1-5-18",
-    "s-1-5-32-544",
-    "*s-1-5-18",
-    "*s-1-5-32-544"
-  ].map(item => item.toLowerCase()).filter(Boolean));
-  const run = args => spawnSync("icacls", [resolved, ...args], {encoding:"utf8", windowsHide:true});
+    userSid,
+    "S-1-5-18",
+    "S-1-5-32-544"
+  ]);
+  const run = args => spawnSync(windowsSystemExecutable("icacls.exe"), [resolved, ...args], {windowsHide:true});
   try {
     // Establish the private explicit ACL before removing inherited entries. If
     // icacls is interrupted or the grant fails, the path keeps its existing
     // inherited access instead of being left with an empty, unusable DACL.
-    const grant = run(["/grant:r", `${account}:${rights}`, `*S-1-5-18:${rights}`, `*S-1-5-32-544:${rights}`]);
-    if (grant.status !== 0) return permissionError(resolved, String(grant.stderr || grant.stdout || "icacls grant failed").trim(), options);
+    const grant = run(["/grant:r", `*${userSid}:${rights}`, `*S-1-5-18:${rights}`, `*S-1-5-32-544:${rights}`]);
+    if (grant.status !== 0) return permissionError(resolved, windowsCommandFailure(grant, "写入 Windows ACL"), options);
     const inheritance = run(["/inheritance:r"]);
-    if (inheritance.status !== 0) return permissionError(resolved, String(inheritance.stderr || inheritance.stdout || "icacls inheritance failed").trim(), options);
-    const listed = run([]);
-    if (listed.status !== 0) return permissionError(resolved, String(listed.stderr || listed.stdout || "icacls listing failed").trim(), options);
-    for (const principal of windowsAclPrincipals(listed.stdout || "", resolved)) {
-      if (allowed.has(principal.toLowerCase())) continue;
-      const removed = run(["/remove:g", principal]);
-      if (removed.status !== 0) return permissionError(resolved, `无法移除 ACL 主体 ${principal}`, options);
+    if (inheritance.status !== 0) return permissionError(resolved, windowsCommandFailure(inheritance, "关闭 Windows ACL 继承"), options);
+    for (const sid of windowsAclSids(resolved)) {
+      if (allowed.has(sid)) continue;
+      const removed = run(["/remove:g", `*${sid}`]);
+      if (removed.status !== 0) return permissionError(resolved, `无法移除 ACL 主体 ${sid}`, options);
     }
     for (const principal of ["*S-1-5-11", "*S-1-5-32-545", "*S-1-1-0"]) run(["/remove:g", principal]);
-    const verified = run([]);
-    if (verified.status !== 0) return permissionError(resolved, "无法验证最终 ACL", options);
-    const unexpected = windowsAclPrincipals(verified.stdout || "", resolved)
-      .filter(principal => !allowed.has(principal.toLowerCase()));
+    const unexpected = windowsAclSids(resolved).filter(sid => !allowed.has(sid));
     if (unexpected.length) return permissionError(resolved, `仍包含未授权 ACL 主体：${unexpected.join(", ")}`, options);
     securedWindowsPaths.add(cacheKey);
     permissionFailures.delete(resolved.toLowerCase());
@@ -155,5 +200,7 @@ module.exports = {
   ensurePrivateDirectory,
   ensurePrivateFile,
   storagePermissionFailureKind,
-  storagePermissionDiagnostics
+  storagePermissionDiagnostics,
+  windowsUserSidFromOutput,
+  windowsAclSidsFromSddl
 };

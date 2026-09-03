@@ -135,7 +135,7 @@ async function main() {
   const hasExtraResource = name => extraResources.some(item => item === name || (item && typeof item === "object" && item.from === name && item.to === name));
   ok("Linux desktop filename uses package metadata accepted by electron-builder", packageJson.desktopName === "terma.desktop" && !Object.prototype.hasOwnProperty.call(packageJson.build?.linux || {}, "desktopName"));
   ok("GNU GPL v3 license is declared and packaged", packageJson.license === "GPL-3.0-only" && licenseText.includes("GNU GENERAL PUBLIC LICENSE") && hasExtraResource("LICENSE"));
-  ok("第三方组件声明随桌面安装包提供", hasExtraResource("THIRD_PARTY_NOTICES.md") && thirdPartySource.includes("listThirdPartyComponents") && ["xterm.js","Ace Editor","jsdiff","noVNC","TigerVNC Viewer","ZMODEM.js","ssh2","node-x11","i18next","Lucide","Electron","node-pty","VcXsrv"].every(name => thirdPartySource.includes(`name:\"${name}\"`)) && ["xterm.js","Ace Editor","jsdiff","noVNC","TigerVNC Viewer","zmodem.js","ssh2","node-x11","i18next","Lucide","Electron","node-pty","VcXsrv"].every(name => thirdPartyNotices.includes(`## ${name}`)));
+  ok("第三方组件声明随桌面安装包提供", hasExtraResource("THIRD_PARTY_NOTICES.md") && thirdPartySource.includes("listThirdPartyComponents") && ["xterm.js","Ace Editor","jsdiff","jsPDF","svg2pdf.js","Noto Sans SC","noVNC","TigerVNC Viewer","ZMODEM.js","ssh2","node-x11","i18next","Lucide","Electron","node-pty","VcXsrv"].every(name => thirdPartySource.includes(`name:\"${name}\"`)) && ["xterm.js","Ace Editor","jsdiff","jsPDF","svg2pdf.js","Noto Sans SC","noVNC","TigerVNC Viewer","zmodem.js","ssh2","node-x11","i18next","Lucide","Electron","node-pty","VcXsrv"].every(name => thirdPartyNotices.includes(`## ${name}`)));
   const lucideVersion = String(packageJson.dependencies?.lucide || "").match(/(\d+\.\d+\.\d+)/)?.[1] || "";
   ok("Lucide 运行时版本与随附组件声明一致", Boolean(lucideVersion) && thirdPartySource.includes(`name:\"Lucide\", version:\"${lucideVersion}\"`) && thirdPartyNotices.includes(`## Lucide\n\n- Project: https://github.com/lucide-icons/lucide\n- Version: ${lucideVersion}`));
   const electronVersion = String(packageJson.devDependencies?.electron || "").match(/(\d+\.\d+\.\d+)/)?.[1] || "";
@@ -703,10 +703,12 @@ async function main() {
   ok(
     "关于接口返回组件、版本与许可证清单",
     Array.isArray(about?.third_party_components)
-      && about.third_party_components.length >= 11
+      && about.third_party_components.length >= 13
       && about.third_party_components.every(item => item?.name && item?.version && item?.license && /^https:\/\//.test(String(item?.project_url || "")))
       && about.third_party_components.some(item => item.name === "jsdiff" && item.version === "9.0.0" && item.license === "BSD-3-Clause")
       && about.third_party_components.some(item => item.name === "node-x11" && item.version === "3.9.1" && item.license === "MIT")
+      && about.third_party_components.some(item => item.name === "jsPDF" && item.version === "4.2.1" && item.license === "MIT")
+      && about.third_party_components.some(item => item.name === "svg2pdf.js" && item.version === "2.8.1" && item.license === "MIT")
       && about.third_party_notices_available === true,
     Array.isArray(about?.third_party_components) ? `${about.third_party_components.length} 项组件` : "无组件清单"
   );

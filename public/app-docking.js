@@ -733,6 +733,9 @@ function focusWorkspacePane(paneId) {
     if (typeof restoreSftpRuntimeForTab === "function" && tab.kind === "sftp") restoreSftpRuntimeForTab(tab.key);
     const subtitle = document.getElementById("workspaceSubtitle");
     if (subtitle) subtitle.textContent = tab.subtitle || "";
+    if (typeof syncWorkspaceDocumentTitle === "function") {
+      syncWorkspaceDocumentTitle(tab.title, tab.subtitle, tab.viewName || tab.kind, tab.key, tab);
+    }
     revealWorkspaceTab(tab.key);
   }
   if (wasFocused) return;

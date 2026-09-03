@@ -21,6 +21,8 @@ const VENDOR_FILES = new Map([
   ["/vendor/i18next/i18next.min.js", vendorFile("i18next", "dist/umd/i18next.min.js")],
   ["/vendor/lucide/lucide.min.js", vendorFile("lucide", "dist/umd/lucide.min.js")],
   ["/vendor/diff/diff.min.js", vendorFile("diff", "dist/diff.min.js")],
+  ["/vendor/jspdf/jspdf.umd.min.js", vendorFile("jspdf", "dist/jspdf.umd.min.js")],
+  ["/vendor/svg2pdf/svg2pdf.umd.min.js", vendorFile("svg2pdf.js", "dist/svg2pdf.umd.min.js")],
   ["/vendor/xterm/xterm.css", vendorFile("@xterm/xterm", "css/xterm.css")],
   ["/vendor/xterm/xterm.js", vendorFile("@xterm/xterm", "lib/xterm.js")],
   ["/vendor/xterm/xterm.mjs", vendorFile("@xterm/xterm", "lib/xterm.mjs")],

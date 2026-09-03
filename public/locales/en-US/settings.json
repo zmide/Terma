@@ -906,6 +906,7 @@
     "desktop_runtime": "Desktop application runtime",
     "desktop_pty": "Desktop PTY sessions",
     "windows_x_server": "Windows X Server runtime",
+    "svg_pdf_cjk_font": "Chinese font for SVG PDF export",
     "other": "Runtime component"
   }
 }

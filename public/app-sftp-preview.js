@@ -64,6 +64,372 @@ function sanitizeSftpSvgDocument(markup) {
   return root;
 }
 
+function sftpSvgExportViewBox(root) {
+  const values = String(root?.getAttribute?.("viewBox") || "").trim().split(/[\s,]+/).map(Number);
+  const valid = values.length >= 4
+    && values.slice(0, 4).every(Number.isFinite)
+    && values[2] > 0
+    && values[3] > 0;
+  const width = valid ? values[2] : sftpSvgNumericDimension(root?.getAttribute?.("width"), 1024);
+  const height = valid ? values[3] : sftpSvgNumericDimension(root?.getAttribute?.("height"), 768);
+  return {
+    x: valid ? values[0] : 0,
+    y: valid ? values[1] : 0,
+    width: Math.max(1, width),
+    height: Math.max(1, height)
+  };
+}
+
+function stripSftpSvgPdfFontDeclarations(root) {
+  const nodes = [root, ...root.querySelectorAll("*")];
+  nodes.forEach(element => {
+    element.removeAttribute("font-family");
+    element.removeAttribute("font");
+    const style = element.getAttribute("style");
+    if (style) {
+      element.setAttribute("style", style
+        .replace(/(^|[;{])\s*font-family\s*:[^;}]*;?/gi, "$1")
+        .replace(/(^|[;{])\s*font\s*:[^;}]*;?/gi, "$1"));
+    }
+  });
+  root.querySelectorAll("style").forEach(style => {
+    style.textContent = String(style.textContent || "")
+      .replace(/(^|[;{])\s*font-family\s*:[^;}]*;?/gi, "$1")
+      .replace(/(^|[;{])\s*font\s*:[^;}]*;?/gi, "$1");
+  });
+  return root;
+}
+
+function stripSftpSvgPdfStyles(root) {
+  root.querySelectorAll("style").forEach(style => style.remove());
+  [root, ...root.querySelectorAll("*")].forEach(element => {
+    element.removeAttribute("style");
+    element.removeAttribute("font");
+    element.removeAttribute("font-family");
+  });
+  return root;
+}
+
+const SFTP_SVG_PDF_FONT_NAME = "TermaNotoSansSC";
+const SFTP_SVG_PDF_FONT_FILE = "NotoSansSC-Regular.ttf";
+let sftpSvgPdfFontBinaryPromise = null;
+
+function sftpSvgPdfNeedsUnicodeFont(root) {
+  const text = [...root.querySelectorAll("text,tspan,title,desc")]
+    .map(element => element.textContent || "")
+    .join("");
+  return /[^\u0000-\u00ff]/u.test(text);
+}
+
+function sftpSvgPdfBinaryString(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length)));
+  }
+  return binary;
+}
+
+async function loadSftpSvgPdfFontBinary() {
+  if (!sftpSvgPdfFontBinaryPromise) {
+    sftpSvgPdfFontBinaryPromise = fetch(`/fonts/${SFTP_SVG_PDF_FONT_FILE}`, {
+      cache: "force-cache",
+      credentials: "same-origin"
+    }).then(async response => {
+      if (!response.ok) throw new Error(tr("sftp:editor.pdf_font_unavailable", {defaultValue:"中文字体不可用，无法生成包含中文的 PDF"}));
+      return sftpSvgPdfBinaryString(await response.arrayBuffer());
+    }).catch(error => {
+      sftpSvgPdfFontBinaryPromise = null;
+      throw error;
+    });
+  }
+  return sftpSvgPdfFontBinaryPromise;
+}
+
+function installSftpSvgPdfFont(pdf, binary) {
+  pdf.addFileToVFS(SFTP_SVG_PDF_FONT_FILE, binary);
+  for (const style of ["normal", "bold", "italic", "bolditalic"]) {
+    pdf.addFont(SFTP_SVG_PDF_FONT_FILE, SFTP_SVG_PDF_FONT_NAME, style, "Identity-H");
+  }
+  pdf.setFont(SFTP_SVG_PDF_FONT_NAME, "normal");
+}
+
+function forceSftpSvgPdfUnicodeFont(root) {
+  stripSftpSvgPdfFontDeclarations(root);
+  root.querySelectorAll("text,tspan").forEach(element => {
+    element.setAttribute("font-family", SFTP_SVG_PDF_FONT_NAME);
+    element.setAttribute("font-weight", "normal");
+    element.setAttribute("font-style", "normal");
+  });
+  return root;
+}
+
+function sftpSvgPdfNumber(value, fallback=0) {
+  const number = Number.parseFloat(String(value ?? ""));
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function sftpSvgPdfViewportTransform(use, referenced, viewBox) {
+  const x = sftpSvgPdfNumber(use.getAttribute("x"));
+  const y = sftpSvgPdfNumber(use.getAttribute("y"));
+  const width = sftpSvgPdfNumber(use.getAttribute("width"), viewBox[2]);
+  const height = sftpSvgPdfNumber(use.getAttribute("height"), viewBox[3]);
+  const preserve = String(
+    use.getAttribute("preserveAspectRatio")
+      || referenced.getAttribute("preserveAspectRatio")
+      || "xMidYMid meet"
+  ).trim();
+  const tokens = preserve.split(/[\s,]+/).filter(Boolean);
+  const align = tokens[0] || "xMidYMid";
+  const mode = align === "none" || tokens[1] === "none"
+    ? "none"
+    : tokens[1] === "slice" ? "slice" : "meet";
+  if (mode === "none") {
+    return {
+      x,
+      y,
+      scaleX: width / viewBox[2],
+      scaleY: height / viewBox[3],
+      offsetX: 0,
+      offsetY: 0
+    };
+  }
+  const scale = mode === "slice"
+    ? Math.max(width / viewBox[2], height / viewBox[3])
+    : Math.min(width / viewBox[2], height / viewBox[3]);
+  const renderedWidth = viewBox[2] * scale;
+  const renderedHeight = viewBox[3] * scale;
+  const remainingX = width - renderedWidth;
+  const remainingY = height - renderedHeight;
+  const offsetX = align.includes("xMin") ? 0 : align.includes("xMax") ? remainingX : remainingX / 2;
+  const offsetY = align.includes("YMin") ? 0 : align.includes("YMax") ? remainingY : remainingY / 2;
+  return {x, y, scaleX:scale, scaleY:scale, offsetX, offsetY};
+}
+
+function sftpSvgPdfReferencedId(element) {
+  const href = element?.getAttribute?.("href") || element?.getAttribute?.("xlink:href") || "";
+  return String(href).trim().replace(/^#/, "");
+}
+
+function sftpSvgPdfFindReferencedElement(root, id) {
+  if (!id) return null;
+  return [...root.querySelectorAll("[id]")].find(element => element.getAttribute("id") === id) || null;
+}
+
+function sftpSvgPdfMakeSymbolOverflowVisible(root) {
+  root.querySelectorAll("symbol,svg").forEach(element => {
+    if (element.tagName.toLowerCase() === "symbol" || element !== root) element.setAttribute("overflow", "visible");
+  });
+  return root;
+}
+
+function sftpSvgPdfFlattenSymbols(root) {
+  const namespace = "http://www.w3.org/2000/svg";
+  const maxReplacements = 300;
+  let replacements = 0;
+  const uses = () => [...root.querySelectorAll("use")];
+  for (let pass = 0; pass < 4; pass += 1) {
+    let replacedInPass = false;
+    for (const use of uses()) {
+      if (replacements >= maxReplacements) break;
+      const id = sftpSvgPdfReferencedId(use);
+      const referenced = sftpSvgPdfFindReferencedElement(root, id);
+      if (!referenced || referenced === use || referenced.closest("use")) continue;
+      const referencedTag = referenced.tagName.toLowerCase();
+      if (["script", "style", "defs", "metadata"].includes(referencedTag)) continue;
+      const viewBox = String(referenced.getAttribute("viewBox") || "").trim().split(/[\s,]+/).map(Number);
+      const opensViewport = ["symbol", "svg"].includes(referencedTag)
+        && viewBox.length >= 4
+        && viewBox.slice(0, 4).every(Number.isFinite)
+        && viewBox[2] > 0
+        && viewBox[3] > 0;
+      const viewport = opensViewport
+        ? sftpSvgPdfViewportTransform(use, referenced, viewBox)
+        : {x:sftpSvgPdfNumber(use.getAttribute("x")), y:sftpSvgPdfNumber(use.getAttribute("y")), scaleX:1, scaleY:1, offsetX:0, offsetY:0};
+      const group = document.createElementNS(namespace, "g");
+      for (const attribute of [...referenced.attributes]) {
+        if (["id", "viewBox", "width", "height", "x", "y"].includes(attribute.name)) continue;
+        group.setAttribute(attribute.name, attribute.value);
+      }
+      for (const attribute of ["class", "style", "fill", "fill-opacity", "stroke", "stroke-width", "stroke-opacity", "opacity", "color", "transform", "clip-path", "mask"]) {
+        if (use.hasAttribute(attribute)) group.setAttribute(attribute, use.getAttribute(attribute));
+      }
+      const referencedTransform = group.getAttribute("transform");
+      // The <use> transform is applied in the parent coordinate system.  Put
+      // it before the symbol viewport translation/scale so rotation centers
+      // are not multiplied by the instance size.
+      const transformParts = [];
+      if (referencedTransform) transformParts.push(referencedTransform);
+      transformParts.push(`translate(${viewport.x} ${viewport.y})`);
+      if (opensViewport) {
+        transformParts.push(`translate(${viewport.offsetX} ${viewport.offsetY}) scale(${viewport.scaleX} ${viewport.scaleY}) translate(${-viewBox[0]} ${-viewBox[1]})`);
+      }
+      group.setAttribute("transform", transformParts.join(" "));
+      if (referencedTag === "symbol" || referencedTag === "svg" || referencedTag === "g") {
+        referenced.childNodes.forEach(child => group.appendChild(child.cloneNode(true)));
+      } else {
+        group.appendChild(referenced.cloneNode(true));
+      }
+      use.replaceWith(group);
+      replacements += 1;
+      replacedInPass = true;
+    }
+    if (!replacedInPass) break;
+  }
+  return root;
+}
+
+function sftpSvgPdfContentBounds(root) {
+  const bounds = [];
+  const drawable = new Set(["path", "polyline", "polygon", "line", "rect", "circle", "ellipse", "text", "tspan", "image"]);
+  for (const element of root.querySelectorAll("*")) {
+    const tag = element.tagName.toLowerCase();
+    if (!drawable.has(tag) || element.closest("defs")) continue;
+    try {
+      const box = element.getBBox({fill:true, stroke:true, markers:true, clipped:false});
+      const matrix = element.getCTM?.();
+      if (!matrix || ![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width < 0 || box.height < 0) continue;
+      const points = [
+        [box.x, box.y],
+        [box.x + box.width, box.y],
+        [box.x, box.y + box.height],
+        [box.x + box.width, box.y + box.height]
+      ].map(([x, y]) => ({x:matrix.a * x + matrix.c * y + matrix.e, y:matrix.b * x + matrix.d * y + matrix.f}));
+      bounds.push({
+        minX:Math.min(...points.map(point => point.x)),
+        minY:Math.min(...points.map(point => point.y)),
+        maxX:Math.max(...points.map(point => point.x)),
+        maxY:Math.max(...points.map(point => point.y))
+      });
+    } catch {}
+  }
+  if (!bounds.length) return null;
+  return {
+    x:Math.min(...bounds.map(item => item.minX)),
+    y:Math.min(...bounds.map(item => item.minY)),
+    width:Math.max(...bounds.map(item => item.maxX)) - Math.min(...bounds.map(item => item.minX)),
+    height:Math.max(...bounds.map(item => item.maxY)) - Math.min(...bounds.map(item => item.minY))
+  };
+}
+
+function sftpSvgPdfExpandViewBox(root, dimensions) {
+  const viewBox = [dimensions.x, dimensions.y, dimensions.width, dimensions.height];
+  const bounds = sftpSvgPdfContentBounds(root);
+  if (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) || bounds.width <= 0 || bounds.height <= 0) return dimensions;
+  const pad = Math.max(1, Math.min(dimensions.width, dimensions.height) * 0.01);
+  const minX = Math.min(viewBox[0], bounds.x - pad);
+  const minY = Math.min(viewBox[1], bounds.y - pad);
+  const maxX = Math.max(viewBox[0] + viewBox[2], bounds.x + bounds.width + pad);
+  const maxY = Math.max(viewBox[1] + viewBox[3], bounds.y + bounds.height + pad);
+  return {x:minX, y:minY, width:Math.max(1, maxX - minX), height:Math.max(1, maxY - minY)};
+}
+
+async function createSftpSvgPdfBlob(blob) {
+  const JsPDF = window.jspdf?.jsPDF;
+  const convertSvg = window.svg2pdf?.svg2pdf;
+  if (typeof JsPDF !== "function" || typeof convertSvg !== "function") {
+    throw new Error(tr("sftp:editor.pdf_conversion_unavailable", {defaultValue:"SVG 转 PDF 组件不可用，请重新加载 Terma"}));
+  }
+  const sanitizedRoot = sanitizeSftpSvgDocument(await blob.text());
+  const needsUnicodeFont = sftpSvgPdfNeedsUnicodeFont(sanitizedRoot);
+  const unicodeFontBinary = needsUnicodeFont ? await loadSftpSvgPdfFontBinary() : "";
+  const dimensions = sftpSvgExportViewBox(sanitizedRoot);
+  const svg = document.importNode(sanitizedRoot, true);
+  sftpSvgPdfMakeSymbolOverflowVisible(svg);
+  sftpSvgPdfFlattenSymbols(svg);
+  const namespace = "http://www.w3.org/2000/svg";
+  svg.setAttribute("xmlns", namespace);
+  svg.setAttribute("viewBox", `${dimensions.x} ${dimensions.y} ${dimensions.width} ${dimensions.height}`);
+  svg.setAttribute("width", `${dimensions.width}px`);
+  svg.setAttribute("height", `${dimensions.height}px`);
+  const embeddedStyles = String(sanitizedRoot.__termaEmbeddedStyles || "");
+  if (embeddedStyles) {
+    const style = document.createElementNS(namespace, "style");
+    style.textContent = embeddedStyles;
+    svg.insertBefore(style, svg.firstChild);
+  }
+  const host = document.createElement("div");
+  host.style.cssText = "position:fixed;left:-100000px;top:-100000px;width:1px;height:1px;overflow:hidden;pointer-events:none;visibility:hidden";
+  host.appendChild(svg);
+  document.body.appendChild(host);
+  const exportDimensions = sftpSvgPdfExpandViewBox(svg, dimensions);
+  svg.setAttribute("viewBox", `${exportDimensions.x} ${exportDimensions.y} ${exportDimensions.width} ${exportDimensions.height}`);
+  svg.setAttribute("width", `${exportDimensions.width}px`);
+  svg.setAttribute("height", `${exportDimensions.height}px`);
+  const render = async source => {
+    const pdf = new JsPDF({
+      unit: "pt",
+      orientation: exportDimensions.width >= exportDimensions.height ? "landscape" : "portrait",
+      format: [exportDimensions.width, exportDimensions.height],
+      compress: true
+    });
+    if (unicodeFontBinary) installSftpSvgPdfFont(pdf, unicodeFontBinary);
+    await convertSvg(source, pdf, {
+      x: 0,
+      y: 0,
+      width: exportDimensions.width,
+      height: exportDimensions.height,
+      loadExternalStyleSheets: false
+    });
+    return pdf.output("blob");
+  };
+  try {
+    const firstSource = needsUnicodeFont ? forceSftpSvgPdfUnicodeFont(svg.cloneNode(true)) : svg;
+    try {
+      return await render(firstSource);
+    } catch (error) {
+      if (!/parse error/i.test(String(error?.message || error))) throw error;
+      try {
+        const compatibleSource = stripSftpSvgPdfFontDeclarations(svg.cloneNode(true));
+        if (needsUnicodeFont) forceSftpSvgPdfUnicodeFont(compatibleSource);
+        return await render(compatibleSource);
+      } catch (compatibilityError) {
+        if (!/parse error/i.test(String(compatibilityError?.message || compatibilityError))) throw compatibilityError;
+        const styleFreeSource = stripSftpSvgPdfStyles(svg.cloneNode(true));
+        if (needsUnicodeFont) forceSftpSvgPdfUnicodeFont(styleFreeSource);
+        return await render(styleFreeSource);
+      }
+    }
+  } catch (error) {
+    if (/parse error/i.test(String(error?.message || error))) {
+      throw new Error(tr("sftp:editor.pdf_unsupported_svg", {defaultValue:"此 SVG 含有 PDF 转换器不支持的路径或样式语法"}));
+    }
+    throw error;
+  } finally {
+    host.remove();
+  }
+}
+
+function triggerSftpGeneratedDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    link.remove();
+  }, 1000);
+}
+
+async function downloadSftpSvgAsPdf(id, path, sourceBlob=null) {
+  try {
+    const blob = sourceBlob || await withSftpFileOpenFeedback(id, path, () => readSftpImageWithProgress(id, path));
+    if (!blob) return false;
+    notify(tr("sftp:editor.exporting_pdf", {defaultValue:"正在导出 SVG PDF..."}), "info");
+    const pdfBlob = await createSftpSvgPdfBlob(blob);
+    const sourceName = String(path || "svg").split(/[\\/]/).pop() || "svg";
+    triggerSftpGeneratedDownload(pdfBlob, sourceName.replace(/\.svg$/i, "") + ".pdf");
+    notify(tr("sftp:editor.pdf_exported", {defaultValue:"SVG PDF 已生成并开始下载"}), "success");
+    return true;
+  } catch (error) {
+    notify(error.message || tr("sftp:editor.pdf_export_failed", {defaultValue:"SVG 转 PDF 失败"}), "error");
+    return false;
+  }
+}
+
 async function previewSftpImage(id, path) {
   let objectUrl = "";
   let modal = null;
@@ -80,7 +446,7 @@ async function previewSftpImage(id, path) {
     const zoomOutLabel = tr("sftp:editor.zoom_out", {defaultValue:"缩小"});
     const zoomInLabel = tr("sftp:editor.zoom_in", {defaultValue:"放大"});
     const zoomResetLabel = tr("sftp:editor.zoom_reset", {defaultValue:"适应窗口"});
-    modal.innerHTML = `<div class="modal-card wide sftp-image-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(path.split(/[\\/]/).pop() || path)}</h2><span>${esc(formatBytes(blob.size))}</span></div><div class="sftp-image-tools"><button id="sftpImageZoomOut" class="icon-button" type="button" title="${escAttr(zoomOutLabel)}" aria-label="${escAttr(zoomOutLabel)}">${icon("minus")}</button><span id="sftpImageZoomValue" class="sftp-image-zoom-value">100%</span><button id="sftpImageZoomReset" class="icon-button" type="button" title="${escAttr(zoomResetLabel)}" aria-label="${escAttr(zoomResetLabel)}">${icon("maximize-2")}</button><button id="sftpImageZoomIn" class="icon-button" type="button" title="${escAttr(zoomInLabel)}" aria-label="${escAttr(zoomInLabel)}">${icon("plus")}</button>${isSvg ? `<div class="sftp-svg-search"><label><span class="sr-only">${esc(searchLabel)}</span><input id="sftpSvgSearch" type="search" placeholder="${escAttr(searchLabel)}" autocomplete="off"></label><span id="sftpSvgSearchCount" aria-live="polite"></span><button id="sftpSvgSearchPrevious" class="icon-button" type="button" title="${escAttr(searchPreviousLabel)}" aria-label="${escAttr(searchPreviousLabel)}">${icon("arrow-up")}</button><button id="sftpSvgSearchNext" class="icon-button" type="button" title="${escAttr(searchNextLabel)}" aria-label="${escAttr(searchNextLabel)}">${icon("arrow-down")}</button></div>` : ""}<button id="sftpImageClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div></div><div id="sftpImageViewport" class="sftp-image-preview"><div id="sftpImageStageShell" class="sftp-image-stage-shell"><div id="sftpImageStage" class="sftp-image-stage"></div></div></div><div class="actions"><button id="sftpImageDownload">${icon("download")}<span>${esc(tr("sftp:menu.download", {defaultValue:"下载"}))}</span></button><button id="sftpImageCloseBottom">${esc(closeLabel)}</button></div></div>`;
+    modal.innerHTML = `<div class="modal-card wide sftp-image-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(path.split(/[\\/]/).pop() || path)}</h2><span>${esc(formatBytes(blob.size))}</span></div><div class="sftp-image-tools"><button id="sftpImageZoomOut" class="icon-button" type="button" title="${escAttr(zoomOutLabel)}" aria-label="${escAttr(zoomOutLabel)}">${icon("minus")}</button><span id="sftpImageZoomValue" class="sftp-image-zoom-value">100%</span><button id="sftpImageZoomReset" class="icon-button" type="button" title="${escAttr(zoomResetLabel)}" aria-label="${escAttr(zoomResetLabel)}">${icon("maximize-2")}</button><button id="sftpImageZoomIn" class="icon-button" type="button" title="${escAttr(zoomInLabel)}" aria-label="${escAttr(zoomInLabel)}">${icon("plus")}</button>${isSvg ? `<div class="sftp-svg-search"><label><span class="sr-only">${esc(searchLabel)}</span><input id="sftpSvgSearch" type="search" placeholder="${escAttr(searchLabel)}" autocomplete="off"></label><span id="sftpSvgSearchCount" aria-live="polite"></span><button id="sftpSvgSearchPrevious" class="icon-button" type="button" title="${escAttr(searchPreviousLabel)}" aria-label="${escAttr(searchPreviousLabel)}">${icon("arrow-up")}</button><button id="sftpSvgSearchNext" class="icon-button" type="button" title="${escAttr(searchNextLabel)}" aria-label="${escAttr(searchNextLabel)}">${icon("arrow-down")}</button></div>` : ""}<button id="sftpImageClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div></div><div id="sftpImageViewport" class="sftp-image-preview"><div id="sftpImageStageShell" class="sftp-image-stage-shell"><div id="sftpImageStage" class="sftp-image-stage"></div></div></div><div class="actions">${isSvg ? `<button id="sftpImageExportPdf">${icon("file-code-2")}<span>${esc(tr("sftp:editor.export_pdf", {defaultValue:"导出 PDF"}))}</span></button>` : ""}<button id="sftpImageDownload">${icon("download")}<span>${esc(tr("sftp:menu.download", {defaultValue:"下载"}))}</span></button><button id="sftpImageCloseBottom">${esc(closeLabel)}</button></div></div>`;
     modal.hidden = false;
     modal.onclick = null;
     const imageCard = modal.querySelector(".sftp-image-modal");
@@ -462,6 +828,7 @@ async function previewSftpImage(id, path) {
     $("sftpSvgSearch")?.addEventListener("input", () => { svgMatchIndex = -1; updateSvgSearch(1); });
     $("sftpSvgSearchPrevious")?.addEventListener("click", () => updateSvgSearch(-1));
     $("sftpSvgSearchNext")?.addEventListener("click", () => updateSvgSearch(1));
+    $("sftpImageExportPdf")?.addEventListener("click", () => downloadSftpSvgAsPdf(id, path, blob));
     $("sftpImageDownload").onclick = () => downloadSftp(id, path);
     $("sftpImageClose").onclick = close;
     $("sftpImageCloseBottom").onclick = close;

@@ -6,6 +6,7 @@ function showSftpEntryMenu(event, id, path, name, type, tabKey=sftpTabKeyFromNod
   const alreadySelected = selectedSftpPaths(tabKey).includes(path);
   selectSftpEntry({shiftKey:false, ctrlKey:false, metaKey:false, preserveSelection:alreadySelected, forceSingle:true}, id, path, name, type, tabKey);
   const isDir = type === "dir";
+  const isSvg = !isDir && /\.svg$/i.test(String(name || ""));
   const rect = event.currentTarget?.getBoundingClientRect?.();
   const menuEvent = {
     preventDefault: () => event.preventDefault(),
@@ -25,6 +26,7 @@ function showSftpEntryMenu(event, id, path, name, type, tabKey=sftpTabKeyFromNod
     ...(!isDir && window.termaDesktop ? [{label:tr("sftp:menu.external_editor", {defaultValue:"用外部编辑器打开"}), icon:"external-link", run:()=>openSftpExternalEdit(id, path)}] : []),
     ...(isDir && window.termaDesktop ? [{label:tr("sftp:menu.compare_local", {defaultValue:"与本地目录比较同步"}), icon:"refresh-cw", run:()=>openSftpDirectorySync(id, path, tabKey)}] : []),
     {label:tr("sftp:menu.download", {defaultValue:"下载"}), icon:"download", run:()=>downloadSftp(id, path, isDir ? "dir" : "file")},
+    ...(isSvg ? [{label:tr("sftp:menu.convert_svg_pdf", {defaultValue:"转换为 PDF 并下载"}), icon:"file-code-2", run:()=>downloadSftpSvgAsPdf(id, path)}] : []),
     ...(window.termaDesktop && typeof sendSftpPathsToDesktop === "function" ? [{label:tr("sftp:menu.send_desktop", {defaultValue:"发送到桌面"}), icon:"monitor-down", run:()=>sendSftpPathsToDesktop(id, [path])}] : []),
     ...(peerTransferActions.length ? [{label:tr("sftp:menu.send_peer", {defaultValue:"发送到对端"}), icon:"send", children:peerTransferActions}] : []),
     ...(!isDir && isArchiveName(name) ? [{label:tr("sftp:menu.extract", {defaultValue:"解压"}), icon:"archive-restore", run:()=>extractSingleSftp(id, path, tabKey)}] : []),

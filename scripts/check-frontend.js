@@ -22,9 +22,13 @@ const html = fs.readFileSync(path.resolve("public/index.html"), "utf8");
 if (!html.includes('name="terma-csp-nonce" content="__TERMA_CSP_NONCE__"')) throw new Error("主页面缺少 CSP nonce 占位符");
 if (!html.includes("?v=__TERMA_VERSION__") || /[?&]v=\d+\.\d+\.\d+/.test(html)) throw new Error("主页面静态资源必须统一使用版本占位符");
 if (!html.includes('/csp-bootstrap.js')) throw new Error("主页面必须在组件脚本之前加载 CSP 引导脚本");
-for (const asset of ["/vendor/ace/ace.css", "/vendor/ace/theme-textmate.css", "/vendor/ace/theme-tomorrow_night.css", "/vendor/diff/diff.min.js", "/vendor/i18next/i18next.min.js"]) {
+for (const asset of ["/vendor/ace/ace.css", "/vendor/ace/theme-textmate.css", "/vendor/ace/theme-tomorrow_night.css", "/vendor/diff/diff.min.js", "/vendor/jspdf/jspdf.umd.min.js", "/vendor/svg2pdf/svg2pdf.umd.min.js", "/vendor/i18next/i18next.min.js"]) {
   if (!html.includes(asset)) throw new Error(`SFTP 编辑器缺少严格 CSP 外部样式：${asset}`);
 }
+const pdfFontPath = path.resolve("public", "fonts", "NotoSansSC-Regular.ttf");
+if (!fs.existsSync(pdfFontPath) || fs.statSync(pdfFontPath).size < 1000000) throw new Error("SVG PDF 导出缺少可嵌入的中文字体");
+const pdfFontLicensePath = path.resolve("public", "fonts", "OFL.txt");
+if (!fs.existsSync(pdfFontLicensePath) || !fs.readFileSync(pdfFontLicensePath, "utf8").includes("SIL OPEN FONT LICENSE Version 1.1")) throw new Error("SVG PDF 导出字体缺少 OFL 许可证文本");
 if (!html.includes('/app-theme-glass.css?v=__TERMA_VERSION__')) throw new Error("主页面缺少主题玻璃样式模块");
 for (const token of [".terma-liquid-lens", "data-liquid-moving", ".modal-scroll-body", "--terma-modal-surface-opacity"]) {
   if (!themeGlassCss.includes(token)) throw new Error(`主题玻璃样式边界缺少：${token}`);

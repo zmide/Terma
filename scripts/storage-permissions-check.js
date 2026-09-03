@@ -3,7 +3,13 @@ const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { ensurePrivateDirectory, ensurePrivateFile, storagePermissionFailureKind } = require("../dist/storage-permissions");
+const {
+  ensurePrivateDirectory,
+  ensurePrivateFile,
+  storagePermissionFailureKind,
+  windowsUserSidFromOutput,
+  windowsAclSidsFromSddl
+} = require("../dist/storage-permissions");
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-storage-permissions-"));
 const directory = path.join(root, "data");
@@ -14,6 +20,22 @@ assert.ok(
   storagePermissionSource.indexOf('const grant = run(["/grant:r"')
     < storagePermissionSource.indexOf('const inheritance = run(["/inheritance:r"]'),
   "Windows storage hardening must establish explicit private access before removing inherited ACLs"
+);
+assert.equal(
+  windowsUserSidFromOutput(Buffer.concat([
+    Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0x5c]),
+    Buffer.from('huangjin,"S-1-5-21-111-222-333-1001"', "ascii")
+  ])),
+  "S-1-5-21-111-222-333-1001",
+  "Windows account detection must extract the SID without decoding localized account names"
+);
+assert.doesNotMatch(storagePermissionSource, /spawnSync\("whoami"[^\n]+encoding:\s*"utf8"/);
+assert.match(storagePermissionSource, /WindowsIdentity\]\:\:GetCurrent\(\)\.User\.Value/);
+assert.match(storagePermissionSource, /icacls\.exe.*\/save/);
+assert.deepEqual(
+  windowsAclSidsFromSddl("D:(A;;FA;;;S-1-5-21-111-222-333-1001)(A;;FA;;;SY)(A;;FA;;;BA)(A;;R;;;WD)"),
+  ["S-1-5-21-111-222-333-1001", "S-1-5-18", "S-1-5-32-544", "S-1-1-0"],
+  "Windows ACL verification must read Unicode SDDL principals instead of localized icacls names"
 );
 
 function powershell(command) {

@@ -86,6 +86,7 @@ const expectedDirectFetchCounts = new Map([
   ["public/app-remote-ftp.js", 1],
   ["public/app-settings-storage.js", 1],
   ["public/app-sftp-open.js", 1],
+  ["public/app-sftp-preview.js", 1],
   ["public/app-terminal-ai-actions.js", 1],
   ["public/login.js", 2]
 ]);
@@ -390,7 +391,7 @@ const mappedVendorAssets = [
   ...staticContentSource.matchAll(/VENDOR_FILES\.set\(\s*"\/vendor\/[^"]+"\s*,\s*vendorFile\("([^"]+)",\s*"([^"]+)"\)\s*\)/g)
 ].map(match => path.join("node_modules", match[1], match[2]));
 const servedVendorAssets = [...mappedVendorAssets, path.join("public", "vendor", "zmodem.js")];
-assert.equal(servedVendorAssets.length, 12, "the static content handler vendor file map changed; review the served i18n scan boundary");
+assert.equal(servedVendorAssets.length, 14, "the static content handler vendor file map changed; review the served i18n scan boundary");
 servedVendorAssets.forEach(assertServedVendorAssetWithoutChinese);
 
 const aceVendorDirectory = path.join("node_modules", "ace-builds", "src-min-noconflict");
