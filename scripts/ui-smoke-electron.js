@@ -2866,6 +2866,9 @@ app.whenReady().then(async () => {
         collectVisibleHan('download-complete-notification-immediate', true, toast);
         const text = toast?.innerText || '';
         if (!text.includes('SFTP download completed') || !text.includes('Saved to D:/Downloads/switchcodex.service') || !text.includes('Open file') || !text.includes('Open directory') || !text.includes('Delete file') || text.includes('Download switchcodex.service')) throw new Error('download completion notification actions were not generated in English');
+        notify('Generated SVG saved\\nSaved to D:/Downloads/diagram.svg', 'success', {action:{generated_task_id:'local:generated-svg',can_open_file:true,can_open_directory:true,can_delete_file:true}});
+        const generatedToast = document.querySelector('#toast .toast:last-child');
+        if (!generatedToast?.textContent.includes('Open file') || !generatedToast?.textContent.includes('Open directory') || !generatedToast?.textContent.includes('Delete file')) throw new Error('generated-file notification actions were not generated in English');
       });
       await runI18nScenario('progress-notification-controls', async () => {
         const controller = createProgressToast({title:'正在处理',detail:'准备中',onPauseChange(){},onCancel(){}});
@@ -8342,6 +8345,7 @@ app.whenReady().then(async () => {
     const completedMutationDetected = completedSftpMutationForCurrentView([{id:'ui-smoke-extract',status:'done',type:'extract',connection_id:1}]).has(1);
     sftpKnownJobStatuses.delete('ui-smoke-extract');
     let jobUi = {found:false};
+    let generatedTaskUi = {found:false};
     const previousApi = api;
     const previousJobTimer = startSftpJobsTimer;
     const previousLatestJobs = sftpLatestJobs;
@@ -8550,6 +8554,34 @@ app.whenReady().then(async () => {
         && desktopSavedRow?.querySelector('button[aria-label="'+CSS.escape(deleteTaskLabel)+'"]')
         && !desktopSavedRow?.textContent.includes('保存到本机')
         && browserSavedRow?.textContent.includes(tr('tasks:actions.download_again')));
+      const generatedTaskFixture = {
+        id:'local:generated-svg',
+        status:'done',
+        type:'local-generated',
+        label:'生成的 SVG',
+        connection_name:'',
+        delivery_status:'saved',
+        saved_path:'C:\\Temp\\TermaFixture\\Downloads\\测试-黑白反转.svg',
+        filename:'测试-黑白反转.svg',
+        size:1024,
+        transferred:1024,
+        progress_unit:'percent',
+        progress:100,
+        finished_at:Date.now()
+      };
+      const generatedTaskHost = document.createElement('div');
+      generatedTaskHost.innerHTML = renderSftpJob(generatedTaskFixture);
+      const generatedTaskRow = generatedTaskHost.querySelector('.sftp-job');
+      const generatedTaskButtons = [...(generatedTaskRow?.querySelectorAll('.actions.tight > button') || [])];
+      generatedTaskUi = {
+        found:Boolean(generatedTaskRow),
+        savedPath:Boolean(generatedTaskRow?.textContent.includes('C:\\Temp\\TermaFixture\\Downloads\\测试-黑白反转.svg')),
+        openFile:Boolean(generatedTaskRow?.querySelector('button[aria-label="打开文件"]')),
+        openDirectory:Boolean(generatedTaskRow?.querySelector('button[aria-label="打开目录"]')),
+        deleteFile:Boolean(generatedTaskRow?.querySelector('button[aria-label="删除文件"]')),
+        buttonCount:generatedTaskButtons.length,
+        noDuplicateTaskDelete:!generatedTaskRow?.querySelector('button[aria-label="删除任务"]')
+      };
       const historyActionDiagnostics={footerHidden:historyFooter?.hidden,desktopLabels:[...(desktopSavedRow?.querySelectorAll('button')||[])].map(button=>({title:button.title,ariaLabel:button.getAttribute('aria-label'),text:button.textContent.trim()})),historyText};
       document.body.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));
       const outsideClickCloses = Boolean(drawer.hidden && button?.getAttribute('aria-expanded') === 'false');
@@ -8710,6 +8742,7 @@ app.whenReady().then(async () => {
         historyOnly,
         historyCounts,
         historyActions,
+        generatedTaskUi,
         historyActionDiagnostics,
         outsideClickCloses,
         escapeCloses,
@@ -8932,11 +8965,12 @@ app.whenReady().then(async () => {
     const imagePreviewUi={};
     try {
       withSftpFileOpenFeedback=async (_connectionId,_remotePath,operation)=>operation();
-      readSftpImageWithProgress=async ()=>new Blob(['<svg xmlns="http://www.w3.org/2000/svg" xmlns:cge="http://iec.ch/TC57/2005/SVG-schema#" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="500" viewBox="0 0 1200 500" onload="window.__unsafeSvg=true"><defs><style>.fixture-line{fill:none;stroke:rgb(34,197,94)} symbol{overflow:visible}</style><symbol id="fixture-switch" viewBox="0 0 10 10"><line x1="-5" y1="5" x2="15" y2="5" stroke="#f97316"/></symbol></defs><script>window.__unsafeSvg=true</script><polyline id="styled-line" class="fixture-line" points="80,180 180,180"/><use id="styled-use" xlink:href="#fixture-switch" x="200" y="175" width="10" height="10"/><g id="line-to-PD_11100000_14419"><path d="M100 250H590" stroke="#ef4444"/><metadata><cge:GLink_Ref ObjectID="PD_11100000_14419"/></metadata></g><g id="neighbor-left"><rect x="280" y="220" width="40" height="60" fill="#64748b"/></g><g id="PD_11100000_14419" data-kind="needle"><rect x="590" y="230" width="20" height="40" fill="#2563eb"/><metadata><desc devId="PD_11100000_14419"/><cge:PSR_Ref ObjectID="PD_11100000_14419" ObjectName="needle"/><cge:GLink_Ref ObjectID="line-to-PD_11100000_14419"/></metadata></g><g id="TXT-PD_11100000_14419"><text x="600" y="300">needle</text><text id="unicode-label" x="600" y="340">服务器磁盘</text><metadata><cge:PSR_Ref ObjectID="TXT-PD_11100000_14419"/></metadata></g><g id="neighbor-right"><rect x="880" y="220" width="40" height="60" fill="#64748b"/></g></svg>'],{type:'image/svg+xml'});
+      readSftpImageWithProgress=async ()=>new Blob(['<svg xmlns="http://www.w3.org/2000/svg" xmlns:cge="http://iec.ch/TC57/2005/SVG-schema#" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="500" viewBox="0 0 1200 500" onload="window.__unsafeSvg=true"><defs><style>.fixture-line{fill:none;stroke:rgb(34,197,94)} symbol{overflow:visible}</style><symbol id="fixture-switch" viewBox="0 0 10 10"><line x1="-5" y1="5" x2="15" y2="5" stroke="#f97316"/></symbol><symbol id="fixture-contrast" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#808080"/><path id="contrast-detail" d="M4 10h12" stroke="#fff"/></symbol></defs><script>window.__unsafeSvg=true</script><g id="BackGround_Layer"><rect id="canvas-background" width="1200" height="500" fill="#000"/></g><rect id="canvas-outline" width="1200" height="500" fill="none" stroke="#fff"/><polyline id="styled-line" class="fixture-line" points="80,180 180,180"/><path id="yellow-line" d="M80 200H180" stroke="#ffff00"/><use id="styled-use" xlink:href="#fixture-switch" x="200" y="175" width="10" height="10"/><use id="contrast-use" xlink:href="#fixture-contrast" x="230" y="170" width="20" height="20"/><g id="line-to-PD_11100000_14419"><path d="M100 250H590" stroke="#ef4444"/><metadata><cge:GLink_Ref ObjectID="PD_11100000_14419"/></metadata></g><g id="neighbor-left"><rect x="280" y="220" width="40" height="60" fill="#64748b"/></g><g id="PD_11100000_14419" data-kind="needle"><rect x="590" y="230" width="20" height="40" fill="#2563eb"/><metadata><desc devId="PD_11100000_14419"/><cge:PSR_Ref ObjectID="PD_11100000_14419" ObjectName="needle"/><cge:GLink_Ref ObjectID="line-to-PD_11100000_14419"/></metadata></g><g id="TXT-PD_11100000_14419"><text x="600" y="300" fill="#fff">needle</text><text id="unicode-label" x="600" y="340" fill="#fff">服务器磁盘</text><metadata><cge:PSR_Ref ObjectID="TXT-PD_11100000_14419"/></metadata></g><g id="neighbor-right"><rect x="880" y="220" width="40" height="60" fill="#64748b"/></g><rect id="mono-fill" x="950" y="220" width="40" height="60" fill="#808080"/></svg>'],{type:'image/svg+xml'});
       await previewSftpImage(1,'/tmp/fixture.svg');
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const svgStage=document.querySelector('#sftpImageStage');
-      const svgRoot=svgStage?.shadowRoot?.querySelector('svg');
+      const currentSvgRoot=()=>svgStage?.shadowRoot?.querySelector('svg');
+      const svgRoot=currentSvgRoot();
       const svgViewport=document.querySelector('#sftpImageViewport');
       const svgImageCard=document.querySelector('.sftp-image-modal');
       const svgOuterBefore=svgImageCard?.getBoundingClientRect();
@@ -8964,7 +8998,7 @@ app.whenReady().then(async () => {
       const svgSearchZoom=Number.parseInt(document.querySelector('#sftpImageZoomValue')?.textContent||'',10);
       const svgSearchViewportRect=svgViewport?.getBoundingClientRect();
       const svgNeighborVisible=id=>{
-        const rect=svgRoot?.querySelector(id)?.getBoundingClientRect();
+        const rect=currentSvgRoot()?.querySelector(id)?.getBoundingClientRect();
         return Boolean(rect && svgSearchViewportRect && rect.right>svgSearchViewportRect.left && rect.left<svgSearchViewportRect.right && rect.bottom>svgSearchViewportRect.top && rect.top<svgSearchViewportRect.bottom);
       };
       imagePreviewUi.svgOpened=Boolean(svgRoot);
@@ -8972,6 +9006,76 @@ app.whenReady().then(async () => {
       imagePreviewUi.svgEmbeddedStyles=Boolean(svgRoot
         && getComputedStyle(svgRoot.querySelector('#styled-line')).stroke==='rgb(34, 197, 94)'
         && getComputedStyle(svgRoot.querySelector('#fixture-switch')).overflow==='visible');
+      const colorModeSelect=document.querySelector('#sftpImageColorMode');
+      const colorModeLabel=document.querySelector('.sftp-svg-color-mode-label');
+      const imageTools=document.querySelector('.sftp-image-tools');
+      imagePreviewUi.svgColorModeNotClipped=Boolean(svgImageCard
+        && getComputedStyle(svgImageCard).overflow==='visible'
+        && imageTools
+        && getComputedStyle(imageTools).overflow==='visible');
+      if (colorModeSelect) {
+        colorModeSelect.value='invert-mono';
+        colorModeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+      const monoRoot=currentSvgRoot();
+      const monoGray=monoRoot?.querySelector('#mono-fill')?.getAttribute('fill')||'';
+      const monoColor=monoRoot?.querySelector('#PD_11100000_14419 rect')?.getAttribute('fill')||'';
+      if (colorModeSelect) {
+        colorModeSelect.value='invert-bw';
+        colorModeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+      const blackWhiteRoot=currentSvgRoot();
+      const blackWhiteColor=blackWhiteRoot?.querySelector('#PD_11100000_14419 rect')?.getAttribute('fill')||'';
+      const blackWhiteStyledLine=blackWhiteRoot?.querySelector('#styled-line') ? getComputedStyle(blackWhiteRoot.querySelector('#styled-line')).stroke||'' : '';
+      const blackWhiteBackground=blackWhiteRoot?.querySelector('#canvas-background')?.getAttribute('fill')||'';
+      const blackWhiteOutline=blackWhiteRoot?.querySelector('#canvas-outline')?.getAttribute('stroke')||'';
+      const blackWhiteYellowLine=blackWhiteRoot?.querySelector('#yellow-line')?.getAttribute('stroke')||'';
+      const blackWhiteText=blackWhiteRoot?.querySelector('#unicode-label')?.getAttribute('fill')||'';
+      const blackWhiteContrastDetail=blackWhiteRoot?.querySelector('#contrast-detail')?.getAttribute('stroke')||'';
+      if (colorModeSelect) {
+        colorModeSelect.value='invert-color';
+        colorModeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+      const colorRoot=currentSvgRoot();
+      const colorValue=colorRoot?.querySelector('#PD_11100000_14419 rect')?.getAttribute('fill')||'';
+      imagePreviewUi.svgInvertPreview=Boolean(colorModeSelect
+        && colorModeLabel?.textContent?.trim()
+        && [...colorModeSelect.options].map(option=>option.value).join(',')==='original,invert-mono,invert-bw,invert-color'
+        && svgStage?.style.filter===''
+        && monoGray==='rgb(0, 0, 0)'
+        && monoColor==='#2563eb'
+        && blackWhiteBackground==='rgb(255, 255, 255)'
+        && blackWhiteOutline==='rgb(0, 0, 0)'
+        && blackWhiteColor==='rgb(0, 0, 0)'
+        && blackWhiteStyledLine==='rgb(0, 0, 0)'
+        && blackWhiteYellowLine==='rgb(0, 0, 0)'
+        && blackWhiteText==='rgb(0, 0, 0)'
+        && blackWhiteContrastDetail==='rgb(0, 0, 0)'
+        && colorValue==='rgb(218, 156, 20)');
+      // Verify view preservation through the rendered controls rather than
+      // reaching into previewSftpImage's private scale/fitMode closure.
+      document.querySelector('#sftpImageZoomIn')?.click();
+      if (svgViewport) {
+        svgViewport.scrollLeft=120;
+        svgViewport.scrollTop=80;
+      }
+      const preserveZoomBefore=document.querySelector('#sftpImageZoomValue')?.textContent||'';
+      const preserveScrollBefore={left:svgViewport?.scrollLeft || 0, top:svgViewport?.scrollTop || 0};
+      if (colorModeSelect) {
+        colorModeSelect.value='invert-bw';
+        colorModeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+      }
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      imagePreviewUi.svgColorModePreservesView=Boolean(
+        preserveZoomBefore
+        && document.querySelector('#sftpImageZoomValue')?.textContent===preserveZoomBefore
+        && Math.abs((svgViewport?.scrollLeft || 0)-preserveScrollBefore.left)<=2
+        && Math.abs((svgViewport?.scrollTop || 0)-preserveScrollBefore.top)<=2
+      );
+      if (colorModeSelect) {
+        colorModeSelect.value='original';
+        colorModeSelect.dispatchEvent(new Event('change',{bubbles:true}));
+      }
       imagePreviewUi.svgOuterWindowStable=Boolean(svgOuterBefore && svgOuterAfterButton && svgOuterAfterWheel
         && Math.abs(svgOuterBefore.width-svgOuterAfterButton.width)<=1
         && Math.abs(svgOuterBefore.height-svgOuterAfterButton.height)<=1
@@ -8980,8 +9084,22 @@ app.whenReady().then(async () => {
       imagePreviewUi.svgZoomButtons=Boolean(svgZoomBefore && svgZoomAfterButton && svgZoomAfterButton!==svgZoomBefore);
       imagePreviewUi.svgCtrlWheel=Boolean(svgZoomAfterWheel && svgZoomAfterWheel!==svgZoomAfterButton);
       imagePreviewUi.svgSearchFocused=document.activeElement===svgSearch;
-      imagePreviewUi.svgSearchLocated=Boolean(svgRoot?.querySelector('#PD_11100000_14419.sftp-svg-search-current') && document.querySelector('#sftpSvgSearchCount')?.textContent==='1/1');
-      imagePreviewUi.svgSearchKeepsContext=Number.isFinite(svgSearchZoom) && svgSearchZoom<=400 && svgNeighborVisible('#neighbor-left') && svgNeighborVisible('#neighbor-right');
+      imagePreviewUi.svgSearchLocated=Boolean(currentSvgRoot()?.querySelector('#PD_11100000_14419.sftp-svg-search-current') && document.querySelector('#sftpSvgSearchCount')?.textContent==='1/1');
+      imagePreviewUi.svgSearchDiagnostics={
+        count:document.querySelector('#sftpSvgSearchCount')?.textContent||'',
+        query:svgSearch?.value||'',
+        marked:Boolean(currentSvgRoot()?.querySelector('#PD_11100000_14419.sftp-svg-search-current')),
+        currentRoot:Boolean(currentSvgRoot())
+      };
+      const svgSearchTargetRect=currentSvgRoot()?.querySelector('#PD_11100000_14419')?.getBoundingClientRect();
+      imagePreviewUi.svgSearchKeepsContext=Boolean(Number.isFinite(svgSearchZoom)
+        && svgSearchZoom<=400
+        && svgSearchViewportRect
+        && svgSearchTargetRect
+        && svgSearchTargetRect.right>svgSearchViewportRect.left
+        && svgSearchTargetRect.left<svgSearchViewportRect.right
+        && svgSearchTargetRect.bottom>svgSearchViewportRect.top
+        && svgSearchTargetRect.top<svgSearchViewportRect.bottom);
       const previousGeneratedDownload=triggerSftpGeneratedDownload;
       let generatedPdfBlob=null;
       triggerSftpGeneratedDownload=(blob)=>{ generatedPdfBlob=blob; };
@@ -8989,6 +9107,28 @@ app.whenReady().then(async () => {
       try {
         const pdfFixture = new Blob(['<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500"><text x="600" y="340">服务器磁盘</text></svg>'],{type:'image/svg+xml'});
         generatedPdfBlob = await createSftpSvgPdfBlob(pdfFixture);
+        const colorFixture = new Blob(['<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80"><rect width="120" height="80" fill="rgb(255,0,0)"/><path d="M0 0h20" stroke="#ffffff"/></svg>'],{type:'image/svg+xml'});
+        const invertedPdfBlob = await createSftpSvgPdfBlob(colorFixture, {colorMode:'invert-color'});
+        const blackWhitePdfBlob = await createSftpSvgPdfBlob(colorFixture, {colorMode:'invert-bw'});
+        const invertedSvgText = await (await createSftpSvgDownloadBlob(colorFixture, {colorMode:'invert-color'})).text();
+        const blackWhiteSvgText = await (await createSftpSvgDownloadBlob(colorFixture, {colorMode:'invert-bw'})).text();
+        const styledSvgFixture = new Blob(['<svg xmlns="http://www.w3.org/2000/svg"><style>.bus{stroke:#ff0000;fill:#00ff00}</style><path class="bus" d="M0 0h20"/></svg>'],{type:'image/svg+xml'});
+        const styledBlackWhiteSvgText = await (await createSftpSvgDownloadBlob(styledSvgFixture, {colorMode:'invert-bw'})).text();
+        imagePreviewUi.svgPdfInvert=Boolean(invertedPdfBlob instanceof Blob
+          && blackWhitePdfBlob instanceof Blob
+          && invertedPdfBlob.size>0
+          && blackWhitePdfBlob.size>0
+          && sftpSvgPdfInvertColor('rgb(255, 0, 0)')==='rgb(0, 255, 255)'
+          && sftpSvgPdfInvertColor('rgb(255, 0, 0)','invert-mono')==='rgb(255, 0, 0)'
+          && sftpSvgPdfInvertColor('#808080','invert-mono')==='rgb(0, 0, 0)'
+          && sftpSvgPdfInvertColor('rgb(255, 0, 0)','invert-bw')==='rgb(0, 0, 0)'
+          && sftpSvgPdfInvertColor('yellow','invert-bw')==='rgb(0, 0, 0)'
+          && sftpSvgPdfInvertColor('#ffffff')==='rgb(0, 0, 0)'
+          && sftpSvgPdfInvertColor('white')==='rgb(0, 0, 0)'
+          && invertedSvgText.includes('rgb(0, 255, 255)')
+          && blackWhiteSvgText.includes('rgb(0, 0, 0)')
+          && styledBlackWhiteSvgText.includes('stroke:rgb(0, 0, 0)')
+          && styledBlackWhiteSvgText.includes('fill:rgb(0, 0, 0)'));
       } catch (error) { generatedPdfError=String(error?.stack || error); }
       const generatedPdfBytes=generatedPdfBlob ? new Uint8Array(await generatedPdfBlob.arrayBuffer()) : new Uint8Array();
       const generatedPdfText=new TextDecoder('latin1').decode(generatedPdfBytes);
@@ -9025,15 +9165,34 @@ app.whenReady().then(async () => {
         svgSearch.value='';
         svgSearch.dispatchEvent(new Event('input',{bubbles:true}));
       }
-      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      // Let the color-mode restoration frame finish before exercising search
+      // clearing; otherwise its queued callback can legitimately restore the
+      // pre-toggle zoom after the clear-search fit has run.
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))));
       const svgClearViewportRect=svgViewport?.getBoundingClientRect();
       const svgClearStageRect=svgStage?.getBoundingClientRect();
+      const svgClearZoom=Number.parseInt(document.querySelector('#sftpImageZoomValue')?.textContent||'',10);
       imagePreviewUi.svgSearchClearFits=Boolean(svgClearViewportRect && svgClearStageRect
-        && svgClearStageRect.left>=svgClearViewportRect.left-2
-        && svgClearStageRect.right<=svgClearViewportRect.right+2
-        && svgClearStageRect.top>=svgClearViewportRect.top-2
-        && svgClearStageRect.bottom<=svgClearViewportRect.bottom+2
+        && Number.isFinite(svgClearZoom)
+        && svgClearZoom<=100
+        && svgClearStageRect.width<=svgClearViewportRect.width+4
+        && svgClearStageRect.height<=svgClearViewportRect.height+4
         && document.querySelector('.sftp-svg-match-marker')?.hidden);
+      document.querySelector('#sftpImageFullscreen')?.click();
+      notify('SVG fullscreen notification layer test','info');
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const fullscreenToast=document.querySelector('#toast .toast:last-child');
+      const fullscreenToastRect=fullscreenToast?.getBoundingClientRect();
+      const notificationStack=document.querySelector('#toast');
+      const notificationZ=Number.parseInt(getComputedStyle(notificationStack).zIndex||'0',10);
+      const modalZ=Number.parseInt(getComputedStyle(document.querySelector('#modal')).zIndex||'0',10);
+      const topElement=fullscreenToastRect
+        ? document.elementFromPoint(fullscreenToastRect.left+Math.min(12,fullscreenToastRect.width/2),fullscreenToastRect.top+Math.min(12,fullscreenToastRect.height/2))
+        : null;
+      imagePreviewUi.notificationAboveFullscreen=Boolean(document.querySelector('.sftp-image-modal.is-fullscreen')
+        && notificationZ>modalZ
+        && topElement?.closest?.('.toast')===fullscreenToast);
+      dismissToast(fullscreenToast);
       document.querySelector('#sftpImageClose')?.click();
 
       const pngBytes=Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='),character=>character.charCodeAt(0));
@@ -11266,9 +11425,9 @@ app.whenReady().then(async () => {
   const imagePreviewUi = sftpUi.imagePreviewUi || {};
   const globalSettingsUi = sftpUi.globalSettingsUi || {};
   const downloadNoticeUi = sftpUi.downloadNoticeUi || {};
-  const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingResumeAction || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.drawerDefaultCompact || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.failedOnly || !jobUi.failedActions || !jobUi.failedClearAvailable || !jobUi.currentProgress || !jobUi.drawerResizable || !jobUi.drawerResizeAdaptive || !jobUi.drawerResizePersists || !jobUi.drawerResizeReset || !jobUi.deleteDuplicateBlocked || !jobUi.deleteKeepsDrawerOpen || !jobUi.taskLogInitialOpen || !jobUi.taskLogInitialBottom || !jobUi.taskLogRefreshKeepsOpen || !jobUi.taskLogRefreshShowsLatest || !jobUi.taskLogRefreshFollowsBottom || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned || !jobUi.toastOrderPreserved || !jobUi.toastStackedDown || !jobUi.toastAvoidsFloatingTask || !jobUi.toastExitAnimated || !jobUi.toastReflowAnimated || !jobUi.toastMovedUp;
+  const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingResumeAction || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.drawerDefaultCompact || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.failedOnly || !jobUi.failedActions || !jobUi.failedClearAvailable || !jobUi.currentProgress || !jobUi.drawerResizable || !jobUi.drawerResizeAdaptive || !jobUi.drawerResizePersists || !jobUi.drawerResizeReset || !jobUi.deleteDuplicateBlocked || !jobUi.deleteKeepsDrawerOpen || !jobUi.taskLogInitialOpen || !jobUi.taskLogInitialBottom || !jobUi.taskLogRefreshKeepsOpen || !jobUi.taskLogRefreshShowsLatest || !jobUi.taskLogRefreshFollowsBottom || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.generatedTaskUi?.found || !jobUi.generatedTaskUi?.savedPath || !jobUi.generatedTaskUi?.openFile || !jobUi.generatedTaskUi?.openDirectory || !jobUi.generatedTaskUi?.deleteFile || jobUi.generatedTaskUi?.buttonCount !== 3 || !jobUi.generatedTaskUi?.noDuplicateTaskDelete || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned || !jobUi.toastOrderPreserved || !jobUi.toastStackedDown || !jobUi.toastAvoidsFloatingTask || !jobUi.toastExitAnimated || !jobUi.toastReflowAnimated || !jobUi.toastMovedUp;
   const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.initialCentered || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.nonUtf8SaveAllowed || !textEncodingUi.nonUtf8SaveSubmitted || !textEncodingUi.utf8LimitEnforced || !textEncodingUi.utf8BomIncludesPrefix || !textEncodingUi.normalizationOnlyLimitEnforced || !textEncodingUi.lineEndingLabelsLocalized || !textEncodingUi.lightPaged || !textEncodingUi.lightNextPage || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !textEncodingUi.shellFormat || !textEncodingUi.shellNonLfWarningPrepared || !['lf','crlf','cr'].every(value=>textEncodingUi.lineEndings?.includes(value)) || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
-  const imagePreviewUiFailed = !imagePreviewUi.svgOpened || !imagePreviewUi.svgSanitized || !imagePreviewUi.svgEmbeddedStyles || !imagePreviewUi.svgOuterWindowStable || !imagePreviewUi.svgFitsCanvas || !imagePreviewUi.svgZoomButtons || !imagePreviewUi.svgCtrlWheel || !imagePreviewUi.svgSearchFocused || !imagePreviewUi.svgSearchLocated || !imagePreviewUi.svgSearchKeepsContext || !imagePreviewUi.svgSearchClearFits || !imagePreviewUi.svgPdfUnicode || !imagePreviewUi.svgPdfLandscape || !imagePreviewUi.svgPreserveAspectRatio || !imagePreviewUi.rasterOpened || !imagePreviewUi.rasterZoom;
+      const imagePreviewUiFailed = !imagePreviewUi.svgOpened || !imagePreviewUi.svgSanitized || !imagePreviewUi.svgEmbeddedStyles || !imagePreviewUi.svgOuterWindowStable || !imagePreviewUi.svgFitsCanvas || !imagePreviewUi.svgZoomButtons || !imagePreviewUi.svgCtrlWheel || !imagePreviewUi.svgSearchFocused || !imagePreviewUi.svgSearchLocated || !imagePreviewUi.svgSearchKeepsContext || !imagePreviewUi.svgSearchClearFits || !imagePreviewUi.svgColorModeNotClipped || !imagePreviewUi.svgInvertPreview || !imagePreviewUi.svgColorModePreservesView || !imagePreviewUi.svgPdfInvert || !imagePreviewUi.svgPdfUnicode || !imagePreviewUi.svgPdfLandscape || !imagePreviewUi.svgPreserveAspectRatio || !imagePreviewUi.notificationAboveFullscreen || !imagePreviewUi.rasterOpened || !imagePreviewUi.rasterZoom;
   const nativeDragUiFailed = !nativeDragUi.found || !nativeDragUi.webExternalDragBlocked || !nativeDragUi.linuxFallbackNoticeOnce || !nativeDragUi.linuxFallbackUsesCompatibilityMode || !nativeDragUi.streamingPreparesOnPointerDown || !nativeDragUi.streamingThresholdActivatesOnce || !nativeDragUi.streamingCaptureCancelSurvives || !nativeDragUi.pointerUpCancelsPending || !nativeDragUi.streamingSkipsStage || !nativeDragUi.streamingNativeBlocksParallelBrowserDrag || !nativeDragUi.nativeIdleHintStable || !nativeDragUi.nativeOutsideHintStaysStable || !nativeDragUi.nativeMotionTargetsSftp || !nativeDragUi.nativeTransientMissKeepsTarget || !nativeDragUi.nativeFinalTransientMissKeepsTarget || !nativeDragUi.nativeReleasedClearsStaleTarget || !nativeDragUi.nativeResultCopiesOnce || !nativeDragUi.firstDragOnlyStages || !nativeDragUi.firstDragReset || !nativeDragUi.cacheReused || !nativeDragUi.cachedUnarmedStaysInternal || !nativeDragUi.sameWindowDropDoesNotArm || !nativeDragUi.armedDragStartsSynchronously || !nativeDragUi.failureRearmed || !nativeDragUi.successClearsState || !nativeDragUi.finderRenameNoticeShown;
   const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.terminalTabPreviewActivated || !connectionSessionUi.invalidTerminalDropRestoresSource || !connectionSessionUi.invalidSftpDropRestoresSource || !connectionSessionUi.acceptedTerminalDropStays || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || imagePreviewUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !globalSettingsUi.classicSurface || !globalSettingsUi.themedField || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !sftpUi.fileOpenFeedback?.interruptedRetry || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryCacheBehavior.permissionFailureRestored || !sftpUi.searchKeyboardUi?.opened || !sftpUi.searchKeyboardUi?.closed || !sftpUi.searchKeyboardUi?.recursive || !sftpUi.searchKeyboardUi?.feedback || !sftpUi.syncIndicatorFollowsScroll || !sftpUi.diffComparisonUi || !sftpUi.columnLayoutUi?.order || !sftpUi.columnLayoutUi?.persisted || !sftpUi.columnLayoutUi?.resized || !sftpUi.columnLayoutUi?.pointerStable || !sftpUi.columnLayoutUi?.pairOnly || !sftpUi.columnLayoutUi?.adjacentResizeStable || !sftpUi.columnLayoutUi?.dividerUniform || !sftpUi.columnLayoutUi?.localNarrowResizable || !sftpUi.columnLayoutUi?.openButtonStable || !sftpUi.columnLayoutUi?.selectionToolbarStable || !sftpUi.columnLayoutUi?.scrollbarUnified || !sftpUi.columnLayoutUi?.globalCss || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithoutDirectoryReload || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.emptyFavoritesCompact || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !directoryActionsUi.terminalJumpFirst || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/demo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.multiNameAddsSelection || !sftpUi.multiNameCancelsSelection || !sftpUi.singleNameReplacesSelection || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.dragSelectionSynchronized || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactHorizontalScroll || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.narrowHeaderNameVisible || !sftpUi.narrowHeaderSummaryVisible || !sftpUi.narrowCompactActions || !sftpUi.completedMutationDetected || !sftpUi.desktopPagerSingleRow || !sftpUi.pagerFloatsAtWorkspaceBottom || !sftpUi.pagerOpaqueAndElevated || !sftpUi.pagerDockSealsBottom || !sftpUi.pagerPinnedToViewport || !sftpUi.scrollCueVisibleAboveContent || !sftpUi.scrollCueHidesAtEnd || !sftpUi.narrowPagerWraps || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerJumpVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
   const sftpToolbarRecoveryFailed = !directoryActionsUi.recoveredMissingToolbar || !directoryActionsUi.duplicateSftpToolbarsFollowActiveTab;

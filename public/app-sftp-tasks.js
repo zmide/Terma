@@ -14,7 +14,6 @@ let sftpJobsRefreshTrailing = false;
 let sftpDirectoryRefreshTimer = 0;
 let sftpDirectoryRefreshActive = false;
 let sftpPreferredDirectoryRefreshKey = "";
-
 function savedSftpTaskCenterSize() {
   try {
     const saved = JSON.parse(localStorage.getItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY) || "null");
@@ -25,7 +24,6 @@ function savedSftpTaskCenterSize() {
     return null;
   }
 }
-
 function persistSftpTaskCenterSize(drawer) {
   if (!drawer || isMobileLayout()) return;
   const rect = drawer.getBoundingClientRect();
@@ -36,7 +34,6 @@ function persistSftpTaskCenterSize(drawer) {
     }));
   } catch {}
 }
-
 function restoreSftpTaskCenterSize(drawer) {
   if (!drawer) return false;
   if (isMobileLayout()) {
@@ -49,7 +46,6 @@ function restoreSftpTaskCenterSize(drawer) {
   applySftpTaskCenterSize(drawer, saved.width, saved.height);
   return true;
 }
-
 function sftpTaskCenterResizeBounds(drawer) {
   const rect = drawer.getBoundingClientRect();
   const maxWidth = Math.max(1, rect.right - SFTP_TASK_CENTER_VIEWPORT_GAP);
@@ -61,7 +57,6 @@ function sftpTaskCenterResizeBounds(drawer) {
     maxHeight
   };
 }
-
 function applySftpTaskCenterSize(drawer, width, height) {
   const bounds = sftpTaskCenterResizeBounds(drawer);
   const nextWidth = Math.max(bounds.minWidth, Math.min(bounds.maxWidth, Number(width) || bounds.minWidth));
@@ -69,7 +64,6 @@ function applySftpTaskCenterSize(drawer, width, height) {
   drawer.style.width = `${Math.round(nextWidth)}px`;
   drawer.style.height = `${Math.round(nextHeight)}px`;
 }
-
 function startSftpTaskCenterResize(event, handle=event.currentTarget) {
   if (event.button !== 0 || isMobileLayout()) return;
   const drawer = document.getElementById("sftpTaskCenterDrawer");
@@ -94,7 +88,6 @@ function startSftpTaskCenterResize(event, handle=event.currentTarget) {
   window.addEventListener("pointercancel", cancelSftpTaskCenterResize);
   window.addEventListener("blur", finishSftpTaskCenterResizeOnBlur);
 }
-
 function moveSftpTaskCenterResize(event) {
   const drag = sftpTaskCenterResize;
   if (!drag || event.pointerId !== drag.pointerId) return;
@@ -105,15 +98,12 @@ function moveSftpTaskCenterResize(event) {
     drag.startHeight + (event.clientY - drag.startY)
   );
 }
-
 function cancelSftpTaskCenterResize(event) {
   finishSftpTaskCenterResize(event, true);
 }
-
 function finishSftpTaskCenterResizeOnBlur() {
   finishSftpTaskCenterResize(null);
 }
-
 function finishSftpTaskCenterResize(event, cancelled=false) {
   const drag = sftpTaskCenterResize;
   if (!drag || event?.pointerId !== undefined && event.pointerId !== drag.pointerId) return;
@@ -129,7 +119,6 @@ function finishSftpTaskCenterResize(event, cancelled=false) {
   if (cancelled) applySftpTaskCenterSize(drag.drawer, drag.startWidth, drag.startHeight);
   else persistSftpTaskCenterSize(drag.drawer);
 }
-
 function resetSftpTaskCenterSize(event) {
   if (isMobileLayout()) return;
   event?.preventDefault?.();
@@ -139,7 +128,6 @@ function resetSftpTaskCenterSize(event) {
   drawer?.style.removeProperty("height");
   try { localStorage.removeItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY); } catch {}
 }
-
 function handleSftpTaskCenterResizeKey(event) {
   if (isMobileLayout()) return;
   if (event.key === "Home") return resetSftpTaskCenterSize(event);
@@ -214,7 +202,6 @@ function startSftpJobsTimer() {
   }
   schedule(3000);
 }
-
 function sftpJobProgress(job) {
   const size = Math.max(0, Number(job?.size || 0));
   const known = job?.progress_known === true || job?.size_known === true || size > 0;
@@ -232,12 +219,10 @@ function sftpJobProgress(job) {
     weightable:size > 0 && !job?.two_stage_upload
   };
 }
-
 function localizedSftpJobText(value) {
   const source = String(value || "");
   return typeof localizedTermaUiPhrase === "function" ? localizedTermaUiPhrase(source) : source;
 }
-
 function localizedSftpTaskMessage(message, code="", params={}) {
   const source = String(message || "");
   const normalizedCode = typeof normalizeBackendPublicErrorCode === "function"
@@ -922,7 +907,7 @@ async function performSftpJobsRefresh() {
     logs:Array.isArray(task.logs) ? task.logs : [],
     error:task.error || ""
   });
-  })];
+  }), ...listSftpGeneratedTasks()];
   if (requestSeq !== sftpJobsRequestSeq) return sftpLatestJobs;
   sftpLastJobsPollAt = Date.now();
   const readyBrowserDownload = jobs.find(job => job.status === "done"
@@ -993,7 +978,14 @@ function renderSftpJob(job) {
   const rawSyncIdArg = sftpTaskInlineArgument(job.raw_sync_id);
   const rawDesktopIdArg = sftpTaskInlineArgument(job.raw_desktop_id);
   let downloadAction = "";
-  if (done && job.type === "download" && job.delivery_status === "saved") {
+  if (done && job.type === "local-generated" && job.delivery_status === "saved") {
+    const openFile = tr("tasks:actions.open_file", {defaultValue:"打开文件"});
+    const openDirectory = tr("tasks:actions.open_directory", {defaultValue:"打开目录"});
+    const deleteFile = tr("sftp:menu.delete_downloaded_file", {defaultValue:"删除文件"});
+    downloadAction = `<button class="icon-button primary sftp-task-icon-action" type="button" title="${escAttr(openFile)}" aria-label="${escAttr(openFile)}" onclick="event.stopPropagation();openSftpGeneratedTaskFile(${jobIdArg},this)">${icon("external-link")}</button><button class="icon-button sftp-task-icon-action" type="button" title="${escAttr(openDirectory)}" aria-label="${escAttr(openDirectory)}" onclick="event.stopPropagation();openSftpGeneratedTaskDirectory(${jobIdArg})">${icon("folder-open")}</button><button class="icon-button danger sftp-task-icon-action" type="button" title="${escAttr(deleteFile)}" aria-label="${escAttr(deleteFile)}" onclick="event.stopPropagation();deleteSftpGeneratedTaskFile(${jobIdArg},this)">${icon("trash-2")}</button>`;
+  } else if (done && job.type === "local-generated") {
+    downloadAction = `<button class="primary" onclick="event.stopPropagation();openSftpGeneratedTaskFile(${jobIdArg},this)">${icon("download")}<span>${esc(tr("tasks:actions.download_again", {defaultValue:"再次下载"}))}</span></button>`;
+  } else if (done && job.type === "download" && job.delivery_status === "saved") {
     const openFile = tr("tasks:actions.open_file", {defaultValue:"打开文件"});
     const openDirectory = tr("tasks:actions.open_directory", {defaultValue:"打开目录"});
     downloadAction = `<button class="icon-button primary sftp-task-icon-action" type="button" title="${escAttr(openFile)}" aria-label="${escAttr(openFile)}" onclick="event.stopPropagation();openSftpDownloadedFile(${jobIdArg},this)">${icon("external-link")}</button><button class="icon-button sftp-task-icon-action" type="button" title="${escAttr(openDirectory)}" aria-label="${escAttr(openDirectory)}" onclick="event.stopPropagation();openSftpDownloadDirectory(this,${jobIdArg})">${icon("folder-open")}</button>`;
@@ -1009,7 +1001,7 @@ function renderSftpJob(job) {
   const exportSyncBtn = syncJob && ["failed", "done", "cancelled"].includes(job.status) ? `<button onclick="event.stopPropagation();exportSftpSyncResult(${rawSyncIdArg},this)">${icon("download")}<span>${esc(tr("tasks:actions.export_result", {defaultValue:"导出结果"}))}</span></button>` : "";
   const desktopOpenBtn = desktopJob ? `<button onclick="event.stopPropagation();openLinuxDesktopTask(${Number(job.connection_id)},${rawDesktopIdArg},this)">${icon("monitor-cog")}<span>${esc(tr("tasks:actions.view", {defaultValue:"查看"}))}</span></button>` : "";
   const deleteTask = tr("tasks:actions.delete", {defaultValue:"删除任务"});
-  const deleteBtn = deletable ? `<button class="icon-button danger sftp-task-icon-action" type="button" title="${escAttr(deleteTask)}" aria-label="${escAttr(deleteTask)}" onclick="event.stopPropagation();deleteSftpJob(${jobIdArg},this)">${icon("trash-2")}</button>` : "";
+  const deleteBtn = deletable && !(job.type === "local-generated" && job.delivery_status === "saved") ? `<button class="icon-button danger sftp-task-icon-action" type="button" title="${escAttr(deleteTask)}" aria-label="${escAttr(deleteTask)}" onclick="event.stopPropagation();deleteSftpJob(${jobIdArg},this)">${icon("trash-2")}</button>` : "";
   const finishedAt = job.finished_at ? `<time datetime="${escAttr(new Date(job.finished_at).toISOString())}">${esc(new Date(job.finished_at).toLocaleString())}</time>` : "";
   const deliveryText = job.saved_path ? `<span class="sftp-job-delivery" data-i18n-skip>${esc(tr("tasks:notifications.saved_to", {path:job.saved_path, defaultValue:`已保存到 ${job.saved_path}`}))}</span>` : "";
   const deliveryErrorText = localizedSftpJobIssue(job, "delivery_error");
@@ -1234,6 +1226,10 @@ if (typeof registerTermaI18nRenderer === "function") {
 
 function deleteSftpJobRecord(id) {
   const key = String(id || "");
+  if (key.startsWith("local:")) {
+    deleteSftpGeneratedTask(key);
+    return Promise.resolve({ok:true});
+  }
   if (key.startsWith("desktop:")) return api(`/api/linux-desktop/tasks/${encodeURIComponent(key.slice(8))}`, {method:"DELETE"});
   if (key.startsWith("component:")) return api(`/api/remote-component/tasks/${encodeURIComponent(key.slice(10))}`, {method:"DELETE"});
   if (key.startsWith("sync:")) return api(`/api/sftp/sync/jobs/${encodeURIComponent(key.slice(5))}`, {method:"DELETE"});
@@ -1315,7 +1311,11 @@ async function clearFinishedSftpJobs(button=null) {
     const syncResult = window.termaDesktop ? await api("/api/sftp/sync/jobs/clear-finished", {method:"POST"}).catch(() => ({removed:0})) : {removed:0};
     const desktopResult = await api("/api/linux-desktop/tasks/clear-finished", {method:"POST"}).catch(() => ({removed:0}));
     const componentResult = await api("/api/remote-component/tasks/clear-finished", {method:"POST"}).catch(() => ({removed:0}));
-    const count = Number(result.removed || 0) + Number(syncResult.removed || 0) + Number(desktopResult.removed || 0) + Number(componentResult.removed || 0);
+    const localCount = sftpGeneratedTasks.length;
+    sftpGeneratedTasks = sftpGeneratedTasks.filter(item => !["done", "cancelled"].includes(item.status));
+    for (const item of [...sftpGeneratedFileBlobs.keys()]) if (!sftpGeneratedTaskById(item)) sftpGeneratedFileBlobs.delete(item);
+    persistSftpGeneratedTasks();
+    const count = Number(result.removed || 0) + Number(syncResult.removed || 0) + Number(desktopResult.removed || 0) + Number(componentResult.removed || 0) + localCount;
     notify(tr("sftp:task_ui.history_cleared", {count, defaultValue:`已清理 ${count} 条历史任务`}), "success");
     await refreshSftpJobs();
   } catch (error) {

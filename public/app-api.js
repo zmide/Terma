@@ -86,6 +86,7 @@ async function api(path, opts = {}) {
     skipSftpConnect = false,
     skipHostTrustPrompt = false,
     hostTrustAttempt = 0,
+    rawBody = false,
     responseType = "json",
     ...fetchOptions
   } = opts;
@@ -101,9 +102,13 @@ async function api(path, opts = {}) {
   if (connectionResource === "sftp" && !String(path).includes("/sftp/session") && !skipSftpConnect && typeof ensureSftpConnection === "function") {
     await ensureSftpConnection(connectionResourceId);
   }
+  const suppliedHeaders = fetchOptions.headers || {};
+  const {headers:_ignoredHeaders, ...requestOptions} = fetchOptions;
   const res = await fetch(path, {
-    ...fetchOptions,
-    headers: { "Content-Type": "application/json", ...quickHeaders }
+    ...requestOptions,
+    headers: rawBody
+      ? {...quickHeaders, ...suppliedHeaders}
+      : { "Content-Type": "application/json", ...quickHeaders, ...suppliedHeaders }
   });
   if (responseType === "arrayBuffer" && res.ok) {
     const data = await res.arrayBuffer();

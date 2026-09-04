@@ -71,8 +71,11 @@ async function checkSftpDesktopDownloadRoutes() {
   const { handleSftpDesktopDownloadRoutes } = require(path.join(root, "dist", "routes", "sftp-desktop-download-routes.js"));
   const output = recorder();
   const calls = [];
+  const generatedDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "terma-generated-pdf-"));
+  let configuredDirectory = "D:/Saved";
   let desktopRequest = false;
   let json = {};
+  let generatedBody = Buffer.from("%PDF-1.7 fixture");
   const jobs = [
     {id:"job-1", type:"download", delivery_status:"saved", saved_path:"C:/Downloads/fixture.txt"},
     {id:"job-2", type:"download", delivery_status:"saved", saved_path:"C:/Downloads/batch"}
@@ -98,8 +101,9 @@ async function checkSftpDesktopDownloadRoutes() {
     getDesktopIntegration:() => desktopIntegration,
     isDesktopRequest:() => desktopRequest,
     listSftpJobs:() => jobs,
+    readBody:async () => generatedBody,
     readJson:async () => json,
-    readRuntimeSettings:() => ({sftp_download_directory:"D:/Saved"}),
+    readRuntimeSettings:() => ({sftp_download_directory:configuredDirectory}),
     sendJson:output.sendJson
   };
 
@@ -135,6 +139,50 @@ async function checkSftpDesktopDownloadRoutes() {
   assert.deepEqual(calls.shift(), ["trash-file", "C:/Downloads/fixture.txt"]);
   assert.deepEqual(output.sent.pop(), {data:{trashed:"C:/Downloads/fixture.txt"}, status:200});
 
+  configuredDirectory = generatedDirectory;
+  const generatedRequest = {method:"POST", headers:{"content-type":"application/pdf", "x-terma-generated-filename":encodeURIComponent("测试-彩色反转.pdf")}};
+  assert.equal(await handleSftpDesktopDownloadRoutes(generatedRequest, output.response, "/api/sftp/download-settings/save-generated", dependencies), true);
+  const generatedResult = output.sent.pop();
+  assert.equal(generatedResult.status, 201);
+  assert.equal(generatedResult.data.ok, true);
+  assert.equal(generatedResult.data.filename, "测试-彩色反转.pdf");
+  assert.equal(fs.readFileSync(generatedResult.data.path, "utf8"), "%PDF-1.7 fixture");
+  assert.equal(await handleSftpDesktopDownloadRoutes(generatedRequest, output.response, "/api/sftp/download-settings/save-generated", dependencies), true);
+  assert.equal(output.sent.pop().data.filename, "测试-彩色反转 (1).pdf");
+
+  generatedBody = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><rect fill="white"/></svg>');
+  const generatedSvgRequest = {method:"POST", headers:{"content-type":"image/svg+xml; charset=utf-8", "x-terma-generated-filename":encodeURIComponent("测试-黑白反转.svg")}};
+  assert.equal(await handleSftpDesktopDownloadRoutes(generatedSvgRequest, output.response, "/api/sftp/download-settings/save-generated", dependencies), true);
+  const generatedSvgResult = output.sent.pop();
+  assert.equal(generatedSvgResult.status, 201);
+  assert.equal(generatedSvgResult.data.filename, "测试-黑白反转.svg");
+  assert.match(fs.readFileSync(generatedSvgResult.data.path, "utf8"), /<svg/);
+
+  json = {path:generatedSvgResult.data.path};
+  assert.equal(await handleSftpDesktopDownloadRoutes({method:"POST"}, output.response, "/api/sftp/download-settings/delete-generated", dependencies), true);
+  assert.deepEqual(calls.shift(), ["trash-file", generatedSvgResult.data.path]);
+  assert.deepEqual(output.sent.pop(), {data:{trashed:generatedSvgResult.data.path}, status:200});
+
+  json = {path:path.join(generatedDirectory, "..", "outside.svg")};
+  assert.equal(await handleSftpDesktopDownloadRoutes({method:"POST"}, output.response, "/api/sftp/download-settings/delete-generated", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{error:"生成文件路径无效"}, status:400});
+
+  assert.equal(await handleSftpDesktopDownloadRoutes({method:"POST", headers:{"content-type":"text/plain"}}, output.response, "/api/sftp/download-settings/save-generated", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{error:"只允许保存 PDF 或 SVG 文件"}, status:415});
+  generatedBody = Buffer.alloc(0);
+  assert.equal(await handleSftpDesktopDownloadRoutes(generatedSvgRequest, output.response, "/api/sftp/download-settings/save-generated", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{error:"生成文件内容为空"}, status:400});
+  generatedBody = Buffer.from("%PDF-1.7 malformed-name");
+  const malformedFilenameRequest = {method:"POST", headers:{"content-type":"application/pdf", "x-terma-generated-filename":"%E0%A4%A"}};
+  assert.equal(await handleSftpDesktopDownloadRoutes(malformedFilenameRequest, output.response, "/api/sftp/download-settings/save-generated", dependencies), true);
+  assert.equal(output.sent.pop().data.filename, "%E0%A4%A.pdf");
+
+  desktopRequest = false;
+  assert.equal(await handleSftpDesktopDownloadRoutes(generatedRequest, output.response, "/api/sftp/download-settings/save-generated", dependencies), true);
+  assert.deepEqual(output.sent.pop(), {data:{error:"生成文件保存仅能在本机桌面端使用"}, status:403});
+  fs.rmSync(generatedDirectory, {recursive:true, force:true});
+
+  desktopRequest = true;
   json = {job_id:"missing"};
   assert.equal(await handleSftpDesktopDownloadRoutes({method:"POST"}, output.response, "/api/sftp/download-settings/open-file", dependencies), true);
   assert.deepEqual(output.sent.pop(), {data:{error:"下载文件不存在或已被清理"}, status:404});

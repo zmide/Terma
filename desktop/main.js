@@ -2,7 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
-const { app, BrowserWindow, Menu, Notification, Tray, clipboard, dialog, ipcMain, nativeImage, nativeTheme, screen, shell } = require("electron");
+const { app, BrowserWindow, Menu, Notification, Tray, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, nativeTheme, screen, shell } = require("electron");
 const { createDesktopBrowserAuthorizationPromptGate } = require("./browser-authorization-prompt");
 const { createNativeSftpDrag } = require("./native-sftp-drag");
 const { createRemoteClientAdapter } = require("./remote-clients");
@@ -653,12 +653,12 @@ if (!displayClientMode) {
     projectRoot:path.resolve(__dirname, ".."),
     userDataPath:app.getPath("userData"),
     getLanguage:()=>desktopInterfaceLanguage,
-    readClipboardPng:() => {
-      const result = readDesktopClipboardImage();
+    readClipboardPng:async () => {
+      const result = await readDesktopClipboardImageAsync();
       return result.ok ? result.data : Buffer.alloc(0);
     },
-    readClipboardFormats:() => {
-      const result = readDesktopClipboardFormats();
+    readClipboardFormats:async () => {
+      const result = await readDesktopClipboardFormatsAsync();
       return result.ok
         ? {png:result.png, bmp:result.bmp}
         : {png:Buffer.alloc(0), bmp:Buffer.alloc(0)};
@@ -2898,6 +2898,7 @@ function encodeDesktopClipboardBmp(image, width, height) {
 }
 
 function readDesktopClipboardImage() {
+  if (typeof clipboard.readImage !== "function") return {ok:false, reason:"unsupported"};
   const image = clipboard.readImage();
   if (!image || image.isEmpty()) return {ok:false, reason:"empty"};
   const size = image.getSize();
@@ -2925,45 +2926,133 @@ function readDesktopClipboardImage() {
   return {ok:true, mime_type:"image/png", width, height, byte_length:data.length, data};
 }
 
-function readDesktopClipboardFormats() {
-  const imageResult = readDesktopClipboardImage();
+function clipboardFormatNames(items) {
+  return [...new Set((Array.isArray(items) ? items : []).flatMap(item => Array.isArray(item?.types) ? item.types : [])
+    .map(value => String(value || "").toLowerCase())
+    .filter(Boolean))];
+}
+
+function clipboardTextFormatName(items) {
+  return (Array.isArray(items) ? items : []).flatMap(item => Array.isArray(item?.types) ? item.types : [])
+    .map(value => String(value || ""))
+    .find(value => {
+      const format = value.toLowerCase();
+      return format === "text" || format === "string" || format === "utf8_string"
+        || format === "public.utf8-plain-text" || format.startsWith("text/plain");
+    }) || "";
+}
+
+async function readModernClipboardImage(items) {
+  const imageItem = (Array.isArray(items) ? items : []).find(item => Array.isArray(item?.types)
+    && item.types.some(type => String(type || "").toLowerCase().startsWith("image/")));
+  const imageType = imageItem?.types?.find(type => String(type || "").toLowerCase().startsWith("image/"));
+  if (!imageItem || !imageType || typeof imageItem.getType !== "function") return {ok:false, reason:"empty"};
+  try {
+    const value = await imageItem.getType(imageType);
+    const bytes = value && typeof value.arrayBuffer === "function"
+      ? Buffer.from(await value.arrayBuffer())
+      : Buffer.alloc(0);
+    if (!bytes.length) return {ok:false, reason:"empty"};
+    const image = nativeImage.createFromBuffer(bytes);
+    if (image.isEmpty()) return {ok:false, reason:"empty"};
+    const size = image.getSize();
+    const width = Math.max(0, Number(size?.width || 0));
+    const height = Math.max(0, Number(size?.height || 0));
+    if (!width || !height) return {ok:false, reason:"empty"};
+    if (width > DESKTOP_CLIPBOARD_IMAGE_MAX_DIMENSION
+      || height > DESKTOP_CLIPBOARD_IMAGE_MAX_DIMENSION
+      || width * height > DESKTOP_CLIPBOARD_IMAGE_MAX_PIXELS) {
+      return {
+        ok:false,
+        reason:"too_large",
+        error:desktopUiText("剪贴板图片尺寸过大，无法安全粘贴", "The clipboard image dimensions are too large to paste safely")
+      };
+    }
+    const png = image.toPNG();
+    if (!png.length) return {ok:false, reason:"empty"};
+    if (png.length > DESKTOP_CLIPBOARD_IMAGE_MAX_BYTES) {
+      return {
+        ok:false,
+        reason:"too_large",
+        error:desktopUiText("剪贴板图片超过 25 MB，无法粘贴到远端终端", "The clipboard image exceeds 25 MB and cannot be pasted into the remote terminal")
+      };
+    }
+    return {ok:true, mime_type:"image/png", width, height, byte_length:png.length, data:png};
+  } catch {
+    return {ok:false, reason:"empty"};
+  }
+}
+
+async function readDesktopClipboardImageAsync(items = null) {
+  if (typeof clipboard.readImage === "function") return readDesktopClipboardImage();
+  try {
+    const available = Array.isArray(items) ? items : (typeof clipboard.read === "function" ? await clipboard.read() : []);
+    return await readModernClipboardImage(available);
+  } catch {
+    return {ok:false, reason:"unsupported"};
+  }
+}
+
+async function readDesktopClipboardFormatsAsync() {
+  const imageResult = await readDesktopClipboardImageAsync();
   if (!imageResult.ok) return {ok:false, reason:imageResult.reason || "empty"};
-  const image = clipboard.readImage();
-  const bmp = encodeDesktopClipboardBmp(image, imageResult.width, imageResult.height);
+  const image = nativeImage.createFromBuffer(imageResult.data);
+  if (image.isEmpty()) return {ok:false, reason:"empty"};
   return {
     ok:true,
     width:imageResult.width,
     height:imageResult.height,
     png:imageResult.data,
-    bmp
+    bmp:encodeDesktopClipboardBmp(image, imageResult.width, imageResult.height)
   };
 }
 
-function readDesktopClipboardSnapshot(options={}) {
-  const formats = clipboard.availableFormats().map(value => String(value || "").toLowerCase());
-  const imageAvailable = formats.some(format => format.startsWith("image/")
-    || format === "cf_dib"
-    || format === "cf_dibv5"
-    || format === "public.tiff"
-    || format === "public.png");
-  const sequence = Number(windowsDesktopNative?.getClipboardSequenceNumber?.() || 0);
-  const textAvailable = formats.some(format => format === "text"
-    || format === "string"
-    || format === "utf8_string"
-    || format === "public.utf8-plain-text"
-    || format.startsWith("text/plain"));
-  const result = {
-    text_available:textAvailable,
-    text:textAvailable ? clipboard.readText() : "",
-    image_available:imageAvailable,
-    // Windows exposes a monotonic clipboard sequence number, so the renderer
-    // can detect changes without decoding the image. Other platforms do not
-    // currently expose an equivalent reliable content revision through
-    // Electron; an empty revision keeps their existing content-read fallback
-    // instead of treating an unchanged MIME list as unchanged image data.
-    image_revision:sequence > 0 ? `win32:${sequence}` : ""
-  };
-  if (imageAvailable && options?.include_image === true) result.image = readDesktopClipboardImage();
+async function readDesktopClipboardSnapshot(options={}) {
+  if (typeof clipboard.availableFormats === "function") {
+    const formats = clipboard.availableFormats().map(value => String(value || "").toLowerCase());
+    const imageAvailable = formats.some(format => format.startsWith("image/")
+      || format === "cf_dib"
+      || format === "cf_dibv5"
+      || format === "public.tiff"
+      || format === "public.png");
+    const sequence = Number(windowsDesktopNative?.getClipboardSequenceNumber?.() || 0);
+    const textAvailable = formats.some(format => format === "text"
+      || format === "string"
+      || format === "utf8_string"
+      || format === "public.utf8-plain-text"
+      || format.startsWith("text/plain"));
+    let text = "";
+    if (textAvailable) {
+      try { text = await Promise.resolve(clipboard.readText()); } catch { text = ""; }
+    }
+    const result = {
+      text_available:textAvailable,
+      text,
+      image_available:imageAvailable,
+      image_revision:sequence > 0 ? `win32:${sequence}` : ""
+    };
+    if (imageAvailable && options?.include_image === true) result.image = readDesktopClipboardImage();
+    return result;
+  }
+  let items = [];
+  try { items = typeof clipboard.read === "function" ? await clipboard.read() : []; }
+  catch { return {text_available:false, text:"", image_available:false, image_revision:""}; }
+  const formats = clipboardFormatNames(items);
+  const imageAvailable = formats.some(format => format.startsWith("image/"));
+  const textFormat = clipboardTextFormatName(items);
+  const textAvailable = Boolean(textFormat);
+  let text = "";
+  if (textAvailable) {
+    const textItem = items.find(item => item?.types?.some(type => String(type || "").toLowerCase() === textFormat.toLowerCase()));
+    try {
+      const value = textItem && typeof textItem.getType === "function" ? await textItem.getType(textFormat) : null;
+      text = value && typeof value.text === "function" ? await value.text() : String(value || "");
+    } catch {
+      try { text = typeof clipboard.readText === "function" ? await clipboard.readText() : ""; } catch { text = ""; }
+    }
+  }
+  const result = {text_available:textAvailable, text, image_available:imageAvailable, image_revision:""};
+  if (imageAvailable && options?.include_image === true) result.image = await readModernClipboardImage(items);
   return result;
 }
 
@@ -3003,6 +3092,46 @@ function writeDesktopClipboardImage(value) {
   return {ok:true, width, height, byte_length:data.length};
 }
 
+async function writeDesktopClipboardImageAsync(value) {
+  if (typeof clipboard.writeImage === "function") return writeDesktopClipboardImage(value);
+  const data = Buffer.isBuffer(value)
+    ? value
+    : value instanceof ArrayBuffer
+      ? Buffer.from(value)
+      : ArrayBuffer.isView(value)
+        ? Buffer.from(value.buffer, value.byteOffset, value.byteLength)
+        : Array.isArray(value?.data)
+          ? Buffer.from(value.data)
+          : Buffer.alloc(0);
+  if (!data.length) throw new Error(desktopUiText("剪贴板图片为空", "The clipboard image is empty"));
+  if (data.length > DESKTOP_CLIPBOARD_IMAGE_MAX_BYTES) throw new Error(desktopUiText(
+    "剪贴板图片超过 25 MB，无法写入本机剪贴板",
+    "The clipboard image exceeds 25 MB and cannot be written to the local clipboard"
+  ));
+  if (data.length < DESKTOP_CLIPBOARD_PNG_SIGNATURE.length || !data.subarray(0, DESKTOP_CLIPBOARD_PNG_SIGNATURE.length).equals(DESKTOP_CLIPBOARD_PNG_SIGNATURE)) {
+    throw new Error(desktopUiText("剪贴板图片不是有效的 PNG 数据", "The clipboard image is not valid PNG data"));
+  }
+  const image = nativeImage.createFromBuffer(data);
+  if (image.isEmpty()) throw new Error(desktopUiText("剪贴板图片不是有效的 PNG 数据", "The clipboard image is not valid PNG data"));
+  const size = image.getSize();
+  const width = Math.max(0, Number(size?.width || 0));
+  const height = Math.max(0, Number(size?.height || 0));
+  if (!width || !height
+    || width > DESKTOP_CLIPBOARD_IMAGE_MAX_DIMENSION
+    || height > DESKTOP_CLIPBOARD_IMAGE_MAX_DIMENSION
+    || width * height > DESKTOP_CLIPBOARD_IMAGE_MAX_PIXELS) {
+    throw new Error(desktopUiText(
+      "剪贴板图片尺寸过大，无法安全写入",
+      "The clipboard image dimensions are too large to write safely"
+    ));
+  }
+  if (typeof clipboard.write !== "function" || typeof ClipboardItem !== "function") {
+    throw new Error(desktopUiText("当前 Electron 不支持写入剪贴板图片", "This Electron version cannot write clipboard images"));
+  }
+  await clipboard.write([new ClipboardItem({"image/png":new Blob([data], {type:"image/png"})})]);
+  return {ok:true, width, height, byte_length:data.length};
+}
+
 function registerDesktopClipboardHandlers() {
   ipcMain.on("terma:set-window-title", (event, value) => {
     const window = desktopWindowForSender(event);
@@ -3014,22 +3143,22 @@ function registerDesktopClipboardHandlers() {
     assertDesktopClipboardSender(event);
     return clipboard.readText();
   });
-  ipcMain.handle("terma:clipboard-write", (event, text) => {
+  ipcMain.handle("terma:clipboard-write", async (event, text) => {
     assertDesktopClipboardSender(event);
-    clipboard.writeText(String(text ?? ""));
+    await Promise.resolve(clipboard.writeText(String(text ?? "")));
     return {ok:true};
   });
-  ipcMain.handle("terma:clipboard-read-image", event => {
+  ipcMain.handle("terma:clipboard-read-image", async event => {
     assertDesktopClipboardSender(event);
-    return readDesktopClipboardImage();
+    return readDesktopClipboardImageAsync();
   });
-  ipcMain.handle("terma:clipboard-read-snapshot", (event, options) => {
+  ipcMain.handle("terma:clipboard-read-snapshot", async (event, options) => {
     assertDesktopClipboardSender(event);
     return readDesktopClipboardSnapshot(options && typeof options === "object" ? options : {});
   });
-  ipcMain.handle("terma:clipboard-write-image", (event, data) => {
+  ipcMain.handle("terma:clipboard-write-image", async (event, data) => {
     assertDesktopClipboardSender(event);
-    return writeDesktopClipboardImage(data);
+    return writeDesktopClipboardImageAsync(data);
   });
   ipcMain.handle("terma:vnc-open-window", async (event, payload={}) => {
     if (!desktopWindowForSender(event) || !rendererBelongsToDesktop(event)) {

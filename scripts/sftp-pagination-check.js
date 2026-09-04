@@ -165,6 +165,18 @@ assert.match(sftpFrontendSource, /loadExternalStyleSheets: false/, "SVG PDF 导�
 assert.match(sftpFrontendSource, /pdf\.output\("blob"\)/, "SVG PDF 导出必须下载生成的 Blob");
 assert.match(sftpFrontendSource, /orientation: exportDimensions\.width >= exportDimensions\.height \? "landscape" : "portrait"/, "SVG PDF 页面方向必须跟随画布比例");
 assert.match(sftpFrontendSource, /id=\"sftpImageExportPdf\"/, "SVG 预览必须显示导出 PDF 操作");
+assert.match(sftpFrontendSource, /id=\"sftpImageColorMode\"/, "SVG 预览必须提供带文字的反色模式选择");
+assert.match(sftpFrontendSource, /\"invert-mono\"[\s\S]*\"invert-bw\"[\s\S]*\"invert-color\"/, "SVG 预览必须同时支持黑白反转、黑白模式和全局反转");
+assert.match(sftpFrontendSource, /options\.blackWhiteTarget === "white" \? 255 : 0/, "SVG 黑白模式必须输出纯黑或纯白，而不是灰阶");
+assert.match(sftpFrontendSource, /function sftpSvgPdfBackgroundElements\(/, "SVG 黑白模式必须识别全画布背景，避免背景与前景同时变成白色");
+assert.match(sftpFrontendSource, /function sftpSvgPdfHasLocalDarkSurface\(/, "SVG 黑白模式必须保留深色图形上的白色细节");
+assert.match(sftpFrontendSource, /function sftpSvgPdfBoundsOverlapDetail\(/, "SVG 黑白模式的白色细节判断必须基于几何重叠");
+assert.match(sftpFrontendSource, /const preservedView = \{/, "SVG 颜色模式切换必须保存预览视图状态");
+assert.match(sftpFrontendSource, /viewport\.scrollLeft = preservedView\.scrollLeft/, "SVG 颜色模式切换必须恢复横向滚动位置");
+assert.match(sftpFrontendSource, /viewport\.scrollTop = preservedView\.scrollTop/, "SVG 颜色模式切换必须恢复纵向滚动位置");
+assert.match(sftpFrontendSource, /sftp-svg-search-controls/, "SVG 搜索输入框必须与上下匹配按钮组成紧凑操作组");
+assert.match(sftpFrontendSource, /createSftpSvgDownloadBlob/, "反色 SVG 下载必须生成转换后的矢量文件");
+assert.match(sftpFrontendSource, /downloadSftpSvgWithColorMode/, "SVG 下载必须跟随当前反色模式");
 assert.doesNotMatch(sftpFrontendSource, /canvas\.toDataURL|toDataURL\(/, "SVG PDF 导出不得退化为截图或栅格导出");
 assert.match(read(path.join(root, "public", "app-sftp-menus.js")), /convert_svg_pdf|downloadSftpSvgAsPdf/, "SVG 右键菜单必须提供 PDF 导出入口");
 assert.match(read(path.join(root, "public", "index.html")), /vendor\/jspdf\/jspdf\.umd\.min\.js/);
@@ -184,7 +196,7 @@ assert.match(sftpFrontendSource, /if \(!sourceViewBoxValid && extent/, "SVG 内�
 assert.match(sftpFrontendSource, /const embeddedStyleTexts = \[\]/, "SVG 内嵌样式必须先脱离 XML 解析，避免触发内联 CSP");
 assert.match(sftpFrontendSource, /const markupWithoutStyles = source/, "SVG 解析前必须移除源 <style> 节点");
 assert.match(sftpFrontendSource, /__termaEmbeddedStyles/, "SVG 内嵌样式必须保存为清理后的 Shadow DOM 样式来源");
-assert.match(sftpFrontendSource, /previewStyle\.textContent = `\$\{embeddedStyles\}/, "SVG 控件和连接线必须继续使用清理后的源样式");
+assert.match(sftpFrontendSource, /mode === "original" \? embeddedStyles : sftpSvgPdfInvertCss\(embeddedStyles, mode\)/, "SVG 控件和连接线必须继续使用清理后的源样式，并随颜色模式转换");
 const appCssSource = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 assert.match(appCssSource, /\.sftp-image-modal \{[^}]*height:min\(760px,calc\(100dvh - 32px\)\)/, "SVG 预览外层窗口必须使用独立固定高度");
 assert.match(appCssSource, /\.sftp-image-preview \{[^}]*min-height:0[^}]*overflow:auto/, "SVG 内部缩放必须限制在滚动预览区域内");

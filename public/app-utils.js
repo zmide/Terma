@@ -537,17 +537,21 @@ function removeToastElement(toast) {
 }
 
 function notificationToastActionList(action) {
-  if (!action || !action.download_job_id) return [];
-  const jobId = String(action.download_job_id);
+  if (!action || (!action.download_job_id && !action.generated_task_id)) return [];
+  const generated = Boolean(action.generated_task_id);
+  const jobId = String(action.generated_task_id || action.download_job_id);
   const actions = [];
   if (action.can_open_file) actions.push({kind:"open-file", label:tr("tasks:actions.open_file", {defaultValue:"打开文件"}), icon:"external-link"});
   if (action.can_open_directory) actions.push({kind:"open-directory", label:tr("tasks:actions.open_directory", {defaultValue:"打开目录"}), icon:"folder-open"});
   if (action.can_delete_file) actions.push({kind:"delete-file", label:tr("sftp:menu.delete_downloaded_file", {defaultValue:"删除文件"}), icon:"trash-2", danger:true});
-  return actions.map(item => ({...item, jobId}));
+  return actions.map(item => ({...item, jobId, generated}));
 }
 
 function runNotificationToastAction(item, button) {
   if (!item?.jobId) return;
+  if (item.generated && item.kind === "open-file" && typeof openSftpGeneratedTaskFile === "function") return void openSftpGeneratedTaskFile(item.jobId, button);
+  if (item.generated && item.kind === "open-directory" && typeof openSftpGeneratedTaskDirectory === "function") return void openSftpGeneratedTaskDirectory(item.jobId);
+  if (item.generated && item.kind === "delete-file" && typeof deleteSftpGeneratedTaskFile === "function") return void deleteSftpGeneratedTaskFile(item.jobId, button);
   if (item.kind === "open-file" && typeof openSftpDownloadedFile === "function") return void openSftpDownloadedFile(item.jobId, button);
   if (item.kind === "open-directory" && typeof openSftpDownloadDirectory === "function") return void openSftpDownloadDirectory(button, item.jobId);
   if (item.kind === "delete-file" && typeof deleteSftpDownloadedFile === "function") return void deleteSftpDownloadedFile(item.jobId, button);

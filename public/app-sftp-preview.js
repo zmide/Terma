@@ -325,7 +325,278 @@ function sftpSvgPdfExpandViewBox(root, dimensions) {
   return {x:minX, y:minY, width:Math.max(1, maxX - minX), height:Math.max(1, maxY - minY)};
 }
 
-async function createSftpSvgPdfBlob(blob) {
+const sftpSvgPdfColorResolutionCache = new Map();
+let sftpSvgPdfColorProbe = null;
+const SFTP_SVG_COLOR_MODES = new Set(["original", "invert-mono", "invert-bw", "invert-color"]);
+
+function sftpSvgColorMode(options = {}) {
+  const requested = typeof options === "string" ? options : options.colorMode;
+  if (SFTP_SVG_COLOR_MODES.has(requested)) return requested;
+  return options?.invert ? "invert-color" : "original";
+}
+
+function sftpSvgColorModeSuffix(mode) {
+  if (mode === "invert-mono") return "-inverted-mono";
+  if (mode === "invert-bw") return "-inverted-bw";
+  if (mode === "invert-color") return "-inverted-color";
+  return "";
+}
+
+function sftpSvgColorModeFilter(mode) {
+  if (mode === "invert-color") return "invert(1)";
+  return "";
+}
+
+function sftpSvgPdfResolveColor(source) {
+  const key = String(source || "").trim();
+  if (!key || sftpSvgPdfColorResolutionCache.has(key)) return sftpSvgPdfColorResolutionCache.get(key) || "";
+  let resolved = "";
+  try {
+    if (globalThis.CSS?.supports?.("color", key) && globalThis.document?.createElement) {
+      sftpSvgPdfColorProbe ||= document.createElementNS("http://www.w3.org/1999/xhtml", "canvas").getContext("2d", {willReadFrequently:true});
+      if (sftpSvgPdfColorProbe) {
+        sftpSvgPdfColorProbe.clearRect(0, 0, 1, 1);
+        sftpSvgPdfColorProbe.fillStyle = key;
+        sftpSvgPdfColorProbe.fillRect(0, 0, 1, 1);
+        const pixel = sftpSvgPdfColorProbe.getImageData(0, 0, 1, 1).data;
+        resolved = `rgba(${pixel[0]}, ${pixel[1]}, ${pixel[2]}, ${Number((pixel[3] / 255).toFixed(4))})`;
+      }
+    }
+  } catch {}
+  sftpSvgPdfColorResolutionCache.set(key, resolved);
+  return resolved;
+}
+
+function sftpSvgPdfParseColor(value) {
+  const raw = String(value || "").trim();
+  const important = /\s*!important\s*$/i.test(raw) ? " !important" : "";
+  const source = raw.replace(/\s*!important\s*$/i, "").trim();
+  if (!source || /^(?:none|transparent|currentColor|inherit|initial|unset|context-[\w-]+)$/i.test(source) || /^url\s*\(/i.test(source)) return null;
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  let a = 1;
+  const hex = source.match(/^#([0-9a-f]{3,8})$/i);
+  if (hex) {
+    const digits = hex[1];
+    if (digits.length === 3 || digits.length === 4) {
+      r = parseInt(digits[0] + digits[0], 16);
+      g = parseInt(digits[1] + digits[1], 16);
+      b = parseInt(digits[2] + digits[2], 16);
+      if (digits.length === 4) a = parseInt(digits[3] + digits[3], 16) / 255;
+    } else if (digits.length === 6 || digits.length === 8) {
+      r = parseInt(digits.slice(0, 2), 16);
+      g = parseInt(digits.slice(2, 4), 16);
+      b = parseInt(digits.slice(4, 6), 16);
+      if (digits.length === 8) a = parseInt(digits.slice(6, 8), 16) / 255;
+    } else return null;
+  } else {
+    const rgb = source.match(/^rgba?\(\s*([^)]*)\)$/i);
+    if (!rgb) {
+      const resolved = sftpSvgPdfResolveColor(source);
+      const parsed = resolved ? sftpSvgPdfParseColor(resolved) : null;
+      return parsed ? {...parsed, important} : null;
+    }
+    const parts = rgb[1].split(/\s*[,/]\s*|\s+/).filter(Boolean);
+    if (parts.length < 3) return null;
+    const channel = item => String(item).endsWith("%") ? Math.round(Math.max(0, Math.min(100, parseFloat(item))) * 2.55) : Math.round(Math.max(0, Math.min(255, parseFloat(item))));
+    r = channel(parts[0]);
+    g = channel(parts[1]);
+    b = channel(parts[2]);
+    if (parts[3] !== undefined) a = String(parts[3]).endsWith("%") ? Math.max(0, Math.min(1, parseFloat(parts[3]) / 100)) : Math.max(0, Math.min(1, parseFloat(parts[3])));
+  }
+  return {r, g, b, a, important};
+}
+
+function sftpSvgPdfInvertColor(value, mode = "invert-color", options = {}) {
+  if (mode === "original") return value;
+  const parsed = sftpSvgPdfParseColor(value);
+  if (!parsed) return value;
+  const {r, g, b, a, important} = parsed;
+  const grayscale = Math.round(.2126 * r + .7152 * g + .0722 * b);
+  if (mode === "invert-mono" && Math.max(r, g, b) - Math.min(r, g, b) > 1) return value;
+  const binary = mode === "invert-bw"
+    ? (options.blackWhiteTarget === "white" ? 255 : 0)
+    : (grayscale >= 128 ? 0 : 255);
+  const channels = ["invert-mono", "invert-bw"].includes(mode) ? `${binary}, ${binary}, ${binary}` : `${255 - r}, ${255 - g}, ${255 - b}`;
+  return (a < 1 ? `rgba(${channels}, ${Number(a.toFixed(4))})` : `rgb(${channels})`) + important;
+}
+
+function sftpSvgPdfInvertCss(value, mode = "invert-color", optionResolver = null) {
+  return String(value || "").replace(/((fill|stroke|stop-color|flood-color|lighting-color|solid-color|color|background-color)\s*:\s*)([^;}\n]+)/gi, (_match, prefix, property, color) => {
+    const options = typeof optionResolver === "function" ? optionResolver(property.toLowerCase(), color) : {};
+    return `${prefix}${sftpSvgPdfInvertColor(color, mode, options)}`;
+  });
+}
+
+function sftpSvgPdfPaintSnapshot(root) {
+  const colorAttributes = new Set(["fill", "stroke", "stop-color", "flood-color", "lighting-color", "solid-color", "color", "background-color"]);
+  const snapshot = new Map();
+  [root, ...root.querySelectorAll("*")].forEach(element => {
+    const paints = new Map();
+    for (const attribute of [...element.attributes]) {
+      const name = attribute.name.toLowerCase();
+      if (colorAttributes.has(name)) paints.set(name, attribute.value);
+    }
+    const style = element.getAttribute("style");
+    if (style) {
+      style.replace(/(?:^|;)\s*(fill|stroke|stop-color|flood-color|lighting-color|solid-color|color|background-color)\s*:\s*([^;}\n]+)/gi, (_match, property, color) => {
+        paints.set(property.toLowerCase(), color);
+        return _match;
+      });
+    }
+    snapshot.set(element, paints);
+  });
+  return snapshot;
+}
+
+function sftpSvgPdfIsNearWhite(value) {
+  const parsed = sftpSvgPdfParseColor(value);
+  return Boolean(parsed && parsed.a > .05 && Math.min(parsed.r, parsed.g, parsed.b) >= 240);
+}
+
+function sftpSvgPdfIsDarkSurface(value) {
+  const parsed = sftpSvgPdfParseColor(value);
+  return Boolean(parsed && parsed.a > .05 && Math.min(parsed.r, parsed.g, parsed.b) < 240);
+}
+
+function sftpSvgPdfElementBounds(element) {
+  if (!element) return null;
+  const tag = element.tagName?.toLowerCase();
+  const numeric = name => sftpSvgPdfNumber(element.getAttribute(name), 0);
+  let x = 0;
+  let y = 0;
+  let width = 0;
+  let height = 0;
+  if (tag === "rect" || tag === "image" || tag === "use") {
+    x = numeric("x");
+    y = numeric("y");
+    width = Math.max(0, numeric("width"));
+    height = Math.max(0, numeric("height"));
+  } else if (tag === "circle") {
+    const radius = Math.max(0, numeric("r"));
+    x = numeric("cx") - radius;
+    y = numeric("cy") - radius;
+    width = radius * 2;
+    height = radius * 2;
+  } else if (tag === "ellipse") {
+    const radiusX = Math.max(0, numeric("rx"));
+    const radiusY = Math.max(0, numeric("ry"));
+    x = numeric("cx") - radiusX;
+    y = numeric("cy") - radiusY;
+    width = radiusX * 2;
+    height = radiusY * 2;
+  } else if (tag === "line") {
+    const x1 = numeric("x1");
+    const y1 = numeric("y1");
+    const x2 = numeric("x2");
+    const y2 = numeric("y2");
+    x = Math.min(x1, x2);
+    y = Math.min(y1, y2);
+    width = Math.abs(x2 - x1);
+    height = Math.abs(y2 - y1);
+  } else if (["polygon", "polyline"].includes(tag)) {
+    const values = String(element.getAttribute("points") || "").match(/-?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?/gi)?.map(Number) || [];
+    const points = [];
+    for (let index = 0; index + 1 < values.length; index += 2) points.push({x:values[index], y:values[index + 1]});
+    if (!points.length) return null;
+    const minX = Math.min(...points.map(point => point.x));
+    const minY = Math.min(...points.map(point => point.y));
+    const maxX = Math.max(...points.map(point => point.x));
+    const maxY = Math.max(...points.map(point => point.y));
+    x = minX;
+    y = minY;
+    width = maxX - minX;
+    height = maxY - minY;
+  } else {
+    try {
+      const box = element.isConnected && typeof element.getBBox === "function" ? element.getBBox() : null;
+      if (!box || !Number.isFinite(box.x) || !Number.isFinite(box.y) || !Number.isFinite(box.width) || !Number.isFinite(box.height)) return null;
+      return {x:box.x, y:box.y, width:Math.max(0, box.width), height:Math.max(0, box.height)};
+    } catch {
+      return null;
+    }
+  }
+  return {x, y, width, height};
+}
+
+function sftpSvgPdfBoundsOverlapDetail(detailBounds, surfaceBounds) {
+  if (!detailBounds || !surfaceBounds || surfaceBounds.width <= 0 || surfaceBounds.height <= 0) return false;
+  const padding = Math.max(.05, Math.min(surfaceBounds.width, surfaceBounds.height) * .03);
+  const centerX = detailBounds.x + detailBounds.width / 2;
+  const centerY = detailBounds.y + detailBounds.height / 2;
+  const centerInside = centerX >= surfaceBounds.x - padding
+    && centerX <= surfaceBounds.x + surfaceBounds.width + padding
+    && centerY >= surfaceBounds.y - padding
+    && centerY <= surfaceBounds.y + surfaceBounds.height + padding;
+  if (centerInside) return true;
+  if (detailBounds.width <= 0 || detailBounds.height <= 0) return false;
+  const overlapWidth = Math.max(0, Math.min(detailBounds.x + detailBounds.width, surfaceBounds.x + surfaceBounds.width) - Math.max(detailBounds.x, surfaceBounds.x));
+  const overlapHeight = Math.max(0, Math.min(detailBounds.y + detailBounds.height, surfaceBounds.y + surfaceBounds.height) - Math.max(detailBounds.y, surfaceBounds.y));
+  return overlapWidth * overlapHeight >= detailBounds.width * detailBounds.height * .5;
+}
+
+function sftpSvgPdfBackgroundElements(root, snapshot) {
+  const dimensions = sftpSvgExportViewBox(root);
+  const toleranceX = Math.max(1, dimensions.width * .01);
+  const toleranceY = Math.max(1, dimensions.height * .01);
+  const backgroundElements = new Set();
+  const hasBackgroundName = element => {
+    for (let current = element; current && current !== root; current = current.parentElement) {
+      if (current.tagName?.toLowerCase() === "defs") return false;
+      const marker = `${current.id || ""} ${current.getAttribute?.("class") || ""}`;
+      if (/back[\s_-]*ground|canvas[\s_-]*(?:bg|background)|page[\s_-]*(?:bg|background)/i.test(marker)) return true;
+    }
+    return false;
+  };
+  [root, ...root.querySelectorAll("*")].forEach(element => {
+    const paints = snapshot.get(element);
+    if (!paints?.size) return;
+    const tag = element.tagName?.toLowerCase();
+    const hasSolidBackgroundPaint = Boolean(sftpSvgPdfParseColor(paints.get("fill") || paints.get("background-color")));
+    const insideDefs = element !== root && Boolean(element.closest?.("defs"));
+    const coversCanvas = !insideDefs && hasSolidBackgroundPaint && tag === "rect"
+      && sftpSvgPdfNumber(element.getAttribute("x"), 0) <= dimensions.x + toleranceX
+      && sftpSvgPdfNumber(element.getAttribute("y"), 0) <= dimensions.y + toleranceY
+      && sftpSvgPdfNumber(element.getAttribute("width"), 0) >= dimensions.width - toleranceX * 2
+      && sftpSvgPdfNumber(element.getAttribute("height"), 0) >= dimensions.height - toleranceY * 2;
+    if ((hasSolidBackgroundPaint && hasBackgroundName(element)) || coversCanvas || (element === root && paints.has("background-color"))) backgroundElements.add(element);
+  });
+  return backgroundElements;
+}
+
+function sftpSvgPdfHasLocalDarkSurface(element, property, snapshot, root) {
+  const ownPaints = snapshot.get(element) || new Map();
+  // Keep white details only when the same SVG element has a real dark fill.
+  // Looking at nearby siblings or ancestors is too broad for CAD symbols:
+  // a tiny black arrow next to a white transformer outline must not make the
+  // entire outline white on the new white canvas.
+  return [...ownPaints]
+    .some(([name, value]) => name !== property && ["fill", "background-color"].includes(name) && sftpSvgPdfIsDarkSurface(value));
+}
+
+function sftpSvgPdfInvertColors(root, mode = "invert-color") {
+  const colorAttributes = new Set(["fill", "stroke", "stop-color", "flood-color", "lighting-color", "solid-color", "color", "background-color"]);
+  const paintSnapshot = mode === "invert-bw" ? sftpSvgPdfPaintSnapshot(root) : null;
+  const backgroundElements = paintSnapshot ? sftpSvgPdfBackgroundElements(root, paintSnapshot) : new Set();
+  const colorOptions = (element, property, color) => {
+    if (mode !== "invert-bw") return {};
+    if (backgroundElements.has(element)) return {blackWhiteTarget:"white"};
+    const preserveWhiteDetail = sftpSvgPdfIsNearWhite(color) && sftpSvgPdfHasLocalDarkSurface(element, property, paintSnapshot, root);
+    return {blackWhiteTarget:preserveWhiteDetail ? "white" : "black"};
+  };
+  [root, ...root.querySelectorAll("*")].forEach(element => {
+    for (const attribute of [...element.attributes]) {
+      const name = attribute.name.toLowerCase();
+      if (colorAttributes.has(name)) element.setAttribute(attribute.name, sftpSvgPdfInvertColor(attribute.value, mode, colorOptions(element, name, attribute.value)));
+      if (name === "style") element.setAttribute(attribute.name, sftpSvgPdfInvertCss(attribute.value, mode, (property, color) => colorOptions(element, property, color)));
+    }
+  });
+  root.querySelectorAll("style").forEach(style => { style.textContent = sftpSvgPdfInvertCss(style.textContent || "", mode); });
+  return root;
+}
+
+async function createSftpSvgPdfBlob(blob, options = {}) {
   const JsPDF = window.jspdf?.jsPDF;
   const convertSvg = window.svg2pdf?.svg2pdf;
   if (typeof JsPDF !== "function" || typeof convertSvg !== "function") {
@@ -349,6 +620,8 @@ async function createSftpSvgPdfBlob(blob) {
     style.textContent = embeddedStyles;
     svg.insertBefore(style, svg.firstChild);
   }
+  const colorMode = sftpSvgColorMode(options);
+  if (colorMode !== "original") sftpSvgPdfInvertColors(svg, colorMode);
   const host = document.createElement("div");
   host.style.cssText = "position:fixed;left:-100000px;top:-100000px;width:1px;height:1px;overflow:hidden;pointer-events:none;visibility:hidden";
   host.appendChild(svg);
@@ -401,6 +674,23 @@ async function createSftpSvgPdfBlob(blob) {
   }
 }
 
+async function createSftpSvgDownloadBlob(blob, options = {}) {
+  const sanitizedRoot = sanitizeSftpSvgDocument(await blob.text());
+  const svg = document.importNode(sanitizedRoot, true);
+  const namespace = "http://www.w3.org/2000/svg";
+  svg.setAttribute("xmlns", namespace);
+  const embeddedStyles = String(sanitizedRoot.__termaEmbeddedStyles || "");
+  if (embeddedStyles) {
+    const style = document.createElementNS(namespace, "style");
+    style.textContent = embeddedStyles;
+    svg.insertBefore(style, svg.firstChild);
+  }
+  const colorMode = sftpSvgColorMode(options);
+  if (colorMode !== "original") sftpSvgPdfInvertColors(svg, colorMode);
+  const markup = new XMLSerializer().serializeToString(svg);
+  return new Blob([`<?xml version="1.0" encoding="UTF-8"?>\n${markup}`], {type:"image/svg+xml"});
+}
+
 function triggerSftpGeneratedDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -414,18 +704,65 @@ function triggerSftpGeneratedDownload(blob, filename) {
   }, 1000);
 }
 
-async function downloadSftpSvgAsPdf(id, path, sourceBlob=null) {
+async function downloadSftpSvgAsPdf(id, path, sourceBlob=null, options = {}) {
   try {
     const blob = sourceBlob || await withSftpFileOpenFeedback(id, path, () => readSftpImageWithProgress(id, path));
     if (!blob) return false;
     notify(tr("sftp:editor.exporting_pdf", {defaultValue:"正在导出 SVG PDF..."}), "info");
-    const pdfBlob = await createSftpSvgPdfBlob(blob);
+    const colorMode = sftpSvgColorMode(options);
+    const inverted = colorMode !== "original";
+    const pdfBlob = await createSftpSvgPdfBlob(blob, {colorMode});
     const sourceName = String(path || "svg").split(/[\\/]/).pop() || "svg";
-    triggerSftpGeneratedDownload(pdfBlob, sourceName.replace(/\.svg$/i, "") + ".pdf");
-    notify(tr("sftp:editor.pdf_exported", {defaultValue:"SVG PDF 已生成并开始下载"}), "success");
-    return true;
+    const filename = sourceName.replace(/\.svg$/i, "") + sftpSvgColorModeSuffix(colorMode) + ".pdf";
+    const task = typeof saveSftpGeneratedFileTask === "function"
+      ? await saveSftpGeneratedFileTask(pdfBlob, filename, {
+          label:tr("sftp:editor.generated_task", {name:filename, defaultValue:`SVG 转 PDF：${filename}`}),
+          connectionId:id,
+          connectionName:connections.find(item => Number(item.id) === Number(id))?.name || "",
+          sourcePath:path,
+          inverted,
+          colorMode
+        })
+      : (triggerSftpGeneratedDownload(pdfBlob, filename), null);
+    const saved = task?.delivery_status === "saved" && task?.saved_path;
+    notify(saved
+      ? `${tr("sftp:editor.pdf_exported_to_tasks", {defaultValue:"SVG PDF 已保存"})}\n${tr("tasks:notifications.saved_to", {path:task.saved_path, defaultValue:`已保存到 ${task.saved_path}`})}`
+      : tr("sftp:editor.pdf_exported", {defaultValue:"SVG PDF 已生成并开始下载"}), "success", saved ? {
+        action:{generated_task_id:task.id, can_open_file:true, can_open_directory:true, can_delete_file:true}
+      } : {});
+    return task || true;
   } catch (error) {
     notify(error.message || tr("sftp:editor.pdf_export_failed", {defaultValue:"SVG 转 PDF 失败"}), "error");
+    return false;
+  }
+}
+
+async function downloadSftpSvgWithColorMode(id, path, sourceBlob, colorMode) {
+  if (colorMode === "original") return downloadSftp(id, path);
+  try {
+    notify(tr("sftp:editor.exporting_svg", {defaultValue:"正在生成反色 SVG..."}), "info");
+    const svgBlob = await createSftpSvgDownloadBlob(sourceBlob, {colorMode});
+    const sourceName = String(path || "svg").split(/[\\/]/).pop() || "svg";
+    const filename = sourceName.replace(/\.svg$/i, "") + sftpSvgColorModeSuffix(colorMode) + ".svg";
+    const task = typeof saveSftpGeneratedFileTask === "function"
+      ? await saveSftpGeneratedFileTask(svgBlob, filename, {
+          label:tr("sftp:editor.generated_svg_task", {name:filename, defaultValue:`处理后的 SVG：${filename}`}),
+          connectionId:id,
+          connectionName:connections.find(item => Number(item.id) === Number(id))?.name || "",
+          sourcePath:path,
+          inverted:true,
+          colorMode
+        })
+      : (triggerSftpGeneratedDownload(svgBlob, filename), null);
+    const saved = task?.delivery_status === "saved" && task?.saved_path;
+    notify(saved
+      ? `${tr("sftp:editor.svg_exported_to_tasks", {defaultValue:"处理后的 SVG 已保存"})}\n${tr("tasks:notifications.saved_to", {path:task.saved_path, defaultValue:`已保存到 ${task.saved_path}`})}`
+      : tr("sftp:editor.svg_exported", {defaultValue:"处理后的 SVG 已生成并开始下载"}), "success", saved ? {
+        action:{generated_task_id:task.id, can_open_file:true, can_open_directory:true, can_delete_file:true}
+      } : {});
+    return task || true;
+  } catch (error) {
+    notify(error.message || tr("sftp:editor.svg_export_failed", {defaultValue:"反色 SVG 生成失败"}), "error");
     return false;
   }
 }
@@ -446,7 +783,15 @@ async function previewSftpImage(id, path) {
     const zoomOutLabel = tr("sftp:editor.zoom_out", {defaultValue:"缩小"});
     const zoomInLabel = tr("sftp:editor.zoom_in", {defaultValue:"放大"});
     const zoomResetLabel = tr("sftp:editor.zoom_reset", {defaultValue:"适应窗口"});
-    modal.innerHTML = `<div class="modal-card wide sftp-image-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(path.split(/[\\/]/).pop() || path)}</h2><span>${esc(formatBytes(blob.size))}</span></div><div class="sftp-image-tools"><button id="sftpImageZoomOut" class="icon-button" type="button" title="${escAttr(zoomOutLabel)}" aria-label="${escAttr(zoomOutLabel)}">${icon("minus")}</button><span id="sftpImageZoomValue" class="sftp-image-zoom-value">100%</span><button id="sftpImageZoomReset" class="icon-button" type="button" title="${escAttr(zoomResetLabel)}" aria-label="${escAttr(zoomResetLabel)}">${icon("maximize-2")}</button><button id="sftpImageZoomIn" class="icon-button" type="button" title="${escAttr(zoomInLabel)}" aria-label="${escAttr(zoomInLabel)}">${icon("plus")}</button>${isSvg ? `<div class="sftp-svg-search"><label><span class="sr-only">${esc(searchLabel)}</span><input id="sftpSvgSearch" type="search" placeholder="${escAttr(searchLabel)}" autocomplete="off"></label><span id="sftpSvgSearchCount" aria-live="polite"></span><button id="sftpSvgSearchPrevious" class="icon-button" type="button" title="${escAttr(searchPreviousLabel)}" aria-label="${escAttr(searchPreviousLabel)}">${icon("arrow-up")}</button><button id="sftpSvgSearchNext" class="icon-button" type="button" title="${escAttr(searchNextLabel)}" aria-label="${escAttr(searchNextLabel)}">${icon("arrow-down")}</button></div>` : ""}<button id="sftpImageClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div></div><div id="sftpImageViewport" class="sftp-image-preview"><div id="sftpImageStageShell" class="sftp-image-stage-shell"><div id="sftpImageStage" class="sftp-image-stage"></div></div></div><div class="actions">${isSvg ? `<button id="sftpImageExportPdf">${icon("file-code-2")}<span>${esc(tr("sftp:editor.export_pdf", {defaultValue:"导出 PDF"}))}</span></button>` : ""}<button id="sftpImageDownload">${icon("download")}<span>${esc(tr("sftp:menu.download", {defaultValue:"下载"}))}</span></button><button id="sftpImageCloseBottom">${esc(closeLabel)}</button></div></div>`;
+    const invertLabel = tr("sftp:editor.invert_colors", {defaultValue:"反色"});
+    const originalColorsLabel = tr("sftp:editor.color_mode_original", {defaultValue:"正色"});
+    const monochromeInvertLabel = tr("sftp:editor.color_mode_invert_mono", {defaultValue:"黑白反转"});
+    const blackWhiteModeLabel = tr("sftp:editor.color_mode_invert_bw", {defaultValue:"黑白模式"});
+    const colorInvertLabel = tr("sftp:editor.color_mode_invert_color", {defaultValue:"全局反转"});
+    const colorModeControl = isSvg
+      ? `<label class="sftp-svg-color-mode"><span class="sftp-svg-color-mode-label">${icon("contrast")}<span>${esc(invertLabel)}</span></span><select id="sftpImageColorMode" title="${escAttr(invertLabel)}" aria-label="${escAttr(invertLabel)}"><option value="original">${esc(originalColorsLabel)}</option><option value="invert-mono">${esc(monochromeInvertLabel)}</option><option value="invert-bw">${esc(blackWhiteModeLabel)}</option><option value="invert-color">${esc(colorInvertLabel)}</option></select></label>`
+      : "";
+    modal.innerHTML = `<div class="modal-card wide sftp-image-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(path.split(/[\\/]/).pop() || path)}</h2><span>${esc(formatBytes(blob.size))}</span></div><div class="sftp-image-tools"><button id="sftpImageZoomOut" class="icon-button" type="button" title="${escAttr(zoomOutLabel)}" aria-label="${escAttr(zoomOutLabel)}">${icon("minus")}</button><span id="sftpImageZoomValue" class="sftp-image-zoom-value">100%</span><button id="sftpImageZoomReset" class="icon-button" type="button" title="${escAttr(zoomResetLabel)}" aria-label="${escAttr(zoomResetLabel)}">${icon("maximize-2")}</button><button id="sftpImageZoomIn" class="icon-button" type="button" title="${escAttr(zoomInLabel)}" aria-label="${escAttr(zoomInLabel)}">${icon("plus")}</button>${colorModeControl}${isSvg ? `<div class="sftp-svg-search"><div class="sftp-svg-search-controls"><label><span class="sr-only">${esc(searchLabel)}</span><input id="sftpSvgSearch" type="search" placeholder="${escAttr(searchLabel)}" autocomplete="off"></label><button id="sftpSvgSearchPrevious" class="icon-button" type="button" title="${escAttr(searchPreviousLabel)}" aria-label="${escAttr(searchPreviousLabel)}">${icon("arrow-up")}</button><button id="sftpSvgSearchNext" class="icon-button" type="button" title="${escAttr(searchNextLabel)}" aria-label="${escAttr(searchNextLabel)}">${icon("arrow-down")}</button></div><span id="sftpSvgSearchCount" aria-live="polite"></span></div>` : ""}<button id="sftpImageClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div></div><div id="sftpImageViewport" class="sftp-image-preview"><div id="sftpImageStageShell" class="sftp-image-stage-shell"><div id="sftpImageStage" class="sftp-image-stage"></div></div></div><div class="actions">${isSvg ? `<button id="sftpImageExportPdf">${icon("file-code-2")}<span>${esc(tr("sftp:editor.export_pdf", {defaultValue:"导出 PDF"}))}</span></button>` : ""}<button id="sftpImageDownload">${icon("download")}<span>${esc(tr("sftp:menu.download", {defaultValue:"下载"}))}</span></button><button id="sftpImageCloseBottom">${esc(closeLabel)}</button></div></div>`;
     modal.hidden = false;
     modal.onclick = null;
     const imageCard = modal.querySelector(".sftp-image-modal");
@@ -470,8 +815,11 @@ async function previewSftpImage(id, path) {
     const shell = $("sftpImageStageShell");
     const stage = $("sftpImageStage");
     let root = null;
+    let svgOriginalRoot = null;
     let baseWidth = 1;
     let baseHeight = 1;
+    let colorMode = "original";
+    let syncSvgPreviewStyle = () => {};
     if (isSvg) {
       const sanitizedRoot = sanitizeSftpSvgDocument(await blob.text());
       const embeddedStyles = String(sanitizedRoot.__termaEmbeddedStyles || "");
@@ -509,7 +857,11 @@ async function previewSftpImage(id, path) {
       // when that SVG is mounted in a ShadowRoot.  Hoist the already-sanitized
       // rules into the shadow stylesheet so class-based strokes/fills and
       // symbol overflow behave exactly like the source SVG.
-      previewStyle.textContent = `${embeddedStyles}\n.sftp-svg-search-current{filter:drop-shadow(0 0 4px #ff3158) drop-shadow(0 0 8px #ffd43b)}`;
+      const searchHighlightStyle = ".sftp-svg-search-current{filter:drop-shadow(0 0 4px #ff3158) drop-shadow(0 0 8px #ffd43b)}";
+      syncSvgPreviewStyle = mode => {
+        previewStyle.textContent = `${mode === "original" ? embeddedStyles : sftpSvgPdfInvertCss(embeddedStyles, mode)}\n${searchHighlightStyle}`;
+      };
+      syncSvgPreviewStyle("original");
       shadow.append(previewStyle, root);
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       try {
@@ -554,6 +906,7 @@ async function previewSftpImage(id, path) {
           }
         }
       } catch {}
+      svgOriginalRoot = root.cloneNode(true);
     } else {
       const image = document.createElement("img");
       image.src = objectUrl;
@@ -568,6 +921,27 @@ async function previewSftpImage(id, path) {
       image.style.maxHeight = "none";
       stage.appendChild(image);
     }
+    const syncSvgColorMode = nextMode => {
+      colorMode = sftpSvgColorMode(nextMode);
+      syncSvgPreviewStyle(colorMode);
+      if (isSvg && root && svgOriginalRoot && colorMode !== "original") {
+        const replacement = svgOriginalRoot.cloneNode(true);
+        sftpSvgPdfInvertColors(replacement, colorMode);
+        root.replaceWith(replacement);
+        root = replacement;
+        stage.style.filter = "";
+      } else if (isSvg && root && svgOriginalRoot && colorMode === "original" && root !== svgOriginalRoot) {
+        const replacement = svgOriginalRoot.cloneNode(true);
+        root.replaceWith(replacement);
+        root = replacement;
+        stage.style.filter = "";
+      } else {
+        stage.style.filter = sftpSvgColorModeFilter(colorMode);
+      }
+      const select = $("sftpImageColorMode");
+      if (select) select.value = colorMode;
+    };
+    syncSvgColorMode("original");
     stage.style.width = `${baseWidth}px`;
     stage.style.height = `${baseHeight}px`;
     let scale = 1;
@@ -576,6 +950,7 @@ async function previewSftpImage(id, path) {
     let svgMatches = [];
     let svgMatchIndex = -1;
     let svgSearchQuery = "";
+    let colorModeChangeSequence = 0;
     const matchMarker = document.createElement("div");
     matchMarker.className = "sftp-svg-match-marker";
     matchMarker.hidden = true;
@@ -701,7 +1076,7 @@ async function previewSftpImage(id, path) {
         updateSvgMatchMarker();
       });
     };
-    const updateSvgSearch = (direction = 1) => {
+    const updateSvgSearch = (direction = 1, options = {}) => {
       if (!root) return;
       const query = String($("sftpSvgSearch")?.value || "").trim().toLowerCase();
       root.querySelectorAll(".sftp-svg-search-current").forEach(element => element.classList.remove("sftp-svg-search-current"));
@@ -711,7 +1086,7 @@ async function previewSftpImage(id, path) {
         svgSearchQuery = "";
         $("sftpSvgSearchCount").textContent = "";
         matchMarker.hidden = true;
-        fit();
+        if (options.fitEmpty !== false) fit();
         return;
       }
       if (query !== svgSearchQuery) {
@@ -735,10 +1110,16 @@ async function previewSftpImage(id, path) {
         $("sftpSvgSearchCount").textContent = tr("sftp:editor.svg_search_empty", {defaultValue:"无匹配"});
         return;
       }
-      svgMatchIndex = (svgMatchIndex + direction + svgMatches.length) % svgMatches.length;
+      const preferredIndex = options.preferredId
+        ? svgMatches.findIndex(element => String(element.getAttribute?.("id") || "") === options.preferredId)
+        : -1;
+      svgMatchIndex = preferredIndex >= 0
+        ? preferredIndex
+        : (svgMatchIndex + direction + svgMatches.length) % svgMatches.length;
       const current = svgMatches[svgMatchIndex];
       current.classList.add("sftp-svg-search-current");
-      focusSvgMatch(current);
+      if (options.focus !== false) focusSvgMatch(current);
+      else requestAnimationFrame(() => updateSvgMatchMarker());
       $("sftpSvgSearchCount").textContent = `${svgMatchIndex + 1}/${svgMatches.length}`;
     };
     const onWheel = event => {
@@ -828,8 +1209,42 @@ async function previewSftpImage(id, path) {
     $("sftpSvgSearch")?.addEventListener("input", () => { svgMatchIndex = -1; updateSvgSearch(1); });
     $("sftpSvgSearchPrevious")?.addEventListener("click", () => updateSvgSearch(-1));
     $("sftpSvgSearchNext")?.addEventListener("click", () => updateSvgSearch(1));
-    $("sftpImageExportPdf")?.addEventListener("click", () => downloadSftpSvgAsPdf(id, path, blob));
-    $("sftpImageDownload").onclick = () => downloadSftp(id, path);
+    $("sftpImageColorMode")?.addEventListener("change", event => {
+      const changeSequence = ++colorModeChangeSequence;
+      const activeMatchId = svgMatches[svgMatchIndex]?.getAttribute?.("id") || "";
+      const preservedView = {
+        scale,
+        fitMode,
+        scrollLeft:viewport.scrollLeft,
+        scrollTop:viewport.scrollTop,
+        searchQuery:String($("sftpSvgSearch")?.value || "").trim().toLowerCase()
+      };
+      syncSvgColorMode(event.target.value);
+      // Rebuild search targets after replacing the SVG root for a vector color
+      // transform; references to the previous DOM tree are no longer usable.
+      if (isSvg) {
+        svgMatches = [];
+        svgMatchIndex = -1;
+        svgSearchQuery = "";
+        updateSvgSearch(1, {focus:false, fitEmpty:false, preferredId:activeMatchId});
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (changeSequence !== colorModeChangeSequence) return;
+          const currentSearchQuery = String($("sftpSvgSearch")?.value || "").trim().toLowerCase();
+          if (currentSearchQuery !== preservedView.searchQuery) {
+            if (!currentSearchQuery) fit();
+            else updateSvgMatchMarker();
+            return;
+          }
+          fitMode = preservedView.fitMode;
+          if (Math.abs(scale - preservedView.scale) > .001) updateZoom(preservedView.scale);
+          viewport.scrollLeft = preservedView.scrollLeft;
+          viewport.scrollTop = preservedView.scrollTop;
+          updateSvgMatchMarker();
+        }));
+      }
+    });
+    $("sftpImageExportPdf")?.addEventListener("click", () => downloadSftpSvgAsPdf(id, path, blob, {colorMode}));
+    $("sftpImageDownload").onclick = () => isSvg ? downloadSftpSvgWithColorMode(id, path, blob, colorMode) : downloadSftp(id, path);
     $("sftpImageClose").onclick = close;
     $("sftpImageCloseBottom").onclick = close;
     $("sftpImageClose").focus();

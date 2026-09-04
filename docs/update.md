@@ -7,21 +7,7 @@
 <a id="english"></a>
 ### English
 
-> The next release will focus on real-world recoverable sessions, cross-platform desktop acceptance, and broader terminal AI interoperability.
-
-#### Important fixes
-
-- Fixed Windows startup incorrectly reporting that the Terma data directory does not support secure permissions when the computer or account domain name contains non-English characters. Permission setup and verification now use the account security identifier instead of localized names.
-- Fixed dragging an active middle tab into a split selecting the following tab in the original pane; the source pane now returns to the tab immediately before the moved tab.
-- Fixed the native Terma window title staying on the previous connection when focus moves between split panes; it now follows the focused pane immediately.
-- Fixed SFTP SVG PDF export failing with a raw `Parse error` on some font or style declarations; export now retries with compatible declarations and shows a clear message only when the SVG syntax itself remains unsupported.
-- Fixed rotated CAD symbols in SFTP SVG PDF exports being displaced when `<use>/<symbol>` instances were expanded; the original parent-coordinate transform is now preserved.
-- Fixed `<use>/<symbol>` instances with non-square viewports being stretched or misaligned; export now honors SVG `preserveAspectRatio` modes (`meet`, `slice`, and `none`).
-- Fixed landscape SVG exports opening as portrait pages with large blank areas; PDF orientation now follows the SVG canvas ratio.
-
-#### Important additions
-
-- Added local vector PDF export for SFTP SVG previews. Use the preview action bar or the SVG file context menu to download a PDF without rasterizing paths and text.
+> The next release will focus on cross-platform session recovery, terminal AI interoperability, and remote desktop clipboard acceptance.
 
 #### Planned
 
@@ -32,27 +18,65 @@
 <a id="简体中文"></a>
 ### 简体中文
 
-> 下一版本将继续完成可恢复会话的真实验收、跨平台远程桌面验收和更广泛的终端 AI 互操作测试。
-
-#### 重要修复
-
-- 修复 Windows 计算机名或账户域包含中文等非英文字符时，启动过程错误提示 Terma 数据目录不支持安全权限的问题；权限设置与复核现在使用账户安全标识符，不再依赖本地化账户名。
-- 修复将当前激活的中间标签拖入分屏后，原窗口错误切换到后一个标签的问题；现在会回到被移动标签前面的标签。
-- 修复在分屏之间切换焦点时 Terma 原生窗口标题仍停留在上一个连接的问题；现在会立即跟随当前获得焦点的分屏。
-- 修复部分 SVG 字体或样式声明导致 SFTP 导出 PDF 直接显示 `Parse error` 的问题；现在会先用兼容声明重试，只有 SVG 语法仍不支持时才显示明确提示。
-- 修复展开 `<use>/<symbol>` 后带旋转的 CAD 图形在 SFTP 导出 PDF 中发生偏移的问题；现在保留原始父坐标系变换。
-- 修复非方形视口的 `<use>/<symbol>` 图形被拉伸或错位的问题；导出现在遵循 SVG 的 `preserveAspectRatio`（`meet`、`slice` 和 `none`）设置。
-- 修复横向 SVG 导出后被当成纵向 PDF、出现大块空白的问题；PDF 页面方向现在跟随 SVG 画布比例。
-
-#### 重要新增
-
-- SFTP SVG 预览新增本地矢量 PDF 导出；可从预览操作栏或 SVG 文件右键菜单下载 PDF，路径和文字不会被栅格化。
+> 下一版本将继续完成跨平台会话恢复、终端 AI 互操作和远程桌面剪贴板验收。
 
 #### 计划
 
 - 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
+
+## v1.6.2
+
+[English](#english) · [简体中文](#简体中文)
+
+<a id="english"></a>
+### English
+
+> This release adds reliable local SVG vector export and color-aware preview controls, while fixing workspace focus, Windows permission, and fullscreen notification issues.
+
+#### Important fixes
+
+- Fixed Windows startup incorrectly reporting that the Terma data directory does not support secure permissions when the computer or account domain name contains non-English characters. Permission setup and verification now use the account security identifier instead of localized names.
+- Fixed dragging an active middle tab into a split selecting the following tab in the original pane; the source pane now returns to the tab immediately before the moved tab.
+- Fixed the native Terma window title staying on the previous connection when focus moves between split panes; it now follows the focused pane immediately.
+- Fixed notifications being covered by fullscreen SVG previews or other application dialogs; page notifications now use the shared top overlay layer, including VNC document fullscreen.
+
+#### Important additions
+
+- Added local vector PDF export for SFTP SVG previews. Paths and text stay vector-based, Chinese text uses the bundled Noto Sans SC font, landscape pages follow the SVG canvas, `<use>/<symbol>` transforms and `preserveAspectRatio` are preserved, and incompatible style declarations get bounded compatibility retries with a clear unsupported-SVG error.
+- Added a labeled SVG color-mode control with Original, B&W invert (change only black, white, and gray), B&W mode (white canvas with black foreground while preserving white details on dark shapes), and Global invert. The preview, downloaded SVG, and exported PDF follow the selected mode; switching modes keeps zoom, scroll, fit state, and the active search result.
+- Desktop-generated SVG and PDF files now save safely with Chinese filenames, appear in the task center and notifications with their saved path, and offer Open file, Open folder, and Delete actions. Browser mode keeps a current-page re-download entry.
+
+#### Changes in this release
+
+- No pull requests were merged after v1.6.1; this release contains direct maintainer changes.
+
+**Full Changelog**: [v1.6.1...v1.6.2](https://github.com/zmide/Terma/compare/v1.6.1...v1.6.2)
+
+<a id="简体中文"></a>
+### 简体中文
+
+> 本版新增可靠的本地 SVG 矢量导出和按颜色模式预览，同时修复工作区焦点、Windows 权限和全屏通知问题。
+
+#### 重要修复
+
+- 修复 Windows 计算机名或账户域包含中文等非英文字符时，启动过程错误提示 Terma 数据目录不支持安全权限的问题；权限设置与复核现在使用账户安全标识符，不再依赖本地化账户名。
+- 修复将当前激活的中间标签拖入分屏后，原窗口错误切换到后一个标签的问题；现在会回到被移动标签前面的标签。
+- 修复在分屏之间切换焦点时 Terma 原生窗口标题仍停留在上一个连接的问题；现在会立即跟随当前获得焦点的分屏。
+- 修复 SVG 全屏预览和其他应用内弹窗遮住通知的问题；页面通知现在统一使用最高浮层，VNC 文档全屏也保持可见。
+
+#### 重要新增
+
+- SFTP SVG 预览新增本地矢量 PDF 导出；路径和文字保持矢量内容，中文使用内置 Noto Sans SC 字体，横向页面跟随 SVG 画布，`<use>/<symbol>` 变换和 `preserveAspectRatio` 保持不变，遇到不兼容样式会有限重试并给出明确的不支持提示。
+- SVG 预览新增带文字的颜色模式控件，可选择正色、黑白反转（只处理黑、白、灰）、黑白模式（白色画布、黑色前景，并保留深色图形上的白色细节）和全局反转；预览、下载的 SVG 和导出的 PDF 都会跟随当前模式，切换时保留缩放、滚动位置、适配状态和当前搜索结果。
+- 桌面端生成的 SVG 和 PDF 会安全保存中文文件名，进入任务中心和通知并显示保存位置，可直接打开文件、打开目录或删除；浏览器模式保留当前页面内的“再次下载”记录。
+
+#### 本次变更
+
+- v1.6.1 之后没有合并 Pull Request；本版包含维护者直接完成的改动。
+
+**完整变更**：[v1.6.1...v1.6.2](https://github.com/zmide/Terma/compare/v1.6.1...v1.6.2)
 
 ## v1.6.1
 

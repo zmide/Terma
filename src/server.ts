@@ -520,6 +520,7 @@ async function handleApi(req, res, pathname) {
     runtimeSettingsFile:RUNTIME_SETTINGS_FILE,
     getDesktopIntegration,
     isDesktopRequest,
+    readBody,
     listSftpJobs,
     readJson,
     readRuntimeSettings,

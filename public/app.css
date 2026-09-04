@@ -7,7 +7,7 @@
   --workspace-header-control-height:30px; --workspace-header-control-font-size:12px; --workspace-header-icon-size:14px;
   --workspace-tab-height:32px; --workspace-tab-font-size:12px; --workspace-tab-dot-size:7px;
   --workspace-tab-close-size:18px; --workspace-tab-horizontal-padding:8px;
-  --activity-bar-width:40px; --operation-pane-width:292px; --notification-stack-offset:0px;
+  --activity-bar-width:40px; --operation-pane-width:292px; --notification-stack-offset:0px; --z-notification:60100;
   --scrollbar-thumb:color-mix(in srgb,var(--muted) 38%,transparent); --scrollbar-thumb-hover:color-mix(in srgb,var(--accent2) 58%,var(--muted));
   --terma-overlay-opacity:100%; --terma-overlay-content-opacity:100%; --terma-overlay-foreground-opacity:100%; --terma-overlay-foreground-alpha:1; --terma-overlay-blur:0px; --terma-overlay-saturation:1;
   --terma-frosted-surface-opacity:100%; --terma-frosted-toolbar-opacity:100%; --terma-frosted-saturation:1; --terma-frosted-backdrop-blur:0px; --terma-frosted-toolbar-blur:0px;
@@ -1018,7 +1018,7 @@ body.sftp-task-center-resizing, body.sftp-task-center-resizing * { cursor:nesw-r
 .notice.success { border-color:var(--accent); background:rgba(22,130,95,.08); }
 .notice.error { border-color:var(--danger); background:rgba(196,50,43,.08); }
 .notice.info { border-color:var(--warn); background:rgba(154,103,0,.08); }
-.notification-stack { position:fixed; z-index:50; top:16px; right:16px; width:min(420px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); display:grid; grid-auto-flow:row; align-content:start; gap:8px; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:none; pointer-events:none; }
+.notification-stack { position:fixed; z-index:var(--z-notification); top:16px; right:16px; width:min(420px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); display:grid; grid-auto-flow:row; align-content:start; gap:8px; overflow-y:auto; overscroll-behavior:contain; scrollbar-width:none; pointer-events:none; }
 .notification-stack::-webkit-scrollbar { display:none; }
 .toast { width:100%; flex:0 0 auto; padding:10px 11px; border:1px solid var(--line); border-left:3px solid var(--warn); border-radius:6px; color:color-mix(in srgb,var(--text) var(--terma-overlay-foreground-opacity),transparent); background:color-mix(in srgb,var(--panel) var(--terma-overlay-opacity),transparent); box-shadow:0 12px 32px rgba(0,0,0,.2); backdrop-filter:blur(var(--terma-overlay-blur)) saturate(var(--terma-overlay-saturation)); -webkit-backdrop-filter:blur(var(--terma-overlay-blur)) saturate(var(--terma-overlay-saturation)); white-space:normal; pointer-events:auto; transform-origin:top right; will-change:transform,opacity; }
 .toast.is-leaving { pointer-events:none; }
@@ -2583,15 +2583,25 @@ body.sftp-editor-split-resizing, body.sftp-editor-split-resizing * { cursor:ns-r
 .sftp-editor-search-bar .icon-button { width:30px; min-width:30px; height:30px; min-height:30px; padding:5px; }
 .sftp-editor-options { display:flex; flex-wrap:wrap; gap:8px 18px; }
 .sftp-editor-modal #sftpTextFormatJson[hidden] { display:none !important; }
-.sftp-image-modal { width:min(1100px,calc(100vw - 32px)); height:min(760px,calc(100dvh - 32px)); min-height:min(420px,calc(100dvh - 32px)); max-height:calc(100dvh - 32px); display:grid; grid-template-rows:auto minmax(0,1fr) auto; overflow:hidden; }
+.sftp-image-modal { width:min(1100px,calc(100vw - 32px)); height:min(760px,calc(100dvh - 32px)); min-height:min(420px,calc(100dvh - 32px)); max-height:calc(100dvh - 32px); display:grid; grid-template-rows:auto minmax(0,1fr) auto; overflow:visible; }
 .sftp-image-modal.is-fullscreen { position:fixed; inset:8px; width:auto; height:auto; max-width:none; max-height:none; border-radius:5px; }
+.sftp-image-modal .sftp-editor-head,
+.sftp-image-modal .sftp-image-tools { position:relative; z-index:2; overflow:visible; }
 .sftp-image-tools { display:flex; align-items:center; justify-content:flex-end; gap:5px; min-width:0; }
 .sftp-image-tools .icon-button { width:30px; min-width:30px; height:30px; min-height:30px; padding:5px; }
 .sftp-image-tools .icon-button svg { width:15px; height:15px; }
+.sftp-image-tools .icon-button.active { color:var(--accent2); border-color:color-mix(in srgb,var(--accent2) 55%,var(--line)); background:color-mix(in srgb,var(--accent2) 12%,var(--field)); }
 .sftp-image-zoom-value { min-width:48px; color:var(--muted); font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace; text-align:center; }
-.sftp-svg-search { display:inline-flex; align-items:center; gap:4px; min-width:180px; max-width:390px; margin-left:4px; }
+.sftp-svg-color-mode { min-width:0; display:inline-flex; align-items:center; gap:5px; margin:0 0 0 3px; padding:0 0 0 7px; border:1px solid var(--line); border-radius:5px; color:var(--muted); background:var(--field); }
+.sftp-svg-color-mode-label { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; font-size:11px; font-weight:600; }
+.sftp-svg-color-mode-label svg { width:14px; height:14px; color:var(--accent2); }
+.sftp-svg-color-mode select { width:auto; min-width:92px; min-height:28px; padding:3px 24px 3px 6px; border:0; border-left:1px solid var(--line); border-radius:0 4px 4px 0; background-color:var(--panel); font-size:11px; }
+.sftp-svg-search { display:inline-flex; align-items:center; gap:5px; min-width:180px; max-width:430px; margin-left:4px; }
+.sftp-svg-search-controls { min-width:150px; flex:1 1 250px; display:inline-flex; align-items:center; gap:0; padding:2px; border:1px solid var(--line); border-radius:5px; background:var(--field); }
 .sftp-svg-search label { min-width:100px; flex:1 1 190px; margin:0; }
-.sftp-svg-search input { width:100%; min-width:0; min-height:30px; padding:4px 8px; font-size:12px; }
+.sftp-svg-search input { width:100%; min-width:0; min-height:26px; padding:4px 6px; border:0; background:transparent; font-size:12px; }
+.sftp-svg-search-controls .icon-button { border:0; border-left:1px solid var(--line); border-radius:0; }
+.sftp-svg-search-controls .icon-button:last-child { border-radius:0 3px 3px 0; }
 .sftp-svg-search > span { min-width:42px; color:var(--muted); font:11px/1 ui-monospace,SFMono-Regular,Menlo,monospace; text-align:center; }
 .sftp-image-preview { min-width:0; min-height:0; height:auto; overflow:auto; border:1px solid var(--line); border-radius:5px; background:repeating-conic-gradient(var(--panel2) 0 25%,var(--panel) 0 50%) 50% / 18px 18px; cursor:grab; overscroll-behavior:contain; }
 .sftp-image-preview.is-panning { cursor:grabbing; user-select:none; }
@@ -3304,7 +3314,7 @@ html.vnc-fullscreen-document:fullscreen .vnc-workspace.vnc-fullscreen-toolbar-ed
 html.vnc-fullscreen-document:fullscreen .vnc-workspace.vnc-fullscreen-toolbar-edge .vnc-toolbar:hover,
 html.vnc-fullscreen-document:fullscreen .vnc-workspace.vnc-fullscreen-toolbar-edge .vnc-toolbar:has(:focus-visible) { transform:translateY(0); }
 html.vnc-fullscreen-document:fullscreen .modal { z-index:60030; }
-html.vnc-fullscreen-document:fullscreen .notification-stack { z-index:60040; }
+html.vnc-fullscreen-document:fullscreen .notification-stack { z-index:var(--z-notification); }
 html.vnc-fullscreen-document:fullscreen .action-menu-backdrop { z-index:60034; }
 html.vnc-fullscreen-document:fullscreen :is(.context-menu,.action-menu,.action-submenu) { z-index:60035; }
 html.vnc-detached-window, html.vnc-detached-window body { width:100%; height:100%; margin:0; overflow:hidden; background:#111; }
@@ -3502,6 +3512,7 @@ body.vnc-detached-window-body .app { display:none !important; }
   .sftp-code-editor { min-height:48dvh; }
   .sftp-image-modal { width:100%; height:94dvh; min-height:0; max-height:94dvh; }
   .sftp-image-tools { width:100%; flex-wrap:wrap; justify-content:flex-end; }
+  .sftp-svg-color-mode { margin-left:0; }
   .sftp-svg-search { order:5; flex:1 1 100%; max-width:none; margin-left:0; }
 }
 
@@ -4182,6 +4193,7 @@ details.advanced-settings > :not(summary) { margin-left:12px; margin-right:12px;
   background:var(--panel);
 }
 .modal-card :is(.modal-message,.connection-test-status,dd,small,p) { overflow-wrap:anywhere; }
+.modal-card.sftp-image-modal { overflow:visible; }
 .remote-install-dialog .modal-title-row > div:first-child > span,
 .vnc-clipboard-helper-modal .modal-title-row > div:first-child > span,
 .x11-install-guide .modal-title-row > div:first-child > span,
