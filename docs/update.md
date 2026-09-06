@@ -7,7 +7,7 @@
 <a id="english"></a>
 ### English
 
-> The next release will focus on cross-platform session recovery, terminal AI interoperability, and remote desktop clipboard acceptance.
+> The next release will continue cross-platform session recovery, terminal AI interoperability, and remote desktop clipboard acceptance.
 
 #### Planned
 
@@ -25,6 +25,40 @@
 - 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
+
+## v1.6.3
+
+[English](#english) · [简体中文](#简体中文)
+
+<a id="english"></a>
+### English
+
+> This maintenance release keeps terminal tabs responsive when full-screen applications redraw frequently.
+
+#### Important fix
+
+- Fixed full-screen terminal applications with frequent screen redraws making other terminal tabs and split panes unresponsive. Visible TUI output is frame-batched, background tabs update at a lower frequency, and all remote output and scrollback are still retained.
+
+#### Changes in this release
+
+- No pull requests were merged after v1.6.2; this release contains direct maintainer changes.
+
+**Full Changelog**: [v1.6.2...v1.6.3](https://github.com/zmide/Terma/compare/v1.6.2...v1.6.3)
+
+<a id="简体中文"></a>
+### 简体中文
+
+> 本维护版本修复全屏终端程序频繁重绘时的标签联动卡顿。
+
+#### 重要修复
+
+- 修复全屏终端程序频繁重绘时拖慢其他终端标签和分屏的问题；可见 TUI 输出按帧合并，后台标签降低刷新频率，同时仍完整保留远端输出和滚动历史。
+
+#### 本次变更
+
+- v1.6.2 之后没有合并 Pull Request；本版包含维护者直接完成的改动。
+
+**完整变更**：[v1.6.2...v1.6.3](https://github.com/zmide/Terma/compare/v1.6.2...v1.6.3)
 
 ## v1.6.2
 

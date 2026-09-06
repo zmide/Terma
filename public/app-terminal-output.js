@@ -1,6 +1,7 @@
 const TERMINAL_OUTPUT_FRAME_BUDGET = 32 * 1024;
 const TERMINAL_OUTPUT_DRAIN_DELAY_MS = 8;
-const TERMINAL_OUTPUT_BACKGROUND_DRAIN_DELAY_MS = 48;
+const TERMINAL_OUTPUT_TUI_DRAIN_DELAY_MS = 32;
+const TERMINAL_OUTPUT_BACKGROUND_DRAIN_DELAY_MS = 96;
 const TERMINAL_OUTPUT_SCROLLBACK_DRAIN_DELAY_MS = 24;
 const TERMINAL_OUTPUT_HIGH_WATER_MARK = 128 * 1024;
 const TERMINAL_OUTPUT_LOW_WATER_MARK = 32 * 1024;
@@ -10,18 +11,23 @@ function scheduleTerminalOutputDrain(session) {
   // Terminal parsing must not depend on a compositor frame. Chromium can keep
   // document.visibilityState as visible when Electron background throttling is
   // disabled, while Windows still stops presenting frames for a minimized window.
+  // Cached tabs are detached from the document, so they can use a coarser batch.
   session.terminalOutputFrameKind = "timeout";
   const hidden = Boolean(globalThis.document?.hidden);
   const buffer = session.term?.buffer?.active;
+  const detached = session.term?.element && session.term.element.isConnected === false;
+  const alternateScreen = buffer?.type === "alternate";
   const viewingScrollback = Boolean(
     session.term?.hasSelection?.()
     || (buffer && Number(buffer.viewportY) < Number(buffer.baseY) - 1)
   );
-  const delay = hidden
+  const delay = hidden || detached
     ? TERMINAL_OUTPUT_BACKGROUND_DRAIN_DELAY_MS
     : viewingScrollback
       ? TERMINAL_OUTPUT_SCROLLBACK_DRAIN_DELAY_MS
-      : TERMINAL_OUTPUT_DRAIN_DELAY_MS;
+      : alternateScreen
+        ? TERMINAL_OUTPUT_TUI_DRAIN_DELAY_MS
+        : TERMINAL_OUTPUT_DRAIN_DELAY_MS;
   session.terminalOutputFrame = setTimeout(() => drainTerminalOutput(session), delay);
 }
 
@@ -99,10 +105,13 @@ function drainTerminalOutput(session) {
     session.term.write(chunk, () => {
       if (Number(session.terminalOutputGeneration || 0) !== generation) return;
       session.terminalOutputWriting = false;
+      if (session.pendingTerminalOutput?.length) {
+        scheduleTerminalOutputDrain(session);
+        return;
+      }
       if (typeof refreshTerminalCommandBufferFromScreen === "function") refreshTerminalCommandBufferFromScreen(session);
       if (typeof finalizePendingTerminalCommand === "function") finalizePendingTerminalCommand(session);
       if (typeof finalizeTerminalAiBlockFromScreen === "function") finalizeTerminalAiBlockFromScreen(session);
-      if (session.pendingTerminalOutput?.length) scheduleTerminalOutputDrain(session);
     });
   } catch {
     session.terminalOutputWriting = false;

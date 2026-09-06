@@ -52,13 +52,63 @@ function checkBrowserWatermarks() {
   sandbox.__api.queueTerminalOutput(selectedSession, "selection");
   assert.equal(timers.at(-1)?.delay, 24, "active selections must not be repainted at the full live-output rate");
 
+  const tuiSession = {
+    term:{buffer:{active:{type:"alternate", viewportY:0, baseY:0}}, hasSelection:() => false},
+    socket:{readyState:1, send() {}}
+  };
+  sandbox.__api.queueTerminalOutput(tuiSession, "tui-redraw");
+  assert.equal(timers.at(-1)?.delay, 32, "alternate-screen TUIs must batch redraws to keep the shared renderer responsive");
+
+  const inactiveSession = {
+    term:{element:{isConnected:false}, buffer:{active:{type:"normal", viewportY:0, baseY:0}}, hasSelection:() => false},
+    socket:{readyState:1, send() {}}
+  };
+  sandbox.__api.queueTerminalOutput(inactiveSession, "inactive-tab");
+  assert.equal(timers.at(-1)?.delay, 96, "detached terminal tabs must drain at a lower frequency");
+
   sandbox.document.hidden = true;
   const hiddenSession = {
     term:{buffer:{active:{viewportY:80, baseY:80}}, hasSelection:() => false},
     socket:{readyState:1, send() {}}
   };
   sandbox.__api.queueTerminalOutput(hiddenSession, "background");
-  assert.equal(timers.at(-1)?.delay, 48, "hidden windows must use the low-frequency fallback drain");
+  assert.equal(timers.at(-1)?.delay, 96, "hidden windows must use the low-frequency fallback drain");
+}
+
+function checkScreenInspectionWaitsForIdle() {
+  const timers = [];
+  const inspections = [];
+  const sandbox = {
+    Uint8Array,
+    WebSocket:{OPEN:1},
+    document:{hidden:false},
+    Number,
+    Math,
+    setTimeout:(callback, delay) => { timers.push({callback, delay}); return timers.length; },
+    clearTimeout:() => {},
+    cancelAnimationFrame:() => {},
+    terminalSessions:new Map(),
+    refreshTerminalCommandBufferFromScreen:() => inspections.push("command-buffer"),
+    finalizePendingTerminalCommand:() => inspections.push("pending-command"),
+    finalizeTerminalAiBlockFromScreen:() => inspections.push("ai-block")
+  };
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(`${read("public/app-terminal-output.js")}\n;globalThis.__api={queueTerminalOutput};`, sandbox, {filename:"public/app-terminal-output.js", timeout:5000});
+  const writes = [];
+  const session = {
+    term:{
+      write(value, callback){ writes.push(String(value)); callback(); },
+      buffer:{active:{type:"normal", viewportY:0, baseY:0}}
+    },
+    socket:{readyState:1, send() {}}
+  };
+  sandbox.__api.queueTerminalOutput(session, "x".repeat(40 * 1024));
+  timers.shift().callback();
+  assert.equal(inspections.length, 0, "screen inspection must not analyze a partially drained terminal frame");
+  assert.equal(timers.length, 1, "remaining output must schedule another drain");
+  timers.shift().callback();
+  assert.equal(writes.join("").length, 40 * 1024, "all queued terminal output must still be written");
+  assert.deepEqual(inspections, ["command-buffer", "pending-command", "ai-block"], "screen inspection should run once after the output batch is idle");
 }
 
 function checkServerFlowContract() {
@@ -86,5 +136,6 @@ function checkServerFlowContract() {
 }
 
 checkBrowserWatermarks();
+checkScreenInspectionWaitsForIdle();
 checkServerFlowContract();
 console.log("PASS terminal output high/low watermarks pause and resume remote sources");
