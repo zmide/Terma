@@ -2050,6 +2050,28 @@ app.whenReady().then(async () => {
       renderSettings();
       renderExplorerTools();
       syncUpdateNoticeDots();
+      let settingsResponsiveColumns = {narrow:'', wide:'', viewportWide:false};
+      {
+        const fixture = document.createElement('div');
+        fixture.className = 'workspace-pane';
+        fixture.style.cssText = 'position:fixed;left:-3000px;top:0;width:1000px;height:320px;overflow:hidden';
+        fixture.innerHTML = '<div class="settings-grid settings-waterfall"><section>One</section><section>Two</section></div>';
+        document.body.appendChild(fixture);
+        try {
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const waterfall = fixture.querySelector('.settings-waterfall');
+          settingsResponsiveColumns.narrow = getComputedStyle(waterfall).columnCount;
+          fixture.style.width = '1200px';
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          settingsResponsiveColumns.wide = getComputedStyle(waterfall).columnCount;
+          settingsResponsiveColumns.viewportWide = document.documentElement.clientWidth > 1100;
+        } finally {
+          fixture.remove();
+        }
+        if (settingsResponsiveColumns.narrow !== '1' || (settingsResponsiveColumns.viewportWide && settingsResponsiveColumns.wide !== '2')) {
+          throw new Error('general settings waterfall did not follow the split-pane container width: ' + JSON.stringify(settingsResponsiveColumns));
+        }
+      }
       await setTermaLanguage('zh-CN');
       const visibleHan = [];
       const thirdPartyLiveSwitch = {
@@ -3390,6 +3412,7 @@ app.whenReady().then(async () => {
         authPolicyUi,
         localDirectUi,
         runtimeUi,
+        settingsResponsiveColumns,
         i18nUi,
         importLabels,
         importOwnSections:JSON.stringify(importLabels) === JSON.stringify(importExpected),
@@ -11325,7 +11348,7 @@ app.whenReady().then(async () => {
   const sessionUiFailed = sessionUi.ttl !== '720' || sessionUi.max !== '1000' || sessionUi.cleanup !== '10' || !sessionUi.active || !sessionUi.save;
   const activityUiFailed = result.activity.count !== 11 || !result.activity.iconCentered || !result.activity.centersAligned || !result.activity.insideColumn || !result.activity.resizable || !result.activityUtilities;
   const appearanceEffectsUiFailed = Object.values(appearanceEffectsUi).some(value => value !== true);
-  const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || i18nUi.language !== 'en-US' || i18nUi.settingsTitle !== 'General' || i18nUi.activityTitle !== 'Switch to Simplified Chinese' || i18nUi.mobileTitle !== 'Switch to Simplified Chinese' || !i18nUi.activityOrder || !i18nUi.persisted || !i18nUi.settingsSelectorRemoved || i18nUi.visibleHan?.length || thirdPartyLiveSwitchFailed || !i18nUi.resumeButton || !i18nUi.pauseButton || !i18nUi.tasksPreserved || !i18nUi.tabsPreserved || !navigationUi.themeUi?.entryHidden || !navigationUi.themeUi?.controlsHidden || !navigationUi.themeUi?.oldConfigIgnored || !navigationUi.themeUi?.clearPreset || !navigationUi.themeUi?.noEffects || !navigationUi.themeUi?.zeroBlur || !navigationUi.cacheUi?.selected || !navigationUi.cacheUi?.panel || navigationUi.cacheUi?.categories !== 6 || !navigationUi.cacheUi?.beforeAbout || !navigationUi.cacheUi?.absentFromGeneral || !navigationUi.storageAlignmentUi?.found || !navigationUi.storageAlignmentUi?.topAligned || !navigationUi.storageAlignmentUi?.bottomAligned || !navigationUi.storageMigrationUi?.controlsFound || !navigationUi.storageMigrationUi?.threeChoices || !navigationUi.storageMigrationUi?.cancelBlockedRequest || !navigationUi.storageMigrationUi?.oneMigrationRequest || !navigationUi.storageMigrationUi?.migrationRequested || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || !authPolicyUi.redundantCheckboxRemoved || !authPolicyUi.localOnlyLabel || !authPolicyUi.alwaysLabel || !authPolicyUi.directDefinition || !localDirectUi.control || !localDirectUi.defaultOff || !localDirectUi.policyCopy || !localDirectUi.enabled || !localDirectUi.proxyBlocked || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.republishedShowsNotice || !navigationUi.republishedReadMarksNotice || !navigationUi.newerVersionShowsAgain;
+  const navigationUiFailed = !navigationUi.settingsOnlySections || !navigationUi.settingsSectionMode || !navigationUi.settingsVertical || navigationUi.settingsResponsiveColumns?.narrow !== '1' || (navigationUi.settingsResponsiveColumns?.viewportWide && navigationUi.settingsResponsiveColumns?.wide !== '2') || i18nUi.language !== 'en-US' || i18nUi.settingsTitle !== 'General' || i18nUi.activityTitle !== 'Switch to Simplified Chinese' || i18nUi.mobileTitle !== 'Switch to Simplified Chinese' || !i18nUi.activityOrder || !i18nUi.persisted || !i18nUi.settingsSelectorRemoved || i18nUi.visibleHan?.length || thirdPartyLiveSwitchFailed || !i18nUi.resumeButton || !i18nUi.pauseButton || !i18nUi.tasksPreserved || !i18nUi.tabsPreserved || !navigationUi.themeUi?.entryHidden || !navigationUi.themeUi?.controlsHidden || !navigationUi.themeUi?.oldConfigIgnored || !navigationUi.themeUi?.clearPreset || !navigationUi.themeUi?.noEffects || !navigationUi.themeUi?.zeroBlur || !navigationUi.cacheUi?.selected || !navigationUi.cacheUi?.panel || navigationUi.cacheUi?.categories !== 6 || !navigationUi.cacheUi?.beforeAbout || !navigationUi.cacheUi?.absentFromGeneral || !navigationUi.storageAlignmentUi?.found || !navigationUi.storageAlignmentUi?.topAligned || !navigationUi.storageAlignmentUi?.bottomAligned || !navigationUi.storageMigrationUi?.controlsFound || !navigationUi.storageMigrationUi?.threeChoices || !navigationUi.storageMigrationUi?.cancelBlockedRequest || !navigationUi.storageMigrationUi?.oneMigrationRequest || !navigationUi.storageMigrationUi?.migrationRequested || settingsSectionsFailed || runtimeUiFailed || sessionUiFailed || !authPolicyUi.redundantCheckboxRemoved || !authPolicyUi.localOnlyLabel || !authPolicyUi.alwaysLabel || !authPolicyUi.directDefinition || !localDirectUi.control || !localDirectUi.defaultOff || !localDirectUi.policyCopy || !localDirectUi.enabled || !localDirectUi.proxyBlocked || navigationUi.duplicateSettingsNav !== 0 || navigationUi.inlineUpdateDotPresent || !navigationUi.importOwnSections || !navigationUi.importSectionMode || !navigationUi.importVertical || !navigationUi.importResultsMerged || !importSourceCheck?.resultsVisible || importSectionsFailed || !navigationUi.treeHidden || navigationUi.dotsBeforeRead.some(dot=>!dot.found||dot.hidden!==false) || navigationUi.dotsAfterRead.some(dot=>!dot.found||dot.hidden!==true) || navigationUi.storedReadVersion !== '1.0.9' || !navigationUi.sameVersionStaysRead || !navigationUi.ignoredVersionHidesNotice || !navigationUi.newerAfterIgnoredShowsNotice || !navigationUi.republishedShowsNotice || !navigationUi.republishedReadMarksNotice || !navigationUi.newerVersionShowsAgain;
   const aboutUiFailed = Boolean(aboutUi.error) || !aboutUi.found || !aboutUi.aboutSelected || aboutUi.duplicateSettingsNav !== 0 || !aboutUi.versionMatches || !aboutUi.licenseMetadata || !aboutUi.sourceLink || !aboutUi.modalOpen || !aboutUi.accessible || !aboutUi.fullText || !aboutUi.textScrollable || !aboutUi.cardWithinViewport || !aboutUi.closeFocused || !aboutUi.backdropIgnored || !aboutUi.closedByEscape || !aboutUi.focusReturned || !aboutUi.followupBackdropClean || !aboutUi.followupResolved || !aboutUi.updateUi;
   const hostTrustUiFailed = !hostTrustUi.unknown?.open
     || !hostTrustUi.unknown?.fingerprint

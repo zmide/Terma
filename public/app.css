@@ -2717,6 +2717,10 @@ body.sftp-editor-split-resizing, body.sftp-editor-split-resizing * { cursor:ns-r
   .sftp-pager > button:last-child { grid-column:2; grid-row:2; width:100%; }
 }
 
+@container workspace-pane (max-width:1100px) {
+  .settings-grid.settings-waterfall { column-count:1; }
+}
+
 @container workspace-pane (max-width:760px) {
   .tabs-shell { height:var(--workspace-tab-height); }
   .tab { max-width:180px; padding-inline:7px; }

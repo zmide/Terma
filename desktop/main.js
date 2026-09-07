@@ -2368,7 +2368,8 @@ async function pollDesktopNotifications() {
   const background = desktopWindowIsBackground();
   for (const event of events) {
     desktopNotificationCursor = Math.max(desktopNotificationCursor, Number(event?.id || 0));
-    const allowed = desktopNotificationAllowed(event, preferences)
+    const allowed = event?.silent !== true
+      && desktopNotificationAllowed(event, preferences)
       && !(event?.type === "update" && updateStatus?.update_ignored);
     sendDesktopNotificationToRenderer(event, allowed && !background);
     if (allowed && background) showBackendSystemNotification(event);

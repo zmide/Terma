@@ -172,12 +172,13 @@ function addNotification(event) {
     title: String(event.title || "Terma"),
     message: String(event.message || ""),
     key: event.key || "",
-    action: event.action || null
+    action: event.action || null,
+    ...(event.silent === true ? {silent:true} : {})
   };
   const events = readEvents();
   events.push(item);
   writeEvents(events);
-  appendNotificationSystemLog(`通知：${item.title}${item.message ? `：${item.message}` : ""}`);
+  if (!item.silent) appendNotificationSystemLog(`通知：${item.title}${item.message ? `：${item.message}` : ""}`);
   return item;
 }
 

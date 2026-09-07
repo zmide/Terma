@@ -269,14 +269,14 @@ function createUpdateChecker(options: any = {}) {
     }
   }
 
-  async function performCheck(force) {
+  async function performCheck(force, notify) {
     const checkedAt = Number(now());
     let cache = readCache();
     const age = checkedAt - Number(cache.checked_at_ms || 0);
     const cached = cachedResult(cache, packageInfo);
     if (!force && cached && age >= 0 && age < cacheTtlMs) {
       const result = cached;
-      await notifyOnce(result);
+      if (notify) await notifyOnce(result);
       return result;
     }
 
@@ -288,7 +288,7 @@ function createUpdateChecker(options: any = {}) {
       result.checked_at = new Date(checkedAt).toISOString();
       cache = { ...readCache(), checked_at_ms: checkedAt, result };
       await saveCacheAsync(cache);
-      await notifyOnce(result);
+      if (notify) await notifyOnce(result);
       return result;
     }
     if (!response?.ok) {
@@ -307,14 +307,15 @@ function createUpdateChecker(options: any = {}) {
     await saveCacheAsync(cache);
     const stored = cachedResult(readCache(), packageInfo);
     const checkedResult = stored ? { ...stored, checked_at: result.checked_at, from_cache: false } : result;
-    await notifyOnce(checkedResult);
+    if (notify) await notifyOnce(checkedResult);
     return checkedResult;
   }
 
   function check(optionsOrForce: any = {}) {
     const force = typeof optionsOrForce === "boolean" ? optionsOrForce : Boolean(optionsOrForce.force);
+    const notify = typeof optionsOrForce === "boolean" || optionsOrForce.notify !== false;
     if (inFlight) return inFlight;
-    inFlight = performCheck(force).finally(() => { inFlight = null; });
+    inFlight = performCheck(force, notify).finally(() => { inFlight = null; });
     return inFlight;
   }
 

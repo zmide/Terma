@@ -448,10 +448,18 @@ async function loadSftpPage(options={}) {
       "SFTP_DIRECTORY_NOT_FOUND",
       "SFTP_DIRECTORY_ACCESS_FAILED"
     ].includes(String(error?.code || ""));
+    let connectionStillActive = directoryAccessError;
+    if (!connectionStillActive) {
+      try {
+        const session = await api(`/api/connections/${id}/sftp/session`, {skipSftpConnect:true});
+        connectionStillActive = Boolean(session?.connected);
+      } catch {}
+    }
+    if (requestSeq !== runtime.state.requestSeq) return false;
     runtime.state = {...currentState, loading:false, requestSeq};
     if (sftpActiveRuntimeKey === tabKey) sftpState = runtime.state;
     if (tab) tab.path = currentState.path;
-    updateSftpConnectionUi(id, directoryAccessError ? "connected" : "disconnected", error.message || tr("sftp:auto.connection_disconnected"));
+    updateSftpConnectionUi(id, connectionStillActive ? "connected" : "disconnected", error.message || tr("sftp:auto.connection_disconnected"));
     const mountedList = sftpElement("sftpList", tabKey);
     if (mountedList && runtime.root?.dataset.sftpTabKey === tabKey) {
       if (hadDirectoryView) {

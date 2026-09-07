@@ -55,6 +55,7 @@ const { closeAllVncSessions } = require("./vnc-proxy");
 const { encryptionState, lockEncryption } = require("./crypto-store");
 const { assertPrivateStorage, ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 const { createUpdateChecker } = require("./update-checker");
+const { createUpdateScheduler } = require("./update-scheduler");
 const { UpdateInstaller } = require("./update-installer");
 const { PACKAGE_ROOT, PACKAGE_VERSION } = require("./services/app-metadata-service");
 const { publicAiSettings: publicAiSettingsForRuntime } = require("./services/ai-service");
@@ -69,7 +70,6 @@ function createServerRuntime(options: any = {}) {
   let onShutdown: null | (() => any) = null;
   let desktopIntegration: any = null;
   let shutdownAuthToken = "";
-  let updateCheckTimer = null;
   let installedUpdateCleanupTimer = null;
   let startupTaskTimer = null;
   let startupEffectsStarted = false;
@@ -88,6 +88,27 @@ function createServerRuntime(options: any = {}) {
           ? `Terma ${result.latest_version} 已重新发布，请在更新页面点击“重新下载”。`
           : `当前版本 ${result.current_version}，最新版本 ${result.latest_version}${result.name ? `（${result.name}）` : ""}。`,
         action:{url:result.release_url}
+      }, {cooldown_ms:0});
+    }
+  });
+  let scheduledUpdateSignal = "";
+  const updateScheduler = createUpdateScheduler({
+    checker:updateChecker,
+    onResult(result, context) {
+      if (context?.startup) return;
+      const available = Boolean(result?.update_available || result?.republished_available);
+      const marker = available ? `${result.latest_version}:${Number(result.release_revision || 0)}` : "";
+      if (!marker || marker === scheduledUpdateSignal) {
+        if (!marker) scheduledUpdateSignal = "";
+        return;
+      }
+      scheduledUpdateSignal = marker;
+      notifyEvent({
+        type:"update",
+        level:"info",
+        key:`update-status:${marker}`,
+        title:result.republished_available ? "Terma 当前版本已重新发布" : "发现 Terma 新版本",
+        silent:true
       }, {cooldown_ms:0});
     }
   });
@@ -468,11 +489,7 @@ function createServerRuntime(options: any = {}) {
     if (urls.lanUrls.length) console.log(`Terma LAN URLs:\n${urls.lanUrls.map(url => `  ${url}`).join("\n")}`);
     appendSystemLog(`Terma 已启动：http://${args.host}:${actualPort}`);
     if (process.env.TERMA_DISABLE_UPDATE_CHECK !== "1" && process.env.TUNNELDESK_DISABLE_UPDATE_CHECK !== "1") {
-      clearTimeout(updateCheckTimer);
-      updateCheckTimer = setTimeout(() => {
-        updateChecker.check({force:true}).catch(() => {});
-      }, 10 * 1000);
-      updateCheckTimer.unref?.();
+      updateScheduler.start();
     }
     startupTaskTimer = setTimeout(async () => {
       let autostart = {ok:0, failed:0, errors:[]};
@@ -500,8 +517,7 @@ function createServerRuntime(options: any = {}) {
   async function shutdown() {
     if (shutdownPromise) return shutdownPromise;
     shutdownPromise = (async () => {
-      clearTimeout(updateCheckTimer);
-      updateCheckTimer = null;
+      updateScheduler.stop();
       clearTimeout(installedUpdateCleanupTimer);
       installedUpdateCleanupTimer = null;
       clearTimeout(startupTaskTimer);

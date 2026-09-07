@@ -26,6 +26,58 @@
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
 
+## v1.6.4
+
+[English](#english) · [简体中文](#简体中文)
+
+<a id="english"></a>
+### English
+
+> This maintenance release fixes SFTP searches that could disconnect on mixed-encoding servers and makes General settings fit narrow split panes. Terma is currently evolving quickly, with frequent updates, so upgrading promptly is recommended for the latest fixes and improvements.
+
+#### Important fixes
+
+- Fixed SFTP searches disconnecting the view on servers whose locale differs from UTF-8 filenames; mixed-encoding filename filtering is now byte-safe, and a failed query keeps the active session connected.
+- Fixed General settings staying in a two-column layout inside a narrow split pane; the settings cards now follow the pane width instead of the full window width.
+
+#### Other improvements
+
+- Updated the SFTP transfer library to address a directory-parsing security issue, excessive CPU use, and timeouts during slow transfers.
+
+#### Changes in this release
+
+- `deps: bump basic-ftp from 6.2.0 to 6.2.1` (#25, @dependabot[bot])
+- `deps: bump @types/node from 26.4.0 to 26.4.1` (#24, @dependabot[bot])
+- `deps: bump lucide from 1.35.0 to 1.40.0` (#26, @dependabot[bot])
+- `deps: bump i18next from 26.4.0 to 26.4.2` (#27, @dependabot[bot])
+- `deps: bump electron from 44.0.0 to 44.2.0` (#28, @dependabot[bot])
+
+**Full Changelog**: [v1.6.3...v1.6.4](https://github.com/zmide/Terma/compare/v1.6.3...v1.6.4)
+
+<a id="简体中文"></a>
+### 简体中文
+
+> 本维护版本修复混合编码服务器上的 SFTP 搜索断开问题，并让通用设置适配较窄分屏。Terma 目前处于快速迭代阶段，更新会比较频繁，建议及时升级以获得最新修复和体验改进。
+
+#### 重要修复
+
+- 修复服务器区域编码与 UTF-8 文件名不一致时，SFTP 搜索会让视图断开的问题；混合编码文件名筛选现在按字节安全处理，查询失败也会保留在线会话。
+- 修复通用设置在较窄分屏中仍保持两列的问题；设置卡片现在会跟随分屏宽度，不再按整个窗口宽度判断。
+
+#### 其他优化
+
+- 更新 SFTP 传输依赖，处理目录解析安全问题、过高 CPU 使用和慢速传输超时。
+
+#### 本次变更
+
+- `deps: bump basic-ftp from 6.2.0 to 6.2.1`（#25，@dependabot[bot]）
+- `deps: bump @types/node from 26.4.0 to 26.4.1`（#24，@dependabot[bot]）
+- `deps: bump lucide from 1.35.0 to 1.40.0`（#26，@dependabot[bot]）
+- `deps: bump i18next from 26.4.0 to 26.4.2`（#27，@dependabot[bot]）
+- `deps: bump electron from 44.0.0 to 44.2.0`（#28，@dependabot[bot]）
+
+**完整变更**：[v1.6.3...v1.6.4](https://github.com/zmide/Terma/compare/v1.6.3...v1.6.4)
+
 ## v1.6.3
 
 [English](#english) · [简体中文](#简体中文)

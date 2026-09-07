@@ -147,7 +147,12 @@ const sftpBackendSource = fs.readFileSync(path.join(root, "src", "sftp.ts"), "ut
 assert.match(sftpBackendSource, /await yieldSftpWork\(\)/, "大目录元数据解析必须分批让出共享事件循环");
 assert.match(sftpBackendSource, /snapshot\.page_orders \|\| \(snapshot\.page_orders = new Map\(\)\)/, "目录分页必须复用排序结果");
 assert.match(sftpFrontendSource, /await requestSftpDirectoryPage\(id, params, controller\?\.signal \|\| null\)/, "SFTP 标签目录读取必须复用共享请求并保留标签级取消");
-assert.match(sftpFrontendSource, /directoryAccessError \? "connected" : "disconnected"/, "目录权限和不存在错误不能误报为 SFTP 连接断开");
+assert.match(sftpFrontendSource, /api\(`\/api\/connections\/\$\{id\}\/sftp\/session`, \{skipSftpConnect:true\}\)/, "目录查询失败后必须核对持久 SFTP 会话状态");
+assert.match(sftpFrontendSource, /connectionStillActive \? "connected" : "disconnected"/, "查询失败但会话仍在线时不能误报 SFTP 连接断开");
+const byteSafeQueryCommand = __buildRemotePagedDirectoryEntriesCommand({query:"艺", sort:"name"});
+assert.match(byteSafeQueryCommand, /LC_ALL=C grep -a -F -i -- "\$TERMA_QUERY"/, "分页搜索必须按字节处理混合编码文件名，不能输出二进制匹配提示");
+const byteSafeMetadataCommand = __buildRemotePagedDirectoryEntriesCommand({query:"艺", sort:"size"});
+assert.match(byteSafeMetadataCommand, /LC_ALL=C awk -F "\$TERMA_TAB"/, "元数据排序搜索必须在字节安全的区域设置下匹配文件名");
 assert.match(sftpFrontendSource, /function jumpSftpPage\(/, "SFTP 分页必须支持直接跳转到指定页");
 assert.match(sftpFrontendSource, /class="sftp-page-jump"/, "SFTP 分页器必须渲染页码跳转控件");
 assert.match(sftpFrontendSource, /event\.ctrlKey.*event\.deltaY/s, "图片预览必须支持 Ctrl 加滚轮缩放");

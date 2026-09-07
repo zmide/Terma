@@ -829,7 +829,7 @@ async function handleNotificationEvent(event, options={}) {
   if (event.type === "update" && typeof loadCachedUpdateStatus === "function") await loadCachedUpdateStatus();
   const ignoredUpdate = event.type === "update" && updateSettings?.update_ignored;
   const allowed = !["off", "muted"].includes(securitySettings?.notification_mode);
-  if (options.display !== false && !ignoredUpdate && allowed) {
+  if (options.display !== false && event.silent !== true && !ignoredUpdate && allowed) {
     notify(`${event.title}${event.message ? `\n${event.message}` : ""}`, event.level === "error" ? "error" : event.level === "success" ? "success" : "info", {action:event.action});
     if (!options.fromDesktop) showDesktopNotification(event);
   }

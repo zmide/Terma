@@ -7,6 +7,11 @@ const {
   createUpdateChecker,
   parseGitHubRepository
 } = require("../dist/update-checker");
+const {
+  DEFAULT_UPDATE_INTERVAL_MS,
+  DEFAULT_UPDATE_STARTUP_DELAY_MS,
+  createUpdateScheduler
+} = require("../dist/update-scheduler");
 
 const projectRoot = path.resolve(__dirname, "..");
 
@@ -64,12 +69,98 @@ async function check(name, callback) {
 }
 
 (async () => {
-  await check("startup forces one update check while settings keeps the cached check path", async () => {
+  await check("startup and six-hour schedule force update checks while settings keeps the cached check path", async () => {
     const runtimeSource = fs.readFileSync(path.join(projectRoot, "src", "server-runtime.ts"), "utf8");
     const settingsSource = fs.readFileSync(path.join(projectRoot, "public", "app-settings-updates.js"), "utf8");
-    assert.match(runtimeSource, /updateChecker\.check\(\{force:true\}\)/);
-    assert.match(runtimeSource, /}, 10 \* 1000\);/);
+    assert.match(runtimeSource, /createUpdateScheduler\(\{[\s\S]*checker:updateChecker,[\s\S]*onResult\(result, context\)/);
+    assert.match(runtimeSource, /silent:true/);
+    assert.match(runtimeSource, /key:`update-status:\$\{marker\}`/);
+    assert.match(runtimeSource, /updateScheduler\.start\(\)/);
+    assert.match(runtimeSource, /updateScheduler\.stop\(\)/);
     assert.match(settingsSource, /`\/api\/updates\/check\$\{force \? "\?force=1" : ""\}`/);
+  });
+
+  await check("update scheduler repeats every six hours and stops pending timers", async () => {
+    const scheduled = [];
+    const checks = [];
+    const cleared = [];
+    const results = [];
+    const scheduler = createUpdateScheduler({
+      checker:{async check(options) { checks.push(options); return {latest_version:"1.0.8"}; }},
+      setTimeout(callback, delay) {
+        const handle = {callback, delay, unrefCalled:false, unref() { this.unrefCalled = true; }};
+        scheduled.push(handle);
+        return handle;
+      },
+      clearTimeout(handle) {
+        handle.cleared = true;
+        cleared.push(handle);
+      },
+      onResult(result, context) { results.push({result, context}); }
+    });
+    assert.equal(DEFAULT_UPDATE_INTERVAL_MS, 6 * 60 * 60 * 1000);
+    scheduler.start();
+    assert.equal(scheduled.length, 1);
+    assert.equal(scheduled[0].delay, DEFAULT_UPDATE_STARTUP_DELAY_MS);
+    assert.equal(scheduled[0].unrefCalled, true);
+    const startup = scheduled.shift();
+    await startup.callback();
+    assert.deepEqual(checks, [{force:true, notify:true}]);
+    assert.deepEqual(results, [{result:{latest_version:"1.0.8"}, context:{startup:true}}]);
+    assert.equal(scheduled.length, 1);
+    assert.equal(scheduled[0].delay, DEFAULT_UPDATE_INTERVAL_MS);
+    const recurring = scheduled.shift();
+    await recurring.callback();
+    assert.deepEqual(checks, [{force:true, notify:true}, {force:true, notify:false}]);
+    assert.deepEqual(results[1], {result:{latest_version:"1.0.8"}, context:{startup:false}});
+    assert.equal(scheduled.length, 1);
+    scheduler.stop();
+    assert.equal(cleared.length, 1);
+    assert.equal(cleared[0].cleared, true);
+    await scheduled[0].callback();
+    assert.equal(checks.length, 2);
+    assert.equal(scheduled.length, 1);
+  });
+
+  await check("update scheduler continues after failures and does not reschedule a stopped in-flight check", async () => {
+    const failureTimers = [];
+    const failures = [];
+    const retrying = createUpdateScheduler({
+      checker:{async check() { throw new Error("offline"); }},
+      setTimeout(callback, delay) {
+        const handle = {callback, delay, unref() {}};
+        failureTimers.push(handle);
+        return handle;
+      },
+      clearTimeout() {},
+      onError(error) { failures.push(error.message); }
+    });
+    retrying.start();
+    await failureTimers.shift().callback();
+    assert.deepEqual(failures, ["offline"]);
+    assert.equal(failureTimers.length, 1);
+    assert.equal(failureTimers[0].delay, DEFAULT_UPDATE_INTERVAL_MS);
+    retrying.stop();
+
+    const inFlightTimers = [];
+    let finishCheck;
+    const pendingCheck = new Promise(resolve => { finishCheck = resolve; });
+    const stopped = createUpdateScheduler({
+      checker:{check() { return pendingCheck; }},
+      setTimeout(callback, delay) {
+        const handle = {callback, delay, unref() {}};
+        inFlightTimers.push(handle);
+        return handle;
+      },
+      clearTimeout() {}
+    });
+    stopped.start();
+    const runningCheck = inFlightTimers.shift().callback();
+    await Promise.resolve();
+    stopped.stop();
+    finishCheck();
+    await runningCheck;
+    assert.equal(inFlightTimers.length, 0);
   });
 
   await check("settings checks cancel stale requests and render unchanged release notes without blocking", async () => {
@@ -324,6 +415,26 @@ async function check(name, callback) {
     assert.deepEqual(notified, ["1.0.8", "1.0.9"]);
     const state = JSON.parse(fs.readFileSync(path.join(project.dataDir, "update-check.json"), "utf8"));
     assert.equal(state.notified_latest_version, "1.0.9");
+  });
+
+  await check("silent scheduled checks cache updates without consuming the next visible notification", async () => {
+    const project = temporaryProject();
+    const notified = [];
+    const checker = createUpdateChecker({
+      ...project,
+      fetch: async () => response(200, release("v1.0.8")),
+      onUpdate: result => notified.push(result.latest_version)
+    });
+    const silentResult = await checker.check({force:true, notify:false});
+    assert.equal(silentResult.update_available, true);
+    assert.deepEqual(notified, []);
+    const silentState = JSON.parse(fs.readFileSync(path.join(project.dataDir, "update-check.json"), "utf8"));
+    assert.equal(silentState.notified_latest_version || "", "");
+
+    await checker.check({force:true, notify:true});
+    assert.deepEqual(notified, ["1.0.8"]);
+    const visibleState = JSON.parse(fs.readFileSync(path.join(project.dataDir, "update-check.json"), "utf8"));
+    assert.equal(visibleState.notified_latest_version, "1.0.8");
   });
 
   await check("same-version republished releases are surfaced and notified once", async () => {
