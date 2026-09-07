@@ -53,7 +53,7 @@ Terma includes or integrates the following third-party components in addition to
 ## Electron
 
 - Project: https://github.com/electron/electron
-- Version: 44.0.0
+- Version: 44.2.0
 - License: MIT License
 - Use: desktop application runtime
 - Copyright: Copyright (c) Electron contributors
