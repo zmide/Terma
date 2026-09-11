@@ -394,7 +394,7 @@ body.operation-pane-resizing, body.operation-pane-resizing * { cursor:col-resize
 .sftp-automation-field-caption { color:var(--muted); font-size:11px; }
 .sftp-automation-weekdays { display:flex; flex-wrap:wrap; gap:6px; }
 .sftp-automation-weekdays .checkline { min-height:31px; padding:5px 8px; border:1px solid var(--line); border-radius:7px; background:var(--panel); }
-.sftp-automation-half-hour-slots { width:100%; max-width:100%; min-width:0; display:grid; grid-template-columns:repeat(auto-fill,minmax(72px,1fr)); gap:5px; max-height:190px; overflow:auto; padding:2px; box-sizing:border-box; }
+.sftp-automation-half-hour-slots { width:100%; max-width:100%; min-width:0; display:grid; grid-template-columns:repeat(auto-fit,minmax(min(72px,100%),1fr)); gap:5px; max-height:190px; overflow:auto; padding:2px; box-sizing:border-box; }
 .sftp-automation-half-hour-slots .checkline { min-height:28px; padding:4px 6px; border:1px solid var(--line); border-radius:6px; background:var(--panel); font-variant-numeric:tabular-nums; }
 .sftp-automation-start-field { display:grid; gap:5px; min-width:0; }
 .sftp-automation-start-field input { max-width:260px; }

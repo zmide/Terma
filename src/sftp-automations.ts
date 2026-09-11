@@ -361,9 +361,15 @@ function isOneShotAutomation(automation: any) {
 }
 
 function localTarget(root: string, relative: string) {
-  const target = path.resolve(root, relative);
-  const rel = path.relative(path.resolve(root), target);
-  if (rel.startsWith("..") || path.isAbsolute(rel)) throw new Error("自动化任务本机目标路径越界");
+  // Regression fixtures may validate Windows paths from a Linux runner.  Use
+  // the path implementation matching the supplied root so those paths are
+  // not accidentally resolved relative to the runner's working directory.
+  const rootValue = String(root || "");
+  const pathApi = path.win32.isAbsolute(rootValue) ? path.win32 : path;
+  const rootAbsolute = pathApi.resolve(rootValue);
+  const target = pathApi.resolve(rootAbsolute, String(relative || ""));
+  const rel = pathApi.relative(rootAbsolute, target);
+  if (rel === ".." || rel.startsWith(`..${pathApi.sep}`) || pathApi.isAbsolute(rel)) throw new Error("自动化任务本机目标路径越界");
   return target;
 }
 
