@@ -1,7 +1,7 @@
 const { randomBytes } = require("node:crypto");
 const path = require("node:path");
 const { buildRemotePosixCommand } = require("./remote-posix");
-const { getSftpConnection, spawnSftpSessionCommand } = require("./sftp-session");
+const { getSftpConnection, readSftpDirectory, spawnSftpSessionCommand } = require("./sftp-session");
 const {
   decodeRemoteFilenameOutput,
   decodeRemoteText,
@@ -54,26 +54,35 @@ function spawnRemote(connection, command) {
   return spawnSftpSessionCommand(connection, buildRemotePosixCommand(command));
 }
 
-function runRemoteCommand(connection, command, input = null, timeoutMs = 30000): Promise<Buffer> {
+function runRemoteCommand(connection, command, input = null, timeoutMs = 30000, signal = null): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = spawnSftpSessionCommand(connection, command);
     const chunks = [];
     const errors = [];
     let settled = false;
+    let timer = null;
+    let onAbort = null;
     const finish = (error = null, code = null) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener?.("abort", onAbort);
       const stdout = Buffer.concat(chunks);
       const stderr = Buffer.concat(errors).toString("utf8");
       if (error) reject(error);
       else if (code !== 0) reject(new Error(stderr || (code === null ? "远程目录命令被连接中断，请重试" : `远程命令退出码 ${code}`)));
       else resolve(stdout);
     };
-    const timer = setTimeout(() => {
+    onAbort = () => {
+      try { child.kill("SIGKILL"); } catch {}
+      finish(Object.assign(new Error("SFTP directory request aborted"), {name:"AbortError"}));
+    };
+    timer = setTimeout(() => {
       try { child.kill("SIGKILL"); } catch {}
       finish(new Error("远程文件操作超时"));
     }, timeoutMs);
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener?.("abort", onAbort, {once:true});
     child.stdout.on("data", (chunk) => chunks.push(chunk));
     child.stderr.on("data", (chunk) => errors.push(chunk));
     child.on("error", (error) => finish(error));
@@ -83,8 +92,8 @@ function runRemoteCommand(connection, command, input = null, timeoutMs = 30000):
   });
 }
 
-function runRemote(connection, command, input = null, timeoutMs = 30000): Promise<Buffer> {
-  return runRemoteCommand(connection, buildRemotePosixCommand(command), input, timeoutMs);
+function runRemote(connection, command, input = null, timeoutMs = 30000, signal = null): Promise<Buffer> {
+  return runRemoteCommand(connection, buildRemotePosixCommand(command), input, timeoutMs, signal);
 }
 
 function positiveInteger(value, fallback, label) {
@@ -217,8 +226,10 @@ function invalidateRemoteDirectoryCache(connectionId) {
   for (const key of [...directoryAliases.keys()]) {
     if (key.startsWith(prefix)) directoryAliases.delete(key);
   }
-  for (const key of [...directorySnapshotRequests.keys()]) {
-    if (key.startsWith(prefix)) directorySnapshotRequests.delete(key);
+  for (const [key, request] of [...directorySnapshotRequests.entries()]) {
+    if (!key.startsWith(prefix)) continue;
+    request.cancel?.();
+    directorySnapshotRequests.delete(key);
   }
 }
 
@@ -245,7 +256,7 @@ function buildRemoteDirectoryEntriesCommand() {
   ].join("; ");
 }
 
-async function enumerateRemoteDir(connectionId, remotePath = ".") {
+async function enumerateRemoteDir(connectionId, remotePath = ".", signal = null) {
   const connection = getSftpConnection(connectionId);
   const dir = remotePath || ".";
   const listEntries = buildRemoteDirectoryEntriesCommand();
@@ -253,7 +264,7 @@ async function enumerateRemoteDir(connectionId, remotePath = ".") {
     remotePathOperand(connection, dir),
     `${buildRemoteDirectoryHeaderCommand()}; ${listEntries}`
   );
-  const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command));
+  const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command, null, 30000, signal));
   const {path:resolvedPath, rows} = parseRemoteDirectoryOutput(output);
   const entries = [];
   for (let index = 0; index < rows.length; index += 1) {
@@ -383,6 +394,87 @@ function parseRemoteDirectoryHeader(lines) {
   return resolvedPath;
 }
 
+function nativeSftpEntryType(attrs: any) {
+  const mode = Number(attrs?.mode || 0);
+  const kind = mode & 0o170000;
+  if (kind === 0o040000) return "dir";
+  return "file";
+}
+
+function nativeSftpEntryIsSymlink(attrs: any) {
+  return (Number(attrs?.mode || 0) & 0o170000) === 0o120000;
+}
+
+function nativeSftpEntryMode(attrs: any) {
+  const mode = Number(attrs?.mode || 0) & 0o7777;
+  return mode ? mode.toString(8) : "";
+}
+
+function decodeNativeSftpName(connection, rawName, rawBytes) {
+  try {
+    const iconv = require("iconv-lite");
+    const encoding = String(connection?.sftp_filename_encoding || "utf8").toLowerCase();
+    if (Buffer.isBuffer(rawBytes)) return iconv.decode(rawBytes, encoding);
+  } catch {}
+  return String(rawName || "");
+}
+
+function encodeNativeSftpPath(connection, remotePath, name, rawBytes) {
+  // Keep the exact filename bytes for configured legacy or mixed encodings so
+  // delete/open actions still address the remote entry after display decoding.
+  try {
+    const iconv = require("iconv-lite");
+    const encoding = String(connection?.sftp_filename_encoding || "utf8").toLowerCase();
+    const base = String(remotePath || ".");
+    const prefix = base === "/" ? "/" : `${base.replace(/\/+$/, "")}/`;
+    const nameBytes = Buffer.isBuffer(rawBytes) ? rawBytes : iconv.encode(String(name || ""), encoding);
+    return Buffer.concat([iconv.encode(prefix, encoding), nameBytes]).toString("base64");
+  } catch {
+    return "";
+  }
+}
+
+function mapNativeSftpEntries(connection, remotePath, rawEntries) {
+  const entries = [];
+  for (const raw of Array.isArray(rawEntries) ? rawEntries : []) {
+    const name = decodeNativeSftpName(connection, raw?.filename, raw?.filename_bytes);
+    if (!name || name === "." || name === "..") continue;
+    if (SFTP_RECYCLE_DIRECTORIES.includes(name) || /^\.(?:terma|tunneldesk)-upload-.*\.part$/.test(name)) continue;
+    const attrs = raw?.attrs || {};
+    const targetAttrs = raw?.targetAttrs || null;
+    const symlink = nativeSftpEntryIsSymlink(attrs);
+    const effectiveAttrs = symlink && targetAttrs ? targetAttrs : attrs;
+    const type = nativeSftpEntryType(effectiveAttrs);
+    entries.push({
+      name,
+      type,
+      size:Math.max(0, Number(effectiveAttrs.size || 0)),
+      mtime:Math.max(0, Number(effectiveAttrs.mtime || 0)),
+      mode:nativeSftpEntryMode(effectiveAttrs),
+      owner:effectiveAttrs.uid === undefined ? "" : String(effectiveAttrs.uid),
+      group:effectiveAttrs.gid === undefined ? "" : String(effectiveAttrs.gid),
+      path_bytes_b64:encodeNativeSftpPath(connection, remotePath, name, raw?.filename_bytes),
+      is_symlink:symlink,
+      link_size:symlink ? Math.max(0, Number(attrs.size || 0)) : 0,
+      link_target_missing:symlink && !targetAttrs,
+      metadata_known:true
+    });
+  }
+  return entries;
+}
+
+async function enumerateRemoteDirNative(connectionId, remotePath = ".", signal = null) {
+  const connection = getSftpConnection(connectionId);
+  const dir = remotePath || ".";
+  const result = await readSftpDirectory(connectionId, dir, {resolveSymlinks:true, signal});
+  const resolvedPath = String(result?.path || dir);
+  const entries = mapNativeSftpEntries(connection, resolvedPath, result?.entries);
+  for (let index = DIRECTORY_PARSE_BATCH_SIZE; index < entries.length; index += DIRECTORY_PARSE_BATCH_SIZE) {
+    await yieldSftpWork();
+  }
+  return {path:resolvedPath, entries};
+}
+
 async function resolveRemoteDirectory(connectionId, remotePath = ".") {
   const connection = getSftpConnection(connectionId);
   const dir = remotePath || ".";
@@ -419,14 +511,14 @@ function parseRemotePagedDirectoryOutput(output) {
   return {path, total, unfilteredTotal, rows:lines.slice(4)};
 }
 
-async function listRemoteDirPaged(connectionId, remotePath, options: any = {}) {
+async function listRemoteDirPaged(connectionId, remotePath, options: any = {}, signal = null) {
   const connection = getSftpConnection(connectionId);
   const dir = remotePath || ".";
   const command = buildRemoteDirectoryReadCommand(
     remotePathOperand(connection, dir),
     buildRemotePagedDirectoryEntriesCommand(options)
   );
-  const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command, null, LARGE_DIRECTORY_METADATA_TIMEOUT_MS));
+  const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command, null, LARGE_DIRECTORY_METADATA_TIMEOUT_MS, signal));
   const {path:resolvedPath, total, unfilteredTotal, rows} = parseRemotePagedDirectoryOutput(output);
   const pageSize = Number(options.page_size || DEFAULT_DIRECTORY_PAGE_SIZE);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -464,12 +556,12 @@ async function listRemoteDirPaged(connectionId, remotePath, options: any = {}) {
   };
 }
 
-async function enumerateRemoteTree(connectionId, remotePath = ".") {
+async function enumerateRemoteTree(connectionId, remotePath = ".", signal = null) {
   const connection = getSftpConnection(connectionId);
   const dir = remotePath || ".";
   const limitedEntries = `{ ${buildRemoteDirectoryHeaderCommand()}; ${buildRemoteRecursiveDirectoryEntriesCommand()}; } | sed -n '1,${MAX_RECURSIVE_SEARCH_ENTRIES + 3}p;${MAX_RECURSIVE_SEARCH_ENTRIES + 4}q'`;
   const command = buildRemoteDirectoryReadCommand(remotePathOperand(connection, dir), limitedEntries);
-  const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command, null, 30000));
+  const output = decodeRemoteFilenameOutput(connection, await runRemote(connection, command, null, 30000, signal));
   const {path:resolvedPath, rows:allRows} = parseRemoteDirectoryOutput(output);
   const truncated = allRows.length > MAX_RECURSIVE_SEARCH_ENTRIES;
   const rows = allRows.slice(0, MAX_RECURSIVE_SEARCH_ENTRIES);
@@ -495,7 +587,40 @@ async function enumerateRemoteTree(connectionId, remotePath = ".") {
   return {path:resolvedPath, truncated, entries};
 }
 
-async function loadDirectorySnapshot(connectionId, remotePath, recursive, refresh) {
+function awaitDirectorySnapshotRequest(request, signal = null) {
+  const waiter = {};
+  if (signal?.aborted) return Promise.reject(Object.assign(new Error("SFTP directory request aborted"), {name:"AbortError"}));
+  request.waiters.add(waiter);
+  let settled = false;
+  const release = () => {
+    if (settled) return;
+    settled = true;
+    request.waiters.delete(waiter);
+    if (!request.waiters.size && !request.done) request.cancel?.();
+  };
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+      release();
+      reject(Object.assign(new Error("SFTP directory request aborted"), {name:"AbortError"}));
+    };
+    if (signal) signal.addEventListener("abort", onAbort, {once:true});
+    request.promise.then(
+      value => {
+        if (signal) signal.removeEventListener("abort", onAbort);
+        release();
+        resolve(value);
+      },
+      error => {
+        if (signal) signal.removeEventListener("abort", onAbort);
+        release();
+        reject(error);
+      }
+    );
+  });
+}
+
+async function loadDirectorySnapshot(connectionId, remotePath, recursive, refresh, directoryReader = null, signal = null) {
   if (!refresh) {
     const cached = cachedDirectorySnapshot(connectionId, remotePath, recursive);
     if (cached) return cached;
@@ -504,7 +629,16 @@ async function loadDirectorySnapshot(connectionId, remotePath, recursive, refres
   let request = directorySnapshotRequests.get(requestKey);
   if (!request) {
     const cacheVersion = Number(directoryCacheVersions.get(Number(connectionId)) || 0);
-    request = (recursive ? enumerateRemoteTree(connectionId, remotePath) : enumerateRemoteDir(connectionId, remotePath))
+    const reader = directoryReader || (recursive ? enumerateRemoteTree : enumerateRemoteDirNative);
+    const controller = typeof AbortController === "function" ? new AbortController() : null;
+    const readerSignal = controller?.signal || null;
+    request = {
+      controller,
+      waiters:new Set(),
+      done:false,
+      cancel:() => controller?.abort()
+    };
+    request.promise = Promise.resolve().then(() => reader(connectionId, remotePath, readerSignal))
       .then((result) => {
         const snapshot = {...result, expires_at:Date.now() + DIRECTORY_CACHE_TTL_MS};
         if (Number(directoryCacheVersions.get(Number(connectionId)) || 0) === cacheVersion) {
@@ -513,28 +647,41 @@ async function loadDirectorySnapshot(connectionId, remotePath, recursive, refres
         return snapshot;
       })
       .finally(() => {
+        request.done = true;
         if (directorySnapshotRequests.get(requestKey) === request) directorySnapshotRequests.delete(requestKey);
       });
     directorySnapshotRequests.set(requestKey, request);
   }
-  return request;
+  // A request can outlive every browser waiter. Keep a rejection handler on
+  // the shared promise so an aborted last waiter cannot create an unhandled
+  // rejection while preserving the original error for active waiters.
+  request.promise.catch(() => {});
+  return awaitDirectorySnapshotRequest(request, signal);
 }
 
 async function listRemoteDir(connectionId, remotePath = ".", options: any = {}) {
+  const abortSignal = options?.signal || options?.abortSignal || null;
   const normalized = normalizeRemoteDirectoryListOptions(options);
   const recursive = normalized.recursive && Boolean(normalized.query);
   let snapshot;
   try {
-    snapshot = await loadDirectorySnapshot(connectionId, remotePath, recursive, normalized.refresh);
-  } catch (error) {
-    if (!recursive && shouldFallbackToPagedDirectoryRead(error)) {
-      try {
-        return await listRemoteDirPaged(connectionId, remotePath, normalized);
-      } catch (fallbackError) {
-        throw normalizeRemoteDirectoryReadError(fallbackError, remotePath);
+    snapshot = await loadDirectorySnapshot(connectionId, remotePath, recursive, normalized.refresh, null, abortSignal);
+  } catch (nativeError) {
+    if (recursive) throw normalizeRemoteDirectoryReadError(nativeError, remotePath);
+    // Keep the shell implementation as a compatibility path for servers that
+    // reject SFTP READDIR or expose an unusual filename encoding.
+    try {
+      snapshot = await loadDirectorySnapshot(connectionId, remotePath, false, normalized.refresh, enumerateRemoteDir, abortSignal);
+    } catch (shellError) {
+      if (shouldFallbackToPagedDirectoryRead(shellError)) {
+        try {
+          return await listRemoteDirPaged(connectionId, remotePath, normalized, abortSignal);
+        } catch (fallbackError) {
+          throw normalizeRemoteDirectoryReadError(fallbackError, remotePath);
+        }
       }
+      throw normalizeRemoteDirectoryReadError(shellError, remotePath);
     }
-    throw normalizeRemoteDirectoryReadError(error, remotePath);
   }
   return {
     path: snapshot.path,
@@ -740,6 +887,22 @@ function buildRecycleRemotePathCommand(remotePath, itemId, deletedAt = Date.now(
     `if [ -e ${sourcePathOperand} ] || [ -L ${sourcePathOperand} ]; then echo "远程项目移入回收站后仍存在" >&2; exit 1; fi`,
     `if [ ! -e "$terma_item/payload" ] && [ ! -L "$terma_item/payload" ]; then echo "回收站项目写入失败" >&2; exit 1; fi`
   ].join("; ");
+}
+
+function buildDeleteRemoteFileCommand(remotePath, connection = null) {
+  const normalizedPath = normalizeRemoteDeletePath(remotePath);
+  const operand = remotePathOperand(connection, normalizedPath);
+  return {
+    path:normalizedPath,
+    command:`if [ -L ${operand} ] || [ ! -f ${operand} ]; then printf '%s\\n' '远程目标不是可删除的普通文件' >&2; exit 1; fi; rm -f -- ${operand}; if [ -e ${operand} ] || [ -L ${operand} ]; then printf '%s\\n' '远程文件删除后仍存在' >&2; exit 1; fi`
+  };
+}
+
+async function deleteRemoteFile(connectionId, remotePath) {
+  const connection = getSftpConnection(connectionId);
+  const request = buildDeleteRemoteFileCommand(remotePath, connection);
+  await runRemote(connection, request.command);
+  return {ok:true,path:request.path};
 }
 
 function buildListRemoteRecycleCommand() {
@@ -1289,6 +1452,7 @@ module.exports = {
   listRemoteFileVersions,
   __remoteBackupVersionTimestamp:remoteBackupVersionTimestamp,
   __buildRemoteDirectoryEntriesCommand:buildRemoteDirectoryEntriesCommand,
+  __mapNativeSftpEntries:mapNativeSftpEntries,
   __buildRemoteDirectoryReadCommand:buildRemoteDirectoryReadCommand,
   __buildRemotePagedDirectoryEntriesCommand:buildRemotePagedDirectoryEntriesCommand,
   __buildRemoteRecursiveDirectoryEntriesCommand:buildRemoteRecursiveDirectoryEntriesCommand,
@@ -1303,11 +1467,14 @@ module.exports = {
   invalidateRemoteDirectoryCache,
   __cacheDirectorySnapshot: cacheDirectorySnapshot,
   __cachedDirectorySnapshot: cachedDirectorySnapshot,
+  __loadDirectorySnapshot: loadDirectorySnapshot,
   makeRemoteDir,
   buildRemoteCreateFileCommand,
   createRemoteFile,
   buildDeleteRemotePathCommand,
   deleteRemotePath,
+  buildDeleteRemoteFileCommand,
+  deleteRemoteFile,
   recycleRemotePath,
   listRemoteRecycleItems,
   restoreRemoteRecycleItem,

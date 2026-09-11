@@ -7,6 +7,7 @@ const root = path.resolve(__dirname, "..");
 const {
   __cacheDirectorySnapshot,
   __cachedDirectorySnapshot,
+  __loadDirectorySnapshot,
   __remoteBackupVersionTimestamp,
   buildClearRemoteRecycleCommand,
   buildDeleteRemoteRecycleCommand,
@@ -15,6 +16,7 @@ const {
   buildRestoreRemoteRecycleCommand,
   buildRemoteCreateFileCommand,
   __buildRemoteDirectoryEntriesCommand,
+  __mapNativeSftpEntries,
   __buildRemoteDirectoryReadCommand,
   __buildRemotePagedDirectoryEntriesCommand,
   __buildRemoteRecursiveDirectoryEntriesCommand,
@@ -144,9 +146,44 @@ assert.match(sftpFrontendSource, /function sftpArchiveEncodingOptionsHtml\(selec
 assert.match(sftpFrontendSource, /sftpArchiveEncodingOptionsHtml\(initialEncoding\)/, "归档编码下拉框必须跟随当前连接编码");
 
 const sftpBackendSource = fs.readFileSync(path.join(root, "src", "sftp.ts"), "utf8");
+const sftpSessionSource = fs.readFileSync(path.join(root, "src", "sftp-session.ts"), "utf8");
+const sftpRouteSource = fs.readFileSync(path.join(root, "src", "routes", "sftp-transfer-routes.ts"), "utf8");
+const iconv = require("iconv-lite");
+const nativeFixture = __mapNativeSftpEntries({sftp_filename_encoding:"utf8"}, "/srv/data", [
+  {filename:"folder", attrs:{mode:0o040755, size:0, mtime:20, uid:1000, gid:1000}},
+  {filename:"file.txt", attrs:{mode:0o100644, size:42, mtime:10, uid:1000, gid:1000}},
+  {filename:".terma-recycle-bin", attrs:{mode:0o040755, size:0, mtime:30, uid:1000, gid:1000}}
+]);
+assert.deepEqual(nativeFixture.map(entry => [entry.name, entry.type, entry.size, entry.mode]), [
+  ["folder", "dir", 0, "755"],
+  ["file.txt", "file", 42, "644"]
+], "native SFTP attributes must map to the existing directory entry contract");
+const gbkNameBytes = iconv.encode("中文.txt", "gbk");
+const gbkFixture = __mapNativeSftpEntries({sftp_filename_encoding:"gbk"}, "/srv/data", [
+  {filename:gbkNameBytes.toString("utf8"), filename_bytes:gbkNameBytes, attrs:{mode:0o100644, size:7, mtime:20, uid:1000, gid:1000}}
+]);
+assert.equal(gbkFixture[0].name, "中文.txt", "GBK 原始文件名必须按连接编码解码");
+assert.deepEqual(Buffer.from(gbkFixture[0].path_bytes_b64, "base64").subarray(-gbkNameBytes.length), gbkNameBytes, "GBK 路径必须保留原始文件名字节");
+const patchScript = path.join(root, "scripts", "patch-ssh2-sftp-raw.js");
+require("node:child_process").execFileSync(process.execPath, [patchScript]);
+require("node:child_process").execFileSync(process.execPath, [patchScript]);
+const patchedSftpSource = fs.readFileSync(path.join(root, "node_modules", "ssh2", "lib", "protocol", "SFTP.js"), "utf8");
+assert.match(patchedSftpSource, /filenameBytes/, "ssh2 原始文件名补丁必须保留 filenameBytes");
+assert.match(patchedSftpSource, /filename_bytes: filenameBytes/, "ssh2 原始文件名补丁必须输出 filename_bytes");
+assert.match(sftpBackendSource, /readSftpDirectory\(connectionId, dir, \{resolveSymlinks:true, signal\}\)/, "normal SFTP browsing must use the native directory channel");
+assert.match(sftpSessionSource, /channel\.readdir\(remotePath/, "native SFTP browsing must issue READDIR instead of a remote shell");
+assert.match(sftpSessionSource, /SFTP_DIRECTORY_CHANNEL_IDLE_TTL_MS/, "目录浏览必须保留可复用的空闲 SFTP 子通道");
+assert.match(sftpSessionSource, /acquireSftpDirectoryChannel\(connectionId, options\.signal\)/, "目录浏览必须从连接级子通道池借用通道");
+assert.match(sftpSessionSource, /releaseSftpDirectoryChannel\(lease, reusable\)/, "目录读取结束后必须归还或关闭租用的子通道");
+assert.match(sftpSessionSource, /sftpStatCancellable\(/, "目录读取取消必须覆盖符号链接元数据请求");
+assert.match(sftpRouteSource, /request\.once\("aborted", abort\)/, "SFTP directory requests must abort when the browser cancels them");
+assert.match(sftpRouteSource, /signal:abortController\.signal/, "SFTP directory cancellation must reach the backend reader");
 assert.match(sftpBackendSource, /await yieldSftpWork\(\)/, "大目录元数据解析必须分批让出共享事件循环");
 assert.match(sftpBackendSource, /snapshot\.page_orders \|\| \(snapshot\.page_orders = new Map\(\)\)/, "目录分页必须复用排序结果");
+assert.match(sftpBackendSource, /request\.waiters\.add\(waiter\)/, "共享目录快照必须按等待者跟踪取消订阅");
+assert.match(sftpBackendSource, /if \(!request\.waiters\.size && !request\.done\) request\.cancel\?\.\(\)/, "仅当没有等待者时才取消底层目录读取");
 assert.match(sftpFrontendSource, /await requestSftpDirectoryPage\(id, params, controller\?\.signal \|\| null\)/, "SFTP 标签目录读取必须复用共享请求并保留标签级取消");
+assert.match(sftpFrontendSource, /api\(requestPath, \{signal\}\)/, "过期 SFTP 搜索必须把 AbortSignal 传给实际 fetch");
 assert.match(sftpFrontendSource, /api\(`\/api\/connections\/\$\{id\}\/sftp\/session`, \{skipSftpConnect:true\}\)/, "目录查询失败后必须核对持久 SFTP 会话状态");
 assert.match(sftpFrontendSource, /connectionStillActive \? "connected" : "disconnected"/, "查询失败但会话仍在线时不能误报 SFTP 连接断开");
 const byteSafeQueryCommand = __buildRemotePagedDirectoryEntriesCommand({query:"艺", sort:"name"});
@@ -460,4 +497,51 @@ assert.deepEqual(JSON.parse(JSON.stringify(frontendContext.permissionModeToCheck
 assert.equal(frontendContext.permissionChecksToMode({ownerRead:true,ownerWrite:true,ownerExecute:false,groupRead:true,groupWrite:false,groupExecute:false,publicRead:false,publicWrite:false,publicExecute:false}), "640");
 assert.equal(frontendContext.normalizePermissionMode("888"), "");
 
-console.log("SFTP pagination checks passed");
+async function runDirectoryCancellationChecks() {
+  const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
+  let readerStarts = 0;
+  let readerAborted = false;
+  const delayedReader = (_connectionId, _remotePath, readerSignal) => new Promise((resolve, reject) => {
+    readerStarts += 1;
+    let timer = null;
+    const onAbort = () => {
+      readerAborted = true;
+      if (timer) clearTimeout(timer);
+      readerSignal?.removeEventListener?.("abort", onAbort);
+      reject(Object.assign(new Error("SFTP directory request aborted"), {name:"AbortError"}));
+    };
+    if (readerSignal?.aborted) return onAbort();
+    timer = setTimeout(() => {
+      readerSignal?.removeEventListener?.("abort", onAbort);
+      resolve({path:"/shared", entries:[]});
+    }, 40);
+    readerSignal?.addEventListener?.("abort", onAbort, {once:true});
+  });
+
+  const firstWaiter = new AbortController();
+  const secondWaiter = new AbortController();
+  const sharedOne = __loadDirectorySnapshot(9901, "/shared", false, true, delayedReader, firstWaiter.signal);
+  const sharedTwo = __loadDirectorySnapshot(9901, "/shared", false, true, delayedReader, secondWaiter.signal);
+  firstWaiter.abort();
+  await assert.rejects(sharedOne, /aborted/);
+  await assert.doesNotReject(sharedTwo, "一个标签取消不能中止另一个仍在等待的目录读取");
+  assert.equal(readerStarts, 1, "同目录并发读取必须只启动一次底层扫描");
+  assert.equal(readerAborted, false, "仍有等待者时不能中止共享底层读取");
+
+  const onlyWaiter = new AbortController();
+  const onlyRequest = __loadDirectorySnapshot(9902, "/cancelled", false, true, delayedReader, onlyWaiter.signal);
+  onlyWaiter.abort();
+  await assert.rejects(onlyRequest, /aborted/);
+  await wait(5);
+  assert.equal(readerAborted, true, "唯一等待者取消后必须中止底层目录读取");
+}
+
+runDirectoryCancellationChecks()
+  .then(() => {
+    require("node:child_process").execFileSync(process.execPath, [path.join(__dirname, "sftp-directory-latency-check.js")], {stdio:"inherit"});
+    console.log("SFTP pagination checks passed");
+  })
+  .catch(error => {
+    console.error(error);
+    process.exitCode = 1;
+  });

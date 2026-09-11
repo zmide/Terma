@@ -346,6 +346,68 @@ function sftpDragTargetNode(target) {
   return target.parentElement || null;
 }
 
+// Switching a tab replaces the pane view asynchronously. Keep the preview
+// alive long enough for the new SFTP surface to become the hit-test target.
+const SFTP_TAB_DRAG_INVALID_GRACE_MS = 360;
+
+function sftpDragTargetTabKey(target) {
+  const node = sftpDragTargetNode(target);
+  if (!node) return "";
+  const tab = node.closest?.(".tab[data-tab-key]");
+  if (tab) return String(tab.dataset.tabKey || "");
+  const sftpShell = node.closest?.(".sftp-shell[data-sftp-tab-key], .sftp-shell[data-tab-key]");
+  if (sftpShell) return String(sftpShell.dataset.sftpTabKey || sftpShell.dataset.tabKey || "");
+  const sftpView = node.closest?.("#view-sftp");
+  if (sftpView) return String(sftpView.dataset.sftpTabKey || sftpView.dataset.workspaceTabKey || "");
+  const localShell = node.closest?.(".local-files-shell[data-local-files-tab-key], .local-files-shell[data-tab-key]");
+  if (localShell) return String(localShell.dataset.localFilesTabKey || localShell.dataset.tabKey || "");
+  const localView = node.closest?.("#view-local-files");
+  if (localView) return String(localView.dataset.localFilesTabKey || localView.dataset.workspaceTabKey || "");
+  if (typeof terminalSessions !== "undefined") {
+    const session = [...terminalSessions.values()].find(item => item?.mount?.contains?.(node));
+    if (session) return String(session.key || "");
+  }
+  return "";
+}
+
+function sftpDragPreviewPaneElement(session=sftpTabDragPreviewSession) {
+  const key = String(session?.previewTabKey || "");
+  if (!key || typeof workspaceFindPaneForTab !== "function" || typeof workspacePaneElement !== "function") return null;
+  const pane = workspaceFindPaneForTab(key);
+  const paneElement = pane ? workspacePaneElement(pane.id) : null;
+  if (!paneElement) return null;
+  const tab = typeof workspaceTabByKey === "function"
+    ? workspaceTabByKey(key)
+    : tabs.find(item => String(item.key || "") === key);
+  const viewSelector = tab?.kind === "sftp"
+    ? "#view-sftp"
+    : tab?.kind === "terminal" || tab?.kind === "quick-terminal"
+      ? "#view-terminal"
+      : tab?.kind === "local-files"
+        ? "#view-local-files"
+        : "";
+  // Only the actual view is a valid continuation target. The pane chrome
+  // contains workspace tabs and headers, which must remain invalid zones.
+  return viewSelector ? paneElement.querySelector(viewSelector) : null;
+}
+
+function sftpDragPointInsideElement(element, clientX, clientY) {
+  if (!element?.getBoundingClientRect) return false;
+  const x = Number(clientX);
+  const y = Number(clientY);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const rect = element.getBoundingClientRect();
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+function isSftpDragPreviewPaneTarget(target, session=sftpTabDragPreviewSession, clientX, clientY) {
+  const pane = sftpDragPreviewPaneElement(session);
+  if (!pane) return false;
+  const node = sftpDragTargetNode(target);
+  if (node && pane.contains?.(node)) return true;
+  return sftpDragPointInsideElement(pane, clientX, clientY);
+}
+
 function isValidSftpInternalDragTarget(target) {
   const node = sftpDragTargetNode(target);
   if (!node) return false;
@@ -357,23 +419,59 @@ function isValidSftpInternalDragTarget(target) {
       : tabs.find(item => item.key === tabNode.dataset.tabKey);
     return Boolean(tab && ["sftp", "terminal", "local-files"].includes(tab.kind));
   }
-  return Boolean(node.closest?.(".sftp-shell, .terminal-box, .terminal-drop-overlay, .sftp-drop-overlay, .local-files-shell, .local-files-drop-overlay"));
+  return Boolean(
+    node.closest?.(
+      ".sftp-shell, #view-sftp, .terminal-box, .terminal-drop-overlay, .sftp-drop-overlay, "
+      + ".local-files-shell, #view-local-files, .local-files-drop-overlay"
+    )
+  );
 }
 
-function scheduleSftpInvalidPreviewRestore() {
+function isValidSftpDragPreviewTarget(target, session=sftpTabDragPreviewSession, clientX, clientY) {
+  if (!isValidSftpInternalDragTarget(target)) return false;
+  const targetKey = sftpDragTargetTabKey(target);
+  if (!targetKey) return true;
+  return targetKey !== String(session?.sourceTabKey || "");
+}
+
+function scheduleSftpInvalidPreviewRestore(event=null) {
   const session = sftpTabDragPreviewSession;
   if (!session || session.accepted) return;
+  const clientX = Number(event?.clientX);
+  const clientY = Number(event?.clientY);
+  if (Number.isFinite(clientX) && Number.isFinite(clientY)) {
+    session.lastClientX = clientX;
+    session.lastClientY = clientY;
+  }
+  if (event?.target) session.lastDragTarget = event.target;
+  if (event?.relatedTarget) session.lastRelatedTarget = event.relatedTarget;
   if (session.invalidTargetTimer) clearTimeout(session.invalidTargetTimer);
   session.invalidTargetTimer = setTimeout(() => {
     session.invalidTargetTimer = 0;
     if (sftpTabDragPreviewSession !== session || session.accepted) return;
+    const pointTarget = Number.isFinite(Number(session.lastClientX)) && Number.isFinite(Number(session.lastClientY))
+      ? document.elementFromPoint(Number(session.lastClientX), Number(session.lastClientY))
+      : null;
+    // Prefer the latest hit-tested node. The related target can be the last
+    // valid SFTP pane even after the pointer has moved into a forbidden area.
+    const currentTarget = pointTarget || session.lastDragTarget || session.lastRelatedTarget;
+    const previewTargetKey = String(session.previewTabKey || "");
+    const currentTargetKey = sftpDragTargetTabKey(currentTarget);
+    if (
+      (previewTargetKey && currentTargetKey === previewTargetKey)
+      || isValidSftpDragPreviewTarget(currentTarget, session, session.lastClientX, session.lastClientY)
+      || isSftpDragPreviewPaneTarget(currentTarget, session, session.lastClientX, session.lastClientY)
+    ) {
+      session.lastValidTargetAt = Date.now();
+      return;
+    }
     const elapsed = Date.now() - Number(session.lastValidTargetAt || 0);
-    if (elapsed < 35) {
+    if (elapsed < SFTP_TAB_DRAG_INVALID_GRACE_MS) {
       scheduleSftpInvalidPreviewRestore();
       return;
     }
     restoreSftpDragSourceTab(session.drag);
-  }, 45);
+  }, SFTP_TAB_DRAG_INVALID_GRACE_MS);
 }
 
 function clearSftpTabDragPreviewSession(drag=null) {
@@ -461,7 +559,20 @@ function handleSftpDocumentDragOver(event) {
   markSftpDragInsideWindow();
   const session = sftpTabDragPreviewSession;
   if (!session || session.accepted) return;
-  if (isValidSftpInternalDragTarget(event?.target)) {
+  const clientX = Number(event?.clientX);
+  const clientY = Number(event?.clientY);
+  if (Number.isFinite(clientX) && Number.isFinite(clientY)) {
+    session.lastClientX = clientX;
+    session.lastClientY = clientY;
+  }
+  if (event?.target) {
+    session.lastDragTarget = event.target;
+    session.lastRelatedTarget = event.target;
+  }
+  if (
+    isValidSftpDragPreviewTarget(event?.target, session, clientX, clientY)
+    || isSftpDragPreviewPaneTarget(event?.target, session, clientX, clientY)
+  ) {
     session.lastTargetKind = "valid";
     session.lastValidTargetAt = Date.now();
     if (session.invalidTargetTimer) {
@@ -471,7 +582,7 @@ function handleSftpDocumentDragOver(event) {
     return;
   }
   session.lastTargetKind = "invalid";
-  restoreSftpDragSourceTab(session.drag);
+  scheduleSftpInvalidPreviewRestore(event);
 }
 
 function finishSftpDragPayload(drag) {
@@ -949,6 +1060,17 @@ function handleSftpTabDragOver(event, tabKey, tabElement=event.currentTarget) {
   const drag = activeSftpDragPayload(event?.dataTransfer);
   if (!drag || !["sftp", "terminal", "local-files"].includes(target?.kind) || String(target.key || "") === String(drag.sourceTabKey || "")) return;
   markSftpDragInsideWindow();
+  const session = beginSftpTabDragPreviewSession(drag, tabKey);
+  if (session) {
+    session.lastValidTargetAt = Date.now();
+    session.lastRelatedTarget = tabElement;
+    if (Number.isFinite(Number(event?.clientX))) session.lastClientX = Number(event.clientX);
+    if (Number.isFinite(Number(event?.clientY))) session.lastClientY = Number(event.clientY);
+    if (session.invalidTargetTimer) {
+      clearTimeout(session.invalidTargetTimer);
+      session.invalidTargetTimer = 0;
+    }
+  }
   event.preventDefault();
   event.dataTransfer.dropEffect = "copy";
   tabElement?.classList.add("sftp-drop-target");
@@ -961,11 +1083,37 @@ function handleSftpTabDragLeave(event, tabElement=event.currentTarget) {
   if (!tabElement?.contains(event.relatedTarget)) {
     tabElement?.classList.remove("sftp-drop-target");
     const session = sftpTabDragPreviewSession;
-    if (session
-      && String(session.previewTabKey || "") === String(tabElement?.dataset?.tabKey || "")
-      && event.relatedTarget
-      && !isValidSftpInternalDragTarget(event.relatedTarget)) {
-      restoreSftpDragSourceTab(session.drag);
+    if (session && String(session.previewTabKey || "") === String(tabElement?.dataset?.tabKey || "")) {
+      const hasUsablePoint = Number.isFinite(Number(event?.clientX))
+        && Number.isFinite(Number(event?.clientY))
+        && (Number(event.clientX) !== 0 || Number(event.clientY) !== 0);
+      const related = event.relatedTarget || (hasUsablePoint
+        ? document.elementFromPoint(Number(event.clientX), Number(event.clientY))
+        : null);
+      // Chromium can emit a transient tab dragleave with no related target
+      // and coordinates 0,0 while the activated SFTP view is being mounted.
+      // Wait for the document dragover event to identify the real destination.
+      if (!related) return;
+      const relatedKey = sftpDragTargetTabKey(related);
+      if (
+        relatedKey === String(session.previewTabKey || "")
+        || isValidSftpDragPreviewTarget(related, session, event?.clientX, event?.clientY)
+        || isSftpDragPreviewPaneTarget(related, session, event?.clientX, event?.clientY)
+      ) {
+        session.lastValidTargetAt = Date.now();
+        session.lastRelatedTarget = related;
+        if (session.invalidTargetTimer) {
+          clearTimeout(session.invalidTargetTimer);
+          session.invalidTargetTimer = 0;
+        }
+        return;
+      }
+      scheduleSftpInvalidPreviewRestore({
+        target:related,
+        relatedTarget:related,
+        clientX:event?.clientX,
+        clientY:event?.clientY
+      });
       return;
     }
     if (activeTabKey !== tabElement?.dataset?.tabKey) clearSftpTabDragPreview();

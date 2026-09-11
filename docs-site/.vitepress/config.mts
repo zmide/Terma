@@ -40,6 +40,7 @@ export default defineConfig({
             { text: '终端工作区', link: '/guide/terminal.html' },
             { text: '连接管理', link: '/guide/connections.html' },
             { text: 'SFTP 文件管理', link: '/guide/sftp.html' },
+            { text: '传输与同步任务', link: '/guide/transfer-sync.html' },
             { text: '远程桌面与 X11', link: '/guide/remote-desktop.html' },
             { text: '转发与批量运维', link: '/guide/forwarding.html' },
             { text: '终端 AI', link: '/guide/terminal-ai.html' },

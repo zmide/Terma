@@ -95,6 +95,7 @@
     "desktop_graphics_install_unavailable": "No graphics components can be installed automatically on this platform ({{platform}}).",
     "desktop_xserver_start_forbidden": "X Server can only be started by an authorized local browser or the Terma desktop app.",
     "desktop_xserver_stop_forbidden": "X Server can only be stopped by an authorized local browser or the Terma desktop app.",
+    "sftp_automation_desktop_only": "SFTP scheduled transfers and folder sync only run in the Terma desktop app; Web requests cannot access local files.",
     "sftp_local_sync_desktop_only": "Local directory sync is only available in the desktop app on this computer.",
     "sftp_separate_download_desktop_only": "Downloading files and folders separately is only supported by the local desktop app. Use an archive download on this device.",
     "sftp_image_preview_unsupported": "This file is not a supported image format for preview.",

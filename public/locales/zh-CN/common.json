@@ -712,6 +712,8 @@
     "auto_rename": "自动重命名",
     "permanently_delete": "永久删除",
     "move_to_trash": "移入回收站",
+    "scroll_left": "向左滚动快捷按钮",
+    "scroll_right": "向右滚动快捷按钮",
     "previous_page": "上一页",
     "next_page": "下一页",
     "settings": "设置",

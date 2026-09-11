@@ -712,6 +712,8 @@
     "auto_rename": "Auto rename",
     "permanently_delete": "Delete permanently",
     "move_to_trash": "Move to trash",
+    "scroll_left": "Scroll shortcut buttons left",
+    "scroll_right": "Scroll shortcut buttons right",
     "previous_page": "Previous page",
     "next_page": "Next page",
     "settings": "Settings",

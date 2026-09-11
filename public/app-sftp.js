@@ -332,6 +332,10 @@ function scheduleSftpDirectoryRequest(run, signal=null) {
 
 function requestSftpDirectoryPage(connectionId, params, signal=null) {
   const requestPath = `/api/connections/${Number(connectionId)}/sftp?${params.toString()}`;
+  // A cancelled tab must cancel its own transport as well as its waiter. Keep
+  // URL-level coalescing for uncancellable callers, but never let a stale
+  // search share the live fetch owned by the latest search.
+  if (signal) return scheduleSftpDirectoryRequest(() => api(requestPath, {signal}), signal);
   let request = sftpDirectoryPageRequests.get(requestPath);
   if (!request) {
     request = scheduleSftpDirectoryRequest(() => api(requestPath)).finally(() => {

@@ -56,6 +56,7 @@ const { encryptionState, lockEncryption } = require("./crypto-store");
 const { assertPrivateStorage, ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 const { createUpdateChecker } = require("./update-checker");
 const { createUpdateScheduler } = require("./update-scheduler");
+const { startSftpAutomationScheduler, stopSftpAutomationScheduler } = require("./sftp-automations");
 const { UpdateInstaller } = require("./update-installer");
 const { PACKAGE_ROOT, PACKAGE_VERSION } = require("./services/app-metadata-service");
 const { publicAiSettings: publicAiSettingsForRuntime } = require("./services/ai-service");
@@ -491,6 +492,7 @@ function createServerRuntime(options: any = {}) {
     if (process.env.TERMA_DISABLE_UPDATE_CHECK !== "1" && process.env.TUNNELDESK_DISABLE_UPDATE_CHECK !== "1") {
       updateScheduler.start();
     }
+    if (desktopIntegration) startSftpAutomationScheduler();
     startupTaskTimer = setTimeout(async () => {
       let autostart = {ok:0, failed:0, errors:[]};
       let restore = {ok:0, failed:0, errors:[]};
@@ -518,6 +520,7 @@ function createServerRuntime(options: any = {}) {
     if (shutdownPromise) return shutdownPromise;
     shutdownPromise = (async () => {
       updateScheduler.stop();
+      stopSftpAutomationScheduler();
       clearTimeout(installedUpdateCleanupTimer);
       installedUpdateCleanupTimer = null;
       clearTimeout(startupTaskTimer);

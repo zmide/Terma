@@ -95,6 +95,7 @@
     "desktop_graphics_install_unavailable": "当前平台没有可自动安装的图形组件（{{platform}}）",
     "desktop_xserver_start_forbidden": "X Server 只能由获得临时授权的本机浏览器或 Terma 桌面端启动",
     "desktop_xserver_stop_forbidden": "X Server 只能由获得临时授权的本机浏览器或 Terma 桌面端停止",
+    "sftp_automation_desktop_only": "SFTP 定时传输和文件夹同步仅在 Terma 桌面端运行；Web 端不会访问本机文件",
     "sftp_local_sync_desktop_only": "本地目录同步只能在本机桌面端中使用",
     "sftp_separate_download_desktop_only": "分别下载文件和目录仅支持本机桌面版；当前设备请使用打包下载",
     "sftp_image_preview_unsupported": "该文件不是支持预览的图片格式",

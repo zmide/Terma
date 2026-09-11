@@ -129,15 +129,29 @@ export async function handleSftpTransferRoutes(
   }
   if (method === "GET" && parts.length === 4) {
     const url = new URL(request.url || pathname, "http://terma.invalid");
-    const result = await dependencies.listRemoteDir(connectionId, url.searchParams.get("path") || ".", {
-      page:url.searchParams.get("page"),
-      page_size:url.searchParams.get("page_size"),
-      query:url.searchParams.get("query"),
-      sort:url.searchParams.get("sort"),
-      dir:url.searchParams.get("dir"),
-      recursive:url.searchParams.get("recursive"),
-      refresh:url.searchParams.get("refresh")
-    });
+    const abortController = new AbortController();
+    const abort = () => abortController.abort();
+    const close = () => {
+      if (!response.writableEnded) abort();
+    };
+    request.once("aborted", abort);
+    response.once("close", close);
+    let result;
+    try {
+      result = await dependencies.listRemoteDir(connectionId, url.searchParams.get("path") || ".", {
+        page:url.searchParams.get("page"),
+        page_size:url.searchParams.get("page_size"),
+        query:url.searchParams.get("query"),
+        sort:url.searchParams.get("sort"),
+        dir:url.searchParams.get("dir"),
+        recursive:url.searchParams.get("recursive"),
+        refresh:url.searchParams.get("refresh"),
+        signal:abortController.signal
+      });
+    } finally {
+      request.removeListener("aborted", abort);
+      response.removeListener("close", close);
+    }
     dependencies.send(response, 200, result, {"Cache-Control":"no-store"});
     return true;
   }

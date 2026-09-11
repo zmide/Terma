@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { DATA_DIR } = require("./config");
 const { notifyEvent } = require("./notifications");
+const { decodeSshOutput } = require("./ssh2-client");
 const { buildDeleteRemotePathCommand, buildRecycleRemotePathCommand, invalidateRemoteDirectoryCache } = require("./sftp");
 const { clearSftpDragCache, deliverSftpPaths, getSftpConnection, openSftpChannel, releaseNativeSftpDragTicket, sftpDragCacheInfo } = require("./sftp-session");
 const { readSftpJobHistory, writeSftpJobHistoryAtomic } = require("./sftp-job-store");
@@ -108,6 +109,21 @@ function finishTransferMetrics(job) {
   const elapsed = Math.max(1, Number(job.finished_at || Date.now()) - Number(job.started_at || Date.now()));
   job.average_bps = Math.round(Number(job.transferred || 0) * 1000 / elapsed);
   job.speed_bps = 0;
+}
+
+const SFTP_JOB_OUTPUT_LIMIT = 12000;
+
+function appendSftpJobOutput(job, outputState, stream, chunk, connection) {
+  const key = stream === "stderr" ? "stderr" : "stdout";
+  const bytesKey = `${key}Bytes`;
+  const previous = Buffer.isBuffer(outputState[bytesKey]) ? outputState[bytesKey] : Buffer.alloc(0);
+  const next = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk || ""));
+  outputState[bytesKey] = Buffer.concat([previous, next]).slice(-SFTP_JOB_OUTPUT_LIMIT);
+  // Decode only after retaining the raw tail so multibyte characters split
+  // across SSH data events cannot turn into replacement characters.
+  job[key] = decodeSshOutput(outputState[bytesKey], connection?.terminal_encoding)
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u0000/g, "");
 }
 
 const {
@@ -224,7 +240,7 @@ function persistJobs(immediate = false) {
 }
 
 function listSftpJobs() {
-  const active: any[] = [...jobs.values()].map((source: any) => {
+  const active: any[] = [...jobs.values()].filter((source: any) => !source.internal_automation).map((source: any) => {
     const job = serializableJob(source);
     return {
       ...job,
@@ -234,7 +250,7 @@ function listSftpJobs() {
     };
   });
   const activeIds = new Set(active.map((job) => job.id));
-  const history = readHistory().filter((job) => !activeIds.has(job.id)).map((job: any) => ({
+  const history = readHistory().filter((job) => !job.internal_automation && !activeIds.has(job.id)).map((job: any) => ({
     ...job,
     can_resume: job.resume_supported === true
       && ["paused", "failed"].includes(job.status)
@@ -243,6 +259,25 @@ function listSftpJobs() {
   return [...active, ...history]
     .sort((a, b) => Number(b.created_at || 0) - Number(a.created_at || 0))
     .slice(0, MAX_HISTORY);
+}
+
+function waitForSftpJob(id: string, timeoutMs = 24 * 60 * 60 * 1000) {
+  const jobId = String(id || "");
+  if (!jobId) return Promise.reject(new Error("SFTP 任务 ID 为空"));
+  const terminal = new Set(["done", "failed", "cancelled"]);
+  const deadline = Date.now() + Math.max(1000, Number(timeoutMs || 0));
+  return new Promise((resolve, reject) => {
+    const poll = () => {
+      const current = jobs.get(jobId) || readHistory().find((item: any) => item.id === jobId);
+      if (current && terminal.has(String(current.status || ""))) {
+        if (current.status === "done") return resolve(serializableJob(current));
+        return reject(Object.assign(new Error(current.error || `SFTP 任务${current.status === "cancelled" ? "已取消" : "失败"}`), {job:serializableJob(current)}));
+      }
+      if (Date.now() >= deadline) return reject(new Error("等待 SFTP 任务完成超时"));
+      setTimeout(poll, 100);
+    };
+    poll();
+  });
 }
 
 function clearFinishedSftpJobs() {
@@ -321,7 +356,7 @@ function startSftpJob(connectionId, type, command, label, options: any = {}) {
   job.child = child;
   jobs.set(id, job);
   persistJobs();
-  const outputState = {remainder:""};
+  const outputState = {remainder:"", stdoutBytes:Buffer.alloc(0), stderrBytes:Buffer.alloc(0)};
   let stdoutEnded = false;
   const flushOutput = () => {
     if (stdoutEnded || !options.progressMarker) return;
@@ -330,11 +365,11 @@ function startSftpJob(connectionId, type, command, label, options: any = {}) {
   };
   child.stdout.on("data", (chunk) => {
     if (options.progressMarker) consumeDeleteJobOutput(job, options.progressMarker, outputState, chunk);
-    else job.stdout = `${job.stdout}${chunk.toString()}`.slice(-12000);
+    else appendSftpJobOutput(job, outputState, "stdout", chunk, connection);
     persistJobs();
   });
   child.stdout.on("end", flushOutput);
-  child.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
+  child.stderr.on("data", (chunk) => { appendSftpJobOutput(job, outputState, "stderr", chunk, connection); persistJobs(); });
   let finished = false;
   const finish = (status, error = "", errorCode = "", errorParams = {}) => {
     if (finished || job.status === "cancelled") return;
@@ -827,4 +862,4 @@ function compressJob(connectionId, paths, targetDir = ".", archiveName = "", fil
   return { ...startSftpJob(connectionId, "compress", request.command, `压缩 ${request.paths.length} 项为 ${request.name}`), output:request.output };
 }
 
-module.exports = { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, discardNativeSftpDragJob, extractJob, finishNativeSftpDragJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, normalizeCompressionRequest, pauseSftpJob, receiveUploadJobContent, recordNativeSftpDragBytes, refreshSftpTransferQueues, resumeSftpJob, setNativeSftpDragCancelHandler, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream, waitForSftpTransferStart, __addUniqueByteRange: addUniqueByteRange, __buildCompressCommand: normalizeCompressionRequest, __buildCrossCopyOverwriteCommand: buildCrossCopyOverwriteCommand, __buildDeleteJobRequest: buildDeleteJobRequest, __consumeDeleteJobOutput: consumeDeleteJobOutput };
+module.exports = { beginNativeSftpDragJob, cancelSftpJob, clearFinishedSftpJobs, clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, deleteSftpJob, discardNativeSftpDragJob, extractJob, finishNativeSftpDragJob, getSftpJobFile, listSftpJobs, markSftpJobDelivered, moveJob, normalizeCompressionRequest, pauseSftpJob, receiveUploadJobContent, recordNativeSftpDragBytes, refreshSftpTransferQueues, resumeSftpJob, setNativeSftpDragCancelHandler, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startUploadJob, startUploadReceiveJob, trackNativeSftpDragStream, waitForSftpTransferStart, waitForSftpJob, __addUniqueByteRange: addUniqueByteRange, __buildCompressCommand: normalizeCompressionRequest, __buildCrossCopyOverwriteCommand: buildCrossCopyOverwriteCommand, __buildDeleteJobRequest: buildDeleteJobRequest, __consumeDeleteJobOutput: consumeDeleteJobOutput };

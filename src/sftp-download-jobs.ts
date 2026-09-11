@@ -151,6 +151,8 @@ function createSftpDownloadJobs(dependencies: any) {
       conflict_mode:["error", "overwrite", "rename"].includes(String(conflictMode || "")) ? String(conflictMode) : "rename",
       delivery_mode:String(options.deliveryMode || "local-files"),
       delivery_status:"pending",
+      silent_notifications:options.silentNotifications === true,
+      internal_automation:options.internalAutomation === true,
       status:"pending",
       phase:"preparing",
       current:"正在准备下载",
@@ -225,13 +227,15 @@ function createSftpDownloadJobs(dependencies: any) {
         finishTransferMetrics(current);
         releaseTransferSlot(current);
         persistJobs(true);
-        notifyEvent({
-          type:"sftp",
-          level:"success",
-          title:"SFTP 下载到本机已完成",
-          message:downloadCompletionMessage(current),
-          action:downloadCompletionAction(current)
-        }, {cooldown_ms:0});
+        if (!current.silent_notifications) {
+          notifyEvent({
+            type:"sftp",
+            level:"success",
+            title:"SFTP 下载到本机已完成",
+            message:downloadCompletionMessage(current),
+            action:downloadCompletionAction(current)
+          }, {cooldown_ms:0});
+        }
       } catch (error: any) {
         current.status = "failed";
         current.phase = "";
@@ -243,13 +247,15 @@ function createSftpDownloadJobs(dependencies: any) {
         finishTransferMetrics(current);
         releaseTransferSlot(current);
         persistJobs(true);
-        notifyEvent({
-          type:"sftp",
-          level:"error",
-          title:"SFTP 下载到本机失败",
-          message:`${current.connection_name} · ${current.label}\n${current.error}`,
-          action:{view:"sftp", connection_id:current.connection_id, sftp_job_id:current.id}
-        }, {cooldown_ms:0});
+        if (!current.silent_notifications) {
+          notifyEvent({
+            type:"sftp",
+            level:"error",
+            title:"SFTP 下载到本机失败",
+            message:`${current.connection_name} · ${current.label}\n${current.error}`,
+            action:{view:"sftp", connection_id:current.connection_id, sftp_job_id:current.id}
+          }, {cooldown_ms:0});
+        }
       }
     }, {phase:"local-saving", current:"正在下载到本机"});
 
@@ -280,6 +286,8 @@ function createSftpDownloadJobs(dependencies: any) {
       delivery_mode:options.deliveryMode === "desktop" ? "desktop" : "browser",
       delivery_status:"pending",
       auto_save_directory:options.deliveryMode === "desktop" ? String(options.autoSaveDirectory || "") : "",
+      silent_notifications:options.silentNotifications === true,
+      internal_automation:options.internalAutomation === true,
       status:"pending",
       can_pause:true,
       resume_supported:true,
@@ -382,7 +390,7 @@ function createSftpDownloadJobs(dependencies: any) {
           if (status === "done" && job.archive_download) cleanupRemoteArchiveArtifact(job);
           releaseTransferSlot(job);
           persistJobs(status !== "paused");
-          if (status === "done" || status === "failed") {
+          if ((status === "done" || status === "failed") && !job.silent_notifications) {
             notifyEvent({
               type:"sftp",
               level:status === "done" ? "success" : "error",
@@ -480,7 +488,9 @@ function createSftpDownloadJobs(dependencies: any) {
         job.finished_at = Date.now();
         releaseTransferSlot(job);
         persistJobs(true);
-        notifyEvent({type:"sftp", level:"error", title:"SFTP 下载失败", message:`${job.connection_name} · ${job.label}\n${job.error}`, action:{view:"sftp", connection_id:job.connection_id, sftp_job_id:job.id}}, {cooldown_ms:0});
+        if (!job.silent_notifications) {
+          notifyEvent({type:"sftp", level:"error", title:"SFTP 下载失败", message:`${job.connection_name} · ${job.label}\n${job.error}`, action:{view:"sftp", connection_id:job.connection_id, sftp_job_id:job.id}}, {cooldown_ms:0});
+        }
       }
     })();
   }
@@ -491,6 +501,10 @@ function createSftpDownloadJobs(dependencies: any) {
     try { job.out?.destroy(); } catch {}
     try { job.child?.kill("SIGTERM"); } catch {}
     if (complete) {
+      if (job.temp_path && !fs.existsSync(job.temp_path) && Number(job.size || 0) === 0) {
+        fs.mkdirSync(path.dirname(job.temp_path), {recursive:true});
+        fs.writeFileSync(job.temp_path, Buffer.alloc(0), {flag:"wx"});
+      }
       job.transferred = fs.existsSync(job.temp_path) ? fs.statSync(job.temp_path).size : job.transferred;
       job.progress = 100;
       job.status = "done";
@@ -505,7 +519,9 @@ function createSftpDownloadJobs(dependencies: any) {
       if (job.archive_download) cleanupRemoteArchiveArtifact(job);
       releaseTransferSlot(job);
       persistJobs(true);
-      notifyEvent({type:"sftp", level:"success", title:job.archive_download ? "SFTP 打包下载已完成" : "SFTP 下载已完成", message:`${downloadCompletionMessage(job)}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}`, action:downloadCompletionAction(job)}, {cooldown_ms:0});
+      if (!job.silent_notifications) {
+        notifyEvent({type:"sftp", level:"success", title:job.archive_download ? "SFTP 打包下载已完成" : "SFTP 下载已完成", message:`${downloadCompletionMessage(job)}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}`, action:downloadCompletionAction(job)}, {cooldown_ms:0});
+      }
     }
   }
 
@@ -568,6 +584,8 @@ function createSftpDownloadJobs(dependencies: any) {
       delivery_mode:options.deliveryMode === "desktop" ? "desktop" : "browser",
       delivery_status:"pending",
       auto_save_directory:options.deliveryMode === "desktop" ? String(options.autoSaveDirectory || "") : "",
+      silent_notifications:options.silentNotifications === true,
+      internal_automation:options.internalAutomation === true,
       status:"pending",
       can_pause:false,
       can_cancel:true,
@@ -606,13 +624,15 @@ function createSftpDownloadJobs(dependencies: any) {
     finishTransferMetrics(job);
     releaseTransferSlot(job);
     persistJobs(true);
-    notifyEvent({
-      type:"sftp",
-      level:"error",
-      title:"SFTP 打包下载失败",
-      message:`${job.connection_name} · ${job.label}\n${job.error}`,
-      action:{view:"sftp", connection_id:job.connection_id, sftp_job_id:job.id}
-    }, {cooldown_ms:0});
+    if (!job.silent_notifications) {
+      notifyEvent({
+        type:"sftp",
+        level:"error",
+        title:"SFTP 打包下载失败",
+        message:`${job.connection_name} · ${job.label}\n${job.error}`,
+        action:{view:"sftp", connection_id:job.connection_id, sftp_job_id:job.id}
+      }, {cooldown_ms:0});
+    }
   }
 
   function prepareArchiveDownloadJob(id: string) {

@@ -11,6 +11,7 @@ function installProductivityHeaderButton() {
     if (host) host.appendChild(button);
     else document.getElementById("sftpTaskCenter")?.before(button);
   }
+  if (typeof installSftpAutomationQuickAction === "function") installSftpAutomationQuickAction(host);
   if (!document.getElementById("terminalSessionManagerButton") && typeof openTerminalSessionManager === "function") {
     const button = document.createElement("button");
     button.id = "terminalSessionManagerButton";

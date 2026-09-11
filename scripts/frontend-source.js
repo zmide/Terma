@@ -5,6 +5,7 @@ const FRONTEND_DOMAINS = Object.freeze({
   docking: [
     "app-workspace-groups.js",
     "app-workspace-chrome.js",
+    "app-terminal-toolbar-scroll.js",
     "app-docking.js",
     "app-workspace-drag.js",
     "app-workspace-persistence.js"
@@ -65,6 +66,7 @@ const FRONTEND_DOMAINS = Object.freeze({
   ],
   productivity: [
     "app-sftp-sync.js",
+    "app-sftp-automations.js",
     "app-external-tools.js",
     "app-command-palette.js",
     "app-command-snippets.js",

@@ -151,7 +151,7 @@ function createSftpUploadJobs(dependencies: any) {
     if (status !== "paused") finishTransferMetrics(job);
     releaseTransferSlot(job);
     persistJobs(status !== "paused");
-    if (status !== "paused") {
+    if (status !== "paused" && !job.silent_notifications) {
       notifyEvent({
         type:"sftp",
         level:status === "done" ? "success" : "error",
@@ -259,6 +259,8 @@ function createSftpUploadJobs(dependencies: any) {
       ownsLocalPath:options.ownsLocalPath !== false
     });
     job.conflict_mode = "overwrite";
+    job.silent_notifications = options.silentNotifications === true;
+    job.internal_automation = options.internalAutomation === true;
     jobs.set(job.id, job);
     persistJobs(true);
     queueTransferJob("upload", job, () => {

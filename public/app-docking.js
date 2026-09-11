@@ -178,6 +178,11 @@ function returnWorkspaceToolbarToMount(toolbar, hidden=true) {
 }
 
 function bindWorkspaceToolbarHorizontalScroll(toolbar) {
+  const terminalActions = toolbar?.querySelector?.(".terminal-actions");
+  if (terminalActions && typeof bindTerminalToolbarScroll === "function") {
+    bindTerminalToolbarScroll(toolbar);
+    return;
+  }
   const actions = toolbar?.querySelector?.(".terminal-actions, .sftp-toolbar-actions");
   if (!actions || actions.dataset.workspaceHorizontalScroll === "1") return;
   actions.dataset.workspaceHorizontalScroll = "1";

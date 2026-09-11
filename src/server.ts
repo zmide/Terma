@@ -207,6 +207,7 @@ const { handleConfigTransferRoutes } = require("./routes/config-transfer-routes"
 const { handleSftpDesktopDownloadRoutes } = require("./routes/sftp-desktop-download-routes");
 const { handleSftpExternalEditRoutes } = require("./routes/sftp-external-edit-routes");
 const { handleSftpJobRoutes } = require("./routes/sftp-job-routes");
+const { handleSftpAutomationRoutes } = require("./routes/sftp-automation-routes");
 const { handleSftpTransferRoutes } = require("./routes/sftp-transfer-routes");
 const { handlePublicAuthRoutes, handleSecurityRoutes } = require("./routes/security-routes");
 const {
@@ -502,6 +503,7 @@ async function handleApi(req, res, pathname) {
   })) return;
   if (await handleCommandResourceRoutes(req, res, pathname, {readJson, sendJson})) return;
   if (await handleForwardTemplateRoutes(req, res, pathname, {createConfigSnapshot, readJson, sendJson})) return;
+  if (await handleSftpAutomationRoutes(req, res, pathname, {getDesktopIntegration, isDesktopRequest, readJson, sendJson})) return;
   if (await handleSftpJobRoutes(req, res, pathname, {sendJson})) return;
   if (await handleLocalFilesRoutes(req, res, pathname, {
     getDesktopIntegration,

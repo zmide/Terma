@@ -10,6 +10,8 @@ const { connectSsh, normalizeSshTransportError } = require("./ssh2-client");
 const { openCachedRange } = require("./sftp-range-cache");
 
 const sessions = new Map();
+const SFTP_DIRECTORY_CHANNEL_IDLE_TTL_MS = 60 * 1000;
+const SFTP_DIRECTORY_CHANNEL_MAX_IDLE = 2;
 const SFTP_DRAG_ROOT = path.join(DATA_DIR, "sftp-drag");
 const SFTP_RANGE_CACHE_ROOT = path.join(SFTP_DRAG_ROOT, "range-cache");
 const SFTP_DRAG_TTL_MS = 6 * 60 * 60 * 1000;
@@ -53,6 +55,7 @@ function sessionView(record) {
 
 function markDisconnected(record, error = null) {
   if (!record) return;
+  closeSftpDirectoryChannels(record);
   if (record.status === "disconnected" && record.manualDisconnected) return;
   record.status = "disconnected";
   record.client = null;
@@ -63,11 +66,116 @@ function markDisconnected(record, error = null) {
 
 function endSessionRecord(record) {
   if (!record) return;
+  closeSftpDirectoryChannels(record);
   record.generation += 1;
   const client = record.client;
   record.client = null;
   record.connecting = null;
   try { client?.end(); } catch {}
+}
+
+function discardSftpDirectoryChannel(record, entry, end = true) {
+  if (!entry) return;
+  entry.closed = true;
+  entry.busy = false;
+  if (entry.idleTimer) clearTimeout(entry.idleTimer);
+  entry.idleTimer = null;
+  record?.directoryChannels?.delete(entry);
+  if (end) {
+    try { entry.channel?.end(); } catch {}
+  }
+}
+
+function closeSftpDirectoryChannels(record) {
+  for (const entry of record?.directoryChannels || []) discardSftpDirectoryChannel(record, entry);
+  record?.directoryChannels?.clear?.();
+}
+
+function markSftpDirectoryChannelClosed(record, entry) {
+  discardSftpDirectoryChannel(record, entry, false);
+}
+
+function registerSftpDirectoryChannel(record, channel) {
+  const entry = {channel, busy:true, closed:false, idleTimer:null, lastUsed:Date.now()};
+  if (!record.directoryChannels) record.directoryChannels = new Set();
+  record.directoryChannels.add(entry);
+  const onClosed = () => markSftpDirectoryChannelClosed(record, entry);
+  channel.once?.("close", onClosed);
+  channel.once?.("end", onClosed);
+  channel.on?.("error", onClosed);
+  return entry;
+}
+
+function releaseSftpDirectoryChannel(lease, reusable = true) {
+  const record = lease?.record;
+  const entry = lease?.entry;
+  if (!record || !entry) return;
+  if (!reusable || entry.closed || sessions.get(record.id) !== record || record.status !== "connected") {
+    discardSftpDirectoryChannel(record, entry);
+    return;
+  }
+  entry.busy = false;
+  entry.lastUsed = Date.now();
+  entry.idleTimer = setTimeout(() => discardSftpDirectoryChannel(record, entry), SFTP_DIRECTORY_CHANNEL_IDLE_TTL_MS);
+  entry.idleTimer.unref?.();
+  const idle = [...(record.directoryChannels || [])]
+    .filter(item => !item.busy && !item.closed)
+    .sort((left, right) => Number(right.lastUsed || 0) - Number(left.lastUsed || 0));
+  idle.slice(SFTP_DIRECTORY_CHANNEL_MAX_IDLE).forEach(item => discardSftpDirectoryChannel(record, item));
+}
+
+function openSftpDirectoryChannel(record, connection, signal = null) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal?.removeEventListener?.("abort", onAbort);
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(Object.assign(new Error("SFTP directory request aborted"), {name:"AbortError"}));
+    };
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener?.("abort", onAbort, {once:true});
+    try {
+      record.client.sftp((error, channel) => {
+        if (settled) {
+          try { channel?.end(); } catch {}
+          return;
+        }
+        settled = true;
+        cleanup();
+        if (error) return reject(normalizeSshTransportError(error, connection));
+        resolve(channel);
+      });
+    } catch (error) {
+      settled = true;
+      cleanup();
+      reject(error);
+    }
+  });
+}
+
+async function acquireSftpDirectoryChannel(connectionId, signal = null) {
+  if (signal?.aborted) throw Object.assign(new Error("SFTP directory request aborted"), {name:"AbortError"});
+  const id = Number(connectionId);
+  const connection = getSftpConnection(id);
+  await connectSftpSession(id);
+  const record = sessions.get(id);
+  if (!record?.client || record.status !== "connected") throw new Error("SFTP 会话未连接");
+  for (const entry of record.directoryChannels || []) {
+    if (entry.closed || entry.busy) continue;
+    if (entry.idleTimer) clearTimeout(entry.idleTimer);
+    entry.idleTimer = null;
+    entry.busy = true;
+    entry.lastUsed = Date.now();
+    return {record, entry};
+  }
+  const channel: any = await openSftpDirectoryChannel(record, connection, signal);
+  if (sessions.get(id) !== record || record.status !== "connected") {
+    try { channel.end(); } catch {}
+    throw new Error("SFTP 连接已取消");
+  }
+  return {record, entry:registerSftpDirectoryChannel(record, channel)};
 }
 
 async function connectSftpSession(connectionId, options: any = {}) {
@@ -889,8 +997,122 @@ function sftpStat(channel, remotePath) {
   return new Promise((resolve, reject) => channel.stat(remotePath, (error, stats) => error ? reject(error) : resolve(stats)));
 }
 
+function sftpStatCancellable(channel, remotePath, signal = null) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal?.removeEventListener?.("abort", onAbort);
+    const finish = (error = null, stats = null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      error ? reject(error) : resolve(stats);
+    };
+    const onAbort = () => {
+      try { channel.end(); } catch {}
+      finish(sftpAbortError());
+    };
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener?.("abort", onAbort, {once:true});
+    try {
+      channel.stat(remotePath, (error, stats) => finish(error, stats));
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
 function sftpReaddir(channel, remotePath) {
   return new Promise((resolve, reject) => channel.readdir(remotePath, (error, entries) => error ? reject(error) : resolve(entries || [])));
+}
+
+function sftpAbortError() {
+  const error: any = new Error("SFTP directory request aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function sftpReaddirCancellable(channel, remotePath, signal = null) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal?.removeEventListener?.("abort", onAbort);
+    const finish = (error = null, entries = []) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      error ? reject(error) : resolve(entries || []);
+    };
+    const onAbort = () => {
+      try { channel.end(); } catch {}
+      finish(sftpAbortError());
+    };
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener?.("abort", onAbort, {once:true});
+    try {
+      channel.readdir(remotePath, (error, entries) => finish(error, entries));
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+function sftpRealpathCancellable(channel, remotePath, signal = null) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal?.removeEventListener?.("abort", onAbort);
+    const finish = (error = null, resolved = "") => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      error ? reject(error) : resolve(String(resolved || remotePath || "."));
+    };
+    const onAbort = () => {
+      try { channel.end(); } catch {}
+      finish(sftpAbortError());
+    };
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener?.("abort", onAbort, {once:true});
+    try {
+      channel.realpath(remotePath, (error, resolved) => finish(error, resolved));
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+/**
+ * Read a directory through the SFTP protocol.  Directory channels are leased
+ * from the connection and kept warm while idle, so opening another small
+ * directory does not pay the SFTP subsystem handshake again.  Each request
+ * still owns its lease; cancellation closes only that channel and cannot
+ * interrupt another tab's read.
+ */
+async function readSftpDirectory(connectionId, remotePath = ".", options: any = {}) {
+  const lease = await acquireSftpDirectoryChannel(connectionId, options.signal);
+  const channel: any = lease.entry.channel;
+  let reusable = false;
+  try {
+    const requested = String(remotePath || ".");
+    const [resolvedPath, entries] = await Promise.all<any>([
+      sftpRealpathCancellable(channel, requested, options.signal).catch(error => error?.name === "AbortError" ? Promise.reject(error) : requested),
+      sftpReaddirCancellable(channel, requested, options.signal)
+    ]);
+    if (options.resolveSymlinks) {
+      for (const entry of entries || []) {
+        const mode = Number(entry?.attrs?.mode || 0) & 0o170000;
+        if (mode !== 0o120000) continue;
+        try {
+          entry.targetAttrs = await sftpStatCancellable(channel, path.posix.join(requested, String(entry.filename || "")), options.signal);
+        } catch (error) {
+          if (error?.name === "AbortError") throw error;
+          entry.targetAttrs = null;
+        }
+      }
+    }
+    reusable = true;
+    return {path:String(resolvedPath || requested), entries};
+  } finally {
+    releaseSftpDirectoryChannel(lease, reusable);
+  }
 }
 
 function sftpFastGet(channel, remotePath, localPath, options: any = {}) {
@@ -1114,6 +1336,7 @@ module.exports = {
   getSftpConnection,
   getNativeSftpDragTicket,
   openSftpChannel,
+  readSftpDirectory,
   openNativeSftpDragTicketFile,
   releaseNativeSftpDragTicket,
   reserveNativeSftpDragTicket,

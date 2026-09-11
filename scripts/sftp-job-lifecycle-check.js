@@ -4,6 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
+const iconv = require("iconv-lite");
 const { decodeRemotePosixCommand } = require("./remote-posix-test-helper");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-job-lifecycle-check-"));
@@ -34,7 +35,7 @@ function fakeRemoteChild(command) {
   if (child.command.includes("wc -c")) {
     setTimeout(() => {
       if (child.killed) return;
-      child.stdout.write(child.command.includes(".terma-upload-") ? "0" : "1048576");
+      child.stdout.write(child.command.includes(".terma-upload-") || child.command.includes("zero.bin") ? "0" : "1048576");
       child.stdout.end();
       child.stderr.end();
       child.emit("close", 0, null);
@@ -84,6 +85,7 @@ async function main() {
     ssh_user:"smoke",
     auth_type:"password",
     ssh_password:"smoke",
+    terminal_encoding:"gb18030",
     sftp_filename_encoding:"utf8"
   };
   const targetConnection = {...connection, id:connection.id + 1, name:"job-lifecycle-target"};
@@ -165,11 +167,13 @@ async function main() {
   const atomicLocal = path.join(temporaryRoot, "atomic.bin");
   const preservedLocal = path.join(temporaryRoot, "preserved.bin");
   const preservedCancelledLocal = path.join(temporaryRoot, "preserved-cancelled.bin");
+  const silentUploadLocal = path.join(temporaryRoot, "silent-upload.bin");
   fs.writeFileSync(uploadLocal, Buffer.alloc(1024 * 1024, 0x41));
   fs.writeFileSync(cancelledLocal, Buffer.alloc(1024 * 1024, 0x42));
   fs.writeFileSync(atomicLocal, Buffer.alloc(32 * 1024, 0x45));
   fs.writeFileSync(preservedLocal, Buffer.alloc(32 * 1024, 0x46));
   fs.writeFileSync(preservedCancelledLocal, Buffer.alloc(32 * 1024, 0x47));
+  fs.writeFileSync(silentUploadLocal, Buffer.alloc(32 * 1024, 0x48));
 
   try {
     const upload = jobs.startUploadJob(connection.id, uploadLocal, "/tmp/upload.bin", fs.statSync(uploadLocal).size);
@@ -257,6 +261,39 @@ async function main() {
     assert.equal(fs.existsSync(preservedCancelledLocal), true, "cancelling an upload must not remove a user-owned source");
     jobs.deleteSftpJob(preservedCancelled.id);
     assert.equal(fs.existsSync(preservedCancelledLocal), true, "deleting a cancelled upload task must not remove a user-owned source");
+
+    const notificationsBeforeSilentJobs = notifications.listNotifications(0).length;
+    const silentUpload = jobs.startUploadJob(connection.id, silentUploadLocal, "/tmp/silent-upload.bin", fs.statSync(silentUploadLocal).size, {ownsLocalPath:false,silentNotifications:true,internalAutomation:true});
+    jobIds.push(silentUpload.id);
+    assert.equal(jobs.listSftpJobs().some(item => item.id === silentUpload.id), false, "an internal automation upload must stay out of the generic task center");
+    const silentUploadChild = children.at(-1);
+    silentUploadChild.stdin.resume();
+    await new Promise(resolve => silentUploadChild.stdin.once("finish", resolve));
+    silentUploadChild.stdout.end();
+    silentUploadChild.stderr.end();
+    silentUploadChild.emit("close", 0, null);
+    await new Promise(resolve => setImmediate(resolve));
+    const silentUploadCommitChild = children.at(-1);
+    silentUploadCommitChild.stdout.end();
+    silentUploadCommitChild.stderr.end();
+    silentUploadCommitChild.emit("close", 0, null);
+    const silentUploadDone = await jobs.waitForSftpJob(silentUpload.id);
+    assert.equal(silentUploadDone.status, "done");
+    assert.ok(Number(silentUploadDone.finished_at) > 0, "silent uploads must still persist their completion time");
+    assert.equal(silentUploadDone.can_pause, false);
+    assert.equal(notifications.listNotifications(0).length, notificationsBeforeSilentJobs, "an automation upload must not emit a per-file notification");
+    jobs.deleteSftpJob(silentUpload.id);
+
+    const zeroDirectory = path.join(temporaryRoot, "zero-download");
+    const silentZeroDownload = jobs.startDownloadJob(connection.id, "/tmp/zero.bin", {deliveryMode:"desktop",autoSaveDirectory:zeroDirectory,silentNotifications:true,internalAutomation:true});
+    jobIds.push(silentZeroDownload.id);
+    assert.equal(jobs.listSftpJobs().some(item => item.id === silentZeroDownload.id), false, "an internal automation download must stay out of the generic task center");
+    const zeroDownloadDone = await jobs.waitForSftpJob(silentZeroDownload.id);
+    assert.equal(zeroDownloadDone.status, "done");
+    assert.ok(zeroDownloadDone.saved_path && fs.existsSync(zeroDownloadDone.saved_path), "a zero-byte automation download must create its local file");
+    assert.equal(fs.statSync(zeroDownloadDone.saved_path).size, 0);
+    assert.equal(notifications.listNotifications(0).length, notificationsBeforeSilentJobs, "an automation download must not emit a per-file notification");
+    jobs.deleteSftpJob(silentZeroDownload.id);
 
     const receivedPayload = Buffer.alloc(384 * 1024, 0x43);
     const receiving = jobs.startUploadReceiveJob(connection.id, "/tmp/received.bin", "received.bin", receivedPayload.length);
@@ -352,6 +389,18 @@ async function main() {
     copyChild.emit("close", 0, null);
     await waitForJob(jobs, copy.id, "done");
     jobs.deleteSftpJob(copy.id);
+
+    const extract = jobs.extractJob(connection.id, "/tmp/eclipse.tar.gz", "/tmp/eclipse", {overwrite:false});
+    jobIds.push(extract.id);
+    const extractChild = children.at(-1);
+    extractChild.stderr.end(iconv.encode("tar: /tmp/eclipse/configuration.xml: 无法打开：文件已存在\n", "gb18030"));
+    extractChild.stdout.end();
+    await new Promise(resolve => setImmediate(resolve));
+    extractChild.emit("close", 2, null);
+    const failedExtract = await waitForJob(jobs, extract.id, "failed");
+    assert.match(failedExtract.error, /无法打开：文件已存在/);
+    assert.doesNotMatch(failedExtract.error, /�/);
+    jobs.deleteSftpJob(extract.id);
 
     assert.throws(() => jobs.crossCopyJob(
       connection.id,

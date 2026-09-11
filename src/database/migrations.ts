@@ -178,6 +178,47 @@ CREATE TABLE IF NOT EXISTS app_meta (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sftp_automations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind TEXT NOT NULL CHECK(kind IN ('transfer', 'sync')),
+  name TEXT NOT NULL,
+  connection_id INTEGER NOT NULL,
+  local_path TEXT NOT NULL,
+  remote_path TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  trigger_mode TEXT NOT NULL DEFAULT 'schedule',
+  schedule_json TEXT NOT NULL DEFAULT '{}',
+  options_json TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  missed_policy TEXT NOT NULL DEFAULT 'run_once',
+  next_run_at INTEGER,
+  last_run_at INTEGER,
+  last_status TEXT NOT NULL DEFAULT 'idle',
+  last_error TEXT NOT NULL DEFAULT '',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY(connection_id) REFERENCES connections(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS sftp_automation_runs (
+  run_id TEXT PRIMARY KEY,
+  automation_id INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT 'manual',
+  started_at INTEGER NOT NULL,
+  finished_at INTEGER,
+  summary_json TEXT NOT NULL DEFAULT '{}',
+  error TEXT NOT NULL DEFAULT '',
+  FOREIGN KEY(automation_id) REFERENCES sftp_automations(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS sftp_automation_baselines (
+  automation_id INTEGER PRIMARY KEY,
+  version INTEGER NOT NULL DEFAULT 1,
+  state_json TEXT NOT NULL DEFAULT '{}',
+  checksum TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY(automation_id) REFERENCES sftp_automations(id) ON DELETE CASCADE
+);
   `);
 
   const remoteProfileSchema: any = get("SELECT sql FROM sqlite_master WHERE type='table' AND name='remote_profiles'");
@@ -273,6 +314,15 @@ COMMIT;
     ELSE quick_badge END
     WHERE quick_badge IN ('令','查','服','网','库','文','启','停')`);
 
+  const sftpAutomationColumns = new Set(all("PRAGMA table_info(sftp_automations)").map((row: any) => row.name));
+  if (!sftpAutomationColumns.has("sort_order")) run("ALTER TABLE sftp_automations ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0");
+  if (Number(get("SELECT COUNT(*) AS count FROM sftp_automations WHERE sort_order<=0")?.count || 0) > 0) {
+    const automationRows = all(`SELECT id FROM sftp_automations
+      ORDER BY CASE WHEN sort_order>0 THEN 0 ELSE 1 END,sort_order,
+      enabled DESC,COALESCE(next_run_at,9223372036854775807),updated_at DESC,id DESC`);
+    automationRows.forEach((row: any, index: number) => run("UPDATE sftp_automations SET sort_order=? WHERE id=?", [index + 1, Number(row.id)]));
+  }
+
   const existingGroups = all("SELECT DISTINCT group_name FROM connections ORDER BY group_name COLLATE NOCASE");
   existingGroups.forEach((row: any, index: number) => run(
     "INSERT OR IGNORE INTO connection_groups(name,sort_order,created_at,updated_at) VALUES(?,?,?,?)",
@@ -302,6 +352,11 @@ COMMIT;
   run("CREATE INDEX IF NOT EXISTS idx_command_snippets_sort ON command_snippets(favorite,last_used_at,updated_at)");
   run("CREATE INDEX IF NOT EXISTS idx_command_snippets_quick_sort ON command_snippets(quick_visible,quick_sort_order,created_at,id)");
   run("CREATE INDEX IF NOT EXISTS idx_named_workspaces_recent ON named_workspaces(last_used_at,updated_at)");
+  run("CREATE INDEX IF NOT EXISTS idx_sftp_automations_due ON sftp_automations(enabled,next_run_at,id)");
+  run("CREATE INDEX IF NOT EXISTS idx_sftp_automations_connection ON sftp_automations(connection_id,kind,enabled,id)");
+  run("CREATE INDEX IF NOT EXISTS idx_sftp_automations_sort ON sftp_automations(sort_order,created_at,id)");
+  run("CREATE INDEX IF NOT EXISTS idx_sftp_automation_runs_automation ON sftp_automation_runs(automation_id,started_at DESC)");
+  run("CREATE INDEX IF NOT EXISTS idx_sftp_automation_baselines_updated ON sftp_automation_baselines(updated_at)");
 
   // Keep the frequent UI refresh probe scoped to data that can change the
   // connection explorer, running forwards, or remote-profile views. Unrelated
