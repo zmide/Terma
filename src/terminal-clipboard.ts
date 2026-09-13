@@ -2,7 +2,12 @@ const { buildRemotePosixCommand } = require("./remote-posix");
 const { runSshCommandForConnectionStreaming } = require("./ssh");
 
 const TERMINAL_CLIPBOARD_IMAGE_MAX_BYTES = 25 * 1024 * 1024;
-const TERMINAL_CLIPBOARD_COMMAND_TIMEOUT_MS = 25 * 1000;
+// Keep the X11 selection available while a remote AI workflow is still
+// processing the prompt. The SSH command is bounded slightly beyond the
+// selection lifetime so the remote trap can clean up its temporary files.
+const TERMINAL_CLIPBOARD_HOLD_MS = 2 * 60 * 1000;
+const TERMINAL_CLIPBOARD_HOLD_SECONDS = Math.ceil(TERMINAL_CLIPBOARD_HOLD_MS / 1000);
+const TERMINAL_CLIPBOARD_COMMAND_TIMEOUT_MS = TERMINAL_CLIPBOARD_HOLD_MS + 10 * 1000;
 const TERMINAL_CLIPBOARD_READY_MARKER = "TERMA_TERMINAL_CLIPBOARD_READY";
 const TERMINAL_CLIPBOARD_UNAVAILABLE_PREFIX = "TERMA_TERMINAL_CLIPBOARD_UNAVAILABLE=";
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -67,7 +72,7 @@ function terminalClipboardImageScript(): string {
     `if ! kill -0 "$terma_clip_pid" 2>/dev/null; then wait "$terma_clip_pid"; terma_clip_status=$?; cat "$terma_clip_error" >&2; printf '${TERMINAL_CLIPBOARD_UNAVAILABLE_PREFIX}xclip-failed\\n'; exit "$terma_clip_status"; fi`,
     `printf '${TERMINAL_CLIPBOARD_READY_MARKER}\\n'`,
     "terma_clip_elapsed=0",
-    "while kill -0 \"$terma_clip_pid\" 2>/dev/null; do terma_clip_elapsed=$((terma_clip_elapsed + 1)); if [ \"$terma_clip_elapsed\" -ge 15 ]; then kill \"$terma_clip_pid\" 2>/dev/null || true; break; fi; sleep 1; done",
+    `while kill -0 \"$terma_clip_pid\" 2>/dev/null; do terma_clip_elapsed=$((terma_clip_elapsed + 1)); if [ \"$terma_clip_elapsed\" -ge ${TERMINAL_CLIPBOARD_HOLD_SECONDS} ]; then kill \"$terma_clip_pid\" 2>/dev/null || true; break; fi; sleep 1; done`,
     "wait \"$terma_clip_pid\" 2>/dev/null || true",
     "exit 0"
   ].join("\n");
@@ -126,6 +131,8 @@ async function writeTerminalClipboardImage(connection: any, value: unknown, opti
 module.exports = {
   PNG_SIGNATURE,
   TERMINAL_CLIPBOARD_IMAGE_MAX_BYTES,
+  TERMINAL_CLIPBOARD_HOLD_MS,
+  TERMINAL_CLIPBOARD_COMMAND_TIMEOUT_MS,
   TERMINAL_CLIPBOARD_READY_MARKER,
   TERMINAL_CLIPBOARD_UNAVAILABLE_PREFIX,
   normalizeTerminalClipboardX11Mode,

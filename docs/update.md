@@ -7,7 +7,7 @@
 <a id="english"></a>
 ### English
 
-> The next release will focus on validating recoverable sessions and remote desktop workflows on real platforms, while expanding terminal AI interoperability coverage.
+> The next release will focus on recoverable terminal sessions, broader terminal AI interoperability, and cross-platform remote desktop acceptance.
 
 #### Planned
 
@@ -18,13 +18,49 @@
 <a id="简体中文"></a>
 ### 简体中文
 
-> 下一版本将重点完成可恢复会话和远程桌面流程的真实平台验收，同时扩展终端 AI 互操作覆盖范围。
+> 下一版本将重点推进可恢复终端、更多终端 AI 互操作场景和跨平台远程桌面验收。
 
 #### 计划
 
 - 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
+
+## v1.7.1
+
+[English](#english) · [简体中文](#简体中文)
+
+<a id="english"></a>
+### English
+
+> This patch release keeps terminal dashboards responsive during delayed, high-frequency redraws and keeps remote image pastes available while an AI workflow is still processing.
+
+#### Important fixes
+
+- Fixed high-frequency ANSI cursor redraws from terminals that stay in the normal screen buffer making other tabs or split panes feel stuck. These redraws are now batched, and terminals in an unfocused split pane use the background drain rate.
+- Fixed delayed image pastes from remote AI workflows losing the X11 clipboard while the model was still processing. The remote image selection now remains available for two minutes before automatic cleanup.
+
+#### Changes in this release
+
+- No pull requests were merged after v1.7.0; all user-visible changes in this release were committed directly by the project maintainer.
+
+**Full Changelog**: [v1.7.0...v1.7.1](https://github.com/zmide/Terma/compare/v1.7.0...v1.7.1)
+
+<a id="简体中文"></a>
+### 简体中文
+
+> 本补丁版本修复终端延迟期间的高频重绘卡顿，并让远端 AI 仍在处理时的图片粘贴保持可用。
+
+#### 重要修复
+
+- 修复部分终端虽未进入备用屏幕、却持续发送 ANSI 光标重绘时拖慢其他标签或分屏的问题；现在会识别这类高频重绘并合并处理，未聚焦的分屏终端也会使用后台低频处理。
+- 修复远端 AI 仍在等待模型处理时图片剪贴板过早失效的问题；远端图片选择现在会保持两分钟，然后自动清理。
+
+#### 本次变更
+
+- v1.7.0 之后没有合并 Pull Request；本版所有用户可见变化均由项目维护者直接提交。
+
+**完整变更**：[v1.7.0...v1.7.1](https://github.com/zmide/Terma/compare/v1.7.0...v1.7.1)
 
 ## v1.7.0
 

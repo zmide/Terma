@@ -111,6 +111,53 @@ function checkScreenInspectionWaitsForIdle() {
   assert.deepEqual(inspections, ["command-buffer", "pending-command", "ai-block"], "screen inspection should run once after the output batch is idle");
 }
 
+function checkAnsiRedrawAndSplitThrottling() {
+  const timers = [];
+  const sandbox = {
+    Uint8Array,
+    WebSocket:{OPEN:1},
+    document:{hidden:false},
+    Number,
+    Math,
+    setTimeout:(callback, delay) => { timers.push({callback, delay}); return timers.length; },
+    clearTimeout:() => {},
+    cancelAnimationFrame:() => {},
+    terminalSessions:new Map()
+  };
+  sandbox.globalThis = sandbox;
+  vm.runInNewContext(`${read("public/app-terminal-output.js")}
+;globalThis.__api={queueTerminalOutput};`, sandbox, {filename:"public/app-terminal-output.js", timeout:5000});
+  const redrawSession = {
+    key:"game",
+    term:{buffer:{active:{type:"normal", viewportY:0, baseY:0}}, write(_value, callback){ callback(); }},
+    socket:{readyState:1, send() {}}
+  };
+  for (let index = 0; index < 8; index += 1) {
+    sandbox.__api.queueTerminalOutput(redrawSession, "\x1b[1;1H");
+    timers.shift().callback();
+  }
+  sandbox.__api.queueTerminalOutput(redrawSession, "\x1b[1;1H");
+  assert.equal(timers.at(-1)?.delay, 32, "frequent ANSI cursor redraws must throttle a normal-buffer game terminal");
+
+  const splitTimers = [];
+  const splitSandbox = {
+    ...sandbox,
+    setTimeout:(callback, delay) => { splitTimers.push({callback, delay}); return splitTimers.length; },
+    workspaceFindPaneForTab:() => ({id:"pane-game", activeTabKey:"game"}),
+    focusedPaneId:"pane-other"
+  };
+  splitSandbox.globalThis = splitSandbox;
+  vm.runInNewContext(`${read("public/app-terminal-output.js")}
+;globalThis.__api={queueTerminalOutput};`, splitSandbox, {filename:"public/app-terminal-output.js", timeout:5000});
+  const splitSession = {
+    key:"game",
+    term:{buffer:{active:{type:"normal", viewportY:0, baseY:0}}, write(_value, callback){ callback(); }},
+    socket:{readyState:1, send() {}}
+  };
+  splitSandbox.__api.queueTerminalOutput(splitSession, "ordinary output");
+  assert.equal(splitTimers.at(-1)?.delay, 96, "a terminal in an unfocused split pane must use the background drain rate");
+}
+
 function checkServerFlowContract() {
   const source = read("src/terminal.ts");
   assert.match(source, /terminal-output-flow/, "server must recognize the output-flow control message");
@@ -137,5 +184,6 @@ function checkServerFlowContract() {
 
 checkBrowserWatermarks();
 checkScreenInspectionWaitsForIdle();
+checkAnsiRedrawAndSplitThrottling();
 checkServerFlowContract();
 console.log("PASS terminal output high/low watermarks pause and resume remote sources");

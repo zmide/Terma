@@ -40,6 +40,9 @@ assert.match(terminalRouteSource, /\["off", "trusted", "untrusted"\]\.includes\(
 assert.match(terminalRouteSource, /isDesktopCapabilityRequest\(request, "xserver"\)/);
 assert.match(clipboardServiceSource, /umask 077/);
 assert.match(clipboardServiceSource, /xclip -selection clipboard -target image\/png -quiet -i/);
+assert.match(clipboardServiceSource, /TERMINAL_CLIPBOARD_HOLD_MS = 2 \* 60 \* 1000/);
+assert.match(clipboardServiceSource, /TERMINAL_CLIPBOARD_COMMAND_TIMEOUT_MS = TERMINAL_CLIPBOARD_HOLD_MS \+ 10 \* 1000/);
+assert.match(clipboardServiceSource, /-ge \$\{TERMINAL_CLIPBOARD_HOLD_SECONDS\}/);
 assert.match(clipboardServiceSource, /rm -f \\"\$terma_clip_file\\" \\"\$terma_clip_error\\"/);
 assert.match(clipboardServiceSource, /input:image/);
 assert.match(sshSource, /stdio: \["pipe", "pipe", "pipe"\]/);
@@ -194,6 +197,8 @@ async function checkBackendPaths() {
   assert.deepEqual(direct, {ready:true, available:true, transport:"x11", tool:"xclip", bytes:validPng.length});
   assert.equal(captured.remoteConnection.id, 7);
   assert.equal(captured.options.x11Mode, "trusted");
+  assert.equal(captured.timeoutMs, clipboard.TERMINAL_CLIPBOARD_COMMAND_TIMEOUT_MS);
+  assert.ok(captured.timeoutMs > clipboard.TERMINAL_CLIPBOARD_HOLD_MS, "SSH cleanup timeout must outlive the clipboard hold window");
   assert.deepEqual(captured.options.input, validPng);
   assert.equal(captured.command.includes(validPng.subarray(8).toString("hex")), false);
 

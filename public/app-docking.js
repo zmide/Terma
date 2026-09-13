@@ -48,6 +48,10 @@ function workspaceFindPaneForTab(key) {
   return workspaceLeaves().find(pane => pane.tabs.includes(key)) || null;
 }
 
+function workspacePaneShowsTab(pane, key) {
+  return Boolean(pane && pane.activeTabKey === String(key || ""));
+}
+
 function workspaceFindSplit(splitId, node=workspaceLayout) {
   if (!node || node.type === "pane") return null;
   if (node.id === splitId) return node;
