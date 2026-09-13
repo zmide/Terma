@@ -44,7 +44,7 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "@types/node": "^26.4.1",
+    "@types/node": "^26.5.1",
     "electron": "^44.2.0",
     "electron-builder": "^26.15.3",
     "node-gyp": "^13.0.2",
