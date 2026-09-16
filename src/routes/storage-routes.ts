@@ -143,6 +143,7 @@ export async function handleStorageRoutes(
       listen_port:data.listen_port ?? current.listen_port,
       sftp_recycle_bin_enabled:data.sftp_recycle_bin_enabled ?? current.sftp_recycle_bin_enabled,
       sftp_floating_progress_enabled:data.sftp_floating_progress_enabled ?? current.sftp_floating_progress_enabled,
+      desktop_notifications_enabled:data.desktop_notifications_enabled ?? current.desktop_notifications_enabled,
       notification_display:data.notification_display ?? current.notification_display,
       sftp_max_open_file_size_mb:data.sftp_max_open_file_size_mb ?? current.sftp_max_open_file_size_mb,
       sftp_text_editor_mode:data.sftp_text_editor_mode ?? current.sftp_text_editor_mode,

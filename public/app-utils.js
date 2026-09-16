@@ -774,10 +774,13 @@ function createProgressToast(options={}) {
 }
 
 function desktopNotificationEnabled() {
-  return typeof Notification !== "undefined" && Notification.permission === "granted";
+  return typeof Notification !== "undefined"
+    && Notification.permission === "granted"
+    && (typeof runtimeSettings === "undefined" || runtimeSettings?.saved?.desktop_notifications_enabled !== false);
 }
 
 async function requestDesktopNotifications() {
+  if (typeof toggleDesktopNotifications === "function") return toggleDesktopNotifications();
   if (typeof Notification === "undefined") return notify(tr("common:notifications.browser_notifications_unsupported", {defaultValue:"当前浏览器不支持系统通知"}), "info");
   const permission = await Notification.requestPermission();
   notify(permission === "granted"

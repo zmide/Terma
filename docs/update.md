@@ -15,6 +15,21 @@
 - Expand terminal AI interoperability tests with additional OpenAI-compatible gateways while keeping command execution and MCP approval boundaries unchanged.
 - Complete real TigerVNC/noVNC/system-client clipboard acceptance for text, Chinese and image transfer on all three desktop platforms.
 
+#### Important fixes
+
+- Long shell code blocks in the terminal AI panel keep their action buttons reachable by scrolling the code area without losing the execute controls.
+- Custom AI provider names now remain unchanged after saving, while default localized names continue to follow the selected language.
+- SFTP history diff previews can be closed without losing the current editor content, including when loading a historical version fails.
+- Large SFTP multi-delete selections no longer fail on remote `csh`/shell argument limits; deletion now runs bounded command batches inside one background task with continuous item progress and cancellation support.
+- Saving an SFTP file in the internal editor keeps the editor open, including when using Ctrl+S, and refreshes the directory after a successful remote save.
+- Notification settings now distinguish background event mode, in-app Terma notifications, desktop notifications, and browser system permission; after authorization, desktop notifications can be turned off or on independently, with the status text and button updating immediately without affecting in-app notices.
+
+#### Important additions
+
+- SFTP SVG files can be previewed as images or opened as editable text.
+- SVG files now offer preview-only, edit-only, and split preview modes, with direct switching between the preview and editor surfaces.
+- Split SVG preview supports drag-to-pan, zoom controls, Ctrl/Command + wheel zoom, click-to-editor targeting, cursor highlighting, a visible target marker at small zoom levels, optional centering and fit-to-target when locating, live refresh without resetting zoom, and a resizable desktop/mobile split. Rendered groups and referenced SVG uses now map back to their actual source element. Manual zoom, fit, or pan disables automatic locating for the current view.
+
 <a id="简体中文"></a>
 ### 简体中文
 
@@ -25,6 +40,21 @@
 - 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
+
+#### 重要修复
+
+- 终端 AI 的长 shell 代码块改为代码区独立滚动，复制、放入终端和执行按钮不会被内容推到面板外。
+- 自定义 AI 供应商名称保存后保持不变；默认的本地化名称仍会跟随当前语言。
+- SFTP 历史版本差异预览现在可以随时关闭；历史版本读取失败时也不会留下无法退出的差异区域，并会保留当前编辑内容。
+- 大批量 SFTP 删除不再因为远端 `csh`/Shell 参数长度限制失败；现在会在同一个后台任务中按安全大小分批执行，并持续显示项目进度且支持取消。
+- 内部编辑器保存 SFTP 文件后保持窗口打开，Ctrl+S 也不再关闭编辑器；远端保存成功后会刷新目录。
+- 通知设置现在明确区分后台事件提醒、Terma 页面提示、桌面通知和浏览器系统授权；桌面通知授权后可以单独关闭或重新开启，状态文字和按钮会立即同步，不影响页面提示。
+
+#### 重要新增
+
+- SFTP 的 SVG 文件现在既可以图片预览，也可以按文本打开并编辑。
+- SVG 文件新增“仅预览”“仅编辑”和“分栏预览”三种模式，预览界面与编辑界面可以直接互相切换。
+- SVG 分栏预览支持拖动平移、缩放按钮、Ctrl/Command + 滚轮缩放、点击图形定位编辑器、小缩放时仍可见的目标标记、光标高亮、定位时可选居中并缩放到目标、保留缩放的实时刷新，以及桌面左右/窄屏上下比例调节；引用的 SVG 图形也会回到实际源元素，而不是跳到 symbol 定义；手动缩放、适应窗口或平移后会关闭当前视图的自动定位。
 
 ## v1.7.1
 

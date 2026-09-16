@@ -253,8 +253,9 @@ function renderSettings() {
       <section>
         <h3>${esc(tr("settings:auto.notifications"))}</h3>
         <div class="muted">${esc(tr("settings:auto.notifications_intro"))}</div>
-        <div class="cmd">${esc(tr("settings:auto.notification_status", {status:notificationPermissionText()}))}</div>
+        <div id="notificationPermissionStatus" class="cmd">${esc(tr("settings:auto.notification_status", {status:notificationPermissionText()}))}</div>
         <label>${esc(tr("settings:auto.notification_method"))}</label>
+        <div class="muted">${esc(tr("settings:auto.notification_method_hint"))}</div>
         <select id="notificationMode">
           <option value="on" ${(s.notification_mode || "on") === "on" ? "selected" : ""}>${esc(tr("settings:auto.notification_mode_on"))}</option>
           <option value="muted" ${s.notification_mode === "muted" ? "selected" : ""}>${esc(tr("settings:auto.notification_mode_muted"))}</option>
@@ -287,7 +288,10 @@ function renderSettings() {
           </div>
         </div>
         <div class="muted">${esc(tr("settings:auto.notification_disable_hint"))}</div>
-        <div class="actions"><button id="notificationSaveBtn" class="primary" onclick="saveNotificationOptions()">${esc(tr("settings:auto.save_notifications"))}</button><button onclick="requestDesktopNotifications()">${esc(tr("settings:auto.enable_desktop_notifications"))}</button></div>
+        <div class="desktop-notification-control">
+          <div id="desktopNotificationStatus" class="cmd">${esc(notificationPermissionText())}</div>
+          <div class="actions"><button id="notificationSaveBtn" class="primary" onclick="saveNotificationOptions()">${esc(tr("settings:auto.save_notifications"))}</button><button id="desktopNotificationToggleBtn" onclick="toggleDesktopNotifications()">${esc(desktopNotificationToggleLabel())}</button></div>
+        </div>
       </section>
         </div>
       </div>
