@@ -1,16 +1,18 @@
 function installProductivityHeaderButton() {
   const host = document.getElementById("workspaceQuickActions");
-  if (!document.getElementById("quickPanelButton")) {
-    const button = document.createElement("button");
+  let button = document.getElementById("quickPanelButton");
+  if (!button) {
+    button = document.createElement("button");
     button.id = "quickPanelButton";
     button.className = "icon-button quick-panel-button";
-    button.title = tr("common:auto.command_window_shortcut", {shortcut:"Ctrl+K"});
-    button.setAttribute("aria-label", tr("common:auto.command_window"));
     button.innerHTML = icon("zap");
     button.onclick = openQuickPanel;
     if (host) host.appendChild(button);
     else document.getElementById("sftpTaskCenter")?.before(button);
   }
+  const english = String(document.documentElement.lang || "").toLowerCase().startsWith("en");
+  button.title = tr("common:auto.command_window_shortcut", {shortcut:"Ctrl+K", defaultValue:english ? "Command window (Ctrl+K)" : "命令窗口（Ctrl+K）"});
+  button.setAttribute("aria-label", tr("common:auto.command_window", {defaultValue:english ? "Command window" : "命令窗口"}));
   if (typeof installSftpAutomationQuickAction === "function") installSftpAutomationQuickAction(host);
   if (!document.getElementById("terminalSessionManagerButton") && typeof openTerminalSessionManager === "function") {
     const button = document.createElement("button");
@@ -153,3 +155,5 @@ function initProductivityFeatures() {
   detectSshConfigOnFirstUse();
   refreshIcons();
 }
+
+if (typeof registerTermaI18nRenderer === "function") registerTermaI18nRenderer(installProductivityHeaderButton);

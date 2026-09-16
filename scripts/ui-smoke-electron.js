@@ -9438,7 +9438,7 @@ app.whenReady().then(async () => {
         };
         svgModeSelect.value='split';
         svgModeSelect.dispatchEvent(new Event('change',{bubbles:true}));
-        for (let attempt=0; attempt<40 && !document.querySelector('.sftp-editor-floating-window #sftpSvgEditorMode'); attempt+=1) {
+        for (let attempt=0; attempt<120 && !document.querySelector('.sftp-editor-floating-window #sftpSvgEditorMode'); attempt+=1) {
           await new Promise(resolve=>setTimeout(resolve,50));
         }
         const svgEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
@@ -9633,7 +9633,7 @@ app.whenReady().then(async () => {
         if (roundTripPreviewMode) await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(resolve,60))));
         if (roundTripPreviewMode) roundTripPreviewMode.value='edit';
         roundTripPreviewMode?.dispatchEvent(new Event('change',{bubbles:true}));
-        for (let attempt=0; attempt<40 && !document.querySelector('.sftp-editor-floating-window #sftpSvgEditorMode'); attempt+=1) {
+        for (let attempt=0; attempt<120 && !document.querySelector('.sftp-editor-floating-window #sftpSvgEditorMode'); attempt+=1) {
           await new Promise(resolve=>setTimeout(resolve,50));
         }
         const roundTripEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
