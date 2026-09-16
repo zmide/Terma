@@ -61,25 +61,142 @@ function createSftpSvgSourceLocator({getText, getAceEditor, getFallbackEditor, o
       fallbackEditor.focus();
       fallbackEditor.setSelectionRange(index, index + targetId.length);
     }
-    onHighlight?.(targetId, {locate:true, force:true});
+    onHighlight?.(targetId, {locate:options.locate !== false, force:true});
   };
   const idForCursor = () => {
     const text = String(getText?.() || "");
     const fallbackOffset = Number(getFallbackEditor?.()?.selectionStart || 0);
     const aceEditor = getAceEditor?.();
-    const row = aceEditor?.getCursorPosition?.().row ?? text.slice(0, fallbackOffset).split("\n").length - 1;
+    const acePosition = aceEditor?.getCursorPosition?.();
+    const cursorOffset = acePosition && aceEditor?.session?.getDocument?.()
+      ? aceEditor.session.getDocument().positionToIndex(acePosition, 0)
+      : fallbackOffset;
+    const row = acePosition?.row ?? text.slice(0, cursorOffset).split("\n").length - 1;
     const lines = text.replace(/\r\n?/g, "\n").split("\n");
     const current = String(lines[row] || "");
-    const direct = current.match(/\bid\s*=\s*["']([^"']+)["']/i) || current.match(/(?:href|xlink:href)\s*=\s*["']#([^"']+)["']/i);
-    if (direct?.[1]) return direct[1];
+    const lineStart = text.lastIndexOf("\n", Math.max(0, cursorOffset - 1)) + 1;
+    const column = Math.max(0, cursorOffset - lineStart);
+    const targetInTag = raw => raw.match(/\bid\s*=\s*["']([^"']+)["']/i)?.[1]
+      || raw.match(/(?:href|xlink:href)\s*=\s*["']#([^"']+)["']/i)?.[1]
+      || "";
+    const tagStart = current.lastIndexOf("<", column);
+    const tagEnd = tagStart >= 0 ? current.indexOf(">", tagStart) : -1;
+    if (tagStart >= 0 && tagEnd >= column) {
+      const direct = targetInTag(current.slice(tagStart, tagEnd + 1));
+      if (direct) return direct;
+    }
+    const candidates = [];
+    const attributeExpression = /\bid\s*=\s*["']([^"']+)["']|(?:href|xlink:href)\s*=\s*["']#([^"']+)["']/gi;
+    let attributeMatch;
+    while ((attributeMatch = attributeExpression.exec(current))) {
+      candidates.push({id:attributeMatch[1] || attributeMatch[2], distance:Math.abs(attributeMatch.index - column)});
+    }
+    candidates.sort((left, right) => left.distance - right.distance);
+    if (candidates[0]?.id) return candidates[0].id;
     for (let distance = 1; distance <= 36; distance += 1) {
       for (const index of [row - distance, row + distance]) {
         if (index < 0 || index >= lines.length) continue;
-        const match = String(lines[index] || "").match(/\bid\s*=\s*["']([^"']+)["']/i) || String(lines[index] || "").match(/(?:href|xlink:href)\s*=\s*["']#([^"']+)["']/i);
-        if (match?.[1]) return match[1];
+        const match = targetInTag(String(lines[index] || ""));
+        if (match) return match;
       }
     }
     return "";
   };
   return {focusSourceId, idForCursor};
+}
+
+function createSftpSvgEditorScheduler({isActive, renderPreview, syncCursor}) {
+  let previewTimer = 0;
+  let cursorTimer = 0;
+  const render = () => {
+    if (!isActive?.()) return;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => {
+      previewTimer = 0;
+      if (isActive?.()) renderPreview?.();
+    }, 140);
+  };
+  const cursor = () => {
+    if (!isActive?.()) return;
+    clearTimeout(cursorTimer);
+    cursorTimer = setTimeout(() => {
+      cursorTimer = 0;
+      if (isActive?.()) syncCursor?.();
+    }, 48);
+  };
+  const clear = () => {
+    clearTimeout(previewTimer);
+    clearTimeout(cursorTimer);
+    previewTimer = 0;
+    cursorTimer = 0;
+  };
+  return {render, cursor, clear};
+}
+
+function createSftpSvgAutoFocusController({getViewport, getStage, getTarget, getToggle, getScale, setScale, updateMarker}) {
+  let focusedId = "";
+  let focusToken = 0;
+  const clear = () => {
+    focusToken += 1;
+    focusedId = "";
+  };
+  const cancel = () => {
+    clear();
+    const toggle = getToggle?.();
+    if (toggle) toggle.checked = false;
+  };
+  const focus = id => {
+    const targetId = String(id || "");
+    const viewport = getViewport?.();
+    const stage = getStage?.();
+    if (!targetId || !viewport || !stage || !getToggle?.()?.checked) return;
+    const target = getTarget?.(targetId);
+    if (!target) return;
+    const currentToken = ++focusToken;
+    const viewportRect = viewport.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    if (focusedId !== targetId) {
+      const desiredFactor = Math.max(.35, Math.min(6, Math.min(
+        Math.max(1, viewportRect.width * .46) / Math.max(1, targetRect.width),
+        Math.max(1, viewportRect.height * .46) / Math.max(1, targetRect.height)
+      )));
+      const currentScale = getScale?.() || 1;
+      const nextScale = Math.max(.05, Math.min(8, currentScale * desiredFactor));
+      focusedId = targetId;
+      if (Math.abs(nextScale - currentScale) > .001) setScale?.(nextScale);
+    }
+    const center = () => {
+      if (currentToken !== focusToken || !getToggle?.()?.checked) return;
+      const nextViewport = getViewport?.();
+      const nextStage = getStage?.();
+      const nextTarget = getTarget?.(targetId);
+      if (!nextViewport || !nextStage || !nextTarget) return;
+      const nextTargetRect = nextTarget.getBoundingClientRect();
+      const stageRect = nextStage.getBoundingClientRect();
+      const targetX = nextTargetRect.left - stageRect.left + nextTargetRect.width / 2;
+      const targetY = nextTargetRect.top - stageRect.top + nextTargetRect.height / 2;
+      const maxLeft = Math.max(0, nextViewport.scrollWidth - nextViewport.clientWidth);
+      const maxTop = Math.max(0, nextViewport.scrollHeight - nextViewport.clientHeight);
+      nextViewport.scrollLeft = Math.max(0, Math.min(maxLeft, targetX - nextViewport.clientWidth / 2));
+      nextViewport.scrollTop = Math.max(0, Math.min(maxTop, targetY - nextViewport.clientHeight / 2));
+      updateMarker?.();
+    };
+    center();
+    requestAnimationFrame(() => requestAnimationFrame(center));
+  };
+  return {focus, cancel, clear};
+}
+
+function setSftpSvgPreviewSize(viewport, stage, width, height) {
+  if (!viewport || !stage) return;
+  const gutterWidth = Math.max(0, viewport.clientWidth);
+  const gutterHeight = Math.max(0, viewport.clientHeight);
+  stage.style.width = `${width + gutterWidth}px`;
+  stage.style.height = `${height + gutterHeight}px`;
+  const root = stage.shadowRoot?.querySelector("svg");
+  if (!root) return;
+  root.style.width = `${width}px`;
+  root.style.height = `${height}px`;
+  root.style.marginLeft = `${gutterWidth / 2}px`;
+  root.style.marginTop = `${gutterHeight / 2}px`;
 }

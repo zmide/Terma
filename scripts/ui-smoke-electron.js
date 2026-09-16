@@ -9409,7 +9409,25 @@ app.whenReady().then(async () => {
       const svgModeSelect=document.querySelector('#sftpImageViewMode');
       if (svgModeSelect) {
         const svgModeApi=api;
+        const svgModeTextReader=readSftpTextWithProgress;
+        const svgModeSource=currentSvgRoot()?.outerHTML||'';
+        let svgModeTextReadCalls=0;
         let svgModeSaveCalls=0;
+        readSftpTextWithProgress=async ()=>{
+          svgModeTextReadCalls+=1;
+          return {
+            content:svgModeSource,
+            size:new TextEncoder().encode(svgModeSource).length,
+            limit:50*1024*1024,
+            encoding:'gbk',
+            preferred_encoding:'auto',
+            line_ending:'lf',
+            final_newline:false,
+            needs_format_repair:false,
+            editor_kind:'ace',
+            is_cancelled:()=>false
+          };
+        };
         api=async (pathname,options={})=>{
           if (String(pathname).endsWith('/sftp/write')) {
             svgModeSaveCalls+=1;
@@ -9426,6 +9444,8 @@ app.whenReady().then(async () => {
         const svgEditorWindow=[...document.querySelectorAll('.sftp-editor-floating-window')].at(-1);
         const svgEditorMode=svgEditorWindow?.querySelector('#sftpSvgEditorMode');
         const svgEditorPreview=svgEditorWindow?.querySelector('#sftpSvgEditorPreview');
+        imagePreviewUi.svgRemoteUsesEncodingAwareRead=svgModeTextReadCalls===1;
+        imagePreviewUi.svgRemoteEncodingPreserved=svgEditorWindow?.querySelector('#sftpTextEncoding')?.value==='gbk';
         imagePreviewUi.svgModeControl=Boolean([...svgModeSelect.options].map(option=>option.value).join(',')==='preview,edit,split');
         imagePreviewUi.svgSplitDiagnostics={
           editorWindow:Boolean(svgEditorWindow),
@@ -9446,23 +9466,85 @@ app.whenReady().then(async () => {
         if (svgEditorMode) svgEditorMode.value='split';
         svgEditorMode?.dispatchEvent(new Event('change',{bubbles:true}));
         await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-        imagePreviewUi.svgSplitRefresh=Boolean(svgEditorPreview?.querySelector('.sftp-svg-editor-preview-stage')?.shadowRoot?.querySelector('svg'));
+        imagePreviewUi.svgSplitRefresh=false;
         const svgEditorHost=svgEditorWindow?.querySelector('#sftpTextEditor');
         const svgAceEditor=svgEditorHost?.__termaAceEditor || (svgEditorHost && window.ace ? ace.edit(svgEditorHost) : null);
         const svgEditorInput=svgEditorWindow?.querySelector('textarea.text-editor');
         const svgAutoFocusToggle=svgEditorPreview?.querySelector('[data-svg-preview-auto-focus]');
+        const svgLiveRefreshId='terma-svg-live-refresh';
+        const svgLiveRefreshSource=svgAceEditor?.getValue?.() ?? svgEditorInput?.value ?? '';
+        const svgLiveRefreshNext=svgLiveRefreshSource.replace(/<\\/svg>/i,'<rect id="'+svgLiveRefreshId+'" width="1" height="1"/></svg>');
+        if (svgLiveRefreshNext!==svgLiveRefreshSource) {
+          if (svgAceEditor) svgAceEditor.setValue(svgLiveRefreshNext,-1);
+          else if (svgEditorInput) {
+            svgEditorInput.value=svgLiveRefreshNext;
+            svgEditorInput.dispatchEvent(new Event('input',{bubbles:true}));
+          }
+          await new Promise(resolve=>setTimeout(resolve,240));
+        }
         const svgEditorRoot=svgEditorPreview?.querySelector('.sftp-svg-editor-preview-stage')?.shadowRoot?.querySelector('svg');
+        imagePreviewUi.svgSplitRefresh=Boolean(svgEditorRoot?.querySelector('#'+svgLiveRefreshId));
         const svgClickTarget=svgEditorRoot?.querySelector('#PD_11100000_14419');
+        const svgAutoFocusZoomBefore=Number.parseInt(svgEditorPreview?.querySelector('[data-svg-preview-zoom-value]')?.textContent||'',10);
         const svgEditorClickBeforePosition=svgAceEditor?.getCursorPosition?.();
         svgClickTarget?.dispatchEvent(new MouseEvent('click',{bubbles:true,composed:true}));
-        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+        await new Promise(resolve=>setTimeout(resolve,700));
         const svgEditorClickPosition=svgAceEditor?.getCursorPosition?.();
         const svgEditorClickRow=svgEditorClickPosition?.row;
         const svgEditorClickLine=Number.isFinite(svgEditorClickRow) ? svgAceEditor.session.getLine(svgEditorClickRow) : '';
         const svgClickTargetAfter=svgEditorRoot?.querySelector('#PD_11100000_14419');
+        const svgAutoFocusZoomAfter=Number.parseInt(svgEditorPreview?.querySelector('[data-svg-preview-zoom-value]')?.textContent||'',10);
+        const svgAutoFocusViewport=svgEditorPreview?.querySelector('.sftp-svg-editor-preview-viewport');
+        const svgAutoFocusViewportRect=svgAutoFocusViewport?.getBoundingClientRect();
+        const svgAutoFocusStageRect=svgEditorPreview?.querySelector('.sftp-svg-editor-preview-stage')?.getBoundingClientRect();
+        const svgAutoFocusTargetRect=svgClickTargetAfter?.getBoundingClientRect();
+        const svgAutoFocusCenterX=svgAutoFocusViewportRect && svgAutoFocusViewport
+          ? svgAutoFocusViewportRect.left+svgAutoFocusViewport.clientLeft+svgAutoFocusViewport.clientWidth/2
+          : Number.NaN;
+        const svgAutoFocusCenterY=svgAutoFocusViewportRect && svgAutoFocusViewport
+          ? svgAutoFocusViewportRect.top+svgAutoFocusViewport.clientTop+svgAutoFocusViewport.clientHeight/2
+          : Number.NaN;
+        const svgAutoFocusCentered=Boolean(svgAutoFocusViewportRect && svgAutoFocusTargetRect
+          && Math.abs(svgAutoFocusTargetRect.left+svgAutoFocusTargetRect.width/2-svgAutoFocusCenterX)<=4
+          && Math.abs(svgAutoFocusTargetRect.top+svgAutoFocusTargetRect.height/2-svgAutoFocusCenterY)<=4);
         imagePreviewUi.svgSplitAutoFocus=Boolean(svgAutoFocusToggle
           && svgAutoFocusToggle.checked
-          && Number.parseInt(svgEditorPreview?.querySelector('[data-svg-preview-zoom-value]')?.textContent||'',10)>100);
+          && Number.isFinite(svgAutoFocusZoomBefore)
+          && Number.isFinite(svgAutoFocusZoomAfter)
+          && svgAutoFocusZoomAfter>svgAutoFocusZoomBefore
+          && svgAutoFocusCentered);
+        imagePreviewUi.svgSplitAutoFocusDiagnostics={
+          checked:Boolean(svgAutoFocusToggle?.checked),
+          zoomBefore:svgAutoFocusZoomBefore,
+          zoomAfter:svgAutoFocusZoomAfter,
+          centered:svgAutoFocusCentered,
+          viewport:svgAutoFocusViewportRect ? {
+            left:Math.round(svgAutoFocusViewportRect.left),
+            top:Math.round(svgAutoFocusViewportRect.top),
+            width:Math.round(svgAutoFocusViewportRect.width),
+            height:Math.round(svgAutoFocusViewportRect.height),
+            clientWidth:svgAutoFocusViewport?.clientWidth||0,
+            clientHeight:svgAutoFocusViewport?.clientHeight||0
+          } : null,
+          target:svgAutoFocusTargetRect ? {
+            left:Math.round(svgAutoFocusTargetRect.left),
+            top:Math.round(svgAutoFocusTargetRect.top),
+            width:Math.round(svgAutoFocusTargetRect.width),
+            height:Math.round(svgAutoFocusTargetRect.height)
+          } : null,
+          stage:svgAutoFocusStageRect ? {
+            left:Math.round(svgAutoFocusStageRect.left),
+            top:Math.round(svgAutoFocusStageRect.top),
+            width:Math.round(svgAutoFocusStageRect.width),
+            height:Math.round(svgAutoFocusStageRect.height)
+          } : null,
+          scroll:svgEditorPreview?.querySelector('.sftp-svg-editor-preview-viewport') ? {
+            left:Math.round(svgEditorPreview.querySelector('.sftp-svg-editor-preview-viewport').scrollLeft),
+            top:Math.round(svgEditorPreview.querySelector('.sftp-svg-editor-preview-viewport').scrollTop)
+          } : null,
+          hintAfterClick:svgEditorPreview?.querySelector('[data-svg-preview-source]')?.textContent||'',
+          highlightedIds:[...svgEditorRoot?.querySelectorAll('.sftp-svg-editor-cursor-current')||[]].map(node=>node.getAttribute('id')).filter(Boolean)
+        };
         imagePreviewUi.svgSplitClickToEditor=Boolean(svgClickTargetAfter?.classList.contains('sftp-svg-editor-cursor-current')
           && svgEditorClickLine.includes('PD_11100000_14419')
           && (!svgEditorClickBeforePosition
@@ -9559,6 +9641,7 @@ app.whenReady().then(async () => {
         const roundTripAceEditor=roundTripEditorHost?.__termaAceEditor || (roundTripEditorHost && window.ace ? ace.edit(roundTripEditorHost) : null);
         const roundTripEditorInput=roundTripEditorWindow?.querySelector('textarea.text-editor');
         const roundTripContent=roundTripAceEditor?.getValue() ?? roundTripEditorInput?.value ?? '';
+        imagePreviewUi.svgInlineModeKeepsContentWithoutRemoteRead=svgModeTextReadCalls===1;
         roundTripEditorWindow?.querySelector('#sftpTextSave')?.click();
         await new Promise(resolve=>setTimeout(resolve,100));
         imagePreviewUi.svgModePreservesUnsavedDiagnostics={
@@ -9579,6 +9662,7 @@ app.whenReady().then(async () => {
         roundTripEditorWindow?.querySelector('#sftpTextClose')?.click();
         await new Promise(resolve=>setTimeout(resolve,20));
         api=svgModeApi;
+        readSftpTextWithProgress=svgModeTextReader;
       }
       document.querySelector('#sftpImageClose')?.click();
 
@@ -10148,13 +10232,19 @@ app.whenReady().then(async () => {
       }
     };
   })()`);
-  const linuxDesktopToolbarOriginalSize=window.getContentSize();
+  const linuxDesktopToolbarOriginalSize=window.getSize();
   try {
-    window.setContentSize(900,640);
-    await new Promise(resolve=>setTimeout(resolve,100));
+    window.setSize(900,640);
+    let linuxDesktopViewportReady=false;
+    for (let attempt=0; attempt<40; attempt+=1) {
+      linuxDesktopViewportReady=await window.webContents.executeJavaScript("window.innerWidth > 700 && !isMobileLayout()");
+      if (linuxDesktopViewportReady) break;
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    if (!linuxDesktopViewportReady) throw new Error('Linux desktop toolbar smoke did not reach a desktop viewport');
     linuxDesktopToolbarUi.desktop=await window.webContents.executeJavaScript("window.__runLinuxDesktopToolbarSmoke()");
   } finally {
-    window.setContentSize(...linuxDesktopToolbarOriginalSize);
+    window.setSize(...linuxDesktopToolbarOriginalSize);
     await new Promise(resolve=>setTimeout(resolve,100));
   }
   await window.webContents.executeJavaScript("document.documentElement.dataset.uiSmokeStage='clipboard-and-themes'");
@@ -12037,7 +12127,7 @@ app.whenReady().then(async () => {
   const downloadNoticeUi = sftpUi.downloadNoticeUi || {};
   const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingResumeAction || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.drawerDefaultCompact || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.failedOnly || !jobUi.failedActions || !jobUi.failedClearAvailable || !jobUi.currentProgress || !jobUi.drawerResizable || !jobUi.drawerResizeAdaptive || !jobUi.drawerResizePersists || !jobUi.drawerResizeReset || !jobUi.deleteDuplicateBlocked || !jobUi.deleteKeepsDrawerOpen || !jobUi.taskLogInitialOpen || !jobUi.taskLogInitialBottom || !jobUi.taskLogRefreshKeepsOpen || !jobUi.taskLogRefreshShowsLatest || !jobUi.taskLogRefreshFollowsBottom || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.generatedTaskUi?.found || !jobUi.generatedTaskUi?.savedPath || !jobUi.generatedTaskUi?.openFile || !jobUi.generatedTaskUi?.openDirectory || !jobUi.generatedTaskUi?.deleteFile || jobUi.generatedTaskUi?.buttonCount !== 3 || !jobUi.generatedTaskUi?.noDuplicateTaskDelete || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned || !jobUi.toastOrderPreserved || !jobUi.toastStackedDown || !jobUi.toastAvoidsFloatingTask || !jobUi.toastExitAnimated || !jobUi.toastReflowAnimated || !jobUi.toastMovedUp;
   const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.initialCentered || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.nonUtf8SaveAllowed || !textEncodingUi.nonUtf8SaveSubmitted || !textEncodingUi.remoteSaveKeepsOpen || !textEncodingUi.remoteEditorClosesExplicitly || !textEncodingUi.utf8LimitEnforced || !textEncodingUi.utf8BomIncludesPrefix || !textEncodingUi.normalizationOnlyLimitEnforced || !textEncodingUi.lineEndingLabelsLocalized || !textEncodingUi.lightPaged || !textEncodingUi.lightNextPage || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !textEncodingUi.shellFormat || !textEncodingUi.shellNonLfWarningPrepared || !['lf','crlf','cr'].every(value=>textEncodingUi.lineEndings?.includes(value)) || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
-      const imagePreviewUiFailed = !imagePreviewUi.svgOpened || !imagePreviewUi.svgSanitized || !imagePreviewUi.svgEmbeddedStyles || !imagePreviewUi.svgOuterWindowStable || !imagePreviewUi.svgFitsCanvas || !imagePreviewUi.svgZoomButtons || !imagePreviewUi.svgCtrlWheel || !imagePreviewUi.svgSearchFocused || !imagePreviewUi.svgSearchLocated || !imagePreviewUi.svgSearchKeepsContext || !imagePreviewUi.svgSearchClearFits || !imagePreviewUi.svgColorModeNotClipped || !imagePreviewUi.svgInvertPreview || !imagePreviewUi.svgColorModePreservesView || !imagePreviewUi.svgPdfInvert || !imagePreviewUi.svgPdfUnicode || !imagePreviewUi.svgPdfLandscape || !imagePreviewUi.svgPreserveAspectRatio || !imagePreviewUi.svgModeControl || !imagePreviewUi.svgSplitEditor || !imagePreviewUi.svgSplitRefresh || !imagePreviewUi.svgSplitAutoFocus || !imagePreviewUi.svgSplitClickToEditor || !imagePreviewUi.svgSplitUseIdClickToEditor || !imagePreviewUi.svgSplitUseReferenceClickToEditor || !imagePreviewUi.svgSplitMarkerVisibleWithoutAutoFocus || !imagePreviewUi.svgEditorControlsWrapFromFirstColumn || !imagePreviewUi.svgSplitManualZoomDisablesAutoFocus || !imagePreviewUi.svgModeRoundTrip || !imagePreviewUi.svgModePreservesUnsaved || !imagePreviewUi.notificationAboveFullscreen || !imagePreviewUi.rasterOpened || !imagePreviewUi.rasterZoom;
+      const imagePreviewUiFailed = !imagePreviewUi.svgOpened || !imagePreviewUi.svgSanitized || !imagePreviewUi.svgEmbeddedStyles || !imagePreviewUi.svgOuterWindowStable || !imagePreviewUi.svgFitsCanvas || !imagePreviewUi.svgZoomButtons || !imagePreviewUi.svgCtrlWheel || !imagePreviewUi.svgSearchFocused || !imagePreviewUi.svgSearchLocated || !imagePreviewUi.svgSearchKeepsContext || !imagePreviewUi.svgSearchClearFits || !imagePreviewUi.svgColorModeNotClipped || !imagePreviewUi.svgInvertPreview || !imagePreviewUi.svgColorModePreservesView || !imagePreviewUi.svgPdfInvert || !imagePreviewUi.svgPdfUnicode || !imagePreviewUi.svgPdfLandscape || !imagePreviewUi.svgPreserveAspectRatio || !imagePreviewUi.svgModeControl || !imagePreviewUi.svgRemoteUsesEncodingAwareRead || !imagePreviewUi.svgRemoteEncodingPreserved || !imagePreviewUi.svgSplitEditor || !imagePreviewUi.svgSplitRefresh || !imagePreviewUi.svgSplitAutoFocus || !imagePreviewUi.svgSplitClickToEditor || !imagePreviewUi.svgSplitUseIdClickToEditor || !imagePreviewUi.svgSplitUseReferenceClickToEditor || !imagePreviewUi.svgSplitMarkerVisibleWithoutAutoFocus || !imagePreviewUi.svgEditorControlsWrapFromFirstColumn || !imagePreviewUi.svgSplitManualZoomDisablesAutoFocus || !imagePreviewUi.svgModeRoundTrip || !imagePreviewUi.svgInlineModeKeepsContentWithoutRemoteRead || !imagePreviewUi.svgModePreservesUnsaved || !imagePreviewUi.notificationAboveFullscreen || !imagePreviewUi.rasterOpened || !imagePreviewUi.rasterZoom;
   const nativeDragUiFailed = !nativeDragUi.found || !nativeDragUi.webExternalDragBlocked || !nativeDragUi.linuxFallbackNoticeOnce || !nativeDragUi.linuxFallbackUsesCompatibilityMode || !nativeDragUi.streamingPreparesOnPointerDown || !nativeDragUi.streamingThresholdActivatesOnce || !nativeDragUi.streamingCaptureCancelSurvives || !nativeDragUi.pointerUpCancelsPending || !nativeDragUi.streamingSkipsStage || !nativeDragUi.streamingNativeBlocksParallelBrowserDrag || !nativeDragUi.nativeIdleHintStable || !nativeDragUi.nativeOutsideHintStaysStable || !nativeDragUi.nativeMotionTargetsSftp || !nativeDragUi.nativeTransientMissKeepsTarget || !nativeDragUi.nativeFinalTransientMissKeepsTarget || !nativeDragUi.nativeReleasedClearsStaleTarget || !nativeDragUi.nativeResultCopiesOnce || !nativeDragUi.firstDragOnlyStages || !nativeDragUi.firstDragReset || !nativeDragUi.cacheReused || !nativeDragUi.cachedUnarmedStaysInternal || !nativeDragUi.sameWindowDropDoesNotArm || !nativeDragUi.armedDragStartsSynchronously || !nativeDragUi.failureRearmed || !nativeDragUi.successClearsState || !nativeDragUi.finderRenameNoticeShown;
   const sftpUiFailed = Boolean(sftpUi.error) || !connectionSessionUi.found || !connectionSessionUi.addressIncludesPort || !connectionSessionUi.disconnectedAction || !connectionSessionUi.disconnectedBanner || !connectionSessionUi.connectedAction || !connectionSessionUi.preservedWhileDisconnected || !connectionSessionUi.automaticConnectShared || !connectionSessionUi.manualDisconnectAutoReconnect || !connectionSessionUi.disconnectedFolderOperationReconnects || !connectionSessionUi.dragFeedbackVisible || !connectionSessionUi.dragTargetViewActivated || !connectionSessionUi.targetListDropPrompt || !connectionSessionUi.targetListDropPromptStable || !connectionSessionUi.targetContentLeaveKeepsPreview || !connectionSessionUi.targetHeaderLeaveKeepsPreview || !connectionSessionUi.crossHostListDropCopies || !connectionSessionUi.crossHostPreviewHandoffSurvives || !connectionSessionUi.crossHostDropHasNoUploadToast || !connectionSessionUi.sameHostListDropCopies || !connectionSessionUi.terminalTabPreviewActivated || !connectionSessionUi.invalidTerminalDropRestoresSource || !connectionSessionUi.invalidSftpDropRestoresSource || !connectionSessionUi.acceptedTerminalDropStays || !connectionSessionUi.ownDragUploadSuppressed || !connectionSessionUi.armedPointerCancelClearsRequest || !connectionSessionUi.armedDragAllowsExternalUpload || !connectionSessionUi.staleInternalDragAllowsExternalUpload || !connectionSessionUi.desktopUriListDragAccepted || !connectionSessionUi.releasedDragAllowsExternalUpload || !connectionSessionUi.externalFileDropDetected || !connectionSessionUi.externalFileDropCollected || !connectionSessionUi.externalDropPromptIsSingle || !connectionSessionUi.externalDropPromptAvoidsWorkspaceChrome || !connectionSessionUi.externalDropPromptListCentered || !connectionSessionUi.externalDropSurfaceFillsWorkspace || !connectionSessionUi.externalDropPromptScrollClamped || !connectionSessionUi.externalDropPromptHorizontalClamped || !connectionSessionUi.externalDropPromptClears || nativeDragUiFailed || jobUiFailed || textEncodingUiFailed || imagePreviewUiFailed || !downloadNoticeUi.oncePerMode || !downloadNoticeUi.desktopPath || !downloadNoticeUi.browserDevice || !downloadNoticeUi.batchUsesSharedNotice || !downloadNoticeUi.browserSeparateChoice || !downloadNoticeUi.browserSeparateQueued || !downloadNoticeUi.noDuplicateBatchNotice || !globalSettingsUi.found || !globalSettingsUi.globalScope || !globalSettingsUi.controls || !globalSettingsUi.floatingProgressDefaultOn || !globalSettingsUi.floatingProgressCanRestore || !globalSettingsUi.downloadBehavior || !globalSettingsUi.defaultLimit || !globalSettingsUi.backdropIgnored || !globalSettingsUi.withinViewport || !globalSettingsUi.classicSurface || !globalSettingsUi.themedField || !directorySizeUi.idleButton || !directorySizeUi.requestedOnce || !directorySizeUi.exactBytes || !directorySizeUi.formatted || !directorySizeUi.refreshable || !sftpUi.fileOpenFeedback?.busy || !sftpUi.fileOpenFeedback?.duplicateBlocked || !sftpUi.fileOpenFeedback?.restored || !sftpUi.fileOpenFeedback?.interruptedRetry || !directoryCacheBehavior.sameResponseUntouched || !directoryCacheBehavior.changedResponseRendered || !directoryCacheBehavior.permissionFailureRestored || !sftpUi.searchKeyboardUi?.opened || !sftpUi.searchKeyboardUi?.closed || !sftpUi.searchKeyboardUi?.recursive || !sftpUi.searchKeyboardUi?.feedback || !sftpUi.syncIndicatorFollowsScroll || !sftpUi.diffComparisonUi || !sftpUi.columnLayoutUi?.order || !sftpUi.columnLayoutUi?.persisted || !sftpUi.columnLayoutUi?.resized || !sftpUi.columnLayoutUi?.pointerStable || !sftpUi.columnLayoutUi?.pairOnly || !sftpUi.columnLayoutUi?.adjacentResizeStable || !sftpUi.columnLayoutUi?.dividerUniform || !sftpUi.columnLayoutUi?.localNarrowResizable || !sftpUi.columnLayoutUi?.openButtonStable || !sftpUi.columnLayoutUi?.selectionToolbarStable || !sftpUi.columnLayoutUi?.scrollbarUnified || !sftpUi.columnLayoutUi?.globalCss || !directoryActionsUi.found || directoryActionsUi.stickyPosition !== 'sticky' || !directoryActionsUi.toolbarInHeader || !directoryActionsUi.navigationBeforeFavorites || !directoryActionsUi.reusedWithoutDirectoryReload || !expectedSftpToolActions.every(action=>directoryActionsUi.actionTitles?.includes(action)) || !directoryActionsUi.searchHidden || !directoryActionsUi.pathEditorHidden || !directoryActionsUi.emptyClipboardHidden || !directoryActionsUi.copyQueueVisible || !directoryActionsUi.copyCancelled || !directoryActionsUi.moveQueueVisible || !directoryActionsUi.moveCancelled || !directoryActionsUi.crossHostCopyEnabled || !directoryActionsUi.crossHostMoveDisabled || !directoryActionsUi.crossHostClipboardConflict || !directoryActionsUi.filenameEncodingMenu || !directoryActionsUi.emptyFavoritesCompact || !directoryActionsUi.wideNavigationCompact || !directoryActionsUi.narrowNavigationCompact || !directoryActionsUi.terminalJump || !directoryActionsUi.terminalJumpFirst || !sftpUi.folderOpened || !sftpUi.fileOpened || !sftpUi.unknownAction || sftpUi.stickyPosition !== "sticky" || !sftpUi.breadcrumbScrollable || !sftpUi.singlePathPresentation || sftpUi.breadcrumbLabels?.join('/') !== '根目录/Users/demo/Public' || sftpUi.breadcrumbText.includes('//') || !sftpUi.selectionShown || !sftpUi.selectionActionsShown || !sftpUi.multiNameAddsSelection || !sftpUi.multiNameCancelsSelection || !sftpUi.singleNameReplacesSelection || !sftpUi.specialSelectionExact || sftpUi.selectedRows !== 2 || !sftpUi.dragSelectionSynchronized || !sftpUi.selectionCleared || !sftpUi.fileHasCompression || !sftpUi.permissionOwnerColumn || !sftpUi.permissionOwnerTitle || !sftpUi.symlinkUsesTargetSize || !sftpUi.symlinkExplainsBothSizes || !sftpUi.symlinkMarked || !sftpUi.wideColumnAlignment || !sftpUi.wideActionsFit || !sftpUi.compactSizeVisible || !sftpUi.compactTimeVisible || !sftpUi.compactAccessVisible || !sftpUi.compactMediumHidden || !sftpUi.compactCoreVisible || !sftpUi.compactHorizontalScroll || !sftpUi.permissionModeSync || !sftpUi.recursiveVisible || sftpUi.compactRowHeight > 48 || !sftpUi.moreMenuOpened || !sftpUi.contextMenuOpened || !sftpUi.directoryDownloadMenu || !sftpUi.narrowLayoutClass || !sftpUi.narrowCoreHidden || !sftpUi.narrowMoreVisible || !sftpUi.narrowMetaVisible || !sftpUi.narrowAccessHidden || !sftpUi.narrowHeaderNameVisible || !sftpUi.narrowHeaderSummaryVisible || !sftpUi.narrowCompactActions || !sftpUi.completedMutationDetected || !sftpUi.desktopPagerSingleRow || !sftpUi.pagerFloatsAtWorkspaceBottom || !sftpUi.pagerOpaqueAndElevated || !sftpUi.pagerDockSealsBottom || !sftpUi.pagerPinnedToViewport || !sftpUi.scrollCueVisibleAboveContent || !sftpUi.scrollCueHidesAtEnd || !sftpUi.narrowPagerWraps || sftpUi.pageRows !== 50 || !sftpUi.pagerVisible || !sftpUi.pagerJumpVisible || !sftpUi.pagerText.includes('第 1/2 页') || !sftpUi.previousDisabled || !sftpUi.nextEnabled;
   const sftpToolbarRecoveryFailed = !directoryActionsUi.recoveredMissingToolbar || !directoryActionsUi.duplicateSftpToolbarsFollowActiveTab;

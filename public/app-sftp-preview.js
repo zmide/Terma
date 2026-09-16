@@ -1227,25 +1227,25 @@ async function previewSftpImage(id, path, previewOptions={}) {
       // is the source of truth. Do not depend on a Blob.text() round-trip here;
       // keeping the exact string also preserves edits appended after the SVG
       // root (comments, processing instructions, and editor markers).
-      const source = Object.prototype.hasOwnProperty.call(previewOptions || {}, "content")
-        ? String(previewOptions.content || "")
-        : svgSourceContent;
+      const hasEditorContent = Object.prototype.hasOwnProperty.call(previewOptions || {}, "content"), source = hasEditorContent ? String(previewOptions.content || "") : "";
       const preserveUnsaved = previewOptions.preserveUnsaved === true
-        || (Object.prototype.hasOwnProperty.call(previewOptions || {}, "content") && previewOptions.modified === true);
+        || (hasEditorContent && previewOptions.modified === true);
       close();
       window.setTimeout(() => {
         previewSftpText(id, path, {
-        initialContent:source,
-        initialSize:blob.size,
-        initialLimit:previewOptions.limit,
-        initialEncoding:previewOptions.encoding || "utf8",
-        initialPreferredEncoding:previewOptions.preferredEncoding,
-        initialLineEnding:previewOptions.lineEnding,
-        initialFinalNewline:previewOptions.finalNewline,
-         initialNeedsFormatRepair:previewOptions.needsFormatRepair === true,
-         initialModified:previewOptions.modified === true,
-         forceNewEditor:preserveUnsaved,
-         svgMode:mode
+          ...(hasEditorContent ? {
+            initialContent:source,
+            initialSize:blob.size,
+            initialLimit:previewOptions.limit,
+            initialEncoding:previewOptions.encoding || "utf8",
+            initialPreferredEncoding:previewOptions.preferredEncoding,
+            initialLineEnding:previewOptions.lineEnding,
+            initialFinalNewline:previewOptions.finalNewline,
+            initialNeedsFormatRepair:previewOptions.needsFormatRepair === true,
+            initialModified:previewOptions.modified === true
+          } : {}),
+          forceNewEditor:preserveUnsaved,
+          svgMode:mode
         });
       }, 0);
     };

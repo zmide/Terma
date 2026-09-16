@@ -616,13 +616,13 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     let svgPreviewBaseHeight = 768;
     let svgPreviewHighlightedId = "";
     let svgPreviewHasRendered = false;
+    let svgPreviewFocusLockId = "";
+    let svgPreviewFocusLockUntil = 0;
     let centerSvgPreviewTarget = () => {};
+    let cancelSvgPreviewAutoFocus = () => {};
+    let clearSvgPreviewAutoFocus = () => {};
     const svgPreviewZoomValue = () => svgEditorPreview?.querySelector("[data-svg-preview-zoom-value]");
     const svgPreviewAutoFocusToggle = () => svgEditorPreview?.querySelector("[data-svg-preview-auto-focus]");
-    const cancelSvgPreviewAutoFocus = () => {
-      const toggle = svgPreviewAutoFocusToggle();
-      if (toggle) toggle.checked = false;
-    };
     const svgPreviewTargetInfoFromNode = node => {
       let current = node;
       const root = svgEditorPreviewStage?.shadowRoot?.querySelector("svg");
@@ -715,19 +715,18 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       if (!svgEditorPreviewViewport || !svgEditorPreviewStage) return;
       const width = Math.max(1, svgPreviewBaseWidth * svgPreviewScale);
       const height = Math.max(1, svgPreviewBaseHeight * svgPreviewScale);
-      svgEditorPreviewStage.style.width = `${width}px`;
-      svgEditorPreviewStage.style.height = `${height}px`;
-      const root = svgEditorPreviewStage.shadowRoot?.querySelector("svg");
-      if (root) {
-        root.style.width = `${width}px`;
-        root.style.height = `${height}px`;
-      }
+      // The helper keeps a half-viewport gutter on every side so edge elements
+      // can still be centered instead of being clamped against the canvas.
+      setSftpSvgPreviewSize(svgEditorPreviewViewport, svgEditorPreviewStage, width, height);
       updateSvgPreviewZoomUi();
       updateSvgPreviewMarker();
     };
     const fitSvgEditorPreview = ({manual=false} = {}) => {
       if (!svgEditorPreviewViewport) return;
-      if (manual) cancelSvgPreviewAutoFocus();
+      clearSvgPreviewAutoFocus();
+      if (manual) {
+        cancelSvgPreviewAutoFocus();
+      }
       const width = Math.max(120, svgEditorPreviewViewport.clientWidth - 24);
       const height = Math.max(120, svgEditorPreviewViewport.clientHeight - 24);
       svgPreviewScale = Math.max(0.05, Math.min(1, width / svgPreviewBaseWidth, height / svgPreviewBaseHeight));
@@ -767,9 +766,24 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       getFallbackEditor: () => fallbackEditor,
       onHighlight: (id, options) => updateSvgPreviewHighlight(id, options)
     });
-    const focusSvgSourceId = (target, options={}) => svgSourceLocator.focusSourceId(target, options);
+    const focusSvgSourceId = (target, options={}) => {
+      const targetId = target && typeof target === "object" ? target.id : target;
+      if (targetId && options.locate !== false) {
+        svgPreviewFocusLockId = String(targetId);
+        svgPreviewFocusLockUntil = Date.now() + 500;
+      }
+      svgSourceLocator.focusSourceId(target, {...options, locate:false});
+      updateSvgPreviewHighlight(String(targetId || ""), {locate:false, force:true});
+      if (targetId && options.locate !== false) {
+        centerSvgPreviewTarget(targetId);
+      }
+    };
     const svgIdForCursor = () => svgSourceLocator.idForCursor();
-    const syncSvgPreviewFromCursor = () => updateSvgPreviewHighlight(svgIdForCursor(), {locate:true});
+    const syncSvgPreviewFromCursor = () => {
+      if (svgPreviewFocusLockId && Date.now() < svgPreviewFocusLockUntil) return;
+      svgPreviewFocusLockId = "";
+      updateSvgPreviewHighlight(svgIdForCursor(), {locate:true});
+    };
     const renderSvgEditorPreview = () => {
       if (!svgEditorPreview || svgModeSelect?.value !== "split") return;
       const stage = svgEditorPreviewStage;
@@ -823,11 +837,17 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
         refreshIcons();
       }
     };
+    const svgScheduler = createSftpSvgEditorScheduler({
+      isActive:() => !finished && Boolean(svgEditorPreview) && svgModeSelect?.value === "split",
+      renderPreview:renderSvgEditorPreview,
+      syncCursor:syncSvgPreviewFromCursor
+    });
     const syncSvgEditorMode = value => {
       if (!svgEditorPreview || !svgModeSelect) return;
       const mode = ["edit", "split"].includes(value) ? value : "edit";
       svgModeSelect.value = mode;
       const showPreview = mode === "split";
+      if (!showPreview) svgScheduler.clear();
       editorWorkspace?.classList.toggle("showing-svg-preview", showPreview);
       svgEditorPreview.hidden = !showPreview;
       if (svgEditorPreviewSplitter) svgEditorPreviewSplitter.hidden = !showPreview;
@@ -844,19 +864,35 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       let dragged = false;
       const updateSvgPreviewZoom = (next, anchor=null, {manual=true} = {}) => {
         if (!svgEditorPreviewViewport || !Number.isFinite(next)) return;
-        if (manual) cancelSvgPreviewAutoFocus();
+        if (manual) {
+          cancelSvgPreviewAutoFocus();
+        }
         const viewportRect = svgEditorPreviewViewport.getBoundingClientRect();
         const previousScale = svgPreviewScale;
         const anchorX = Number.isFinite(anchor?.clientX) ? anchor.clientX : viewportRect.left + viewportRect.width / 2;
         const anchorY = Number.isFinite(anchor?.clientY) ? anchor.clientY : viewportRect.top + viewportRect.height / 2;
-        const logicalX = (svgEditorPreviewViewport.scrollLeft + anchorX - viewportRect.left) / Math.max(.05, previousScale);
-        const logicalY = (svgEditorPreviewViewport.scrollTop + anchorY - viewportRect.top) / Math.max(.05, previousScale);
+        const gutterX = svgEditorPreviewViewport.clientWidth / 2;
+        const gutterY = svgEditorPreviewViewport.clientHeight / 2;
+        const logicalX = (svgEditorPreviewViewport.scrollLeft + anchorX - viewportRect.left - gutterX) / Math.max(.05, previousScale);
+        const logicalY = (svgEditorPreviewViewport.scrollTop + anchorY - viewportRect.top - gutterY) / Math.max(.05, previousScale);
         svgPreviewScale = Math.max(.05, Math.min(8, next));
         svgPreviewFitMode = false;
         setSvgPreviewSize();
-        svgEditorPreviewViewport.scrollLeft = Math.max(0, logicalX * svgPreviewScale - (anchorX - viewportRect.left));
-        svgEditorPreviewViewport.scrollTop = Math.max(0, logicalY * svgPreviewScale - (anchorY - viewportRect.top));
+        svgEditorPreviewViewport.scrollLeft = Math.max(0, gutterX + logicalX * svgPreviewScale - (anchorX - viewportRect.left));
+        svgEditorPreviewViewport.scrollTop = Math.max(0, gutterY + logicalY * svgPreviewScale - (anchorY - viewportRect.top));
       };
+      const svgAutoFocusController = createSftpSvgAutoFocusController({
+        getViewport:() => svgEditorPreviewViewport,
+        getStage:() => svgEditorPreviewStage,
+        getTarget:resolveSvgPreviewTarget,
+        getToggle:svgPreviewAutoFocusToggle,
+        getScale:() => svgPreviewScale,
+        setScale:nextScale => updateSvgPreviewZoom(nextScale, null, {manual:false}),
+        updateMarker:updateSvgPreviewMarker
+      });
+      centerSvgPreviewTarget = svgAutoFocusController.focus;
+      cancelSvgPreviewAutoFocus = svgAutoFocusController.cancel;
+      clearSvgPreviewAutoFocus = svgAutoFocusController.clear;
       const onPreviewWheel = event => {
         if (!(event.ctrlKey || event.metaKey)) return;
         event.preventDefault();
@@ -914,36 +950,6 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
         if (autoFocusToggle?.checked && svgPreviewHighlightedId) centerSvgPreviewTarget(svgPreviewHighlightedId);
       };
       autoFocusToggle?.addEventListener("change", onAutoFocusChange);
-      centerSvgPreviewTarget = id => {
-        if (!svgEditorPreviewViewport || !svgEditorPreviewStage || !svgPreviewAutoFocusToggle()?.checked) return;
-        const target = resolveSvgPreviewTarget(id);
-        if (!target) return;
-        const viewportRect = svgEditorPreviewViewport.getBoundingClientRect();
-        const targetRect = target.getBoundingClientRect();
-        const targetWidth = Math.max(1, targetRect.width);
-        const targetHeight = Math.max(1, targetRect.height);
-        const desiredFactor = Math.max(.35, Math.min(6, Math.min(
-          Math.max(1, viewportRect.width * .46) / targetWidth,
-          Math.max(1, viewportRect.height * .46) / targetHeight
-        )));
-        const nextScale = Math.max(.05, Math.min(8, svgPreviewScale * desiredFactor));
-        if (Math.abs(nextScale - svgPreviewScale) > .001) {
-          updateSvgPreviewZoom(nextScale, {
-            clientX:targetRect.left + targetRect.width / 2,
-            clientY:targetRect.top + targetRect.height / 2
-          }, {manual:false});
-        }
-        requestAnimationFrame(() => {
-          const nextViewportRect = svgEditorPreviewViewport?.getBoundingClientRect();
-          const nextTarget = resolveSvgPreviewTarget(id);
-          if (!nextViewportRect || !nextTarget) return;
-          const nextTargetRect = nextTarget.getBoundingClientRect();
-          const dx = nextTargetRect.left + nextTargetRect.width / 2 - (nextViewportRect.left + nextViewportRect.width / 2);
-          const dy = nextTargetRect.top + nextTargetRect.height / 2 - (nextViewportRect.top + nextViewportRect.height / 2);
-          svgEditorPreviewViewport.scrollLeft = Math.max(0, svgEditorPreviewViewport.scrollLeft + dx);
-          svgEditorPreviewViewport.scrollTop = Math.max(0, svgEditorPreviewViewport.scrollTop + dy);
-        });
-      };
       const previewResizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => {
         if (svgPreviewFitMode) fitSvgEditorPreview();
         else updateSvgPreviewMarker();
@@ -951,6 +957,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       previewResizeObserver?.observe(svgEditorPreviewViewport);
       releaseSvgPreviewInteractions = () => {
         finishPreviewDrag();
+        svgAutoFocusController.clear();
         previewResizeObserver?.disconnect();
         svgEditorPreviewViewport.removeEventListener("wheel", onPreviewWheel);
         svgEditorPreviewViewport.removeEventListener("scroll", onPreviewScroll);
@@ -1037,6 +1044,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       finished = true;
       clearTimeout(editorStatsTimer);
       clearTimeout(editorSearchTimer);
+      svgScheduler.clear();
       document.removeEventListener("keydown", onModalKeyDown, true);
       releaseEditorLayout();
       releaseSvgPreviewInteractions();
@@ -1096,7 +1104,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     updateStats();
     syncFormatButton();
     if (aceEditor) {
-      aceEditor.session.on("change", () => { contentModified = true; invalidateEditorSearchMatches(); scheduleEditorStats(); renderSvgEditorPreview(); });
+      aceEditor.session.on("change", () => { contentModified = true; invalidateEditorSearchMatches(); scheduleEditorStats(); svgScheduler.render(); });
       aceEditor.commands.addCommand({name:"saveSftpFile", bindKey:{win:"Ctrl-S",mac:"Command-S"}, exec:()=>saveButton.click()});
     } else fallbackEditor.addEventListener("input", () => {
       if (useLightEditor) {
@@ -1105,7 +1113,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       } else contentModified = true;
       invalidateEditorSearchMatches();
       scheduleEditorStats();
-      renderSvgEditorPreview();
+      svgScheduler.render();
     });
     svgModeSelect?.addEventListener("change", event => {
       const mode = String(event.target.value || "edit");
@@ -1125,6 +1133,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
         });
         return;
       }
+      if (mode === "split" && editorWorkspace?.classList.contains("showing-diff")) closeDiffPreview();
       syncSvgEditorMode(mode);
       focusEditor();
     });
@@ -1133,7 +1142,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       releaseSvgPreviewLayout = bindSftpSvgEditorLayout(editorWorkspace, svgEditorPreviewSplitter, () => aceEditor?.resize(true));
     }
     if (aceEditor && svgEditorPreview) {
-      const syncSvgCursor = () => { if (svgModeSelect?.value === "split") syncSvgPreviewFromCursor(); };
+      const syncSvgCursor = () => { if (svgModeSelect?.value === "split") svgScheduler.cursor(); };
       aceEditor.selection.on("changeCursor", syncSvgCursor);
       aceEditor.selection.on("changeSelection", syncSvgCursor);
       const previousRelease = releaseSvgPreviewInteractions;
@@ -1144,7 +1153,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       };
     }
     if (fallbackEditor && svgEditorPreview) {
-      const syncSvgSelection = () => { if (svgModeSelect?.value === "split") syncSvgPreviewFromCursor(); };
+      const syncSvgSelection = () => { if (svgModeSelect?.value === "split") svgScheduler.cursor(); };
       fallbackEditor.addEventListener("keyup", syncSvgSelection);
       fallbackEditor.addEventListener("click", syncSvgSelection);
       const previousRelease = releaseSvgPreviewInteractions;
@@ -1217,6 +1226,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
         return;
       }
       if (!versions.length) return notify(tr("sftp:editor.no_history", {defaultValue:"没有可比较的历史备份"}), "info");
+      if (svgModeSelect?.value === "split") syncSvgEditorMode("edit");
       const box = diffPreview;
       setSftpEditorDiffVisible(editorWorkspace, diffSplitter, box, true);
       requestAnimationFrame(() => aceEditor?.resize(true));
