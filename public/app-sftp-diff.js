@@ -8,7 +8,8 @@ function readSftpEditorLayout() {
   return {
     width:Math.max(760, Math.min(1600, Number(value.width) || 1180)),
     height:Math.max(560, Math.min(1100, Number(value.height) || 820)),
-    split:Math.max(28, Math.min(76, Number(value.split) || 58))
+    split:Math.max(28, Math.min(76, Number(value.split) || 58)),
+    svgSplit:Math.max(24, Math.min(76, Number(value.svgSplit) || 50))
   };
 }
 
@@ -18,10 +19,72 @@ function writeSftpEditorLayout(value) {
   const next = {
     width:Math.max(760, Math.min(1600, Number(supplied.width) || current.width)),
     height:Math.max(560, Math.min(1100, Number(supplied.height) || current.height)),
-    split:Math.max(28, Math.min(76, Number(supplied.split) || current.split))
+    split:Math.max(28, Math.min(76, Number(supplied.split) || current.split)),
+    svgSplit:Math.max(24, Math.min(76, Number(supplied.svgSplit) || current.svgSplit))
   };
   localStorage.setItem(SFTP_EDITOR_LAYOUT_STORAGE_KEY, JSON.stringify(next));
   return next;
+}
+
+function bindSftpSvgEditorLayout(workspace, splitter, onResize=()=>{}) {
+  if (!workspace || !splitter) return () => {};
+  const layout = readSftpEditorLayout();
+  workspace.style.setProperty("--sftp-svg-preview-split", `${layout.svgSplit}%`);
+  let resizing = null;
+  const updateSplit = event => {
+    if (!resizing) return;
+    const rect = workspace.getBoundingClientRect();
+    const compact = rect.width <= 760;
+    const span = compact ? rect.height : rect.width;
+    const start = compact ? rect.top : rect.left;
+    const position = compact ? event.clientY : event.clientX;
+    const split = Math.max(24, Math.min(76, ((position - start) / Math.max(1, span)) * 100));
+    workspace.style.setProperty("--sftp-svg-preview-split", `${split}%`);
+    workspace.dataset.svgSplit = String(split);
+    onResize();
+  };
+  const finishResize = () => {
+    if (!resizing) return;
+    const handle = resizing.handle;
+    const pointerId = resizing.pointerId;
+    resizing = null;
+    document.body.classList.remove("sftp-editor-svg-split-resizing");
+    document.removeEventListener("pointermove", updateSplit);
+    document.removeEventListener("pointerup", finishResize);
+    document.removeEventListener("pointercancel", finishResize);
+    writeSftpEditorLayout({svgSplit:Number(workspace.dataset.svgSplit) || layout.svgSplit});
+    try { handle?.releasePointerCapture?.(pointerId); } catch {}
+  };
+  const startResize = event => {
+    if (event.button !== 0 || !workspace.classList.contains("showing-svg-preview")) return;
+    event.preventDefault();
+    resizing = {handle:event.currentTarget, pointerId:event.pointerId};
+    document.body.classList.add("sftp-editor-svg-split-resizing");
+    try { event.currentTarget.setPointerCapture?.(event.pointerId); } catch {}
+    document.addEventListener("pointermove", updateSplit);
+    document.addEventListener("pointerup", finishResize);
+    document.addEventListener("pointercancel", finishResize);
+  };
+  splitter.addEventListener("pointerdown", startResize);
+  const onKeyDown = event => {
+    if (!workspace.classList.contains("showing-svg-preview")) return;
+    if (![`ArrowLeft`,`ArrowRight`,`ArrowUp`,`ArrowDown`].includes(event.key)) return;
+    event.preventDefault();
+    const compact = workspace.getBoundingClientRect().width <= 760;
+    const direction = compact ? (event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0) : (event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0);
+    if (!direction) return;
+    const next = Math.max(24, Math.min(76, Number(workspace.dataset.svgSplit || layout.svgSplit) + direction * 2));
+    workspace.dataset.svgSplit = String(next);
+    workspace.style.setProperty("--sftp-svg-preview-split", `${next}%`);
+    writeSftpEditorLayout({svgSplit:next});
+    onResize();
+  };
+  splitter.addEventListener("keydown", onKeyDown);
+  return () => {
+    if (resizing) finishResize();
+    splitter.removeEventListener("pointerdown", startResize);
+    splitter.removeEventListener("keydown", onKeyDown);
+  };
 }
 
 function applySftpEditorLayout(card, workspace) {

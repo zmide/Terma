@@ -143,7 +143,7 @@ async function main() {
   assert.deepEqual(normalizeRuntimeSettings({ai:{skills_enabled:["security-audit", "invalid-skill", "security-audit"]}}).ai.skills_enabled, ["security-audit"]);
   assert.deepEqual(normalizeListenHosts(["127.0.0.1", "0.0.0.0", "127.0.0.1"]), ["0.0.0.0"]);
   assert.deepEqual(normalizeRuntimeSettings({ listen_hosts: "127.0.0.1,127.0.0.2", listen_port: "8123" }), {
-    schema_version: 21,
+    schema_version: 22,
     language: "zh-CN",
     language_onboarding_version: 0,
     vnc_fullscreen_toolbar: "always",
@@ -156,6 +156,7 @@ async function main() {
     listen_port: 8123,
     sftp_recycle_bin_enabled: false,
     sftp_floating_progress_enabled: true,
+    desktop_notifications_enabled: true,
     notification_display: {
       info:{...DEFAULT_NOTIFICATION_DISPLAY.info},
       success:{...DEFAULT_NOTIFICATION_DISPLAY.success},
@@ -185,6 +186,8 @@ async function main() {
   assert.equal(normalizeRuntimeSettings({}, { sftp_recycle_bin_enabled: true }).sftp_recycle_bin_enabled, true);
   assert.equal(normalizeRuntimeSettings({ sftp_floating_progress_enabled: false }).sftp_floating_progress_enabled, false);
   assert.equal(normalizeRuntimeSettings({}, { sftp_floating_progress_enabled: false }).sftp_floating_progress_enabled, false);
+  assert.equal(normalizeRuntimeSettings({ desktop_notifications_enabled: false }).desktop_notifications_enabled, false);
+  assert.equal(normalizeRuntimeSettings({}, { desktop_notifications_enabled: false }).desktop_notifications_enabled, false);
   assert.deepEqual(normalizeRuntimeSettings({ notification_display:{
     info:{enabled:false, duration_ms:1200},
     progress:{enabled:false, success_duration_ms:5000, error_duration_ms:9000}
@@ -320,6 +323,7 @@ async function main() {
     assert.equal(persistedAfterFallback.listen_port, info.actual_port);
     assert.equal(persistedAfterFallback.sftp_recycle_bin_enabled, true);
     assert.equal(persistedAfterFallback.sftp_floating_progress_enabled, true);
+    assert.equal(persistedAfterFallback.desktop_notifications_enabled, true);
     assert.deepEqual(persistedAfterFallback.notification_display, {
       info:{...DEFAULT_NOTIFICATION_DISPLAY.info},
       success:{...DEFAULT_NOTIFICATION_DISPLAY.success},
@@ -356,6 +360,7 @@ async function main() {
     assert.equal(settings.body.saved.language, "zh-CN");
     assert.equal(settings.body.saved.sftp_recycle_bin_enabled, true);
     assert.equal(settings.body.saved.sftp_floating_progress_enabled, true);
+    assert.equal(settings.body.saved.desktop_notifications_enabled, true);
     assert.deepEqual(settings.body.saved.notification_display, persistedAfterFallback.notification_display);
     assert.equal(settings.body.saved.sftp_max_open_file_size_mb, 50);
     assert.equal(settings.body.saved.sftp_text_editor_mode, "ace");
@@ -449,7 +454,24 @@ async function main() {
       progress:{enabled:false, success_duration_ms:null, error_duration_ms:10000}
     });
     assert.equal(notificationDisplaySaved.body.saved.sftp_floating_progress_enabled, false);
+    assert.equal(notificationDisplaySaved.body.saved.desktop_notifications_enabled, true);
     console.log("PASS notification category visibility and durations persist independently");
+
+    const desktopNotificationsDisabled = await request(base, "/api/runtime-settings", {
+      method: "PUT",
+      body: JSON.stringify({ desktop_notifications_enabled: false })
+    });
+    assert.equal(desktopNotificationsDisabled.response.ok, true);
+    assert.equal(desktopNotificationsDisabled.body.saved.desktop_notifications_enabled, false);
+    assert.deepEqual(desktopNotificationsDisabled.body.saved.notification_display, notificationDisplaySaved.body.saved.notification_display);
+    const desktopNotificationsEnabled = await request(base, "/api/runtime-settings", {
+      method: "PUT",
+      body: JSON.stringify({ desktop_notifications_enabled: true })
+    });
+    assert.equal(desktopNotificationsEnabled.response.ok, true);
+    assert.equal(desktopNotificationsEnabled.body.saved.desktop_notifications_enabled, true);
+    assert.deepEqual(desktopNotificationsEnabled.body.saved.notification_display, notificationDisplaySaved.body.saved.notification_display);
+    console.log("PASS desktop notification switch persists independently from page notification settings");
 
     const editorPolicySaved = await request(base, "/api/runtime-settings", {
       method: "PUT",

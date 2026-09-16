@@ -88,11 +88,13 @@ function sftpRowActionsHtml(id, path, name, type, tabKey=activeTabKey) {
   const tabKeyArg = sftpOperationInlineArgument(tabKey);
   const nameArg = sftpOperationInlineArgument(name);
   const typeArg = sftpOperationInlineArgument(type);
+  const openAsTextButton = `<button class="sftp-row-action sftp-row-action-core sftp-file-open-button" data-sftp-connection-id="${connectionId}" data-sftp-remote-path="${esc(path)}" data-sftp-open-kind="text" title="${escAttr(openAsText)}" aria-label="${escAttr(openAsText)}" onclick="event.stopPropagation();previewSftpText(${connectionId},${pathArg})">${icon("file-text")}<span>${esc(open)}</span></button>`;
   return [
     isDir
       ? `<button class="sftp-row-action sftp-row-action-core" title="${escAttr(openDirectory)}" aria-label="${escAttr(openDirectory)}" onclick="event.stopPropagation();navigateSftpPath(${pathArg},${tabKeyArg})">${icon("folder-open")}<span>${esc(open)}</span></button>`
       : isSftpImageName(name)
         ? `<button class="sftp-row-action sftp-row-action-core sftp-file-open-button" data-sftp-connection-id="${connectionId}" data-sftp-remote-path="${esc(path)}" data-sftp-open-kind="image" title="${escAttr(previewImage)}" aria-label="${escAttr(previewImage)}" onclick="event.stopPropagation();previewSftpImage(${connectionId},${pathArg})">${icon("image")}<span>${esc(preview)}</span></button>`
+        + (isSftpSvgName(name) ? openAsTextButton : "")
         : `<button class="sftp-row-action sftp-row-action-core sftp-file-open-button" data-sftp-connection-id="${connectionId}" data-sftp-remote-path="${esc(path)}" data-sftp-open-kind="text" title="${escAttr(openAsText)}" aria-label="${escAttr(openAsText)}" onclick="event.stopPropagation();previewSftpText(${connectionId},${pathArg})">${icon("file-text")}<span>${esc(open)}</span></button>`,
     !isDir ? `<button class="sftp-row-action sftp-row-action-medium" title="${escAttr(download)}" aria-label="${escAttr(download)}" onclick="event.stopPropagation();downloadSftp(${connectionId},${pathArg})">${icon("download")}<span>${esc(download)}</span></button>` : "",
     archive ? `<button class="sftp-row-action sftp-row-action-medium" title="${escAttr(extract)}" aria-label="${escAttr(extract)}" onclick="event.stopPropagation();extractSingleSftp(${connectionId},${pathArg},${tabKeyArg})">${icon("archive-restore")}<span>${esc(extract)}</span></button>` : "",

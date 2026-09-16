@@ -17,12 +17,16 @@ function showSftpEntryMenu(event, id, path, name, type, tabKey=sftpTabKeyFromNod
   const peerTransferActions = typeof workspaceSftpPathTransferActions === "function"
     ? workspaceSftpPathTransferActions(tabKey, id, path, name, type)
     : [];
+  const openAsText = !isDir && isSvg
+    ? [{label:tr("sftp:menu.open_as_text", {defaultValue:"以文本打开"}), icon:"file-text", run:()=>previewSftpText(id, path)}]
+    : [];
   showActionMenu(menuEvent, [
     isDir
       ? {label:tr("sftp:menu.open", {defaultValue:"打开"}), icon:"folder-open", run:()=>navigateSftpPath(path, tabKey)}
       : isSftpImageName(name)
         ? {label:tr("sftp:menu.preview_image", {defaultValue:"预览图片"}), icon:"image", run:()=>previewSftpImage(id, path)}
         : {label:tr("sftp:menu.open_as_text", {defaultValue:"以文本打开"}), icon:"file-text", run:()=>previewSftpText(id, path)},
+    ...openAsText,
     ...(!isDir && window.termaDesktop ? [{label:tr("sftp:menu.external_editor", {defaultValue:"用外部编辑器打开"}), icon:"external-link", run:()=>openSftpExternalEdit(id, path)}] : []),
     ...(isDir && window.termaDesktop ? [{label:tr("sftp:menu.compare_local", {defaultValue:"与本地目录比较同步"}), icon:"refresh-cw", run:()=>openSftpDirectorySync(id, path, tabKey)}] : []),
     {label:tr("sftp:menu.download", {defaultValue:"下载"}), icon:"download", run:()=>downloadSftp(id, path, isDir ? "dir" : "file")},

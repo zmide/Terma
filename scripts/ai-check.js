@@ -552,7 +552,7 @@ async function main() {
     assert.equal(requestOptions.headers.Authorization, undefined);
 
     let savedAi = { ...DEFAULT_AI_SETTINGS, active_provider_id:"primary", providers:[
-      {id:"primary", name:"Primary", endpoint:"https://primary.example/v1", model:"p-model", api_type:"responses", api_key:"primary-secret"},
+      {id:"primary", name:"Primary", default_name:true, endpoint:"https://primary.example/v1", model:"p-model", api_type:"responses", api_key:"primary-secret"},
       {id:"secondary", name:"Secondary", endpoint:"https://secondary.example/v1", model:"s-model", api_type:"responses", api_key:"secondary-secret"}
     ], endpoint:"https://primary.example/v1", model:"p-model", api_key:"primary-secret" };
     let persistedAi = null;
@@ -564,7 +564,7 @@ async function main() {
         enabled:true,
         active_provider_id:"secondary",
         providers:[
-          {id:"primary", name:"Primary renamed", endpoint:"https://primary.example/v1", model:"p-model", api_type:"responses"},
+          {id:"primary", name:"Primary renamed", default_name:false, endpoint:"https://primary.example/v1", model:"p-model", api_type:"responses"},
           {id:"secondary", name:"Secondary", endpoint:"https://secondary.example/v1", model:"s-model", api_type:"responses"}
         ]
       }}),
@@ -575,6 +575,7 @@ async function main() {
       sendJson:(_response, value) => { saveResponse.body = value; }
     });
     assert.equal(persistedAi.active_provider_id, "secondary");
+    assert.equal(persistedAi.providers.find(item => item.id === "primary").default_name, false);
     assert.equal(persistedAi.providers.find(item => item.id === "primary").api_key, "primary-secret");
     assert.equal(persistedAi.providers.find(item => item.id === "secondary").api_key, "secondary-secret");
     assert.equal(saveResponse.body.providers.find(item => item.id === "primary").api_key_configured, true);

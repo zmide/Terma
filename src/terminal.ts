@@ -334,6 +334,10 @@ function resolveTerminalCwd() {
 function handleTerminalUpgrade(req, socket, options: any = {}) {
   let upgraded = false;
   let language = "zh-CN";
+  // A browser may abort the upgrade between the HTTP handshake and the first
+  // terminal frame.  Install a guard before any socket.write() so an
+  // asynchronous ECONNABORTED does not become an uncaught process error.
+  socket.on("error", () => {});
   try {
     const key = validateWebSocketUpgrade(req);
     const url = new URL(req.url, "http://terma.invalid");

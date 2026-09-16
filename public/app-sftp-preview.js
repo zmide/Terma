@@ -767,11 +767,14 @@ async function downloadSftpSvgWithColorMode(id, path, sourceBlob, colorMode) {
   }
 }
 
-async function previewSftpImage(id, path) {
+async function previewSftpImage(id, path, previewOptions={}) {
   let objectUrl = "";
   let modal = null;
   try {
-    const blob = await withSftpFileOpenFeedback(id, path, () => readSftpImageWithProgress(id, path));
+    const hasInlineContent = Object.prototype.hasOwnProperty.call(previewOptions || {}, "content");
+    const blob = hasInlineContent
+      ? new Blob([String(previewOptions.content || "")], {type:"image/svg+xml"})
+      : await withSftpFileOpenFeedback(id, path, () => readSftpImageWithProgress(id, path));
     if (!blob) return;
     objectUrl = URL.createObjectURL(blob);
     modal = $("modal");
@@ -783,6 +786,10 @@ async function previewSftpImage(id, path) {
     const zoomOutLabel = tr("sftp:editor.zoom_out", {defaultValue:"缩小"});
     const zoomInLabel = tr("sftp:editor.zoom_in", {defaultValue:"放大"});
     const zoomResetLabel = tr("sftp:editor.zoom_reset", {defaultValue:"适应窗口"});
+    const svgModeLabel = tr("sftp:editor.svg_mode", {defaultValue:"SVG 模式"});
+    const svgPreviewLabel = tr("sftp:editor.svg_mode_preview", {defaultValue:"仅预览"});
+    const svgEditLabel = tr("sftp:editor.svg_mode_edit", {defaultValue:"仅编辑"});
+    const svgSplitLabel = tr("sftp:editor.svg_mode_split", {defaultValue:"分栏预览"});
     const invertLabel = tr("sftp:editor.invert_colors", {defaultValue:"反色"});
     const originalColorsLabel = tr("sftp:editor.color_mode_original", {defaultValue:"正色"});
     const monochromeInvertLabel = tr("sftp:editor.color_mode_invert_mono", {defaultValue:"黑白反转"});
@@ -791,7 +798,10 @@ async function previewSftpImage(id, path) {
     const colorModeControl = isSvg
       ? `<label class="sftp-svg-color-mode"><span class="sftp-svg-color-mode-label">${icon("contrast")}<span>${esc(invertLabel)}</span></span><select id="sftpImageColorMode" title="${escAttr(invertLabel)}" aria-label="${escAttr(invertLabel)}"><option value="original">${esc(originalColorsLabel)}</option><option value="invert-mono">${esc(monochromeInvertLabel)}</option><option value="invert-bw">${esc(blackWhiteModeLabel)}</option><option value="invert-color">${esc(colorInvertLabel)}</option></select></label>`
       : "";
-    modal.innerHTML = `<div class="modal-card wide sftp-image-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(path.split(/[\\/]/).pop() || path)}</h2><span>${esc(formatBytes(blob.size))}</span></div><div class="sftp-image-tools"><button id="sftpImageZoomOut" class="icon-button" type="button" title="${escAttr(zoomOutLabel)}" aria-label="${escAttr(zoomOutLabel)}">${icon("minus")}</button><span id="sftpImageZoomValue" class="sftp-image-zoom-value">100%</span><button id="sftpImageZoomReset" class="icon-button" type="button" title="${escAttr(zoomResetLabel)}" aria-label="${escAttr(zoomResetLabel)}">${icon("maximize-2")}</button><button id="sftpImageZoomIn" class="icon-button" type="button" title="${escAttr(zoomInLabel)}" aria-label="${escAttr(zoomInLabel)}">${icon("plus")}</button>${colorModeControl}${isSvg ? `<div class="sftp-svg-search"><div class="sftp-svg-search-controls"><label><span class="sr-only">${esc(searchLabel)}</span><input id="sftpSvgSearch" type="search" placeholder="${escAttr(searchLabel)}" autocomplete="off"></label><button id="sftpSvgSearchPrevious" class="icon-button" type="button" title="${escAttr(searchPreviousLabel)}" aria-label="${escAttr(searchPreviousLabel)}">${icon("arrow-up")}</button><button id="sftpSvgSearchNext" class="icon-button" type="button" title="${escAttr(searchNextLabel)}" aria-label="${escAttr(searchNextLabel)}">${icon("arrow-down")}</button></div><span id="sftpSvgSearchCount" aria-live="polite"></span></div>` : ""}<button id="sftpImageClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div></div><div id="sftpImageViewport" class="sftp-image-preview"><div id="sftpImageStageShell" class="sftp-image-stage-shell"><div id="sftpImageStage" class="sftp-image-stage"></div></div></div><div class="actions">${isSvg ? `<button id="sftpImageExportPdf">${icon("file-code-2")}<span>${esc(tr("sftp:editor.export_pdf", {defaultValue:"导出 PDF"}))}</span></button>` : ""}<button id="sftpImageDownload">${icon("download")}<span>${esc(tr("sftp:menu.download", {defaultValue:"下载"}))}</span></button><button id="sftpImageCloseBottom">${esc(closeLabel)}</button></div></div>`;
+    const svgModeControl = isSvg
+      ? `<label class="sftp-svg-view-mode"><span class="sftp-svg-view-mode-label">${icon("panels-top-left")}<span>${esc(svgModeLabel)}</span></span><select id="sftpImageViewMode" title="${escAttr(svgModeLabel)}" aria-label="${escAttr(svgModeLabel)}"><option value="preview">${esc(svgPreviewLabel)}</option><option value="edit">${esc(svgEditLabel)}</option><option value="split">${esc(svgSplitLabel)}</option></select></label>`
+      : "";
+    modal.innerHTML = `<div class="modal-card wide sftp-image-modal" role="dialog" aria-modal="true"><div class="sftp-editor-head"><div><h2>${esc(path.split(/[\\/]/).pop() || path)}</h2><span>${esc(formatBytes(blob.size))}</span></div><div class="sftp-image-tools"><button id="sftpImageZoomOut" class="icon-button" type="button" title="${escAttr(zoomOutLabel)}" aria-label="${escAttr(zoomOutLabel)}">${icon("minus")}</button><span id="sftpImageZoomValue" class="sftp-image-zoom-value">100%</span><button id="sftpImageZoomReset" class="icon-button" type="button" title="${escAttr(zoomResetLabel)}" aria-label="${escAttr(zoomResetLabel)}">${icon("maximize-2")}</button><button id="sftpImageZoomIn" class="icon-button" type="button" title="${escAttr(zoomInLabel)}" aria-label="${escAttr(zoomInLabel)}">${icon("plus")}</button>${colorModeControl}${svgModeControl}${isSvg ? `<div class="sftp-svg-search"><div class="sftp-svg-search-controls"><label><span class="sr-only">${esc(searchLabel)}</span><input id="sftpSvgSearch" type="search" placeholder="${escAttr(searchLabel)}" autocomplete="off"></label><button id="sftpSvgSearchPrevious" class="icon-button" type="button" title="${escAttr(searchPreviousLabel)}" aria-label="${escAttr(searchPreviousLabel)}">${icon("arrow-up")}</button><button id="sftpSvgSearchNext" class="icon-button" type="button" title="${escAttr(searchNextLabel)}" aria-label="${escAttr(searchNextLabel)}">${icon("arrow-down")}</button></div><span id="sftpSvgSearchCount" aria-live="polite"></span></div>` : ""}<button id="sftpImageClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div></div><div id="sftpImageViewport" class="sftp-image-preview"><div id="sftpImageStageShell" class="sftp-image-stage-shell"><div id="sftpImageStage" class="sftp-image-stage"></div></div></div><div class="actions">${isSvg ? `<button id="sftpImageExportPdf">${icon("file-code-2")}<span>${esc(tr("sftp:editor.export_pdf", {defaultValue:"导出 PDF"}))}</span></button>` : ""}<button id="sftpImageDownload">${icon("download")}<span>${esc(tr("sftp:menu.download", {defaultValue:"下载"}))}</span></button><button id="sftpImageCloseBottom">${esc(closeLabel)}</button></div></div>`;
     modal.hidden = false;
     modal.onclick = null;
     const imageCard = modal.querySelector(".sftp-image-modal");
@@ -819,9 +829,11 @@ async function previewSftpImage(id, path) {
     let baseWidth = 1;
     let baseHeight = 1;
     let colorMode = "original";
+    let svgSourceContent = "";
     let syncSvgPreviewStyle = () => {};
     if (isSvg) {
-      const sanitizedRoot = sanitizeSftpSvgDocument(await blob.text());
+      svgSourceContent = await blob.text();
+      const sanitizedRoot = sanitizeSftpSvgDocument(svgSourceContent);
       const embeddedStyles = String(sanitizedRoot.__termaEmbeddedStyles || "");
       const viewBox = String(sanitizedRoot.getAttribute("viewBox") || "").trim().split(/[\s,]+/).map(Number);
       const sourceViewBoxValid = viewBox.length >= 4
@@ -1130,7 +1142,10 @@ async function previewSftpImage(id, path) {
     };
     const onKeyDown = event => {
       if (!modal.contains(event.target) && !modal.contains(document.activeElement)) return;
-      if (event.key === "Escape") return close();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        return requestClose();
+      }
       if (isSvg && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
         $("sftpSvgSearch")?.focus();
@@ -1206,6 +1221,43 @@ async function previewSftpImage(id, path) {
       syncFullscreen(!imageCard.classList.contains("is-fullscreen"));
       requestAnimationFrame(() => requestAnimationFrame(() => fitMode ? fit() : updateSvgMatchMarker()));
     };
+    const openSvgEditorMode = mode => {
+      if (!isSvg || !["edit", "split"].includes(mode)) return;
+      // When the preview was opened from an unsaved editor, the inline content
+      // is the source of truth. Do not depend on a Blob.text() round-trip here;
+      // keeping the exact string also preserves edits appended after the SVG
+      // root (comments, processing instructions, and editor markers).
+      const source = Object.prototype.hasOwnProperty.call(previewOptions || {}, "content")
+        ? String(previewOptions.content || "")
+        : svgSourceContent;
+      const preserveUnsaved = previewOptions.preserveUnsaved === true
+        || (Object.prototype.hasOwnProperty.call(previewOptions || {}, "content") && previewOptions.modified === true);
+      close();
+      window.setTimeout(() => {
+        previewSftpText(id, path, {
+        initialContent:source,
+        initialSize:blob.size,
+        initialLimit:previewOptions.limit,
+        initialEncoding:previewOptions.encoding || "utf8",
+        initialPreferredEncoding:previewOptions.preferredEncoding,
+        initialLineEnding:previewOptions.lineEnding,
+        initialFinalNewline:previewOptions.finalNewline,
+         initialNeedsFormatRepair:previewOptions.needsFormatRepair === true,
+         initialModified:previewOptions.modified === true,
+         forceNewEditor:preserveUnsaved,
+         svgMode:mode
+        });
+      }, 0);
+    };
+    const requestClose = () => previewOptions.modified === true && isSvg
+      ? openSvgEditorMode("edit")
+      : close();
+    $("sftpImageViewMode")?.addEventListener("change", event => {
+      const mode = String(event.target.value || "preview");
+      if (mode === "preview") return;
+      event.target.value = "preview";
+      openSvgEditorMode(mode);
+    });
     $("sftpSvgSearch")?.addEventListener("input", () => { svgMatchIndex = -1; updateSvgSearch(1); });
     $("sftpSvgSearchPrevious")?.addEventListener("click", () => updateSvgSearch(-1));
     $("sftpSvgSearchNext")?.addEventListener("click", () => updateSvgSearch(1));
@@ -1245,8 +1297,8 @@ async function previewSftpImage(id, path) {
     });
     $("sftpImageExportPdf")?.addEventListener("click", () => downloadSftpSvgAsPdf(id, path, blob, {colorMode}));
     $("sftpImageDownload").onclick = () => isSvg ? downloadSftpSvgWithColorMode(id, path, blob, colorMode) : downloadSftp(id, path);
-    $("sftpImageClose").onclick = close;
-    $("sftpImageCloseBottom").onclick = close;
+    $("sftpImageClose").onclick = requestClose;
+    $("sftpImageCloseBottom").onclick = requestClose;
     $("sftpImageClose").focus();
   } catch (error) {
     if (objectUrl) URL.revokeObjectURL(objectUrl);
@@ -1258,14 +1310,28 @@ async function previewSftpImage(id, path) {
   }
 }
 
-async function previewSftpText(id, path) {
+async function previewSftpText(id, path, openOptions={}) {
   const editorKey = typeof sftpTextEditorOpenKey === "function" ? sftpTextEditorOpenKey(id, path) : "";
-  if (editorKey && typeof activateSftpTextEditor === "function" && activateSftpTextEditor(editorKey)) return;
+  if (!openOptions.forceNewEditor && editorKey && typeof activateSftpTextEditor === "function" && activateSftpTextEditor(editorKey)) return;
   try {
     const editorConnection = connections.find(item => Number(item.id) === Number(id));
-    let requestedEncoding = "";
+    let requestedEncoding = String(openOptions.initialEncoding || "");
+    let pendingData = Object.prototype.hasOwnProperty.call(openOptions || {}, "initialContent")
+      ? {
+          content:String(openOptions.initialContent || ""),
+          size:Number(openOptions.initialSize || String(openOptions.initialContent || "").length),
+          limit:Number(openOptions.initialLimit || 50*1024*1024),
+          encoding:requestedEncoding || "utf8",
+          preferred_encoding:String(openOptions.initialPreferredEncoding || "auto"),
+          line_ending:openOptions.initialLineEnding,
+          final_newline:openOptions.initialFinalNewline,
+          needs_format_repair:openOptions.initialNeedsFormatRepair === true,
+          initial_modified:openOptions.initialModified === true
+        }
+      : null;
     while (true) {
-      const data = await withSftpFileOpenFeedback(id, path, () => readSftpTextWithProgress(id, path, requestedEncoding));
+      const data = pendingData || await withSftpFileOpenFeedback(id, path, () => readSftpTextWithProgress(id, path, requestedEncoding));
+      pendingData = null;
       if (!data) return;
       await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       if (data.is_cancelled?.()) return;
@@ -1276,9 +1342,24 @@ async function previewSftpText(id, path) {
         lineEnding:data.line_ending,
         finalNewline:data.final_newline,
         bom:data.bom,
+        needsFormatRepair:data.needs_format_repair === true,
+         initialModified:data.initial_modified === true,
+         forceNewEditor:openOptions.forceNewEditor === true,
+         svgMode:isSftpSvgName(path) ? (openOptions.svgMode || "edit") : "",
         serverName:editorConnection?.name || String(id),
         sourceLabel:`${editorConnection?.name || id} · ${path}`,
         onSave:next => api(`/api/connections/${id}/sftp/write`, {method:"POST", body:JSON.stringify({path, content:next.content, backup:next.backup, encoding:next.encoding, line_ending:next.line_ending, persist_default:next.persist_default})}),
+        onSaved:(saved, next) => {
+          const savedEncoding = saved?.encoding || next.encoding;
+          if (editorConnection && next.persist_default) editorConnection.sftp_text_encoding = savedEncoding;
+          if (typeof queueSftpDirectoryRefresh === "function") {
+            queueSftpDirectoryRefresh(id);
+            flushPendingSftpDirectoryRefresh();
+          }
+          notify((saved?.normalized_script || next.normalized_script) && (saved?.line_ending || next.line_ending) === "lf"
+            ? tr("sftp:editor.saved_shell_script", {encoding:sftpTextEncodingLabel(savedEncoding), defaultValue:`脚本已按 ${sftpTextEncodingLabel(savedEncoding)}、Unix LF、无 BOM 保存`})
+            : tr("sftp:editor.saved_with_encoding_and_line_ending", {encoding:sftpTextEncodingLabel(savedEncoding), lineEnding:sftpTextLineEndingLabel(saved?.line_ending || next.line_ending), defaultValue:`文件已按 ${sftpTextEncodingLabel(savedEncoding)}、${sftpTextLineEndingLabel(saved?.line_ending || next.line_ending)} 保存`}), "success");
+        },
         loadVersions:() => api(`/api/connections/${id}/sftp/versions?path=${encodeURIComponent(path)}&limit=10`).catch(() => ({versions:[]})),
         onReady:() => data.progress?.finish(tr("sftp:editor.opened", {size:formatBytes(data.size || 0), defaultValue:`已打开 · ${formatBytes(data.size || 0)}`})),
         loadVersion:async (version, versionEncoding) => {
@@ -1294,17 +1375,22 @@ async function previewSftpText(id, path) {
         requestedEncoding = next.encoding;
         continue;
       }
-      if (!next.changed && !(next.persist_default && data.preferred_encoding !== next.encoding)) return notify(tr("sftp:editor.no_changes", {defaultValue:"文件内容没有变化"}), "info");
-      const saved = next.savedResult || await api(`/api/connections/${id}/sftp/write`, {method:"POST", body:JSON.stringify({path, content:next.content, backup:next.backup, encoding:next.encoding, line_ending:next.line_ending, persist_default:next.persist_default})});
-      const savedEncoding = saved?.encoding || next.encoding;
-      if (editorConnection && next.persist_default) editorConnection.sftp_text_encoding = savedEncoding;
-      if (typeof queueSftpDirectoryRefresh === "function") {
-        queueSftpDirectoryRefresh(id);
-        flushPendingSftpDirectoryRefresh();
+      if (next.action === "preview" && isSftpSvgName(path)) {
+        await previewSftpImage(id, path, {
+          content:next.content || "",
+          initialSize:next.size,
+          type:"image/svg+xml",
+          limit:next.limit,
+          encoding:next.encoding,
+          preferredEncoding:next.preferredEncoding,
+          lineEnding:next.lineEnding,
+          finalNewline:next.finalNewline,
+           needsFormatRepair:next.needsFormatRepair === true,
+           modified:next.modified === true,
+           preserveUnsaved:true
+        });
+        return;
       }
-      notify((saved?.normalized_script || next.normalized_script) && (saved?.line_ending || next.line_ending) === "lf"
-        ? tr("sftp:editor.saved_shell_script", {encoding:sftpTextEncodingLabel(savedEncoding), defaultValue:`脚本已按 ${sftpTextEncodingLabel(savedEncoding)}、Unix LF、无 BOM 保存`})
-        : tr("sftp:editor.saved_with_encoding_and_line_ending", {encoding:sftpTextEncodingLabel(savedEncoding), lineEnding:sftpTextLineEndingLabel(saved?.line_ending || next.line_ending), defaultValue:`文件已按 ${sftpTextEncodingLabel(savedEncoding)}、${sftpTextLineEndingLabel(saved?.line_ending || next.line_ending)} 保存`}), "success");
       return;
     }
   } catch (error) {
