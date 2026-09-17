@@ -123,13 +123,75 @@ async function loadRuntimeDiagnostics() {
   }
 }
 
+function desktopNotificationsAppEnabled() {
+  return typeof runtimeSettings === "undefined" || runtimeSettings?.saved?.desktop_notifications_enabled !== false;
+}
+
 function notificationPermissionText() {
   if (typeof Notification === "undefined") return tr("settings:auto.notifications_unsupported");
-  return {
-    granted:tr("settings:auto.notifications_authorized"),
-    denied:tr("settings:auto.notifications_denied"),
-    default:tr("settings:auto.notifications_page_only")
-  }[Notification.permission] || Notification.permission;
+  const permission = Notification.permission;
+  if (permission === "granted") {
+    return desktopNotificationsAppEnabled()
+      ? tr("settings:auto.notifications_authorized_enabled")
+      : tr("settings:auto.notifications_authorized_disabled");
+  }
+  if (permission === "denied") return tr("settings:auto.notifications_denied_detail");
+  return tr("settings:auto.notifications_page_only");
+}
+
+function desktopNotificationToggleLabel() {
+  if (typeof Notification !== "undefined" && Notification.permission === "granted" && desktopNotificationsAppEnabled()) {
+    return tr("settings:auto.disable_desktop_notifications");
+  }
+  return tr("settings:auto.enable_desktop_notifications");
+}
+
+function updateDesktopNotificationControls() {
+  const button = $("desktopNotificationToggleBtn");
+  if (button) button.textContent = desktopNotificationToggleLabel();
+  const permissionText = notificationPermissionText();
+  const summary = $("notificationPermissionStatus");
+  if (summary) summary.textContent = tr("settings:auto.notification_status", {status:permissionText});
+  const status = $("desktopNotificationStatus");
+  if (status) status.textContent = permissionText;
+}
+
+async function toggleDesktopNotifications() {
+  const inPane = captureSettingsPane();
+  const button = $("desktopNotificationToggleBtn");
+  if (typeof Notification === "undefined") {
+    notify(tr("common:notifications.browser_notifications_unsupported", {defaultValue:"当前浏览器不支持系统通知"}), "info");
+    return false;
+  }
+  if (Notification.permission === "denied") {
+    notify(tr("settings:auto.notifications_denied_detail"), "info");
+    return false;
+  }
+  setButtonBusy(button, true, tr("settings:auto.saving"));
+  try {
+    let permission = Notification.permission;
+    const wasGranted = permission === "granted";
+    if (!wasGranted) permission = await Notification.requestPermission();
+    if (permission !== "granted") {
+      notify(tr("common:notifications.desktop_notifications_denied", {defaultValue:"桌面通知未授权"}), "info");
+      inPane(updateDesktopNotificationControls);
+      return false;
+    }
+    const enabled = wasGranted ? !desktopNotificationsAppEnabled() : true;
+    const result = await api("/api/runtime-settings", {
+      method:"PUT",
+      body:JSON.stringify({desktop_notifications_enabled:enabled})
+    });
+    runtimeSettings = normalizeRuntimeSettingsResponse({...runtimeSettings, ...result});
+    inPane(updateDesktopNotificationControls);
+    notify(tr(enabled ? "settings:auto.desktop_notifications_enabled" : "settings:auto.desktop_notifications_disabled"), "success");
+    return true;
+  } catch (error) {
+    notify(error.message || tr("settings:auto.notification_save_failed"), "error");
+    return false;
+  } finally {
+    inPane(() => setButtonBusy(button, false));
+  }
 }
 
 function updateSecurityBadges() {

@@ -194,7 +194,13 @@ function captureTerminalAiProviderForm() {
     provider.api_key_configured = true;
   }
   provider.clear_api_key = clearKey;
-  provider.name = String($("terminalAiProviderName")?.value || provider.name || "").trim().slice(0, 120) || provider.name;
+  const previousName = String(provider.name || "").trim();
+  const nextName = String($("terminalAiProviderName")?.value || provider.name || "").trim().slice(0, 120) || provider.name;
+  provider.name = nextName;
+  // A name edited in the settings UI is intentionally no longer a localized
+  // placeholder. Keep this bit in the draft so the backend can clear an old
+  // default_name=true marker instead of restoring it on the next load.
+  provider.default_name = nextName === previousName ? provider.default_name === true : false;
   return provider;
 }
 
@@ -448,7 +454,7 @@ function aiSettingsFormValue(options={}) {
   const reasoning_effort = ["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes($("terminalAiReasoningEffort")?.value) ? $("terminalAiReasoningEffort").value : "none";
   const deep_thinking = Boolean($("terminalAiDeepThinking")?.checked);
   const providers = terminalAiProvidersDraft.map(item => {
-    const next = {id:item.id, name:item.name, provider:"openai-compatible", endpoint:item.endpoint, model:item.model || "", api_type:item.api_type === "completions" ? "completions" : "responses"};
+    const next = {id:item.id, name:item.name, default_name:item.default_name === true, provider:"openai-compatible", endpoint:item.endpoint, model:item.model || "", api_type:item.api_type === "completions" ? "completions" : "responses"};
     if (item.api_key) next.api_key = item.api_key;
     if (item.clear_api_key) next.clear_api_key = true;
     return next;
@@ -601,6 +607,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
     settings_persisted:source.settings_persisted === true,
     sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
     sftp_floating_progress_enabled: savedSource.sftp_floating_progress_enabled !== false,
+    desktop_notifications_enabled: savedSource.desktop_notifications_enabled !== false,
     notification_display: normalizeNotificationDisplay(savedSource.notification_display),
     sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 50,
     sftp_text_editor_mode: ["ace", "auto", "light"].includes(savedSource.sftp_text_editor_mode) ? savedSource.sftp_text_editor_mode : "ace",
@@ -629,6 +636,7 @@ function normalizeRuntimeSettingsResponse(value={}) {
       listen_port: runtimePortValue(savedSource.listen_port ?? savedSource.port),
       sftp_recycle_bin_enabled: savedSource.sftp_recycle_bin_enabled === true,
       sftp_floating_progress_enabled: savedSource.sftp_floating_progress_enabled !== false,
+      desktop_notifications_enabled: savedSource.desktop_notifications_enabled !== false,
       notification_display: normalizeNotificationDisplay(savedSource.notification_display),
       sftp_max_open_file_size_mb: Number(savedSource.sftp_max_open_file_size_mb) || 50,
       sftp_text_editor_mode: ["ace", "auto", "light"].includes(savedSource.sftp_text_editor_mode) ? savedSource.sftp_text_editor_mode : "ace",

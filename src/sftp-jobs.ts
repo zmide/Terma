@@ -21,6 +21,11 @@ const jobs = new Map();
 const JOBS_FILE = path.join(DATA_DIR, "sftp-jobs.json");
 const MAX_HISTORY = 120;
 const ACTIVE_STATUSES = new Set(["running", "pending", "paused"]);
+// The command is wrapped in a base64-encoded `/bin/sh -c` invocation for
+// remote login-shell compatibility. Keep each payload well below common
+// exec/SSH argument limits; large selections are executed as sequential
+// batches by the same background job.
+const DELETE_COMMAND_BATCH_BYTES = 24 * 1024;
 let historyCache: any[] | null = null;
 let persistTimer: any = null;
 let downloadCacheService: any = null;
@@ -437,8 +442,24 @@ function buildDeleteJobRequest(connection, paths, recycleEnabled = false, pathBy
       : request.command;
     return `(${operation}) && printf '%s\\n' ${shellQuote(`${markerPrefix}${index + 1}`)}`;
   });
+  const commands = [];
+  let batch = [];
+  let batchBytes = 0;
+  for (const operation of operations) {
+    const operationBytes = Buffer.byteLength(operation, "utf8");
+    const separatorBytes = batch.length ? Buffer.byteLength(" && ", "utf8") : 0;
+    if (batch.length && batchBytes + separatorBytes + operationBytes > DELETE_COMMAND_BATCH_BYTES) {
+      commands.push(batch.join(" && "));
+      batch = [];
+      batchBytes = 0;
+    }
+    batch.push(operation);
+    batchBytes += (batch.length > 1 ? Buffer.byteLength(" && ", "utf8") : 0) + operationBytes;
+  }
+  if (batch.length) commands.push(batch.join(" && "));
   return {
     command: operations.join(" && "),
+    commands,
     paths: prepared.map((item) => item.path),
     recycled: Boolean(recycleEnabled),
     item_count: prepared.length,
@@ -506,14 +527,11 @@ function deletePathsJob(connectionId, paths, recycleEnabled = false, pathBytesB6
     started_at: Date.now(),
     finished_at: null
   };
-  resetTransferSpeed(job);
-  const child = spawnRemote(connection, request.command);
   const outputState = { remainder: "" };
-  job.child = child;
   jobs.set(id, job);
   persistJobs();
   let finished = false;
-  let stdoutEnded = false;
+  let stdoutEnded = true;
   const flushOutput = () => {
     if (stdoutEnded) return;
     stdoutEnded = true;
@@ -546,18 +564,48 @@ function deletePathsJob(connectionId, paths, recycleEnabled = false, pathBytesB6
       action: { view: "sftp", connection_id: job.connection_id, sftp_job_id: job.id }
     }, { cooldown_ms: 0 });
   };
-  child.stdout.on("data", (chunk) => {
-    consumeDeleteJobOutput(job, request.progress_marker, outputState, chunk);
-    persistJobs();
-  });
-  child.stdout.on("end", flushOutput);
-  child.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
-  child.on("error", (error) => finish("failed", error.message));
-  child.on("close", (code, signal) => {
-    if (code === 0) return finish("done");
-    if (job.stderr) return finish("failed", job.stderr);
-    finish("failed", `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`, signal ? "sftp_process_exit_with_signal" : "sftp_process_exit", {exit_code:code, signal:signal || ""});
-  });
+  const startBatch = (nextIndex) => {
+    if (finished || job.status === "cancelled") return;
+    stdoutEnded = false;
+    let child;
+    try {
+      child = spawnRemote(connection, request.commands[nextIndex] || request.command);
+    } catch (error) {
+      finish("failed", error?.message || String(error));
+      return;
+    }
+    job.child = child;
+    let batchFinished = false;
+    const failBatch = (error, errorCode = "", errorParams = {}) => {
+      if (batchFinished || finished || job.status === "cancelled") return;
+      batchFinished = true;
+      finish("failed", error || "删除命令执行失败", errorCode, errorParams);
+    };
+    child.stdout.on("data", (chunk) => {
+      consumeDeleteJobOutput(job, request.progress_marker, outputState, chunk);
+      persistJobs();
+    });
+    child.stdout.on("end", flushOutput);
+    child.stderr.on("data", (chunk) => { job.stderr = `${job.stderr}${chunk.toString()}`.slice(-12000); persistJobs(); });
+    child.on("error", (error) => failBatch(error.message));
+    child.on("close", (code, signal) => {
+      if (batchFinished || finished || job.status === "cancelled") return;
+      batchFinished = true;
+      flushOutput();
+      job.child = null;
+      if (code !== 0) {
+        if (job.stderr) return finish("failed", job.stderr);
+        return finish("failed", `退出码 ${code ?? ""}${signal ? `，信号 ${signal}` : ""}`, signal ? "sftp_process_exit_with_signal" : "sftp_process_exit", {exit_code:code, signal:signal || ""});
+      }
+      if (nextIndex + 1 < request.commands.length) {
+        persistJobs();
+        return setImmediate(() => startBatch(nextIndex + 1));
+      }
+      finish("done");
+    });
+  };
+  resetTransferSpeed(job);
+  startBatch(0);
   return {
     id,
     status: job.status,

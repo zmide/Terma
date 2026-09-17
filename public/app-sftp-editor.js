@@ -110,6 +110,10 @@ function isSftpImageName(name) {
   return ["png","jpg","jpeg","gif","webp","bmp","ico","svg"].includes(String(name || "").toLowerCase().split(".").pop());
 }
 
+function isSftpSvgName(name) {
+  return String(name || "").toLowerCase().split(".").pop() === "svg";
+}
+
 function termaAceMessages() {
   const messageKeys = {
     "autocomplete.popup.aria-roledescription":"autocomplete_suggestions",
@@ -221,6 +225,13 @@ function sftpTextEditorOpenKey(connectionId, remotePath) {
 function activateSftpTextEditor(editorKey) {
   const record = sftpFloatingEditorRegistry.get(String(editorKey || ""));
   if (!record) return false;
+  // A mode switch can finish an editor while an async preview callback still
+  // holds the registry entry. Never treat a detached window as reusable: doing
+  // so would consume the open request and leave the user with no editor.
+  if (!record.modal?.isConnected) {
+    sftpFloatingEditorRegistry.delete(String(editorKey || ""));
+    return false;
+  }
   record.restore?.();
   return true;
 }
@@ -272,7 +283,7 @@ function sftpFloatingEditorShelfItem(layer, metadata, restore) {
 
 function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8", preferredEncoding="auto", diffOptions={}) {
   const editorKey = String(diffOptions.editorKey || "");
-  if (editorKey && activateSftpTextEditor(editorKey)) return Promise.resolve(null);
+  if (editorKey && !diffOptions.forceNewEditor && activateSftpTextEditor(editorKey)) return Promise.resolve(null);
   return new Promise((resolve) => {
     const floatingLayer = sftpFloatingEditorLayer();
     const modal = document.createElement("div");
@@ -291,10 +302,10 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     refreshSftpFloatingEditorShelfLabels(floatingLayer);
     const detectedLanguage = sftpEditorLanguageForFile(title);
     const unixScript = isSftpUnixScript(title, content);
-    const scriptNeedsFormatRepair = unixScript && Boolean(
+    let scriptNeedsFormatRepair = diffOptions.needsFormatRepair === true || (unixScript && Boolean(
       diffOptions.bom
       || (content && diffOptions.finalNewline === false)
-    );
+    ));
     if (unixScript && encoding === "utf8bom") encoding = "utf8";
     const initialLineEnding = sftpTextLineEnding(diffOptions.lineEnding || "lf");
     const wrapEnabled = localStorage.getItem("sftpEditorWordWrap") !== "0";
@@ -311,11 +322,27 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     const minimizeLabel = tr("sftp:editor.minimize", {defaultValue:"最小化"});
     const fullscreenLabel = tr("sftp:editor.fullscreen", {defaultValue:"全屏"});
     const closeLabel = tr("sftp:editor.close", {defaultValue:"关闭"});
+    const isSvgDocument = isSftpSvgName(title);
+    const initialSvgMode = isSvgDocument && diffOptions.svgMode === "split" ? "split" : "edit";
+    const svgModeLabel = tr("sftp:editor.svg_mode", {defaultValue:"SVG 模式"});
+    const svgPreviewLabel = tr("sftp:editor.svg_mode_preview", {defaultValue:"仅预览"});
+    const svgEditLabel = tr("sftp:editor.svg_mode_edit", {defaultValue:"仅编辑"});
+    const svgSplitLabel = tr("sftp:editor.svg_mode_split", {defaultValue:"分栏预览"});
     modal.innerHTML = `<div class="modal-card wide sftp-editor-modal floating" role="dialog" aria-modal="false"><div class="sftp-editor-head"><div class="sftp-editor-title"><h2>${esc(fileName)}</h2>${sourceLabel ? `<small class="sftp-editor-source" title="${escAttr(sourceLabel)}">${esc(sourceLabel)}</small>` : ""}<span id="sftpEditorStats">${esc(fileLimit)}</span></div><div class="sftp-editor-head-actions"><div class="sftp-editor-controls"><label>${esc(tr("sftp:editor.text_encoding", {defaultValue:"文本编码"}))}<select id="sftpTextEncoding">${sftpTextEncodingOptions.map(([value,label]) => `<option value="${value}" ${value === encoding ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>${esc(tr("sftp:editor.line_ending", {defaultValue:"换行符"}))}<select id="sftpLineEnding">${sftpTextLineEndingOptions().map(([value,label]) => `<option value="${value}" ${value === initialLineEnding ? "selected" : ""}>${esc(label)}</option>`).join("")}</select></label><label>${esc(tr("sftp:editor.language", {defaultValue:"语言"}))}<select id="sftpEditorLanguage"><option value="auto">${esc(tr("sftp:editor.automatic_language", {language:sftpEditorLanguageLabel(detectedLanguage), defaultValue:`自动（${sftpEditorLanguageLabel(detectedLanguage)}）`}))}</option>${sftpEditorLanguageOptions.map(([value]) => `<option value="${value}">${esc(sftpEditorLanguageLabel(value))}</option>`).join("")}</select></label><label class="check-row compact"><input id="sftpEditorWordWrap" type="checkbox" ${wrapEnabled ? "checked" : ""}> ${esc(tr("sftp:editor.word_wrap", {defaultValue:"自动换行"}))}</label></div><div class="sftp-editor-window-controls"><button id="sftpEditorSearchToggle" class="icon-button" type="button" title="${escAttr(searchLabel)}" aria-label="${escAttr(searchLabel)}">${icon("search")}</button><button id="sftpEditorMinimize" class="icon-button" type="button" title="${escAttr(minimizeLabel)}" aria-label="${escAttr(minimizeLabel)}">${icon("minus")}</button><button id="sftpEditorFullscreen" class="icon-button" type="button" title="${escAttr(fullscreenLabel)}" aria-label="${escAttr(fullscreenLabel)}">${icon("maximize")}</button><button id="sftpEditorCloseTop" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div></div></div><div id="sftpEditorWorkspace" class="sftp-editor-workspace"><div id="sftpEditorSearchBar" class="sftp-editor-search-bar" hidden><input id="sftpEditorSearchInput" type="search" placeholder="${escAttr(searchLabel)}" autocomplete="off"><span id="sftpEditorSearchCount" aria-live="polite"></span><button id="sftpEditorSearchPrevious" class="icon-button" type="button" title="${escAttr(previousLabel)}" aria-label="${escAttr(previousLabel)}">${icon("arrow-up")}</button><button id="sftpEditorSearchNext" class="icon-button" type="button" title="${escAttr(nextLabel)}" aria-label="${escAttr(nextLabel)}">${icon("arrow-down")}</button><button id="sftpEditorSearchClose" class="icon-button" type="button" title="${escAttr(closeLabel)}" aria-label="${escAttr(closeLabel)}">${icon("x")}</button></div><div id="sftpTextEditor" class="sftp-code-editor" aria-label="${escAttr(tr("sftp:editor.editor_aria", {defaultValue:"SFTP 文本编辑器"}))}"></div><div id="sftpEditorSplit" class="sftp-editor-splitter" role="separator" aria-orientation="horizontal" aria-label="${escAttr(tr("sftp:editor.resize_diff_aria", {defaultValue:"调整编辑与差异区域比例"}))}" tabindex="0" hidden></div><div id="sftpDiffPreview" class="sftp-diff-preview" hidden></div></div><div class="sftp-editor-options"><label class="check-row"><input id="sftpBackupBeforeSave" type="checkbox" checked> ${esc(tr("sftp:editor.backup_before_save", {defaultValue:"保存前备份远程文件"}))}</label><label class="check-row"><input id="sftpPersistEncoding" type="checkbox" ${preferredEncoding === encoding ? "checked" : ""}> ${esc(tr("sftp:editor.persist_encoding", {defaultValue:"设为此连接默认文本编码"}))}</label><label class="sftp-diff-history-control"><span>${esc(tr("sftp:editor.compare_version", {defaultValue:"比较版本"}))}</span><select id="sftpDiffHistory" disabled>${historyOptions}</select><small id="sftpDiffHistoryCount">${esc(historyLoading ? tr("sftp:editor.loading_backups", {defaultValue:"正在读取备份..."}) : tr("sftp:editor.recent_backups", {count:versions.length, defaultValue:`最近 ${versions.length} / 10 个备份`}))}</small></label></div><div class="actions"><button id="sftpTextFormatJson" hidden>${icon("braces")}<span>${esc(tr("sftp:editor.format_json", {defaultValue:"格式化 JSON"}))}</span></button><button id="sftpTextDiff" disabled>${esc(tr("sftp:editor.preview_diff", {defaultValue:"预览差异"}))}</button><button class="primary" id="sftpTextSave">${esc(tr("sftp:editor.save", {defaultValue:"保存"}))} <span class="shortcut-hint">Ctrl+S</span></button><button id="sftpTextClose">${esc(closeLabel)}</button></div></div>`;
     modal.hidden = false;
     modal.onclick = null;
     let finished = false;
     const getEditor = selector => modal.querySelector(selector);
+    if (isSvgDocument) {
+      const controls = getEditor(".sftp-editor-controls");
+      if (controls) {
+        const modeControl = document.createElement("label");
+        modeControl.className = "sftp-svg-editor-mode";
+        modeControl.innerHTML = `<span>${esc(svgModeLabel)}</span><select id="sftpSvgEditorMode" aria-label="${escAttr(svgModeLabel)}"><option value="preview">${esc(svgPreviewLabel)}</option><option value="edit">${esc(svgEditLabel)}</option><option value="split">${esc(svgSplitLabel)}</option></select>`;
+        controls.appendChild(modeControl);
+        modeControl.querySelector("select").value = initialSvgMode;
+      }
+    }
     const titleBox = getEditor(".sftp-editor-title");
     const editorSaveStatus = document.createElement("small");
     editorSaveStatus.className = "sftp-editor-save-status";
@@ -446,6 +473,28 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     const editorWorkspace = getEditor("#sftpEditorWorkspace");
     const diffSplitter = getEditor("#sftpEditorSplit");
     const diffPreview = getEditor("#sftpDiffPreview");
+    let svgEditorPreview = null;
+    let svgEditorPreviewViewport = null;
+    let svgEditorPreviewStage = null;
+    let svgEditorPreviewSplitter = null;
+    if (isSvgDocument && editorWorkspace) {
+      svgEditorPreview = document.createElement("div");
+      svgEditorPreview.id = "sftpSvgEditorPreview";
+      svgEditorPreview.className = "sftp-svg-editor-preview";
+      svgEditorPreview.hidden = true;
+      svgEditorPreview.innerHTML = `<div class="sftp-svg-editor-preview-toolbar"><div class="sftp-svg-editor-preview-hint" data-svg-preview-source aria-live="polite"></div><label class="sftp-svg-editor-preview-auto-focus" title="${escAttr(tr("sftp:editor.svg_preview_auto_focus", {defaultValue:"定位时居中并缩放"}))}"><input type="checkbox" data-svg-preview-auto-focus checked><span>${esc(tr("sftp:editor.svg_preview_auto_focus", {defaultValue:"定位时居中并缩放"}))}</span></label><div class="sftp-svg-editor-preview-zoom"><button type="button" class="icon-button" data-svg-preview-zoom="out" title="${escAttr(tr("sftp:editor.zoom_out", {defaultValue:"缩小"}))}" aria-label="${escAttr(tr("sftp:editor.zoom_out", {defaultValue:"缩小"}))}">${icon("minus")}</button><span data-svg-preview-zoom-value>100%</span><button type="button" class="icon-button" data-svg-preview-zoom="fit" title="${escAttr(tr("sftp:editor.zoom_reset", {defaultValue:"适应窗口"}))}" aria-label="${escAttr(tr("sftp:editor.zoom_reset", {defaultValue:"适应窗口"}))}">${icon("maximize-2")}</button><button type="button" class="icon-button" data-svg-preview-zoom="in" title="${escAttr(tr("sftp:editor.zoom_in", {defaultValue:"放大"}))}" aria-label="${escAttr(tr("sftp:editor.zoom_in", {defaultValue:"放大"}))}">${icon("plus")}</button></div></div><div class="sftp-svg-editor-preview-viewport"><div class="sftp-svg-editor-preview-stage"></div></div><div class="sftp-svg-editor-preview-marker" data-svg-preview-marker hidden aria-hidden="true"></div>`;
+      svgEditorPreviewViewport = svgEditorPreview.querySelector(".sftp-svg-editor-preview-viewport");
+      svgEditorPreviewStage = svgEditorPreview.querySelector(".sftp-svg-editor-preview-stage");
+      editorWorkspace.insertBefore(svgEditorPreview, getEditor("#sftpTextEditor"));
+      svgEditorPreviewSplitter = document.createElement("div");
+      svgEditorPreviewSplitter.id = "sftpSvgEditorSplit";
+      svgEditorPreviewSplitter.className = "sftp-editor-svg-splitter";
+      svgEditorPreviewSplitter.setAttribute("role", "separator");
+      svgEditorPreviewSplitter.setAttribute("aria-orientation", "vertical");
+      svgEditorPreviewSplitter.setAttribute("aria-label", tr("sftp:editor.resize_svg_preview_aria", {defaultValue:"调整 SVG 预览与编辑区域比例"}));
+      svgEditorPreviewSplitter.tabIndex = 0;
+      editorWorkspace.insertBefore(svgEditorPreviewSplitter, getEditor("#sftpTextEditor"));
+    }
     let aceEditor = null;
     let fallbackEditor = null;
     const useLightEditor = diffOptions.editorKind === "light";
@@ -560,6 +609,364 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       rebuildLightPageOffsets();
       renderLightPage(0);
     };
+    const svgModeSelect = getEditor("#sftpSvgEditorMode");
+    let svgPreviewScale = 1;
+    let svgPreviewFitMode = true;
+    let svgPreviewBaseWidth = 1024;
+    let svgPreviewBaseHeight = 768;
+    let svgPreviewHighlightedId = "";
+    let svgPreviewHasRendered = false;
+    let svgPreviewFocusLockId = "";
+    let svgPreviewFocusLockUntil = 0;
+    let centerSvgPreviewTarget = () => {};
+    let cancelSvgPreviewAutoFocus = () => {};
+    let clearSvgPreviewAutoFocus = () => {};
+    const svgPreviewZoomValue = () => svgEditorPreview?.querySelector("[data-svg-preview-zoom-value]");
+    const svgPreviewAutoFocusToggle = () => svgEditorPreview?.querySelector("[data-svg-preview-auto-focus]");
+    const svgPreviewTargetInfoFromNode = node => {
+      let current = node;
+      const root = svgEditorPreviewStage?.shadowRoot?.querySelector("svg");
+      const shadowRoot = root?.getRootNode?.();
+      if (!root || !shadowRoot) return null;
+      let href = "";
+      while (current) {
+        if (current === root) break;
+        if (current.getRootNode?.() !== shadowRoot) break;
+        const id = current.getAttribute?.("id");
+        const nodeName = String(current.localName || current.nodeName || "").toLowerCase();
+        const nodeHref = current.getAttribute?.("href") || current.getAttribute?.("xlink:href");
+        if (!href && nodeName === "use" && nodeHref && /^#.+/.test(String(nodeHref))) href = String(nodeHref).slice(1);
+        if (id) return {id:String(id), href, nodeName, sourceElement:current};
+        current = current.parentElement || current.parentNode || null;
+      }
+      return href ? {id:href, href, nodeName:"use", sourceElement:node} : null;
+    };
+    const svgPreviewTargetIdFromNode = node => {
+      return svgPreviewTargetInfoFromNode(node)?.id || "";
+    };
+    const svgPreviewTargetInfoFromEvent = event => {
+      for (const node of event?.composedPath?.() || []) {
+        const targetInfo = svgPreviewTargetInfoFromNode(node);
+        if (targetInfo?.id) return targetInfo;
+      }
+      return svgPreviewTargetInfoFromNode(event?.target);
+    };
+    const svgPreviewTargetIdFromEvent = event => {
+      return svgPreviewTargetInfoFromEvent(event)?.id || "";
+    };
+    const resolveSvgPreviewTarget = id => {
+      const targetId = String(id || "");
+      const root = svgEditorPreviewStage?.shadowRoot?.querySelector("svg");
+      if (!root || !targetId) return null;
+      const isDefinition = node => {
+        let current = node.parentElement;
+        while (current && current !== root) {
+          const name = String(current.localName || current.nodeName || "").toLowerCase();
+          if (name === "defs" || name === "symbol") return true;
+          current = current.parentElement;
+        }
+        return false;
+      };
+      const nodes = [...root.querySelectorAll("*")];
+      const direct = nodes.filter(node => node.getAttribute("id") === targetId);
+      const references = nodes.filter(node => [node.getAttribute("href"), node.getAttribute("xlink:href")].includes(`#${targetId}`));
+      return direct.find(node => !isDefinition(node))
+        || references.find(node => !isDefinition(node))
+        || direct[0]
+        || references[0]
+        || null;
+    };
+    const updateSvgPreviewMarker = () => {
+      const marker = svgEditorPreview?.querySelector("[data-svg-preview-marker]");
+      if (!marker) return;
+      const viewport = svgEditorPreviewViewport;
+      const target = svgPreviewHighlightedId ? resolveSvgPreviewTarget(svgPreviewHighlightedId) : null;
+      if (!viewport || !target) {
+        if (!target || !viewport) marker.hidden = true;
+        if (!target) marker.classList.remove("is-edge");
+        return;
+      }
+      const previewRect = svgEditorPreview.getBoundingClientRect();
+      const viewportRect = viewport.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      if (!previewRect.width || !previewRect.height || !viewportRect.width || !viewportRect.height) {
+        marker.hidden = true;
+        return;
+      }
+      const inset = 15;
+      const minX = viewportRect.left - previewRect.left + inset;
+      const maxX = viewportRect.right - previewRect.left - inset;
+      const minY = viewportRect.top - previewRect.top + inset;
+      const maxY = viewportRect.bottom - previewRect.top - inset;
+      const targetX = targetRect.left + Math.max(1, targetRect.width) / 2 - previewRect.left;
+      const targetY = targetRect.top + Math.max(1, targetRect.height) / 2 - previewRect.top;
+      const x = Math.max(minX, Math.min(maxX, targetX));
+      const y = Math.max(minY, Math.min(maxY, targetY));
+      marker.style.left = `${x}px`;
+      marker.style.top = `${y}px`;
+      marker.classList.toggle("is-edge", Math.abs(x - targetX) > 1 || Math.abs(y - targetY) > 1);
+      marker.hidden = false;
+    };
+    const updateSvgPreviewZoomUi = () => {
+      const value = svgPreviewZoomValue();
+      if (value) value.textContent = `${Math.round(svgPreviewScale * 100)}%`;
+    };
+    const setSvgPreviewSize = () => {
+      if (!svgEditorPreviewViewport || !svgEditorPreviewStage) return;
+      const width = Math.max(1, svgPreviewBaseWidth * svgPreviewScale);
+      const height = Math.max(1, svgPreviewBaseHeight * svgPreviewScale);
+      // The helper keeps a half-viewport gutter on every side so edge elements
+      // can still be centered instead of being clamped against the canvas.
+      setSftpSvgPreviewSize(svgEditorPreviewViewport, svgEditorPreviewStage, width, height);
+      updateSvgPreviewZoomUi();
+      updateSvgPreviewMarker();
+    };
+    const fitSvgEditorPreview = ({manual=false} = {}) => {
+      if (!svgEditorPreviewViewport) return;
+      clearSvgPreviewAutoFocus();
+      if (manual) {
+        cancelSvgPreviewAutoFocus();
+      }
+      const width = Math.max(120, svgEditorPreviewViewport.clientWidth - 24);
+      const height = Math.max(120, svgEditorPreviewViewport.clientHeight - 24);
+      svgPreviewScale = Math.max(0.05, Math.min(1, width / svgPreviewBaseWidth, height / svgPreviewBaseHeight));
+      svgPreviewFitMode = true;
+      setSvgPreviewSize();
+      requestAnimationFrame(() => {
+        if (!svgEditorPreviewViewport) return;
+        svgEditorPreviewViewport.scrollLeft = Math.max(0, (svgEditorPreviewViewport.scrollWidth - svgEditorPreviewViewport.clientWidth) / 2);
+        svgEditorPreviewViewport.scrollTop = Math.max(0, (svgEditorPreviewViewport.scrollHeight - svgEditorPreviewViewport.clientHeight) / 2);
+      });
+    };
+    const updateSvgPreviewHighlight = (id, options={}) => {
+      const previousId = svgPreviewHighlightedId;
+      svgPreviewHighlightedId = String(id || "");
+      const root = svgEditorPreviewStage?.shadowRoot?.querySelector("svg");
+      const hint = svgEditorPreview?.querySelector("[data-svg-preview-source]");
+      if (hint) hint.textContent = svgPreviewHighlightedId ? tr("sftp:editor.svg_preview_target", {id:svgPreviewHighlightedId, defaultValue:`定位：${svgPreviewHighlightedId}`}) : "";
+      if (!root) {
+        updateSvgPreviewMarker();
+        return;
+      }
+      root.querySelectorAll(".sftp-svg-editor-cursor-current").forEach(node => node.classList.remove("sftp-svg-editor-cursor-current"));
+      if (!svgPreviewHighlightedId) {
+        updateSvgPreviewMarker();
+        return;
+      }
+      const target = resolveSvgPreviewTarget(svgPreviewHighlightedId);
+      target?.classList.add("sftp-svg-editor-cursor-current");
+      updateSvgPreviewMarker();
+      if (svgPreviewHighlightedId && options.locate !== false && (options.force || svgPreviewHighlightedId !== previousId)) {
+        requestAnimationFrame(() => centerSvgPreviewTarget(svgPreviewHighlightedId));
+      }
+    };
+    const svgSourceLocator = createSftpSvgSourceLocator({
+      getText: () => aceEditor ? aceEditor.getValue() : getValue(),
+      getAceEditor: () => aceEditor,
+      getFallbackEditor: () => fallbackEditor,
+      onHighlight: (id, options) => updateSvgPreviewHighlight(id, options)
+    });
+    const focusSvgSourceId = (target, options={}) => {
+      const targetId = target && typeof target === "object" ? target.id : target;
+      if (targetId && options.locate !== false) {
+        svgPreviewFocusLockId = String(targetId);
+        svgPreviewFocusLockUntil = Date.now() + 500;
+      }
+      svgSourceLocator.focusSourceId(target, {...options, locate:false});
+      updateSvgPreviewHighlight(String(targetId || ""), {locate:false, force:true});
+      if (targetId && options.locate !== false) {
+        centerSvgPreviewTarget(targetId);
+      }
+    };
+    const svgIdForCursor = () => svgSourceLocator.idForCursor();
+    const syncSvgPreviewFromCursor = () => {
+      if (svgPreviewFocusLockId && Date.now() < svgPreviewFocusLockUntil) return;
+      svgPreviewFocusLockId = "";
+      updateSvgPreviewHighlight(svgIdForCursor(), {locate:true});
+    };
+    const renderSvgEditorPreview = () => {
+      if (!svgEditorPreview || svgModeSelect?.value !== "split") return;
+      const stage = svgEditorPreviewStage;
+      if (!stage) return;
+      const previousScroll = {left:svgEditorPreviewViewport?.scrollLeft || 0, top:svgEditorPreviewViewport?.scrollTop || 0};
+      try {
+        if (typeof sanitizeSftpSvgDocument !== "function") throw new Error(tr("sftp:editor.svg_parse_failed", {defaultValue:"SVG 内容无法解析"}));
+        const sanitizedRoot = sanitizeSftpSvgDocument(getValue());
+        const embeddedStyles = String(sanitizedRoot.__termaEmbeddedStyles || "");
+        const viewBox = typeof sftpSvgExportViewBox === "function" ? sftpSvgExportViewBox(sanitizedRoot) : {x:0, y:0, width:1024, height:768};
+        svgPreviewBaseWidth = sftpSvgNumericDimension?.(sanitizedRoot.getAttribute("width"), viewBox.width) || viewBox.width;
+        svgPreviewBaseHeight = sftpSvgNumericDimension?.(sanitizedRoot.getAttribute("height"), viewBox.height) || viewBox.height;
+        if (!sanitizedRoot.getAttribute("height") && sanitizedRoot.getAttribute("width") && viewBox.width > 0) svgPreviewBaseHeight = svgPreviewBaseWidth * viewBox.height / viewBox.width;
+        const root = document.importNode(sanitizedRoot, true);
+        root.setAttribute("viewBox", `${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`);
+        root.setAttribute("preserveAspectRatio", root.getAttribute("preserveAspectRatio") || "xMidYMid meet");
+        root.removeAttribute("width");
+        root.removeAttribute("height");
+        root.style.width = `${Math.max(1, svgPreviewBaseWidth)}px`;
+        root.style.height = `${Math.max(1, svgPreviewBaseHeight)}px`;
+        root.style.display = "block";
+        root.style.overflow = "visible";
+        const shadow = stage.shadowRoot || stage.attachShadow({mode:"open"});
+        const style = document.createElement("style");
+        style.textContent = `${embeddedStyles}\n:host{display:block;width:${Math.max(1, svgPreviewBaseWidth)}px;height:${Math.max(1, svgPreviewBaseHeight)}px}svg{display:block;width:100%;height:100%;max-width:none;max-height:none}.sftp-svg-editor-cursor-current{filter:drop-shadow(0 0 4px #ff3158) drop-shadow(0 0 8px #ffd43b)}`;
+        shadow.replaceChildren(style, root);
+        setSvgPreviewSize();
+        if (!svgPreviewHasRendered) {
+          svgPreviewHasRendered = true;
+          fitSvgEditorPreview();
+        } else requestAnimationFrame(() => { if (svgEditorPreviewViewport) { svgEditorPreviewViewport.scrollLeft = previousScroll.left; svgEditorPreviewViewport.scrollTop = previousScroll.top; } });
+        updateSvgPreviewHighlight(svgPreviewHighlightedId || svgIdForCursor(), {locate:false});
+        root.addEventListener("click", event => {
+          const targetInfo = svgPreviewTargetInfoFromEvent(event);
+          if (targetInfo?.id) {
+            event.preventDefault();
+            event.stopPropagation();
+            focusSvgSourceId(targetInfo);
+          }
+        });
+      } catch (error) {
+        const errorHost = stage.shadowRoot || stage;
+        errorHost.replaceChildren();
+        const errorNode = document.createElement("div");
+        errorNode.className = "sftp-svg-editor-preview-error";
+        errorNode.innerHTML = icon("triangle-alert");
+        const errorText = document.createElement("span");
+        errorText.textContent = error.message || tr("sftp:editor.svg_parse_failed", {defaultValue:"SVG 内容无法解析"});
+        errorNode.appendChild(errorText);
+        errorHost.appendChild(errorNode);
+        refreshIcons();
+      }
+    };
+    const svgScheduler = createSftpSvgEditorScheduler({
+      isActive:() => !finished && Boolean(svgEditorPreview) && svgModeSelect?.value === "split",
+      renderPreview:renderSvgEditorPreview,
+      syncCursor:syncSvgPreviewFromCursor
+    });
+    const syncSvgEditorMode = value => {
+      if (!svgEditorPreview || !svgModeSelect) return;
+      const mode = ["edit", "split"].includes(value) ? value : "edit";
+      svgModeSelect.value = mode;
+      const showPreview = mode === "split";
+      if (!showPreview) svgScheduler.clear();
+      editorWorkspace?.classList.toggle("showing-svg-preview", showPreview);
+      svgEditorPreview.hidden = !showPreview;
+      if (svgEditorPreviewSplitter) svgEditorPreviewSplitter.hidden = !showPreview;
+      if (showPreview) {
+        renderSvgEditorPreview();
+        requestAnimationFrame(() => { if (svgPreviewFitMode) fitSvgEditorPreview(); else setSvgPreviewSize(); });
+      }
+      requestAnimationFrame(() => aceEditor?.resize(true));
+    };
+    let releaseSvgPreviewInteractions = () => {};
+    let releaseSvgPreviewLayout = () => {};
+    if (svgEditorPreviewViewport && svgEditorPreviewStage) {
+      let dragState = null;
+      let dragged = false;
+      const updateSvgPreviewZoom = (next, anchor=null, {manual=true} = {}) => {
+        if (!svgEditorPreviewViewport || !Number.isFinite(next)) return;
+        if (manual) {
+          cancelSvgPreviewAutoFocus();
+        }
+        const viewportRect = svgEditorPreviewViewport.getBoundingClientRect();
+        const previousScale = svgPreviewScale;
+        const anchorX = Number.isFinite(anchor?.clientX) ? anchor.clientX : viewportRect.left + viewportRect.width / 2;
+        const anchorY = Number.isFinite(anchor?.clientY) ? anchor.clientY : viewportRect.top + viewportRect.height / 2;
+        const gutterX = svgEditorPreviewViewport.clientWidth / 2;
+        const gutterY = svgEditorPreviewViewport.clientHeight / 2;
+        const logicalX = (svgEditorPreviewViewport.scrollLeft + anchorX - viewportRect.left - gutterX) / Math.max(.05, previousScale);
+        const logicalY = (svgEditorPreviewViewport.scrollTop + anchorY - viewportRect.top - gutterY) / Math.max(.05, previousScale);
+        svgPreviewScale = Math.max(.05, Math.min(8, next));
+        svgPreviewFitMode = false;
+        setSvgPreviewSize();
+        svgEditorPreviewViewport.scrollLeft = Math.max(0, gutterX + logicalX * svgPreviewScale - (anchorX - viewportRect.left));
+        svgEditorPreviewViewport.scrollTop = Math.max(0, gutterY + logicalY * svgPreviewScale - (anchorY - viewportRect.top));
+      };
+      const svgAutoFocusController = createSftpSvgAutoFocusController({
+        getViewport:() => svgEditorPreviewViewport,
+        getStage:() => svgEditorPreviewStage,
+        getTarget:resolveSvgPreviewTarget,
+        getToggle:svgPreviewAutoFocusToggle,
+        getScale:() => svgPreviewScale,
+        setScale:nextScale => updateSvgPreviewZoom(nextScale, null, {manual:false}),
+        updateMarker:updateSvgPreviewMarker
+      });
+      centerSvgPreviewTarget = svgAutoFocusController.focus;
+      cancelSvgPreviewAutoFocus = svgAutoFocusController.cancel;
+      clearSvgPreviewAutoFocus = svgAutoFocusController.clear;
+      const onPreviewWheel = event => {
+        if (!(event.ctrlKey || event.metaKey)) return;
+        event.preventDefault();
+        updateSvgPreviewZoom(svgPreviewScale * (event.deltaY < 0 ? 1.15 : 1 / 1.15), event, {manual:true});
+      };
+      const onPreviewScroll = () => updateSvgPreviewMarker();
+      const onPreviewPointerMove = event => {
+        if (!dragState || event.pointerId !== dragState.pointerId) return;
+        const dx = event.clientX - dragState.clientX;
+        const dy = event.clientY - dragState.clientY;
+        if (Math.abs(dx) + Math.abs(dy) > 3) {
+          if (!dragged) cancelSvgPreviewAutoFocus();
+          dragged = true;
+          try { svgEditorPreviewViewport.setPointerCapture?.(dragState.pointerId); } catch {}
+          event.preventDefault();
+        }
+        svgEditorPreviewViewport.scrollLeft = dragState.scrollLeft - dx;
+        svgEditorPreviewViewport.scrollTop = dragState.scrollTop - dy;
+      };
+      const finishPreviewDrag = event => {
+        if (!dragState || (event && event.pointerId !== dragState.pointerId)) return;
+        const pointerId = dragState.pointerId;
+        const targetId = dragState.targetId;
+        const wasDragged = dragged;
+        dragState = null;
+        svgEditorPreviewViewport.classList.remove("is-panning");
+        document.removeEventListener("pointermove", onPreviewPointerMove);
+        document.removeEventListener("pointerup", finishPreviewDrag);
+        document.removeEventListener("pointercancel", finishPreviewDrag);
+        try { svgEditorPreviewViewport.releasePointerCapture?.(pointerId); } catch {}
+        if (!wasDragged && targetId) focusSvgSourceId(targetId);
+        setTimeout(() => { dragged = false; }, 0);
+      };
+      const startPreviewDrag = event => {
+        if (event.button !== 0 || event.target?.closest?.("button")) return;
+        dragState = {pointerId:event.pointerId, clientX:event.clientX, clientY:event.clientY, scrollLeft:svgEditorPreviewViewport.scrollLeft, scrollTop:svgEditorPreviewViewport.scrollTop, targetId:svgPreviewTargetIdFromEvent(event)};
+        dragged = false;
+        svgEditorPreviewViewport.classList.add("is-panning");
+        document.addEventListener("pointermove", onPreviewPointerMove);
+        document.addEventListener("pointerup", finishPreviewDrag);
+        document.addEventListener("pointercancel", finishPreviewDrag);
+      };
+      const onPreviewClick = event => { if (dragged) { event.preventDefault(); event.stopPropagation(); } };
+      svgEditorPreviewViewport.addEventListener("wheel", onPreviewWheel, {passive:false});
+      svgEditorPreviewViewport.addEventListener("scroll", onPreviewScroll, {passive:true});
+      svgEditorPreviewViewport.addEventListener("pointerdown", startPreviewDrag);
+      svgEditorPreviewViewport.addEventListener("click", onPreviewClick, true);
+      svgEditorPreview.querySelectorAll("[data-svg-preview-zoom]").forEach(button => button.addEventListener("click", () => {
+        const mode = button.dataset.svgPreviewZoom;
+        if (mode === "fit") fitSvgEditorPreview({manual:true});
+        else updateSvgPreviewZoom(svgPreviewScale * (mode === "in" ? 1.25 : 1 / 1.25), null, {manual:true});
+      }));
+      const autoFocusToggle = svgPreviewAutoFocusToggle();
+      const onAutoFocusChange = () => {
+        if (autoFocusToggle?.checked && svgPreviewHighlightedId) centerSvgPreviewTarget(svgPreviewHighlightedId);
+      };
+      autoFocusToggle?.addEventListener("change", onAutoFocusChange);
+      const previewResizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+        if (svgPreviewFitMode) fitSvgEditorPreview();
+        else updateSvgPreviewMarker();
+      }) : null;
+      previewResizeObserver?.observe(svgEditorPreviewViewport);
+      releaseSvgPreviewInteractions = () => {
+        finishPreviewDrag();
+        svgAutoFocusController.clear();
+        previewResizeObserver?.disconnect();
+        svgEditorPreviewViewport.removeEventListener("wheel", onPreviewWheel);
+        svgEditorPreviewViewport.removeEventListener("scroll", onPreviewScroll);
+        svgEditorPreviewViewport.removeEventListener("pointerdown", startPreviewDrag);
+        svgEditorPreviewViewport.removeEventListener("click", onPreviewClick, true);
+        autoFocusToggle?.removeEventListener("change", onAutoFocusChange);
+      };
+    }
+    if (svgModeSelect) syncSvgEditorMode(initialSvgMode);
     const focusEditor = () => aceEditor ? aceEditor.focus() : fallbackEditor.focus();
     const searchBar = getEditor("#sftpEditorSearchBar");
     const searchInput = getEditor("#sftpEditorSearchInput");
@@ -637,8 +1044,11 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       finished = true;
       clearTimeout(editorStatsTimer);
       clearTimeout(editorSearchTimer);
+      svgScheduler.clear();
       document.removeEventListener("keydown", onModalKeyDown, true);
       releaseEditorLayout();
+      releaseSvgPreviewInteractions();
+      releaseSvgPreviewLayout();
       releaseFloatingEditor();
       if (editorKey && sftpFloatingEditorRegistry.get(editorKey)?.modal === modal) sftpFloatingEditorRegistry.delete(editorKey);
       try { aceEditor?.destroy(); } catch {}
@@ -654,7 +1064,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     const syncFormatButton = () => {
       getEditor("#sftpTextFormatJson").hidden = useLightEditor || !isSftpJsonFileName(title) || selectedLanguage() !== "json";
     };
-    let contentModified = false;
+    let contentModified = diffOptions.initialModified === true;
     const updateStats = (force=false, providedValue=null, providedEncoding="") => {
       if (useLightEditor && contentModified && !force) {
         getEditor("#sftpEditorStats").textContent = tr("sftp:editor.modified_check_size", {defaultValue:"已修改 · 保存时检查大小"});
@@ -694,7 +1104,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
     updateStats();
     syncFormatButton();
     if (aceEditor) {
-      aceEditor.session.on("change", () => { contentModified = true; invalidateEditorSearchMatches(); scheduleEditorStats(); });
+      aceEditor.session.on("change", () => { contentModified = true; invalidateEditorSearchMatches(); scheduleEditorStats(); svgScheduler.render(); });
       aceEditor.commands.addCommand({name:"saveSftpFile", bindKey:{win:"Ctrl-S",mac:"Command-S"}, exec:()=>saveButton.click()});
     } else fallbackEditor.addEventListener("input", () => {
       if (useLightEditor) {
@@ -703,8 +1113,85 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       } else contentModified = true;
       invalidateEditorSearchMatches();
       scheduleEditorStats();
+      svgScheduler.render();
+    });
+    svgModeSelect?.addEventListener("change", event => {
+      const mode = String(event.target.value || "edit");
+      if (mode === "preview") {
+        const currentContent = getValue();
+        finish({
+          action:"preview",
+          content:currentContent,
+          size:sftpEditorByteMeasurement(currentContent, getEditor("#sftpTextEncoding")?.value || encoding).bytes,
+          limit,
+          encoding:getEditor("#sftpTextEncoding")?.value || encoding,
+          preferredEncoding,
+          lineEnding:getEditor("#sftpLineEnding")?.value || initialLineEnding,
+          finalNewline:/\r\n$|\r$|\n$/.test(currentContent),
+          needsFormatRepair:scriptNeedsFormatRepair,
+          modified:contentModified
+        });
+        return;
+      }
+      if (mode === "split" && editorWorkspace?.classList.contains("showing-diff")) closeDiffPreview();
+      syncSvgEditorMode(mode);
+      focusEditor();
     });
     releaseEditorLayout = bindSftpEditorLayout(card, editorWorkspace, diffSplitter, () => aceEditor?.resize(true));
+    if (svgEditorPreviewSplitter && typeof bindSftpSvgEditorLayout === "function") {
+      releaseSvgPreviewLayout = bindSftpSvgEditorLayout(editorWorkspace, svgEditorPreviewSplitter, () => aceEditor?.resize(true));
+    }
+    if (aceEditor && svgEditorPreview) {
+      const syncSvgCursor = () => { if (svgModeSelect?.value === "split") svgScheduler.cursor(); };
+      aceEditor.selection.on("changeCursor", syncSvgCursor);
+      aceEditor.selection.on("changeSelection", syncSvgCursor);
+      const previousRelease = releaseSvgPreviewInteractions;
+      releaseSvgPreviewInteractions = () => {
+        previousRelease();
+        aceEditor.selection.off("changeCursor", syncSvgCursor);
+        aceEditor.selection.off("changeSelection", syncSvgCursor);
+      };
+    }
+    if (fallbackEditor && svgEditorPreview) {
+      const syncSvgSelection = () => { if (svgModeSelect?.value === "split") svgScheduler.cursor(); };
+      fallbackEditor.addEventListener("keyup", syncSvgSelection);
+      fallbackEditor.addEventListener("click", syncSvgSelection);
+      const previousRelease = releaseSvgPreviewInteractions;
+      releaseSvgPreviewInteractions = () => {
+        previousRelease();
+        fallbackEditor.removeEventListener("keyup", syncSvgSelection);
+        fallbackEditor.removeEventListener("click", syncSvgSelection);
+      };
+    }
+    let diffRequestSequence = 0;
+    const diffPreviewLabel = tr("sftp:editor.preview_diff", {defaultValue:"预览差异"});
+    const closeDiffLabel = tr("sftp:editor.close_diff", {defaultValue:"关闭差异"});
+    const renderDiffPreview = (content, options={}) => {
+      if (!diffPreview) return;
+      const heading = options.loading
+        ? tr("sftp:editor.reading_history", {defaultValue:"正在读取历史版本..."})
+        : tr("sftp:editor.diff_preview_title", {defaultValue:"差异预览"});
+      const body = options.loading
+        ? `<div class="sftp-diff-unavailable">${icon("loader-circle")} ${esc(heading)}</div>`
+        : options.error
+          ? `<div class="sftp-diff-unavailable error">${esc(options.error)}</div>`
+          : sftpDiffViewerHtml(options.oldText || "", options.newText ?? getValue(), {oldLabel:options.oldLabel, newLabel:tr("sftp:editor.current_content", {defaultValue:"当前编辑内容"})});
+      diffPreview.innerHTML = `<div class="sftp-diff-preview-head"><strong>${esc(heading)}</strong><button id="sftpDiffClose" type="button">${esc(closeDiffLabel)}</button></div><div class="sftp-diff-preview-body">${body}</div>`;
+      diffPreview.querySelector("#sftpDiffClose")?.addEventListener("click", closeDiffPreview);
+      refreshIcons();
+    };
+    const closeDiffPreview = () => {
+      diffRequestSequence += 1;
+      setSftpEditorDiffVisible(editorWorkspace, diffSplitter, diffPreview, false);
+      diffPreview?.replaceChildren();
+      const button = getEditor("#sftpTextDiff");
+      if (button) {
+        button.textContent = diffPreviewLabel;
+        button.classList.remove("busy", "active");
+        button.disabled = useLightEditor || !versions.length;
+      }
+      requestAnimationFrame(() => aceEditor?.resize(true));
+    };
     const syncHistoryControls = () => {
       const select = getEditor("#sftpDiffHistory");
       const button = getEditor("#sftpTextDiff");
@@ -734,33 +1221,43 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       getEditor("#sftpTextDiff").title = tr("sftp:editor.light_no_diff", {defaultValue:"轻量编辑器为避免占用大量内存，不加载全文差异预览"});
     }
     getEditor("#sftpTextDiff").onclick = async () => {
+      if (editorWorkspace?.classList.contains("showing-diff")) {
+        closeDiffPreview();
+        return;
+      }
       if (!versions.length) return notify(tr("sftp:editor.no_history", {defaultValue:"没有可比较的历史备份"}), "info");
+      if (svgModeSelect?.value === "split") syncSvgEditorMode("edit");
       const box = diffPreview;
       setSftpEditorDiffVisible(editorWorkspace, diffSplitter, box, true);
       requestAnimationFrame(() => aceEditor?.resize(true));
       const button = getEditor("#sftpTextDiff");
+      button.textContent = closeDiffLabel;
+      button.classList.add("active");
       const selected = Number(getEditor("#sftpDiffHistory")?.value || 0);
       let comparisonContent = "";
       let oldLabel = tr("sftp:editor.previous_backup", {defaultValue:"上一次备份"});
+      const requestSequence = ++diffRequestSequence;
+      renderDiffPreview("", {loading:true});
       if (versions[selected] && typeof diffOptions.loadVersion === "function") {
         button.disabled = true;
         button.classList.add("busy");
-        box.innerHTML = `<div class="sftp-diff-unavailable">${icon("loader-circle")} ${esc(tr("sftp:editor.reading_history", {defaultValue:"正在读取历史版本..."}))}</div>`;
-        refreshIcons();
         try {
           const version = versions[selected];
           const loaded = await diffOptions.loadVersion(version, encoding);
+          if (requestSequence !== diffRequestSequence || finished) return;
           comparisonContent = loaded?.content || "";
           oldLabel = tr("sftp:editor.backup_label", {time:sftpDiffDisplayTime(version.changed_at || Number(version.mtime || 0) * 1000), defaultValue:`备份 ${sftpDiffDisplayTime(version.changed_at || Number(version.mtime || 0) * 1000)}`});
         } catch (error) {
-          box.innerHTML = `<div class="sftp-diff-unavailable error">${esc(error.message || tr("sftp:editor.history_read_failed", {defaultValue:"历史版本读取失败"}))}</div>`;
+          if (requestSequence !== diffRequestSequence || finished) return;
+          renderDiffPreview("", {error:error.message || tr("sftp:editor.history_read_failed", {defaultValue:"历史版本读取失败"})});
           return;
         } finally {
-          button.disabled = false;
+          if (!finished && requestSequence === diffRequestSequence) button.disabled = false;
           button.classList.remove("busy");
         }
       }
-      box.innerHTML = sftpDiffViewerHtml(comparisonContent, getValue(), {oldLabel, newLabel:tr("sftp:editor.current_content", {defaultValue:"当前编辑内容"})});
+      if (requestSequence !== diffRequestSequence || finished) return;
+      renderDiffPreview(comparisonContent, {oldLabel, newLabel:tr("sftp:editor.current_content", {defaultValue:"当前编辑内容"})});
     };
     getEditor("#sftpTextEncoding").onchange = event => {
       const nextEncoding = event.target.value;
@@ -828,7 +1325,14 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       )) return;
       if (!updateStats(true, prepared.content, prepared.encoding)) return notify(tr("sftp:editor.content_too_large", {limit:formatBytes(limit), defaultValue:`在线编辑内容不能超过 ${formatBytes(limit)}`}), "error");
       const payload = {action:"save", content:prepared.content, changed:contentModified || prepared.changed || scriptNeedsFormatRepair, backup:getEditor("#sftpBackupBeforeSave").checked, encoding:prepared.encoding, line_ending:prepared.lineEnding, normalized_script:prepared.unixScript && prepared.lineEnding === "lf", persist_default:getEditor("#sftpPersistEncoding").checked};
-      if (typeof diffOptions.onSave !== "function" || (!payload.changed && !(payload.persist_default && preferredEncoding !== payload.encoding))) return finish(payload);
+      if (typeof diffOptions.onSave !== "function") return finish(payload);
+      if (!payload.changed && !(payload.persist_default && preferredEncoding !== payload.encoding)) {
+        editorSaveStatus.hidden = false;
+        editorSaveStatus.classList.remove("error");
+        editorSaveStatus.classList.add("success");
+        editorSaveStatus.textContent = tr("sftp:editor.no_changes", {defaultValue:"文件内容没有变化"});
+        return;
+      }
       saveButton.disabled = true;
       saveButton.classList.add("busy");
       editorSaveStatus.hidden = false;
@@ -837,9 +1341,19 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       try {
         const savedResult = await diffOptions.onSave(payload);
         contentModified = false;
+        scriptNeedsFormatRepair = false;
+        const savedEncoding = savedResult?.encoding || payload.encoding;
+        encoding = savedEncoding;
+        if (payload.persist_default) preferredEncoding = savedEncoding;
+        const encodingSelect = getEditor("#sftpTextEncoding");
+        if (encodingSelect && [...encodingSelect.options].some(option => option.value === savedEncoding)) encodingSelect.value = savedEncoding;
         editorSaveStatus.classList.add("success");
         editorSaveStatus.textContent = tr("sftp:editor.saved_remote", {defaultValue:"已保存到远端"});
-        finish({...payload, savedResult});
+        updateStats(true, getValue(), savedEncoding);
+        try {
+          await diffOptions.onSaved?.(savedResult, {...payload, encoding:savedEncoding});
+        } catch {}
+        focusEditor();
       } catch (error) {
         editorSaveStatus.classList.add("error");
         editorSaveStatus.textContent = tr("sftp:editor.save_waiting_reconnect", {defaultValue:"保存失败，内容仍在窗口中；重连后可再次保存"});

@@ -26,6 +26,54 @@
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
 
+## v1.7.2
+
+[English](#english) · [简体中文](#简体中文)
+
+<a id="english"></a>
+### English
+
+> This release adds a practical SVG editing workflow to SFTP and improves deletion, editor, notification, and terminal long-code-block reliability.
+
+#### Important fixes
+
+- Large SFTP multi-delete selections now run in safe batches instead of failing on remote Shell argument limits, while keeping one task with continuous progress and cancellation.
+- Saving an SFTP file, including with Ctrl+S, keeps the editor open; history diff previews can also be closed without losing current content.
+- Notification settings now clearly separate in-app notices, desktop notifications, and browser permission, and the desktop notification switch updates immediately.
+- Long terminal code blocks keep their action buttons reachable ([#33](https://github.com/zmide/Terma/issues/33)), and custom provider names remain unchanged after saving ([#34](https://github.com/zmide/Terma/issues/34)).
+
+#### Important additions
+
+- SVG files can be opened as text or used in preview-only, edit-only, and split modes. Split preview supports live updates without resetting zoom, drag/zoom controls, a resizable layout, and two-way locating between rendered graphics and source code.
+
+#### Changes in this release
+
+- Improve SFTP SVG editing, batch deletion, and notification controls ([#35](https://github.com/zmide/Terma/pull/35), [@JunXiaoRuo](https://github.com/JunXiaoRuo))
+
+**Full Changelog**: [v1.7.1...v1.7.2](https://github.com/zmide/Terma/compare/v1.7.1...v1.7.2)
+
+<a id="简体中文"></a>
+### 简体中文
+
+> 本版为 SFTP 新增实用的 SVG 编辑流程，并提升批量删除、编辑器、通知和终端长代码块操作的可靠性。
+
+#### 重要修复
+
+- 大批量 SFTP 删除改为按安全大小分批执行，不再因远端 Shell 参数过长而失败；整个过程仍保留为一个任务，并持续显示进度且支持取消。
+- 内部编辑器保存文件或按 Ctrl+S 后保持打开；历史差异预览也可以关闭，并保留当前编辑内容。
+- 通知设置现在明确区分页面提示、桌面通知和浏览器授权，桌面通知开关会立即更新状态。
+- 终端长代码块不会再把操作按钮推到不可见区域（[#33](https://github.com/zmide/Terma/issues/33)）；自定义模型供应商名称保存后也不会被覆盖（[#34](https://github.com/zmide/Terma/issues/34)）。
+
+#### 重要新增
+
+- SVG 文件可以按文本打开，也可以使用“仅预览”“仅编辑”和“分栏预览”。分栏模式支持保留缩放的实时更新、拖动与缩放、比例调节，以及图形与源码双向定位。
+
+#### 本次变更
+
+- 完善 SFTP SVG 编辑、批量删除和通知设置（[#35](https://github.com/zmide/Terma/pull/35)，[@JunXiaoRuo](https://github.com/JunXiaoRuo)）
+
+**完整变更**：[v1.7.1...v1.7.2](https://github.com/zmide/Terma/compare/v1.7.1...v1.7.2)
+
 ## v1.7.1
 
 [English](#english) · [简体中文](#简体中文)

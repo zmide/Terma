@@ -209,6 +209,7 @@ async function main() {
   const sftpEncodingSource = read("src/sftp-encoding.ts");
   const sftpFrontend = readFrontendDomain(root, "sftp");
   const sftpPreviewFrontend = read("public/app-sftp-preview.js");
+  const sftpDiffFrontend = read("public/app-sftp-diff.js");
   const remoteFrontend = readFrontendDomain(root, "remote");
   const sftpCss = read("public/app.css");
   const nativeSftpDragDesktopSource = read("desktop/native-sftp-drag.js");
@@ -223,6 +224,11 @@ async function main() {
   ok("SFTP 搜索支持加载反馈与有界子目录索引", sftpBackend.includes("buildRemoteRecursiveDirectoryEntriesCommand") && sftpBackend.includes("MAX_RECURSIVE_SEARCH_ENTRIES") && sftpFrontend.includes("setSftpRecursiveSearch") && sftpFrontend.includes("syncSftpSearchFeedback") && sftpFrontend.includes("搜索子目录"));
   ok("SFTP 双击目录进入、文件打开编辑", sftpFrontend.includes("activateSftpEntry") && sftpFrontend.includes('ondblclick="activateSftpEntry'));
   ok("SFTP 任意扩展名显示文本打开", !sftpFrontend.includes("isTextPreviewName") && sftpFrontend.includes("以文本打开"));
+  ok("SFTP SVG 同时支持图片预览和文本打开", sftpFrontend.includes("isSftpSvgName") && sftpFrontend.includes("openAsTextButton") && sftpFrontend.includes("previewSftpText"));
+  ok("SFTP SVG 支持预览、编辑和分栏模式互跳", sftpPreviewFrontend.includes("sftpImageViewMode") && sftpPreviewFrontend.includes("openSvgEditorMode") && sftpPreviewFrontend.includes("initialContent") && sftpPreviewFrontend.includes("initialModified") && sftpPreviewFrontend.includes("previewOptions.modified") && sftpFrontend.includes("sftpSvgEditorMode") && sftpFrontend.includes("showing-svg-preview") && sftpFrontend.includes("renderSvgEditorPreview") && sftpFrontend.includes("updateSvgPreviewZoom") && sftpFrontend.includes("onPreviewWheel") && sftpFrontend.includes("focusSvgSourceId") && sftpFrontend.includes("syncSvgPreviewFromCursor") && sftpFrontend.includes("centerSvgPreviewTarget") && sftpFrontend.includes("cancelSvgPreviewAutoFocus") && sftpFrontend.includes("svgPreviewTargetIdFromEvent") && sftpDiffFrontend.includes("svgSplit"));
+  ok("SFTP 远端 SVG 切换编辑时保留编码感知读取", sftpPreviewFrontend.includes("const hasEditorContent") && sftpPreviewFrontend.includes("...(hasEditorContent ? {") && sftpPreviewFrontend.includes("hasEditorContent && previewOptions.modified"));
+  ok("SFTP SVG 实时预览调度更新并与差异预览互斥", sftpFrontend.includes("createSftpSvgEditorScheduler") && sftpFrontend.includes("svgScheduler.render()") && sftpFrontend.includes("svgScheduler.cursor()") && sftpFrontend.includes('if (mode === "split" && editorWorkspace?.classList.contains("showing-diff")) closeDiffPreview()') && sftpFrontend.includes('if (svgModeSelect?.value === "split") syncSvgEditorMode("edit")'));
+  ok("终端 AI 长代码块保留可达的执行区", sftpCss.includes(".terminal-ai-code") && sftpCss.includes("max-height:min(360px,42vh)") && sftpCss.includes("overflow-y:auto") && read("public/app-terminal-ai-render.js").includes("terminal-ai-execute-command"));
   ok("SFTP 面包屑跟随滚动", sftpCss.includes(".sftp-top { position:sticky") && sftpCss.includes(".sftp-breadcrumb { display:flex") && sftpCss.includes("overflow-x:auto"));
   ok("SFTP 紧凑工具栏支持新建、条件粘贴、导航和悬浮搜索", sftpFrontend.includes('class="sftp-toolbar"') && sftpFrontend.includes("createSftpFile") && sftpFrontend.includes("renderSftpClipboardActions") && sftpFrontend.includes("cancelSftpClipboard") && sftpFrontend.includes("navigateSftpHistory") && sftpFrontend.includes("submitSftpPath") && sftpFrontend.includes('class="sftp-floating-search"') && sftpFrontend.includes('class="sftp-drop-overlay"') && sftpCss.includes(".sftp-shell { position:relative; display:flex;") && sftpCss.includes(".sftp-top { position:sticky") && sftpCss.includes("container-name:sftp-view") && sftpCss.includes("@container sftp-view (max-width:760px)") && sftpCss.includes(".sftp-favorites.is-empty { display:none; }") && !sftpFrontend.includes('classList.toggle("empty"'));
   ok("SFTP 拖拽传输、冲突处理、批量下载和版本差异预览可用", sftpSessionSource.includes("stageSftpPaths") && sftpSessionSource.includes("deliverSftpPaths") && read("desktop/main.js").includes("terma:sftp-start-drag") && sftpFrontend.includes("handleSftpDrop") && sftpFrontend.includes("dropSftpItemsOnTab") && sftpFrontend.includes("sftpDiffHistory") && sftpFrontend.includes("/sftp/versions") && sftpFrontend.includes("downloadSftpSelection") && sftpFrontend.includes("confirmSftpDownloadNotice") && sftpFrontend.includes("queueSftpDownload") && sftpFrontend.includes("conflict = await sftpConflictChoice") && !sftpFrontend.includes("sftpClipboard.action") && sftpSessionServerSource.includes('parts[4] === "download-batch"') && sftpSessionServerSource.includes('parts[4] === "upload-plan"'));
@@ -254,6 +260,7 @@ async function main() {
   );
   ok("页面通知在悬停或聚焦时暂停销毁计时", read("public/app-utils.js").includes("const toastTimerState = new Map()") && read("public/app-utils.js").includes("const toastPauseReasons = new WeakMap()") && read("public/app-utils.js").includes("wireToastInteractionPause") && read("public/app-utils.js").includes('addEventListener("pointerenter"') && read("public/app-utils.js").includes('addEventListener("focusin"') && !read("public/app-utils.js").includes("syncToastSelectionState") && read("public/app-utils.js").includes("scheduleToastDismiss"));
   ok("页面通知支持分类开关、显示时长和独立悬浮任务卡设置", read("src/runtime-settings.ts").includes("DEFAULT_NOTIFICATION_DISPLAY") && read("src/runtime-settings.ts").includes("normalizeNotificationDisplay") && read("public/app-utils.js").includes("function notificationDisplayPreferences") && read("public/app-utils.js").includes("preference?.enabled === false") && readFrontendDomain(root, "settings").includes('id="notificationInfoEnabled"') && readFrontendDomain(root, "settings").includes('id="notificationProgressSuccessDuration"') && readFrontendDomain(root, "settings").includes('id="taskCenterFloatingProgressEnabled"') && read("public/app.css").includes(".notification-preference-row"));
+  ok("桌面通知可独立关闭并明确区分浏览器授权与 Terma 开关", read("src/runtime-settings.ts").includes("desktop_notifications_enabled") && read("src/routes/storage-routes.ts").includes("desktop_notifications_enabled:data.desktop_notifications_enabled") && read("public/app-utils.js").includes("runtimeSettings?.saved?.desktop_notifications_enabled !== false") && readFrontendDomain(root, "settings").includes('id="notificationPermissionStatus"') && readFrontendDomain(root, "settings").includes('id="desktopNotificationToggleBtn"') && readFrontendDomain(root, "settings").includes('id="desktopNotificationStatus"') && read("public/app-settings-security.js").includes("function toggleDesktopNotifications") && read("public/app-settings-security.js").includes("updateDesktopNotificationControls") && read("public/app-settings-security.js").includes("notifications_authorized_disabled"));
   ok("SFTP SVG 搜索按设备身份去重并保留定位上下文", sftpPreviewFrontend.includes("svgSearchTarget") && sftpPreviewFrontend.includes("exactTargets") && sftpPreviewFrontend.includes("source.closest(\"metadata\")") && sftpPreviewFrontend.includes("const contextWidth = Math.max(720") && sftpPreviewFrontend.includes("fit();"));
   ok(
     "Linux 缺少 FUSE 时提示原因并保留兼容拖出",
@@ -475,13 +482,17 @@ async function main() {
       && terminalAiFrontend.includes("/api/ai/chat")
       && aiServiceSource.includes("redactAiText")
       && aiServiceSource.includes('redirect:"manual"')
-      && !aiRoutesSource.includes("requireEncryptionUnlocked")
-      && aiRoutesSource.includes("api_key")
-      && serverSource.includes("handleAiRoutes"));
+       && !aiRoutesSource.includes("requireEncryptionUnlocked")
+       && aiRoutesSource.includes("api_key")
+       && serverSource.includes("handleAiRoutes"));
+   ok("AI 供应商自定义名称可清除默认名称标记",
+     settingsFrontend.includes("provider.default_name = nextName === previousName")
+       && settingsFrontend.includes("default_name:item.default_name === true")
+       && runtimeSettingsSource.includes('Object.prototype.hasOwnProperty.call(source, "default_name")'));
   ok("全局终端设置独立持久化并应用到当前和未来会话",
     runtimeSettingsSource.includes("DEFAULT_TERMINAL_SETTINGS")
       && runtimeSettingsSource.includes("normalizeTerminalSettings")
-      && runtimeSettingsSource.includes("schema_version: 21")
+      && runtimeSettingsSource.includes("schema_version: 22")
       && runtimeSettingsSource.includes("scrollback_lines")
       && runtimeSettingsSource.includes("language: normalizeLanguage")
       && runtimeSettingsSource.includes("language_onboarding_version")
@@ -562,6 +573,7 @@ async function main() {
   ok("SFTP 任务完成事件立即清理悬浮进行中状态", sftpTasksFrontend.includes("settleSftpJobFromNotification") && utilsFrontend.includes("event.action?.sftp_job_id") && utilsFrontend.includes("void refreshSftpJobs().catch") && read("src/sftp-upload-jobs.ts").includes("sftp_job_id:job.id") && sftpJobsSource.includes("sftp_job_id: job.id"));
   ok("通知仅在鼠标悬停或获得焦点时暂停销毁计时", utilsFrontend.includes('addEventListener("pointerenter"') && utilsFrontend.includes('addEventListener("pointerleave"') && utilsFrontend.includes('addEventListener("focusin"') && !utilsFrontend.includes("selectionchange"));
   ok("SVG 搜索使用目标元素边框和尺寸标签定位", sftpPreviewFrontend.includes("dataset.label") && sftpPreviewFrontend.includes("bounds.width * scale") && appCss.includes(".sftp-svg-match-marker::after") && appCss.includes("content:attr(data-label)"));
+  ok("SFTP 文本差异预览可以关闭并在失败时恢复", sftpFrontend.includes("closeDiffPreview") && sftpFrontend.includes("sftpDiffClose") && sftpFrontend.includes("diffRequestSequence") && appCss.includes(".sftp-diff-preview-head"));
   ok("SFTP 文本编辑支持检测、切换并保持编码", read("src/sftp.ts").includes("decodeRemoteText") && read("src/sftp.ts").includes("encodeRemoteText") && sftpFrontend.includes("sftpTextEncodingOptions") && sftpFrontend.includes("persist_default") && dbSource.includes("sftp_text_encoding TEXT NOT NULL DEFAULT 'auto'"));
   ok("SFTP 文件名编码独立切换并持久化", read("src/sftp.ts").includes("decodeRemoteFilenameOutput") && read("src/sftp.ts").includes("remotePathOperand") && sftpFrontend.includes("showSftpFilenameEncodingMenu") && dbSource.includes("sftp_filename_encoding TEXT NOT NULL DEFAULT 'utf8'"));
   ok("SFTP 目录导航使用 LRU 缓存并按变化静默刷新", sftpFrontend.includes("sftpDirectoryViewCache") && sftpFrontend.includes("SFTP_DIRECTORY_VIEW_CACHE_TTL_MS") && sftpFrontend.includes("SFTP_DIRECTORY_VIEW_CACHE_MAX_DIRECTORIES") && sftpFrontend.includes("SFTP_DIRECTORY_VIEW_CACHE_MAX_ENTRIES") && sftpFrontend.includes("renderIfChangedOnly:true") && sftpFrontend.includes("sftpDirectoryContentSignature") && sftpFrontend.includes("silent:true") && sftpFrontend.includes("clearSftpDirectoryViewCache"));
@@ -569,6 +581,7 @@ async function main() {
   ok("终端与 SFTP 可以按连接双向跳转", terminalFrontend.includes("openSftp(${c.id})") && sftpFrontend.includes("openTerminal(${id})"));
   ok("SFTP 支持可暂停续传的跨主机复制", sftpJobsSource.includes("createCheckpointTransfers") && sftpJobsSource.includes("checkpoint_manifest") && sftpJobsSource.includes("checkpoint_staging_path") && !sftpJobsSource.includes("source.stdout.pipe(target.stdin)") && sftpFrontend.includes("/sftp/cross-copy"));
   ok("终端与批量命令共享严格 WebSocket 帧解析器", terminalSource.includes("WebSocketFrameParser") && read("src/commands.ts").includes("WebSocketFrameParser") && read("src/websocket.ts").includes("客户端 WebSocket 数据帧必须掩码") && read("src/websocket.ts").includes("fragmentOpcode"));
+  ok("终端 WebSocket 升级可安全处理客户端提前断开", terminalSource.includes('socket.on("error", () => {});') && read("src/websocket.ts").includes("try {\n    return socket.write"));
   ok("连接列表消除转发 N+1 查询并补索引", dbSource.includes('all("SELECT * FROM connection_forwards ORDER BY connection_id,id")') && dbSource.includes("idx_connection_forwards_connection_id") && dbSource.includes("idx_connections_group_sort"));
   ok("SFTP 状态防抖原子写入且日志使用缓冲队列", sftpJobsSource.includes("setTimeout(() => persistJobs(true), 400)") && read("src/sftp-job-store.ts").includes("fs.renameSync(temporary, file)") && read("src/logs.ts").includes("queueLogWrite") && !read("src/logs.ts").includes("fs.appendFileSync(logFile"));
   ok("同名私钥不会绕过连接级绑定", importerSource.includes("identity_file: null") && importerSource.includes("missing_identity: Boolean(keyName)") && !importerSource.includes("identityFileMap") && serverSource.includes("const target = requested ?") && !serverSource.includes("existingByName.get(keyName)"));

@@ -223,7 +223,9 @@ function normalizeAiProvider(value: any = {}, fallback: any = {}, index = 0) {
   return {
     id:normalizeAiProviderId(source.id, base.id, index),
     name,
-    default_name:source.default_name === true || base.default_name === true,
+    default_name:Object.prototype.hasOwnProperty.call(source, "default_name")
+      ? source.default_name === true
+      : base.default_name === true,
     provider:"openai-compatible",
     endpoint,
     model,
@@ -427,7 +429,7 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     : (value.hosts !== undefined ? value.hosts : value.host);
   const portValue = value.listen_port !== undefined ? value.listen_port : value.port;
   return {
-    schema_version: 21,
+    schema_version: 22,
     language: normalizeLanguage(value.language, fallback.language),
     language_onboarding_version: Math.max(0, Math.min(1, Number.isInteger(Number(value.language_onboarding_version ?? fallback.language_onboarding_version))
       ? Number(value.language_onboarding_version ?? fallback.language_onboarding_version)
@@ -468,6 +470,9 @@ function normalizeRuntimeSettings(value: any = {}, fallback: any = {}) {
     sftp_floating_progress_enabled: value.sftp_floating_progress_enabled === undefined
       ? fallback.sftp_floating_progress_enabled !== false
       : value.sftp_floating_progress_enabled !== false,
+    desktop_notifications_enabled: value.desktop_notifications_enabled === undefined
+      ? fallback.desktop_notifications_enabled !== false
+      : value.desktop_notifications_enabled !== false,
     notification_display: normalizeNotificationDisplay(
       value.notification_display,
       fallback.notification_display

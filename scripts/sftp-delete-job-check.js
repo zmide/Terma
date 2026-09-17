@@ -161,6 +161,23 @@ async function main() {
     assert.equal(permanentCommand.includes(".terma-recycle-bin"), false);
     assert.equal(permanentCommand.includes(".tunneldesk-recycle-bin"), false);
 
+    const largePaths = Array.from({length:200}, (_, index) =>
+      `/tmp/batch-${String(index).padStart(3, "0")}-${"x".repeat(105)}.txt`
+    );
+    const largeRequest = jobs.__buildDeleteJobRequest(connection, largePaths, false);
+    assert.ok(largeRequest.commands.length > 1, "large delete selections must be split into multiple commands");
+    for (const command of largeRequest.commands) {
+      assert.ok(Buffer.byteLength(command, "utf8") <= 24 * 1024, "each delete command must stay below the remote argument limit");
+    }
+    const largeCommandStart = commands.length;
+    const largeStart = jobs.deletePathsJob(connection.id, largePaths, false);
+    jobIds.push(largeStart.id);
+    const large = await waitForJob(jobs, largeStart.id, "done");
+    assert.equal(large.item_count, largePaths.length);
+    assert.equal(large.completed_items, largePaths.length);
+    assert.equal(large.progress, 100);
+    assert.equal(commands.length - largeCommandStart, largeRequest.commands.length, "each split delete batch must execute exactly once");
+
     const failedStart = jobs.deletePathsJob(connection.id, ["/tmp/first.txt", "/tmp/fail-me.txt"], false);
     jobIds.push(failedStart.id);
     const failed = await waitForJob(jobs, failedStart.id, "failed");
