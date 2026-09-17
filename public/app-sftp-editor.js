@@ -1017,12 +1017,12 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
         const startPosition = aceDocument.indexToPosition(start, 0);
         const endPosition = aceDocument.indexToPosition(end, 0);
         aceEditor.selection.setRange(new Range(startPosition.row, startPosition.column, endPosition.row, endPosition.column), false);
-        aceEditor.scrollToLine(startPosition.row, true, true);
+        aceEditor.scrollToLine?.(startPosition.row, true, true);
+        aceEditor.renderer?.scrollCursorIntoView?.(startPosition, 0.45);
         if (!keepSearchFocus) aceEditor.focus();
       } else {
         fallbackEditor.setSelectionRange(start, end);
-        const line = editorSearchSource().slice(0, start).split("\n").length - 1;
-        fallbackEditor.scrollTop = Math.max(0, line * 20 - fallbackEditor.clientHeight / 2);
+        scrollSftpFallbackEditorToOffset(fallbackEditor, editorSearchSource(), start);
         if (!keepSearchFocus) fallbackEditor.focus();
       }
     };
@@ -1050,6 +1050,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       releaseSvgPreviewInteractions();
       releaseSvgPreviewLayout();
       releaseFloatingEditor();
+      svgSourceLocator?.clear?.();
       if (editorKey && sftpFloatingEditorRegistry.get(editorKey)?.modal === modal) sftpFloatingEditorRegistry.delete(editorKey);
       try { aceEditor?.destroy(); } catch {}
       lightSource = "";

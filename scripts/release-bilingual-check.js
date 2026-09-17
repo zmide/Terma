@@ -41,6 +41,14 @@ if (fs.existsSync(updatePath)) {
   assertSynchronizedSections(validateBilingualReleaseBody(draftMatch[1], "下一版草稿"), "下一版草稿");
 }
 validateBilingualReleaseBody(bilingualPlaceholder("v9.9.9"), "双语空说明模板");
+validateBilingualReleaseBody(
+  bilingualPlaceholder("v9.9.9")
+    .replaceAll("#english", "#v9-9-9-english")
+    .replaceAll('id="english"', 'id="v9-9-9-english"')
+    .replaceAll("#简体中文", "#v9-9-9-zh")
+    .replaceAll('id="简体中文"', 'id="v9-9-9-zh"'),
+  "版本化快速跳转"
+);
 
 const releaseNotesDirectory = path.join(root, ".github", "release-notes");
 for (const name of fs.readdirSync(releaseNotesDirectory)) {
