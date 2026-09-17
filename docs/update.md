@@ -46,7 +46,7 @@
 
 #### Changes in this release
 
-- No pull requests were merged after v1.7.2; these user-visible changes were committed directly by the project maintainer.
+- Fix long single-line navigation and release v1.7.3 ([#37](https://github.com/zmide/Terma/pull/37), [@JunXiaoRuo](https://github.com/JunXiaoRuo))
 
 **Full Changelog**: [v1.7.2...v1.7.3](https://github.com/zmide/Terma/compare/v1.7.2...v1.7.3)
 
@@ -66,7 +66,7 @@
 
 #### 本次变更
 
-- v1.7.2 之后没有合并 Pull Request；本版用户可见变化均由项目维护者直接提交。
+- 修复超长单行定位并发布 v1.7.3（[#37](https://github.com/zmide/Terma/pull/37)，[@JunXiaoRuo](https://github.com/JunXiaoRuo)）
 
 **完整变更**：[v1.7.2...v1.7.3](https://github.com/zmide/Terma/compare/v1.7.2...v1.7.3)
 
