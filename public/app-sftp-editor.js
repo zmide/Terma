@@ -1017,12 +1017,14 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
         const startPosition = aceDocument.indexToPosition(start, 0);
         const endPosition = aceDocument.indexToPosition(end, 0);
         aceEditor.selection.setRange(new Range(startPosition.row, startPosition.column, endPosition.row, endPosition.column), false);
-        aceEditor.scrollToLine(startPosition.row, true, true);
+        aceEditor.scrollToLine?.(startPosition.row, true, true);
+        aceEditor.renderer?.scrollCursorIntoView?.(startPosition, 0.45);
         if (!keepSearchFocus) aceEditor.focus();
       } else {
         fallbackEditor.setSelectionRange(start, end);
-        const line = editorSearchSource().slice(0, start).split("\n").length - 1;
-        fallbackEditor.scrollTop = Math.max(0, line * 20 - fallbackEditor.clientHeight / 2);
+        const source = editorSearchSource(), lineStart = source.lastIndexOf("\n", Math.max(0, start - 1)) + 1, column = Math.max(0, start - lineStart), line = source.slice(0, start).split("\n").length - 1;
+        const fontSize = Number.parseFloat(getComputedStyle(fallbackEditor).fontSize || "14") || 14, lineHeight = Number.parseFloat(getComputedStyle(fallbackEditor).lineHeight || "") || fontSize * 1.45, approximateCharWidth = Math.max(6, fontSize * .62);
+        fallbackEditor.scrollTop = Math.max(0, line * lineHeight - fallbackEditor.clientHeight * .4); fallbackEditor.scrollLeft = Math.max(0, Math.min(Math.max(0, fallbackEditor.scrollWidth - fallbackEditor.clientWidth), column * approximateCharWidth - fallbackEditor.clientWidth * .42));
         if (!keepSearchFocus) fallbackEditor.focus();
       }
     };
@@ -1050,6 +1052,7 @@ function sftpTextModal(title, content, size=0, limit=5*1024*1024, encoding="utf8
       releaseSvgPreviewInteractions();
       releaseSvgPreviewLayout();
       releaseFloatingEditor();
+      svgSourceLocator?.clear?.();
       if (editorKey && sftpFloatingEditorRegistry.get(editorKey)?.modal === modal) sftpFloatingEditorRegistry.delete(editorKey);
       try { aceEditor?.destroy(); } catch {}
       lightSource = "";

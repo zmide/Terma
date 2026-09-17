@@ -7,7 +7,7 @@
 <a id="english"></a>
 ### English
 
-> The next release will focus on recoverable terminal sessions, broader terminal AI interoperability, and cross-platform remote desktop acceptance.
+> The next release will continue recoverable terminal, interoperability, and cross-platform remote desktop work.
 
 #### Planned
 
@@ -18,13 +18,57 @@
 <a id="简体中文"></a>
 ### 简体中文
 
-> 下一版本将重点推进可恢复终端、更多终端 AI 互操作场景和跨平台远程桌面验收。
+> 下一版本继续推进可恢复终端、互操作场景和跨平台远程桌面验收。
 
 #### 计划
 
 - 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
+
+## v1.7.3
+
+[English](#english) · [简体中文](#简体中文)
+
+<a id="english"></a>
+### English
+
+> This maintenance release makes internal editor navigation reliable for very long single-line files and makes selections easier to see, including SVG source locating.
+
+#### Important fixes
+
+- Text search in any file opened by the internal text editor now scrolls horizontally to matches inside very long single lines instead of only moving to the line.
+- Editor selections are easier to see in both light and dark themes, and SVG preview-to-source navigation selects and clearly marks the complete target tag.
+
+#### Known issue
+
+- macOS packages are currently not code-signed or notarized, so Gatekeeper may report that Terma is damaged or cannot be opened. See [Issue #36](https://github.com/zmide/Terma/issues/36) for a temporary workaround.
+
+#### Changes in this release
+
+- No pull requests were merged after v1.7.2; these user-visible changes were committed directly by the project maintainer.
+
+**Full Changelog**: [v1.7.2...v1.7.3](https://github.com/zmide/Terma/compare/v1.7.2...v1.7.3)
+
+<a id="简体中文"></a>
+### 简体中文
+
+> 本维护版本改进超长单行文件的编辑器定位，并让选中内容更容易看清，包括 SVG 源码定位。
+
+#### 重要修复
+
+- 所有通过内部文本编辑器打开的文件，在超长单行中查找内容时都会横向滚动到实际匹配位置，不再只定位到同一行。
+- 编辑器选区在浅色和深色主题下都更容易看清；从 SVG 预览定位源码时，会选中并醒目标记完整的目标标签。
+
+#### 已知问题
+
+- macOS 发布包目前尚未完成代码签名和公证，Gatekeeper 可能提示 Terma 已损坏或无法打开。临时处理方法见 [Issue #36](https://github.com/zmide/Terma/issues/36)。
+
+#### 本次变更
+
+- v1.7.2 之后没有合并 Pull Request；本版用户可见变化均由项目维护者直接提交。
+
+**完整变更**：[v1.7.2...v1.7.3](https://github.com/zmide/Terma/compare/v1.7.2...v1.7.3)
 
 ## v1.7.2
 

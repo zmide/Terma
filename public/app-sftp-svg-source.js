@@ -1,5 +1,40 @@
 function createSftpSvgSourceLocator({getText, getAceEditor, getFallbackEditor, onHighlight}) {
-  const findSourceIndex = (text, targetId, {preferReference=false, sourceElement=null} = {}) => {
+  let aceTargetMarkerId = null;
+  let aceLineMarkerId = null;
+  let aceGutterRow = -1;
+  let fallbackHighlightActive = false;
+  const getAceRange = (start, end) => {
+    const Range = globalThis.ace?.require?.("ace/range")?.Range;
+    if (!Range) return null;
+    return new Range(start.row, start.column, end.row, end.column);
+  };
+  const clearAceHighlight = aceEditor => {
+    const session = aceEditor?.session;
+    if (!session) return;
+    if (aceTargetMarkerId !== null) {
+      session.removeMarker?.(aceTargetMarkerId);
+      aceTargetMarkerId = null;
+    }
+    if (aceLineMarkerId !== null) {
+      session.removeMarker?.(aceLineMarkerId);
+      aceLineMarkerId = null;
+    }
+    if (aceGutterRow >= 0) {
+      session.removeGutterDecoration?.(aceGutterRow, "sftp-svg-source-gutter");
+      aceGutterRow = -1;
+    }
+  };
+  const highlightAceRange = (aceEditor, start, end) => {
+    const session = aceEditor?.session;
+    const range = getAceRange(start, end);
+    if (!session || !range) return;
+    clearAceHighlight(aceEditor);
+    aceTargetMarkerId = session.addMarker?.(range, "sftp-svg-source-target", "text", true) ?? null;
+    aceLineMarkerId = session.addMarker?.(getAceRange(start, {row:start.row, column:Math.max(1, start.column + 1)}), "sftp-svg-source-line", "fullLine", false) ?? null;
+    session.addGutterDecoration?.(start.row, "sftp-svg-source-gutter");
+    aceGutterRow = start.row;
+  };
+  const findSourceRange = (text, targetId, {preferReference=false, sourceElement=null} = {}) => {
     const wanted = String(targetId || "");
     if (!wanted) return -1;
     const candidates = [];
@@ -35,33 +70,56 @@ function createSftpSvgSourceLocator({getText, getAceEditor, getFallbackEditor, o
             if (attributes[attributeName] === attributeValue) score += 6;
           }
         }
-        candidates.push({index:match.index, score});
+        candidates.push({index:match.index, length:raw.length, score});
       }
       if (!/\/\s*>$/.test(raw) && !["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"].includes(name)) stack.push(name);
     }
     candidates.sort((left, right) => right.score - left.score || left.index - right.index);
-    return candidates[0]?.index ?? -1;
+    return candidates[0] ? {index:candidates[0].index, length:candidates[0].length} : null;
   };
   const focusSourceId = (target, options={}) => {
     const targetInfo = target && typeof target === "object" ? target : {id:target};
     const targetId = String(targetInfo.id || "").trim();
     if (!targetId) return;
     const text = String(getText?.() || "");
-    let index = findSourceIndex(text, targetId, {preferReference:targetInfo.nodeName === "use" || options.preferReference, sourceElement:targetInfo.sourceElement});
-    if (index < 0) index = text.indexOf(targetId);
-    if (index < 0) return;
+    const sourceRange = findSourceRange(text, targetId, {preferReference:targetInfo.nodeName === "use" || options.preferReference, sourceElement:targetInfo.sourceElement});
+    const index = sourceRange?.index ?? text.indexOf(targetId);
+    if (index < 0) return false;
+    const rangeLength = Math.max(targetId.length, sourceRange?.length || 0);
     const aceEditor = getAceEditor?.();
     const fallbackEditor = getFallbackEditor?.();
     if (aceEditor) {
-      const position = aceEditor.session.getDocument().indexToPosition(index, 0);
-      aceEditor.selection.moveTo(position.row, position.column);
-      aceEditor.scrollToLine(position.row, true, true);
+      const document = aceEditor.session.getDocument();
+      const start = document.indexToPosition(index, 0);
+      const end = document.indexToPosition(index + rangeLength, 0);
+      const range = getAceRange(start, end);
+      // Keep the caret at the opening tag while retaining the full range
+      // selection, so existing source-to-preview navigation can still read
+      // the tag from the cursor position.
+      if (range) aceEditor.selection.setRange(range, true);
+      else aceEditor.selection.moveTo(start.row, start.column);
+      aceEditor.scrollToLine(start.row, true, true);
+      aceEditor.renderer?.scrollCursorIntoView?.(start, 0.45);
+      highlightAceRange(aceEditor, start, end);
       aceEditor.focus();
     } else if (fallbackEditor) {
       fallbackEditor.focus();
-      fallbackEditor.setSelectionRange(index, index + targetId.length);
+      fallbackEditor.setSelectionRange(index, index + rangeLength);
+      const lineStart = text.lastIndexOf("\n", Math.max(0, index - 1)) + 1;
+      const column = Math.max(0, index - lineStart);
+      const line = text.slice(0, index).split("\n").length - 1;
+      const fontSize = Number.parseFloat(globalThis.getComputedStyle?.(fallbackEditor)?.fontSize || "14") || 14;
+      const approximateCharWidth = Math.max(6, fontSize * .62);
+      fallbackEditor.scrollTop = Math.max(0, line * fontSize * 1.45 - fallbackEditor.clientHeight * .4);
+      fallbackEditor.scrollLeft = Math.max(0, Math.min(
+        Math.max(0, fallbackEditor.scrollWidth - fallbackEditor.clientWidth),
+        column * approximateCharWidth - fallbackEditor.clientWidth * .42
+      ));
+      fallbackEditor.classList.add("sftp-source-locate-active");
+      fallbackHighlightActive = true;
     }
     onHighlight?.(targetId, {locate:options.locate !== false, force:true});
+    return true;
   };
   const idForCursor = () => {
     const text = String(getText?.() || "");
@@ -102,7 +160,14 @@ function createSftpSvgSourceLocator({getText, getAceEditor, getFallbackEditor, o
     }
     return "";
   };
-  return {focusSourceId, idForCursor};
+  const clear = () => {
+    const aceEditor = getAceEditor?.();
+    clearAceHighlight(aceEditor);
+    const fallbackEditor = getFallbackEditor?.();
+    if (fallbackHighlightActive) fallbackEditor?.classList.remove("sftp-source-locate-active");
+    fallbackHighlightActive = false;
+  };
+  return {focusSourceId, idForCursor, clear};
 }
 
 function createSftpSvgEditorScheduler({isActive, renderPreview, syncCursor}) {
