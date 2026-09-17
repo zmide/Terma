@@ -19,13 +19,13 @@ function requiresBilingualRelease(version) {
 
 function validateBilingualReleaseBody(body, label="Release Notes") {
   const normalized = String(body || "").replace(/\r\n?/g, "\n");
-  const navigation = normalized.indexOf("[English](#english)");
-  const chineseNavigation = normalized.indexOf("[简体中文](#简体中文)");
-  const englishAnchor = normalized.indexOf('<a id="english"></a>');
+  const navigationMatch = normalized.match(/\[English\]\(#([^)]+)\)\s*·\s*\[简体中文\]\(#([^)]+)\)/);
+  const navigation = navigationMatch?.index ?? -1;
+  const englishAnchor = navigationMatch ? normalized.indexOf(`<a id="${navigationMatch[1]}"></a>`, navigation) : -1;
   const englishHeading = normalized.indexOf("### English", englishAnchor);
-  const chineseAnchor = normalized.indexOf('<a id="简体中文"></a>');
+  const chineseAnchor = navigationMatch ? normalized.indexOf(`<a id="${navigationMatch[2]}"></a>`, englishHeading) : -1;
   const chineseHeading = normalized.indexOf("### 简体中文", chineseAnchor);
-  if (!(navigation >= 0 && chineseNavigation > navigation && englishAnchor > chineseNavigation && englishHeading > englishAnchor && chineseAnchor > englishHeading && chineseHeading > chineseAnchor)) {
+  if (!(navigation >= 0 && englishAnchor > navigation && englishHeading > englishAnchor && chineseAnchor > englishHeading && chineseHeading > chineseAnchor)) {
     throw new Error(`${label} 必须提供快速跳转，并按 English、简体中文顺序排列`);
   }
   const english = normalized.slice(englishHeading + "### English".length, chineseAnchor).trim();

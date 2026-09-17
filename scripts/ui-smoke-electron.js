@@ -9511,7 +9511,18 @@ app.whenReady().then(async () => {
         const svgEditorClickLine=Number.isFinite(svgEditorClickRow) ? svgAceEditor.session.getLine(svgEditorClickRow) : '';
         const svgEditorClickSelection=svgAceEditor?.getSelectionRange?.();
         const svgEditorClickSelectedText=svgAceEditor?.getSelectedText?.()||'';
-        const svgEditorClickScrollLeft=Number(svgAceEditor?.renderer?.getScrollLeft?.() ?? svgAceEditor?.renderer?.scroller?.scrollLeft ?? 0);
+        const svgEditorClickScrollValue=svgAceEditor?.renderer?.getScrollLeft?.() ?? svgAceEditor?.renderer?.scroller?.scrollLeft;
+        const svgEditorClickScrollLeft=Number(svgEditorClickScrollValue);
+        const svgEditorClickScrollerRect=svgAceEditor?.renderer?.scroller?.getBoundingClientRect?.();
+        const svgEditorClickScreenPosition=svgEditorClickSelection?.start
+          ? svgAceEditor?.renderer?.textToScreenCoordinates?.(svgEditorClickSelection.start.row,svgEditorClickSelection.start.column)
+          : null;
+        const svgEditorClickViewportX=Number(svgEditorClickScreenPosition?.pageX)-Number(window.scrollX||0);
+        const svgEditorClickHorizontallyVisible=Boolean(svgEditorClickScrollerRect
+          && Number.isFinite(svgEditorClickScrollLeft)
+          && Number.isFinite(svgEditorClickViewportX)
+          && svgEditorClickViewportX>=svgEditorClickScrollerRect.left
+          && svgEditorClickViewportX<=svgEditorClickScrollerRect.right);
         const svgEditorClickMarkers=svgAceEditor?.session?.getMarkers?.(true)||{};
         const svgEditorClickHasMarker=Object.values(svgEditorClickMarkers).some(marker=>String(marker?.clazz||marker?.className||'').includes('sftp-svg-source-target'));
         const svgClickTargetAfter=svgEditorRoot?.querySelector('#PD_11100000_14419');
@@ -9577,7 +9588,7 @@ app.whenReady().then(async () => {
           && svgEditorClickSelection.start?.row===svgEditorClickSelection.end?.row
           && svgEditorClickSelectedText.includes('PD_11100000_14419')
           && svgEditorClickHasMarker
-          && svgEditorClickScrollLeft>=0);
+          && svgEditorClickHorizontallyVisible);
         imagePreviewUi.svgSplitSourceFocusDiagnostics={
           selectedText:svgEditorClickSelectedText.slice(0,180),
           range:svgEditorClickSelection ? {
@@ -9585,6 +9596,8 @@ app.whenReady().then(async () => {
             end:svgEditorClickSelection.end
           } : null,
           scrollLeft:svgEditorClickScrollLeft,
+          viewportX:svgEditorClickViewportX,
+          horizontallyVisible:svgEditorClickHorizontallyVisible,
           hasMarker:svgEditorClickHasMarker
         };
         const svgStyledUse=svgEditorRoot?.querySelector('#styled-use');

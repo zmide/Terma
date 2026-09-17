@@ -1,3 +1,19 @@
+function scrollSftpFallbackEditorToOffset(editor, text, offset) {
+  if (!editor) return false;
+  const source = String(text || "");
+  const index = Math.max(0, Math.min(source.length, Number(offset) || 0));
+  const lineStart = source.lastIndexOf("\n", Math.max(0, index - 1)) + 1;
+  const column = Math.max(0, index - lineStart);
+  const line = source.slice(0, index).split("\n").length - 1;
+  const style = globalThis.getComputedStyle?.(editor);
+  const fontSize = Number.parseFloat(style?.fontSize || "14") || 14;
+  const lineHeight = Number.parseFloat(style?.lineHeight || "") || fontSize * 1.45;
+  const approximateCharWidth = Math.max(6, fontSize * .62);
+  editor.scrollTop = Math.max(0, line * lineHeight - editor.clientHeight * .4);
+  editor.scrollLeft = Math.max(0, Math.min(Math.max(0, editor.scrollWidth - editor.clientWidth), column * approximateCharWidth - editor.clientWidth * .42));
+  return true;
+}
+
 function createSftpSvgSourceLocator({getText, getAceEditor, getFallbackEditor, onHighlight}) {
   let aceTargetMarkerId = null;
   let aceLineMarkerId = null;
@@ -105,16 +121,7 @@ function createSftpSvgSourceLocator({getText, getAceEditor, getFallbackEditor, o
     } else if (fallbackEditor) {
       fallbackEditor.focus();
       fallbackEditor.setSelectionRange(index, index + rangeLength);
-      const lineStart = text.lastIndexOf("\n", Math.max(0, index - 1)) + 1;
-      const column = Math.max(0, index - lineStart);
-      const line = text.slice(0, index).split("\n").length - 1;
-      const fontSize = Number.parseFloat(globalThis.getComputedStyle?.(fallbackEditor)?.fontSize || "14") || 14;
-      const approximateCharWidth = Math.max(6, fontSize * .62);
-      fallbackEditor.scrollTop = Math.max(0, line * fontSize * 1.45 - fallbackEditor.clientHeight * .4);
-      fallbackEditor.scrollLeft = Math.max(0, Math.min(
-        Math.max(0, fallbackEditor.scrollWidth - fallbackEditor.clientWidth),
-        column * approximateCharWidth - fallbackEditor.clientWidth * .42
-      ));
+      scrollSftpFallbackEditorToOffset(fallbackEditor, text, index);
       fallbackEditor.classList.add("sftp-source-locate-active");
       fallbackHighlightActive = true;
     }
