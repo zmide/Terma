@@ -60,6 +60,7 @@ function serializableJob(source) {
     transfer_start_phase,
     transfer_start_current,
     abortController,
+    download_finalizing,
     native_drag_token,
     native_drag_ranges,
     ...job
@@ -711,6 +712,18 @@ function cancelSftpJob(id) {
   }
   if (job.type === "native-drag" && job.native_drag_token) {
     return requestNativeSftpDragCancel(job);
+  }
+  if (job.type === "download" && job.download_finalizing === true) {
+    removeQueuedTransfer(job);
+    rejectTransferWaiters(job, transferCancelledError());
+    job.phase = "cancelling";
+    job.current = "正在取消保存";
+    job.can_pause = false;
+    job.can_cancel = false;
+    setSftpJobIssue(job, "error", "用户已取消", "sftp_user_cancelled");
+    try { job.abortController?.abort?.(); } catch {}
+    persistJobs(true);
+    return {ok:true, status:job.status, phase:job.phase};
   }
   const uploadPhase = job.type === "upload" ? job.phase : "";
   removeQueuedTransfer(job);

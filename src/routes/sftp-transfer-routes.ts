@@ -3,6 +3,8 @@ import { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
 import { publicErrorBody } from "../public-error";
 
+const SFTP_SEPARATE_DOWNLOAD_LIMIT = 200;
+
 interface SftpTransferRouteDependencies {
   authorizeConnectionId(request: IncomingMessage, value: string): number;
   clearRemoteRecycleItems(connectionId: number): Promise<any>;
@@ -169,6 +171,14 @@ export async function handleSftpTransferRoutes(
   if (method === "POST" && parts[4] === "download-batch") {
     const data = await dependencies.readJson(request);
     const paths = Array.isArray(data.paths) ? data.paths : [];
+    if (data.mode === "separate" && paths.length > SFTP_SEPARATE_DOWNLOAD_LIMIT) {
+      dependencies.sendJson(response, publicErrorBody(
+        "SFTP_SEPARATE_DOWNLOAD_TOO_MANY",
+        `一次最多分别下载 ${SFTP_SEPARATE_DOWNLOAD_LIMIT} 个文件或目录`,
+        {max:SFTP_SEPARATE_DOWNLOAD_LIMIT}
+      ), 400);
+      return true;
+    }
     const saved = dependencies.readRuntimeSettings(dependencies.runtimeSettingsFile);
     const desktop = Boolean(dependencies.isDesktopRequest(request) && desktopIntegration?.getDownloadDirectory);
     const defaultDirectory = desktop ? await Promise.resolve(desktopIntegration.getDownloadDirectory()) : "";

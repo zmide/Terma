@@ -591,12 +591,15 @@ async function checkSftpTransferRoutes() {
   const sent = [];
   let json = {};
   let cancelled = false;
+  let desktopIntegration = null;
+  let desktopRequest = false;
+  const localDeliveryCalls = [];
   const response = {destroyed:false, writableEnded:false};
   const dependencies = {
     authorizeConnectionId:() => 7,
-    getDesktopIntegration:() => null,
+    getDesktopIntegration:() => desktopIntegration,
     invalidateRemoteDirectoryCache:() => {},
-    isDesktopRequest:() => false,
+    isDesktopRequest:() => desktopRequest,
     readJson:async () => json,
     readRemoteDirectorySize:async () => ({bytes:4096}),
     readRuntimeSettings:() => ({sftp_max_open_file_size_mb:8, sftp_recycle_bin_enabled:true}),
@@ -610,6 +613,10 @@ async function checkSftpTransferRoutes() {
     safeUploadName:name => String(name).replace(/[^a-z0-9.]+/gi, "_"),
     send:(_response, status, data, headers={}) => sent.push({status, data, headers}),
     sendJson:output.sendJson,
+    startLocalDeliveryJob:(connectionId, paths, target, conflict, options) => {
+      localDeliveryCalls.push({connectionId, paths, target, conflict, options});
+      return {id:`local-${localDeliveryCalls.length}`, status:"pending"};
+    },
     startUploadReceiveJob:() => ({id:"upload-1"})
   };
 
@@ -646,6 +653,27 @@ async function checkSftpTransferRoutes() {
   json = {path:"/srv"};
   assert.equal(await handleSftpTransferRoutes({method:"POST"}, response, "/api/connections/7/sftp/directory-size", dependencies), true);
   assert.deepEqual(sent.pop(), {status:200, data:{bytes:4096}, headers:{"Cache-Control":"no-store"}});
+
+  desktopIntegration = {getDownloadDirectory:() => "C:\\Downloads"};
+  desktopRequest = true;
+  json = {mode:"separate", paths:Array.from({length:200}, (_, index) => `/tmp/file-${index}.bin`)};
+  assert.equal(await handleSftpTransferRoutes({method:"POST"}, response, "/api/connections/7/sftp/download-batch", dependencies), true);
+  assert.equal(localDeliveryCalls.length, 200, "200 个分别下载项目必须全部创建任务");
+  assert.equal(output.sent.pop().status, 202);
+
+  localDeliveryCalls.length = 0;
+  json = {mode:"separate", paths:Array.from({length:201}, (_, index) => `/tmp/file-${index}.bin`)};
+  assert.equal(await handleSftpTransferRoutes({method:"POST"}, response, "/api/connections/7/sftp/download-batch", dependencies), true);
+  assert.equal(localDeliveryCalls.length, 0, "超过上限时不能创建任何分别下载任务");
+  assert.deepEqual(output.sent.pop(), {
+    data:{
+      error:"一次最多分别下载 200 个文件或目录",
+      code:"SFTP_SEPARATE_DOWNLOAD_TOO_MANY",
+      error_code:"sftp_separate_download_too_many",
+      error_params:{max:200}
+    },
+    status:400
+  });
 
   json = {exists:false};
   cancelled = true;

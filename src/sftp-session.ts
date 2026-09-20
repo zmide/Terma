@@ -155,11 +155,39 @@ function openSftpDirectoryChannel(record, connection, signal = null) {
   });
 }
 
+function waitForSftpConnection(connectionPromise, signal = null) {
+  if (!signal) return connectionPromise;
+  if (signal.aborted) return Promise.reject(sftpAbortError());
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener?.("abort", onAbort);
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(sftpAbortError());
+    };
+    signal.addEventListener?.("abort", onAbort, {once:true});
+    Promise.resolve(connectionPromise).then(value => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    }, error => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    });
+  });
+}
+
 async function acquireSftpDirectoryChannel(connectionId, signal = null) {
   if (signal?.aborted) throw Object.assign(new Error("SFTP directory request aborted"), {name:"AbortError"});
   const id = Number(connectionId);
   const connection = getSftpConnection(id);
-  await connectSftpSession(id);
+  await waitForSftpConnection(connectSftpSession(id), signal);
+  if (signal?.aborted) throw sftpAbortError();
   const record = sessions.get(id);
   if (!record?.client || record.status !== "connected") throw new Error("SFTP 会话未连接");
   for (const entry of record.directoryChannels || []) {
@@ -957,7 +985,7 @@ function clearSftpDragCache(now = Date.now()) {
   return sftpDragCacheInfo(now);
 }
 
-async function openSftpChannel(connectionId) {
+async function openSftpChannel(connectionId, signal = null) {
   const id = Number(connectionId);
   const connection = getSftpConnection(id);
   let lastError = null;
@@ -966,13 +994,13 @@ async function openSftpChannel(connectionId) {
       // A channel failure must not tear down the shared SSH transport.  Several
       // SFTP tabs can be opening channels at the same time; reconnecting with
       // force=true here would invalidate the channels owned by the other tabs.
-      await connectSftpSession(id);
+      await waitForSftpConnection(connectSftpSession(id), signal);
+      if (signal?.aborted) throw sftpAbortError();
       const record = sessions.get(id);
       if (!record?.client || record.status !== "connected") throw new Error("SFTP 会话未连接");
-      return await new Promise((resolve, reject) => {
-        record.client.sftp((error, channel) => error ? reject(normalizeSshTransportError(error, connection)) : resolve(channel));
-      });
+      return await openSftpDirectoryChannel(record, connection, signal);
     } catch (error) {
+      if (error?.name === "AbortError") throw error;
       lastError = error;
       const record = sessions.get(id);
       // Only reset a session that has already been marked disconnected.  An
@@ -1214,7 +1242,7 @@ async function stageSftpPaths(connectionId, remotePaths, progress: any = null) {
   let staged = false;
   const files = [];
   try {
-    channel = await openSftpChannel(connectionId);
+    channel = await openSftpChannel(connectionId, progress?.signal);
     const counter = {value:0};
     for (const remotePath of paths) {
       if (progress?.signal?.aborted) throw sftpAbortError();

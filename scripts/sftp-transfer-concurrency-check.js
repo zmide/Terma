@@ -3,7 +3,8 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const {EventEmitter} = require("node:events");
-const {PassThrough} = require("node:stream");
+const {PassThrough, Readable} = require("node:stream");
+const {decodeRemotePosixCommand} = require("./remote-posix-test-helper");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-transfer-concurrency-"));
 process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
@@ -19,7 +20,10 @@ function writeLimits(download, upload) {
   }), "utf8");
 }
 
+const downloadablePayloads = new Map();
+
 function fakeRemoteChild(command) {
+  const decodedCommand = decodeRemotePosixCommand(command);
   const child = new EventEmitter();
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
@@ -33,10 +37,18 @@ function fakeRemoteChild(command) {
     child.emit("close", null, signal);
     return true;
   };
-  if (String(command).includes("wc -c")) {
+  const fixture = [...downloadablePayloads.entries()].find(([remotePath]) => decodedCommand.includes(remotePath));
+  if (decodedCommand.includes("wc -c")) {
     setImmediate(() => {
       if (child.killed) return;
-      child.stdout.end("1024");
+      child.stdout.end(String(fixture ? fixture[1].length : 1024));
+      child.stderr.end();
+      child.emit("close", 0, null);
+    });
+  } else if (fixture && (decodedCommand.includes("cat --") || decodedCommand.includes("tail -c"))) {
+    setImmediate(() => {
+      if (child.killed) return;
+      child.stdout.end(fixture[1]);
       child.stderr.end();
       child.emit("close", 0, null);
     });
@@ -84,6 +96,8 @@ async function main() {
   });
   const jobs = require("../dist/sftp-jobs");
   const ids = [];
+  const originalRename = fs.promises.rename;
+  const originalCreateReadStream = fs.createReadStream;
   try {
     const uploadIds = Array.from({length:4}, (_, index) => {
       const localPath = path.join(temporaryRoot, `upload-${index}.bin`);
@@ -120,6 +134,87 @@ async function main() {
     jobs.cancelSftpJob(localDelivery.id);
     await waitUntil(() => jobs.listSftpJobs().find(job => job.id === localDelivery.id)?.status === "cancelled", "本机分别下载任务未进入取消状态");
     assert.equal(localDeliverySignal?.aborted, true, "取消本机分别下载必须中止底层递归 SFTP 读取");
+
+    writeLimits(1, 3);
+    jobs.refreshSftpTransferQueues();
+    const autoSaveRemotePath = "/tmp/auto-save.bin";
+    const autoSavePayload = Buffer.alloc(768 * 1024, 0x5a);
+    downloadablePayloads.set(autoSaveRemotePath, autoSavePayload);
+    const autoSaveDirectory = path.join(temporaryRoot, "auto-save");
+    fs.mkdirSync(autoSaveDirectory, {recursive:true});
+    fs.promises.rename = async (source, target) => {
+      if (path.basename(String(target)) === "auto-save.bin") {
+        const error = new Error("cross-device move");
+        error.code = "EXDEV";
+        throw error;
+      }
+      if (path.basename(String(target)) === "save-failure.bin") {
+        const error = new Error("save denied");
+        error.code = "EACCES";
+        throw error;
+      }
+      return originalRename(source, target);
+    };
+    fs.createReadStream = (source, options) => {
+      if (String(source).includes("auto-save.bin")) {
+        const content = fs.readFileSync(source);
+        let offset = 0;
+        let pending = false;
+        return new Readable({
+          read() {
+            if (pending || this.destroyed) return;
+            pending = true;
+            setTimeout(() => {
+              pending = false;
+              if (this.destroyed) return;
+              if (offset >= content.length) {
+                this.push(null);
+                return;
+              }
+              const next = Math.min(content.length, offset + 16 * 1024);
+              this.push(content.subarray(offset, next));
+              offset = next;
+            }, 8);
+          }
+        });
+      }
+      return originalCreateReadStream(source, options);
+    };
+
+    const saving = jobs.startDownloadJob(99201, autoSaveRemotePath, {
+      deliveryMode:"desktop",
+      autoSaveDirectory:autoSaveDirectory
+    });
+    ids.push(saving.id);
+    const autoSaveTarget = path.join(autoSaveDirectory, "auto-save.bin");
+    await waitUntil(() => {
+      const job = jobs.listSftpJobs().find(item => item.id === saving.id);
+      return job?.status === "running" && job.phase === "system-saving" && fs.existsSync(autoSaveTarget) && fs.statSync(autoSaveTarget).size > 0;
+    }, "跨磁盘自动保存未进入可取消的 system-saving 阶段");
+    const queuedBehindSave = jobs.startDownloadJob(99201, "/tmp/queued-behind-save.bin", {deliveryMode:"browser"});
+    ids.push(queuedBehindSave.id);
+    assert.equal(jobs.listSftpJobs().find(job => job.id === queuedBehindSave.id)?.status, "pending", "自动保存期间必须继续占用下载并发名额");
+    assert.equal(jobs.refreshSftpTransferQueues().download.active, 1, "自动保存期间不能提前释放下载并发名额");
+    const cancelling = jobs.cancelSftpJob(saving.id);
+    assert.equal(cancelling.phase, "cancelling", "取消自动保存时必须等待异步复制清理完成");
+    await waitUntil(() => jobs.listSftpJobs().find(job => job.id === saving.id)?.status === "cancelled", "自动保存取消后未进入终态");
+    assert.equal(fs.existsSync(autoSaveTarget), false, "取消跨磁盘自动保存后不能留下部分目标文件");
+    assert.equal(jobs.listSftpJobs().find(job => job.id === saving.id)?.delivery_status, "cancelled", "异步保存回调不能把已取消任务覆盖为完成");
+    await waitUntil(() => jobs.listSftpJobs().find(job => job.id === queuedBehindSave.id)?.status === "running", "自动保存清理完成后未释放下载并发名额");
+    jobs.cancelSftpJob(queuedBehindSave.id);
+
+    const failedSaveRemotePath = "/tmp/save-failure.bin";
+    downloadablePayloads.set(failedSaveRemotePath, Buffer.alloc(32 * 1024, 0x33));
+    const failedSave = jobs.startDownloadJob(99201, failedSaveRemotePath, {
+      deliveryMode:"desktop",
+      autoSaveDirectory:autoSaveDirectory
+    });
+    ids.push(failedSave.id);
+    await waitUntil(() => {
+      const job = jobs.listSftpJobs().find(item => item.id === failedSave.id);
+      return job?.status === "done" && job.delivery_status === "failed";
+    }, "自动保存失败后任务未正确结束");
+    assert.equal(jobs.refreshSftpTransferQueues().download.active, 0, "自动保存失败后必须准确释放一次下载并发名额");
     console.log("SFTP transfer concurrency check passed.");
   } finally {
     for (const id of ids) {
@@ -130,6 +225,8 @@ async function main() {
     }
     sessionModule.exports.spawnSftpSessionCommand = originalSpawn;
     sessionModule.exports.deliverSftpPaths = originalDeliver;
+    fs.promises.rename = originalRename;
+    fs.createReadStream = originalCreateReadStream;
     try { db.closeDatabase(); } catch {}
     try { fs.rmSync(temporaryRoot, {recursive:true, force:true}); } catch {}
   }
