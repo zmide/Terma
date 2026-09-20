@@ -155,11 +155,39 @@ function openSftpDirectoryChannel(record, connection, signal = null) {
   });
 }
 
+function waitForSftpConnection(connectionPromise, signal = null) {
+  if (!signal) return connectionPromise;
+  if (signal.aborted) return Promise.reject(sftpAbortError());
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal.removeEventListener?.("abort", onAbort);
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(sftpAbortError());
+    };
+    signal.addEventListener?.("abort", onAbort, {once:true});
+    Promise.resolve(connectionPromise).then(value => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve(value);
+    }, error => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    });
+  });
+}
+
 async function acquireSftpDirectoryChannel(connectionId, signal = null) {
   if (signal?.aborted) throw Object.assign(new Error("SFTP directory request aborted"), {name:"AbortError"});
   const id = Number(connectionId);
   const connection = getSftpConnection(id);
-  await connectSftpSession(id);
+  await waitForSftpConnection(connectSftpSession(id), signal);
+  if (signal?.aborted) throw sftpAbortError();
   const record = sessions.get(id);
   if (!record?.client || record.status !== "connected") throw new Error("SFTP 会话未连接");
   for (const entry of record.directoryChannels || []) {
@@ -957,7 +985,7 @@ function clearSftpDragCache(now = Date.now()) {
   return sftpDragCacheInfo(now);
 }
 
-async function openSftpChannel(connectionId) {
+async function openSftpChannel(connectionId, signal = null) {
   const id = Number(connectionId);
   const connection = getSftpConnection(id);
   let lastError = null;
@@ -966,13 +994,13 @@ async function openSftpChannel(connectionId) {
       // A channel failure must not tear down the shared SSH transport.  Several
       // SFTP tabs can be opening channels at the same time; reconnecting with
       // force=true here would invalidate the channels owned by the other tabs.
-      await connectSftpSession(id);
+      await waitForSftpConnection(connectSftpSession(id), signal);
+      if (signal?.aborted) throw sftpAbortError();
       const record = sessions.get(id);
       if (!record?.client || record.status !== "connected") throw new Error("SFTP 会话未连接");
-      return await new Promise((resolve, reject) => {
-        record.client.sftp((error, channel) => error ? reject(normalizeSshTransportError(error, connection)) : resolve(channel));
-      });
+      return await openSftpDirectoryChannel(record, connection, signal);
     } catch (error) {
+      if (error?.name === "AbortError") throw error;
       lastError = error;
       const record = sessions.get(id);
       // Only reset a session that has already been marked disconnected.  An
@@ -991,6 +1019,30 @@ async function openSftpChannel(connectionId) {
 
 function sftpLstat(channel, remotePath) {
   return new Promise((resolve, reject) => channel.lstat(remotePath, (error, stats) => error ? reject(error) : resolve(stats)));
+}
+
+function sftpLstatCancellable(channel, remotePath, signal = null) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => signal?.removeEventListener?.("abort", onAbort);
+    const finish = (error = null, stats = null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      error ? reject(error) : resolve(stats);
+    };
+    const onAbort = () => {
+      try { channel.end(); } catch {}
+      finish(sftpAbortError());
+    };
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener?.("abort", onAbort, {once:true});
+    try {
+      channel.lstat(remotePath, (error, stats) => finish(error, stats));
+    } catch (error) {
+      finish(error);
+    }
+  });
 }
 
 function sftpStat(channel, remotePath) {
@@ -1118,6 +1170,8 @@ async function readSftpDirectory(connectionId, remotePath = ".", options: any = 
 function sftpFastGet(channel, remotePath, localPath, options: any = {}) {
   const expectedSize = Math.max(0, Number(options.size || 0));
   let reported = 0;
+  let settled = false;
+  const signal = options.signal || null;
   const report = (transferred) => {
     const value = Math.max(0, Number(transferred || 0));
     const delta = Math.max(0, value - reported);
@@ -1125,34 +1179,51 @@ function sftpFastGet(channel, remotePath, localPath, options: any = {}) {
     if (delta > 0) options.onBytes?.(delta);
   };
   return new Promise((resolve, reject) => {
+    const cleanup = () => signal?.removeEventListener?.("abort", onAbort);
+    const finish = (error = null) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      error ? reject(error) : resolve(undefined);
+    };
+    const onAbort = () => {
+      try { channel.end(); } catch {}
+      finish(sftpAbortError());
+    };
+    if (signal?.aborted) return onAbort();
+    signal?.addEventListener?.("abort", onAbort, {once:true});
     try {
       channel.fastGet(remotePath, localPath, {
         step: (transferred) => report(transferred)
       }, error => {
         if (!error && expectedSize > reported) report(expectedSize);
-        error ? reject(error) : resolve(undefined);
+        finish(error);
       });
     } catch (error) {
-      reject(error);
+      finish(error);
     }
   });
 }
 
 async function downloadSftpEntry(channel, remotePath, localPath, counter, progress: any = null) {
+  if (progress?.signal?.aborted) throw sftpAbortError();
   counter.value += 1;
   if (counter.value > 10000) throw new Error("一次拖出最多处理 10000 个文件和目录");
-  const linkStats: any = await sftpLstat(channel, remotePath);
-  const stats: any = linkStats?.isSymbolicLink?.() ? await sftpStat(channel, remotePath) : linkStats;
+  const linkStats: any = await sftpLstatCancellable(channel, remotePath, progress?.signal);
+  if (progress?.signal?.aborted) throw sftpAbortError();
+  const stats: any = linkStats?.isSymbolicLink?.() ? await sftpStatCancellable(channel, remotePath, progress?.signal) : linkStats;
+  if (progress?.signal?.aborted) throw sftpAbortError();
   if (!stats?.isDirectory?.()) {
     fs.mkdirSync(path.dirname(localPath), {recursive:true});
     const size = Math.max(0, Number(stats?.size || 0));
     progress?.onFile?.({path:remotePath, size});
-    await sftpFastGet(channel, remotePath, localPath, {size, onBytes:progress?.onBytes});
+    await sftpFastGet(channel, remotePath, localPath, {size, onBytes:progress?.onBytes, signal:progress?.signal});
     return;
   }
   fs.mkdirSync(localPath, {recursive:true});
-  const entries: any[] = await sftpReaddir(channel, remotePath) as any[];
+  const entries: any[] = await sftpReaddirCancellable(channel, remotePath, progress?.signal) as any[];
   for (const entry of entries) {
+    if (progress?.signal?.aborted) throw sftpAbortError();
     const name = String(entry?.filename || "");
     if (!name || name === "." || name === "..") continue;
     await downloadSftpEntry(channel, path.posix.join(remotePath, name), availableLocalEntry(localPath, name), counter, progress);
@@ -1161,6 +1232,7 @@ async function downloadSftpEntry(channel, remotePath, localPath, counter, progre
 
 async function stageSftpPaths(connectionId, remotePaths, progress: any = null) {
   const paths = normalizeSftpDeliveryPaths(remotePaths);
+  if (progress?.signal?.aborted) throw sftpAbortError();
   cleanupSftpDragStaging();
   fs.mkdirSync(SFTP_DRAG_ROOT, {recursive:true});
   const directory = path.join(SFTP_DRAG_ROOT, crypto.randomUUID());
@@ -1170,9 +1242,10 @@ async function stageSftpPaths(connectionId, remotePaths, progress: any = null) {
   let staged = false;
   const files = [];
   try {
-    channel = await openSftpChannel(connectionId);
+    channel = await openSftpChannel(connectionId, progress?.signal);
     const counter = {value:0};
     for (const remotePath of paths) {
+      if (progress?.signal?.aborted) throw sftpAbortError();
       const baseName = path.posix.basename(remotePath.replace(/\/+$/, "")) || "download";
       const localPath = availableLocalEntry(directory, baseName);
       await downloadSftpEntry(channel, remotePath, localPath, counter, progress);
@@ -1198,7 +1271,10 @@ async function deliverSftpPaths(connectionId, remotePaths, targetDirectory, conf
   const staged = await stageSftpPaths(connectionId, remotePaths, progress);
   const saved = [];
   try {
+    if (progress?.signal?.aborted) throw sftpAbortError();
+    progress?.onCommit?.();
     for (const source of staged.files) {
+      if (progress?.signal?.aborted) throw sftpAbortError();
       const requestedTarget = path.join(directory, safeLocalEntryName(path.basename(source)));
       if (conflict === "error" && fs.existsSync(requestedTarget)) {
         const error: any = new Error(`本地目录已存在同名项目：${path.basename(requestedTarget)}`);

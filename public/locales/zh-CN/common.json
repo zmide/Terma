@@ -747,6 +747,7 @@
     "no_running_tasks": "暂无进行中的任务",
     "adjust_task_center": "调整任务中心大小",
     "adjust_task_center_hint": "拖动调整任务中心大小，双击恢复默认",
+    "reset_task_center_size": "恢复任务中心默认大小",
     "adjust_activity_bar": "调整活动栏宽度",
     "adjust_activity_bar_hint": "拖动调整活动栏宽度，双击恢复默认",
     "adjust_operation_pane": "调整操作区宽度",

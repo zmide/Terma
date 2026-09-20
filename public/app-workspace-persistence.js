@@ -111,7 +111,7 @@ function restoreWorkspaceGroups(saved) {
     const groupTabKeys = new Set();
     for (const tab of Array.isArray(stored.tabs) ? stored.tabs : []) {
       if (!tab || typeof tab !== "object" || typeof tab.key !== "string" || !tab.key || !tab.kind || groupTabKeys.has(tab.key)) continue;
-      groupTabs.push({...tab});
+      groupTabs.push(restoreWorkspaceGroupTab(tab));
       groupTabKeys.add(tab.key);
     }
     const storedName = normalizedWorkspaceGroupStoredName(groupId, stored.name);
@@ -129,7 +129,7 @@ function restoreWorkspaceGroups(saved) {
     const legacyKeys = new Set();
     for (const tab of Array.isArray(saved.tabs) ? saved.tabs : []) {
       if (!tab || typeof tab !== "object" || typeof tab.key !== "string" || !tab.key || !tab.kind || legacyKeys.has(tab.key)) continue;
-      legacyTabs.push({...tab});
+      legacyTabs.push(restoreWorkspaceGroupTab(tab));
       legacyKeys.add(tab.key);
     }
     restoredGroups.push({

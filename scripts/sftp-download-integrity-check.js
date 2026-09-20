@@ -122,6 +122,7 @@ async function main() {
   const sessions = require("../dist/sftp-session");
   const jobs = require("../dist/sftp-jobs");
   let jobId = "";
+  let desktopJobId = "";
   let growingJobId = "";
   let archiveJobId = "";
   try {
@@ -134,6 +135,15 @@ async function main() {
     assert.equal(completed.transferred, payload.length, "completed transfer count must equal the remote size");
     assert.equal(downloaded.length, payload.length, "a completed download must not be truncated");
     assert.equal(hash(downloaded), hash(payload), "a completed download must preserve every byte");
+    const desktopDirectory = path.join(temporaryRoot, "desktop-downloads");
+    fs.mkdirSync(desktopDirectory, {recursive:true});
+    const desktop = jobs.startDownloadJob(connection.id, "/fixture/download.bin", {
+      deliveryMode:"desktop",
+      autoSaveDirectory:desktopDirectory
+    });
+    desktopJobId = desktop.id;
+    const saved = await waitForJobState(jobs, desktopJobId, item => item.status === "done" && item.delivery_status === "saved" && item.saved_path);
+    assert.equal(hash(fs.readFileSync(saved.saved_path)), hash(payload), "desktop delivery must save the completed file without blocking transfer state");
     const growing = jobs.startDownloadJob(connection.id, "/fixture/growing.log", { deliveryMode:"browser" });
     growingJobId = growing.id;
     const changed = await waitForStatus(jobs, growingJobId, ["done"]);
@@ -176,6 +186,10 @@ async function main() {
       if (current && ["running", "pending", "paused"].includes(current.status)) jobs.cancelSftpJob(jobId);
     } catch {}
     try {
+      const current = desktopJobId && jobs.listSftpJobs().find(item => item.id === desktopJobId);
+      if (current && ["running", "pending", "paused"].includes(current.status)) jobs.cancelSftpJob(desktopJobId);
+    } catch {}
+    try {
       const current = growingJobId && jobs.listSftpJobs().find(item => item.id === growingJobId);
       if (current && ["running", "pending", "paused"].includes(current.status)) jobs.cancelSftpJob(growingJobId);
     } catch {}
@@ -184,6 +198,7 @@ async function main() {
       if (current && ["running", "pending", "paused"].includes(current.status)) jobs.cancelSftpJob(archiveJobId);
     } catch {}
     try { if (jobId) jobs.deleteSftpJob(jobId); } catch {}
+    try { if (desktopJobId) jobs.deleteSftpJob(desktopJobId); } catch {}
     try { if (growingJobId) jobs.deleteSftpJob(growingJobId); } catch {}
     try { if (archiveJobId) jobs.deleteSftpJob(archiveJobId); } catch {}
     sessions.closeAllSftpSessions();

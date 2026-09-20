@@ -1,9 +1,4 @@
 const sftpTaskLogViewStates = new Map();
-const SFTP_TASK_CENTER_MIN_WIDTH = 340;
-const SFTP_TASK_CENTER_MIN_HEIGHT = 240;
-const SFTP_TASK_CENTER_VIEWPORT_GAP = 12;
-const SFTP_TASK_CENTER_SIZE_STORAGE_KEY = "sftpTaskCenterSizeV1";
-let sftpTaskCenterResize = null;
 let sftpBackgroundRefreshInFlight = false;
 let sftpBackgroundVisibilityBound = false;
 let sftpLastJobsPollAt = 0;
@@ -14,136 +9,6 @@ let sftpJobsRefreshTrailing = false;
 let sftpDirectoryRefreshTimer = 0;
 let sftpDirectoryRefreshActive = false;
 let sftpPreferredDirectoryRefreshKey = "";
-function savedSftpTaskCenterSize() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY) || "null");
-    const width = Number(saved?.width);
-    const height = Number(saved?.height);
-    return Number.isFinite(width) && Number.isFinite(height) ? {width, height} : null;
-  } catch {
-    return null;
-  }
-}
-function persistSftpTaskCenterSize(drawer) {
-  if (!drawer || isMobileLayout()) return;
-  const rect = drawer.getBoundingClientRect();
-  try {
-    localStorage.setItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY, JSON.stringify({
-      width:Math.round(rect.width),
-      height:Math.round(rect.height)
-    }));
-  } catch {}
-}
-function restoreSftpTaskCenterSize(drawer) {
-  if (!drawer) return false;
-  if (isMobileLayout()) {
-    drawer.style.removeProperty("width");
-    drawer.style.removeProperty("height");
-    return false;
-  }
-  const saved = savedSftpTaskCenterSize();
-  if (!saved) return false;
-  applySftpTaskCenterSize(drawer, saved.width, saved.height);
-  return true;
-}
-function sftpTaskCenterResizeBounds(drawer) {
-  const rect = drawer.getBoundingClientRect();
-  const maxWidth = Math.max(1, rect.right - SFTP_TASK_CENTER_VIEWPORT_GAP);
-  const maxHeight = Math.max(1, window.innerHeight - rect.top - SFTP_TASK_CENTER_VIEWPORT_GAP);
-  return {
-    minWidth:Math.min(SFTP_TASK_CENTER_MIN_WIDTH, maxWidth),
-    minHeight:Math.min(SFTP_TASK_CENTER_MIN_HEIGHT, maxHeight),
-    maxWidth,
-    maxHeight
-  };
-}
-function applySftpTaskCenterSize(drawer, width, height) {
-  const bounds = sftpTaskCenterResizeBounds(drawer);
-  const nextWidth = Math.max(bounds.minWidth, Math.min(bounds.maxWidth, Number(width) || bounds.minWidth));
-  const nextHeight = Math.max(bounds.minHeight, Math.min(bounds.maxHeight, Number(height) || bounds.minHeight));
-  drawer.style.width = `${Math.round(nextWidth)}px`;
-  drawer.style.height = `${Math.round(nextHeight)}px`;
-}
-function startSftpTaskCenterResize(event, handle=event.currentTarget) {
-  if (event.button !== 0 || isMobileLayout()) return;
-  const drawer = document.getElementById("sftpTaskCenterDrawer");
-  if (!drawer || drawer.hidden) return;
-  if (sftpTaskCenterResize) finishSftpTaskCenterResize(null, true);
-  event.preventDefault();
-  event.stopPropagation();
-  const rect = drawer.getBoundingClientRect();
-  sftpTaskCenterResize = {
-    drawer,
-    handle,
-    pointerId:event.pointerId,
-    startX:event.clientX,
-    startY:event.clientY,
-    startWidth:rect.width,
-    startHeight:rect.height
-  };
-  try { handle?.setPointerCapture?.(event.pointerId); } catch {}
-  document.body.classList.add("sftp-task-center-resizing");
-  window.addEventListener("pointermove", moveSftpTaskCenterResize, {passive:false});
-  window.addEventListener("pointerup", finishSftpTaskCenterResize);
-  window.addEventListener("pointercancel", cancelSftpTaskCenterResize);
-  window.addEventListener("blur", finishSftpTaskCenterResizeOnBlur);
-}
-function moveSftpTaskCenterResize(event) {
-  const drag = sftpTaskCenterResize;
-  if (!drag || event.pointerId !== drag.pointerId) return;
-  event.preventDefault();
-  applySftpTaskCenterSize(
-    drag.drawer,
-    drag.startWidth - (event.clientX - drag.startX),
-    drag.startHeight + (event.clientY - drag.startY)
-  );
-}
-function cancelSftpTaskCenterResize(event) {
-  finishSftpTaskCenterResize(event, true);
-}
-function finishSftpTaskCenterResizeOnBlur() {
-  finishSftpTaskCenterResize(null);
-}
-function finishSftpTaskCenterResize(event, cancelled=false) {
-  const drag = sftpTaskCenterResize;
-  if (!drag || event?.pointerId !== undefined && event.pointerId !== drag.pointerId) return;
-  window.removeEventListener("pointermove", moveSftpTaskCenterResize);
-  window.removeEventListener("pointerup", finishSftpTaskCenterResize);
-  window.removeEventListener("pointercancel", cancelSftpTaskCenterResize);
-  window.removeEventListener("blur", finishSftpTaskCenterResizeOnBlur);
-  sftpTaskCenterResize = null;
-  try {
-    if (drag.handle.hasPointerCapture?.(drag.pointerId)) drag.handle.releasePointerCapture(drag.pointerId);
-  } catch {}
-  document.body.classList.remove("sftp-task-center-resizing");
-  if (cancelled) applySftpTaskCenterSize(drag.drawer, drag.startWidth, drag.startHeight);
-  else persistSftpTaskCenterSize(drag.drawer);
-}
-function resetSftpTaskCenterSize(event) {
-  if (isMobileLayout()) return;
-  event?.preventDefault?.();
-  event?.stopPropagation?.();
-  const drawer = document.getElementById("sftpTaskCenterDrawer");
-  drawer?.style.removeProperty("width");
-  drawer?.style.removeProperty("height");
-  try { localStorage.removeItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY); } catch {}
-}
-function handleSftpTaskCenterResizeKey(event) {
-  if (isMobileLayout()) return;
-  if (event.key === "Home") return resetSftpTaskCenterSize(event);
-  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
-  event.preventDefault();
-  event.stopPropagation();
-  const drawer = document.getElementById("sftpTaskCenterDrawer");
-  if (!drawer) return;
-  const rect = drawer.getBoundingClientRect();
-  const step = event.shiftKey ? 32 : 16;
-  const width = rect.width + (event.key === "ArrowLeft" ? step : event.key === "ArrowRight" ? -step : 0);
-  const height = rect.height + (event.key === "ArrowDown" ? step : event.key === "ArrowUp" ? -step : 0);
-  applySftpTaskCenterSize(drawer, width, height);
-  persistSftpTaskCenterSize(drawer);
-}
-
 function startSftpJobsTimer() {
   if (sftpJobsTimer) return;
   const schedule = delay => {
@@ -306,6 +171,40 @@ function sftpTaskCollections(jobs=sftpLatestJobs) {
   const activeCount = current.filter(job => SFTP_ACTIVE_JOB_STATUSES.has(job.status)).length;
   const failedCount = failed.length;
   return {current, failed, history, activeCount, failedCount};
+}
+function sftpTransferQueueJobs(jobs=sftpLatestJobs) {
+  return jobs.filter(job => SFTP_TRANSFER_QUEUE_TYPES.has(job.type) && SFTP_ACTIVE_JOB_STATUSES.has(job.status));
+}
+function sftpTransferJobCanPause(job) {
+  if (!job || job.resume_supported !== true) return false;
+  if (job.status === "running") return job.can_pause !== false;
+  return job.status === "pending" && ["download", "cross-copy"].includes(job.type);
+}
+function sftpTransferJobCanResume(job) {
+  return Boolean(job && job.status === "paused" && job.can_resume);
+}
+function sftpTransferJobCanCancel(job) {
+  return Boolean(job
+    && SFTP_ACTIVE_JOB_STATUSES.has(job.status)
+    && job.can_cancel !== false
+    && !(job.type === "upload" && job.phase === "committing"));
+}
+async function runSftpTransferJobBatch(jobs, operation, concurrency=6) {
+  let nextIndex = 0;
+  const results = new Array(jobs.length);
+  const workers = Array.from({length:Math.min(Math.max(1, Number(concurrency || 1)), jobs.length)}, async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= jobs.length) return;
+      try {
+        results[index] = {status:"fulfilled", value:await operation(jobs[index])};
+      } catch (reason) {
+        results[index] = {status:"rejected", reason};
+      }
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function sftpTaskCenterProgress(jobs=sftpLatestJobs) {
@@ -627,12 +526,26 @@ function renderSftpTaskCenterDrawer(jobs=sftpLatestJobs) {
     failedCount ? tr("tasks:auto.failed_count", {count:failedCount, defaultValue:`${failedCount} 项失败`}) : "",
     !activeCount && !failedCount ? tr("tasks:auto.empty_current", {defaultValue:"暂无进行中的任务"}) : ""
   ].filter(Boolean).join(" · ");
+  const transferQueue = sftpTransferQueueJobs(current);
+  const pausableCount = transferQueue.filter(sftpTransferJobCanPause).length;
+  const resumableCount = transferQueue.filter(sftpTransferJobCanResume).length;
+  const cancelableCount = transferQueue.filter(sftpTransferJobCanCancel).length;
+  const showingCurrentQueue = !showingHistory && !showingFailed && transferQueue.length > 0;
   const footer = document.getElementById("sftpTaskCenterFooter");
-  if (footer) footer.hidden = !((showingHistory && history.length) || (showingFailed && failed.length));
+  if (footer) footer.hidden = !(showingCurrentQueue || (showingHistory && history.length) || (showingFailed && failed.length));
+  const queueActions = document.getElementById("sftpTaskCenterQueueActions");
+  if (queueActions) queueActions.hidden = !showingCurrentQueue;
+  const pauseAllButton = document.getElementById("sftpTaskCenterPauseAllButton");
+  if (pauseAllButton) pauseAllButton.disabled = pausableCount === 0;
+  const resumeAllButton = document.getElementById("sftpTaskCenterResumeAllButton");
+  if (resumeAllButton) resumeAllButton.disabled = resumableCount === 0;
+  const clearQueueButton = document.getElementById("sftpTaskCenterClearQueueButton");
+  if (clearQueueButton) clearQueueButton.disabled = cancelableCount === 0;
   const clearLabel = document.getElementById("sftpTaskCenterClearLabel");
   if (clearLabel) clearLabel.textContent = tr(showingFailed ? "tasks:dialogs.clear_failed_action" : "tasks:dialogs.clear_history_action", {defaultValue:showingFailed ? "清空失败" : "清空历史"});
   const clearButton = document.getElementById("sftpTaskCenterClearButton");
   if (clearButton) {
+    clearButton.hidden = !showingHistory && !showingFailed;
     clearButton.title = tr(showingFailed ? "tasks:auto.delete_all_failed" : "tasks:auto.delete_all_history", {defaultValue:showingFailed ? "删除全部失败任务记录" : "删除全部历史任务记录"});
     clearButton.setAttribute("aria-label", clearButton.title);
   }
@@ -693,6 +606,7 @@ function closeSftpTaskCenter() {
   const button = document.getElementById("sftpTaskCenterButton");
   if (sftpTaskCenterResize) finishSftpTaskCenterResize(null);
   if (drawer) drawer.hidden = true;
+  document.body.classList.remove("sftp-task-center-open");
   button?.setAttribute("aria-expanded", "false");
 }
 
@@ -704,6 +618,8 @@ async function toggleSftpTaskCenter(event) {
   if (!drawer || !button) return;
   if (!drawer.hidden) return closeSftpTaskCenter();
   drawer.hidden = false;
+  document.body.classList.add("sftp-task-center-open");
+  ensureSftpTaskCenterBoundsMonitoring(drawer);
   restoreSftpTaskCenterSize(drawer);
   button.setAttribute("aria-expanded", "true");
   renderSftpTaskCenterDrawer();
@@ -713,7 +629,6 @@ async function toggleSftpTaskCenter(event) {
 function trackSftpMutationJob(job) {
   if (job?.id) sftpKnownJobStatuses.set(String(job.id), String(job.status || "running"));
 }
-
 function settleSftpJobFromNotification(event) {
   const jobId = String(event?.action?.sftp_job_id || event?.action?.download_job_id || "");
   if (!jobId) return false;
@@ -779,7 +694,6 @@ function flushPendingSftpDirectoryRefresh(tabKey="") {
   if (sftpDirectoryRefreshActive || sftpDirectoryRefreshTimer) return;
   sftpDirectoryRefreshTimer = setTimeout(runPendingSftpDirectoryRefresh, 0);
 }
-
 async function runPendingSftpDirectoryRefresh() {
   sftpDirectoryRefreshTimer = 0;
   if (sftpDirectoryRefreshActive) return;
@@ -817,7 +731,6 @@ function refreshSftpJobsIfStale(maxAge=2000) {
   if (age >= 0 && age < Math.max(0, Number(maxAge || 0))) return Promise.resolve(sftpLatestJobs);
   return refreshSftpJobs();
 }
-
 async function performSftpJobsRefresh() {
   const requestSeq = ++sftpJobsRequestSeq;
   const [transferJobs, syncJobs, desktopJobs, componentJobs] = await Promise.all([
@@ -1175,6 +1088,91 @@ async function resumeSftpJob(id, button=null) {
     await refreshSftpJobs();
   } catch (error) {
     notify(error.message || tr("sftp:task_ui.resume_failed", {defaultValue:"重试任务失败"}), "error");
+  } finally {
+    endUiAction(actionKey, button);
+  }
+}
+
+async function pauseAllSftpTransferJobs(button=null) {
+  const actionKey = "sftp-task:pause-all";
+  if (!beginUiAction(actionKey, button, tr("sftp:task_ui.pausing", {defaultValue:"暂停中..."}))) return null;
+  try {
+    const queue = sftpTransferQueueJobs();
+    const candidates = queue.filter(sftpTransferJobCanPause);
+    const results = await runSftpTransferJobBatch(candidates, job => api(`/api/sftp/jobs/${encodeURIComponent(job.id)}/pause`, {method:"POST"}));
+    const completed = results.filter(result => result.status === "fulfilled" && result.value?.status === "paused").length;
+    const skipped = queue.length - completed;
+    await refreshSftpJobs();
+    notify(skipped
+      ? tr("tasks:notifications.queue_partial", {completed, skipped, defaultValue:`已处理 ${completed} 个传输任务，${skipped} 个当前阶段暂不能操作`})
+      : tr("tasks:notifications.queue_paused", {count:completed, defaultValue:`已暂停 ${completed} 个传输任务`}), skipped ? "info" : "success");
+    return {completed, skipped};
+  } catch (error) {
+    notify(error.message || tr("sftp:task_ui.pause_failed", {defaultValue:"暂停任务失败"}), "error");
+    return null;
+  } finally {
+    endUiAction(actionKey, button);
+  }
+}
+
+async function resumeAllSftpTransferJobs(button=null) {
+  const actionKey = "sftp-task:resume-all";
+  if (!beginUiAction(actionKey, button, tr("sftp:task_ui.processing", {defaultValue:"处理中..."}))) return null;
+  try {
+    const queue = sftpTransferQueueJobs();
+    const candidates = queue.filter(sftpTransferJobCanResume);
+    const results = await runSftpTransferJobBatch(candidates, job => api(`/api/sftp/jobs/${encodeURIComponent(job.id)}/resume`, {method:"POST"}));
+    const completed = results.filter(result => result.status === "fulfilled" && result.value?.ok !== false).length;
+    const skipped = queue.length - completed;
+    await refreshSftpJobs();
+    notify(skipped
+      ? tr("tasks:notifications.queue_partial", {completed, skipped, defaultValue:`已处理 ${completed} 个传输任务，${skipped} 个当前阶段暂不能操作`})
+      : tr("tasks:notifications.queue_resumed", {count:completed, defaultValue:`已继续 ${completed} 个传输任务`}), skipped ? "info" : "success");
+    return {completed, skipped};
+  } catch (error) {
+    notify(error.message || tr("sftp:task_ui.resume_failed", {defaultValue:"继续任务失败"}), "error");
+    return null;
+  } finally {
+    endUiAction(actionKey, button);
+  }
+}
+
+async function clearCurrentSftpTransferQueue(button=null) {
+  const actionKey = "sftp-task:clear-queue";
+  if (!beginUiAction(actionKey, button, tr("sftp:task_ui.stopping", {defaultValue:"停止中..."}))) return null;
+  try {
+    const queue = sftpTransferQueueJobs();
+    const candidates = queue.filter(sftpTransferJobCanCancel);
+    if (!candidates.length) return {completed:0, skipped:queue.length};
+    if (!await confirmModal(
+      tr("tasks:dialogs.clear_queue_message", {count:candidates.length, defaultValue:`取消当前队列中的 ${candidates.length} 个上传、下载或跨主机传输任务？已完成和失败记录不会被删除。`}),
+      tr("tasks:dialogs.clear_queue_title", {defaultValue:"清空传输队列"}),
+      tr("tasks:dialogs.clear_queue_action", {defaultValue:"取消并清空"}),
+      tr("common:actions.cancel", {defaultValue:"取消"}),
+      true
+    )) return null;
+    const results = await runSftpTransferJobBatch(candidates, async job => {
+      const key = String(job.id || "");
+      const upload = sftpUploadRequests.get(key);
+      if (upload) upload.cancelled = true;
+      try {
+        return await api(`/api/sftp/jobs/${encodeURIComponent(key)}/cancel`, {method:"POST"});
+      } finally {
+        try { upload?.xhr?.abort(); } catch {}
+      }
+    });
+    const completed = results.filter(result => result.status === "fulfilled"
+      && result.value?.ok !== false
+      && ["cancelled", "cancelling"].includes(result.value?.status)).length;
+    const skipped = queue.length - completed;
+    await refreshSftpJobs();
+    notify(skipped
+      ? tr("tasks:notifications.queue_partial", {completed, skipped, defaultValue:`已处理 ${completed} 个传输任务，${skipped} 个当前阶段暂不能操作`})
+      : tr("tasks:notifications.queue_cleared", {count:completed, defaultValue:`已取消 ${completed} 个传输任务`}), skipped ? "info" : "success");
+    return {completed, skipped};
+  } catch (error) {
+    notify(error.message || tr("tasks:notifications.clear_queue_failed", {defaultValue:"清空传输队列失败"}), "error");
+    return null;
   } finally {
     endUiAction(actionKey, button);
   }

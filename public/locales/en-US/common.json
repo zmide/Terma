@@ -747,6 +747,7 @@
     "no_running_tasks": "No active tasks",
     "adjust_task_center": "Resize task center",
     "adjust_task_center_hint": "Drag to resize the task center; double-click to reset",
+    "reset_task_center_size": "Reset task center size",
     "adjust_activity_bar": "Resize activity bar",
     "adjust_activity_bar_hint": "Drag to resize the activity bar; double-click to reset",
     "adjust_operation_pane": "Resize operation pane",

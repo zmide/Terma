@@ -612,12 +612,19 @@ function bindTerminalDropUpload(session, connection, key, mount) {
     if (typeof collectDroppedFiles !== "function" || typeof uploadSftpFilesToDirectory !== "function") {
       return notify(tr("terminal:drop.upload_unavailable", {defaultValue:"当前版本不支持终端文件上传"}), "error");
     }
+    let files;
     try {
-      const files = await collectDroppedFiles(event.dataTransfer);
+      files = await collectDroppedFiles(event.dataTransfer);
       if (!files.length) throw new Error(tr("terminal:drop.no_upload_files", {defaultValue:"没有找到可上传的文件"}));
+    } catch (error) {
+      return notify(error.message || tr("terminal:drop.upload_failed", {defaultValue:"终端文件上传失败"}), "error");
+    }
+    notify(tr("terminal:drop.sftp_login_identity_hint", {defaultValue:"拖入文件会通过 SFTP 上传，使用 SSH 连接的原登录用户，不会继承终端中通过 su 或 sudo 切换后的用户"}), "info");
+    try {
       await uploadSftpFilesToDirectory(files, connection.id, directory);
     } catch (error) {
-      notify(error.message || tr("terminal:drop.upload_failed", {defaultValue:"终端文件上传失败"}), "error");
+      const detail = error.message || tr("terminal:drop.upload_failed", {defaultValue:"终端文件上传失败"});
+      notify(tr("terminal:drop.upload_failed_identity_hint", {error:detail, defaultValue:`${detail}。如果终端已切换用户，请选择原登录用户可写目录，或在上传后用终端移动文件或调整权限`}), "error");
     }
   });
 }

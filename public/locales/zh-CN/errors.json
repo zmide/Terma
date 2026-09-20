@@ -98,6 +98,7 @@
     "sftp_automation_desktop_only": "SFTP 定时传输和文件夹同步仅在 Terma 桌面端运行；Web 端不会访问本机文件",
     "sftp_local_sync_desktop_only": "本地目录同步只能在本机桌面端中使用",
     "sftp_separate_download_desktop_only": "分别下载文件和目录仅支持本机桌面版；当前设备请使用打包下载",
+    "sftp_separate_download_too_many": "一次最多分别下载 {{max}} 个文件或目录",
     "sftp_image_preview_unsupported": "该文件不是支持预览的图片格式",
     "sftp_drag_out_desktop_only": "拖出到本机只能在桌面版中使用",
     "sftp_target_conflict": "目标目录已存在同名项目：{{name}}",

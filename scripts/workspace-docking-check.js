@@ -115,6 +115,8 @@ function loadDockingModel() {
       workspaceTabByKey,
       workspaceHasTabKey,
       serializeWorkspaceLayout,
+      workspaceGroupPersistableTab,
+      restoreWorkspaceGroupTab,
       restoreWorkspaceLayoutNode,
       workspaceDropZoneAtPoint,
       applyWorkspaceTabDrop,
@@ -128,6 +130,8 @@ function loadDockingModel() {
       serializeWorkspaceGroupsForPreset,
       applyWorkspaceGroupPreset,
       restoreWorkspaceGroups,
+      saveTabsState,
+      restoreTabsState,
       switchWorkspaceGroup,
       beginWorkspaceGroupSelection,
       cancelWorkspaceGroupSelection,
@@ -162,6 +166,7 @@ function loadDockingModel() {
 
 function loadLegacyWorkspaceModel() {
   const noop = () => {};
+  const storage = new Map();
   const sandbox = {
     console,
     Map,
@@ -169,18 +174,23 @@ function loadLegacyWorkspaceModel() {
     Date,
     Math,
     JSON,
+    storage,
     tabs:[],
     activeTabKey:"",
     activeView:"welcome",
     responsiveLayoutMobile:false,
+    runtimeSettings:{saved:{restore_workspace_tabs:true}},
     terminalSessions:new Map(),
     sftpDisconnectedTabs:new Set(),
     sftpViewStates:new Map(),
     isMobileLayout:() => false,
     requestAnimationFrame:callback => { callback(); return 1; },
     cancelAnimationFrame:noop,
-    localStorage:{getItem:() => null, setItem:noop},
-    window:{addEventListener:noop, removeEventListener:noop},
+    localStorage:{
+      getItem:key => storage.get(key) || null,
+      setItem:(key, value) => storage.set(key, String(value))
+    },
+    window:{restoringTabs:false, addEventListener:noop, removeEventListener:noop},
     document:{body:{classList:{add:noop, remove:noop, toggle:noop}}}
   };
   sandbox.globalThis = sandbox;
@@ -197,8 +207,13 @@ function loadLegacyWorkspaceModel() {
         addTab,
         activateTab,
         closeTabsByKey,
+        persistableTabs,
+        saveTabsState,
+        restoreTabsState,
+        setTabs:value => { tabs = value; },
         getTabs:() => tabs,
-        getActiveTabKey:() => activeTabKey
+        getActiveTabKey:() => activeTabKey,
+        storage
       };`;
 
   vm.runInNewContext(source, sandbox, {filename, timeout:5000});
@@ -442,6 +457,52 @@ function runWorkspaceDockingChecks({silent=false}={}) {
     });
     assert.equal(restored.tabs[0].key, "settings");
     assert.equal(api.getWorkspaceGroups()[1].tabs[0].key, "settings");
+  });
+
+  check("restored workspace tabs discard stale connection colors and do not persist runtime status", () => {
+    const restoredModel = loadDockingModel();
+    const restoredTabs = [
+      {key:"terminal-restored", kind:"terminal", connectionStatus:"connected"},
+      {key:"sftp-restored", kind:"sftp", connectionStatus:"connecting"},
+      {key:"remote-terminal-restored", kind:"remote-terminal", connectionStatus:"connected"},
+      {key:"vnc-restored", kind:"remote-desktop", protocol:"vnc", connectionStatus:"connected"},
+      {key:"rdp-restored", kind:"remote-desktop", protocol:"rdp", connectionStatus:"connected"}
+    ];
+    restoredModel.storage.set("workspaceTabs", JSON.stringify({
+      activeWorkspaceGroupId:"workspace-main",
+      workspaceGroups:[{
+        id:"workspace-main",
+        name:"",
+        tabs:restoredTabs,
+        layout:pane("pane-restored", restoredTabs.map(tab => tab.key)),
+        activeTabKey:"terminal-restored",
+        focusedPaneId:"pane-restored"
+      }]
+    }));
+
+    assert.equal(restoredModel.api.restoreTabsState(), true);
+    const byKey = new Map(restoredModel.api.getTabs().map(tab => [tab.key, tab]));
+    for (const key of ["terminal-restored", "sftp-restored", "remote-terminal-restored", "vnc-restored"]) {
+      assert.equal(byKey.get(key).connectionStatus, "disconnected", `${key} must restart disconnected`);
+    }
+    assert.equal(Object.hasOwn(byKey.get("rdp-restored"), "connectionStatus"), false);
+    const saved = JSON.parse(restoredModel.storage.get("workspaceTabs"));
+    assert.equal(saved.workspaceGroups[0].tabs.every(tab => !Object.hasOwn(tab, "connectionStatus")), true);
+  });
+
+  check("legacy workspace restore also resets and omits connection status", () => {
+    const legacy = loadLegacyWorkspaceModel();
+    legacy.storage.set("workspaceTabs", JSON.stringify({
+      activeTabKey:"terminal-legacy",
+      tabs:[
+        {key:"terminal-legacy", kind:"terminal", connectionStatus:"connected"},
+        {key:"sftp-legacy", kind:"sftp", connectionStatus:"connecting"}
+      ]
+    }));
+    assert.equal(legacy.restoreTabsState(), true);
+    assert.equal(legacy.getTabs().every(tab => tab.connectionStatus === "disconnected"), true);
+    const saved = JSON.parse(legacy.storage.get("workspaceTabs"));
+    assert.equal(saved.tabs.every(tab => !Object.hasOwn(tab, "connectionStatus")), true);
   });
 
   check("background sessions can resolve and update tabs in inactive workspace groups", () => {

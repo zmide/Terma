@@ -3,6 +3,8 @@ import { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
 import { publicErrorBody } from "../public-error";
 
+const SFTP_SEPARATE_DOWNLOAD_LIMIT = 200;
+
 interface SftpTransferRouteDependencies {
   authorizeConnectionId(request: IncomingMessage, value: string): number;
   clearRemoteRecycleItems(connectionId: number): Promise<any>;
@@ -169,6 +171,14 @@ export async function handleSftpTransferRoutes(
   if (method === "POST" && parts[4] === "download-batch") {
     const data = await dependencies.readJson(request);
     const paths = Array.isArray(data.paths) ? data.paths : [];
+    if (data.mode === "separate" && paths.length > SFTP_SEPARATE_DOWNLOAD_LIMIT) {
+      dependencies.sendJson(response, publicErrorBody(
+        "SFTP_SEPARATE_DOWNLOAD_TOO_MANY",
+        `一次最多分别下载 ${SFTP_SEPARATE_DOWNLOAD_LIMIT} 个文件或目录`,
+        {max:SFTP_SEPARATE_DOWNLOAD_LIMIT}
+      ), 400);
+      return true;
+    }
     const saved = dependencies.readRuntimeSettings(dependencies.runtimeSettingsFile);
     const desktop = Boolean(dependencies.isDesktopRequest(request) && desktopIntegration?.getDownloadDirectory);
     const defaultDirectory = desktop ? await Promise.resolve(desktopIntegration.getDownloadDirectory()) : "";
@@ -178,10 +188,10 @@ export async function handleSftpTransferRoutes(
         dependencies.sendJson(response, publicErrorBody("SFTP_SEPARATE_DOWNLOAD_DESKTOP_ONLY", "分别下载文件和目录仅支持本机桌面版；当前设备请使用打包下载"), 400);
         return true;
       }
-      dependencies.sendJson(response, dependencies.startLocalDeliveryJob(connectionId, paths, targetDirectory, "rename", {
-        label:"批量下载到本机",
+      const jobs = paths.map((remotePath: string) => dependencies.startLocalDeliveryJob(connectionId, [remotePath], targetDirectory, "rename", {
         deliveryMode:"download-directory"
-      }), 202);
+      }));
+      dependencies.sendJson(response, {jobs, count:jobs.length, status:"pending"}, 202);
       return true;
     }
     dependencies.sendJson(response, dependencies.startArchiveDownloadJob(connectionId, paths, {

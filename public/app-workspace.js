@@ -330,6 +330,15 @@ function workspaceTabConnectionStateText(status) {
   });
 }
 
+function restoreLegacyWorkspaceTab(tab) {
+  const restored = {...tab};
+  const usesConnectionStatus = ["terminal", "quick-terminal", "sftp", "remote-terminal"].includes(restored.kind)
+    || (restored.kind === "remote-desktop" && restored.protocol === "vnc");
+  if (usesConnectionStatus) restored.connectionStatus = "disconnected";
+  else delete restored.connectionStatus;
+  return restored;
+}
+
 function renderTabs() {
   if (typeof syncSftpTabTitles === "function") syncSftpTabTitles();
   const container = $("tabs");
@@ -340,7 +349,7 @@ function renderTabs() {
     const fullTitle = [localizedTitle, localizedWorkspaceTabSubtitle(tab)].filter(Boolean).join(" - ");
     const showsConnectionStatus = ["terminal", "quick-terminal", "sftp", "remote-terminal"].includes(tab.kind)
       || (tab.kind === "remote-desktop" && tab.protocol === "vnc");
-    const connectionStatus = showsConnectionStatus ? (tab.connectionStatus || "connecting") : "";
+    const connectionStatus = showsConnectionStatus ? (tab.connectionStatus || "disconnected") : "";
     const connectionStateText = workspaceTabConnectionStateText(connectionStatus);
     const connectionDot = connectionStatus ? `<span class="tab-connection-dot ${connectionStatus}" title="${escAttr(connectionStateText)}" aria-hidden="true"></span>` : "";
     const closeText = tr("navigation:auto.close_tab", {defaultValue:"关闭标签"});
@@ -747,8 +756,8 @@ function showTabContextMenu(event, key) {
 }
 
 function persistableTabs() {
-  return tabs.filter(tab => tab.kind && !tab.transient && tab.kind !== "quick-terminal").map(({key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned,connectionStatus,sessionMode,sessionBackend,persistentSessionId,resumePolicy,lastKnownCwd}) => ({
-    key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned:Boolean(pinned),connectionStatus,
+  return tabs.filter(tab => tab.kind && !tab.transient && tab.kind !== "quick-terminal").map(({key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned,sessionMode,sessionBackend,persistentSessionId,resumePolicy,lastKnownCwd}) => ({
+    key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned:Boolean(pinned),
     sessionMode,sessionBackend,persistentSessionId,resumePolicy,lastKnownCwd
   }));
 }
@@ -764,7 +773,7 @@ function restoreTabsState() {
   try {
     if (runtimeSettings?.saved?.restore_workspace_tabs === false) return false;
     const saved = JSON.parse(localStorage.getItem("workspaceTabs") || "{}");
-    const restored = (saved.tabs || []).filter(tab => tab.kind);
+    const restored = (saved.tabs || []).filter(tab => tab.kind).map(restoreLegacyWorkspaceTab);
     if (!restored.length) return false;
     window.restoringTabs = true;
     tabs = restored;

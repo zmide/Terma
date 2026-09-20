@@ -1,6 +1,8 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const fsp = fs.promises;
 const path = require("node:path");
+const { pipeline } = require("node:stream/promises");
 const { remotePathOperand, shellQuote, spawnRemote } = require("./sftp-job-paths");
 const { clearSftpJobIssue, setSftpJobIssue } = require("./sftp-job-issues");
 const { archiveTarCreateOptions, normalizeArchiveFilenameEncoding, resolveArchiveFilenameEncoding } = require("./sftp-operation-commands");
@@ -10,6 +12,47 @@ function codedSftpJobError(message: string, code: string, params: any = {}) {
   error.sftpJobCode = code;
   error.sftpJobParams = params;
   return error;
+}
+
+function downloadAbortError() {
+  return Object.assign(new Error("SFTP download save aborted"), {name:"AbortError"});
+}
+
+function throwIfDownloadAborted(signal: any) {
+  if (signal?.aborted) throw downloadAbortError();
+}
+
+async function moveDownloadedFile(source: string, target: string, signal: any = null) {
+  throwIfDownloadAborted(signal);
+  try {
+    await fsp.rename(source, target);
+    if (signal?.aborted) {
+      try { await fsp.unlink(target); } catch {}
+      throw downloadAbortError();
+    }
+    return;
+  } catch (error: any) {
+    if (error?.code !== "EXDEV") throw error;
+  }
+
+  let targetOpened = false;
+  const input = fs.createReadStream(source);
+  const output = fs.createWriteStream(target, {flags:"wx"});
+  output.once("open", () => { targetOpened = true; });
+  try {
+    await pipeline(input, output, {signal});
+    throwIfDownloadAborted(signal);
+    await fsp.unlink(source);
+    if (signal?.aborted) {
+      try { await fsp.unlink(target); } catch {}
+      throw downloadAbortError();
+    }
+  } catch (error) {
+    if (targetOpened) {
+      try { await fsp.unlink(target); } catch {}
+    }
+    throw error;
+  }
 }
 
 function createSftpDownloadJobs(dependencies: any) {
@@ -86,25 +129,23 @@ function createSftpDownloadJobs(dependencies: any) {
     return target;
   }
 
-  function autoSaveDownloadedFile(job: any) {
+  async function autoSaveDownloadedFile(job: any, signal: any = null) {
     const directory = String(job.auto_save_directory || "").trim();
     if (!directory || !job.temp_path || !fs.existsSync(job.temp_path)) return;
     try {
-      fs.mkdirSync(directory, { recursive:true });
+      throwIfDownloadAborted(signal);
+      await fsp.mkdir(directory, { recursive:true });
+      throwIfDownloadAborted(signal);
       const target = availableLocalPath(directory, job.download_name || path.posix.basename(job.remote_path || "download"));
-      try {
-        fs.renameSync(job.temp_path, target);
-      } catch (error: any) {
-        if (error?.code !== "EXDEV") throw error;
-        fs.copyFileSync(job.temp_path, target, fs.constants.COPYFILE_EXCL);
-        fs.unlinkSync(job.temp_path);
-      }
+      await moveDownloadedFile(job.temp_path, target, signal);
+      throwIfDownloadAborted(signal);
       job.saved_path = target;
       job.delivery_status = "saved";
       job.delivered_at = Date.now();
       job.temp_path = "";
       clearSftpJobIssue(job, "delivery_error");
     } catch (error: any) {
+      if (error?.name === "AbortError") throw error;
       job.delivery_status = "failed";
       setSftpJobIssue(job, "delivery_error", error.message || String(error));
     }
@@ -134,6 +175,88 @@ function createSftpDownloadJobs(dependencies: any) {
     return job?.saved_path ? `已保存到 ${job.saved_path}` : `${job.connection_name} · ${job.label}`;
   }
 
+  function persistAndNotifyDownload(job: any, status: string) {
+    persistJobs(status !== "paused");
+    if ((status === "done" || status === "failed") && !job.silent_notifications) {
+      notifyEvent({
+        type:"sftp",
+        level:status === "done" ? "success" : "error",
+        title:job.archive_download
+          ? (status === "done" ? "SFTP 打包下载已完成" : "SFTP 打包下载失败")
+          : (status === "done" ? "SFTP 下载已完成" : "SFTP 下载失败"),
+        message:`${status === "done" ? downloadCompletionMessage(job) : `${job.connection_name} · ${job.label}`}${job.warning ? `\n${job.warning}` : ""}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}${job.error ? `\n${job.error}` : ""}`,
+        action:status === "done" ? downloadCompletionAction(job) : {view:"sftp", connection_id:job.connection_id, sftp_job_id:job.id}
+      }, {cooldown_ms:0});
+    }
+  }
+
+  function finalizeDownloadTransfer(job: any, status: string, error = "", errorCode = "", errorParams: any = {}) {
+    if (job.status === "cancelled" || job.phase === "cancelling") return false;
+    if (status === "done") {
+      if (job.temp_path && fs.existsSync(job.temp_path)) job.transferred = fs.statSync(job.temp_path).size;
+      else if (job.size_known) job.transferred = Math.max(Number(job.transferred || 0), Number(job.size || 0));
+      job.progress = 100;
+    }
+    job.status = status;
+    if (status !== "paused") {
+      job.phase = "";
+      job.current = status === "done" ? (job.archive_download ? "打包下载已完成" : "下载已完成") : "";
+      job.can_pause = false;
+      job.can_cancel = false;
+    }
+    if (error || status === "done") setSftpJobIssue(job, "error", error, errorCode, errorParams);
+    if (status !== "paused") job.finished_at = Date.now();
+    if (status !== "paused") finishTransferMetrics(job);
+    if (status === "done" && job.archive_download) cleanupRemoteArchiveArtifact(job);
+    releaseTransferSlot(job);
+    persistAndNotifyDownload(job, status);
+    return true;
+  }
+
+  function finishCancelledDesktopSave(job: any) {
+    try { if (job.temp_path) fs.unlinkSync(job.temp_path); } catch {}
+    if (job.archive_download) cleanupRemoteArchiveArtifact(job);
+    job.status = "cancelled";
+    job.phase = "";
+    job.current = "";
+    job.can_pause = false;
+    job.can_cancel = false;
+    job.delivery_status = "cancelled";
+    job.finished_at = Date.now();
+    finishTransferMetrics(job);
+    releaseTransferSlot(job);
+    persistJobs(true);
+  }
+
+  function autoSaveAndFinishDownload(job: any) {
+    if (job.download_finalizing) return;
+    job.download_finalizing = true;
+    const abortController = new AbortController();
+    job.abortController = abortController;
+    job.status = "running";
+    job.phase = "system-saving";
+    job.current = "正在保存到本机";
+    job.can_pause = false;
+    job.can_cancel = true;
+    job.delivery_status = "saving";
+    job.finished_at = null;
+    persistJobs(true);
+    void autoSaveDownloadedFile(job, abortController.signal).catch((error: any) => {
+      if (error?.name !== "AbortError") {
+        job.delivery_status = "failed";
+        setSftpJobIssue(job, "delivery_error", error?.message || String(error));
+      }
+    }).finally(() => {
+      job.abortController = null;
+      job.download_finalizing = false;
+      if (abortController.signal.aborted || job.phase === "cancelling" || job.status === "cancelled") {
+        finishCancelledDesktopSave(job);
+        return;
+      }
+      finalizeDownloadTransfer(job, "done");
+    });
+  }
+
   function startLocalDeliveryJob(connectionId: number, remotePaths: unknown, targetDirectory: string, conflictMode = "rename", options: any = {}) {
     const connection = getSftpConnection(connectionId);
     const paths = Array.isArray(remotePaths) ? remotePaths.map(item => String(item || "")).filter(Boolean) : [];
@@ -156,7 +279,7 @@ function createSftpDownloadJobs(dependencies: any) {
       status:"pending",
       phase:"preparing",
       current:"正在准备下载",
-      can_cancel:false,
+      can_cancel:true,
       can_pause:false,
       resume_supported:false,
       stdout:"",
@@ -180,11 +303,15 @@ function createSftpDownloadJobs(dependencies: any) {
     queueTransferJob("download", job, async () => {
       const current = jobs.get(id);
       if (!current) return;
+      const abortController = new AbortController();
+      current.abortController = abortController;
       current.phase = "local-saving";
       current.current = "正在下载到本机";
+      current.can_cancel = true;
       persistJobs();
       try {
         const result = await deliverSftpPaths(connectionId, paths, current.target_directory, current.conflict_mode, {
+          signal:abortController.signal,
           onFile: ({size}: any) => {
             if (current.status !== "running") return;
             const bytes = Math.max(0, Number(size || 0));
@@ -200,6 +327,13 @@ function createSftpDownloadJobs(dependencies: any) {
             recordTransferred(current, Math.max(0, Number(bytes || 0)));
             persistJobs();
           },
+          onCommit: () => {
+            if (current.status !== "running") return;
+            current.phase = "system-saving";
+            current.current = "正在保存到本机";
+            current.can_cancel = false;
+            persistJobs(true);
+          },
           onItem: () => {
             if (current.status !== "running") return;
             current.item_transferred = Math.min(current.item_count, Number(current.item_transferred || 0) + 1);
@@ -207,6 +341,7 @@ function createSftpDownloadJobs(dependencies: any) {
             persistJobs();
           }
         });
+        if (current.status === "cancelled") return;
         current.status = "done";
         current.phase = "";
         current.current = "已保存到本机";
@@ -237,6 +372,7 @@ function createSftpDownloadJobs(dependencies: any) {
           }, {cooldown_ms:0});
         }
       } catch (error: any) {
+        if (current.status === "cancelled" || error?.name === "AbortError") return;
         current.status = "failed";
         current.phase = "";
         current.current = "";
@@ -256,6 +392,8 @@ function createSftpDownloadJobs(dependencies: any) {
             action:{view:"sftp", connection_id:current.connection_id, sftp_job_id:current.id}
           }, {cooldown_ms:0});
         }
+      } finally {
+        current.abortController = null;
       }
     }, {phase:"local-saving", current:"正在下载到本机"});
 
@@ -373,33 +511,22 @@ function createSftpDownloadJobs(dependencies: any) {
         let outputEnding = false;
         let closeCode: number | null = null;
         let closeSignal: string | null = null;
+        let finishStarted = false;
         const finish = (status: string, error = "", errorCode = "", errorParams: any = {}) => {
           if (ignoreStoppedTransferFinish(job, status)) return;
+          if (finishStarted) return;
           if (job.finished_at && status !== "paused") return;
+          finishStarted = true;
           try { out.destroy(); } catch {}
           if (status !== "paused") try { child.kill("SIGTERM"); } catch {}
           if (status === "done") {
             job.transferred = (job.size || fs.existsSync(job.temp_path)) ? fs.statSync(job.temp_path).size : job.transferred;
             job.progress = 100;
           }
-          job.status = status;
-          if (error || status === "done") setSftpJobIssue(job, "error", error, errorCode, errorParams);
-          if (status !== "paused") job.finished_at = Date.now();
-          if (status !== "paused") finishTransferMetrics(job);
-          if (status === "done" && job.delivery_mode === "desktop") autoSaveDownloadedFile(job);
-          if (status === "done" && job.archive_download) cleanupRemoteArchiveArtifact(job);
-          releaseTransferSlot(job);
-          persistJobs(status !== "paused");
-          if ((status === "done" || status === "failed") && !job.silent_notifications) {
-            notifyEvent({
-              type:"sftp",
-              level:status === "done" ? "success" : "error",
-              title:job.archive_download
-                ? (status === "done" ? "SFTP 打包下载已完成" : "SFTP 打包下载失败")
-                : (status === "done" ? "SFTP 下载已完成" : "SFTP 下载失败"),
-              message:`${status === "done" ? downloadCompletionMessage(job) : `${job.connection_name} · ${job.label}`}${job.warning ? `\n${job.warning}` : ""}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}${job.error ? `\n${job.error}` : ""}`,
-              action:status === "done" ? downloadCompletionAction(job) : {view:"sftp", connection_id:job.connection_id, sftp_job_id:job.id}
-            }, {cooldown_ms:0});
+          if (status === "done" && job.delivery_mode === "desktop") {
+            autoSaveAndFinishDownload(job);
+          } else {
+            finalizeDownloadTransfer(job, status, error, errorCode, errorParams);
           }
         };
         const completeAfterStreams = () => {
@@ -498,6 +625,7 @@ function createSftpDownloadJobs(dependencies: any) {
   function finishDownloadJob(id: string, complete: boolean) {
     const job = jobs.get(id);
     if (!job || job.status === "paused" || job.status === "cancelled") return;
+    if (job.download_finalizing) return;
     try { job.out?.destroy(); } catch {}
     try { job.child?.kill("SIGTERM"); } catch {}
     if (complete) {
@@ -507,21 +635,8 @@ function createSftpDownloadJobs(dependencies: any) {
       }
       job.transferred = fs.existsSync(job.temp_path) ? fs.statSync(job.temp_path).size : job.transferred;
       job.progress = 100;
-      job.status = "done";
-      job.phase = "";
-      job.current = job.archive_download ? "打包下载已完成" : "下载已完成";
-      clearSftpJobIssue(job, "error");
-      job.can_pause = false;
-      job.can_cancel = false;
-      job.finished_at = Date.now();
-      finishTransferMetrics(job);
-      if (job.delivery_mode === "desktop") autoSaveDownloadedFile(job);
-      if (job.archive_download) cleanupRemoteArchiveArtifact(job);
-      releaseTransferSlot(job);
-      persistJobs(true);
-      if (!job.silent_notifications) {
-        notifyEvent({type:"sftp", level:"success", title:job.archive_download ? "SFTP 打包下载已完成" : "SFTP 下载已完成", message:`${downloadCompletionMessage(job)}${job.delivery_error ? `\n自动保存失败：${job.delivery_error}` : ""}`, action:downloadCompletionAction(job)}, {cooldown_ms:0});
-      }
+      if (job.delivery_mode === "desktop") autoSaveAndFinishDownload(job);
+      else finalizeDownloadTransfer(job, "done");
     }
   }
 

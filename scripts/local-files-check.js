@@ -27,7 +27,8 @@ assert.match(routes, /!dependencies\.isDesktopRequest\(request\) \|\| !desktopIn
 assert.match(routes, /startLocalDeliveryJob\(Number\(data\.connection_id\), data\.paths \|\| \[\], data\.target/);
 assert.match(routes, /pathname === "\/api\/local-files\/receive"[\s\S]*?sendJson\(response, startLocalDeliveryJob\(/);
 assert.match(routes, /pathname === "\/api\/local-files\/receive-desktop"[\s\S]*?deliveryMode:"desktop"/);
-assert.match(server, /data\.mode === "separate"[\s\S]*?startLocalDeliveryJob\(connectionId, paths, targetDirectory/);
+assert.match(server, /data\.mode === "separate"[\s\S]*?paths\.map\(\(remotePath: string\) => dependencies\.startLocalDeliveryJob\(connectionId, \[remotePath\], targetDirectory/);
+assert.match(server, /sendJson\(response, \{jobs, count:jobs\.length, status:"pending"\}, 202\)/);
 assert.match(routes, /sendJson\(response, startLocalDeliveryJob\([\s\S]*?\), 202\)/);
 const sftpJobs = readSftpJobSource(root);
 assert.match(sftpJobs, /function startLocalDeliveryJob\(/);

@@ -163,8 +163,17 @@ function workspaceGroupName() {
 
 function workspaceGroupPersistableTab(tab) {
   if (!tab?.kind || tab.transient || tab.kind === "quick-terminal") return null;
-  const {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned,connectionStatus,sessionMode,sessionBackend,persistentSessionId,resumePolicy,lastKnownCwd} = tab;
-  return {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned:Boolean(pinned),connectionStatus,sessionMode,sessionBackend,persistentSessionId,resumePolicy,lastKnownCwd};
+  const {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned,sessionMode,sessionBackend,persistentSessionId,resumePolicy,lastKnownCwd} = tab;
+  return {key,title,subtitle,viewName,closable,kind,id,path,protocol,pinned:Boolean(pinned),sessionMode,sessionBackend,persistentSessionId,resumePolicy,lastKnownCwd};
+}
+
+function restoreWorkspaceGroupTab(tab) {
+  const restored = {...tab};
+  const usesConnectionStatus = ["terminal", "quick-terminal", "sftp", "remote-terminal"].includes(restored.kind)
+    || (restored.kind === "remote-desktop" && restored.protocol === "vnc");
+  if (usesConnectionStatus) restored.connectionStatus = "disconnected";
+  else delete restored.connectionStatus;
+  return restored;
 }
 
 function workspaceFilterLayout(node, allowedKeys) {

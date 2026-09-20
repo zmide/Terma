@@ -15,7 +15,10 @@
     "stop": "Stop task",
     "close_floating": "Close floating progress",
     "mute_floating": "Mute floating progress card",
-    "progress": "Task progress"
+    "progress": "Task progress",
+    "pause_all": "Pause all",
+    "resume_all": "Resume all",
+    "clear_queue": "Clear queue"
   },
   "phase": {
     "archiving": "Creating archive",
@@ -49,7 +52,10 @@
     "clear_history_action": "Clear history",
     "clear_failed_title": "Clear failed tasks",
     "clear_failed_message": "Delete all {{count}} failed task records? Other Task Center records will not be affected.",
-    "clear_failed_action": "Clear failed"
+    "clear_failed_action": "Clear failed",
+    "clear_queue_title": "Clear transfer queue",
+    "clear_queue_message": "Cancel {{count}} uploads, downloads, or cross-host transfers in the current queue? Completed and failed records will be kept.",
+    "clear_queue_action": "Cancel and clear"
   },
   "logs": {
     "batch_label": "Batch execution - {{date}} {{time}}",
@@ -85,7 +91,12 @@
     ,"desktop_job_line": "{{connection}} · Send to desktop",
     "download_item": "Download {{name}}",
     "connection_download_item": "{{connection}} · Download {{name}}",
-    "downloading_item": "Downloading: {{name}}"
+    "downloading_item": "Downloading: {{name}}",
+    "queue_paused": "Paused {{count}} transfer tasks",
+    "queue_resumed": "Resumed {{count}} transfer tasks",
+    "queue_cleared": "Cancelled {{count}} transfer tasks",
+    "queue_partial": "Updated {{completed}} transfer tasks; {{skipped}} cannot be changed in their current stage",
+    "clear_queue_failed": "Failed to clear the transfer queue"
   },
   "auto": {
     "background_count": "{{count}} background tasks",

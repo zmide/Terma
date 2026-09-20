@@ -87,8 +87,10 @@
     "local_upload_failed": "Failed to upload Local Files into the terminal",
     "sftp_drop_unavailable": "This version cannot drop SFTP items into a terminal",
     "upload_unavailable": "This version cannot upload files into a terminal",
+    "sftp_login_identity_hint": "Dropped files are uploaded through SFTP with the SSH connection's original login user. They do not inherit a user selected with su or sudo in the terminal.",
     "no_upload_files": "No uploadable files were found",
-    "upload_failed": "Terminal file upload failed"
+    "upload_failed": "Terminal file upload failed",
+    "upload_failed_identity_hint": "{{error}}. If the terminal has switched users, choose a directory writable by the original login user, or move the uploaded file and adjust its permissions from the terminal."
   },
   "startup": {
     "title": "Terminal startup",
