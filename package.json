@@ -64,7 +64,7 @@
     "lucide": "^1.40.0",
     "ssh2": "^1.17.0",
     "svg2pdf.js": "^2.8.1",
-    "x11": "^4.1.0",
+    "x11": "^4.2.1",
     "zmodem.js": "0.1.10"
   },
   "optionalDependencies": {
