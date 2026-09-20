@@ -1,13 +1,13 @@
 # Terma Release Notes / 更新记录
 
-## v1.7.5 draft / v1.7.5 草稿
+## Next release draft / 下一版草稿
 
 [English](#v1-7-5-english) · [简体中文](#v1-7-5-zh)
 
 <a id="v1-7-5-english"></a>
 ### English
 
-> The next release will continue recoverable terminal, interoperability, and cross-platform remote desktop work.
+> The v1.7.5 draft will continue recoverable terminal, interoperability, and cross-platform remote desktop work.
 
 #### Planned
 
@@ -18,7 +18,7 @@
 <a id="v1-7-5-zh"></a>
 ### 简体中文
 
-> 下一版本继续推进可恢复终端、互操作场景和跨平台远程桌面验收。
+> v1.7.5 草稿继续推进可恢复终端、互操作场景和跨平台远程桌面验收。
 
 #### 计划
 
