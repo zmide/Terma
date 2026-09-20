@@ -1,10 +1,10 @@
 # Terma Release Notes / 更新记录
 
-## Next release draft / 下一版草稿
+## v1.7.5 draft / v1.7.5 草稿
 
-[English](#english) · [简体中文](#简体中文)
+[English](#v1-7-5-english) · [简体中文](#v1-7-5-zh)
 
-<a id="english"></a>
+<a id="v1-7-5-english"></a>
 ### English
 
 > The next release will continue recoverable terminal, interoperability, and cross-platform remote desktop work.
@@ -15,7 +15,7 @@
 - Expand terminal AI interoperability tests with additional OpenAI-compatible gateways while keeping command execution and MCP approval boundaries unchanged.
 - Complete real TigerVNC/noVNC/system-client clipboard acceptance for text, Chinese and image transfer on all three desktop platforms.
 
-<a id="简体中文"></a>
+<a id="v1-7-5-zh"></a>
 ### 简体中文
 
 > 下一版本继续推进可恢复终端、互操作场景和跨平台远程桌面验收。
@@ -25,6 +25,68 @@
 - 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
+
+## v1.7.4
+
+[English](#v1-7-4-english) · [简体中文](#v1-7-4-zh)
+
+<a id="v1-7-4-english"></a>
+### English
+
+> This release improves transfer reliability and makes the task center easier to control. Upgrading is recommended for users who regularly transfer multiple or large files over SFTP.
+
+#### Important fixes
+
+- Restored terminal, SFTP, remote terminal, and VNC tabs now start as disconnected instead of showing a stale connected state.
+- Large SFTP downloads use lighter status updates and non-blocking desktop delivery, reducing window freezes during transfer and cross-volume saves.
+- The task center now stays above page notifications, repairs oversized saved dimensions, and provides an always-accessible reset-size button.
+
+#### Important additions
+
+- Multi-file uploads, separate downloads, and cross-host transfers now share one visible queue with pause-all, resume-all, and clear-queue controls.
+
+#### Other improvements
+
+- Dropping files into a terminal now explains that SFTP still uses the SSH connection's original login user after `su` or `sudo` switches the terminal user.
+
+#### Known issue
+
+- macOS packages are currently not code-signed or notarized, so Gatekeeper may report that Terma is damaged or cannot be opened. See [Issue #36](https://github.com/zmide/Terma/issues/36) for a temporary workaround.
+
+#### Changes in this release
+
+- Release v1.7.4 with transfer queue and task center improvements ([#38](https://github.com/zmide/Terma/pull/38), [@JunXiaoRuo](https://github.com/JunXiaoRuo))
+
+**Full Changelog**: [v1.7.3...v1.7.4](https://github.com/zmide/Terma/compare/v1.7.3...v1.7.4)
+
+<a id="v1-7-4-zh"></a>
+### 简体中文
+
+> 本版提升传输可靠性，并让任务中心更容易控制。经常通过 SFTP 传输多个文件或大文件的用户建议升级。
+
+#### 重要修复
+
+- 恢复终端、SFTP、远程终端和 VNC 标签时统一显示为已断开，不再错误继承上次运行的绿色连接状态。
+- 大文件 SFTP 下载采用更轻量的状态更新和非阻塞桌面保存，减少传输及跨磁盘保存时的窗口卡死。
+- 任务中心打开时不再被页面通知遮挡；异常保存尺寸会自动修正，并提供始终可用的“恢复默认大小”按钮。
+
+#### 重要新增
+
+- 多文件上传、分别下载和跨主机传输现在统一显示在同一队列，并支持全部暂停、全部继续和清空队列。
+
+#### 其他优化
+
+- 拖入终端上传文件时会明确说明：即使终端已通过 `su` 或 `sudo` 切换用户，SFTP 仍使用 SSH 连接的原登录用户。
+
+#### 已知问题
+
+- macOS 发布包目前尚未完成代码签名和公证，Gatekeeper 可能提示 Terma 已损坏或无法打开。临时处理方法见 [Issue #36](https://github.com/zmide/Terma/issues/36)。
+
+#### 本次变更
+
+- 发布 v1.7.4，完善传输队列与任务中心（[#38](https://github.com/zmide/Terma/pull/38)，[@JunXiaoRuo](https://github.com/JunXiaoRuo)）
+
+**完整变更**：[v1.7.3...v1.7.4](https://github.com/zmide/Terma/compare/v1.7.3...v1.7.4)
 
 ## v1.7.3
 
