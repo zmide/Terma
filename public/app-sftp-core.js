@@ -4,6 +4,7 @@ const sftpKnownJobStatuses = new Map();
 const sftpPendingDirectoryRefreshes = new Set();
 const sftpDismissedFloatingJobIds = new Set();
 const SFTP_ACTIVE_JOB_STATUSES = new Set(["running", "pending", "paused"]);
+const SFTP_TRANSFER_QUEUE_TYPES = new Set(["upload", "download", "cross-copy", "local-delivery", "native-drag"]);
 const SFTP_MUTATING_JOB_TYPES = new Set(["upload", "copy", "cross-copy", "move", "extract", "compress", "delete", "sync", "local-delivery"]);
 const SFTP_DIRECTORY_VIEW_CACHE_TTL_MS = 10 * 60 * 1000;
 const SFTP_DIRECTORY_VIEW_CACHE_MAX_DIRECTORIES = 60;

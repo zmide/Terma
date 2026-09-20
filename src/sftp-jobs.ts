@@ -28,6 +28,7 @@ const ACTIVE_STATUSES = new Set(["running", "pending", "paused"]);
 const DELETE_COMMAND_BATCH_BYTES = 24 * 1024;
 let historyCache: any[] | null = null;
 let persistTimer: any = null;
+let persistRequestedAt = 0;
 let downloadCacheService: any = null;
 
 function uploadJobOwnsLocalPath(job) {
@@ -58,6 +59,7 @@ function serializableJob(source) {
     transfer_slot_kind,
     transfer_start_phase,
     transfer_start_current,
+    abortController,
     native_drag_token,
     native_drag_ranges,
     ...job
@@ -231,12 +233,23 @@ function readHistory(): any[] {
 
 function persistJobs(immediate = false) {
   if (!immediate) {
-    clearTimeout(persistTimer);
-    persistTimer = setTimeout(() => persistJobs(true), 400);
+    persistRequestedAt = Date.now();
+    if (persistTimer) return;
+    const flush = () => {
+      const remaining = Math.max(0, 400 - (Date.now() - persistRequestedAt));
+      if (remaining > 0) {
+        persistTimer = setTimeout(flush, remaining);
+        return;
+      }
+      persistTimer = null;
+      persistJobs(true);
+    };
+    persistTimer = setTimeout(flush, 400);
     return;
   }
   clearTimeout(persistTimer);
   persistTimer = null;
+  persistRequestedAt = 0;
   const active: any[] = [...jobs.values()].map(serializableJob);
   const byId = new Map(readHistory().map((job: any) => [job.id, job]));
   for (const job of active) byId.set(job.id, job);
@@ -712,6 +725,7 @@ function cancelSftpJob(id) {
   try { job.out?.destroy(); } catch {}
   try { job.responder?.kill?.("SIGTERM"); } catch {}
   try { job.responder?.destroy?.(); } catch {}
+  try { job.abortController?.abort?.(); } catch {}
   if (job.streams instanceof Set) {
     for (const stream of job.streams) {
       try { stream.destroy(); } catch {}

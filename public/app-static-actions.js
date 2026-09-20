@@ -23,6 +23,18 @@ registerTermaAction("static-task-center-clear", ({event, element}) => {
   event.stopPropagation();
   return sftpTaskCenterView === "failed" ? clearFailedSftpJobs(element) : clearFinishedSftpJobs(element);
 });
+registerTermaAction("static-task-center-pause-all", ({event, element}) => {
+  event.stopPropagation();
+  return pauseAllSftpTransferJobs(element);
+});
+registerTermaAction("static-task-center-resume-all", ({event, element}) => {
+  event.stopPropagation();
+  return resumeAllSftpTransferJobs(element);
+});
+registerTermaAction("static-task-center-clear-queue", ({event, element}) => {
+  event.stopPropagation();
+  return clearCurrentSftpTransferQueue(element);
+});
 registerTermaAction("static-task-list-open", ({event}) => openSftpTaskList(event));
 registerTermaAction("static-task-resize-start", ({event, element}) => startSftpTaskCenterResize(event, element));
 registerTermaAction("static-task-resize-reset", ({event}) => resetSftpTaskCenterSize(event));

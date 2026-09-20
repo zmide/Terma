@@ -597,7 +597,7 @@ function workspaceTabHtml(tab, pane) {
   ].filter(Boolean).join(" - ");
   const showsConnectionStatus = ["terminal", "quick-terminal", "sftp", "remote-terminal"].includes(tab.kind)
     || (tab.kind === "remote-desktop" && tab.protocol === "vnc");
-  const connectionStatus = showsConnectionStatus ? (tab.connectionStatus || "connecting") : "";
+  const connectionStatus = showsConnectionStatus ? (tab.connectionStatus || "disconnected") : "";
   const connectionStateText = tr(`common:auto.${connectionStatus === "connected" ? "connected" : connectionStatus === "disconnected" ? "disconnected" : "connecting"}`, {defaultValue:connectionStatus === "connected" ? "Connected" : connectionStatus === "disconnected" ? "Disconnected" : "Connecting"});
   const connectionDot = connectionStatus
     ? `<span class="tab-connection-dot ${connectionStatus}" title="${escAttr(connectionStateText)}" aria-hidden="true"></span>`

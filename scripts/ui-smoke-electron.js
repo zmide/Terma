@@ -4798,6 +4798,7 @@ app.whenReady().then(async () => {
         &&uploadPrompt?.values.includes('overwrite')
         &&uploadPrompt?.values.includes('rename')
         &&uploadPrompt?.values.includes('')
+        &&terminalDropCalls.notices.some(item=>item.type==='info'&&item.text.includes('SSH 连接的原登录用户')&&item.text.includes('su 或 sudo'))
         &&dropOverlay?.hidden===true
       );
       dispatchDropEvent('dragenter',uploadDataTransfer);
@@ -8602,6 +8603,19 @@ app.whenReady().then(async () => {
       resetSftpTaskCenterSize();
       await toggleSftpTaskCenter();
       const drawerOpened = Boolean(drawer && !drawer.hidden && button?.getAttribute('aria-expanded') === 'true');
+      notify('任务中心层级测试','info');
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const taskCenterLayerToast = document.querySelector('#toast .toast:last-child');
+      const taskCenterLayerToastRect = taskCenterLayerToast?.getBoundingClientRect();
+      const taskCenterLayerDrawerRect = drawer?.getBoundingClientRect();
+      const overlapX = Math.max(taskCenterLayerToastRect?.left||0,taskCenterLayerDrawerRect?.left||0)+12;
+      const overlapY = Math.max(taskCenterLayerToastRect?.top||0,taskCenterLayerDrawerRect?.top||0)+12;
+      const taskCenterAboveNotifications = Boolean(document.body.classList.contains('sftp-task-center-open')
+        && taskCenterLayerToastRect && taskCenterLayerDrawerRect
+        && overlapX < Math.min(taskCenterLayerToastRect.right,taskCenterLayerDrawerRect.right)
+        && overlapY < Math.min(taskCenterLayerToastRect.bottom,taskCenterLayerDrawerRect.bottom)
+        && document.elementFromPoint(overlapX,overlapY)?.closest?.('#sftpTaskCenterDrawer'));
+      dismissToast(taskCenterLayerToast);
       const defaultDrawerRect = drawer?.getBoundingClientRect();
       const drawerDefaultCompact = Boolean(defaultDrawerRect
         && defaultDrawerRect.width >= 338
@@ -8620,6 +8634,61 @@ app.whenReady().then(async () => {
         && !currentText.includes('失败任务')
         && !currentText.includes('完成历史任务')
         && !currentText.includes('取消历史任务');
+      const queueActions = document.querySelector('#sftpTaskCenterQueueActions');
+      const pauseAllButton = document.querySelector('#sftpTaskCenterPauseAllButton');
+      const resumeAllButton = document.querySelector('#sftpTaskCenterResumeAllButton');
+      const clearQueueButton = document.querySelector('#sftpTaskCenterClearQueueButton');
+      const currentQueueActions = Boolean(queueActions && !queueActions.hidden
+        && pauseAllButton && !pauseAllButton.disabled
+        && resumeAllButton?.disabled
+        && clearQueueButton && !clearQueueButton.disabled
+        && document.querySelector('#sftpTaskCenterClearButton')?.hidden);
+      const queueFixtures = [
+        {...jobFixtures[0],id:'queue-upload-running'},
+        {id:'queue-download-paused',status:'paused',type:'download',phase:'downloading',label:'暂停下载',connection_id:Number(connection.id),connection_name:'iMac',resume_supported:true,can_resume:true,can_cancel:true},
+        {id:'queue-cross-pending',status:'pending',type:'cross-copy',phase:'queued',label:'排队跨主机',connection_id:Number(connection.id),connection_name:'Mac mini',resume_supported:true,can_pause:false,can_cancel:true},
+        {id:'queue-local-running',status:'running',type:'local-delivery',phase:'local-saving',label:'分别下载到本机',connection_id:Number(connection.id),connection_name:'iMac',resume_supported:false,can_pause:false,can_cancel:true},
+        {id:'queue-cross-scanning',status:'running',type:'cross-copy',phase:'scanning',label:'扫描跨主机',connection_id:Number(connection.id),connection_name:'Mac mini',resume_supported:true,can_pause:false,can_cancel:true}
+      ];
+      const queueBatchCalls = [];
+      sftpLatestJobs = queueFixtures;
+      updateSftpTaskCenter(queueFixtures);
+      api = async (pathname, options={}) => {
+        if (pathname === '/api/sftp/jobs') return queueFixtures;
+        if (['/api/sftp/sync/jobs','/api/linux-desktop/tasks','/api/remote-component/tasks'].includes(pathname)) return [];
+        queueBatchCalls.push({pathname,method:options.method||'GET'});
+        if (pathname.endsWith('/pause')) return {ok:true,status:'paused'};
+        if (pathname.endsWith('/resume')) return {ok:true,status:'pending'};
+        if (pathname.endsWith('/cancel')) return {ok:true,status:'cancelled'};
+        return {ok:true};
+      };
+      confirmModal = async () => true;
+      const pauseBatchResult = await pauseAllSftpTransferJobs(pauseAllButton);
+      const resumeBatchResult = await resumeAllSftpTransferJobs(resumeAllButton);
+      const clearBatchResult = await clearCurrentSftpTransferQueue(clearQueueButton);
+      const queueBatchControls = Boolean(pauseBatchResult?.completed === 2
+        && pauseBatchResult?.skipped === 3
+        && resumeBatchResult?.completed === 1
+        && resumeBatchResult?.skipped === 4
+        && clearBatchResult?.completed === 5
+        && clearBatchResult?.skipped === 0
+        && queueBatchCalls.filter(call=>call.pathname.endsWith('/pause')).length === 2
+        && queueBatchCalls.filter(call=>call.pathname.endsWith('/resume')).length === 1
+        && queueBatchCalls.filter(call=>call.pathname.endsWith('/cancel')).length === 5
+        && !drawer.hidden);
+      const queueBatchDiagnostics = {
+        pauseBatchResult,
+        resumeBatchResult,
+        clearBatchResult,
+        pauseCalls:queueBatchCalls.filter(call=>call.pathname.endsWith('/pause')).length,
+        resumeCalls:queueBatchCalls.filter(call=>call.pathname.endsWith('/resume')).length,
+        cancelCalls:queueBatchCalls.filter(call=>call.pathname.endsWith('/cancel')).length,
+        drawerHidden:drawer.hidden
+      };
+      sftpLatestJobs = jobFixtures;
+      api = async pathname => pathname === '/api/sftp/jobs' ? jobFixtures : [];
+      confirmModal = previousConfirmModal;
+      updateSftpTaskCenter(jobFixtures);
       setSftpTaskCenterView('failed');
       const failedText = list?.textContent.replace(/\s+/g,' ').trim() || '';
       const failedRows = [...(list?.querySelectorAll('.sftp-job') || [])];
@@ -8629,7 +8698,8 @@ app.whenReady().then(async () => {
       const failedFooter = document.querySelector('#sftpTaskCenterFooter');
       const failedClearAvailable = Boolean(failedFooter && !failedFooter.hidden
         && document.querySelector('#sftpTaskCenterClearLabel')?.textContent === '清空失败'
-        && document.querySelector('#sftpTaskCenterClearButton')?.getAttribute('aria-label')?.includes('失败任务'));
+        && document.querySelector('#sftpTaskCenterClearButton')?.getAttribute('aria-label')?.includes('失败任务')
+        && document.querySelector('#sftpTaskCenterQueueActions')?.hidden);
       const taskLogDetails=failedRow?.querySelector('.global-task-log');
       taskLogDetails?.querySelector('summary')?.click();
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
@@ -8693,6 +8763,62 @@ app.whenReady().then(async () => {
       const drawerResizeReset = Boolean(Math.abs(resetDrawerRect.width - drawerBeforeResizeRect.width) <= 2
         && Math.abs(resetDrawerRect.height - drawerBeforeResizeRect.height) <= 2
         && localStorage.getItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY)===null);
+      localStorage.setItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY,JSON.stringify({width:window.innerWidth*4,height:window.innerHeight*4}));
+      clearSftpTaskCenterSizeConstraints(drawer);
+      drawer.style.removeProperty('width');
+      drawer.style.removeProperty('height');
+      const oversizedDrawerRestored=restoreSftpTaskCenterSize(drawer);
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const recoveredDrawerRect=drawer.getBoundingClientRect();
+      const recoveredContentRect=document.querySelector('.content')?.getBoundingClientRect();
+      const recoveredHandleRect=drawerResizeHandle?.getBoundingClientRect();
+      const recoveredHandleX=(recoveredHandleRect?.left||0)+(recoveredHandleRect?.width||0)/2;
+      const recoveredHandleY=(recoveredHandleRect?.top||0)+(recoveredHandleRect?.height||0)/2;
+      const correctedOversizedDrawerSize=savedSftpTaskCenterSize();
+      const drawerOversizeRecovers=Boolean(oversizedDrawerRestored
+        && recoveredContentRect
+        && recoveredHandleRect
+        && correctedOversizedDrawerSize
+        && recoveredDrawerRect.left >= recoveredContentRect.left + SFTP_TASK_CENTER_VIEWPORT_GAP - 1
+        && recoveredDrawerRect.right <= Math.min(window.innerWidth,recoveredContentRect.right) - SFTP_TASK_CENTER_VIEWPORT_GAP + 1
+        && recoveredDrawerRect.bottom <= Math.min(window.innerHeight,recoveredContentRect.bottom) - SFTP_TASK_CENTER_VIEWPORT_GAP + 1
+        && recoveredHandleX >= recoveredContentRect.left
+        && recoveredHandleY < window.innerHeight
+        && document.elementFromPoint(recoveredHandleX,recoveredHandleY)?.closest?.('#sftpTaskCenterResize')
+        && correctedOversizedDrawerSize.width <= recoveredDrawerRect.width + 1
+        && correctedOversizedDrawerSize.height <= recoveredDrawerRect.height + 1);
+      const drawerResetSizeButton=document.querySelector('#sftpTaskCenterResetSizeButton');
+      const drawerResetSizeButtonRect=drawerResetSizeButton?.getBoundingClientRect();
+      const drawerResetSizeButtonReachable=Boolean(drawerResetSizeButtonRect
+        && document.elementFromPoint(drawerResetSizeButtonRect.left+drawerResetSizeButtonRect.width/2,drawerResetSizeButtonRect.top+drawerResetSizeButtonRect.height/2)?.closest?.('#sftpTaskCenterResetSizeButton'));
+      drawerResetSizeButton?.click();
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const headerResetDrawerRect=drawer.getBoundingClientRect();
+      const drawerHeaderReset=Boolean(drawerResetSizeButtonReachable
+        && Math.abs(headerResetDrawerRect.width-drawerBeforeResizeRect.width)<=2
+        && Math.abs(headerResetDrawerRect.height-drawerBeforeResizeRect.height)<=2
+        && localStorage.getItem(SFTP_TASK_CENTER_SIZE_STORAGE_KEY)===null);
+      const boundedDragHandleRect=drawerResizeHandle?.getBoundingClientRect();
+      const boundedDragPointerId=452;
+      const boundedDragStartX=(boundedDragHandleRect?.left||0)+(boundedDragHandleRect?.width||0)/2;
+      const boundedDragStartY=(boundedDragHandleRect?.top||0)+(boundedDragHandleRect?.height||0)/2;
+      drawerResizeHandle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:boundedDragPointerId,pointerType:'mouse',button:0,buttons:1,clientX:boundedDragStartX,clientY:boundedDragStartY}));
+      window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:boundedDragPointerId,pointerType:'mouse',button:0,buttons:1,clientX:-window.innerWidth,clientY:window.innerHeight*2}));
+      window.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:boundedDragPointerId,pointerType:'mouse',button:0,buttons:0,clientX:-window.innerWidth,clientY:window.innerHeight*2}));
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const boundedDragDrawerRect=drawer.getBoundingClientRect();
+      const boundedDragContentRect=document.querySelector('.content')?.getBoundingClientRect();
+      const boundedDragRecoveredHandleRect=drawerResizeHandle?.getBoundingClientRect();
+      const boundedDragHandleX=(boundedDragRecoveredHandleRect?.left||0)+(boundedDragRecoveredHandleRect?.width||0)/2;
+      const boundedDragHandleY=(boundedDragRecoveredHandleRect?.top||0)+(boundedDragRecoveredHandleRect?.height||0)/2;
+      const drawerResizeClamps=Boolean(boundedDragContentRect
+        && boundedDragRecoveredHandleRect
+        && boundedDragDrawerRect.left >= boundedDragContentRect.left + SFTP_TASK_CENTER_VIEWPORT_GAP - 1
+        && boundedDragDrawerRect.right <= Math.min(window.innerWidth,boundedDragContentRect.right) - SFTP_TASK_CENTER_VIEWPORT_GAP + 1
+        && boundedDragDrawerRect.bottom <= Math.min(window.innerHeight,boundedDragContentRect.bottom) - SFTP_TASK_CENTER_VIEWPORT_GAP + 1
+        && document.elementFromPoint(boundedDragHandleX,boundedDragHandleY)?.closest?.('#sftpTaskCenterResize'));
+      drawerResetSizeButton?.click();
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
 
       const deleteFixture = {id:'delete-record-job',status:'failed',type:'upload',label:'待删除失败任务',connection_id:Number(connection.id),connection_name:'iMac'};
       updateSftpTaskCenter([...refreshedJobFixtures, deleteFixture]);
@@ -8911,9 +9037,13 @@ app.whenReady().then(async () => {
         floatingMutePersists,
         floatingSettingRestores,
          drawerOpened,
+         taskCenterAboveNotifications,
          drawerDefaultCompact,
          currentOnly,
          currentActions,
+         currentQueueActions,
+         queueBatchControls,
+         queueBatchDiagnostics,
          failedOnly,
          failedActions,
          failedClearAvailable,
@@ -8922,6 +9052,9 @@ app.whenReady().then(async () => {
          drawerResizeAdaptive,
          drawerResizePersists,
          drawerResizeReset,
+         drawerOversizeRecovers,
+         drawerHeaderReset,
+         drawerResizeClamps,
          deleteDuplicateBlocked,
          deleteKeepsDrawerOpen,
         taskLogInitialOpen,
@@ -12175,7 +12308,7 @@ app.whenReady().then(async () => {
   const imagePreviewUi = sftpUi.imagePreviewUi || {};
   const globalSettingsUi = sftpUi.globalSettingsUi || {};
   const downloadNoticeUi = sftpUi.downloadNoticeUi || {};
-  const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingResumeAction || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.drawerDefaultCompact || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.failedOnly || !jobUi.failedActions || !jobUi.failedClearAvailable || !jobUi.currentProgress || !jobUi.drawerResizable || !jobUi.drawerResizeAdaptive || !jobUi.drawerResizePersists || !jobUi.drawerResizeReset || !jobUi.deleteDuplicateBlocked || !jobUi.deleteKeepsDrawerOpen || !jobUi.taskLogInitialOpen || !jobUi.taskLogInitialBottom || !jobUi.taskLogRefreshKeepsOpen || !jobUi.taskLogRefreshShowsLatest || !jobUi.taskLogRefreshFollowsBottom || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.generatedTaskUi?.found || !jobUi.generatedTaskUi?.savedPath || !jobUi.generatedTaskUi?.openFile || !jobUi.generatedTaskUi?.openDirectory || !jobUi.generatedTaskUi?.deleteFile || jobUi.generatedTaskUi?.buttonCount !== 3 || !jobUi.generatedTaskUi?.noDuplicateTaskDelete || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned || !jobUi.toastOrderPreserved || !jobUi.toastStackedDown || !jobUi.toastAvoidsFloatingTask || !jobUi.toastExitAnimated || !jobUi.toastReflowAnimated || !jobUi.toastMovedUp;
+  const jobUiFailed = !jobUi.found || !jobUi.singleGlobalEntry || !jobUi.noPaneTaskRegions || !jobUi.failedStatusVisible || !jobUi.totalProgressVisible || !jobUi.totalProgressIndeterminate || !jobUi.totalProgressHidesWhenIdle || !jobUi.floatingVisibleBelowHeader || !jobUi.floatingActions || !jobUi.floatingResumeAction || !jobUi.floatingProgress || !jobUi.floatingOpensTaskCenter || !jobUi.floatingCloseHidesCurrent || !jobUi.floatingNewTaskReopens || !jobUi.floatingMutePersists || !jobUi.floatingSettingRestores || !jobUi.drawerOpened || !jobUi.taskCenterAboveNotifications || !jobUi.drawerDefaultCompact || !jobUi.currentOnly || !jobUi.currentActions || !jobUi.currentQueueActions || !jobUi.queueBatchControls || !jobUi.failedOnly || !jobUi.failedActions || !jobUi.failedClearAvailable || !jobUi.currentProgress || !jobUi.drawerResizable || !jobUi.drawerResizeAdaptive || !jobUi.drawerResizePersists || !jobUi.drawerResizeReset || !jobUi.drawerOversizeRecovers || !jobUi.drawerHeaderReset || !jobUi.drawerResizeClamps || !jobUi.deleteDuplicateBlocked || !jobUi.deleteKeepsDrawerOpen || !jobUi.taskLogInitialOpen || !jobUi.taskLogInitialBottom || !jobUi.taskLogRefreshKeepsOpen || !jobUi.taskLogRefreshShowsLatest || !jobUi.taskLogRefreshFollowsBottom || !jobUi.drawerFitsViewport || !jobUi.historyOnly || !jobUi.historyCounts || !jobUi.historyActions || !jobUi.generatedTaskUi?.found || !jobUi.generatedTaskUi?.savedPath || !jobUi.generatedTaskUi?.openFile || !jobUi.generatedTaskUi?.openDirectory || !jobUi.generatedTaskUi?.deleteFile || jobUi.generatedTaskUi?.buttonCount !== 3 || !jobUi.generatedTaskUi?.noDuplicateTaskDelete || !jobUi.outsideClickCloses || !jobUi.escapeCloses || !jobUi.runningStatusVisible || !jobUi.nativeDragTaskStopHidden || !jobUi.itemProgress || !jobUi.staleJobResponseIgnored || !jobUi.toastIconsAligned || !jobUi.toastOrderPreserved || !jobUi.toastStackedDown || !jobUi.toastAvoidsFloatingTask || !jobUi.toastExitAnimated || !jobUi.toastReflowAnimated || !jobUi.toastMovedUp;
   const textEncodingUiFailed = !textEncodingUi.opened || !textEncodingUi.initialCentered || !textEncodingUi.aceLoaded || textEncodingUi.selected !== 'gbk' || !textEncodingUi.manualLanguage || !textEncodingUi.nonJsonFormattingHidden || !textEncodingUi.nonUtf8SaveAllowed || !textEncodingUi.nonUtf8SaveSubmitted || !textEncodingUi.remoteSaveKeepsOpen || !textEncodingUi.remoteEditorClosesExplicitly || !textEncodingUi.utf8LimitEnforced || !textEncodingUi.utf8BomIncludesPrefix || !textEncodingUi.normalizationOnlyLimitEnforced || !textEncodingUi.lineEndingLabelsLocalized || !textEncodingUi.lightPaged || !textEncodingUi.lightNextPage || !textEncodingUi.jsonFormatting || !textEncodingUi.jsonHiddenAfterLanguageChange || !textEncodingUi.json5FormattingHidden || !textEncodingUi.wordWrap || !textEncodingUi.persistDefault || !textEncodingUi.backup || !textEncodingUi.shellFormat || !textEncodingUi.shellNonLfWarningPrepared || !['lf','crlf','cr'].every(value=>textEncodingUi.lineEndings?.includes(value)) || !['utf8','utf8bom','gb18030','gbk','big5','shift_jis','euc-kr','latin1'].every(value=>textEncodingUi.options?.includes(value)) || !['auto','json','yaml','xml','sh','batchfile','powershell','javascript','java','c_cpp','sql','markdown'].every(value=>textEncodingUi.languageOptions?.includes(value));
       const imagePreviewUiFailed = !imagePreviewUi.svgOpened || !imagePreviewUi.svgSanitized || !imagePreviewUi.svgEmbeddedStyles || !imagePreviewUi.svgOuterWindowStable || !imagePreviewUi.svgFitsCanvas || !imagePreviewUi.svgZoomButtons || !imagePreviewUi.svgCtrlWheel || !imagePreviewUi.svgSearchFocused || !imagePreviewUi.svgSearchLocated || !imagePreviewUi.svgSearchKeepsContext || !imagePreviewUi.svgSearchClearFits || !imagePreviewUi.svgColorModeNotClipped || !imagePreviewUi.svgInvertPreview || !imagePreviewUi.svgColorModePreservesView || !imagePreviewUi.svgPdfInvert || !imagePreviewUi.svgPdfUnicode || !imagePreviewUi.svgPdfLandscape || !imagePreviewUi.svgPreserveAspectRatio || !imagePreviewUi.svgModeControl || !imagePreviewUi.svgRemoteUsesEncodingAwareRead || !imagePreviewUi.svgRemoteEncodingPreserved || !imagePreviewUi.svgSplitEditor || !imagePreviewUi.svgSplitRefresh || !imagePreviewUi.svgLongLineSearch || !imagePreviewUi.svgSplitAutoFocus || !imagePreviewUi.svgSplitClickToEditor || !imagePreviewUi.svgSplitOneLineSourceFocus || !imagePreviewUi.svgSplitUseIdClickToEditor || !imagePreviewUi.svgSplitUseReferenceClickToEditor || !imagePreviewUi.svgSplitMarkerVisibleWithoutAutoFocus || !imagePreviewUi.svgEditorControlsWrapFromFirstColumn || !imagePreviewUi.svgSplitManualZoomDisablesAutoFocus || !imagePreviewUi.svgModeRoundTrip || !imagePreviewUi.svgInlineModeKeepsContentWithoutRemoteRead || !imagePreviewUi.svgModePreservesUnsaved || !imagePreviewUi.notificationAboveFullscreen || !imagePreviewUi.rasterOpened || !imagePreviewUi.rasterZoom;
   const nativeDragUiFailed = !nativeDragUi.found || !nativeDragUi.webExternalDragBlocked || !nativeDragUi.linuxFallbackNoticeOnce || !nativeDragUi.linuxFallbackUsesCompatibilityMode || !nativeDragUi.streamingPreparesOnPointerDown || !nativeDragUi.streamingThresholdActivatesOnce || !nativeDragUi.streamingCaptureCancelSurvives || !nativeDragUi.pointerUpCancelsPending || !nativeDragUi.streamingSkipsStage || !nativeDragUi.streamingNativeBlocksParallelBrowserDrag || !nativeDragUi.nativeIdleHintStable || !nativeDragUi.nativeOutsideHintStaysStable || !nativeDragUi.nativeMotionTargetsSftp || !nativeDragUi.nativeTransientMissKeepsTarget || !nativeDragUi.nativeFinalTransientMissKeepsTarget || !nativeDragUi.nativeReleasedClearsStaleTarget || !nativeDragUi.nativeResultCopiesOnce || !nativeDragUi.firstDragOnlyStages || !nativeDragUi.firstDragReset || !nativeDragUi.cacheReused || !nativeDragUi.cachedUnarmedStaysInternal || !nativeDragUi.sameWindowDropDoesNotArm || !nativeDragUi.armedDragStartsSynchronously || !nativeDragUi.failureRearmed || !nativeDragUi.successClearsState || !nativeDragUi.finderRenameNoticeShown;
@@ -12292,7 +12425,7 @@ app.whenReady().then(async () => {
       columnLayoutFalse:Object.entries(sftpUi.columnLayoutUi || {}).filter(([, value]) => value === false).map(([name]) => name),
       connectionSessionFalse:Object.entries(connectionSessionUi).filter(([, value]) => value === false).map(([name]) => name),
       jobUiFalse:Object.entries(jobUi).filter(([, value]) => value === false).map(([name]) => name),
-      jobUiDiagnostics:{historyActionDiagnostics:jobUi.historyActionDiagnostics,stackedToastTitles:jobUi.stackedToastTitles},
+      jobUiDiagnostics:{historyActionDiagnostics:jobUi.historyActionDiagnostics,queueBatchDiagnostics:jobUi.queueBatchDiagnostics,stackedToastTitles:jobUi.stackedToastTitles},
       textEncodingUiFalse:Object.entries(textEncodingUi).filter(([, value]) => value === false).map(([name]) => name),
       reusedWithoutDirectoryReload:sftpUi.directoryActionsUi?.reusedWithoutDirectoryReload,
       directoryActionsFalse:Object.entries(sftpUi.directoryActionsUi || {}).filter(([, value]) => value === false).map(([name]) => name),

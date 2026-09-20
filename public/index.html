@@ -90,7 +90,10 @@
           <aside id="sftpTaskCenterDrawer" class="sftp-task-center-drawer" aria-label="任务中心" data-i18n-aria-label="tasks:title" hidden>
             <header class="sftp-task-center-head">
               <div><strong data-i18n="tasks:title">任务中心</strong><span id="sftpTaskCenterSummary" data-i18n-skip="true">暂无进行中的任务</span></div>
-              <button class="icon-button" type="button" data-action="static-task-center-close" title="关闭任务中心" data-i18n-title="common:auto.close_task_center" aria-label="关闭任务中心" data-i18n-aria-label="common:auto.close_task_center"><i data-lucide="x"></i></button>
+              <div class="sftp-task-center-head-actions">
+                <button id="sftpTaskCenterResetSizeButton" class="icon-button" type="button" data-action="static-task-resize-reset" title="恢复任务中心默认大小" data-i18n-title="common:auto.reset_task_center_size" aria-label="恢复任务中心默认大小" data-i18n-aria-label="common:auto.reset_task_center_size"><i data-lucide="minimize-2"></i></button>
+                <button class="icon-button" type="button" data-action="static-task-center-close" title="关闭任务中心" data-i18n-title="common:auto.close_task_center" aria-label="关闭任务中心" data-i18n-aria-label="common:auto.close_task_center"><i data-lucide="x"></i></button>
+              </div>
             </header>
             <div class="sftp-task-center-tabs" role="tablist" aria-label="任务视图" data-i18n-aria-label="common:auto.task_view">
               <button id="sftpTaskCenterCurrentTab" type="button" role="tab" aria-selected="true" data-action="static-task-center-view" data-task-view="current"><span data-i18n="common:auto.current_tasks">进行中</span><small id="sftpTaskCenterCurrentCount">0</small></button>
@@ -99,6 +102,11 @@
             </div>
             <div id="sftpTaskCenterList" class="sftp-task-center-list" role="tabpanel"></div>
             <footer id="sftpTaskCenterFooter" class="sftp-task-center-footer" hidden>
+              <div id="sftpTaskCenterQueueActions" class="sftp-task-center-queue-actions" hidden>
+                <button id="sftpTaskCenterPauseAllButton" type="button" data-action="static-task-center-pause-all"><i data-lucide="pause"></i><span data-i18n="tasks:actions.pause_all">全部暂停</span></button>
+                <button id="sftpTaskCenterResumeAllButton" type="button" data-action="static-task-center-resume-all"><i data-lucide="play"></i><span data-i18n="tasks:actions.resume_all">全部继续</span></button>
+                <button id="sftpTaskCenterClearQueueButton" class="danger" type="button" data-action="static-task-center-clear-queue"><i data-lucide="list-x"></i><span data-i18n="tasks:actions.clear_queue">清空队列</span></button>
+              </div>
               <button id="sftpTaskCenterClearButton" class="danger" type="button" data-action="static-task-center-clear"><i data-lucide="trash-2"></i><span id="sftpTaskCenterClearLabel" data-i18n-skip="true">清空历史</span></button>
             </footer>
             <div id="sftpTaskCenterResize" class="sftp-task-center-resize-handle" role="button" tabindex="0" aria-label="调整任务中心大小" data-i18n-aria-label="common:auto.adjust_task_center" title="拖动调整任务中心大小，双击恢复默认" data-i18n-title="common:auto.adjust_task_center_hint" data-pointerdown-action="static-task-resize-start" data-dblclick-action="static-task-resize-reset" data-keydown-action="static-task-resize-key"></div>

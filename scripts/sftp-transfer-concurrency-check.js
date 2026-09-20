@@ -73,7 +73,15 @@ async function main() {
   const sessions = require("../dist/sftp-session");
   const sessionModule = require.cache[require.resolve("../dist/sftp-session")];
   const originalSpawn = sessionModule.exports.spawnSftpSessionCommand;
+  const originalDeliver = sessionModule.exports.deliverSftpPaths;
+  let localDeliverySignal = null;
   sessionModule.exports.spawnSftpSessionCommand = (_connection, command) => fakeRemoteChild(command);
+  sessionModule.exports.deliverSftpPaths = (_connectionId, _paths, _targetDirectory, _conflictMode, progress={}) => new Promise((resolve, reject) => {
+    localDeliverySignal = progress.signal || null;
+    const abort = () => reject(Object.assign(new Error("cancelled"), {name:"AbortError"}));
+    if (localDeliverySignal?.aborted) return abort();
+    localDeliverySignal?.addEventListener("abort", abort, {once:true});
+  });
   const jobs = require("../dist/sftp-jobs");
   const ids = [];
   try {
@@ -103,6 +111,15 @@ async function main() {
     writeLimits(3, 3);
     jobs.refreshSftpTransferQueues();
     await waitUntil(() => counts(jobs, downloadIds).running === 3 && counts(jobs, downloadIds).pending === 1, "提高下载并发后未立即放行排队任务");
+    for (const id of downloadIds) if (["running", "pending"].includes(jobs.listSftpJobs().find(job => job.id === id)?.status)) jobs.cancelSftpJob(id);
+
+    const localDelivery = jobs.startLocalDeliveryJob(99201, ["/tmp/a.bin", "/tmp/b.bin"], temporaryRoot, "rename");
+    ids.push(localDelivery.id);
+    await waitUntil(() => jobs.listSftpJobs().find(job => job.id === localDelivery.id)?.status === "running", "本机分别下载任务未开始");
+    assert.equal(jobs.listSftpJobs().find(job => job.id === localDelivery.id)?.can_cancel, true, "本机分别下载任务必须可取消");
+    jobs.cancelSftpJob(localDelivery.id);
+    await waitUntil(() => jobs.listSftpJobs().find(job => job.id === localDelivery.id)?.status === "cancelled", "本机分别下载任务未进入取消状态");
+    assert.equal(localDeliverySignal?.aborted, true, "取消本机分别下载必须中止底层递归 SFTP 读取");
     console.log("SFTP transfer concurrency check passed.");
   } finally {
     for (const id of ids) {
@@ -112,6 +129,7 @@ async function main() {
       } catch {}
     }
     sessionModule.exports.spawnSftpSessionCommand = originalSpawn;
+    sessionModule.exports.deliverSftpPaths = originalDeliver;
     try { db.closeDatabase(); } catch {}
     try { fs.rmSync(temporaryRoot, {recursive:true, force:true}); } catch {}
   }

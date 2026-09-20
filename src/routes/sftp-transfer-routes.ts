@@ -178,10 +178,10 @@ export async function handleSftpTransferRoutes(
         dependencies.sendJson(response, publicErrorBody("SFTP_SEPARATE_DOWNLOAD_DESKTOP_ONLY", "分别下载文件和目录仅支持本机桌面版；当前设备请使用打包下载"), 400);
         return true;
       }
-      dependencies.sendJson(response, dependencies.startLocalDeliveryJob(connectionId, paths, targetDirectory, "rename", {
-        label:"批量下载到本机",
+      const jobs = paths.map((remotePath: string) => dependencies.startLocalDeliveryJob(connectionId, [remotePath], targetDirectory, "rename", {
         deliveryMode:"download-directory"
-      }), 202);
+      }));
+      dependencies.sendJson(response, {jobs, count:jobs.length, status:"pending"}, 202);
       return true;
     }
     dependencies.sendJson(response, dependencies.startArchiveDownloadJob(connectionId, paths, {

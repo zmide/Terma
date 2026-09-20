@@ -156,7 +156,8 @@ async function downloadSftpSelection(tabKey=activeTabKey) {
         body:JSON.stringify({paths:entries.map(item => item.path), mode, filename:archive?.filename, encoding:archive?.encoding})
       });
       if (mode === "separate") {
-        trackSftpMutationJob(result);
+        const queuedJobs = Array.isArray(result?.jobs) ? result.jobs : [result];
+        for (const job of queuedJobs) trackSftpMutationJob(job);
         notify(tr(entries.length === 1 ? "common:notifications.background_transfer_downloads_one" : "common:notifications.background_transfer_downloads_other", {count:entries.length, defaultValue:`后台传输已开始：${entries.length} 个项目到下载目录`}), "info");
       } else {
         trackSftpBrowserDownload(result);
@@ -577,25 +578,34 @@ async function uploadSftpFilesToDirectory(inputFiles, connectionId, root=".", op
   const conflict = options.conflict || await chooseSftpUploadConflict(collisions);
   if (collisions.length && !conflict) return;
   try {
+    const uploads = [];
+    try {
+      for (const item of files) {
+        const parts = item.relativePath.split("/");
+        const filename = parts.pop() || item.file.name;
+        const targetDirectory = parts.length ? joinRemotePath(directory, parts.join("/")) : directory;
+        const started = await api(`/api/connections/${Number(connectionId)}/sftp/upload-job`, {
+          method:"POST",
+          body:JSON.stringify({
+            path:targetDirectory,
+            filename,
+            conflict:conflict || "error",
+            size:Number(item.file.size || 0),
+            private:options.private === true
+          })
+        });
+        trackSftpMutationJob(started);
+        uploads.push({item, started});
+      }
+    } catch (error) {
+      await Promise.allSettled(uploads.map(({started}) => api(`/api/sftp/jobs/${encodeURIComponent(started.id)}/cancel`, {method:"POST"})));
+      throw error;
+    }
+    await refreshSftpJobs();
+    startSftpJobsTimer();
     let nextIndex = 0;
-    let firstError = null;
-    const uploadOne = async item => {
-      const parts = item.relativePath.split("/");
-      const filename = parts.pop() || item.file.name;
-      const targetDirectory = parts.length ? joinRemotePath(directory, parts.join("/")) : directory;
-      const started = await api(`/api/connections/${Number(connectionId)}/sftp/upload-job`, {
-        method:"POST",
-        body:JSON.stringify({
-          path:targetDirectory,
-          filename,
-          conflict:conflict || "error",
-          size:Number(item.file.size || 0),
-          private:options.private === true
-        })
-      });
-      trackSftpMutationJob(started);
-      await refreshSftpJobs();
-      startSftpJobsTimer();
+    const errors = [];
+    const uploadOne = async ({item, started}) => {
       try {
         const job = await uploadWithProgress(`/api/sftp/jobs/${encodeURIComponent(started.id)}/content`, item.file, started);
         trackSftpMutationJob(job);
@@ -607,16 +617,16 @@ async function uploadSftpFilesToDirectory(inputFiles, connectionId, root=".", op
       }
     };
     const concurrency = Math.max(1, Math.min(8, Number(runtimeSettings?.saved?.sftp_upload_concurrency || 3)));
-    const workers = Array.from({length:Math.min(concurrency, files.length)}, async () => {
-      while (!firstError) {
+    const workers = Array.from({length:Math.min(concurrency, uploads.length)}, async () => {
+      while (true) {
         const index = nextIndex++;
-        if (index >= files.length) return;
-        try { await uploadOne(files[index]); }
-        catch (error) { firstError = error; }
+        if (index >= uploads.length) return;
+        try { await uploadOne(uploads[index]); }
+        catch (error) { errors.push(error); }
       }
     });
     await Promise.all(workers);
-    if (firstError) throw firstError;
+    if (errors.length) throw errors[0];
   } finally {
     const input = sftpElement("sftpUpload", tabKey);
     if (input) input.value = "";

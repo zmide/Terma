@@ -15,7 +15,10 @@
     "stop": "停止任务",
     "close_floating": "关闭当前悬浮进度",
     "mute_floating": "静默悬浮进度卡",
-    "progress": "任务进度"
+    "progress": "任务进度",
+    "pause_all": "全部暂停",
+    "resume_all": "全部继续",
+    "clear_queue": "清空队列"
   },
   "phase": {
     "archiving": "正在生成压缩包",
@@ -49,7 +52,10 @@
     "clear_history_action": "清空历史",
     "clear_failed_title": "清空失败任务",
     "clear_failed_message": "删除全部 {{count}} 条失败任务记录？此操作不会影响任务中心中的其他记录。",
-    "clear_failed_action": "清空失败"
+    "clear_failed_action": "清空失败",
+    "clear_queue_title": "清空传输队列",
+    "clear_queue_message": "取消当前队列中的 {{count}} 个上传、下载或跨主机传输任务？已完成和失败记录不会被删除。",
+    "clear_queue_action": "取消并清空"
   },
   "logs": {
     "batch_label": "批量执行-{{date}} {{time}}",
@@ -85,7 +91,12 @@
     ,"desktop_job_line": "{{connection}} · 发送到桌面",
     "download_item": "下载 {{name}}",
     "connection_download_item": "{{connection}} · 下载 {{name}}",
-    "downloading_item": "正在下载：{{name}}"
+    "downloading_item": "正在下载：{{name}}",
+    "queue_paused": "已暂停 {{count}} 个传输任务",
+    "queue_resumed": "已继续 {{count}} 个传输任务",
+    "queue_cleared": "已取消 {{count}} 个传输任务",
+    "queue_partial": "已处理 {{completed}} 个传输任务，{{skipped}} 个当前阶段暂不能操作",
+    "clear_queue_failed": "清空传输队列失败"
   },
   "auto": {
     "background_count": "{{count}} 个后台任务",
