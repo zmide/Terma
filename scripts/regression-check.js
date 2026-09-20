@@ -343,7 +343,7 @@ async function main() {
     appCss.indexOf("@container workspace-pane (max-width:1100px)"),
     appCss.indexOf("@container workspace-pane (max-width:760px)")
   );
-  const sftpTasksFrontend = read("public/app-sftp-tasks.js");
+  const sftpTasksFrontend = sftpFrontend;
   const storageRoutesSource = read("src/routes/storage-routes.ts");
   const updateRouteSource = read("src/routes/update-routes.ts");
   const notificationsSource = read("src/notifications.ts");
