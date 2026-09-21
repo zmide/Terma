@@ -12,6 +12,7 @@ interface BackupRestoreRouteDependencies {
   deleteConfigSnapshot(id: string): any;
   ensurePrivateFile(file: string): void;
   exportDatabaseFile(includePasswords: boolean): {cleanup(): void; path: string; size: number};
+  exportConfigSelection(selection: any): any;
   inspectRestoreDatabaseFile(databasePath: string, security: any, credentialBindings: any, identityBindings: any): any;
   listConfigSnapshots(): any[];
   lockEncryption(): void;
@@ -22,6 +23,7 @@ interface BackupRestoreRouteDependencies {
   reopenDatabase(): void;
   requireEncryptionUnlocked(): void;
   restoreConfigSnapshotById(id: string): any;
+  restoreConfigSelection(payload: any): any;
   secureHeaders(headers?: Record<string, string | number>): Record<string, string | number>;
   sendJson(response: ServerResponse, data: unknown, status?: number): void;
   stopAllForwards(): Promise<void> | void;
@@ -80,6 +82,24 @@ export async function handleBackupRestoreRoutes(
     stream.on("close", cleanup);
     response.on("close", cleanup);
     stream.pipe(response);
+    return true;
+  }
+  if (method === "POST" && pathname === "/api/config-selection/export") {
+    dependencies.requireEncryptionUnlocked();
+    const data = await dependencies.readJson(request);
+    dependencies.sendJson(response, dependencies.exportConfigSelection(data?.selection || data || {}));
+    return true;
+  }
+  if (method === "POST" && pathname === "/api/config-selection/import") {
+    dependencies.requireEncryptionUnlocked();
+    const data = await dependencies.readJson(request);
+    const selection = data?.selection || {};
+    if (!selection.connections && !selection.remote_profiles && !selection.forwards && !selection.command_snippets) throw new Error("选择性配置包没有可导入的配置");
+    dependencies.createConfigSnapshot("选择性配置导入前自动快照");
+    if (selection.connections || selection.forwards) await dependencies.stopAllForwards();
+    const result = dependencies.restoreConfigSelection(data);
+    dependencies.clearConnectionHealthCache();
+    dependencies.sendJson(response, result);
     return true;
   }
   if (method === "GET" && pathname === "/api/backup/bundle") {

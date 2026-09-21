@@ -25,7 +25,7 @@ interface SftpTransferRouteDependencies {
   isDesktopRequest(request: IncomingMessage): boolean;
   listRemoteDir(connectionId: number, remotePath: string, options: any): Promise<any>;
   listRemoteFileVersions(connectionId: number, remotePath: string, limit: number): Promise<any>;
-  listRemoteRecycleItems(connectionId: number): Promise<any[]>;
+  listRemoteRecycleItems(connectionId: number, options?: any): Promise<any>;
   makeRemoteDir(connectionId: number, remotePath: string): Promise<any>;
   moveJob(connectionId: number, paths: string[], target: string): any;
   moveRemotePaths(connectionId: number, paths: string[], target: string): Promise<any>;
@@ -208,9 +208,13 @@ export async function handleSftpTransferRoutes(
     return true;
   }
   if (method === "GET" && parts[4] === "trash" && parts.length === 5) {
+    const url = new URL(request.url || pathname, "http://terma.invalid");
     dependencies.sendJson(response, {
       enabled:dependencies.readRuntimeSettings(dependencies.runtimeSettingsFile).sftp_recycle_bin_enabled,
-      items:await dependencies.listRemoteRecycleItems(connectionId)
+      ...(await dependencies.listRemoteRecycleItems(connectionId, {
+        page:url.searchParams.get("page"),
+        page_size:url.searchParams.get("page_size")
+      }))
     });
     return true;
   }

@@ -65,7 +65,12 @@ let editingForwardTemplateId = "";
 let forwardTemplates = [];
 let runningGroupMode = localStorage.getItem("runningGroupMode") || "server";
 let sftpClipboard = null;
-let sftpState = { path: ".", entries: [], query: "", sort: "name", dir: "asc", connectionId: 0, selected: null, page: 1, pageSize: 50, total: 0, totalPages: 1, unfilteredTotal: 0, loading: false, requestSeq: 0 };
+let sftpRecycleBinPage = 1;
+const SFTP_RECYCLE_BIN_PAGE_SIZE = 50;
+const initialSftpPageSize = [25, 50, 100, 200].includes(Number(localStorage.getItem("sftpPageSize")))
+  ? Number(localStorage.getItem("sftpPageSize"))
+  : 50;
+let sftpState = { path: ".", entries: [], query: "", sort: "name", dir: "asc", connectionId: 0, selected: null, page: 1, pageSize: initialSftpPageSize, total: 0, totalPages: 1, unfilteredTotal: 0, loading: false, requestSeq: 0 };
 const sftpDisconnectedTabs = new Set();
 const sftpViewStates = new Map();
 const sftpDirectoryViewCache = new Map();

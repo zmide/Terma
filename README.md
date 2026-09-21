@@ -4,8 +4,6 @@
 
 Terma is a remote connection workspace for desktop and self-hosted Web environments. It brings SSH, terminals, SFTP, remote desktops, port forwarding, and batch commands into one interface.
 
-> Name migration: Terma remains compatible with legacy TunnelDesk data and `TUNNELDESK_*` environment variables. The desktop app offers to migrate old data when it is detected and keeps the old directory available for rollback.
-
 [Download the latest release](https://github.com/zmide/Terma/releases/latest) · [View release history](https://github.com/zmide/Terma/releases) · [GPL-3.0 license](LICENSE)
 
 <p align="center">
@@ -218,8 +216,6 @@ Common environment variables:
 | `TUNNEL_WEB_HOST` | Set the listen address |
 | `TUNNEL_WEB_PORT` | Set the listen port; defaults to `8088` |
 
-Legacy variables such as `TUNNELDESK_WEB_ONLY` and `TUNNELDESK_LAN` remain accepted for compatibility. New scripts and deployments should use `TERMA_*`.
-
 ## Development and verification
 
 ```sh
@@ -273,13 +269,6 @@ Build output is written to `release/`:
 - macOS ZIP: extract and run `Terma.app` without installation. “Installation-free” applies to the app bundle only; runtime data is still stored in the system user-data directory. Choose `x64` for Intel or `arm64` for Apple Silicon.
 
 Pushing a `v*` tag starts the Release workflow, which builds and verifies Windows, Linux, and macOS artifacts separately.
-
-## Upgrading from TunnelDesk
-
-- The new desktop identity is `com.zmide.terma`; the main executable and Linux package use `terma`. The Windows installer, macOS `/Applications/Terma.app`, and Linux application menu all use Terma, and an old TunnelDesk installation is not reused as the new program.
-- Desktop data migrates by default to `%APPDATA%\Terma\runtime` on Windows, `~/.config/Terma/runtime` on Linux, and `~/Library/Application Support/Terma/runtime` on macOS. The old `TunnelDesk` directory is retained only as a migration source and rollback copy.
-- Import/Export > Legacy data migration can inspect and run the migration again. Existing data in both locations is never overwritten silently; confirming a migration first backs up current Terma data.
-- Terma recognizes legacy backups, `TUNNELDESK_*` compatibility variables, and remote `tunneldesk-*` managed configurations. New XDMCP, VNC, and SSH X11 configurations use the `terma` name. Do not manually delete old configurations or applications before migration succeeds.
 
 ## Data and security
 

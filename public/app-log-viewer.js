@@ -1,3 +1,37 @@
+const logViewerSearchTimers = new Map();
+
+function rememberLogViewerScroll(tabKey=activeTabKey) {
+  const state = logViewerStates.get(String(tabKey || ""));
+  const view = logViewerElement(tabKey);
+  const container = logViewerScrollContainer(view);
+  if (!state || !container) return;
+  state.scrollTop = Number(container.scrollTop || 0);
+}
+
+function logViewerMatchIndex(state) {
+  const matches = state?.matches || [];
+  const activeLine = Number(state?.activeMatchLine || 0);
+  if (activeLine > 0) {
+    const byLine = matches.findIndex(match => Number(match?.line || 0) === activeLine);
+    if (byLine >= 0) return byLine;
+  }
+  const index = Number(state?.matchIndex);
+  return Number.isInteger(index) && index >= 0 && index < matches.length ? index : -1;
+}
+
+function logViewerActiveMatch(state) {
+  const matches = state?.matches || [];
+  const index = logViewerMatchIndex(state);
+  const fallback = index >= 0 ? matches[index] : null;
+  const line = Number(state?.activeMatchLine || fallback?.line || state?.targetLine || 0);
+  if (!line) return null;
+  return {
+    line,
+    text: state?.activeMatchText !== undefined ? String(state.activeMatchText || "") : String(fallback?.text || ""),
+    index
+  };
+}
+
 async function openLog(path, title, updateTab=true, existingKey="", searchQuery=undefined, targetLine=0) {
   const paneId = typeof currentWorkspacePaneId === "function" ? currentWorkspacePaneId() : "";
   const inPane = action => typeof runInWorkspacePane === "function" ? runInWorkspacePane(paneId, action) : action();
@@ -5,6 +39,25 @@ async function openLog(path, title, updateTab=true, existingKey="", searchQuery=
   const tabKey = existingKey || (!updateTab && currentTab?.kind === "log" ? currentTab.key : `log-${path}`);
   const sourceTitle = String(title || tr("common:log_viewer.default_title", {defaultValue:"Log"}));
   const displayTitle = typeof localizedLogLabel === "function" ? localizedLogLabel(sourceTitle) : sourceTitle;
+  const cached = logViewerStates.get(tabKey);
+  const canRestore = !updateTab && searchQuery === undefined && !Number(targetLine || 0)
+    && cached && Object.prototype.hasOwnProperty.call(cached, "text")
+    && String(cached.path || "") === String(path || "");
+  if (canRestore) {
+    inPane(() => {
+      setWorkspace(displayTitle, tr("common:log_viewer.workspace_title", {defaultValue:"Log viewer"}), "log", tabKey, false, true, {kind:"log", path, logTitleSource:sourceTitle});
+      logViewerState = cached;
+      cached.sourceTitle = sourceTitle;
+      cached.title = displayTitle;
+      const view = logViewerElement(tabKey);
+      if (view?.dataset.logTabKey === String(tabKey) && view.querySelector(".log-view")) {
+        positionLogViewerScroll(logViewerScrollContainer(view), "restore", {top:Number(cached.scrollTop || 0)});
+      } else {
+        renderLogViewer(cached, tabKey, "restore");
+      }
+    });
+    return;
+  }
   inPane(() => {
     setWorkspace(displayTitle, tr("common:log_viewer.workspace_title", {defaultValue:"Log viewer"}), "log", tabKey, updateTab, true, {kind:"log", path, logTitleSource:sourceTitle});
     const view = logViewerElement(tabKey);
@@ -23,7 +76,9 @@ async function openLog(path, title, updateTab=true, existingKey="", searchQuery=
       text:result.text || "", matches, matches_truncated:Boolean(result.matches_truncated),
       has_older:Boolean(result.has_older), has_newer:Boolean(result.has_newer),
       startLine:Number(result.start_line || 0), targetLine:Number(result.target_line || targetLine || 0),
-      matchIndex:selectedIndex, detailSearchOpen:Boolean(query.trim())
+      matchIndex:selectedIndex, activeMatchLine:selectedIndex >= 0 ? Number(matches[selectedIndex]?.line || 0) : 0,
+      activeMatchText:selectedIndex >= 0 ? String(matches[selectedIndex]?.text || "") : "",
+      detailSearchOpen:Boolean(query.trim()), scrollTop:0
     };
     logViewerStates.set(tabKey, state);
     logViewerState = state;
@@ -65,7 +120,9 @@ function positionLogViewerScroll(container, mode="end", previous={}) {
   if (!container) return;
   const apply = () => {
     if (!container.isConnected) return;
-    if (mode === "preserve") {
+    if (mode === "restore") {
+      container.scrollTop = Number(previous.top || 0);
+    } else if (mode === "preserve") {
       container.scrollTop = Number(previous.top || 0) + Math.max(0, container.scrollHeight - Number(previous.height || 0));
     } else if (mode === "end") {
       container.scrollTop = container.scrollHeight;
@@ -96,8 +153,16 @@ function renderLogViewer(state=currentLogViewerState(), tabKey=activeTabKey, scr
   if (!state) return;
   const view = logViewerElement(tabKey);
   if (!view) return;
+  const targetScrollRequestId = Number(state.targetScrollRequestId || 0) + 1;
+  state.targetScrollRequestId = targetScrollRequestId;
+  view.dataset.logTabKey = String(tabKey || "");
   const scrollContainer = logViewerScrollContainer(view);
   const previousScroll = {top:scrollContainer?.scrollTop || 0, height:scrollContainer?.scrollHeight || 0};
+  const focusedSearch = document.activeElement?.matches?.("[data-input-action=\"log-detail-search\"]")
+    && document.activeElement.dataset.tabKey === String(tabKey);
+  const searchSelection = focusedSearch
+    ? {start:Number(document.activeElement.selectionStart || 0), end:Number(document.activeElement.selectionEnd || 0)}
+    : null;
   const matches = state.matches || [];
   const query = String(state.query ?? logSearch ?? "");
   const matchCount = matches.length;
@@ -122,8 +187,23 @@ function renderLogViewer(state=currentLogViewerState(), tabKey=activeTabKey, scr
   const logActions = `<div class="actions log-view-actions"><button type="button" data-action="log-ai-open" data-tab-key="${escAttr(tabKey)}" title="${escAttr(aiLabel)}">${icon("sparkles")}<span>${esc(aiLabel)}</span></button>${window.termaDesktop ? `<button type="button" data-action="log-open-external" data-tab-key="${escAttr(tabKey)}" title="${escAttr(externalLabel)}">${icon("external-link")}<span>${esc(externalLabel)}</span></button>` : ""}</div>`;
   view.innerHTML = `${detailSearch}${logActions}${older}<pre class="log-view" data-i18n-skip>${renderLogTextLines(localizedSystemLogText(state.text || tr("common:log_display.empty", {defaultValue:"Log is empty"}), state), query, state)}</pre>`;
   refreshIcons();
-  positionLogViewerScroll(logViewerScrollContainer(view), scrollMode, previousScroll);
-  if (scrollMode === "target") scrollLogViewerTarget(state, view);
+  const nextScroll = scrollMode === "restore" ? {top:Number(state.scrollTop || 0), height:previousScroll.height} : previousScroll;
+  const nextContainer = logViewerScrollContainer(view);
+  positionLogViewerScroll(nextContainer, scrollMode, nextScroll);
+  nextContainer?.addEventListener("scroll", () => { state.scrollTop = Number(nextContainer.scrollTop || 0); }, {passive:true});
+  if (focusedSearch) {
+    requestAnimationFrame(() => {
+      const input = logViewerElement(tabKey)?.querySelector("[data-input-action=\"log-detail-search\"]");
+      if (!input) return;
+      input.focus({preventScroll:true});
+      if (searchSelection) {
+        const end = Math.min(input.value.length, searchSelection.end);
+        const start = Math.min(end, searchSelection.start);
+        try { input.setSelectionRange(start, end); } catch {}
+      }
+    });
+  }
+  if (scrollMode === "target") scrollLogViewerTarget(state, view, targetScrollRequestId);
 }
 
 function showLogDetailSearch(tabKey=activeTabKey) {
@@ -153,19 +233,66 @@ function hideLogDetailSearch(tabKey=activeTabKey) {
 function renderLogTextLines(text, query, state={}) {
   const lines = String(text || "").split("\n");
   const firstLine = Number(state.startLine || 0);
+  const selectedMatch = logViewerActiveMatch(state);
+  const currentLine = Number(selectedMatch?.line || 0);
+  const terms = String(query || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const lineHasQuery = line => terms.length > 0 && terms.some(term => String(line || "").toLowerCase().includes(term));
+  const matchingLineIndexes = lines.map((line, index) => lineHasQuery(line) ? index : -1).filter(index => index >= 0);
+  const normalizeMatchText = value => String(value || "").replace(/\s+/g, " ").trim();
+  const matchTargetText = match => {
+    if (!match?.text || !match?.line) return "";
+    const prefix = `${match.line}:`;
+    const row = String(match.text).split(/\\r?\\n/).find(value => value.startsWith(prefix));
+    return normalizeMatchText(row ? row.slice(prefix.length) : "");
+  };
+  const targetText = normalizeMatchText(matchTargetText(selectedMatch));
+  let currentIndex = currentLine > 0 && firstLine > 0 ? currentLine - firstLine : -1;
+  if (targetText) {
+    const targetLineIndexes = lines.map((line, index) => lineHasQuery(line) && normalizeMatchText(line).includes(targetText) ? index : -1).filter(index => index >= 0);
+    const activeIndex = Number(selectedMatch?.index ?? logViewerMatchIndex(state));
+    const sameTextOrdinal = activeIndex >= 0
+      ? (state.matches || []).slice(0, activeIndex + 1).map(matchTargetText).filter(value => value === targetText).length - 1
+      : 0;
+    if (targetLineIndexes.length) currentIndex = targetLineIndexes[Math.max(0, Math.min(targetLineIndexes.length - 1, sameTextOrdinal))];
+  }
+  if (currentIndex < 0 || currentIndex >= lines.length || !lineHasQuery(lines[currentIndex])) {
+    currentIndex = -1;
+  }
+  if (currentIndex < 0 && matchingLineIndexes.length) {
+    const visibleOrdinal = Number(selectedMatch?.index ?? state.matchIndex);
+    currentIndex = Number.isInteger(visibleOrdinal) && visibleOrdinal >= 0 && visibleOrdinal < matchingLineIndexes.length
+      ? matchingLineIndexes[visibleOrdinal]
+      : matchingLineIndexes[matchingLineIndexes.length - 1];
+  }
   return lines.map((line, index) => {
     const lineNumber = firstLine > 0 ? firstLine + index : 0;
     const anchor = lineNumber > 0 ? ` data-log-line="${lineNumber}"` : "";
-    return `<span class="log-line"${anchor}>${highlightLogText(line, query)}</span>`;
+    const current = index === currentIndex;
+    const currentAttr = current ? ` data-log-current="true"` : "";
+    return `<span class="log-line"${anchor}${currentAttr}>${highlightLogText(line, query, current)}</span>`;
   }).join("\n");
 }
 
-function scrollLogViewerTarget(state, view) {
+function scrollLogViewerTarget(state, view, requestId=Number(state?.targetScrollRequestId || 0)) {
   const targetLine = Number(state?.targetLine || 0);
   if (!targetLine || !view) return;
+  const container = logViewerScrollContainer(view);
+  if (!container) return;
+  const isCurrentRequest = () => Number(state?.targetScrollRequestId || 0) === Number(requestId) && container.isConnected && view.isConnected;
   const scroll = () => {
-    const target = view.querySelector(`[data-log-line="${targetLine}"]`);
-    if (target) target.scrollIntoView({block:"center", inline:"nearest"});
+    if (!isCurrentRequest()) return;
+    const target = view.querySelector('[data-log-current="true"]') || view.querySelector(`[data-log-line="${targetLine}"]`);
+    if (!target) return;
+    const marker = target.querySelector("mark.log-search-current") || target;
+    const rects = marker.getClientRects?.() || [];
+    const rect = [...rects].find(item => item.width > 0 && item.height > 0) || marker.getBoundingClientRect();
+    if (!rect || !rect.height || !container.clientHeight) return;
+    const containerRect = container.getBoundingClientRect();
+    const targetCenter = rect.top + rect.height / 2;
+    const containerCenter = containerRect.top + container.clientHeight / 2;
+    const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    const nextScrollTop = container.scrollTop + targetCenter - containerCenter;
+    container.scrollTop = Math.max(0, Math.min(maxScrollTop, nextScrollTop));
   };
   requestAnimationFrame(() => { scroll(); requestAnimationFrame(scroll); });
 }
@@ -189,13 +316,18 @@ async function loadOlderLog(tabKey=activeTabKey) {
 }
 
 
-function highlightLogText(text, query=logSearch) {
+function highlightLogText(text, query=logSearch, current=false) {
   const escaped = esc(text);
   const q = String(query || "").trim();
   if (!q) return escaped;
   const parts = q.split(/\s+/).filter(Boolean).map(escapeRegExp);
   if (!parts.length) return escaped;
-  return escaped.replace(new RegExp(`(${parts.join("|")})`, "gi"), `<mark>$1</mark>`);
+  let currentApplied = false;
+  return escaped.replace(new RegExp(`(${parts.join("|")})`, "gi"), match => {
+    const active = current && !currentApplied;
+    currentApplied ||= active;
+    return `<mark${active ? ` class="log-search-current"` : ""}>${match}</mark>`;
+  });
 }
 
 function escapeRegExp(text) {
@@ -253,6 +385,8 @@ async function loadLogViewerMatch(state, tabKey, matchIndex) {
     state.matches = result.matches || matches;
     state.matches_truncated = Boolean(result.matches_truncated);
     state.matchIndex = nextIndex;
+    state.activeMatchLine = Number(match.line || 0);
+    state.activeMatchText = String(match.text || "");
     logViewerState = state;
     renderLogViewer(state, tabKey, "target");
   });
@@ -261,11 +395,15 @@ async function loadLogViewerMatch(state, tabKey, matchIndex) {
 async function setLogViewerSearch(value, tabKey=activeTabKey) {
   const state = currentLogViewerState(tabKey);
   if (!state) return;
+  clearTimeout(logViewerSearchTimers.get(String(tabKey || "")) || 0);
+  logViewerSearchTimers.delete(String(tabKey || ""));
   const query = String(value || "").trim();
   const requestId = Number(state.detailSearchRequestId || 0) + 1;
   state.detailSearchRequestId = requestId;
   state.query = query;
   state.matchIndex = -1;
+  state.activeMatchLine = 0;
+  state.activeMatchText = "";
   state.targetLine = 0;
   if (!query) {
     state.matches = [];
@@ -293,6 +431,13 @@ function scheduleLogViewerSearch(value, tabKey=activeTabKey) {
   const state = currentLogViewerState(tabKey);
   if (!state) return;
   state.pendingSearchQuery = String(value || "");
+  const key = String(tabKey || "");
+  clearTimeout(logViewerSearchTimers.get(key) || 0);
+  const timer = setTimeout(() => {
+    logViewerSearchTimers.delete(key);
+    void setLogViewerSearch(state.pendingSearchQuery, tabKey);
+  }, 180);
+  logViewerSearchTimers.set(key, timer);
 }
 
 async function moveLogViewerSearch(delta, tabKey=activeTabKey) {

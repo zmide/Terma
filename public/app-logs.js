@@ -13,7 +13,12 @@ function currentLogViewerState(tabKey=activeTabKey) {
 }
 
 function disposeLogViewerState(tabKey) {
-  logViewerStates.delete(String(tabKey || ""));
+  const key = String(tabKey || "");
+  logViewerStates.delete(key);
+  if (typeof logViewerSearchTimers !== "undefined") {
+    clearTimeout(logViewerSearchTimers.get(key) || 0);
+    logViewerSearchTimers.delete(key);
+  }
 }
 
 function setLogSearch(value) {

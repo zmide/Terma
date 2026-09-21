@@ -2,29 +2,95 @@
 
 ## Next release draft / 下一版草稿
 
-[English](#v1-7-5-english) · [简体中文](#v1-7-5-zh)
+[English](#v1-7-6-english) · [简体中文](#v1-7-6-zh)
 
-<a id="v1-7-5-english"></a>
+<a id="v1-7-6-english"></a>
 ### English
 
-> The v1.7.5 draft will continue recoverable terminal, interoperability, and cross-platform remote desktop work.
+> The v1.7.6 draft continues recoverable-session, interoperability, and cross-platform remote desktop acceptance.
 
 #### Planned
 
 - Complete real network and reload acceptance for recoverable sessions on Linux, macOS, Windows fallback, and browser mode.
 - Expand terminal AI interoperability tests with additional OpenAI-compatible gateways while keeping command execution and MCP approval boundaries unchanged.
-- Complete real TigerVNC/noVNC/system-client clipboard acceptance for text, Chinese and image transfer on all three desktop platforms.
+- Complete real TigerVNC/noVNC/system-client clipboard acceptance for text, Chinese, and image transfer on all three desktop platforms.
 
-<a id="v1-7-5-zh"></a>
+<a id="v1-7-6-zh"></a>
 ### 简体中文
 
-> v1.7.5 草稿继续推进可恢复终端、互操作场景和跨平台远程桌面验收。
+> v1.7.6 草稿继续推进可恢复会话、互操作场景和跨平台远程桌面验收。
 
 #### 计划
 
 - 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
+
+## v1.7.5
+
+[English](#v1-7-5-english) · [简体中文](#v1-7-5-zh)
+
+<a id="v1-7-5-english"></a>
+### English
+
+> This release makes log navigation dependable, adds practical SFTP recycle-bin and configuration export controls, and removes obsolete migration UI. macOS packages remain unsigned and are tracked in [Issue #36](https://github.com/zmide/Terma/issues/36).
+
+#### Important fixes
+
+- Log detail search now updates while typing, maps repeated text to the correct match, gives the active match a distinct highlight, and centers it in the real log viewport without moving the surrounding workspace.
+- Switching away from an open log and back no longer refreshes the file or loses the current scroll position.
+
+#### Important additions
+
+- SFTP recycle-bin entries now support pagination, and the directory page-size choice is remembered across sessions.
+- Added selective configuration packages for SSH connections, other connections, forwarding rules, and batch commands. Passwords are excluded by default and require explicit confirmation to export or import.
+
+#### Other improvements
+
+- The import/export page now explains that database backups contain database data only; runtime settings and log files are not included.
+- Removed the obsolete legacy-data migration entry and automatic merge path; current configuration and storage-path migration remain available.
+- Reworked SFTP recycle-bin file badges so ZIP, 7Z, and other extensions stay inside the icon instead of overlapping the row below.
+
+#### Known issue
+
+- macOS packages are currently not code-signed or notarized, so Gatekeeper may report that Terma is damaged or cannot be opened. See [Issue #36](https://github.com/zmide/Terma/issues/36) for the temporary workaround.
+
+#### Changes in this release
+
+- Direct maintenance changes after v1.7.4; no merged pull requests were included in this range.
+
+**Full Changelog**: [v1.7.4...v1.7.5](https://github.com/zmide/Terma/compare/v1.7.4...v1.7.5)
+
+<a id="v1-7-5-zh"></a>
+### 简体中文
+
+> 本版让日志定位更可靠，新增实用的 SFTP 回收站和配置导出控制，并移除已过时的迁移界面。macOS 发布包仍未签名，继续由 [Issue #36](https://github.com/zmide/Terma/issues/36) 跟踪。
+
+#### 重要修复
+
+- 日志详情搜索现在输入即更新，重复文本会定位到正确的匹配项，当前匹配使用独立高亮，并居中到实际日志可视区域，不再带动外层工作区滚动。
+- 切换到其他标签再返回日志时不再重新刷新文件，也不会丢失当前滚动位置。
+
+#### 重要新增
+
+- SFTP 回收站支持分页，目录每页数量选择会跨会话记住。
+- 新增选择性配置包，可选择 SSH 连接、其他连接、转发配置和批量命令；密码默认不导出，导出或导入密码都需要明确确认。
+
+#### 其他优化
+
+- 导入导出页面明确说明：数据库备份只包含数据库数据，不包含运行设置和日志文件。
+- 移除已不再需要的旧版数据迁移入口和自动合并流程；当前配置与数据路径迁移仍保留。
+- 优化 SFTP 回收站文件角标，ZIP、7Z 等扩展名会固定在图标内部，不再压到下一行内容。
+
+#### 已知问题
+
+- macOS 发布包目前尚未完成代码签名和公证，Gatekeeper 可能提示 Terma 已损坏或无法打开。临时处理方法见 [Issue #36](https://github.com/zmide/Terma/issues/36)。
+
+#### 本次变更
+
+- v1.7.4 之后的直接维护改动；本范围没有合并 Pull Request。
+
+**完整变更**：[v1.7.4...v1.7.5](https://github.com/zmide/Terma/compare/v1.7.4...v1.7.5)
 
 ## v1.7.4
 

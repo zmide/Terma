@@ -64,6 +64,14 @@ const sftpTabRuntimes = new Map();
 const sftpTabCounts = new Map();
 let sftpActiveRuntimeKey = "";
 
+const SFTP_PAGE_SIZE_OPTIONS = Object.freeze([25, 50, 100, 200]);
+const SFTP_PAGE_SIZE_STORAGE_KEY = "sftpPageSize";
+
+function rememberedSftpPageSize() {
+  const value = Number(localStorage.getItem(SFTP_PAGE_SIZE_STORAGE_KEY));
+  return SFTP_PAGE_SIZE_OPTIONS.includes(value) ? value : 50;
+}
+
 function defaultSftpState(connectionId=0, remotePath=".") {
   return {
     path:remotePath || ".",
@@ -76,7 +84,7 @@ function defaultSftpState(connectionId=0, remotePath=".") {
     connectionId:Number(connectionId || 0),
     selected:null,
     page:1,
-    pageSize:50,
+    pageSize:rememberedSftpPageSize(),
     total:0,
     totalPages:1,
     unfilteredTotal:0,

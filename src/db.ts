@@ -145,7 +145,7 @@ function duplicateNamedWorkspace(id) { return productivityRepository.duplicateNa
 function useNamedWorkspace(id) { return productivityRepository.useNamedWorkspace(id); }
 function deleteNamedWorkspace(id) { return productivityRepository.deleteNamedWorkspace(id); }
 
-const { exportConfigSnapshot, restoreConfigSnapshot } = createConfigSnapshotService({cleanRemoteProfile, cleanForward});
+const { exportConfigSnapshot, restoreConfigSnapshot, exportConfigSelection, restoreConfigSelection } = createConfigSnapshotService({cleanRemoteProfile, cleanForward});
 
 ensureBuiltinForwardTemplates();
 
@@ -227,6 +227,8 @@ module.exports = {
   applyForwardTemplate,
   exportConfigSnapshot,
   restoreConfigSnapshot,
+  exportConfigSelection,
+  restoreConfigSelection,
   ensureBuiltinForwardTemplates,
   closeDatabase,
   reopenDatabase,

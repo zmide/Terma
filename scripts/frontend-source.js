@@ -64,7 +64,8 @@ const FRONTEND_DOMAINS = Object.freeze({
     "app-sftp-transfer.js",
     "app-sftp-menus.js",
     "app-sftp-task-center-layout.js",
-    "app-sftp-tasks.js"
+    "app-sftp-tasks.js",
+    "app-sftp-recycle.js"
   ],
   productivity: [
     "app-sftp-sync.js",

@@ -357,9 +357,7 @@ for (const entry of fs.readdirSync(path.join(root, "desktop"), {withFileTypes:tr
         argument !== chineseArgument
         && sourceNodeLiteralValues(argument).some(candidate => candidate && !/[\u3400-\u9fff]/.test(candidate) && /[a-z]/i.test(candidate))
       )));
-      const legacyDataPattern = relative === "desktop/brand-data-migration.js"
-        && sourceLiteralInsideNamedFunction(node, "isLegacyCopyName");
-      if ((!selectorCall || !hasEnglishPair) && !legacyDataPattern) {
+      if (!selectorCall || !hasEnglishPair) {
         const position = source.getLineAndCharacterOfPosition(node.getStart(source));
         desktopLiteralErrors.push(`${relative}:${position.line + 1} ${phraseSkeleton(value)}`);
       }
@@ -713,7 +711,6 @@ for (const nativeText of ["Open in browser", "Start all forwarding", "Stop all f
   assert.ok(read("desktop/main.js").includes(nativeText), `desktop native UI is missing English text: ${nativeText}`);
 }
 for (const [relative, helper] of [
-  ["desktop/brand-data-migration.js", "migrationText"],
   ["desktop/storage-migration.js", "storageMigrationText"],
   ["desktop/windows-rdp-credentials.js", "windowsRdpCredentialText"]
 ]) {

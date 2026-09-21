@@ -361,9 +361,21 @@
         <label data-i18n="settings:auto.restore_database">恢复数据库 / 加密迁移包</label>
         <div class="upload-line"><label class="file-picker"><input id="db_restore_upload" type="file" accept=".db,.json,.termabackup,.tdbackup,.tdbackup.json,application/json,application/octet-stream,*/*" data-change-action="static-file-picker"><span class="file-picker-button" data-i18n="common:auto.choose_file">选择文件</span><span class="file-picker-name" data-i18n="common:auto.not_selected">未选择文件</span></label><button class="danger" data-action="static-backup-restore" data-i18n="settings:auto.upload_restore">上传恢复</button></div>
         <div id="backupBundleNote" class="muted" data-i18n-skip="true">普通备份使用 .db 文件；启用配置加密后会显示 .termabackup 加密迁移包下载入口。</div>
-        <div class="import-export-config legacy-brand-migration-block">
-          <h3><i data-lucide="refresh-cw"></i><span data-i18n="settings:auto.legacy_migration">旧版数据迁移</span></h3>
-          <div id="legacyBrandMigration"></div>
+        <div class="import-export-config config-selection-block">
+          <h3><i data-lucide="list-checks"></i><span data-i18n="settings:auto.config_selection_title">选择性配置导入导出</span></h3>
+          <div class="muted" data-i18n="settings:auto.config_selection_hint">可单独选择要迁移的配置。不会包含运行设置和日志；也不会包含私钥文件本体。</div>
+          <div class="config-selection-options">
+            <label><input id="configSelectionConnections" type="checkbox" checked><span data-i18n="settings:auto.config_selection_connections">SSH 连接</span></label>
+            <label><input id="configSelectionRemoteProfiles" type="checkbox" checked><span data-i18n="settings:auto.config_selection_remote_profiles">其他连接</span></label>
+            <label><input id="configSelectionForwards" type="checkbox" checked><span data-i18n="settings:auto.config_selection_forwards">转发配置</span></label>
+            <label><input id="configSelectionCommandSnippets" type="checkbox" checked><span data-i18n="settings:auto.config_selection_command_snippets">批量命令配置</span></label>
+            <label><input id="configSelectionPasswords" type="checkbox"><span data-i18n="settings:auto.config_selection_passwords">密码（默认不导出）</span></label>
+          </div>
+          <div class="actions">
+            <button data-action="static-config-selection-export" data-i18n="settings:auto.config_selection_export">导出所选配置</button>
+            <label class="file-picker"><input id="config_selection_upload" type="file" accept=".json,.terma-config.json,application/json" data-change-action="static-file-picker"><span class="file-picker-button" data-i18n="common:auto.choose_file">选择文件</span><span class="file-picker-name" data-i18n="common:auto.not_selected">未选择文件</span></label>
+            <button class="primary" data-action="static-config-selection-import" data-i18n="settings:auto.config_selection_import">导入所选配置</button>
+          </div>
         </div>
       </section>
     </div>
@@ -444,6 +456,7 @@
 <script src="/app-sftp-menus.js?v=__TERMA_VERSION__"></script>
 <script src="/app-sftp-task-center-layout.js?v=__TERMA_VERSION__"></script>
 <script src="/app-sftp-tasks.js?v=__TERMA_VERSION__"></script>
+<script src="/app-sftp-recycle.js?v=__TERMA_VERSION__"></script>
 <script src="/app-local-files-columns.js?v=__TERMA_VERSION__"></script>
 <script src="/app-local-files.js?v=__TERMA_VERSION__"></script>
 <script src="/app-workspace-transfer.js?v=__TERMA_VERSION__"></script>

@@ -55,7 +55,9 @@ const {
   databaseRevision,
   closeDatabase,
   reopenDatabase,
-  exportDatabaseFile
+  exportDatabaseFile,
+  exportConfigSelection,
+  restoreConfigSelection
 } = require("./db");
 const {
   listIdentityFiles,
@@ -496,9 +498,9 @@ async function handleApi(req, res, pathname) {
   if (await handleBackupRestoreRoutes(req, res, pathname, {
     clearConnectionHealthCache, closeDatabase, createConfigSnapshot, createDatabaseBundleHeader,
     databaseTransferStore, dbPath:DB_PATH, deleteConfigSnapshot, ensurePrivateFile,
-    exportDatabaseFile, inspectRestoreDatabaseFile, listConfigSnapshots, lockEncryption,
+    exportConfigSelection, exportDatabaseFile, inspectRestoreDatabaseFile, listConfigSnapshots, lockEncryption,
     normalizeRestoredCredentials, readJson, readSecuritySettings, reconcileEncryptionStateAtStartup,
-    reopenDatabase, requireEncryptionUnlocked, restoreConfigSnapshotById, secureHeaders,
+    reopenDatabase, requireEncryptionUnlocked, restoreConfigSelection, restoreConfigSnapshotById, secureHeaders,
     sendJson, stopAllForwards, writeSecuritySettings
   })) return;
   if (await handleCommandResourceRoutes(req, res, pathname, {readJson, sendJson})) return;

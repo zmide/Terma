@@ -584,6 +584,7 @@ function setSftpPageSize(value, tabKey=activeTabKey) {
   clearTimeout(runtime.searchTimer);
   const pageSize = Number(value);
   if (![25,50,100,200].includes(pageSize) || pageSize === runtime.state.pageSize) return;
+  localStorage.setItem("sftpPageSize", String(pageSize));
   runtime.state.pageSize = pageSize;
   runtime.state.page = 1;
   const list = sftpElement("sftpList", tabKey);

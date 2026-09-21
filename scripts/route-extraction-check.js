@@ -542,8 +542,6 @@ async function checkSystemRoutes() {
   assert.equal(await handleSystemRoutes({method:"GET"}, output.response, "/api/unknown", dependencies), false);
   assert.equal(await handleSystemRoutes({method:"GET"}, output.response, "/api/about", dependencies), true);
   assert.deepEqual(output.sent.pop(), {data:{product_name:"Terma"}, status:200});
-  assert.equal(await handleSystemRoutes({method:"POST"}, output.response, "/api/legacy-brand-migration", dependencies), true);
-  assert.deepEqual(output.sent.pop(), {data:{error:"旧版数据迁移仅能在运行 Terma 的本机桌面版中执行"}, status:403});
   assert.equal(await handleSystemRoutes({method:"GET", url:"/api/notifications?since=42"}, output.response, "/api/notifications", dependencies), true);
   assert.deepEqual(output.sent.pop(), {data:[{since:42}], status:200});
 }
@@ -689,10 +687,15 @@ async function checkBackupRestoreRoutes() {
   const snapshotDependencies = {
     clearConnectionHealthCache:() => snapshotCalls.push("clear"),
     createConfigSnapshot:reason => snapshotCalls.push(`snapshot:${reason}`),
+    exportConfigSelection:selection => ({type:"terma-config-selection", selection, data:{}}),
     readJson:async () => ({}),
     requireEncryptionUnlocked:() => snapshotCalls.push("unlock"),
     restoreConfigSnapshotById:id => {
       snapshotCalls.push(`restore:${id}`);
+      return {ok:true};
+    },
+    restoreConfigSelection:payload => {
+      snapshotCalls.push(`selection-import:${payload.type}`);
       return {ok:true};
     },
     sendJson:output.sendJson,
@@ -701,6 +704,16 @@ async function checkBackupRestoreRoutes() {
   assert.equal(await handleBackupRestoreRoutes({method:"GET"}, output.response, "/api/about", snapshotDependencies), false);
   assert.equal(await handleBackupRestoreRoutes({method:"POST"}, output.response, "/api/config-snapshots/snapshot-1/restore", snapshotDependencies), true);
   assert.deepEqual(snapshotCalls, ["unlock", "snapshot:回滚前自动快照", "stop", "restore:snapshot-1", "clear"]);
+  snapshotCalls.length = 0;
+  const selectionPayload = {selection:{connections:true, remote_profiles:false, forwards:false, command_snippets:false, passwords:false}};
+  snapshotDependencies.readJson = async () => selectionPayload;
+  assert.equal(await handleBackupRestoreRoutes({method:"POST"}, output.response, "/api/config-selection/export", snapshotDependencies), true);
+  assert.deepEqual(output.sent.pop(), {status:200, data:{type:"terma-config-selection", selection:selectionPayload.selection, data:{}}});
+  assert.deepEqual(snapshotCalls, ["unlock"]);
+  snapshotCalls.length = 0;
+  snapshotDependencies.readJson = async () => ({type:"terma-config-selection", version:1, selection:selectionPayload.selection, data:{}});
+  assert.equal(await handleBackupRestoreRoutes({method:"POST"}, output.response, "/api/config-selection/import", snapshotDependencies), true);
+  assert.deepEqual(snapshotCalls, ["unlock", "snapshot:选择性配置导入前自动快照", "stop", "selection-import:terma-config-selection", "clear"]);
 
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "terma-route-restore-"));
   const databasePath = path.join(temporary, "terma.db");

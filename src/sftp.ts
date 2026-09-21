@@ -980,9 +980,23 @@ async function recycleRemotePath(connectionId, remotePath) {
   return { ok: true, recycled: true, id, original_path: originalPath, deleted_at: deletedAt };
 }
 
-async function listRemoteRecycleItems(connectionId) {
+async function listRemoteRecycleItems(connectionId, options: any = {}) {
   const connection = getSftpConnection(connectionId);
-  return parseRemoteRecycleItems((await runRemote(connection, buildListRemoteRecycleCommand())).toString("utf8"));
+  const allItems = parseRemoteRecycleItems((await runRemote(connection, buildListRemoteRecycleCommand())).toString("utf8"));
+  const requestedPage = Number(options.page || 1);
+  const requestedPageSize = Number(options.page_size || 50);
+  const pageSize = [25, 50, 100, 200].includes(requestedPageSize) ? requestedPageSize : 50;
+  const total = allItems.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const page = Math.min(Math.max(1, Number.isFinite(requestedPage) ? Math.trunc(requestedPage) : 1), totalPages);
+  const offset = (page - 1) * pageSize;
+  return {
+    items:allItems.slice(offset, offset + pageSize),
+    page,
+    page_size:pageSize,
+    total,
+    total_pages:totalPages
+  };
 }
 
 async function restoreRemoteRecycleItem(connectionId, itemId, storage = "terma") {

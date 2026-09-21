@@ -1912,7 +1912,8 @@ body.sftp-task-center-open .notification-stack { z-index:9; }
 .log-view { flex:1 1 auto; min-height:0; margin:0; white-space:pre-wrap; overflow:auto; background:var(--panel); color:var(--text); border-radius:4px; padding:14px; }
 .log-view .log-line { scroll-margin-top:64px; }
 .log-line { display:inline; }
-.log-view mark { background:#f5d76e; color:#111827; border-radius:2px; padding:0 1px; }
+.log-view mark { background:color-mix(in srgb,var(--warn) 42%,transparent); color:var(--text); border-radius:2px; padding:0 1px; }
+.log-view mark.log-search-current { background:color-mix(in srgb,var(--accent2) 88%,var(--panel)); color:var(--panel); outline:1px solid color-mix(in srgb,var(--accent2) 82%,var(--text)); box-shadow:0 0 0 2px color-mix(in srgb,var(--accent2) 28%,transparent); font-weight:800; }
 .compact-log-context { display:grid; gap:8px; }
 .compact-log-context span { color:var(--muted); font-size:12px; }
 .compact-log-context pre { margin:0; max-height:180px; overflow:auto; white-space:pre-wrap; background:var(--panel); color:var(--text); border-radius:4px; padding:10px; }
@@ -2101,9 +2102,11 @@ body.sftp-task-center-open .notification-stack { z-index:9; }
 .import-export-config { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
 .import-export-config > h3 { display:flex; align-items:center; gap:7px; margin:0 0 10px; font-size:14px; }
 .import-export-config > h3 svg { width:17px; height:17px; color:var(--accent2); }
-.legacy-brand-migration-content { display:grid; gap:8px; min-width:0; }
-.legacy-brand-migration-content .muted { min-width:0; overflow-wrap:anywhere; }
-.legacy-brand-migration-content code { white-space:normal; overflow-wrap:anywhere; }
+.config-selection-options { display:flex; flex-wrap:wrap; gap:8px 16px; margin:10px 0; }
+.config-selection-options label { display:inline-flex; align-items:center; gap:6px; min-width:0; }
+.config-selection-options input { accent-color:var(--accent); }
+.config-selection-block .actions { flex-wrap:wrap; align-items:center; }
+.config-selection-block .file-picker { min-width:190px; }
 .import-connection-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .import-connection-head label { display:flex; align-items:center; gap:6px; margin:0; color:var(--muted); }
 .import-connection-head input { width:90px; padding:5px 7px; }
@@ -4291,6 +4294,17 @@ details.advanced-settings > :not(summary) { margin-left:12px; margin-right:12px;
 .sftp-recycle-item { min-width:0; display:grid; grid-template-columns:32px minmax(0,1fr) auto; gap:8px; align-items:center; padding:7px; border:1px solid var(--line); border-radius:5px; background:var(--panel); }
 .sftp-recycle-icon { width:32px; height:32px; display:grid; place-items:center; color:var(--accent2); background:var(--field); border-radius:4px; }
 .sftp-recycle-icon svg { width:16px; height:16px; }
+.sftp-recycle-icon.dir { color:var(--accent2); }
+.sftp-recycle-icon.script { color:#16815d; }
+.sftp-recycle-icon.config { color:#8a5a00; }
+.sftp-recycle-icon.code { color:#2563a8; }
+.sftp-recycle-icon.log { color:#a33a32; }
+.sftp-recycle-icon.archive { color:#7b4ab0; }
+.sftp-recycle-icon.image, .sftp-recycle-icon.media { color:#b24777; }
+.sftp-recycle-icon.data { color:#0f7c86; }
+.sftp-recycle-item > .sftp-recycle-icon { position:relative; display:grid; place-items:center; overflow:visible; }
+.sftp-recycle-item > .sftp-recycle-icon svg { width:18px; height:18px; transform:translateY(-1px); }
+.sftp-recycle-item > .sftp-recycle-icon small { position:absolute; right:1px; bottom:1px; z-index:2; max-width:22px; margin:0; padding:0 2px; border:1px solid color-mix(in srgb,var(--line) 78%,var(--panel)); border-radius:3px; color:var(--text); background:color-mix(in srgb,var(--panel) 92%,var(--field)); font-size:7px; line-height:10px; font-weight:750; overflow:hidden; text-overflow:ellipsis; }
 .sftp-recycle-item > div:nth-child(2) { min-width:0; }
 .sftp-recycle-item strong, .sftp-recycle-item span, .sftp-recycle-item small { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .sftp-recycle-item strong { font-size:12px; }

@@ -7,8 +7,6 @@ const { createDesktopBrowserAuthorizationPromptGate } = require("./browser-autho
 const { createNativeSftpDrag } = require("./native-sftp-drag");
 const { createRemoteClientAdapter } = require("./remote-clients");
 const { createXServerRuntime } = require("./xserver-runtime");
-const { copyLegacyProfileMissing, mergeLegacyRuntime, removeCreatedFiles } = require("./brand-data-migration");
-const { legacyBrandWindowsAppRunning } = require("./windows-brand-process");
 const {
   runtimeRoot:desktopStorageRuntimeRoot,
   createDesktopStorageTransition,
@@ -18,13 +16,9 @@ const {
 } = require("./storage-migration");
 
 const PRODUCT_NAME = "Terma";
-const LEGACY_PRODUCT_NAME = "TunnelDesk";
 const PRODUCT_ID = "terma";
-const LEGACY_PRODUCT_ID = "tunneldesk";
 const APP_USER_MODEL_ID = "com.zmide.terma";
-const LEGACY_APP_USER_MODEL_ID = "com.zmide.tunneldesk";
 const TOAST_ACTIVATOR_CLSID = "{75F75A3C-FD87-47D7-B50D-15D5C636B26E}";
-const BRAND_MIGRATION_VERSION = 2;
 
 let windowsDesktopNative = null;
 if (process.platform === "win32") {
@@ -137,7 +131,6 @@ let trayUiRevision = "";
 let desktopInterfaceLanguage = normalizeDesktopNotificationLanguage(process.env[DESKTOP_INTERFACE_LANGUAGE_ENV]);
 let trayState = { runningConnections: 0, runningForwards: 0, failedForwards: 0, totalForwards: 0, online: false };
 let pendingStorageMigrationNotice = "";
-let legacyBrandMigration = { status:"not-checked", source:"", target:"", backup:"", message:"" };
 let nativeSftpDrag = null;
 let linuxNotificationProbe = { checkedAt: 0, available: false };
 const pendingDisplayClientSessions = new Map();
@@ -388,262 +381,6 @@ function removeLegacyElectronShortcut() {
       console.warn(`failed to remove legacy shortcut ${shortcutPath}: ${error.message}`);
     }
   }
-}
-
-function legacyBrandUserDataPath() {
-  return path.join(app.getPath("appData"), LEGACY_PRODUCT_NAME);
-}
-
-function brandMigrationMetadataPath() {
-  return path.join(app.getPath("userData"), "brand-migration.json");
-}
-
-function readBrandMigrationMetadata() {
-  try {
-    const value = JSON.parse(fs.readFileSync(brandMigrationMetadataPath(), "utf8"));
-    return value && typeof value === "object" ? value : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeBrandMigrationMetadata(value) {
-  const destination = brandMigrationMetadataPath();
-  fs.mkdirSync(path.dirname(destination), { recursive:true });
-  const temporary = `${destination}.tmp-${process.pid}-${Date.now()}`;
-  try {
-    fs.writeFileSync(temporary, JSON.stringify(value, null, 2), "utf8");
-    fs.renameSync(temporary, destination);
-  } finally {
-    try { fs.rmSync(temporary, { force:true }); } catch {}
-  }
-}
-
-function legacyBrandAppRunning() {
-  try {
-    if (process.platform === "win32") {
-      return legacyBrandWindowsAppRunning({
-        spawnSync,
-        currentPid:process.pid,
-        currentUserData:app.getPath("userData"),
-        legacyUserData:legacyBrandUserDataPath()
-      });
-    }
-    for (const processName of [LEGACY_PRODUCT_NAME, LEGACY_PRODUCT_ID]) {
-      const result = spawnSync("pgrep", ["-x", processName], { encoding:"utf8" });
-      if (result.status === 0 && Boolean(String(result.stdout || "").trim())) return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-function brandMigrationRuntimePaths() {
-  if (dataPath && sshPath) return { dataDir:dataPath, sshDir:sshPath };
-  let stored = {};
-  try {
-    stored = JSON.parse(fs.readFileSync(path.join(app.getPath("userData"), "desktop-settings.json"), "utf8"));
-  } catch {}
-  return resolveRuntimePaths({
-    ...defaultDesktopSettings(),
-    ...(stored && typeof stored === "object" ? stored : {})
-  });
-}
-
-function inspectLegacyBrandMigration() {
-  const source = legacyBrandUserDataPath();
-  const targetProfile = app.getPath("userData");
-  const runtime = brandMigrationRuntimePaths();
-  const target = path.dirname(runtime.dataDir);
-  const metadata = readBrandMigrationMetadata();
-  const sourceAvailable = source !== targetProfile && runtimeHasPersistentData(path.join(source, "runtime"));
-  const targetHasData = runtimeHasPersistentData(target);
-  return {
-    ...legacyBrandMigration,
-    source,
-    target,
-    target_profile:targetProfile,
-    target_data_dir:runtime.dataDir,
-    target_ssh_dir:runtime.sshDir,
-    source_available:sourceAvailable,
-    target_has_data:targetHasData,
-    legacy_running:sourceAvailable && legacyBrandAppRunning(),
-    completed:Boolean(metadata?.status === "migrated"),
-    last_migration:metadata || null
-  };
-}
-
-function migrateLegacyBrandUserData(options = {}) {
-  const source = legacyBrandUserDataPath();
-  const targetProfile = app.getPath("userData");
-  const runtime = options.target_data_dir && options.target_ssh_dir
-    ? { dataDir:path.resolve(options.target_data_dir), sshDir:path.resolve(options.target_ssh_dir) }
-    : brandMigrationRuntimePaths();
-  const target = path.dirname(runtime.dataDir);
-  const result = {
-    status:"not-needed",
-    source,
-    target,
-    backup:"",
-    message:""
-  };
-  if (path.resolve(source) === path.resolve(targetProfile) || !runtimeHasPersistentData(path.join(source, "runtime"))) {
-    legacyBrandMigration = result;
-    return result;
-  }
-  if (legacyBrandAppRunning()) {
-    result.status = "legacy-running";
-    result.message = desktopUiText(
-      "检测到旧版程序仍在运行。请先退出旧版，再迁移数据。",
-      "The legacy application is still running. Quit it before migrating data."
-    );
-    legacyBrandMigration = result;
-    return result;
-  }
-  const previousMigration = readBrandMigrationMetadata();
-  if (!options.manual && previousMigration?.status === "migrated" && Number(previousMigration?.migration_version || 0) >= BRAND_MIGRATION_VERSION) {
-    result.status = "already-migrated";
-    result.backup = String(previousMigration.backup || "");
-    result.message = desktopUiText(
-      "旧版数据已经完成合并，可在设置中手动重新检查。",
-      "Legacy data has already been merged. You can run the check again manually in Settings."
-    );
-    legacyBrandMigration = result;
-    return result;
-  }
-  const createdProfileFiles = copyLegacyProfileMissing(source, targetProfile);
-  try {
-    const migration = mergeLegacyRuntime({
-      sourceDataDir:path.join(source, "runtime", "data"),
-      sourceSshDir:path.join(source, "runtime", ".ssh"),
-      targetDataDir:runtime.dataDir,
-      targetSshDir:runtime.sshDir,
-      backupParent:targetProfile
-    });
-    result.backup = migration.backupRoot || "";
-    result.summary = migration.summary;
-    result.ssh = migration.ssh;
-    const metadata = {
-      status:"migrated",
-      migration_version:BRAND_MIGRATION_VERSION,
-      migrated_at:new Date().toISOString(),
-      source,
-      target,
-      target_profile:targetProfile,
-      target_data_dir:runtime.dataDir,
-      target_ssh_dir:runtime.sshDir,
-      backup:result.backup,
-      legacy_product:LEGACY_PRODUCT_NAME,
-      product:PRODUCT_NAME,
-      preserved_legacy_directory:true,
-      merged_with_current:true,
-      counts:migration.summary,
-      ssh:migration.ssh
-    };
-    let metadataWarning = "";
-    try { writeBrandMigrationMetadata(metadata); }
-    catch (metadataError) {
-      metadataWarning = desktopUiText(
-        `（迁移记录写入失败：${metadataError.message || metadataError}）`,
-        ` (failed to write the migration record: ${metadataError.message || metadataError})`
-      );
-    }
-    result.status = "migrated";
-    result.message = desktopUiText(
-      `已将 ${LEGACY_PRODUCT_NAME} 数据合并到 ${PRODUCT_NAME}，当前数据和旧目录都已保留。${metadataWarning}`,
-      `${LEGACY_PRODUCT_NAME} data was merged into ${PRODUCT_NAME}. Current data and the legacy directory were both preserved.${metadataWarning}`
-    );
-    legacyBrandMigration = result;
-    return result;
-  } catch (error) {
-    removeCreatedFiles(createdProfileFiles);
-    result.backup = String(error.migrationBackup || "");
-    result.status = "failed";
-    result.message = desktopUiText(
-      `旧版数据合并失败，当前 Terma 数据未被替换：${error.message || error}${result.backup ? `；当前数据备份：${result.backup}` : ""}`,
-      `Legacy data could not be merged. Current Terma data was not replaced: ${error.message || error}${result.backup ? `; current data backup: ${result.backup}` : ""}`
-    );
-    legacyBrandMigration = result;
-    return result;
-  }
-}
-
-function migrateLegacyBrandData(value = {}) {
-  const preview = inspectLegacyBrandMigration();
-  if (!preview.source_available) return {
-    ok:false,
-    ...preview,
-    error:desktopUiText("未发现可迁移的旧版数据", "No legacy data is available to migrate")
-  };
-  if (preview.legacy_running) return {
-    ok:false,
-    ...preview,
-    error:desktopUiText("旧版程序仍在运行，请退出后再迁移", "The legacy application is still running; quit it before migrating")
-  };
-  if (preview.target_has_data && !Boolean(value.merge_current || value.replace_current)) {
-    return {
-      ok:false,
-      ...preview,
-      needs_merge_confirmation:true,
-      needs_replace_confirmation:true,
-      error:desktopUiText(
-        "Terma 已有数据，确认后会先完整备份，再合并旧版连接、分组、远程配置、工作区和密钥",
-        "Terma already contains data. After confirmation, it will create a complete backup before merging legacy connections, groups, remote profiles, workspaces, and keys."
-      )
-    };
-  }
-  setTimeout(async () => {
-    quitting = true;
-    try { await Promise.resolve(shutdown?.()); } catch (error) { console.error(error); }
-    const migrated = migrateLegacyBrandUserData({
-      manual:true,
-      force:true,
-      target_data_dir:preview.target_data_dir,
-      target_ssh_dir:preview.target_ssh_dir
-    });
-    if (migrated.status === "migrated") relaunchInForeground();
-    else quitting = false;
-    if (migrated.status === "migrated") app.exit(0);
-  }, 250);
-  return { ok:true, restart_required:true, ...preview };
-}
-
-function prepareLegacyBrandMigrationAtStartup(settings, runtime = resolveRuntimePaths(settings)) {
-  const source = legacyBrandUserDataPath();
-  const targetProfile = app.getPath("userData");
-  const target = path.dirname(runtime.dataDir);
-  const sourceAvailable = path.resolve(source) !== path.resolve(targetProfile)
-    && runtimeHasPersistentData(path.join(source, "runtime"));
-  if (!sourceAvailable) {
-    legacyBrandMigration = { status:"not-needed", source, target, backup:"", message:"" };
-    return legacyBrandMigration;
-  }
-
-  const targetHasData = runtimeHasPersistentData(target);
-  if (String(settings?.dataMode || "") !== "user" || targetHasData) {
-    legacyBrandMigration = {
-      status:"available",
-      source,
-      target,
-      backup:"",
-      message:String(settings?.dataMode || "") === "user"
-        ? desktopUiText(
-          "检测到旧版数据；当前用户目录已有数据，请在迁移界面确认后合并。",
-          "Legacy data was detected, and the current user directory already contains data. Confirm the merge in the migration view."
-        )
-        : desktopUiText(
-          "检测到旧版数据；当前使用项目或自定义数据目录，请在迁移界面确认后合并。",
-          "Legacy data was detected while a project or custom data directory is in use. Confirm the merge in the migration view."
-        )
-    };
-    return legacyBrandMigration;
-  }
-
-  return migrateLegacyBrandUserData({
-    target_data_dir:runtime.dataDir,
-    target_ssh_dir:runtime.sshDir
-  });
 }
 
 if (!displayClientMode) {
@@ -3282,8 +3019,6 @@ app.whenReady().then(async () => {
   const startupDesktopSettings = prepareRuntimeSettings();
   createStartupWindow(startupDesktopSettings);
   try {
-    const startupRuntime = resolveRuntimePaths(startupDesktopSettings);
-    prepareLegacyBrandMigrationAtStartup(startupDesktopSettings, startupRuntime);
     loadBackend(startupDesktopSettings);
     if (startupDesktopSettings.xServerAutoStart) {
       try { await xServerRuntime.start(); } catch (error) { console.warn(`X Server auto-start skipped: ${error.message}`); }
@@ -3315,8 +3050,6 @@ app.whenReady().then(async () => {
         confirmDesktopBrowserAuthorization,
         getSettings: desktopSettingsView,
         saveSettings: saveDesktopSettings,
-        getLegacyBrandMigration: inspectLegacyBrandMigration,
-        migrateLegacyBrandData,
         chooseDataDir: chooseDesktopDataDir,
         chooseVncClient: chooseVncClientForSettings,
         getDownloadDirectory: defaultDownloadDirectory,

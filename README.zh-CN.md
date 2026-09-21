@@ -4,8 +4,6 @@
 
 Terma 是一个面向桌面端和自托管 Web 的远程连接工作台，用于集中管理 SSH、终端、SFTP、远程桌面、端口转发和批量命令。
 
-> 名称迁移：Terma 保留对旧版 TunnelDesk 数据和 `TUNNELDESK_*` 环境变量的兼容；桌面版发现旧数据时会提示迁移，旧目录仍保留供回滚。
-
 [下载最新版本](https://github.com/zmide/Terma/releases/latest) · [查看版本记录](https://github.com/zmide/Terma/releases) · [GPL-3.0 许可](LICENSE)
 
 <p align="center">
@@ -218,8 +216,6 @@ TERMA_WEB_ONLY=1 ./start.sh --host 0.0.0.0 --port 8088
 | `TUNNEL_WEB_HOST` | 指定监听地址 |
 | `TUNNEL_WEB_PORT` | 指定监听端口，默认 `8088` |
 
-旧版 `TUNNELDESK_WEB_ONLY`、`TUNNELDESK_LAN` 等同名变量仍作为兼容输入，新脚本和新部署应改用 `TERMA_*`。
-
 ## 开发与验证
 
 ```sh
@@ -273,13 +269,6 @@ npm run dist -- --mac dmg zip --x64 --arm64 --publish never
 - macOS ZIP：解压后可直接运行 `Terma.app`，无需安装；它只表示应用免安装，运行数据仍保存在系统用户数据目录。Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
 
 推送 `v*` 标签时，Release 工作流会在 Windows、Linux 和 macOS 上分别构建并验证产物。
-
-## 从 TunnelDesk 升级
-
-- 新桌面标识为 `com.zmide.terma`，主程序和 Linux 包名使用 `terma`；Windows 安装向导、macOS `/Applications/Terma.app` 和 Linux 应用菜单均使用 Terma。旧 TunnelDesk 安装不会被当作新程序继续写入。
-- 桌面数据默认迁移到 Windows `%APPDATA%\Terma\runtime`、Linux `~/.config/Terma/runtime`、macOS `~/Library/Application Support/Terma/runtime`。旧 `TunnelDesk` 目录只作为迁移来源并保留供回滚。
-- “导入导出 > 旧版数据迁移”可重新探测并一键迁移。新旧目录都已有数据时不会静默覆盖；确认迁移后会先备份当前 Terma 数据。
-- Terma 会识别旧版备份、`TUNNELDESK_*` 兼容变量和远端 `tunneldesk-*` 管理配置。新建的 XDMCP、VNC 与 SSH X11 配置使用 `terma` 名称；迁移成功前不要手工删除旧配置或旧应用。
 
 ## 数据与安全
 

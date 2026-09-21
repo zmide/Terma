@@ -649,6 +649,9 @@ function activateTab(key) {
   if (previousTab?.kind === "command" && previousTab.key !== key && typeof rememberBatchCommandDraft === "function") {
     rememberBatchCommandDraft(currentBatchRoot(), previousTab.key);
   }
+  if (previousTab?.kind === "log" && previousTab.key !== key && typeof rememberLogViewerScroll === "function") {
+    rememberLogViewerScroll(previousTab.key);
+  }
   if (activeView === "sftp" && activeTabKey !== key && typeof rememberSftpViewState === "function") {
     rememberSftpViewState(activeTabKey);
   }

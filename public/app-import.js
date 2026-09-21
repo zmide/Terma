@@ -9,7 +9,6 @@ function importSectionLabel(id) {
   return label();
 }
 let activeImportSection = "import-source";
-let legacyBrandMigrationState = null;
 
 function localizedConfigSnapshotReason(reason) {
   const source = String(reason || "");
@@ -33,7 +32,6 @@ function showImport(updateTab=true) {
   if (existingView?.querySelector("#importMainPanel")) {
     setWorkspace(tr("navigation:auto.import_export", {defaultValue:"导入导出"}), tr("settings:auto.import_migration", {defaultValue:"迁移 SSH config、数据库备份和连接配置快照。"}), "import", "import", updateTab, true, {kind:"import"});
     renderBackupControls();
-    renderLegacyBrandMigration();
     showImportSection(activeImportSection, {moveToWorkspace:false});
     void renderConfigSnapshots();
     void loadSecuritySettings().then(() => inPane(renderBackupControls)).catch(() => {});
@@ -44,7 +42,6 @@ function showImport(updateTab=true) {
   setWorkspace(tr("navigation:auto.import_export", {defaultValue:"导入导出"}), tr("settings:auto.import_migration", {defaultValue:"迁移 SSH config、数据库备份和连接配置快照。"}), "import", "import", updateTab, true, {kind:"import"});
   renderBackupControls();
   loadSecuritySettings().then(() => inPane(renderBackupControls)).catch(() => {});
-  renderLegacyBrandMigration();
   renderImport();
   renderConfigSnapshots();
   showImportSection(activeImportSection, {moveToWorkspace:false});
@@ -160,77 +157,6 @@ function renderBackupControls() {
     : tr("settings:import.backup_plain_hint", {defaultValue:"未启用配置加密：通常下载普通 .db 数据库备份即可。启用配置加密后才会显示加密迁移包下载入口。"});
 }
 
-function legacyBrandMigrationStatus(state) {
-  if (state?.legacy_running) return {kind:"error", icon:"circle-alert", text:tr("settings:import.legacy_running", {defaultValue:"旧版程序仍在运行。请先退出旧版，再迁移数据。"})};
-  if (state?.status === "failed") return {kind:"error", icon:"circle-alert", text:localizedTermaUiPhrase(state.message || tr("settings:import.legacy_previous_failed", {defaultValue:"上一次旧版数据迁移失败。"}))};
-  if (state?.completed) return {kind:"success", icon:"circle-check", text:tr("settings:auto.legacy_complete", {defaultValue:"已完成旧版数据合并。当前数据和旧目录都已保留。"})};
-  if (state?.target_has_data) return {kind:"info", icon:"shield-alert", text:tr("settings:import.legacy_target_has_data", {defaultValue:"Terma 已有数据。迁移前会完整备份，再合并缺失的连接、分组、远程配置、工作区和密钥。"})};
-  if (state?.source_available) return {kind:"info", icon:"database", text:tr("settings:import.legacy_source_found", {defaultValue:"发现可迁移的旧版数据。"})};
-  return {kind:"info", icon:"circle-check", text:tr("settings:import.legacy_source_missing", {defaultValue:"未发现可迁移的旧版数据。"})};
-}
-
-async function renderLegacyBrandMigration() {
-  const box = $("legacyBrandMigration");
-  if (!box) return;
-  box.innerHTML = stateView("loading", tr("settings:import.legacy_checking", {defaultValue:"正在检查旧版数据"}));
-  try {
-    const state = await api("/api/legacy-brand-migration");
-    legacyBrandMigrationState = state;
-    if (!state?.available) {
-      box.innerHTML = `<div class="runtime-feedback info">${icon("monitor-off")}<span>${esc(localizedTermaUiPhrase(state?.message || tr("settings:auto.legacy_desktop_only", {defaultValue:"旧版数据迁移仅能在本机桌面版中执行"})))}</span></div>`;
-      refreshIcons();
-      return;
-    }
-    const status = legacyBrandMigrationStatus(state);
-    const migration = state.last_migration || {};
-    const canMigrate = Boolean(state.source_available) && !state.legacy_running;
-    const actionLabel = state.completed
-      ? tr("settings:auto.legacy_recheck_merge", {defaultValue:"重新检查并合并"})
-      : state.target_has_data
-        ? tr("settings:import.legacy_backup_merge", {defaultValue:"备份并合并旧数据"})
-        : tr("settings:import.legacy_migrate_restart", {defaultValue:"迁移并重新启动"});
-    const action = canMigrate
-      ? `<button class="${state.target_has_data ? "danger" : "primary"}" data-ui-action-key="legacy-brand-migration" onclick="migrateLegacyBrandData(this)">${actionLabel}</button>`
-      : "";
-    const lastBackup = migration.backup ? `<div class="muted">${esc(tr("settings:auto.legacy_backup", {path:migration.backup, defaultValue:`当前 Terma 数据备份：${migration.backup}`}))}</div>` : "";
-    const migratedAtText = migration.migrated_at ? new Date(migration.migrated_at).toLocaleString(document.documentElement.lang || "zh-CN", {hour12:false}) : "";
-    const migratedAt = migratedAtText ? `<div class="muted">${esc(tr("settings:auto.legacy_last_migration", {time:migratedAtText, defaultValue:`最近迁移：${migratedAtText}`}))}</div>` : "";
-    const currentSource = state.source_available ? `<div class="muted">${esc(tr("settings:auto.legacy_source", {path:state.source, defaultValue:`旧版目录：${state.source}`}))}</div>` : "";
-    const redetectLabel = tr("settings:auto.legacy_redetect", {defaultValue:"重新检测旧版数据"});
-    box.innerHTML = `<div class="legacy-brand-migration-content"><div class="runtime-feedback ${status.kind}">${icon(status.icon)}<span>${esc(status.text)}</span></div>${currentSource}${migratedAt}${lastBackup}<div class="actions tight"><button onclick="renderLegacyBrandMigration()" title="${escAttr(redetectLabel)}" aria-label="${escAttr(redetectLabel)}">${icon("refresh-cw")}</button>${action}</div></div>`;
-    refreshIcons();
-  } catch (error) {
-    box.innerHTML = stateView("error", tr("settings:import.legacy_check_failed", {defaultValue:"旧版数据检查失败"}), localizedTermaUiPhrase(error.message || tr("settings:import.legacy_state_failed", {defaultValue:"无法读取迁移状态"})));
-  }
-}
-
-async function migrateLegacyBrandData(button) {
-  const state = legacyBrandMigrationState || await api("/api/legacy-brand-migration");
-  if (!state?.available || !state.source_available) return renderLegacyBrandMigration();
-  if (state.legacy_running) return notify(tr("settings:import.legacy_exit_first", {defaultValue:"请先退出旧版程序，再迁移数据"}), "error");
-  const mergeCurrent = Boolean(state.target_has_data);
-  const message = mergeCurrent
-    ? tr("settings:import.legacy_merge_confirm", {defaultValue:"会先完整备份当前 Terma 数据，再合并旧版数据中缺失的连接、分组、远程配置、工作区和密钥；同名项目保留当前设置，只补齐缺失凭据。旧版目录不会删除。继续？"})
-    : tr("settings:import.legacy_migrate_confirm", {defaultValue:"会迁移旧版数据中的连接、分组、远程配置、工作区和密钥并重新启动 Terma。旧版目录不会删除。继续？"});
-  if (!await confirmModal(
-    message,
-    tr("settings:import.legacy_title", {defaultValue:"迁移旧版数据"}),
-    mergeCurrent ? tr("settings:import.legacy_merge_action", {defaultValue:"备份并合并"}) : tr("settings:import.legacy_migrate_action", {defaultValue:"迁移并重启"}),
-    tr("common:actions.cancel", {defaultValue:"取消"}),
-    mergeCurrent
-  )) return;
-  if (!beginUiAction("legacy-brand-migration", button, tr("settings:import.legacy_migrating", {defaultValue:"迁移中..."}))) return;
-  try {
-    const result = await api("/api/legacy-brand-migration", {method:"POST", body:JSON.stringify({merge_current:mergeCurrent})});
-    if (!result?.ok) throw new Error(localizedTermaUiPhrase(result?.error || tr("settings:import.legacy_not_started", {defaultValue:"旧版数据迁移未启动"})));
-    notify(tr("settings:import.legacy_started", {defaultValue:"正在迁移旧版数据，Terma 即将重新启动"}), "success");
-  } catch (error) {
-    notify(localizedTermaUiPhrase(error.message || tr("settings:import.legacy_failed", {defaultValue:"旧版数据迁移失败"})), "error");
-    endUiAction("legacy-brand-migration", button);
-    await renderLegacyBrandMigration();
-  }
-}
-
 async function parseImportConfig(){
   const f=$("config_upload").files[0];
   if(!f) return notify(tr("settings:import.select_config_file", {defaultValue:"请选择 config 文件"}),"error");
@@ -344,6 +270,84 @@ async function downloadDatabaseBackup() {
   notify(includePasswords
     ? tr("settings:import.backup_with_passwords", {defaultValue:"数据库备份已下载（包含 SSH 密码）"})
     : tr("settings:import.backup_without_passwords", {defaultValue:"数据库备份已下载（不包含 SSH 密码）"}), "success");
+}
+
+function configSelectionValues() {
+  return {
+    connections:Boolean($("configSelectionConnections")?.checked),
+    remote_profiles:Boolean($("configSelectionRemoteProfiles")?.checked),
+    forwards:Boolean($("configSelectionForwards")?.checked),
+    command_snippets:Boolean($("configSelectionCommandSnippets")?.checked),
+    passwords:Boolean($("configSelectionPasswords")?.checked)
+  };
+}
+
+function hasConfigSelection(selection) {
+  return Boolean(selection.connections || selection.remote_profiles || selection.forwards || selection.command_snippets);
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function exportConfigSelectionUi() {
+  const selection = configSelectionValues();
+  if (!hasConfigSelection(selection)) return notify(tr("settings:auto.config_selection_choose", {defaultValue:"请至少选择一类配置"}), "error");
+  if (selection.passwords && !await confirmModal(
+    tr("settings:auto.config_selection_password_warning", {defaultValue:"导出密码会把 SSH 密码、私钥口令和其他连接密码写入 JSON 文件。请妥善保管，继续吗？"}),
+    tr("settings:auto.config_selection_password_title", {defaultValue:"确认导出密码"}),
+    tr("settings:auto.config_selection_export", {defaultValue:"导出"}),
+    tr("common:actions.cancel", {defaultValue:"取消"}),
+    true
+  )) return;
+  try {
+    const payload = await api("/api/config-selection/export", {method:"POST", body:JSON.stringify({selection})});
+    downloadBlob(new Blob([JSON.stringify(payload, null, 2)], {type:"application/json"}), `terma-config-${new Date().toISOString().replace(/[:.]/g, "-")}.terma-config.json`);
+    notify(selection.passwords
+      ? tr("settings:auto.config_selection_exported_with_passwords", {defaultValue:"选择性配置已导出（包含密码，请妥善保管文件）"})
+      : tr("settings:auto.config_selection_exported", {defaultValue:"选择性配置已导出"}), "success");
+  } catch (error) {
+    notify(localizedTermaUiPhrase(error.message || tr("settings:auto.config_selection_failed", {defaultValue:"选择性配置导出失败"})), "error");
+  }
+}
+
+async function importConfigSelectionUi() {
+  if (!requireConfigEncryptionUnlocked(tr("settings:auto.config_selection_import_context", {defaultValue:"导入选择性配置"}))) return;
+  const file = $("config_selection_upload")?.files?.[0];
+  if (!file) return notify(tr("settings:auto.config_selection_file", {defaultValue:"请选择选择性配置文件"}), "error");
+  let payload;
+  try {
+    payload = JSON.parse(await file.text());
+  } catch {
+    return notify(tr("settings:auto.config_selection_invalid", {defaultValue:"选择性配置文件格式无效"}), "error");
+  }
+  const selection = payload?.selection || {};
+  if (!hasConfigSelection(selection)) return notify(tr("settings:auto.config_selection_invalid", {defaultValue:"选择性配置文件格式无效"}), "error");
+  const passwordWarning = selection.passwords
+    ? `\n\n${tr("settings:auto.config_selection_import_password_warning", {defaultValue:"该文件包含密码，导入后会写入当前配置。请确认文件来源可信。"})}`
+    : "";
+  if (!await confirmModal(
+    `${tr("settings:auto.config_selection_import_confirm", {defaultValue:"导入会合并并更新所选配置，不会删除未选择的配置。继续吗？"})}${passwordWarning}`,
+    tr("settings:auto.config_selection_import_title", {defaultValue:"导入选择性配置"}),
+    tr("settings:auto.config_selection_import", {defaultValue:"导入"}),
+    tr("common:actions.cancel", {defaultValue:"取消"}),
+    true
+  )) return;
+  try {
+    const result = await api("/api/config-selection/import", {method:"POST", body:JSON.stringify(payload)});
+    await loadAll();
+    if ($("config_selection_upload")) $("config_selection_upload").value = "";
+    renderImport();
+    const skipped = Number(result.skipped_forwards || 0);
+    notify(tr("settings:auto.config_selection_imported", {connections:result.connections || 0, remote_profiles:result.remote_profiles || 0, forwards:result.forwards || 0, snippets:result.command_snippets || 0, skipped, defaultValue:`已导入连接 ${result.connections || 0} 个、其他连接 ${result.remote_profiles || 0} 个、转发 ${result.forwards || 0} 个、批量命令 ${result.command_snippets || 0} 个${skipped ? `；跳过 ${skipped} 个缺少 SSH 连接的转发` : ""}`}), skipped ? "info" : "success");
+  } catch (error) {
+    notify(localizedTermaUiPhrase(error.message || tr("settings:auto.config_selection_failed", {defaultValue:"选择性配置导入失败"})), "error");
+  }
 }
 
 function setImportSortOrder(index, value) {
