@@ -9,14 +9,6 @@
 
 > The v1.7.7 draft continues recoverable-session, interoperability, and cross-platform remote desktop acceptance.
 
-#### Improvements
-
-- Added mouse back/forward navigation in SFTP and Local Files, using the hovered panel's own directory history in split workspaces.
-- Added Home, End, PgUp, and PgDn to the terminal shortcut bar and moved the mobile bar to the bottom, above the command input. Shortcut visibility updates without rebuilding the terminal session.
-- Added a Shortcuts page in global terminal settings, supporting custom names, key combinations, enabled states, ordering, deletion, and restoring defaults. Changes persist across restarts and update open terminal bars without reconnecting.
-- The update page now exposes the matching package's GitHub direct link and five mirror download links alongside the existing automatic download and verification flow. Manual parallel speed tests show per-route speeds, the fastest route, and unavailable states without downloading the full package.
-- Fixed source desktop startup being blocked by optional native SFTP drag download/build failures. Electron header preparation now reuses the cache and tries a mirror after the default source fails; release packaging still requires successful native builds.
-
 #### Planned
 
 - Complete real network and reload acceptance for recoverable sessions on Linux, macOS, Windows fallback, and browser mode.
@@ -27,14 +19,6 @@
 ### 简体中文
 
 > v1.7.7 草稿继续推进可恢复会话、互操作场景和跨平台远程桌面验收。
-
-#### 优化
-
-- SFTP 和本地文件支持鼠标侧键后退、前进，分屏时沿用鼠标所在面板自己的目录历史。
-- 终端快捷键栏补齐 Home、End、PgUp、PgDn，移动端移到终端底部、命令输入框上方；显示和隐藏快捷键不再重建终端会话。
-- 终端全局设置新增快捷键页，支持自定义名称和按键组合、启用/停用、排序、删除与恢复默认；配置重启后保留，保存后直接更新已打开的终端快捷键栏，无需重连。
-- 更新页展示对应安装包的 GitHub 原站和五条镜像下载链接，同时保留现有自动下载与校验流程；支持手动并行测速，显示各线路速度、最快线路和不可用状态，不下载完整安装包。
-- 修复原生 SFTP 拖拽组件的可选下载或编译失败导致源码桌面启动中断的问题；Electron 头文件准备复用缓存，原站失败后尝试镜像，正式打包仍要求原生构建成功。
 
 #### 计划
 
@@ -67,7 +51,7 @@
 
 #### Known issue
 
-- macOS packages are not code-signed or notarized, so Gatekeeper may report that Terma is damaged or cannot be opened. Use the temporary workaround described in [Issue #36](https://github.com/zmide/Terma/issues/36).
+- macOS packages are not code-signed or notarized, so Gatekeeper may report that Terma is damaged or cannot be opened. In System Settings → Privacy & Security, select “Open Anyway”; if it is still blocked after moving Terma to Applications, run `xattr -dr com.apple.quarantine /Applications/Terma.app`. Do not disable Gatekeeper globally or clear quarantine for all applications. See [Issue #36](https://github.com/zmide/Terma/issues/36).
 
 #### Changes in this release
 
@@ -97,7 +81,7 @@
 
 #### 已知问题
 
-- macOS 发布包尚未完成代码签名和公证，Gatekeeper 可能提示 Terma 已损坏或无法打开。临时处理方式见 [Issue #36](https://github.com/zmide/Terma/issues/36)。
+- macOS 发布包尚未完成代码签名和公证，Gatekeeper 可能提示 Terma 已损坏或无法打开。请在“系统设置 → 隐私与安全性”中点击“仍要打开”；如果将 Terma 放入“应用程序”后仍被拦截，可执行 `xattr -dr com.apple.quarantine /Applications/Terma.app`。不要全局关闭 Gatekeeper，也不要批量清除所有应用的隔离属性。详见 [Issue #36](https://github.com/zmide/Terma/issues/36)。
 
 #### 本次变更
 
