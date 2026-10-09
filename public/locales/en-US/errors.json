@@ -24,6 +24,7 @@
   "ssh_host_key_failed": "SSH host-key verification failed. Confirm whether the server fingerprint change is trusted.",
   "ssh_failed": "The SSH connection failed. Check the connection settings, network, and remote SSH service.",
   "backend": {
+    "terminal_shortcuts_invalid": "Invalid shortcuts: check key combinations, button names (up to 24 characters), and the number of shortcuts (up to 48)",
     "request_failed": "The request failed. Try again.",
     "ai_disabled": "Terminal AI is not enabled.",
     "ai_model_required": "Select an AI model first.",

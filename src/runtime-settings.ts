@@ -2,6 +2,7 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const terminalShortcuts = require("../public/app-terminal-shortcut-config");
 
 const DEFAULT_LISTEN_HOSTS = ["127.0.0.1"];
 const DEFAULT_LISTEN_PORT = 8088;
@@ -50,7 +51,8 @@ const DEFAULT_TERMINAL_SETTINGS = Object.freeze({
   copy_include_trailing_newline: false,
   copy_trim_trailing_spaces: false,
   select_non_whitespace_block: false,
-  multiline_paste_mode: "prompt"
+  multiline_paste_mode: "prompt",
+  shortcut_keys: terminalShortcuts.defaults
 });
 const DEFAULT_AI_CONTEXT_TOKENS = 1000000;
 const AI_CONTEXT_DEFAULT_VERSION = 1;
@@ -190,7 +192,8 @@ function normalizeTerminalSettings(value: any = {}, fallback: any = DEFAULT_TERM
     copy_include_trailing_newline: source.copy_include_trailing_newline === undefined ? base.copy_include_trailing_newline !== false : source.copy_include_trailing_newline === true,
     copy_trim_trailing_spaces: source.copy_trim_trailing_spaces === undefined ? base.copy_trim_trailing_spaces === true : source.copy_trim_trailing_spaces === true,
     select_non_whitespace_block: source.select_non_whitespace_block === undefined ? base.select_non_whitespace_block === true : source.select_non_whitespace_block === true,
-    multiline_paste_mode: TERMINAL_MULTILINE_PASTE_MODES.has(multilinePasteMode) ? multilinePasteMode : DEFAULT_TERMINAL_SETTINGS.multiline_paste_mode
+    multiline_paste_mode: TERMINAL_MULTILINE_PASTE_MODES.has(multilinePasteMode) ? multilinePasteMode : DEFAULT_TERMINAL_SETTINGS.multiline_paste_mode,
+    shortcut_keys: terminalShortcuts.normalize(source.shortcut_keys ?? base.shortcut_keys ?? DEFAULT_TERMINAL_SETTINGS.shortcut_keys)
   };
 }
 

@@ -49,6 +49,14 @@ export interface UpdateDownloadState {
   platform?: string;
   arch?: string;
   package_type?: string;
+  download_asset_name?: string;
+  download_links?: Array<{ id: string; label: string; url: string }>;
+}
+
+export interface UpdateDownloadLinkProbe {
+  asset_name: string;
+  asset_url: string;
+  results: UpdateDownloadProbeResult[];
 }
 
 export interface UpdateCleanupResult {
@@ -303,6 +311,7 @@ export class UpdateInstaller {
   private readonly probeTimeoutMs: number;
   private readonly downloadIdleTimeoutMs: number;
   private inFlight: Promise<UpdateDownloadState> | null = null;
+  private linkProbeInFlight: {key: string; promise: Promise<UpdateDownloadLinkProbe>} | null = null;
   private liveState: UpdateDownloadState | null = null;
 
   constructor(dataDirectory: string, options: UpdateInstallerOptions = {}) {
@@ -370,8 +379,21 @@ export class UpdateInstaller {
     const result: UpdateDownloadState = {
       ...state,
       platform: this.platform,
-      arch: this.arch
+      arch: this.arch,
+      download_links: []
     };
+    if (release?.assets?.length) {
+      try {
+        const manualAsset = selected || selectUpdateAsset(release.assets, this.platform, this.arch, this.windowsPackageType);
+        const source = trustedGitHubAssetUrl(manualAsset.url);
+        result.download_asset_name = manualAsset.name;
+        result.download_links = UPDATE_DOWNLOAD_ROUTES.map(route => ({
+          id: route.id,
+          label: route.label,
+          url: routeDownloadUrl(route, source)
+        }));
+      } catch {}
+    }
     if (release && releaseAvailable) {
       try {
         selected ||= selectUpdateAsset(release.assets, this.platform, this.arch, this.windowsPackageType);
@@ -567,6 +589,33 @@ export class UpdateInstaller {
       if (timeout) clearTimeout(timeout);
       controller.abort();
       await closeResponseIterator(iterator);
+    }
+  }
+
+  async probeDownloadLinks(release: UpdateRelease): Promise<UpdateDownloadLinkProbe> {
+    const asset = selectUpdateAsset(release?.assets, this.platform, this.arch, this.windowsPackageType);
+    const source = trustedGitHubAssetUrl(asset.url);
+    if (!Number.isSafeInteger(asset.size) || asset.size <= 0 || asset.size > 4 * 1024 * 1024 * 1024) {
+      throw new Error("更新产物大小无效");
+    }
+    const key = JSON.stringify([asset.name, source.href, asset.size]);
+    if (this.linkProbeInFlight) {
+      if (this.linkProbeInFlight.key !== key) throw new Error("下载链接正在测速，请稍后重试");
+      return this.linkProbeInFlight.promise;
+    }
+    const operation = {
+      key,
+      promise: this.rankDownloadRoutes(source, release, asset).then(({probes}) => ({
+        asset_name: asset.name,
+        asset_url: source.href,
+        results: probes
+      }))
+    };
+    this.linkProbeInFlight = operation;
+    try {
+      return await operation.promise;
+    } finally {
+      if (this.linkProbeInFlight === operation) this.linkProbeInFlight = null;
     }
   }
 

@@ -24,6 +24,7 @@
   "ssh_host_key_failed": "SSH 主机指纹校验失败，请确认服务器指纹变化是否可信",
   "ssh_failed": "SSH 连接失败，请检查连接配置、网络和远端 SSH 服务",
   "backend": {
+    "terminal_shortcuts_invalid": "快捷键配置无效，请检查按键组合、按钮名称（最多 24 个字符）和数量（最多 48 项）",
     "request_failed": "请求失败，请重试",
     "ai_disabled": "终端 AI 尚未启用",
     "ai_model_required": "请先选择 AI 模型",

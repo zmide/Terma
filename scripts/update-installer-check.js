@@ -128,6 +128,19 @@ async function main() {
       arch: "x64",
       fetch: async () => response(body)
     });
+    const linksStatus = installer.status(release(asset));
+    assert.equal(linksStatus.download_asset_name, asset.name);
+    assert.deepEqual(linksStatus.download_links.map(link => link.url), UPDATE_DOWNLOAD_ROUTES.map(route => `${route.prefix}${asset.url}`));
+    assert.equal(linksStatus.download_links[0].id, "direct");
+    const upToDateLinks = installer.status({...release(asset), current_version:"1.2.0", update_available:false});
+    assert.equal(upToDateLinks.download_links.length, 6);
+    assert.equal(upToDateLinks.selected_asset_name, undefined);
+    for (const url of ["https://example.com/update.exe", "http://github.com/zmide/Terma/releases/download/v1.2.0/Terma.exe", "javascript:alert(1)"]) {
+      assert.deepEqual(installer.status(release({...asset, url})).download_links, []);
+    }
+    const portableLinks = new UpdateInstaller(path.join(root, "portable-links"), {platform:"win32", arch:"x64", windowsPackageType:"portable"})
+      .status(release({...asset, name:"Terma-1.2.0-windows-x64-portable.exe"}));
+    assert.ok(portableLinks.download_asset_name.endsWith("-portable.exe"));
     const downloaded = await installer.download(release(asset));
     assert.equal(downloaded.state, "downloaded");
     assert.equal(downloaded.progress_percent, 100);
@@ -346,6 +359,46 @@ async function main() {
       ["gh-proxy-hk", 120],
       ["gh-proxy-cdn", 150]
     ]);
+    const manualRequests = [];
+    let cancelledManualRoute = false;
+    const manualRoot = path.join(root, "manual-probe");
+    const manualInstaller = new UpdateInstaller(manualRoot, {
+      platform:"win32", arch:"x64", probeTimeoutMs:250,
+      fetch:async (url, options) => {
+        manualRequests.push(String(url));
+        assert.equal(requestHeader(options, "range"), `bytes=0-${routedAsset.size - 1}`);
+        const route = routeForUrl(String(url), routedAsset.url);
+        await sleep(15);
+        if (route.id === "ghfast") return response("<html>proxy error</html>", {contentType:"text/html"});
+        if (route.id === "gh-proxy-hk") return response(null, {ok:false, status:503});
+        if (route.id === "gh-proxy-cdn") return hangingResponse(() => { cancelledManualRoute = true; });
+        return response(routedBody);
+      }
+    });
+    const manualRelease = {...release(routedAsset), current_version:"1.2.0", update_available:false};
+    const firstManualProbe = manualInstaller.probeDownloadLinks(manualRelease);
+    const repeatedManualProbe = manualInstaller.probeDownloadLinks(manualRelease);
+    await assert.rejects(() => manualInstaller.probeDownloadLinks({...manualRelease, assets:[{...routedAsset, size:1}]}), /正在测速/);
+    const [manualResult, repeatedResult] = await Promise.all([firstManualProbe, repeatedManualProbe]);
+    assert.deepEqual(manualResult, repeatedResult);
+    assert.equal(manualRequests.length, UPDATE_DOWNLOAD_ROUTES.length, "concurrent clicks must share one set of six probes");
+    assert.equal(manualResult.asset_name, routedAsset.name);
+    assert.equal(manualResult.asset_url, routedAsset.url);
+    assert.equal(manualResult.results.length, 6);
+    assert.ok(manualResult.results.find(item => item.id === "direct").bytes_per_second > 0);
+    assert.match(manualResult.results.find(item => item.id === "ghfast").error, /返回了网页/);
+    assert.equal(manualResult.results.find(item => item.id === "gh-proxy-hk").error, "HTTP 503");
+    assert.equal(manualResult.results.find(item => item.id === "gh-proxy-cdn").error, "测速超时");
+    assert.equal(cancelledManualRoute, true);
+    assert.equal(manualInstaller.status().state, "idle");
+    assert.equal(fs.existsSync(manualRoot), false, "manual speed tests must not create update files or change download state");
+    await manualInstaller.probeDownloadLinks(manualRelease);
+    assert.equal(manualRequests.length, 12, "completed probes can be run again");
+    for (const invalid of [{...routedAsset, size:0}, {...routedAsset, url:"https://example.com/update.exe"}]) {
+      await assert.rejects(() => manualInstaller.probeDownloadLinks({...manualRelease, assets:[invalid]}));
+    }
+    assert.equal(manualRequests.length, 12, "invalid assets must be rejected before network access");
+
     const probeIds = [];
     const downloadIds = [];
     let activeProbes = 0;
@@ -410,7 +463,7 @@ async function main() {
     });
     await assert.rejects(() => htmlInstaller.download(release(asset)), /返回了网页而不是安装包/);
 
-    console.log("更新安装包检查通过：平台/架构/便携类型选包、升级后旧错误清理、六线路并行测速与失败换线、进度状态、GitHub HTTPS、HTML 拒绝、大小与 SHA-256 校验、篡改拒绝");
+    console.log("更新安装包检查通过：独立测速与请求合并、不落盘、平台选包、并行测速与失败换线、进度状态、GitHub HTTPS、HTML 拒绝、大小与 SHA-256 校验");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

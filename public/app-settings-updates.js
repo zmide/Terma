@@ -95,6 +95,62 @@ function nextUpdateNotesFrame() {
   });
 }
 
+let updateDownloadLinksProbe = null;
+
+function updateDownloadLinksKey(download) {
+  const source = download?.download_links?.find(link => link.id === "direct")?.url;
+  return source && download.download_asset_name ? JSON.stringify([download.download_asset_name, source]) : "";
+}
+
+function updateManualDownloadLinksHtml(update) {
+  const download = update?.download_status;
+  const routes = download?.download_links || [];
+  if (Array.isArray(update?.assets) && !update.assets.some(asset => asset.name === download?.download_asset_name
+    && routes.some(link => link.id === "direct" && link.url === asset.url))) return "";
+  const probe = updateDownloadLinksProbe?.key === updateDownloadLinksKey(download) ? updateDownloadLinksProbe : null;
+  const successful = (probe?.results || []).filter(result => result.available && Number(result.bytes_per_second) > 0);
+  const fastest = successful.sort((left, right) => Number(right.bytes_per_second) - Number(left.bytes_per_second))[0]?.id;
+  const links = routes.flatMap(link => {
+    try {
+      const url = new URL(String(link.url || ""));
+      if (url.protocol !== "https:" || url.username || url.password) return [];
+      const label = link.id === "direct" ? tr("settings:updates.github_download") : String(link.label || url.hostname);
+      const result = probe?.results?.find(item => item.id === link.id);
+      const speed = result?.available ? formatUpdateSpeed(result.bytes_per_second) : "";
+      const metric = probe?.running ? tr("settings:updates.probe_running") : result
+        ? speed ? link.id === fastest ? tr("settings:updates.probe_fastest", {speed}) : speed : tr("settings:updates.probe_unavailable")
+        : "";
+      const error = result?.error === "测速超时" ? tr("settings:updates.probe_timeout") : result?.error || "";
+      const detail = result ? `${result.elapsed_ms || 0} ms${error ? ` · ${error}` : ""}` : "";
+      return [`<a class="button-link update-download-link ${speed && link.id === fastest ? "is-fastest" : ""}" href="${escAttr(url.href)}" target="_blank" rel="noopener noreferrer" title="${escAttr([url.href, detail].filter(Boolean).join("\n"))}"><span class="update-download-link-label">${icon("external-link")}<span>${esc(label)}</span></span>${metric ? `<small class="${result && !speed ? "is-unavailable" : ""}">${esc(metric)}</small>` : ""}</a>`];
+    } catch { return []; }
+  });
+  if (!links.length) return "";
+  const busy = Boolean(updateDownloadLinksProbe?.running);
+  const error = probe?.error ? `<div class="warning">${esc(localizedUpdateStatusError(probe.error))}</div>` : "";
+  return `<div class="update-download-links"><div class="update-download-links-head"><strong>${esc(tr("settings:updates.download_links"))}</strong><button id="probeUpdateDownloadLinksBtn" title="${escAttr(tr("settings:updates.probe_hint"))}" onclick="probeUpdateDownloadLinks()"${busy ? ' disabled aria-busy="true"' : ""}>${icon(busy ? "loader-circle" : "gauge")}<span>${esc(tr(busy ? "settings:updates.probe_running" : "settings:updates.probe_links"))}</span></button></div><small>${esc(download.download_asset_name || "")}</small>${error}<div class="actions">${links.join("")}</div></div>`;
+}
+
+async function probeUpdateDownloadLinks() {
+  const key = updateDownloadLinksKey(updateSettings?.download_status);
+  if (!key || updateDownloadLinksProbe?.running) return;
+  const inPane = captureSettingsPane();
+  updateDownloadLinksProbe = {key, running:true, results:[]};
+  inPane(() => renderUpdateStatus({icons:true}));
+  try {
+    const result = await api("/api/updates/download/probe", {method:"POST", body:"{}"});
+    updateDownloadLinksProbe = {
+      key:JSON.stringify([result.asset_name, result.asset_url]),
+      running:false,
+      results:Array.isArray(result.results) ? result.results : []
+    };
+  } catch (error) {
+    updateDownloadLinksProbe = {key, running:false, results:[], error:error.message || String(error)};
+  } finally {
+    inPane(() => renderUpdateStatus({icons:true}));
+  }
+}
+
 function updateStatusHtml(options={}) {
   const update = updateSettings;
   const checking = Boolean(options.checking ?? updateStatusChecking);
@@ -200,6 +256,7 @@ function updateStatusHtml(options={}) {
     </dl>
     ${republishedNotice}${checkError}${notes}${downloadError}
     <div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)"${checkButtonState}>${icon("refresh-cw")}<span>${esc(tr(checking ? "settings:updates.checking_short" : "settings:auto.check_updates"))}</span></button>${downloadAction}${releaseLink}</div>
+    ${updateManualDownloadLinksHtml(update)}
     ${ignoreControl}
     <div class="muted">${esc(tr("settings:auto.update_security_hint"))}</div>
   </div>`;

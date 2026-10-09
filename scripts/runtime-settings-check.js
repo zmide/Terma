@@ -398,7 +398,8 @@ async function main() {
         ctrl_left_click_moves_cursor: false,
         url_links_enabled: true,
         url_prefixes: ["https://", "ssh://"],
-        multiline_paste_mode: "single_line"
+        multiline_paste_mode: "single_line",
+        shortcut_keys:[{key:"F5", ctrl:true, label:"Logs"}, {key:"Tab", shift:true, enabled:false}]
       } })
     });
     assert.equal(terminalSaved.response.ok, true);
@@ -412,6 +413,15 @@ async function main() {
     const persistedTerminalSettings = JSON.parse(fs.readFileSync(runtimeFile, "utf8")).terminal;
     assert.equal(persistedTerminalSettings.background_mode, "custom");
     assert.equal(persistedTerminalSettings.background_color, "#34abcd");
+    assert.equal(persistedTerminalSettings.shortcut_keys[0].label, "Logs");
+    assert.equal(persistedTerminalSettings.shortcut_keys[0].ctrl, true);
+    assert.equal(persistedTerminalSettings.shortcut_keys[1].enabled, false);
+    const invalidShortcuts = await request(base, "/api/runtime-settings", {
+      method:"PUT", body:JSON.stringify({terminal:{shortcut_keys:[{key:"bad\nkey"}]}})
+    });
+    assert.equal(invalidShortcuts.response.ok, false);
+    assert.equal(invalidShortcuts.body.error_code, "terminal_shortcuts_invalid");
+    assert.deepEqual(JSON.parse(fs.readFileSync(runtimeFile, "utf8")).terminal.shortcut_keys, persistedTerminalSettings.shortcut_keys);
     console.log("PASS global terminal settings save independently and are normalized");
 
     const recycleDisabled = await request(base, "/api/runtime-settings", {
@@ -425,6 +435,7 @@ async function main() {
     assert.equal(recycleDisabled.body.saved.terminal.background_mode, "custom");
     assert.equal(recycleDisabled.body.saved.terminal.background_color, "#34abcd");
     assert.equal(recycleDisabled.body.saved.terminal.middle_mouse_action, "open_settings");
+    assert.deepEqual(recycleDisabled.body.saved.terminal.shortcut_keys, persistedTerminalSettings.shortcut_keys);
     console.log("PASS SFTP recycle setting saves independently without listener validation");
 
     const floatingProgressDisabled = await request(base, "/api/runtime-settings", {
