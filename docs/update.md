@@ -51,7 +51,7 @@
 
 #### Known issue
 
-- macOS packages are not code-signed or notarized, so Gatekeeper may report that Terma is damaged or cannot be opened. In System Settings → Privacy & Security, select “Open Anyway”; if it is still blocked after moving Terma to Applications, run `xattr -dr com.apple.quarantine /Applications/Terma.app`. Do not disable Gatekeeper globally or clear quarantine for all applications. See [Issue #36](https://github.com/zmide/Terma/issues/36).
+- macOS packages are not code-signed or notarized, so Gatekeeper may report that Terma is damaged or cannot be opened. First try opening Terma once, then in System Settings → Privacy & Security select “Open Anyway”; if it is still blocked after moving Terma to Applications, run `xattr -dr com.apple.quarantine /Applications/Terma.app`. Do not disable Gatekeeper globally or clear quarantine for all applications. See [Issue #36](https://github.com/zmide/Terma/issues/36).
 
 #### Changes in this release
 
@@ -81,7 +81,7 @@
 
 #### 已知问题
 
-- macOS 发布包尚未完成代码签名和公证，Gatekeeper 可能提示 Terma 已损坏或无法打开。请在“系统设置 → 隐私与安全性”中点击“仍要打开”；如果将 Terma 放入“应用程序”后仍被拦截，可执行 `xattr -dr com.apple.quarantine /Applications/Terma.app`。不要全局关闭 Gatekeeper，也不要批量清除所有应用的隔离属性。详见 [Issue #36](https://github.com/zmide/Terma/issues/36)。
+- macOS 发布包尚未完成代码签名和公证，Gatekeeper 可能提示 Terma 已损坏或无法打开。请先尝试打开一次 Terma，再到“系统设置 → 隐私与安全性”中点击“仍要打开”；如果将 Terma 放入“应用程序”后仍被拦截，可执行 `xattr -dr com.apple.quarantine /Applications/Terma.app`。不要全局关闭 Gatekeeper，也不要批量清除所有应用的隔离属性。详见 [Issue #36](https://github.com/zmide/Terma/issues/36)。
 
 #### 本次变更
 
