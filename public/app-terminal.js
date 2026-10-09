@@ -693,50 +693,6 @@ function sendMobileTerminalInput(key) {
   input.focus();
 }
 
-function renderTerminalKeys(key) {
-  const ctrlOnceTitle = tr("terminal:keys.ctrl_once_hint", {defaultValue:"Ctrl 一次：下一个字母按 Ctrl 组合键发送"});
-  const ctrlOnceLabel = tr("terminal:keys.ctrl_once", {defaultValue:"Ctrl一次"});
-  const ctrlLockTitle = tr("terminal:keys.ctrl_lock_hint", {defaultValue:"Ctrl 锁定：连续发送 Ctrl 组合键，再点一次关闭"});
-  const ctrlLockLabel = tr("terminal:keys.ctrl_lock", {defaultValue:"Ctrl锁"});
-  return `<div id="terminalKeys" class="terminal-keys ${terminalKeysVisible ? "" : "hidden"}">
-    ${["Esc","Tab","/","-","|","~"].map(label => `<button onpointerdown="keepTerminalKeyboardClosed(event)" onclick="sendTerminalKey('${key}','${escAttr(label)}')">${esc(label)}</button>`).join("")}
-    <span class="terminal-arrow-pad"><button class="arrow-up" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="sendTerminalKey('${key}','↑')">↑</button><button class="arrow-left" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="sendTerminalKey('${key}','←')">←</button><button class="arrow-down" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="sendTerminalKey('${key}','↓')">↓</button><button class="arrow-right" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="sendTerminalKey('${key}','→')">→</button></span>
-    <button class="${terminalCtrlArmed || terminalCtrlLocked ? "active" : ""}" title="${escAttr(ctrlOnceTitle)}" aria-label="${escAttr(ctrlOnceTitle)}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="armTerminalCtrl(event)">${esc(ctrlOnceLabel)}</button>
-    <button class="${terminalCtrlLocked ? "active" : ""}" title="${escAttr(ctrlLockTitle)}" aria-label="${escAttr(ctrlLockTitle)}" onpointerdown="keepTerminalKeyboardClosed(event)" onclick="toggleCtrlLock()">${esc(ctrlLockLabel)}</button>
-    ${["C","D","L","A","E","R","Z"].map(label => `<button onpointerdown="keepTerminalKeyboardClosed(event)" onclick="sendCtrlCombo('${key}','${label}')">^${label}</button>`).join("")}
-  </div>`;
-}
-
-function rerenderTerminalKeys(key=activeTabKey) {
-  const box = terminalElementForKey(key, "#terminalKeys");
-  if (!box) return;
-  const left = box.scrollLeft;
-  box.outerHTML = renderTerminalKeys(key);
-  const next = terminalElementForKey(key, "#terminalKeys");
-  if (next) next.scrollLeft = left;
-}
-
-function toggleTerminalKeys(key) {
-  terminalKeysVisible = !terminalKeysVisible;
-  localStorage.setItem("terminalKeysVisible", terminalKeysVisible ? "1" : "0");
-  openTerminal(currentConnection()?.id || selectedId, false, key, tabs.find(tab => tab.key === key)?.title || "");
-}
-
-function armTerminalCtrl() {
-  terminalCtrlArmed = !terminalCtrlArmed;
-  rerenderTerminalKeys();
-}
-
-function toggleCtrlLock() {
-  terminalCtrlLocked = !terminalCtrlLocked;
-  terminalCtrlArmed = false;
-  rerenderTerminalKeys();
-}
-
-function terminalSequence(label) {
-  return {Esc:"\x1b", Tab:"\t", "↑":"\x1b[A", "↓":"\x1b[B", "→":"\x1b[C", "←":"\x1b[D"}[label] || label;
-}
-
 function terminalReconnectInput(data) {
   return ["\r", "\n", "\r\n"].includes(String(data || ""));
 }
@@ -785,7 +741,7 @@ function sendTerminalKey(key, label) {
     sendCtrlCombo(key, label);
     return;
   }
-  sendTerminalData(key, terminalSequence(label));
+  sendTerminalData(key, terminalSequence(label, key));
   if (terminalCtrlArmed && !terminalCtrlLocked) terminalCtrlArmed = false;
   rerenderTerminalKeys(key);
 }

@@ -66,7 +66,7 @@ if not "%TERMA_WEB_ONLY%"=="1" (
     call npm run xserver:prepare
     if errorlevel 1 goto failed
     call npm run native:build:if-needed
-    if errorlevel 1 goto failed
+    if errorlevel 1 echo Native SFTP drag build failed; desktop mode will use the available fallback.
     call :start_desktop_detached
     if errorlevel 1 goto start_web
     echo Terma desktop is starting.

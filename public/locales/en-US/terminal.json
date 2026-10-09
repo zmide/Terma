@@ -500,6 +500,18 @@
     "remove": "Remove from command bar",
     "delete": "Delete command snippet"
   },
+  "shortcuts": {
+    "title": "Shortcuts",
+    "configure": "Customize shortcuts",
+    "key": "Key",
+    "character": "Custom character",
+    "label": "Button name (optional)",
+    "enabled": "Enable {{key}}",
+    "move_up": "Move up",
+    "move_down": "Move down",
+    "add": "Add",
+    "empty": "No shortcuts"
+  },
   "settings": {
     "mouse_none": "Do nothing",
     "mouse_context_menu": "Open the terminal menu",

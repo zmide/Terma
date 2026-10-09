@@ -9,6 +9,14 @@
 
 > The v1.7.6 draft continues recoverable-session, interoperability, and cross-platform remote desktop acceptance.
 
+#### Improvements
+
+- Added mouse back/forward navigation in SFTP and Local Files, using the hovered panel's own directory history in split workspaces.
+- Added Home, End, PgUp, and PgDn to the terminal shortcut bar and moved the mobile bar to the bottom, above the command input. Shortcut visibility updates without rebuilding the terminal session.
+- Added a Shortcuts page in global terminal settings, supporting custom names, key combinations, enabled states, ordering, deletion, and restoring defaults. Changes persist across restarts and update open terminal bars without reconnecting.
+- The update page now exposes the matching package's GitHub direct link and five mirror download links alongside the existing automatic download and verification flow. Manual parallel speed tests show per-route speeds, the fastest route, and unavailable states without downloading the full package.
+- Fixed source desktop startup being blocked by optional native SFTP drag download/build failures. Electron header preparation now reuses the cache and tries a mirror after the default source fails; release packaging still requires successful native builds.
+
 #### Planned
 
 - Complete real network and reload acceptance for recoverable sessions on Linux, macOS, Windows fallback, and browser mode.
@@ -19,6 +27,14 @@
 ### 简体中文
 
 > v1.7.6 草稿继续推进可恢复会话、互操作场景和跨平台远程桌面验收。
+
+#### 优化
+
+- SFTP 和本地文件支持鼠标侧键后退、前进，分屏时沿用鼠标所在面板自己的目录历史。
+- 终端快捷键栏补齐 Home、End、PgUp、PgDn，移动端移到终端底部、命令输入框上方；显示和隐藏快捷键不再重建终端会话。
+- 终端全局设置新增快捷键页，支持自定义名称和按键组合、启用/停用、排序、删除与恢复默认；配置重启后保留，保存后直接更新已打开的终端快捷键栏，无需重连。
+- 更新页展示对应安装包的 GitHub 原站和五条镜像下载链接，同时保留现有自动下载与校验流程；支持手动并行测速，显示各线路速度、最快线路和不可用状态，不下载完整安装包。
+- 修复原生 SFTP 拖拽组件的可选下载或编译失败导致源码桌面启动中断的问题；Electron 头文件准备复用缓存，原站失败后尝试镜像，正式打包仍要求原生构建成功。
 
 #### 计划
 

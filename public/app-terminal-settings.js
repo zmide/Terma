@@ -17,7 +17,8 @@ const defaultTerminalGlobalSettings = Object.freeze({
   copy_include_trailing_newline:false,
   copy_trim_trailing_spaces:false,
   select_non_whitespace_block:false,
-  multiline_paste_mode:"prompt"
+  multiline_paste_mode:"prompt",
+  shortcut_keys:termaTerminalShortcuts.defaults
 });
 const terminalMouseActionOptions = [
   ["none", () => tr("terminal:settings.mouse_none")],
@@ -113,7 +114,8 @@ function normalizeTerminalGlobalSettings(value={}) {
     copy_include_trailing_newline:source.copy_include_trailing_newline === undefined ? defaultTerminalGlobalSettings.copy_include_trailing_newline : source.copy_include_trailing_newline === true,
     copy_trim_trailing_spaces:source.copy_trim_trailing_spaces === true,
     select_non_whitespace_block:source.select_non_whitespace_block === true,
-    multiline_paste_mode:["prompt", "paste", "single_line"].includes(source.multiline_paste_mode) ? source.multiline_paste_mode : defaultTerminalGlobalSettings.multiline_paste_mode
+    multiline_paste_mode:["prompt", "paste", "single_line"].includes(source.multiline_paste_mode) ? source.multiline_paste_mode : defaultTerminalGlobalSettings.multiline_paste_mode,
+    shortcut_keys:termaTerminalShortcuts.normalize(source.shortcut_keys ?? defaultTerminalGlobalSettings.shortcut_keys)
   };
 }
 
@@ -248,6 +250,7 @@ function applyTerminalGlobalSettingsToSession(session) {
 }
 
 function applyTerminalGlobalSettingsToSessions() {
+  for (const key of new Set([...terminalSurfaceCache.keys(), ...terminalSessions.keys()])) rerenderTerminalKeys(key);
   for (const session of terminalSessions.values()) {
     const viewport = typeof captureTerminalViewport === "function" ? captureTerminalViewport(session) : null;
     applyTerminalGlobalSettingsToSession(session);
@@ -697,6 +700,7 @@ async function showTerminalGlobalSettings(key=activeTabKey) {
       <button id="terminalSettingsTabAppearance" class="active" type="button" role="tab" aria-selected="true" aria-controls="terminalSettingsPanelAppearance" onclick="selectTerminalSettingsTab('appearance')">${icon("palette")}<span>${esc(tr("terminal:settings.appearance"))}</span></button>
       <button id="terminalSettingsTabInteraction" type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanelInteraction" onclick="selectTerminalSettingsTab('interaction')">${icon("mouse-pointer-2")}<span>${esc(tr("terminal:settings.mouse_and_links"))}</span></button>
       <button id="terminalSettingsTabClipboard" type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanelClipboard" onclick="selectTerminalSettingsTab('clipboard')">${icon("copy")}<span>${esc(tr("terminal:settings.selection_and_paste"))}</span></button>
+      <button id="terminalSettingsTabShortcuts" type="button" role="tab" aria-selected="false" aria-controls="terminalSettingsPanelShortcuts" onclick="selectTerminalSettingsTab('shortcuts')">${icon("keyboard")}<span>${esc(tr("terminal:shortcuts.title"))}</span></button>
     </div>
     <div class="terminal-settings-panels">
       <section id="terminalSettingsPanelAppearance" class="terminal-settings-panel" role="tabpanel" aria-labelledby="terminalSettingsTabAppearance">
@@ -770,10 +774,12 @@ async function showTerminalGlobalSettings(key=activeTabKey) {
           </div>
         </div>
       </section>
+      ${terminalShortcutSettingsHtml()}
     </div>
     <div class="actions terminal-settings-actions"><button type="button" onclick="resetTerminalGlobalSettingsForm()">${esc(tr("terminal:settings.restore_defaults"))}</button><button type="button" onclick="closeTerminalGlobalSettings('${escAttr(key)}')">${esc(tr("common:actions.cancel"))}</button><button id="terminalSettingsSave" class="primary" type="button" onclick="saveTerminalGlobalSettings('${escAttr(key)}')">${icon("save")}<span>${esc(tr("terminal:settings.save"))}</span></button></div>
   </div>`;
   modal.hidden = false;
+  fillTerminalShortcutSettings(settings.shortcut_keys);
   modal.onkeydown = event => {
       if (event.key === "Escape") closeTerminalGlobalSettings(key);
   };
@@ -784,17 +790,24 @@ async function showTerminalGlobalSettings(key=activeTabKey) {
 }
 
 function selectTerminalSettingsTab(name) {
-  const selected = ["appearance", "interaction", "clipboard"].includes(name) ? name : "appearance";
+  const selected = ["appearance", "interaction", "clipboard", "shortcuts"].includes(name) ? name : "appearance";
   const mapping = {
     appearance:["terminalSettingsTabAppearance", "terminalSettingsPanelAppearance"],
     interaction:["terminalSettingsTabInteraction", "terminalSettingsPanelInteraction"],
-    clipboard:["terminalSettingsTabClipboard", "terminalSettingsPanelClipboard"]
+    clipboard:["terminalSettingsTabClipboard", "terminalSettingsPanelClipboard"],
+    shortcuts:["terminalSettingsTabShortcuts", "terminalSettingsPanelShortcuts"]
   };
   Object.entries(mapping).forEach(([key, [tabId, panelId]]) => {
     const active = key === selected;
     $(tabId)?.classList.toggle("active", active);
     $(tabId)?.setAttribute("aria-selected", String(active));
     if ($(panelId)) $(panelId).hidden = !active;
+    if (active && $(tabId)) {
+      const tab = $(tabId);
+      const list = tab.parentElement;
+      const rect = tab.getBoundingClientRect();
+      list.scrollTo({left:list.scrollLeft + rect.left - list.getBoundingClientRect().left - (list.clientWidth - rect.width) / 2, behavior:"instant"});
+    }
   });
 }
 
@@ -864,6 +877,7 @@ function fillTerminalGlobalSettingsForm(settings) {
   $("terminalSettingTrailingNewline").checked = values.copy_include_trailing_newline;
   $("terminalSettingTrimSpaces").checked = values.copy_trim_trailing_spaces;
   $("terminalSettingMultilinePaste").value = values.multiline_paste_mode;
+  fillTerminalShortcutSettings(values.shortcut_keys);
   syncTerminalSettingsForm();
   syncTerminalBackgroundForm();
 }
@@ -892,7 +906,8 @@ function terminalGlobalSettingsFormValue() {
     copy_include_trailing_newline:$("terminalSettingTrailingNewline").checked,
     copy_trim_trailing_spaces:$("terminalSettingTrimSpaces").checked,
     select_non_whitespace_block:$("terminalSettingNonWhitespaceBlock").checked,
-    multiline_paste_mode:$("terminalSettingMultilinePaste").value
+    multiline_paste_mode:$("terminalSettingMultilinePaste").value,
+    shortcut_keys:terminalShortcutSettingsFormValue()
   };
 }
 
@@ -907,7 +922,7 @@ async function saveTerminalGlobalSettings(key=activeTabKey) {
     closeTerminalGlobalSettings(key);
     notify(tr("terminal:settings.saved"), "success");
   } catch (error) {
-    notify(error.message || tr("terminal:settings.save_failed"), "error");
+    notify(error.code === "terminal_shortcuts_invalid" ? tr("errors:backend.terminal_shortcuts_invalid") : error.message || tr("terminal:settings.save_failed"), "error");
   } finally {
     setButtonBusy(button, false);
   }

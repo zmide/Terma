@@ -500,6 +500,18 @@
     "remove": "从命令栏移除",
     "delete": "删除命令片段"
   },
+  "shortcuts": {
+    "title": "快捷键",
+    "configure": "自定义快捷键",
+    "key": "按键",
+    "character": "自定义字符",
+    "label": "按钮名称（可选）",
+    "enabled": "启用 {{key}}",
+    "move_up": "上移",
+    "move_down": "下移",
+    "add": "添加",
+    "empty": "暂无快捷键"
+  },
   "settings": {
     "mouse_none": "不执行操作",
     "mouse_context_menu": "打开终端菜单",

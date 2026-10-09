@@ -11,6 +11,7 @@ interface UpdateCheckerLike {
 interface UpdateInstallerLike {
   status(release?: any): unknown;
   download(release: any): Promise<unknown>;
+  probeDownloadLinks(release: any): Promise<unknown>;
   verifyDownloaded(release?: any): Promise<any>;
 }
 
@@ -74,6 +75,15 @@ export async function handleUpdateRoutes(
       can_open: dependencies.canOpenPackage(),
       can_open_directory: dependencies.canOpenDirectory()
     });
+    return true;
+  }
+  if (request.method === "POST" && pathname === "/api/updates/download/probe") {
+    try {
+      const release = await checker.check({ force: false });
+      sendJson(response, await installer.probeDownloadLinks(release));
+    } catch (error) {
+      sendJson(response, { error: error instanceof Error ? error.message : String(error) }, 422);
+    }
     return true;
   }
   if (request.method === "POST" && pathname === "/api/updates/download") {

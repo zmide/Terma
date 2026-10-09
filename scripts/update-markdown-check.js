@@ -97,4 +97,29 @@ assert.doesNotMatch(styles, /\.update-release-markdown code \{[^}]*background:va
 assert.match(styles, /\.update-notes \{[^}]*background:var\(--panel2,var\(--panel\)\)/);
 assert.match(styles, /\.update-release-markdown a \{[^}]*color:color-mix\(/);
 
-console.log("更新说明 Markdown 渲染检查通过：版本标题去重、主题代码样式、链接、代码和 HTML 转义正常");
+const linksStart = source.indexOf("let updateDownloadLinksProbe = null;");
+const linksEnd = source.indexOf("function updateStatusHtml", linksStart);
+assert.ok(linksStart >= 0 && linksEnd > linksStart, "手动下载链接渲染器应存在");
+context.tr = key => key;
+context.icon = () => "";
+vm.runInContext(source.slice(linksStart, linksEnd), context);
+const asset = {name:"Terma-1.7.6-windows-x64-installer.exe", url:"https://github.com/zmide/Terma/releases/download/v1.7.6/Terma-1.7.6-windows-x64-installer.exe"};
+const linkUpdate = {assets:[asset], download_status:{download_asset_name:asset.name, download_links:[
+  {id:"direct", label:"GitHub", url:asset.url},
+  {id:"mirror", label:"<script>mirror</script>", url:`https://ghfast.top/${asset.url}`},
+  {id:"unsafe", label:"unsafe", url:"javascript:alert(1)"},
+  {id:"insecure", label:"insecure", url:"http://example.com/file.exe"},
+  {id:"credentials", label:"credentials", url:"https://user:pass@example.com/file.exe"}
+]}};
+const links = context.updateManualDownloadLinksHtml(linkUpdate);
+assert.equal((links.match(/<a /g) || []).length, 2);
+assert.match(links, /settings:updates.github_download/);
+assert.match(links, /&lt;script&gt;mirror&lt;\/script&gt;/);
+assert.doesNotMatch(links, /<script>|javascript:|http:\/\/|user:pass/);
+assert.equal((links.match(/target="_blank" rel="noopener noreferrer"/g) || []).length, 2);
+assert.equal(context.updateManualDownloadLinksHtml({...linkUpdate, assets:[]}), "");
+assert.equal(context.updateManualDownloadLinksHtml({...linkUpdate, assets:[{...asset, name:"other.exe"}]}), "");
+assert.equal(context.updateManualDownloadLinksHtml({...linkUpdate, assets:[{...asset, url:asset.url.replace("v1.7.6", "v1.7.7")}]}), "");
+assert.equal(context.updateManualDownloadLinksHtml(null), "");
+
+console.log("更新说明与下载链接渲染检查通过：版本标题、主题样式、HTML 转义、安全链接和旧资源隔离正常");

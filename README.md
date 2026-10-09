@@ -60,7 +60,8 @@ Terma is a remote connection workspace for desktop and self-hosted Web environme
 - Select multiple terminals as a synchronized group so input in any member is broadcast to the entire group. Multi-line input, dangerous commands, and hidden-input prompts trigger additional confirmation or automatic suspension.
 - Tabs can indicate new output, command completion, and disconnection. Long background tasks can send notifications, with muting per connection or tab.
 - Open the selected terminal path or current directory in SFTP. `Ctrl+Shift+T` restores the most recently closed terminal or SFTP tab.
-- Mobile terminals provide Esc, Tab, arrow keys, Ctrl combinations, and a command input bar.
+- Mobile terminals provide Esc, Tab, Home, End, PgUp, PgDn, arrow keys, Ctrl combinations, and a command input bar at the bottom of the terminal.
+- Global terminal settings customize the shortcut bar with regular keys, function keys, or Ctrl/Alt/Shift combinations, names, visibility, and order. Saved changes update existing terminals without reconnecting.
 
 ### SFTP
 
@@ -73,6 +74,7 @@ Terma is a remote connection workspace for desktop and self-hosted Web environme
 - Edit remote files with system applications, VS Code, or a custom editor on desktop. When content changes, Terma asks whether to save; text conflicts can be reviewed side by side before choosing backup and overwrite, save as, or keep unsaved. The internal editor can compare the ten most recent backup versions.
 - Compare local and remote directories and run upload, download, or bidirectional synchronization on desktop. Review each planned item first; conflicts are skipped by default, and tasks support cancellation, retry, and result export.
 - Jump between terminal and SFTP views for the current connection.
+- SFTP and Local Files support mouse back/forward buttons using each tab's own directory history.
 
 ### Remote desktops and other protocols
 
@@ -98,6 +100,7 @@ Terma is a remote connection workspace for desktop and self-hosted Web environme
 - Database backup and restore, configuration snapshots, and encrypted migration packages.
 - During database restore, private keys can be rebound and passwords can be supplied without preserving paths from the old computer.
 - Desktop builds check GitHub Releases and select update files by operating system, architecture, and installation type. Before download, Terma compares direct and available accelerated routes, uses the faster route, retries another route on failure, and still verifies SHA-256.
+- The update page provides the matching package's GitHub direct link and five mirror links for manual downloads in the system browser. Test all six links on demand to compare speeds and identify the fastest route, using the Terma host's network.
 
 ## Architecture
 
@@ -224,6 +227,8 @@ npm run build
 npm run native:build:if-needed
 npm run desktop:run
 ```
+
+Native SFTP drag support is optional during source startup: download or compilation failures warn and allow desktop startup to continue, using the available staged-download fallback. Windows/macOS builds reuse cached Electron headers and try npmmirror if the default source fails, without disabling TLS or verification or inheriting a global npm Node.js `disturl`. Set `TERMA_ELECTRON_HEADERS_URL` to override the header source; local node-gyp `nodedir` settings remain supported. `npm run native:build:required`, `package`, and `dist` still require a successful native build.
 
 Common checks:
 

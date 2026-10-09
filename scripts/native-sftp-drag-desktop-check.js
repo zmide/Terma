@@ -7,6 +7,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { readSftpJobSource } = require("./backend-source");
 const { readFrontendDomain } = require("./frontend-source");
+const {checkNativeBuildFallback} = require("./native-sftp-build-check");
 
 const root = path.resolve(__dirname, "..");
 const adapterPath = path.join(root, "desktop", "native-sftp-drag.js");
@@ -697,6 +698,7 @@ function checkNativeSessionRaceGuards() {
 }
 
 async function main() {
+  checkNativeBuildFallback();
   checkUnavailableNativeFallback();
   checkLocalizedUnsupportedPlatformFallback();
   checkWindowsActivationAndMetadataFastPath();

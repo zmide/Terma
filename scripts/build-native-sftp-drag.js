@@ -60,7 +60,9 @@ function run(command, args, options = {}) {
     cwd: options.cwd || root,
     env: { ...process.env, ...(options.env || {}) },
     stdio: "inherit",
-    shell: false
+    shell: false,
+    windowsHide: true,
+    timeout: options.timeout
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -171,6 +173,36 @@ function nativeBuildIsCurrent(platform) {
   return true;
 }
 
+function nodeGypSetting(name) {
+  return process.env[`npm_package_config_node_gyp_${name}`] ||
+    process.env[`npm_config_${name}`] || "";
+}
+
+function prepareElectronHeaders(nodeGyp, options) {
+  if (nodeGypSetting("nodedir")) return "";
+  const configuredUrl = process.env.TERMA_ELECTRON_HEADERS_URL;
+  const urls = configuredUrl ? [configuredUrl] : [
+    "https://electronjs.org/headers",
+    "https://npmmirror.com/mirrors/electron"
+  ];
+  for (const [index, url] of urls.entries()) {
+    const distUrlEnv = {npm_config_dist_url:url, npm_package_config_node_gyp_dist_url:url};
+    try {
+      // Prepare downloads separately so compiler errors never trigger a mirror retry.
+      run(process.execPath, [
+        nodeGyp, "install", "--ensure", `--target=${electronVersion}`,
+        `--arch=${options.env.npm_config_arch}`, `--dist-url=${url}`
+      ], {...options, env:{...options.env, ...distUrlEnv}, timeout:120_000});
+      return url;
+    } catch (error) {
+      if (index === urls.length - 1) throw error;
+      console.warn(`[native-sftp-drag] Electron headers preparation failed: ${error.message}`);
+      console.warn(`[native-sftp-drag] Trying headers mirror: ${urls[index + 1]}`);
+    }
+  }
+  return "";
+}
+
 function buildNodeApiAddon(moduleDirectory, outputName, platform) {
   const nodeGyp = path.join(root, "node_modules", "node-gyp", "bin", "node-gyp.js");
   if (!fs.existsSync(nodeGyp)) {
@@ -193,20 +225,30 @@ function buildNodeApiAddon(moduleDirectory, outputName, platform) {
   }
 
   for (const arch of requestedArchitectures(platform)) {
+    const options = {
+      cwd: moduleDirectory,
+      env: {
+        npm_config_arch:arch,
+        npm_config_target_arch:arch,
+        npm_package_config_node_gyp_arch:arch,
+        npm_package_config_node_gyp_target_arch:arch,
+        npm_config_target:electronVersion,
+        npm_package_config_node_gyp_target:electronVersion
+      }
+    };
+    const headersUrl = prepareElectronHeaders(nodeGyp, options);
+    if (headersUrl) {
+      options.env.npm_config_dist_url = headersUrl;
+      options.env.npm_package_config_node_gyp_dist_url = headersUrl;
+    }
     run(process.execPath, [
       nodeGyp,
       "rebuild",
       "--release",
       `--target=${electronVersion}`,
       `--arch=${arch}`,
-      "--dist-url=https://electronjs.org/headers"
-    ], {
-      cwd: moduleDirectory,
-      env: {
-        npm_config_arch: arch,
-        npm_config_target_arch: arch
-      }
-    });
+      ...(headersUrl ? [`--dist-url=${headersUrl}`] : [])
+    ], options);
     const source = path.join(moduleDirectory, "build", "Release", outputName);
     const destination = path.join(
       moduleDirectory,
@@ -305,8 +347,13 @@ try {
   const result = main();
   if (required && result === false) process.exitCode = 1;
 } catch (error) {
-  console.error(
-    `[native-sftp-drag] ERROR: ${error instanceof Error ? error.message : String(error)}`
-  );
-  process.exitCode = 1;
+  const message = error instanceof Error ? error.message : String(error);
+  if (required) {
+    console.error(`[native-sftp-drag] ERROR: ${message}`);
+    process.exitCode = 1;
+  } else {
+    console.warn(`[native-sftp-drag] SKIP: Optional native build failed: ${message}`);
+    console.warn("[native-sftp-drag] Desktop startup will continue with the available SFTP drag fallback. " +
+      "Run npm run native:build:required to retry the full native build.");
+  }
 }

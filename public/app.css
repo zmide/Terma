@@ -1940,6 +1940,34 @@ body.sftp-task-center-open .notification-stack { z-index:9; }
 .terminal-settings-tabs svg { width:15px; height:15px; }
 .terminal-settings-panels { min-height:0; overflow:auto; }
 .terminal-settings-panel[hidden] { display:none; }
+.terminal-shortcut-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:0 0 10px; }
+.terminal-shortcut-heading h3 { margin:0; }
+.terminal-shortcut-heading small { font-size:12px; font-weight:400; color:var(--muted); }
+.terminal-shortcut-heading button { flex-shrink:0; }
+.terminal-shortcut-rows { max-height:280px; overflow:auto; border-block:1px solid var(--line); }
+.terminal-shortcut-row { display:grid; grid-template-columns:18px minmax(90px,1fr) minmax(100px,1.3fr) auto; align-items:center; gap:10px; padding:7px 2px; border-bottom:1px solid var(--line); }
+.terminal-shortcut-row:last-child { border-bottom:0; }
+.terminal-shortcut-row > input[type="checkbox"] { width:16px; margin:0; }
+.terminal-shortcut-row code { min-width:0; overflow-wrap:anywhere; font-size:12px; }
+.terminal-shortcut-row-label { min-width:0; }
+.terminal-shortcut-row-actions { display:flex; gap:3px; }
+.terminal-shortcut-row-actions .icon-button { width:30px; height:30px; min-height:30px; padding:5px; }
+.terminal-shortcut-add { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; padding-top:12px; }
+.terminal-shortcut-add > div { min-width:0; }
+.terminal-shortcut-add label { margin-top:0; }
+.terminal-shortcut-modifiers { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.terminal-shortcut-modifiers .check-row { margin:0; }
+.terminal-shortcut-add > button { justify-self:end; align-self:end; }
+.terminal-shortcut-error { color:var(--danger); margin-top:10px; }
+@media (max-width:600px) {
+  .terminal-shortcut-row { grid-template-columns:18px minmax(0,1fr) auto; gap:8px; }
+  .terminal-shortcut-row-label { grid-column:2; grid-row:2; }
+  .terminal-shortcut-row-actions { grid-column:3; grid-row:1 / span 2; }
+  .terminal-shortcut-heading { flex-wrap:wrap; }
+  .terminal-settings-modal .terminal-settings-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .terminal-settings-modal .terminal-settings-actions button { min-width:0; }
+  .terminal-settings-modal #terminalSettingsSave { grid-column:1 / -1; }
+}
 .terminal-settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:22px; }
 .terminal-settings-section { min-width:0; padding:14px 0 8px; }
 .terminal-settings-section h3 { display:flex; align-items:center; gap:6px; margin:0 0 10px; font-size:14px; }
@@ -5048,4 +5076,19 @@ html[data-theme="dark"] .terminal-ai-compose-buttons > .terminal-ai-send-button:
 @media (max-width:760px), (hover:none) and (pointer:coarse) {
   .terminal-actions-scroll-shell { width:100%; flex:1 1 100%; }
   .terminal-actions-scroll-button { flex-basis:30px; width:30px; min-width:30px; height:30px; min-height:30px; }
+  .terminal-tab-surface > .terminal-keys { order:1; flex-shrink:0; margin:6px 0 0; }
+  .terminal-tab-surface > .terminal-mobile-composer { order:2; }
 }
+.update-download-links { min-width:0; margin:12px 0; padding-top:12px; border-top:1px solid var(--line); }
+.update-download-links-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.update-download-links-head > button { flex:0 0 128px; width:128px; min-width:0; }
+.update-download-links-head [aria-busy="true"] svg { animation:state-spin .8s linear infinite; }
+.update-download-links > small { margin:4px 0 8px; color:var(--muted); overflow-wrap:anywhere; }
+.update-download-links .actions { flex-wrap:wrap; }
+.update-download-links > small { display:block; }
+.update-download-link { flex-direction:column; align-items:flex-start; max-width:100%; gap:3px; }
+.update-download-link-label { display:flex; align-items:center; min-width:0; gap:6px; overflow-wrap:anywhere; }
+.update-download-link small { color:var(--muted); font-size:11px; }
+.update-download-link.is-fastest { border-color:var(--accent2); }
+.update-download-link.is-fastest small { color:var(--accent2); }
+.update-download-link small.is-unavailable { color:var(--danger); }
