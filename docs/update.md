@@ -2,12 +2,12 @@
 
 ## Next release draft / 下一版草稿
 
-[English](#v1-7-6-english) · [简体中文](#v1-7-6-zh)
+[English](#v1-7-7-english) · [简体中文](#v1-7-7-zh)
 
-<a id="v1-7-6-english"></a>
+<a id="v1-7-7-english"></a>
 ### English
 
-> The v1.7.6 draft continues recoverable-session, interoperability, and cross-platform remote desktop acceptance.
+> The v1.7.7 draft continues recoverable-session, interoperability, and cross-platform remote desktop acceptance.
 
 #### Improvements
 
@@ -23,10 +23,10 @@
 - Expand terminal AI interoperability tests with additional OpenAI-compatible gateways while keeping command execution and MCP approval boundaries unchanged.
 - Complete real TigerVNC/noVNC/system-client clipboard acceptance for text, Chinese, and image transfer on all three desktop platforms.
 
-<a id="v1-7-6-zh"></a>
+<a id="v1-7-7-zh"></a>
 ### 简体中文
 
-> v1.7.6 草稿继续推进可恢复会话、互操作场景和跨平台远程桌面验收。
+> v1.7.7 草稿继续推进可恢复会话、互操作场景和跨平台远程桌面验收。
 
 #### 优化
 
@@ -41,6 +41,70 @@
 - 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
+
+## v1.7.6
+
+[English](#v1-7-6-english) · [简体中文](#v1-7-6-zh)
+
+<a id="v1-7-6-english"></a>
+### English
+
+> This release adds configurable terminal shortcuts, mouse navigation for file panels, and manual update mirrors with speed tests. Source desktop startup now continues when the optional native SFTP drag component cannot build; macOS packages remain unsigned and need the temporary workaround in [Issue #36](https://github.com/zmide/Terma/issues/36).
+
+#### Important fixes
+
+- Source desktop startup no longer stops when the optional native SFTP drag component cannot download or compile; release packaging still requires a successful native build.
+
+#### Important additions
+
+- Terminal shortcut bars can now be customized with names, key combinations, enabled states, ordering, deletion, and restore-defaults; saved changes update open terminals without reconnecting.
+- SFTP and Local Files support mouse back and forward buttons using each tab's own directory history, including split workspaces.
+- The update page now shows the matching package's GitHub link and five mirror links, and can test all six routes without downloading the full package.
+
+#### Other improvements
+
+- Mobile terminal shortcuts now include Home, End, PgUp, and PgDn and stay above the command input.
+
+#### Known issue
+
+- macOS packages are not code-signed or notarized, so Gatekeeper may report that Terma is damaged or cannot be opened. Use the temporary workaround described in [Issue #36](https://github.com/zmide/Terma/issues/36).
+
+#### Changes in this release
+
+- [PR #54](https://github.com/zmide/Terma/pull/54) — configurable terminal shortcuts, file-panel mouse navigation, update route testing, and source-startup fallback, by [@junxiaoruoya](https://github.com/junxiaoruoya).
+- [PR #50](https://github.com/zmide/Terma/pull/50) — development type-definition maintenance, by [@dependabot](https://github.com/dependabot).
+
+**Full Changelog**: [v1.7.5...v1.7.6](https://github.com/zmide/Terma/compare/v1.7.5...v1.7.6)
+
+<a id="v1-7-6-zh"></a>
+### 简体中文
+
+> 本版新增可配置终端快捷键、文件面板鼠标导航和带测速的手动更新镜像下载；可选的原生 SFTP 拖拽组件下载或编译失败时，源码桌面仍可继续启动。macOS 发布包仍未签名和公证，临时处理方式见 [Issue #36](https://github.com/zmide/Terma/issues/36)。
+
+#### 重要修复
+
+- 可选的原生 SFTP 拖拽组件下载或编译失败时，源码桌面启动不再中断；正式打包仍要求原生构建成功。
+
+#### 重要新增
+
+- 终端快捷键栏支持自定义名称、按键组合、启用状态、顺序、删除和恢复默认；保存后已打开的终端会直接更新，无需重连。
+- SFTP 和本地文件支持使用鼠标前进、后退键沿各自标签的目录历史导航，分屏时也不会操作另一侧面板。
+- 更新页展示对应安装包的 GitHub 原站和五条镜像链接，并可在不下载完整安装包的情况下测试六条线路。
+
+#### 其他优化
+
+- 移动端终端快捷键栏补齐 Home、End、PgUp、PgDn，并固定在命令输入框上方。
+
+#### 已知问题
+
+- macOS 发布包尚未完成代码签名和公证，Gatekeeper 可能提示 Terma 已损坏或无法打开。临时处理方式见 [Issue #36](https://github.com/zmide/Terma/issues/36)。
+
+#### 本次变更
+
+- [PR #54](https://github.com/zmide/Terma/pull/54) —— 可配置终端快捷键、文件面板鼠标导航、更新线路测速和源码启动后备方案，贡献者：[[@junxiaoruoya](https://github.com/junxiaoruoya)]。
+- [PR #50](https://github.com/zmide/Terma/pull/50) —— 开发期类型声明维护，贡献者：[[@dependabot](https://github.com/dependabot)]。
+
+**完整变更**：[v1.7.5...v1.7.6](https://github.com/zmide/Terma/compare/v1.7.5...v1.7.6)
 
 ## v1.7.5
 
