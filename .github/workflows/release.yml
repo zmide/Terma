@@ -191,6 +191,7 @@ jobs:
           keychain="/Users/bing/Library/Keychains/login.keychain-db"
           security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$keychain"
           security set-keychain-settings -t 3600 "$keychain"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$MACOS_KEYCHAIN_PASSWORD" "$keychain"
       - name: Sign and notarize macOS DMGs
         shell: bash
         run: |
