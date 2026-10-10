@@ -51,6 +51,7 @@
 
 - [PR #56](https://github.com/zmide/Terma/pull/56) — corrected release documentation, by [@JunXiaoRuo](https://github.com/JunXiaoRuo).
 - [PR #57](https://github.com/zmide/Terma/pull/57) — added the Gatekeeper temporary-workaround prerequisite, by [@JunXiaoRuo](https://github.com/JunXiaoRuo).
+- [PR #58](https://github.com/zmide/Terma/pull/58) — published signed macOS DMGs, removed the macOS ZIP package, and compacted mobile terminal shortcuts, by [@JunXiaoRuo](https://github.com/JunXiaoRuo).
 
 **Full Changelog**: [v1.7.6...v1.7.7](https://github.com/zmide/Terma/compare/v1.7.6...v1.7.7)
 
@@ -75,6 +76,7 @@
 
 - [PR #56](https://github.com/zmide/Terma/pull/56) —— 修正文档发布说明，贡献者：[[@JunXiaoRuo](https://github.com/JunXiaoRuo)]。
 - [PR #57](https://github.com/zmide/Terma/pull/57) —— 补充 Gatekeeper 临时处理前置步骤，贡献者：[[@JunXiaoRuo](https://github.com/JunXiaoRuo)]。
+- [PR #58](https://github.com/zmide/Terma/pull/58) —— 发布已签名 macOS DMG、移除 macOS ZIP 并收紧移动端终端快捷键，贡献者：[[@JunXiaoRuo](https://github.com/JunXiaoRuo)]。
 
 **完整变更**：[v1.7.6...v1.7.7](https://github.com/zmide/Terma/compare/v1.7.6...v1.7.7)
 
