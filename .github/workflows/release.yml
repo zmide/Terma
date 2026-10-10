@@ -127,6 +127,10 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
+    env:
+      # The protected Mac runner uses the regional Electron mirror so both
+      # architecture runtimes can be downloaded reliably before signing.
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
