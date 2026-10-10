@@ -195,6 +195,7 @@ async function main() {
       && releaseWorkflow.includes("macos-sign")
       && releaseWorkflow.includes("--mac dmg --x64 --arm64 --publish never")
       && !releaseWorkflow.includes("--mac dmg zip --x64 --arm64 --publish never")
+      && releaseWorkflow.includes("Remove unused macOS blockmaps")
       && releaseWorkflow.includes("if-no-files-found: error")
       && releaseWorkflow.includes("Terma-linux-source-noarch")
   );
