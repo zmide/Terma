@@ -137,6 +137,8 @@ jobs:
         run: npm run dist -- --mac dmg --x64 --arm64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+      - name: Remove unused macOS blockmaps
+        run: rm -f release/*.blockmap
 
       - name: Verify packaged macOS native drag addons
         run: node scripts/native-sftp-drag-artifacts-check.js macos packaged release
