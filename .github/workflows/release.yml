@@ -14,11 +14,22 @@ jobs:
     name: Regression Gate
     runs-on: ubuntu-latest
     steps:
+      - name: Check cached workspace revision
+        id: cached-workspace
+        shell: bash
+        run: |
+          if [ "$(git rev-parse HEAD 2>/dev/null || true)" = "$GITHUB_SHA" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout
-        continue-on-error: true
+        if: steps.cached-workspace.outputs.ready != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Verify checkout revision
+        shell: bash
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Setup Node.js
@@ -139,11 +150,22 @@ jobs:
       - name: Configure Git transport
         run: git config --global http.version HTTP/1.1
 
+      - name: Check cached workspace revision
+        id: cached-workspace
+        shell: bash
+        run: |
+          if [ "$(git rev-parse HEAD 2>/dev/null || true)" = "$GITHUB_SHA" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout
-        continue-on-error: true
+        if: steps.cached-workspace.outputs.ready != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Verify checkout revision
+        shell: bash
         run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Setup Node.js
