@@ -228,7 +228,8 @@ jobs:
               app="$(find "$mountpoint" -type d -name '*.app' -print -quit)"
               test -n "$app"
               codesign --verify --deep --strict --verbose=2 "$app"
-              spctl -a -vvv -t open --context context:primary-signature "$app"
+              spctl -a -vvv -t open --context context:primary-signature "$dmg"
+              spctl -a -vvv -t exec "$app"
             )
           done
 

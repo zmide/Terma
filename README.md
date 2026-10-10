@@ -270,7 +270,7 @@ Build output is written to `release/`:
 
 - Windows installer: run `*-installer.exe` and follow the wizard; run `*-portable.exe` directly for the portable build.
 - Linux: run `chmod +x release/*.AppImage` before launching an AppImage; install DEB and RPM packages with the system package manager.
-- macOS DMG: release packages are signed and notarized; open the `.dmg` for the machine architecture and drag Terma to Applications. Choose `x64` for Intel or `arm64` for Apple Silicon.
+- macOS DMG: official release packages are signed and notarized. DMGs built locally are not guaranteed to be signed or notarized. Open the `.dmg` for the machine architecture and drag Terma to Applications. Choose `x64` for Intel or `arm64` for Apple Silicon.
 
 Pushing a `v*` tag starts the Release workflow, which builds and verifies Windows, Linux, and macOS artifacts separately.
 

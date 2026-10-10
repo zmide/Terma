@@ -270,7 +270,7 @@ npm run dist -- --mac dmg --x64 --arm64 --publish never
 
 - Windows 安装版：运行 `*-installer.exe` 并按向导安装；便携版直接运行 `*-portable.exe`。
 - Linux：AppImage 执行 `chmod +x release/*.AppImage` 后即可运行；DEB、RPM 使用系统包管理器安装。
-- macOS DMG：发布包会完成代码签名和公证；打开与机器架构对应的 `.dmg`，将 Terma 拖入“应用程序”后启动。Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
+- macOS DMG：官方发布包会完成代码签名和公证；使用此命令本地构建的 DMG 不保证完成签名和公证。打开与机器架构对应的 `.dmg`，将 Terma 拖入“应用程序”后启动。Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
 
 推送 `v*` 标签时，Release 工作流会在 Windows、Linux 和 macOS 上分别构建并验证产物。
 

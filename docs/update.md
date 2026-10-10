@@ -37,7 +37,7 @@
 
 #### Important fixes
 
-- macOS Gatekeeper startup issue tracked in [Issue #36](https://github.com/zmide/Terma/issues/36) is addressed with signed and notarized release DMGs for both Intel and Apple silicon.
+- macOS Gatekeeper startup issue tracked in [Issue #36](https://github.com/zmide/Terma/issues/36) is addressed with signed and notarized release DMGs for both Intel and Apple Silicon.
 
 #### Important additions
 
