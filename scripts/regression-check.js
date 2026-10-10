@@ -168,7 +168,7 @@ async function main() {
   const expectedReleaseArtifacts = {
     windows: ["Terma-1.2.3-windows-x64-installer.exe", "Terma-1.2.3-windows-x64-portable.exe"],
     linux: ["Terma-1.2.3-linux-x86_64.AppImage", "Terma-1.2.3-linux-amd64.deb", "Terma-1.2.3-linux-x86_64.rpm"],
-    macos: ["Terma-1.2.3-macos-x64.dmg", "Terma-1.2.3-macos-x64.zip", "Terma-1.2.3-macos-arm64.dmg", "Terma-1.2.3-macos-arm64.zip"],
+    macos: ["Terma-1.2.3-macos-x64.dmg", "Terma-1.2.3-macos-arm64.dmg"],
     "linux-source": ["Terma-1.2.3-linux-source-noarch.tar.gz"]
   };
   let mismatchedReleaseTagRejected = false;
@@ -191,6 +191,11 @@ async function main() {
       && releaseWorkflow.includes("Terma-windows-x64")
       && releaseWorkflow.includes("Terma-linux-x64")
       && releaseWorkflow.includes("Terma-macos-x64-arm64")
+      && releaseWorkflow.includes("terma-macos-unsigned-x64-arm64")
+      && releaseWorkflow.includes("macos-sign")
+      && releaseWorkflow.includes("--mac dmg --x64 --arm64 --publish never")
+      && !releaseWorkflow.includes("--mac dmg zip --x64 --arm64 --publish never")
+      && releaseWorkflow.includes("if-no-files-found: error")
       && releaseWorkflow.includes("Terma-linux-source-noarch")
   );
   const sftpBackend = read("src/sftp.ts");

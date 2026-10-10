@@ -7,7 +7,7 @@
 | 平台 | 桌面端 | Web 模式 | 发布产物 |
 | --- | --- | --- | --- |
 | Windows 10/11 | 支持 | 支持 | 安装版、便携版 |
-| macOS | 支持 | 支持 | DMG、ZIP |
+| macOS | 支持 | 支持 | 已签名并公证的 DMG |
 | Linux | 支持 | 支持 | AppImage、DEB、RPM |
 | Termux / 无图形 Linux | 不建议 | 支持 | 源码运行 |
 

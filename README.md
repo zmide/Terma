@@ -131,7 +131,7 @@ The desktop app is an Electron container around the same Web UI and Node.js serv
 | Platform | Desktop | Web mode | Release artifacts |
 | --- | --- | --- | --- |
 | Windows 10/11 | Supported | Supported | Installer and portable executable |
-| macOS | Supported | Supported | DMG and installation-free ZIP |
+| macOS | Supported | Supported | Signed and notarized DMG |
 | Linux | Supported | Supported | AppImage, DEB, and RPM |
 | Termux / headless Linux | Not recommended | Supported | Run from source |
 
@@ -263,15 +263,14 @@ npm run dist -- --win nsis portable --x64 --publish never
 npm run dist -- --linux AppImage deb rpm --x64 --publish never
 
 # macOS: Intel and Apple Silicon
-npm run dist -- --mac dmg zip --x64 --arm64 --publish never
+npm run dist -- --mac dmg --x64 --arm64 --publish never
 ```
 
 Build output is written to `release/`:
 
 - Windows installer: run `*-installer.exe` and follow the wizard; run `*-portable.exe` directly for the portable build.
 - Linux: run `chmod +x release/*.AppImage` before launching an AppImage; install DEB and RPM packages with the system package manager.
-- macOS DMG: open the `.dmg` for the machine architecture and drag Terma to Applications.
-- macOS ZIP: extract and run `Terma.app` without installation. “Installation-free” applies to the app bundle only; runtime data is still stored in the system user-data directory. Choose `x64` for Intel or `arm64` for Apple Silicon.
+- macOS DMG: official release packages are signed and notarized. DMGs built locally are not guaranteed to be signed or notarized. Open the `.dmg` for the machine architecture and drag Terma to Applications. Choose `x64` for Intel or `arm64` for Apple Silicon.
 
 Pushing a `v*` tag starts the Release workflow, which builds and verifies Windows, Linux, and macOS artifacts separately.
 

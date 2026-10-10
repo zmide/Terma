@@ -1,6 +1,6 @@
 {
   "name": "terma",
-  "version": "1.7.6",
+  "version": "1.7.7",
   "releaseRevision": 1,
   "private": true,
   "license": "GPL-3.0-only",
@@ -203,8 +203,7 @@
         }
       ],
       "target": [
-        "dmg",
-        "zip"
+        "dmg"
       ]
     }
   }

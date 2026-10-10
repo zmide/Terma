@@ -1821,6 +1821,16 @@ body.sftp-task-center-open .notification-stack { z-index:9; }
 .terminal-quick-command-bar.compact .terminal-quick-command-name { max-width:86px; font-size:11px; }
 .terminal-quick-command-bar.compact .terminal-quick-command small { display:none; }
 .terminal-quick-command-bar.compact .terminal-quick-command-manage { top:9px; right:5px; width:24px; min-width:24px; height:24px; min-height:24px; }
+@media (max-width:760px) {
+  .terminal-quick-command-bar:not(.compact) .terminal-quick-command-list { flex-wrap:nowrap; align-items:center; overflow-x:auto; overflow-y:hidden; padding:2px 37px 3px 5px; gap:4px; }
+  .terminal-quick-command-bar:not(.compact) .terminal-quick-command { min-width:72px; min-height:30px; padding:2px 6px 2px 3px; gap:3px; }
+  .terminal-quick-command-bar:not(.compact) .terminal-quick-command.no-badge { min-width:56px; }
+  .terminal-quick-command-bar:not(.compact) .terminal-quick-command-drag { height:20px; }
+  .terminal-quick-command-bar:not(.compact) .terminal-quick-command-badge { width:19px; height:19px; font-size:9px; }
+  .terminal-quick-command-bar:not(.compact) .terminal-quick-command-name { max-width:86px; font-size:11px; }
+  .terminal-quick-command-bar:not(.compact) .terminal-quick-command small { display:none; }
+  .terminal-quick-command-bar:not(.compact) .terminal-quick-command-manage { top:9px; right:5px; width:24px; min-width:24px; height:24px; min-height:24px; }
+}
 .snippet-quick-settings { min-width:0; margin:12px 0; padding:10px 12px 12px; border:1px solid var(--line); border-radius:5px; background:color-mix(in srgb,var(--field) 70%,var(--panel)); }
 .snippet-quick-settings legend { padding:0 5px; font-size:12px; font-weight:700; }
 .snippet-quick-grid { margin-top:9px; }

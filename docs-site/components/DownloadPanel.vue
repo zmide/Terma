@@ -30,7 +30,6 @@ const definitions = computed(() => {
     const suffix = architecture.value === 'arm64' ? 'arm64' : 'x64'
     return [
       { key: 'dmg', label: '安装镜像', extension: 'dmg', filename: `Terma-${version.value}-macos-${suffix}.dmg` },
-      { key: 'zip', label: '免安装压缩包', extension: 'zip', filename: `Terma-${version.value}-macos-${suffix}.zip` },
     ]
   }
   return [

@@ -22,7 +22,7 @@ function expectedReleaseFiles(version = packageJson.version) {
   const core = ["windows", "linux", "macos", "linux-source"]
     .flatMap(platform => expectedArtifacts(platform, version));
   const blockmaps = core
-    .filter(name => /windows-x64-installer\.exe$|macos-(?:x64|arm64)\.(?:dmg|zip)$/i.test(name))
+    .filter(name => /windows-x64-installer\.exe$/i.test(name))
     .map(name => `${name}.blockmap`);
   return [...core, ...blockmaps, `Terma-${version}-sbom.cdx.json`].sort((left, right) => left.localeCompare(right, "en"));
 }

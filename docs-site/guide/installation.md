@@ -5,7 +5,7 @@
 从 [GitHub Releases](https://github.com/zmide/Terma/releases) 下载对应平台的安装包：
 
 - Windows：安装版或便携版。
-- macOS：DMG 或 ZIP；Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
+- macOS：已签名并公证的 DMG；Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
 - Linux：AppImage、DEB 或 RPM。
 
 首次启动后，在“设置 > 安全”中配置 Web 密码或访问 Token（自托管 Web 模式尤其重要）。
