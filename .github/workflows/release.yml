@@ -182,6 +182,15 @@ jobs:
             node scripts/mac-icon-padding-check.js "$iconset_dir/icon_512x512@2x.png"
           done < <(find release -path "*/${PRODUCT_FILENAME}.app/Contents/Info.plist" -type f -print)
           test "$app_count" -eq 2
+      - name: Unlock macOS signing keychain
+        shell: bash
+        env:
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$MACOS_KEYCHAIN_PASSWORD"
+          keychain="/Users/bing/Library/Keychains/login.keychain-db"
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -t 3600 "$keychain"
       - name: Sign and notarize macOS DMGs
         shell: bash
         run: |
