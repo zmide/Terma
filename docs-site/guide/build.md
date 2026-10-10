@@ -20,6 +20,6 @@ Windows/macOS 构建复用 Electron 头文件缓存，默认原站准备失败�
 npm run dist
 ```
 
-构建结果位于 `release/`。Windows 会生成安装版和便携版，Linux 会生成 AppImage、DEB、RPM，macOS 会生成 DMG 和 ZIP。
+构建结果位于 `release/`。Windows 会生成安装版和便携版，Linux 会生成 AppImage、DEB、RPM，macOS 会生成 DMG；正式发布时由专用 macOS 签名机完成代码签名和公证。
 
 发布前应在目标平台验证启动、SSH、终端、SFTP、远程桌面和更新检查，并保留对应的第三方许可证文件。

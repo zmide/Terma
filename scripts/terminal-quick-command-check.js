@@ -42,6 +42,8 @@ assert.match(styles, /\.terminal-quick-command \{[^}]*width:max-content;[^}]*max
 assert.match(styles, /\.terminal-quick-command-bar \{[^}]*min-height:32px/);
 assert.match(styles, /\.terminal-quick-command\.no-badge/);
 assert.match(styles, /\.terminal-quick-command-bar\.compact/);
+assert.match(styles, /\.terminal-quick-command-bar:not\(\.compact\) \.terminal-quick-command \{[^}]*min-height:30px/);
+assert.match(styles, /\.terminal-quick-command-bar:not\(\.compact\) \.terminal-quick-command-list \{[^}]*overflow-x:auto/);
 assert.match(commandSnippets, /显示在终端快速命令栏/);
 assert.match(commandSnippets, /无（更紧凑）/);
 assert.match(commandSnippets, /data-snippet-save/);

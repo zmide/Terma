@@ -134,7 +134,7 @@ jobs:
         run: npm ci
 
       - name: Build macOS packages
-        run: npm run dist -- --mac dmg zip --x64 --arm64 --publish never
+        run: npm run dist -- --mac dmg --x64 --arm64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
@@ -172,13 +172,74 @@ jobs:
       - name: Upload macOS workflow artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
+          name: terma-macos-unsigned-x64-arm64
+          overwrite: true
+          retention-days: 7
+          if-no-files-found: error
+          path: release/*.dmg
+
+  macos-sign:
+    name: macOS Sign and notarize
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: macos
+    runs-on: [self-hosted, macOS, ARM64, terma-signer]
+    environment: macos-signing
+    timeout-minutes: 60
+    concurrency:
+      group: terma-macos-sign-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Download unsigned macOS DMGs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: terma-macos-unsigned-x64-arm64
+          digest-mismatch: error
+          path: macos-unsigned
+
+      - name: Sign and notarize macOS DMGs
+        shell: bash
+        run: |
+          rm -rf macos-signed
+          mkdir -p macos-signed
+          /Users/bing/terma-actions-runner/sign-terma-release.sh \
+            "$GITHUB_WORKSPACE/macos-unsigned" \
+            "$GITHUB_WORKSPACE/macos-signed" \
+            "$GITHUB_REF_NAME"
+
+      - name: Verify signed and notarized macOS DMGs
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(macos-signed/*.dmg)
+          test "${#dmgs[@]}" -eq 2
+          for dmg in "${dmgs[@]}"; do
+            xcrun stapler validate "$dmg"
+            (
+              mountpoint="$(mktemp -d)"
+              cleanup() {
+                hdiutil detach "$mountpoint" -quiet >/dev/null 2>&1 || true
+                rmdir "$mountpoint" 2>/dev/null || true
+              }
+              trap cleanup EXIT
+              hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mountpoint" >/dev/null
+              app="$(find "$mountpoint" -type d -name '*.app' -print -quit)"
+              test -n "$app"
+              codesign --verify --deep --strict --verbose=2 "$app"
+              spctl -a -vvv -t open --context context:primary-signature "$app"
+            )
+          done
+
+      - name: Upload signed macOS workflow artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
           name: Terma-macos-x64-arm64
           overwrite: true
           retention-days: 7
-          path: |
-            release/*.dmg
-            release/*.zip
-            release/*.blockmap
+          if-no-files-found: error
+          path: macos-signed/*.dmg
 
   linux-source:
     name: Linux Source
@@ -242,7 +303,7 @@ jobs:
     needs:
       - windows
       - linux
-      - macos
+      - macos-sign
       - linux-source
     runs-on: ubuntu-latest
     permissions:

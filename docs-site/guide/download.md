@@ -12,8 +12,7 @@ import DownloadPanel from '../components/DownloadPanel.vue'
 
 - **Windows 安装版**：通过安装向导安装，可选择安装目录。
 - **Windows 便携版**：无需安装，直接运行；运行数据仍会保存到 Terma 的数据目录。
-- **macOS DMG**：将 Terma 拖到“应用程序”目录。Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
-- **macOS ZIP**：解压后直接运行 `Terma.app`。
+- **macOS DMG**：发布包已完成代码签名和公证；将 Terma 拖到“应用程序”目录。Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
 - **Linux AppImage / DEB / RPM**：按发行版选择；AppImage 需要先执行 `chmod +x`。
 - **SHA256SUMS**：发布文件的校验和，不是安装包。
 

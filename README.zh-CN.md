@@ -131,7 +131,7 @@ Electron 桌面端 ─┐
 | 平台 | 桌面端 | Web 模式 | 发布产物 |
 | --- | --- | --- | --- |
 | Windows 10/11 | 支持 | 支持 | 安装版、便携版 |
-| macOS | 支持 | 支持 | DMG 安装镜像、ZIP 免安装运行包 |
+| macOS | 支持 | 支持 | 已签名并公证的 DMG |
 | Linux | 支持 | 支持 | AppImage、DEB、RPM |
 | Termux / 无图形 Linux | 不建议 | 支持 | 源码运行 |
 
@@ -263,15 +263,14 @@ npm run dist -- --win nsis portable --x64 --publish never
 npm run dist -- --linux AppImage deb rpm --x64 --publish never
 
 # macOS：Intel 与 Apple Silicon
-npm run dist -- --mac dmg zip --x64 --arm64 --publish never
+npm run dist -- --mac dmg --x64 --arm64 --publish never
 ```
 
 构建结果位于 `release/`。各平台运行方式：
 
 - Windows 安装版：运行 `*-installer.exe` 并按向导安装；便携版直接运行 `*-portable.exe`。
 - Linux：AppImage 执行 `chmod +x release/*.AppImage` 后即可运行；DEB、RPM 使用系统包管理器安装。
-- macOS DMG：打开与机器架构对应的 `.dmg`，将 Terma 拖入“应用程序”后启动。
-- macOS ZIP：解压后可直接运行 `Terma.app`，无需安装；它只表示应用免安装，运行数据仍保存在系统用户数据目录。Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
+- macOS DMG：发布包会完成代码签名和公证；打开与机器架构对应的 `.dmg`，将 Terma 拖入“应用程序”后启动。Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
 
 推送 `v*` 标签时，Release 工作流会在 Windows、Linux 和 macOS 上分别构建并验证产物。
 

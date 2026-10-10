@@ -25,9 +25,7 @@ function expectedArtifacts(platform, version = packageJson.version) {
   if (platform === "macos") {
     return [
       `${product}-${releaseVersion}-macos-x64.dmg`,
-      `${product}-${releaseVersion}-macos-x64.zip`,
-      `${product}-${releaseVersion}-macos-arm64.dmg`,
-      `${product}-${releaseVersion}-macos-arm64.zip`
+      `${product}-${releaseVersion}-macos-arm64.dmg`
     ];
   }
   if (platform === "linux-source") {
@@ -64,7 +62,10 @@ function verifyArtifacts(platform, directory, version = packageJson.version) {
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name);
   const relevant = relevantArtifacts(platform, names);
-  const allowed = new Set(expected.flatMap((name) => [name, `${name}.blockmap`]));
+  const allowed = new Set(expected);
+  if (platform === "windows" || platform === "linux") {
+    expected.forEach((name) => allowed.add(`${name}.blockmap`));
+  }
   const missing = expected.filter((name) => !relevant.includes(name));
   const unexpected = relevant.filter((name) => !allowed.has(name));
   if (missing.length || unexpected.length) {
