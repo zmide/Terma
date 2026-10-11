@@ -8,10 +8,10 @@ const path = require("node:path");
 const { pipeline } = require("node:stream/promises");
 const { spawnSync } = require("node:child_process");
 
-const VERSION = "21.1.10.0";
-const DOWNLOAD_URL = "https://master.dl.sourceforge.net/project/vcxsrv/vcxsrv/21.1.10/vcxsrv-64.21.1.10.0.installer.exe?viasf=1";
-const SHA256 = "f0bdc3f17a2a4c09172c7d0f9dd6b2b3f95b1fdbb2794bd8ffda474c636cced3";
-const EXPECTED_BYTES = 41781489;
+const VERSION = "21.1.16.1";
+const DOWNLOAD_URL = "https://github.com/marchaesen/vcxsrv/releases/download/21.1.16.1/vcxsrv-64.21.1.16.1.installer.exe";
+const SHA256 = "df7fed8f49665d0592528ab6be9d07111ea73c6848283d128b77690e05b8f90b";
+const EXPECTED_BYTES = 42993397;
 const projectRoot = path.resolve(__dirname, "..");
 const runtimeRoot = path.join(projectRoot, "runtime", "xserver");
 const targetDirectory = path.join(runtimeRoot, "win32");
@@ -145,7 +145,7 @@ async function prepare() {
   fs.mkdirSync(runtimeRoot, {recursive:true});
   const installer = path.join(os.tmpdir(), `terma-vcxsrv-${VERSION}-${process.pid}-${Date.now()}.exe`);
   try {
-    console.log(`Downloading VcXsrv ${VERSION} from SourceForge...`);
+    console.log(`Downloading VcXsrv ${VERSION} from GitHub...`);
     await downloadInstaller(installer);
     verifyInstaller(installer);
     fs.mkdirSync(targetDirectory, {recursive:true});
@@ -177,7 +177,7 @@ async function prepare() {
       name:"VcXsrv",
       version:VERSION,
       source:DOWNLOAD_URL,
-      corresponding_source:"https://github.com/marchaesen/vcxsrv/tree/21.1.10",
+      corresponding_source:"https://github.com/marchaesen/vcxsrv/tree/21.1.16.1",
       sha256:SHA256,
       prepared_at:new Date().toISOString()
     }, null, 2)}\n`, "utf8");

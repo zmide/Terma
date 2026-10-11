@@ -44,11 +44,12 @@
     "node": ">=22"
   },
   "devDependencies": {
-    "@types/node": "^26.6.3",
-    "electron": "^44.2.0",
+    "@types/node": "^26.6.5",
+    "electron": "^44.7.0",
     "electron-builder": "^26.15.3",
-    "node-gyp": "^13.0.2",
-    "typescript": "^6.0.3"
+    "node-gyp": "^13.1.0",
+    "typescript": "^7.0.2",
+    "typescript-legacy": "npm:typescript@6.0.3"
   },
   "dependencies": {
     "@novnc/novnc": "^1.7.0",
@@ -56,15 +57,15 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "ace-builds": "^1.44.0",
-    "basic-ftp": "^6.2.1",
+    "basic-ftp": "^6.2.3",
     "diff": "^9.0.0",
-    "i18next": "26.4.2",
+    "i18next": "26.4.3",
     "iconv-lite": "^0.7.3",
     "jspdf": "^4.2.1",
-    "lucide": "^1.40.0",
+    "lucide": "^1.55.0",
     "ssh2": "^1.17.0",
     "svg2pdf.js": "^2.8.1",
-    "x11": "^4.1.0",
+    "x11": "^4.3.1",
     "zmodem.js": "0.1.10"
   },
   "optionalDependencies": {

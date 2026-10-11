@@ -2,7 +2,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
-const ts = require("typescript");
+// TypeScript 7 keeps the compiler API behind an unstable module while this
+// repository's source-audit needs the stable AST helpers. Keep a small
+// TypeScript 6 alias for this checker; the production compiler remains TS 7.
+const ts = require("typescript-legacy");
 const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
@@ -377,7 +380,7 @@ assert.deepEqual(
 );
 
 const packageJson = JSON.parse(read("package.json"));
-assert.equal(packageJson.dependencies?.i18next, "26.4.2", "i18next must use the reviewed exact runtime version");
+assert.equal(packageJson.dependencies?.i18next, "26.4.3", "i18next must use the reviewed exact runtime version");
 assert.equal(fs.existsSync(path.join(root, "node_modules", "i18next", "dist", "umd", "i18next.min.js")), true);
 function assertServedVendorAssetWithoutChinese(relative) {
   assert.equal(/[\u3400-\u9fff]/.test(read(relative)), false, `${relative} must not contain bundled Chinese UI text`);
@@ -742,9 +745,9 @@ const uncoveredStaticPhrases = [...staticPhrases].filter(value => (
   !chinesePhrases.has(value) && !chineseTemplates.some(expression => expression.test(value))
 ));
 assert.deepEqual(uncoveredStaticPhrases, [], `static UI phrases missing from locale resources: ${uncoveredStaticPhrases.join(" | ")}`);
-assert.ok(read("src/third-party-components.ts").includes('name:"i18next", version:"26.4.2"'));
-assert.ok(read("src/third-party-components.ts").includes('name:"node-x11", version:"3.9.1"'));
+assert.ok(read("src/third-party-components.ts").includes('name:"i18next", version:"26.4.3"'));
+assert.ok(read("src/third-party-components.ts").includes('name:"node-x11", version:"4.3.1"'));
 assert.doesNotMatch(read("src/third-party-components.ts"), /\buse:\s*["'`][^"'`]*[\u3400-\u9fff]/, "third-party component purposes must use stable locale-independent codes");
-assert.ok(read("THIRD_PARTY_NOTICES.md").includes("## i18next\n\n- Project: https://github.com/i18next/i18next\n- Version: 26.4.2"));
+assert.ok(read("THIRD_PARTY_NOTICES.md").includes("## i18next\n\n- Project: https://github.com/i18next/i18next\n- Version: 26.4.3"));
 require("./sftp-job-i18n-check");
 console.log(`Internationalization resource check passed: ${languages.length} languages, ${namespaces.length} namespaces.`);

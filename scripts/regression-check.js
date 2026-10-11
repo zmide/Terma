@@ -740,7 +740,7 @@ async function main() {
       && about.third_party_components.length >= 13
       && about.third_party_components.every(item => item?.name && item?.version && item?.license && /^https:\/\//.test(String(item?.project_url || "")))
       && about.third_party_components.some(item => item.name === "jsdiff" && item.version === "9.0.0" && item.license === "BSD-3-Clause")
-      && about.third_party_components.some(item => item.name === "node-x11" && item.version === "3.9.1" && item.license === "MIT")
+      && about.third_party_components.some(item => item.name === "node-x11" && item.version === "4.3.1" && item.license === "MIT")
       && about.third_party_components.some(item => item.name === "jsPDF" && item.version === "4.2.1" && item.license === "MIT")
       && about.third_party_components.some(item => item.name === "svg2pdf.js" && item.version === "2.8.1" && item.license === "MIT")
       && about.third_party_notices_available === true,

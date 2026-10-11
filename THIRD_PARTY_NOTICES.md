@@ -26,10 +26,10 @@ Terma includes or integrates the following third-party components in addition to
 - Use: SSH and SFTP transport
 - Copyright: Copyright Brian White. All rights reserved.
 
-## node-x11
+## node-x11 (npm package: x11)
 
 - Project: https://github.com/sidorares/node-x11
-- Version: 3.9.1
+- Version: 4.3.1
 - License: MIT License
 - Use: X11 selection protocol client for PNG clipboard bridging
 - Copyright: Copyright (c) 2011-2012 Andrey Sidorov
@@ -37,7 +37,7 @@ Terma includes or integrates the following third-party components in addition to
 ## i18next
 
 - Project: https://github.com/i18next/i18next
-- Version: 26.4.2
+- Version: 26.4.3
 - License: MIT License
 - Use: interface internationalization and language resource management
 - Copyright: Copyright (c) 2011-present i18next
@@ -45,7 +45,7 @@ Terma includes or integrates the following third-party components in addition to
 ## Lucide
 
 - Project: https://github.com/lucide-icons/lucide
-- Version: 1.40.0
+- Version: 1.55.0
 - License: ISC License; selected icons derived from Feather are under the MIT License
 - Use: interface icons
 - Copyright: Copyright (c) 2026 Lucide Icons and Contributors; Feather-derived icons Copyright (c) 2013-present Cole Bemis
@@ -53,7 +53,7 @@ Terma includes or integrates the following third-party components in addition to
 ## Electron
 
 - Project: https://github.com/electron/electron
-- Version: 44.2.0
+- Version: 44.7.0
 - License: MIT License
 - Use: desktop application runtime
 - Copyright: Copyright (c) Electron contributors
@@ -132,12 +132,12 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 ## VcXsrv
 
-- Project: https://sourceforge.net/projects/vcxsrv/
-- Binary release: https://sourceforge.net/projects/vcxsrv/files/vcxsrv/21.1.10/
-- Corresponding source: https://github.com/marchaesen/vcxsrv/tree/21.1.10
-- Source archive: https://github.com/marchaesen/vcxsrv/archive/refs/tags/21.1.10.tar.gz
+- Project: https://github.com/marchaesen/vcxsrv
+- Binary release: https://github.com/marchaesen/vcxsrv/releases/tag/21.1.16.1
+- Corresponding source: https://github.com/marchaesen/vcxsrv/tree/21.1.16.1
+- Source archive: https://github.com/marchaesen/vcxsrv/archive/refs/tags/21.1.16.1.tar.gz
 - License: GNU General Public License v3.0
 - Upstream: X.Org Server and related open-source components
 - Use: bundled Windows X Server runtime
 
-VcXsrv contains components under their respective open-source licenses. The linked source tag is the source used for the bundled 21.1.10.0 binary release.
+VcXsrv contains components under their respective open-source licenses. The linked source tag is the source used for the bundled 21.1.16.1 binary release.

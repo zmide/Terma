@@ -7,7 +7,12 @@
 <a id="v1-7-9-english"></a>
 ### English
 
-> The v1.7.9 draft continues recoverable-session, interoperability, and cross-platform remote desktop acceptance.
+> The v1.7.9 draft keeps the remote-session work moving and refreshes the bundled desktop and graphics components.
+
+#### Other improvements
+
+- Updated the Electron desktop runtime, interface icons, X11 transport, internationalization runtime, FTP transport, and build toolchain to their reviewed versions.
+- Updated the bundled Windows VcXsrv runtime to 21.1.16.1 with a pinned HTTPS download and SHA-256 verification.
 
 #### Planned
 
@@ -18,7 +23,12 @@
 <a id="v1-7-9-zh"></a>
 ### 简体中文
 
-> v1.7.9 草稿继续推进可恢复会话、互操作场景和跨平台远程桌面验收。
+> v1.7.9 草稿继续推进远程会话相关工作，并更新内置桌面与图形组件。
+
+#### 其他优化
+
+- 更新 Electron 桌面运行时、界面图标、X11 传输、国际化运行时、FTP 传输和构建工具链到经过核对的版本。
+- 将内置 Windows VcXsrv 更新到 21.1.16.1，并使用固定 HTTPS 地址和 SHA-256 校验。
 
 #### 计划
 

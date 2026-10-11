@@ -46,7 +46,7 @@ function buildFixture({platform="win32", args=[], env={}, fault=()=>null, curren
           if (invalidOutput) throw new Error("fixture: wrong binary architecture");
         }
       };
-      if (id === path.join(root, "package.json")) return {devDependencies:{electron:"44.2.0"}};
+      if (id === path.join(root, "package.json")) return {devDependencies:{electron:"44.7.0"}};
       throw new Error(`Unexpected fixture import: ${id}`);
     }
   }, {filename:"build-native-sftp-drag.js"});
@@ -118,7 +118,7 @@ function checkNativeBuildFallback() {
   }});
   for (const call of [...headerCalls(genericNode), ...compileCalls(genericNode)]) {
     assert.equal(call.options.env.npm_package_config_node_gyp_dist_url, official);
-    assert.equal(call.options.env.npm_package_config_node_gyp_target, "44.2.0");
+    assert.equal(call.options.env.npm_package_config_node_gyp_target, "44.7.0");
     assert.equal(call.options.env.npm_package_config_node_gyp_arch, "x64");
   }
   const customPriority = buildFixture({env:{TERMA_ELECTRON_HEADERS_URL:mirror, npm_config_dist_url:official}});
