@@ -2638,7 +2638,7 @@ body.sftp-task-center-open .notification-stack { z-index:9; }
 .local-files-row.is-dragging { opacity:.5; outline:2px solid color-mix(in srgb,var(--accent2) 65%,transparent); outline-offset:-2px; }
 .local-files-name { min-width:0; display:flex; align-items:center; gap:8px; overflow:hidden; border:0; padding:3px 8px; text-align:left; background:transparent; -webkit-user-drag:none; user-select:none; }
 .local-files-name-copy { min-width:0; display:grid; gap:1px; }
-.local-files-file-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.local-files-file-name { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.45; }
 .local-files-mobile-meta { display:none; min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--muted); font:10px/1.25 ui-monospace,SFMono-Regular,Menlo,monospace; }
 .local-files-row > span { min-width:0; overflow:hidden; padding-inline:10px; color:var(--muted); text-overflow:ellipsis; white-space:nowrap; font:12px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace; }
 .local-files-list > .sftp-pager-dock { position:sticky; z-index:5; bottom:0; flex:0 0 auto; width:100%; margin-top:auto; padding:14px 10px 10px; background:var(--panel); box-shadow:0 -8px 18px rgba(15,23,32,.07); }
@@ -2835,7 +2835,7 @@ body.sftp-item-drag-active .tab[data-kind="sftp"], body.sftp-item-drag-active .t
 .sftp-list.has-scroll-below .sftp-scroll-cue { display:grid; }
 .sftp-name { display:flex; gap:6px; align-items:center; min-width:0; min-height:30px; text-align:left; border:0; background:transparent; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:2px; }
 .sftp-name-copy { min-width:0; display:grid; gap:1px; }
-.sftp-file-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sftp-file-name { display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; line-height:1.45; }
 .sftp-mobile-meta { display:none; min-width:0; overflow:hidden; text-overflow:ellipsis; color:var(--muted); font:10px/1.25 ui-monospace,SFMono-Regular,Menlo,monospace; }
 .sftp-check { width:auto; }
 .sftp-icon { position:relative; flex:0 0 28px; width:28px; height:26px; display:grid; place-items:center; color:var(--muted); }

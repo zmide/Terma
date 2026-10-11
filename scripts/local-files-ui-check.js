@@ -468,6 +468,8 @@ async function main() {
   assert.doesNotMatch(css, /\.local-files-head-cell \{[^}]*border-right:/, "本地文件表头不得与拖动手柄重复绘制分隔线");
   assert.doesNotMatch(css, /\.sftp-head-cell \{[^}]*border-right:/, "SFTP 表头不得与拖动手柄重复绘制分隔线");
   assert.match(css, /\.sftp-pager select \{[^}]*min-height:28px;[^}]*padding:3px 28px 3px 8px;/);
+  assert.match(css, /\.sftp-file-name \{[^}]*display:block;[^}]*line-height:1\.45;/, "SFTP 文件名必须使用明确的块级行盒，避免下划线被字体基线裁剪");
+  assert.match(css, /\.local-files-file-name \{[^}]*display:block;[^}]*line-height:1\.45;/, "本地文件名必须使用明确的块级行盒，和 SFTP 保持一致");
   assert.doesNotMatch(css, /\.local-files-page-size/, "本地分页不得保留一套独立于 SFTP 的选择器样式");
   assert.match(css, /@container local-files-view \(max-width:520px\) \{[\s\S]*?\.local-files-list > \.sftp-pager-dock > \.sftp-pager \{[^}]*grid-template-columns:minmax\(0,1fr\) minmax\(0,1fr\);/);
 

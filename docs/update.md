@@ -2,12 +2,12 @@
 
 ## Next release draft / 下一版草稿
 
-[English](#v1-7-8-english) · [简体中文](#v1-7-8-zh)
+[English](#v1-7-9-english) · [简体中文](#v1-7-9-zh)
 
-<a id="v1-7-8-english"></a>
+<a id="v1-7-9-english"></a>
 ### English
 
-> The v1.7.8 draft continues recoverable-session, interoperability, and cross-platform remote desktop acceptance.
+> The v1.7.9 draft continues recoverable-session, interoperability, and cross-platform remote desktop acceptance.
 
 #### Planned
 
@@ -15,16 +15,50 @@
 - Expand terminal AI interoperability tests with additional OpenAI-compatible gateways while keeping command execution and MCP approval boundaries unchanged.
 - Complete real TigerVNC/noVNC/system-client clipboard acceptance for text, Chinese, and image transfer on all three desktop platforms.
 
-<a id="v1-7-8-zh"></a>
+<a id="v1-7-9-zh"></a>
 ### 简体中文
 
-> v1.7.8 草稿继续推进可恢复会话、互操作场景和跨平台远程桌面验收。
+> v1.7.9 草稿继续推进可恢复会话、互操作场景和跨平台远程桌面验收。
 
 #### 计划
 
 - 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
 - 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
 - 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
+
+## v1.7.8
+
+[English](#v1-7-8-english) · [简体中文](#v1-7-8-zh)
+
+<a id="v1-7-8-english"></a>
+### English
+
+> SFTP and Local Files now keep underscores and other baseline characters visible, so names such as `.bash_history` remain readable.
+
+#### Important fixes
+
+- Fixed SFTP and Local Files filenames whose underscores could disappear in the list.
+
+#### Changes in this release
+
+- Direct maintenance update: corrected filename rendering in SFTP and Local Files.
+
+**Full Changelog**: [v1.7.7...v1.7.8](https://github.com/zmide/Terma/compare/v1.7.7...v1.7.8)
+
+<a id="v1-7-8-zh"></a>
+### 简体中文
+
+> SFTP 和本地文件列表现在能正常显示下划线等基线字符，`.bash_history` 这类文件名可以完整阅读。
+
+#### 重要修复
+
+- 修复 SFTP 和本地文件列表中文件名下划线可能不显示的问题。
+
+#### 本次变更
+
+- 直接维护更新：修正 SFTP 和本地文件列表的文件名显示布局。
+
+**完整变更**：[v1.7.7...v1.7.8](https://github.com/zmide/Terma/compare/v1.7.7...v1.7.8)
 
 ## v1.7.7
 
@@ -52,6 +86,8 @@
 - [PR #56](https://github.com/zmide/Terma/pull/56) — corrected release documentation, by [@JunXiaoRuo](https://github.com/JunXiaoRuo).
 - [PR #57](https://github.com/zmide/Terma/pull/57) — added the Gatekeeper temporary-workaround prerequisite, by [@JunXiaoRuo](https://github.com/JunXiaoRuo).
 - [PR #58](https://github.com/zmide/Terma/pull/58) — published signed macOS DMGs, removed the macOS ZIP package, and compacted mobile terminal shortcuts, by [@JunXiaoRuo](https://github.com/JunXiaoRuo).
+- [PR #59](https://github.com/zmide/Terma/pull/59) — corrected macOS release artifact validation, by [@JunXiaoRuo](https://github.com/JunXiaoRuo).
+- [PR #60](https://github.com/zmide/Terma/pull/60) — improved the reliability of the macOS build and signing path, by [@JunXiaoRuo](https://github.com/JunXiaoRuo).
 
 **Full Changelog**: [v1.7.6...v1.7.7](https://github.com/zmide/Terma/compare/v1.7.6...v1.7.7)
 
@@ -77,6 +113,8 @@
 - [PR #56](https://github.com/zmide/Terma/pull/56) —— 修正文档发布说明，贡献者：[[@JunXiaoRuo](https://github.com/JunXiaoRuo)]。
 - [PR #57](https://github.com/zmide/Terma/pull/57) —— 补充 Gatekeeper 临时处理前置步骤，贡献者：[[@JunXiaoRuo](https://github.com/JunXiaoRuo)]。
 - [PR #58](https://github.com/zmide/Terma/pull/58) —— 发布已签名 macOS DMG、移除 macOS ZIP 并收紧移动端终端快捷键，贡献者：[[@JunXiaoRuo](https://github.com/JunXiaoRuo)]。
+- [PR #59](https://github.com/zmide/Terma/pull/59) —— 修正 macOS 发布产物校验，贡献者：[[@JunXiaoRuo](https://github.com/JunXiaoRuo)]。
+- [PR #60](https://github.com/zmide/Terma/pull/60) —— 提升 macOS 构建和签名流程的可靠性，贡献者：[[@JunXiaoRuo](https://github.com/JunXiaoRuo)]。
 
 **完整变更**：[v1.7.6...v1.7.7](https://github.com/zmide/Terma/compare/v1.7.6...v1.7.7)
 
