@@ -157,6 +157,7 @@
     "sftp_native_drag_failed": "拖出下载失败",
     "sftp_native_drag_cancel_rejected": "系统暂未接受停止请求，传输仍在继续",
     "sftp_remote_filename_invalid": "远程文件名无效",
+    "sftp_archive_filename_conversion_failed": "压缩包文件名转换失败，请检查连接的文件名编码后重试",
     "sftp_cross_copy_name_unavailable": "无法为 {{name}} 分配可用名称",
     "sftp_cross_copy_too_many_entries": "一次最多处理 {{max}} 个文件和目录",
     "sftp_cross_copy_source_changed": "源文件在传输期间发生变化：{{path}}",

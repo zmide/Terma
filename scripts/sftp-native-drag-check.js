@@ -583,6 +583,14 @@ try {
   assert.equal(pendingMacDirectory.size, 0);
   assert.equal(pendingMacDirectory.size_known, false, "a directory stays indeterminate until its recursive manifest size is known");
   assert.equal(pendingMacDirectory.progress_known, false);
+  const expandedDirectory = await session.getNativeSftpDragTicket(macDirectoryTicket.token);
+  assert.equal(jobs.beginNativeSftpDragJob(macDirectoryTicket.token, expandedDirectory).id, macDirectoryTask.id);
+  const sizedDirectory = jobs.listSftpJobs().find(item => item.id === macDirectoryTask.id);
+  assert.equal(sizedDirectory.size, Buffer.byteLength("nested promise"));
+  assert.equal(sizedDirectory.size_known, true, "A preparation task must gain a determinate size when recursive enumeration finishes");
+  assert.equal(sizedDirectory.progress_known, true);
+  jobs.beginNativeSftpDragJob(macDirectoryTicket.token, macDirectoryTicket);
+  assert.equal(jobs.listSftpJobs().find(item => item.id === macDirectoryTask.id).size_known, true, "A delayed stale callback must not erase the resolved directory size");
   assert.deepEqual(jobs.discardNativeSftpDragJob(macDirectoryTicket.token), {ok:true, status:"discarded"});
   assert.equal(session.releaseNativeSftpDragTicket(macDirectoryTicket.token), true);
 

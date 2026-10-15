@@ -1470,11 +1470,13 @@ struct DragSession : std::enable_shared_from_this<DragSession> {
       : spec(std::move(parsed_spec)), request_id(std::move(id)),
         manifest_state(spec.items.empty() ? ManifestState::kPending
                                           : ManifestState::kReady),
-        async_event(CreateEventW(nullptr, TRUE, TRUE, nullptr)) {
+        async_event(CreateEventW(nullptr, TRUE, TRUE, nullptr)),
+        manifest_event(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {
     InitializeContentTracking();
   }
 
   ~DragSession() {
+    if (manifest_event != nullptr) CloseHandle(manifest_event);
     if (async_event != nullptr) {
       CloseHandle(async_event);
       async_event = nullptr;
@@ -1503,6 +1505,8 @@ struct DragSession : std::enable_shared_from_this<DragSession> {
   std::atomic<bool> async_in_operation{false};
   std::atomic<HRESULT> async_result{S_OK};
   HANDLE async_event = nullptr;
+  HANDLE manifest_event = nullptr;
+  std::atomic<bool> manifest_requested{false};
   std::mutex content_mutex;
   std::vector<std::vector<std::pair<uint64_t, uint64_t>>> content_ranges;
   uint64_t content_total_bytes = 0;
@@ -1600,6 +1604,7 @@ struct DragSession : std::enable_shared_from_this<DragSession> {
     activation_cv.notify_all();
     manifest_cv.notify_all();
     if (async_event != nullptr) SetEvent(async_event);
+    if (manifest_event != nullptr) SetEvent(manifest_event);
   }
 
   void InitializeContentTracking() {
@@ -1725,6 +1730,7 @@ struct DragSession : std::enable_shared_from_this<DragSession> {
     InitializeContentTracking();
     MaybeMarkContentComplete();
     manifest_cv.notify_all();
+    if (manifest_event != nullptr) SetEvent(manifest_event);
   }
 
   void FailManifest(HRESULT result, std::string message) {
@@ -1739,6 +1745,38 @@ struct DragSession : std::enable_shared_from_this<DragSession> {
     }
     activation_cv.notify_all();
     manifest_cv.notify_all();
+    if (manifest_event != nullptr) SetEvent(manifest_event);
+  }
+
+  HRESULT WaitForManifestWithMessages() {
+    const ULONGLONG started = GetTickCount64();
+    while (IsManifestPending() && !cancelled.load() && !g_shutting_down.load()) {
+      // SHDoDragDrop's usual QueryContinueDrag callback cannot run until this
+      // nested data request returns. Keep Escape and drag feedback responsive.
+      if (!released.load() && (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0) {
+        Cancel();
+        break;
+      }
+      if (!released.load()) EmitMotion();
+      if (GetTickCount64() - started >= spec.timeout_ms) {
+        FailManifest(HRESULT_FROM_WIN32(ERROR_TIMEOUT), "Directory listing timed out");
+        break;
+      }
+      DWORD index = 0;
+      HRESULT result = manifest_event == nullptr ? CO_E_NOTINITIALIZED
+          : CoWaitForMultipleHandles(COWAIT_DISPATCH_CALLS |
+                COWAIT_DISPATCH_WINDOW_MESSAGES | COWAIT_INPUTAVAILABLE,
+                100, 1, &manifest_event, &index);
+      if (result == CO_E_NOTINITIALIZED) {
+        std::unique_lock<std::mutex> lock(manifest_mutex);
+        manifest_cv.wait_for(lock, std::chrono::milliseconds(100), [&]() {
+          return manifest_state != ManifestState::kPending || cancelled.load();
+        });
+      } else if (FAILED(result) && result != RPC_S_CALLPENDING) {
+        return result;
+      }
+    }
+    return WaitForManifest();
   }
 
   HRESULT WaitForManifest(std::string* error = nullptr) {
@@ -2966,13 +3004,18 @@ class VirtualFileDataObject final : public IDataObject,
       // Chromium probes the OLE data object while the pointer is still over
       // Terma. Waiting here keeps the hidden drag window's mouse capture
       // alive and makes the application appear frozen for large directories.
-      // Explorer's asynchronous extraction retries after StartOperation.
-      if ((!session_->released.load() && IsCursorOverSourceWindow()) ||
-          !session_->async_in_operation.load()) {
+      // Explorer can request descriptors BEFORE StartOperation and does not
+      // reliably retry E_PENDING. External requests must wait with COM/window
+      // dispatch enabled, while probes back into the source stay non-blocking.
+      if (!session_->released.load() && IsCursorOverSourceWindow()) {
         return E_PENDING;
       }
     }
-    return session_->WaitForManifest();
+    if ((session_->released.load() || !IsCursorOverSourceWindow()) &&
+        !session_->manifest_requested.exchange(true)) {
+      session_->Emit("manifestRequested");
+    }
+    return session_->WaitForManifestWithMessages();
   }
 
   HRESULT GetDescriptors(STGMEDIUM* medium) {

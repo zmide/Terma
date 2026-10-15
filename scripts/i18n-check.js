@@ -691,6 +691,7 @@ assert.ok(zmodemFrontend.includes("registerTermaI18nRenderer(() => syncTerminalZ
 assert.ok(zmodemFrontend.includes("function terminalZmodemViewText("), "ZMODEM live localization must retain structured translation keys and parameters");
 assert.equal(zmodemFrontend.includes("translatedTermaPhrase"), false, "ZMODEM live localization must not translate rendered user filenames or paths heuristically");
 const uiSmoke = read("scripts/ui-smoke-electron.js");
+assert.ok(uiSmoke.includes("runI18nScenario('desktop-notification-toggle'"), "English UI smoke must exercise saved desktop notification toggles, including busy-label restoration");
 assert.match(uiSmoke, /\['title','aria-label','placeholder'\]/, "English UI smoke must inspect translatable attributes");
 assert.match(uiSmoke, /collectVisibleHan\('document', true\)/, "English UI smoke must inspect hidden rendered DOM as well as visible pages");
 assert.ok(uiSmoke.includes("scenario:'third-party-live-language-switch'"), "English UI smoke must create third-party components in Chinese before switching to English");

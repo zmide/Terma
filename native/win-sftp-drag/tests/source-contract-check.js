@@ -242,9 +242,18 @@ assert.match(
 );
 assert.match(
   source,
-  /HRESULT ResolveManifestForDataRequest\(\)[\s\S]*IsManifestPending\(\)[\s\S]*IsCursorOverSourceWindow\(\)[\s\S]*!session_->async_in_operation\.load\(\)[\s\S]*return E_PENDING;/,
-  "OLE data probes must stay non-blocking until an asynchronous drop operation owns the directory manifest"
+  /HRESULT ResolveManifestForDataRequest\(\)[\s\S]*if \(!session_->released\.load\(\) && IsCursorOverSourceWindow\(\)\) \{\s*return E_PENDING;/,
+  "Only probes over the source window may reject a pending directory manifest"
 );
+const manifestGate = source.slice(source.indexOf("HRESULT ResolveManifestForDataRequest()"), source.indexOf("HRESULT GetDescriptors(STGMEDIUM* medium)"));
+assert.doesNotMatch(manifestGate, /async_in_operation/, "Explorer may request descriptors before StartOperation; that request must not be rejected");
+assert.match(manifestGate, /manifest_requested\.exchange\(true\)[\s\S]*Emit\("manifestRequested"\)[\s\S]*WaitForManifestWithMessages\(\)/, "Directory preparation must publish progress before waiting for its manifest");
+assert.match(source, /HRESULT WaitForManifestWithMessages\(\)[\s\S]*spec\.timeout_ms[\s\S]*CoWaitForMultipleHandles\(COWAIT_DISPATCH_CALLS[\s\S]*COWAIT_DISPATCH_WINDOW_MESSAGES[\s\S]*return WaitForManifest\(\)/, "External descriptor waits must be bounded, cancellable, and dispatch OLE/window messages");
+assert.match(source, /HRESULT WaitForManifestWithMessages\(\)[\s\S]*!released\.load\(\) && \(GetAsyncKeyState\(VK_ESCAPE\)[\s\S]*Cancel\(\);[\s\S]*EmitMotion\(\)/, "Escape and drag feedback must stay responsive while a nested descriptor request waits for enumeration");
+for (const method of ["Cancel", "PublishManifest", "FailManifest"]) {
+  const body = new RegExp(`void ${method}\\([^]*?\\n  \\}`).exec(source)?.[0] || "";
+  assert.match(body, /SetEvent\(manifest_event\)/, `${method} must wake the manifest wait`);
+}
 assert.match(
   source,
   /QueryGetData\(FORMATETC\* format\)[\s\S]*session_->IsManifestPending\(\)[\s\S]*return S_OK;[\s\S]*session_->WaitForManifest\(\)/,

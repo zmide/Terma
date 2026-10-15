@@ -80,7 +80,10 @@ function createNativeSftpDragJobs(dependencies: any) {
     const key = String(token || "");
     if (closedNativeDragTokens.has(key)) return { id:"", status:"discarded" };
     const existingId = nativeDragJobIds.get(key);
-    if (existingId && jobs.has(existingId)) return { id:existingId, status:jobs.get(existingId).status };
+    const existing = existingId ? jobs.get(existingId) : null;
+    if (existing && (existing.size_known || !ticket?.ready || !Array.isArray(ticket?.entries) || !activeStatuses.has(existing.status))) {
+      return {id:existingId, status:existing.status};
+    }
     const connectionId = Number(ticket?.connection_id || 0);
     const connection = getSftpConnection(connectionId);
     const topLevel = Array.isArray(ticket?.top_level) ? ticket.top_level : [];
@@ -96,6 +99,16 @@ function createNativeSftpDragJobs(dependencies: any) {
     const size = sizeKnown
       ? sizedEntries.reduce((total: number, entry: any) => entry?.type === "file" ? total + Math.max(0, Number(entry.size || 0)) : total, 0)
       : 0;
+    if (existing) {
+      if (sizeKnown && activeStatuses.has(existing.status)) {
+        existing.size = size;
+        existing.size_known = true;
+        existing.progress_known = true;
+        existing.progress = size > 0 ? Math.min(99, Number(existing.transferred || 0) / size * 100) : 0;
+        persistJobs();
+      }
+      return { id:existingId, status:existing.status };
+    }
     const id = crypto.randomUUID();
     const job: any = {
       id,
@@ -220,6 +233,9 @@ function createNativeSftpDragJobs(dependencies: any) {
       job.transferred = job.size || job.transferred;
       job.progress = 100;
     }
+    removeQueuedTransfer(job);
+    job.transfer_runner = null;
+    rejectTransferWaiters(job, transferCancelledError());
     finishTransferMetrics(job);
     releaseTransferSlot(job);
     nativeDragJobIds.delete(key);

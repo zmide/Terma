@@ -6,6 +6,7 @@ const { pipeline } = require("node:stream/promises");
 const { remotePathOperand, shellQuote, spawnRemote } = require("./sftp-job-paths");
 const { clearSftpJobIssue, setSftpJobIssue } = require("./sftp-job-issues");
 const { archiveTarCreateOptions, normalizeArchiveFilenameEncoding, resolveArchiveFilenameEncoding } = require("./sftp-operation-commands");
+const { normalizeDownloadedTarFilenames } = require("./infrastructure/tar-filename-transcoder");
 
 function codedSftpJobError(message: string, code: string, params: any = {}) {
   const error: any = new Error(message);
@@ -238,14 +239,27 @@ function createSftpDownloadJobs(dependencies: any) {
     job.current = "正在保存到本机";
     job.can_pause = false;
     job.can_cancel = true;
-    job.delivery_status = "saving";
+    job.delivery_status = job.delivery_mode === "desktop" ? "saving" : "pending";
     job.finished_at = null;
     persistJobs(true);
-    void autoSaveDownloadedFile(job, abortController.signal).catch((error: any) => {
-      if (error?.name !== "AbortError") {
-        job.delivery_status = "failed";
-        setSftpJobIssue(job, "delivery_error", error?.message || String(error));
+    let finalizationError: any = null;
+    void (async () => {
+      const encoding = normalizeArchiveFilenameEncoding(job.archive_filename_encoding);
+      if (job.archive_download && !job.archive_utf8_filenames && !["utf8", "default"].includes(encoding)) {
+        try {
+          await normalizeDownloadedTarFilenames(job.temp_path, encoding, abortController.signal);
+        } catch (error: any) {
+          if (error?.name === "AbortError") throw error;
+          throw codedSftpJobError("压缩包文件名转换失败，请检查连接的文件名编码后重试", "sftp_archive_filename_conversion_failed");
+        }
+        job.archive_utf8_filenames = true;
+        job.size = (await fsp.stat(job.temp_path)).size;
+        job.transferred = job.size;
+        persistJobs(true);
       }
+      if (job.delivery_mode === "desktop") await autoSaveDownloadedFile(job, abortController.signal);
+    })().catch((error: any) => {
+      finalizationError = error;
     }).finally(() => {
       job.abortController = null;
       job.download_finalizing = false;
@@ -253,7 +267,9 @@ function createSftpDownloadJobs(dependencies: any) {
         finishCancelledDesktopSave(job);
         return;
       }
-      finalizeDownloadTransfer(job, "done");
+      if (finalizationError) {
+        finalizeDownloadTransfer(job, "failed", finalizationError.message || String(finalizationError), finalizationError.sftpJobCode || "", finalizationError.sftpJobParams || {});
+      } else finalizeDownloadTransfer(job, "done");
     });
   }
 
@@ -523,7 +539,7 @@ function createSftpDownloadJobs(dependencies: any) {
             job.transferred = (job.size || fs.existsSync(job.temp_path)) ? fs.statSync(job.temp_path).size : job.transferred;
             job.progress = 100;
           }
-          if (status === "done" && job.delivery_mode === "desktop") {
+          if (status === "done" && (job.delivery_mode === "desktop" || job.archive_download)) {
             autoSaveAndFinishDownload(job);
           } else {
             finalizeDownloadTransfer(job, status, error, errorCode, errorParams);
@@ -635,7 +651,7 @@ function createSftpDownloadJobs(dependencies: any) {
       }
       job.transferred = fs.existsSync(job.temp_path) ? fs.statSync(job.temp_path).size : job.transferred;
       job.progress = 100;
-      if (job.delivery_mode === "desktop") autoSaveAndFinishDownload(job);
+      if (job.delivery_mode === "desktop" || job.archive_download) autoSaveAndFinishDownload(job);
       else finalizeDownloadTransfer(job, "done");
     }
   }
@@ -775,6 +791,7 @@ function createSftpDownloadJobs(dependencies: any) {
     job.finished_at = null;
     job.started_at = job.started_at || Date.now();
     job.archive_ready = false;
+    job.archive_utf8_filenames = false;
     resetTransferSpeed(job);
     persistJobs(true);
     let stdout = "";

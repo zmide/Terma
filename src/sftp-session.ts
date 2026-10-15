@@ -8,6 +8,7 @@ const { getConnection } = require("./db");
 const { resolveQuickConnectionById } = require("./quick-terminal");
 const { connectSsh, normalizeSshTransportError } = require("./ssh2-client");
 const { openCachedRange } = require("./sftp-range-cache");
+const { bindSftpChannelEncoding } = require("./infrastructure/sftp-channel-encoding");
 
 const sessions = new Map();
 const SFTP_DIRECTORY_CHANNEL_IDLE_TTL_MS = 60 * 1000;
@@ -41,7 +42,8 @@ function connectionFingerprint(connection) {
     connection.ssh_user,
     connection.auth_type || "key",
     connection.identity_file || "",
-    connection.ssh_password || ""
+    connection.ssh_password || "",
+    connection.sftp_filename_encoding || "utf8"
   ]);
 }
 
@@ -145,7 +147,8 @@ function openSftpDirectoryChannel(record, connection, signal = null) {
         settled = true;
         cleanup();
         if (error) return reject(normalizeSshTransportError(error, connection));
-        resolve(channel);
+        if (!record.rawFilenamePaths) record.rawFilenamePaths = new Map();
+        resolve(bindSftpChannelEncoding(channel, connection, record.rawFilenamePaths));
       });
     } catch (error) {
       settled = true;

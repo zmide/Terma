@@ -177,7 +177,7 @@ async function main() {
     assert.equal(jobs.listSftpJobs().find(item => item.id === archiveJobId).remote_archive_path, "", "completed archive downloads must clean the remote temporary file");
     const archive = jobs.getSftpJobFile(archiveJobId);
     assert.equal(archive.name, "selected:files?.tar.gz", "a browser archive download must keep the requested tar.gz filename");
-    assert.match(archiveCreateCommand, /LC_ALL=C tar --format=posix --pax-option=hdrcharset=UTF-8/, "archive creation must isolate filename bytes from the remote locale and mark UTF-8 filenames");
+    assert.match(archiveCreateCommand, /LC_ALL=C tar --format=posix --pax-option='hdrcharset=ISO-IR 10646 2000 UTF-8'/, "archive creation must isolate filename bytes from the remote locale and mark UTF-8 filenames");
     assert.ok(fs.statSync(archive.path).size > 0, "the archive response must use the completed job artifact");
     console.log("SFTP download integrity check passed.");
   } finally {
