@@ -537,6 +537,23 @@ try {
   assert.equal(session.releaseNativeSftpDragTicket(completeTaskTicket.token), true);
 
   const macPromiseSize = Buffer.byteLength("promised report");
+  const linkProgressTicket = session.reserveNativeSftpDragTicket(123, ["/root/kernel-link"], {
+    platform:"win32",
+    entries:[{path:"/root/kernel-link",name:"kernel-link",type:"file",size:27,metadataKnown:true}]
+  });
+  const linkProgressTask = jobs.beginNativeSftpDragJob(linkProgressTicket.token, linkProgressTicket);
+  assert.equal(jobs.listSftpJobs().find(item => item.id === linkProgressTask.id).size, 27);
+  const readyLinkManifest = await session.getNativeSftpDragTicket(linkProgressTicket.token);
+  jobs.beginNativeSftpDragJob(linkProgressTicket.token, readyLinkManifest);
+  assert.equal(jobs.listSftpJobs().find(item => item.id === linkProgressTask.id).size, 8192, "A ready manifest must replace preview metadata with the symlink target's content size");
+  const cachedManifest = {...readyLinkManifest};
+  Object.defineProperty(cachedManifest, "entries", {get() { throw new Error("Manifest size must be computed only once"); }});
+  jobs.beginNativeSftpDragJob(linkProgressTicket.token, cachedManifest);
+  jobs.recordNativeSftpDragBytes(linkProgressTicket.token, 4096);
+  assert.equal(jobs.listSftpJobs().find(item => item.id === linkProgressTask.id).transferred, 4096);
+  assert.deepEqual(jobs.finishNativeSftpDragJob(linkProgressTicket.token, "done"), {ok:true,status:"cancelled"}, "A partial symlink target must not be reported complete at the stale preview size");
+  assert.equal(session.releaseNativeSftpDragTicket(linkProgressTicket.token), true);
+
   const macProgressTicket = session.reserveNativeSftpDragTicket(123, ["/root/report.txt"], {
     platform:"darwin",
     entries:[{

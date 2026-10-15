@@ -23,6 +23,7 @@ function createNativeSftpDragJobs(dependencies: any) {
     writeJsonJobs
   } = dependencies;
   const nativeDragJobIds = new Map<string, string>();
+  const manifestSizedJobs = new WeakSet<object>();
   const closedNativeDragTokens = new Map<string, NodeJS.Timeout>();
   let nativeDragCancelHandler: any = null;
 
@@ -81,7 +82,7 @@ function createNativeSftpDragJobs(dependencies: any) {
     if (closedNativeDragTokens.has(key)) return { id:"", status:"discarded" };
     const existingId = nativeDragJobIds.get(key);
     const existing = existingId ? jobs.get(existingId) : null;
-    if (existing && (existing.size_known || !ticket?.ready || !Array.isArray(ticket?.entries) || !activeStatuses.has(existing.status))) {
+    if (existing && (manifestSizedJobs.has(existing) || !ticket?.ready || !Array.isArray(ticket?.entries) || !activeStatuses.has(existing.status))) {
       return {id:existingId, status:existing.status};
     }
     const connectionId = Number(ticket?.connection_id || 0);
@@ -105,6 +106,7 @@ function createNativeSftpDragJobs(dependencies: any) {
         existing.size_known = true;
         existing.progress_known = true;
         existing.progress = size > 0 ? Math.min(99, Number(existing.transferred || 0) / size * 100) : 0;
+        manifestSizedJobs.add(existing);
         persistJobs();
       }
       return { id:existingId, status:existing.status };
@@ -140,6 +142,7 @@ function createNativeSftpDragJobs(dependencies: any) {
       finished_at:null
     };
     resetTransferSpeed(job);
+    if (manifestReady) manifestSizedJobs.add(job);
     jobs.set(id, job);
     nativeDragJobIds.set(key, id);
     queueTransferJob("download", job, () => resolveTransferWaiters(job), {
