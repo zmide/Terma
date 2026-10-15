@@ -49,7 +49,7 @@
 
 #### Changes in this release
 
-- SFTP download, drag-out, and desktop notification fixes.
+- Release v1.7.9: fix SFTP downloads and folder drag-out ([#61](https://github.com/zmide/Terma/pull/61), @JunXiaoRuo).
 - [Update dependencies and bundled components](https://github.com/zmide/Terma/commit/7c347d508766f6933fdc97d6979dcfb685c93cc0).
 
 **Full Changelog**: [v1.7.8...v1.7.9](https://github.com/zmide/Terma/compare/v1.7.8...v1.7.9)
@@ -73,7 +73,7 @@
 
 #### 本次变更
 
-- SFTP 下载、拖出与桌面通知修复。
+- 发布 v1.7.9：修复 SFTP 下载与目录拖出（[#61](https://github.com/zmide/Terma/pull/61)，@JunXiaoRuo）。
 - [更新依赖与随附组件](https://github.com/zmide/Terma/commit/7c347d508766f6933fdc97d6979dcfb685c93cc0)。
 
 **完整变更**：[v1.7.8...v1.7.9](https://github.com/zmide/Terma/compare/v1.7.8...v1.7.9)
