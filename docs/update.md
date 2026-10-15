@@ -2,39 +2,81 @@
 
 ## Next release draft / 下一版草稿
 
+[English](#v1-7-10-english) · [简体中文](#v1-7-10-zh)
+
+<a id="v1-7-10-english"></a>
+### English
+
+> The next release will continue improving remote-session recovery and cross-platform remote desktops.
+
+#### Planned
+
+- Complete real network and reload acceptance for recoverable sessions on Linux, macOS, Windows fallback, and browser mode.
+- Expand terminal model interoperability tests while preserving command execution and MCP approval boundaries.
+- Complete text, Chinese, and image clipboard acceptance for remote desktops on all three desktop platforms.
+
+<a id="v1-7-10-zh"></a>
+### 简体中文
+
+> 下一版继续完善远程会话恢复和跨平台远程桌面体验。
+
+#### 计划
+
+- 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
+- 扩展终端模型互操作测试，同时保持命令执行和 MCP 确认边界不变。
+- 完成远程桌面在三种桌面平台上的文本、中文和图片剪贴板验收。
+
+## v1.7.9
+
 [English](#v1-7-9-english) · [简体中文](#v1-7-9-zh)
 
 <a id="v1-7-9-english"></a>
 ### English
 
-> The v1.7.9 draft keeps the remote-session work moving and refreshes the bundled desktop and graphics components.
+> Chinese filenames now stay readable in SFTP packed downloads and local transfers. Windows folder drag-out shows preparation and download progress, and desktop notification controls correctly reflect their saved state.
+
+#### Important fixes
+
+- Fixed unreadable Chinese filenames in packed downloads from servers using GB18030 or other legacy filename encodings.
+- Fixed dragging Chinese-named folders to the desktop and sending them to a local file pane failing with “file not found” or HTTP 400 on those servers.
+- Fixed Windows directory drag-out silently doing nothing while the file list was loading. Drag-out tasks now show progress during preparation and download, not just on completion.
+- Fixed the desktop notification button keeping its old label after turning notifications off or on.
 
 #### Other improvements
 
-- Updated the Electron desktop runtime, interface icons, X11 transport, internationalization runtime, FTP transport, and build toolchain to their reviewed versions.
-- Updated the bundled Windows VcXsrv runtime to 21.1.16.1 with a pinned HTTPS download and SHA-256 verification.
+- Updated the bundled desktop, icon, language, and file-transfer components.
+- Updated the Windows component used to display remote graphical applications.
 
-#### Planned
+#### Changes in this release
 
-- Complete real network and reload acceptance for recoverable sessions on Linux, macOS, Windows fallback, and browser mode.
-- Expand terminal AI interoperability tests with additional OpenAI-compatible gateways while keeping command execution and MCP approval boundaries unchanged.
-- Complete real TigerVNC/noVNC/system-client clipboard acceptance for text, Chinese, and image transfer on all three desktop platforms.
+- Release v1.7.9: fix SFTP downloads and folder drag-out ([#61](https://github.com/zmide/Terma/pull/61), @JunXiaoRuo).
+- [Update dependencies and bundled components](https://github.com/zmide/Terma/commit/7c347d508766f6933fdc97d6979dcfb685c93cc0).
+
+**Full Changelog**: [v1.7.8...v1.7.9](https://github.com/zmide/Terma/compare/v1.7.8...v1.7.9)
 
 <a id="v1-7-9-zh"></a>
 ### 简体中文
 
-> v1.7.9 草稿继续推进远程会话相关工作，并更新内置桌面与图形组件。
+> SFTP 打包下载和本机传输可正确保留中文名称，Windows 目录拖出支持准备及下载进度提示，桌面通知按钮也能正确反映保存后的状态。
+
+#### 重要修复
+
+- 修复使用 GB18030 等旧文件名编码的服务器打包下载后，压缩包内中文名称显示异常的问题。
+- 修复这些服务器的中文目录拖到桌面或发送到本地文件分栏时，提示找不到文件或 HTTP 400 的问题。
+- 修复 Windows 拖出目录时，文件清单尚未加载完就无反应的问题；拖出任务在准备和下载期间即可查看进度，不再只提示完成。
+- 修复开启或关闭桌面通知后，按钮仍显示旧文字的问题。
 
 #### 其他优化
 
-- 更新 Electron 桌面运行时、界面图标、X11 传输、国际化运行时、FTP 传输和构建工具链到经过核对的版本。
-- 将内置 Windows VcXsrv 更新到 21.1.16.1，并使用固定 HTTPS 地址和 SHA-256 校验。
+- 更新内置桌面运行时、界面图标、多语言和文件传输组件。
+- 更新 Windows 上用于显示远程图形应用的组件。
 
-#### 计划
+#### 本次变更
 
-- 完成 Linux、macOS、Windows 降级和浏览器模式下的真实断网、重载与会话恢复验收。
-- 使用更多 OpenAI 兼容网关扩展终端 AI 互操作测试，同时保持命令执行和 MCP 确认边界不变。
-- 完成 TigerVNC、noVNC、系统客户端在三种桌面平台上的文本、中文和图片剪贴板验收。
+- 发布 v1.7.9：修复 SFTP 下载与目录拖出（[#61](https://github.com/zmide/Terma/pull/61)，@JunXiaoRuo）。
+- [更新依赖与随附组件](https://github.com/zmide/Terma/commit/7c347d508766f6933fdc97d6979dcfb685c93cc0)。
+
+**完整变更**：[v1.7.8...v1.7.9](https://github.com/zmide/Terma/compare/v1.7.8...v1.7.9)
 
 ## v1.7.8
 

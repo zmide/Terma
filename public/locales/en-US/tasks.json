@@ -157,6 +157,7 @@
     "sftp_native_drag_failed": "The drag-out download failed",
     "sftp_native_drag_cancel_rejected": "The system has not accepted the stop request. The transfer is still running.",
     "sftp_remote_filename_invalid": "The remote filename is invalid",
+    "sftp_archive_filename_conversion_failed": "Could not convert the archive filenames. Check the connection's filename encoding and try again.",
     "sftp_cross_copy_name_unavailable": "Could not allocate an available name for {{name}}",
     "sftp_cross_copy_too_many_entries": "A single transfer can contain at most {{max}} files and directories",
     "sftp_cross_copy_source_changed": "The source file changed during transfer: {{path}}",

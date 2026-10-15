@@ -2902,6 +2902,34 @@ app.whenReady().then(async () => {
         if (!text.includes('Pause') || !text.includes('Stop')) throw new Error('progress notification controls were not generated in English');
         controller.dismiss();
       });
+      await runI18nScenario('desktop-notification-toggle', async () => {
+        const savedApi = api;
+        const savedSettings = runtimeSettings;
+        const descriptor = Object.getOwnPropertyDescriptor(window, 'Notification');
+        try {
+          Object.defineProperty(window, 'Notification', {configurable:true,value:{permission:'granted'}});
+          runtimeSettings = {...runtimeSettings,saved:{...runtimeSettings.saved,desktop_notifications_enabled:true}};
+          api = async (pathname, options={}) => {
+            if (pathname === '/api/runtime-settings' && options.method === 'PUT') {
+              return {saved:{...runtimeSettings.saved,...JSON.parse(options.body)}};
+            }
+            return savedApi(pathname, options);
+          };
+          renderSettings();
+          await toggleDesktopNotifications();
+          const button = document.getElementById('desktopNotificationToggleBtn');
+          if (button.textContent.trim() !== tr('settings:auto.enable_desktop_notifications') || button.disabled || button.hasAttribute('aria-busy')) throw new Error('desktop notification toggle restored its old label after saving');
+          collectVisibleHan('desktop-notification-disabled', true, document.getElementById('settings-notifications'));
+          await toggleDesktopNotifications();
+          if (button.textContent.trim() !== tr('settings:auto.disable_desktop_notifications')) throw new Error('desktop notifications could not be enabled again');
+        } finally {
+          api = savedApi;
+          runtimeSettings = savedSettings;
+          if (descriptor) Object.defineProperty(window, 'Notification', descriptor);
+          else delete window.Notification;
+          renderSettings();
+        }
+      });
       await runI18nScenario('task-confirmations', async () => {
         const prompts = [
           [tr('tasks:dialogs.delete_message'),tr('tasks:dialogs.delete_title'),tr('common:actions.delete')],
@@ -4126,8 +4154,18 @@ app.whenReady().then(async () => {
         status:document.querySelector('#desktopNotificationStatus')?.textContent || '',
         button:document.querySelector('#desktopNotificationToggleBtn')?.textContent.trim() || ''
       };
-      runtimeSettings.saved.desktop_notifications_enabled = false;
-      updateDesktopNotificationControls();
+      const savedToggleApi = api;
+      try {
+        api = async (pathname, options={}) => {
+          if (pathname === '/api/runtime-settings' && options.method === 'PUT') {
+            return {saved:{...runtimeSettings.saved,...JSON.parse(options.body)}};
+          }
+          return savedToggleApi(pathname, options);
+        };
+        await toggleDesktopNotifications();
+      } finally {
+        api = savedToggleApi;
+      }
       const disabledNotificationState = {
         summary:document.querySelector('#notificationPermissionStatus')?.textContent || '',
         status:document.querySelector('#desktopNotificationStatus')?.textContent || '',
@@ -9060,6 +9098,23 @@ app.whenReady().then(async () => {
         && jobRequestCount === 2
         && sftpLatestJobs.length === 1
         && sftpLatestJobs[0]?.id === deleteJob.id;
+      const nativeProgressApi = api;
+      const nativeProgressRequest = 'native-directory-progress-fixture';
+      let nativeProgressJob = {id:nativeProgressRequest,type:'native-drag',status:'running',phase:'system-saving',connection_id:Number(connection.id),label:'拖出 folder 到本机',size:0,transferred:0,size_known:false,progress_known:false,can_cancel:true};
+      try {
+        api = async pathname => pathname === '/api/sftp/jobs' ? [nativeProgressJob] : [];
+        sftpNativeDragRequests.set(nativeProgressRequest, {lastActivityAt:Date.now()});
+        handleSftpNativeDragEvent({requestId:nativeProgressRequest,type:'transferStarted'});
+        await refreshSftpJobs();
+        if (floatingCard.hidden || !floatingCard.querySelector('.progress.indeterminate')) throw new Error('native directory preparation did not show immediate indeterminate progress');
+        nativeProgressJob = {...nativeProgressJob,size:1000,size_known:true,progress_known:true,transferred:500,progress:50,speed_bps:250};
+        await refreshSftpJobs();
+        if (floatingCard.hidden || !floatingCard.textContent.includes('50%') || !floatingCard.querySelector('.sftp-task-float-cancel:not([hidden])')) throw new Error('native directory download did not update progress and stop control');
+      } finally {
+        sftpNativeDragRequests.delete(nativeProgressRequest);
+        api = nativeProgressApi;
+        updateSftpTaskCenter([deleteJob]);
+      }
       document.documentElement.dataset.uiSmokeStage = 'sftp-task-notifications';
       const previousFloatingTransition = floatingCard?.style.transition || '';
       if (floatingCard) floatingCard.style.transition = 'none';

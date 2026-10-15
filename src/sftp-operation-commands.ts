@@ -41,7 +41,7 @@ function archiveTarCreateOptions(encoding: string) {
   // the default archive names as UTF-8. Callers prefix the command with
   // LC_ALL=C so a GB18030 login locale cannot reinterpret UTF-8 argv bytes.
   return encoding === "default" || encoding === "utf8"
-    ? "--format=posix --pax-option=hdrcharset=UTF-8 "
+    ? "--format=posix --pax-option='hdrcharset=ISO-IR 10646 2000 UTF-8' "
     : "--format=posix --pax-option=hdrcharset=BINARY ";
 }
 

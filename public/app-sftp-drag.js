@@ -867,7 +867,7 @@ function handleSftpNativeDragEvent(event) {
   request.lastActivityAt = Date.now();
   if (["started", "motion", "released"].includes(event.type)) noteSftpDragFeedbackActivity();
   if (event.type === "transferStarted") {
-    refreshSftpJobs();
+    refreshSftpJobs().finally(() => startSftpJobsTimer(true));
     return;
   }
   if (event.type === "ready") {

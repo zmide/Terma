@@ -457,15 +457,15 @@ const singleArchive = normalizeCompressionRequest(["/srv/file.txt"], "/srv", "fi
 assert.equal(singleArchive.name, "file-copy.tar.gz");
 assert.equal(singleArchive.output, "/srv/file-copy.tar.gz");
 assert.equal(singleArchive.filename_encoding, "utf8");
-assert.match(singleArchive.command, /LC_ALL=C tar --format=posix --pax-option=hdrcharset=UTF-8 -czf/);
+assert.match(singleArchive.command, /LC_ALL=C tar --format=posix --pax-option='hdrcharset=ISO-IR 10646 2000 UTF-8' -czf/);
 assert.match(singleArchive.command, /'\.\/file\.txt'/);
-assert.match(require("../dist/sftp-operation-commands").archiveTarCreateOptions("default"), /hdrcharset=UTF-8/);
+assert.match(require("../dist/sftp-operation-commands").archiveTarCreateOptions("default"), /'hdrcharset=ISO-IR 10646 2000 UTF-8'/);
 assert.equal(resolveArchiveFilenameEncoding({sftp_filename_encoding:"gbk"}, "default"), "gbk");
 assert.throws(() => resolveArchiveFilenameEncoding({sftp_filename_encoding:"utf8"}, "gbk"), /必须与当前 SFTP 文件名编码一致/);
 const multiArchive = normalizeCompressionRequest(["/srv/folder", "/srv/-danger"], "/srv", "bundle.tar.gz", null, "utf-8");
 assert.equal(multiArchive.paths.length, 2);
 assert.equal(multiArchive.filename_encoding, "utf8");
-assert.match(multiArchive.command, /--format=posix --pax-option=hdrcharset=UTF-8/);
+assert.match(multiArchive.command, /--format=posix --pax-option='hdrcharset=ISO-IR 10646 2000 UTF-8'/);
 assert.match(multiArchive.command, /'\.\/-danger'/);
 assert.equal(normalizeArchiveFilenameEncoding("euc-kr"), "euc_kr");
 assert.equal(normalizeArchiveFilenameEncoding("ISO-8859-1"), "latin1");

@@ -190,7 +190,10 @@ async function toggleDesktopNotifications() {
     notify(error.message || tr("settings:auto.notification_save_failed"), "error");
     return false;
   } finally {
-    inPane(() => setButtonBusy(button, false));
+    inPane(() => {
+      setButtonBusy(button, false);
+      updateDesktopNotificationControls();
+    });
   }
 }
 

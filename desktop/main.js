@@ -1426,6 +1426,19 @@ function maybeFinishNativeDragSession(session) {
   releaseNativeDragSession(session, {forceTicketRelease:process.platform === "linux"});
 }
 
+function startNativeSftpDragProgress(session) {
+  if (session.nativeJobStarted || session.internalTarget || session.cancelling) return;
+  const task = beginNativeSftpDragJob?.(session.token, session.ticket);
+  if (!task?.id) return;
+  session.nativeJobStarted = true;
+  // Publish queued/indeterminate progress before waiting for a transfer slot or
+  // for Explorer/Finder to open the first file in a recursive directory.
+  sendSftpDragEvent(session, {type:"transferStarted"});
+  session.nativeJobStartPromise = Promise.resolve(waitForSftpTransferStart?.(task.id));
+  // Windows/Linux await the same slot through their content HTTP request.
+  session.nativeJobStartPromise.catch(() => {});
+}
+
 async function handleNativeSftpWriteRequest(session, nativeEvent) {
   if (!session || typeof deliverNativeSftpDragTicketItem !== "function") {
     nativeSftpDrag?.completeWrite?.(nativeEvent.requestId, desktopUiText(
@@ -1437,18 +1450,11 @@ async function handleNativeSftpWriteRequest(session, nativeEvent) {
   session.pendingWrites += 1;
   if (!session.nativeJobStarted) {
     try {
-      const task = beginNativeSftpDragJob?.(session.token, session.ticket);
-      session.nativeJobStarted = Boolean(task?.id);
-      if (session.nativeJobStarted) {
-        session.nativeJobStartPromise = Promise.resolve(waitForSftpTransferStart?.(task.id)).then(() => {
-          sendSftpDragEvent(session, {type:"transferStarted"});
-        });
-      }
+      startNativeSftpDragProgress(session);
     } catch (error) {
       console.warn("Failed to start macOS SFTP native drag task:", error);
     }
   }
-  if (session.nativeJobStartPromise) await session.nativeJobStartPromise;
   const itemId = String(nativeEvent.itemId || "");
   const targetPath = String(nativeEvent.targetPath || "");
   const deliveryKey = `${itemId}\0${targetPath}`;
@@ -1456,6 +1462,7 @@ async function handleNativeSftpWriteRequest(session, nativeEvent) {
   session.macCompletionTimer = null;
   session.macCompletionGraceElapsed = false;
   try {
+    if (session.nativeJobStartPromise) await session.nativeJobStartPromise;
     let delivery = session.inflightDeliveries.get(deliveryKey);
     if (!session.completedDeliveries.has(deliveryKey) && !delivery) {
       delivery = deliverNativeSftpDragTicketItem(
@@ -1504,6 +1511,9 @@ async function handleNativeSftpWriteRequest(session, nativeEvent) {
 
 function handleNativeSftpDragEvent(session, nativeEvent) {
   if (!session || session.released || !nativeEvent || typeof nativeEvent !== "object") return;
+  if (nativeEvent.message === "Directory listing timed out") {
+    nativeEvent = {...nativeEvent, message:desktopUiText("目录清单加载超时，请重新拖出", "Directory listing timed out. Please drag again.")};
+  }
   if (NATIVE_SFTP_DRAG_DEBUG) {
     console.log("[native-sftp-drag] event", JSON.stringify({
       requestId:session.requestId,
@@ -1514,6 +1524,11 @@ function handleNativeSftpDragEvent(session, nativeEvent) {
   }
   if (nativeEvent.type === "consuming") {
     session.consuming = true;
+    startNativeSftpDragProgress(session);
+    return;
+  }
+  if (nativeEvent.type === "manifestRequested") {
+    startNativeSftpDragProgress(session);
     return;
   }
   if (nativeEvent.type === "contentComplete") {

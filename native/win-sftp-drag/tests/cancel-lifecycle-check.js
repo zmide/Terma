@@ -2,7 +2,9 @@
 
 const assert = require("node:assert/strict");
 const { app } = require("electron");
-const nativeDrag = require("..");
+const nativeDrag = process.env.TERMA_NATIVE_DRAG_TEST_BUILD === "1"
+  ? require("../build/Release/win_sftp_drag.node")
+  : require("..");
 
 function waitForEvent(events, predicate, timeoutMs = 5000) {
   const existing = events.find(predicate);

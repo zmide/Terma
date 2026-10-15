@@ -9,8 +9,12 @@ let sftpJobsRefreshTrailing = false;
 let sftpDirectoryRefreshTimer = 0;
 let sftpDirectoryRefreshActive = false;
 let sftpPreferredDirectoryRefreshKey = "";
-function startSftpJobsTimer() {
-  if (sftpJobsTimer) return;
+let sftpJobsSchedule = null;
+function startSftpJobsTimer(immediate=false) {
+  if (sftpJobsTimer) {
+    if (immediate) sftpJobsSchedule?.(0);
+    return;
+  }
   const schedule = delay => {
     clearTimeout(sftpJobsTimer);
     sftpJobsTimer = setTimeout(run, Math.max(0, Number(delay || 0)));
@@ -65,7 +69,8 @@ function startSftpJobsTimer() {
       }
     });
   }
-  schedule(3000);
+  sftpJobsSchedule = schedule;
+  schedule(immediate ? 0 : 3000);
 }
 function sftpJobProgress(job) {
   const size = Math.max(0, Number(job?.size || 0));

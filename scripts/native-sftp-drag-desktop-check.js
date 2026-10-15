@@ -624,6 +624,81 @@ function checkPreloadCapabilityFallback() {
   assert.equal(Object.isFrozen(exposedValue.capabilities), true);
 }
 
+async function checkEarlyNativeProgress() {
+  const source = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
+  const helper = source.slice(source.indexOf("function startNativeSftpDragProgress("), source.indexOf("async function handleNativeSftpWriteRequest("));
+  const events = [];
+  let started = 0;
+  let resolveSlot;
+  const slot = new Promise(resolve => { resolveSlot = resolve; });
+  const context = vm.createContext({
+    Promise,
+    beginNativeSftpDragJob:() => { started += 1; return {id:"preparing-folder"}; },
+    waitForSftpTransferStart:() => slot,
+    sendSftpDragEvent:(_session, event) => events.push(event)
+  });
+  vm.runInContext(helper, context);
+  const session = {token:"fixture", ticket:{ready:false,top_level:[{type:"directory",name:"folder"}]}};
+  context.startNativeSftpDragProgress(session);
+  assert.equal(events[0]?.type, "transferStarted", "A directory must become visible before its first content read or download slot");
+  assert.equal(session.nativeJobStarted, true);
+  context.startNativeSftpDragProgress(session);
+  context.startNativeSftpDragProgress({internalTarget:{kind:"local-files"}});
+  context.startNativeSftpDragProgress({cancelling:true});
+  assert.equal(started, 1, "Repeated callbacks, internal transfers and cancellations must not create duplicate jobs");
+  resolveSlot();
+  await session.nativeJobStartPromise;
+  assert.equal(events.length, 1);
+
+  const taskSource = fs.readFileSync(path.join(root, "public", "app-sftp-tasks.js"), "utf8");
+  const scheduled = [];
+  let listeners = 0;
+  const timerContext = vm.createContext({
+    sftpJobsTimer:0,
+    setTimeout:(_callback, delay) => { scheduled.push(delay); return scheduled.length; },
+    clearTimeout() {},
+    document:{addEventListener:() => { listeners += 1; }}
+  });
+  vm.runInContext(taskSource.slice(0, taskSource.indexOf("function sftpJobProgress(")), timerContext);
+  timerContext.startSftpJobsTimer();
+  assert.equal(scheduled.at(-1), 3000);
+  timerContext.startSftpJobsTimer(true);
+  assert.equal(scheduled.at(-1), 0, "Native progress must wake an existing idle polling timer rather than waiting ten seconds");
+  assert.equal(listeners, 1, "Waking the task poller must not register duplicate lifecycle handlers");
+}
+
+async function checkQueuedNativeProgressCleanup() {
+  const {createNativeSftpDragJobs} = require("../dist/sftp-native-drag-jobs");
+  const {createSftpTransferScheduler} = require("../dist/sftp-transfer-scheduler");
+  const jobs = new Map();
+  const activeStatuses = new Set(["pending", "running"]);
+  const noop = () => {};
+  const scheduler = createSftpTransferScheduler({jobs,activeStatuses,persistJobs:noop,finishTransferMetrics:noop});
+  const nativeJobs = createNativeSftpDragJobs({
+    ...scheduler, jobs, activeStatuses,
+    getSftpConnection:() => ({name:"fixture"}),
+    persistJobs:noop, finishTransferMetrics:noop, notifyEvent:noop,
+    resetTransferSpeed:noop, recordTransferred:noop, writeJsonJobs:noop,
+    readHistory:() => []
+  });
+  const ticket = {connection_id:1,top_level:[{type:"directory",name:"folder"}],ready:false};
+  // Fill every configured slot without opening a file or a network connection.
+  for (let index=0;index<8;index+=1) nativeJobs.beginNativeSftpDragJob(`occupied-${index}`, ticket);
+  for (const status of ["cancelled", "failed", "done"]) {
+    const token = `queued-${status}`;
+    const task = nativeJobs.beginNativeSftpDragJob(token, ticket);
+    assert.equal(task.status, "pending");
+    const settled = assert.rejects(scheduler.waitForSftpTransferStart(task.id), {code:"SFTP_TRANSFER_CANCELLED"});
+    nativeJobs.finishNativeSftpDragJob(token, status);
+    await settled;
+    assert.equal(jobs.get(task.id).transfer_queued, false);
+    assert.equal(jobs.get(task.id).transfer_runner, null);
+    assert.equal(jobs.get(task.id).transfer_waiters.length, 0, "Terminal drag events must settle preparation waiters even if no file was opened");
+    assert.equal(nativeJobs.beginNativeSftpDragJob(token, ticket).status, "discarded");
+  }
+  for (let index=0;index<8;index+=1) nativeJobs.discardNativeSftpDragJob(`occupied-${index}`);
+}
+
 function checkNativeSessionRaceGuards() {
   const mainSource = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
   const adapterSource = fs.readFileSync(adapterPath, "utf8");
@@ -710,6 +785,8 @@ async function main() {
   checkLinuxFuseOptionsContract();
   checkPreloadCapabilityFallback();
   checkNativeSessionRaceGuards();
+  await checkEarlyNativeProgress();
+  await checkQueuedNativeProgressCleanup();
   console.log("native SFTP desktop drag checks passed");
 }
 
