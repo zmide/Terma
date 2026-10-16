@@ -732,6 +732,12 @@ async function inspectDatabaseBackup(file) {
   return result;
 }
 
+function databaseRestoreUnboundCount(check, credentialBindings = []) {
+  const resolved = new Set(credentialBindings.filter(binding => binding.auth_type === 'password'
+    || (binding.auth_type === 'key' && binding.identity_path)).map(binding => Number(binding.connection_id)));
+  return (check.unresolved_identities || []).filter(item => !resolved.has(Number(item.connection_id))).length;
+}
+
 async function restoreDatabaseBackup() {
   if (!requireConfigEncryptionUnlocked(tr("settings:import.database_restore_context", {defaultValue:"恢复数据库"}))) return;
   const file = $("db_restore_upload")?.files?.[0];
@@ -759,7 +765,7 @@ async function restoreDatabaseBackup() {
   const encryptedWithoutMetadata = !check.encrypted_bundle && (check.connections || []).some(item => item.identity_encrypted || item.password_encrypted)
     ? `\n\n${tr("settings:import.encrypted_without_metadata_warning", {defaultValue:"检测到已加密凭据，但普通 .db 不包含解锁元数据；跨设备恢复应改用原设备导出的加密迁移包。"})}`
     : "";
-  const unboundCount = check.unresolved_identities?.length || 0;
+  const unboundCount = databaseRestoreUnboundCount(check, credentialBindings);
   const unboundText = unboundCount
     ? `\n\n${tr("settings:import.unbound_warning", {count:unboundCount, defaultValue:`${unboundCount} 个连接将不绑定私钥，旧机器上的私钥路径会被清除；之后可在连接设置中补充。`})}`
     : "";

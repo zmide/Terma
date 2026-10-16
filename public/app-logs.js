@@ -65,7 +65,7 @@ async function renderLogs(){
   const uiState = captureUiState($("connectionGroups") || document);
   const queryAtStart = logSearch;
   const nextLogsData = await api("/api/logs");
-  if (queryAtStart !== logSearch) return;
+  if (queryAtStart !== logSearch || primaryView !== "logs") return;
   logsData = nextLogsData;
   const systemOpen = logOpen.has("system");
   const systemLogs = filterLogs(logsData.system || []);

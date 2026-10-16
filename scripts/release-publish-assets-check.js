@@ -2,6 +2,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
 const { expectedReleaseFiles, prepare, verifyRemote } = require("./release-publish-assets");
@@ -39,17 +40,36 @@ assert.match(
   /\n  regression:\n[\s\S]*?\n      - name: Run regression checks\n        run: npm run regression\n/,
   "release workflow must run the complete regression suite before packaging"
 );
-for (const job of ["windows", "linux", "macos", "linux-source"]) {
+for (const job of ["windows", "linux", "macos", "linux-source", "fnos"]) {
   assert.match(
     normalizedWorkflow,
     new RegExp(`\\n  ${job}:\\n    name:[^\\n]+\\n    needs: regression\\n`),
     `${job} release packaging must depend on the regression gate`
   );
 }
+assert.match(normalizedWorkflow, /\n  fnos:\n[\s\S]*?uses: \.\/\.github\/workflows\/fnos\.yml/);
+assert.match(publishReleaseJob, /\n      - fnos\n/, "Release publication must wait for both fnOS architectures");
+const fnosWorkflow = fs.readFileSync(path.join(root, ".github/workflows/fnos.yml"), "utf8");
+assert.match(fnosWorkflow, /\n  workflow_call:/);
+assert.match(fnosWorkflow, /arch: x64\s+runner: ubuntu-24\.04\s/);
+assert.match(fnosWorkflow, /arch: arm64\s+runner: ubuntu-24\.04-arm\s/);
+assert.match(fnosWorkflow, /--stage-only/);
+assert.match(fnosWorkflow, /--pack-staging/);
+assert.match(fnosWorkflow, /FNPACK_SHA256: [a-f0-9]{64}/);
+assert.match(fnosWorkflow, /sha256sum --check --strict/);
+assert.match(fnosWorkflow, /digest-mismatch: error/);
+assert.match(fnosWorkflow, /name: fnos-staging-/, "Intermediate native archives must not match the release download prefix");
+assert.match(fnosWorkflow, /if-no-files-found: error/);
 
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "terma-release-assets-"));
 try {
   for (const name of expectedReleaseFiles()) fs.writeFileSync(path.join(fixture, name), name);
+  const fpks = expectedReleaseFiles().filter(name => name.endsWith(".fpk"));
+  assert.equal(fpks.length, 2);
+  for (const name of fpks) {
+    const hash = crypto.createHash("sha256").update(fs.readFileSync(path.join(fixture, name))).digest("hex");
+    fs.writeFileSync(path.join(fixture, `${name}.sha256`), `${hash}  ${name}\n`);
+  }
   prepare(fixture);
   const names = fs.readdirSync(fixture).sort((left, right) => left.localeCompare(right, "en"));
   assert.ok(names.includes("SHA256SUMS"));
@@ -57,6 +77,16 @@ try {
   fs.writeFileSync(remoteList, names.join("\n"));
   verifyRemote(fixture, remoteList);
   fs.rmSync(remoteList, {force:true});
+  const fpk = fpks[0];
+  fs.writeFileSync(path.join(fixture, fpk), "tampered");
+  assert.throws(() => prepare(fixture), /checksum mismatch/);
+  fs.writeFileSync(path.join(fixture, fpk), fpk);
+  fs.writeFileSync(path.join(fixture, "fnos-staging.tar.gz"), "must not be published");
+  assert.throws(() => prepare(fixture), /unexpected:/);
+  fs.rmSync(path.join(fixture, "fnos-staging.tar.gz"));
+  fs.rmSync(path.join(fixture, fpks[1]));
+  assert.throws(() => prepare(fixture), /missing:/);
+  fs.writeFileSync(path.join(fixture, fpks[1]), fpks[1]);
   fs.rmSync(path.join(fixture, expectedReleaseFiles()[0]));
   assert.throws(() => prepare(fixture), /missing:/);
 } finally {

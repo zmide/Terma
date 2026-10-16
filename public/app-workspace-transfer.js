@@ -23,6 +23,7 @@ function workspaceTransferTargetLabel(target) {
 
 function workspaceLocalFilesTargetReady(sourceTabKey, target) {
   const tab = target?.tab || target;
+  if (typeof webFilesRuntime === 'function' && webFilesRuntime(sourceTabKey)) return tab?.kind === 'sftp' && Number(tab.id)>0;
   if (!tab) return false;
   if (tab.kind === "sftp") return Number(tab.id) > 0;
   if (tab.kind === "terminal") return Boolean(terminalSessions?.get?.(String(tab.key || ""))?.connected);
@@ -37,6 +38,7 @@ function workspaceLocalFilesTargetReady(sourceTabKey, target) {
 }
 
 async function copyLocalFilesToLocalTab(payload, target) {
+  if (typeof webFilesRuntime === 'function' && (webFilesRuntime(payload?.sourceTabKey) || webFilesRuntime(target?.key))) throw new Error(webFilesTr('cross_local_unavailable'));
   if (!payload?.paths?.length || target?.kind !== "local-files") return;
   const runtime = localFileRuntimes.get(String(target.key || ""));
   if (runtime?.location !== "directory" || !runtime.path) throw new Error(tr("navigation:transfer.open_target_directory", {defaultValue:"请先在对端本地文件标签中打开一个目录"}));

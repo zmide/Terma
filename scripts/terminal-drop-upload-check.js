@@ -148,7 +148,7 @@ assert.match(sftp, /function releaseSftpDragFeedbackTarget/);
 assert.match(sftp, /focusSftpDragFeedbackTarget\("sftp", tabKey\)/);
 assert.match(sftp, /item\.name \|\| item\.filename \|\| tr\("sftp:transfer\.unnamed_item"\)/);
 assert.doesNotMatch(sftp, /item\.name \|\| item\.filename \|\| "未命名项目"/);
-assert.match(sftp, /createRemoteUploadDirectories\(Number\(connectionId\), directory, files\)/);
+assert.match(sftp, /createRemoteUploadDirectories\(Number\(connectionId\), directory, files, options\.directories \|\| \[\]\)/);
 assert.match(sftp, /conflict:conflict \|\| "error"/);
 const uploadQueueStart = sftp.indexOf("async function uploadSftpFilesToDirectory");
 const uploadQueueEnd = sftp.indexOf("\nasync function uploadSftpFiles(", uploadQueueStart);

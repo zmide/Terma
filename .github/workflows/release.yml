@@ -324,6 +324,11 @@ jobs:
           retention-days: 7
           path: release-source/*.tar.gz
 
+  fnos:
+    name: fnOS
+    needs: regression
+    uses: ./.github/workflows/fnos.yml
+
   publish-release:
     name: Publish Release
     if: startsWith(github.ref, 'refs/tags/')
@@ -332,6 +337,7 @@ jobs:
       - linux
       - macos
       - linux-source
+      - fnos
     runs-on: ubuntu-latest
     permissions:
       contents: write

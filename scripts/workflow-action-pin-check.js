@@ -24,6 +24,12 @@ for (const name of fs.readdirSync(workflowDirectory).filter(item => /\.ya?ml$/i.
   lines.forEach((line, index) => {
     const match = line.match(/^\s*uses:\s*([^\s#]+)(?:\s+#.*)?$/);
     if (!match) return;
+    if (match[1].startsWith("./")) {
+      if (!/^\.\/\.github\/workflows\/[a-zA-Z0-9_-]+\.ya?ml$/.test(match[1])
+        || !fs.existsSync(path.resolve(workflowDirectory, "../..", match[1]))
+        || !fs.lstatSync(path.resolve(workflowDirectory, "../..", match[1])).isFile()) findings.push(`${name}:${index + 1} invalid local workflow ${match[1]}`);
+      return;
+    }
     const [action, reference = ""] = match[1].split("@");
     if (!/^[0-9a-f]{40}$/i.test(reference)) findings.push(`${name}:${index + 1} ${match[1]}`);
     const requiredPin = node24Pins.get(action);

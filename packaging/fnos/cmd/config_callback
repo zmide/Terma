@@ -1,0 +1,17 @@
+#!/bin/bash
+source "$(dirname "$0")/common"
+"$NODE" "$APP_DIR/scripts/fnos-config.js" rollback
+if ! message="$("$NODE" "$APP_DIR/scripts/fnos-config.js" validate 2>&1)"; then fail "$message"; fi
+was_running=0
+if "$(dirname "$0")/main" status; then was_running=1; fi
+"$(dirname "$0")/main" stop
+if ! message="$("$NODE" "$APP_DIR/scripts/fnos-config.js" apply 2>&1)"; then
+  if [ "$was_running" = 1 ]; then "$(dirname "$0")/main" start || true; fi
+  fail "$message"
+fi
+if [ "$was_running" = 1 ] && ! TERMA_FNOS_CONFIG_APPLY=1 "$(dirname "$0")/main" start; then
+  "$NODE" "$APP_DIR/scripts/fnos-config.js" rollback
+  "$(dirname "$0")/main" start || true
+  fail "配置未生效，已恢复原设置 / Configuration failed; previous settings were restored"
+fi
+"$NODE" "$APP_DIR/scripts/fnos-config.js" commit

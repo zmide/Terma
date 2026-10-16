@@ -174,6 +174,10 @@ try {
   assert.equal(session.__portableDragEntryName("report.txt", "win32"), "report.txt");
   assert.equal(session.__portableDragEntryName("a:b?.txt", "win32"), "a_b_.txt");
   assert.equal(session.__portableDragEntryName("CON", "win32"), "_CON");
+  assert.equal(session.__portableDragEntryName("LPT¹.txt", "win32"), "_LPT¹.txt");
+  const delivery=session.planSftpPathDelivery(["/root/CON.txt","/root/report 21:38:27?.txt"],temporaryRoot);
+  assert.equal(delivery.items[0].name,process.platform==="win32"?"_CON.txt":"CON.txt");
+  assert.equal(delivery.items[1].name,process.platform==="win32"?"report 21_38_27_.txt":"report 21:38:27?.txt");
   assert.equal(session.__portableDragEntryName("../name", "linux"), ".._name");
 
   assert.deepEqual(

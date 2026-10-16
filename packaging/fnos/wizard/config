@@ -1,0 +1,61 @@
+[
+  {
+    "stepTitle": "Terma · 登录与网络 / Login and network",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "所有字段留空会保留当前设置。运行中的 Terma 会在保存后短暂重启，现有 Web 登录将失效。8088 端口和私有数据位置由应用包管理。 / Leave fields blank to keep their current values. Saving briefly restarts a running instance and ends existing Web sessions. The package manages port 8088 and private storage."
+      },
+      {
+        "type": "password",
+        "field": "wizard_new_web_password",
+        "label": "新 Web 密码（留空保持） / New Web password",
+        "initValue": ""
+      },
+      {
+        "type": "password",
+        "field": "wizard_new_web_password_confirm",
+        "label": "确认新密码 / Confirm new password",
+        "initValue": ""
+      },
+      {
+        "type": "text",
+        "field": "wizard_listen_hosts",
+        "label": "监听地址（网卡 IP） / Listen addresses",
+        "initValue": "",
+        "helpText": "例如 0.0.0.0（全部 IPv4 网卡）、127.0.0.1（仅本机）或 NAS 的具体网卡 IP；多个 IP 用逗号分隔，不填写 192.168.31.0/24 这样的来源网段。留空保持。 / Use local interface IPv4 addresses, separated by commas; leave blank to keep."
+      },
+      {
+        "type": "text",
+        "field": "wizard_allowed_hosts",
+        "label": "允许的访问域名或 IP / Allowed Hosts",
+        "initValue": "",
+        "helpText": "填写完整域名或 IP，例如 terma.example.com；多个值用逗号分隔，不填写 https:// 或路径，不支持通配符。留空保持。 / Exact domain names or IPs; no scheme, path or wildcard. Leave blank to keep."
+      },
+      {
+        "type": "text",
+        "field": "wizard_trusted_proxies",
+        "label": "可信反向代理 IP / Trusted proxy IPs",
+        "initValue": "",
+        "helpText": "仅填写实际转发请求的代理 IP（例如 127.0.0.1），多个值用逗号分隔；不使用代理时留空。 / Only actual proxy source IPs; leave blank to keep."
+      },
+      {
+        "type": "select",
+        "field": "wizard_reset_network",
+        "label": "恢复默认网络设置 / Reset network settings",
+        "initValue": "false",
+        "helpText": "恢复监听全部 IPv4 网卡，并清空允许域名和可信代理；本次填写的值会在恢复后应用。 / Reset listeners, Allowed Hosts and trusted proxies, then apply values entered above.",
+        "options": [
+          {
+            "label": "保持现有网络设置 / Keep current network settings",
+            "value": "false"
+          },
+          {
+            "label": "恢复默认，再应用以上填写的值 / Reset then apply entered values",
+            "value": "true"
+          }
+        ]
+      }
+    ]
+  }
+]

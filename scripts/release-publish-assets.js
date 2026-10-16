@@ -5,7 +5,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   expectedArtifacts,
-  verifyReleaseVersion
+  verifyReleaseVersion,
+  verifyFnosChecksums
 } = require("./release-artifacts-check");
 
 const root = path.resolve(__dirname, "..");
@@ -19,7 +20,7 @@ function releaseFileNames(directory) {
 }
 
 function expectedReleaseFiles(version = packageJson.version) {
-  const core = ["windows", "linux", "macos", "linux-source"]
+  const core = ["windows", "linux", "macos", "linux-source", "fnos-x64", "fnos-arm64"]
     .flatMap(platform => expectedArtifacts(platform, version));
   const blockmaps = core
     .filter(name => /windows-x64-installer\.exe$/i.test(name))
@@ -50,6 +51,7 @@ function prepare(directory) {
   const expected = expectedReleaseFiles();
   const actual = releaseFileNames(directory).filter(name => name !== "SHA256SUMS");
   assertExactFiles(actual, expected, "Downloaded workflow artifacts");
+  verifyFnosChecksums(directory, expected);
   const lines = actual.map(name => `${sha256(path.join(directory, name))}  ${name}`);
   fs.writeFileSync(path.join(directory, "SHA256SUMS"), `${lines.join("\n")}\n`, "utf8");
   console.log(`Verified ${actual.length} release assets and generated SHA256SUMS.`);

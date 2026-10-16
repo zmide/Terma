@@ -586,7 +586,7 @@ function workspaceTabHtml(tab, pane) {
   const visibleInPane = tab.key === pane.activeTabKey;
   if (visibleInPane && tab.activityState) tab.activityState = "";
   const localizedTitle = tab.kind === "local-files"
-    ? tr("common:auto.local_files", {defaultValue:"Local Files"})
+    ? (tab.fileSource ? webFilesSourceLabel(tab.fileSource) : tr("common:auto.local_files", {defaultValue:"Local Files"}))
     : typeof localizedWorkspaceTabTitle === "function" ? localizedWorkspaceTabTitle(tab) : tab.title;
   const presentation = workspaceTabPresentation({...tab, title:localizedTitle});
   const fullTitle = [
@@ -1217,6 +1217,7 @@ function nextWorkspaceTabCopyKey(tab) {
 }
 
 function workspaceTabCopyTitle(tab) {
+  if (tab?.kind === "local-files" && tab.fileSource) return webFilesSourceLabel(tab.fileSource);
   if (tab?.kind === "local-files") return tr("common:auto.local_files", {defaultValue:"Local Files"});
   const copySuffix = tr("common:workspace.copy_suffix", {defaultValue:" · Copy"});
   let base = String(tab?.title || tr("navigation:auto.tab", {defaultValue:"Tab"}));
@@ -1322,6 +1323,7 @@ function duplicateWorkspaceTab(key, options={}) {
     return duplicateKey;
   }
   if (tab.kind === "local-files" && typeof openLocalFiles === "function") {
+    if (tab.fileSource) return openWebFiles(tab.path || "", true, duplicateKey, tab.fileSource);
     return openLocalFiles(tab.path || "", true, duplicateKey);
   }
   addWorkspaceTabCopy(tab, duplicateKey, duplicateTitle);

@@ -1,6 +1,7 @@
 "use strict";
 
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
@@ -31,6 +32,11 @@ function expectedArtifacts(platform, version = packageJson.version) {
   if (platform === "linux-source") {
     return [`${product}-${releaseVersion}-linux-source-noarch.tar.gz`];
   }
+  const fnos = platform.match(/^fnos-(x64|arm64)$/);
+  if (fnos) {
+    const fpk = `${product}-${releaseVersion}-fnos-${fnos[1]}.fpk`;
+    return [fpk, `${fpk}.sha256`];
+  }
   throw new Error(`未知发布平台：${platform}`);
 }
 
@@ -39,7 +45,9 @@ function relevantArtifacts(platform, names) {
     windows: /\.(?:exe|blockmap)$/i,
     linux: /\.(?:AppImage|deb|rpm|blockmap)$/i,
     macos: /\.(?:dmg|zip|blockmap)$/i,
-    "linux-source": /\.tar\.gz$/i
+    "linux-source": /\.tar\.gz$/i,
+    "fnos-x64": /\.fpk(?:\.sha256)?$/i,
+    "fnos-arm64": /\.fpk(?:\.sha256)?$/i
   };
   const pattern = patterns[platform];
   if (!pattern) throw new Error(`未知发布平台：${platform}`);
@@ -75,8 +83,19 @@ function verifyArtifacts(platform, directory, version = packageJson.version) {
     ].filter(Boolean).join("；");
     throw new Error(`${platform} 发布产物校验失败：${details}`);
   }
+  verifyFnosChecksums(directory, expected);
   console.log(`${platform} 发布产物名称已验证：\n${relevant.map((name) => `  ${name}`).join("\n")}`);
   return relevant;
+}
+
+function verifyFnosChecksums(directory, names) {
+  for (const name of names.filter(value => value.endsWith(".fpk"))) {
+    const data = fs.readFileSync(path.join(directory, name));
+    const hash = crypto.createHash("sha256").update(data).digest("hex");
+    if (!data.length || fs.readFileSync(path.join(directory, `${name}.sha256`), "utf8") !== `${hash}  ${name}\n`) {
+      throw new Error(`fnOS checksum mismatch: ${name}`);
+    }
+  }
 }
 
 if (require.main === module) {
@@ -87,4 +106,4 @@ if (require.main === module) {
   verifyArtifacts(platform, directory, version);
 }
 
-module.exports = { expectedArtifacts, relevantArtifacts, verifyArtifacts, verifyReleaseVersion };
+module.exports = { expectedArtifacts, relevantArtifacts, verifyArtifacts, verifyReleaseVersion, verifyFnosChecksums };

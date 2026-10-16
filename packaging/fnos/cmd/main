@@ -1,0 +1,38 @@
+#!/bin/bash
+source "$(dirname "$0")/common"
+unset wizard_web_password wizard_web_password_confirm wizard_new_web_password wizard_new_web_password_confirm
+case "${1:-}" in
+  start)
+    if owned_pid >/dev/null; then exit 0; fi
+    if [ "${TERMA_FNOS_CONFIG_APPLY:-}" != 1 ]; then "$NODE" "$APP_DIR/scripts/fnos-config.js" rollback; fi
+    unset TERMA_FNOS_CONFIG_APPLY
+    initialize check
+    HOSTS="$("$NODE" "$APP_DIR/scripts/fnos-config.js" listen-hosts)"
+    cd "$APP_DIR"
+    "$NODE" "$APP_DIR/dist/server.js" --host "$HOSTS" --port "$PORT" >> "$TERMA_DATA_DIR/web.log" 2>&1 < /dev/null &
+    child=$!
+    for ((attempt=0; attempt<30; attempt++)); do
+      if ! kill -0 "$child" 2>/dev/null; then wait "$child" || true; fail "Terma failed to start. Check the private application log."; fi
+      if [ -f "$PID_FILE" ] && [ ! -L "$PID_FILE" ] && [ "$(head -n 1 "$PID_FILE")" = "$child" ] && "$NODE" "$APP_DIR/scripts/fnos-initialize.js" ready >/dev/null 2>&1; then
+        if "$NODE" "$APP_DIR/scripts/fnos-process.js" record "$child" && owned_pid >/dev/null; then exit 0; fi
+        "$NODE" "$APP_DIR/scripts/fnos-process.js" stop-child "$child" || true
+        fail "Terma process identity could not be recorded"
+      fi
+      sleep 1
+    done
+    "$NODE" "$APP_DIR/scripts/fnos-process.js" stop-child "$child" || true
+    fail "Terma startup timed out"
+    ;;
+  stop)
+    pid="$(owned_pid)" || exit 0
+    kill -TERM "$pid"
+    for ((attempt=0; attempt<20; attempt++)); do
+      if ! owned_pid >/dev/null; then exit 0; fi
+      sleep 1
+    done
+    pid="$(owned_pid)" || exit 0
+    kill -KILL "$pid"
+    ;;
+  status) owned_pid >/dev/null && exit 0; exit 3 ;;
+  *) exit 1 ;;
+esac

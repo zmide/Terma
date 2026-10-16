@@ -368,17 +368,19 @@ function syncSshKeyWizardBits() {
 }
 
 async function generateSshKeyUi() {
-  const result = await api("/api/ssh/keys/generate", {method:"POST", body:JSON.stringify({
+  let result;
+  try { result = await api("/api/ssh/keys/generate", {method:"POST", body:JSON.stringify({
     name:$("sshKeyName").value.trim(),
     comment:$("sshKeyComment").value.trim(),
     passphrase:$("sshKeyPassphrase").value,
     key_type:$("sshKeyType")?.value || "ed25519",
     key_bits:Number($("sshKeyBits")?.value || 256)
-  })});
+  })}); } catch (error) { notify(error.message, "error"); return; }
+  if (document.querySelector('#managedKeysList')) await loadManagedKeys();
   const modal = $("modal");
   modal.innerHTML = `<div class="modal-card wide ssh-key-wizard ssh-key-result-modal"><div class="ssh-key-result-head"><div><h2>${esc(tr("navigation:auto.key_generated", {defaultValue:"密钥已生成"}))}</h2><span>${esc(tr("navigation:auto.key_generated_hint", {defaultValue:"密钥已保存，可复制公钥或部署到 SSH 连接。"}))}</span></div><button class="icon-button" type="button" onclick="closeModal()">${icon("x")}</button></div>
     <div class="key-result-summary"><div><span>${esc(tr("navigation:auto.private_key_location", {defaultValue:"私钥位置"}))}</span><code>${esc(result.private_path)}</code></div><span class="status-pill">${result.has_passphrase ? esc(tr("navigation:auto.key_protected", {defaultValue:"私钥已使用口令保护"})) : esc(tr("navigation:auto.key_unprotected", {defaultValue:"私钥未设置口令"}))}</span></div>
-    <div class="ssh-key-result-section"><label for="generatedPublicKey">${esc(tr("navigation:auto.public_key", {defaultValue:"公钥"}))}</label><textarea id="generatedPublicKey" readonly>${esc(result.public_key)}</textarea></div>
+    <div class="ssh-key-result-section"><label for="generatedPublicKey">${esc(tr("navigation:auto.public_key", {defaultValue:"公钥"}))}</label><textarea id="generatedPublicKey" data-i18n-skip readonly>${esc(result.public_key)}</textarea></div>
     <div class="ssh-key-result-section"><label for="generatedKeyConnection">${esc(tr("navigation:auto.deploy_to_server", {defaultValue:"部署到服务器"}))}</label><select id="generatedKeyConnection"><option value="">${esc(tr("navigation:auto.select_ssh", {defaultValue:"选择 SSH 连接"}))}</option>${connections.map(connection => `<option value="${connection.id}">${esc(productivityConnectionLabel(connection))}</option>`).join("")}</select></div>
     <div class="ssh-key-result-actions"><button onclick="copyGeneratedPublicKey()">${icon("copy")}<span>${esc(tr("navigation:auto.copy_public_key", {defaultValue:"复制公钥"}))}</span></button><button onclick="downloadGeneratedPublicKey('${escAttr(result.public_path)}')">${icon("download")}<span>${esc(tr("navigation:auto.download_public_key", {defaultValue:"下载公钥"}))}</span></button><button class="primary" onclick="deployGeneratedPublicKeyUi('${escAttr(result.public_path)}')">${icon("upload")}<span>${esc(tr("navigation:auto.deploy_public_key", {defaultValue:"部署公钥"}))}</span></button><button onclick="closeModal();loadKeys()">${esc(tr("navigation:auto.complete", {defaultValue:"完成"}))}</button></div>
   </div>`;

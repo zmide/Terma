@@ -85,6 +85,8 @@
     "cross_done": "跨主机复制已完成",
     "cross_failed": "跨主机复制失败",
     "saved_to": "已保存到 {{path}}",
+    "renamed_count": "已重命名 {{count}} 项，已有文件已保留",
+    "file_renamed": "文件已重命名：{{source}} → {{target}}",
     "auto_save_failed": "自动保存失败：{{error}}",
     "processed_items": "已处理 {{completed}}/{{total}} 项",
     "cross_items": "{{source}} → {{target}} · {{count}} 项"

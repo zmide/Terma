@@ -1,4 +1,12 @@
 {
+  "access_page": {
+    "title": "This address is not allowed",
+    "description": "Terma has rejected this domain or IP address. Your password has not been checked yet.",
+    "local_access": "Open Terma using an address that already works, usually the server's local IP address.",
+    "allow_host": "In Settings > Security, add the exact domain or IP to Allowed Hosts. NAS packages can also provide this option in their system application settings.",
+    "proxy_hint": "For HTTPS through a reverse proxy, configure only the proxy's actual IP as trusted and forward the original protocol. Keep Web login enabled.",
+    "listen_hint": "Listening addresses select the server's network interfaces. Allowed Hosts select the domain names and IP addresses accepted in browser requests. Configure them separately."
+  },
   "generic": "The operation failed",
   "language_switch": "Failed to switch the interface language",
   "xclip_no_plan": "No xclip installation method is available for this system. See the manual installation instructions.",
@@ -24,6 +32,23 @@
   "ssh_host_key_failed": "SSH host-key verification failed. Confirm whether the server fingerprint change is trusted.",
   "ssh_failed": "The SSH connection failed. Check the connection settings, network, and remote SSH service.",
   "backend": {
+    "ssh_key_passphrase_invalid": "Private-key passphrases must be at most 256 characters and cannot contain line breaks or null characters.",
+    "ssh_key_name_invalid": "Use only letters, numbers, dots, hyphens and underscores; the name must not end with .pub.",
+    "ssh_key_import_invalid": "Choose an SSH private-key file no larger than 1 MB.",
+    "ssh_key_user_scope_disabled": "User ~/.ssh management is disabled. Use the Terma key directory.",
+    "ssh_key_path_invalid": "This private key is outside the managed directories or is unavailable. Refresh the list.",
+    "ssh_key_passphrase_incorrect": "The current private-key passphrase is incorrect.",
+    "ssh_key_passphrase_required": "Enter the current private-key passphrase.",
+    "ssh_key_update_failed": "The private-key passphrase could not be changed. Check the current passphrase and the server's OpenSSH tools.",
+    "ssh_key_in_use": "An SSH connection uses this private key. Change or remove its key binding first.",
+    "ssh_key_public_unavailable": "The public key could not be read. Check the private-key format and its public file; encrypted PEM keys need a matching .pub file.",
+    "ssh_key_public_file_unsafe": "The public key must be an independent regular file in the key directory, not a link.",
+    "ssh_key_public_mismatch": "The public key does not match the private key. Import the correct key again.",
+    "host_not_allowed": "This address has not been allowed to access Terma.",
+    "fnos_security_managed": "The fnOS app requires authentication for every request. Host desktop permissions cannot be enabled.",
+    "fnos_listen_managed": "The fnOS package manages the listening address and port.",
+    "fnos_storage_managed": "The fnOS app center manages the application data directory.",
+    "fnos_update_managed": "Upgrade Terma through fnOS App Center or install a newer FPK package.",
     "terminal_shortcuts_invalid": "Invalid shortcuts: check key combinations, button names (up to 24 characters), and the number of shortcuts (up to 48)",
     "request_failed": "The request failed. Try again.",
     "ai_disabled": "Terminal AI is not enabled.",
@@ -178,7 +203,12 @@
     "remote_task_conflict": "Another remote-component task is running. Wait for it to finish, then try again.",
     "remote_component_operation_failed": "The remote-component operation failed. See the task log for details.",
     "remote_component_verification_failed": "The remote-component command finished, but the resulting state could not be verified.",
-    "contract_example": "Could not process {{subject}}"
+    "contract_example": "Could not process {{subject}}",
+    "server_files_path_denied": "The folder is not authorized or contains protected files.",
+    "server_files_login_required": "Sign in to Terma before accessing device folders.",
+    "server_files_overwrite_file_only": "Only matching files can be overwritten. Rename folders instead.",
+    "server_files_limit": "Operate on at most 1000 files and folders at a time.",
+    "server_files_text_limit": "Only UTF-8 text files up to 1 MiB can be edited."
   },
   "actions": {
     "invalid_definition": "An action must provide both id and run",

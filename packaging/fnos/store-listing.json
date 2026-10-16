@@ -1,0 +1,8 @@
+{
+  "appname": "terma",
+  "display_name": "Terma",
+  "suggested_categories": ["开发工具"],
+  "description_source": "description.html",
+  "screenshots": ["poster/terminal.jpg", "poster/sftp.jpg"],
+  "note": "上架资料，不是 fnOS manifest 字段。当前公开 Native FPK 规范没有分类字段；应用中心分类由商店目录标签管理。"
+}

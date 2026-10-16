@@ -1,0 +1,24 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+fail() { printf '%s\n' "$1" >&2; if [ -n "${TRIM_TEMP_LOGFILE:-}" ]; then printf '%s\n' "$1" > "$TRIM_TEMP_LOGFILE"; fi; exit 1; }
+for required in TRIM_APPDEST TRIM_PKGVAR TRIM_PKGHOME TRIM_PKGTMP; do
+  value="${!required:-}"
+  [[ "$value" == /* && "$value" != / ]] || fail "Missing application path: $required"
+done
+export PATH="/var/apps/nodejs_v22/target/bin:/usr/local/bin:/usr/bin:/bin"
+export TERMA_DISTRIBUTION=fnos
+export TERMA_DATA_DIR="$TRIM_PKGVAR/data"
+export TERMA_SSH_DIR="$TRIM_PKGVAR/ssh"
+export HOME="$TRIM_PKGHOME"
+export TMPDIR="$TRIM_PKGTMP"
+export TERMA_DISABLE_UPDATE_CHECK=1
+APP_DIR="$TRIM_APPDEST/server"
+NODE="/var/apps/nodejs_v22/target/bin/node"
+PID_FILE="$TERMA_DATA_DIR/web.pid"
+PORT="${TRIM_SERVICE_PORT:-8088}"
+[[ "$PORT" == 8088 ]] || fail "Terma requires the declared application port 8088"
+initialize() { "$NODE" "$APP_DIR/scripts/fnos-initialize.js" "$1"; }
+owned_pid() {
+  "$NODE" "$APP_DIR/scripts/fnos-process.js" verify
+}

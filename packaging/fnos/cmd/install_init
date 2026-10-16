@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+if [ -n "${TRIM_APP_STATUS:-}" ] && [ "${TRIM_APP_STATUS^^}" != INSTALL ]; then exit 0; fi
+if [ -z "${TRIM_APP_STATUS:-}" ] && [ -n "${TRIM_OLD_APPVER:-}" ]; then exit 0; fi
+password="${wizard_web_password:-}"
+if [ "${#password}" -lt 12 ] || [ "${#password}" -gt 4096 ] || [ "$password" != "${wizard_web_password_confirm:-}" ]; then
+  printf '%s\n' 'Use matching Web passwords of at least 12 characters / Web 密码至少 12 个字符且两次输入必须一致' > "$TRIM_TEMP_LOGFILE"
+  exit 1
+fi

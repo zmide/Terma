@@ -5,6 +5,11 @@ const path = require("node:path");
 const { runMobileScenario } = require("./ui-smoke-mobile-scenario");
 const { runVisualRegression } = require("./ui-visual-regression");
 const { runIssueUiScenario } = require("./issue-ui-scenario");
+const { runManagedKeysUiScenario } = require("./managed-keys-ui-scenario");
+const { runWebFilesUiScenario } = require("./web-files-ui-scenario");
+const { runSftpRenameUiScenario } = require("./sftp-rename-ui-scenario");
+const { runWebFilesRealUiScenario } = require("./web-files-real-ui-scenario");
+const { runWebFilesDeliveryUiScenario } = require("./web-files-delivery-ui-scenario");
 
 const url = process.env.TERMA_CHECK_URL || process.env.TUNNELDESK_CHECK_URL || "http://127.0.0.1:8099";
 const errors = [];
@@ -64,6 +69,42 @@ app.whenReady().then(async () => {
   await window.loadURL(url);
   await new Promise(resolve => setTimeout(resolve, 1200));
   console.log("[ui-smoke] page loaded");
+  if(process.env.TERMA_UI_SCENARIO === 'web-files-real') {
+    await runWebFilesRealUiScenario(window);clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
+  if (process.env.TERMA_UI_SCENARIO === "managed-keys") {
+    await runManagedKeysUiScenario(window);
+    clearTimeout(smokeWatchdog);
+    app.exit(0);
+    return;
+  }
+  if (process.env.TERMA_UI_SCENARIO === "web-files") {
+    await runSftpRenameUiScenario(window);
+    await runWebFilesUiScenario(window);
+    await runWebFilesDeliveryUiScenario(window);
+    clearTimeout(smokeWatchdog);
+    app.exit(0);
+    return;
+  }
+  // Receive fixtures use their own workspace so they cannot leave tabs or
+  // asynchronous settings renderers behind in the integration window.
+  const deliveryWindow = new BrowserWindow({
+    show:false, width:1200, height:800,
+    webPreferences:{contextIsolation:true, backgroundThrottling:false, preload:path.join(__dirname,"ui-smoke-preload.js")}
+  });
+  deliveryWindow.webContents.on("console-message", details => {
+    if (["warning","error"].includes(details.level)) errors.push(details.message);
+  });
+  try {
+    await deliveryWindow.loadURL(url);
+    await deliveryWindow.webContents.executeJavaScript(`(async () => {
+      await window.termaI18nReady;
+      for (let attempt=0;window.workspaceRestorePending && attempt<100;attempt++) await new Promise(resolve=>setTimeout(resolve,20));
+      if (window.workspaceRestorePending) throw new Error("Receive fixture initialization timed out");
+      return true;
+    })()`);
+    await runWebFilesDeliveryUiScenario(deliveryWindow);
+  } finally { deliveryWindow.destroy(); }
   console.log("[ui-smoke] language onboarding");
   window.setSize(392, 800);
   await new Promise(resolve => setTimeout(resolve, 80));
@@ -3107,7 +3148,21 @@ app.whenReady().then(async () => {
           updateSettings = previousUpdateSettings;
         }
       });
-      await runI18nScenario('cache-clear-confirmation', async () => {
+        await runI18nScenario('fnos-managed-settings', async () => {
+          const host = document.createElement('div');
+          const previousUpdateSettings = updateSettings;
+          updateSettings = {current_version:'1.7.9',download_status:{managed_by:'fnos'}};
+          host.innerHTML = updateStatusHtml() + runtimeSettingsPanelHtml({listen_locked:true,saved:{listen_hosts:['0.0.0.0'],listen_port:8088},available_hosts:[]});
+          document.body.appendChild(host);
+          try {
+            await collectTranslatedHan('fnos-managed-settings-open', true, host);
+            if (host.querySelector('#downloadUpdateBtn') || !host.querySelector('#runtimeListenPort')?.disabled) throw new Error('fnOS package management controls are not restricted');
+          } finally {
+            host.remove();
+            updateSettings = previousUpdateSettings;
+          }
+        });
+        await runI18nScenario('cache-clear-confirmation', async () => {
         const decision = clearProgramCache('', null);
         await new Promise(resolve => setTimeout(resolve, 0));
         const modal = document.getElementById('modal');
@@ -12228,6 +12283,9 @@ app.whenReady().then(async () => {
     testStyle.remove();
     return result;
   })()`);
+  await runManagedKeysUiScenario(window);
+  await runWebFilesUiScenario(window);
+  await runSftpRenameUiScenario(window);
   await runIssueUiScenario(window);
   const visual = await runVisualRegression(window);
   if (screenshotEnabled) {

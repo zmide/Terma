@@ -69,6 +69,11 @@ async function main() {
     language:"zh-CN",
     language_onboarding_version:1
   }), "utf8");
+  if(process.env.TERMA_UI_SCENARIO === 'web-files-real') {
+    const documents=path.join(dataDirectory,'files','Documentation');
+    fs.mkdirSync(documents,{recursive:true});
+    for(const name of ['README.md','LICENSE'])fs.copyFileSync(path.join(__dirname,'..',name),path.join(documents,name));
+  }
   const port = await availablePort();
   const url = `http://127.0.0.1:${port}`;
   const serverOutput = [];

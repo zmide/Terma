@@ -16,6 +16,11 @@ function storageSettingsPanelHtml() {
   const settings = desktopSettings?.settings || {};
   const paths = desktopSettings?.paths || {};
   const storage = desktopSettings?.storage || {};
+  if (runtimeSettings?.distribution === 'fnos') return `<section class="desktop-settings-section storage-settings-section">
+    <h3>${esc(tr("settings:storage.title"))}</h3>
+    <div class="muted">${esc(tr("errors:backend.fnos_storage_managed"))}</div>
+    <div class="desktop-current-paths"><code>${esc(tr("settings:auto.data_path_label", {path:paths.dataDir || ""}))}</code><code>${esc(tr("settings:auto.key_path_label", {path:paths.sshDir || ""}))}</code></div>
+  </section>`;
   const configurable = Boolean(desktopSettings?.available);
   const saveAction = `<button class="primary storage-settings-save" type="button" onclick="${configurable ? "saveDesktopSettings(this)" : "saveWebStorageSettings(this)"}">${icon("save")}<span>${esc(tr("settings:auto.save_data_restart"))}</span></button>`;
   if (desktopSettings?.storage_management_available === false) return `<section class="desktop-settings-section storage-settings-section">

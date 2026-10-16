@@ -55,6 +55,7 @@
     "delete_failed": "Failed to delete the SSH host trust record"
   },
   "key_management": {
+    "fnos_scope_hint": "The fnOS app manages the Terma key directory only. Import private keys into the directory above.",
     "description": "Manage SSH private keys, public keys, and deployment actions in Terma's key directory.",
     "project_title": "Terma key directory",
     "project_hint": "Private keys stay local; their contents are never shown in the list.",
@@ -768,6 +769,8 @@
     "reset_done": "Theme settings restored to defaults"
   },
   "updates": {
+    "fnos_managed": "Upgrade Terma through fnOS App Center or install a newer Terma FPK package.",
+    "fnos_listener_managed": "The fnOS package manages the listening address and port.",
     "reading_version": "Reading the current version",
     "checking": "Checking for updates",
     "reading_releases": "Reading GitHub release information",

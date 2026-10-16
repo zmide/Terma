@@ -484,6 +484,7 @@ function sftpTaskCenterRenderSignature(visible, view) {
     resume_supported:job.resume_supported,
     delivery_status:job.delivery_status,
     saved_path:job.saved_path,
+    renamed_files:job.renamed_files,
     delivery_error:job.delivery_error,
     warning:job.warning,
     error:job.error,
@@ -632,7 +633,7 @@ async function toggleSftpTaskCenter(event) {
 }
 
 function trackSftpMutationJob(job) {
-  if (job?.id) sftpKnownJobStatuses.set(String(job.id), String(job.status || "running"));
+  if (job?.id) sftpKnownJobStatuses.set(String(job.id), ["done", "failed", "cancelled"].includes(job.status) ? "pending" : String(job.status || "running"));
 }
 function settleSftpJobFromNotification(event) {
   const jobId = String(event?.action?.sftp_job_id || event?.action?.download_job_id || "");
@@ -657,7 +658,9 @@ function settleSftpJobFromNotification(event) {
     queueSftpDirectoryRefresh(connectionId);
     flushPendingSftpDirectoryRefresh();
   }
-  sftpKnownJobStatuses.set(jobId, job.status);
+  // Local saves need the authoritative saved path from the next task poll.
+  // Keep their previous status until that poll has refreshed matching panes.
+  if (!["local-delivery", "download"].includes(job.type)) sftpKnownJobStatuses.set(jobId, job.status);
   updateSftpTaskCenter(sftpLatestJobs);
   return true;
 }
@@ -670,10 +673,10 @@ function completedSftpMutationForCurrentView(jobs) {
     if (!id) continue;
     visibleIds.add(id);
     const previous = sftpKnownJobStatuses.get(id);
-    if (previous && previous !== job.status && ["done", "cancelled", "failed"].includes(job.status) && SFTP_MUTATING_JOB_TYPES.has(job.type)) {
+    if (previous && previous !== job.status && ["done", "cancelled", "failed"].includes(job.status)) {
       const connectionId = Number(job.connection_id || 0);
-      if (connectionId) connectionsToRefresh.add(connectionId);
-      if (job.type === "local-delivery" && typeof refreshLocalFilesForDeliveryJob === "function") refreshLocalFilesForDeliveryJob(job);
+      if (connectionId && SFTP_MUTATING_JOB_TYPES.has(job.type)) connectionsToRefresh.add(connectionId);
+      if (["local-delivery", "download"].includes(job.type) && typeof refreshLocalFilesForDeliveryJob === "function") refreshLocalFilesForDeliveryJob(job);
     }
     sftpKnownJobStatuses.set(id, String(job.status || ""));
   }
@@ -922,6 +925,7 @@ function renderSftpJob(job) {
   const deleteBtn = deletable && !(job.type === "local-generated" && job.delivery_status === "saved") ? `<button class="icon-button danger sftp-task-icon-action" type="button" title="${escAttr(deleteTask)}" aria-label="${escAttr(deleteTask)}" onclick="event.stopPropagation();deleteSftpJob(${jobIdArg},this)">${icon("trash-2")}</button>` : "";
   const finishedAt = job.finished_at ? `<time datetime="${escAttr(new Date(job.finished_at).toISOString())}">${esc(new Date(job.finished_at).toLocaleString())}</time>` : "";
   const deliveryText = job.saved_path ? `<span class="sftp-job-delivery" data-i18n-skip>${esc(tr("tasks:notifications.saved_to", {path:job.saved_path, defaultValue:`已保存到 ${job.saved_path}`}))}</span>` : "";
+  const renamedText = (Array.isArray(job.renamed_files) ? job.renamed_files : []).slice(0,6).map(item => `<span class="sftp-job-delivery" data-i18n-skip>${esc(tr("tasks:notifications.file_renamed", {source:JSON.stringify(item.source), target:JSON.stringify(item.target)}))}</span>`).join("");
   const deliveryErrorText = localizedSftpJobIssue(job, "delivery_error");
   const transferWarningText = localizedSftpJobIssue(job, "warning");
   const jobErrorText = localizedSftpJobIssue(job, "error");
@@ -930,7 +934,7 @@ function renderSftpJob(job) {
   const taskLogView = (desktopJob || componentJob) ? ensureSftpTaskLogViewState(job.id) : null;
   const taskLog = taskLogView && job.logs?.length ? `<details class="global-task-log" data-task-id="${escAttr(job.id)}" ${taskLogView.expanded ? "open" : ""}><summary>${esc(tr("tasks:auto.view_logs", {defaultValue:"查看日志"}))}</summary><pre>${esc(job.logs.slice(-80).map(item => `[${new Date(item.at || Date.now()).toLocaleTimeString()}] ${item.text || ""}`).join("\n"))}</pre></details>` : "";
   const currentText = localizedSftpJobText(job.current);
-  return `<div class="sftp-job ${escAttr(job.status)}"><div><strong data-i18n-skip>${esc(sftpJobDisplayLabel(job))}</strong><span data-i18n-skip>${esc(job.connection_name || "")} · ${esc(detail)}${job.progress_unit === "percent" ? "" : currentText ? ` · ${esc(currentText)}` : ""}${finishedAt ? ` · ${finishedAt}` : ""}</span>${deliveryText}${progressBar}${taskLog}${transferWarning}${deliveryError}${jobErrorText ? `<div class="sftp-job-error"><strong>${esc(tr("tasks:auto.failure_reason", {defaultValue:"失败原因"}))}</strong><span data-i18n-skip>${esc(jobErrorText).slice(0,500)}</span></div>` : ""}</div><div class="actions tight">${downloadAction}${resumeBtn}${pauseBtn}${retrySyncBtn}${exportSyncBtn}${desktopOpenBtn}${cancelBtn}${deleteBtn}</div></div>`;
+  return `<div class="sftp-job ${escAttr(job.status)}"><div><strong data-i18n-skip>${esc(sftpJobDisplayLabel(job))}</strong><span data-i18n-skip>${esc(job.connection_name || "")} · ${esc(detail)}${job.progress_unit === "percent" ? "" : currentText ? ` · ${esc(currentText)}` : ""}${finishedAt ? ` · ${finishedAt}` : ""}</span>${deliveryText}${renamedText}${progressBar}${taskLog}${transferWarning}${deliveryError}${jobErrorText ? `<div class="sftp-job-error"><strong>${esc(tr("tasks:auto.failure_reason", {defaultValue:"失败原因"}))}</strong><span data-i18n-skip>${esc(jobErrorText).slice(0,500)}</span></div>` : ""}</div><div class="actions tight">${downloadAction}${resumeBtn}${pauseBtn}${retrySyncBtn}${exportSyncBtn}${desktopOpenBtn}${cancelBtn}${deleteBtn}</div></div>`;
 }
 
 function sftpJobStatus(status, phase="") {

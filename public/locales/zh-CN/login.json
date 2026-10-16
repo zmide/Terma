@@ -1,6 +1,8 @@
 {
   "title": "Terma 登录",
   "description": "请输入 Web 访问密码；仅配置 Token 时也可直接输入 Token。",
+  "setup_hint": "首次使用时，请先在运行 Terma 的设备上设置 Web 密码；登录后可在“设置 → 安全”中修改。",
+  "fnos_setup_hint": "请输入安装时设置的 Web 密码。如需设置或重置，请进入“飞牛应用中心 → Terma → 应用设置”。这里使用 Terma 自己的密码，无需用户名。",
   "credential": "密码或 Token",
   "show_password": "显示密码",
   "hide_password": "隐藏密码",

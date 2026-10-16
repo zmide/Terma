@@ -26,7 +26,8 @@ const THIRD_PARTY_COMPONENTS:ThirdPartyComponent[] = [
 ];
 
 function listThirdPartyComponents():ThirdPartyComponent[] {
-  return THIRD_PARTY_COMPONENTS.map(item => ({...item}));
+  const desktopOnly = new Set(["Electron", "VcXsrv", "TigerVNC Viewer"]);
+  return THIRD_PARTY_COMPONENTS.filter(item => process.env.TERMA_DISTRIBUTION !== "fnos" || !desktopOnly.has(item.name)).map(item => ({...item}));
 }
 
 module.exports = {listThirdPartyComponents};

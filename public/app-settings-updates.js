@@ -156,6 +156,9 @@ function updateStatusHtml(options={}) {
   const checking = Boolean(options.checking ?? updateStatusChecking);
   const checkButtonState = checking ? ` disabled aria-busy="true"` : "";
   const downloadButtonState = checking ? ` disabled aria-busy="true"` : "";
+  if (update?.download_status?.managed_by === "fnos") {
+    return `<div class="update-card"><div class="update-card-head"><strong>Terma</strong><span>${esc(update.current_version || "")}</span></div><p>${esc(tr("settings:updates.fnos_managed"))}</p></div>`;
+  }
   if (!update) {
     return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:updates.reading_version"))}</span></div><div class="update-status checking"><div><strong>${esc(tr("settings:updates.checking"))}</strong><span>${esc(tr("settings:updates.reading_releases"))}</span></div><span class="status-pill">${esc(tr("settings:updates.checking_short"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)"${checkButtonState}>${icon("refresh-cw")}<span>${esc(tr(checking ? "settings:updates.checking_short" : "settings:updates.check_again"))}</span></button></div></div>`;
   }

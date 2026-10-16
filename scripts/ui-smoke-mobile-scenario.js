@@ -381,11 +381,12 @@ async function runMobileScenario(window) {
       let groupOrderSaveCalls=0;
       saveConnectionGroupOrder=async()=>{groupOrderSaveCalls+=1;};
       groupDragHandle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:77,pointerType:'touch',button:0,clientX:dragRect?.left||10,clientY:dragRect?.top||10}));
-      await new Promise(resolve=>setTimeout(resolve,500));
+      for(let attempt=0;attempt<60&&!document.querySelector('.group-dragging');attempt+=1)await new Promise(resolve=>setTimeout(resolve,25));
       const draggingNode=document.querySelector('.group-dragging');
       renderConnections();
       await new Promise(resolve=>setTimeout(resolve,1800));
       layout.groupDragSurvivesRefresh=Boolean(draggingNode&&draggingNode.isConnected&&draggingNode.classList.contains('group-dragging'));
+      if(!layout.groupDragSurvivesRefresh)layout.groupDragDiagnostics={started:Boolean(draggingNode),connected:Boolean(draggingNode?.isConnected),active:Boolean(connectionGroupDrag?.active),pending:Boolean(connectionGroupDrag?.renderPending),search:connectionSearch,primaryView,groupConnected:Boolean(connectionGroupDrag?.group?.isConnected),currentTree:$('connectionGroups')?.innerHTML.slice(0,300)};
       document.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true,pointerId:77,pointerType:'touch'}));
       await new Promise(resolve=>setTimeout(resolve,30));
       layout.groupCancelDoesNotSave=!document.querySelector('.group-dragging')&&groupOrderSaveCalls===0;

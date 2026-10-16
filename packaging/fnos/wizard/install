@@ -1,0 +1,27 @@
+[
+  {
+    "stepTitle": "Terma",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "Terma runs on port 8088 as a dedicated application user. Set a Web password before the first start. Desktop-only features and scheduled SFTP sync are unavailable. / Terma 使用 8088 端口和专用应用用户。请设置首次 Web 登录密码；桌面专属功能与定时同步暂不可用。"
+      },
+      {
+        "type": "password",
+        "field": "wizard_web_password",
+        "label": "Web password / Web 登录密码",
+        "rules": [
+          { "required": true, "message": "Please enter a Web password / 请设置 Web 登录密码" },
+          { "min": 12, "message": "Use at least 12 characters / 至少使用 12 个字符" }
+        ]
+      },
+      {
+        "type": "password",
+        "field": "wizard_web_password_confirm",
+        "label": "Confirm Web password / 确认 Web 登录密码",
+        "rules": [{"required": true, "message": "Confirm your Web password / 请再次输入 Web 登录密码"}]
+      },
+      {"type":"tips","helpText":"This is a separate Terma password; no username is required. Reinstalling with retained data uses the password entered here; upgrades keep the current password. After installation, use Application Center → Terma → Application Settings to reset it or change listen addresses and allowed domains. / 这是 Terma 独立的密码，无需用户名。保留数据重装时使用本次填写的密码，正常升级保留原密码。安装后可在“应用中心 → Terma → 应用设置”中重置密码、调整监听地址和允许的访问域名。"}
+    ]
+  }
+]

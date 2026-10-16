@@ -6,6 +6,7 @@ const path = require("node:path");
 const { DATA_DIR } = require("./config");
 const { LOGIN_PROTECTION_LIMITS, LoginRateLimiter, SessionStore } = require("./auth-protection");
 const { localDirectDesktopIntegrationDecision, normalizeActualListenHosts } = require("./desktop-integration-policy");
+const { isFnosDistribution, assertDistributionSecurityOptions } = require("./infrastructure/distribution-policy");
 const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
 
 const SECURITY_FILE = path.join(DATA_DIR, "security.json");
@@ -207,11 +208,11 @@ function readSecuritySettings() {
     return {
       ...defaultSettings(),
       ...stored,
-      auth_mode:authMode,
-      lan_auth_enabled:authMode !== "off",
+      auth_mode:isFnosDistribution() ? "always" : authMode,
+      lan_auth_enabled:isFnosDistribution() || authMode !== "off",
       ...normalizeEncryptionState(stored),
       secure_cookie_mode: ["auto", "always", "never"].includes(String(stored?.secure_cookie_mode)) ? String(stored.secure_cookie_mode) : "auto",
-      local_direct_desktop_integration_enabled: stored?.local_direct_desktop_integration_enabled === true,
+      local_direct_desktop_integration_enabled: !isFnosDistribution() && stored?.local_direct_desktop_integration_enabled === true,
       trusted_proxy_addresses: normalizeTrustedProxyAddresses(stored?.trusted_proxy_addresses),
       allowed_hosts: normalizeAllowedHosts(stored?.allowed_hosts),
       session_ttl_minutes: normalizeBoundedInteger(stored?.session_ttl_minutes, DEFAULT_SESSION_TTL_MINUTES, SESSION_LIMITS.ttl_minutes),
@@ -224,7 +225,7 @@ function readSecuritySettings() {
       global_login_max_failures: normalizeBoundedInteger(stored?.global_login_max_failures, 50, { ...LOGIN_PROTECTION_LIMITS.globalMaxFailures, min:1 }),
       global_login_window_seconds: normalizeBoundedInteger(stored?.global_login_window_seconds, 5 * 60, LOGIN_PROTECTION_LIMITS.globalWindowSeconds),
       global_login_lock_seconds: normalizeBoundedInteger(stored?.global_login_lock_seconds, 60, LOGIN_PROTECTION_LIMITS.globalLockSeconds),
-      manage_user_ssh_keys_enabled: stored?.manage_user_ssh_keys_enabled === true
+      manage_user_ssh_keys_enabled: !isFnosDistribution() && stored?.manage_user_ssh_keys_enabled === true
     };
   } catch {
     return defaultSettings();
@@ -335,6 +336,7 @@ function setToken(token = crypto.randomBytes(32).toString("base64url")) {
 }
 
 function updateSecurityOptions(data) {
+  assertDistributionSecurityOptions(data);
   const next: any = {};
   const requestedAuthMode = String(data.auth_mode || "");
   if (["lan", "always", "off"].includes(requestedAuthMode)) {
@@ -503,6 +505,7 @@ function isRequestSecure(req) {
 }
 
 function authRequired(req) {
+  if (isFnosDistribution()) return true;
   const settings = readSecuritySettings();
   if (settings.auth_mode === "off" || settings.lan_auth_enabled === false) return false;
   if (settings.auth_mode === "always") return true;
@@ -921,5 +924,6 @@ module.exports = {
   setToken,
   updateSecurityOptions,
   verifySecret,
+  validateAllowedHosts:requireAllowedHosts,
   writeSecuritySettings
 };

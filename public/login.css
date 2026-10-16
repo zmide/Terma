@@ -15,4 +15,6 @@ label{display:block;font-size:12px;color:#687782;margin-bottom:6px}
 .password-toggle svg[hidden]{display:none}
 .login-button{width:100%;margin-top:14px;padding:10px;border:0;border-radius:4px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}
 .err{color:#b42318;min-height:20px;margin-top:10px}
+.setup-hint{margin:16px 0 0;padding-top:14px;border-top:1px solid #ccd4dc;font-size:12px;line-height:1.6;color:#687782;overflow-wrap:anywhere}
+@media(prefers-color-scheme:dark){.setup-hint{border-color:#475569;color:#aab6c5}}
 @media (prefers-color-scheme:dark){body{background:#111827;color:#e5e7eb}.card{background:#1f2937;border-color:#475569;box-shadow:0 12px 32px rgba(0,0,0,.32)}.muted,label{color:#aab6c5}.password-field input{background:#111827;border-color:#526172;color:#f8fafc}.password-toggle{color:#cbd5e1}.password-toggle:hover,.language-toggle:hover{background:#334155;color:#fff}.language-toggle{background:#1f2937;border-color:#526172;color:#e5e7eb}.err{color:#fca5a5}}

@@ -85,6 +85,8 @@
     "cross_done": "Cross-host copy completed",
     "cross_failed": "Cross-host copy failed",
     "saved_to": "Saved to {{path}}",
+    "renamed_count": "Renamed: {{count}}; existing files were kept",
+    "file_renamed": "File renamed: {{source}} → {{target}}",
     "auto_save_failed": "Automatic save failed: {{error}}",
     "processed_items": "Processed {{completed}}/{{total}} items",
     "cross_items": "{{source}} → {{target}} · {{count}} items"

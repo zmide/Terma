@@ -1,4 +1,12 @@
 {
+  "access_page": {
+    "title": "此访问地址尚未获得许可",
+    "description": "Terma 拒绝了当前域名或 IP 地址，尚未进行密码校验。",
+    "local_access": "先使用已经可以访问的地址打开 Terma，通常是运行设备的局域网 IP。",
+    "allow_host": "在“设置 → 安全”的“允许的 Host”中添加完整域名或 IP。NAS 安装包也可以通过系统的应用设置提供此选项。",
+    "proxy_hint": "通过反向代理使用 HTTPS 时，只将实际代理 IP 加入可信代理，并正确转发原始协议；请保持 Web 登录保护。",
+    "listen_hint": "监听地址用于选择服务器的网卡；允许的 Host 用于校验浏览器使用的域名或 IP。这两项需要分别配置。"
+  },
   "generic": "操作失败",
   "language_switch": "界面语言切换失败",
   "xclip_no_plan": "当前系统没有可用的 xclip 安装方案，请查看手动安装说明",
@@ -24,6 +32,23 @@
   "ssh_host_key_failed": "SSH 主机指纹校验失败，请确认服务器指纹变化是否可信",
   "ssh_failed": "SSH 连接失败，请检查连接配置、网络和远端 SSH 服务",
   "backend": {
+    "ssh_key_passphrase_invalid": "私钥口令不能超过 256 个字符，且不能包含换行或空字符。",
+    "ssh_key_name_invalid": "密钥名称只能包含字母、数字、点、横线和下划线，且不能以 .pub 结尾。",
+    "ssh_key_import_invalid": "请选择不超过 1 MB 的 SSH 私钥文件。",
+    "ssh_key_user_scope_disabled": "用户 ~/.ssh 密钥管理尚未启用，请使用 Terma 密钥目录。",
+    "ssh_key_path_invalid": "该私钥不在允许管理的目录中，或文件已不可用，请刷新列表。",
+    "ssh_key_passphrase_incorrect": "原私钥口令不正确。",
+    "ssh_key_passphrase_required": "请输入当前私钥口令。",
+    "ssh_key_update_failed": "修改私钥口令失败，请检查原口令以及服务器上的 OpenSSH 工具。",
+    "ssh_key_in_use": "该私钥正在被 SSH 连接使用，请先更换或移除连接中的密钥绑定。",
+    "ssh_key_public_unavailable": "无法读取公钥，请确认私钥格式及对应公钥文件；加密 PEM 私钥需要配套的 .pub 文件。",
+    "ssh_key_public_file_unsafe": "对应公钥必须是密钥目录中的独立普通文件，不能使用链接。",
+    "ssh_key_public_mismatch": "公钥与私钥不匹配，请重新导入正确的密钥。",
+    "host_not_allowed": "此访问地址尚未获得 Terma 的访问许可。",
+    "fnos_security_managed": "飞牛应用必须保持所有访问经过登录验证，且不能启用宿主桌面权限。",
+    "fnos_listen_managed": "飞牛应用的监听地址和端口由应用包管理。",
+    "fnos_storage_managed": "飞牛应用的数据目录由应用中心管理。",
+    "fnos_update_managed": "请通过飞牛应用中心或安装新版 FPK 升级 Terma。",
     "terminal_shortcuts_invalid": "快捷键配置无效，请检查按键组合、按钮名称（最多 24 个字符）和数量（最多 48 项）",
     "request_failed": "请求失败，请重试",
     "ai_disabled": "终端 AI 尚未启用",
@@ -178,7 +203,12 @@
     "remote_task_conflict": "已有远端组件任务正在执行，请等待完成后再试",
     "remote_component_operation_failed": "远端组件操作失败，请查看任务日志",
     "remote_component_verification_failed": "远端组件命令已结束，但状态验证未通过",
-    "contract_example": "无法处理 {{subject}}"
+    "contract_example": "无法处理 {{subject}}",
+    "server_files_path_denied": "此目录未授权，或包含受保护文件",
+    "server_files_login_required": "请先登录 Terma，再访问设备目录",
+    "server_files_overwrite_file_only": "覆盖仅适用于同名文件；文件夹请选择重命名",
+    "server_files_limit": "一次最多操作 1000 个文件和目录",
+    "server_files_text_limit": "只可编辑不超过 1 MiB 的 UTF-8 文本文件"
   },
   "actions": {
     "invalid_definition": "动作必须提供 id 和 run",
