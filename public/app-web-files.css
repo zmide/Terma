@@ -1,0 +1,61 @@
+.web-files-shell { min-width:0; font:13px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; gap:0; }
+.web-files-shell button,.web-files-shell input { font-family:inherit; }
+.web-files-shell .local-files-top { display:flex; flex-direction:column; gap:12px; top:0; margin:0; padding:14px 16px 12px; background:var(--panel); box-shadow:none; backdrop-filter:none; }
+.web-files-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; min-width:0; }
+.web-files-origin { display:flex; align-items:center; gap:10px; min-width:0; flex:1 1 240px; }
+.web-files-source-icon { display:grid; place-items:center; flex:none; width:36px; height:36px; border-radius:9px; color:var(--accent2); background:color-mix(in srgb,var(--accent2) 9%,var(--panel)); border:1px solid color-mix(in srgb,var(--accent2) 18%,var(--line)); }
+.web-files-source-icon svg { width:19px; height:19px; }
+.web-files-origin>div { min-width:0; }
+.web-files-source-line { display:flex; align-items:center; gap:8px; }
+.web-files-source-line strong { font-size:14px; }
+.web-files-mode { flex:none; border:1px solid var(--line); border-radius:5px; padding:1px 6px; font-size:10px; color:var(--muted); background:var(--field); }
+.web-files-mode[data-writable="true"] { color:var(--accent); border-color:color-mix(in srgb,var(--accent) 25%,var(--line)); background:color-mix(in srgb,var(--accent) 6%,var(--panel)); }
+.web-files-hint { display:block; margin-top:3px; font-size:11px; line-height:1.5; color:var(--muted); overflow-wrap:anywhere; }
+.web-files-shell .local-files-toolbar { margin-left:auto; }
+.web-files-shell .local-files-toolbar-actions { display:flex; flex-wrap:wrap; gap:5px; overflow:visible; }
+.web-files-shell .local-files-toolbar-actions>button { min-height:30px; border-radius:5px; font-size:12px; }
+.web-files-navigation { display:flex; align-items:center; flex-wrap:wrap; gap:5px; min-width:0; }
+.web-files-navigation>.icon-button { flex:none; width:28px; min-width:28px; height:30px; min-height:30px; padding:5px; border-color:transparent; background:transparent; box-shadow:none; }
+.web-files-navigation>.icon-button:hover { border-color:var(--line); background:var(--hover); }
+.web-files-navigation svg { width:15px; height:15px; }
+.web-files-address { display:flex; align-items:center; gap:7px; flex:1 1 180px; min-width:0; min-height:32px; padding:0 5px 0 9px; border:1px solid var(--line); border-radius:6px; background:var(--field); }
+.web-files-address>span { display:flex; flex:none; color:var(--muted); }
+.web-files-address .web-files-path { display:block; flex:1; min-width:0; margin:0; padding:6px 0; overflow:hidden; border:0; border-radius:0; background:transparent; color:var(--text); text-align:left; text-overflow:ellipsis; white-space:nowrap; box-shadow:none; font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.web-files-address .web-files-path:hover { color:var(--accent2); }
+.web-files-address>.icon-button { flex:none; width:24px; min-width:24px; height:25px; min-height:25px; padding:4px; border:0; background:transparent; box-shadow:none; }
+.web-files-search { display:flex; align-items:center; gap:7px; flex:0 1 220px; min-width:140px; min-height:32px; padding:0 9px; border:1px solid var(--line); border-radius:6px; background:var(--field); }
+.web-files-search>span { flex:none; display:flex; color:var(--muted); }
+.web-files-search input { flex:1; width:100%; min-width:0; margin:0; padding:6px 0; border:0; outline:0; background:transparent; box-shadow:none; font-size:12px; }
+.web-files-address:focus-within,.web-files-search:focus-within { border-color:var(--accent2); box-shadow:0 0 0 2px color-mix(in srgb,var(--accent2) 10%,transparent); }
+.web-files-shell .local-files-list { min-height:0; flex:1; margin-top:12px; border-radius:7px; }
+.web-files-shell .local-files-head { min-height:34px; background:var(--field); box-shadow:none; }
+.web-files-shell .local-files-head>span { text-align:left; padding-inline:10px; font-size:11px; }
+.web-files-shell .local-files-row { min-height:42px; border-bottom-color:color-mix(in srgb,var(--line) 60%,transparent); }
+.web-files-shell .local-files-name { min-width:0; border:0; box-shadow:none; font:inherit; }
+.web-files-shell .web-files-root-path { display:block; margin-top:2px; color:var(--muted); font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.web-files-selection { margin-top:10px; border-radius:6px; background:color-mix(in srgb,var(--accent2) 5%,var(--panel)); }
+.web-files-shell .pager { gap:10px; margin-top:auto; padding:10px; justify-content:center; font-size:12px; border-top:1px solid var(--line); }
+.web-files-shell .pager button { min-height:27px; padding:3px 9px; font-size:11px; }
+.web-files-status { padding:7px 2px 0; font-size:11px; color:var(--muted); white-space:pre-line; overflow-wrap:anywhere; }
+.web-files-status:empty { display:none; }
+.web-files-editor textarea { width:100%; min-height:45vh; box-sizing:border-box; resize:vertical; white-space:pre; font-family:monospace; background:var(--panel); color:var(--text); border:1px solid var(--line); }
+.web-files-login { text-align:center; }
+.sftp-inline-rename-input { width:100%; min-width:32px; max-width:100%; box-sizing:border-box; padding:2px 4px; border:1px solid var(--primary); border-radius:3px; background:var(--field); color:var(--text); font:inherit; }
+.sftp-inline-renaming { position:relative; }
+@container workspace-pane (max-width:700px) {
+  .web-files-search { flex:1 1 100%; }
+  .web-files-origin { flex-basis:100%; }
+  .web-files-shell .local-files-toolbar { margin-left:0; }
+}
+@media(max-width:760px) {
+  .web-files-shell .local-files-top { gap:10px; padding:12px; }
+  .web-files-header { gap:9px; }
+  .web-files-origin { flex-basis:100%; }
+  .web-files-source-icon { width:32px; height:32px; }
+  .web-files-shell .local-files-toolbar { margin-left:0; width:100%; }
+  .web-files-search { flex:1 1 100%; }
+  .web-files-selection .local-files-selection-actions { flex-wrap:wrap; }
+  .web-files-search input { font-size:16px; }
+  .web-files-address { flex-basis:160px; }
+  .web-files-shell .local-files-head { grid-template-columns:24px minmax(0,1fr); }
+}

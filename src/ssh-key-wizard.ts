@@ -9,6 +9,8 @@ const { allowedIdentityPath, looksLikePrivateKeyData } = require("./identity-pat
 const { runSshCommandForConnection, securePrivateKeyPermissions } = require("./ssh");
 const { buildRemotePosixCommand } = require("./remote-posix");
 const { ensurePrivateDirectory } = require("./storage-permissions");
+const { publicError } = require("./public-error");
+const { readManagedPublicKey, publicKeyText, assertPublicCompanion, writeManagedPublicKey } = require("./services/ssh-key-public-service");
 
 const KEY_TYPES = Object.freeze({
   ed25519: {bits:[256], defaultBits:256, label:"Ed25519"},
@@ -24,7 +26,7 @@ function pathKey(value) {
 function cleanKeyName(value, keyType = "ed25519") {
   const name = String(value || `id_${keyType}_terma`).trim();
   if (!/^[A-Za-z0-9._-]{1,80}$/.test(name) || name === "." || name === ".." || name.toLowerCase().endsWith(".pub")) {
-    throw new Error("密钥名称只能包含字母、数字、点、横线和下划线，且不能以 .pub 结尾");
+    throw publicError("SSH_KEY_NAME_INVALID", "密钥名称只能包含字母、数字、点、横线和下划线，且不能以 .pub 结尾");
   }
   return name;
 }
@@ -48,9 +50,7 @@ function keyRoot(scope = "project", userKeysEnabled = false) {
   if (value === "project") return PROJECT_SSH_DIR;
   if (value !== "user") throw new Error("未知的密钥目录");
   if (!userKeysEnabled) {
-    const error: any = new Error("用户 ~/.ssh 密钥管理尚未启用");
-    error.statusCode = 403;
-    throw error;
+    throw publicError("SSH_KEY_USER_SCOPE_DISABLED", "用户 ~/.ssh 密钥管理尚未启用", {}, 403);
   }
   return USER_SSH_DIR;
 }
@@ -107,17 +107,14 @@ function generateSshKey(data: any = {}, userKeysEnabled = false) {
 function managedPrivatePath(file, scope, userKeysEnabled = false) {
   const root = path.resolve(keyRoot(scope, userKeysEnabled));
   const candidate = path.resolve(String(file || ""));
-  if (pathKey(path.dirname(candidate)) !== pathKey(root)) throw new Error("密钥不在所选管理目录中");
+  if (pathKey(path.dirname(candidate)) !== pathKey(root)) throw publicError("SSH_KEY_PATH_INVALID", "密钥不在所选管理目录中");
   const allowed = allowedIdentityPath(candidate);
-  if (!allowed) throw new Error("所选文件不是可管理的普通私钥文件");
+  if (!allowed) throw publicError("SSH_KEY_PATH_INVALID", "所选文件不是可管理的普通私钥文件");
   return allowed;
 }
 
 function parsedPublicKey(privatePath) {
-  const publicPath = `${privatePath}.pub`;
-  const parsed = utils.parseKey(fs.existsSync(publicPath) ? fs.readFileSync(publicPath) : fs.readFileSync(privatePath));
-  const item = Array.isArray(parsed) ? parsed[0] : parsed;
-  return item instanceof Error ? null : item;
+  return readManagedPublicKey(privatePath);
 }
 
 function publicKeyBits(parsed) {
@@ -184,7 +181,7 @@ function listManagedKeys(userKeysEnabled = false) {
 
 function importManagedKey(filename, data, scope = "project", userKeysEnabled = false) {
   const name = cleanKeyName(path.basename(String(filename || "id_key")), "key");
-  if (!Buffer.isBuffer(data) || !data.length || data.length > 1024 * 1024 || !looksLikePrivateKeyData(name, data)) throw new Error("上传内容不是受支持的 SSH 私钥，或文件超过 1MB");
+  if (!Buffer.isBuffer(data) || !data.length || data.length > 1024 * 1024 || !looksLikePrivateKeyData(name, data)) throw publicError("SSH_KEY_IMPORT_INVALID", "上传内容不是受支持的 SSH 私钥，或文件超过 1MB");
   const target = uniqueKeyPath(name, scope, userKeysEnabled, "key");
   try {
     fs.writeFileSync(target, data, {mode:0o600, flag:"wx"});
@@ -192,7 +189,7 @@ function importManagedKey(filename, data, scope = "project", userKeysEnabled = f
     const parsed = parsedPublicKey(target);
     const publicSsh = parsed?.getPublicSSH?.();
     if (publicSsh) {
-      const publicText = `${String(publicSsh).trim()}${parsed.comment ? ` ${String(parsed.comment).trim()}` : ""}\n`;
+      const publicText = `${publicKeyText(parsed)}\n`;
       fs.writeFileSync(`${target}.pub`, publicText, {mode:0o644, flag:"wx"});
     }
     return {ok:true, item:managedKeyMetadata(target, scope)};
@@ -205,7 +202,7 @@ function importManagedKey(filename, data, scope = "project", userKeysEnabled = f
 
 function deleteManagedKey(file, scope, userKeysEnabled = false, referencedPaths: string[] = []) {
   const target = managedPrivatePath(file, scope, userKeysEnabled);
-  if (referencedPaths.some(item => pathKey(item) === pathKey(target))) throw new Error("该私钥正在被 SSH 连接使用，请先更换连接的认证密钥");
+  if (referencedPaths.some(item => pathKey(item) === pathKey(target))) throw publicError("SSH_KEY_IN_USE", "该私钥正在被 SSH 连接使用，请先更换连接的认证密钥", {}, 409);
   fs.rmSync(target);
   try { fs.rmSync(`${target}.pub`, {force:true}); } catch {}
   return {ok:true};
@@ -216,8 +213,19 @@ function managedKeyProperties(file, scope, userKeysEnabled = false) {
 }
 
 function runSshKeygenPassphrase(privatePath, currentPassphrase, nextPassphrase) {
+  let askpassDirectory = "";
+  let args = ["-p", "-f", privatePath, "-P", String(currentPassphrase || ""), "-N", String(nextPassphrase || "")];
+  let environment = process.env;
+  if (process.platform === "linux") {
+    askpassDirectory = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "terma-key-passphrase-"));
+    const helper = path.join(askpassDirectory, "askpass");
+    fs.writeFileSync(helper, '#!/bin/sh\ncase "$1" in\n  *"old passphrase"*) printf "%s\\n" "$TERMA_KEYGEN_CURRENT" ;;\n  *"new passphrase"*|*"same passphrase"*) printf "%s\\n" "$TERMA_KEYGEN_NEXT" ;;\n  *) exit 1 ;;\nesac\n', {mode:0o700});
+    args = ["-p", "-f", privatePath];
+    environment = {...process.env, SSH_ASKPASS:helper, SSH_ASKPASS_REQUIRE:"force", DISPLAY:"terma-keygen", LC_ALL:"C",
+      TERMA_KEYGEN_CURRENT:String(currentPassphrase || ""), TERMA_KEYGEN_NEXT:String(nextPassphrase || "")};
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn("ssh-keygen", ["-p", "-f", privatePath, "-P", String(currentPassphrase || ""), "-N", String(nextPassphrase || "")], {windowsHide:true, stdio:["ignore", "ignore", "pipe"]});
+    const child = spawn("ssh-keygen", args, {env:environment, windowsHide:true, stdio:["ignore", "ignore", "pipe"]});
     let stderr = "";
     let settled = false;
     const finish = (error, value) => {
@@ -231,8 +239,10 @@ function runSshKeygenPassphrase(privatePath, currentPassphrase, nextPassphrase) 
     child.on("error", error => finish(new Error("当前系统没有可用的 ssh-keygen，无法修改私钥口令"), undefined));
     child.on("close", code => {
       if (code === 0) return finish(null, true);
-      finish(new Error(stderr.toLowerCase().includes("incorrect passphrase") ? "原私钥口令不正确" : "修改私钥口令失败，请确认当前口令和 OpenSSH 工具可用"), undefined);
+      finish(stderr.toLowerCase().includes("incorrect passphrase") ? publicError("SSH_KEY_PASSPHRASE_INCORRECT", "原私钥口令不正确") : publicError("SSH_KEY_UPDATE_FAILED", "修改私钥口令失败，请确认当前口令和 OpenSSH 工具可用"), undefined);
     });
+  }).finally(() => {
+    if (askpassDirectory) fs.rmSync(askpassDirectory, {recursive:true, force:true});
   });
 }
 
@@ -242,29 +252,27 @@ async function updateManagedKey(file, scope, userKeysEnabled = false, data:any =
   if (/[\u0000-\u001f\u007f]/.test(comment)) throw new Error("备注不能包含控制字符");
   const currentPassphrase = String(data.current_passphrase || "");
   const nextPassphrase = String(data.new_passphrase || "");
-  if (currentPassphrase.length > 256 || nextPassphrase.length > 256) throw new Error("私钥口令长度不能超过 256 个字符");
+  if (currentPassphrase.length > 256 || nextPassphrase.length > 256 || /[\0\r\n]/.test(currentPassphrase + nextPassphrase)) throw publicError("SSH_KEY_PASSPHRASE_INVALID", "私钥口令不能超过 256 个字符，且不能包含换行或空字符");
   const before = managedKeyMetadata(target, scope);
+  const parsed = readManagedPublicKey(target, currentPassphrase);
+  if (!parsed) throw publicError("SSH_KEY_PUBLIC_UNAVAILABLE", "无法读取公钥，请确认私钥格式及对应公钥文件");
   const passphraseRequested = Boolean(data.change_passphrase) || Boolean(currentPassphrase) || Boolean(nextPassphrase);
   if (passphraseRequested) {
-    if (before.has_passphrase && !currentPassphrase) throw new Error("请输入当前私钥口令");
+    if (before.has_passphrase && !currentPassphrase) throw publicError("SSH_KEY_PASSPHRASE_REQUIRED", "请输入当前私钥口令");
     await runSshKeygenPassphrase(target, currentPassphrase, nextPassphrase);
   }
   const publicPath = `${target}.pub`;
-  if (!fs.existsSync(publicPath)) throw new Error("该私钥没有对应的 .pub 公钥文件");
-  const publicKey = fs.readFileSync(publicPath, "utf8").trim();
-  const parts = publicKey.split(/\s+/);
-  if (parts.length < 2) throw new Error("公钥格式无效");
-  const nextPublic = `${parts[0]} ${parts[1]}${comment ? ` ${comment}` : ""}\n`;
-  fs.writeFileSync(publicPath, nextPublic, {encoding:"utf8", mode:0o644});
+  assertPublicCompanion(target);
+  const nextPublic = `${publicKeyText(parsed, comment)}\n`;
+  writeManagedPublicKey(target, nextPublic);
   return {ok:true, item:managedKeyMetadata(target, scope)};
 }
 
 function managedPublicKey(file, scope, userKeysEnabled = false) {
   const target = managedPrivatePath(file, scope, userKeysEnabled);
   const publicPath = `${target}.pub`;
-  if (!fs.existsSync(publicPath)) throw new Error("该私钥没有对应的 .pub 公钥文件");
-  const publicKey = fs.readFileSync(publicPath, "utf8").trim();
-  if (!/^(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521))\s+\S+(?:\s+.*)?$/.test(publicKey)) throw new Error("公钥格式无效");
+  const parsed = readManagedPublicKey(target);
+  const publicKey = publicKeyText(parsed);
   return {ok:true, public_path:publicPath, public_key:publicKey, filename:path.basename(publicPath)};
 }
 
@@ -279,8 +287,8 @@ async function deployGeneratedPublicKey(connectionId, publicPath, userKeysEnable
   const inProject = projectRelative && !projectRelative.startsWith("..") && !path.isAbsolute(projectRelative);
   const inUser = userKeysEnabled && userRelative && !userRelative.startsWith("..") && !path.isAbsolute(userRelative);
   if ((!inProject && !inUser) || !target.endsWith(".pub")) throw new Error("公钥不在允许管理的密钥目录中");
-  const publicKey = fs.readFileSync(target, "utf8").trim();
-  if (!/^(?:ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(?:256|384|521))\s+\S+(?:\s+.*)?$/.test(publicKey)) throw new Error("公钥格式无效");
+  const scope = inProject ? "project" : "user";
+  const publicKey = managedPublicKey(target.slice(0, -4), scope, userKeysEnabled).public_key;
   const encoded = Buffer.from(publicKey, "utf8").toString("base64");
   const command = ["set -eu", "td_ssh_dir=\"$HOME/.ssh\"", "td_auth=\"$td_ssh_dir/authorized_keys\"", "mkdir -p \"$td_ssh_dir\"", "chmod 700 \"$td_ssh_dir\"", `td_key=$(printf %s ${shellQuote(encoded)} | base64 -d 2>/dev/null || printf %s ${shellQuote(encoded)} | base64 -D)`, "touch \"$td_auth\"", "chmod 600 \"$td_auth\"", "grep -qxF \"$td_key\" \"$td_auth\" || printf '%s\\n' \"$td_key\" >> \"$td_auth\""].join("\n");
   const connection = getConnection(Number(connectionId));

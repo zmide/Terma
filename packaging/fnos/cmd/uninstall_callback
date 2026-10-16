@@ -1,0 +1,3 @@
+#!/bin/bash
+# Retain application data and backups. No recursive data deletion is performed.
+exit 0

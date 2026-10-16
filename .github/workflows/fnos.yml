@@ -1,0 +1,100 @@
+name: Build fnOS packages
+
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare fnOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: node:22.23.1-bookworm
+    timeout-minutes: 30
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential python3
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build and verify backend
+        run: |
+          npm run build
+          npm run check:strict
+          npm run fnos:check
+      - name: Stage native application
+        run: npm run dist:fnos -- --skip-build --stage-only --arch ${{ matrix.arch }}
+      - name: Upload native staging archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fnos-staging-${{ matrix.arch }}
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 1
+          path: release/fnos/*.staging.tar.gz
+
+  pack:
+    name: Package fnOS ${{ matrix.arch }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    runs-on: ubuntu-24.04
+    container: node:22.23.1-bookworm
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare verified fnpack
+        env:
+          FNPACK_SHA256: 54b97fa7b70968c4d05c79840f5daeff508957d0bb2062fdb0376d00d9615c93
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl python3
+          curl --fail --location --retry 2 https://static2.fnnas.com/fnpack/fnpack-1.2.3-linux-amd64 -o /usr/local/bin/fnpack
+          printf '%s  %s\n' "$FNPACK_SHA256" /usr/local/bin/fnpack | sha256sum --check --strict
+          chmod 755 /usr/local/bin/fnpack
+      - name: Download native staging archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          digest-mismatch: error
+          name: fnos-staging-${{ matrix.arch }}
+          path: fnos-staging
+      - name: Build and verify FPK
+        env:
+          FNOS_ARCH: ${{ matrix.arch }}
+        run: |
+          python3 scripts/fnos-staging-check.py
+          VERSION="$(node -p 'require("./package.json").version')"
+          node scripts/build-fnos.js --pack-staging "fnos-staging/Terma-${VERSION}-fnos-${FNOS_ARCH}.staging.tar.gz" --arch "$FNOS_ARCH"
+          node scripts/release-artifacts-check.js "fnos-${FNOS_ARCH}" release/fnos
+      - name: Upload packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Terma-fnos-${{ matrix.arch }}
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            release/fnos/*.fpk
+            release/fnos/*.sha256

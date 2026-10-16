@@ -33,6 +33,8 @@ async function waitForServer(url, child) {
 }
 
 function assertLoginPagePasswordToggle(html) {
+  assert.match(html, /data-login-i18n="setup_hint">/);
+  assert.match(html, /data-login-i18n="fnos_setup_hint" hidden>/);
   assert.equal((html.match(/id="passwordToggle"/g) || []).length, 1);
   assert.match(html, /<button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false">/);
   assert.match(html, /<link rel="stylesheet" href="\/login\.css">/);
@@ -222,6 +224,8 @@ async function main() {
     });
     assert.equal(offModeResponse.status, 200);
     const disabledLoginPage = await fetch(`${url}/login`, {redirect:"manual"});
+    assert.equal((await fetch(`${url}/api/server-files`)).status,200,"Direct local browsers retain standard local access to scoped folders");
+    assert.equal((await fetch(`${url}/api/server-files`,{headers:{"x-forwarded-for":"192.0.2.40"}})).status,403,"Proxy requests cannot inherit direct local file access");
     assert.equal(disabledLoginPage.status, 302);
     assert.equal(disabledLoginPage.headers.get("location"), "/");
     const alwaysModeResponse = await fetch(`${url}/api/security`, {

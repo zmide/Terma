@@ -24,6 +24,7 @@ async function confirmSftpDownloadNotice(downloadSettings) {
 }
 
 function trackSftpBrowserDownload(result) {
+  trackSftpMutationJob(result);
   if (result?.delivery_mode === "browser" && result.id) sftpPendingBrowserDownloads.add(result.id);
   return result;
 }
@@ -521,13 +522,20 @@ async function handleSftpDrop(event, tabKey=sftpTabKeyFromNode(event?.currentTar
   }
 }
 
-async function createRemoteUploadDirectories(connectionId, root, files) {
+async function createRemoteUploadDirectories(connectionId, root, files, selectedDirectories=[]) {
   const directories = new Set();
   for (const item of files) {
     const parts = normalizeDroppedRelativePath(item.relativePath, item.file.name).split("/");
     parts.pop();
     let current = String(root || ".");
     for (const part of parts) {
+      current = joinRemotePath(current, part);
+      directories.add(current);
+    }
+  }
+  for (const relative of selectedDirectories) {
+    let current = String(root || ".");
+    for (const part of normalizeDroppedRelativePath(relative, "").split("/")) {
       current = joinRemotePath(current, part);
       directories.add(current);
     }
@@ -554,9 +562,10 @@ async function uploadSftpFilesToDirectory(inputFiles, connectionId, root=".", op
   const tabKey = String(options.tabKey || "");
   const files = inputFiles.map(item => item?.file ? item : ({file:item, relativePath:item?.webkitRelativePath || item?.name}))
     .filter(item => item.file).map(item => ({...item, relativePath:normalizeDroppedRelativePath(item.relativePath, item.file.name)}));
-  if (!files.length) return;
   const directory = String(root || ".");
-  await createRemoteUploadDirectories(Number(connectionId), directory, files);
+  if (!files.length && !options.directories?.length) return;
+  await createRemoteUploadDirectories(Number(connectionId), directory, files, options.directories || []);
+  if (!files.length) {await refreshSftp({tabKey});return;}
   const groups = new Map();
   for (const item of files) {
     const parts = item.relativePath.split("/");

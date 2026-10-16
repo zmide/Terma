@@ -55,6 +55,7 @@
     "delete_failed": "删除 SSH 主机信任记录失败"
   },
   "key_management": {
+    "fnos_scope_hint": "飞牛应用仅管理 Terma 密钥目录，请将私钥导入上方目录。",
     "description": "管理 Terma 密钥目录中的 SSH 私钥、公钥和部署操作。",
     "project_title": "Terma 密钥目录",
     "project_hint": "私钥只在本机管理，列表不会显示私钥内容。",
@@ -768,6 +769,8 @@
     "reset_done": "主题配置已恢复默认"
   },
   "updates": {
+    "fnos_managed": "请通过飞牛应用中心或安装新版 Terma FPK 升级。",
+    "fnos_listener_managed": "监听地址和端口由飞牛应用包管理。",
     "reading_version": "正在读取当前版本",
     "checking": "正在检查更新",
     "reading_releases": "正在读取 GitHub 发布信息",

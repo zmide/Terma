@@ -41,6 +41,7 @@ Terma 面向需要频繁管理多台服务器的开发者和运维人员。先�
 <div class="terma-links">
   <a href="/guide/security.html">安全边界</a>
   <a href="/guide/deployment.html">Web 部署</a>
+  <a href="/guide/deployment.html#飞牛-fnos">飞牛 fnOS</a>
   <a href="/guide/faq.html">常见问题</a>
   <a href="https://github.com/zmide/Terma/issues">问题反馈</a>
 </div>

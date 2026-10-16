@@ -82,6 +82,7 @@ for (const entry of fs.readdirSync(path.join(root, "public"), {withFileTypes:tru
 assert.deepEqual(literalTrErrors, [], `literal tr() keys missing from bilingual locale resources:\n${literalTrErrors.join("\n")}`);
 
 const expectedDirectFetchCounts = new Map([
+  ["public/app-web-files.js", 2],
   ["public/app-api.js", 1],
   ["public/app-connection-form.js", 1],
   ["public/app-i18n.js", 1],
@@ -111,6 +112,7 @@ for (const relative of [
   "public/app-import.js",
   "public/app-remote-ftp.js",
   "public/app-settings-storage.js",
+  "public/app-web-files.js",
   "public/app-sftp-open.js"
 ]) {
   const source = read(relative);
@@ -691,6 +693,7 @@ assert.ok(zmodemFrontend.includes("registerTermaI18nRenderer(() => syncTerminalZ
 assert.ok(zmodemFrontend.includes("function terminalZmodemViewText("), "ZMODEM live localization must retain structured translation keys and parameters");
 assert.equal(zmodemFrontend.includes("translatedTermaPhrase"), false, "ZMODEM live localization must not translate rendered user filenames or paths heuristically");
 const uiSmoke = read("scripts/ui-smoke-electron.js");
+assert.ok(uiSmoke.includes("runI18nScenario('fnos-managed-settings'"), "English UI smoke must cover fnOS managed update and listener controls");
 assert.ok(uiSmoke.includes("runI18nScenario('desktop-notification-toggle'"), "English UI smoke must exercise saved desktop notification toggles, including busy-label restoration");
 assert.match(uiSmoke, /\['title','aria-label','placeholder'\]/, "English UI smoke must inspect translatable attributes");
 assert.match(uiSmoke, /collectVisibleHan\('document', true\)/, "English UI smoke must inspect hidden rendered DOM as well as visible pages");

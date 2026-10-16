@@ -1,6 +1,8 @@
 {
   "title": "Sign in to Terma",
   "description": "Enter the Web access password. If only an access token is configured, enter that token instead.",
+  "setup_hint": "First use: set a Web password in Terma on the device running the service. After signing in, you can change it in Settings > Security.",
+  "fnos_setup_hint": "Use the Web password chosen during installation. To set or reset it, open fnOS App Center > Terma > Application Settings. This is Terma's own password; no username is required.",
   "credential": "Password or token",
   "show_password": "Show password",
   "hide_password": "Hide password",

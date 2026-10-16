@@ -296,11 +296,7 @@ function closeAllSftpSessions() {
 }
 
 function safeLocalEntryName(value) {
-  const source = String(value || "download");
-  const normalized = process.platform === "win32"
-    ? source.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").replace(/[. ]+$/g, "")
-    : source.replace(/[\x00/]/g, "_");
-  return normalized && normalized !== "." && normalized !== ".." ? normalized : "download";
+  return portableDragEntryName(value,process.platform);
 }
 
 function availableLocalEntry(parent, filename) {
@@ -367,7 +363,7 @@ function portableDragEntryName(value, platform: string = process.platform) {
   let normalized = source.replace(/[\x00/\\]/g, "_");
   if (platform === "win32") {
     normalized = normalized.replace(/[<>:"|?*\x00-\x1f]/g, "_").replace(/[. ]+$/g, "");
-    if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(normalized)) normalized = `_${normalized}`;
+    if (/^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/i.test(normalized)) normalized = `_${normalized}`;
   }
   return normalized && normalized !== "." && normalized !== ".." ? normalized : "download";
 }
@@ -1285,6 +1281,7 @@ async function deliverSftpPaths(connectionId, remotePaths, targetDirectory, conf
         throw error;
       }
       const target = conflict === "rename" ? availableLocalEntry(directory, path.basename(source)) : requestedTarget;
+      progress?.validateTarget?.({source,target,overwrite:conflict === "overwrite"});
       if (conflict === "overwrite") replaceLocalEntryFromStage(source, target);
       else moveStagedSftpEntry(source, target);
       saved.push(target);

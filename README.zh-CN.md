@@ -21,6 +21,9 @@ Terma 是一个面向桌面端和自托管 Web 的远程连接工作台，用于
     <td colspan="2"><strong>SFTP 文件管理</strong><br><img src=".github/assets/screenshots/zh-CN/desktop-sftp.png" alt="Terma SFTP 文件管理"></td>
   </tr>
   <tr>
+    <td colspan="2"><strong>浏览器文件来源</strong><br><img src=".github/assets/screenshots/zh-CN/browser-files.png" alt="Terma 浏览器文件来源选择与设备授权目录"></td>
+  </tr>
+  <tr>
     <td colspan="2"><strong>Linux 桌面管理</strong><br><img src=".github/assets/screenshots/zh-CN/desktop-linux-management.png" alt="Terma Linux 桌面管理"></td>
   </tr>
   <tr>
@@ -67,6 +70,8 @@ Terma 是一个面向桌面端和自托管 Web 的远程连接工作台，用于
 
 - 文件和目录浏览、搜索、排序、分页、收藏、上传、下载和在线文本编辑；搜索支持 `Ctrl+F`、加载反馈和按需包含子目录。
 - 桌面端可在终端或 SFTP 中新建一个或多个“本地文件”标签，并按新标签或上、下、左、右分屏打开；本地文件使用与 SFTP 一致的工具栏、面包屑、多选和分页布局，本地与远端 SFTP 标签可直接拖拽互传，远端项目也可一键发送到桌面。Windows 盘符根目录向上可进入“此电脑”并切换其他磁盘。
+- 浏览器本地文件标签可选择“当前电脑”或“Terma 所在设备”。电脑目录通过浏览器授权；普通发行版显示 Terma 运行账户可访问的磁盘与目录，飞牛使用应用中心授权范围。设备路径可查看、复制和输入跳转。普通 HTTP 或不支持目录写入的浏览器提供只读文件夹选择和上传，下载由浏览器保存；受支持的 HTTPS 和 localhost 浏览器也能写入所选文件夹。接收远端文件时自动调整 Windows 不兼容的名称，并保留已有文件。
+- 在 SFTP 中选中文件或文件夹，稍后再次单击名称即可直接改名；双击仍然打开项目。
 - 新建、重命名、删除、回收站、权限与所有者修改、压缩和解压。
 - 工作区标题栏提供全局任务中心，统一显示 SFTP 传输、目录同步和 Linux 桌面安装/卸载进度；默认同时显示不遮挡标题栏的悬浮进度卡，可临时关闭或永久静默，并在通用设置的“任务中心”中重新开启。
 - 文件名编码和文本内容编码独立设置，兼容常见中日韩传统编码。
@@ -134,6 +139,7 @@ Electron 桌面端 ─┐
 | macOS | 支持 | 支持 | 已签名并公证的 DMG |
 | Linux | 支持 | 支持 | AppImage、DEB、RPM |
 | Termux / 无图形 Linux | 不建议 | 支持 | 源码运行 |
+| fnOS NAS | 浏览器 | 支持 | 原生 FPK；参见[飞牛打包说明](packaging/fnos/README.md) |
 
 ## 运行要求
 
@@ -272,7 +278,7 @@ npm run dist -- --mac dmg --x64 --arm64 --publish never
 - Linux：AppImage 执行 `chmod +x release/*.AppImage` 后即可运行；DEB、RPM 使用系统包管理器安装。
 - macOS DMG：官方发布包会完成代码签名和公证；使用此命令本地构建的 DMG 不保证完成签名和公证。打开与机器架构对应的 `.dmg`，将 Terma 拖入“应用程序”后启动。Intel 选择 `x64`，Apple Silicon 选择 `arm64`。
 
-推送 `v*` 标签时，Release 工作流会在 Windows、Linux 和 macOS 上分别构建并验证产物。
+推送 `v*` 标签时，Release 工作流会构建并验证 Windows、Linux、macOS 和飞牛 fnOS 产物。飞牛流程在对应的 x64/ARM64 运行器上准备原生依赖，将两种 FPK 和校验文件纳入发布附件检查，也支持单独手动构建。
 
 ## 数据与安全
 

@@ -5,9 +5,9 @@ type ReleaseAsset = { name: string; size?: number; digest?: string }
 type ReleaseInfo = { tag_name: string; name?: string; published_at?: string; assets?: ReleaseAsset[] }
 
 const repository = 'zmide/Terma'
-const fallbackTag = 'v1.7.9'
+const fallbackTag = 'v1.7.10'
 const channel = ref<'accelerated' | 'direct'>('accelerated')
-const platform = ref<'windows' | 'macos' | 'linux'>('windows')
+const platform = ref<'windows' | 'macos' | 'linux' | 'fnos'>('windows')
 const architecture = ref<'x64' | 'arm64'>('x64')
 const release = ref<ReleaseInfo>({ tag_name: fallbackTag, assets: [] })
 const loading = ref(true)
@@ -17,6 +17,7 @@ const platformOptions = [
   { value: 'windows', label: 'Windows' },
   { value: 'macos', label: 'macOS' },
   { value: 'linux', label: 'Linux' },
+  { value: 'fnos', label: '飞牛 fnOS' },
 ] as const
 
 const definitions = computed(() => {
@@ -30,6 +31,14 @@ const definitions = computed(() => {
     const suffix = architecture.value === 'arm64' ? 'arm64' : 'x64'
     return [
       { key: 'dmg', label: '安装镜像', extension: 'dmg', filename: `Terma-${version.value}-macos-${suffix}.dmg` },
+    ]
+  }
+  if (platform.value === 'fnos') {
+    const suffix = architecture.value === 'arm64' ? 'arm64' : 'x64'
+    const filename = `Terma-${version.value}-fnos-${suffix}.fpk`
+    return [
+      { key: 'fpk', label: '应用安装包', extension: 'fpk', filename },
+      { key: 'fpk-checksum', label: '安装包校验', extension: 'sha256', filename: `${filename}.sha256` },
     ]
   }
   return [
@@ -68,12 +77,12 @@ function formatSize(size?: number) {
 
 function setPlatform(value: typeof platform.value) {
   platform.value = value
-  if (value !== 'macos') architecture.value = 'x64'
+  if (value !== 'macos' && value !== 'fnos') architecture.value = 'x64'
 }
 
 function onPlatformChange(event: Event) {
   const value = (event.target as HTMLSelectElement).value
-  if (value === 'windows' || value === 'macos' || value === 'linux') setPlatform(value)
+  if (value === 'windows' || value === 'macos' || value === 'linux' || value === 'fnos') setPlatform(value)
 }
 
 onMounted(async () => {
@@ -116,11 +125,11 @@ onMounted(async () => {
         <option v-for="item in platformOptions" :key="item.value" :value="item.value">{{ item.label }}</option>
       </select>
     </label>
-    <label v-if="platform === 'macos'">
+    <label v-if="platform === 'macos' || platform === 'fnos'">
       <span>架构</span>
       <select v-model="architecture">
-        <option value="x64">Intel x64</option>
-        <option value="arm64">Apple Silicon arm64</option>
+        <option value="x64">{{ platform === 'macos' ? 'Intel x64' : 'x64' }}</option>
+        <option value="arm64">{{ platform === 'macos' ? 'Apple Silicon arm64' : 'ARM64' }}</option>
       </select>
     </label>
   </div>

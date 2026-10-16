@@ -1,0 +1,14 @@
+{
+  ".url": {
+    "terma.main": {
+      "title": "Terma",
+      "icon": "images/icon_{0}.png",
+      "type": "url",
+      "protocol": "http",
+      "port": "8088",
+      "url": "/",
+      "allUsers": false,
+      "control": { "accessPerm": "readonly" }
+    }
+  }
+}

@@ -26,6 +26,20 @@ try {
   assert.equal(fs.existsSync(overwriteSource), false);
   assert.equal(fs.readdirSync(targetDirectory).some(name => name.startsWith(".terma-overwrite-")), false);
 
+  const interruptedSource = path.join(temporaryRoot, "interrupted-source.txt");
+  fs.writeFileSync(interruptedSource, "replacement", "utf8");
+  const rename = fs.renameSync;
+  try {
+    fs.renameSync = function(source, target) {
+      if (source === interruptedSource) throw Object.assign(new Error("Simulated commit failure"), {code:"EIO"});
+      return rename.apply(this, arguments);
+    };
+    assert.throws(() => session.__replaceLocalEntryFromStage(interruptedSource, path.join(targetDirectory, "same.txt")), /Simulated commit failure/);
+  } finally { fs.renameSync = rename; }
+  assert.equal(fs.readFileSync(path.join(targetDirectory, "same.txt"), "utf8"), "new", "a failed replacement must restore the original");
+  assert.equal(fs.readFileSync(interruptedSource, "utf8"), "replacement");
+  assert.equal(fs.readdirSync(targetDirectory).some(name => name.startsWith(".terma-overwrite-")), false);
+
   const moveSource = path.join(temporaryRoot, "move-source.txt");
   fs.writeFileSync(moveSource, "moved", "utf8");
   session.__moveStagedSftpEntry(moveSource, path.join(targetDirectory, "new.txt"));

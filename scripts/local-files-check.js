@@ -96,7 +96,7 @@ assert.match(localUi, /trackLocalDeliveryJobTarget\(job, target\.key, directory\
 assert.match(localUi, /trackSftpMutationJob\(job\)/);
 assert.match(localUi, /refreshLocalFilesForDeliveryJob\(job\)/);
 const sftpTasksUi = fs.readFileSync(path.join(root, "public", "app-sftp-tasks.js"), "utf8");
-assert.match(sftpTasksUi, /job\.type === "local-delivery"/);
+require("./local-delivery-refresh-check");
 assert.match(sftpTasksUi, /refreshLocalFilesForDeliveryJob\(job\)/);
 assert.match(sftpTasksUi, /queueSftpDirectoryRefresh\(connectionId\)[\s\S]*?flushPendingSftpDirectoryRefresh\(\)/, "SFTP completion notifications must queue directory refresh before the authoritative poll");
 assert.match(sftpTasksUi, /function sftpTaskCenterRenderSignature\(/, "task center polling must compare a lightweight signature before rendering job markup");

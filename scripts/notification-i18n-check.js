@@ -37,5 +37,6 @@ assert.equal(
   "remote error text must remain unchanged"
 );
 assert.equal(localizeNotificationText("SFTP 上传已完成", "zh-CN"), "SFTP 上传已完成");
+assert.equal(localizeNotificationText('已重命名 2 项，已有文件已保留\n文件已重命名："中文.txt" → "中文 (1).txt"', 'en-US'), 'Renamed: 2; existing files were kept\nFile renamed: "中文.txt" → "中文 (1).txt"');
 
 console.log("Notification internationalization checks passed.");

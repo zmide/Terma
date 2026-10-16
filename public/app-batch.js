@@ -137,6 +137,7 @@ function showCommandContextMenu(event) {
 
 async function renderCommandTemplates(options={}) {
   if (options.reload !== false || !commandTemplates.length) await loadCommandTemplates();
+  if (primaryView !== "command") return;
   $("connectionGroups").innerHTML = `<div class="command-template-manager">
     <div class="template-list">
       ${commandTemplates.map(template => renderTemplateRow(template)).join("") || stateView("empty", tr("terminal:batch.templates_empty_title"), tr("terminal:batch.templates_empty_hint"), `<button class="primary" onclick="newCommandTemplate()">${esc(tr("terminal:template_editor.add_title"))}</button>`)}

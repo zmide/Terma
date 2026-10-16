@@ -1,5 +1,7 @@
 import { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
+import { isFnosDistribution, fnosUpdateStatus } from "../infrastructure/distribution-policy";
+import { publicErrorBody } from "../public-error";
 
 interface UpdateCheckerLike {
   packageInfo: { version?: string; releaseRevision?: number };
@@ -33,6 +35,12 @@ export async function handleUpdateRoutes(
   dependencies: UpdateRouteDependencies
 ): Promise<boolean> {
   const { checker, installer, sendJson } = dependencies;
+  if (isFnosDistribution() && pathname.startsWith("/api/updates/")
+    && (pathname.includes("/download") || pathname === "/api/updates/open" || pathname === "/api/updates/open-directory")) {
+    if (request.method === "GET" && pathname === "/api/updates/download/status") sendJson(response, fnosUpdateStatus());
+    else sendJson(response, publicErrorBody("FNOS_UPDATE_MANAGED", "请通过飞牛应用中心或安装新版 FPK 升级 Terma"), 409);
+    return true;
+  }
   if (request.method === "GET" && pathname === "/api/updates/status") {
     sendJson(response, checker.status() || {
       current_version: String(checker.packageInfo.version || "").replace(/^v/i, ""),

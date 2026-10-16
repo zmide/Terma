@@ -21,6 +21,9 @@ Terma is a remote connection workspace for desktop and self-hosted Web environme
     <td colspan="2"><strong>SFTP file management</strong><br><img src=".github/assets/screenshots/en-US/desktop-sftp.png" alt="Terma SFTP file management"></td>
   </tr>
   <tr>
+    <td colspan="2"><strong>Browser file sources</strong><br><img src=".github/assets/screenshots/en-US/browser-files.png" alt="Terma browser file source selection and authorized device directory"></td>
+  </tr>
+  <tr>
     <td colspan="2"><strong>Linux desktop management</strong><br><img src=".github/assets/screenshots/en-US/desktop-linux-management.png" alt="Terma Linux desktop management"></td>
   </tr>
   <tr>
@@ -67,6 +70,8 @@ Terma is a remote connection workspace for desktop and self-hosted Web environme
 
 - Browse, search, sort, paginate, favorite, upload, download, and edit files online. Search supports `Ctrl+F`, progress feedback, and optional recursive traversal.
 - The desktop app can open one or more Local Files tabs from a terminal or SFTP tab in a new tab or an upper, lower, left, or right split. Local Files uses the same toolbar, breadcrumb, selection, and pagination model as SFTP. Files can be dragged directly between local and remote tabs, and remote items can be sent to the desktop. On Windows, navigating above a drive root opens This PC for switching drives.
+- Browser Local Files tabs let you choose This computer or the Terma device. Computer folders use browser authorization; standard device views show drives and folders available to the Terma account, while fnOS uses App Center folder authorization. Device paths can be viewed, copied and entered. Plain HTTP and unsupported browsers provide read-only folder selection and uploads, with downloads saved by the browser; supported HTTPS and localhost browsers can also write selected folders. Remote names incompatible with Windows are adjusted when received, preserving existing files.
+- Select a file or folder in SFTP, then click its name again after a pause to rename it inline. Double-click still opens the item.
 - Create, rename, delete, recycle, change permissions and owners, compress, and extract files and directories.
 - A global Task Center in the workspace header combines SFTP transfers, directory synchronization, and Linux desktop installation/removal progress. A non-obstructing floating progress card is enabled by default, can be hidden temporarily or muted permanently, and can be restored under General settings > Task Center.
 - Configure filename encoding independently from text-content encoding, including common Chinese, Japanese, and Korean legacy encodings.
@@ -134,6 +139,7 @@ The desktop app is an Electron container around the same Web UI and Node.js serv
 | macOS | Supported | Supported | Signed and notarized DMG |
 | Linux | Supported | Supported | AppImage, DEB, and RPM |
 | Termux / headless Linux | Not recommended | Supported | Run from source |
+| fnOS NAS | Browser | Supported | Native FPK; see [fnOS packaging](packaging/fnos/README.md) |
 
 ## Requirements
 
@@ -272,7 +278,7 @@ Build output is written to `release/`:
 - Linux: run `chmod +x release/*.AppImage` before launching an AppImage; install DEB and RPM packages with the system package manager.
 - macOS DMG: official release packages are signed and notarized. DMGs built locally are not guaranteed to be signed or notarized. Open the `.dmg` for the machine architecture and drag Terma to Applications. Choose `x64` for Intel or `arm64` for Apple Silicon.
 
-Pushing a `v*` tag starts the Release workflow, which builds and verifies Windows, Linux, and macOS artifacts separately.
+Pushing a `v*` tag starts the Release workflow, which builds and verifies Windows, Linux, macOS, and fnOS artifacts. The fnOS workflow prepares native dependencies on matching x64/ARM64 runners and includes both FPKs and their checksums in the verified release set; it also supports manual builds.
 
 ## Data and security
 

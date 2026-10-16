@@ -1,0 +1,17 @@
+<p><b>开发工具 · SSH 终端、SFTP 与端口转发</b></p>
+<p>Terma 把常用远程操作放进浏览器：管理 SSH 连接与分组，打开终端、传输文件、编辑远端文本，并管理转发。服务运行在 NAS 上，电脑和平板通过浏览器访问。</p>
+<p><b>终端与连接管理 / Terminals and connections</b></p>
+<p>使用标签页和工作区处理远程任务，保留连接配置、命令片段与转发模板。SSH 和转发从 NAS 发起。</p>
+<p><img src='@TERMINAL_IMAGE@' alt='Terma SSH terminal / SSH 终端' width='960' style='max-width:100%'></p>
+<p><b>SFTP 文件管理 / SFTP file management</b></p>
+<p>浏览远端目录，上传、下载和编辑文件，查看传输进度。浏览器下载的文件保存到当前设备。</p>
+<p><img src='@SFTP_IMAGE@' alt='Terma SFTP file manager / SFTP 文件管理' width='960' style='max-width:100%'></p>
+<p><b>VNC 远程桌面 / VNC remote desktop</b></p>
+<p>内置 noVNC，可直接在浏览器标签页中查看和操作远程桌面，无需在 NAS 上安装图形客户端。目标设备需先运行 VNC 服务，可配合已有 SSH 连接管理远端 Linux 桌面。</p>
+<p>Use bundled noVNC to view and control remote desktops in a browser tab. No graphical client is required on the NAS. The remote device must run a VNC server.</p>
+<p><b>首次登录与网络 / First login and network</b></p>
+<p>安装向导会要求设置并确认至少 12 个字符的 Web 密码。Terma 使用独立密码，无需用户名；忘记密码可进入“应用中心 → Terma → 应用设置”重置。该页面也能调整监听地址、允许的访问域名和可信代理。访问端口为 8088。</p>
+<p>Set and confirm a Web password of at least 12 characters during installation. Terma has its own password and requires no username. Reset it or configure listeners, Allowed Hosts and trusted proxies in Application Center → Terma → Application Settings. The service uses port 8088.</p>
+<p><b>使用范围 / Availability</b></p>
+<p>提供后台 Web 功能和浏览器双来源文件标签，可选择当前电脑或应用中心授权的 NAS 目录。不包含 Electron 原生拖出、原生图形客户端、串口设备访问和定时 SFTP 同步。所有用户访问同一个 Terma 实例，请只授权可信使用者。</p>
+<p>SSH terminals, SFTP, browser VNC through bundled noVNC, remote connections and tunnels. Native desktop integration and scheduled SFTP sync are unavailable in this package. Access is shared within one Terma instance.</p>

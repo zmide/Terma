@@ -204,6 +204,7 @@ const { handleConnectionRoutes } = require("./routes/connection-routes");
 const { handleForwardTemplateRoutes } = require("./routes/forward-template-routes");
 const { handleFtpRoutes } = require("./routes/ftp-routes");
 const { handleLocalFilesRoutes } = require("./routes/local-files-routes");
+const { handleServerFilesRoutes } = require("./routes/server-files-routes");
 const { handleLocalControlRoutes } = require("./routes/local-control-routes");
 const { handleConfigTransferRoutes } = require("./routes/config-transfer-routes");
 const { handleSftpDesktopDownloadRoutes } = require("./routes/sftp-desktop-download-routes");
@@ -288,6 +289,7 @@ const { prepareSftpWriteContent } = require("./services/sftp-content-service");
 const { createServerRuntime } = require("./server-runtime");
 const { readBody, readJson, safeUploadName, send, sendJson } = require("./http-response");
 const { serveStatic } = require("./static-content-handler");
+const { rejectHostRequest } = require("./services/access-error-page-service");
 
 const prunedConfigSnapshots = pruneConfigSnapshotsForCurrentEncryption();
 if (prunedConfigSnapshots) appendSystemLog(`配置加密状态已变化，已安全清理 ${prunedConfigSnapshots} 个不兼容的旧快照`);
@@ -347,7 +349,7 @@ function authorizedSftpConnectionId(req, value) {
 }
 
 async function handleApi(req, res, pathname) {
-  if (!hostAllowed(req)) return sendJson(res, { error:"Unrecognized Host" }, 421);
+  if (!hostAllowed(req)) return rejectHostRequest(req, res);
   if (!sameOrigin(req)) return sendJson(res, { error: "Forbidden" }, 403);
   if (await handleLocalControlRoutes(req, res, pathname, {
     getDesktopIntegration, getNativeSftpDragTicket, hasShutdownToken,
@@ -507,6 +509,7 @@ async function handleApi(req, res, pathname) {
   if (await handleForwardTemplateRoutes(req, res, pathname, {createConfigSnapshot, readJson, sendJson})) return;
   if (await handleSftpAutomationRoutes(req, res, pathname, {getDesktopIntegration, isDesktopRequest, readJson, sendJson})) return;
   if (await handleSftpJobRoutes(req, res, pathname, {sendJson})) return;
+  if (await handleServerFilesRoutes(req, res, pathname, {readJson, sendJson, authorizeConnectionId:authorizedSftpConnectionId})) return;
   if (await handleLocalFilesRoutes(req, res, pathname, {
     getDesktopIntegration,
     getHomeDirectory:() => os.homedir(),
@@ -605,7 +608,7 @@ async function handleApi(req, res, pathname) {
 
 function requestHandler(req, res) {
   Promise.resolve().then(async () => {
-    if (!hostAllowed(req)) return sendJson(res, { error:"Unrecognized Host" }, 421);
+    if (!hostAllowed(req)) return rejectHostRequest(req, res);
     const { pathname } = new URL(req.url, "http://terma.invalid");
     if (pathname.startsWith("/api/")) await handleApi(req, res, pathname);
     else serveStatic(req, res, pathname);

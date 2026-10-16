@@ -53,6 +53,8 @@ function selectSftpEntry(event, id, path, name, type, tabKey=activeTabKey) {
 }
 
 function activateSftpEntry(event, id, path, name, type, tabKey=sftpTabKeyFromNode(event?.currentTarget)) {
+  if (event?.target?.closest('.sftp-inline-rename-input')) return;
+  if (typeof cancelSftpInlineRename === 'function') cancelSftpInlineRename();
   if (event?.target?.closest(".sftp-check, .sftp-row-actions")) return;
   event?.preventDefault();
   event?.stopPropagation();

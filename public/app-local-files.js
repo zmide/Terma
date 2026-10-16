@@ -8,7 +8,7 @@ let localFileInternalDragHandoff = null;
 const LOCAL_FILES_DRAG_HANDOFF_TTL_MS = 4000;
 
 function localFilesAvailable() {
-  return Boolean(window.termaDesktop);
+  return true;
 }
 
 function localFilesEntryDisplayName(entry) {
@@ -36,7 +36,16 @@ function localFilesRuntime(tabKey) {
 }
 
 function localDeliveryPathKey(value) {
-  return String(value || "").replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+  const raw = String(value || "");
+  const normalized = raw.replace(/\\/g, "/").replace(/\/+$/, "");
+  return /^[a-z]:|^\/\//i.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+function localDeliveryJobDirectory(job) {
+  if (job?.type === "local-delivery") return String(job.target_directory || job.saved_path || "");
+  if (job?.type !== "download" || job.delivery_status !== "saved" || !job.saved_path) return "";
+  const file = String(job.saved_path).replace(/\\/g, "/");
+  return file.slice(0, file.lastIndexOf("/") + 1);
 }
 
 function trackLocalDeliveryJobTarget(job, tabKey, directory) {
@@ -46,18 +55,14 @@ function trackLocalDeliveryJobTarget(job, tabKey, directory) {
 }
 
 function refreshLocalFilesForDeliveryJob(job) {
-  const id = String(job?.id || "");
-  const registered = id ? localDeliveryJobTargets.get(id) : null;
-  if (id) localDeliveryJobTargets.delete(id);
   if (!job || !["done", "failed", "cancelled"].includes(String(job.status || ""))) return;
-  const targets = registered ? [registered] : [...localFileRuntimes.entries()]
-    .filter(([, runtime]) => localDeliveryPathKey(runtime?.path) === localDeliveryPathKey(job.target_directory))
-    .map(([tabKey, runtime]) => ({tabKey, directory:runtime.path}));
-  if (job.status !== "done") return;
-  for (const target of targets) {
-    const runtime = localFileRuntimes.get(String(target.tabKey || ""));
-    if (!runtime || localDeliveryPathKey(runtime.path) !== localDeliveryPathKey(job.target_directory)) continue;
-    void loadLocalFiles(String(target.tabKey), {path:runtime.path, location:runtime.location, page:runtime.page, refresh:true});
+  const id = String(job?.id || "");
+  if (id) localDeliveryJobTargets.delete(id);
+  const directory = localDeliveryJobDirectory(job);
+  if (job.status !== "done" || !directory) return;
+  for (const [tabKey, runtime] of localFileRuntimes) {
+    if (runtime.fileSource || !runtime.path || localDeliveryPathKey(runtime.path) !== localDeliveryPathKey(directory)) continue;
+    void loadLocalFiles(tabKey, {path:runtime.path, location:runtime.location, page:runtime.page, refresh:true});
   }
 }
 
@@ -68,6 +73,7 @@ function localFilesToolbarButtonHtml(tabKey="") {
 }
 
 function showNewLocalFilesMenu(event) {
+  if (!window.termaDesktop) return showWebFilesSourceMenu(event);
   if (!localFilesAvailable()) return notify(tr("sftp:local_files.desktop_only", {defaultValue:"本地文件只支持桌面端"}), "info");
   const actions = [{label:tr("navigation:auto.new_tab", {defaultValue:"新建标签"}), icon:"file-plus-2", run:()=>openLocalFilesInPlacement("")}];
   if (!isMobileLayout() && typeof applyWorkspaceTabDrop === "function") {
@@ -107,6 +113,7 @@ async function openLocalFilesInPlacement(splitZone="") {
 }
 
 async function openLocalFiles(requestedPath="", updateTab=true, existingKey="") {
+  if (!window.termaDesktop || (existingKey && workspaceTabByKey(existingKey)?.fileSource)) return openWebFiles(requestedPath, updateTab, existingKey);
   if (!localFilesAvailable()) {
     notify(tr("sftp:local_files.desktop_only_detail", {defaultValue:"本地文件只支持在 Terma 桌面端使用"}), "info");
     return "";
@@ -182,6 +189,7 @@ async function openLocalFiles(requestedPath="", updateTab=true, existingKey="") 
 }
 
 async function loadLocalFiles(tabKey, options={}) {
+  if (typeof webFilesRuntime === 'function' && webFilesRuntime(tabKey)) return loadWebFiles(tabKey,options.path ?? webFilesRuntime(tabKey).path);
   const runtime = localFilesRuntime(tabKey);
   const root = localFilesRoot(tabKey);
   const list = root?.querySelector(".local-files-list");
@@ -279,6 +287,7 @@ function restoreLocalFilesScrollPosition(tabKey, position, list=localFilesRoot(t
 }
 
 function renderLocalFiles(tabKey, options={}) {
+  if (typeof webFilesRuntime === 'function' && webFilesRuntime(tabKey)) return renderWebFiles(tabKey);
   const runtime = localFilesRuntime(tabKey);
   const root = localFilesRoot(tabKey);
   const list = root?.querySelector(".local-files-list");
@@ -761,6 +770,7 @@ function navigateLocalFilesPath(pathValue, tabKey) {
 }
 
 function navigateLocalFilesHistory(direction, tabKey) {
+  if (typeof webFilesRuntime === 'function' && webFilesRuntime(tabKey)) return navigateWebFilesHistory(direction,tabKey);
   const runtime = localFilesRuntime(tabKey);
   const navigation = localFilesNavigationState(tabKey);
   const nextIndex = navigation.index + Number(direction || 0);
@@ -932,6 +942,7 @@ function bindLocalFileDragLifecycle() {
 bindLocalFileDragLifecycle();
 
 async function uploadLocalFilesToSftp(payload, target, tabKey="") {
+  if (typeof webFilesRuntime === 'function' && webFilesRuntime(payload?.sourceTabKey)) return uploadWebFilesToSftp(payload,target);
   if (!payload?.paths?.length || !["sftp", "terminal"].includes(String(target?.kind || ""))) return;
   const runtime = target.kind === "sftp" ? sftpTabRuntimes.get(String(target.key || tabKey || "")) : null;
   const directory = runtime?.state.path || target.path || ".";
@@ -964,6 +975,7 @@ async function localFilesReceiveConflictChoice(directory, entries) {
 }
 
 async function copySftpDraggedItemsToLocalTab(drag, target) {
+  if (typeof webFilesRuntime === 'function' && webFilesRuntime(target?.key)) return receiveSftpInWebFiles(drag,target);
   if (!drag?.entries?.length || target?.kind !== "local-files") return;
   finishSftpDragPayload(drag);
   const runtime = localFilesRuntime(target.key);
@@ -1027,6 +1039,7 @@ function syncLocalFilesLanguage() {
   for (const tab of tabs) {
     if (tab?.kind !== "local-files") continue;
     const runtime = localFileRuntimes.get(String(tab.key || ""));
+    if (runtime?.fileSource) {tab.title=webFilesSourceLabel(runtime.fileSource);continue;}
     tab.title = title;
     if (!runtime) continue;
     if (runtime.location === "computer") runtime.displayPath = computerLabel;

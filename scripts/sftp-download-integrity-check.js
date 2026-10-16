@@ -120,11 +120,18 @@ async function main() {
   dbModule.exports.getConnection = id => Number(id) === connection.id ? connection : originalGetConnection(id);
   await trustTestHost(connection);
   const sessions = require("../dist/sftp-session");
+  const originalDeliver = sessions.deliverSftpPaths;
+  sessions.deliverSftpPaths = async (_id, _paths, directory) => {
+    const target = path.join(directory, "download (1).bin");
+    fs.writeFileSync(target, payload);
+    return {directory,files:[target]};
+  };
   const jobs = require("../dist/sftp-jobs");
   let jobId = "";
   let desktopJobId = "";
   let growingJobId = "";
   let archiveJobId = "";
+  let deliveryJobId = "";
   try {
     const started = jobs.startDownloadJob(connection.id, "/fixture/download.bin", { deliveryMode:"browser" });
     jobId = started.id;
@@ -137,6 +144,7 @@ async function main() {
     assert.equal(hash(downloaded), hash(payload), "a completed download must preserve every byte");
     const desktopDirectory = path.join(temporaryRoot, "desktop-downloads");
     fs.mkdirSync(desktopDirectory, {recursive:true});
+    fs.writeFileSync(path.join(desktopDirectory, "download.bin"), "keep existing file");
     const desktop = jobs.startDownloadJob(connection.id, "/fixture/download.bin", {
       deliveryMode:"desktop",
       autoSaveDirectory:desktopDirectory
@@ -144,6 +152,22 @@ async function main() {
     desktopJobId = desktop.id;
     const saved = await waitForJobState(jobs, desktopJobId, item => item.status === "done" && item.delivery_status === "saved" && item.saved_path);
     assert.equal(hash(fs.readFileSync(saved.saved_path)), hash(payload), "desktop delivery must save the completed file without blocking transfer state");
+    assert.equal(path.basename(saved.saved_path), "download (1).bin");
+    assert.equal(fs.readFileSync(path.join(desktopDirectory, "download.bin"), "utf8"), "keep existing file");
+    assert.deepEqual(saved.renamed_files, [{source:"download.bin", target:"download (1).bin"}]);
+    const notifications = require("../dist/notifications");
+    const notice = notifications.listNotifications(0, "en-US").find(item => item.action?.download_job_id === desktopJobId);
+    assert.match(notice.message, /Renamed: 1; existing files were kept/);
+    assert.match(notice.message, /File renamed: "download.bin" → "download \(1\).bin"/);
+    const deliveryDirectory = path.join(temporaryRoot,"local-delivery");
+    fs.mkdirSync(deliveryDirectory);
+    fs.writeFileSync(path.join(deliveryDirectory,"download.bin"),"keep local delivery original");
+    deliveryJobId = jobs.startLocalDeliveryJob(connection.id,["/fixture/download.bin"],deliveryDirectory,"rename").id;
+    const delivery = await waitForJob(jobs,deliveryJobId);
+    assert.deepEqual(delivery.renamed_files,[{source:"download.bin",target:"download (1).bin"}]);
+    assert.equal(fs.readFileSync(path.join(deliveryDirectory,"download.bin"),"utf8"),"keep local delivery original");
+    const deliveryNotice = notifications.listNotifications(0,"en-US").find(item=>item.action?.sftp_job_id===deliveryJobId);
+    assert.match(deliveryNotice.message,/File renamed: "download.bin" → "download \(1\).bin"/);
     const growing = jobs.startDownloadJob(connection.id, "/fixture/growing.log", { deliveryMode:"browser" });
     growingJobId = growing.id;
     const changed = await waitForStatus(jobs, growingJobId, ["done"]);
@@ -181,6 +205,8 @@ async function main() {
     assert.ok(fs.statSync(archive.path).size > 0, "the archive response must use the completed job artifact");
     console.log("SFTP download integrity check passed.");
   } finally {
+    sessions.deliverSftpPaths = originalDeliver;
+    try { if(deliveryJobId) jobs.deleteSftpJob(deliveryJobId); } catch {}
     try {
       const current = jobId && jobs.listSftpJobs().find(item => item.id === jobId);
       if (current && ["running", "pending", "paused"].includes(current.status)) jobs.cancelSftpJob(jobId);

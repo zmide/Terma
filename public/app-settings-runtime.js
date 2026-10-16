@@ -894,7 +894,7 @@ function runtimeHostOptionsHtml(data=runtimeSettings) {
           ? tr("settings:auto.interface_binding", {interface:runtimeInterfaceLabel(entry.interface), defaultValue:`${runtimeInterfaceLabel(entry.interface)} · 仅绑定此网卡地址`})
           : tr("settings:auto.address_binding", {defaultValue:"仅绑定此网卡地址"});
     return `<label class="runtime-host-option ${wildcard ? "wildcard" : ""}" data-runtime-host-option="${escAttr(address)}">
-      <input type="checkbox" name="runtimeListenHost" value="${escAttr(address)}" ${selected.has(address) ? "checked" : ""} onchange="syncRuntimeHostOptions(this)">
+      <input type="checkbox" name="runtimeListenHost" value="${escAttr(address)}" ${selected.has(address) ? "checked" : ""} ${data?.listen_locked ? "disabled" : ""} onchange="syncRuntimeHostOptions(this)">
       <span><strong>${esc(runtimeHostEntryLabel(entry, address))}</strong><small>${esc(detail)}</small></span>
       <code>${esc(address)}</code>
     </label>`;
@@ -944,14 +944,15 @@ function runtimeSettingsPanelHtml(data=runtimeSettings) {
       ${data?.restart_required ? `<span class="status-pill reconnecting">${esc(tr("settings:auto.restart_pending", {defaultValue:"等待重启"}))}</span>` : `<span class="status-pill running">${esc(tr("settings:auto.effective", {defaultValue:"已生效"}))}</span>`}
     </div>
     ${overridden ? `<div class="warning">${esc(tr("settings:auto.runtime_override_warning", {defaultValue:"当前进程使用环境变量或启动参数覆盖监听配置。保存仍会写入配置文件，但重启时若继续传入覆盖项，将优先使用覆盖值。"}))}</div>` : ""}
-    <fieldset class="runtime-host-fieldset">
+    ${data?.listen_locked ? `<p class="muted">${esc(tr("settings:updates.fnos_listener_managed"))}</p>` : ""}
+    <fieldset class="runtime-host-fieldset" ${data?.listen_locked ? "disabled" : ""}>
       <legend>${esc(tr("settings:auto.listen_addresses", {defaultValue:"监听地址（可多选）"}))}</legend>
       <div class="runtime-host-options">${runtimeHostOptionsHtml(data)}</div>
       <div id="runtimeWildcardHint" class="muted" hidden>${esc(tr("settings:auto.wildcard_selected_hint", {defaultValue:"已选择所有 IPv4 网卡；其他地址已折叠，取消勾选后可按网卡选择。"}))}</div>
     </fieldset>
     <div class="runtime-port-field">
       <label for="runtimeListenPort">${esc(tr("settings:auto.listen_port", {defaultValue:"监听端口"}))}</label>
-      <input id="runtimeListenPort" type="number" inputmode="numeric" min="1" max="65535" step="1" value="${escAttr(saved.listen_port)}" oninput="clearRuntimeSettingsFeedback()">
+      <input id="runtimeListenPort" type="number" inputmode="numeric" min="1" max="65535" step="1" value="${escAttr(saved.listen_port)}" ${data?.listen_locked ? "disabled" : ""} oninput="clearRuntimeSettingsFeedback()">
       <span>${esc(tr("settings:auto.listen_port_hint", {defaultValue:"允许填写 1-65535。保存不会中断当前连接，重启 Terma 后生效。"}))}</span>
     </div>
     <div class="runtime-security-note">${icon("shield-alert")}<div><strong>${esc(tr("settings:auto.lan_auth_warning_title", {defaultValue:"局域网访问前先确认认证策略"}))}</strong><span>${esc(tr("settings:auto.lan_auth_warning", {defaultValue:"选择指定网卡 IP 或 0.0.0.0 后，同一网络中的设备可能访问 Terma。建议保留 Web 密码并使用“仅非本机访问时校验密码”或“所有浏览器访问都校验密码”。0.0.0.0 表示所有 IPv4 网卡，不只代表某一个局域网地址。"}))}</span></div></div>

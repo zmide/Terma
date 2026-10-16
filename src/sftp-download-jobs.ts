@@ -141,6 +141,8 @@ function createSftpDownloadJobs(dependencies: any) {
       await moveDownloadedFile(job.temp_path, target, signal);
       throwIfDownloadAborted(signal);
       job.saved_path = target;
+      const originalName = String(job.download_name || path.posix.basename(job.remote_path || "download"));
+      job.renamed_files = path.basename(target) === originalName ? [] : [{source:originalName, target:path.basename(target)}];
       job.delivery_status = "saved";
       job.delivered_at = Date.now();
       job.temp_path = "";
@@ -173,7 +175,10 @@ function createSftpDownloadJobs(dependencies: any) {
   }
 
   function downloadCompletionMessage(job: any) {
-    return job?.saved_path ? `已保存到 ${job.saved_path}` : `${job.connection_name} · ${job.label}`;
+    const message = job?.saved_path ? `已保存到 ${job.saved_path}` : `${job.connection_name} · ${job.label}`;
+    const renamed = Array.isArray(job?.renamed_files) ? job.renamed_files : [];
+    if (!renamed.length) return message;
+    return [message, `已重命名 ${renamed.length} 项，已有文件已保留`, ...renamed.slice(0, 6).map((item: any) => `文件已重命名：${JSON.stringify(item.source)} → ${JSON.stringify(item.target)}`)].join("\n");
   }
 
   function persistAndNotifyDownload(job: any, status: string) {
@@ -328,6 +333,7 @@ function createSftpDownloadJobs(dependencies: any) {
       try {
         const result = await deliverSftpPaths(connectionId, paths, current.target_directory, current.conflict_mode, {
           signal:abortController.signal,
+          validateTarget:options.validateTarget,
           onFile: ({size}: any) => {
             if (current.status !== "running") return;
             const bytes = Math.max(0, Number(size || 0));
@@ -364,6 +370,11 @@ function createSftpDownloadJobs(dependencies: any) {
         current.delivery_status = "saved";
         current.saved_path = result.directory;
         current.saved_files = result.files;
+        current.renamed_files = (result.files || []).flatMap((file: string, index: number) => {
+          const source = names[index];
+          const target = path.basename(file);
+          return source && source !== target ? [{source, target}] : [];
+        });
         if (!current.size_known) {
           current.progress_unit = "items";
           current.size = Math.max(1, current.item_count);

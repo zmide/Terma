@@ -2,6 +2,8 @@
 
 Terma includes or integrates the following third-party components in addition to the dependencies listed in `package.json`.
 
+The fnOS FPK distributes the Web backend, browser assets and production npm dependencies. It uses the separately installed fnOS Node.js runtime and does not bundle Electron, VcXsrv or TigerVNC Viewer. The About page lists components applicable to that distribution; this document retains the full project notices.
+
 ## xterm.js
 
 - Project: https://github.com/xtermjs/xterm.js

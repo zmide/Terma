@@ -59,6 +59,7 @@ const { createUpdateScheduler } = require("./update-scheduler");
 const { startSftpAutomationScheduler, stopSftpAutomationScheduler } = require("./sftp-automations");
 const { UpdateInstaller } = require("./update-installer");
 const { PACKAGE_ROOT, PACKAGE_VERSION } = require("./services/app-metadata-service");
+const { isFnosDistribution, distributionPolicy } = require("./infrastructure/distribution-policy");
 const { publicAiSettings: publicAiSettingsForRuntime } = require("./services/ai-service");
 
 function createServerRuntime(options: any = {}) {
@@ -340,6 +341,7 @@ function createServerRuntime(options: any = {}) {
     const effective = {listen_hosts:[...(actualHosts || [])], listen_port:actualPort, sources};
     return {
       ...saved,
+      ...distributionPolicy(),
       settings_persisted:settingsPersisted,
       saved,
       effective,
@@ -567,6 +569,12 @@ function createServerRuntime(options: any = {}) {
   }
 
   function startServer(customArgs: any = parseArgs(), startOptions: any = {}) {
+    if (isFnosDistribution()) {
+      const security = require("./security").readSecuritySettings();
+      if (!security.password_hash && !security.token_hash && !process.env.TERMA_AUTH_TOKEN) {
+        throw new Error("fnOS Web access must be initialized before starting Terma");
+      }
+    }
     args = normalizeStartArgs(customArgs);
     exitOnShutdown = startOptions.exitOnShutdown !== false;
     onShutdown = typeof startOptions.onShutdown === "function" ? startOptions.onShutdown : null;
@@ -593,7 +601,7 @@ function createServerRuntime(options: any = {}) {
       resetWebAccessSecurity();
       appendSystemLog("已根据 TERMA_RESET_WEB_ACCESS 重置 Web 访问密码和 Token");
     }
-    const ready = bindWithFallback(args.listen_hosts, args.listen_port).then(async binding => {
+    const ready = bindWithFallback(args.listen_hosts, args.listen_port, isFnosDistribution() ? {maxFallbacks:0} : {}).then(async binding => {
       activeServers = binding.listeners;
       try {
         shutdownAuthToken = crypto.randomBytes(32).toString("base64url");

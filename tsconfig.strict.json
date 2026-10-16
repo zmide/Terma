@@ -7,6 +7,9 @@
     "useUnknownInCatchVariables": true
   },
   "files": [
+    "src/services/ssh-key-public-service.ts",
+    "src/infrastructure/fnos-configuration.ts",
+    "src/services/access-error-page-service.ts",
     "src/auth-protection.ts",
     "src/database-transfer.ts",
     "src/database/connection-normalizer.ts",
@@ -43,6 +46,8 @@
     "src/routes/ftp-routes.ts",
     "src/routes/config-transfer-routes.ts",
     "src/routes/local-files-routes.ts",
+    "src/routes/server-files-routes.ts",
+    "src/services/server-files-service.ts",
     "src/routes/local-control-routes.ts",
     "src/routes/remote-task-routes.ts",
     "src/routes/remote-profile-routes.ts",

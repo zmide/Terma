@@ -1,0 +1,8 @@
+[
+  {
+    "stepTitle": "Terma",
+    "items": [
+      { "type": "tips", "helpText": "Application data, keys and upgrade backups are retained. Export a backup before uninstalling. / 卸载脚本保留应用数据、密钥和升级备份；建议卸载前导出备份。" }
+    ]
+  }
+]

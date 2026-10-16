@@ -1,5 +1,7 @@
 import { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
+import { isFnosDistribution, assertDistributionListenSettings } from "../infrastructure/distribution-policy";
+import { publicErrorBody } from "../public-error";
 
 interface StorageRouteDependencies {
   dataDir: string;
@@ -32,6 +34,11 @@ export async function handleStorageRoutes(
 ): Promise<boolean> {
   const method = request.method || "GET";
   const desktopIntegration = dependencies.getDesktopIntegration();
+  if (isFnosDistribution() && ((method === "PUT" && pathname === "/api/desktop-settings")
+    || pathname === "/api/storage/directories")) {
+    dependencies.sendJson(response, publicErrorBody("FNOS_STORAGE_MANAGED", "飞牛应用的数据目录由应用中心管理"), 403);
+    return true;
+  }
 
   if (method === "GET" && pathname === "/api/desktop-settings") {
     const desktopRequest = dependencies.isDesktopRequest(request);
@@ -161,6 +168,7 @@ export async function handleStorageRoutes(
       terminal: data.terminal ?? current.terminal,
       ai: current.ai
     });
+    assertDistributionListenSettings(next, current);
     if (data.sftp_download_directory !== undefined && desktopIntegration) {
       if (!dependencies.isDesktopRequest(request) || !desktopIntegration?.validateDownloadDirectory) {
         dependencies.sendJson(response, { error:"下载目录只能在本机桌面端中修改" }, 403);
