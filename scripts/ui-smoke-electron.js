@@ -86,9 +86,20 @@ app.whenReady().then(async () => {
     app.exit(0);
     return;
   }
-  // Run the self-contained receive fixture before later integration scenarios
-  // install asynchronous settings renderers with their own saved languages.
-  await runWebFilesDeliveryUiScenario(window);
+  // Receive fixtures use their own workspace so they cannot leave tabs or
+  // asynchronous settings renderers behind in the integration window.
+  const deliveryWindow = new BrowserWindow({
+    show:false, width:1200, height:800,
+    webPreferences:{contextIsolation:true, backgroundThrottling:false, preload:path.join(__dirname,"ui-smoke-preload.js")}
+  });
+  deliveryWindow.webContents.on("console-message", details => {
+    if (["warning","error"].includes(details.level)) errors.push(details.message);
+  });
+  try {
+    await deliveryWindow.loadURL(url);
+    await deliveryWindow.webContents.executeJavaScript("window.termaI18nReady");
+    await runWebFilesDeliveryUiScenario(deliveryWindow);
+  } finally { deliveryWindow.destroy(); }
   console.log("[ui-smoke] language onboarding");
   window.setSize(392, 800);
   await new Promise(resolve => setTimeout(resolve, 80));
