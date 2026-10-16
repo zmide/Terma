@@ -48,6 +48,10 @@
 - Added a native fnOS package for SSH, SFTP and bundled browser noVNC, with an illustrated introduction, installation password confirmation, App Center password and network settings, start/stop controls and backups before upgrades. Reinstalling with retained data uses the newly entered password; upgrades keep the existing one. Desktop-only features and scheduled SFTP sync remain unavailable in this package.
 - Unrecognized access hostnames now show a Chinese/English explanation with setup instructions; API requests retain structured errors.
 
+#### Changes in this release
+
+- Release v1.7.10: native fnOS packages and browser file management ([#62](https://github.com/zmide/Terma/pull/62), @JunXiaoRuo).
+
 **Full Changelog**: [v1.7.9...v1.7.10](https://github.com/zmide/Terma/compare/v1.7.9...v1.7.10)
 
 <a id="v1-7-10-zh"></a>
@@ -69,6 +73,10 @@
 - SFTP 选中文件或文件夹后，稍后再次单击名称可直接改名，双击仍然打开项目。
 - 新增飞牛原生安装包，可通过浏览器使用 SSH、SFTP 和内置 noVNC，提供图文介绍、安装密码确认、应用中心密码与网络设置、启停控制和升级前备份；保留数据重装时使用本次填写的密码，正常升级保留原密码。桌面专属功能与定时 SFTP 同步暂不可用。
 - 访问未允许的主机名时显示可切换中英文的说明和设置方法，API 请求继续返回结构化错误。
+
+#### 本次变更
+
+- 发布 v1.7.10：飞牛原生包与浏览器文件管理（[#62](https://github.com/zmide/Terma/pull/62)，@JunXiaoRuo）。
 
 **完整变更**：[v1.7.9...v1.7.10](https://github.com/zmide/Terma/compare/v1.7.9...v1.7.10)
 
