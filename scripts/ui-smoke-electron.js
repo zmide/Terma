@@ -97,7 +97,12 @@ app.whenReady().then(async () => {
   });
   try {
     await deliveryWindow.loadURL(url);
-    await deliveryWindow.webContents.executeJavaScript("window.termaI18nReady");
+    await deliveryWindow.webContents.executeJavaScript(`(async () => {
+      await window.termaI18nReady;
+      for (let attempt=0;window.workspaceRestorePending && attempt<100;attempt++) await new Promise(resolve=>setTimeout(resolve,20));
+      if (window.workspaceRestorePending) throw new Error("Receive fixture initialization timed out");
+      return true;
+    })()`);
     await runWebFilesDeliveryUiScenario(deliveryWindow);
   } finally { deliveryWindow.destroy(); }
   console.log("[ui-smoke] language onboarding");
