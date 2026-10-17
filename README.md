@@ -35,9 +35,9 @@ Terma is a remote connection workspace for desktop and self-hosted Web environme
 
 - One data set powers the Electron desktop app, desktop browsers, and mobile Web access, so connection settings do not need to be maintained twice.
 - SSH connections, terminals, SFTP, tunnels, and batch operations share one multi-tab workspace.
-- Desktop packages are available for Windows, macOS, and Linux; Web mode also runs on Linux servers and Termux.
+- Desktop packages are available for Windows, macOS, and Linux; Web mode also runs on Linux servers and Termux, with native x64/ARM64 FPKs for fnOS NAS.
 - Supports private-key and password authentication, encrypted configuration, database backup and restore, and SSH config import/export.
-- Listens only on loopback by default. LAN access can be protected with a password, session management, and trusted-proxy policies.
+- Desktop and source runs listen only on loopback by default. LAN access can be protected with a password, session management, and trusted-proxy policies; fnOS requires authentication for every browser session.
 
 ## Core features
 
@@ -139,9 +139,13 @@ The desktop app is an Electron container around the same Web UI and Node.js serv
 | macOS | Supported | Supported | Signed and notarized DMG |
 | Linux | Supported | Supported | AppImage, DEB, and RPM |
 | Termux / headless Linux | Not recommended | Supported | Run from source |
-| fnOS NAS | Browser | Supported | Native FPK; see [fnOS packaging](packaging/fnos/README.md) |
+| fnOS NAS | Not available | Supported | Native x64/ARM64 FPKs; see [fnOS packaging](packaging/fnos/README.md) |
+
+On fnOS, install the FPK for your NAS architecture from the [latest release](https://github.com/zmide/Terma/releases/latest) through App Center and set a separate Terma Web password. SSH, SFTP, port forwarding, and embedded noVNC run in the browser; native desktop clients and scheduled SFTP sync are unavailable. See the [fnOS deployment guide](https://terma.zmide.com/guide/deployment.html#%E9%A3%9E%E7%89%9B-fnos) for setup and folder authorization.
 
 ## Requirements
+
+The following requirements apply to source runs. The fnOS FPK uses the official Node.js 22 application from App Center.
 
 - Node.js 22 or later
 - npm
@@ -282,13 +286,13 @@ Pushing a `v*` tag starts the Release workflow, which builds and verifies Window
 
 ## Data and security
 
-- Source runs and Windows portable builds use the project `data/` directory by default. Installed builds use the system user-data directory and can migrate it elsewhere from Settings.
+- Source runs and Windows portable builds use the project `data/` directory by default. Installed desktop builds use the system user-data directory and can migrate it elsewhere from Settings. fnOS keeps data and keys in application-managed directories.
 - SSH passwords, private-key paths, access tokens, and database backups are sensitive. Protect the runtime data directory and enable configuration encryption when appropriate. Encryption uses a separate key and password verifier. Legacy v1/v2 data is rotated to `termaenc:v3:` with a new salt after unlocking with the original master password, without re-entering connection credentials. Generate a fresh backup and remove obsolete v1 backups after rotation; if an old backup was exposed, also rotate the SSH, VNC, and other credentials stored in it.
 - After configuration encryption is enabled, a restarted and locked Terma can still show ordinary lists and change non-sensitive display settings, but it cannot download a full-credential migration package, restore a database or snapshot, fully edit connections, save credentials, or save terminal startup profiles. Enter the master password to unlock those operations. If power is lost while enabling or disabling encryption, Terma retains a resumable transition state and blocks sensitive fields until the password is entered again.
 - When a Web password or access token is configured, regular browsers must authenticate even on loopback. The login page accepts either credential. The Electron desktop app uses a separate random credential for each launch.
 - SSH private keys must be real, independent regular private-key files located in the active managed-key directory or at the top level of the user's `~/.ssh`. Directories, external paths, symbolic or hard links, public keys, and config files are rejected. Additional SSH arguments are limited to algorithms, compression, timeouts, and similar connection tuning; they cannot replace the host, user, jump host, forwarding, X11, local program, credentials, or host-trust boundaries. Previously saved incompatible paths or arguments are reported while editing and are never moved or rewritten silently.
 - Permanently trusted SSH host keys are stored in the runtime data directory and can be reviewed or removed under Settings > Security. The fingerprint is requested again after removal.
-- The service listens only on `127.0.0.1` by default. Set a Web password for LAN access; use a private network such as Tailscale, ZeroTier, or WireGuard for remote access.
+- Desktop and source runs listen only on `127.0.0.1` by default. Set a Web password for LAN access; fnOS uses the listen address configured in App Center and always requires login. Use a private network such as Tailscale, ZeroTier, or WireGuard for remote access.
 - Behind Nginx, Caddy, or another reverse proxy, configure the IP that directly connects to Terma as a trusted proxy—usually `127.0.0.1` for a same-host deployment—and add the exact Host used by the browser. Keep the Terma Web password or token enabled. Proxying to `127.0.0.1` does not grant the browser loopback authentication exemption.
 - Local desktop capabilities such as file and directory selection, X Server control, and external clients accept only the random credential from the current Electron process. A regular browser visiting loopback does not receive those capabilities.
 - `stop.bat` and `stop.sh` request graceful shutdown with the current instance's temporary `shutdown.token`. The token is removed at shutdown, and process-level fallback is used only if graceful shutdown fails.
