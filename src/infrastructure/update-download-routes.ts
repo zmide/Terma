@@ -14,7 +14,7 @@ export const UPDATE_DOWNLOAD_ROUTES: readonly UpdateDownloadRoute[] = Object.fre
 ]);
 
 export const TRUSTED_GITHUB_ASSET_HOSTS = new Set([
-  "github.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com"
+  "github.com", "objects.githubusercontent.com", "github-releases.githubusercontent.com", "release-assets.githubusercontent.com"
 ]);
 
 export function trustedGitHubAssetUrl(value: string): URL {

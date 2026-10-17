@@ -34,6 +34,7 @@
 #### Important fixes
 
 - The fnOS uninstall notice now warns that uninstalling or reinstalling may remove application data and internal backups. Export a complete backup outside the application directory first.
+- Direct update downloads and speed tests now accept GitHub's current official file-download address instead of incorrectly rejecting its redirect.
 - Mobile terminal controls are more compact and align with the scroll arrows. The font decrease button, size and increase button stay together in the correct order.
 
 #### Important additions
@@ -63,6 +64,7 @@
 #### 重要修复
 
 - 飞牛卸载提示明确说明卸载或重装可能清理应用数据及内部备份。请先将完整备份导出到应用目录之外。
+- 更新直连下载和测速支持 GitHub 当前使用的官方文件地址，不再误拒绝其正常跳转。
 - 移动端终端按钮缩小并与左右滚动箭头对齐，字号减号、当前数值和加号按顺序相邻显示。
 
 #### 重要新增
