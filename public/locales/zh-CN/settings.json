@@ -769,7 +769,9 @@
     "reset_done": "主题配置已恢复默认"
   },
   "updates": {
-    "fnos_managed": "请通过飞牛应用中心或安装新版 Terma FPK 升级。",
+    "fnos_managed": "下载对应架构的 FPK 后，在飞牛应用中心选择手动安装以升级并保留现有数据。这里仅检查版本和显示更新日志，不会自动安装。",
+    "fnos_download_fpk": "下载飞牛 FPK",
+    "fnos_no_asset": "此版本暂未找到匹配设备架构的 FPK，请在发布页面确认飞牛安装包。",
     "fnos_listener_managed": "监听地址和端口由飞牛应用包管理。",
     "reading_version": "正在读取当前版本",
     "checking": "正在检查更新",

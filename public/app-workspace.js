@@ -1222,6 +1222,7 @@ function showMobileExplorer() {
   document.querySelector(".left-pane").classList.remove("mobile-hide");
   $("content").classList.remove("mobile-show");
   document.body.classList.remove("mobile-terminal-active");
+  if (typeof renderMobileWorkspaceTabs === "function") renderMobileWorkspaceTabs();
 }
 
 function showMobileWorkspace() {
@@ -1229,6 +1230,7 @@ function showMobileWorkspace() {
   document.querySelector(".left-pane").classList.add("mobile-hide");
   $("content").classList.add("mobile-show");
   document.body.classList.toggle("mobile-terminal-active", ["terminal","remote-terminal"].includes(activeView));
+  if (typeof renderMobileWorkspaceTabs === "function") renderMobileWorkspaceTabs();
 }
 
 function syncResponsivePane() {

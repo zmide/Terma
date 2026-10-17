@@ -84,6 +84,7 @@ async function until(predicate, message) {
 }
 
 async function main() {
+  await require("./fnos-updates-check").runFnosUpdateChecks();
   if (process.platform === "linux") {
     const stagingCheck = spawnSync("python3", ["scripts/fnos-staging-check.py"], {cwd:root, encoding:"utf8", timeout:15000});
     assert.equal(stagingCheck.status, 0, stagingCheck.stderr);

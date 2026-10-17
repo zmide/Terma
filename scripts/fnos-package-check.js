@@ -16,6 +16,7 @@ function verifyPackage(directory, arch) {
   assert.equal(manifest.service_port, "8088");
   assert.equal(manifest.install_dep_apps, "nodejs_v22");
   assert.match(manifest.desc, /data:image\/jpeg,%/);
+  assert.equal((manifest.desc.match(/<img /g) || []).length, 4, "Desktop and mobile screenshots must all be included");
   assert.match(manifest.desc, /noVNC/, "The installed introduction must include browser VNC");
   assert.equal(manifest.desc.startsWith("<p>"), true, "Description quotes must not become visible text");
   assert.equal(manifest.desc.endsWith("</p>"), true, "Introduction must not be truncated");

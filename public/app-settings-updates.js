@@ -102,7 +102,7 @@ function updateDownloadLinksKey(download) {
   return source && download.download_asset_name ? JSON.stringify([download.download_asset_name, source]) : "";
 }
 
-function updateManualDownloadLinksHtml(update) {
+function updateManualDownloadLinksHtml(update, options={}) {
   const download = update?.download_status;
   const routes = download?.download_links || [];
   if (Array.isArray(update?.assets) && !update.assets.some(asset => asset.name === download?.download_asset_name
@@ -128,7 +128,8 @@ function updateManualDownloadLinksHtml(update) {
   if (!links.length) return "";
   const busy = Boolean(updateDownloadLinksProbe?.running);
   const error = probe?.error ? `<div class="warning">${esc(localizedUpdateStatusError(probe.error))}</div>` : "";
-  return `<div class="update-download-links"><div class="update-download-links-head"><strong>${esc(tr("settings:updates.download_links"))}</strong><button id="probeUpdateDownloadLinksBtn" title="${escAttr(tr("settings:updates.probe_hint"))}" onclick="probeUpdateDownloadLinks()"${busy ? ' disabled aria-busy="true"' : ""}>${icon(busy ? "loader-circle" : "gauge")}<span>${esc(tr(busy ? "settings:updates.probe_running" : "settings:updates.probe_links"))}</span></button></div><small>${esc(download.download_asset_name || "")}</small>${error}<div class="actions">${links.join("")}</div></div>`;
+  const action = options.delegated ? 'data-action="fnos-probe-download-links"' : 'onclick="probeUpdateDownloadLinks()"';
+  return `<div class="update-download-links"><div class="update-download-links-head"><strong>${esc(tr("settings:updates.download_links"))}</strong><button id="probeUpdateDownloadLinksBtn" title="${escAttr(tr("settings:updates.probe_hint"))}" ${action}${busy ? ' disabled aria-busy="true"' : ""}>${icon(busy ? "loader-circle" : "gauge")}<span>${esc(tr(busy ? "settings:updates.probe_running" : "settings:updates.probe_links"))}</span></button></div><small>${esc(download.download_asset_name || "")}</small>${error}<div class="actions">${links.join("")}</div></div>`;
 }
 
 async function probeUpdateDownloadLinks() {
@@ -156,8 +157,8 @@ function updateStatusHtml(options={}) {
   const checking = Boolean(options.checking ?? updateStatusChecking);
   const checkButtonState = checking ? ` disabled aria-busy="true"` : "";
   const downloadButtonState = checking ? ` disabled aria-busy="true"` : "";
-  if (update?.download_status?.managed_by === "fnos") {
-    return `<div class="update-card"><div class="update-card-head"><strong>Terma</strong><span>${esc(update.current_version || "")}</span></div><p>${esc(tr("settings:updates.fnos_managed"))}</p></div>`;
+  if (update?.download_status?.managed_by === "fnos" || (typeof runtimeSettings !== "undefined" && runtimeSettings?.distribution === "fnos")) {
+    return fnosUpdateStatusHtml(update, {...options, checking});
   }
   if (!update) {
     return `<div class="update-card"><div class="update-card-head"><strong>${esc(tr("settings:auto.github_release_updates"))}</strong><span>${esc(tr("settings:updates.reading_version"))}</span></div><div class="update-status checking"><div><strong>${esc(tr("settings:updates.checking"))}</strong><span>${esc(tr("settings:updates.reading_releases"))}</span></div><span class="status-pill">${esc(tr("settings:updates.checking_short"))}</span></div><div class="actions update-actions"><button id="checkUpdateBtn" onclick="refreshUpdateStatus(true)"${checkButtonState}>${icon("refresh-cw")}<span>${esc(tr(checking ? "settings:updates.checking_short" : "settings:updates.check_again"))}</span></button></div></div>`;
@@ -548,7 +549,7 @@ async function refreshUpdateStatus(force=false) {
     const message = error.message || tr("settings:updates.github_connection_failed");
     updateSettings = previousUpdateStatus?.latest_version
       ? {...previousUpdateStatus, check_error:message}
-      : {error:message, ...(previousDownloadStatus ? {download_status:previousDownloadStatus} : {})};
+      : {...previousUpdateStatus, error:message, ...(previousDownloadStatus ? {download_status:previousDownloadStatus} : {})};
     await yieldBeforeUpdateRender();
     if (requestSequence !== updateStatusRefreshSequence || controller?.signal.aborted) return;
     inPane(() => {

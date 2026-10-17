@@ -3273,7 +3273,6 @@ body.sftp-editor-split-resizing, body.sftp-editor-split-resizing * { cursor:ns-r
   .terminal-actions .terminal-action-forward { order:4; }
   .terminal-actions .terminal-action-sftp { order:5; }
   .terminal-actions .terminal-action-sftp > span { display:inline; }
-  .terminal-toolbar .terminal-actions button.terminal-action-sftp { width:auto; min-width:84px; padding-inline:10px; }
   .terminal-actions .terminal-action-font, .terminal-actions .terminal-action-display, .terminal-actions .terminal-action-recent { order:10; }
   .terminal-actions .terminal-global-settings-button { display:none; }
   .terminal-keys { display:grid; grid-auto-flow:column; grid-template-rows:repeat(2,38px); grid-auto-columns:max-content; align-items:stretch; min-height:92px; max-height:none; overflow-x:auto; overflow-y:hidden; overscroll-behavior-x:contain; -webkit-overflow-scrolling:touch; touch-action:pan-x; padding:7px; margin-bottom:6px; }

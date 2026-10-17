@@ -2,27 +2,86 @@
 
 ## Next release draft / 下一版草稿
 
-[English](#v1-7-11-english) · [简体中文](#v1-7-11-zh)
+[English](#v1-8-1-english) · [简体中文](#v1-8-1-zh)
 
-<a id="v1-7-11-english"></a>
+<a id="v1-8-1-english"></a>
 ### English
 
-> The next release will continue improving session recovery and cross-platform remote desktops.
+> Further session-recovery and remote-desktop acceptance work is planned.
 
 #### Planned
 
-- Complete real network and reload acceptance for recoverable sessions.
-- Expand terminal model interoperability and remote-desktop clipboard acceptance.
+- Expand real-network session recovery and cross-platform remote-desktop acceptance.
 
-<a id="v1-7-11-zh"></a>
+<a id="v1-8-1-zh"></a>
 ### 简体中文
 
-> 下一版继续完善会话恢复和跨平台远程桌面体验。
+> 下一版继续推进会话恢复与远程桌面的实际环境验收。
 
 #### 计划
 
-- 完成可恢复会话的真实断网与重载验收。
-- 扩展终端模型互操作和远程桌面剪贴板验收。
+- 扩展真实网络下的会话恢复和跨平台远程桌面验收。
+
+## v1.8.0
+
+[English](#v1-8-0-english) · [简体中文](#v1-8-0-zh)
+
+<a id="v1-8-0-english"></a>
+### English
+
+> fnOS gains version checks, release notes and accelerated FPK downloads. Mobile users can switch and close open sessions directly, and VNC now defaults to the embedded noVNC workspace.
+
+#### Important fixes
+
+- The fnOS uninstall notice now warns that uninstalling or reinstalling may remove application data and internal backups. Export a complete backup outside the application directory first.
+- Mobile terminal controls are more compact and align with the scroll arrows. The font decrease button, size and increase button stay together in the correct order.
+
+#### Important additions
+
+- fnOS Settings → About offers version checks, recent release notes and an FPK matching the NAS architecture, with a direct download, five accelerated links and manual speed tests. Install upgrades manually through App Center; failed checks retain cached release notes.
+- Mobile workspace tabs appear beside Back and above the connection list. Switch to an existing session or use its close button without opening another session.
+
+#### Other improvements
+
+- New VNC connections default to embedded noVNC. Existing profiles keep their explicit client choice; bundled TigerVNC Viewer, the system client and Auto remain available.
+- The fnOS introduction presents terminals, files, mobile use and bundled noVNC in clear sections, with offline desktop and mobile screenshots.
+- Platform and deployment documentation now explains fnOS support and browser file management on the computer or authorized NAS folders.
+
+#### Changes in this release
+
+- Document fnOS platform support and installation ([#63](https://github.com/zmide/Terma/pull/63), @JunXiaoRuo).
+- Correct fnOS browser file-management documentation ([#64](https://github.com/zmide/Terma/pull/64), @JunXiaoRuo).
+
+**Full Changelog**: [v1.7.10...v1.8.0](https://github.com/zmide/Terma/compare/v1.7.10...v1.8.0)
+
+<a id="v1-8-0-zh"></a>
+### 简体中文
+
+> 飞牛新增版本检查、更新日志和 FPK 加速下载。移动端可以直接切换和关闭已打开的会话，VNC 默认使用内置 noVNC 工作区。
+
+#### 重要修复
+
+- 飞牛卸载提示明确说明卸载或重装可能清理应用数据及内部备份。请先将完整备份导出到应用目录之外。
+- 移动端终端按钮缩小并与左右滚动箭头对齐，字号减号、当前数值和加号按顺序相邻显示。
+
+#### 重要新增
+
+- 飞牛“设置 → 关于”提供版本检查、最近更新日志和匹配 NAS 架构的 FPK，支持直连、五条加速线路及手动测速。升级仍由应用中心手动安装；检查失败时保留已缓存的日志。
+- 移动端在返回按钮旁和连接列表上方显示工作区标签，可切换已有会话或点击关闭按钮，无需重新打开会话。
+
+#### 其他优化
+
+- 新建 VNC 连接默认使用内置 noVNC。已有配置保留明确选择的客户端，仍可使用内置 TigerVNC Viewer、系统客户端或自动模式。
+- 飞牛应用介绍按终端、文件、移动操作和内置 noVNC 分节展示，配有离线可看的桌面与手机截图。
+- 平台和部署文档补充飞牛支持，说明浏览器可管理当前电脑或授权 NAS 目录中的文件。
+
+#### 本次变更
+
+- 补充飞牛平台支持与安装文档（[#63](https://github.com/zmide/Terma/pull/63)，@JunXiaoRuo）。
+- 修正飞牛浏览器文件管理的文档说明（[#64](https://github.com/zmide/Terma/pull/64)，@JunXiaoRuo）。
+
+**完整变更**：[v1.7.10...v1.8.0](https://github.com/zmide/Terma/compare/v1.7.10...v1.8.0)
+
 
 ## v1.7.10
 

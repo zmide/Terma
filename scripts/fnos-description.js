@@ -3,7 +3,7 @@ const path = require("node:path");
 
 function renderFnosDescription(directory) {
   let description = fs.readFileSync(path.join(directory,"description.html"),"utf8");
-  for (const [placeholder,name] of [["@TERMINAL_IMAGE@","terminal.jpg"],["@SFTP_IMAGE@","sftp.jpg"]]) {
+  for (const [placeholder,name] of [["@TERMINAL_IMAGE@","terminal.jpg"],["@SFTP_IMAGE@","sftp.jpg"],["@MOBILE_TERMINAL_IMAGE@","mobile-terminal.jpg"],["@MOBILE_SFTP_IMAGE@","mobile-sftp.jpg"]]) {
     // fnOS's manifest reader treats a literal semicolon as an INI delimiter,
     // even inside desc quotes. A percent-encoded (non-base64) data URL has no
     // semicolon and remains self-contained without external image requests.
@@ -12,6 +12,7 @@ function renderFnosDescription(directory) {
     description = description.replaceAll(placeholder,"data:image/jpeg,"+data);
   }
   description = description.replace(/\r?\n/g," ").trim();
+  if (/@[A-Z_]+@/.test(description)) throw new Error("fnOS description contains an unresolved image placeholder");
   if (/[;"\r\n]/.test(description)) throw new Error("fnOS description must not contain INI delimiters or double quotes");
   return description;
 }

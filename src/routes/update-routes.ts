@@ -1,6 +1,8 @@
 import { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
-import { isFnosDistribution, fnosUpdateStatus } from "../infrastructure/distribution-policy";
+import { isFnosDistribution } from "../infrastructure/distribution-policy";
+import { fnosUpdateStatus, selectFnosUpdateAsset } from "../infrastructure/fnos-updates";
+import type { UpdateAsset } from "../update-installer";
 import { publicErrorBody } from "../public-error";
 
 interface UpdateCheckerLike {
@@ -14,6 +16,7 @@ interface UpdateInstallerLike {
   status(release?: any): unknown;
   download(release: any): Promise<unknown>;
   probeDownloadLinks(release: any): Promise<unknown>;
+  probeAssetDownloadLinks(release: any, asset: UpdateAsset): Promise<unknown>;
   verifyDownloaded(release?: any): Promise<any>;
 }
 
@@ -37,7 +40,17 @@ export async function handleUpdateRoutes(
   const { checker, installer, sendJson } = dependencies;
   if (isFnosDistribution() && pathname.startsWith("/api/updates/")
     && (pathname.includes("/download") || pathname === "/api/updates/open" || pathname === "/api/updates/open-directory")) {
-    if (request.method === "GET" && pathname === "/api/updates/download/status") sendJson(response, fnosUpdateStatus());
+    if (request.method === "GET" && pathname === "/api/updates/download/status") sendJson(response, fnosUpdateStatus(checker.status()));
+    else if (request.method === "POST" && pathname === "/api/updates/download/probe") {
+      try {
+        const release = await checker.check({ force:false });
+        const asset = selectFnosUpdateAsset(release);
+        if (!asset) throw new Error("当前 Release 没有适用于此 NAS 架构的飞牛 FPK 安装包");
+        sendJson(response, await installer.probeAssetDownloadLinks(release, asset));
+      } catch (error) {
+        sendJson(response, {error:error instanceof Error ? error.message : String(error)}, 422);
+      }
+    }
     else sendJson(response, publicErrorBody("FNOS_UPDATE_MANAGED", "请通过飞牛应用中心或安装新版 FPK 升级 Terma"), 409);
     return true;
   }

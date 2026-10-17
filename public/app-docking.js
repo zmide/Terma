@@ -868,6 +868,7 @@ setWorkspaceTabConnectionStatus = function(key, status) {
     dot.className = `tab-connection-dot ${normalized}`;
     dot.title = tr(`common:auto.${normalized === "connected" ? "connected" : normalized === "disconnected" ? "disconnected" : "connecting"}`, {defaultValue:normalized === "connected" ? "Connected" : normalized === "disconnected" ? "Disconnected" : "Connecting"});
   });
+  if (typeof renderMobileWorkspaceTabs === "function") renderMobileWorkspaceTabs();
 };
 
 renderTabContent = function(tab, options={}) {

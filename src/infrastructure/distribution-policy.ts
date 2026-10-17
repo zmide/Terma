@@ -3,7 +3,6 @@ import { publicError } from "../public-error";
 export function isFnosDistribution(): boolean {
   return process.env.TERMA_DISTRIBUTION === "fnos";
 }
-
 export function distributionPolicy() {
   return {
     distribution:isFnosDistribution() ? "fnos" : "standard",
@@ -30,9 +29,4 @@ export function assertDistributionListenSettings(data: any, current: any): void 
     || (data.listen_hosts !== undefined && hosts(data.listen_hosts) !== hosts(current.listen_hosts))) {
     throw publicError("FNOS_LISTEN_MANAGED", "飞牛应用的监听地址和端口由应用包管理");
   }
-}
-
-export function fnosUpdateStatus() {
-  return {state:"managed", managed_by:"fnos", platform:process.platform, arch:process.arch,
-    package_type:"fpk", can_open:false, can_open_directory:false, download_links:[]};
 }

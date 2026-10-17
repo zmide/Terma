@@ -581,7 +581,7 @@ async function runMobileScenario(window) {
         titleHeight:terminalMobileTitleRect.height,
         toolbarHeight:terminalMobileToolbarRect.height,
         priorityOrder:[...terminalBackFixture.querySelectorAll('.terminal-action-reconnect,.terminal-action-keys,.terminal-action-forward-list,.terminal-action-forward,.terminal-action-sftp')].sort((left,right)=>Number(getComputedStyle(left).order)-Number(getComputedStyle(right).order)).map(button=>button.className.match(/terminal-action-(reconnect|keys|forward-list|forward|sftp)/)?.[1]),
-        sftpTextFits:Boolean(terminalMobileSftpButton && terminalMobileSftpButton.clientWidth >= 82 && terminalMobileSftpButton.scrollWidth <= terminalMobileSftpButton.clientWidth + 1 && terminalMobileSftpButton.textContent.trim() === 'SFTP'),
+        sftpTextFits:Boolean(terminalMobileSftpButton && Math.abs(terminalMobileSftpButton.getBoundingClientRect().width-30)<1 && terminalMobileSftpButton.querySelector('svg')?.getBoundingClientRect().width>0 && getComputedStyle(terminalMobileSftpButton.querySelector('span')).display==='none'),
         globalSettingsHidden:getComputedStyle(mobileGlobalSettingsButton).display==='none',
         returned:!document.querySelector('.left-pane')?.classList.contains('mobile-hide')&&!document.querySelector('#content')?.classList.contains('mobile-show')&&!document.body.classList.contains('mobile-terminal-active')
       };
