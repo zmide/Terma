@@ -120,7 +120,7 @@ function updateManualDownloadLinksHtml(update, options={}) {
       const metric = probe?.running ? tr("settings:updates.probe_running") : result
         ? speed ? link.id === fastest ? tr("settings:updates.probe_fastest", {speed}) : speed : tr("settings:updates.probe_unavailable")
         : "";
-      const error = result?.error === "测速超时" ? tr("settings:updates.probe_timeout") : result?.error || "";
+      const error = result?.error === "测速超时" ? tr("settings:updates.probe_timeout") : result?.error ? localizedUpdateStatusError(result.error) : "";
       const detail = result ? `${result.elapsed_ms || 0} ms${error ? ` · ${error}` : ""}` : "";
       return [`<a class="button-link update-download-link ${speed && link.id === fastest ? "is-fastest" : ""}" href="${escAttr(url.href)}" target="_blank" rel="noopener noreferrer" title="${escAttr([url.href, detail].filter(Boolean).join("\n"))}"><span class="update-download-link-label">${icon("external-link")}<span>${esc(label)}</span></span>${metric ? `<small class="${result && !speed ? "is-unavailable" : ""}">${esc(metric)}</small>` : ""}</a>`];
     } catch { return []; }

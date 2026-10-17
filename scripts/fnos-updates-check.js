@@ -32,6 +32,9 @@ async function runFnosUpdateChecks() {
     assert.match(html,/data-action="fnos-probe-download-links"/);
     assert.equal((html.match(/href='?"?https:[^>]+\.fpk"/g)||[]).length,6);
     assert.doesNotMatch(html,/onclick=|downloadUpdateBtn|openDownloadedUpdate|<script>/);
+    vm.runInContext('updateDownloadLinksProbe='+JSON.stringify({key:context.updateDownloadLinksKey(target.download_status),results:[{id:"direct",available:false,error:"更新下载返回了网页，而不是安装包"}]}),context);
+    assert.doesNotMatch(context.fnosUpdateStatusHtml(target), /更新下载返回了网页/);
+    vm.runInContext('updateDownloadLinksProbe=null',context);
   }
   for (const change of [
     {download_status:{managed_by:"fnos",arch:"ia32"}}, {assets:[]}, {assets:null},
