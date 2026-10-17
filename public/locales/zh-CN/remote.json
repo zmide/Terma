@@ -24,7 +24,7 @@
     "clear_password": "清除已保存密码",
     "rdp_password_consent": "我了解风险，允许 Terma 把已保存密码交给 RDP 客户端",
     "rdp_password_hint": "RDP 用户名和密码都可留空。默认由客户端询问；勾选警告后，Windows 使用临时凭据、FreeRDP 使用标准输入。macOS Windows App 不提供密码接口，Terma 会改用已安装的 FreeRDP。",
-    "vnc_password_hint": "VNC 密码可选加密保存；保存后 Terma 会传给所选客户端，留空时才会在连接时询问。自动模式优先使用内置 TigerVNC，noVNC 需要在连接设置中手动选择。TigerVNC 原生剪贴板主要传输文本，图片同步请使用 Terma 内置 noVNC。",
+    "vnc_password_hint": "VNC 密码可选加密保存；保存后 Terma 会传给所选客户端，留空时才会在连接时询问。默认使用内置 noVNC；自动模式优先 TigerVNC Viewer，再回退到系统客户端。TigerVNC 原生剪贴板主要传输文本，图片同步请使用内置 noVNC。",
     "tags": "标签",
     "tags_example": "例如：办公 内网 图形桌面",
     "protocol_options": "{{protocol}} 选项",

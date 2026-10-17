@@ -24,7 +24,7 @@
     "clear_password": "Clear saved password",
     "rdp_password_consent": "I understand the risk and allow Terma to pass the saved password to the RDP client",
     "rdp_password_hint": "The RDP username and password may be left blank so the client can prompt. After you acknowledge the warning, Windows uses temporary credentials and FreeRDP uses standard input. Because macOS Windows App has no password interface, Terma uses an installed FreeRDP client instead.",
-    "vnc_password_hint": "A VNC password can be saved in encrypted form. Terma passes it to the selected client; leave it blank to be prompted when connecting. Automatic mode prefers bundled TigerVNC, while noVNC must be selected manually in Connection settings. Native TigerVNC clipboard support is mainly text, so use Terma's built-in noVNC for image sync.",
+    "vnc_password_hint": "A VNC password can be saved in encrypted form. Terma passes it to the selected client; leave it blank to be prompted when connecting. Built-in noVNC is the default; Auto tries TigerVNC Viewer before the system client. Native TigerVNC clipboard support is mainly text; use built-in noVNC for image sync.",
     "tags": "Tags",
     "tags_example": "For example: office intranet desktop",
     "protocol_options": "{{protocol}} options",

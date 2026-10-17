@@ -11484,6 +11484,7 @@ app.whenReady().then(async () => {
       renderRemoteProfileForm({...vnc,id:0,name:'',options:{}});
       const vncDefaultsToNoVnc=document.getElementById('remote_vnc_client_mode')?.value==='embedded'
         &&remoteProfileFormOptions('vnc').client_mode==='embedded'
+        &&document.getElementById('remoteDesktopCredentialNote')?.textContent.includes('默认使用内置 noVNC')
         &&!document.getElementById('remote_vnc_auto_sync_images')?.disabled;
       renderRemoteProfileForm({...vnc,options:{client_mode:'auto'}});
       const vncExplicitAutoPreserved=document.getElementById('remote_vnc_client_mode')?.value==='auto';
