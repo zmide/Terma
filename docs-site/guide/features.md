@@ -179,6 +179,7 @@ Terma 把远程连接、终端、文件、桌面和自动化运维放进同一�
 - Termux 与无图形 Linux 保留 Web/后台运行方式；桌面端与 Web 端共用连接、转发、命令片段和工作区数据。
 - 桌面端可使用内置 X Server、TigerVNC、noVNC 和 XQuartz；缺少可选组件时会给出探测、安装、离线安装和手动配置路径。
 - Web 模式使用静态前端和 Node.js 服务，可放在 Nginx、宝塔或其他反向代理后运行；生产部署建议启用 HTTPS、回环绑定和访问控制。
+- 外部 HTTPS 转发到内部 HTTP 时，可在安全设置或飞牛应用设置中关闭 HTTPS/HTTP 来源协议校验，无需填写可信代理 IP；仍校验域名、端口和登录凭据。
 - 构建、打包、原生依赖准备、运行时校验和多平台验证步骤见[构建与打包](/guide/build.html)与[Web 模式部署](/guide/deployment.html)。
 
 ## 继续阅读

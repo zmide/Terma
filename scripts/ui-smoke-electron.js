@@ -6,6 +6,7 @@ const { runMobileScenario } = require("./ui-smoke-mobile-scenario");
 const { runMobileWorkspaceUiScenario } = require("./mobile-workspace-ui-scenario");
 const { runFnosUpdatesUiScenario } = require("./fnos-updates-ui-scenario");
 const { runFnosDescriptionUiScenario } = require("./fnos-description-ui-scenario");
+const { runOriginProtocolUiScenario } = require("./origin-protocol-ui-scenario");
 const { runVisualRegression } = require("./ui-visual-regression");
 const { runIssueUiScenario } = require("./issue-ui-scenario");
 const { runManagedKeysUiScenario } = require("./managed-keys-ui-scenario");
@@ -72,6 +73,10 @@ app.whenReady().then(async () => {
   await window.loadURL(url);
   await new Promise(resolve => setTimeout(resolve, 1200));
   console.log("[ui-smoke] page loaded");
+  if (process.env.TERMA_UI_SCENARIO === "origin-protocol") {
+    await runOriginProtocolUiScenario(window);
+    clearTimeout(smokeWatchdog);app.exit(0);return;
+  }
   if (process.env.TERMA_UI_SCENARIO === "fnos-description") {
     await runFnosDescriptionUiScenario(window);
     clearTimeout(smokeWatchdog);
@@ -138,6 +143,7 @@ app.whenReady().then(async () => {
     await mobileNavigationWindow.loadURL(url);
     await runMobileWorkspaceUiScenario(mobileNavigationWindow);
     await runFnosUpdatesUiScenario(mobileNavigationWindow);
+    await runOriginProtocolUiScenario(mobileNavigationWindow);
     await runFnosDescriptionUiScenario(mobileNavigationWindow);
   } catch (error) { console.error(errors.join("\n")); throw error; }
   finally { mobileNavigationWindow.destroy(); }

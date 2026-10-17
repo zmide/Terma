@@ -4,7 +4,7 @@
     "description": "Terma has rejected this domain or IP address. Your password has not been checked yet.",
     "local_access": "Open Terma using an address that already works, usually the server's local IP address.",
     "allow_host": "In Settings > Security, add the exact domain or IP to Allowed Hosts. NAS packages can also provide this option in their system application settings.",
-    "proxy_hint": "For HTTPS through a reverse proxy, configure only the proxy's actual IP as trusted and forward the original protocol. Keep Web login enabled.",
+    "proxy_hint": "For HTTPS forwarding, configure the actual trusted proxy IP and original protocol, or turn off HTTPS/HTTP origin protocol checking for forwarding you control. Keep Web login enabled.",
     "listen_hint": "Listening addresses select the server's network interfaces. Allowed Hosts select the domain names and IP addresses accepted in browser requests. Configure them separately."
   },
   "generic": "The operation failed",
@@ -32,6 +32,9 @@
   "ssh_host_key_failed": "SSH host-key verification failed. Confirm whether the server fingerprint change is trusted.",
   "ssh_failed": "The SSH connection failed. Check the connection settings, network, and remote SSH service.",
   "backend": {
+    "origin_protocol_check_invalid": "HTTPS/HTTP origin protocol checking must be enabled or disabled.",
+    "request_origin_protocol_mismatch": "HTTPS/HTTP origin protocols differ. Use a working address to turn off protocol checking in Settings > Security, or configure a trusted proxy. NAS packages may also offer application settings.",
+    "request_origin_forbidden": "Request origin checking failed. Check Allowed Hosts, ports and HTTPS/HTTP origin protocol settings.",
     "ssh_key_passphrase_invalid": "Private-key passphrases must be at most 256 characters and cannot contain line breaks or null characters.",
     "ssh_key_name_invalid": "Use only letters, numbers, dots, hyphens and underscores; the name must not end with .pub.",
     "ssh_key_import_invalid": "Choose an SSH private-key file no larger than 1 MB.",

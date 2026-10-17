@@ -178,6 +178,8 @@ function renderSettings() {
           <option value="always" ${s.secure_cookie_mode === "always" ? "selected" : ""}>${esc(tr("settings:auto.cookie_always"))}</option>
           <option value="never" ${s.secure_cookie_mode === "never" ? "selected" : ""}>${esc(tr("settings:auto.cookie_never"))}</option>
         </select>
+        <label class="check-row"><input id="securityOriginProtocolCheck" type="checkbox" ${s.origin_protocol_check_enabled !== false ? "checked" : ""}> ${esc(tr("settings:auto.origin_protocol_check"))}</label>
+        <div class="muted">${esc(tr("settings:auto.origin_protocol_check_hint"))}</div>
         <label class="check-row"><input id="securityTrustedProxyEnabled" type="checkbox" data-change-action="security-local-direct-desktop-integration" ${s.trusted_proxy_enabled ? "checked" : ""}> ${esc(tr("settings:auto.trust_proxy"))}</label>
         <label>${esc(tr("settings:auto.trusted_proxy_ip"))}</label>
         <input id="securityTrustedProxyAddresses" value="${escAttr((s.trusted_proxy_addresses || []).join(", "))}" placeholder="${escAttr(tr("settings:auto.trusted_proxy_placeholder"))}">

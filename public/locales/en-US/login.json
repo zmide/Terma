@@ -8,6 +8,8 @@
   "hide_password": "Hide password",
   "submit": "Sign in",
   "failed": "Sign-in failed",
+  "protocol_mismatch": "The browser and backend use different HTTPS/HTTP protocols. Your password has not been checked. For HTTPS forwarding to HTTP, open Terma at a working address, then turn off “Check HTTPS/HTTP origin protocol” in Settings > Security. On fnOS, you can also use App Center > Terma > Application Settings.",
+  "origin_forbidden": "Request origin checking failed before your password was checked. Open Terma at a working address and check Allowed Hosts, ports and HTTPS/HTTP origin protocol in Settings > Security. NAS packages may also offer application settings.",
   "not_configured": "No Web password or access token has been configured",
   "invalid": "The password or token is incorrect",
   "temporarily_locked": "The password or token is incorrect. Sign-in is locked for {{seconds}} seconds",

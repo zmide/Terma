@@ -8,6 +8,8 @@
   "hide_password": "隐藏密码",
   "submit": "登录",
   "failed": "登录失败",
+  "protocol_mismatch": "浏览器与后端的 HTTPS/HTTP 协议不一致，尚未校验密码。若使用 HTTPS 转发到 HTTP，请通过可用地址进入 Terma“设置 → 安全”，关闭“校验 HTTPS/HTTP 来源协议”；飞牛也可在“应用中心 → Terma → 应用设置”中关闭。",
+  "origin_forbidden": "访问来源校验失败，尚未校验密码。请通过可用地址检查 Terma“设置 → 安全”中的允许域名、端口和 HTTPS/HTTP 来源协议；NAS 也可使用应用设置。",
   "not_configured": "尚未设置 Web 密码或访问 Token",
   "invalid": "密码或 Token 不正确",
   "temporarily_locked": "密码或 Token 不正确，登录已暂时锁定 {{seconds}} 秒",

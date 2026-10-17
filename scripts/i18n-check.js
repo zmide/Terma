@@ -694,6 +694,7 @@ assert.ok(zmodemFrontend.includes("function terminalZmodemViewText("), "ZMODEM l
 assert.equal(zmodemFrontend.includes("translatedTermaPhrase"), false, "ZMODEM live localization must not translate rendered user filenames or paths heuristically");
 const uiSmoke = read("scripts/ui-smoke-electron.js");
 assert.ok(uiSmoke.includes("runFnosUpdatesUiScenario(mobileNavigationWindow)"), "UI smoke must cover fnOS release notes and package links in both languages and themes");
+assert.ok(uiSmoke.includes("runOriginProtocolUiScenario(mobileNavigationWindow)"), "UI smoke must cover protocol settings and login errors in both languages and themes");
 assert.ok(uiSmoke.includes("runI18nScenario('fnos-managed-settings'"), "English UI smoke must cover fnOS managed update and listener controls");
 assert.ok(uiSmoke.includes("runI18nScenario('desktop-notification-toggle'"), "English UI smoke must exercise saved desktop notification toggles, including busy-label restoration");
 assert.match(uiSmoke, /\['title','aria-label','placeholder'\]/, "English UI smoke must inspect translatable attributes");

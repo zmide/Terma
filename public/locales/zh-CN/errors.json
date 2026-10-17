@@ -4,7 +4,7 @@
     "description": "Terma 拒绝了当前域名或 IP 地址，尚未进行密码校验。",
     "local_access": "先使用已经可以访问的地址打开 Terma，通常是运行设备的局域网 IP。",
     "allow_host": "在“设置 → 安全”的“允许的 Host”中添加完整域名或 IP。NAS 安装包也可以通过系统的应用设置提供此选项。",
-    "proxy_hint": "通过反向代理使用 HTTPS 时，只将实际代理 IP 加入可信代理，并正确转发原始协议；请保持 Web 登录保护。",
+    "proxy_hint": "通过 HTTPS 转发访问时，可配置实际可信代理 IP 和原始协议，或为你控制的转发入口关闭 HTTPS/HTTP 来源协议校验；请保持 Web 登录保护。",
     "listen_hint": "监听地址用于选择服务器的网卡；允许的 Host 用于校验浏览器使用的域名或 IP。这两项需要分别配置。"
   },
   "generic": "操作失败",
@@ -32,6 +32,9 @@
   "ssh_host_key_failed": "SSH 主机指纹校验失败，请确认服务器指纹变化是否可信",
   "ssh_failed": "SSH 连接失败，请检查连接配置、网络和远端 SSH 服务",
   "backend": {
+    "origin_protocol_check_invalid": "HTTPS/HTTP 来源协议校验必须为开启或关闭。",
+    "request_origin_protocol_mismatch": "HTTPS/HTTP 来源协议不一致。请通过可用地址进入“设置 → 安全”关闭协议校验，或配置可信代理；NAS 也可使用应用设置。",
+    "request_origin_forbidden": "访问来源校验失败，请检查允许的域名、端口和 HTTPS/HTTP 来源协议设置。",
     "ssh_key_passphrase_invalid": "私钥口令不能超过 256 个字符，且不能包含换行或空字符。",
     "ssh_key_name_invalid": "密钥名称只能包含字母、数字、点、横线和下划线，且不能以 .pub 结尾。",
     "ssh_key_import_invalid": "请选择不超过 1 MB 的 SSH 私钥文件。",

@@ -255,6 +255,7 @@ async function saveSecurityOptions() {
   const auth_mode = $("securityAuthMode").value;
   const lan_auth_enabled = auth_mode !== "off";
   const secure_cookie_mode = $("securitySecureCookieMode")?.value || "auto";
+  const origin_protocol_check_enabled = $("securityOriginProtocolCheck")?.checked !== false;
   const trusted_proxy_enabled = Boolean($("securityTrustedProxyEnabled")?.checked);
   const trusted_proxy_addresses = String($("securityTrustedProxyAddresses")?.value || "").split(/[\s,]+/).filter(Boolean);
   const local_direct_desktop_integration_enabled = Boolean($("securityLocalDirectDesktopIntegration")?.checked);
@@ -271,7 +272,7 @@ async function saveSecurityOptions() {
     confirm_unsafe = await confirmModal(tr("settings:security.disable_lan_password_confirm"), tr("settings:auto.high_risk"), tr("settings:security.confirm_disable"), tr("common:actions.cancel"), true);
     if (!confirm_unsafe) return;
   }
-  securitySettings = await api("/api/security", {method:"PUT", body:JSON.stringify({auth_mode, lan_auth_enabled, secure_cookie_mode, trusted_proxy_enabled, trusted_proxy_addresses, local_direct_desktop_integration_enabled, allowed_hosts, login_max_failures, login_window_seconds, login_lock_seconds, global_login_protection_enabled, global_login_max_failures, global_login_window_seconds, global_login_lock_seconds, confirm_unsafe})});
+  securitySettings = await api("/api/security", {method:"PUT", body:JSON.stringify({auth_mode, lan_auth_enabled, secure_cookie_mode, origin_protocol_check_enabled, trusted_proxy_enabled, trusted_proxy_addresses, local_direct_desktop_integration_enabled, allowed_hosts, login_max_failures, login_window_seconds, login_lock_seconds, global_login_protection_enabled, global_login_max_failures, global_login_window_seconds, global_login_lock_seconds, confirm_unsafe})});
   updateLocalDirectDesktopIntegrationPreview();
   notify(tr("settings:security.policy_saved"), "success");
 }

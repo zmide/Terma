@@ -88,7 +88,7 @@ const {
 } = require("./ssh");
 const { diagnoseSshError } = require("./ssh-diagnostics");
 const { createForwardReconfigurationService } = require("./services/forward-reconfiguration-service");
-const { publicErrorDetails } = require("./public-error");
+const { publicErrorDetails, publicErrorBody } = require("./public-error");
 const { inspectExtraArgs } = require("./ssh-command");
 const { deleteManagedKey, deployGeneratedPublicKey, generateSshKey, importManagedKey, listManagedKeys, managedKeyProperties, managedPublicKey, updateManagedKey } = require("./ssh-key-wizard");
 const { authorizeQuickConnectionId, createQuickTerminalTicket, revokeQuickTerminalTicket } = require("./quick-terminal");
@@ -166,7 +166,7 @@ const {
   requestAuthenticationBinding,
   readSecuritySettings,
   revokeDesktopBrowserGrant,
-  sameOrigin,
+  originRejectionCode,
   secureHeaders,
   securityDiagnostics,
   securitySettingsRevision,
@@ -350,7 +350,9 @@ function authorizedSftpConnectionId(req, value) {
 
 async function handleApi(req, res, pathname) {
   if (!hostAllowed(req)) return rejectHostRequest(req, res);
-  if (!sameOrigin(req)) return sendJson(res, { error: "Forbidden" }, 403);
+  const originFailure = originRejectionCode(req);
+  if (originFailure) return sendJson(res, publicErrorBody(originFailure,
+    originFailure === "request_origin_protocol_mismatch" ? "HTTPS/HTTP origin protocol mismatch" : "Request origin is not allowed"), 403);
   if (await handleLocalControlRoutes(req, res, pathname, {
     getDesktopIntegration, getNativeSftpDragTicket, hasShutdownToken,
     isAuthenticated, isDesktopRequest, isDirectLoopbackRequest, releaseNativeSftpDragTicket,
@@ -641,6 +643,8 @@ function requestHandler(req, res) {
 }
 
 function upgradeHandler(req, socket) {
+  // Peer resets can arrive during either rejection or the upgrade handshake.
+  socket.on("error", () => {});
   try {
     if (!hostAllowed(req) || !webSocketOriginAllowed(req) || !isAuthenticated(req)) return socket.destroy();
     const { pathname } = new URL(req.url, "http://terma.invalid");

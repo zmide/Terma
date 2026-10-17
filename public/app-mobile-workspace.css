@@ -1,20 +1,21 @@
 .mobile-workspace-tabs { display:none; }
 
 @media (max-width:760px), (hover:none) and (pointer:coarse) {
-  .mobile-workspace-tabs:not([hidden]) { display:flex; flex:1 1 auto; min-width:0; align-items:center; gap:4px; height:46px; overflow-x:auto; overflow-y:hidden; scrollbar-width:none; overscroll-behavior-x:contain; touch-action:pan-x; pointer-events:auto; }
+  .mobile-workspace-tabs:not([hidden]) { display:flex; flex:1 1 auto; min-width:0; align-items:center; gap:4px; height:44px; overflow-x:auto; overflow-y:hidden; scrollbar-width:none; overscroll-behavior-x:contain; touch-action:pan-x; pointer-events:auto; }
   .mobile-workspace-tabs::-webkit-scrollbar { display:none; }
   #mobileExplorerTabs:not([hidden]) { flex:0 0 54px; padding:4px 8px; border-bottom:1px solid var(--line); background:var(--panel); }
-  .mobile-workspace-tab { display:inline-flex; flex:0 0 auto; align-items:center; min-width:96px; max-width:200px; height:46px; padding:0 0 0 6px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--muted); font-size:12px; white-space:nowrap; }
+  .mobile-workspace-tab { display:inline-flex; flex:0 0 auto; align-items:center; min-width:96px; max-width:200px; height:38px; padding:0 0 0 6px; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--muted); font-size:12px; white-space:nowrap; }
   .mobile-workspace-tab-main { display:inline-flex; align-items:center; justify-content:flex-start; gap:5px; flex:1 1 auto; min-width:44px; height:44px; min-height:44px; padding:0 4px 0 0; border:0; border-radius:3px; background:transparent; color:inherit; font:inherit; box-shadow:none; }
   .mobile-workspace-tab-title { min-width:0; overflow:hidden; text-overflow:ellipsis; }
   .mobile-workspace-tab-close { display:inline-grid; flex:0 0 44px; width:44px; min-width:44px; height:44px; min-height:44px; padding:0; border:0; border-radius:3px; place-items:center; background:transparent; color:var(--text); font-size:18px; line-height:1; box-shadow:none; touch-action:manipulation; }
-  .mobile-workspace-tab-close:hover { background:var(--buttonHover); }
+  .mobile-workspace-tab-main:hover,
+  .mobile-workspace-tab-close:hover { background:linear-gradient(var(--buttonHover),var(--buttonHover)) center / 100% 36px no-repeat; }
   .mobile-workspace-tab-main > svg.lucide { width:14px; height:14px; flex:0 0 14px; }
   .mobile-workspace-tab .tab-connection-dot { width:6px; height:6px; flex:0 0 6px; }
   .mobile-workspace-tab.active { color:var(--text); border-color:color-mix(in srgb,var(--accent2) 55%,var(--line)); background:color-mix(in srgb,var(--accent2) 12%,var(--panel)); }
   .mobile-workspace-tab button:focus-visible { outline:2px solid var(--accent2); outline-offset:-2px; }
   .content.mobile-show > .mobile-back-bar,
-  .content.mobile-show.terminal-content > .mobile-back-bar { position:relative; flex:0 0 58px; width:100%; height:58px; padding:6px; gap:6px; border-bottom:1px solid var(--line); background:var(--panel); }
+  .content.mobile-show.terminal-content > .mobile-back-bar { position:relative; flex:0 0 50px; width:100%; height:50px; padding:6px; gap:6px; border-bottom:1px solid var(--line); background:var(--panel); }
   .content .topbar > .workspace-heading { padding-left:0; }
   .content .tabs-shell { display:none; }
   .terminal-toolbar .terminal-actions > button:not(.terminal-global-settings-button) { flex:0 0 30px; width:30px; min-width:30px; height:30px; min-height:30px; padding:0; display:inline-flex; align-items:center; justify-content:center; gap:0; }

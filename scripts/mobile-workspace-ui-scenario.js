@@ -72,14 +72,16 @@ async function runMobileWorkspaceUiScenario(window) {
           return document.activeElement===list.querySelector('.'+className+'[data-tab-key="mobile-ui-one"]');
         });
         const closeTargets=[...list.querySelectorAll('.mobile-workspace-tab-close')];
+        const tabFrames=[...list.querySelectorAll('.mobile-workspace-tab')].map(node=>node.getBoundingClientRect());
         const before=actions.scrollLeft;
         right.click();
         return {sameRow:Math.abs((back.top+back.height/2)-(nav.top+nav.height/2))<1&&nav.left>=back.right,
+          tabHeightMatchesBack:tabFrames.every(rect=>Math.abs(rect.height-back.height)<1&&Math.abs(rect.top-back.top)<1),
           switched,explorerVisible,reopened,noNewSessions:tabs.length===count&&terminalSessions.size===sessions,
           escaped:!list.querySelector('file')&&list.textContent.includes('Alpha <file>'),
           compact:rects.every(rect=>Math.abs(rect.width-30)<1&&Math.abs(rect.height-30)<1),
           aligned:rects.every(rect=>Math.abs(rect.top-left.top)<1&&Math.abs(rect.bottom-arrow.bottom)<1),
-          coordinates:{arrows:[left.top,left.height,arrow.top,arrow.height],buttons:rects.map(rect=>[rect.top,rect.height])},
+          coordinates:{back:[back.top,back.height],tabs:tabFrames.map(rect=>[rect.top,rect.height]),arrows:[left.top,left.height,arrow.top,arrow.height],buttons:rects.map(rect=>[rect.top,rect.height])},
           x11Visible:[x11,x11.querySelector('svg'),x11.querySelector('b')].every(node=>node.getBoundingClientRect().width>0&&node.getBoundingClientRect().height>0),
           closeVisible:closeTargets.length===2&&closeTargets.every(button=>{const rect=button.getBoundingClientRect();const main=button.parentElement.querySelector('.mobile-workspace-tab-main').getBoundingClientRect();return button.tagName==='BUTTON'&&rect.width>=44&&rect.height>=44&&main.right<=rect.left&&rect.right<=button.parentElement.getBoundingClientRect().right&&!button.parentElement.closest('button');}),
           focusPreserved,

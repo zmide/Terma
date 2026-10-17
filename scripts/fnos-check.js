@@ -103,6 +103,7 @@ async function main() {
   const settingsFile = path.join(env.TERMA_DATA_DIR, "security.json");
   const settings = JSON.parse(fs.readFileSync(settingsFile));
   assert.equal(settings.auth_mode, "always");
+  assert.equal(settings.origin_protocol_check_enabled, true);
   assert.equal(fs.readFileSync(settingsFile, "utf8").includes(password), false);
   const runtimeFile = path.join(env.TERMA_DATA_DIR, "runtime-settings.json");
   assert.deepEqual(JSON.parse(fs.readFileSync(runtimeFile)).listen_hosts, ["0.0.0.0"]);
@@ -112,7 +113,7 @@ async function main() {
     {wizard_new_web_password:password, wizard_new_web_password_confirm:"different"},
     {wizard_listen_hosts:"192.0.2.200"}, {wizard_listen_hosts:"192.168.31.0/24"},
     {wizard_allowed_hosts:"https://terma.example.com/path"}, {wizard_allowed_hosts:"*.example.com"},
-    {wizard_trusted_proxies:"0.0.0.0"}, {wizard_trusted_proxies:"192.0.2.0/24"}
+    {wizard_trusted_proxies:"0.0.0.0"}, {wizard_trusted_proxies:"192.0.2.0/24"}, {wizard_origin_protocol_check:"invalid"}
   ]) configure(env, "apply", fields, false);
   assert.equal(fs.readFileSync(settingsFile, "utf8"), before, "Invalid settings changed authentication");
   configure(env, "apply", {wizard_listen_hosts:"127.0.0.1", wizard_allowed_hosts:"terma.example.com", wizard_trusted_proxies:"127.0.0.1"});
@@ -130,6 +131,25 @@ async function main() {
   configure(env, "rollback");
   assert.equal(JSON.parse(fs.readFileSync(settingsFile)).password_hash, settings.password_hash);
   configure(env, "apply", {wizard_reset_network:"true"});
+  configure(env, "commit");
+  configure(env, "apply", {wizard_origin_protocol_check:"false"});
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile)).origin_protocol_check_enabled, false);
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile)).trusted_proxy_enabled, false, "Protocol compatibility must not require proxy trust");
+  configure(env, "commit");
+  configure(env, "apply", {});
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile)).origin_protocol_check_enabled, false, "Blank wizard must preserve protocol choice");
+  configure(env, "commit");
+  initialize(env, "upgrade");
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile)).origin_protocol_check_enabled, false, "Upgrade must preserve protocol choice");
+  configure(env, "apply", {wizard_origin_protocol_check:"true"});
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile)).origin_protocol_check_enabled, true);
+  configure(env, "rollback");
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile)).origin_protocol_check_enabled, false);
+  configure(env, "apply", {wizard_reset_network:"true", wizard_origin_protocol_check:"false"});
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile)).origin_protocol_check_enabled, false, "Explicit choice takes precedence over reset");
+  configure(env, "commit");
+  configure(env, "apply", {wizard_reset_network:"true"});
+  assert.equal(JSON.parse(fs.readFileSync(settingsFile)).origin_protocol_check_enabled, true, "Network reset restores strict protocol checking");
   configure(env, "commit");
   assert.equal(fs.existsSync(path.join(env.TERMA_DATA_DIR, "fnos-config-rollback.json")), false);
   initialize(env, "upgrade");
@@ -166,7 +186,7 @@ async function main() {
     assert.equal(preserved.password_salt,reinstalled.password_salt,"Upgrade changed the password salt");
   }
   const upgradeConfigurationBefore=fs.readFileSync(reinstallSecurity,"utf8");
-  configure(reinstallEnv,"apply",{TRIM_APP_STATUS:"UPGRADE",wizard_new_web_password:password,wizard_new_web_password_confirm:password,wizard_reset_network:"true"});
+  configure(reinstallEnv,"apply",{TRIM_APP_STATUS:"UPGRADE",wizard_new_web_password:password,wizard_new_web_password_confirm:password,wizard_reset_network:"true",wizard_origin_protocol_check:"false"});
   assert.equal(fs.readFileSync(reinstallSecurity,"utf8"),upgradeConfigurationBefore,"Upgrade reused stale configuration wizard values");
   const child = start(env, port);
   const base = `http://127.0.0.1:${port}`;
@@ -275,6 +295,9 @@ async function main() {
   console.log("fnOS browser API flow passed: key generation/import/properties/public/deletion, connection CRUD, SSH config import/export, snapshots and database backup");
   const auth = await (await request("/api/security")).json();
   assert.equal(auth.auth_mode, "always");
+  assert.equal((await request("/api/security", "PUT", {origin_protocol_check_enabled:false})).status, 200);
+  assert.equal((await (await request("/api/security")).json()).origin_protocol_check_enabled, false);
+  assert.equal((await request("/api/security", "PUT", {origin_protocol_check_enabled:true})).status, 200);
   assert.equal((await request("/api/security", "PUT", {auth_mode:"off", confirm_unsafe:true})).status, 400);
   assert.equal((await request("/api/desktop-settings", "PUT", {dataMode:"custom", customDataDir:temporary})).status, 403);
   assert.equal((await request("/api/storage/directories")).status, 403);
