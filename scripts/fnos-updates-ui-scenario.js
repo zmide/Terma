@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const {UPDATE_DOWNLOAD_ROUTES} = require("../dist/update-installer");
+const {BrowserWindow} = require("electron");
 
 async function fnosUpdatePageScenario(options) {
   const previous = {api,updateSettings,runtimeSettings,updateDownloadLinksProbe};
@@ -91,19 +92,24 @@ async function fnosUpdatePageScenario(options) {
 }
 
 async function runFnosUpdatesUiScenario(window) {
-  await window.webContents.executeJavaScript(`(async()=>{await window.termaI18nReady;while(window.workspaceRestorePending)await new Promise(resolve=>setTimeout(resolve,20));})()`);
   const results=[];
   for (const width of [390,1200]) for (const language of ['zh-CN','en-US']) for (const theme of ['light','dark']) {
-    window.setSize(width,844);
-    await new Promise(resolve=>setTimeout(resolve,80));
-    const options={width,language,theme,arch:theme==='light'?'x64':'arm64',routes:UPDATE_DOWNLOAD_ROUTES};
-    const metrics=await window.webContents.executeJavaScript(`(${fnosUpdatePageScenario.toString()})(${JSON.stringify(options)})`);
-    for (const [name,value] of Object.entries(metrics)) assert.equal(value,true,`${JSON.stringify(options)} ${name}: ${JSON.stringify(metrics)}`);
-    if(process.env.TERMA_UI_FNOS_UPDATES_PROOF_DIR){
-      fs.mkdirSync(process.env.TERMA_UI_FNOS_UPDATES_PROOF_DIR,{recursive:true});
-      fs.writeFileSync(path.join(process.env.TERMA_UI_FNOS_UPDATES_PROOF_DIR,`updates-${width}-${language}-${theme}.png`),(await window.webContents.capturePage()).toPNG());
+    const page=new BrowserWindow({show:false,width,height:844,webPreferences:{contextIsolation:true,backgroundThrottling:false,
+      partition:`fnos-updates-${width}-${language}-${theme}-${Date.now()}`,preload:path.join(__dirname,'ui-smoke-preload.js')}});
+    try {
+      await page.loadURL(window.webContents.getURL());
+      await page.webContents.executeJavaScript(`(async()=>{await window.termaI18nReady;while(window.workspaceRestorePending)await new Promise(resolve=>setTimeout(resolve,20));})()`);
+      const options={width,language,theme,arch:theme==='light'?'x64':'arm64',routes:UPDATE_DOWNLOAD_ROUTES};
+      const metrics=await page.webContents.executeJavaScript(`(${fnosUpdatePageScenario.toString()})(${JSON.stringify(options)})`);
+      for (const [name,value] of Object.entries(metrics)) assert.equal(value,true,`${JSON.stringify(options)} ${name}: ${JSON.stringify(metrics)}`);
+      if(process.env.TERMA_UI_FNOS_UPDATES_PROOF_DIR){
+        fs.mkdirSync(process.env.TERMA_UI_FNOS_UPDATES_PROOF_DIR,{recursive:true});
+        fs.writeFileSync(path.join(process.env.TERMA_UI_FNOS_UPDATES_PROOF_DIR,`updates-${width}-${language}-${theme}.png`),(await page.webContents.capturePage()).toPNG());
+      }
+      results.push({width,language,theme,arch:options.arch,...metrics});
+    } finally {
+      page.destroy();
     }
-    results.push({width,language,theme,arch:options.arch,...metrics});
   }
   console.log('fnOS updates UI passed',JSON.stringify(results));
 }
