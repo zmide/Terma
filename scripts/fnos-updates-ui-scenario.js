@@ -41,13 +41,16 @@ async function fnosUpdatePageScenario(options) {
     applyTheme(options.theme);
     await openSettingsSection('settings-about');
     showMobileWorkspace();
+    await refreshUpdateStatus(false);
     const settled=async (expectWarning=false) => {
       for(let attempt=0;attempt<100;attempt++) {
         const currentArea=$('updateCheckArea');
-        if (!updateStatusChecking&&currentArea?.querySelectorAll('.update-release-entry').length===2&&(!expectWarning||currentArea.querySelector('.warning'))) return;
+        const entries=[...currentArea?.querySelectorAll('.update-release-entry')||[]];
+        const notesReady=entries.length===2&&entries.every(entry=>entry.textContent.includes(options.language==='en-US'?'Improved file transfers.':'改进文件传输。'));
+        if (!updateStatusChecking&&notesReady&&currentArea?.querySelectorAll('.update-release-entry').length===2&&(!expectWarning||currentArea.querySelector('.warning'))) return;
         await new Promise(resolve=>setTimeout(resolve,20));
       }
-      throw new Error('fnOS update rendering timed out');
+      throw new Error('fnOS update rendering timed out: '+JSON.stringify({language:options.language,width:options.width,theme:options.theme,checking:updateStatusChecking,lang:document.documentElement.lang,text:$('updateCheckArea')?.textContent.slice(0,700)}));
     };
     await settled();
     const before=checks;
