@@ -23,4 +23,6 @@
 
 服务器或 Termux 建议运行 Web-only 模式，只需要 Node.js、npm、Git 和 OpenSSH。桌面专用能力会隐藏或降级，不影响 SSH、终端、SFTP 和转发等核心功能。
 
-飞牛包使用专用应用用户和官方 Node.js 22 运行时，入口为独立浏览器标签页，支持 SSH、SFTP、端口转发和内置 noVNC。浏览器文件标签可选择当前电脑或应用中心授权的 NAS 目录；桌面专属的原生拖出、原生本地文件管理和定时同步不包含在此包中。[下载 x64 / ARM64 FPK](/guide/download.html)，或查看[飞牛部署指南](/guide/deployment.html#飞牛-fnos)。ARM64 产物仍需对应设备验收。
+飞牛包使用专用应用用户和官方 Node.js 22 运行时，入口为独立浏览器标签页，支持 SSH、SFTP、浏览器本地文件管理、端口转发和内置 noVNC。本地文件标签可选择浏览器授权的电脑文件夹或应用中心授权的 NAS 目录，详见[文件管理](/guide/sftp.html#分屏与任务)。
+
+原生拖出到系统文件管理器、调用本机图形客户端与定时 SFTP 同步仍属于桌面专用能力，不包含在飞牛包中。[下载 x64 / ARM64 FPK](/guide/download.html)，或查看[飞牛部署指南](/guide/deployment.html#飞牛-fnos)。ARM64 产物仍需对应设备验收。

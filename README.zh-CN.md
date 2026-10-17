@@ -141,7 +141,7 @@ Electron 桌面端 ─┐
 | Termux / 无图形 Linux | 不建议 | 支持 | 源码运行 |
 | 飞牛 fnOS NAS | 不提供 | 支持 | x64/ARM64 原生 FPK；参见[飞牛打包说明](packaging/fnos/README.md) |
 
-在飞牛应用中心手动安装[最新 Release](https://github.com/zmide/Terma/releases/latest) 中与 NAS 架构对应的 FPK，并设置独立的 Terma Web 密码。SSH、SFTP、端口转发和内置 noVNC 均通过浏览器使用；原生桌面客户端和定时 SFTP 同步不包含在此包中。配置与目录授权见[飞牛部署指南](https://terma.zmide.com/guide/deployment.html#%E9%A3%9E%E7%89%9B-fnos)。
+在飞牛应用中心手动安装[最新 Release](https://github.com/zmide/Terma/releases/latest) 中与 NAS 架构对应的 FPK，并设置独立的 Terma Web 密码。SSH、SFTP、本地文件管理、端口转发和内置 noVNC 均通过浏览器使用。本地文件标签可选择浏览器授权的电脑文件夹或应用中心授权的 NAS 目录。原生桌面客户端和定时 SFTP 同步不包含在此包中。配置与目录授权见[飞牛部署指南](https://terma.zmide.com/guide/deployment.html#%E9%A3%9E%E7%89%9B-fnos)。
 
 ## 运行要求
 

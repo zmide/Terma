@@ -141,7 +141,7 @@ The desktop app is an Electron container around the same Web UI and Node.js serv
 | Termux / headless Linux | Not recommended | Supported | Run from source |
 | fnOS NAS | Not available | Supported | Native x64/ARM64 FPKs; see [fnOS packaging](packaging/fnos/README.md) |
 
-On fnOS, install the FPK for your NAS architecture from the [latest release](https://github.com/zmide/Terma/releases/latest) through App Center and set a separate Terma Web password. SSH, SFTP, port forwarding, and embedded noVNC run in the browser; native desktop clients and scheduled SFTP sync are unavailable. See the [fnOS deployment guide](https://terma.zmide.com/guide/deployment.html#%E9%A3%9E%E7%89%9B-fnos) for setup and folder authorization.
+On fnOS, install the FPK for your NAS architecture from the [latest release](https://github.com/zmide/Terma/releases/latest) through App Center and set a separate Terma Web password. SSH, SFTP, local file management, port forwarding, and embedded noVNC run in the browser. Local Files tabs can use browser-authorized computer folders or NAS folders authorized in App Center. Native desktop clients and scheduled SFTP sync are unavailable. See the [fnOS deployment guide](https://terma.zmide.com/guide/deployment.html#%E9%A3%9E%E7%89%9B-fnos) for setup and folder authorization.
 
 ## Requirements
 
