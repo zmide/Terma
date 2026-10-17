@@ -32,7 +32,7 @@ Terma 是一个面向桌面端和自托管 Web 的远程连接工作台。它把
 | Termux / 无图形 Linux | 不建议 | 支持 |
 | 飞牛 fnOS（x64 / ARM64） | 不提供 | 支持 |
 
-飞牛提供原生 FPK，在应用中心手动安装后通过浏览器访问，支持 SSH、SFTP、端口转发和内置 noVNC。桌面专属的原生客户端与定时 SFTP 同步不包含在飞牛包中。安装包见[版本下载](/guide/download.html)，密码、目录授权与网络设置见[飞牛部署指南](/guide/deployment.html#飞牛-fnos)。
+飞牛提供原生 FPK，在应用中心手动安装后通过浏览器访问，支持 SSH、SFTP、本地文件管理、端口转发和内置 noVNC。本地文件标签可选择浏览器授权的电脑文件夹或应用中心授权的 NAS 目录。桌面专属的原生客户端与定时 SFTP 同步不包含在飞牛包中。安装包见[版本下载](/guide/download.html)，密码、目录授权与网络设置见[飞牛部署指南](/guide/deployment.html#飞牛-fnos)。
 
 ## 下一步
 
