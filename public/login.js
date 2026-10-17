@@ -45,6 +45,8 @@ function localizedLoginError(value) {
   if (code === "auth_login_not_configured") return loginTr("not_configured", {}, source);
   if (code === "auth_login_invalid") return loginTr("invalid", {}, source);
   if (code === "auth_login_failed") return loginTr("failed", {}, source);
+  if (code === "request_origin_protocol_mismatch") return loginTr("protocol_mismatch", {}, source);
+  if (code === "request_origin_forbidden" || source === "Forbidden") return loginTr("origin_forbidden", {}, source);
   let match = source.match(/登录尝试过多，请在\s*(\d+)\s*秒后重试/);
   if (match) return loginTr("too_many_attempts", {seconds:match[1]}, source);
   match = source.match(/密码或 Token 不正确，登录已暂时锁定\s*(\d+)\s*秒/);

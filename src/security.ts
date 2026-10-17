@@ -8,6 +8,8 @@ const { LOGIN_PROTECTION_LIMITS, LoginRateLimiter, SessionStore } = require("./a
 const { localDirectDesktopIntegrationDecision, normalizeActualListenHosts } = require("./desktop-integration-policy");
 const { isFnosDistribution, assertDistributionSecurityOptions } = require("./infrastructure/distribution-policy");
 const { ensurePrivateDirectory, ensurePrivateFile } = require("./storage-permissions");
+const { requestOriginFailure } = require("./infrastructure/request-origin-policy");
+const { publicError } = require("./public-error");
 
 const SECURITY_FILE = path.join(DATA_DIR, "security.json");
 ensurePrivateDirectory(DATA_DIR);
@@ -86,6 +88,7 @@ function defaultSettings() {
     encryption_legacy_check: "",
     notification_mode: "on",
     secure_cookie_mode: "auto",
+    origin_protocol_check_enabled: true,
     trusted_proxy_enabled: false,
     trusted_proxy_addresses: [],
     local_direct_desktop_integration_enabled: false,
@@ -212,6 +215,7 @@ function readSecuritySettings() {
       lan_auth_enabled:isFnosDistribution() || authMode !== "off",
       ...normalizeEncryptionState(stored),
       secure_cookie_mode: ["auto", "always", "never"].includes(String(stored?.secure_cookie_mode)) ? String(stored.secure_cookie_mode) : "auto",
+      origin_protocol_check_enabled: stored?.origin_protocol_check_enabled !== false,
       local_direct_desktop_integration_enabled: !isFnosDistribution() && stored?.local_direct_desktop_integration_enabled === true,
       trusted_proxy_addresses: normalizeTrustedProxyAddresses(stored?.trusted_proxy_addresses),
       allowed_hosts: normalizeAllowedHosts(stored?.allowed_hosts),
@@ -246,6 +250,7 @@ function publicSecuritySettings(req = null) {
     encryption_version: settings.encryption_version,
     notification_mode: ["on", "muted", "off"].includes(String(settings.notification_mode)) ? settings.notification_mode : "on",
     secure_cookie_mode: settings.secure_cookie_mode,
+    origin_protocol_check_enabled: settings.origin_protocol_check_enabled,
     trusted_proxy_enabled: Boolean(settings.trusted_proxy_enabled),
     trusted_proxy_addresses: settings.trusted_proxy_addresses,
     local_direct_desktop_integration_enabled: Boolean(settings.local_direct_desktop_integration_enabled),
@@ -350,6 +355,12 @@ function updateSecurityOptions(data) {
   if (typeof data.allow_disable_lan_auth !== "undefined") next.allow_disable_lan_auth = Boolean(data.allow_disable_lan_auth);
   if (["on", "muted", "off"].includes(String(data.notification_mode || ""))) next.notification_mode = String(data.notification_mode);
   if (["auto", "always", "never"].includes(String(data.secure_cookie_mode || ""))) next.secure_cookie_mode = String(data.secure_cookie_mode);
+  if (Object.prototype.hasOwnProperty.call(data, "origin_protocol_check_enabled")) {
+    if (typeof data.origin_protocol_check_enabled !== "boolean") {
+      throw publicError("ORIGIN_PROTOCOL_CHECK_INVALID", "HTTPS/HTTP protocol checking must be enabled or disabled.", {}, 400);
+    }
+    next.origin_protocol_check_enabled = data.origin_protocol_check_enabled;
+  }
   if (typeof data.trusted_proxy_enabled !== "undefined") next.trusted_proxy_enabled = Boolean(data.trusted_proxy_enabled);
   if (typeof data.trusted_proxy_addresses !== "undefined") next.trusted_proxy_addresses = normalizeTrustedProxyAddresses(data.trusted_proxy_addresses);
   if (typeof data.local_direct_desktop_integration_enabled !== "undefined") {
@@ -394,6 +405,7 @@ function resetWebAccessSecurity() {
     token_hash: "",
     token_salt: "",
     secure_cookie_mode: "auto",
+    origin_protocol_check_enabled: true,
     trusted_proxy_enabled: false,
     trusted_proxy_addresses: [],
     local_direct_desktop_integration_enabled: false,
@@ -501,7 +513,12 @@ function isRequestSecure(req) {
   const settings = readSecuritySettings();
   if (settings.secure_cookie_mode === "always") return true;
   if (settings.secure_cookie_mode === "never") return false;
-  return requestProtocol(req) === "https:";
+  if (requestProtocol(req) === "https:") return true;
+  // Keep HTTPS login cookies Secure when an administrator allows an HTTP
+  // upstream without granting trust to forwarding headers or proxy addresses.
+  return settings.origin_protocol_check_enabled === false
+    && typeof req.headers.origin === "string" && req.headers.origin.startsWith("https://")
+    && originRejectionCode(req) === null;
 }
 
 function authRequired(req) {
@@ -803,26 +820,18 @@ function hostAllowed(req) {
   return isLocalHostAuthority(req);
 }
 
-function sameOrigin(req, options: any = {}) {
-  if (!hostAllowed(req)) return false;
+function originRejectionCode(req, options: any = {}) {
+  if (!hostAllowed(req)) return "request_origin_forbidden";
   const origin = req.headers.origin;
-  if (!origin) return options.websocket ? (isDirectLoopbackRequest(req) || hasExplicitCredential(req)) : true;
-  if (String(origin).trim().toLowerCase() === "null") return false;
-  try {
-    const parsed = new URL(String(origin));
-    if (!["http:", "https:"].includes(parsed.protocol)) return false;
-    if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) return false;
-    const protocol = requestProtocol(req);
-    if (parsed.protocol !== protocol) return false;
-    const originHost = parseHostAuthority(parsed.host);
-    const requestHostValue = requestHost(req);
-    if (!originHost || !requestHostValue) return false;
-    const originPort = originHost.port || (parsed.protocol === "https:" ? 443 : 80);
-    const requestPort = requestHostValue.port || (protocol === "https:" ? 443 : 80);
-    return originHost.hostname === requestHostValue.hostname && originPort === requestPort;
-  } catch {
-    return false;
+  if (!origin) {
+    return !options.websocket || isDirectLoopbackRequest(req) || hasExplicitCredential(req) ? null : "request_origin_forbidden";
   }
+  return requestOriginFailure({origin, host:requestHost(req), protocol:requestProtocol(req),
+    checkProtocol:readSecuritySettings().origin_protocol_check_enabled, parseAuthority:parseHostAuthority});
+}
+
+function sameOrigin(req, options: any = {}) {
+  return originRejectionCode(req, options) === null;
 }
 
 function webSocketOriginAllowed(req) {
@@ -913,6 +922,7 @@ module.exports = {
   resetWebAccessSecurity,
   revokeDesktopBrowserGrant,
   sameOrigin,
+  originRejectionCode,
   webSocketOriginAllowed,
   secureHeaders,
   securityDiagnostics,

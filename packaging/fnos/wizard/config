@@ -41,10 +41,22 @@
       },
       {
         "type": "select",
+        "field": "wizard_origin_protocol_check",
+        "label": "校验 HTTPS/HTTP 来源协议 / Check HTTPS/HTTP origin protocol",
+        "initValue": "keep",
+        "helpText": "默认开启。外网 HTTPS 转发到后端 HTTP 导致登录失败时可关闭，无需填写可信代理 IP；仍校验域名、端口和密码。仅用于你控制的转发入口。 / Disable for HTTPS-to-HTTP forwarding without a trusted proxy IP. Domain, port and password checks remain. Use only with forwarding you control.",
+        "options": [
+          {"label": "保持现有设置 / Keep current setting", "value": "keep"},
+          {"label": "开启校验（默认） / Enabled (default)", "value": "true"},
+          {"label": "关闭校验，允许 HTTPS 转发到 HTTP / Disabled: allow HTTPS forwarding to HTTP", "value": "false"}
+        ]
+      },
+      {
+        "type": "select",
         "field": "wizard_reset_network",
         "label": "恢复默认网络设置 / Reset network settings",
         "initValue": "false",
-        "helpText": "恢复监听全部 IPv4 网卡，并清空允许域名和可信代理；本次填写的值会在恢复后应用。 / Reset listeners, Allowed Hosts and trusted proxies, then apply values entered above.",
+        "helpText": "恢复监听全部 IPv4 网卡，清空允许域名和可信代理，并开启协议校验；本次选择和填写的值会在恢复后应用。 / Reset listeners, Allowed Hosts and trusted proxies, and enable protocol checking; then apply the choices and values above.",
         "options": [
           {
             "label": "保持现有网络设置 / Keep current network settings",

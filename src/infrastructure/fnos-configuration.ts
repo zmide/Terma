@@ -23,6 +23,11 @@ export function validateFnosConfiguration(input: Record<string, unknown>) {
   const local = new Set(["0.0.0.0", "127.0.0.1"]);
   for (const entries of Object.values(os.networkInterfaces())) for (const entry of entries || []) if (entry.family === "IPv4") local.add(entry.address);
   const resetNetwork = input.reset_network === true || input.reset_network === "true";
+  const protocolChoice = String(input.origin_protocol_check ?? "keep").trim();
+  if (!["", "keep", "true", "false"].includes(protocolChoice)) {
+    throw new Error("协议校验请选择保持、开启或关闭 / Choose keep, enabled or disabled for protocol checking");
+  }
+  const checkProtocol = protocolChoice === "false" ? false : protocolChoice === "true" || resetNetwork ? true : existing.origin_protocol_check_enabled;
   const listenHosts = String(input.listen_hosts ?? "").trim()
     ? normalizeListenHosts(input.listen_hosts, null)
     : resetNetwork ? ["0.0.0.0"] : (current.listen_hosts || ["0.0.0.0"]);
@@ -40,6 +45,7 @@ export function validateFnosConfiguration(input: Record<string, unknown>) {
     password,
     runtime:{...current, listen_hosts:listenHosts, listen_port:8088},
     security:{allowed_hosts:allowedHosts, trusted_proxy_addresses:trustedProxies, trusted_proxy_enabled:trustedProxies.length > 0,
+      origin_protocol_check_enabled:checkProtocol,
       auth_mode:"always", lan_auth_enabled:true, allow_disable_lan_auth:false,
       local_direct_desktop_integration_enabled:false, manage_user_ssh_keys_enabled:false}
   };

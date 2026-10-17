@@ -9,6 +9,7 @@
   "files": [
     "src/services/ssh-key-public-service.ts",
     "src/infrastructure/fnos-configuration.ts",
+    "src/infrastructure/request-origin-policy.ts",
     "src/services/access-error-page-service.ts",
     "src/auth-protection.ts",
     "src/database-transfer.ts",
