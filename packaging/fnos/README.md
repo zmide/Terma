@@ -64,6 +64,6 @@ npm run dist:fnos -- --pack-staging /path/to/Terma-<version>-fnos-arm64.staging.
 
 SSH、终端、SFTP、浏览器 VNC 和转发等使用现有 Web 能力。浏览器本地文件标签可选择当前电脑或 NAS 授权目录；电脑端取决于浏览器授权与安全上下文，NAS 端使用专用应用账号和飞牛授权路径。安装包声明 `terma/files` 共享目录，并开放应用中心的额外目录授权。Electron 原生拖出、原生图形客户端、串口设备访问及定时 SFTP 同步不包含在此包中。数据属于一个应用实例，不提供 NAS 多用户之间的独立凭据隔离。
 
-局域网可直接访问。自行使用 HTTPS 反向代理时，需要配置准确的 Allowed Hosts 和可信代理，并保留 Host、Origin 与转发协议。此包尚未接入飞牛统一网关的 Unix Socket 与业务权限。
+局域网可直接访问。自行使用 HTTPS 反向代理时，配置准确的 Allowed Hosts，并保留浏览器的 Host 和 Origin。HTTPS 转发到 HTTP 且协议校验保持开启时，填写实际可信代理 IP 并正确转发原始协议；也可关闭来源协议校验，无需填写可信代理 IP。此包尚未接入飞牛统一网关的 Unix Socket 与业务权限。
 
 官方文档：<https://developer.fnnas.com/docs/examples/native>、<https://developer.fnnas.com/docs/cli/fnpack>。
