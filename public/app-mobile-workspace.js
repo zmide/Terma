@@ -24,11 +24,18 @@ function renderMobileWorkspaceTabs() {
     list.setAttribute("aria-label", label);
     if (list.innerHTML !== markup) {
       const previousScroll = list.scrollLeft;
+      const focused = list.contains(document.activeElement) ? document.activeElement.closest("button[data-tab-key]") : null;
+      const focusIdentity = focused ? {key:focused.dataset.tabKey, action:focused.dataset.action} : null;
       list.innerHTML = markup;
       list.scrollLeft = previousScroll;
+      if (focusIdentity) {
+        const replacement = [...list.querySelectorAll("button[data-tab-key]")].find(button => button.dataset.tabKey === focusIdentity.key && button.dataset.action === focusIdentity.action);
+        replacement?.focus({preventScroll:true});
+      }
     }
     if (list.hidden || !list.getBoundingClientRect().width) continue;
-    const active = list.querySelector('[aria-selected="true"]')?.closest(".mobile-workspace-tab");
+    const active = (list.contains(document.activeElement) ? document.activeElement.closest(".mobile-workspace-tab") : null)
+      || list.querySelector('[aria-selected="true"]')?.closest(".mobile-workspace-tab");
     if (!active) continue;
     const bounds = list.getBoundingClientRect();
     const item = active.getBoundingClientRect();

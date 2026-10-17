@@ -30,7 +30,7 @@ npm run dist:fnos -- --pack-staging /path/to/Terma-<version>-fnos-arm64.staging.
 
 在飞牛应用中心手动上传 `.fpk`，选择安装位置，并两次输入至少 12 个字符的 Web 登录密码。也可以使用 `appcenter-cli install-fpk <文件> --volume <存储空间编号> --env <私有向导配置文件>`；密码字段为 `wizard_web_password` 和 `wizard_web_password_confirm`，使用后应删除，不能提交到仓库。
 
-现有实例升级请通过应用中心上传新版 FPK。`install-fpk` 遇到已安装应用可能只返回已安装提示，不执行覆盖升级；`install-local` 是开发重装入口，会先卸载，不能用于保留数据的生产升级。必须以实际安装版本和文件摘要确认结果。
+现有实例升级请通过应用中心上传新版 FPK。命令行安装对已安装应用和数据的处理可能随 fnOS 版本不同；使用前应检查目标设备的命令帮助，并在测试设备确认 `install-fpk` 与开发安装命令 `install-local` 的行为。不要仅凭命令返回成功判断升级完成，必须核对实际安装版本和文件摘要；生产升级前将完整备份导出到应用目录之外。
 
 保留数据后重新安装时，使用本次安装向导填写的 Web 密码，已有连接、密钥和网络设置继续保留。正常升级保留当前密码，不使用安装向导重置密码。
 

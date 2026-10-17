@@ -63,7 +63,15 @@ async function runMobileWorkspaceUiScenario(window) {
         const left=document.querySelector('.terminal-actions-scroll-left').getBoundingClientRect();
         const arrow=right.getBoundingClientRect();
         const x11=actions.querySelector('.x11-icon');
-        const closeButtons=[...list.querySelectorAll('.mobile-workspace-tab-close')];
+        const focusPreserved=['mobile-workspace-tab-main','mobile-workspace-tab-close'].every(className=>{
+          const target=list.querySelector('.'+className+'[data-tab-key="mobile-ui-one"]');
+          target.focus();
+          const tab=tabs.find(tab=>tab.key==='mobile-ui-one');
+          tab.connectionStatus=tab.connectionStatus==='connected'?'connecting':'connected';
+          renderMobileWorkspaceTabs();
+          return document.activeElement===list.querySelector('.'+className+'[data-tab-key="mobile-ui-one"]');
+        });
+        const closeTargets=[...list.querySelectorAll('.mobile-workspace-tab-close')];
         const before=actions.scrollLeft;
         right.click();
         return {sameRow:Math.abs((back.top+back.height/2)-(nav.top+nav.height/2))<1&&nav.left>=back.right,
@@ -73,7 +81,8 @@ async function runMobileWorkspaceUiScenario(window) {
           aligned:rects.every(rect=>Math.abs(rect.top-left.top)<1&&Math.abs(rect.bottom-arrow.bottom)<1),
           coordinates:{arrows:[left.top,left.height,arrow.top,arrow.height],buttons:rects.map(rect=>[rect.top,rect.height])},
           x11Visible:[x11,x11.querySelector('svg'),x11.querySelector('b')].every(node=>node.getBoundingClientRect().width>0&&node.getBoundingClientRect().height>0),
-          closeVisible:closeButtons.length===2&&closeButtons.every(button=>button.tagName==='BUTTON'&&button.getBoundingClientRect().width>=24&&button.getBoundingClientRect().right<=button.parentElement.getBoundingClientRect().right&&!button.parentElement.closest('button')),
+          closeVisible:closeTargets.length===2&&closeTargets.every(button=>{const rect=button.getBoundingClientRect();const main=button.parentElement.querySelector('.mobile-workspace-tab-main').getBoundingClientRect();return button.tagName==='BUTTON'&&rect.width>=44&&rect.height>=44&&main.right<=rect.left&&rect.right<=button.parentElement.getBoundingClientRect().right&&!button.parentElement.closest('button');}),
+          focusPreserved,
           fontOrder:minus.right<=readout.left&&readout.right<=plus.left&&Math.abs(minus.top-readout.top)<1,
           toolbarScroll:actions.scrollLeft>before,withinViewport:document.documentElement.scrollWidth<=innerWidth,
           label:list.getAttribute('aria-label')};

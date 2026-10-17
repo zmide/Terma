@@ -40,7 +40,7 @@ async function runFnosDescriptionUiScenario(window) {
     }
     console.log('fnOS introduction UI passed: four offline images, paired mobile screenshots, both themes and widths');
   } finally {
-    if(path.dirname(temporary)!==fs.realpathSync(os.tmpdir())||!path.basename(temporary).startsWith('terma-fnos-description-'))throw new Error('Invalid introduction preview workspace');
+    if(fs.realpathSync(path.dirname(temporary))!==fs.realpathSync(os.tmpdir())||!path.basename(temporary).startsWith('terma-fnos-description-'))throw new Error('Invalid introduction preview workspace');
     fs.rmSync(temporary,{recursive:true,force:true});
   }
 }
