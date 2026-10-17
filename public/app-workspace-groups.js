@@ -229,6 +229,7 @@ function workspaceGroupBarElement() {
 }
 
 function renderWorkspaceGroupBar() {
+  if (typeof renderMobileWorkspaceTabs === "function") renderMobileWorkspaceTabs();
   const bar = workspaceGroupBarElement();
   if (!bar) return;
   captureCurrentWorkspaceGroup();

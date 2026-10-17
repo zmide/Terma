@@ -56,6 +56,13 @@ try {
     assert.equal(db.getRemoteProfile(id).protocol, protocol);
   }
   assert.equal(db.getRemoteProfile(ids.get("vnc")).options.client_mode, "system");
+  for (const [mode,expected] of [[undefined,"embedded"],["invalid","embedded"],["auto","auto"],["system","system"],["bundled","bundled"],["embedded","embedded"]]) {
+    const id=db.insertRemoteProfile({name:"vnc-default-check",protocol:"vnc",host:"127.0.0.1",options:mode===undefined?{}:{client_mode:mode}});
+    assert.equal(db.getRemoteProfile(id).options.client_mode,expected);
+    const copy=db.duplicateRemoteProfile(id);
+    assert.equal(db.getRemoteProfile(copy.id).options.client_mode,expected);
+    db.deleteRemoteProfile(copy.id);db.deleteRemoteProfile(id);
+  }
   assert.equal(db.getRemoteProfile(ids.get("vnc")).options.cursor_mode, "hide");
   assert.equal(db.getRemoteProfile(ids.get("vnc")).options.display_mode, "original");
   db.updateRemoteProfile(ids.get("vnc"), {options:{client_mode:"embedded", cursor_mode:"show", display_mode:"resize", quality:9}});

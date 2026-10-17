@@ -31,6 +31,8 @@ Terma 是一个面向桌面端和自托管 Web 的远程连接工作台，用于
   </tr>
 </table>
 
+<p align="center"><strong>移动工作区标签与终端工具栏</strong><br><img src=".github/assets/screenshots/zh-CN/mobile-terminal.jpg" alt="Terma 移动终端，可切换会话和关闭标签" width="320"></p>
+
 ## 项目特点
 
 - 一套数据同时服务 Electron 桌面端、浏览器和移动端 Web，不需要维护两份连接配置。
@@ -63,7 +65,7 @@ Terma 是一个面向桌面端和自托管 Web 的远程连接工作台，用于
 - 可选择多个终端组成同步组，在其中任意终端输入都会同步到整组；多行、危险命令和隐藏输入会额外确认或自动暂停。
 - 标签可提示新输出、命令完成和连接断开；长任务在后台结束后可发送通知，并支持按连接或标签静音。
 - 可将终端选中路径或当前目录直接在 SFTP 中打开，`Ctrl+Shift+T` 可恢复最近关闭的终端或 SFTP 标签。
-- 移动端在终端底部提供 Esc、Tab、Home、End、PgUp、PgDn、方向键、Ctrl 组合键和命令输入栏。
+- 移动端在终端底部提供 Esc、Tab、Home、End、PgUp、PgDn、方向键、Ctrl 组合键和命令输入栏；返回按钮旁和连接列表顶部均可切换已打开的标签。
 - 终端全局设置可自定义快捷键栏，添加普通按键、功能键或 Ctrl/Alt/Shift 组合，调整名称、启用状态和顺序；保存后直接更新现有终端，无需重连。
 
 ### SFTP
@@ -84,7 +86,7 @@ Terma 是一个面向桌面端和自托管 Web 的远程连接工作台，用于
 ### 远程桌面与其他协议
 
 - SSH 与其他协议使用独立活动入口；RDP、VNC、XDMCP、FTP/FTPS、Telnet 和串口可单独分组、搜索和新增，也可在新增 SSH 时或其更多菜单中按协议生成单个或全部默认配置。
-- RDP 使用系统原生客户端，由 SSH 生成的配置会按目标地址直接打开并由客户端询问桌面账号；macOS 未安装 Windows App 时可使用 Microsoft 官方独立 PKG，支持提前放入下载目录后离线安装。VNC 自动优先使用随包提供的 TigerVNC Viewer，再回退到内置 noVNC 工作区，最后回退系统客户端；三种方式都可以单独选择。VNC 支持可选加密保存密码，并在工作区内完成控制、双向剪贴板自动同步、全屏和重连；鼠标默认按远端平台自动选择显示策略，也可在 VNC 工具栏手动显示或隐藏本地光标。权限受限时仍可手动收发剪贴板，密码错误时可重新输入并更新保存密码。
+- RDP 使用系统原生客户端，由 SSH 生成的配置会按目标地址直接打开并由客户端询问桌面账号；macOS 未安装 Windows App 时可使用 Microsoft 官方独立 PKG，支持提前放入下载目录后离线安装。VNC 默认使用内置 noVNC 工作区，也可选择内置 TigerVNC Viewer、系统客户端或自动模式；自动模式优先 TigerVNC Viewer，再回退到系统客户端，已有连接明确保存的选择继续保留。VNC 支持可选加密保存密码，并在工作区内完成控制、双向剪贴板自动同步、全屏和重连；鼠标默认按远端平台自动选择显示策略，也可在 VNC 工具栏手动显示或隐藏本地光标。权限受限时仍可手动收发剪贴板，密码错误时可重新输入并更新保存密码。
 - Windows 桌面包内置并管理 X Server；macOS 由 Terma 管理 XQuartz 的启动、停止和 XDMCP 窗口，Linux 复用当前图形桌面并使用 Xephyr。X11 入口会通过 SSH 自动识别远端已安装的终端、工具、文件管理器、浏览器和桌面会话，保存密码的连接也可直接启动，并支持自定义程序；macOS 可探测 XQuartz、xauth、sshd 和 `XAuthLocation`，缺少组件时可在程序内安装官方 XQuartz。
 - Linux 桌面管理可通过 SSH 识别 Debian、Ubuntu、RHEL、Fedora、Arch、openSUSE 等发行版，探测并安装或卸载常见桌面环境；卸载后会按核心启动程序重新验证，不会默认清理无关的自动依赖。XDMCP、桌面管理、RDP 会话修复、SSH X11 转发和远端 X11/XQuartz 安装可使用仅限本次操作的管理员密码、私钥或 SSH Agent，凭据不会保存。X Server 管理可检查、开启或关闭远端 SSH X11 转发，启用 X11 的终端连接会直接显示实际转发结果。
 - Windows、Linux 和 macOS 桌面版均支持 XDMCP 直接查询、间接查询和局域网广播；Windows 使用随包组件，Linux 使用 Xephyr，macOS 使用 XQuartz 提供的 Xephyr。Terma 可通过同主机 SSH 连接探测桌面会话、显示管理器和 UDP 177，管理 LightDM 和仍保留 XDMCP 的旧版 GDM；GDM 50 及以上或 Debian/Ubuntu 的 SDDM 可经确认切换为 LightDM，并只撤销自身添加的 UFW/firewalld 规则。XDMCP 不加密，只应在可信局域网使用。
@@ -141,7 +143,7 @@ Electron 桌面端 ─┐
 | Termux / 无图形 Linux | 不建议 | 支持 | 源码运行 |
 | 飞牛 fnOS NAS | 不提供 | 支持 | x64/ARM64 原生 FPK；参见[飞牛打包说明](packaging/fnos/README.md) |
 
-在飞牛应用中心手动安装[最新 Release](https://github.com/zmide/Terma/releases/latest) 中与 NAS 架构对应的 FPK，并设置独立的 Terma Web 密码。SSH、SFTP、本地文件管理、端口转发和内置 noVNC 均通过浏览器使用。本地文件标签可选择浏览器授权的电脑文件夹或应用中心授权的 NAS 目录。原生桌面客户端和定时 SFTP 同步不包含在此包中。配置与目录授权见[飞牛部署指南](https://terma.zmide.com/guide/deployment.html#%E9%A3%9E%E7%89%9B-fnos)。
+在飞牛应用中心手动安装[最新 Release](https://github.com/zmide/Terma/releases/latest) 中与 NAS 架构对应的 FPK，并设置独立的 Terma Web 密码。SSH、SFTP、本地文件管理、端口转发和内置 noVNC 均通过浏览器使用。本地文件标签可选择浏览器授权的电脑文件夹或应用中心授权的 NAS 目录。“设置 → 关于”提供版本检查、更新日志和匹配架构的 FPK 直连、加速下载与测速，下载后通过应用中心手动升级。原生桌面客户端和定时 SFTP 同步不包含在此包中。配置与目录授权见[飞牛部署指南](https://terma.zmide.com/guide/deployment.html#%E9%A3%9E%E7%89%9B-fnos)。
 
 ## 运行要求
 

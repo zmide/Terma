@@ -239,7 +239,7 @@ async function main() {
       size:redirectBody.length,
       digest:digest(redirectBody)
     };
-    for (const redirectStatus of [302, 307]) {
+    for (const [redirectStatus,redirectHost] of [[302,"objects.githubusercontent.com"],[307,"release-assets.githubusercontent.com"]]) {
       const seen = [];
       const redirectInstaller = new UpdateInstaller(path.join(root, `redirect-${redirectStatus}`), {
         platform:"win32",
@@ -247,9 +247,9 @@ async function main() {
         probeBytes:64 * 1024,
         fetch: async url => {
           const current = String(url);
-          if (current.startsWith("https://objects.githubusercontent.com/")) return response(redirectBody);
+          if (current.startsWith(`https://${redirectHost}/`)) return response(redirectBody);
           seen.push(current);
-          return redirectResponse("https://objects.githubusercontent.com/terma/redirect-fixture.exe", redirectStatus);
+          return redirectResponse(`https://${redirectHost}/terma/redirect-fixture.exe`, redirectStatus);
         }
       });
       const redirected = await redirectInstaller.download(release(redirectAsset));

@@ -243,7 +243,7 @@ function vncConnectionHelpMarkup(profile, platform="", serviceAvailable=false, d
   const listenerName = listenerProcess
     ? (listenerProcess.match(/(?:^|\/)\b(Xtigervnc|Xvnc|x11vnc|wayvnc|gnome-remote-desktop)\b/i)?.[1] || tr("remote:vnc_status.listener_process", {defaultValue:"VNC 监听进程"}))
     : "";
-  const clientMode = String(profile.options?.client_mode || "auto");
+  const clientMode = normalizedVncClientMode(profile.options);
   const embedded = clientMode === "embedded";
   const bundled = clientMode === "bundled";
   const automatic = clientMode === "auto";
@@ -1266,7 +1266,7 @@ async function launchRemoteDesktop(id, key="", button=null, clientModeOverride="
     if (!profile) throw new Error(tr("remote:vnc_ui.detached_profile_missing", {defaultValue:"远程连接不存在"}));
     const effectiveClientMode = ["auto", "bundled", "embedded", "system"].includes(String(clientModeOverride))
       ? String(clientModeOverride)
-      : String(profile.options?.client_mode || "auto");
+      : normalizedVncClientMode(profile.options);
     const automaticVnc = profile.protocol === "vnc" && effectiveClientMode === "auto";
     const temporaryVncPassword = profile.protocol === "vnc" && temporaryCredentials && Object.prototype.hasOwnProperty.call(temporaryCredentials, "password")
       ? String(temporaryCredentials.password || "")
@@ -1314,7 +1314,7 @@ async function launchRemoteDesktop(id, key="", button=null, clientModeOverride="
       }
     }
     const launchPayload = {};
-    if (effectiveClientMode !== String(profile.options?.client_mode || "auto")) launchPayload.client_mode = effectiveClientMode;
+    if (effectiveClientMode !== normalizedVncClientMode(profile.options)) launchPayload.client_mode = effectiveClientMode;
     if (temporaryVncPassword) launchPayload.vnc_password = temporaryVncPassword;
     const result = await api(`/api/remote-profiles/${id}/launch`, {
       method:"POST",

@@ -769,7 +769,9 @@
     "reset_done": "Theme settings restored to defaults"
   },
   "updates": {
-    "fnos_managed": "Upgrade Terma through fnOS App Center or install a newer Terma FPK package.",
+    "fnos_managed": "Download the FPK for your device architecture, then use Manual Install in fnOS Application Center to upgrade and retain existing data. This page only checks versions and shows release notes; it does not install updates automatically.",
+    "fnos_download_fpk": "Download fnOS FPK",
+    "fnos_no_asset": "No FPK matching this device architecture was found for this release. Check the release page for fnOS packages.",
     "fnos_listener_managed": "The fnOS package manages the listening address and port.",
     "reading_version": "Reading the current version",
     "checking": "Checking for updates",

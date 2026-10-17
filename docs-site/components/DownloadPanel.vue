@@ -5,7 +5,7 @@ type ReleaseAsset = { name: string; size?: number; digest?: string }
 type ReleaseInfo = { tag_name: string; name?: string; published_at?: string; assets?: ReleaseAsset[] }
 
 const repository = 'zmide/Terma'
-const fallbackTag = 'v1.7.10'
+const fallbackTag = 'v1.8.0'
 const channel = ref<'accelerated' | 'direct'>('accelerated')
 const platform = ref<'windows' | 'macos' | 'linux' | 'fnos'>('windows')
 const architecture = ref<'x64' | 'arm64'>('x64')
