@@ -48,7 +48,7 @@
   "devDependencies": {
     "@types/node": "^26.6.5",
     "electron": "^44.7.0",
-    "electron-builder": "^26.15.3",
+    "electron-builder": "^26.18.0",
     "node-gyp": "^13.1.0",
     "typescript": "^7.0.2",
     "typescript-legacy": "npm:typescript@6.0.3"
