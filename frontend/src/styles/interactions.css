@@ -1,0 +1,108 @@
+/* Product interaction rules shared by Web and Electron. Registry styles stay intact. */
+.terma-vue-root :is(button,input,select,textarea,[class*="-card"],[class*="-panel"],[class*="-menu"],[class*="-popover"]) { box-shadow:none !important; }
+.terma-vue-root :is(button,[class*="-card"],[class*="-panel"],[class*="-menu"],[class*="-popover"]) { background-image:none !important; backdrop-filter:none !important; }
+.terma-vue-root {
+  --tile-button-outline-hover-shadow: none;
+  --tile-button-outline-shadow: none;
+  --tile-button-outline-hover-background: color-mix(in srgb, var(--text) 5%, var(--panel));
+  --tile-button-outline-hover-color: var(--text);
+}
+.terminal-toolbar.terma-vue-root[data-theme='light'] {
+  --accent: #16825f;
+  --muted: #687782;
+  --tile-button-outline-hover-shadow: none;
+  --tile-button-outline-shadow: none;
+}
+.terminal-toolbar.terma-vue-root[data-theme='dark'] {
+  --accent: #46c2a8;
+  --muted: #9aa7ad;
+  --tile-button-outline-hover-shadow: none;
+  --tile-button-outline-shadow: none;
+}
+.terma-vue-root.terma-zmodem-root[data-theme] {
+  --primary-button-color: var(--tile-brand);
+  --accent: var(--tile-text-success);
+  --accent2: var(--tile-brand);
+  --danger: var(--tile-text-danger);
+  --field: var(--tile-surface-base);
+  --line: var(--tile-line);
+  --muted: var(--tile-text-subtle);
+  --panel: var(--tile-surface-elevated);
+  --panel2: var(--tile-surface-recessed);
+  --text: var(--tile-text-default);
+  --warn: var(--tile-text-warning);
+  --tile-button-height: auto;
+  --tile-button-gap: 6px;
+  --tile-button-padding-inline: 10px;
+  --tile-button-padding-block: 7px;
+  --tile-button-radius: 4px;
+  --tile-button-font-family: inherit;
+  --tile-button-font-size: inherit;
+  --tile-button-line-height: inherit;
+  --tile-button-outline-border-width: 1px;
+  --tile-button-outline-color: var(--tile-text-default);
+  --tile-button-outline-hover-background: var(--tile-tint);
+  --tile-button-outline-hover-color: var(--tile-text-default);
+  --tile-button-outline-shadow: none;
+}
+.terma-zmodem-root .terma-button { font-weight: 400; }
+.terma-zmodem-root .terma-button.primary { color: #fff; background: var(--accent2); border-color: var(--accent2); }
+.terma-zmodem-root .terma-button.icon-button { width: 34px; min-width: 34px; height: 34px; min-height: 34px; padding: 0; }
+.terma-zmodem-root .terma-button:disabled { opacity: .55; }
+button {
+  transition-property: background-color, border-color, color;
+  transition-duration: 120ms;
+}
+button:focus:not(:focus-visible) { outline: none; box-shadow: none; }
+.terma-vue-root button.terma-button {
+  transition: none;
+}
+.password-input-control button.password-visibility-toggle.terma-button {
+  height: calc(100% - 2px);
+  min-height: 0;
+}
+.terma-vue-root.terma-notification-root {
+  --tile-button-height: auto;
+  --tile-button-radius: 4px;
+  --tile-button-font-family: inherit;
+  --tile-button-font-size: 11px;
+  --tile-button-line-height: 1.4;
+  --tile-button-outline-color: var(--text);
+}
+.terma-notification-root button.terma-button {
+  color: var(--text);
+  font-weight: 400;
+}
+.terma-notification-root button.terma-button.danger {
+  color: var(--danger);
+  --tile-button-outline-hover-color: var(--danger);
+}
+.terma-notification-root button.terma-button.icon-button {
+  min-width: 28px;
+  height: 28px;
+}
+.terma-vue-root button.terma-button:hover:not(:disabled),
+.terma-vue-root button.terma-button:active:not(:disabled) {
+  box-shadow: none;
+  transform: none;
+}
+button:focus-visible, .terma-vue-root button.terma-button:focus-visible {
+  outline: 2px solid var(--blue, #1677ff);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+.activity button.active,
+.activity button.active:hover:not(:disabled),
+.mobile-tabs button.active,
+.mobile-tabs button.active:hover:not(:disabled),
+.terma-shell-root.activity button.terma-button.active,
+.terma-shell-root.activity button.terma-button.active:hover:not(:disabled) {
+  color: var(--blue, #1677ff);
+  background: color-mix(in srgb, var(--blue, #1677ff) 12%, var(--panel));
+}
+.terma-vue-root button.terma-button.primary:hover:not(:disabled),
+button.primary:hover:not(:disabled) {
+  color: #fff;
+  background: color-mix(in srgb, var(--primary-button-color, var(--accent)) 88%, #000);
+  border-color: color-mix(in srgb, var(--primary-button-color, var(--accent)) 88%, #000);
+}

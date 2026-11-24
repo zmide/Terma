@@ -219,12 +219,12 @@ async function configureVncServerForProfile(profile, data: any = {}) {
   };
 }
 
-async function inspectVncClipboardHelperForProfile(profile) {
+async function inspectVncClipboardHelperForProfile(profile, repair = true) {
   clearVncClipboardCapabilityCache();
   return inspectVncClipboardHelper(profile, {
     getConnection,
     listConnections,
-    repairManagementConnection:(item, connectionId) => repairRemoteProfileManagementConnection(item.id, connectionId),
+    repairManagementConnection:repair ? (item, connectionId) => repairRemoteProfileManagementConnection(item.id, connectionId) : undefined,
     runSshCommandForConnection
   });
 }
@@ -236,7 +236,7 @@ async function configureVncClipboardHelperForProfile(profile, data: any = {}) {
   const inspectionProfile = requestedConnectionId > 0
     ? {...profile, options:{...(profile.options || {}), source_ssh_connection_id:requestedConnectionId}}
     : profile;
-  const before = await inspectVncClipboardHelperForProfile(inspectionProfile);
+  const before = await inspectVncClipboardHelperForProfile(inspectionProfile, action !== "guide");
   if (action === "guide") return vncClipboardHelperGuideResult(before);
   const uninstalling = action === "uninstall";
   if (before.platform === "macos") throw new Error(uninstalling

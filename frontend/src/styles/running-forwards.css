@@ -1,0 +1,32 @@
+.terma-running-root[data-theme] { color:var(--text); --muted:var(--tile-text-subtle); --accent:var(--tile-text-success); --accent2:var(--tile-text-link); --primary-button-color:var(--tile-brand); }
+.terma-running-root .running-tools .primary { background:var(--tile-brand); border-color:var(--tile-brand); color:white; }
+.terma-running-root .running-forward-view { min-width:0; }
+.terma-running-root .running-overview { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:0; padding:8px 0; border-bottom:1px solid var(--line); }
+.terma-running-root .running-overview>span { border:0; border-radius:0; background:transparent; min-width:0; padding:6px 2px; }
+.terma-running-root .running-overview .running-overview-label { color:var(--muted); font-size:12px; white-space:normal; overflow-wrap:anywhere; }
+.terma-running-root .running-overview .reconnecting>strong { color:var(--warn); }
+.terma-running-root .running-overview .failed>strong { color:var(--danger); }
+.terma-running-root .running-search { margin:var(--explorer-gap) var(--explorer-inset); }
+.terma-running-root .running-forward-list { padding:0 8px; }
+.terma-running-root .forward-running-row { border:0; border-bottom:1px solid var(--line); border-radius:0; padding:12px 0; background:transparent; display:flex; flex-direction:column; gap:8px; min-width:0; }
+.terma-running-root .running-forward-main { display:flex; flex-direction:column; gap:5px; align-items:stretch; justify-content:flex-start; text-align:left; width:100%; min-width:0; padding:4px; border:0; background:transparent; border-radius:3px; }
+.terma-running-root .running-forward-main:hover { background:var(--buttonHover); }
+.terma-running-root .running-forward-title { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+.terma-running-root .running-forward-title strong { overflow-wrap:anywhere; white-space:normal; overflow:visible; }
+.terma-running-root .running-status { font-size:12px; color:var(--accent); }
+.terma-running-root .running-status.failed,.terma-running-root .forward-error-detail { color:var(--danger); }
+.terma-running-root .running-status.reconnecting { color:var(--warn); }
+.terma-running-root :is(.running-mode,.conn-meta,.running-no-url) { font-size:12px; color:var(--muted); overflow-wrap:anywhere; white-space:normal; }
+.terma-running-root :is(.running-forward-url,.forward-error-detail) { overflow-wrap:anywhere; white-space:pre-wrap; font-size:12px; }
+.terma-running-root .running-forward-url { color:var(--accent2); }
+.terma-running-root .running-actions { display:flex; flex-wrap:wrap; justify-content:flex-start; gap:5px; min-width:0; }
+.terma-running-root .running-actions .terma-button { justify-content:flex-start; }
+.terma-running-root .running-actions :is(.open-forward-link,.forward-error-log-link) { width:auto; max-width:100%; }
+.terma-running-root .running-actions :is(button,a) { min-height:30px; box-shadow:none; background-image:none; }
+.terma-running-root .running-actions .icon-button { width:30px; min-width:30px; padding:5px; display:inline-flex; justify-content:center; }
+.terma-running-root .open-forward-link { display:inline-flex; align-items:center; gap:5px; border:1px solid var(--line); border-radius:4px; padding:4px 8px; color:var(--text); text-decoration:none; }
+.terma-running-root .running-error { margin:8px; color:var(--danger); overflow-wrap:anywhere; }
+.terma-running-root svg { flex:none; width:16px; height:16px; }
+@media(max-width:760px){.terma-running-root .running-actions :is(button,a){min-height:40px;}.terma-running-root .running-actions .icon-button{width:40px;min-width:40px;}}
+
+.terma-vue-root.terma-running-root .running-tools button.danger:not(:hover,:focus-visible) { color:var(--tile-text-danger); background:transparent; border-color:transparent; }

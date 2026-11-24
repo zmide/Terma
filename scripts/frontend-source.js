@@ -1,106 +1,42 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+const LEGACY_BUNDLE = "public/app-legacy-adapters.js";
+const LEGACY_INPUTS = Object.freeze([
+]);
+const legacyInputNames = new Set(LEGACY_INPUTS);
+
+function frontendSourcePath(file) {
+  return path.posix.join(legacyInputNames.has(file) ? "frontend/legacy" : "public", file);
+}
+
+function frontendJavaScriptSources(root) {
+  const publicSources = fs.readdirSync(path.join(root, "public"), {withFileTypes:true})
+    .filter(entry => entry.isFile() && /\.js$/i.test(entry.name))
+    .map(entry => path.posix.join("public", entry.name));
+  return [...publicSources.filter(file => file !== LEGACY_BUNDLE), ...LEGACY_INPUTS.map(frontendSourcePath)];
+}
+
+function legacyBundleSource(root) {
+  return "// Built from frontend/legacy. Edit the individual source files.\n" + LEGACY_INPUTS.map(file => {
+    const relative = frontendSourcePath(file);
+    const source = fs.readFileSync(path.join(root, relative), "utf8").replace(/\r\n/g, "\n");
+    return `// ${relative}\n${source}\n;\n`;
+  }).join("\n");
+}
+
 const FRONTEND_DOMAINS = Object.freeze({
-  docking: [
-    "app-workspace-groups.js",
-    "app-workspace-chrome.js",
-    "app-mobile-workspace.js",
-    "app-terminal-toolbar-scroll.js",
-    "app-docking.js",
-    "app-workspace-drag.js",
-    "app-workspace-persistence.js"
-  ],
+  docking: [],
   settings: [
-    "app-settings-core.js",
-    "app-theme-settings.js",
-    "app-settings-cache.js",
-    "app-settings-storage.js",
-    "app-settings-runtime.js",
-    "app-settings-integrations.js",
-    "app-settings.js",
-    "app-settings-fnos-updates.js",
-    "app-settings-updates.js",
-    "app-settings-security.js"
+    "app-theme-settings.js"
   ],
-  logs: ["app-logs.js", "app-log-viewer.js", "app-log-maintenance.js"],
-  connections: [
-    "app-connections-list.js",
-    "app-connection-terminal.js",
-    "app-connection-validation.js",
-    "app-connection-form.js",
-    "app-connection-health.js",
-    "app-connections.js",
-    "app-quick-connect.js"
-  ],
+  logs: [],
+  connections: [],
   terminal: [
-    "app-terminal-core.js",
-    "app-terminal-output.js",
-    "app-terminal-zmodem.js",
-    "app-terminal-shortcut-config.js",
-    "app-terminal-shortcut-settings.js",
-    "app-terminal-settings.js",
-    "app-terminal-startup.js",
-    "app-terminal-ai-render.js",
-    "app-terminal-ai-mcp.js",
-    "app-terminal-ai-layout.js",
-    "app-terminal-ai.js",
-    "app-terminal-ai-actions.js",
-    "app-terminal-ai-tasks.js",
-    "app-terminal-keys.js",
-    "app-terminal.js",
-    "app-terminal-command-tracking.js",
-    "app-ssh-credentials.js",
-    "app-terminal-image-paste.js"
-  ],
-  sftp: [
-    "app-sftp-core.js",
-    "app-sftp-columns.js",
-    "app-sftp-diff.js",
-    "app-sftp-open.js",
-    "app-sftp.js",
-    "app-sftp-svg-source.js",
-    "app-sftp-editor.js",
-    "app-sftp-preview.js",
-    "app-sftp-generated-tasks.js",
-    "app-sftp-drag-payload.js",
-    "app-sftp-drag.js",
-    "app-sftp-operations.js",
-    "app-sftp-rename.js",
-    "app-sftp-transfer.js",
-    "app-sftp-menus.js",
-    "app-sftp-task-center-layout.js",
-    "app-sftp-tasks.js",
-    "app-sftp-recycle.js"
-  ],
-  productivity: [
-    "app-sftp-sync.js",
-    "app-sftp-automations.js",
-    "app-external-tools.js",
-    "app-command-palette.js",
-    "app-command-snippets.js",
-    "app-terminal-quick-commands.js",
-    "app-named-workspaces.js",
-    "app-terminal-productivity.js",
-    "app-productivity.js"
-  ],
-  remote: [
-    "app-desktop-integration.js",
-    "app-remote.js",
-    "app-linux-desktop.js",
-    "app-remote-profiles.js",
-    "app-remote-rdp.js",
-    "app-remote-xdmcp.js",
-    "app-vnc-core.js",
-    "app-vnc-clipboard.js",
-    "app-vnc-management.js",
-    "app-vnc.js",
-    "app-vnc-window.js",
-    "app-remote-credentials.js",
-    "app-remote-ftp.js",
-    "app-remote-terminal.js",
-    "app-x11.js"
-  ]
+      ],
+  sftp: [],
+  productivity: [],
+  remote: []
 });
 
 function indexScriptFiles(root, options = {}) {
@@ -108,24 +44,51 @@ function indexScriptFiles(root, options = {}) {
   const files = [...html.matchAll(/<script\s+src="\/([^"?]+\.js)(?:\?[^"#]*)?"/g)]
     .map(match => match[1])
     .filter(file => !file.startsWith("vendor/"));
-  return files
+  const entries = files
     .filter(file => options.includeBootstrap || file !== "csp-bootstrap.js")
     .map(file => path.posix.join("public", file));
+  return options.expandLegacy
+    ? entries.flatMap(file => file === LEGACY_BUNDLE ? LEGACY_INPUTS.map(frontendSourcePath) : [file])
+    : entries;
 }
 
 function readFrontendFiles(root, files) {
-  return files.map(file => fs.readFileSync(path.join(root, "public", file), "utf8")).join("\n");
+  return files.map(file => fs.readFileSync(path.join(root, frontendSourcePath(file)), "utf8")).join("\n");
 }
 
 function readFrontendDomain(root, domain) {
+  if(domain==="utilities")return ["frontend/src/shared/browser-ui.ts","frontend/src/shared/theme-runtime.ts","frontend/src/features/connections/identity-labels.ts","frontend/src/features/settings/encryption-guard.ts","frontend/src/shared/expanded-groups.ts","frontend/src/shared/i18n/ui-phrase.ts","frontend/src/shared/action-menu.ts","frontend/src/features/efficiency/notification-actions.ts","frontend/src/shared/html-escape.ts","frontend/src/shared/api/public-errors.ts","frontend/src/shared/api/workspace-request.ts","frontend/src/shared/ui/icon-service.ts","frontend/src/shared/form-controls.ts","frontend/src/shared/ui-action-service.ts","frontend/src/shared/ui-snapshot-service.ts","frontend/src/shared/clipboard-service.ts","frontend/src/shared/viewport-service.ts","frontend/src/entries/about-embed.ts"]
+    .map(file=>require("typescript-legacy").transpileModule(fs.readFileSync(path.join(root,file),"utf8"),{compilerOptions:{target:9,module:99}}).outputText).join("\n");
   const files = FRONTEND_DOMAINS[domain];
   if (!files) throw new Error(`未知前端领域：${domain}`);
+  if(domain==="terminal")return [
+    "terminal-page","terminal-surface-workspace","terminal-transport-workspace",
+    "terminal-input-workspace","terminal-input-actions",
+    "terminal-image-workspace","terminal-connection-runtime","terminal-authentication-workspace",
+    "terminal-drop-workspace","terminal-engine-view","terminal-metadata"
+  ].map(name=>require("typescript-legacy").transpileModule(fs.readFileSync(path.join(root,"frontend/src/features/terminal",name+".ts"),"utf8"),
+    {compilerOptions:{target:9,module:99}}).outputText).join("\n");
   return readFrontendFiles(root, files);
 }
 
 module.exports = {
+  LEGACY_BUNDLE,
+  LEGACY_INPUTS,
+  frontendSourcePath,
+  frontendJavaScriptSources,
+  legacyBundleSource,
   FRONTEND_DOMAINS,
   indexScriptFiles,
   readFrontendDomain,
   readFrontendFiles
+};
+
+module.exports.frontendExportSource=function(file,name){
+ const ts=require('typescript-legacy'),source=fs.readFileSync(file,'utf8'),tree=ts.createSourceFile(file,source,99,true);
+ for(const node of tree.statements){
+  if(ts.isFunctionDeclaration(node)&&node.name?.text===name)return node.getText(tree);
+  if(ts.isVariableStatement(node))for(const declaration of node.declarationList.declarations)
+    if(declaration.name.getText(tree)===name)return declaration.getText(tree);
+ }
+ throw new Error('Missing actual typed export '+name+' in '+file);
 };

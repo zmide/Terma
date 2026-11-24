@@ -1,0 +1,566 @@
+/* Terma flat visual contract: one product-wide surface policy for every
+   desktop, browser, mobile, modal, drawer and migrated view. */
+html.flat-ui {
+  --chrome-hover:color-mix(in srgb,var(--text) 13%,transparent);
+  --floating-surface-radius:8px;
+  --floating-surface-line:color-mix(in srgb,var(--text) 19%,var(--panel));
+  --terma-frosted-surface-opacity:100%;
+  --terma-frosted-toolbar-opacity:100%;
+  --terma-frosted-saturation:1;
+  --terma-frosted-backdrop-blur:0px;
+  --terma-frosted-toolbar-blur:0px;
+  --terma-liquid-highlight-opacity:0%;
+  --terma-liquid-highlight-alpha:0;
+  --terma-liquid-shadow-alpha:0;
+  --terma-liquid-motion-alpha:0;
+}
+
+/* Every operation area uses the activity surface, including scoped Vue roots. */
+html.flat-ui .left-pane,
+html.flat-ui .left-pane [data-theme] {
+  --sidebar:var(--activity);
+}
+html.flat-ui .mobile-tabs,
+html.flat-ui .left-pane,
+html.flat-ui .left-pane :is(.brand,.sidebar,.explorer-tools) {
+  background:var(--activity);
+}
+
+html.flat-ui :is(.brand .side-actions,.terminal-actions-scroll-shell,.terminal-actions,.workspace-quick-actions) button:hover:not(:disabled),
+html.flat-ui :is(.brand > .operation-pane-expand,.workspace-quick-connect-button,.workspace-quick-actions-more-button):hover:not(:disabled),
+html.flat-ui .sftp-task-center-button:hover:not(:disabled,[aria-expanded="true"]) {
+  background-color:var(--chrome-hover);
+  border-color:transparent;
+}
+
+html.flat-ui .brand .side-actions > button:hover:not(:disabled,[aria-pressed="true"]) { color:var(--text); }
+html.flat-ui .workspace-quick-actions :is(.quick-panel-button,.sftp-automation-quick-button):hover { color:var(--accent2); }
+html.flat-ui .workspace-quick-actions .terminal-session-manager-quick-button:hover { color:var(--accent); }
+
+html.flat-ui :is(.terminal-actions,.sftp-toolbar-actions) .local-files-open-button {
+  border-color:transparent;
+  background-color:transparent;
+  box-shadow:none;
+}
+
+html.flat-ui :is(.terminal-actions,.sftp-toolbar-actions) .local-files-open-button:hover:not(:disabled) {
+  background-color:var(--chrome-hover);
+}
+
+html.flat-ui .sftp-task-center {
+  --task-center-join-surface:var(--panel);
+  --task-center-join-line:var(--line);
+}
+
+html.flat-ui .sftp-task-center .sftp-task-center-button[aria-expanded="true"] {
+  color:var(--accent2);
+  background:var(--task-center-join-surface);
+  border-color:var(--task-center-join-line);
+  border-bottom-color:transparent;
+  border-radius:4px 4px 0 0;
+}
+
+html.flat-ui .sftp-task-center .sftp-task-center-button.is-failed[aria-expanded="true"] { color:var(--danger); }
+
+html.flat-ui .sftp-task-center:has(.sftp-task-center-button[aria-expanded="true"])::after {
+  content:"";
+  position:absolute;
+  z-index:73;
+  inset:calc(50% + var(--workspace-header-control-height) / 2 - 2px) 0 0;
+  border-inline:1px solid var(--task-center-join-line);
+  background:var(--task-center-join-surface);
+  pointer-events:none;
+}
+
+html.flat-ui .sftp-task-center .sftp-task-center-drawer { top:calc(100% - 1px); }
+html.flat-ui .sftp-task-center .sftp-task-center-drawer::after { background:var(--task-center-join-surface); }
+
+html.flat-ui .workspace :is(.settings-panel,.batch-page,.exchange-page) {
+  margin:0;
+  border:0;
+  background:transparent;
+}
+
+html.flat-ui .workspace .settings-panel .settings-grid > section {
+  padding-inline:0;
+  border:0;
+  border-block-start:1px solid var(--line);
+  border-radius:0;
+  background:transparent;
+}
+
+html.flat-ui :is(.terminal-settings-tabs,.sftp-task-center-tabs,.workspace-group-tabs) {
+  --joined-tab-surface:var(--panel);
+  border-block-end:0;
+  background-color:color-mix(in srgb,var(--text) 4%,var(--joined-tab-surface));
+  box-shadow:inset 0 -1px var(--line);
+}
+
+html.flat-ui .workspace-group-tabs { --joined-tab-surface:var(--bg); }
+
+html.flat-ui :is(.terminal-settings-tabs,.sftp-task-center-tabs,.workspace-group-tabs) > button[role="tab"] {
+  position:relative;
+  border:1px solid transparent;
+  border-block-end:0 !important;
+  border-radius:4px 4px 0 0;
+  background:transparent;
+  box-shadow:none;
+}
+
+html.flat-ui :is(.terminal-settings-tabs,.sftp-task-center-tabs,.workspace-group-tabs) > button[role="tab"]:hover:not([aria-selected="true"]) {
+  color:var(--text);
+  background:var(--chrome-hover);
+}
+
+html.flat-ui :is(.terminal-settings-tabs,.sftp-task-center-tabs,.workspace-group-tabs) > button[role="tab"][aria-selected="true"] {
+  border-color:var(--line);
+  border-block-start-color:var(--accent2);
+  color:var(--text);
+  background:var(--joined-tab-surface);
+}
+
+html.flat-ui .terminal-settings-tabs > button::after { content:none; }
+
+html.flat-ui .terminal-ai-mode-option:hover:not([aria-selected="true"]) {
+  background-color:var(--chrome-hover);
+}
+
+html.flat-ui .terminal-ai-mode-option[aria-selected="true"] {
+  border-block-start:1px solid var(--accent2);
+  background:var(--panel);
+}
+
+html.flat-ui .terma-liquid-lens,
+html.flat-ui .terma-liquid-lens::before,
+html.flat-ui .terma-liquid-lens::after,
+html.flat-ui .terma-liquid-flow,
+html.flat-ui .terma-liquid-highlight,
+html.flat-ui [class*="liquid"] {
+  display:none !important;
+  animation:none !important;
+  transition:none !important;
+}
+
+html.flat-ui :where(*),
+html.flat-ui :where(*::before),
+html.flat-ui :where(*::after) {
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+  background-image:none !important;
+}
+
+html.flat-ui :where(
+  .app,
+  .modal,
+  .quick-panel,
+  .notification-toast,
+  .notification-toast-stack,
+  .sftp-task-center-drawer,
+  .sftp-floating-search,
+  .sftp-drag-preview,
+  .sftp-drag-hint,
+  .terminal-broadcast-bar,
+  .terminal-session-manager,
+  .terminal-session-manager-row,
+  .productivity-manager,
+  .productivity-row,
+  .card,
+  [class$="-card"],
+  [class*="-card-"],
+  [class$="-panel"],
+  [class*="-panel-"],
+  [class$="-drawer"],
+  [class*="-drawer-"]
+) {
+  box-shadow:none !important;
+  border-radius:0 !important;
+}
+
+/* Business surfaces use the same flat contract as the shell. Their legacy
+   rules live in app.css and therefore need an explicit neutralization list. */
+html.flat-ui :where(
+  .sftp-automation-row,
+  .sftp-automation-run-row,
+  .sftp-automation-confirm-card,
+  .global-forward-card,
+  .global-forward-hero,
+  .quick-panel-dialog,
+  .quick-connection-modal,
+  .terminal-ai-panel,
+  .terminal-session-manager,
+  .command-snippet-manager,
+  .local-files-list,
+  .sftp-list,
+  .sftp-pager,
+  .forward-list,
+  .forward-pagination,
+  .sftp-job,
+  .sftp-task-center-drawer,
+  .sftp-floating-search,
+  .sftp-drag-preview,
+  .sftp-drag-hint,
+  .sftp-image-modal,
+  .sftp-editor-modal,
+  .sftp-comparison-modal
+) {
+  box-shadow:none !important;
+  border-radius:0 !important;
+  background-image:none !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+
+/* Round the floating surface itself and leave embedded page sections flat. */
+html.flat-ui :is(
+  dialog,
+  .modal-card,
+  [role="dialog"],
+  [role="alertdialog"],
+  .context-menu,
+  .action-menu,
+  .action-submenu,
+  .sftp-vue-menu-submenu,
+  .forward-rule-menu,
+  .quick-panel-dialog,
+  .sftp-task-center-drawer,
+  .sftp-floating-search,
+  .terminal-ai-composer-popover
+) {
+  border-radius:var(--floating-surface-radius) !important;
+  box-shadow:none !important;
+}
+
+html.flat-ui :is(.context-menu,.action-menu,.action-submenu,.sftp-vue-menu-submenu,.forward-rule-menu) {
+  border-color:var(--floating-surface-line);
+}
+
+html.flat-ui .sftp-vue-menu-submenu {
+  border:1px solid var(--floating-surface-line);
+  background-color:color-mix(in srgb,var(--text) 3%,var(--panel));
+}
+
+html.flat-ui #quickPanel #modal :is(.modal-card,[role="dialog"],[role="alertdialog"]) {
+  border-radius:0 !important;
+}
+
+html.flat-ui .sftp-task-center:has(.sftp-task-center-button[aria-expanded="true"]) .sftp-task-center-drawer {
+  border-start-end-radius:0 !important;
+}
+
+@media (max-width:760px), (hover:none) and (pointer:coarse) {
+  html.flat-ui .modal :is(.modal-card,[role="dialog"],[role="alertdialog"]):not(.is-fullscreen) {
+    border-end-start-radius:0 !important;
+    border-end-end-radius:0 !important;
+  }
+}
+
+.terma-hover-tooltip {
+  position:fixed;
+  z-index:60040;
+  box-sizing:border-box;
+  width:max-content;
+  max-width:min(320px,calc(100vw - 8px));
+  padding:5px 8px;
+  border:1px solid var(--floating-surface-line,var(--line));
+  border-radius:5px;
+  background:var(--panel);
+  color:var(--text);
+  font:400 12px/1.4 var(--font-sans,system-ui,sans-serif);
+  white-space:pre-line;
+  overflow-wrap:anywhere;
+  pointer-events:none;
+}
+
+html.flat-ui :where(
+  .sftp-automation-row:hover,
+  .sftp-automation-run-row:hover,
+  .sftp-automation-row.dragging,
+  .global-forward-card:hover,
+  .terminal-ai-panel:hover,
+  .quick-result:hover,
+  .local-files-row:hover,
+  .sftp-row:hover
+) {
+  box-shadow:none !important;
+  transform:none !important;
+}
+
+html.flat-ui :where(
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  .tab,
+  .activity button,
+  .activity a,
+  .workspace-quick-actions button,
+  .workspace-header-tools button
+):hover,
+html.flat-ui :where(
+  button,
+  a,
+  .tab,
+  .activity button,
+  .activity a,
+  .workspace-quick-actions button,
+  .workspace-header-tools button
+):active {
+  transform:none !important;
+  filter:none !important;
+}
+
+html.flat-ui :where(button, a, input, select, textarea) {
+  transition:background-color .12s ease,border-color .12s ease,color .12s ease !important;
+}
+
+html.flat-ui :where(.mobile-tabs, .panel, .sftp-list, .local-files-list, .sftp-pager-dock, .sftp-pager, .local-files-top, .sftp-top) {
+  box-shadow:none !important;
+}
+
+html.flat-ui :where(.sftp-row:hover, .local-files-row:hover, .tab:hover, .connection-row:hover) {
+  transform:none !important;
+  box-shadow:none !important;
+}
+
+html.flat-ui .sidebar .explorer-search {
+  height:var(--explorer-control-height);
+  min-height:0;
+  background:var(--tile-surface-base,var(--field));
+}
+html.flat-ui .sidebar .explorer-tools .explorer-search {
+  margin:0;
+}
+html.flat-ui .sidebar .explorer-search input {
+  width:100%;
+  height:100%;
+  min-height:0;
+  margin:0;
+  border:0;
+  background:transparent;
+  outline:0;
+  box-shadow:none;
+  padding-block:0;
+  font-size:12px;
+  font-weight:400;
+}
+html.flat-ui .sidebar :is(.explorer-search,.explorer-tools button) svg {
+  width:14px;
+  height:14px;
+  flex:none;
+}
+html.flat-ui .sidebar .explorer-compact-actions {
+  display:flex;
+  flex-wrap:wrap;
+  gap:var(--explorer-gap);
+}
+html.flat-ui .sidebar .explorer-compact-actions > .explorer-search {
+  flex:0 0 100%;
+}
+html.flat-ui .sidebar .explorer-compact-actions > .primary:not(.icon-button) {
+  flex:1 0 auto;
+  width:auto;
+  max-width:100%;
+  height:auto;
+  white-space:normal;
+  overflow:visible;
+}
+.explorer-compact-actions > .primary > span {min-width:0;overflow-wrap:anywhere;}
+.explorer-compact-actions > .explorer-aux-actions {
+  display:flex;
+  flex-wrap:wrap;
+  gap:var(--explorer-gap);
+  max-width:100%;
+}
+.field-dropdown {position:relative;display:block;min-width:0;}
+.field-dropdown > input::-webkit-calendar-picker-indicator {opacity:0;cursor:pointer;}
+.field-dropdown > svg {
+  position:absolute;
+  inset-inline-end:8px;
+  top:50%;
+  width:16px;
+  height:16px;
+  translate:0 -50%;
+  color:var(--muted);
+  pointer-events:none;
+}
+html.flat-ui .sidebar .explorer-tools .explorer-compact-actions > button:not(.primary,.icon-button) {
+  width:auto;
+  padding-inline:5px;
+}
+html.flat-ui .sidebar .explorer-tools .explorer-action-strip button {
+  min-height:var(--explorer-control-height);
+  border-radius:4px;
+  text-align:left;
+  justify-content:flex-start;
+}
+html.flat-ui .sidebar .explorer-tools .explorer-action-strip button.icon-button {
+  width:var(--explorer-icon-width);
+  min-width:var(--explorer-icon-width);
+  height:var(--explorer-control-height);
+  padding:0;
+  justify-content:center;
+}
+
+/* Active tabs share the workspace surface. */
+@media (min-width:761px) and (not ((hover:none) and (pointer:coarse))) {
+  html.flat-ui .app {
+    --workbench-radius:6px;
+    --sidebar-divider:var(--line);
+  }
+  html.flat-ui :is(.brand,.topbar) {
+    background:var(--panel);
+    border-block-end:1px solid var(--sidebar-divider);
+  }
+  html.flat-ui :is(.left-pane,.sidebar,.sidebar .explorer-tools) {
+    background:var(--sidebar);
+  }
+  html.flat-ui .left-pane { border-inline-end:1px solid var(--sidebar-divider); }
+  html.flat-ui .topbar { box-shadow:none; }
+  html.flat-ui .activity {
+    border-inline-end:1px solid var(--sidebar-divider);
+    background:var(--activity);
+    box-shadow:none;
+  }
+  html.flat-ui .operation-pane-collapsed .activity { border-inline-end:0; }
+  html.flat-ui .activity .activity-top > button.active,
+  html.flat-ui .activity .activity-top > button.active:hover:not(:disabled) {
+    color:var(--accent2);
+    background:color-mix(in srgb,var(--accent2) 12%,var(--activity));
+  }
+  html.flat-ui .workspace-is-split .workspace-pane {
+    border-radius:var(--workbench-radius);
+  }
+  html.flat-ui .sidebar { border-radius:0; }
+  html.flat-ui body:not(.workspace-is-split) .workspace-dock > .workspace-pane { border:0; }
+  html.flat-ui .workspace-is-split .workspace-pane.focused { box-shadow:none; }
+  html.flat-ui .workspace-pane-chrome { background:var(--bg); }
+  html.flat-ui .workspace-pane-chrome > .workspace-header-tools {
+    background:inherit;
+    border-bottom:0;
+  }
+  html.flat-ui .workspace-pane .tabs-shell { border-bottom:0; }
+  html.flat-ui .workspace-pane .tabs {
+    gap:2px;
+    padding:3px 3px 0;
+  }
+  html.flat-ui .workspace-pane .tabs .tab {
+    border-inline-end-color:transparent;
+    border-block-start:1px solid transparent;
+    border-block-end:0 !important;
+    border-radius:4px 4px 0 0;
+  }
+  html.flat-ui .workspace-pane .tabs .tab.active:not(.tab-dragging) {
+    background:var(--bg);
+    border-block-start-color:var(--accent2);
+  }
+  html.flat-ui .workspace-pane .tabs .tab-connection-dot { box-shadow:none; }
+  html.flat-ui .workspace-pane.terminal-pane > .workspace { padding:0; }
+  html.flat-ui .terminal-pane .terminal-main-row > .terminal-box {
+    border:0;
+    border-radius:0;
+    box-shadow:none;
+  }
+  html.flat-ui .terminal-pane .terminal-quick-command-bar {
+    margin:0;
+    border:0;
+    border-block-start:1px solid var(--line);
+    border-radius:0;
+    background:var(--panel);
+  }
+  html.flat-ui .terminal-pane .terminal-quick-command-list { border-top:0; }
+  html.flat-ui :is(.topbar,.workspace-pane-chrome) .terminal-font-size-readout,
+  html.flat-ui .brand .side-actions > .icon-button,
+  html.flat-ui :is(.topbar,.workspace-pane-chrome) .terminal-actions > .icon-button {
+    border-color:transparent;
+  }
+  html.flat-ui .topbar :is(.workspace-quick-actions > button,.sftp-task-center-button,.workspace-quick-connect-button):not(:hover,:focus-visible,[aria-expanded="true"],[aria-pressed="true"],.is-failed) {
+    border-color:transparent;
+  }
+  html.flat-ui .sidebar {
+    --explorer-control-height:28px;
+    --explorer-gap:4px;
+    --explorer-inset:6px;
+  }
+  html.flat-ui .sidebar .explorer-tools {
+    padding:5px 6px;
+  }
+  html.flat-ui .sidebar .explorer-tools.section-mode {
+    gap:1px;
+  }
+  html.flat-ui .sidebar .explorer-tools .explorer-action-strip {
+    gap:var(--explorer-gap);
+  }
+  html.flat-ui .sidebar .explorer-tools .explorer-action-strip button,
+  html.flat-ui .sidebar .explorer-tools.section-mode > button {
+    height:auto;
+    min-height:var(--explorer-control-height);
+    padding-block:2px;
+    font-size:12px;
+  }
+  html.flat-ui .sidebar #connectionGroups { --connection-group-sticky-height:28px; }
+  html.flat-ui .sidebar .group[data-group-name] { margin-bottom:0; }
+  html.flat-ui .sidebar .connection-group-head-row {
+    grid-template-columns:minmax(0,1fr) 24px 28px;
+    border-block-end:1px solid var(--sidebar-divider);
+    background:var(--sidebar);
+    box-shadow:none;
+  }
+  html.flat-ui .sidebar .connection-group-head-row:hover {
+    background:color-mix(in srgb,var(--text) 4%,var(--sidebar));
+  }
+  html.flat-ui .sidebar .connection-group-head-row .group-head {
+    grid-area:1 / 1;
+    min-height:calc(var(--connection-group-sticky-height) - 1px);
+    padding:0 4px 0 8px;
+    gap:5px;
+    background:transparent;
+    font-size:13px;
+    font-weight:600;
+  }
+  html.flat-ui .sidebar .connection-group-head-row .count { font-size:11px; font-weight:400; }
+  html.flat-ui .sidebar .connection-group-drag-handle {
+    grid-area:1 / 2;
+    align-self:stretch;
+    opacity:0;
+  }
+  html.flat-ui .sidebar .connection-group-head-row:is(:hover,:focus-within) .connection-group-drag-handle,
+  html.flat-ui .sidebar .group-dragging .connection-group-drag-handle { opacity:.75; }
+  html.flat-ui .sidebar .connection-group-menu-button {
+    grid-area:1 / 3;
+    width:26px;
+    min-width:26px;
+    height:26px;
+    min-height:26px;
+    margin:0;
+  }
+
+  html.flat-ui .sidebar .log-list-group > header {
+    min-height:28px;
+    padding-block:0;
+  }
+  html.flat-ui .sidebar .log-list-group-main {
+    min-height:27px;
+    padding-block:0;
+  }
+  html.flat-ui .sidebar .log-list-row {
+    padding-block:0;
+  }
+  html.flat-ui .sidebar .log-list-file {
+    min-height:26px;
+    padding-block:3px;
+  }
+}
+
+html.flat-ui .connection-group-head-row .chev svg { width:14px; height:14px; }
+
+/* Keep migrated terminal menus opaque and predictable under the flat theme;
+   the upstream outline button hover token may otherwise reintroduce a
+   translucent surface on top of the menu panel. */
+html.flat-ui .terma-terminal-controls-root .terma-button.terminal-display-menu-item:not(.danger):not([aria-checked="true"]):hover:not(:disabled),
+html.flat-ui .terma-terminal-controls-root .terma-button.terminal-display-menu-item:not(.danger):not([aria-checked="true"]):active:not(:disabled) {
+  color:var(--text) !important;
+  background:color-mix(in srgb,var(--text) 5%,var(--panel)) !important;
+  background-color:color-mix(in srgb,var(--text) 5%,var(--panel)) !important;
+  border-color:var(--line) !important;
+}

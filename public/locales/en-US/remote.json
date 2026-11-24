@@ -1,5 +1,8 @@
 {
   "title": "Remote Desktop",
+  "jump": {
+    "open_title": "Open this connection's remote desktop"
+  },
   "auto": {
     "remote_desktop": "Remote desktop",
     "add_connection": "Add connection",

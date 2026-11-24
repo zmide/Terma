@@ -4,6 +4,32 @@ Terma includes or integrates the following third-party components in addition to
 
 The fnOS FPK distributes the Web backend, browser assets and production npm dependencies. It uses the separately installed fnOS Node.js runtime and does not bundle Electron, VcXsrv or TigerVNC Viewer. The About page lists components applicable to that distribution; this document retains the full project notices.
 
+## Vue
+
+- Project: https://github.com/vuejs/core
+- Version: 3.5.44
+- License: MIT License
+- Use: interface framework for migrated pages
+- Copyright: Copyright (c) 2018-present, Yuxi (Evan) You
+
+## Tile UI
+
+- Project: https://github.com/zmide/tile-ui
+- Revision: f047bf2f17820d4c6a5525ff37de7f18a2148d1e
+- License: MIT License
+- Use: interface components for migrated pages
+- Copyright: Copyright (c) 2026 Bin <bin@pbk6.cn>
+
+## Kumo
+
+- Project: https://github.com/cloudflare/kumo
+- Revision: 7e0ff40546f08405d05bc9754f0ff0fd009ece0a, supplied through the Tile UI Kumo theme registry
+- License: MIT License
+- Use: interface theme for migrated pages
+- Copyright: Cloudflare, Inc. and Tile UI contributors; the original notices are retained in full.
+
+The original MIT license texts for Vue, i18next, Tile UI and the Kumo theme are bundled in `frontend/dist/THIRD_PARTY_NOTICES.txt`.
+
 ## xterm.js
 
 - Project: https://github.com/xtermjs/xterm.js

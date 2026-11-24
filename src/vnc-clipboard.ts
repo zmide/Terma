@@ -92,14 +92,32 @@ if [ "$td_os" = Darwin ] && [ -x /usr/bin/pbpaste ] && [ -x /usr/bin/pbcopy ]; t
   td_mode=macos
   td_tool=pbcopy
 elif [ "$td_os" = Linux ]; then
-  # A managed x11vnc process identifies the exact desktop shared by this VNC
-  # profile. Prefer it over unrelated Xvfb/XRDP displays found in /proc.
-  td_vnc_args=$(ps -eo args= 2>/dev/null | grep '[x]11vnc' | grep -E '(^|[[:space:]])-rfbport[[:space:]]+${normalizedVncPort}([[:space:]]|$)' | head -n 1)
+  # Match the listener's VNC port before considering unrelated desktop sessions.
+  td_vnc_pid=""
+  for td_candidate_pid in $(ps -eo pid=,comm= 2>/dev/null | awk '$2 ~ /^(x11vnc|Xvnc|Xtigervnc|X0tigervnc)$/ {print $1}'); do
+    td_args=$(tr '\000' '\n' < "/proc/$td_candidate_pid/cmdline" 2>/dev/null)
+    td_port=$(printf '%s\n' "$td_args" | sed -n '/^-rfbport$/{n;p;q;}')
+    td_number=$(printf '%s\n' "$td_args" | sed -n 's/^:\([0-9][0-9]*\)\(\.[0-9]*\)\{0,1\}$/\1/p' | head -n 1)
+    [ -n "$td_port" ] || { [ -n "$td_number" ] && td_port=$(awk -v n="$td_number" 'BEGIN {print 5900+n}'); }
+    [ "$td_port" = "${normalizedVncPort}" ] || continue
+    td_vnc_pid=$td_candidate_pid
+    break
+  done
+  td_vnc_args=""
+  [ -z "$td_vnc_pid" ] || td_vnc_args=$(tr '\000' '\n' < "/proc/$td_vnc_pid/cmdline" 2>/dev/null)
   if [ -n "$td_vnc_args" ]; then
-    td_candidate_display=$(printf '%s\n' "$td_vnc_args" | sed -n 's/.*[[:space:]]-display[[:space:]]\([^[:space:]]*\).*/\1/p')
-    td_candidate_auth=$(printf '%s\n' "$td_vnc_args" | sed -n 's/.*[[:space:]]-auth[[:space:]]\([^[:space:]]*\).*/\1/p')
+    td_candidate_display=$(printf '%s\n' "$td_vnc_args" | sed -n '/^-display$/{n;p;q;}')
+    [ -n "$td_candidate_display" ] || td_candidate_display=$(printf '%s\n' "$td_vnc_args" | sed -n '/^:[0-9][0-9]*\(\.[0-9]*\)\{0,1\}$/p' | head -n 1)
+    td_candidate_auth=$(printf '%s\n' "$td_vnc_args" | sed -n '/^-auth$/{n;p;q;}')
     [ -n "$td_candidate_display" ] && td_display=$td_candidate_display
-    [ -n "$td_candidate_auth" ] && td_xauthority=$td_candidate_auth
+    td_xauthority=""
+    [ -z "$td_candidate_auth" ] || [ "$td_candidate_auth" = guess ] || td_xauthority=$td_candidate_auth
+    td_wayland_display=""
+    td_runtime_dir=""
+    td_session_type=x11
+    td_session_uid=$(stat -c %u "/proc/$td_vnc_pid" 2>/dev/null || id -u)
+    td_session_user=$(stat -c %U "/proc/$td_vnc_pid" 2>/dev/null || id -un)
+    td_session_home=$(getent passwd "$td_session_user" 2>/dev/null | cut -d: -f6)
   fi
 
   # DISPLAY values copied from SSH X11-forwarded processes point back to a
@@ -119,6 +137,10 @@ elif [ "$td_os" = Linux ]; then
     td_candidate_display=$(printf '%s\n' "$td_values" | sed -n 's/^DISPLAY=//p' | head -n 1)
     td_candidate_wayland=$(printf '%s\n' "$td_values" | sed -n 's/^WAYLAND_DISPLAY=//p' | head -n 1)
     td_is_local_display "$td_candidate_display" || td_candidate_display=""
+    if [ -n "$td_vnc_pid" ]; then
+      [ "$td_candidate_display" = "$td_display" ] || continue
+      td_candidate_wayland=""
+    fi
     [ -n "$td_candidate_display$td_candidate_wayland" ] || continue
     [ -n "$td_display" ] || td_display=$td_candidate_display
     [ -n "$td_wayland_display" ] || td_wayland_display=$td_candidate_wayland
@@ -140,7 +162,7 @@ elif [ "$td_os" = Linux ]; then
     td_socket=$(find /tmp/.X11-unix -maxdepth 1 -type s -name 'X[0-9]*' 2>/dev/null | sort -V | head -n 1)
     [ -n "$td_socket" ] && td_display=:\${td_socket##*/X}
   fi
-  if [ -z "$td_xauthority" ]; then
+  if [ -z "$td_xauthority" ] && [ -z "$td_vnc_pid" ]; then
     td_xauthority=$(ps -eo args= 2>/dev/null | sed -n 's/.*[[:space:]]-auth[[:space:]]\([^[:space:]]*\).*/\1/p' | head -n 1)
   fi
   if [ -z "$td_session_home" ] || [ ! -d "$td_session_home" ]; then
@@ -155,7 +177,7 @@ elif [ "$td_os" = Linux ]; then
   if [ -z "$td_runtime_dir" ] && [ "$td_session_uid" -ge 0 ] 2>/dev/null; then
     [ -d "/run/user/$td_session_uid" ] && td_runtime_dir="/run/user/$td_session_uid"
   fi
-  if [ -z "$td_wayland_display" ] && [ -n "$td_runtime_dir" ]; then
+  if [ -z "$td_vnc_pid" ] && [ -z "$td_wayland_display" ] && [ -n "$td_runtime_dir" ]; then
     td_wayland_socket=$(find "$td_runtime_dir" -maxdepth 1 -type s -name 'wayland-*' 2>/dev/null | sort | head -n 1)
     [ -n "$td_wayland_socket" ] && td_wayland_display=\${td_wayland_socket##*/}
   fi
@@ -400,7 +422,7 @@ function vncClipboardHelperGuideResult(capability: any = {}) {
 async function detectVncClipboardBridge(profile, dependencies) {
   const { connectionId, connection, resolvedBy, reason } = bridgeContext(profile, dependencies);
   if (!connection) return { available:false, transport:"rfb", connection_id:0, reason };
-  const key = `${connectionId}:${connection.ssh_user || ""}@${connection.ssh_host || ""}:${connection.ssh_port || 22}`;
+  const key = `${connectionId}:${connection.ssh_user || ""}@${connection.ssh_host || ""}:${connection.ssh_port || 22}:vnc:${profile.id}:${Number(profile.port || 5900)}`;
   const cached = capabilityCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.value;
   const result = await dependencies.runSshCommandForConnection(connection, buildRemotePosixCommand(buildClipboardDetectionScript(profile?.port)), CLIPBOARD_COMMAND_TIMEOUT_MS);

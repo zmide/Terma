@@ -3,6 +3,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { makeRemoteDir, resolveRemoteUploadTarget } = require("./sftp");
 const { startUploadJob } = require("./sftp-jobs");
+const { publicError } = require('./public-error');
 
 const LOCAL_TRANSFER_TOP_LEVEL_LIMIT = 100;
 const LOCAL_TRANSFER_ENTRY_LIMIT = 1000;
@@ -192,7 +193,7 @@ function renameLocalPath(value, newName) {
   const name = validateLocalName(newName);
   const target = path.join(path.dirname(source), name);
   if (target === source) return {ok:true, path:target, name};
-  if (fs.existsSync(target)) throw new Error(`目标名称已存在：${name}`);
+  if (fs.existsSync(target)) throw publicError('FILE_NAME_EXISTS',`目标名称已存在：${name}`,{},409);
   fs.renameSync(source, target);
   return {ok:true, path:target, name};
 }
@@ -217,7 +218,7 @@ function createLocalEntry(directoryValue, nameValue, typeValue = "file") {
   const directory = normalizeLocalDirectory(directoryValue);
   const name = validateLocalName(nameValue);
   const target = path.join(directory, name);
-  if (fs.existsSync(target)) throw new Error(`目标名称已存在：${name}`);
+  if (fs.existsSync(target)) throw publicError('FILE_NAME_EXISTS',`目标名称已存在：${name}`,{},409);
   if (String(typeValue) === "dir" || String(typeValue) === "directory") fs.mkdirSync(target);
   else fs.writeFileSync(target, "", {flag:"wx"});
   return {ok:true, path:target, name, type:String(typeValue) === "dir" || String(typeValue) === "directory" ? "dir" : "file"};

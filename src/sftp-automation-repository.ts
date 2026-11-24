@@ -131,6 +131,7 @@ function normalizeOptions(value: any, kind: string, existing: any = {}) {
   const interval = Number(input.interval_minutes || 15);
   const historyLimit = Number(input.history_limit ?? existing.history_limit ?? 300);
   return {
+    server_files:Boolean(existing.server_files || input.server_files),
     conflict,
     excludes,
     max_file_size:Number.isSafeInteger(maxFileSize) && maxFileSize > 0 ? Math.min(maxFileSize, 1024 * 1024 * 1024 * 4) : 0,

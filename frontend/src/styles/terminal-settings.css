@@ -1,0 +1,23 @@
+.terma-terminal-dialog[data-theme] {
+  --primary-button-color:var(--tile-brand);--accent2:var(--tile-brand);--text:var(--tile-text-default);
+  --muted:var(--tile-text-subtle);--panel:var(--tile-surface-elevated);--panel2:var(--tile-surface-recessed);
+  --field:var(--tile-surface-base);--line:var(--tile-line);--danger:var(--tile-text-danger);
+  --tile-button-height:auto;--tile-button-gap:6px;--tile-button-padding-inline:10px;--tile-button-padding-block:7px;
+  --tile-button-radius:4px;--tile-button-font-family:inherit;--tile-button-font-size:inherit;--tile-button-line-height:inherit;
+  --tile-button-outline-color:var(--text);--tile-button-outline-hover-color:var(--text);
+  --tile-button-outline-hover-background:var(--tile-tint);--tile-button-outline-shadow:none;
+}
+.terma-terminal-dialog .terma-button {font-weight:400;}
+.terma-terminal-dialog .terma-button.primary {color:#fff;background:var(--accent2);border-color:var(--accent2);}
+.terma-terminal-dialog .terma-button.icon-button {min-width:34px;width:34px;height:34px;min-height:34px;padding:0;}
+.terma-terminal-dialog .terminal-shortcut-row-actions .terma-button {width:30px;min-width:30px;height:30px;min-height:30px;padding:5px;}
+.terma-terminal-dialog fieldset.terminal-settings-panels {border:0;margin:0;padding:0;min-width:0;}
+.terma-terminal-dialog .terminal-settings-tabs .terma-button {border:0;border-radius:4px 4px 0 0;padding:6px 12px;min-height:36px;box-shadow:none;}
+.terma-terminal-dialog .terminal-settings-tabs .terma-button>span {min-width:0;}
+.terma-terminal-dialog .terminal-background-choice.active {box-shadow:none;}
+.terma-terminal-dialog .terminal-settings-actions .terma-button,.terma-terminal-dialog .terminal-paste-actions .terma-button {white-space:normal;min-width:0;}
+.terma-terminal-dialog .terminal-settings-panel label {overflow-wrap:anywhere;}
+@media(max-width:700px){
+  .terma-terminal-dialog .terminal-paste-actions {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}
+  .terma-terminal-dialog #terminalPasteConfirm {grid-column:1 / -1;}
+}

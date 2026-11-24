@@ -1,0 +1,22 @@
+.terma-vue-root.terma-log-list-root[data-theme]{--muted:var(--tile-text-subtle);--field:var(--tile-control-background);color:var(--tile-text-default);min-width:0;width:100%}
+.terma-log-list-root button{justify-content:flex-start;text-align:left;box-shadow:none!important;background-image:none!important;border-radius:3px;max-width:100%;white-space:normal;overflow-wrap:anywhere;transform:none!important}.terma-log-list-root button.primary{background:var(--tile-brand);border-color:var(--tile-brand);color:white}.terma-log-list-root button.icon-button{width:32px;min-width:32px;padding:6px;justify-content:center}.terma-log-list-root svg{width:16px;height:16px;flex:none}
+.log-list-group { border-block-end:1px solid var(--sidebar-divider,var(--line)); }
+.log-list-group > header,.log-list-row { display:flex; align-items:center; gap:4px; min-width:0; padding:4px 8px; }
+.log-list-group > header { border-block-end:1px solid var(--sidebar-divider,var(--line)); }
+.log-list-group > header:has([aria-expanded="false"]) { border-block-end-color:transparent; }
+.log-list-group > header:hover,.log-list-row:hover { background:color-mix(in srgb,var(--text) 4%,var(--sidebar)); }
+.log-list-group-main,.log-list-file { display:flex; gap:5px; align-items:center; flex:1; min-width:0; padding:6px 0; color:var(--text); }
+.log-list-group-main strong { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:13px; font-weight:600; }
+.log-list-group small { color:var(--muted); font-size:11px; }
+.log-list-file { flex-direction:column; align-items:flex-start; gap:3px; padding-inline-start:20px; }
+.log-list-file span,.log-list-file small { width:100%; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.terma-vue-root.terma-log-list-root .log-list-group-main svg { width:14px; height:14px; color:var(--muted); }
+.terma-vue-root.terma-log-list-root .log-list-group .danger { color:var(--muted); }
+.terma-vue-root.terma-log-list-root .log-list-group .danger:is(:hover,:focus-visible):not(:disabled) { color:var(--tile-text-danger); background:var(--chrome-hover); }
+@media (min-width:761px) and (not ((hover:none) and (pointer:coarse))) {
+  .terma-vue-root.terma-log-list-root .log-list-group .icon-button { width:26px; min-width:26px; height:26px; min-height:26px; padding:4px; }
+}
+.log-list-empty{display:flex;flex-direction:column;gap:10px;padding:20px 12px;color:var(--muted)}.log-list-error{padding:10px;color:var(--tile-text-danger);overflow-wrap:anywhere}.log-list-pager{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:8px}.log-list-pager>span{color:var(--muted);font-size:12px}.log-list>p{padding:8px;color:var(--muted)}
+.terma-log-list-root .log-item-time{font-size:11px;white-space:nowrap;color:var(--muted);max-width:100%}
+
+.terma-vue-root.terma-log-list-root :is(.log-list-group-main,.log-list-file){background:transparent;border:0;box-shadow:none}

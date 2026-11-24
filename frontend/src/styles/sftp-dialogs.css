@@ -1,0 +1,64 @@
+.terma-sftp-dialog-root { display:contents; }
+.terma-sftp-dialog-root[data-theme] {
+  --primary-button-color:var(--tile-brand); --accent2:var(--tile-brand);
+  --text:var(--tile-text-default); --muted:color-mix(in srgb,var(--tile-text-subtle) 90%,var(--tile-text-default));
+  --panel:var(--tile-surface-elevated); --panel2:var(--tile-surface-recessed);
+  --field:var(--tile-surface-base); --line:var(--tile-line); --danger:var(--tile-text-danger);
+  --tile-button-height:auto; --tile-button-gap:6px; --tile-button-padding-inline:10px;
+  --tile-button-padding-block:7px; --tile-button-radius:4px; --tile-button-font-family:inherit;
+  --tile-button-font-size:inherit; --tile-button-line-height:inherit;
+  --tile-button-outline-color:var(--text); --tile-button-outline-hover-color:var(--text);
+  --tile-button-outline-hover-background:var(--tile-tint); --tile-button-outline-shadow:none;
+}
+.sftp-vue-dialog { color:var(--text); max-height:calc(100dvh - 32px); overflow:auto; }
+.sftp-vue-dialog .sftp-modal-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.sftp-vue-dialog .sftp-modal-head > div { min-width:0; }
+.sftp-vue-dialog .sftp-modal-head span { display:block; overflow-wrap:anywhere; color:var(--muted); }
+.sftp-vue-dialog .terma-button { height:auto; min-height:34px; max-width:100%; white-space:normal; text-align:left; justify-content:flex-start; }
+.sftp-vue-dialog .terma-button.primary { color:#fff; background:var(--accent2); border-color:var(--accent2); }
+.sftp-vue-dialog .terma-button.danger { color:var(--danger); border-color:color-mix(in srgb,var(--danger) 40%,var(--line)); }
+.sftp-vue-dialog .terma-button.icon-button { width:34px; min-width:34px; padding:6px; justify-content:center; }
+.sftp-vue-dialog .terma-button span { color:inherit; }
+.sftp-vue-dialog .actions { gap:8px; flex-wrap:wrap; }
+.sftp-dialog-error { padding:8px 10px; margin:8px 0; color:var(--danger); border:1px solid color-mix(in srgb,var(--danger) 40%,var(--line)); border-radius:5px; overflow-wrap:anywhere; }
+.sftp-vue-dialog.web-files-editor { display:flex; flex-direction:column; gap:10px; }
+.sftp-vue-dialog.web-files-editor .sftp-modal-head h2 { overflow-wrap:anywhere; }
+.sftp-vue-dialog.web-files-editor textarea { width:100%; min-width:0; min-height:140px; height:min(54dvh,480px); max-height:65dvh; resize:vertical; white-space:pre; font-family:var(--mono,monospace); background:var(--panel); color:var(--text); border:1px solid var(--line); box-sizing:border-box; }
+.sftp-dialog-confirmation .modal-message { white-space:pre-wrap; overflow-wrap:anywhere; }
+.sftp-principal-picker { min-width:0; width:100%; }
+.sftp-permission-principal-field { display:grid; align-content:start; gap:5px; min-width:0; }
+.sftp-permission-principal-field > span { font-size:11px; color:var(--text); }
+.sftp-principal-control { display:flex; align-items:stretch; border:1px solid var(--line); border-radius:4px; background:var(--field); }
+.sftp-vue-dialog .sftp-principal-control input { flex:1; min-width:0; width:0; border:0; background:transparent; }
+.sftp-vue-dialog .sftp-principal-control .icon-button { flex:0 0 32px; width:32px; min-width:32px; min-height:32px; border:0; border-inline-start:1px solid var(--line); border-radius:0 4px 4px 0; background:transparent; }
+.sftp-principal-control:focus-within { border-color:var(--accent2); }
+.sftp-principal-options { display:flex; flex-direction:column; gap:2px; max-height:160px; overflow:auto; padding:4px; margin-top:4px; border:1px solid var(--line); border-radius:4px; background:var(--panel); }
+.sftp-vue-dialog .sftp-principal-options .terma-button { flex:none; width:100%; border-color:transparent; justify-content:flex-start; text-align:start; }
+.sftp-principal-options [aria-selected=true] { color:var(--accent2); background:color-mix(in srgb,var(--accent2) 10%,var(--panel)); }
+.sftp-principal-empty { padding:6px; color:var(--muted); font-size:12px; }
+.sftp-vue-dialog .sftp-archive-form { display:grid; gap:9px; }
+.sftp-vue-dialog .upload-line { display:flex; align-items:stretch; flex-wrap:wrap; gap:8px; }
+.sftp-vue-dialog .upload-line > input { flex:1 1 180px; min-width:0; }
+.sftp-vue-dialog .sftp-archive-browser { min-width:0; display:grid; gap:8px; }
+.sftp-vue-dialog .sftp-archive-browser[hidden] { display:none; }
+.sftp-dialog-browser-tools { display:flex; flex-wrap:wrap; gap:6px; }
+.sftp-dialog-tree-row { display:flex; align-items:center; min-width:0; gap:4px; box-sizing:border-box; }
+.sftp-vue-dialog .sftp-dialog-directory { flex:1; min-width:0; border-color:transparent; background:transparent; }
+.sftp-vue-dialog .sftp-dialog-directory span { overflow-wrap:anywhere; }
+.sftp-vue-dialog #sftpArchiveBrowserPath { overflow-wrap:anywhere; white-space:normal; }
+.sftp-vue-dialog .sftp-recycle-item .actions { flex-wrap:wrap; }
+.sftp-vue-dialog .sftp-recycle-item .actions .terma-button { justify-content:flex-start; }
+.sftp-vue-dialog .sftp-recycle-item span { color:inherit; }
+.sftp-vue-dialog .sftp-recycle-pager { display:flex; flex-wrap:wrap; gap:8px; padding:10px 0; }
+.sftp-vue-dialog .sftp-recycle-pager .terma-button { flex:0 0 auto; white-space:nowrap; }
+.sftp-vue-dialog .sftp-recycle-pager > span { color:var(--muted); font-size:12px; white-space:nowrap; }
+@media (max-width:760px) {
+  .sftp-vue-dialog .terma-button { min-height:40px; }
+  .sftp-vue-dialog .terma-button.icon-button { width:40px; min-width:40px; }
+  .sftp-vue-dialog .sftp-permission-groups { grid-template-columns:repeat(3,minmax(0,1fr)); gap:5px; }
+  .sftp-vue-dialog .sftp-permission-group { display:block; padding:6px; }
+  .sftp-vue-dialog .sftp-permission-group label { justify-content:flex-start; gap:4px; font-size:12px; }
+  .sftp-vue-dialog .sftp-permission-group label > span { min-width:0; overflow-wrap:anywhere; }
+  .sftp-vue-dialog .sftp-permission-fields { grid-template-columns:minmax(0,1fr); }
+  .sftp-vue-dialog .sftp-recycle-item .actions { grid-template-columns:minmax(0,1fr); }
+}

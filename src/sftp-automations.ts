@@ -9,6 +9,12 @@ const { getConnection } = require("./db");
 const { deleteRemoteFile, listRemoteDir, makeRemoteDir, readRemoteBinaryFile, readRemoteFileMetadata, resolveRemoteUploadTarget } = require("./sftp");
 const { startUploadJob, startDownloadJob, waitForSftpJob } = require("./sftp-jobs");
 const repository = require("./sftp-automation-repository");
+const { resolveServerPath } = require('./services/server-files-service');
+let requireServerFilePolicy = false;
+
+function validateAutomationPath(value: string, options: any, mutable = false) {
+  if (requireServerFilePolicy || options?.server_files) resolveServerPath(value,{missing:mutable,missingParents:mutable,mutable});
+}
 
 const MAX_FILES = 20000;
 const MAX_RUN_DETAILS = 1000;
@@ -99,6 +105,7 @@ function shouldKeep(relative: string, name: string, options: any) {
 }
 
 async function localTree(root: string, options: any) {
+  validateAutomationPath(root,options);
   const result = new Map<string, any>();
   const stat = await fsp.lstat(root);
   if (stat.isSymbolicLink()) throw new Error("自动化任务跳过符号链接，源路径本身不能是符号链接");
@@ -117,6 +124,7 @@ async function localTree(root: string, options: any) {
       if (!shouldKeep(relative, entry.name, options)) continue;
       const absolute = path.join(current.absolute, entry.name);
       if (entry.isSymbolicLink()) continue;
+      validateAutomationPath(absolute,options);
       if (entry.isDirectory()) pending.push({absolute, relative});
       else if (entry.isFile()) {
         const entryStat = await fsp.stat(absolute);
@@ -404,6 +412,7 @@ async function resolveRemoteTarget(connectionId: number, target: string, conflic
 }
 
 async function runUploadFile(connectionId: number, source: any, target: string, options: any, summary: any) {
+  validateAutomationPath(source.local_path,options);
   if (source.local_path) await assertStableLocalFile(source.local_path, source);
   await makeRemoteDir(connectionId, path.posix.dirname(target));
   const resolved = await resolveRemoteTarget(connectionId, target, options.conflict);
@@ -416,10 +425,12 @@ async function runUploadFile(connectionId: number, source: any, target: string, 
 }
 
 async function runDownloadFile(connectionId: number, source: any, target: string, options: any, runId: string, summary: any) {
+  validateAutomationPath(target,options,true);
   const existing = fs.existsSync(target);
   if (existing && options.conflict === "skip") { summary.skipped += 1; recordRunDetail(summary, {path:source.relative,action:"skipped",reason:"target_exists"}); return; }
   let finalTarget = target;
   if (existing && options.conflict === "rename") finalTarget = availableLocalTarget(target);
+  validateAutomationPath(finalTarget,options,true);
   if (existing && options.conflict === "overwrite") {
     const stat = fs.lstatSync(target);
     if (stat.isSymbolicLink() || stat.isDirectory()) throw new Error(`本机目标不是可覆盖的普通文件：${target}`);
@@ -436,6 +447,7 @@ async function runDownloadFile(connectionId: number, source: any, target: string
     await fsp.mkdir(path.dirname(finalTarget), {recursive:true});
     if (fs.existsSync(atomic)) fs.rmSync(atomic, {recursive:true,force:true});
     await fsp.rename(job.saved_path, atomic);
+    validateAutomationPath(finalTarget,options,true);
     if (existing && options.conflict === "overwrite") fs.rmSync(finalTarget, {recursive:true,force:true});
     await fsp.rename(atomic, finalTarget);
   } finally {
@@ -447,8 +459,9 @@ async function runDownloadFile(connectionId: number, source: any, target: string
   recordRunDetail(summary, {path:source.relative,action:"downloaded",bytes:source.size});
 }
 
-async function deleteLocalSyncedFile(root: string, relative: string, summary: any) {
+async function deleteLocalSyncedFile(root: string, relative: string, summary: any, options: any = {}) {
   const target = localTarget(root, relative);
+  validateAutomationPath(target,options,true);
   const stat = await fsp.lstat(target);
   if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`本机目标不是可删除的普通文件：${target}`);
   await fsp.unlink(target);
@@ -575,7 +588,7 @@ async function executeSync(automation: any, runId: string) {
         const trackedPair = Boolean(baselineLocal[relative] && baselineRemote[relative]);
         const mayDeleteLocal = Boolean(options.propagate_deletes && trackedPair && (direction === "download" || direction === "bidirectional"));
         if (mayDeleteLocal) {
-          if (await matchesDeletionSnapshot(automation.connection_id, left, baselineLocal[relative], "local", options)) await deleteLocalSyncedFile(automation.local_path, relative, summary);
+          if (await matchesDeletionSnapshot(automation.connection_id, left, baselineLocal[relative], "local", options)) await deleteLocalSyncedFile(automation.local_path, relative, summary, options);
           else { summary.conflicts += 1; recordRunDetail(summary, {path:relative,action:"delete_conflict",reason:"local_changed"}); }
           continue;
         }
@@ -596,6 +609,8 @@ async function executeSync(automation: any, runId: string) {
           const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 17);
           const localConflict = localTarget(automation.local_path, `${relative}.terma-conflict-${os.hostname()}-${stamp}`);
           const remoteConflict = `${joinRemote(automation.remote_path, relative)}.terma-conflict-${os.hostname()}-${stamp}`;
+          validateAutomationPath(left.local_path,options);
+          validateAutomationPath(localConflict,options,true);
           await fsp.mkdir(path.dirname(localConflict), {recursive:true});
           await fsp.copyFile(left.local_path, localConflict);
           await runDownloadFile(automation.connection_id, right, localConflict.replace(/\.terma-conflict-.+$/, `.remote-conflict-${stamp}`), {...options,conflict:"rename"}, runId, summary);
@@ -653,6 +668,7 @@ function baselineChecksum(state: any) {
 }
 
 async function executeAutomation(automation: any, runId: string) {
+  validateAutomationPath(automation.local_path,automation.options,automation.direction!=='upload');
   return automation.kind === "transfer" ? executeTransfer(automation, runId) : executeSync(automation, runId);
 }
 
@@ -718,6 +734,7 @@ async function runAutomation(id: any, options: any = {}) {
         if (isOneShotAutomation(automation)) repository.setScheduleState(automation.id, {enabled:false,next_run_at:null});
         return {ok:status === "done",run_id:runId,summary};
       } catch (error) {
+        if (String(error?.code || '').startsWith('SERVER_FILES_')) throw error;
         if (String(error?.message || error).includes("基线") || String(error?.message || error).includes("规则已变化")) throw error;
         if (attempt >= MAX_RETRIES - 1) throw error;
         await sleep(RETRY_DELAYS[attempt]);
@@ -747,6 +764,7 @@ function refreshContinuousWatchers() {
   for (const [id, automation] of active) {
     if (watchers.has(id)) continue;
     try {
+      validateAutomationPath(automation.local_path,automation.options);
       const watcher = fs.watch(automation.local_path, {recursive:true}, () => {
         clearTimeout(watcher.debounce);
         watcher.debounce = setTimeout(() => void runAutomation(id, {reason:"change"}), 2000);
@@ -786,8 +804,9 @@ function handleMissedAutomation(automation: any, nowMs = Date.now()) {
   return true;
 }
 
-function startSftpAutomationScheduler() {
+function startSftpAutomationScheduler(options: {serverFiles?:boolean} = {}) {
   if (schedulerStarted) return;
+  requireServerFilePolicy = Boolean(options.serverFiles);
   schedulerStarted = true;
   repository.recoverRunningRuns();
   for (const automation of repository.listAutomations()) {

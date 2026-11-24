@@ -10,6 +10,7 @@ dist/
 release/
 release-notes.md
 /release-verify*/
+/public/app-legacy-adapters.js
 docs/
 .tmp-native-drag-acceptance/
 /.terma-brand-migration-*/

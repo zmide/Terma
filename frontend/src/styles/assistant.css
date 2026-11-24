@@ -1,0 +1,25 @@
+.terminal-ai-panel[data-terma-assistant]{box-shadow:none!important;background:var(--panel);border:1px solid var(--line);border-radius:4px}
+.terminal-ai-panel[data-terma-assistant] button{box-shadow:none!important;transform:none!important}
+.terminal-ai-panel[data-terma-assistant] button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.terminal-ai-panel[data-terma-assistant] .terminal-ai-composer-popover{box-shadow:none!important;border-radius:4px}
+.terminal-ai-panel[data-terma-assistant].terminal-ai-layout-floating{max-width:calc(100vw - 16px);max-height:calc(100dvh - 16px)}
+.terminal-ai-panel[data-terma-assistant].terminal-ai-layout-floating:not(.is-minimized){width:var(--terminal-ai-width,380px)!important}
+.terminal-ai-panel[data-terma-assistant] button{--tile-button-outline-hover-background:color-mix(in srgb,var(--accent) 7%,var(--field));--tile-button-outline-hover-color:var(--text)}
+.terminal-ai-panel[data-terma-assistant] .terminal-ai-streaming::after{content:'…';background:none;animation:none}
+.terminal-ai-panel[data-terma-assistant] .terminal-ai-mode-option.active{background:color-mix(in srgb,var(--accent) 14%,var(--field))!important;color:var(--accent)!important}
+.terminal-ai-panel[data-terma-assistant] .terminal-ai-mode-option.active:is(:hover,:focus,:active){background:color-mix(in srgb,var(--accent) 14%,var(--field));color:var(--accent)}
+.terminal-ai-panel[data-terma-assistant] .terminal-ai-model-control,.terminal-ai-panel[data-terma-assistant] .terminal-ai-compose-config{min-width:0}
+.terminal-ai-panel[data-terma-assistant] textarea{resize:vertical;max-height:240px}
+.terminal-ai-panel[data-terma-assistant] .terma-button{min-width:0;white-space:nowrap}
+.terminal-ai-panel[data-terma-assistant] .terminal-ai-code-actions{display:flex;flex-wrap:wrap;gap:6px}
+.terminal-ai-panel[data-terma-assistant] .terminal-ai-blocks-wrap{flex:0 1 auto;min-height:32px;max-height:180px;overflow:auto}
+.terminal-ai-panel[data-terma-assistant] :is(.terminal-ai-blocks,.terminal-ai-block,.terminal-ai-block-head){min-width:0;max-width:100%;box-sizing:border-box}
+.terminal-ai-panel[data-terma-assistant] :is(.terminal-ai-blocks,.terminal-ai-block){width:100%}
+.terminal-ai-panel[data-terma-assistant] .terminal-ai-block-head>.terminal-ai-block-select{flex:1 1 0;width:0}
+.terminal-ai-panel[data-terma-assistant] .terminal-ai-turns{min-height:72px}
+.terminal-ai-history-modal .terminal-ai-history-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+.terminal-ai-history-modal .terminal-ai-history-row>button:first-child{justify-content:flex-start;text-align:left}
+.terminal-ai-history-modal .terminal-ai-history-row b,.terminal-ai-history-modal .terminal-ai-history-row small{display:block;overflow-wrap:anywhere;white-space:normal}
+.terminal-ai-history-modal .terminal-ai-history-list{max-height:55dvh;overflow:auto}
+.terma-operations-root .terminal-ai-log-modal{width:min(1000px,calc(100vw - 28px))}
+@media(max-width:600px){.terminal-ai-panel[data-terma-assistant] .terminal-ai-compose-actions{flex-wrap:wrap}.terminal-ai-panel[data-terma-assistant] .terminal-ai-composer-popover{max-width:calc(100vw - 44px)}.terminal-ai-panel[data-terma-assistant] .terminal-ai-code-actions>button{flex:0 1 auto}}

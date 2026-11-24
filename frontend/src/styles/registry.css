@@ -1,0 +1,59 @@
+/* Tile extension defaults are written here by the component registry. */
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+    --tile-success: #22c55e;
+    --tile-success-foreground: #fafafa;
+    --tile-warning: #f59e0b;
+    --tile-warning-foreground: #fafafa;
+    --tile-info: #3b82f6;
+    --tile-info-foreground: #fafafa;
+    --tile-overlay: rgb(0 0 0 / 0.5);
+    --tile-shadow-color: 0 0 0;
+    --tile-radius-full: 9999px;
+    --tile-text-xs: 0.75rem;
+    --tile-text-sm: 0.875rem;
+    --tile-text-base: 1rem;
+    --tile-text-lg: 1.125rem;
+    --tile-text-xl: 1.25rem;
+    --tile-text-2xl: 1.5rem;
+    --tile-text-3xl: 1.875rem;
+    --tile-font-light: 300;
+    --tile-font-normal: 400;
+    --tile-font-medium: 500;
+    --tile-font-semibold: 600;
+    --tile-font-bold: 700;
+    --tile-leading-none: 1;
+    --tile-leading-tight: 1.25;
+    --tile-leading-normal: 1.5;
+    --tile-leading-relaxed: 1.625;
+}
+
+@theme inline {
+    --color-tile-success: var(--tile-success);
+    --color-tile-success-foreground: var(--tile-success-foreground);
+    --color-tile-warning: var(--tile-warning);
+    --color-tile-warning-foreground: var(--tile-warning-foreground);
+    --color-tile-info: var(--tile-info);
+    --color-tile-info-foreground: var(--tile-info-foreground);
+    --color-tile-overlay: var(--tile-overlay);
+    --tile-shadow-color: var(--tile-shadow-color);
+    --tile-radius-full: var(--tile-radius-full);
+    --tile-text-xs: var(--tile-text-xs);
+    --tile-text-sm: var(--tile-text-sm);
+    --tile-text-base: var(--tile-text-base);
+    --tile-text-lg: var(--tile-text-lg);
+    --tile-text-xl: var(--tile-text-xl);
+    --tile-text-2xl: var(--tile-text-2xl);
+    --tile-text-3xl: var(--tile-text-3xl);
+    --tile-font-light: var(--tile-font-light);
+    --tile-font-normal: var(--tile-font-normal);
+    --tile-font-medium: var(--tile-font-medium);
+    --tile-font-semibold: var(--tile-font-semibold);
+    --tile-font-bold: var(--tile-font-bold);
+    --tile-leading-none: var(--tile-leading-none);
+    --tile-leading-tight: var(--tile-leading-tight);
+    --tile-leading-normal: var(--tile-leading-normal);
+    --tile-leading-relaxed: var(--tile-leading-relaxed);
+}

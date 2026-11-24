@@ -1,0 +1,46 @@
+.xserver-manager :is(.xserver-state,.x11-forwarding-panel,.xserver-clipboard-panel),
+.x11-install-guide :is(.remote-install-mode,.remote-install-manual),
+.x11-app-launcher .connection-test-status {
+  background:var(--panel) !important;
+  box-shadow:none;
+  backdrop-filter:none;
+}
+.modal-card.xserver-manager > .actions,
+.xserver-manager :is(.x11-forwarding-panel,.xserver-clipboard-panel) .actions,
+.x11-install-guide .actions,
+.x11-app-launcher .actions {
+  min-width:0;
+  max-width:100%;
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:flex-start;
+  overflow:visible;
+  gap:6px;
+}
+.modal-card.xserver-manager > .actions > button,
+.xserver-manager :is(.x11-forwarding-panel,.xserver-clipboard-panel) .actions > button,
+.x11-install-guide .actions > button,
+.x11-app-launcher .actions > button {
+  flex:0 1 auto;
+  min-width:0;
+  max-width:100%;
+  white-space:normal;
+  height:auto;
+  overflow-wrap:anywhere;
+}
+.xserver-manager .actions button svg,
+.x11-install-guide .actions button svg,
+.x11-app-launcher .actions button svg {flex-shrink:0;}
+.x11-app-launcher > label {display:grid;gap:5px;min-width:0;}
+.x11-app-launcher :is(input,select) {width:100%;min-width:0;}
+.x11-app-launcher .x11-app-install-action {margin-block:12px;}
+.modal-card.xserver-manager > .actions {
+  border-top:1px solid var(--line);
+  padding-top:10px;
+}
+@media(max-width:700px){
+  .modal-card.xserver-manager > .actions > button,
+  .xserver-manager :is(.x11-forwarding-panel,.xserver-clipboard-panel) .actions > button,
+  .x11-install-guide .actions > button {flex:1 1 140px;justify-content:flex-start;}
+  .xserver-manager .xserver-details > div {grid-template-columns:90px minmax(0,1fr);gap:8px;}
+}

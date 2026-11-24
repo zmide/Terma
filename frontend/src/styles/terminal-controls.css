@@ -1,0 +1,105 @@
+.terma-terminal-controls-root {
+  --primary-button-color:var(--tile-brand);
+  --accent2:var(--tile-brand);
+  --text:var(--tile-text-default);
+  --muted:var(--tile-text-subtle);
+  --panel:var(--tile-surface-elevated);
+  --field:var(--tile-surface-base);
+  --line:var(--tile-line);
+  --hover:var(--tile-tint);
+  --danger:var(--tile-text-danger);
+  --tile-button-height:auto;
+  --tile-button-gap:6px;
+  --tile-button-padding-inline:10px;
+  --tile-button-padding-block:7px;
+  --tile-button-radius:4px;
+  --tile-button-font-family:inherit;
+  --tile-button-font-size:inherit;
+  --tile-button-line-height:inherit;
+  --tile-button-outline-color:var(--text);
+  --tile-button-outline-hover-color:var(--text);
+  --tile-button-outline-hover-background:var(--hover);
+  --tile-button-outline-shadow:none;
+}
+.terma-terminal-controls-root .terma-button { font-weight:400; transition:none !important; }
+.terminal-mobile-composer.terma-vue-root .terma-button.primary {
+  color:#fff;
+  background:var(--primary-button-color);
+  border-color:var(--primary-button-color);
+  box-shadow:none;
+}
+.terminal-mobile-composer.terma-vue-root .terma-button.primary:hover:not(:disabled) {
+  background:color-mix(in srgb,var(--primary-button-color) 88%,var(--tile-surface-base));
+}
+.terminal-toolbar.terma-vue-root .terma-button { transition:none !important; }
+.terma-terminal-controls-root .terma-button:hover:not(:disabled),
+.terma-terminal-controls-root .terma-button:active:not(:disabled) { box-shadow:none; transform:none; }
+.terma-terminal-controls-root .terminal-display-menu-item { min-width:0; min-height:32px; gap:var(--tile-button-gap); }
+.terma-terminal-controls-root .terminal-display-menu-item > span { white-space:normal; overflow-wrap:anywhere; }
+.terma-terminal-controls-root.action-menu:not(.mobile-action-menu) { width:max-content; max-width:calc(100vw - 16px); }
+.terma-terminal-controls-root .terma-button.terminal-display-menu-item:not(.danger):not([aria-checked="true"]):hover:not(:disabled),
+.terma-terminal-controls-root .terma-button.terminal-display-menu-item:not(.danger):not([aria-checked="true"]):active:not(:disabled) {
+  color:var(--text);
+  background:color-mix(in srgb,var(--text) 5%,var(--panel)) !important;
+  background-color:color-mix(in srgb,var(--text) 5%,var(--panel)) !important;
+  border-color:var(--line) !important;
+}
+.terma-terminal-controls-root.context-menu button:not([aria-checked="true"]):hover:not(:disabled),
+.terma-terminal-controls-root.action-menu button:not([aria-checked="true"]):hover:not(:disabled) {
+  background:color-mix(in srgb,var(--text) 5%,var(--panel)) !important;
+  background-color:color-mix(in srgb,var(--text) 5%,var(--panel)) !important;
+}
+.terma-terminal-controls-root .terma-button.terminal-display-menu-item[aria-checked="true"],
+.terma-terminal-controls-root .terma-button.terminal-display-menu-item[aria-checked="true"]:hover:not(:disabled),
+.terma-terminal-controls-root .terma-button.terminal-display-menu-item[aria-checked="true"]:active:not(:disabled) {
+  color:var(--accent2);
+  background:color-mix(in srgb,var(--accent2) 10%,var(--panel));
+  border-color:color-mix(in srgb,var(--accent2) 24%,var(--line));
+}
+.terma-terminal-controls-root .terma-button.terminal-display-menu-item.danger:hover:not(:disabled),
+.terma-terminal-controls-root .terma-button.terminal-display-menu-item.danger:active:not(:disabled) {
+  color:var(--danger);
+  background:color-mix(in srgb,var(--danger) 7%,var(--panel));
+  border-color:color-mix(in srgb,var(--danger) 28%,var(--line));
+}
+.terminal-keys.terma-vue-root .terminal-key-shortcut { min-width:42px; min-height:30px; box-sizing:border-box; padding:5px 8px; font-size:12px; white-space:nowrap; }
+.terminal-keys.terma-vue-root .terminal-key-shortcut.active,
+.terminal-keys.terma-vue-root .terminal-key-ctrl-once.active,
+.terminal-keys.terma-vue-root .terminal-key-ctrl-lock.active { color:#fff; background:var(--accent2); border-color:var(--accent2); }
+.terminal-keys.terma-vue-root .terminal-arrow-pad .terma-button { min-height:0; padding:1px 6px; line-height:1; }
+.terminal-keys.terma-vue-root .terminal-shortcut-configure { min-width:30px; width:30px; height:30px; min-height:30px; padding:5px; }
+.terminal-keys.terma-vue-root .terminal-shortcut-configure svg { width:16px; height:16px; }
+@media (max-width:760px), (hover:none) and (pointer:coarse) {
+  .terma-terminal-controls-root.mobile-action-menu .terma-button { min-height:40px; }
+  .terma-terminal-controls-root.mobile-action-menu .terma-button.action-menu-close { background:var(--panel); }
+  .terminal-keys.terma-vue-root .terminal-key-shortcut,
+  .terminal-keys.terma-vue-root .terminal-key-ctrl-once,
+  .terminal-keys.terma-vue-root .terminal-key-ctrl-lock { min-width:52px; min-height:38px; padding:5px 9px; }
+  .terminal-keys.terma-vue-root .terminal-arrow-pad .terma-button { min-width:42px; min-height:38px; }
+  .terminal-toolbar .terminal-actions > button:not(.terminal-global-settings-button) {
+    flex:0 0 30px;
+    width:30px;
+    min-width:30px;
+    height:30px;
+    min-height:30px;
+    padding:0;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    gap:0;
+  }
+  .terminal-toolbar .terminal-actions > button > span:not(.composite-icon),
+  .terminal-toolbar .terminal-actions > button > svg:not(:first-child) { display:none !important; }
+  .terminal-toolbar .terminal-actions > button > svg.lucide { width:14px; height:14px; flex:0 0 14px; }
+  .terminal-toolbar .terminal-actions .terminal-font-size-readout { order:10; height:30px; }
+  .terminal-toolbar .terminal-actions-scroll-shell { align-items:center; }
+  .terminal-toolbar .terminal-actions-scroll-shell > .terminal-actions {
+    align-items:center;
+    height:30px;
+    min-height:30px;
+    margin-block:0;
+    padding-block:0;
+    scrollbar-width:none;
+  }
+  .terminal-toolbar .terminal-actions-scroll-shell > .terminal-actions::-webkit-scrollbar { display:none; }
+}

@@ -971,6 +971,10 @@ function createWindow(options = {}) {
     return { action: "deny" };
   });
   const renderer = mainWindow.webContents;
+  require('./download-names').registerDownloadNames(renderer, {
+    trustedUrl:urlBelongsToDesktop,
+    directory:() => app.getPath('downloads')
+  });
   renderer.on?.("will-navigate", (event, url) => {
     if (urlBelongsToDesktop(url)) return;
     event.preventDefault();
@@ -2057,6 +2061,7 @@ async function readDesktopNotificationPreferences(force=false) {
   const language = setDesktopInterfaceLanguage(runtimeLanguage || desktopInterfaceLanguage, Boolean(runtimeLanguage));
   desktopNotificationPreferences = {
     mode:String(security?.notification_mode || "on"),
+    systemEnabled:(runtime?.saved?.desktop_notifications_enabled ?? runtime?.desktop_notifications_enabled) !== false,
     language,
     info:display?.info?.enabled !== false,
     success:display?.success?.enabled !== false,
@@ -2124,7 +2129,7 @@ async function pollDesktopNotifications() {
       && desktopNotificationAllowed(event, preferences)
       && !(event?.type === "update" && updateStatus?.update_ignored);
     sendDesktopNotificationToRenderer(event, allowed && !background);
-    if (allowed && background) showBackendSystemNotification(event);
+    if (allowed && background && preferences.systemEnabled !== false) showBackendSystemNotification(event);
   }
 }
 

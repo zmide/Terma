@@ -1,0 +1,13 @@
+.terma-vue-root.terma-log-reader-root[data-theme]{--muted:var(--tile-text-subtle);--field:var(--tile-control-background);color:var(--tile-text-default);width:100%;height:100%;min-height:0;overflow:hidden;display:flex}
+.terma-log-reader-root .log-reader-page{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0;height:100%;gap:8px}.terma-log-reader-root .log-view{flex:1;min-height:0;overflow:auto;margin:0;padding:14px;background:var(--panel);color:var(--text);white-space:pre-wrap;overflow-wrap:anywhere;font-family:var(--mono,monospace);border:1px solid var(--line);border-radius:3px}
+.terma-log-reader-root .log-detail-search{display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin:0;padding:3px 5px;background:var(--sidebar);border:1px solid var(--line);border-radius:3px}.terma-log-reader-root .log-detail-search[hidden]{display:none}
+.terma-log-reader-root .log-reader-search{display:flex;align-items:center;flex:1 1 8rem;min-width:min(8rem,100%);margin:0}
+.log-reader-search>span{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.terma-log-reader-root .log-reader-search input{width:100%;min-width:0;height:30px;min-height:30px;margin:0;padding:3px 8px;color:var(--text);background:var(--field);border:1px solid var(--line);border-radius:3px;font-weight:400}
+.terma-log-reader-root :is(.log-view-actions,.log-detail-search-actions,.log-load-actions){display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-width:0}.terma-log-reader-root button{box-shadow:none!important;background-image:none!important;justify-content:flex-start;max-width:100%;white-space:normal;overflow-wrap:anywhere;height:auto;min-height:34px;border-radius:3px}.terma-log-reader-root button.icon-button{width:34px;min-width:34px;padding:6px;justify-content:center}.terma-log-reader-root svg{width:16px;height:16px;flex:none}.terma-log-reader-root small,.log-detail-search-count{color:var(--muted);font-size:12px}.log-reader-error{color:var(--tile-text-danger);overflow-wrap:anywhere}.terma-log-reader-root .log-search-current{outline:1px solid var(--tile-brand)}
+.terma-log-reader-root .log-detail-search{box-shadow:none;background-image:none}
+.terma-log-reader-root .log-detail-search-count{min-width:32px}
+.terma-log-reader-root .log-detail-search-actions{gap:2px}
+.terma-log-reader-root .log-detail-search-actions>.icon-button{flex:none;width:30px;min-width:30px;height:30px;min-height:30px;padding:4px}
+@media (pointer:coarse){.terma-log-reader-root .log-reader-search input,.terma-log-reader-root .log-detail-search-actions>.icon-button{min-height:40px}.terma-log-reader-root .log-detail-search-actions>.icon-button{min-width:40px}}
+.terma-log-reader-root .log-view{box-shadow:none!important;background-image:none!important}

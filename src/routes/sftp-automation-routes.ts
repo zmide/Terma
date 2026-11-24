@@ -1,6 +1,11 @@
 import { IncomingMessage, ServerResponse } from "node:http";
 import { URL } from "node:url";
-import { publicErrorBody } from "../public-error";
+import { publicError } from "../public-error";
+import { assertServerFilesAccess } from '../services/server-files-access';
+import { resolveServerPath, serverFileRoots } from '../services/server-files-service';
+import { resolveServerDirectory } from '../services/server-files-service';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const defaultAutomations = require("../sftp-automations");
 
@@ -10,6 +15,7 @@ interface Dependencies {
   readJson(request: IncomingMessage): Promise<any>;
   sendJson(response: ServerResponse, data: unknown, status?: number): void;
   automations?: any;
+  authorizeConnectionId?(request: IncomingMessage, value: string): number;
 }
 
 function allowed(request: IncomingMessage, dependencies: Dependencies) {
@@ -20,26 +26,40 @@ function allowed(request: IncomingMessage, dependencies: Dependencies) {
 
 export async function handleSftpAutomationRoutes(request: IncomingMessage, response: ServerResponse, pathname: string, dependencies: Dependencies): Promise<boolean> {
   if (pathname !== "/api/sftp/automations" && !pathname.startsWith("/api/sftp/automations/")) return false;
-  if (!allowed(request, dependencies)) {
-    dependencies.sendJson(response, publicErrorBody("SFTP_AUTOMATION_DESKTOP_ONLY", "SFTP 定时传输和文件夹同步仅在 Terma 桌面端运行；Web 端不会访问本机文件"), 403);
-    return true;
-  }
+  const desktop = allowed(request, dependencies);
+  if (!desktop) assertServerFilesAccess(request);
   const operations = dependencies.automations || defaultAutomations;
+  const validate = (item: any) => {
+    if (!item) throw publicError('SFTP_AUTOMATION_NOT_FOUND','自动化任务不存在',{},404);
+    dependencies.authorizeConnectionId?.(request,String(item.connection_id));
+    if (!desktop) resolveServerPath(item.local_path,{missing:true,missingParents:true,mutable:item.direction!=='upload'});
+    return item;
+  };
+  const prepare = (item: any) => {
+    validate(item);
+    return desktop ? item : {...item,options:{...item.options,server_files:true}};
+  };
+  const visible = (item: any) => { try {validate(item); return true;} catch {return false;} };
   const method = request.method || "GET";
   const url = new URL(request.url || pathname, "http://terma.invalid");
   const parts = pathname.split("/").filter(Boolean);
+  if (method === 'GET' && pathname === '/api/sftp/automations/context') {
+    dependencies.sendJson(response,{default_path:serverFileRoots().find(root=>root.root_kind==='workspace')?.directory || ''});
+    return true;
+  }
   if (method === "GET" && pathname === "/api/sftp/automations") {
-    dependencies.sendJson(response, operations.listAutomations());
+    dependencies.sendJson(response, operations.listAutomations().filter(visible));
     return true;
   }
   if (method === "POST" && pathname === "/api/sftp/automations") {
-    const item = operations.saveAutomation(await dependencies.readJson(request));
+    const item = operations.saveAutomation(prepare(await dependencies.readJson(request)));
     operations.syncAutomationSchedule(item.id, true);
     dependencies.sendJson(response, operations.getAutomation(item.id), 201);
     return true;
   }
   if (method === "GET" && pathname === "/api/sftp/automations/runs") {
-    dependencies.sendJson(response, operations.listAutomationRuns(0));
+    const ids = new Set(operations.listAutomations().filter(visible).map((item:any)=>Number(item.id)));
+    dependencies.sendJson(response, operations.listAutomationRuns(0).filter((item:any)=>ids.has(Number(item.automation_id))));
     return true;
   }
   if (method === "POST" && pathname === "/api/sftp/automations/cron-preview") {
@@ -53,6 +73,8 @@ export async function handleSftpAutomationRoutes(request: IncomingMessage, respo
   }
   if (method === "POST" && pathname === "/api/sftp/automations/reorder") {
     const payload = await dependencies.readJson(request);
+    if (!Array.isArray(payload?.ids)) throw publicError('SFTP_AUTOMATION_INVALID','自动化任务 ID 无效');
+    payload.ids.forEach((id:any)=>validate(operations.getAutomation(id)));
     dependencies.sendJson(response, operations.reorderAutomations(payload?.ids));
     return true;
   }
@@ -62,13 +84,19 @@ export async function handleSftpAutomationRoutes(request: IncomingMessage, respo
     dependencies.sendJson(response, {error:"自动化任务 ID 无效"}, 400);
     return true;
   }
+  const existing = validate(operations.getAutomation(id));
+  if (method === 'GET' && parts.length === 5 && parts[4] === 'local-directory') {
+    const directory = fs.statSync(existing.local_path).isDirectory() ? existing.local_path : path.dirname(existing.local_path);
+    dependencies.sendJson(response,{path:resolveServerDirectory(directory)});
+    return true;
+  }
   if (method === "GET" && parts.length === 4) {
     const item = operations.getAutomation(id);
     dependencies.sendJson(response, item || {error:"自动化任务不存在"}, item ? 200 : 404);
     return true;
   }
   if (method === "PUT" && parts.length === 4) {
-    const item = operations.saveAutomation(await dependencies.readJson(request), id);
+    const item = operations.saveAutomation(prepare({...existing,...await dependencies.readJson(request)}), id);
     operations.syncAutomationSchedule(id, true);
     dependencies.sendJson(response, operations.getAutomation(item.id));
     return true;
@@ -93,12 +121,14 @@ export async function handleSftpAutomationRoutes(request: IncomingMessage, respo
     return true;
   }
   if (method === "POST" && parts.length === 5 && parts[4] === "run") {
+    if (!desktop && !existing.options?.server_files) operations.saveAutomation(prepare(existing),id);
     void operations.runAutomation(id, {reason:"manual"});
     dependencies.sendJson(response, {ok:true,status:"queued",automation_id:id}, 202);
     return true;
   }
   if (method === "POST" && parts.length === 5 && (parts[4] === "pause" || parts[4] === "enable")) {
     const enable = parts[4] === "enable";
+    if (!desktop && enable && !existing.options?.server_files) operations.saveAutomation(prepare(existing),id);
     const item = operations.setScheduleState(id, {enabled:enable, next_run_at:null, last_status:enable ? "idle" : "paused"});
     operations.syncAutomationSchedule(id, true);
     dependencies.sendJson(response, item || {error:"自动化任务不存在"}, item ? 200 : 404);

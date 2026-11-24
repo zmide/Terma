@@ -1,0 +1,12 @@
+.server-directory-picker { grid-column:1/-1; min-width:0; padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--panel); color:var(--text); text-align:left; }
+.server-picker-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:8px 0; }
+.server-picker-toolbar input { flex:1; min-width:100px; }
+.server-picker-columns { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,2fr); gap:8px; }
+.server-picker-tree,.server-picker-entries { overflow:auto; max-height:250px; min-width:0; }
+.server-picker-node { display:flex; align-items:center; gap:4px; margin:3px 0; }
+.server-picker-node button:first-child { flex:0 0 28px; padding:4px; }
+.server-picker-node button:last-child { flex:1; justify-content:flex-start; min-width:0; text-align:left; }
+.server-picker-node button span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.server-picker-path { overflow-wrap:anywhere; }
+.server-picker-node button.selected { color:var(--blue); background:color-mix(in srgb,var(--blue) 12%,var(--panel)); }
+@media(max-width:600px) { .server-picker-columns { grid-template-columns:minmax(0,1fr); } .server-picker-tree { max-height:130px; } }

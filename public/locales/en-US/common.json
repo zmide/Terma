@@ -1,5 +1,6 @@
 {
   "actions": {
+    "adjust_dialog_window": "Drag to resize. Use arrow keys to resize or Alt + arrow keys to move",
     "cancel": "Cancel",
     "close": "Close",
     "continue": "Resume",
@@ -22,7 +23,8 @@
     "repair_temporary_credentials": "Repair temporary SSH credentials",
     "close_desktop": "Close desktop",
     "refresh": "Refresh",
-    "done": "Done"
+    "done": "Done",
+    "confirm": "Confirm"
   },
   "api": {
     "login_required": "Sign in first",
@@ -60,9 +62,10 @@
     "next_match": "Next match",
     "load_older": "Load earlier content",
     "chunk_hint": "Logs are read in 256 KB chunks instead of loading a large file all at once.",
-    "no_system_log_date": "There is no system log for {{date}}"
-    ,"open_external": "Open in external editor"
-    ,"open_external_failed": "Unable to open external editor"
+    "no_system_log_date": "There is no system log for {{date}}",
+    "open_external": "Open in external editor",
+    "open_external_failed": "Unable to open external editor",
+    "invalid_path": "The log path is invalid."
   },
   "log_maintenance": {
     "title": "Log settings",
@@ -87,18 +90,22 @@
     "history_title": "Clean historical logs",
     "invalid_retention": "Enter a valid retention period",
     "delete_result": "Deleted {{count}} logs",
-    "delete_result_with_errors": "Deleted {{deleted}} logs; {{failed}} failed"
-    ,"current_usage": "Current usage"
-    ,"file_count": "{{count}} files"
-    ,"file_count_label": "Log files"
-    ,"cleanup_days": "Delete logs older than (days)"
-    ,"cleanup_preview": "Preview"
-    ,"cleanup_preview_result": "{{files}} files, expected to free {{bytes}}"
-    ,"cleanup_loading": "Calculating..."
-    ,"cleanup_preview_failed": "Unable to calculate cleanup preview"
-    ,"cleanup_selected": "Clean selected history"
-    ,"group_size": "Group size: {{size}}"
-    ,"log_size": "Log size: {{size}}"
+    "delete_result_with_errors": "Deleted {{deleted}} logs; {{failed}} failed",
+    "current_usage": "Current usage",
+    "file_count": "{{count}} files",
+    "file_count_label": "Log files",
+    "cleanup_days": "Delete logs older than (days)",
+    "cleanup_preview": "Preview",
+    "cleanup_preview_result": "{{files}} files, expected to free {{bytes}}",
+    "cleanup_loading": "Calculating...",
+    "cleanup_preview_failed": "Unable to calculate cleanup preview",
+    "cleanup_selected": "Clean selected history",
+    "group_size": "Group size: {{size}}",
+    "log_size": "Log size: {{size}}",
+    "loading": "Loading logs…",
+    "searching": "Searching log contents…",
+    "operation_failed": "The log operation failed. Try again.",
+    "invalid_settings": "Enter whole numbers within the allowed limits."
   },
   "local_files": {
     "available_space": "{{free}} available / {{total}}",
@@ -759,7 +766,6 @@
     "command_window_shortcut": "Command window ({{shortcut}})",
     "new_version": "New version available",
     "server": "Server",
-    "refresh_status": "Refresh status",
     "cancel_selection": "Clear selection",
     "command": "Command",
     "today_logs": "Today's logs",
@@ -779,17 +785,16 @@
     "close_other_tabs": "Close other tabs",
     "close_right_tabs": "Close tabs to the right",
     "close_all_tabs": "Close all tabs",
-    "refresh_other_connections": "Refresh other connections",
     "quick_open_remote_desktop": "Quick open Remote Desktop",
     "trusted_x11": "Trusted X11",
     "untrusted_x11": "Restricted X11",
-    "x11_disabled": "X11 disabled"
-    ,"back_to_parent_menu": "Back",
+    "x11_disabled": "X11 disabled",
+    "back_to_parent_menu": "Back",
     "close_menu": "Close menu"
   },
   "workspace": {
     "welcome_title": "Get started",
-    "welcome_hint": "Select an SSH resource, log, or import/export item on the left. Open content remains available in workspace tabs.",
+    "welcome_hint": "Open a saved connection or use Quick open to find a host or forwarding rule. Your sessions open in workspace tabs.",
     "view_connections": "View connections",
     "welcome_subtitle": "Select an item on the left to begin",
     "startup_running": "Startup tasks are running",
@@ -811,7 +816,6 @@
     "search_logs": "Search logs",
     "log_settings": "Log settings",
     "cleanup_logs": "Clean up logs",
-    "refresh_templates": "Refresh templates",
     "search_remote_connections": "Search other connections, protocols, hosts, or groups",
     "remote_connection_actions": "Other connection actions",
     "search_ssh_connections": "Search connections, hosts, users, or groups",
@@ -822,7 +826,7 @@
   "dialogs": {
     "connected_tabs_title": "Close connected tabs?",
     "connected_tabs_many": "{{count}} tabs are still connected or connecting. Closing them will disconnect their sessions. Continue?",
-    "connected_tabs_many_mixed": "{{count}} tabs are still connected or connecting. Normal sessions will disconnect; {{persistentCount}} recoverable remote sessions will continue running.",
+    "connected_tabs_many_mixed": "{{count}} tabs are still connected or connecting. Normal sessions will disconnect. Recoverable remote sessions ({{persistentCount}}) will continue running.",
     "persistent_tabs_many": "{{count}} recoverable tabs are still connected or connecting. Closing them only detaches Terma; their remote sessions and processes will continue running.",
     "connected_tab_one": "“{{title}}” is still {{status}}. Closing it will disconnect the session. Continue?",
     "persistent_tab_one": "“{{title}}” is still {{status}}. Closing the tab only detaches Terma; the recoverable remote session and its processes will continue running.",
@@ -846,15 +850,17 @@
     "ssh_host_new_fingerprint": "New fingerprint",
     "ssh_host_fingerprint": "Fingerprint",
     "ssh_host_once_hint": "Trust once does not save a trust record; Terma will ask again on the next connection.",
-    "ssh_host_trust_once": "Trust once"
-    ,"deploy_public_key_title": "Deploy SSH public key",
+    "ssh_host_trust_once": "Trust once",
+    "deploy_public_key_title": "Deploy SSH public key",
     "deploy_public_key_message": "Append the public key to authorized_keys for {{name}} ({{user}}@{{host}}). Existing keys will not be overwritten."
   },
   "named_workspaces": {
     "title": "Named workspaces",
     "count": "{{count}} workspaces",
+    "count_one": "{{count}} workspace",
     "save_current": "Save current",
     "tab_count": "{{count}} tabs",
+    "tab_count_one": "{{count}} tab",
     "group_count": "{{count}} workspace groups",
     "rename_title": "Rename workspace",
     "name_label": "Workspace name",
@@ -870,17 +876,21 @@
     "connection_separator": ", ",
     "no_connection_tabs": "No connection tabs",
     "will_start_forwards": "{{count}} forwarding rules will start",
+    "will_start_forwards_one": "{{count}} forwarding rule will start",
     "no_forwards": "No forwarding rules will start",
     "missing_references": "{{count}} connection references are missing and must be rebound first",
+    "missing_references_one": "{{count}} connection reference is missing and must be rebound first",
     "repair_missing": "Repair missing connections",
     "confirm_open": "Open workspace",
     "no_restorable_tabs": "This workspace has no restorable tabs. Repair the missing connections first.",
     "opened": "Workspace “{{name}}” opened",
     "partial_title": "Workspace partially opened",
     "partial_message": "The tabs from {{name}} were restored, but {{count}} forwarding rules failed to start.",
+    "partial_message_one": "The tabs from {{name}} were restored, but {{count}} forwarding rule failed to start.",
     "keep_current": "Keep current result",
     "retry_failed": "Retry failed forwarding rules",
     "still_failed": "{{count}} forwarding rules still failed to start",
+    "still_failed_one": "{{count}} forwarding rule still failed to start",
     "failed_all_started": "All failed forwarding rules are now running",
     "import_failed": "Failed to import the workspace file",
     "invalid_file": "This is not a valid Terma named workspace file",
@@ -896,7 +906,9 @@
     "select_all_missing": "Select an existing connection for every missing item",
     "rebound": "Missing connections rebound",
     "delete_message": "Delete this named workspace? Connection settings will not be deleted.",
-    "delete_title": "Delete workspace"
+    "delete_title": "Delete workspace",
+    "loading": "Loading workspaces…",
+    "operation_failed": "The workspace operation failed. Try again."
   },
   "ssh_config_import": {
     "no_hosts": "No importable hosts were found in ~/.ssh/config",
@@ -941,8 +953,8 @@
     "server_ready": "X Server is ready",
     "remove_components": "Remove X11 components",
     "disable_forwarding": "Disable X11 forwarding",
-    "enable_forwarding": "Enable X11 forwarding"
-    ,"clipboard_requires_helper": "Image clipboard requires an SSH helper and xclip/wl-clipboard",
+    "enable_forwarding": "Enable X11 forwarding",
+    "clipboard_requires_helper": "Image clipboard requires an SSH helper and xclip/wl-clipboard",
     "forwarding_title": "Remote SSH X11 components and forwarding · {{name}}",
     "platform": "Platform: {{platform}}",
     "offset": "offset",
@@ -1193,7 +1205,8 @@
     "open_sftp": "Open SFTP",
     "manage_forwards": "Manage forwarding",
     "edit_connection": "Edit connection",
-    "try_another": "Try a different keyword."
+    "try_another": "Try a different keyword.",
+    "loading": "Loading…"
   },
   "product": "Terma"
 }

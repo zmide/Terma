@@ -1,0 +1,22 @@
+import {installAssistantActions} from '../assistant/assistant-action-workspace';
+import type { EventRegistry } from '@/shared/actions/event-registry';
+import {installNamedWorkspaceViews} from '../quick/NamedWorkspaceViews';
+import {installLogMaintenance} from '../logs/LogMaintenanceViews';
+import {installLogReader} from '../logs/LogReaderViews';
+import {installLogList} from '../logs/LogListViews';
+import {installBatchViews} from '../batch/batch-mount';
+import {installRemoteProfileRuntime} from '../remote/profile-runtime';
+import {installRemoteClientRuntime} from '../remote/client-runtime';
+import {installRemoteDesktopRuntime} from '../remote/remote-desktop-runtime';
+import {installRemoteList} from '../remote/profile-list-runtime';
+import {installRemoteManagement} from '../remote/management-runtime';
+import {installVncRuntime} from '../remote/vnc-runtime';
+import {installRemoteTransport} from '../remote/transport-runtime';
+import {installX11} from '../x11/x11-runtime';
+import {installAssistant} from '../assistant/assistant-runtime';
+import {installSessionEfficiency} from '../session-efficiency/session-runtime';
+import {installEfficiency} from '../efficiency/efficiency-runtime';
+import {installSnippets} from '../snippets/snippet-runtime';
+import {installForwardWorkspace} from '../forwards/forward-workspace';
+import {batchWorkspacePort,logListWorkspacePort,logReaderWorkspacePort,logMaintenanceWorkspacePort,forwardWorkspacePort,renderBatchExplorer,openBatchCommand,renderLogs} from './workspace-operations-host';
+export function installOperations(registry: EventRegistry,...remoteManagement: Parameters<typeof installRemoteManagement>){installForwardWorkspace(forwardWorkspacePort);installRemoteProfileRuntime();installRemoteClientRuntime();installRemoteDesktopRuntime();installRemoteList();installRemoteManagement(...remoteManagement);installVncRuntime();installRemoteTransport();installX11();installSnippets();installEfficiency(registry);installSessionEfficiency();installAssistant();installAssistantActions(registry);installBatchViews(batchWorkspacePort,{ open:openBatchCommand, renderExplorer:renderBatchExplorer });installLogList(logListWorkspacePort,renderLogs);installLogReader(logReaderWorkspacePort);installLogMaintenance(logMaintenanceWorkspacePort);installNamedWorkspaceViews();}

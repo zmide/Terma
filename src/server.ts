@@ -126,7 +126,7 @@ const {
   stageSftpPaths
 } = require("./sftp-session");
 const { handleBatchCommandUpgrade } = require("./commands");
-const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemoteRecycleItem, extractRemoteArchive, invalidateRemoteDirectoryCache, listRemoteDir, listRemoteFileVersions, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, renameRemotePath, resolveRemoteDirectory, resolveRemoteUploadTarget, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
+const { clearRemoteRecycleItems, copyRemotePaths, createRemoteFile, deleteRemoteRecycleItem, extractRemoteArchive, invalidateRemoteDirectoryCache, readRemotePrincipals, listRemoteDir, listRemoteFileVersions, listRemoteRecycleItems, makeRemoteDir, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads, readRemoteBinaryFile, readRemoteDirectorySize, readRemoteTextFile, renameRemotePath, resolveRemoteDirectory, resolveRemoteUploadTarget, restoreRemoteRecycleItem, setRemotePermissions, writeRemoteFile, streamRemoteFile } = require("./sftp");
 const { clearSftpCache, compressJob, copyJob, crossCopyJob, deletePathsJob, extractJob, listSftpJobs, moveJob, receiveUploadJobContent, sftpCacheInfo, startArchiveDownloadJob, startDownloadJob, startLocalDeliveryJob, startUploadReceiveJob } = require("./sftp-jobs");
 const { getExternalEdit, getExternalEditComparison, listExternalEdits, resolveExternalEdit, startExternalEdit, stopExternalEdit, stopExternalEditsForConnection } = require("./sftp-external-edit");
 const { startSyncJob, startSyncPlanningJob } = require("./sftp-sync");
@@ -509,7 +509,7 @@ async function handleApi(req, res, pathname) {
   })) return;
   if (await handleCommandResourceRoutes(req, res, pathname, {readJson, sendJson})) return;
   if (await handleForwardTemplateRoutes(req, res, pathname, {createConfigSnapshot, readJson, sendJson})) return;
-  if (await handleSftpAutomationRoutes(req, res, pathname, {getDesktopIntegration, isDesktopRequest, readJson, sendJson})) return;
+  if (await handleSftpAutomationRoutes(req, res, pathname, {getDesktopIntegration, isDesktopRequest, readJson, sendJson, authorizeConnectionId:authorizedSftpConnectionId})) return;
   if (await handleSftpJobRoutes(req, res, pathname, {sendJson})) return;
   if (await handleServerFilesRoutes(req, res, pathname, {readJson, sendJson, authorizeConnectionId:authorizedSftpConnectionId})) return;
   if (await handleLocalFilesRoutes(req, res, pathname, {
@@ -581,7 +581,7 @@ async function handleApi(req, res, pathname) {
     connectSftpSession, copyJob, copyRemotePaths, createNativeSftpDragTicket, createRemoteFile,
     crossCopyJob, deletePathsJob, deleteRemoteRecycleItem, disconnectSftpSession, extractJob,
     extractRemoteArchive, getDesktopIntegration, invalidateRemoteDirectoryCache,
-    isDesktopRequest, listRemoteDir, listRemoteFileVersions, listRemoteRecycleItems, makeRemoteDir,
+    isDesktopRequest, readRemotePrincipals, listRemoteDir, listRemoteFileVersions, listRemoteRecycleItems, makeRemoteDir,
     moveJob, moveRemotePaths, normalizeRemotePermissionRequest, planRemoteUploads,
     prepareSftpWriteContent, readJson, readRemoteBinaryFile, readRemoteDirectorySize,
     readRemoteTextFile, readRuntimeSettings, receiveUploadJobContent, renameRemotePath,

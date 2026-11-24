@@ -33,7 +33,7 @@ try {
     if (!args.includes("--skip-build")) run("npm", ["run", "build"]);
     fs.cpSync(path.join(root, "packaging", "fnos"), pack, {recursive:true});
     fs.mkdirSync(server, {recursive:true});
-    for (const name of ["dist", "public", "package.json", "package-lock.json", "LICENSE", "THIRD_PARTY_NOTICES.md"]) {
+    for (const name of ["dist", "frontend/dist", "public", "package.json", "package-lock.json", "LICENSE", "THIRD_PARTY_NOTICES.md"]) {
       fs.cpSync(path.join(root, name), path.join(server, name), {recursive:true});
     }
     fs.cpSync(path.join(root, "LICENSE"), path.join(pack, "LICENSE"));

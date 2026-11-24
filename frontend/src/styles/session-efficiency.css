@@ -1,0 +1,15 @@
+.session-efficiency-manager{height:auto!important;min-height:0!important;max-height:calc(100dvh - 40px);display:flex;flex-direction:column;gap:16px}
+.terma-operations-root .session-efficiency-manager{width:min(760px,calc(100vw - 28px))}
+.terma-operations-root .session-efficiency-manager .productivity-manager-head{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:12px}
+.terma-operations-root .session-efficiency-manager .productivity-manager-head .icon-button{align-self:start}
+.session-efficiency-manager .productivity-manager-head{margin:0;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.session-efficiency-manager .terminal-session-manager-list{min-height:0;overflow:auto;max-height:55dvh}
+.session-efficiency-manager .terminal-session-manager-row{display:grid;grid-template-columns:28px minmax(0,1fr) auto;align-items:center;gap:12px;padding:12px 0}
+.session-efficiency-manager .terminal-session-manager-copy{min-width:0}
+.session-efficiency-manager .terminal-session-manager-title{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.session-efficiency-manager strong,.session-efficiency-manager .terminal-session-manager-copy>small{white-space:normal;overflow-wrap:anywhere}
+.session-efficiency-manager .terminal-session-manager-row .actions{display:flex;gap:6px;flex-wrap:nowrap}
+.session-efficiency-manager button,.session-efficiency-confirm button{box-shadow:none!important;transform:none!important}
+.session-efficiency-confirm{width:min(460px,calc(100vw - 32px));max-width:100%;padding:24px;min-height:0!important}
+.session-efficiency-confirm .actions{justify-content:flex-end}
+@media(max-width:600px){.session-efficiency-manager{max-height:100dvh;gap:12px}.session-efficiency-manager .terminal-session-manager-row{grid-template-columns:24px minmax(0,1fr);gap:8px}.session-efficiency-manager .terminal-session-manager-row .actions{grid-column:2;justify-content:flex-start}.session-efficiency-manager .terminal-session-manager-list{max-height:65dvh}}

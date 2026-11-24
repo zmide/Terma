@@ -9,6 +9,7 @@ const { resolveQuickConnectionById } = require("./quick-terminal");
 const { connectSsh, normalizeSshTransportError } = require("./ssh2-client");
 const { openCachedRange } = require("./sftp-range-cache");
 const { bindSftpChannelEncoding } = require("./infrastructure/sftp-channel-encoding");
+const { publicError } = require("./public-error");
 
 const sessions = new Map();
 const SFTP_DIRECTORY_CHANNEL_IDLE_TTL_MS = 60 * 1000;
@@ -146,7 +147,16 @@ function openSftpDirectoryChannel(record, connection, signal = null) {
         }
         settled = true;
         cleanup();
-        if (error) return reject(normalizeSshTransportError(error, connection));
+        if (error) {
+          // ssh2 reports a protocol rejection or a numeric exit before SFTP is ready.
+          // An unqualified channel close can also be caused by transport loss.
+          const failedToStart = error.message === "Unable to start subsystem: sftp"
+            || (typeof error.code === "number" && error.code !== 0
+              && error.message === `Received exit code ${error.code} while establishing SFTP session`);
+          return reject(failedToStart
+            ? publicError("SFTP_SUBSYSTEM_UNAVAILABLE", "SSH 已连接，但远端无法启动 SFTP。请检查服务器是否已安装并启用 SFTP 子系统。", undefined, 502)
+            : normalizeSshTransportError(error, connection));
+        }
         if (!record.rawFilenamePaths) record.rawFilenamePaths = new Map();
         resolve(bindSftpChannelEncoding(channel, connection, record.rawFilenamePaths));
       });

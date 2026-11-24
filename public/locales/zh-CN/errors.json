@@ -32,6 +32,9 @@
   "ssh_host_key_failed": "SSH 主机指纹校验失败，请确认服务器指纹变化是否可信",
   "ssh_failed": "SSH 连接失败，请检查连接配置、网络和远端 SSH 服务",
   "backend": {
+    "file_name_exists": "已有同名文件或文件夹，请换一个名称。现有文件和文件夹未被覆盖。",
+    "sftp_rename_exists": "该名称已存在，请使用其他名称。已有文件和文件夹不会被覆盖。",
+    "sftp_invalid_path": "远程路径无效。",
     "origin_protocol_check_invalid": "HTTPS/HTTP 来源协议校验必须为开启或关闭。",
     "request_origin_protocol_mismatch": "HTTPS/HTTP 来源协议不一致。请通过可用地址进入“设置 → 安全”关闭协议校验，或配置可信代理；NAS 也可使用应用设置。",
     "request_origin_forbidden": "访问来源校验失败，请检查允许的域名、端口和 HTTPS/HTTP 来源协议设置。",
@@ -54,6 +57,7 @@
     "fnos_update_managed": "请通过飞牛应用中心或安装新版 FPK 升级 Terma。",
     "terminal_shortcuts_invalid": "快捷键配置无效，请检查按键组合、按钮名称（最多 24 个字符）和数量（最多 48 项）",
     "request_failed": "请求失败，请重试",
+    "sftp_subsystem_unavailable": "SSH 已连接，但远端无法启动 SFTP。请检查服务器是否已安装并启用 SFTP 子系统。",
     "ai_disabled": "终端 AI 尚未启用",
     "ai_model_required": "请先选择 AI 模型",
     "ai_message_required": "请输入要发送给 AI 的内容",
@@ -124,7 +128,8 @@
     "desktop_graphics_install_unavailable": "当前平台没有可自动安装的图形组件（{{platform}}）",
     "desktop_xserver_start_forbidden": "X Server 只能由获得临时授权的本机浏览器或 Terma 桌面端启动",
     "desktop_xserver_stop_forbidden": "X Server 只能由获得临时授权的本机浏览器或 Terma 桌面端停止",
-    "sftp_automation_desktop_only": "SFTP 定时传输和文件夹同步仅在 Terma 桌面端运行；Web 端不会访问本机文件",
+    "sftp_automation_not_found": "传输或同步任务不存在",
+    "sftp_automation_invalid": "传输或同步任务 ID 无效",
     "sftp_local_sync_desktop_only": "本地目录同步只能在本机桌面端中使用",
     "sftp_separate_download_desktop_only": "分别下载文件和目录仅支持本机桌面版；当前设备请使用打包下载",
     "sftp_separate_download_too_many": "一次最多分别下载 {{max}} 个文件或目录",
@@ -211,7 +216,8 @@
     "server_files_login_required": "请先登录 Terma，再访问设备目录",
     "server_files_overwrite_file_only": "覆盖仅适用于同名文件；文件夹请选择重命名",
     "server_files_limit": "一次最多操作 1000 个文件和目录",
-    "server_files_text_limit": "只可编辑不超过 1 MiB 的 UTF-8 文本文件"
+    "server_files_text_limit": "只可编辑不超过 1 MiB 的 UTF-8 文本文件",
+    "forward_group_invalid": "转发分组名称不能超过 128 个字符或包含控制字符。"
   },
   "actions": {
     "invalid_definition": "动作必须提供 id 和 run",

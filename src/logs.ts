@@ -157,7 +157,7 @@ function appendTerminalLog(logFile, data) {
 function createBatchCommandLog(command, count) {
   ensureLogDirs();
   const startedAt = new Date();
-  const filename = `batch-${dayName(startedAt)}-${pad(startedAt.getHours())}${pad(startedAt.getMinutes())}${pad(startedAt.getSeconds())}.log`;
+  const filename = `batch-${dayName(startedAt)}-${pad(startedAt.getHours())}${pad(startedAt.getMinutes())}${pad(startedAt.getSeconds())}-${require("node:crypto").randomUUID()}.log`;
   const fullPath = path.join(BATCH_DIR, filename);
   const label = `批量执行-${Number(dateParts(startedAt).month)}月${Number(dateParts(startedAt).day)}日 ${pad(startedAt.getHours())}:${pad(startedAt.getMinutes())}:${pad(startedAt.getSeconds())}`;
   fs.appendFileSync(fullPath, `# ${label}\n# 目标数量：${count}\n# 开始时间：${zhDateTime(startedAt)}\n# 命令：${command}\n\n`, "utf8");
@@ -168,6 +168,11 @@ function appendBatchCommandLog(logFile, data) {
   if (!logFile) return;
   ensureLogDirs();
   queueLogWrite(logFile, data);
+}
+
+async function flushBatchCommandLog(logFile: string) {
+  // A write already in flight may schedule another queued write from its finally callback.
+  while (logWriteQueues.has(logFile)) await flushLogFile(logFile);
 }
 
 function relativeLogPath(fullPath) {
@@ -187,7 +192,7 @@ function parseTerminalFilename(name) {
 function parseBatchFilename(name) {
   const rotation = Number(name.match(/\.log\.(\d+)$/i)?.[1] || 0);
   const stem = name.replace(/\.log(?:\.\d+)?$/i, "");
-  const match = stem.match(/^batch-(\d{4})-(\d{2})-(\d{2})-(\d{6})$/);
+  const match = stem.match(/^batch-(\d{4})-(\d{2})-(\d{2})-(\d{6})(?:-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})?$/i);
   if (!match) return { label: stem, time: 0 };
   const time = new Date(`${match[1]}-${match[2]}-${match[3]}T${match[4].slice(0, 2)}:${match[4].slice(2, 4)}:${match[4].slice(4, 6)}`).getTime();
   return {
@@ -365,6 +370,7 @@ module.exports = {
   appendTerminalLog,
   createBatchCommandLog,
   appendBatchCommandLog,
+  flushBatchCommandLog,
   listLogs,
   getLogSettings,
   updateLogSettings,

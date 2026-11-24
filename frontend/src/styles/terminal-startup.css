@@ -1,0 +1,38 @@
+.terma-terminal-dialog .terminal-startup-modal {
+  --terminal-startup-accent: var(--accent2, var(--tile-brand));
+  --accent: var(--tile-text-success);
+  --warn: var(--tile-text-warning);
+  --tile-button-focus-outline: 2px solid var(--tile-focus);
+  --tile-button-focus-outline-style: solid;
+  --tile-button-focus-outline-offset: 2px;
+  max-width: min(860px, calc(100vw - 32px));
+}
+.terma-terminal-dialog .terminal-startup-modal :is(button,input,select,summary):focus-visible { outline:2px solid var(--tile-focus); outline-offset:2px; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-capability > span { color:var(--tile-text-subtle); }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-capability.warning > span { color:var(--tile-text-warning); }
+.terma-terminal-dialog .terminal-startup-modal .terminal-session-component-status.installed { color:var(--tile-text-success); }
+.terma-terminal-dialog .terminal-startup-modal .terma-button { font-weight: 400; }
+.terma-terminal-dialog .terminal-startup-modal .terma-button.primary { color:#fff; background:var(--terminal-startup-accent); border-color:var(--terminal-startup-accent); }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-scroll { overflow:auto; max-height:min(70vh, 720px); padding:0 2px; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-capability-control { align-items:stretch; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-capability-control > .terma-button { min-width:112px; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-actions { flex-wrap:wrap; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-actions > .terma-button { min-width:132px; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-actions > .terma-button { white-space:normal; height:auto; min-height:34px; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-actions > .terma-button > span { min-width:0; overflow-wrap:anywhere; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-actions svg { flex-shrink:0; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-split-picker > .terma-button { height:100%; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-split-picker .terminal-startup-split-options { transform:translateX(-50%); transition:opacity .12s ease; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-split-picker .terminal-startup-split-center { transform:translate(-50%,-50%); box-shadow:none; transition:opacity .12s ease; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-split-options > .terma-button { position:absolute; left:calc(50% - 19px); top:calc(60% - 19px); width:38px; min-width:38px; height:38px; padding:0; border-radius:999px; transform:none !important; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-split-options > .terma-button { box-shadow:none; transition:background-color .12s ease,border-color .12s ease,opacity .12s ease; }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-split-options > .terma-button[data-split-zone="top"] { top:calc(60% - 69px); }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-split-options > .terma-button[data-split-zone="bottom"] { top:calc(60% + 31px); }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-split-options > .terma-button[data-split-zone="left"] { left:calc(50% - 69px); }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-split-options > .terma-button[data-split-zone="right"] { left:calc(50% + 31px); }
+.terma-terminal-dialog .terminal-startup-modal .terminal-startup-split-options > .terma-button svg { width:17px; height:17px; }
+@media(max-width:700px){
+  .terma-terminal-dialog .terminal-startup-modal { max-width:calc(100vw - 16px); }
+  .terma-terminal-dialog .terminal-startup-modal .terminal-startup-actions > .terma-button { flex:1 1 132px; }
+  .terma-terminal-dialog .terminal-startup-modal .terminal-startup-split-picker { display:none; }
+}

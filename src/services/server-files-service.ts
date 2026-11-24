@@ -57,7 +57,7 @@ function protectedServerPath(value: string): boolean {
     .some(directory => inside(value, real(directory)));
 }
 
-export function serverFilePath(value: unknown, options: {missing?:boolean; mutable?:boolean} = {}): string {
+export function serverFilePath(value: unknown, options: {missing?:boolean; mutable?:boolean; missingParents?:boolean} = {}): string {
   const requested = String(value || "");
   const parts = requested.split("/");
   if (parts.shift() !== "" || !parts.length || parts.some(part => !part || part === "." || part === ".." || part.startsWith(".terma-upload-") || part.startsWith(".terma-edit-") || /[\\\0\x00-\x1f]/.test(part) || (process.platform==="win32" && /[<>:"|?*]/.test(part)))) throw denied();
@@ -68,10 +68,10 @@ export function serverFilePath(value: unknown, options: {missing?:boolean; mutab
   for (const [index, part] of parts.slice(1).entries()) {
     current = path.join(current, part);
     if (protectedServerPath(current)) throw denied();
-    if (options.missing && index === parts.length - 2 && !fs.existsSync(current)) {
+    if (options.missing && (index === parts.length - 2 || options.missingParents) && !fs.existsSync(current)) {
       // lstat also detects dangling links, which existsSync does not.
       try { fs.lstatSync(current); throw denied(); } catch (error: any) { if (error.code !== "ENOENT") throw error; }
-      break;
+      continue;
     }
     const stat = fs.lstatSync(current);
     if (stat.isSymbolicLink() || (!stat.isFile() && !stat.isDirectory()) || (stat.isFile() && stat.nlink > 1)) throw denied();
@@ -82,13 +82,19 @@ export function serverFilePath(value: unknown, options: {missing?:boolean; mutab
 }
 
 export function resolveServerDirectory(value:unknown):string {
+  const virtual=resolveServerPath(value);
+  if(!fs.statSync(serverFilePath(virtual)).isDirectory())throw denied();
+  return virtual;
+}
+
+export function resolveServerPath(value:unknown, options: {missing?:boolean; mutable?:boolean; missingParents?:boolean} = {}):string {
   if(typeof value!=="string" || !path.isAbsolute(value) || /[\0\r\n]/.test(value)) throw denied();
   const directory=path.resolve(value);
   const root=serverFileRoots().filter(item=>inside(directory,item.directory)).sort((a,b)=>b.directory.length-a.directory.length)[0];
   if(!root)throw denied();
   const relative=path.relative(root.directory,directory).split(path.sep).filter(Boolean).join("/");
   const virtual="/"+root.id+(relative?"/"+relative:"");
-  if(!fs.statSync(serverFilePath(virtual)).isDirectory())throw denied();
+  serverFilePath(virtual,options);
   return virtual;
 }
 

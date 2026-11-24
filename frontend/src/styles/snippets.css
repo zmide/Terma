@@ -1,0 +1,25 @@
+.snippet-feature{position:relative;min-width:0;background:var(--panel);box-shadow:none}
+.snippet-feature.command-snippet-manager{display:flex;flex-direction:column;height:auto;min-height:0;max-height:calc(100dvh - 64px);padding:16px 20px;gap:12px}
+.snippet-feature.command-snippet-manager>.modal-title-row{margin:0;padding:0 0 12px;min-height:0;border-bottom:1px solid var(--line);align-items:center}
+.snippet-feature.command-snippet-manager>.modal-title-row>.actions{margin:0;align-items:center}
+.snippet-feature.command-snippet-manager>.command-snippet-list{flex:0 1 auto;min-height:0;max-height:52dvh;overflow:auto;margin:0;padding:0}
+.snippet-feature.command-snippet-manager>.actions{margin:0;padding-top:12px;border-top:1px solid var(--line)}
+#quickPanel[data-command-page] .snippet-feature.command-snippet-manager{max-height:calc(100dvh - 120px)}
+#quickPanel[data-command-page] .snippet-feature.command-snippet-manager>.actions:last-child{display:none!important}
+.snippet-feature .snippet-field{display:grid;gap:5px;min-width:0}
+.snippet-feature :is(input,select,textarea){min-width:0;max-width:100%;box-sizing:border-box}
+.snippet-feature :is(textarea,pre,code){overflow-wrap:anywhere;white-space:pre-wrap;min-width:0;max-width:100%}
+.snippet-feature .actions{display:flex!important;flex-wrap:wrap!important;justify-content:flex-start;gap:6px;overflow:visible!important;min-width:0}
+.snippet-feature .actions button{flex:0 1 auto;min-width:0;max-width:100%;height:auto;white-space:normal;box-shadow:none}
+.snippet-feature .modal-title-row>.actions{flex-shrink:1}
+.snippet-feature .command-snippet-actions{display:flex;flex-wrap:wrap;gap:6px}
+.snippet-feature .command-snippet-copy{min-width:0;overflow:hidden}
+.snippet-feature .command-snippet-name{flex-wrap:wrap;min-width:0;gap:5px 8px}
+.snippet-feature .command-snippet-name strong{flex:1 0 100%;min-width:0;max-width:100%;overflow-wrap:anywhere;white-space:normal}
+.snippet-feature .command-snippet-name span{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.snippet-feature .snippet-workflow-parameter{grid-template-columns:minmax(70px,1fr) repeat(3,minmax(100px,1fr));align-items:end}
+.snippet-feature .snippet-color-swatch{position:relative;box-shadow:none!important}
+.snippet-feature .snippet-color-swatch input{inset:6px auto auto 6px;width:14px;height:14px;margin:0}
+.snippet-feature .snippet-workflow-footer>.snippet-field{display:flex;flex:0 0 auto;align-items:center;gap:8px}
+.snippet-feature .snippet-workflow-footer>.snippet-field>span{white-space:nowrap}
+@media(max-width:700px){.snippet-feature .modal-title-row{align-items:flex-start;flex-wrap:wrap}.snippet-feature .snippet-workflow-parameter{grid-template-columns:repeat(2,minmax(0,1fr))}.snippet-feature .command-snippet-row{display:grid;grid-template-columns:32px minmax(0,1fr)}.snippet-feature .command-snippet-actions{grid-column:2}.snippet-feature .actions button{flex:1 1 130px}}

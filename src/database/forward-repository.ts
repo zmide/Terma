@@ -35,7 +35,9 @@ export function createForwardRepository(dependencies: ForwardRepositoryDependenc
     if (!["local", "remote", "socks"].includes(data.mode)) {
       throw new Error("转发类型只能是 local、remote 或 socks");
     }
+    if (data.group_name != null && (typeof data.group_name !== "string" || data.group_name.length > 128 || /[\u0000-\u001f\u007f]/.test(data.group_name))) throw publicError("FORWARD_GROUP_INVALID", "转发分组名称不能超过 128 个字符或包含控制字符", {}, 400);
     const item: any = {
+      group_name:String(data.group_name || "").trim() || null,
       mode:data.mode,
       service_name:String(data.service_name || "").trim() || null,
       service_type:String(data.service_type || "").trim() || null,
@@ -68,21 +70,21 @@ export function createForwardRepository(dependencies: ForwardRepositoryDependenc
     const timestamp = now();
     const result = run(
       `INSERT INTO connection_forwards
-       (connection_id, mode, service_name, service_type, service_note, url_scheme, url_path, bind_host, bind_port, target_host, target_port, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [Number(connectionId), item.mode, item.service_name, item.service_type, item.service_note, item.url_scheme, item.url_path, item.bind_host, item.bind_port, item.target_host, item.target_port, timestamp, timestamp]
+       (connection_id, mode, service_name, service_type, service_note, group_name, url_scheme, url_path, bind_host, bind_port, target_host, target_port, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [Number(connectionId), item.mode, item.service_name, item.service_type, item.service_note, item.group_name, item.url_scheme, item.url_path, item.bind_host, item.bind_port, item.target_host, item.target_port, timestamp, timestamp]
     );
     return Number(result.lastInsertRowid);
   }
 
   function updateForward(id: number, data: any) {
-    getForward(id);
-    const item = cleanForward(data);
+    const before = getForward(id);
+    const item = cleanForward({ ...data, group_name:data.group_name === undefined ? before.group_name : data.group_name });
     run(
       `UPDATE connection_forwards
-       SET mode=?, service_name=?, service_type=?, service_note=?, url_scheme=?, url_path=?, bind_host=?, bind_port=?, target_host=?, target_port=?, updated_at=?
+       SET mode=?, service_name=?, service_type=?, service_note=?, group_name=?, url_scheme=?, url_path=?, bind_host=?, bind_port=?, target_host=?, target_port=?, updated_at=?
        WHERE id=?`,
-      [item.mode, item.service_name, item.service_type, item.service_note, item.url_scheme, item.url_path, item.bind_host, item.bind_port, item.target_host, item.target_port, now(), Number(id)]
+      [item.mode, item.service_name, item.service_type, item.service_note, item.group_name, item.url_scheme, item.url_path, item.bind_host, item.bind_port, item.target_host, item.target_port, now(), Number(id)]
     );
   }
 
@@ -107,20 +109,21 @@ export function createForwardRepository(dependencies: ForwardRepositoryDependenc
     const timestamp = now();
     const result = run(
       `INSERT INTO forward_templates
-       (name, mode, service_name, service_type, service_note, url_scheme, url_path, bind_host, bind_port, target_host, target_port, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [item.name, item.mode, item.service_name, item.service_type, item.service_note, item.url_scheme, item.url_path, item.bind_host, item.bind_port, item.target_host, item.target_port, timestamp, timestamp]
+       (name, mode, service_name, service_type, service_note, group_name, url_scheme, url_path, bind_host, bind_port, target_host, target_port, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [item.name, item.mode, item.service_name, item.service_type, item.service_note, item.group_name, item.url_scheme, item.url_path, item.bind_host, item.bind_port, item.target_host, item.target_port, timestamp, timestamp]
     );
     return Number(result.lastInsertRowid);
   }
 
   function updateForwardTemplate(id: number, data: any) {
-    const item = cleanForwardTemplate(data);
+    const before = getForwardTemplate(id);
+    const item = cleanForwardTemplate({ ...data, group_name:data.group_name === undefined ? before.group_name : data.group_name });
     run(
       `UPDATE forward_templates
-       SET name=?, mode=?, service_name=?, service_type=?, service_note=?, url_scheme=?, url_path=?, bind_host=?, bind_port=?, target_host=?, target_port=?, updated_at=?
+       SET name=?, mode=?, service_name=?, service_type=?, service_note=?, group_name=?, url_scheme=?, url_path=?, bind_host=?, bind_port=?, target_host=?, target_port=?, updated_at=?
        WHERE id=?`,
-      [item.name, item.mode, item.service_name, item.service_type, item.service_note, item.url_scheme, item.url_path, item.bind_host, item.bind_port, item.target_host, item.target_port, now(), Number(id)]
+      [item.name, item.mode, item.service_name, item.service_type, item.service_note, item.group_name, item.url_scheme, item.url_path, item.bind_host, item.bind_port, item.target_host, item.target_port, now(), Number(id)]
     );
   }
 

@@ -338,7 +338,7 @@ function identityPermissionStatus(file) {
       if (!item.ok) item.issues.push("mode");
       return item;
     }
-    const result = spawnSync("icacls", [file], { encoding: "utf8" });
+    const result = spawnSync("icacls", [file], { encoding: "utf8", windowsHide:true });
     const output = `${result.stdout || ""}${result.stderr || ""}`.trim();
     if (result.error || result.status !== 0 || !output) {
       item.details = `无法读取 Windows ACL${result.status != null ? `（退出码 ${result.status}）` : ""}`;

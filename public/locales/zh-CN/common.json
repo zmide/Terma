@@ -1,5 +1,6 @@
 {
   "actions": {
+    "adjust_dialog_window": "拖动调整窗口大小。方向键缩放，Alt 加方向键移动",
     "cancel": "取消",
     "close": "关闭",
     "continue": "继续",
@@ -22,7 +23,8 @@
     "repair_temporary_credentials": "修复临时 SSH 凭据",
     "close_desktop": "关闭桌面",
     "refresh": "刷新",
-    "done": "完成"
+    "done": "完成",
+    "confirm": "确认"
   },
   "api": {
     "login_required": "请先登录",
@@ -60,9 +62,10 @@
     "next_match": "下一处",
     "load_older": "加载更早内容",
     "chunk_hint": "按 256 KB 分段读取，不会一次载入整个大日志。",
-    "no_system_log_date": "{{date}}没有对应系统日志"
-    ,"open_external": "用外部编辑器打开"
-    ,"open_external_failed": "无法打开外部编辑器"
+    "no_system_log_date": "{{date}}没有对应系统日志",
+    "open_external": "用外部编辑器打开",
+    "open_external_failed": "无法打开外部编辑器",
+    "invalid_path": "日志路径无效。"
   },
   "log_maintenance": {
     "title": "日志设置",
@@ -87,18 +90,22 @@
     "history_title": "清理历史日志",
     "invalid_retention": "请输入有效保留天数",
     "delete_result": "已删除 {{count}} 条日志",
-    "delete_result_with_errors": "已删除 {{deleted}} 条日志，失败 {{failed}} 条"
-    ,"current_usage": "当前占用"
-    ,"file_count": "{{count}} 个文件"
-    ,"file_count_label": "日志文件"
-    ,"cleanup_days": "删除多少天以前的日志"
-    ,"cleanup_preview": "预览"
-    ,"cleanup_preview_result": "{{files}} 个文件，预计释放 {{bytes}}"
-    ,"cleanup_loading": "正在计算..."
-    ,"cleanup_preview_failed": "无法计算清理预估"
-    ,"cleanup_selected": "清理历史日志"
-    ,"group_size": "分组大小：{{size}}"
-    ,"log_size": "日志大小：{{size}}"
+    "delete_result_with_errors": "已删除 {{deleted}} 条日志，失败 {{failed}} 条",
+    "current_usage": "当前占用",
+    "file_count": "{{count}} 个文件",
+    "file_count_label": "日志文件",
+    "cleanup_days": "删除多少天以前的日志",
+    "cleanup_preview": "预览",
+    "cleanup_preview_result": "{{files}} 个文件，预计释放 {{bytes}}",
+    "cleanup_loading": "正在计算...",
+    "cleanup_preview_failed": "无法计算清理预估",
+    "cleanup_selected": "清理历史日志",
+    "group_size": "分组大小：{{size}}",
+    "log_size": "日志大小：{{size}}",
+    "loading": "正在读取日志…",
+    "searching": "正在搜索日志正文…",
+    "operation_failed": "日志操作失败，请重试。",
+    "invalid_settings": "请填写允许范围内的整数。"
   },
   "local_files": {
     "available_space": "{{free}} 可用 / {{total}}",
@@ -759,7 +766,6 @@
     "command_window_shortcut": "命令窗口（{{shortcut}}）",
     "new_version": "发现新版本",
     "server": "服务器",
-    "refresh_status": "刷新状态",
     "cancel_selection": "取消选择",
     "command": "命令",
     "today_logs": "今日日志",
@@ -779,17 +785,16 @@
     "close_other_tabs": "关闭其他标签",
     "close_right_tabs": "关闭右侧标签",
     "close_all_tabs": "关闭所有标签",
-    "refresh_other_connections": "刷新其他连接",
     "quick_open_remote_desktop": "快捷打开远程桌面",
     "trusted_x11": "可信 X11",
     "untrusted_x11": "受限 X11",
-    "x11_disabled": "关闭 X11"
-    ,"back_to_parent_menu": "返回上一级",
+    "x11_disabled": "关闭 X11",
+    "back_to_parent_menu": "返回上一级",
     "close_menu": "关闭菜单"
   },
   "workspace": {
     "welcome_title": "开始使用",
-    "welcome_hint": "从左侧选择 SSH 资源、日志或导入导出；打开的内容会保留为工作区标签。",
+    "welcome_hint": "从连接列表选择已保存的主机，或用快速打开查找连接和转发。会话会在工作区标签中打开。",
     "view_connections": "查看连接",
     "welcome_subtitle": "选择左侧项目后开始操作",
     "startup_running": "启动任务正在执行",
@@ -811,7 +816,6 @@
     "search_logs": "搜索日志",
     "log_settings": "日志设置",
     "cleanup_logs": "清理日志",
-    "refresh_templates": "刷新模板",
     "search_remote_connections": "搜索其他连接、协议、主机、分组",
     "remote_connection_actions": "其他连接操作",
     "search_ssh_connections": "搜索连接、主机、用户、分组",
@@ -846,15 +850,17 @@
     "ssh_host_new_fingerprint": "新指纹",
     "ssh_host_fingerprint": "指纹",
     "ssh_host_once_hint": "“仅本次信任”不会写入信任记录；下次连接仍会重新确认。",
-    "ssh_host_trust_once": "仅本次信任"
-    ,"deploy_public_key_title": "部署 SSH 公钥",
+    "ssh_host_trust_once": "仅本次信任",
+    "deploy_public_key_title": "部署 SSH 公钥",
     "deploy_public_key_message": "将公钥追加到 {{name}}（{{user}}@{{host}}）的 authorized_keys。不会覆盖已有公钥。"
   },
   "named_workspaces": {
     "title": "命名工作区",
     "count": "{{count}} 个工作区",
+    "count_one": "{{count}} 个工作区",
     "save_current": "保存当前",
     "tab_count": "{{count}} 个标签",
+    "tab_count_one": "{{count}} 个标签",
     "group_count": "{{count}} 个工作区组",
     "rename_title": "重命名工作区",
     "name_label": "工作区名称",
@@ -870,17 +876,21 @@
     "connection_separator": "、",
     "no_connection_tabs": "无连接标签",
     "will_start_forwards": "将启动 {{count}} 条转发",
+    "will_start_forwards_one": "将启动 {{count}} 条转发",
     "no_forwards": "不启动转发",
     "missing_references": "{{count}} 个连接引用缺失，需要先重新绑定",
+    "missing_references_one": "{{count}} 个连接引用缺失，需要先重新绑定",
     "repair_missing": "修复缺失连接",
     "confirm_open": "确认打开",
     "no_restorable_tabs": "这个工作区没有可恢复的标签，请先修复缺失连接",
     "opened": "工作区“{{name}}”已打开",
     "partial_title": "工作区已部分打开",
     "partial_message": "{{name}} 的标签已恢复，但 {{count}} 条转发启动失败。",
+    "partial_message_one": "{{name}} 的标签已恢复，但 {{count}} 条转发启动失败。",
     "keep_current": "保留当前结果",
     "retry_failed": "重试失败转发",
     "still_failed": "仍有 {{count}} 条转发启动失败",
+    "still_failed_one": "仍有 {{count}} 条转发启动失败",
     "failed_all_started": "失败的转发已全部启动",
     "import_failed": "工作区文件导入失败",
     "invalid_file": "不是有效的 Terma 命名工作区文件",
@@ -896,7 +906,9 @@
     "select_all_missing": "请为每个缺失项选择一个现有连接",
     "rebound": "缺失连接已重新绑定",
     "delete_message": "删除这个命名工作区？连接配置不会被删除。",
-    "delete_title": "删除工作区"
+    "delete_title": "删除工作区",
+    "loading": "正在读取工作区…",
+    "operation_failed": "工作区操作失败，请重试。"
   },
   "ssh_config_import": {
     "no_hosts": "没有检测到可导入的 ~/.ssh/config 主机",
@@ -941,8 +953,8 @@
     "server_ready": "X Server 已就绪",
     "remove_components": "卸载 X11 组件",
     "disable_forwarding": "关闭 X11 转发",
-    "enable_forwarding": "开启 X11 转发"
-    ,"clipboard_requires_helper": "图片剪贴板需要 SSH 辅助和 xclip/wl-clipboard",
+    "enable_forwarding": "开启 X11 转发",
+    "clipboard_requires_helper": "图片剪贴板需要 SSH 辅助和 xclip/wl-clipboard",
     "forwarding_title": "远端 SSH X11 组件与转发 · {{name}}",
     "platform": "平台：{{platform}}",
     "offset": "偏移",
@@ -1193,7 +1205,8 @@
     "open_sftp": "打开 SFTP",
     "manage_forwards": "管理转发",
     "edit_connection": "编辑连接",
-    "try_another": "换一个关键词试试。"
+    "try_another": "换一个关键词试试。",
+    "loading": "正在加载…"
   },
   "product": "Terma"
 }

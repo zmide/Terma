@@ -5,7 +5,8 @@ const { spawn } = require("node:child_process");
 const { DATA_DIR, SSH_BIN } = require("./config");
 const { getConnection } = require("./db");
 const { effectiveExtraArgs, securePrivateKeyPermissions } = require("./ssh");
-const { appendBatchCommandLog, appendSystemLog, createBatchCommandLog } = require("./logs");
+const { appendBatchCommandLog, appendSystemLog, createBatchCommandLog, flushBatchCommandLog } = require("./logs");
+const { createBatchLogStream } = require("./services/batch-log-service");
 const { notifyEvent } = require("./notifications");
 const { publicError, publicErrorDetails } = require("./public-error");
 const { shouldUseBuiltinSsh, spawnPasswordCommand } = require("./ssh2-client");
@@ -162,7 +163,8 @@ async function runBatchCommandStream(socket, payload, activeChildren) {
       const connection = rows[next++];
       const started = Date.now();
       sendJson(socket, { type: "start", id: connection.id, name: connection.name, command });
-      appendBatchCommandLog(log.fullPath, `\n## ${connection.name} (${connection.ssh_user}@${connection.ssh_host}:${connection.ssh_port})\n`);
+      const logStream = createBatchLogStream(connection, text => appendBatchCommandLog(log.fullPath, text));
+      logStream.start();
       await new Promise((resolve) => {
         const child = shouldUseBuiltinSsh(connection)
           ? spawnPasswordCommand(connection, "sh -s")
@@ -178,7 +180,7 @@ async function runBatchCommandStream(socket, payload, activeChildren) {
           if (success) ok++;
           else failed++;
           const message = error ? error.message : `退出码 ${exitCode ?? ""}`;
-          appendBatchCommandLog(log.fullPath, `\n[结束] ${connection.name} ${success ? "成功" : `失败：${message}`}，用时 ${Date.now() - started}ms\n`);
+          for (const tail of logStream.finish(`${success ? "success" : "failed"} exit=${exitCode ?? "?"} elapsed=${Date.now() - started}ms${error ? ": " + message : ""}`)) sendJson(socket, {type:"data",id:connection.id,name:connection.name,...tail});
           sendJson(socket, {
             type:"exit",
             id:connection.id,
@@ -195,14 +197,14 @@ async function runBatchCommandStream(socket, payload, activeChildren) {
           finish(null, publicError("BATCH_COMMAND_TIMEOUT", "命令执行超时"));
         }, timeoutMs);
         child.stdout?.on("data", (chunk) => {
-          const text = chunk.toString();
-          appendBatchCommandLog(log.fullPath, text);
-          sendJson(socket, { type: "data", stream: "stdout", id: connection.id, name: connection.name, data: text });
+          if (settled) return;
+          const text = logStream.data("stdout", chunk);
+          if (text) sendJson(socket, { type: "data", stream: "stdout", id: connection.id, name: connection.name, data: text });
         });
         child.stderr?.on("data", (chunk) => {
-          const text = chunk.toString();
-          appendBatchCommandLog(log.fullPath, text);
-          sendJson(socket, { type: "data", stream: "stderr", id: connection.id, name: connection.name, data: text });
+          if (settled) return;
+          const text = logStream.data("stderr", chunk);
+          if (text) sendJson(socket, { type: "data", stream: "stderr", id: connection.id, name: connection.name, data: text });
         });
         child.on("error", (error) => finish(null, error));
         child.on("close", (code) => finish(code));
@@ -216,10 +218,12 @@ async function runBatchCommandStream(socket, payload, activeChildren) {
   await Promise.all(Array.from({ length: Math.min(4, rows.length) }, worker));
   if (socket.destroyed) {
     appendBatchCommandLog(log.fullPath, "\n# 批量执行已停止或执行通道已断开\n");
+    await flushBatchCommandLog(log.fullPath);
     appendSystemLog(`批量命令已停止：${log.label}`);
     return;
   }
   appendBatchCommandLog(log.fullPath, `\n# 批量执行完成：成功 ${ok} 个，失败 ${failed} 个\n`);
+  await flushBatchCommandLog(log.fullPath);
   sendJson(socket, { type: "done", ok, failed, total: rows.length, log_path: path.relative(path.join(DATA_DIR, "logs"), log.fullPath).replace(/\\/g, "/") });
   appendSystemLog(`批量命令已完成：${log.label}，成功 ${ok} 个，失败 ${failed} 个`);
   notifyEvent({

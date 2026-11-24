@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="flat-ui">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,8 +11,8 @@
   <link rel="stylesheet" href="/vendor/ace/theme-textmate.css?v=__TERMA_VERSION__">
   <link rel="stylesheet" href="/vendor/ace/theme-tomorrow_night.css?v=__TERMA_VERSION__">
   <link rel="stylesheet" href="/app.css?v=__TERMA_VERSION__">
-  <link rel="stylesheet" href="/app-theme-glass.css?v=__TERMA_VERSION__">
-  <link rel="stylesheet" href="/app-mobile-workspace.css?v=__TERMA_VERSION__">
+  <link rel="stylesheet" href="/app-flat.css?v=__TERMA_VERSION__">
+  <!-- TERMA_ABOUT_VUE_ASSETS -->
 </head>
 <body>
   <div id="toast" class="notification-stack" aria-live="polite" aria-label="通知" data-i18n-aria-label="common:log_display.notification"></div>
@@ -299,90 +299,8 @@
   </div>
 </template>
 
-<template id="forwardManagerTpl">
-  <div class="panel">
-    <form id="forwardForm">
-      <input type="hidden" id="forward_conn_id">
-      <div class="grid">
-        <div><label data-i18n="connections:auto.forward_type">转发类型</label><select id="forward_mode" data-change-action="static-forward-labels"><option value="local" data-i18n="connections:auto.local_forward">本地转发 -L</option><option value="remote" data-i18n="connections:auto.remote_forward">远程转发 -R</option><option value="socks" data-i18n="connections:auto.socks_forward">SOCKS5 -D</option></select></div>
-        <div><label id="forward_bind_label" data-i18n="connections:auto.local_bind_host">本地监听地址</label><input id="forward_bind_host" value="127.0.0.1"></div>
-      </div>
-      <div class="grid3">
-        <div><label id="forward_bind_port_label" data-i18n="connections:auto.local_bind_port">本地监听端口</label><input id="forward_bind_port" type="number" min="1" max="65535"></div>
-        <div id="targetHostBox"><label data-i18n="connections:auto.target_host">目标主机</label><input id="forward_target_host" value="127.0.0.1"></div>
-        <div id="targetPortBox"><label data-i18n="connections:auto.target_port">目标端口</label><input id="forward_target_port" type="number" min="1" max="65535"></div>
-      </div>
-      <div class="grid3">
-        <div><label data-i18n="connections:auto.service_name">服务名称</label><input id="forward_service_name" placeholder="例如：后台面板" data-i18n-placeholder="connections:auto.service_name_example"></div>
-        <div><label data-i18n="connections:auto.service_type">服务类型</label><select id="forward_service_type"><option value="" data-i18n="common:auto.automatic">自动</option><option value="web">Web</option><option value="mysql">MySQL</option><option value="redis">Redis</option><option value="ssh">SSH</option><option value="socks">SOCKS5</option><option value="other" data-i18n="common:auto.other">其他</option></select></div>
-        <div><label data-i18n="connections:auto.note">备注</label><input id="forward_service_note" placeholder="可选" data-i18n-placeholder="remote:auto.optional"></div>
-      </div>
-      <div class="grid3 forward-access-grid">
-        <div><label data-i18n="connections:auto.access_protocol">访问协议</label><select id="forward_url_scheme"><option value="" data-i18n="common:auto.automatic">自动</option><option value="http">http</option><option value="https">https</option></select></div>
-        <div><label data-i18n="connections:auto.url_path">URL 路径</label><input id="forward_url_path" maxlength="2048" spellcheck="false" placeholder="/admin" data-i18n-placeholder="connections:auto.url_path_example"></div>
-        <div><label data-i18n="connections:auto.forward_template">转发模板</label><select id="forward_template_select" data-change-action="static-forward-template-apply"><option value="" data-i18n="connections:auto.choose_template">选择模板</option></select></div>
-      </div>
-      <div class="actions"><button class="primary" id="forwardSubmitBtn" type="submit" data-i18n="connections:auto.add_forward">添加转发</button><button type="button" data-action="static-forward-template-save" data-i18n="connections:auto.save_template">保存为模板</button><button type="button" data-action="static-forward-template-manage" data-i18n="connections:auto.manage_template">管理模板</button><button type="button" data-action="static-forward-port-recommend" data-i18n="connections:auto.recommend_port">推荐端口</button><button type="button" id="cancelForwardEditBtn" data-action="static-forward-edit-cancel" hidden data-i18n="connections:auto.cancel_edit">取消编辑</button><button type="button" id="bulkDeleteForwardsBtn" class="danger" data-action="static-forward-bulk-delete" hidden data-i18n="connections:auto.delete_selected_forwards">删除选中转发</button></div>
-    </form>
-    <div id="forwardTemplateManager" class="template-list" hidden></div>
-  </div>
-  <div class="panel">
-    <h3 data-i18n="connections:forwards.workspace_title">转发列表</h3>
-    <div id="forwardList" class="muted"></div>
-  </div>
-</template>
 
-<template id="importTpl">
-  <div class="panel" id="importMainPanel">
-    <div class="workspace-head">
-      <div>
-        <h2 data-i18n="navigation:auto.import_export">导入导出</h2>
-        <div class="subtitle" data-i18n="settings:auto.import_migration">迁移 SSH config、数据库备份和连接配置快照。</div>
-      </div>
-    </div>
-    <div class="grid import-main-grid">
-      <section id="import-source" class="import-section">
-        <h3><i data-lucide="file-input"></i><span data-i18n="settings:auto.ssh_config_import_export">SSH config 导入导出</span></h3>
-        <label data-i18n="settings:auto.upload_config">上传配置文件</label>
-        <div class="upload-line"><label class="file-picker"><input id="config_upload" type="file" accept="*/*" data-change-action="static-file-picker"><span class="file-picker-button" data-i18n="common:auto.choose_file">选择文件</span><span class="file-picker-name" data-i18n="common:auto.not_selected">未选择文件</span></label><button data-action="static-import-config" data-i18n="settings:auto.upload_parse">上传解析</button></div>
-        <label data-i18n="settings:auto.paste_config">或粘贴 config 内容</label><textarea id="config_text" placeholder="Host demo&#10;  HostName example.com&#10;  User root&#10;  LocalForward 6010 127.0.0.1:6868"></textarea>
-        <div class="actions"><button data-action="static-import-text" data-i18n="settings:auto.paste_parse">粘贴解析</button></div>
-        <div id="import-results" class="import-results-block">
-          <div class="import-results-head"><h3><i data-lucide="list-checks"></i><span data-i18n="settings:auto.import_results">导入结果</span></h3><div class="actions"><button id="bindImportKeysBtn" data-action="static-import-bind-keys" data-i18n="settings:auto.bind_keys" hidden>绑定私钥</button><button id="batchTestBtn" data-action="static-import-test" data-i18n="settings:auto.batch_test">批量测试</button><button id="batchSaveBtn" class="primary" data-action="static-import-save" data-i18n="settings:auto.batch_save">批量保存</button></div></div>
-          <div id="importResults"></div>
-        </div>
-        <div class="import-export-config">
-          <h3><i data-lucide="file-output"></i><span data-i18n="settings:auto.export_config">导出 SSH config</span></h3>
-          <textarea id="export_text" readonly></textarea>
-          <div class="actions"><button data-action="static-export-config" data-i18n="settings:auto.generate_export">生成导出内容</button><button data-action="static-export-copy" data-i18n="common:auto.copy">复制</button></div>
-        </div>
-      </section>
-      <section id="import-export" class="import-section">
-        <h3><i data-lucide="database-backup"></i><span data-i18n="settings:auto.database_import_export">数据库导入导出</span></h3>
-        <div class="actions"><button data-action="static-backup-database" data-i18n="settings:auto.download_database">下载数据库备份</button><button id="backupBundleBtn" data-action="static-backup-bundle" data-i18n="settings:auto.download_bundle" hidden>下载加密迁移包</button></div>
-        <label data-i18n="settings:auto.restore_database">恢复数据库 / 加密迁移包</label>
-        <div class="upload-line"><label class="file-picker"><input id="db_restore_upload" type="file" accept=".db,.json,.termabackup,.tdbackup,.tdbackup.json,application/json,application/octet-stream,*/*" data-change-action="static-file-picker"><span class="file-picker-button" data-i18n="common:auto.choose_file">选择文件</span><span class="file-picker-name" data-i18n="common:auto.not_selected">未选择文件</span></label><button class="danger" data-action="static-backup-restore" data-i18n="settings:auto.upload_restore">上传恢复</button></div>
-        <div id="backupBundleNote" class="muted" data-i18n-skip="true">普通备份使用 .db 文件；启用配置加密后会显示 .termabackup 加密迁移包下载入口。</div>
-        <div class="import-export-config config-selection-block">
-          <h3><i data-lucide="list-checks"></i><span data-i18n="settings:auto.config_selection_title">选择性配置导入导出</span></h3>
-          <div class="muted" data-i18n="settings:auto.config_selection_hint">可单独选择要迁移的配置。不会包含运行设置和日志；也不会包含私钥文件本体。</div>
-          <div class="config-selection-options">
-            <label><input id="configSelectionConnections" type="checkbox" checked><span data-i18n="settings:auto.config_selection_connections">SSH 连接</span></label>
-            <label><input id="configSelectionRemoteProfiles" type="checkbox" checked><span data-i18n="settings:auto.config_selection_remote_profiles">其他连接</span></label>
-            <label><input id="configSelectionForwards" type="checkbox" checked><span data-i18n="settings:auto.config_selection_forwards">转发配置</span></label>
-            <label><input id="configSelectionCommandSnippets" type="checkbox" checked><span data-i18n="settings:auto.config_selection_command_snippets">批量命令配置</span></label>
-            <label><input id="configSelectionPasswords" type="checkbox"><span data-i18n="settings:auto.config_selection_passwords">密码（默认不导出）</span></label>
-          </div>
-          <div class="actions">
-            <button data-action="static-config-selection-export" data-i18n="settings:auto.config_selection_export">导出所选配置</button>
-            <label class="file-picker"><input id="config_selection_upload" type="file" accept=".json,.terma-config.json,application/json" data-change-action="static-file-picker"><span class="file-picker-button" data-i18n="common:auto.choose_file">选择文件</span><span class="file-picker-name" data-i18n="common:auto.not_selected">未选择文件</span></label>
-            <button class="primary" data-action="static-config-selection-import" data-i18n="settings:auto.config_selection_import">导入所选配置</button>
-          </div>
-        </div>
-      </section>
-    </div>
-  </div>
-</template>
+
 
 <script src="/vendor/lucide/lucide.min.js?v=__TERMA_VERSION__"></script>
 <script src="/vendor/ace/ace.js?v=__TERMA_VERSION__"></script>
@@ -390,115 +308,6 @@
 <script src="/vendor/jspdf/jspdf.umd.min.js?v=__TERMA_VERSION__"></script>
 <script src="/vendor/svg2pdf/svg2pdf.umd.min.js?v=__TERMA_VERSION__"></script>
 <script src="/vendor/i18next/i18next.min.js?v=__TERMA_VERSION__"></script>
-<script src="/app-i18n.js?v=__TERMA_VERSION__"></script>
-<script src="/app-api.js?v=__TERMA_VERSION__"></script>
-<script src="/app-utils.js?v=__TERMA_VERSION__"></script>
-<script src="/app-events.js?v=__TERMA_VERSION__"></script>
-<script src="/app-workspace.js?v=__TERMA_VERSION__"></script>
-<script src="/app-workspace-groups.js?v=__TERMA_VERSION__"></script>
-<script src="/app-workspace-chrome.js?v=__TERMA_VERSION__"></script>
-<script src="/app-mobile-workspace.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-toolbar-scroll.js?v=__TERMA_VERSION__"></script>
-<script src="/app-docking.js?v=__TERMA_VERSION__"></script>
-<script src="/app-workspace-drag.js?v=__TERMA_VERSION__"></script>
-<script src="/app-workspace-persistence.js?v=__TERMA_VERSION__"></script>
-<script src="/app-settings-core.js?v=__TERMA_VERSION__"></script>
 <script src="/app-theme-settings.js?v=__TERMA_VERSION__"></script>
-<script src="/app-settings-cache.js?v=__TERMA_VERSION__"></script>
-<script src="/app-settings-storage.js?v=__TERMA_VERSION__"></script>
-<script src="/app-settings-runtime.js?v=__TERMA_VERSION__"></script>
-<script src="/app-settings-integrations.js?v=__TERMA_VERSION__"></script>
-<script src="/app-settings.js?v=__TERMA_VERSION__"></script>
-<script src="/app-settings-fnos-updates.js?v=__TERMA_VERSION__"></script>
-<script src="/app-settings-updates.js?v=__TERMA_VERSION__"></script>
-<script src="/app-settings-security.js?v=__TERMA_VERSION__"></script>
-<script src="/app-settings-keys.js?v=__TERMA_VERSION__"></script>
-<script src="/app-running.js?v=__TERMA_VERSION__"></script>
-<script src="/app-batch.js?v=__TERMA_VERSION__"></script>
-<script src="/app-logs.js?v=__TERMA_VERSION__"></script>
-<script src="/app-log-viewer.js?v=__TERMA_VERSION__"></script>
-<script src="/app-log-maintenance.js?v=__TERMA_VERSION__"></script>
-<script src="/app-quick-ssh.js?v=__TERMA_VERSION__"></script>
-<script src="/app-connections-list.js?v=__TERMA_VERSION__"></script>
-<script src="/app-connection-terminal.js?v=__TERMA_VERSION__"></script>
-<script src="/app-connection-validation.js?v=__TERMA_VERSION__"></script>
-<script src="/app-connection-form.js?v=__TERMA_VERSION__"></script>
-<script src="/app-connection-health.js?v=__TERMA_VERSION__"></script>
-<script src="/app-connections.js?v=__TERMA_VERSION__"></script>
-<script src="/app-quick-connect.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-core.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-output.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-zmodem.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-shortcut-config.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-shortcut-settings.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-settings.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-startup.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-ai-render.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-ai-mcp.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-ai-layout.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-ai.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-ai-actions.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-ai-tasks.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-keys.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-command-tracking.js?v=__TERMA_VERSION__"></script>
-<script src="/app-ssh-credentials.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-image-paste.js?v=__TERMA_VERSION__"></script>
-<script src="/app-forwards.js?v=__TERMA_VERSION__"></script>
-<script src="/app-global-forwards.js?v=__TERMA_VERSION__"></script>
-<script src="/app-import.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-core.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-columns.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-diff.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-open.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-svg-source.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-editor.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-preview.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-generated-tasks.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-drag-payload.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-drag.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-operations.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-rename.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-transfer.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-menus.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-task-center-layout.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-tasks.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-recycle.js?v=__TERMA_VERSION__"></script>
-<script src="/app-local-files-columns.js?v=__TERMA_VERSION__"></script>
-<script src="/app-local-files.js?v=__TERMA_VERSION__"></script>
-<script src="/app-browser-files.js?v=__TERMA_VERSION__"></script>
-<script src="/app-web-files.js?v=__TERMA_VERSION__"></script>
-<link rel="stylesheet" href="/app-web-files.css?v=__TERMA_VERSION__">
-<script src="/app-file-navigation.js?v=__TERMA_VERSION__"></script>
-<script src="/app-workspace-transfer.js?v=__TERMA_VERSION__"></script>
-<script src="/app-actions.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-sync.js?v=__TERMA_VERSION__"></script>
-<script src="/app-sftp-automations.js?v=__TERMA_VERSION__"></script>
-<script src="/app-external-tools.js?v=__TERMA_VERSION__"></script>
-<script src="/app-command-palette.js?v=__TERMA_VERSION__"></script>
-<script src="/app-command-snippets.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-quick-commands.js?v=__TERMA_VERSION__"></script>
-<script src="/app-named-workspaces.js?v=__TERMA_VERSION__"></script>
-<script src="/app-terminal-productivity.js?v=__TERMA_VERSION__"></script>
-<script src="/app-productivity.js?v=__TERMA_VERSION__"></script>
-<script src="/app-desktop-integration.js?v=__TERMA_VERSION__"></script>
-<script src="/app-remote.js?v=__TERMA_VERSION__"></script>
-<script src="/app-linux-desktop.js?v=__TERMA_VERSION__"></script>
-<script src="/app-remote-profiles.js?v=__TERMA_VERSION__"></script>
-<script src="/app-remote-rdp.js?v=__TERMA_VERSION__"></script>
-<script src="/app-remote-xdmcp.js?v=__TERMA_VERSION__"></script>
-<script src="/app-vnc-core.js?v=__TERMA_VERSION__"></script>
-<script src="/app-vnc-clipboard.js?v=__TERMA_VERSION__"></script>
-<script src="/app-vnc-management.js?v=__TERMA_VERSION__"></script>
-<script src="/app-vnc.js?v=__TERMA_VERSION__"></script>
-<script src="/app-vnc-window.js?v=__TERMA_VERSION__"></script>
-<script src="/app-remote-credentials.js?v=__TERMA_VERSION__"></script>
-<script src="/app-remote-ftp.js?v=__TERMA_VERSION__"></script>
-<script src="/app-remote-terminal.js?v=__TERMA_VERSION__"></script>
-<script src="/app-x11.js?v=__TERMA_VERSION__"></script>
-<script src="/app-state.js?v=__TERMA_VERSION__"></script>
-<script src="/app.js?v=__TERMA_VERSION__"></script>
-<script src="/app-static-actions.js?v=__TERMA_VERSION__"></script>
 </body>
 </html>

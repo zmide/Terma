@@ -1,0 +1,116 @@
+.terma-vue-root.terma-quick-root[data-theme] {
+  --accent: var(--tile-text-success);
+  --accent2: var(--tile-brand);
+  --danger: var(--tile-text-danger);
+  --field: var(--tile-surface-base);
+  --line: var(--tile-line);
+  --muted: var(--tile-text-subtle);
+  --panel: var(--tile-surface-elevated);
+  --panel2: var(--tile-surface-recessed);
+  --text: var(--tile-text-default);
+  --warn: var(--tile-text-warning);
+  --tile-button-height: auto;
+  --tile-button-gap: 6px;
+  --tile-button-padding-inline: 10px;
+  --tile-button-padding-block: 7px;
+  --tile-button-radius: 4px;
+  --tile-button-font-family: inherit;
+  --tile-button-font-size: inherit;
+  --tile-button-line-height: inherit;
+  --tile-button-outline-border-width: 1px;
+  --tile-button-outline-color: var(--tile-text-default);
+  --tile-button-outline-hover-background: var(--tile-tint);
+  --tile-button-outline-hover-color: var(--tile-text-default);
+  --tile-button-outline-shadow: none;
+}
+.terma-quick-root .terma-button { font-weight: 400; }
+.terma-quick-root .terma-button.icon-button { width: 34px; min-width: 34px; height: 34px; min-height: 34px; padding: 0; }
+.terma-quick-root .terma-button.quick-panel-button,
+.terma-quick-root .terma-button.sftp-automation-quick-button { color:var(--accent2); }
+.terma-quick-root .terma-button.terminal-session-manager-quick-button,
+.terma-quick-root .terma-button.xserver-quick-button.ready { color:var(--accent); }
+.terma-quick-root .terma-button.xserver-quick-button.warning { color:var(--warn); }
+.terma-quick-root .terma-button.xserver-quick-button.error { color:var(--danger); }
+.terma-quick-root .terma-button.primary { color: #fff; background: var(--accent2); border-color: var(--accent2); }
+.terma-quick-root .terma-button.danger { color: var(--danger); }
+.terma-quick-root .terma-button:disabled { opacity: .55; }
+.terma-quick-root .quick-connection-table:not(:has(.quick-connection-row)) > .quick-connection-columns {
+  display: none;
+}
+.terma-quick-root .quick-forward-server { min-width:0; display:grid; gap:2px; }
+.terma-quick-root .quick-forward-server :is(code, small) { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.terma-quick-root .quick-forward-server small { color:var(--tile-text-link); font:10px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+.terma-quick-root .terma-button.quick-connection-target-row {
+  width: 100%;
+  min-width: 0;
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) 28px;
+  align-items: center;
+  justify-content: stretch;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--text);
+  background: var(--panel);
+  text-align: left;
+  white-space: normal;
+}
+.terma-quick-root .terma-button.quick-connection-target-row:hover,
+.terma-quick-root .terma-button.quick-connection-target-row:focus-visible {
+  background: color-mix(in srgb, var(--accent2) 8%, var(--panel));
+}
+.terma-quick-root button.terma-button.quick-connection-target-row:focus-visible {
+  outline-offset: -2px;
+}
+.terma-quick-root .quick-connection-target-row > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+.terma-quick-root .quick-connection-target-row strong {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.terma-quick-root .quick-connection-target-row small {
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.terma-quick-root .quick-connection-target-row > span:last-child {
+  display: grid;
+  place-items: center;
+}
+.terma-quick-root .quick-connection-target-row > span:last-child svg {
+  width: 16px;
+  height: 16px;
+  color: var(--accent2);
+}
+.terma-quick-root .terma-button.sftp-task-float-open {min-width:0;display:grid;grid-template-columns:28px minmax(0,1fr);align-items:center;justify-content:stretch;gap:8px;padding:0;border:0;color:inherit;text-align:left;background:transparent;box-shadow:none;}
+.terma-quick-root .terma-button.sftp-task-float-open:hover {border:0;color:inherit;background:transparent;box-shadow:none;}
+.terma-quick-root.sftp-task-float .terma-button.icon-button {width:28px;min-width:28px;height:28px;min-height:28px;}
+.terma-quick-root .sftp-job-copy {text-align:left;}
+.terma-quick-root .sftp-task-center-list {overflow-anchor:none;}
+.terma-quick-root .sftp-job .actions.tight {flex-wrap:wrap;justify-content:flex-start;}
+.terma-quick-root .sftp-job .actions.tight .terma-button {flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;gap:5px;}
+.terma-quick-root .sftp-job .actions.tight .terma-button > span {margin:0;color:inherit;}
+.terma-quick-root .sftp-automation-row-actions .terma-button {border-radius:8px;}
+.terma-quick-root[data-theme='dark'] .sftp-automation-action-run {--accent:#16825f;}
+.terma-quick-root .sftp-automation-row-actions .terma-button.sftp-automation-action-history {color:var(--accent2);border-color:color-mix(in srgb,var(--accent2) 24%,var(--line));background:color-mix(in srgb,var(--accent2) 8%,var(--panel));}
+.terma-quick-root .sftp-automation-row-actions .terma-button.sftp-automation-action-history:hover {color:var(--accent2);border-color:color-mix(in srgb,var(--accent2) 38%,var(--line));background:color-mix(in srgb,var(--accent2) 13%,var(--panel));}
+.terma-quick-root .terma-button.sftp-automation-remote-entry { width:100%; min-width:0; display:grid; grid-template-columns:16px 22px minmax(0,1fr); justify-content:stretch; gap:7px; padding:7px 8px 7px calc(8px + var(--tree-depth,0) * 18px); border-color:transparent; border-radius:7px; color:var(--text); background:transparent; text-align:left; }
+.terma-quick-root .terma-button.sftp-automation-remote-entry.active,
+.terma-quick-root .terma-button.sftp-automation-remote-entry.active:hover { border-color:color-mix(in srgb,var(--accent2) 35%,var(--line)); background:color-mix(in srgb,var(--accent2) 10%,var(--panel)); }
+.terma-quick-root .terma-button.remote-install-mode { min-width:0; min-height:68px; display:grid; grid-template-columns:34px minmax(0,1fr) auto; justify-content:stretch; gap:9px; padding:10px 11px; border:0; border-radius:0; color:var(--text); background:var(--panel); text-align:left; white-space:normal; }
+.terma-quick-root .terma-button.remote-install-mode:disabled { opacity:1; color:var(--muted); background:color-mix(in srgb,var(--field) 78%,var(--panel)); }
+.terma-quick-root .terma-button.remote-install-mode[aria-busy="true"] { display:flex; justify-content:center; padding-inline:14px; text-align:center; }
+@media (max-width:700px) {
+  .terma-quick-root .terma-button.remote-install-mode { min-height:64px; grid-template-columns:24px minmax(0,1fr); gap:6px 8px; }
+  .terma-quick-root .remote-install-mode-icon { grid-column:1; grid-row:1 / span 2; align-self:start; }
+  .terma-quick-root .remote-install-mode-copy { grid-column:2; grid-row:1; min-width:0; }
+  .terma-quick-root .remote-install-mode-copy strong,
+  .terma-quick-root .remote-install-mode-copy small { overflow-wrap:break-word; }
+  .terma-quick-root .remote-install-mode-state { grid-column:2; grid-row:2; justify-self:start; min-width:0; white-space:normal; overflow-wrap:break-word; }
+}

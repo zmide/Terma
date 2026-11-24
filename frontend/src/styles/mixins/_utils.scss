@@ -1,0 +1,119 @@
+// ==========================================
+// 基础混入工具
+// ==========================================
+
+// 清除浮动
+@mixin clearfix {
+	&::after {
+		content: '';
+		display: table;
+		clear: both;
+	}
+}
+
+// 隐藏文本
+@mixin hide-text {
+	overflow: hidden;
+	text-indent: -9999px;
+}
+
+// 绝对定位居中
+@mixin center-absolutely {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	transform: translate(-50%, -50%);
+}
+
+// Flex 居中
+@mixin flex-center {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+// Flex 垂直居中
+@mixin flex-center-vertical {
+	display: flex;
+	align-items: center;
+}
+
+// Flex 水平居中
+@mixin flex-center-horizontal {
+	display: flex;
+	justify-content: center;
+}
+
+// 省略号
+@mixin ellipsis($lines: 1) {
+	@if $lines == 1 {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	} @else {
+		display: -webkit-box;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		-webkit-line-clamp: $lines;
+		-webkit-box-orient: vertical;
+	}
+}
+
+// 响应式断点
+$breakpoints: (
+	'sm': 640px,
+	'md': 768px,
+	'lg': 1024px,
+	'xl': 1280px,
+	'2xl': 1536px,
+);
+
+@mixin respond-to($breakpoint) {
+	@if map-has-key($breakpoints, $breakpoint) {
+		@media (min-width: map-get($breakpoints, $breakpoint)) {
+			@content;
+		}
+	} @else {
+		@media (min-width: $breakpoint) {
+			@content;
+		}
+	}
+}
+
+// 主题变量生成
+@mixin theme-variables($theme-prefix: 'tile') {
+	--#{$theme-prefix}-primary: var(--primary);
+	--#{$theme-prefix}-primary-foreground: var(--primary-foreground);
+	--#{$theme-prefix}-secondary: var(--secondary);
+	--#{$theme-prefix}-secondary-foreground: var(--secondary-foreground);
+	--#{$theme-prefix}-accent: var(--accent);
+	--#{$theme-prefix}-accent-foreground: var(--accent-foreground);
+	--#{$theme-prefix}-destructive: var(--destructive);
+	--#{$theme-prefix}-destructive-foreground: var(--destructive-foreground);
+	--#{$theme-prefix}-background: var(--background);
+	--#{$theme-prefix}-foreground: var(--foreground);
+	--#{$theme-prefix}-border: var(--border);
+	--#{$theme-prefix}-input: var(--input);
+	--#{$theme-prefix}-ring: var(--ring);
+}
+
+// 焦点状态
+@mixin focus-ring {
+	&:focus-visible {
+		outline: none;
+		box-shadow:
+			0 0 0 2px $background,
+			0 0 0 4px $ring;
+	}
+}
+
+// 禁用状态
+@mixin disabled {
+	&:disabled,
+	&.disabled,
+	&[disabled] {
+		pointer-events: none;
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+}

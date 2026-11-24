@@ -8,6 +8,25 @@ const { authRequired, isAuthenticated, secureHeaders } = require("./security");
 const { send, sendJson } = require("./http-response");
 const { isFnosDistribution } = require("./infrastructure/distribution-policy");
 
+const VUE_DIST_DIR = path.resolve(__dirname, "../frontend/dist");
+const VUE_PAGE_CONFIGS = [
+  {page: "login.html", assetPrefix: "/login-vue-assets/", manifestKey: "login.html"},
+  {page: "about.html", assetPrefix: "/about-vue-assets/", manifestKey: "about.html"},
+  {page: "about-embed.html", assetPrefix: "/about-vue-assets/", manifestKey: "about-embed.html"}
+];
+const VUE_MANIFEST_PATH = path.join(VUE_DIST_DIR, ".vite", "manifest.json");
+const STATIC_CONTENT_TYPES = new Map([
+  [".html", "text/html; charset=utf-8"],
+  [".js", "text/javascript; charset=utf-8"],
+  [".mjs", "text/javascript; charset=utf-8"],
+  [".css", "text/css; charset=utf-8"],
+  [".json", "application/json; charset=utf-8"],
+  [".png", "image/png"],
+  [".ttf", "font/ttf"],
+  [".txt", "text/plain; charset=utf-8"]
+]);
+const RESOURCE_DIRECTORIES = ["/assets", "/fonts", "/locales", "/vendor"];
+
 function vendorFile(packageName, relativePath) {
   const local = path.resolve(__dirname, "../node_modules", packageName, relativePath);
   if (fs.existsSync(local)) return local;
@@ -44,6 +63,63 @@ function mainAppContentSecurityPolicy(nonce) {
   return `default-src 'self'; style-src 'self' 'nonce-${nonce}'; style-src-attr 'unsafe-inline'; script-src 'self'; script-src-attr 'unsafe-inline'; worker-src 'self' blob:; img-src 'self' data: blob:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'`;
 }
 
+function loginContentSecurityPolicy() {
+  return "default-src 'self'; style-src 'self'; style-src-attr 'none'; script-src 'self'; script-src-attr 'none'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+}
+
+function vuePageHtml(pageName) {
+  const config = VUE_PAGE_CONFIGS.find(item => item.page === pageName);
+  if (!config) return null;
+  const file = path.join(VUE_DIST_DIR, config.page);
+  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) return null;
+  return fs.readFileSync(file, "utf8").replaceAll("./assets/", config.assetPrefix);
+}
+
+function vueManifest() {
+  if (!fs.existsSync(VUE_MANIFEST_PATH)) return null;
+  try { return JSON.parse(fs.readFileSync(VUE_MANIFEST_PATH, "utf8")); }
+  catch { return null; }
+}
+
+function manifestAssetPaths(manifest, entryKey, files = new Set(), visited = new Set()) {
+  if (!manifest || visited.has(entryKey)) return files;
+  visited.add(entryKey);
+  const entry = manifest[entryKey];
+  if (!entry) return files;
+  if (entry.file) files.add(entry.file);
+  for (const css of entry.css || []) files.add(css);
+  for (const imported of entry.imports || []) manifestAssetPaths(manifest, imported, files, visited);
+  return files;
+}
+
+function aboutEmbedHtmlTags() {
+  const file = path.join(VUE_DIST_DIR, "about-embed.html");
+  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) return "";
+  const html = fs.readFileSync(file, "utf8");
+  const tags = Array.from(html.matchAll(/<(?:script type="module" crossorigin src="\.\/assets\/[A-Za-z0-9._-]+\.js"><\/script>|link rel="(?:modulepreload|stylesheet)" crossorigin href="\.\/assets\/[A-Za-z0-9._-]+\.(?:js|css)">)/g), match => match[0]);
+  return tags.map(tag => tag.replaceAll("./assets/", "/about-vue-assets/")).join("\n  ");
+}
+
+function vuePageAsset(pathname) {
+  const config = VUE_PAGE_CONFIGS.find(item => pathname.startsWith(item.assetPrefix));
+  if (!config) return null;
+  const relative = pathname.slice(config.assetPrefix.length);
+  if (!relative || relative.includes("/") || !/^[A-Za-z0-9._-]+$/.test(relative)) return {invalid: true};
+  const manifest = vueManifest();
+  const allowed = new Set();
+  for (const pageConfig of VUE_PAGE_CONFIGS.filter(item => item.assetPrefix === config.assetPrefix)) {
+    for (const file of manifestAssetPaths(manifest, pageConfig.manifestKey)) allowed.add(path.basename(file));
+    const page = path.join(VUE_DIST_DIR, pageConfig.page);
+    if (fs.existsSync(page) && !fs.statSync(page).isDirectory()) {
+      for (const match of fs.readFileSync(page, "utf8").matchAll(/\.\/assets\/([A-Za-z0-9._-]+)/g)) allowed.add(match[1]);
+    }
+  }
+  if (!allowed.has(relative)) return {invalid: true};
+  const root = path.resolve(VUE_DIST_DIR, "assets");
+  const file = path.resolve(root, relative);
+  return file.startsWith(root + path.sep) ? {file} : {invalid: true};
+}
+
 function serveStatic(req, res, pathname) {
   if (pathname === "/favicon.ico") {
     res.writeHead(204, secureHeaders());
@@ -52,10 +128,36 @@ function serveStatic(req, res, pathname) {
   }
   if (pathname === "/login") {
     if (isAuthenticated(req)) return send(res, 302, "", {Location:"/"});
-    return send(res, 200, loginPage(), {
+    const page = vuePageHtml("login.html")?.replace("<html ", `<html data-terma-distribution="${isFnosDistribution() ? "fnos" : "standard"}" `);
+    return send(res, 200, page || loginPage(), {
       "Content-Type":"text/html; charset=utf-8",
-      "Content-Security-Policy":"default-src 'self'; style-src 'self'; style-src-attr 'none'; script-src 'self'; script-src-attr 'none'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+      "Content-Security-Policy":loginContentSecurityPolicy(),
+      "Cache-Control":"no-cache"
     });
+  }
+  if (pathname === "/about") {
+    if (!isAuthenticated(req) && authRequired(req)) return send(res, 302, "", {Location:"/login"});
+    const page = vuePageHtml("about.html");
+    if (!page) return sendJson(res, {error:"Vue about page is not built"}, 503);
+    return send(res, 200, page, {
+      "Content-Type":"text/html; charset=utf-8",
+      "Content-Security-Policy":loginContentSecurityPolicy(),
+      "Cache-Control":"no-cache"
+    });
+  }
+  if (VUE_PAGE_CONFIGS.some(item => pathname.startsWith(item.assetPrefix))) {
+    const vueAsset = vuePageAsset(pathname);
+    const vueAssetFile = vueAsset?.file;
+    if (!vueAssetFile || !fs.existsSync(vueAssetFile) || fs.statSync(vueAssetFile).isDirectory()) return sendJson(res, {error:"Vue page asset not found"}, 404);
+    const extension = path.extname(vueAssetFile).toLowerCase();
+    const body = fs.readFileSync(vueAssetFile);
+    res.writeHead(200, secureHeaders({
+      "Content-Type":STATIC_CONTENT_TYPES.get(extension) || "application/octet-stream",
+      "Cache-Control":"public, max-age=31536000, immutable",
+      "Content-Length":body.length
+    }));
+    res.end(body);
+    return;
   }
   const loginAsset = pathname === "/login.css"
     || pathname === "/login.js"
@@ -82,17 +184,23 @@ function serveStatic(req, res, pathname) {
     file = path.resolve(PUBLIC_DIR, relative);
   }
   if (!isVendorFile && !file.startsWith(PUBLIC_DIR)) return sendJson(res, {error:"Not found"}, 404);
-  if (isVendorFile && (!fs.existsSync(file) || fs.statSync(file).isDirectory())) return sendJson(res, {error:"Vendor file not found"}, 404);
-  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(PUBLIC_DIR, "index.html");
+  if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) {
+    if (isVendorFile) return sendJson(res, {error:"Vendor file not found"}, 404);
+    const appAsset = /^\/app(?:-[a-z0-9-]+)?\.(?:css|js)$/i.test(pathname);
+    if (loginAsset || appAsset || RESOURCE_DIRECTORIES.some(directory => pathname === directory || pathname.startsWith(`${directory}/`))) {
+      return sendJson(res, {error:"Not found"}, 404);
+    }
+    file = path.join(PUBLIC_DIR, "index.html");
+  }
   const extension = path.extname(file).toLowerCase();
-  const types = {".html":"text/html; charset=utf-8", ".js":"text/javascript; charset=utf-8", ".mjs":"text/javascript; charset=utf-8", ".css":"text/css; charset=utf-8", ".json":"application/json; charset=utf-8"};
   let body = fs.readFileSync(file);
-  const responseHeaders = {"Content-Type":types[extension] || "application/octet-stream", "Cache-Control":"no-cache"};
+  const responseHeaders = {"Content-Type":STATIC_CONTENT_TYPES.get(extension) || "application/octet-stream", "Cache-Control":"no-cache"};
   if (extension === ".html" && path.basename(file) === "index.html") {
     const nonce = crypto.randomBytes(18).toString("base64");
     body = Buffer.from(body.toString("utf8")
       .replaceAll("__TERMA_CSP_NONCE__", nonce)
-      .replaceAll("__TERMA_VERSION__", encodeURIComponent(PACKAGE_VERSION)), "utf8");
+      .replaceAll("__TERMA_VERSION__", encodeURIComponent(PACKAGE_VERSION))
+      .replaceAll("<!-- TERMA_ABOUT_VUE_ASSETS -->", aboutEmbedHtmlTags()), "utf8");
     responseHeaders["Content-Security-Policy"] = mainAppContentSecurityPolicy(nonce);
   }
   responseHeaders["Content-Length"] = body.length;

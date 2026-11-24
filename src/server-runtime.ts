@@ -494,7 +494,7 @@ function createServerRuntime(options: any = {}) {
     if (process.env.TERMA_DISABLE_UPDATE_CHECK !== "1" && process.env.TUNNELDESK_DISABLE_UPDATE_CHECK !== "1") {
       updateScheduler.start();
     }
-    if (desktopIntegration) startSftpAutomationScheduler();
+    startSftpAutomationScheduler({serverFiles:!desktopIntegration});
     startupTaskTimer = setTimeout(async () => {
       let autostart = {ok:0, failed:0, errors:[]};
       let restore = {ok:0, failed:0, errors:[]};

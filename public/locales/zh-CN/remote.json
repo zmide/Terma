@@ -1,5 +1,8 @@
 {
   "title": "远程桌面",
+  "jump": {
+    "open_title": "打开此连接的远程桌面"
+  },
   "auto": {
     "remote_desktop": "远程桌面",
     "add_connection": "添加连接",

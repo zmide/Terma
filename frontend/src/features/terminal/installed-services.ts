@@ -1,0 +1,30 @@
+import type {InstalledFeaturesTerminalTerminalClipboardServiceServices as Services0} from '@/features/terminal/terminal-clipboard-service';
+import type {InstalledFeaturesTerminalTerminalCommandTrackingServiceServices as Services1} from '@/features/terminal/terminal-command-tracking-service';
+import type {InstalledFeaturesTerminalTerminalConnectionServiceServices as Services2} from '@/features/terminal/terminal-connection-service';
+import type {InstalledFeaturesTerminalTerminalControlsMountServices as Services3} from '@/features/terminal/terminal-controls-mount';
+import type {InstalledFeaturesTerminalTerminalCursorCopyMountServices as Services4} from '@/features/terminal/terminal-cursor-copy-mount';
+import type {InstalledFeaturesTerminalTerminalDialogMountServices as Services5} from '@/features/terminal/terminal-dialog-mount';
+import type {InstalledFeaturesTerminalTerminalDirectoryWorkspaceServices as Services6} from '@/features/terminal/terminal-directory-workspace';
+import type {InstalledFeaturesTerminalTerminalImagePasteServiceServices as Services7} from '@/features/terminal/terminal-image-paste-service';
+import type {InstalledFeaturesTerminalTerminalInteractionServiceServices as Services8} from '@/features/terminal/terminal-interaction-service';
+import type {InstalledFeaturesTerminalTerminalKeysServiceServices as Services9} from '@/features/terminal/terminal-keys-service';
+import type {InstalledFeaturesTerminalTerminalOutputFlowServiceServices as Services10} from '@/features/terminal/terminal-output-flow-service';
+import type {InstalledFeaturesTerminalTerminalPreferencesServiceServices as Services11} from '@/features/terminal/terminal-preferences-service';
+import type {InstalledFeaturesTerminalTerminalSessionCoreServiceServices as Services12} from '@/features/terminal/terminal-session-core-service';
+import type {InstalledFeaturesTerminalTerminalSettingsModelServices as Services13} from '@/features/terminal/terminal-settings-model';
+import type {InstalledFeaturesTerminalTerminalSettingsServiceServices as Services14} from '@/features/terminal/terminal-settings-service';
+import type {InstalledFeaturesTerminalTerminalShortcutConfigServiceServices as Services15} from '@/features/terminal/terminal-shortcut-config-service';
+import type {InstalledFeaturesTerminalTerminalStartupStateServices as Services16} from '@/features/terminal/terminal-startup-state';
+import type {InstalledFeaturesTerminalTerminalStartupWorkspaceServices as Services17} from '@/features/terminal/terminal-startup-workspace';
+import type {InstalledFeaturesTerminalTerminalSurfaceServiceServices as Services18} from '@/features/terminal/terminal-surface-service';
+import type {InstalledFeaturesTerminalTerminalToolbarMountServices as Services19} from '@/features/terminal/terminal-toolbar-mount';
+import type {InstalledFeaturesTerminalTerminalToolbarScrollServiceServices as Services20} from '@/features/terminal/terminal-toolbar-scroll-service';
+import type {InstalledFeaturesTerminalTerminalToolbarServiceServices as Services21} from '@/features/terminal/terminal-toolbar-service';
+import type {InstalledFeaturesTerminalTerminalTransportServiceServices as Services22} from '@/features/terminal/terminal-transport-service';
+import type {InstalledFeaturesTerminalTerminalViewportServiceServices as Services23} from '@/features/terminal/terminal-viewport-service';
+import type {InstalledFeaturesTerminalTerminalZmodemMountServices as Services24} from '@/features/terminal/terminal-zmodem-mount';
+import type {InstalledFeaturesTerminalTerminalZmodemServiceServices as Services25} from '@/features/terminal/terminal-zmodem-service';
+
+// Installed instances are owned by this domain. Factories and lifecycle hooks remain in their modules.
+export type InstalledTerminalServices=Services0 & Services1 & Services2 & Services3 & Services4 & Services5 & Services6 & Services7 & Services8 & Services9 & Services10 & Services11 & Services12 & Services13 & Services14 & Services15 & Services16 & Services17 & Services18 & Services19 & Services20 & Services21 & Services22 & Services23 & Services24 & Services25;
+export const terminalServices:InstalledTerminalServices={} as InstalledTerminalServices;

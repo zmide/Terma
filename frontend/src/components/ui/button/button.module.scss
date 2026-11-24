@@ -1,0 +1,222 @@
+@use '../../../styles/variables/colors' as *;
+
+.button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--tile-button-gap, #{$spacing-2});
+	white-space: nowrap;
+	border-radius: var(--tile-button-radius, #{$radius});
+	font-family: var(--tile-button-font-family, inherit);
+	font-size: var(--tile-button-font-size, #{$text-sm});
+	line-height: var(--tile-button-line-height, inherit);
+	font-weight: $font-medium;
+	transition: all $transition-fast;
+	cursor: pointer;
+	outline: none;
+
+	&:focus-visible {
+		outline: var(--tile-button-focus-outline, none);
+		outline-offset: var(--tile-button-focus-outline-offset, 0px);
+		outline-style: var(--tile-button-focus-outline-style, none);
+		box-shadow:
+			0 0 0 2px $background,
+			0 0 0 4px $ring;
+	}
+
+	&:disabled,
+	&.disabled,
+	&[aria-disabled='true'] {
+		pointer-events: none;
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	svg {
+		pointer-events: none;
+		width: var(--tile-button-icon-size, 1em);
+		height: var(--tile-button-icon-size, 1em);
+	}
+
+	// 尺寸变体
+	&.sizeDefault {
+		height: var(--tile-button-height, 2.25rem);
+		padding: 0 var(--tile-button-padding-inline, #{$spacing-4});
+		padding-block: var(--tile-button-padding-block, 0);
+
+		&.hasIcon {
+			padding-inline: var(--tile-button-icon-padding-inline, #{$spacing-3});
+		}
+	}
+
+	&.sizeXs {
+		height: var(--tile-button-xs-height, 1.5rem);
+		gap: var(--tile-button-xs-gap, #{$spacing-1});
+		border-radius: var(--tile-button-xs-radius, #{$radius});
+		padding: 0 var(--tile-button-xs-padding-inline, #{$spacing-2});
+		padding-block: var(--tile-button-xs-padding-block, 0);
+		font-size: var(--tile-button-xs-font-size, #{$text-xs});
+		line-height: var(--tile-button-compact-line-height, inherit);
+
+		svg {
+			width: 0.75rem;
+			height: 0.75rem;
+		}
+
+		&.hasIcon {
+			padding-inline: var(--tile-button-xs-icon-padding-inline, #{$spacing-1_5});
+		}
+	}
+
+	&.sizeSm {
+		height: var(--tile-button-sm-height, 2rem);
+		border-radius: var(--tile-button-sm-radius, #{$radius-sm});
+		padding: 0 var(--tile-button-sm-padding-inline, #{$spacing-3});
+		padding-block: var(--tile-button-sm-padding-block, 0);
+		font-size: var(--tile-button-sm-font-size, #{$text-xs});
+		line-height: var(--tile-button-compact-line-height, inherit);
+		gap: var(--tile-button-sm-gap, #{$spacing-2});
+
+		&.hasIcon {
+			padding-inline: var(--tile-button-sm-icon-padding-inline, #{$spacing-2});
+			gap: var(--tile-button-sm-gap, #{$spacing-1});
+		}
+	}
+
+	&.sizeLg {
+		height: var(--tile-button-lg-height, 2.5rem);
+		border-radius: var(--tile-button-lg-radius, #{$radius-md});
+		padding: 0 var(--tile-button-lg-padding-inline, #{$spacing-6});
+		padding-block: var(--tile-button-lg-padding-block, 0);
+		font-size: var(--tile-button-lg-font-size, #{$text-base});
+		gap: var(--tile-button-lg-gap, #{$spacing-2});
+
+		&.hasIcon {
+			padding-inline: var(--tile-button-lg-icon-padding-inline, #{$spacing-4});
+		}
+	}
+
+	&.sizeIcon {
+		height: var(--tile-button-height, 2.25rem);
+		width: var(--tile-button-height, 2.25rem);
+		padding: 0;
+	}
+
+	&.sizeIconXs {
+		height: var(--tile-button-icon-xs-size, 1.5rem);
+		width: var(--tile-button-icon-xs-size, 1.5rem);
+		border-radius: var(--tile-button-xs-radius, #{$radius});
+		padding: 0;
+
+		svg {
+			width: 0.75rem;
+			height: 0.75rem;
+		}
+	}
+
+	&.sizeIconSm {
+		height: var(--tile-button-sm-height, 2rem);
+		width: var(--tile-button-sm-height, 2rem);
+		border-radius: var(--tile-button-icon-sm-radius, #{$radius});
+		padding: 0;
+	}
+
+	&.sizeIconLg {
+		height: var(--tile-button-lg-height, 2.5rem);
+		width: var(--tile-button-lg-height, 2.5rem);
+		padding: 0;
+	}
+
+	// 样式变体
+	&.variantDefault {
+		background-color: var(--tile-button-default-background, #{$primary});
+		background-image: var(--tile-button-default-background-image, none);
+		color: var(--tile-button-default-color, #{$primary-foreground});
+		border: none;
+		box-shadow: var(--tile-button-default-shadow, #{$shadow-sm});
+
+		&:focus-visible {
+			box-shadow: var(--tile-button-default-focus-shadow, #{$shadow-sm});
+		}
+
+		&:hover:not(:disabled) {
+			background-color: var(--tile-button-default-hover-background, #{$primary-hover});
+			background-image: var(--tile-button-default-hover-background-image, none);
+		}
+
+		&:active:not(:disabled) {
+			background-color: var(--tile-button-default-active-background, #{$primary-active});
+			background-image: var(--tile-button-default-active-background-image, none);
+		}
+	}
+
+	&.variantDestructive {
+		background-color: var(--tile-button-destructive-background, #{$destructive});
+		background-image: var(--tile-button-destructive-background-image, none);
+		color: var(--tile-button-destructive-color, #{$destructive-foreground});
+		border: none;
+		box-shadow: var(--tile-button-destructive-shadow, #{$shadow-sm});
+
+		&:hover:not(:disabled) {
+			background-color: var(--tile-button-destructive-hover-background, #{$destructive-hover});
+			background-image: var(--tile-button-destructive-hover-background-image, none);
+		}
+	}
+
+	&.variantOutline {
+		background-color: var(--tile-button-outline-background, transparent);
+		color: var(--tile-button-outline-color, #{$foreground});
+		border: var(--tile-button-outline-border-width, 1px) solid $border;
+		box-shadow: var(--tile-button-outline-shadow, #{$shadow-sm});
+
+		&:hover:not(:disabled) {
+			background-color: var(--tile-button-outline-hover-background, #{$accent});
+			color: var(--tile-button-outline-hover-color, #{$accent-foreground});
+			box-shadow: var(--tile-button-outline-hover-shadow, #{$shadow-sm});
+		}
+	}
+
+	&.variantSecondary {
+		background-color: var(--tile-button-secondary-background, #{$secondary});
+		color: var(--tile-button-secondary-color, #{$secondary-foreground});
+		border: none;
+		box-shadow: var(--tile-button-secondary-shadow, #{$shadow-sm});
+
+		&:hover:not(:disabled) {
+			background-color: var(--tile-button-secondary-hover-background, #{$secondary-hover});
+		}
+
+		&:focus-visible {
+			box-shadow: var(--tile-button-secondary-focus-shadow, #{$shadow-sm});
+		}
+
+		&:disabled,
+		&.disabled,
+		&[aria-disabled='true'] {
+			color: var(--tile-button-secondary-disabled-color, #{$secondary-foreground});
+			background-color: var(--tile-button-secondary-disabled-background, #{$secondary});
+		}
+	}
+
+	&.variantGhost {
+		background-color: var(--tile-button-ghost-background, transparent);
+		color: var(--tile-button-ghost-color, #{$foreground});
+		box-shadow: var(--tile-button-ghost-shadow, none);
+
+		&:hover:not(:disabled) {
+			background-color: var(--tile-button-ghost-hover-background, #{$accent});
+			color: var(--tile-button-ghost-hover-color, #{$accent-foreground});
+		}
+	}
+
+	&.variantLink {
+		background-color: transparent;
+		color: var(--tile-button-link-color, #{$primary});
+		text-decoration: underline;
+		text-underline-offset: 4px;
+
+		&:hover:not(:disabled) {
+			text-decoration: none;
+		}
+	}
+}

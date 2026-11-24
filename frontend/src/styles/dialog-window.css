@@ -1,0 +1,51 @@
+[data-dialog-window] {
+  position:relative;
+  box-sizing:border-box;
+  translate:var(--dialog-offset,none);
+}
+[data-dialog-window][data-dialog-sized] {
+  width:var(--dialog-width) !important;
+  height:var(--dialog-height) !important;
+  max-width:none !important;
+  max-height:none !important;
+}
+[data-dialog-sized]:is(.forward-dialog-root,.quick-panel-dialog) > :is(.forward-editor-layer,.command-page) {
+  max-height:100%;
+}
+[data-dialog-sized].quick-panel-dialog:has(.command-page) { overflow:hidden; }
+[data-dialog-sized].quick-panel-dialog > .command-page { height:100%; }
+[data-dialog-drag] { cursor:move; touch-action:none; }
+[data-dialog-window] > button.dialog-window-resize {
+  position:absolute;
+  z-index:8;
+  inset:auto 2px 2px auto;
+  width:22px;
+  height:22px;
+  min-width:0;
+  min-height:0;
+  padding:0;
+  display:grid;
+  place-items:center;
+  border:0;
+  background:transparent;
+  box-shadow:none;
+  color:var(--tile-text-subtle,var(--muted));
+  cursor:nwse-resize;
+  touch-action:none;
+}
+.dialog-window-resize::after {
+  content:"";
+  width:9px;
+  height:9px;
+  border-right:2px solid currentColor;
+  border-bottom:2px solid currentColor;
+  border-bottom-right-radius:7px;
+}
+[data-dialog-window] > button.dialog-window-resize:hover { color:var(--tile-brand,var(--accent2)); }
+[data-dialog-window] > button.dialog-window-resize:focus-visible {
+  outline:2px solid var(--tile-focus,var(--accent2));
+  outline-offset:-2px;
+}
+[data-dialog-window]:has(.automation-layer:not([hidden]),.sftp-automation-confirm-layer:not([hidden])) > button.dialog-window-resize {
+  visibility:hidden;
+}

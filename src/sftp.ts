@@ -1,7 +1,11 @@
 const { randomBytes } = require("node:crypto");
 const path = require("node:path");
-const { buildRemotePosixCommand } = require("./remote-posix");
-const { getSftpConnection, readSftpDirectory, spawnSftpSessionCommand } = require("./sftp-session");
+const { buildRemotePosixCommand, prepareRemotePosixInput } = require("./remote-posix");
+const { getSftpConnection, readSftpDirectory, spawnSftpSessionCommand, openSftpChannel } = require("./sftp-session");
+const { renameSftpEntry } = require("./services/sftp-rename-service");
+const { createRemotePrincipalService } = require("./services/sftp-principal-service");
+const remotePrincipals = createRemotePrincipalService({connection:getSftpConnection, spawn:spawnSftpSessionCommand, wrap:buildRemotePosixCommand});
+const readRemotePrincipals = (connectionId) => remotePrincipals.read(connectionId);
 const {
   decodeRemoteFilenameOutput,
   decodeRemoteText,
@@ -48,10 +52,6 @@ function permissionPathOperand(value) {
   const normalized = String(value || "");
   if (normalized.startsWith("/") || normalized.startsWith("./")) return normalized;
   return `./${normalized}`;
-}
-
-function spawnRemote(connection, command) {
-  return spawnSftpSessionCommand(connection, buildRemotePosixCommand(command));
 }
 
 function runRemoteCommand(connection, command, input = null, timeoutMs = 30000, signal = null): Promise<Buffer> {
@@ -326,6 +326,12 @@ function normalizeRemoteDirectoryReadError(error, remotePath) {
     return normalized;
   }
   return error;
+}
+
+function directoryFallbackError(error, nativeError, remotePath) {
+  const normalized = normalizeRemoteDirectoryReadError(error, remotePath);
+  if (normalized?.name === "AbortError" || normalized?.code) return normalized;
+  return nativeError?.publicCode === "sftp_subsystem_unavailable" ? nativeError : normalized;
 }
 
 function remoteDirectoryFindFilter() {
@@ -667,7 +673,7 @@ async function listRemoteDir(connectionId, remotePath = ".", options: any = {}) 
   try {
     snapshot = await loadDirectorySnapshot(connectionId, remotePath, recursive, normalized.refresh, null, abortSignal);
   } catch (nativeError) {
-    if (recursive) throw normalizeRemoteDirectoryReadError(nativeError, remotePath);
+    if (recursive || nativeError?.name === "AbortError") throw normalizeRemoteDirectoryReadError(nativeError, remotePath);
     // Keep the shell implementation as a compatibility path for servers that
     // reject SFTP READDIR or expose an unusual filename encoding.
     try {
@@ -675,15 +681,15 @@ async function listRemoteDir(connectionId, remotePath = ".", options: any = {}) 
     } catch (shellError) {
       if (shouldFallbackToPagedDirectoryRead(shellError)) {
         try {
-          return await listRemoteDirPaged(connectionId, remotePath, normalized, abortSignal);
+          return await remotePrincipals.decorate(connectionId, await listRemoteDirPaged(connectionId, remotePath, normalized, abortSignal));
         } catch (fallbackError) {
-          throw normalizeRemoteDirectoryReadError(fallbackError, remotePath);
+          throw directoryFallbackError(fallbackError, nativeError, remotePath);
         }
       }
-      throw normalizeRemoteDirectoryReadError(shellError, remotePath);
+      throw directoryFallbackError(shellError, nativeError, remotePath);
     }
   }
-  return {
+  return remotePrincipals.decorate(connectionId, {
     path: snapshot.path,
     recursive,
     truncated:Boolean(snapshot.truncated),
@@ -692,7 +698,7 @@ async function listRemoteDir(connectionId, remotePath = ".", options: any = {}) 
       normalized,
       snapshot.page_orders || (snapshot.page_orders = new Map())
     )
-  };
+  });
 }
 
 function remoteBackupVersionTimestamp(name, prefix, fallback = 0) {
@@ -1019,9 +1025,9 @@ async function clearRemoteRecycleItems(connectionId) {
 }
 
 async function renameRemotePath(connectionId, from, to) {
-  const connection = getSftpConnection(connectionId);
-  await runRemote(connection, `mv -- ${remotePathOperand(connection, from)} ${remotePathOperand(connection, to)}`);
-  return { ok: true };
+  const channel = await openSftpChannel(connectionId);
+  try { return await renameSftpEntry(channel, String(from || ""), String(to || "")); }
+  finally { try { channel.end(); } catch {} }
 }
 
 function normalizeRemotePrincipal(value, label) {
@@ -1033,8 +1039,9 @@ function normalizeRemotePrincipal(value, label) {
 
 function normalizeRemotePermissionRequest(paths, mode, recursive = false, owner = "", group = "") {
   const source = Array.isArray(paths) ? paths : [paths];
+  if (!source.length || source.some(item => typeof item !== "string" || !item.length)) throw new Error("请选择要设置权限的文件或目录");
   const normalizedPaths = [...new Set(source
-    .map((item) => path.posix.normalize(String(item || "").replace(/\\/g, "/").trim()))
+    .map((item) => path.posix.normalize(item))
     .filter(Boolean))];
   if (!normalizedPaths.length) throw new Error("请选择要设置权限的文件或目录");
   if (normalizedPaths.length > 200) throw new Error("一次最多设置 200 个文件或目录的权限");
@@ -1044,7 +1051,7 @@ function normalizeRemotePermissionRequest(paths, mode, recursive = false, owner 
   if (!/^[0-7]{3}$/.test(normalizedMode)) throw new Error("权限值必须是三位八进制数字，例如 755");
   const applyRecursively = recursive === true;
   if (normalizedPaths.some((item) => item === ".." || item.startsWith("../"))) throw new Error("远程路径不能越出当前连接目录");
-  if (applyRecursively && normalizedPaths.some((item) => ["/", ".", ".."].includes(item))) {
+  if (applyRecursively && normalizedPaths.some((item) => ["/", ".", ".."].includes(item.replace(/\/+$/, "") || "/"))) {
     throw new Error("不能对根目录或当前目录递归设置权限");
   }
   return {
@@ -1199,8 +1206,11 @@ async function planRemoteUploads(connectionId, directory, filenames) {
   return { directory:normalizeRemoteUploadDirectory(directory), items };
 }
 
-function buildReadRemoteBinaryCommand(remotePath, maximumBytes, connection = null) {
-  const limit = normalizeOpenFileLimit(maximumBytes);
+// POSIX numeric long listing places the regular file or link size before the filename.
+// Parse only that field and suppress glob expansion even for unusual names.
+const REMOTE_LS_FILE_SIZE = `terma_ls_size() ( terma_type=$1; shift; terma_row=$(LC_ALL=C ls -ldn "$@" -- "$TERMA_TARGET" 2>/dev/null) || return 1; set -f; set -- $terma_row; case "\${1-}" in "$terma_type"*) ;; *) return 1;; esac; case "\${5-}" in ""|*[!0-9]*) return 1;; esac; printf "%s\\n" "$5"; )`;
+
+function remoteFileOpenGuard(remotePath, limit, connection) {
   const limitMb = Math.max(1, Math.round(limit / 1024 / 1024));
   return [
     `TERMA_TARGET=${remotePathOperand(connection, remotePath)}`,
@@ -1208,17 +1218,37 @@ function buildReadRemoteBinaryCommand(remotePath, maximumBytes, connection = nul
     `if [ -L "$TERMA_TARGET" ]; then TERMA_IS_LINK=1; else TERMA_IS_LINK=0; fi`,
     `if [ "$TERMA_IS_LINK" = 1 ] && [ ! -e "$TERMA_TARGET" ]; then printf "%s\\n" "符号链接指向的目标不存在" >&2; exit 1; fi`,
     `if [ ! -f "$TERMA_TARGET" ]; then printf "%s\\n" "目标不是普通文件" >&2; exit 1; fi`,
-    `if stat -L -c "%s" "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_STAT_STYLE=gnu; TERMA_SIZE=$(stat -L -c "%s" "$TERMA_TARGET"); if [ "$TERMA_IS_LINK" = 1 ]; then TERMA_LINK_SIZE=$(stat -c "%s" "$TERMA_TARGET"); fi`,
-    `elif stat -L -f "%z" "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_STAT_STYLE=bsd; TERMA_SIZE=$(stat -L -f "%z" "$TERMA_TARGET"); if [ "$TERMA_IS_LINK" = 1 ]; then TERMA_LINK_SIZE=$(stat -f "%z" "$TERMA_TARGET"); fi`,
-    `else printf "%s\\n" "远程系统缺少兼容的 stat 命令" >&2; exit 1; fi`,
+    REMOTE_LS_FILE_SIZE,
+    `if TERMA_SIZE=$(stat -L -c "%s" "$TERMA_TARGET" 2>/dev/null); then if [ "$TERMA_IS_LINK" = 1 ]; then TERMA_LINK_SIZE=$(stat -c "%s" "$TERMA_TARGET"); fi`,
+    `elif TERMA_SIZE=$(stat -L -f "%z" "$TERMA_TARGET" 2>/dev/null); then if [ "$TERMA_IS_LINK" = 1 ]; then TERMA_LINK_SIZE=$(stat -f "%z" "$TERMA_TARGET"); fi`,
+    `elif TERMA_SIZE=$(terma_ls_size - -L); then if [ "$TERMA_IS_LINK" = 1 ]; then TERMA_LINK_SIZE=$(terma_ls_size l); fi`,
+    `else printf "%s\\n" "无法读取远程文件大小" >&2; exit 1; fi`,
     `case "$TERMA_SIZE" in ""|*[!0-9]*) printf "%s\\n" "远程文件大小返回格式无效" >&2; exit 1;; esac`,
-    `if [ "$TERMA_SIZE" -gt "$TERMA_LIMIT" ]; then if [ "$TERMA_IS_LINK" = 1 ]; then printf "符号链接本身为 %s B，目标文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "\${TERMA_LINK_SIZE:-0}" "$TERMA_SIZE" >&2; else printf "文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "$TERMA_SIZE" >&2; fi; exit 1; fi`,
+    `if [ "$TERMA_SIZE" -gt "$TERMA_LIMIT" ]; then if [ "$TERMA_IS_LINK" = 1 ]; then printf "符号链接本身为 %s B，目标文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "\${TERMA_LINK_SIZE:-0}" "$TERMA_SIZE" >&2; else printf "文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "$TERMA_SIZE" >&2; fi; exit 1; fi`
+  ];
+}
+
+function buildReadRemoteBinaryCommand(remotePath, maximumBytes, connection = null) {
+  const limit = normalizeOpenFileLimit(maximumBytes);
+  return [
+    ...remoteFileOpenGuard(remotePath, limit, connection),
     `head -c ${limit + 1} "$TERMA_TARGET"`
   ].join("; ");
 }
 
-function buildReadRemoteBinaryExecCommand(remotePath, maximumBytes, connection = null) {
-  return buildRemotePosixCommand(buildReadRemoteBinaryCommand(remotePath, maximumBytes, connection));
+// These read operations do not need stdin for data. Pass the quoted script to
+// a fixed command so the login shell sees neither the path nor the payload.
+const FILE_READ_SHELL = "/bin/sh -s";
+const fileReadScript = (script: string) => Buffer.from(`${script}\n`, "utf8");
+
+function runFileRead(connection, command: string, timeoutMs = 30000) {
+  return runRemoteCommand(connection, FILE_READ_SHELL, fileReadScript(command), timeoutMs);
+}
+
+function spawnFileRead(connection, command: string) {
+  const child = spawnSftpSessionCommand(connection, FILE_READ_SHELL);
+  child.stdin.end(fileReadScript(command));
+  return child;
 }
 
 async function readRemoteBinaryFile(connectionId, remotePath, maximumBytes = DEFAULT_MAX_OPEN_FILE_SIZE) {
@@ -1226,7 +1256,7 @@ async function readRemoteBinaryFile(connectionId, remotePath, maximumBytes = DEF
   const limit = normalizeOpenFileLimit(maximumBytes);
   let body;
   try {
-    body = await runRemoteCommand(connection, buildReadRemoteBinaryExecCommand(remotePath, limit, connection), null, 60000);
+    body = await runFileRead(connection, buildReadRemoteBinaryCommand(remotePath, limit, connection), 60000);
   } catch (error) {
     throw new Error(humanizeOpenFileError(error, limit));
   }
@@ -1240,11 +1270,12 @@ async function readRemoteFileMetadata(connectionId, remotePath) {
     `TERMA_TARGET=${remotePathOperand(connection, remotePath)}`,
     `if [ -L "$TERMA_TARGET" ] && [ ! -e "$TERMA_TARGET" ]; then printf "%s\\n" "符号链接指向的目标不存在" >&2; exit 1; fi`,
     `if [ ! -f "$TERMA_TARGET" ]; then printf "%s\\n" "目标不是普通文件" >&2; exit 1; fi`,
-    `if stat -L -c "%s %Y" "$TERMA_TARGET" >/dev/null 2>&1; then stat -L -c "%s %Y" "$TERMA_TARGET"`,
-    `elif stat -L -f "%z %m" "$TERMA_TARGET" >/dev/null 2>&1; then stat -L -f "%z %m" "$TERMA_TARGET"`,
-    `else printf "%s\\n" "远程系统缺少兼容的 stat 命令" >&2; exit 1; fi`
+    REMOTE_LS_FILE_SIZE,
+    `if TERMA_META=$(stat -L -c "%s %Y" "$TERMA_TARGET" 2>/dev/null) || TERMA_META=$(stat -L -f "%z %m" "$TERMA_TARGET" 2>/dev/null); then printf "%s\\n" "$TERMA_META"`,
+    `elif TERMA_SIZE=$(terma_ls_size - -L) && TERMA_MTIME=$(date -r "$TERMA_TARGET" +%s 2>/dev/null); then printf "%s %s\\n" "$TERMA_SIZE" "$TERMA_MTIME"`,
+    `else printf "%s\\n" "无法读取远程文件元数据" >&2; exit 1; fi`
   ].join("; ");
-  const output = (await runRemote(connection, command)).toString("utf8").trim();
+  const output = (await runFileRead(connection, command)).toString("utf8").trim();
   const match = /^(\d+)\s+(\d+)$/.exec(output);
   if (!match) throw new Error("远程文件元数据返回格式无效");
   return {size:Number(match[1]), mtime:Number(match[2])};
@@ -1252,18 +1283,8 @@ async function readRemoteFileMetadata(connectionId, remotePath) {
 
 function buildStreamRemoteOpenCommand(remotePath, maximumBytes, connection = null) {
   const limit = normalizeOpenFileLimit(maximumBytes);
-  const limitMb = Math.max(1, Math.round(limit / 1024 / 1024));
   return [
-    `TERMA_TARGET=${remotePathOperand(connection, remotePath)}`,
-    `TERMA_LIMIT=${limit}`,
-    `if [ -L "$TERMA_TARGET" ]; then TERMA_IS_LINK=1; else TERMA_IS_LINK=0; fi`,
-    `if [ "$TERMA_IS_LINK" = 1 ] && [ ! -e "$TERMA_TARGET" ]; then printf "%s\\n" "符号链接指向的目标不存在" >&2; exit 1; fi`,
-    `if [ ! -f "$TERMA_TARGET" ]; then printf "%s\\n" "目标不是普通文件" >&2; exit 1; fi`,
-    `if stat -L -c "%s" "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_SIZE=$(stat -L -c "%s" "$TERMA_TARGET"); if [ "$TERMA_IS_LINK" = 1 ]; then TERMA_LINK_SIZE=$(stat -c "%s" "$TERMA_TARGET"); fi`,
-    `elif stat -L -f "%z" "$TERMA_TARGET" >/dev/null 2>&1; then TERMA_SIZE=$(stat -L -f "%z" "$TERMA_TARGET"); if [ "$TERMA_IS_LINK" = 1 ]; then TERMA_LINK_SIZE=$(stat -f "%z" "$TERMA_TARGET"); fi`,
-    `else printf "%s\\n" "远程系统缺少兼容的 stat 命令" >&2; exit 1; fi`,
-    `case "$TERMA_SIZE" in ""|*[!0-9]*) printf "%s\\n" "远程文件大小返回格式无效" >&2; exit 1;; esac`,
-    `if [ "$TERMA_SIZE" -gt "$TERMA_LIMIT" ]; then if [ "$TERMA_IS_LINK" = 1 ]; then printf "符号链接本身为 %s B，目标文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "\${TERMA_LINK_SIZE:-0}" "$TERMA_SIZE" >&2; else printf "文件实际为 %s B，超过 ${limitMb} MB，不能在程序中打开；可在 SFTP 页面全局设置中调整打开上限\\n" "$TERMA_SIZE" >&2; fi; exit 1; fi`,
+    ...remoteFileOpenGuard(remotePath, limit, connection),
     `printf "TERMA_OPEN_READY:%s:%s:%s\\n" "$TERMA_SIZE" "$TERMA_IS_LINK" "\${TERMA_LINK_SIZE:-0}"`,
     `head -c "$TERMA_SIZE" < "$TERMA_TARGET"`
   ].join("; ");
@@ -1272,7 +1293,7 @@ function buildStreamRemoteOpenCommand(remotePath, maximumBytes, connection = nul
 function streamRemoteOpenFile(connectionId, remotePath, maximumBytes, res, req, secureResponseHeaders = headers => headers) {
   const connection = getSftpConnection(connectionId);
   const limit = normalizeOpenFileLimit(maximumBytes);
-  const child = spawnRemote(connection, buildStreamRemoteOpenCommand(remotePath, limit, connection));
+  const child = spawnFileRead(connection, buildStreamRemoteOpenCommand(remotePath, limit, connection));
   let headerBuffer = Buffer.alloc(0);
   let headersSent = false;
   let completed = false;
@@ -1373,7 +1394,6 @@ function streamRemoteOpenFile(connectionId, remotePath, maximumBytes, res, req, 
     cleanup();
     res.end();
   });
-  child.stdin.end();
 }
 
 async function readRemoteTextFile(connectionId, remotePath, requestedEncoding = "", maximumBytes = DEFAULT_MAX_OPEN_FILE_SIZE) {
@@ -1387,7 +1407,7 @@ async function readRemoteTextFile(connectionId, remotePath, requestedEncoding = 
 function streamRemoteFile(connectionId, remotePath, res, req) {
   const connection = getSftpConnection(connectionId);
   const basename = String(remotePath || "").split("/").pop() || "download";
-  const child = spawnRemote(connection, `cat -- ${remotePathOperand(connection, remotePath)}`);
+  const child = spawnFileRead(connection, `cat -- ${remotePathOperand(connection, remotePath)}`);
   let headersSent = false;
   let stderr = [];
   let aborted = false;
@@ -1432,11 +1452,11 @@ function streamRemoteFile(connectionId, remotePath, res, req) {
     }
     try { res.end(); } catch {}
   });
-  child.stdin.end();
 }
 
 async function writeRemoteFile(connectionId, remotePath, data, options: { backup?: boolean } = {}) {
   const connection = getSftpConnection(connectionId);
+  if (typeof remotePath !== "string" || !remotePath || remotePath.includes("\0") || remotePath.length > 4096) throw new Error("远程文件路径无效或过长");
   const quotedPath = remotePathOperand(connection, remotePath);
   let backupPath = null;
   let command = "";
@@ -1445,7 +1465,8 @@ async function writeRemoteFile(connectionId, remotePath, data, options: { backup
     backupPath = `${remotePath}.bak-${stamp}-${randomBytes(4).toString("hex")}`;
     command = `cp -p -- ${quotedPath} ${remotePathOperand(connection, backupPath)} && `;
   }
-  await runRemote(connection, `${command}cat > ${quotedPath}`, data, 60000);
+  const request = prepareRemotePosixInput(`${command}cat > ${quotedPath}`, Buffer.from(data));
+  await runRemoteCommand(connection, request.command, request.input, 60000);
   return { ok: true, backup_path: backupPath };
 }
 
@@ -1461,6 +1482,7 @@ async function setRemoteFileMtime(connectionId, remotePath, mtimeSeconds) {
 }
 
 module.exports = {
+  readRemotePrincipals,
   listRemoteDir,
   resolveRemoteDirectory,
   listRemoteFileVersions,
@@ -1510,10 +1532,10 @@ module.exports = {
   readRemoteTextFile,
   readRemoteBinaryFile,
   readRemoteFileMetadata,
+  spawnFileRead,
   streamRemoteOpenFile,
   __buildStreamRemoteOpenCommand:buildStreamRemoteOpenCommand,
   __buildReadRemoteBinaryCommand:buildReadRemoteBinaryCommand,
-  __buildReadRemoteBinaryExecCommand:buildReadRemoteBinaryExecCommand,
   decodeRemoteText,
   encodeRemoteText,
   normalizeTextEncoding,

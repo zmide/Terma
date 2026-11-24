@@ -26,4 +26,19 @@ function buildRemotePosixCommand(script: unknown): string {
   return `/bin/sh -c '${runner}'`;
 }
 
-module.exports = { buildRemotePosixCommand };
+/**
+ * Reserve the first stdin line for an octal-encoded script. `read` consumes
+ * only that line; the executed command inherits the remaining binary input.
+ * The fixed outer command is also safe for csh/tcsh login shells.
+ */
+function prepareRemotePosixInput(script: unknown, input: Buffer = Buffer.alloc(0)): { command: string; input: Buffer } {
+  const source = Buffer.from(String(script || ""), "utf8");
+  if (!source.length || source.length * 5 > POSIX_PAYLOAD_LIMIT) throw new Error("Remote POSIX script is empty or too large");
+  const encoded = [...source].map(byte => `\\0${byte.toString(8).padStart(3, "0")}`).join("");
+  return {
+    command: `/bin/sh -c 'IFS= read -r terma_script || exit 1; terma_script=$(printf "%b" "$terma_script") || exit $?; exec /bin/sh -c "$terma_script"'`,
+    input: Buffer.concat([Buffer.from(`${encoded}\n`, "ascii"), input])
+  };
+}
+
+module.exports = { buildRemotePosixCommand, prepareRemotePosixInput };

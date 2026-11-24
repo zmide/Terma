@@ -1,0 +1,57 @@
+.terma-remote-root[data-theme] {
+  --primary-button-color:var(--tile-brand);
+  --accent:var(--tile-text-success);--accent2:var(--tile-brand);--text:var(--tile-text-default);
+  --muted:var(--tile-text-subtle);--panel:var(--tile-surface-elevated);--panel2:var(--tile-surface-recessed);
+  --field:var(--tile-surface-base);--line:var(--tile-line);--danger:var(--tile-text-danger);--warn:var(--tile-text-warning);
+  --tile-button-height:auto;--tile-button-gap:6px;--tile-button-padding-inline:10px;--tile-button-padding-block:7px;
+  --tile-button-radius:4px;--tile-button-font-family:inherit;--tile-button-font-size:inherit;--tile-button-line-height:inherit;
+  --tile-button-outline-color:var(--text);--tile-button-outline-hover-color:var(--text);
+  --tile-button-outline-hover-background:var(--tile-tint);--tile-button-outline-shadow:none;
+}
+.terma-remote-root .terma-button {font-weight:400;}
+.terma-remote-root .terma-button.primary {color:#fff;background:var(--accent2);border-color:var(--accent2);}
+.terma-remote-root .terma-button.danger {color:var(--danger);}
+.terma-remote-root .ftp-row-actions .terma-button {width:28px;min-width:28px;height:28px;min-height:28px;padding:5px;}
+.terma-remote-root .ftp-upload-button {color:var(--text);margin:0;}
+.ftp-entry-copy {min-width:0;display:grid;gap:2px;}
+.ftp-entry-name {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ftp-mobile-meta {display:none;color:var(--muted);font-size:11px;}
+.remote-terminal-error[hidden] {display:none;}
+#view-remote-terminal.terma-remote-root {position:relative;}
+.remote-terminal-error {position:absolute;inset:64px 10px auto;z-index:2;}
+.terma-remote-root .terminal-toolbar .terma-button {height:30px;min-height:30px;padding:4px 7px;}
+.terma-remote-root .terminal-status {min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.terma-remote-root .vnc-toolbar-actions > * {flex:0 0 auto;}
+.terma-remote-root .vnc-workspace-jump-actions:empty {display:none;}
+.remote-management-view {display:grid;gap:10px;min-width:0;}
+.terma-remote-desktop-launch > *, .linux-desktop-manager > * {flex-shrink:0;}
+.terma-remote-desktop-launch {justify-content:flex-start;}
+.remote-management-view, .terma-managed-install {text-align:left;}
+.terma-managed-install {overflow-anchor:none;}
+.remote-management-view .remote-diagnostic-status {display:grid;grid-template-columns:30px minmax(0,1fr);}
+.remote-management-view .remote-diagnostic-status > .remote-diagnostic-icon {width:28px;min-width:28px;}
+.remote-management-view .remote-diagnostic-actions .terma-button {white-space:normal;max-width:100%;min-width:0;}
+.remote-management-view > *, .terma-managed-install > * {min-width:0;}
+.remote-management-view .remote-service-head {display:grid;grid-template-columns:36px minmax(0,1fr);align-items:center;gap:10px;}
+.remote-management-view .remote-service-head > div {min-width:0;overflow-wrap:anywhere;}
+.terma-remote-root .remote-install-mode {display:grid;grid-template-columns:34px minmax(0,1fr) auto;white-space:normal;text-align:left;justify-content:initial;}
+.terma-remote-root .remote-install-mode-copy {min-width:0;}
+.terma-remote-root .remote-install-mode-copy small {overflow-wrap:anywhere;}
+.terma-remote-root .remote-service-actions, .terma-managed-install > .actions {justify-content:flex-start;flex-wrap:wrap;}
+.terma-remote-root .remote-service-actions .terma-button, .terma-managed-install > .actions .terma-button {white-space:normal;min-width:0;max-width:100%;}
+.terma-remote-root .remote-admin-grid > div {min-width:0;}
+.terma-remote-root .remote-service-meta span {overflow-wrap:anywhere;min-width:0;}
+.terma-remote-root .remote-admin-modal input, .terma-remote-root .remote-admin-modal select {max-width:100%;min-width:0;}
+.terma-remote-root .vnc-clipboard-modal {overflow-anchor:none;}
+.terma-remote-root .vnc-clipboard-modal > *, .terma-remote-root .vnc-clipboard-modal select, .terma-remote-root .vnc-clipboard-modal textarea {min-width:0;max-width:100%;}
+.terma-remote-root .vnc-clipboard-modal .modal-title-row > div {min-width:0;overflow-wrap:anywhere;}
+.terma-remote-root .vnc-clipboard-modal .actions {flex-wrap:wrap;}
+.terma-remote-root :is(.vnc-clipboard-modal,.remote-admin-modal) > .connection-test-status.warning {color:var(--text);border-color:color-mix(in srgb,var(--warn) 45%,var(--line));background:color-mix(in srgb,var(--warn) 8%,var(--field));}
+@media(max-width:760px){
+  .terma-remote-root .ftp-table {min-width:0;width:100%;}
+  .terma-remote-root .ftp-row {grid-template-columns:minmax(0,1fr) 112px;}
+  .terma-remote-root .ftp-row > span:nth-child(2),.terma-remote-root .ftp-row > span:nth-child(3) {display:none;}
+  .terma-remote-root .ftp-row > span {padding-inline:8px;}
+  .terma-remote-root .ftp-name {gap:6px;}
+  .terma-remote-root .ftp-mobile-meta {display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+}

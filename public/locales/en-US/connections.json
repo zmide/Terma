@@ -1,4 +1,9 @@
 {
+  "forward_pages": {
+    "invalid": "Enter a valid forwarding type, host and port (1–65535). Access links support HTTP and HTTPS.",
+    "apply": "Apply template",
+    "no_templates": "No forwarding templates yet."
+  },
   "title": "Connections",
   "auto": {
     "ssh_host": "SSH host",
@@ -110,8 +115,8 @@
     "manage_template": "Manage templates",
     "recommend_port": "Recommend a port",
     "cancel_edit": "Cancel editing",
-    "delete_selected_forwards": "Delete selected tunnels"
-    ,"restore_forwards": "Restore tunnels",
+    "delete_selected_forwards": "Delete selected tunnels",
+    "restore_forwards": "Restore tunnels",
     "local_forward_short": "Local forwarding",
     "local_only_access": "Local access only",
     "forward_summary": "{{name}} · Local listener {{bind}} → target {{target}}"
@@ -250,7 +255,17 @@
       "page": "Page {{page}} of {{pages}}",
       "page_size": "Items per page",
       "showing": "Showing {{from}}–{{to}} of {{total}}"
-    }
+    },
+    "status_refresh_failed": "The action completed, but status could not be refreshed. Try Refresh.",
+    "group_name": "Forwarding group",
+    "group_by_name": "By group name",
+    "group_label": "Group: {{name}}",
+    "ungrouped": "Ungrouped",
+    "group_rules": "{{count}} rules in total",
+    "start_group": "Start group",
+    "stop_group": "Stop group",
+    "stop_all": "Stop all forwarding",
+    "bulk_result": "Forwarding completed: {{success}} succeeded, {{failed}} failed, {{skipped}} skipped"
   },
   "list": {
     "add_remote": "Add another connection",
@@ -385,8 +400,8 @@
     "no_address": "No address to open",
     "local_only": "Local access only",
     "lan_access": "Available on the LAN",
-    "bind_access": "Available through the listener address"
-    ,"workspace_tab": "{{name}} · Forwarding list",
+    "bind_access": "Available through the listener address",
+    "workspace_tab": "{{name}} · Forwarding list",
     "runtime": "Running for {{duration}}",
     "reconnect_count": "Reconnected {{count}} times",
     "duration_hours_minutes": "{{hours}}h {{minutes}}m",
@@ -540,7 +555,7 @@
     "test_requires_credentials": "Connection {{name}} needs a testable new private key or password staged first",
     "sort_invalid": "The order for {{name}} is invalid",
     "unsafe_fallback": "The private key is no longer in a safe directory. Edit the connection and import it into the Terma key directory or the top level of the user's ~/.ssh directory.",
-    "legacy_invalid": "This private key is no longer valid. Import it again."
+    "legacy_invalid": "Invalid private key"
   },
   "health": {
     "authentication_failed": "Health-check authentication failed",

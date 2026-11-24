@@ -1,0 +1,113 @@
+.terma-connections-root[data-theme] {
+  --primary-button-color:var(--tile-brand);
+  --accent:var(--tile-text-success);--accent2:var(--tile-brand);--text:var(--tile-text-default);
+  --muted:var(--tile-text-subtle);--panel:var(--tile-surface-elevated);--panel2:var(--tile-surface-recessed);
+  --field:var(--tile-surface-base);--line:var(--tile-line);--danger:var(--tile-text-danger);--warn:var(--tile-text-warning);
+  --tile-button-height:auto;--tile-button-gap:6px;--tile-button-padding-inline:10px;--tile-button-padding-block:7px;
+  --tile-button-radius:4px;--tile-button-font-family:inherit;--tile-button-font-size:inherit;--tile-button-line-height:inherit;
+  --tile-button-outline-color:var(--text);--tile-button-outline-hover-color:var(--text);
+  --tile-button-outline-hover-background:var(--tile-tint);--tile-button-outline-shadow:none;
+}
+.terma-connections-root .terma-button {font-weight:400;}
+.terma-connections-root .terma-button.primary {color:#fff;background:var(--accent2);border-color:var(--accent2);}
+.terma-connections-root .terma-button.danger {color:var(--danger);}
+.terma-connections-root .terma-button.group-head {display:flex;justify-content:flex-start;width:100%;padding:7px 0;border:0;border-radius:0;background:transparent;box-shadow:none;}
+.terma-connections-root .terma-button.group-head .count {margin-left:auto;}
+.explorer-tools.terma-connections-root .terma-button {justify-content:flex-start;}
+.explorer-tools.terma-connections-root .terma-button.icon-button {justify-content:center;}
+.explorer-tools.terma-connections-root .connection-action-strip .explorer-main-action {height:auto;white-space:normal;}
+.explorer-tools.terma-connections-root .connection-action-strip .explorer-main-action > span {min-width:0;overflow-wrap:anywhere;}
+.connection-toolbar {grid-template-columns:minmax(0,1fr);}
+.connection-toolbar .connection-quick-actions {display:grid;grid-template-columns:repeat(auto-fit,minmax(32px,1fr));gap:5px;min-width:0;}
+.sidebar .explorer-tools.terma-connections-root .connection-quick-actions > .icon-button {width:100%;}
+@media (max-width:760px) {
+  .connection-toolbar .connection-quick-actions {grid-template-columns:repeat(auto-fit,minmax(38px,1fr));}
+}
+.terma-connections-root .terma-button.icon-button:not(:where(.explorer-action-strip button)) {width:34px;min-width:34px;height:34px;min-height:34px;padding:0;}
+.terma-connections-root .conn-actions .terma-button {width:28px;min-width:28px;height:28px;min-height:28px;padding:0;border-color:transparent;background:transparent;box-shadow:none;}
+.terma-connections-root .conn-actions .terma-button.conn-primary-action {color:var(--accent2);background:color-mix(in srgb,var(--accent2) 10%,transparent);}
+.terma-connections-root .conn-actions .terma-button.connection-forward-toggle.is-running {color:var(--danger);}
+.terma-connections-root .connection-group-menu-button.terma-button {width:28px;min-width:28px;height:28px;min-height:28px;}
+.workspace-welcome {
+  width:min(100%,900px);
+  min-width:0;
+  margin:clamp(14px,6vh,64px) auto 24px;
+}
+.workspace-welcome-intro {
+  display:flex;
+  align-items:flex-start;
+  gap:clamp(12px,2.5vw,22px);
+  padding:clamp(16px,3.5vw,34px);
+  border:1px solid var(--line);
+  border-radius:10px;
+  background:var(--panel);
+}
+.workspace-welcome-mark {
+  flex:none;
+  width:clamp(36px,6vw,54px);
+  aspect-ratio:1;
+  display:grid;
+  place-items:center;
+  color:var(--tile-text-link);
+  background:var(--tile-tint);
+  border:1px solid color-mix(in srgb,var(--tile-brand) 26%,var(--line));
+  border-radius:10px;
+}
+.workspace-welcome-mark svg {width:54%;height:54%;}
+.workspace-welcome-copy {min-width:0;}
+.workspace-welcome-copy h2 {margin:0;font-size:clamp(19px,2.4vw,28px);line-height:1.2;}
+.workspace-welcome-copy p {max-width:56ch;margin:8px 0 16px;color:var(--muted);line-height:1.55;}
+.workspace-welcome-actions,.startup-counts,.startup-addresses {display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px;min-width:0;}
+.workspace-welcome :is(.workspace-welcome-actions,.startup-counts) button {max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:start;}
+.workspace-welcome button svg {width:16px;height:16px;flex:none;}
+.startup-summary {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:space-between;
+  align-items:center;
+  gap:10px 16px;
+  margin-top:10px;
+  padding:10px 12px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--panel);
+  --startup-color:var(--accent);
+}
+.startup-summary.warning {--startup-color:var(--warn);}
+.startup-overview {flex:1 1 270px;min-width:0;overflow-wrap:anywhere;}
+.startup-title {display:flex;align-items:center;gap:7px;}
+.startup-title i {flex:none;width:7px;height:7px;border-radius:50%;background:var(--startup-color);}
+.startup-addresses {margin-top:6px;gap:3px 6px;}
+.startup-addresses code {max-width:100%;padding:1px 5px;border-radius:3px;background:var(--field);color:var(--muted);font-size:var(--ui-font-size-small);overflow-wrap:anywhere;}
+.startup-counts :is(.startup-count-card,.terma-button.startup-status-button) {
+  display:inline-flex;
+  align-items:baseline;
+  gap:5px;
+  min-height:0;
+  padding:4px 7px;
+  border:1px solid var(--line);
+  border-radius:4px;
+  background:var(--field);
+  color:var(--muted);
+}
+.startup-counts .startup-count-card strong,.startup-counts .startup-status-button strong {color:var(--text);font-size:var(--ui-field-font-size);font-variant-numeric:tabular-nums;}
+.startup-counts .startup-count-card small,.startup-counts .startup-status-button small {color:inherit;font-size:var(--ui-font-size-small);}
+.startup-counts .startup-count-card[data-startup-state="running"] strong {color:var(--accent);}
+.startup-counts .startup-count-card[data-startup-state="reconnecting"] strong {color:var(--warn);}
+.startup-counts .startup-status-button.bad {color:var(--danger);border-color:color-mix(in srgb,var(--danger) 34%,var(--line));}
+.startup-counts .startup-status-button.bad strong {color:inherit;}
+.terma-connections-root .grid>div {min-width:0;}
+.terma-connections-root .remote-profile-editor.panel {box-shadow:none;}
+.serial-device-controls > .field-dropdown {flex:1 1 12rem;}
+.serial-device-controls > .field-dropdown > input {width:100%;min-width:0;}
+.terma-connections-root .remote-profile-editor input[type="range"] {appearance:auto;background:transparent;border:0;box-shadow:none;min-height:24px;padding:0;}
+.terma-connections-root .terma-button:disabled {opacity:.55;}
+@media(max-width:700px){.terma-connections-root .actions{flex-wrap:wrap;}}
+#connectionSelectAll:indeterminate {
+  border-color: var(--accent2);
+  background: var(--accent2);
+}
+#connectionSelectAll:indeterminate::before {
+  clip-path: inset(40% 0 round 1px);
+  transform: scale(1);
+}

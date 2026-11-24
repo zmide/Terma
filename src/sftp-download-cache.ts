@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const {managedExternalDownload} = require('./services/download-staging');
 
 const DOWNLOAD_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const BROWSER_DELIVERY_GRACE_MS = 10 * 60 * 1000;
@@ -23,6 +24,8 @@ function createSftpDownloadCache(dependencies: any) {
 
   function removeDownloadCacheFile(job: any) {
     if (!job?.temp_path) return false;
+    const file = path.resolve(job.temp_path);
+    if (path.dirname(file) !== path.resolve(downloadsDirectory) && !managedExternalDownload(job)) return false;
     try {
       fs.unlinkSync(job.temp_path);
     } catch (error: any) {
@@ -102,6 +105,21 @@ function createSftpDownloadCache(dependencies: any) {
       if (job.type === "upload" && job.local_path) protectedUploads.add(path.resolve(job.local_path));
     }
     const downloads = directoryCacheStats(downloadsDirectory, protectedDownloads);
+    const seen = new Set<string>();
+    for (const job of [...jobs.values(), ...getHistory()]) {
+      if (!managedExternalDownload(job) || seen.has(path.resolve(job.temp_path))) continue;
+      seen.add(path.resolve(job.temp_path));
+      try {
+        const stat = fs.lstatSync(job.temp_path);
+        if (!stat.isFile() || stat.isSymbolicLink()) continue;
+        downloads.bytes += stat.size;
+        downloads.files += 1;
+        if (!protectedDownloads.has(path.resolve(job.temp_path))) {
+          downloads.reclaimable_bytes += stat.size;
+          downloads.reclaimable_files += 1;
+        }
+      } catch {}
+    }
     const uploads = directoryCacheStats(uploadsDirectory, protectedUploads);
     const drag = sftpDragCacheInfo();
     return {

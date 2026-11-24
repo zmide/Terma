@@ -24,6 +24,7 @@ interface SftpTransferRouteDependencies {
   invalidateRemoteDirectoryCache(connectionId: number): void;
   isDesktopRequest(request: IncomingMessage): boolean;
   listRemoteDir(connectionId: number, remotePath: string, options: any): Promise<any>;
+  readRemotePrincipals(connectionId: number): Promise<any>;
   listRemoteFileVersions(connectionId: number, remotePath: string, limit: number): Promise<any>;
   listRemoteRecycleItems(connectionId: number, options?: any): Promise<any>;
   makeRemoteDir(connectionId: number, remotePath: string): Promise<any>;
@@ -85,6 +86,11 @@ export async function handleSftpTransferRoutes(
   const parts = pathname.split("/").filter(Boolean);
   if (parts.length < 4 || parts[0] !== "api" || parts[1] !== "connections" || parts[3] !== "sftp") return false;
   const connectionId = dependencies.authorizeConnectionId(request, parts[2]);
+
+  if (method === "GET" && parts.length === 5 && parts[4] === "principals") {
+    dependencies.send(response, 200, await dependencies.readRemotePrincipals(connectionId), {"Cache-Control":"no-store"});
+    return true;
+  }
 
   if (method === "POST" && parts.length === 6 && parts[4] === "sync" && parts[5] === "plan") {
     if (!dependencies.isDesktopRequest(request) || !desktopIntegration?.chooseSyncDirectory) {

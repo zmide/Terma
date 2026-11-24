@@ -32,6 +32,9 @@
   "ssh_host_key_failed": "SSH host-key verification failed. Confirm whether the server fingerprint change is trusted.",
   "ssh_failed": "The SSH connection failed. Check the connection settings, network, and remote SSH service.",
   "backend": {
+    "file_name_exists": "That name already exists. Choose a different name. Existing files and folders have been kept.",
+    "sftp_rename_exists": "That name already exists. Choose a different name. Existing files and folders have been kept.",
+    "sftp_invalid_path": "The remote path is invalid.",
     "origin_protocol_check_invalid": "HTTPS/HTTP origin protocol checking must be enabled or disabled.",
     "request_origin_protocol_mismatch": "HTTPS/HTTP origin protocols differ. Use a working address to turn off protocol checking in Settings > Security, or configure a trusted proxy. NAS packages may also offer application settings.",
     "request_origin_forbidden": "Request origin checking failed. Check Allowed Hosts, ports and HTTPS/HTTP origin protocol settings.",
@@ -54,6 +57,7 @@
     "fnos_update_managed": "Upgrade Terma through fnOS App Center or install a newer FPK package.",
     "terminal_shortcuts_invalid": "Invalid shortcuts: check key combinations, button names (up to 24 characters), and the number of shortcuts (up to 48)",
     "request_failed": "The request failed. Try again.",
+    "sftp_subsystem_unavailable": "SSH connected, but the server could not start SFTP. Check that the SFTP subsystem is installed and enabled on the server.",
     "ai_disabled": "Terminal AI is not enabled.",
     "ai_model_required": "Select an AI model first.",
     "ai_message_required": "Enter a message to send to AI.",
@@ -124,7 +128,8 @@
     "desktop_graphics_install_unavailable": "No graphics components can be installed automatically on this platform ({{platform}}).",
     "desktop_xserver_start_forbidden": "X Server can only be started by an authorized local browser or the Terma desktop app.",
     "desktop_xserver_stop_forbidden": "X Server can only be stopped by an authorized local browser or the Terma desktop app.",
-    "sftp_automation_desktop_only": "SFTP scheduled transfers and folder sync only run in the Terma desktop app; Web requests cannot access local files.",
+    "sftp_automation_not_found": "The transfer or sync task no longer exists.",
+    "sftp_automation_invalid": "The transfer or sync task ID is invalid.",
     "sftp_local_sync_desktop_only": "Local directory sync is only available in the desktop app on this computer.",
     "sftp_separate_download_desktop_only": "Downloading files and folders separately is only supported by the local desktop app. Use an archive download on this device.",
     "sftp_separate_download_too_many": "You can download at most {{max}} files or folders separately at one time.",
@@ -211,7 +216,8 @@
     "server_files_login_required": "Sign in to Terma before accessing device folders.",
     "server_files_overwrite_file_only": "Only matching files can be overwritten. Rename folders instead.",
     "server_files_limit": "Operate on at most 1000 files and folders at a time.",
-    "server_files_text_limit": "Only UTF-8 text files up to 1 MiB can be edited."
+    "server_files_text_limit": "Only UTF-8 text files up to 1 MiB can be edited.",
+    "forward_group_invalid": "Forwarding group names must be 128 characters or fewer and contain no control characters."
   },
   "actions": {
     "invalid_definition": "An action must provide both id and run",

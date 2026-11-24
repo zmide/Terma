@@ -1,4 +1,9 @@
 {
+  "forward_pages": {
+    "invalid": "请填写有效的转发类型、主机和端口（1–65535），访问地址仅支持 HTTP 与 HTTPS。",
+    "apply": "应用模板",
+    "no_templates": "暂无转发模板。"
+  },
   "title": "连接",
   "auto": {
     "ssh_host": "SSH 主机",
@@ -110,8 +115,8 @@
     "manage_template": "管理模板",
     "recommend_port": "推荐端口",
     "cancel_edit": "取消编辑",
-    "delete_selected_forwards": "删除选中转发"
-    ,"restore_forwards": "恢复转发",
+    "delete_selected_forwards": "删除选中转发",
+    "restore_forwards": "恢复转发",
     "local_forward_short": "本地转发",
     "local_only_access": "仅本机可访问",
     "forward_summary": "{{name}} · 本地监听 {{bind}} → 目标 {{target}}"
@@ -250,7 +255,17 @@
       "page": "第 {{page}} / {{pages}} 页",
       "page_size": "每页数量",
       "showing": "显示 {{from}}–{{to}} / 共 {{total}} 条"
-    }
+    },
+    "status_refresh_failed": "操作已完成，但状态刷新失败，请点击刷新重试。",
+    "group_name": "转发分组",
+    "group_by_name": "按分组名",
+    "group_label": "分组：{{name}}",
+    "ungrouped": "未分组",
+    "group_rules": "全部 {{count}} 条规则",
+    "start_group": "启动分组",
+    "stop_group": "停止分组",
+    "stop_all": "停止全部转发",
+    "bulk_result": "转发操作完成：成功 {{success}}，失败 {{failed}}，跳过 {{skipped}}"
   },
   "list": {
     "add_remote": "添加其他连接",
@@ -385,8 +400,8 @@
     "no_address": "无可打开地址",
     "local_only": "仅本机可访问",
     "lan_access": "局域网可访问地址",
-    "bind_access": "可按监听地址访问"
-    ,"workspace_tab": "{{name}} · 转发列表",
+    "bind_access": "可按监听地址访问",
+    "workspace_tab": "{{name}} · 转发列表",
     "runtime": "运行 {{duration}}",
     "reconnect_count": "重连 {{count}} 次",
     "duration_hours_minutes": "{{hours}}小时{{minutes}}分",
@@ -540,7 +555,7 @@
     "test_requires_credentials": "连接 {{name}} 需要先暂存可测试的新私钥或新密码",
     "sort_invalid": "连接 {{name}} 的排序值无效",
     "unsafe_fallback": "私钥已不在安全目录，请编辑连接并导入 Terma 密钥目录或用户 ~/.ssh 顶层。",
-    "legacy_invalid": "当前私钥已失效，请重新导入"
+    "legacy_invalid": "私钥已失效"
   },
   "health": {
     "authentication_failed": "健康检查认证失败",

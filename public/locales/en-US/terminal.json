@@ -44,10 +44,6 @@
     "authorization": "Waiting for authorization",
     "connecting": "Connecting"
   },
-  "latency": {
-    "hint": "Interactive response latency: time from sending a keystroke until the remote terminal first returns data",
-    "latest": "Latest interactive response latency: {{latency}} ms; measured from sending a keystroke until the remote terminal first returns data"
-  },
   "tabs": {
     "quick": "{{name}} · Quick terminal",
     "quick_generic": "Quick terminal",
@@ -136,8 +132,8 @@
     "detecting": "Inspecting remote shells, Python, Node, and session tools in read-only mode…",
     "detect_failed": "Unable to identify the remote environment: {{error}}. You can still use the server login shell or enter a custom program.",
     "button_title": "Terminal startup: {{profile}}{{temporary}}",
-    "temporary_suffix": " (this tab only)"
-    ,"server_default_shell": "Server default shell",
+    "temporary_suffix": " (this tab only)",
+    "server_default_shell": "Server default shell",
     "custom_program": "Custom program",
     "group_repl": "Interactive languages",
     "group_shell": "Shell",
@@ -237,6 +233,9 @@
     "send_command": "Send command"
   },
   "session": {
+    "component_tmux": "tmux session manager",
+    "component_screen": "GNU screen session manager",
+    "manual_component": "Install {{component}} on the remote host and ensure the login user can run it.",
     "install_online": "Install online",
     "install_offline": "Use remote cache",
     "install_local": "Download and upload",
@@ -247,6 +246,7 @@
     "not_installed": "Not installed",
     "active_sessions": "{{count}} active sessions, {{termaCount}} managed by Terma",
     "no_active_sessions": "No active sessions",
+    "no_components": "No recoverable session components were detected.",
     "install_hint": "Install tasks appear in the task center. Use the manual instructions when no automatic method is available.",
     "detecting": "Detecting tmux and screen…",
     "detect_failed": "Session component detection failed: {{error}}",
@@ -280,7 +280,10 @@
       "restored": "Recoverable session reopened",
       "terminate_title": "Terminate recoverable session",
       "terminate": "Terminate and clean up"
-    }
+    },
+    "target_changed": "The session or connection changed. Select it again before continuing.",
+    "history_unavailable": "Recently closed tabs could not be saved",
+    "restore_failed": "The tab could not be restored. Its record was kept so you can retry."
   },
   "recent": {
     "title": "Recent commands",
@@ -345,16 +348,49 @@
     "workflow_select_placeholder": "Select",
     "workflow_steps_preview": "Execution steps",
     "workflow_dry_run_notice": "This workflow is preview-only. No command will be sent.",
-    "workflow_types": {"text":"Text", "path":"Path", "port":"Port", "boolean":"Switch", "select":"Select"},
+    "workflow_types": {
+      "text": "Text",
+      "path": "Path",
+      "port": "Port",
+      "boolean": "Switch",
+      "select": "Select"
+    },
     "quick_bar": "Quick command bar",
     "show_in_quick_bar": "Show in the terminal quick command bar",
     "click_action": "Click action",
     "icon": "Icon",
     "color": "Color",
     "quick_color": "Quick command color",
-    "badges": {"none":"None (compact)","command":"Command","inspect":"Inspect","service":"Service","network":"Network","database":"Database","file":"File","start":"Start","stop":"Stop"},
-    "badge_glyphs": {"command":"Cmd","inspect":"Chk","service":"Svc","network":"Net","database":"DB","file":"File","start":"On","stop":"Off"},
-    "colors": {"blue":"Blue","green":"Green","amber":"Amber","red":"Red","cyan":"Cyan","gray":"Gray","purple":"Purple"},
+    "badges": {
+      "none": "None (compact)",
+      "command": "Command",
+      "inspect": "Inspect",
+      "service": "Service",
+      "network": "Network",
+      "database": "Database",
+      "file": "File",
+      "start": "Start",
+      "stop": "Stop"
+    },
+    "badge_glyphs": {
+      "command": "Cmd",
+      "inspect": "Chk",
+      "service": "Svc",
+      "network": "Net",
+      "database": "DB",
+      "file": "File",
+      "start": "On",
+      "stop": "Off"
+    },
+    "colors": {
+      "blue": "Blue",
+      "green": "Green",
+      "amber": "Amber",
+      "red": "Red",
+      "cyan": "Cyan",
+      "gray": "Gray",
+      "purple": "Purple"
+    },
     "saved": "Command snippet saved",
     "delete_title": "Delete command snippet",
     "delete_message": "Delete this command snippet?",
@@ -375,7 +411,8 @@
     "confirm_batch_title": "Confirm batch execution",
     "sent_terminals": "Sent to {{count}} terminals",
     "run_succeeded": "Succeeded",
-    "run_failed": "Failed · {{code}}"
+    "run_failed": "Failed · {{code}}",
+    "target_changed": "The original target changed or disconnected. Select the targets again."
   },
   "broadcast": {
     "title": "Terminal broadcast",
@@ -404,6 +441,10 @@
     "add": "Add template"
   },
   "batch": {
+    "loading_templates": "Loading templates…",
+    "invalid_input": "Enter a timeout from 5 to 600 seconds and a command within the channel size limit.",
+    "targets_changed": "The selected SSH connection changed. Review the targets and try again.",
+    "template_name_required": "Enter a template name.",
     "context_copy": "Copy",
     "context_paste": "Paste",
     "context_select_all": "Select all",
@@ -597,6 +638,7 @@
     "global_settings": "Global terminal settings"
   },
   "display": {
+    "menu_label": "Terminal display options",
     "system_font": "System monospace",
     "custom_font": "Custom font…",
     "custom_font_title": "Custom terminal font",
@@ -708,7 +750,8 @@
     "choose_files_hint": "Choose local files to begin uploading. Files stay within the current SSH session.",
     "choose_files": "Choose files",
     "protocol_error": "ZMODEM protocol error",
-    "terminal_closed": "Terminal closed"
+    "terminal_closed": "Terminal closed",
+    "no_files_received": "The remote program offered no regular files. sz cannot send directories directly; use an SFTP archive download for folders."
   },
   "productivity": {
     "no_closed_tab": "There is no recently closed tab to restore",
@@ -888,11 +931,11 @@
     "agent_denied": "User rejected execution",
     "agent_not_executed": "Not executed",
     "agent_capture_missing": "Command was sent but its output was not captured",
-     "agent_exit_code": "Exit code {{code}}",
-     "agent_session_ended": "The terminal session ended, so execution stopped. Reconnect the terminal and resume the task.",
-     "command_syntax_find": "The find expression is missing escaped grouping parentheses, so the command was not sent. Use \\( and \\).",
-     "command_syntax_printf": "The printf format starts with -, so the command was not sent. Use printf -- '--- ...' or printf '%s\\n' '--- ...'.",
-     "agent_capture_failed": "The command was sent, but no matching command record was created, so automatic continuation stopped.",
+    "agent_exit_code": "Exit code {{code}}",
+    "agent_session_ended": "The terminal session ended, so execution stopped. Reconnect the terminal and resume the task.",
+    "command_syntax_find": "The find expression is missing escaped grouping parentheses, so the command was not sent. Use \\( and \\).",
+    "command_syntax_printf": "The printf format starts with -, so the command was not sent. Use printf -- '--- ...' or printf '%s\\n' '--- ...'.",
+    "agent_capture_failed": "The command was sent, but no matching command record was created, so automatic continuation stopped.",
     "agent_timeout": "The command did not finish within {{seconds}} seconds, so automatic continuation stopped. The terminal command was not forcibly interrupted.",
     "agent_repeated": "A duplicate command was detected, so this execution was skipped and a final summary will be requested.",
     "agent_duplicate_summary_prompt": "Original task: {{task}}. The command \"{{command}}\" has already run in this task and must not run again. Here is the only trusted terminal result from the first execution:\n{{output}}\nReturn only a final closing summary: state whether the task is complete, the actual result, any failure reason, or the user's next step. Do not output commands, call tools, or execute anything again.",
@@ -967,7 +1010,9 @@
     "log_selected": "Selected log content",
     "log_full_window": "Current log window",
     "log_privacy": "Review the context before sending. Passwords, tokens, and private keys in logs are masked automatically.",
-    "log_empty": "The current log window has no content to analyze"
+    "log_empty": "The current log window has no content to analyze",
+    "stream_too_large": "The response or stream is too large. This request was stopped.",
+    "attachment_too_large": "The attachment exceeds 1 MB. Use a smaller file and try again."
   },
   "auto": {
     "batch_title": "Run a command on multiple SSH hosts",

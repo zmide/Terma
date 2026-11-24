@@ -1,0 +1,9 @@
+.terma-sftp-settings-root { display:contents; }
+.terma-sftp-settings-root[data-theme] {
+  --muted:var(--tile-text-subtle);
+  --accent:var(--tile-brand);
+}
+.terma-sftp-settings-root .terminal-settings-panel { overflow:auto; min-height:0; }
+.terma-sftp-settings-root .terminal-settings-section h3 { display:flex; align-items:center; gap:7px; }
+.terma-sftp-settings-root .terminal-settings-section h3 svg { width:16px; height:16px; flex:0 0 auto; }
+.terma-sftp-settings-root .terminal-settings-actions button { min-width:0; }

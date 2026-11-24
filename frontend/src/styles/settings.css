@@ -1,0 +1,137 @@
+.terma-vue-root.terma-settings-root,
+.terma-vue-root.terma-settings-nav,
+.terma-vue-root.terma-settings-dialog {
+  --accent: var(--tile-brand);
+  --accent2: var(--tile-brand);
+  --danger: var(--tile-text-danger);
+  --field: var(--tile-surface-base);
+  --line: var(--tile-line);
+  --muted: var(--tile-text-subtle);
+  --panel: var(--tile-surface-elevated);
+  --panel2: var(--tile-surface-recessed);
+  --text: var(--tile-text-default);
+  --warn: var(--tile-text-warning);
+  --tile-button-height: auto;
+  --tile-button-gap: 6px;
+  --tile-button-padding-inline: 10px;
+  --tile-button-padding-block: 4px;
+  --tile-button-radius: 4px;
+  --tile-button-font-family: inherit;
+  --tile-button-font-size: inherit;
+  --tile-button-line-height: inherit;
+  --tile-button-outline-border-width: 1px;
+  --tile-button-outline-color: var(--tile-text-default);
+  --tile-button-outline-hover-background: var(--tile-tint);
+  --tile-button-outline-hover-color: var(--tile-text-default);
+  --tile-button-outline-shadow: none;
+}
+.terma-settings-root .terma-button,
+.terma-settings-nav .terma-button,
+.terma-settings-dialog .terma-button { font-weight: 400; }
+.terma-settings-root .terma-button.primary,
+.terma-settings-dialog .terma-button.primary { color: #fff; background: var(--tile-brand); border-color: var(--tile-brand); }
+.terma-settings-root .status-pill.running { color: var(--tile-text-success); }
+.terma-settings-root .terma-button.danger,
+.terma-settings-dialog .terma-button.danger { color: var(--danger); }
+.terma-settings-root svg,
+.terma-settings-nav svg,
+.terma-settings-dialog svg { flex-shrink: 0; }
+#explorerTools.terma-settings-nav .terma-button { justify-content: flex-start; border: 0; box-shadow: none; }
+#explorerTools.terma-settings-nav .terma-button[aria-current="page"],
+#explorerTools.terma-settings-nav .terma-button[aria-current="page"]:is(:hover,:focus-visible,:active) {
+  color: var(--tile-brand);
+  background: var(--explorer-selected-surface, color-mix(in srgb, var(--tile-brand) 9%, transparent));
+  box-shadow: inset 2px 0 0 var(--tile-brand);
+}
+.terma-settings-root .settings-group[hidden] { display: none; }
+.terma-settings-root .settings-panel { padding:8px 0 16px; }
+.terma-settings-root .settings-panel > .workspace-head h2 { font-size:var(--ui-title-size); }
+.terma-settings-root :is(.settings-group-head h3,.settings-grid section > h3:first-child) {
+  font-size:var(--ui-section-title-size);
+}
+.terma-settings-root .settings-groups { gap:12px; }
+.terma-settings-root .settings-group { gap:8px; padding-bottom:12px; }
+.terma-settings-root .settings-group:last-child { padding-bottom:0; }
+.terma-settings-root .settings-grid > section { padding-block:8px; }
+.terma-settings-root .notification-preference-row {
+  min-height:calc(var(--control-h) + 8px);
+  padding:4px 8px;
+}
+.terma-settings-root .notification-preference-row .check-row { padding-block:2px; }
+.terma-settings-root .notification-duration { grid-template-columns:auto 60px auto; }
+.terma-settings-root .notification-duration input { width:60px; }
+.terma-settings-root .desktop-notification-control { min-width:0; }
+.terma-settings-root .desktop-notification-control > .actions { min-width:0; flex-wrap:wrap; }
+.terma-settings-root .desktop-notification-control > .actions > .terma-button { min-width:0; max-width:100%; white-space:normal; overflow-wrap:anywhere; }
+.terma-settings-dialog .settings-choice-modal > .actions { min-width:0; flex-wrap:wrap; }
+.terma-settings-dialog .settings-choice-modal > .actions > .terma-button { min-width:0; white-space:normal; overflow-wrap:anywhere; }
+.terma-settings-dialog .ssh-host-trust-head > div { min-width:0; overflow-wrap:anywhere; }
+.terma-settings-dialog .ssh-host-trust-head h2 { padding:0; border:0; }
+.terma-settings-dialog .ssh-host-trust-modal > .ssh-host-trust-actions { flex-wrap:wrap; overflow:visible; }
+.terma-settings-dialog .ssh-host-trust-actions > .terma-button { min-width:0; white-space:normal; overflow-wrap:anywhere; }
+.terma-settings-dialog .storage-directory-list > .terma-button {
+  justify-content:flex-start;
+  text-align:left;
+  min-width:0;
+  white-space:normal;
+}
+.terma-settings-dialog .storage-directory-list > .terma-button > span {
+  min-width:0;
+  overflow-wrap:anywhere;
+}
+
+/* Settings uses the same flat surface language as the rest of the shell.
+   Keep the hierarchy in borders and spacing instead of floating rounded cards. */
+.terma-settings-root :where(
+  .ssh-trust-record,
+  .ssh-key-management-toolbar,
+  .ssh-key-management-scope,
+  .ssh-managed-key-row,
+  .ssh-key-public-preview,
+  .ssh-key-properties-grid > div,
+  .ssh-key-property-fingerprint,
+  .ssh-key-passphrase-box,
+  .settings-kv,
+  .runtime-config-summary,
+  .runtime-host-option,
+  .notification-preference-list,
+  .update-card,
+  .update-status,
+  .update-notes,
+  .storage-directory-path,
+  .desktop-runtime-row
+) {
+  border-radius:0 !important;
+  box-shadow:none !important;
+  background:var(--panel) !important;
+}
+.terma-settings-root :where(
+  .ssh-trust-record,
+  .ssh-key-management-toolbar,
+  .ssh-key-management-scope,
+  .ssh-managed-key-row,
+  .ssh-key-public-preview,
+  .ssh-key-properties-grid > div,
+  .ssh-key-property-fingerprint,
+  .ssh-key-passphrase-box,
+  .runtime-host-option,
+  .notification-preference-row,
+  .update-notes,
+  .storage-directory-path,
+  .desktop-runtime-row
+) { background:var(--field) !important; }
+.terma-settings-root :where(.theme-appearance-preview,.theme-preview-toolbar,.theme-preview-card,.theme-preview-notification,.theme-preview-task) {
+  border-radius:0 !important;
+  box-shadow:none !important;
+  background-image:none !important;
+  backdrop-filter:none !important;
+  -webkit-backdrop-filter:none !important;
+}
+.terma-settings-root :where(.theme-appearance-preview::after) { display:none !important; }
+.terma-settings-root :where(.settings-grid section) { border-top-color:var(--line); }
+@media (max-width:760px) {
+  .terma-settings-dialog .ssh-host-trust-modal > .ssh-host-trust-actions { display:grid; grid-template-columns:minmax(0,1fr); }
+  .terma-settings-dialog .ssh-host-trust-actions > .terma-button { width:100%; }
+  .terma-settings-dialog .settings-choice-modal > .actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .terma-settings-dialog .settings-choice-modal > .actions > .terma-button:last-child:nth-child(odd) { grid-column:1 / -1; }
+}

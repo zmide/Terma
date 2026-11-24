@@ -1,0 +1,20 @@
+#quickPanel[data-command-page]{padding:24px 12px;align-items:center}
+#quickPanel[data-command-page] .quick-panel-dialog{width:min(1000px,calc(100vw - 24px));max-height:calc(100dvh - 48px);display:flex;flex-direction:column;box-shadow:none;border-radius:3px}
+#quickPanel[data-command-page] .quick-panel-dialog>.quick-panel-search,#quickPanel[data-command-page] .quick-panel-dialog>.quick-panel-results{display:none}
+.command-page{display:flex;flex-direction:column;min-height:0;max-height:inherit;width:100%;color:var(--text);background:var(--panel)}
+.terma-vue-root.command-page[data-theme]{--text:var(--tile-text-default);--muted:var(--tile-text-subtle);--panel:var(--tile-surface-elevated);--field:var(--tile-control-background);--line:var(--tile-line);--danger:var(--tile-text-danger);--accent:var(--tile-text-success);--accent2:var(--tile-brand);color:var(--text)}
+.command-page-toolbar{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+.command-page-toolbar>strong{flex:1;min-width:0;overflow-wrap:anywhere}.command-page-toolbar button{flex:none;box-shadow:none!important;transform:none!important;border-radius:3px;white-space:nowrap}.command-page-toolbar svg{width:17px;height:17px}.command-page-toolbar .icon-button{width:34px;height:34px;padding:6px}
+.command-page-content{min-height:0;overflow:auto}
+#quickPanel #modal{position:static;inset:auto;display:block;padding:0;width:100%;height:auto;min-height:0;background:transparent;overflow:visible;backdrop-filter:none}
+#quickPanel #modal[hidden]{display:none}
+#quickPanel #modal :is(.modal-card,.forward-dialog-root){width:100%;max-width:100%;max-height:none;margin:0;border:0;border-radius:0;box-shadow:none}
+#quickPanel #modal .terma-operations-root{width:100%}#quickPanel #modal .operations-view{display:block}
+#quickPanel #modal .named-workspace-manager>header,#quickPanel #modal .named-workspace-manager>footer:has(>button:only-child),#quickPanel #modal .command-snippet-footer{display:none}
+#quickPanel #modal .modal-card>h2,#quickPanel #modal .modal-title-row h2,#quickPanel #modal .modal-title-row>.icon-button,#quickPanel #modal .productivity-manager-head h2,#quickPanel #modal .command-snippet-manager-icon{display:none}
+#quickPanel .quick-panel-dialog{box-shadow:none;border-radius:3px}
+@media(max-width:700px){#quickPanel[data-command-page]{padding:8px}#quickPanel[data-command-page] .quick-panel-dialog{width:100%;height:calc(100dvh - 16px);max-height:none}.command-page{height:100%}.command-page-toolbar{gap:8px;padding:8px}.command-page-content{flex:1;overflow:auto}}
+
+.command-page-loading{margin:0;padding:18px 20px;color:var(--muted)}
+
+#quickPanel #modal .ssh-key-result-head h2,#quickPanel #modal .ssh-key-result-head>.icon-button{display:none}

@@ -14,7 +14,8 @@
   },
   "main": "desktop/main.js",
   "scripts": {
-    "build": "node scripts/patch-ssh2-sftp-raw.js && node scripts/prepare-zmodem-runtime.js && tsc",
+    "build": "npm run build:frontend && node scripts/patch-ssh2-sftp-raw.js && node scripts/prepare-zmodem-runtime.js && tsc",
+    "build:frontend": "node scripts/build-frontend.js",
     "dist:fnos": "node scripts/build-fnos.js",
     "fnos:check": "node scripts/fnos-check.js",
     "desktop": "npm run build && electron .",
@@ -86,6 +87,7 @@
     "files": [
       "desktop/**/*",
       "dist/**/*",
+      "frontend/dist/**/*",
       "public/**/*",
       "native/win-sftp-drag/index.js",
       "native/win-sftp-drag/package.json",

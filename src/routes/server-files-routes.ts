@@ -4,6 +4,7 @@ import { IncomingMessage, ServerResponse } from "node:http";
 import { pipeline } from "node:stream/promises";
 import { listServerFiles, mutateServerFiles, readServerText, writeServerText, serverFilePath, serverFileTree, serverFileName, resolveServerDirectory, validateServerReceiveTarget } from "../services/server-files-service";
 import { publicError } from "../public-error";
+import { assertServerFilesAccess } from '../services/server-files-access';
 const security = require("../security");
 const local = require("../local-files");
 const sftp = require("../sftp-session");
@@ -19,8 +20,7 @@ export async function handleServerFilesRoutes(req: IncomingMessage, res: ServerR
   if (pathname !== "/api/server-files" && !pathname.startsWith("/api/server-files/")) return false;
   // Direct local browsers retain the standard app's local access policy.
   // Network/proxy requests and fnOS still require an actual login session.
-  const directLocal = process.env.TERMA_DISTRIBUTION !== "fnos" && security.isDirectLoopbackRequest(req) && !security.authRequired(req);
-  if (!directLocal && !security.hasAuthenticatedWebSession(req) && !security.isDesktopRequest(req)) throw publicError("SERVER_FILES_LOGIN_REQUIRED", "请先登录 Terma，再访问设备目录", {}, 403);
+  assertServerFilesAccess(req);
   const url = new URL(req.url || pathname,"http://terma.invalid");
   const action = pathname.slice("/api/server-files".length).replace(/^\//,"");
   const value = url.searchParams.get("path") || "";

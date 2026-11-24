@@ -218,6 +218,8 @@ function createNativeSftpDragJobs(dependencies: any) {
     job.streams.clear();
     job.status = finalStatus;
     job.phase = "";
+    job.current = "";
+    job.current_i18n_key = "";
     job.can_cancel = false;
     job.can_pause = false;
     if (finalStatus === "done") {

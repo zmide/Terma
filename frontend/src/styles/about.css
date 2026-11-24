@@ -1,0 +1,83 @@
+.terma-about-root, .terma-about-root * { box-sizing: border-box; }
+.terma-about-page { margin: 0; min-height: 100%; background: var(--tile-canvas, #f4f6f8); color: var(--tile-text-default, #1f2933); font: 14px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+.terma-about-root { min-height: 100vh; background: var(--tile-canvas); color: var(--tile-text-default); }
+.terma-about-root.terma-about-embedded { min-width: 0; min-height: 0; background: transparent; color: inherit; font: inherit; }
+.terma-vue-root.terma-about-root.terma-about-embedded {
+  --accent2: var(--tile-brand);
+  --danger: var(--tile-text-danger);
+  --field: var(--tile-surface-base);
+  --line: var(--tile-line);
+  --muted: var(--tile-text-subtle);
+  --panel: var(--tile-surface-elevated);
+  --panel2: var(--tile-surface-recessed);
+  --text: var(--tile-text-default);
+  --warn: var(--tile-text-warning);
+  --tile-button-height: auto;
+  --tile-button-gap: 6px;
+  --tile-button-padding-inline: 10px;
+  --tile-button-padding-block: 7px;
+  --tile-button-radius: 4px;
+  --tile-button-font-family: inherit;
+  --tile-button-font-size: inherit;
+  --tile-button-line-height: inherit;
+  --tile-button-outline-border-width: 1px;
+  --tile-button-outline-color: var(--tile-text-default);
+  --tile-button-outline-hover-background: var(--tile-tint);
+  --tile-button-outline-hover-color: var(--tile-text-default);
+  --tile-button-outline-shadow: none;
+}
+.terma-about-embedded .settings-grid { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.terma-about-embedded .settings-grid section { min-width: 0; background: transparent; }
+.terma-about-embedded .status-pill.running { color: var(--tile-text-success); }
+.terma-about-root .terma-link { text-decoration: none; }
+.terma-about-embedded .terma-button, .terma-about-embedded .terma-link { font-weight: 400; }
+.terma-about-embedded .about-actions { margin-top: 12px; }
+.terma-about-embedded .about-update-area { min-width: 0; }
+.terma-about-embedded .update-release-link { flex: none; }
+.terma-about-embedded .update-card-head > * { min-width: 0; overflow-wrap: anywhere; }
+.terma-about-embedded .update-details > div { min-width: 0; }
+.terma-about-embedded .update-details dd > strong, .terma-about-embedded .update-details dd > small { overflow-wrap: anywhere; }
+.terma-about-shell { width: min(960px, 100%); margin: 0 auto; padding: 52px 24px 64px; }
+.terma-about-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
+.terma-about-eyebrow { color: var(--tile-text-subtle); font-size: 13px; }
+.terma-about-header h1 { margin: 4px 0 8px; color: var(--tile-text-strong); font-size: 28px; line-height: 1.2; }
+.terma-about-header p { margin: 0; color: var(--tile-text-subtle); }
+.terma-about-controls { display: flex; gap: 8px; }
+.terma-about-control { min-width: 44px; height: 36px; padding: 0 12px; border: 1px solid var(--tile-line); border-radius: 4px; background: var(--tile-surface-base); color: var(--tile-text-default); font: inherit; cursor: pointer; }
+.terma-about-control:hover { background: var(--tile-tint); }
+.terma-about-control:focus-visible, .terma-about-close:focus-visible { outline: 2px solid var(--tile-focus); outline-offset: 2px; }
+.terma-about-card { display: grid; gap: 24px; padding: 28px; border: 1px solid var(--tile-line); border-radius: 4px; background: var(--tile-surface-base); box-shadow: none; }
+.terma-about-state { min-height: 180px; place-items: center; color: var(--tile-text-subtle); }
+.terma-about-error { justify-items: center; text-align: center; }
+.terma-about-error p { margin: 0; color: var(--tile-text-danger); }
+.terma-about-product { display: flex; align-items: center; gap: 16px; }
+.terma-about-product img { width: 56px; height: 56px; object-fit: contain; }
+.terma-about-product h2 { margin: 0 0 4px; color: var(--tile-text-strong); font-size: 20px; }
+.terma-about-product p, .terma-about-note { margin: 0; color: var(--tile-text-subtle); }
+.terma-about-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.terma-about-meta div { padding: 14px; border: 1px solid var(--tile-hairline); background: var(--tile-surface-recessed); }
+.terma-about-meta dt { color: var(--tile-text-subtle); font-size: 12px; }
+.terma-about-meta dd { margin: 4px 0 0; color: var(--tile-text-default); overflow-wrap: anywhere; }
+.terma-about-warning { margin: 0; padding: 12px 14px; border: 1px solid var(--tile-warning); background: var(--tile-warning-tint); color: var(--tile-text-warning); }
+.terma-about-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.terma-about-components { display: grid; gap: 14px; padding-top: 8px; }
+.terma-about-components-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.terma-about-components-head h3 { margin: 0 0 4px; color: var(--tile-text-strong); font-size: 16px; }
+.terma-about-components-head p { margin: 0; color: var(--tile-text-subtle); }
+.terma-about-components-head > span { flex: none; color: var(--tile-text-subtle); font-size: 12px; }
+.terma-about-table { overflow-x: auto; border: 1px solid var(--tile-hairline); }
+.terma-about-row { display: grid; grid-template-columns: minmax(160px, 1.2fr) minmax(100px, .8fr) minmax(100px, .8fr) minmax(180px, 1.4fr); gap: 12px; align-items: center; min-width: 620px; padding: 11px 12px; border-top: 1px solid var(--tile-hairline); }
+.terma-about-row:first-child { border-top: 0; }
+.terma-about-row-head { border-top: 0; background: var(--tile-surface-recessed); color: var(--tile-text-subtle); font-size: 12px; }
+.terma-about-row a { color: var(--tile-text-link); }
+.terma-about-row code { color: var(--tile-text-subtle); font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.terma-about-modal-backdrop { position: fixed; inset: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; padding: 20px; background: var(--tile-overlay); z-index: 1000; }
+.terma-about-modal { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; width: min(880px, 100%); max-height: min(720px, calc(100dvh - 40px)); padding: 20px; border: 1px solid var(--tile-line); border-radius: 4px; background: var(--tile-surface-overlay); box-shadow: none; }
+.terma-about-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.terma-about-modal-head h2 { margin: 0; color: var(--tile-text-strong); font-size: 18px; }
+.terma-about-close { width: 32px; height: 32px; border: 0; background: transparent; color: var(--tile-text-default); font-size: 24px; line-height: 1; cursor: pointer; }
+.terma-about-modal pre { min-height: 0; margin: 16px 0; padding: 16px; overflow: auto; border: 1px solid var(--tile-hairline); background: var(--tile-surface-recessed); color: var(--tile-text-default); white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.terma-about-modal-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.terma-about-confirm { width: min(520px, 100%); }
+.terma-about-confirm-message { min-height: 0; margin: 20px 0; overflow: auto; color: var(--tile-text-default); white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 680px) { .terma-about-shell { padding: 28px 16px 44px; } .terma-about-header { flex-direction: column; } .terma-about-meta { grid-template-columns: minmax(0, 1fr); } .terma-about-card { padding: 20px; } }

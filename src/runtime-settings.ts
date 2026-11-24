@@ -2,7 +2,8 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
-const terminalShortcuts = require("../public/app-terminal-shortcut-config");
+import { terminalShortcutConfig as terminalShortcuts } from "./shared/terminal-shortcut-config";
+import { defaultTerminalSettings, terminalMouseActions } from "./shared/terminal-settings";
 
 const DEFAULT_LISTEN_HOSTS = ["127.0.0.1"];
 const DEFAULT_LISTEN_PORT = 8088;
@@ -32,28 +33,7 @@ const DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT = Object.freeze({
   unsplit: Object.freeze({ terminal: "header", sftp: "header" }),
   split: Object.freeze({ terminal: "header", sftp: "header" })
 });
-const DEFAULT_TERMINAL_SETTINGS = Object.freeze({
-  font_family: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-  font_size: 13,
-  scrollback_lines: 30000,
-  background_mode: "theme",
-  background_color: "#0f1720",
-  middle_mouse_action: "paste_clipboard",
-  right_mouse_action: "context_menu",
-  ctrl_left_click_moves_cursor: true,
-  url_links_enabled: true,
-  url_prefixes: ["http://", "https://", "ftp://", "ssh://", "telnet://"],
-  url_ctrl_click: true,
-  word_separators: " ()[]{}',\"`",
-  shift_double_click_uses_separators: false,
-  auto_copy_selection: false,
-  copy_tabs_to_spaces: false,
-  copy_include_trailing_newline: false,
-  copy_trim_trailing_spaces: false,
-  select_non_whitespace_block: false,
-  multiline_paste_mode: "prompt",
-  shortcut_keys: terminalShortcuts.defaults
-});
+const DEFAULT_TERMINAL_SETTINGS = defaultTerminalSettings;
 const DEFAULT_AI_CONTEXT_TOKENS = 1000000;
 const AI_CONTEXT_DEFAULT_VERSION = 1;
 const AI_API_TYPES = new Set(["responses", "completions"]);
@@ -90,7 +70,7 @@ const DEFAULT_AI_SETTINGS = Object.freeze({
   mcp_servers: [],
   api_key: ""
 });
-const TERMINAL_MOUSE_ACTIONS = new Set(["none", "context_menu", "paste_clipboard", "open_settings", "send_enter", "paste_selection"]);
+const TERMINAL_MOUSE_ACTIONS = new Set<string>(terminalMouseActions);
 const TERMINAL_MULTILINE_PASTE_MODES = new Set(["prompt", "paste", "single_line"]);
 const TERMINAL_URL_SCHEMES = new Set(["http", "https", "ftp", "ssh", "telnet"]);
 const TERMINAL_BACKGROUND_MODES = new Set(["theme", "black", "white", "custom"]);
@@ -348,8 +328,8 @@ function normalizeWorkspaceToolbarPlacement(value: any = {}, fallback: any = DEF
   const source = value && typeof value === "object" ? value : {};
   const base = fallback && typeof fallback === "object" ? fallback : DEFAULT_WORKSPACE_TOOLBAR_PLACEMENT;
   const normalizePlacement = (candidate, defaultValue) => {
-    const placement = String(candidate ?? defaultValue ?? "header");
-    return WORKSPACE_TOOLBAR_PLACEMENTS.has(placement) ? placement : "header";
+    if (WORKSPACE_TOOLBAR_PLACEMENTS.has(candidate)) return candidate;
+    return WORKSPACE_TOOLBAR_PLACEMENTS.has(defaultValue) ? defaultValue : "header";
   };
   return {
     unsplit: {

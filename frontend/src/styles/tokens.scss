@@ -1,0 +1,31 @@
+// ==========================================
+// Tile 扩展令牌
+// ==========================================
+
+:where(:root) {
+	--tile-success: #22c55e;
+	--tile-success-foreground: #fafafa;
+	--tile-warning: #f59e0b;
+	--tile-warning-foreground: #fafafa;
+	--tile-info: #3b82f6;
+	--tile-info-foreground: #fafafa;
+	--tile-overlay: rgb(0 0 0 / 0.5);
+	--tile-shadow-color: 0 0 0;
+	--tile-radius-full: 9999px;
+	--tile-text-xs: 0.75rem;
+	--tile-text-sm: 0.875rem;
+	--tile-text-base: 1rem;
+	--tile-text-lg: 1.125rem;
+	--tile-text-xl: 1.25rem;
+	--tile-text-2xl: 1.5rem;
+	--tile-text-3xl: 1.875rem;
+	--tile-font-light: 300;
+	--tile-font-normal: 400;
+	--tile-font-medium: 500;
+	--tile-font-semibold: 600;
+	--tile-font-bold: 700;
+	--tile-leading-none: 1;
+	--tile-leading-tight: 1.25;
+	--tile-leading-normal: 1.5;
+	--tile-leading-relaxed: 1.625;
+}

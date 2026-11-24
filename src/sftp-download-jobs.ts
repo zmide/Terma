@@ -1,9 +1,11 @@
 const crypto = require("node:crypto");
+const {allocateDownloadStage, assertDownloadStage} = require("./services/download-staging");
 const fs = require("node:fs");
 const fsp = fs.promises;
 const path = require("node:path");
 const { pipeline } = require("node:stream/promises");
 const { remotePathOperand, shellQuote, spawnRemote } = require("./sftp-job-paths");
+const { spawnFileRead } = require("./sftp");
 const { clearSftpJobIssue, setSftpJobIssue } = require("./sftp-job-issues");
 const { archiveTarCreateOptions, normalizeArchiveFilenameEncoding, resolveArchiveFilenameEncoding } = require("./sftp-operation-commands");
 const { normalizeDownloadedTarFilenames } = require("./infrastructure/tar-filename-transcoder");
@@ -26,14 +28,16 @@ function throwIfDownloadAborted(signal: any) {
 async function moveDownloadedFile(source: string, target: string, signal: any = null) {
   throwIfDownloadAborted(signal);
   try {
-    await fsp.rename(source, target);
+    await fsp.link(source, target);
+    try { await fsp.unlink(source); }
+    catch (error) { try { await fsp.unlink(target); } catch {} throw error; }
     if (signal?.aborted) {
       try { await fsp.unlink(target); } catch {}
       throw downloadAbortError();
     }
     return;
   } catch (error: any) {
-    if (error?.code !== "EXDEV") throw error;
+    if (!["EXDEV", "EPERM", "ENOTSUP", "EOPNOTSUPP"].includes(error?.code)) throw error;
   }
 
   let targetOpened = false;
@@ -77,7 +81,7 @@ function createSftpDownloadJobs(dependencies: any) {
   } = dependencies;
 
   function getRemoteSize(connection: any, remotePath: string) {
-    const child = spawnRemote(connection, `wc -c < ${remotePathOperand(connection, remotePath)} | tr -d ' '`);
+    const child = spawnFileRead(connection, `wc -c < ${remotePathOperand(connection, remotePath)}`);
     return new Promise<number>((resolve, reject) => {
       let out = "";
       let err = "";
@@ -91,8 +95,12 @@ function createSftpDownloadJobs(dependencies: any) {
           if (err.trim()) return reject(new Error(err.trim()));
           return reject(codedSftpJobError(`读取远程文件大小失败（退出码 ${code ?? "?"}）`, "sftp_remote_size_failed", {exit_code:code}));
         }
-        const size = Number((out || "").trim());
-        resolve(Number.isFinite(size) ? size : 0);
+        const rawSize = out.trim();
+        const size = Number(rawSize);
+        if (!/^\d+$/.test(rawSize) || !Number.isSafeInteger(size)) {
+          return reject(codedSftpJobError("远程文件大小返回格式无效", "sftp_remote_size_failed", {exit_code:code}));
+        }
+        resolve(size);
       });
     });
   }
@@ -137,6 +145,7 @@ function createSftpDownloadJobs(dependencies: any) {
       throwIfDownloadAborted(signal);
       await fsp.mkdir(directory, { recursive:true });
       throwIfDownloadAborted(signal);
+      assertDownloadStage(job);
       const target = availableLocalPath(directory, job.download_name || path.posix.basename(job.remote_path || "download"));
       await moveDownloadedFile(job.temp_path, target, signal);
       throwIfDownloadAborted(signal);
@@ -438,8 +447,8 @@ function createSftpDownloadJobs(dependencies: any) {
     const connection = getSftpConnection(connectionId);
     const id = crypto.randomUUID();
     const basename = path.posix.basename(String(remotePath || "").replace(/\\/g, "/")) || "download";
-    fs.mkdirSync(downloadsDirectory, { recursive:true });
-    const tempPath = path.join(downloadsDirectory, `${id}-${safeLocalFilename(basename)}`);
+    const stage = allocateDownloadStage(id, safeLocalFilename(basename), downloadsDirectory, options);
+    const tempPath = stage.tempPath;
     const job: any = {
       id,
       connection_id:Number(connectionId),
@@ -448,9 +457,10 @@ function createSftpDownloadJobs(dependencies: any) {
       label:`下载 ${basename}`,
       remote_path:remotePath,
       temp_path:tempPath,
+      download_stage_directory:stage.directory,
       delivery_mode:options.deliveryMode === "desktop" ? "desktop" : "browser",
       delivery_status:"pending",
-      auto_save_directory:options.deliveryMode === "desktop" ? String(options.autoSaveDirectory || "") : "",
+      auto_save_directory:stage.directory,
       silent_notifications:options.silentNotifications === true,
       internal_automation:options.internalAutomation === true,
       status:"pending",
@@ -495,6 +505,7 @@ function createSftpDownloadJobs(dependencies: any) {
           persistJobs();
         }
         if (!jobs.has(id) || job.status === "cancelled" || job.status === "paused") return;
+        assertDownloadStage(job);
         let offset = fs.existsSync(job.temp_path) ? fs.statSync(job.temp_path).size : 0;
         if (job.size_known && offset > job.size) {
           fs.truncateSync(job.temp_path, 0);
@@ -519,7 +530,7 @@ function createSftpDownloadJobs(dependencies: any) {
           persistJobs();
         }
         const command = offset > 0 ? `tail -c +${offset + 1} ${remotePathOperand(connection, job.remote_path)}` : `cat -- ${remotePathOperand(connection, job.remote_path)}`;
-        const child = spawnRemote(connection, command);
+        const child = spawnFileRead(connection, command);
         const out = fs.createWriteStream(job.temp_path, offset > 0 ? {flags:"a"} : {});
         job.child = child;
         job.out = out;
@@ -704,8 +715,8 @@ function createSftpDownloadJobs(dependencies: any) {
     if (!/\.(?:tar\.gz|tgz)$/i.test(basename)) basename = `${basename}.tar.gz`;
     if (Buffer.byteLength(basename, "utf8") > 255) throw new Error("打包下载文件名过长");
     const filenameEncoding = resolveArchiveFilenameEncoding(connection, options.encoding);
-    fs.mkdirSync(downloadsDirectory, {recursive:true});
-    const tempPath = path.join(downloadsDirectory, `${id}-${safeLocalFilename(basename)}`);
+    const stage = allocateDownloadStage(id, safeLocalFilename(basename), downloadsDirectory, options);
+    const tempPath = stage.tempPath;
     const job: any = {
       id,
       connection_id:Number(connectionId),
@@ -723,9 +734,10 @@ function createSftpDownloadJobs(dependencies: any) {
       remote_path:"",
       download_name:basename,
       temp_path:tempPath,
+      download_stage_directory:stage.directory,
       delivery_mode:options.deliveryMode === "desktop" ? "desktop" : "browser",
       delivery_status:"pending",
-      auto_save_directory:options.deliveryMode === "desktop" ? String(options.autoSaveDirectory || "") : "",
+      auto_save_directory:stage.directory,
       silent_notifications:options.silentNotifications === true,
       internal_automation:options.internalAutomation === true,
       status:"pending",
