@@ -46,6 +46,7 @@ const regressionWorkflow = fs.readFileSync(path.join(workflowDirectory, "regress
 const artifactName = "terma-actions-node24-smoke-${{ github.run_id }}-${{ github.run_attempt }}";
 const prepareArtifactStep = getNamedStep(regressionWorkflow, "Prepare artifact round-trip fixture");
 const uploadArtifactStep = getNamedStep(regressionWorkflow, "Upload artifact round-trip fixture");
+const visibilityArtifactStep = getNamedStep(regressionWorkflow, "Wait for artifact visibility");
 const downloadArtifactStep = getNamedStep(regressionWorkflow, "Download artifact round-trip fixture");
 const verifyArtifactStep = getNamedStep(regressionWorkflow, "Verify artifact round-trip digest");
 assert.match(regressionWorkflow, /xvfb-run[^\n]*npm run ui:smoke/, "Regression workflow 必须在虚拟显示器中运行 Electron UI smoke");
@@ -60,6 +61,9 @@ assert.ok(uploadArtifactStep.includes(`name: ${artifactName}`), "artifact 上传
 assert.match(uploadArtifactStep, /id: roundtrip-upload/, "artifact 上传步骤必须提供本次实际上传 ID");
 assert.match(uploadArtifactStep, /if-no-files-found: error/, "artifact 上传步骤必须在文件缺失时失败");
 assert.match(uploadArtifactStep, /path: data\/actions-node24-smoke\/payload\.txt/, "artifact 上传步骤路径不一致");
+assert.match(visibilityArtifactStep, /timeout-minutes: 2/, "artifact 可见性等待必须有时间上限");
+assert.ok(visibilityArtifactStep.includes("TERMA_ARTIFACT_ID: ${{ steps.roundtrip-upload.outputs.artifact-id }}"), "可见性等待必须核对实际上传 ID");
+assert.ok(regressionWorkflow.indexOf(visibilityArtifactStep) < regressionWorkflow.indexOf(downloadArtifactStep), "artifact 可见性检查必须先于下载");
 assert.match(downloadArtifactStep, new RegExp(`uses: actions/download-artifact@${node24Pins.get("actions/download-artifact")}`), "artifact 下载步骤未使用已审核 action");
 assert.ok(downloadArtifactStep.includes("artifact-ids: ${{ steps.roundtrip-upload.outputs.artifact-id }}"), "artifact 下载必须使用本次上传返回的 ID");
 assert.ok(downloadArtifactStep.includes("github-token: ${{ github.token }}"), "artifact 下载必须通过当前工作流的只读 API 权限访问");
@@ -70,4 +74,58 @@ assert.match(downloadArtifactStep, /path: data\/actions-node24-roundtrip/, "arti
 assert.match(verifyArtifactStep, /test -f data\/actions-node24-roundtrip\/payload\.txt/, "artifact 校验步骤缺少下载文件检查");
 assert.match(verifyArtifactStep, /sha256sum data\/actions-node24-roundtrip\/payload\.txt[^\n]*TERMA_ACTIONS_SMOKE_SHA/, "artifact 校验步骤缺少 SHA-256 比较");
 assert.ok(fs.existsSync(path.resolve(__dirname, "../.github/dependabot.yml")), "仓库缺少 Dependabot 配置");
+
+// Execute the actual workflow shell against an isolated API fixture. Windows
+// source checks do not depend on a Unix shell; this runs in the Ubuntu gate.
+if (process.platform !== "win32") {
+  const {spawnSync} = require("node:child_process");
+  const directory = fs.mkdtempSync(path.join(require("node:os").tmpdir(), "terma-artifact-visibility-"));
+  const stateFile = path.join(directory, "state.json");
+  const waitScript = visibilityArtifactStep.match(/        run: \|\r?\n([\s\S]*)/)[1]
+    .split(/\r?\n/).map(line => line.replace(/^          /, "")).join("\n");
+  try {
+    fs.writeFileSync(path.join(directory, "gh"), `#!/usr/bin/env node
+const fs=require("node:fs"),file=process.env.TERMA_VISIBILITY_STATE;
+let state;try{state=JSON.parse(fs.readFileSync(file,"utf8"));}catch{state={calls:[],sleeps:[]};}
+state.calls.push(process.argv.slice(2));fs.writeFileSync(file,JSON.stringify(state));
+const mode=process.env.TERMA_VISIBILITY_MODE,count=state.calls.length;
+if(mode==="api-error"&&count<3)process.exit(1);
+if(mode==="ready"||mode==="api-error"||mode==="delayed"&&count>=3)console.log("12345");
+if(mode==="wrong")console.log("99999");
+`, {mode:0o700});
+    fs.writeFileSync(path.join(directory, "sleep"), `#!/usr/bin/env node
+const fs=require("node:fs"),file=process.env.TERMA_VISIBILITY_STATE;
+const state=JSON.parse(fs.readFileSync(file,"utf8"));
+state.sleeps.push(process.argv[2]);fs.writeFileSync(file,JSON.stringify(state));
+`, {mode:0o700});
+    for (const [mode, id, status, calls, sleeps] of [
+      ["ready", "12345", 0, 1, 0],
+      ["delayed", "12345", 0, 3, 2],
+      ["api-error", "12345", 0, 3, 2],
+      ["missing", "12345", 1, 12, 11],
+      ["wrong", "12345", 1, 12, 11],
+      ["ready", "invalid-id", 1, 0, 0]
+    ]) {
+      fs.writeFileSync(stateFile, JSON.stringify({calls:[], sleeps:[]}));
+      const result = spawnSync("bash", ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", waitScript], {
+        encoding:"utf8", timeout:10000,
+        env:{...process.env, PATH:directory + path.delimiter + process.env.PATH,
+          GH_TOKEN:"fixture", GITHUB_REPOSITORY:"fixture/project", GITHUB_RUN_ID:"42",
+          TERMA_ARTIFACT_ID:id, TERMA_VISIBILITY_MODE:mode, TERMA_VISIBILITY_STATE:stateFile}
+      });
+      assert.equal(result.status, status, `${mode}: ${result.error || result.stderr || result.stdout}`);
+      const state = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+      assert.equal(state.calls.length, calls, mode);
+      assert.deepEqual(state.sleeps, Array(sleeps).fill("5"), mode);
+      for (const args of state.calls) {
+        assert.deepEqual(args, ["api", "-H", "Cache-Control: no-cache",
+          "repos/fixture/project/actions/runs/42/artifacts?per_page=100",
+          "--jq", ".artifacts[] | select(.expired == false) | .id"]);
+      }
+    }
+    console.log("Artifact visibility checks passed: delayed indexing, API recovery, exact ID, bounded failure, invalid input");
+  } finally {
+    fs.rmSync(directory, {recursive:true, force:true});
+  }
+}
 console.log("GitHub Actions 引用检查通过：Node 24 action 均固定到已审核的完整 commit SHA，并覆盖 artifact 往返摘要校验");
