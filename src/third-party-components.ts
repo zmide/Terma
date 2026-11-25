@@ -11,7 +11,7 @@ const THIRD_PARTY_COMPONENTS:ThirdPartyComponent[] = [
   {name:"Tile UI", version:"f047bf2", license:"MIT", project_url:"https://github.com/zmide/tile-ui", use:"interface_components"},
   {name:"Kumo", version:"7e0ff40", license:"MIT", project_url:"https://github.com/cloudflare/kumo", use:"interface_theme"},
   {name:"xterm.js", version:"6.0.0", license:"MIT", project_url:"https://github.com/xtermjs/xterm.js", use:"terminal"},
-  {name:"Ace Editor", version:"1.44.0", license:"BSD-3-Clause", project_url:"https://github.com/ajaxorg/ace-builds", use:"sftp_text_edit"},
+  {name:"Ace Editor", version:"1.45.2", license:"BSD-3-Clause", project_url:"https://github.com/ajaxorg/ace-builds", use:"sftp_text_edit"},
   {name:"jsdiff", version:"9.0.0", license:"BSD-3-Clause", project_url:"https://github.com/kpdecker/jsdiff", use:"sftp_diff"},
   {name:"jsPDF", version:"4.2.1", license:"MIT", project_url:"https://github.com/parallax/jsPDF", use:"browser_pdf_generation"},
   {name:"svg2pdf.js", version:"2.8.1", license:"MIT", project_url:"https://github.com/yWorks/svg2pdf.js", use:"svg_vector_pdf_export"},

@@ -41,7 +41,7 @@ The original MIT license texts for Vue, i18next, Tile UI and the Kumo theme are 
 ## Ace Editor
 
 - Project: https://github.com/ajaxorg/ace-builds
-- Version: 1.44.0
+- Version: 1.45.2
 - License: BSD 3-Clause License
 - Use: SFTP text editing
 - Copyright: Copyright (c) 2010, Ajax.org B.V.
