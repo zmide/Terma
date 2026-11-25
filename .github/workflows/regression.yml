@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload artifact round-trip fixture
         id: roundtrip-upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: terma-actions-node24-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
@@ -134,7 +134,7 @@ jobs:
 
       - name: Upload UI diagnostics on failure
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ui-smoke-diagnostics-${{ matrix.group }}-${{ github.run_attempt }}
           if-no-files-found: ignore

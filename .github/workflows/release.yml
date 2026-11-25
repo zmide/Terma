@@ -1,4 +1,4 @@
-﻿name: Build Releases
+name: Build Releases
 
 on:
   push:
@@ -71,7 +71,7 @@ jobs:
         run: node scripts/release-artifacts-check.js windows
 
       - name: Upload Windows workflow artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Terma-windows-x64
           overwrite: true
@@ -120,7 +120,7 @@ jobs:
         run: node scripts/release-artifacts-check.js linux
 
       - name: Upload Linux workflow artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Terma-linux-x64
           overwrite: true
@@ -260,7 +260,7 @@ jobs:
           done
 
       - name: Upload signed macOS workflow artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Terma-macos-x64-arm64
           overwrite: true
@@ -317,7 +317,7 @@ jobs:
           tar -tzf "$archive" | grep "^${PRODUCT_SLUG}/" > /dev/null
 
       - name: Upload Linux/source workflow artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Terma-linux-source-noarch
           overwrite: true
