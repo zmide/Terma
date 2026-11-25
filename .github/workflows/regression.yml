@@ -50,6 +50,28 @@ jobs:
           retention-days: 1
           path: data/actions-node24-smoke/payload.txt
 
+      - name: Wait for artifact visibility
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TERMA_ARTIFACT_ID: ${{ steps.roundtrip-upload.outputs.artifact-id }}
+        run: |
+          if [[ ! "$TERMA_ARTIFACT_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::Invalid uploaded artifact ID"
+            exit 1
+          fi
+          for attempt in {1..12}; do
+            if gh api -H "Cache-Control: no-cache" \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+              --jq '.artifacts[] | select(.expired == false) | .id' \
+              | grep -Fxq "$TERMA_ARTIFACT_ID"; then
+              exit 0
+            fi
+            if [[ "$attempt" -lt 12 ]]; then sleep 5; fi
+          done
+          echo "::error::Uploaded artifact did not become visible within the retry limit"
+          exit 1
+
       - name: Download artifact round-trip fixture
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
