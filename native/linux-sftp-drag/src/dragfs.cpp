@@ -683,9 +683,6 @@ int DragFileSystem::on_open(const char* path, struct fuse_file_info* file_info) 
   node->open_files.fetch_add(1);
   state->add_open_reference();
   file_info->fh = reinterpret_cast<std::uint64_t>(handle);
-  // Keep cancellation errors visible to readers instead of the page cache
-  // converting a failed read-ahead page into a generic I/O error.
-  file_info->direct_io = 1;
   file_info->keep_cache = 0;
   return 0;
 }
