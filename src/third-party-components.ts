@@ -22,7 +22,7 @@ const THIRD_PARTY_COMPONENTS:ThirdPartyComponent[] = [
   {name:"ssh2", version:"1.17.0", license:"MIT", project_url:"https://github.com/mscdex/ssh2", use:"ssh_sftp_transport"},
   {name:"node-x11", version:"4.3.1", license:"MIT", project_url:"https://github.com/sidorares/node-x11", use:"x11_protocol_client"},
   {name:"i18next", version:"26.4.3", license:"MIT", project_url:"https://github.com/i18next/i18next", use:"interface_i18n"},
-  {name:"Lucide", version:"1.55.0", license:"ISC", project_url:"https://lucide.dev", use:"interface_icons"},
+  {name:"Lucide", version:"1.61.0", license:"ISC", project_url:"https://lucide.dev", use:"interface_icons"},
   {name:"Electron", version:"44.7.0", license:"MIT", project_url:"https://github.com/electron/electron", use:"desktop_runtime"},
   {name:"node-pty", version:"1.1.0", license:"MIT", project_url:"https://github.com/microsoft/node-pty", use:"desktop_pty"},
   {name:"VcXsrv", version:"21.1.16.1", license:"GPL-3.0", project_url:"https://github.com/marchaesen/vcxsrv", use:"windows_x_server"}

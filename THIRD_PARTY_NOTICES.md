@@ -73,7 +73,7 @@ The original MIT license texts for Vue, i18next, Tile UI and the Kumo theme are 
 ## Lucide
 
 - Project: https://github.com/lucide-icons/lucide
-- Version: 1.55.0
+- Version: 1.61.0
 - License: ISC License; selected icons derived from Feather are under the MIT License
 - Use: interface icons
 - Copyright: Copyright (c) 2026 Lucide Icons and Contributors; Feather-derived icons Copyright (c) 2013-present Cole Bemis
