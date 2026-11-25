@@ -11,7 +11,7 @@ const THIRD_PARTY_COMPONENTS:ThirdPartyComponent[] = [
   {name:"Tile UI", version:"f047bf2", license:"MIT", project_url:"https://github.com/zmide/tile-ui", use:"interface_components"},
   {name:"Kumo", version:"7e0ff40", license:"MIT", project_url:"https://github.com/cloudflare/kumo", use:"interface_theme"},
   {name:"xterm.js", version:"6.0.0", license:"MIT", project_url:"https://github.com/xtermjs/xterm.js", use:"terminal"},
-  {name:"Ace Editor", version:"1.44.0", license:"BSD-3-Clause", project_url:"https://github.com/ajaxorg/ace-builds", use:"sftp_text_edit"},
+  {name:"Ace Editor", version:"1.45.2", license:"BSD-3-Clause", project_url:"https://github.com/ajaxorg/ace-builds", use:"sftp_text_edit"},
   {name:"jsdiff", version:"9.0.0", license:"BSD-3-Clause", project_url:"https://github.com/kpdecker/jsdiff", use:"sftp_diff"},
   {name:"jsPDF", version:"4.2.1", license:"MIT", project_url:"https://github.com/parallax/jsPDF", use:"browser_pdf_generation"},
   {name:"svg2pdf.js", version:"2.8.1", license:"MIT", project_url:"https://github.com/yWorks/svg2pdf.js", use:"svg_vector_pdf_export"},
@@ -21,9 +21,9 @@ const THIRD_PARTY_COMPONENTS:ThirdPartyComponent[] = [
   {name:"ZMODEM.js", version:"0.1.10", license:"Apache-2.0", project_url:"https://github.com/FGasper/zmodemjs", use:"zmodem_transfer"},
   {name:"ssh2", version:"1.17.0", license:"MIT", project_url:"https://github.com/mscdex/ssh2", use:"ssh_sftp_transport"},
   {name:"node-x11", version:"4.3.1", license:"MIT", project_url:"https://github.com/sidorares/node-x11", use:"x11_protocol_client"},
-  {name:"i18next", version:"26.4.3", license:"MIT", project_url:"https://github.com/i18next/i18next", use:"interface_i18n"},
-  {name:"Lucide", version:"1.55.0", license:"ISC", project_url:"https://lucide.dev", use:"interface_icons"},
-  {name:"Electron", version:"44.7.0", license:"MIT", project_url:"https://github.com/electron/electron", use:"desktop_runtime"},
+  {name:"i18next", version:"26.5.5", license:"MIT", project_url:"https://github.com/i18next/i18next", use:"interface_i18n"},
+  {name:"Lucide", version:"1.61.0", license:"ISC", project_url:"https://lucide.dev", use:"interface_icons"},
+  {name:"Electron", version:"45.0.0", license:"MIT", project_url:"https://github.com/electron/electron", use:"desktop_runtime"},
   {name:"node-pty", version:"1.1.0", license:"MIT", project_url:"https://github.com/microsoft/node-pty", use:"desktop_pty"},
   {name:"VcXsrv", version:"21.1.16.1", license:"GPL-3.0", project_url:"https://github.com/marchaesen/vcxsrv", use:"windows_x_server"}
 ];

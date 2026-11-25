@@ -41,7 +41,7 @@ The original MIT license texts for Vue, i18next, Tile UI and the Kumo theme are 
 ## Ace Editor
 
 - Project: https://github.com/ajaxorg/ace-builds
-- Version: 1.44.0
+- Version: 1.45.2
 - License: BSD 3-Clause License
 - Use: SFTP text editing
 - Copyright: Copyright (c) 2010, Ajax.org B.V.
@@ -65,7 +65,7 @@ The original MIT license texts for Vue, i18next, Tile UI and the Kumo theme are 
 ## i18next
 
 - Project: https://github.com/i18next/i18next
-- Version: 26.4.3
+- Version: 26.5.5
 - License: MIT License
 - Use: interface internationalization and language resource management
 - Copyright: Copyright (c) 2011-present i18next
@@ -73,7 +73,7 @@ The original MIT license texts for Vue, i18next, Tile UI and the Kumo theme are 
 ## Lucide
 
 - Project: https://github.com/lucide-icons/lucide
-- Version: 1.55.0
+- Version: 1.61.0
 - License: ISC License; selected icons derived from Feather are under the MIT License
 - Use: interface icons
 - Copyright: Copyright (c) 2026 Lucide Icons and Contributors; Feather-derived icons Copyright (c) 2013-present Cole Bemis
@@ -81,7 +81,7 @@ The original MIT license texts for Vue, i18next, Tile UI and the Kumo theme are 
 ## Electron
 
 - Project: https://github.com/electron/electron
-- Version: 44.7.0
+- Version: 45.0.0
 - License: MIT License
 - Use: desktop application runtime
 - Copyright: Copyright (c) Electron contributors
