@@ -127,6 +127,28 @@ function wildcardXauthorityRecords(value) {
     .join("\n");
 }
 
+function parseXkbQuery(value) {
+  const settings = {};
+  for (const line of String(value || "").split(/\r?\n/)) {
+    const match = /^\s*(rules|model|layout|variant|options)\s*:\s*(.*?)\s*$/i.exec(line);
+    if (!match) continue;
+    const setting = match[2].trim();
+    if (!setting || !/^[A-Za-z0-9_.,+\-:]+$/.test(setting)) continue;
+    settings[match[1].toLowerCase()] = setting;
+  }
+  return settings;
+}
+
+function xkbLaunchArgs(settings = {}) {
+  return [
+    ["rules", "-xkb-rules"],
+    ["model", "-xkb-model"],
+    ["layout", "-xkb-layout"],
+    ["variant", "-xkb-variant"],
+    ["options", "-xkb-options"]
+  ].flatMap(([key, flag]) => settings[key] ? [flag, settings[key]] : []);
+}
+
 function existingFile(candidates) {
   return candidates.find(candidate => {
     try { return candidate && fs.statSync(candidate).isFile(); } catch { return false; }
@@ -479,6 +501,7 @@ function createXServerRuntime(options = {}) {
     const xauth = existingFile(["/opt/X11/bin/xauth", "/usr/X11/bin/xauth", "/usr/bin/xauth"]);
     if (xauth) environment.TERMA_XAUTH = xauth;
     if (state.authorityFile && fs.existsSync(state.authorityFile)) environment.XAUTHORITY = state.authorityFile;
+    else if (environment.XAUTHORITY && !fs.existsSync(environment.XAUTHORITY)) delete environment.XAUTHORITY;
   }
 
   function linuxXdmcpExecutable() {
@@ -498,6 +521,22 @@ function createXServerRuntime(options = {}) {
       "/usr/X11/bin/Xephyr",
       commandPath("Xephyr", platform)
     ]);
+  }
+
+  function macXkbSettings() {
+    const setxkbmap = existingFile([
+      "/opt/X11/bin/setxkbmap",
+      "/usr/X11/bin/setxkbmap",
+      commandPath("setxkbmap", platform)
+    ]);
+    if (!setxkbmap || !environment.DISPLAY) return {};
+    const result = spawnSync(setxkbmap, ["-display", environment.DISPLAY, "-query"], {
+      encoding:"utf8",
+      windowsHide:true,
+      timeout:3000,
+      env:environment
+    });
+    return result.status === 0 ? parseXkbQuery(result.stdout) : {};
   }
 
   function linuxPackageManager() {
@@ -540,7 +579,9 @@ function createXServerRuntime(options = {}) {
       const state = xQuartzProcessState();
       const running = state.running;
       const display = String(state.display || output("/bin/launchctl", ["getenv", "DISPLAY"]) || environment.DISPLAY || "").trim();
-      const authority = String(state.authorityFile || environment.XAUTHORITY || "").trim();
+      const stateAuthority = state.authorityFile && fs.existsSync(state.authorityFile) ? state.authorityFile : "";
+      const environmentAuthority = environment.XAUTHORITY && fs.existsSync(environment.XAUTHORITY) ? environment.XAUTHORITY : "";
+      const authority = String(stateAuthority || environmentAuthority || "").trim();
       const xdmcpClient = macXdmcpExecutable();
       if (running && display) applyXQuartzEnvironment({...state, display, authorityFile:authority});
       return {
@@ -552,7 +593,7 @@ function createXServerRuntime(options = {}) {
         can_start:Boolean(application && !running),
         can_stop:Boolean(running),
         can_install:Boolean(!application || !xdmcpClient),
-        xdmcp_available:Boolean(application && xdmcpClient),
+        xdmcp_available:Boolean(application && running && display && authority && xdmcpClient),
         xdmcp_client:xdmcpClient,
         mode:application ? "system" : "missing",
         server:application ? "XQuartz" : "",
@@ -1068,6 +1109,7 @@ function createXServerRuntime(options = {}) {
   }
 
   async function waitForMacXephyr(displayNumber, processHandle, timeoutMs = 12000) {
+    if (await waitForDisplayPort(displayNumber, timeoutMs, processHandle)) return true;
     const xwininfo = existingFile(["/opt/X11/bin/xwininfo", "/usr/X11/bin/xwininfo", commandPath("xwininfo", platform)]);
     const marker = `Xephyr on :${displayNumber}.0`;
     const deadline = Date.now() + timeoutMs;
@@ -1085,6 +1127,9 @@ function createXServerRuntime(options = {}) {
       throw new Error(text("macOS XDMCP 需要安装 XQuartz；请在当前页面安装后重试", "macOS XDMCP requires XQuartz. Install it from this page and try again"));
     }
     if (!current.available) current = await startMac();
+    if (!current.authority_file || !fs.existsSync(current.authority_file)) {
+      throw new Error(text("XQuartz 已运行，但没有找到当前授权文件；请重启 XQuartz 后重试", "XQuartz is running, but its current authorization file was not found. Restart XQuartz and try again"));
+    }
     const mode = new Set(["query", "indirect", "broadcast"]).has(String(profile.options?.mode))
       ? String(profile.options.mode)
       : "query";
@@ -1092,12 +1137,21 @@ function createXServerRuntime(options = {}) {
     if (mode !== "broadcast" && (!host || host.includes("\0") || /[\r\n]/.test(host))) throw new Error(text("XDMCP 目标主机无效", "The XDMCP target host is invalid"));
     const port = Number(profile.port || 177);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(text("XDMCP 端口无效", "The XDMCP port is invalid"));
+    const requestedLocalAddress = String(profile.options?.local_address || "").trim();
+    if (requestedLocalAddress.includes("\0") || /[\r\n]/.test(requestedLocalAddress) || (requestedLocalAddress && net.isIP(requestedLocalAddress) !== 4)) {
+      throw new Error(text("XDMCP 本地地址必须是本机 IPv4 地址", "The XDMCP local address must be this machine's IPv4 address"));
+    }
+    const localAddress = await resolveXdmcpLocalAddress(host, port, requestedLocalAddress, {mode});
     const displayNumber = await availableDisplayNumber();
     const {windowMode, width, height} = xdmcpWindowSettings(profile.options);
+    const keyboardArgs = xkbLaunchArgs(macXkbSettings());
     const args = [`:${displayNumber}`];
     if (mode === "broadcast") args.push("-broadcast");
     else args.push(mode === "indirect" ? "-indirect" : "-query", host);
     args.push("-port", String(port));
+    if (localAddress) args.push("-from", localAddress);
+    args.push("-listen", "tcp");
+    args.push(...keyboardArgs);
     if (windowMode === "fullscreen") args.push("-fullscreen");
     else {
       args.push("-screen", `${width}x${height}`);
@@ -1121,7 +1175,7 @@ function createXServerRuntime(options = {}) {
     });
     if (!await waitForMacXephyr(displayNumber, processHandle)) {
       try { processHandle.kill(); } catch {}
-      throw new Error(launchError.trim() || text("macOS XDMCP 图形桌面启动超时，请确认远端已启用 XDMCP/UDP 177", "macOS XDMCP graphical desktop startup timed out. Confirm that the remote host has enabled XDMCP/UDP 177"));
+      throw new Error(launchError.trim() || xdmcpLaunchFailureMessage("", displayNumber, localAddress, getLanguage()) || text("macOS XDMCP 图形桌面启动超时，请确认远端已启用 XDMCP/UDP 177", "macOS XDMCP graphical desktop startup timed out. Confirm that the remote host has enabled XDMCP/UDP 177"));
     }
     return {
       ok:true,
@@ -1130,6 +1184,7 @@ function createXServerRuntime(options = {}) {
       display:`:${displayNumber}.0`,
       pid:processHandle.pid,
       mode,
+      local_address:localAddress,
       window_mode:windowMode
     };
   }
@@ -1317,6 +1372,8 @@ module.exports = {
   retryWindowsDisplayLaunch,
   wildcardXauthorityRecords,
   xdmcpWindowSettings,
+  xkbLaunchArgs,
+  parseXkbQuery,
   parseXQuartzProcessIds,
   parseXQuartzProcessOutput,
   XQUARTZ_BYTES,
