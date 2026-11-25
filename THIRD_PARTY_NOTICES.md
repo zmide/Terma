@@ -65,7 +65,7 @@ The original MIT license texts for Vue, i18next, Tile UI and the Kumo theme are 
 ## i18next
 
 - Project: https://github.com/i18next/i18next
-- Version: 26.4.3
+- Version: 26.5.5
 - License: MIT License
 - Use: interface internationalization and language resource management
 - Copyright: Copyright (c) 2011-present i18next

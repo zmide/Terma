@@ -47,7 +47,7 @@ for (const [source, destination] of [
 
 const notices = [
   ["Vue 3.5.44", "third-party/vue/LICENSE"],
-  ["i18next 26.4.3", "third-party/i18next/LICENSE"],
+  ["i18next 26.5.5", "third-party/i18next/LICENSE"],
   ["Tile UI f047bf2f17820d4c6a5525ff37de7f18a2148d1e", "third-party/tile-ui/LICENSE"],
   ["Tile UI styles and Cloudflare Kumo 7e0ff40546f08405d05bc9754f0ff0fd009ece0a", "src/styles/themes/LICENSE.kumo"]
 ].map(([name, file]) => `${name}\n${"=".repeat(name.length)}\n\n${fs.readFileSync(path.join(frontendRoot, file), "utf8")}\n`);
