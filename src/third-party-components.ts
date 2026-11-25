@@ -23,7 +23,7 @@ const THIRD_PARTY_COMPONENTS:ThirdPartyComponent[] = [
   {name:"node-x11", version:"4.3.1", license:"MIT", project_url:"https://github.com/sidorares/node-x11", use:"x11_protocol_client"},
   {name:"i18next", version:"26.5.5", license:"MIT", project_url:"https://github.com/i18next/i18next", use:"interface_i18n"},
   {name:"Lucide", version:"1.61.0", license:"ISC", project_url:"https://lucide.dev", use:"interface_icons"},
-  {name:"Electron", version:"44.7.0", license:"MIT", project_url:"https://github.com/electron/electron", use:"desktop_runtime"},
+  {name:"Electron", version:"45.0.0", license:"MIT", project_url:"https://github.com/electron/electron", use:"desktop_runtime"},
   {name:"node-pty", version:"1.1.0", license:"MIT", project_url:"https://github.com/microsoft/node-pty", use:"desktop_pty"},
   {name:"VcXsrv", version:"21.1.16.1", license:"GPL-3.0", project_url:"https://github.com/marchaesen/vcxsrv", use:"windows_x_server"}
 ];

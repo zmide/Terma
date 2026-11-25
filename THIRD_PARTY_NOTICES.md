@@ -81,7 +81,7 @@ The original MIT license texts for Vue, i18next, Tile UI and the Kumo theme are 
 ## Electron
 
 - Project: https://github.com/electron/electron
-- Version: 44.7.0
+- Version: 45.0.0
 - License: MIT License
 - Use: desktop application runtime
 - Copyright: Copyright (c) Electron contributors
