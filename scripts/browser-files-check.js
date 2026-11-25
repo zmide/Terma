@@ -1,8 +1,6 @@
 const assert=require('node:assert/strict');
-const fs=require('node:fs');
-const vm=require('node:vm');
-const context=vm.createContext({window:{},webFilesTr:key=>key,TextDecoder,TextEncoder});
-vm.runInContext(fs.readFileSync('public/app-browser-files.js','utf8')+'\n globalThis.Directory=BrowserFileDirectory;',context);
+const {loadFrontendService}=require('./frontend-service-test-helper');
+const {BrowserFileDirectory}=loadFrontendService('frontend/src/features/files/browser-directory.ts');
 function missing(){const error=new Error('missing');error.name='NotFoundError';throw error;}
 function mismatch(){const error=new Error('wrong kind');error.name='TypeMismatchError';throw error;}
 function directory(name,items=new Map()) {
@@ -13,7 +11,7 @@ function directory(name,items=new Map()) {
 }
 function file(name,content){let data=content;return {name,kind:'file',async getFile(){return {name,size:Buffer.byteLength(data),lastModified:1000,async arrayBuffer(){return Uint8Array.from(Buffer.from(data)).buffer;},data};},async createWritable(){let staged;return {async write(value){staged=typeof value==='string'?value:value.data;},async close(){data=staged;},async abort(){}};}};}
 (async()=>{
-  const fixture=new context.Directory();fixture.handle=directory('fixture');fixture.name='fixture';fixture.writable=true;
+  const fixture=new BrowserFileDirectory(key=>key);fixture.handle=directory('fixture');fixture.name='fixture';fixture.writable=true;
   assert.equal(fixture.receiveName('report 21:38:27?.txt','Win32'),'report 21_38_27_.txt');
   assert.equal(fixture.receiveName('CON.txt','Win32'),'_CON.txt');
   assert.equal(fixture.receiveName('LPT¹.log','Win32'),'_LPT¹.log');

@@ -61,9 +61,9 @@ for (const [key, source] of chineseEntries) {
 phraseTemplates.sort((left, right) => right.literalLength - left.literalLength || right.expression.source.length - left.expression.source.length);
 
 function fallbackReplacements() {
-  const file = path.join(root, "public", "app-i18n.js");
+  const file = path.join(root, "frontend", "src", "shared", "i18n", "phrase-translation.ts");
   const sourceText = fs.readFileSync(file, "utf8");
-  const source = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const source = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   let replacements = [];
   const visit = node => {
     if (ts.isVariableDeclaration(node)
@@ -157,9 +157,9 @@ function expressionVariants(node, depth=0) {
 }
 
 const findings = new Map();
-const publicRoot = path.join(root, "public");
-for (const name of fs.readdirSync(publicRoot).filter(file => /^app.*\.js$/.test(file))) {
-  const sourceText = fs.readFileSync(path.join(publicRoot, name), "utf8");
+const appSources = require('./frontend-source').frontendJavaScriptSources(root).filter(file => /^app.*\.js$/.test(path.basename(file)));
+for (const name of appSources) {
+  const sourceText = fs.readFileSync(path.join(root, name), "utf8");
   const source = ts.createSourceFile(name, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   const visit = node => {
     if (ts.isCallExpression(node)

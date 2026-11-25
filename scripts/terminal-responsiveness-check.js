@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const { readFrontendDomain } = require("./frontend-source");
+const { loadFrontendService } = require("./frontend-service-test-helper");
 
 const root = path.resolve(__dirname, "..");
 const read = file => fs.readFileSync(path.join(root, file), "utf8");
@@ -17,11 +18,6 @@ function sourceBetween(source, startMarker, endMarker) {
 }
 
 function checkViewportAnchors() {
-  const source = sourceBetween(
-    read("public/app-utils.js"),
-    "function captureVisibleTerminalViewports(",
-    "\nfunction chooseModal("
-  );
   const timers = new Map();
   const fitCalls = [];
   let nextTimer = 0;
@@ -54,10 +50,12 @@ function checkViewportAnchors() {
     window:{}
   };
   sandbox.globalThis = sandbox;
-  vm.runInNewContext(`${source}\n;globalThis.__api = {scheduleTerminalFit, fitVisibleTerminals};`, sandbox, {
-    filename:"public/app-utils.js",
-    timeout:5000
+  const {createTerminalViewportService}=loadFrontendService('frontend/src/features/terminal/terminal-viewport-service.ts',sandbox);
+  const service=createTerminalViewportService({
+    sessions:()=>sandbox.terminalSessions.values(),capture:sandbox.captureTerminalViewport,
+    fitPreservingViewport:sandbox.fitTerminalPreservingViewport,error:error=>{throw error;}
   });
+  sandbox.__api={scheduleTerminalFit:service.schedule,fitVisibleTerminals:service.fit};
 
   const anchors = new Map([[session, originalAnchor]]);
   sandbox.__api.scheduleTerminalFit({anchors});
@@ -74,43 +72,54 @@ function checkViewportAnchors() {
 }
 
 function checkOutputBatching() {
-  const source = sourceBetween(
-    read("public/app-terminal-output.js"),
-    "const TERMINAL_OUTPUT_FRAME_BUDGET",
-    "\nfunction drainTerminalOutput("
+  const timers = [], writes = [];
+  const {createTerminalOutputFlowService} = loadFrontendService(
+    'frontend/src/features/terminal/terminal-output-flow-service.ts',
+    {setTimeout(callback){timers.push(callback);return timers.length;}}
   );
-  const sandbox = {Uint8Array, Number, setTimeout:() => 1};
-  sandbox.globalThis = sandbox;
-  vm.runInNewContext(`${source}\n;globalThis.__take = takeTerminalOutputChunk;`, sandbox, {
-    filename:"public/app-terminal-output.js",
-    timeout:5000
-  });
+  const service = createTerminalOutputFlowService();
+  const term = {write(value, callback){writes.push(value);callback();}};
 
-  const login = {pendingTerminalOutput:["Last login: Wed Aug 19\r\n", "sh-4.1$ "]};
+  const login = {term};
+  service.queue(login, 'Last login: Wed Aug 19\r\n');
+  service.queue(login, 'sh-4.1$ ');
+  timers.shift()();
   assert.equal(
-    sandbox.__take(login, 32 * 1024),
+    writes.pop(),
     "Last login: Wed Aug 19\r\nsh-4.1$ ",
     "small adjacent login chunks should reach xterm in one write"
   );
   assert.equal(login.pendingTerminalOutput.length, 0);
 
-  const binary = {pendingTerminalOutput:[new Uint8Array([1, 2]), new Uint8Array([3, 4, 5])]};
-  assert.deepEqual([...sandbox.__take(binary, 4)], [1, 2, 3, 4], "binary output should coalesce only up to the frame budget");
+  const binary = {term};
+  service.queue(binary, new Uint8Array(32766).fill(1));
+  service.queue(binary, new Uint8Array([2, 3, 5]));
+  timers.shift()();
+  const frame = writes.pop();
+  assert.equal(frame.length, 32768, 'binary output uses the normal frame budget');
+  assert.deepEqual([...frame.slice(-3)], [1,2,3], "adjacent binary chunks coalesce up to the frame budget");
   assert.deepEqual([...binary.pendingTerminalOutput[0]], [5], "binary overflow must remain queued for the next frame");
+  timers.shift()();
+  assert.deepEqual([...writes.pop()], [5]);
 }
 
 function checkLoginProbeDeferral() {
   const terminal = readFrontendDomain(root, "terminal");
-  const core = read("public/app-terminal-core.js");
-  const connect = sourceBetween(terminal, "async function connectTerminalAttempt(", "\nfunction reconnectTerminal(");
+  const directory = read("frontend/src/features/terminal/terminal-directory-service.ts");
+  const directoryWorkspace = read("frontend/src/features/terminal/terminal-directory-workspace.ts");
+  const transport = read("frontend/src/features/terminal/terminal-transport-service.ts");
+  const connect = read("frontend/src/features/terminal/terminal-connection-runtime.ts");
   assert.doesNotMatch(connect, /void initializeTerminalDirectory\(session, c, key\)/, "SSH open must not start an SFTP directory probe immediately");
-  assert.match(connect, /scheduleTerminalDirectoryInitialization\(session, c, key, 1200\)/, "SSH open should defer the first directory probe");
-  assert.match(connect, /queueTerminalOutput\(session, terminalOutput\);[\s\S]{0,180}scheduleTerminalDirectoryInitialization\(session, c, key\)/, "terminal output should postpone the probe until login output becomes idle");
-  assert.match(core, /session\.directoryInitializationPending/, "terminal directory initialization must deduplicate concurrent requests");
-  assert.match(core, /session\.socket !== socket[\s\S]{0,160}!session\.connected/, "a deferred probe must be discarded after reconnect or disconnect");
-  assert.match(core, /\/sftp\/resolve-directory\?/, "terminal directory tracking must use the lightweight resolver");
+  assert.match(connect, /termaTerminalConnection!\.connect/, "SSH connects through the typed connection owner");
+  const connection = read("frontend/src/features/terminal/terminal-connection-service.ts");
+  assert.match(connection, /port\.bindTransport\(connection, key, session, socket, attempt\)/, "connection preparation binds through the existing transport");
+  assert.match(transport, /port\.scheduleDirectory\(session, connection, key, 1200\)/, "SSH open should defer the first directory probe");
+  assert.match(transport, /port\.queueOutput\(session, terminalOutput\);[\s\S]{0,180}port\.scheduleDirectory\(session, connection, key\)/, "terminal output should postpone the probe until login output becomes idle");
+  assert.match(directory, /session\.directoryInitializationPending/, "terminal directory initialization must deduplicate concurrent requests");
+  assert.match(directory, /session\.socket !== socket[\s\S]{0,160}!session\.connected/, "a deferred probe must be discarded after reconnect or disconnect");
+  assert.match(directoryWorkspace, /\/sftp\/resolve-directory\?/, "terminal directory tracking must use the lightweight resolver");
   assert.doesNotMatch(
-    sourceBetween(core, "async function probeTerminalDirectory(", "\nasync function initializeTerminalDirectory("),
+    directoryWorkspace,
     /page_size|refresh|\/sftp\?/,
     "terminal startup must not enumerate the remote home directory"
   );

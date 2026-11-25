@@ -90,41 +90,66 @@ async function main() {
   );
   assert.throws(() => parseX11ApplicationDiscovery("ordinary output"), /无法识别/);
 
-  const terminalFrontend = readFrontendDomain(path.join(__dirname, ".."), "terminal");
-  const remoteFrontend = readFrontendDomain(path.join(__dirname, ".."), "remote");
+  const x11Terminal=fs.readFileSync(path.join(__dirname,'../frontend/src/features/x11/terminal-service.ts'),'utf8');
+  const remoteFrontend = [
+    ...['terminal-service','remote-service','local-service','launcher-service','LauncherView'].map(name=>fs.readFileSync(path.join(__dirname,'../frontend/src/features/x11/'+name+'.ts'),'utf8')),
+    readFrontendDomain(path.join(__dirname, ".."), "remote"),
+    fs.readFileSync(path.join(__dirname, "..", "frontend", "src", "features", "quick", "quick-views.ts"), "utf8")
+  ].join("\n");
   const frontendCss = fs.readFileSync(path.join(__dirname, "..", "public", "app.css"), "utf8");
-  const connectionFrontend = readFrontendDomain(path.join(__dirname, ".."), "connections");
-  const utilityFrontend = fs.readFileSync(path.join(__dirname, "..", "public", "app-utils.js"), "utf8");
+  const connectionFrontend = fs.readFileSync(path.join(__dirname, "../frontend/src/features/connections/connection-host.ts"), "utf8");
+  const terminalToolbar = fs.readFileSync(path.join(__dirname, '../frontend/src/features/terminal/terminal-toolbar-service.ts'), 'utf8');
+  const desktopRuntime = fs.readFileSync(path.join(__dirname, '../frontend/src/features/remote/remote-desktop-runtime.ts'), 'utf8');
+  const desktopProbe = fs.readFileSync(path.join(__dirname, '../frontend/src/features/remote/resource-probe.ts'), 'utf8');
+  const remoteProfileForm = fs.readFileSync(path.join(__dirname, '../frontend/src/features/connections/RemoteProfileForm.tsx'), 'utf8');
+  const utilityFrontend = fs.readFileSync(path.join(__dirname, "../frontend/src/shared/action-menu.ts"), "utf8");
+  const terminalMenuFrontend = [
+    fs.readFileSync(path.join(__dirname, "..", "frontend", "src", "features", "terminal", "terminal-controls-mount.ts"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "..", "frontend", "src", "features", "terminal", "TerminalDisplayMenuView.ts"), "utf8")
+  ].join("\n");
   const ssh2Source = fs.readFileSync(path.join(__dirname, "..", "src", "ssh2-client.ts"), "utf8");
   const terminalSource = fs.readFileSync(path.join(__dirname, "..", "src", "terminal.ts"), "utf8");
   const runtimeSource = fs.readFileSync(path.join(__dirname, "..", "desktop", "xserver-runtime.js"), "utf8");
-  assert.match(terminalFrontend, /\.\.\.\(x11Mode \? \{x11_mode:x11Mode\} : \{\}\)/, "临时终端配置必须保留 X11 模式");
-  assert.match(remoteFrontend, /detectX11Applications/);
+  assert.match(x11Terminal, /port\.override\(key,\{\.\.\.port\.startup\(c\),x11_mode:value\}\);return port\.openTerminal\(c\.id,key,title\)/, "临时终端配置必须保留 X11 模式");
+  assert.match(remoteFrontend, /\/x11-applications["'`]/);
   assert.match(remoteFrontend, /x11-applications\/verify/);
-  assert.match(remoteFrontend, /openX11InstallGuide/);
+  assert.match(remoteFrontend, /termaX11\.openGuide\(id\)/);
   assert.match(remoteFrontend, /安装远端 XQuartz/);
-  assert.match(remoteFrontend, /macOS X11 管理/);
   assert.match(remoteFrontend, /不会继承其他终端中的 sudo -i/);
-  assert.match(remoteFrontend, /macOS 不安装 Linux 桌面环境/);
-  assert.match(remoteFrontend, /openSshX11ConfigureTerminal/);
+  const linuxModel = fs.readFileSync(path.join(__dirname, "../frontend/src/features/remote/linux-desktop-model.ts"), "utf8");
+  const locale = require("../public/locales/zh-CN/remote.json").linux_desktop;
+  assert.match(linuxModel, /macos \? 'macos_title' : 'title'/);
+  assert.equal(locale.macos_title, "macOS X11 管理");
+  assert.match(linuxModel, /macos \? 'macos_hint' : 'unsupported_hint'/);
+  assert.match(locale.macos_hint, /macOS 不安装 Linux 桌面环境/);
+  assert.match(remoteFrontend, /termaX11\.remote\.configureTerminal\(id, action, source\)/);
   assert.match(remoteFrontend, /x11\.sshd-config/, "SSH X11 管理授权必须绑定后端使用的精确 scope");
-  assert.match(remoteFrontend, /快速连接的管理员授权只用于这一次操作/, "临时连接管理员授权不得复用");
-  assert.match(remoteFrontend, /openXdmcpSetupGuide/);
+  assert.match(fs.readFileSync(path.join(__dirname,'../frontend/src/features/remote/admin-service.ts'),'utf8'),/quick\?'once'/,'temporary grants remain one-time');
+  assert.match(desktopRuntime, /termaRemoteManagement\.setupGuide\(/);
   assert.match(remoteFrontend, /在终端执行/);
-  const productivityFrontend = readFrontendDomain(path.join(__dirname, ".."), "productivity");
+  const productivityFrontend = [
+    readFrontendDomain(path.join(__dirname, ".."), "productivity"),
+    fs.readFileSync(path.join(__dirname, "..", "frontend", "src", "features", "quick", "QuickHeader.ts"), "utf8")
+  ].join("\n");
   assert.match(productivityFrontend, /xServerQuickButton/);
-  assert.match(remoteFrontend, /已自动识别/);
-  assert.match(remoteFrontend, /applications\.length \? "success" : "warning"/);
+  assert.match(remoteFrontend,/common:x11\.detected_applications/);
+  assert.match(remoteFrontend, /state\.error\?'error':state\.loading\?'busy':warning\?'warning':'success'/);
   assert.doesNotMatch(remoteFrontend, /请在终端中输入 SSH 密码/);
-  assert.match(connectionFrontend, /children:\(\)=>x11LaunchActions\(id\)/, "连接菜单应把 X11 操作声明为原位子菜单");
-  assert.match(remoteFrontend, /children:\(\)=>x11ModeScopeActions\(connectionId,"untrusted",terminalKey\)/, "受限 X11 默认动作必须提供作用范围子菜单");
-  assert.match(remoteFrontend, /children:\(\)=>x11ModeScopeActions\(connectionId,"trusted",terminalKey\)/, "可信 X11 默认动作必须提供作用范围子菜单");
-  assert.match(remoteFrontend, /children:\(\)=>x11ModeScopeActions\(connectionId,"off",terminalKey\)/, "关闭 X11 默认动作必须提供作用范围子菜单");
-  assert.match(remoteFrontend, /当前终端生效[\s\S]*新建终端[\s\S]*下次生效/, "X11 模式作用范围必须完整且顺序稳定");
-  assert.match(remoteFrontend, /saveAndApplyX11ModeToCurrentTerminal[\s\S]*persistConnectionX11Mode\(connectionId, normalizedMode\)[\s\S]*terminalStartupOverrides\.set\(key,[\s\S]*x11_mode:normalizedMode[\s\S]*reconnectTerminal\(connectionId, key\)/, "当前终端模式必须先保存默认值，再通过标签启动配置重连生效");
-  assert.match(remoteFrontend, /saveAndOpenX11ModeTerminal[\s\S]*persistConnectionX11Mode\(connectionId, normalizedMode\)[\s\S]*openTerminalWithX11Mode\(connectionId, normalizedMode/, "新建终端必须先保存默认值，再使用独立标签模式");
-  assert.match(utilityFrontend, /showActionSubMenu\(button, children\)/, "桌面动作菜单应保留父菜单并展开子菜单");
-  assert.match(utilityFrontend, /\$\("actionSubMenu"\)\?\.remove\(\)/, "关闭动作菜单时应同时清理子菜单");
+  const connectionMenu = fs.readFileSync(path.join(__dirname, "../frontend/src/features/connections/connection-menu-service.ts"), "utf8");
+  assert.match(connectionMenu, /key: 'x11'[\s\S]*?children: \(\) => port\.x11\(id\)/, "连接菜单应把 X11 操作声明为原位子菜单");
+  assert.match(connectionFrontend, /x11: id => x11Services\.termaX11TerminalMenu\?\.actions\(id\)/, "连接菜单 X11 子菜单应复用领域入口");
+  const x11Menu = fs.readFileSync(path.join(__dirname, '../frontend/src/features/x11/terminal-menu-service.ts'), 'utf8');
+  for (const mode of ['untrusted', 'trusted', 'off']) {
+    assert.ok(x11Menu.includes(`children: () => scopes(id, '${mode}', key)`), `${mode} X11 默认动作必须提供作用范围子菜单`);
+  }
+  assert.match(x11Menu, /current_terminal[\s\S]*new_terminal[\s\S]*next_start/, "X11 模式作用范围必须完整且顺序稳定");
+  assert.match(terminalToolbar, /termaX11TerminalMenu\?\.openQuick\(event, key\)/, "临时终端应委托类型化 X11 菜单");
+  assert.match(terminalToolbar, /termaX11TerminalMenu\?\.open\(event, id, key\)/, "SSH 终端应委托类型化 X11 菜单");
+  assert.match(x11Terminal,/await persist\(id,value,fixed\.current\)[\s\S]*scope==='current'[\s\S]*port\.override[\s\S]*port\.reconnect/,'current scope persists before reconnect');
+  assert.match(x11Terminal,/await persist\(id,value,fixed\.current\)[\s\S]*scope==='new'\)return open/,'new scope persists before opening');
+  assert.match(utilityFrontend, /terminalServices\.termaTerminalActionMenu\?\.open/, "旧动作菜单入口应委托给 Vue 菜单");
+  assert.match(terminalMenuFrontend, /desktopPath/, "Vue 动作菜单应保留桌面父级子菜单");
+  assert.match(terminalMenuFrontend, /mobilePath/, "Vue 动作菜单应保留窄屏返回路径");
   assert.match(ssh2Source, /openBuiltinX11Channel/);
   assert.match(ssh2Source, /rewriteX11Authorization/);
   assert.match(ssh2Source, /probeBuiltinX11Session/);
@@ -133,9 +158,10 @@ async function main() {
   assert.match(terminalSource, /\[X11\] 转发已建立/);
   assert.match(terminalSource, /\[X11\] 转发未建立/);
   assert.match(terminalSource, /本次已自动降级为普通 SSH 终端/, "X11 降级必须向用户说明普通命令行仍可使用");
-  assert.match(remoteFrontend, /XDMCP 不依赖 SSH X11 转发/);
+  assert.match(remoteProfileForm, /tr\('xdmcp_local_xserver_hint'/);
+  assert.match(require('../public/locales/zh-CN/remote.json').auto.xdmcp_local_xserver_hint, /XDMCP 不依赖 SSH X11 转发/);
   assert.match(remoteFrontend, /renderSshX11ForwardingPanel/);
-  assert.match(remoteFrontend, /linux-desktop.*x11-forwarding/s);
+  assert.match(desktopProbe, /read\(id,'linux-desktop'\),read\(id,'x11-forwarding'\)/);
   assert.match(runtimeSource, /if \(await canConnect\(port, 250\)\) continue/);
   assert.match(runtimeSource, /"-multiwindow",[\s\S]*"-compositewm",[\s\S]*"-swcursor"/, "Windows 多窗口模式必须保留当前 Composite 与光标兼容参数");
   assert.doesNotMatch(runtimeSource, /"-nodecoration"/, "X Server 不得显式关闭窗口装饰");

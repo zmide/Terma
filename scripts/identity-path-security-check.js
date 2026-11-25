@@ -53,7 +53,15 @@ try {
   fs.writeFileSync(outsideKey, keyBody, {mode:0o644});
 
   const identity = require("../dist/identity-path");
+  const childProcess = require("node:child_process");
+  const originalChildSpawnSync = childProcess.spawnSync;
+  let permissionCheckOptions;
+  childProcess.spawnSync = (command, args, options) => {
+    if (command === "icacls") permissionCheckOptions = options;
+    return originalChildSpawnSync(command, args, options);
+  };
   const ssh = require("../dist/ssh");
+  childProcess.spawnSync = originalChildSpawnSync;
   const sshCommand = require("../dist/ssh-command");
   db = require("../dist/db");
 
@@ -78,6 +86,8 @@ try {
 
   let windowsAclChecked = false;
   if (process.platform === "win32") {
+    ssh.identityPermissionStatus(allowedKey);
+    assert.equal(permissionCheckOptions?.windowsHide, true, "Windows identity checks hide the console window");
     const granted = spawnSync("icacls", [allowedKey, "/grant", "*S-1-5-32-546:R"], {encoding:"utf8"});
     if (granted.status === 0) {
       windowsAclChecked = true;

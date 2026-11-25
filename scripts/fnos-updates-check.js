@@ -2,19 +2,24 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const vm = require("node:vm");
 const os = require("node:os");
+const {loadFrontendService} = require("./frontend-service-test-helper");
 const {fnosUpdateStatus,selectFnosUpdateAsset} = require("../dist/infrastructure/fnos-updates");
 const {UpdateInstaller,UPDATE_DOWNLOAD_ROUTES} = require("../dist/update-installer");
 
 async function runFnosUpdateChecks() {
-  const escaped = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"}[char]));
-  const context = {URL, document:{documentElement:{lang:"en-US"}}, esc:escaped, escAttr:escaped,
-    icon:() => "", tr:key => key, registerTermaAction:() => {}, runtimeSettings:{distribution:"fnos"}};
-  vm.createContext(context);
-  for (const file of ["app-settings-fnos-updates.js", "app-settings-updates.js"]) {
-    vm.runInContext(fs.readFileSync(path.join(__dirname,"..","public",file),"utf8"), context);
-  }
+  const {selectedFnosUpdateAsset} = loadFrontendService(path.join(__dirname, '../frontend/src/features/settings/update-status-model.ts'),{URL});
+  const {createSettingsRequestLifecycle} = loadFrontendService("frontend/src/features/settings/settings-request-lifecycle.ts");
+  const {createUpdateController} = loadFrontendService("frontend/src/features/settings/update-controller.ts");
+  const requests = createSettingsRequestLifecycle();
+  let status;
+  const updates = createUpdateController({
+    requests, language:() => "en-US", distribution:() => "fnos", tr:key => key, emit() {},
+    capturePane:() => action => action(),
+    request:async url => url.endsWith("/download/status") ? status?.download_status : status,
+    downloads:() => ({probeSnapshot:null, actionPending:false, startPolling() {}}),
+    notice:() => ({sync() {}})
+  });
   const release = {current_version:"1.7.9.4", latest_version:"1.7.10", update_available:true,
     release_url:"https://github.com/zmide/Terma/releases/tag/v1.7.10", notes:"Release <script>blocked</script>",
     download_status:{managed_by:"fnos",arch:"x64"}, assets:["x64","arm64"].map(arch => ({
@@ -22,19 +27,16 @@ async function runFnosUpdateChecks() {
     }))};
   for (const arch of ["x64","arm64"]) {
     const target = {...release,download_status:fnosUpdateStatus(release,arch)};
-    assert.equal(context.fnosReleaseAsset(target).name, `Terma-1.7.10-fnos-${arch}.fpk`);
-    assert.equal(selectFnosUpdateAsset(release,arch).name,context.fnosReleaseAsset(target).name);
-    assert.deepEqual(target.download_status.download_links.map(link=>link.url),UPDATE_DOWNLOAD_ROUTES.map(route=>route.prefix+context.fnosReleaseAsset(target).url));
-    const html = context.fnosUpdateStatusHtml(target);
-    assert.match(html,/data-action="fnos-check-updates"/);
-    assert.match(html,/update-notes/);
-    assert.match(html,/&lt;script&gt;blocked/);
-    assert.match(html,/data-action="fnos-probe-download-links"/);
-    assert.equal((html.match(/href='?"?https:[^>]+\.fpk"/g)||[]).length,6);
-    assert.doesNotMatch(html,/onclick=|downloadUpdateBtn|openDownloadedUpdate|<script>/);
-    vm.runInContext('updateDownloadLinksProbe='+JSON.stringify({key:context.updateDownloadLinksKey(target.download_status),results:[{id:"direct",available:false,error:"更新下载返回了网页，而不是安装包"}]}),context);
-    assert.doesNotMatch(context.fnosUpdateStatusHtml(target), /更新下载返回了网页/);
-    vm.runInContext('updateDownloadLinksProbe=null',context);
+    assert.equal(selectedFnosUpdateAsset(target).name, `Terma-1.7.10-fnos-${arch}.fpk`);
+    assert.equal(selectFnosUpdateAsset(release,arch).name,selectedFnosUpdateAsset(target).name);
+    assert.deepEqual(target.download_status.download_links.map(link=>link.url),UPDATE_DOWNLOAD_ROUTES.map(route=>route.prefix+selectedFnosUpdateAsset(target).url));
+    status = target;
+    await updates.loadCached();
+    const snapshot = updates.snapshot();
+    assert.equal(snapshot.fnos,true);
+    assert.equal(snapshot.update.notes,release.notes);
+    assert.equal(Object.hasOwn(snapshot,"notesHtml"),false);
+    assert.equal(snapshot.update.download_status.download_links.length,6);
   }
   for (const change of [
     {download_status:{managed_by:"fnos",arch:"ia32"}}, {assets:[]}, {assets:null},
@@ -46,15 +48,18 @@ async function runFnosUpdateChecks() {
     {assets:[{name:"Terma-1.7.10-x64.AppImage",url:release.assets[0].url}]}
   ]) {
     const invalid={...release,...change};
-    assert.equal(context.fnosReleaseAsset(invalid),null,JSON.stringify(change));
+    assert.equal(selectedFnosUpdateAsset(invalid),null,JSON.stringify(change));
     assert.equal(selectFnosUpdateAsset(invalid,change.download_status?.arch||"x64"),null,JSON.stringify(change));
     assert.deepEqual(fnosUpdateStatus(invalid,change.download_status?.arch||"x64").download_links,[]);
   }
-  for (const status of [null, {error:"timeout"}, {...release,check_error:"timeout"}, {...release,update_available:false}, {...release,republished_available:true}]) {
-    context.updateSettings=status;
-    context.updateStatusChecking=false;
-    assert.match(context.updateStatusHtml(), /fnos-update-card/);
-    assert.match(context.updateStatusHtml({checking:true}), /disabled aria-busy="true"/);
+  for (const record of [null, {error:"timeout"}, {...release,check_error:"timeout"}, {...release,update_available:false}, {...release,republished_available:true}]) {
+    status = record;
+    await updates.loadCached();
+    assert.equal(updates.snapshot().fnos,true);
+    assert.equal(updates.snapshot({checking:true}).checking,true);
+    const request = requests.begin();
+    assert.equal(updates.snapshot().checking,true);
+    assert.equal(request.finish(), true);
   }
   const {handleUpdateRoutes} = require("../dist/routes/update-routes");
   const previous = process.env.TERMA_DISTRIBUTION;

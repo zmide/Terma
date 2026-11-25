@@ -1,208 +1,139 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const vm = require("node:vm");
 const { readFrontendDomain } = require("./frontend-source");
+const {loadFrontendService} = require("./frontend-service-test-helper");
 
 const source = readFrontendDomain(path.resolve(__dirname, ".."), "remote");
-const vncCoreSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-vnc-core.js"), "utf8");
-const utilsSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-utils.js"), "utf8");
-const apiSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-api.js"), "utf8");
-const vncWindowSource = fs.readFileSync(path.resolve(__dirname, "..", "public", "app-vnc-window.js"), "utf8");
-const openStart = source.indexOf("async function openRemoteDesktop(");
-const openEnd = source.indexOf("\nfunction renderRdpServerState", openStart);
-const openRemoteDesktop = source.slice(openStart, openEnd);
-const renderStart = source.indexOf("function renderEmbeddedVnc(");
-const renderEnd = source.indexOf("\nasync function connectEmbeddedVnc", renderStart);
-const renderEmbeddedVnc = source.slice(renderStart, renderEnd);
-const embeddedOpenStart = source.indexOf("async function openEmbeddedVncDesktop(");
-const embeddedOpenEnd = source.indexOf("\nfunction renderEmbeddedVnc", embeddedOpenStart);
-const openEmbeddedVncDesktop = source.slice(embeddedOpenStart, embeddedOpenEnd);
-const managementControlsStart = source.indexOf("function syncEmbeddedVncManagementControls(");
-const managementControlsEnd = source.indexOf("\nfunction showVncManagement", managementControlsStart);
-const syncEmbeddedVncManagementControls = source.slice(managementControlsStart, managementControlsEnd);
-const managementStart = source.indexOf("function showVncManagement(");
-const managementEnd = source.indexOf("\nasync function connectEmbeddedVnc", managementStart);
-const showVncManagement = source.slice(managementStart, managementEnd);
-const focusStart = source.indexOf("function vncSessionCanFocus(");
-const focusEnd = source.indexOf("\nasync function ensureVncClipboardTransport", focusStart);
-const vncFocus = source.slice(focusStart, focusEnd);
-const connectStart = source.indexOf("async function connectEmbeddedVnc(");
-const connectEnd = source.indexOf("\nasync function handleVncSecurityFailure", connectStart);
-const connectEmbeddedVnc = source.slice(connectStart, connectEnd);
-const fullscreenSource = vncWindowSource;
-const cursorPolicyStart = source.indexOf("function normalizeVncRemotePlatform(");
-const cursorPolicyEnd = source.indexOf("\nfunction vncClipboardDefaultStatus", cursorPolicyStart);
-const cursorPolicy = source.slice(cursorPolicyStart, cursorPolicyEnd);
-const taskWatcherStart = source.indexOf("function watchRemoteComponentTask(");
-const taskWatcherEnd = source.indexOf("\nfunction reusableRemoteAdminGrant", taskWatcherStart);
-const taskWatcher = source.slice(taskWatcherStart, taskWatcherEnd);
-const actionStart = source.indexOf("async function runVncServerAction(");
-const actionEnd = source.indexOf("\nfunction installVncServer", actionStart);
-const vncServerAction = source.slice(actionStart, actionEnd);
-const sourceSaveStart = source.indexOf("async function saveVncServerSessionSource(");
-const sourceSaveEnd = source.indexOf("\nfunction vncSessionKeyForProfile", sourceSaveStart);
-const saveVncServerSessionSource = source.slice(sourceSaveStart, sourceSaveEnd);
-const rdpInstallStart = source.indexOf("async function installRdpServer(");
-const rdpInstallEnd = source.indexOf("\nasync function runRdpServerActionImpl", rdpInstallStart);
-const rdpServerActions = source.slice(rdpInstallStart, rdpInstallEnd);
-const x11InstallStart = source.indexOf("async function installRemoteX11Components(");
-const x11InstallEnd = source.indexOf("\nfunction openX11InstallTerminal", x11InstallStart);
-const x11ComponentActions = source.slice(x11InstallStart, x11InstallEnd);
-const linuxManagerStart = source.indexOf("function openLinuxDesktopManager(");
-const linuxManagerEnd = source.indexOf("\nfunction showRemoteProfileFromSshMenu", linuxManagerStart);
-const linuxDesktopManager = source.slice(linuxManagerStart, linuxManagerEnd);
-const xServerManagerStart = source.indexOf("async function renderXServerManager(");
-const xServerManagerEnd = source.indexOf("\nasync function inspectSshX11Forwarding", xServerManagerStart);
-const xServerManager = source.slice(xServerManagerStart, xServerManagerEnd);
+const sessionOwner=fs.readFileSync(path.resolve(__dirname,'../frontend/src/features/remote/vnc-session-service.ts'),'utf8'),managementOwner=fs.readFileSync(path.resolve(__dirname,'../frontend/src/features/remote/vnc-management-service.ts'),'utf8'),fullscreenOwner=fs.readFileSync(path.resolve(__dirname,'../frontend/src/features/remote/vnc-fullscreen.ts'),'utf8');
+const diagnosticsOwner=fs.readFileSync(path.resolve(__dirname,'../frontend/src/features/remote/management-diagnostics.ts'),'utf8');
+const quickViews = fs.readFileSync(path.resolve(__dirname, "..", "frontend", "src", "features", "quick", "quick-views.ts"), "utf8");
+const vncWorkspaceOwner = fs.readFileSync(path.resolve(__dirname, '../frontend/src/features/remote/vnc-workspace.ts'), 'utf8');
+const vncRuntimeSource = fs.readFileSync(path.resolve(__dirname, "../frontend/src/features/remote/vnc-runtime.ts"), "utf8");
+const utilsSource = fs.readFileSync(path.resolve(__dirname, "../frontend/src/shared/ui-action-service.ts"), "utf8");
+const apiSource = fs.readFileSync(path.resolve(__dirname, "..", "frontend/src/shared/api/workspace-request.ts"), "utf8");
+const remoteDesktopViewsSource = fs.readFileSync(path.resolve(__dirname, "..", "frontend", "src", "features", "remote", "RemoteDesktopViews.ts"), "utf8");
+const remoteDesktopServiceSource = fs.readFileSync(path.resolve(__dirname, "..", "frontend", "src", "features", "remote", "remote-desktop-service.ts"), "utf8");
+const openRemoteDesktop = fs.readFileSync(path.resolve(__dirname,'../frontend/src/features/remote/remote-desktop-workspace.ts'),'utf8');
+const remoteDesktopRuntime = fs.readFileSync(path.resolve(__dirname,'../frontend/src/features/remote/remote-desktop-runtime.ts'),'utf8');
+const vncToolbarOwner = path.resolve(__dirname, '../frontend/src/features/remote/vnc-clipboard-toolbar.ts');
+
+const rdpServerActions = fs.readFileSync(path.resolve(__dirname,"..","frontend/src/features/remote/protocol-service.ts"),"utf8");
+const x11ComponentActions = fs.readFileSync(path.resolve(__dirname,'../frontend/src/features/x11/remote-service.ts'),'utf8');
+const linuxDesktopManager=fs.readFileSync(path.resolve(__dirname,'../frontend/src/features/remote/desktop-service.ts'),'utf8');
+const xServerManagerStart = quickViews.indexOf("export function renderXServerManager(");
+const xServerManagerEnd = quickViews.indexOf("\nexport function renderSshX11ForwardingPanel", xServerManagerStart);
+const xServerManager = quickViews.slice(xServerManagerStart, xServerManagerEnd);
 const css = fs.readFileSync(path.resolve(__dirname, "..", "public", "app.css"), "utf8");
 
-assert.ok(openStart >= 0 && openEnd > openStart, "openRemoteDesktop source must be available");
-assert.ok(renderStart >= 0 && renderEnd > renderStart, "renderEmbeddedVnc source must be available");
-assert.ok(embeddedOpenStart >= 0 && embeddedOpenEnd > embeddedOpenStart, "openEmbeddedVncDesktop source must be available");
-assert.ok(managementControlsStart >= 0 && managementControlsEnd > managementControlsStart, "VNC management control sync source must be available");
-assert.ok(managementStart >= 0 && managementEnd > managementStart, "showVncManagement source must be available");
-assert.ok(focusStart >= 0 && focusEnd > focusStart, "VNC focus guard source must be available");
-assert.ok(connectStart >= 0 && connectEnd > connectStart, "connectEmbeddedVnc source must be available");
-assert.ok(fullscreenSource.includes("function syncVncFullscreenPresentation(") && fullscreenSource.includes("async function toggleVncFullscreen("), "VNC fullscreen source must be available");
-assert.ok(cursorPolicyStart >= 0 && cursorPolicyEnd > cursorPolicyStart, "VNC cursor policy source must be available");
-assert.ok(taskWatcherStart >= 0 && taskWatcherEnd > taskWatcherStart, "remote component task watcher source must be available");
-assert.ok(actionStart >= 0 && actionEnd > actionStart, "VNC server action source must be available");
-assert.ok(sourceSaveStart >= 0 && sourceSaveEnd > sourceSaveStart, "VNC source save source must be available");
-assert.ok(rdpInstallStart >= 0 && rdpInstallEnd > rdpInstallStart, "RDP service action source must be available");
-assert.ok(x11InstallStart >= 0 && x11InstallEnd > x11InstallStart, "X11 component action source must be available");
-assert.ok(linuxManagerStart >= 0 && linuxManagerEnd > linuxManagerStart, "Linux desktop manager source must be available");
+const docking = fs.readFileSync(path.resolve(__dirname, '../frontend/src/features/workspace/workspace-host.ts'), 'utf8');
+assert.match(docking, /remoteDesktop:id => remoteServices\.termaRemoteDesktop\.open\(Number\(id\), false\)/, "remote desktop restores through the typed workspace");
+assert.equal(fs.existsSync(path.resolve(__dirname, '../public/app-vnc.js')), false, 'the old VNC host script is retired');
+assert.match(vncRuntimeSource, /remoteServices\.termaRemoteDesktop\.scope\.activeWorkspace\(workspace, key\)/);
+assert.ok(rdpServerActions.includes('export function createProtocolService'), "RDP service action owner must be available");
+assert.match(quickViews, /termaX11\.remote\.operate\(id, 'components', mode, button, 'install-guide'\)/, "X11 component action source must be available");
+assert.ok(linuxDesktopManager.includes('export function createDesktopService'), "Linux desktop manager source must be available");
 assert.ok(xServerManagerStart >= 0 && xServerManagerEnd > xServerManagerStart, "X Server manager source must be available");
 
-const cachedWorkspace = openRemoteDesktop.indexOf("const existingVncSession");
-const desktopProbe = openRemoteDesktop.indexOf("inspectLinuxDesktopForRemoteProfile(profile)");
+const cachedWorkspace = openRemoteDesktop.indexOf("port.mountVnc(profile, key)");
+const desktopProbe = openRemoteDesktop.indexOf("port.prepare(profile, prepareOptions)");
 assert.ok(cachedWorkspace >= 0, "VNC open path must detect an existing workspace");
 assert.ok(desktopProbe >= 0, "first VNC open must retain Linux desktop diagnostics");
 assert.ok(cachedWorkspace < desktopProbe, "an existing VNC workspace must be restored before any remote desktop probe");
-assert.match(openRemoteDesktop, /const existingVncSession = profile\.protocol === "vnc" \? vncSessions\.get\(key\) : null;[\s\S]*?if \(!showManagement && existingVncSession\?\.workspace && \(existingVncSession\.connected \|\| existingVncSession\.connecting\)\) \{[\s\S]*?existingVncSession\.presentation === "management"[\s\S]*?showVncManagement\(profile\.id, key, false\)[\s\S]*?return renderEmbeddedVnc\(profile, key\)/, "tab switching must preserve the user's management/viewer choice for a live VNC session");
-assert.match(openRemoteDesktop, /id="remoteDesktopCloseButton"[\s\S]*?closeEmbeddedVncDesktop\([^)]*\)[\s\S]*?关闭桌面/, "the probe page must include a close action for a retained embedded desktop");
+assert.match(remoteDesktopServiceSource, /options\.managedVnc && options\.managementConnectionId\s*\? port\.inspectLinux\(profile\)/, "managed VNC preparation retains Linux desktop diagnostics in its current service");
+assert.match(openRemoteDesktop, /id: 'remoteDesktopCloseButton'[\s\S]*?port\.closeVncSession\(key\)/, "the Vue probe page must include a close action for a retained embedded desktop");
+assert.match(remoteDesktopRuntime, /remoteServices\.termaRemoteViews\?\.renderDesktopLaunch/, "RDP/VNC/XDMCP management launch pages must use the installed Vue view adapter");
+assert.match(openRemoteDesktop, /view\.__termaRemoteDesktopRefresh = \(\) => scope\.paint\(renderScope, target => \{[\s\S]*?render\(target, [^\n]+\);\s*refreshStatus\(\);/, "live language changes must repaint the desktop launch page without repeating its probe");
+assert.match(vncRuntimeSource, /newWindow:guard\(\(\) => windows\.open\(id,key\)\)/, "the connected VNC toolbar must expose a detached-window action beside fullscreen");
+assert.doesNotMatch(vncRuntimeSource, /data-vnc-window-maximize|toggleVncWindowMaximize/, "detached VNC maximization must use the Electron title bar instead of a duplicate toolbar action");
+assert.match(vncRuntimeSource, /closeWindow:guard\(\(\) => windows\.closeSelf\(key\)\)/, "a detached VNC workspace must expose an explicit close action");
+assert.match(vncRuntimeSource, /settings:guard\(\(\) => detached \? windows\.settings\(id\) : remoteServices\.termaRemoteProfiles\.editor\.edit\(id,true\)\)/, "a detached VNC workspace must expose connection settings beside close");
+assert.match(openRemoteDesktop, /remoteDesktopLaunchButton: \{disabled: false, label: tr\('remote:vnc_status.reenter'\)[\s\S]*?remoteDesktopCloseButton: \{hidden: false, disabled: false\}/, "a retained desktop exposes localized re-enter and close actions through Vue state");
+assert.match(vncWorkspaceOwner, /function refresh[\s\S]*?session\?\.workspace === workspace && session\.presentation === 'viewer'\) render\(session, target, detached\)/, "language updates must re-render the VNC toolbar without reconnecting the desktop");
 
-const cachedBranch = renderEmbeddedVnc.slice(
-  renderEmbeddedVnc.indexOf("if (session?.workspace)"),
-  renderEmbeddedVnc.indexOf("view.innerHTML =")
-);
-assert.match(cachedBranch, /view\.replaceChildren\(session\.workspace\)/, "tab switching must reattach the existing VNC workspace");
-assert.match(cachedBranch, /applyVncDisplayMode\(session\)/, "reattached noVNC canvas must restore its selected display policy immediately");
-assert.doesNotMatch(cachedBranch, /inspectLinuxDesktopForRemoteProfile|connectEmbeddedVnc\(profile, key\)[\s\S]*await/, "cached VNC restore must stay local and synchronous");
-assert.match(renderEmbeddedVnc, /managementNodes[\s\S]*?Array\.from\(view\.childNodes\)/, "opening the embedded viewer must preserve the probe and management DOM");
-assert.match(renderEmbeddedVnc, /showVncManagement\([^)]*\)/, "the VNC toolbar must expose a return-to-management command");
-assert.match(renderEmbeddedVnc, /const backLabel = tr\("remote:vnc_ui\.back_management"/, "the VNC toolbar return command must use an i18n label");
-assert.match(renderEmbeddedVnc, /openVncInNewWindow\(\$\{profile\.id\}/, "the connected VNC toolbar must expose a detached-window action beside fullscreen");
-assert.doesNotMatch(renderEmbeddedVnc, /data-vnc-window-maximize|toggleVncWindowMaximize/, "detached VNC maximization must use the Electron title bar instead of a duplicate toolbar action");
-assert.match(renderEmbeddedVnc, /closeDetachedVncWindow\('\$\{escAttr\(key\)\}'\)/, "a detached VNC workspace must expose an explicit close action");
-assert.match(renderEmbeddedVnc, /openDetachedVncConnectionSettings\(\$\{profile\.id\}\)[\s\S]*?connectionSettingsLabel/, "a detached VNC workspace must expose connection settings beside close");
-assert.match(renderEmbeddedVnc, /session\.presentation = "viewer"/, "attaching the desktop must remember the viewer presentation");
-assert.match(openEmbeddedVncDesktop, /captureRemoteDesktopRenderScope\(profile\.id, key, view\)[\s\S]*?withRemoteDesktopRenderScope\(renderScope/, "late embedded VNC probes must be scoped to the view that requested them");
-assert.match(openEmbeddedVncDesktop, /finally \{\s*if \(button\) setButtonBusy\(button, false\);\s*\}/, "the cached launch button must leave its busy state even after it is detached from the document");
-assert.doesNotMatch(openEmbeddedVncDesktop, /document\.contains\(button\)/, "detached management controls must not retain an opening state");
-assert.match(syncEmbeddedVncManagementControls, /setButtonBusy\(launchButton, false\)[\s\S]*?label\.textContent = tr\("remote:vnc_status\.reenter"[\s\S]*?closeButton\.hidden = false/, "a retained desktop must expose localized re-enter and close actions on the probe page");
-assert.match(showVncManagement, /view\.replaceChildren\(\.\.\.session\.managementNodes\)/, "returning from the viewer must restore the preserved management page");
-assert.match(showVncManagement, /captureRemoteDesktopRenderScope\(profileId, key, view\)[\s\S]*?session\.presentation = "management"/, "returning to management must invalidate stale desktop renders and remember the chosen presentation");
-assert.match(showVncManagement, /inspectVncServer\(profileId, null, container\)/, "restored management state should refresh its remote probe in place");
+const {createVncClipboardToolbar} = loadFrontendService(vncToolbarOwner);
+const {createRemoteWorkspaceScope} = loadFrontendService('frontend/src/features/remote/remote-workspace-scope.ts');
+let focusedPane = 'first', paneActive = 'vnc-test';
+const {activeWorkspace} = createRemoteWorkspaceScope({activeKey:()=> 'vnc-test', focusedPane:()=>focusedPane,
+  pane:()=>({activeTabKey:paneActive})});
+const toolbar = createVncClipboardToolbar({}, {}, activeWorkspace);
+let focusCalls = 0;
+const focused = {key:'vnc-test',workspace:{isConnected:true,closest:()=>({dataset:{paneId:'first'}})},viewport:{isConnected:true},rfb:{focus:()=>{focusCalls++;}}};
+assert.equal(toolbar.focus(focused),true);
+focusedPane='second';
+assert.equal(toolbar.focus(focused),false,'background splits may not steal keyboard focus');
+focusedPane='first';paneActive='other';
+assert.equal(toolbar.focus(focused),false,'inactive VNC tabs may not steal keyboard focus');
+focused.workspace.isConnected=false;
+assert.equal(toolbar.focus(focused),false,'detached VNC tabs may not steal keyboard focus');
+assert.equal(focusCalls,1);
 
-assert.match(vncFocus, /session\?\.workspace\?\.isConnected/, "a detached VNC workspace must not steal keyboard focus");
-assert.match(vncFocus, /paneId !== focusedPaneId/, "a visible VNC in a background split pane must not steal keyboard focus");
-assert.match(vncFocus, /paneState\?\.activeTabKey[\s\S]*?paneState\.activeTabKey !== session\.key/, "only the active VNC tab in a pane may receive focus");
-
-assert.match(connectEmbeddedVnc, /const connectionRevision = Number\(session\.connectionRevision \|\| 0\) \+ 1/);
-assert.match(connectEmbeddedVnc, /vncSessions\.get\(key\) === session && session\.connectionRevision === connectionRevision/);
-assert.match(connectEmbeddedVnc, /const RFB = await noVncRfbClass\(\);\s*if \(!isCurrentConnection\(\)\) return;/);
-assert.match(connectEmbeddedVnc, /vnc-credential[\s\S]*?if \(!isCurrentConnection\(\)\) return;/, "a closed or reopened tab must discard a late credential response");
-assert.match(connectEmbeddedVnc, /addEventListener\("connect"[\s\S]*?!isCurrentConnection\(\)/, "an obsolete noVNC connection event must be ignored");
-assert.match(connectEmbeddedVnc, /catch \(error\) \{\s*if \(!isCurrentConnection\(\)\) return;/, "an obsolete connection failure must not alter the replacement tab");
-assert.match(connectEmbeddedVnc, /applyVncDisplayMode\(session, rfb\)/, "new noVNC sessions must apply the saved scale or remote-resize policy");
 assert.doesNotMatch(source, /scheduleInitialVncReconnect|initialReconnectTimer|initialReconnectUsed/, "VNC failures must not launch blind unauthenticated retries that can trigger a server blacklist");
-assert.match(connectEmbeddedVnc, /addEventListener\("disconnect"[\s\S]*?diagnoseEmbeddedVncDisconnect\(profile, key\)/, "a failed noVNC connection must move directly to diagnostics and wait for an explicit retry");
-assert.match(vncCoreSource, /patchNoVncFailureEvents[\s\S]*?dispatchEvent\(new CustomEvent\("termafailure"/, "noVNC internal failures must be exposed to Terma diagnostics");
-assert.match(connectEmbeddedVnc, /addEventListener\("termafailure"[\s\S]*?session\.failureDetail/, "noVNC failure details must be retained before the disconnect event");
-assert.match(source, /classifyVncFailure[\s\S]*?Unsupported security types[\s\S]*?Too many security failures/, "VNC authentication incompatibility and server lockout must be classified explicitly");
-assert.match(source, /fallback_system_client_unsupported/, "auto mode must offer the system VNC client for unsupported RealVNC authentication");
-assert.match(source, /failure\.kind === "unsupported-security"[\s\S]*?launchRemoteDesktop[\s\S]*?failure\.kind === "too-many-security-failures"[\s\S]*?system_fallback_blocked_lockout/, "server lockout must not trigger another system-client attempt");
-assert.match(source, /function vncDiagnosticCopy\(diagnostics, serviceAvailable, detail="", options=\{\}\)[\s\S]*?options\?\.connectionAttempt === true[\s\S]*?connection_failed_title/, "a failed VNC connection must not reuse the SSH probe-unavailable copy");
-assert.match(source, /connection_failed_with_detail[\s\S]*?远端返回/, "a VNC server handshake reason must be shown in the connection failure card");
-assert.match(connectEmbeddedVnc, /const detail = event\.detail\?\.reason \|\| session\.failureDetail \|\| "";[\s\S]*?diagnoseEmbeddedVncDisconnect\(profile, key, detail\)/, "the VNC disconnect reason must be retained for user-facing diagnostics");
-assert.match(source, /function handleVncServerVerification\(profile, key, rfb, event\)[\s\S]*?confirmModal[\s\S]*?rfb\.approveServer/, "RealVNC RSA/AES server verification must be explicitly confirmed before continuing");
-assert.match(connectEmbeddedVnc, /addEventListener\("serververification"[\s\S]*?handleVncServerVerification\(profile, key, rfb, event\)/, "noVNC server verification events must reach the VNC identity prompt");
+assert.doesNotMatch(source, /noVncRfbClass|\bvncSessions\b/, "the classic host must not own the RFB loader or any session map");
+assert.match(vncRuntimeSource, /const RFB = await remoteServices\.termaVncRuntime\.loadRfb\(\);[\s\S]*?return new RFB\(owner\.screen, url\.href, /);
+assert.match(vncRuntimeSource, /patchNoVncFailureEvents[\s\S]*?dispatchEvent\(new CustomEvent\('termafailure'/, "noVNC internal failures must be exposed to Terma diagnostics");
+assert.match(diagnosticsOwner, /classifyVncFailure[\s\S]*?Unsupported security types[\s\S]*?Too many security failures/, "VNC authentication incompatibility and server lockout must be classified explicitly");
+assert.doesNotMatch(source, /function (?:vncDiagnosticCopy|vncServiceFailureDetail|classifyVncFailure)\(/, "classic VNC must not retain a duplicate diagnosis owner");
+assert.match(sessionOwner, /vncFailureTitleKey\(detail\)/, "session status uses the shared diagnosis owner");
 
-assert.match(fullscreenSource, /document\.documentElement\.requestFullscreen\(\)/, "fullscreen must keep noVNC's body-level cursor overlay inside the fullscreen tree");
-assert.match(fullscreenSource, /document\.addEventListener\("fullscreenchange", syncVncFullscreenPresentation\)/, "fullscreen exit must restore the regular VNC presentation");
-assert.match(fullscreenSource, /applyVncDisplayMode\(session\)/, "fullscreen changes must restore the selected VNC display policy");
-assert.match(fullscreenSource, /vnc-fullscreen-toolbar-always[\s\S]*?vnc-fullscreen-toolbar-never[\s\S]*?vnc-fullscreen-toolbar-edge/, "VNC content fullscreen must support always-visible, hidden, and top-edge toolbar modes");
-assert.match(fullscreenSource, /workspace\?\.classList\.toggle\("vnc-fullscreen-active"/, "content fullscreen must retain the entire VNC workspace so the toolbar remains available");
-assert.match(fullscreenSource, /syncVncFullscreenToolbarLabel/, "the fullscreen control must change to an exit action while active");
-assert.match(renderEmbeddedVnc, /vnc-fullscreen-toolbar-edge-zone/, "top-edge mode must include a pointer target above the noVNC canvas");
-assert.match(fullscreenSource, /addEventListener\("pointerover", handleVncFullscreenEdgePointer, true\)/, "top-edge mode must observe captured pointer entry even when noVNC owns the canvas");
-assert.doesNotMatch(fullscreenSource, /viewport\.requestFullscreen/, "the VNC viewport alone must not enter fullscreen because noVNC's fallback cursor lives under document.body");
+assert.match(remoteDesktopViewsSource, /class: 'vnc-fullscreen-toolbar-edge-zone'/, "top-edge mode must include a Vue-owned pointer target above the noVNC canvas");
 assert.match(css, /html\.vnc-fullscreen-document:fullscreen \.vnc-viewport\.vnc-fullscreen-active \{[^}]*position:fixed;[^}]*inset:0;[^}]*z-index:60000;/s, "the active VNC viewport must cover the fullscreen document without covering noVNC's software cursor layer");
 assert.match(css, /\.vnc-workspace\.vnc-fullscreen-active \{[^}]*position:fixed;[^}]*inset:0;/s, "the fullscreen workspace must include the toolbar and viewport");
 assert.match(css, /vnc-fullscreen-toolbar-edge-visible[\s\S]*?transform:translateY\(0\)/, "the top-edge toolbar mode must reveal the toolbar without leaving fullscreen");
 
-assert.match(cursorPolicy, /\["auto", "show", "hide"\]/, "VNC cursor mode must support automatic and both manual overrides");
-assert.match(cursorPolicy, /mode === "hide" \|\| \(mode === "auto" && vncUsesFramebufferCursor\(session\)\)/, "automatic mode must hide the duplicate local cursor only for framebuffer cursor servers");
-assert.match(cursorPolicy, /rfb\.showDotCursor = !hideLocalCursor/, "hidden local cursor mode must also disable noVNC's transparent-cursor dot");
-assert.match(cursorPolicy, /showVncCursorModeMenu[\s\S]*?setVncCursorMode/, "the active VNC workspace must expose automatic and manual cursor controls");
-assert.match(cursorPolicy, /\["scale", "original", "resize"\]/, "VNC display mode must support local scaling, original pixels, and remote resizing");
-assert.match(cursorPolicy, /rfb\.scaleViewport = mode !== "original"/);
-assert.match(cursorPolicy, /rfb\.resizeSession = mode === "resize"/);
+assert.match(vncRuntimeSource, /cursorMode:guard\(event => presentation\.menu\(event,key\)\)/, "the active VNC workspace delegates cursor selection to its typed owner");
+assert.doesNotMatch(source, /function (?:setVncCursorMode|applyVncCursorPolicy|applyVncDisplayMode)\(/, "the classic VNC shell no longer controls cursor or display mode");
 assert.match(css, /\.vnc-screen\.vnc-hide-local-cursor canvas[^}]*cursor:none !important;/s, "macOS framebuffer cursor mode must hide the noVNC CSS cursor");
 assert.match(css, /\.vnc-local-cursor-overlay-hidden[^}]*visibility:hidden !important;/s, "macOS framebuffer cursor mode must hide noVNC's fallback overlay cursor");
 assert.match(css, /\.vnc-viewport\.vnc-display-original \{[^}]*overflow:auto;/s, "original-pixel mode must allow scrolling instead of forcing local scaling");
 
-assert.match(taskWatcher, /const completion = new Promise[\s\S]*?return completion;/, "remote component watchers must expose task completion to action locks");
-assert.match(taskWatcher, /catch \(error\)[\s\S]*?watcher\.finish\(failedTask\)/, "task polling failures must release the action lock");
-assert.match(taskWatcher, /const previous = remoteComponentTaskWatchers\.get\(id\);[\s\S]*?if \(previous\) \{[\s\S]*?return previous\.completion;/, "re-watching the same task must reuse its completion instead of releasing the action lock early");
-assert.doesNotMatch(taskWatcher, /if \(previous\) \{[\s\S]*?previous\.finish/, "re-watching the same task must not finish the active watcher");
-assert.match(taskWatcher, /subscribers:new Set\(\)/, "one remote task poller must retain multiple subscribers");
-assert.match(taskWatcher, /previous\.subscribers\.add\(subscriber\)/, "re-watching a task must subscribe without replacing the first caller");
-assert.match(taskWatcher, /Promise\.allSettled\(\[\.\.\.watcher\.subscribers\]/, "updates and terminal callbacks must fan out to every task subscriber");
-assert.doesNotMatch(taskWatcher, /previous\.options\s*=\s*options/, "a second task watcher must not overwrite the first watcher's callbacks");
-assert.match(vncServerAction, /const actionKey = vncServerActionKey\(profileId\);/, "all VNC service actions for the same profile must share one lock");
-assert.doesNotMatch(vncServerAction, /const actionKey = `vnc-server:[^`]*\$\{String\(action/, "VNC service locks must not be scoped to only one action name");
-assert.match(vncServerAction, /const taskCompletion = watchRemoteComponentTask\(result\.task,[\s\S]*?notifyRemoteComponentTaskRequest\([^;]+;\s*await taskCompletion;/, "VNC task creation should report conflict-aware status while keeping the action locked until completion");
-assert.match(saveVncServerSessionSource, /const stateContainer = select\.closest\?\.\("#vncServerState"\)/, "VNC source changes must remember the panel that initiated the save");
-assert.match(saveVncServerSessionSource, /helpSession[\s\S]*?showVncConnectionHelp\(helpSession, vncServerReady\(diagnostics\)/, "embedded VNC source changes must refresh the existing help panel in place");
-assert.equal((saveVncServerSessionSource.match(/\/vnc\/server`/g) || []).length, 1, "VNC source changes should reuse one diagnostics request for the active panel");
-
-assert.match(rdpServerActions, /async function installRdpServer[\s\S]*?const actionKey = rdpServerActionKey\(profileId\);[\s\S]*?beginUiAction/, "RDP installation must use the shared profile resource lock");
-assert.match(rdpServerActions, /async function runRdpServerAction[\s\S]*?const actionKey = rdpServerActionKey\(profileId\);/, "RDP start, stop and uninstall must share the installation lock");
-assert.match(x11ComponentActions, /async function installRemoteX11Components[\s\S]*?x11ComponentsActionKey\(connectionId\)[\s\S]*?await taskCompletion/, "X11 installation must hold a connection resource lock until task completion");
-assert.match(x11ComponentActions, /async function uninstallRemoteX11Components[\s\S]*?x11ComponentsActionKey\(connectionId\)[\s\S]*?await taskCompletion/, "X11 uninstall must share the same connection resource lock");
-assert.match(linuxDesktopManager, /const linuxDesktopTaskMonitors = new Map|activeLinuxDesktopMonitorForConnection/, "Linux desktop tasks must remain discoverable after reopening the manager");
-assert.match(linuxDesktopManager, /api\("\/api\/linux-desktop\/tasks"\)/, "Linux desktop manager must recover a running task when in-memory view state is missing");
-assert.match(linuxDesktopManager, /function pollLinuxDesktopInstallTask[\s\S]*?endUiAction\(actionKey, button\)/, "Linux desktop resource locks must release only when task polling settles");
-assert.match(utilsSource, /function syncUiActionControls[\s\S]*?\[data-ui-action-key\]/, "resource locks must synchronize every visible control for the same remote resource");
-assert.match(utilsSource, /function beginUiAction[\s\S]*?syncUiActionControls\(actionKey, true\)/, "starting a resource action must immediately disable all matching controls");
-assert.match(utilsSource, /function endUiAction[\s\S]*?syncUiActionControls\(actionKey, false\)/, "settled resource actions must restore all matching controls");
-assert.match(apiSource, /data\.code === "REMOTE_TASK_CONFLICT"[\s\S]*?data\.task\?\.id/, "409 resource conflicts must hand the existing task back to the frontend watcher");
-assert.match(apiSource, /task\.type === "remote-component"[\s\S]*?reused_task:sameAction[\s\S]*?task_conflict:true[\s\S]*?conflict_same_action:sameAction/, "remote component conflicts must distinguish same-action reuse from an opposite action");
-assert.match(apiSource, /ok:sameAction/, "an opposite remote component action must not be reported as successful");
+assert.match(rdpServerActions, /port.begin\(id,protocol,button,policy.busy\)/, "RDP installation must use the shared profile resource lock adapter");
+assert.match(rdpServerActions, /const mutations=new Set<string>\(\)[\s\S]*?lock=`\$\{protocol\}:\$\{id\}`[\s\S]*?mutations.has\(lock\)/, "RDP start, stop and uninstall must share the installation lock");
+assert.match(x11ComponentActions,/locks\.add\(lock\)[\s\S]*await port\.watch[\s\S]*locks\.delete\(lock\)/,'X11 actions retain their resource lock until task completion');
+assert.match(x11ComponentActions,/lock=x11RemoteActionKey\(area,id\)/,'install and uninstall share the same component lock');
+assert.match(linuxDesktopManager, /function monitorFor\(id:number\).*?monitors\.values\(\).*?item\.connectionId===id&&desktopTaskRunning\(item\.task\)/, "Linux desktop tasks must remain discoverable for the selected host after reopening");
+const desktopService=fs.readFileSync(path.resolve(__dirname,"../frontend/src/features/remote/desktop-service.ts"),"utf8");
+assert.match(desktopService, /port\.api\('\/api\/linux-desktop\/tasks'\)/, "Linux desktop manager must recover a running task when in-memory view state is missing");
+assert.match(desktopService, /finish:[\s\S]*?port\.end\(id,button\)/, "Linux desktop resource locks must release only when task polling settles");
+const uiActionOwner = fs.readFileSync(path.resolve(__dirname, "../frontend/src/shared/ui-action-service.ts"), "utf8");
+assert.match(utilsSource, /export const syncUiActionControls=[\s\S]*?sharedServices\.termaUiActions\.syncControls/, "resource locks must use the shared typed owner");
+assert.match(uiActionOwner, /querySelectorAll<ActionControl>\('\[data-ui-action-key\]'\)/, "resource locks must synchronize every visible control for the same remote resource");
+assert.match(uiActionOwner, /function begin[\s\S]*?syncControls\(normalized, true\)/, "starting a resource action must immediately disable all matching controls");
+assert.match(uiActionOwner, /function end[\s\S]*?syncControls\(normalized, false\)/, "settled resource actions must restore all matching controls");
+assert.match(apiSource, /data\.code === 'REMOTE_TASK_CONFLICT'[\s\S]*?data\.task\?\.id/, "409 resource conflicts must hand the existing task back to the frontend watcher");
+assert.match(apiSource, /task\.type !== 'remote-component'[\s\S]*?reused_task: same[\s\S]*?task_conflict: true[\s\S]*?conflict_same_action: same/, "remote component conflicts must distinguish same-action reuse from an opposite action");
+assert.match(apiSource, /ok: same/, "an opposite remote component action must not be reported as successful");
 assert.match(xServerManager, /diagnostics\.integration_available === false/, "X Server management must detect a backend without desktop integration");
 assert.match(xServerManager, /当前连接的是独立 Web\/测试后端，无法读取运行 Terma 桌面设备上的 X Server/, "X Server management must explain which device owns the X Server");
 assert.match(xServerManager, /!integrationUnavailable && diagnostics\.can_stop[\s\S]*?!integrationUnavailable && diagnostics\.can_install[\s\S]*?!integrationUnavailable && diagnostics\.can_start/, "desktop X Server actions must be hidden when desktop integration is unavailable");
 
+assert.match(sessionOwner,/const sessions=new Map/);
+assert.match(sessionOwner,/session.connectionRevision===revision/);
+assert.match(sessionOwner,/current\(\)[\s\S]*?session.rfb===rfb/);
+assert.match(sessionOwner,/saved.password=''/);
+assert.match(sessionOwner,/rfb.approveServer/);
+assert.match(sessionOwner,/port.confirm/);
+assert.match(sessionOwner,/system_fallback_blocked_lockout/);
+assert.match(vncWorkspaceOwner,/session.screen.parentElement !== session.viewport\) session.viewport.appendChild\(session.screen\)/);
+assert.match(sessionOwner,/session.presentation='viewer'/);
+assert.match(managementOwner,/pending.has\(id\)\|\|!port.begin/);
+assert.match(managementOwner,/await view.watch/);
+assert.match(fullscreenOwner,/await root.requestFullscreen\(\)/);
+assert.match(fullscreenOwner,/doc.addEventListener\('fullscreenchange',sync\)/);
+assert.match(fullscreenOwner,/\['always','never','edge'\]/);
 async function checkRemoteTaskConflictContract() {
   let payload = null;
-  const context = {
-    fetch:async () => ({status:409, statusText:"Conflict", ok:false, text:async () => JSON.stringify(payload)}),
-    location:{href:""},
-    JSON,
-    String,
-    Number,
-    Boolean,
-    Error
-  };
-  vm.runInNewContext(`${apiSource}\nthis.testApi = api;`, context);
+  const {createWorkspaceRequest} = loadFrontendService('frontend/src/shared/api/workspace-request.ts', {Headers,fetch});
+  const testApi = createWorkspaceRequest({
+    tr:(key, options = {}) => options.defaultValue || key,
+    fetch: async () => new Response(JSON.stringify(payload), {status:409})
+  }, {message:(_data, raw) => raw});
   payload = {
     code:"REMOTE_TASK_CONFLICT",
     error:"VNC 服务已有启动任务正在执行",
     task:{id:"remote-component-1", type:"remote-component", action:"start", action_label:"启动", status:"running"}
   };
-  const opposite = await context.testApi("/api/remote-profiles/1/vnc/server", {method:"POST", body:JSON.stringify({action:"stop"})});
+  const opposite = await testApi("/api/remote-profiles/1/vnc/server", {method:"POST", body:JSON.stringify({action:"stop"})});
   assert.equal(opposite.ok, false, "an opposite action conflict must not be successful");
   assert.equal(opposite.reused_task, false, "an opposite action must not be marked as a reused request");
   assert.equal(opposite.task_conflict, true);
@@ -211,119 +142,18 @@ async function checkRemoteTaskConflictContract() {
   assert.equal(opposite.running_action, "start");
   assert.equal(opposite.task.id, "remote-component-1", "the running task must remain available for observation");
 
-  const same = await context.testApi("/api/remote-profiles/1/vnc/server", {method:"POST", body:JSON.stringify({action:"start"})});
+  const same = await testApi("/api/remote-profiles/1/vnc/server", {method:"POST", body:JSON.stringify({action:"start"})});
   assert.equal(same.ok, true);
   assert.equal(same.reused_task, true);
   assert.equal(same.conflict_same_action, true);
   assert.equal(same.task.id, "remote-component-1");
 }
 
-async function checkRemoteTaskSubscriberFanout() {
-  const calls = new Map();
-  const context = {
-    Map,
-    Set,
-    Promise,
-    String,
-    Boolean,
-    Number,
-    encodeURIComponent,
-    setTimeout:callback => { setImmediate(callback); return 1; },
-    remoteComponentTaskScopeMatches:() => true,
-    remoteComponentTaskContainer:(_scope, container) => container || null,
-    renderRemoteComponentTask:() => {},
-    api:async pathValue => {
-      const taskId = decodeURIComponent(String(pathValue).split("/").pop());
-      calls.set(taskId, Number(calls.get(taskId) || 0) + 1);
-      if (taskId === "fanout-failed") throw new Error("poll failed");
-      return {id:taskId, type:"remote-component", action:"start", status:"done", progress:100};
-    }
-  };
-  vm.runInNewContext(`const remoteComponentTaskWatchers = new Map();\n${taskWatcher}\nthis.testWatch = watchRemoteComponentTask;`, context);
-
-  const doneEvents = [];
-  const runningTask = {id:"fanout-done", type:"remote-component", action:"start", status:"running", progress:20};
-  const first = context.testWatch(runningTask, {
-    container:{id:"first"},
-    onUpdate:task => doneEvents.push(`first:update:${task.status}`),
-    onDone:task => doneEvents.push(`first:done:${task.status}`)
-  });
-  const second = context.testWatch(runningTask, {
-    container:{id:"second"},
-    onUpdate:task => doneEvents.push(`second:update:${task.status}`),
-    onDone:task => doneEvents.push(`second:done:${task.status}`)
-  });
-  assert.strictEqual(second, first, "duplicate watchers must share one completion promise");
-  const doneTask = await first;
-  assert.equal(doneTask.status, "done");
-  assert.equal(calls.get("fanout-done"), 1, "duplicate watchers must share one polling loop");
-  assert.ok(doneEvents.includes("first:update:running"));
-  assert.ok(doneEvents.includes("second:update:running"));
-  assert.ok(doneEvents.includes("first:update:done"));
-  assert.ok(doneEvents.includes("second:update:done"));
-  assert.ok(doneEvents.includes("first:done:done"));
-  assert.ok(doneEvents.includes("second:done:done"));
-
-  const failedEvents = [];
-  const failedTask = {id:"fanout-failed", type:"remote-component", action:"stop", status:"running", progress:10};
-  const failedFirst = context.testWatch(failedTask, {onFailed:task => failedEvents.push(`first:${task.status}`)});
-  const failedSecond = context.testWatch(failedTask, {onFailed:task => failedEvents.push(`second:${task.status}`)});
-  assert.strictEqual(failedSecond, failedFirst);
-  const failedResult = await failedFirst;
-  assert.equal(failedResult.status, "failed");
-  assert.equal(calls.get("fanout-failed"), 1);
-  assert.deepEqual(failedEvents.sort(), ["first:failed", "second:failed"]);
+async function checkEmbeddedVncPresentationScope(){
+const {createVncSessionService}=require('./frontend-service-test-helper').loadFrontendService('frontend/src/features/remote/vnc-session-service.ts');let active=true,renders=0,switches=0;const busy=[],profile={id:7,protocol:'vnc',host:'host.test',options:{}};const port={seed:()=>[],bind(){},profile:()=>profile,unlocked:()=>true,tr:k=>k,scope:()=>({current:()=>active,showMissingDesktop(){}}),busy:(_,v)=>busy.push(v),readDiagnostics:async()=>{active=false;return {};},readDesktop:async()=>null,prepareEmbedded:async()=>{switches++;return true;},notify(){},screen:()=>({}),render:()=>renders++};const service=createVncSessionService(port);assert.equal(await service.open(7,'key',{}),null);assert.equal(renders,0);assert.equal(switches,0);assert.deepEqual(busy,[true,false]);
 }
 
-async function checkEmbeddedVncPresentationScope() {
-  const profile = {id:7, protocol:"vnc", options:{}};
-  const view = {};
-  const sessions = new Map();
-  const busyStates = [];
-  let currentScope = null;
-  let diagnosticsCalls = 0;
-  let renders = 0;
-  let windowSwitchCalls = 0;
-  const context = {
-    Map,
-    Promise,
-    remoteProfileById:() => profile,
-    $:() => view,
-    vncSessions:sessions,
-    captureRemoteDesktopRenderScope:() => (currentScope = {active:true}),
-    withRemoteDesktopRenderScope:(scope, action) => scope.active ? action(view) : undefined,
-    setButtonBusy:(_button, busy) => busyStates.push(busy),
-    api:async () => {
-      diagnosticsCalls += 1;
-      currentScope.active = false;
-      return {status:"ready"};
-    },
-    inspectLinuxDesktopForRemoteProfile:async () => ({platform_supported:true, has_desktop:true}),
-    renderLinuxDesktopMissingWorkspace:() => { throw new Error("unexpected missing desktop render"); },
-    renderEmbeddedVnc:() => { renders += 1; },
-    prepareEmbeddedVncWindowSwitch:async () => { windowSwitchCalls += 1; return true; },
-    tr:(key, options={}) => options.defaultValue || key,
-    notify:() => {}
-  };
-  vm.runInNewContext(`${openEmbeddedVncDesktop}\nthis.testOpenEmbeddedVnc = openEmbeddedVncDesktop;`, context);
-
-  const staleResult = await context.testOpenEmbeddedVnc(7, "remote-desktop-7", {});
-  assert.equal(staleResult, null, "a stale asynchronous open must not replace the newly selected view");
-  assert.equal(renders, 0);
-  assert.equal(windowSwitchCalls, 0, "a stale asynchronous open must not close or switch another VNC window");
-  assert.deepEqual(busyStates, [true, false], "a detached launch button must always leave its busy state");
-
-  const retained = {workspace:{}, connected:true, connecting:false, presentation:"management"};
-  sessions.set("remote-desktop-7", retained);
-  const reopened = await context.testOpenEmbeddedVnc(7, "remote-desktop-7", {});
-  assert.equal(reopened, true);
-  assert.equal(retained.presentation, "viewer", "re-entering a retained session must select the viewer presentation");
-  assert.equal(renders, 1);
-  assert.equal(windowSwitchCalls, 1, "re-entering built-in VNC must close the matching detached window first");
-  assert.equal(diagnosticsCalls, 1, "re-entering a live desktop must stay local instead of probing again");
-}
-
-Promise.all([checkRemoteTaskConflictContract(), checkRemoteTaskSubscriberFanout(), checkEmbeddedVncPresentationScope()])
+Promise.all([checkRemoteTaskConflictContract(), checkEmbeddedVncPresentationScope()])
   .then(() => console.log("VNC 工作区复用检查通过：已有标签立即恢复，旧连接异步结果隔离，后台分屏不抢焦点，全屏与自动/手动鼠标策略有效"))
   .catch(error => {
     console.error(error);

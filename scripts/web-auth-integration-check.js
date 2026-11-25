@@ -7,6 +7,36 @@ const path = require("node:path");
 const vm = require("node:vm");
 const { spawn } = require("node:child_process");
 const appVersion = require("../package.json").version;
+const {createFallbackStaticHandler} = require("./static-content-fallback-fixture");
+
+function assertUnbuiltLoginFallback(root) {
+  const serve = createFallbackStaticHandler(root);
+  const request = {headers: {host: "localhost"}, socket: {remoteAddress: "127.0.0.1"}};
+  function read(pathname) {
+    const result = {};
+    serve(request, {
+      writeHead(status, headers) {result.status = status; result.headers = headers;},
+      end(body) {result.body = String(body || "");}
+    }, pathname);
+    return result;
+  }
+  const page = read("/login");
+  assert.equal(page.status, 200);
+  assert.match(page.body, /href="\/login\.css"/);
+  assert.match(page.body, /src="\/login\.js" defer/);
+  assert.doesNotMatch(page.body, /login-vue-assets/);
+  assert.match(page.headers["Content-Security-Policy"], /script-src-attr 'none'/);
+  assert.doesNotMatch(page.headers["Content-Security-Policy"], /unsafe-inline/);
+  for (const [pathname, mime] of [["/login.css", "text/css"], ["/login.js", "text/javascript"]]) {
+    const asset = read(pathname);
+    assert.equal(asset.status, 200);
+    assert.ok(asset.headers["Content-Type"].startsWith(mime));
+    assert.equal(asset.body, fs.readFileSync(path.resolve(__dirname, "../public" + pathname), "utf8"));
+  }
+  const protectedPage = read("/about");
+  assert.equal(protectedPage.status, 302);
+  assert.equal(protectedPage.headers.Location, "/login");
+}
 
 function availablePort() {
   return new Promise((resolve, reject) => {
@@ -32,17 +62,33 @@ async function waitForServer(url, child) {
   throw new Error("等待认证验证服务器启动超时");
 }
 
-function assertLoginPagePasswordToggle(html) {
-  assert.match(html, /data-login-i18n="setup_hint">/);
-  assert.match(html, /data-login-i18n="fnos_setup_hint" hidden>/);
-  assert.equal((html.match(/id="passwordToggle"/g) || []).length, 1);
-  assert.match(html, /<button id="passwordToggle" class="password-toggle" type="button" title="显示密码" aria-label="显示密码" aria-pressed="false">/);
-  assert.match(html, /<link rel="stylesheet" href="\/login\.css">/);
-  assert.match(html, /<script src="\/login\.js" defer><\/script>/);
+function assertVueLoginPage(html) {
+  assert.match(html, /<div id="app"><\/div>/);
+  assert.match(html, /<script type="module" crossorigin src="\/login-vue-assets\/[A-Za-z0-9._-]+\.js"><\/script>/);
+  assert.match(html, /<link rel="stylesheet" crossorigin href="\/login-vue-assets\/[A-Za-z0-9._-]+\.css">/);
+  assert.match(html, /<link rel="modulepreload" crossorigin href="\/login-vue-assets\/[A-Za-z0-9._-]+\.js">/);
   assert.doesNotMatch(html, /\sonclick=/);
   assert.doesNotMatch(html, /<script>([\s\S]*?)<\/script>/);
-  assert.equal((html.match(/class="password-toggle"/g) || []).length, 1);
-  assert.match(html, /id="passwordHideIcon"[^>]*hidden/);
+  return Array.from(html.matchAll(/(?:src|href)="(\/login-vue-assets\/[A-Za-z0-9._-]+\.(?:js|css))"/g), match => match[1]);
+}
+
+function assertVueAboutPage(html) {
+  assert.match(html, /<div id="app"><\/div>/);
+  assert.match(html, /<script type="module" crossorigin src="\/about-vue-assets\/[A-Za-z0-9._-]+\.js"><\/script>/);
+  assert.match(html, /<link rel="stylesheet" crossorigin href="\/about-vue-assets\/[A-Za-z0-9._-]+\.css">/);
+  assert.match(html, /<link rel="modulepreload" crossorigin href="\/about-vue-assets\/[A-Za-z0-9._-]+\.js">/);
+  assert.doesNotMatch(html, /\sonclick=/);
+  return Array.from(html.matchAll(/(?:src|href)="(\/about-vue-assets\/[A-Za-z0-9._-]+\.(?:js|css))"/g), match => match[1]);
+}
+
+function assertVueAboutEmbedAssets(html) {
+  assert.match(html, /<script type="module" crossorigin src="\/about-vue-assets\/[A-Za-z0-9._-]+\.js"><\/script>/);
+  assert.match(html, /<link rel="stylesheet" crossorigin href="\/about-vue-assets\/[A-Za-z0-9._-]+\.css">/);
+  assert.doesNotMatch(html, /TERMA_ABOUT_VUE_ASSETS/);
+  return Array.from(html.matchAll(/(?:src|href)="(\/about-vue-assets\/[A-Za-z0-9._-]+\.(?:js|css))"/g), match => match[1]);
+}
+
+function assertLegacyLoginAssets() {
   const css = fs.readFileSync(path.resolve(__dirname, "../public/login.css"), "utf8");
   assert.match(css, /\.card\{[^}]*width:min\(360px,100%\)[^}]*box-sizing:border-box/);
   assert.match(css, /body\{[^}]*padding:16px[^}]*overflow-x:hidden/);
@@ -158,15 +204,25 @@ async function main() {
   server.stderr.on("data", chunk => output.push(chunk.toString()));
   try {
     await waitForServer(url, server);
+    assertUnbuiltLoginFallback(root);
     const loginPageResponse = await fetch(url + "/login");
     assert.equal(loginPageResponse.status, 200);
     const loginCsp = loginPageResponse.headers.get("content-security-policy") || "";
     assert.match(loginCsp, /script-src 'self'/);
     assert.match(loginCsp, /script-src-attr 'none'/);
     assert.doesNotMatch(loginCsp, /unsafe-inline/);
-    assertLoginPagePasswordToggle(await loginPageResponse.text());
+    const loginPageHtml = await loginPageResponse.text();
+    assert.match(loginPageHtml, /data-terma-distribution="standard"/);
+    const loginAssets = assertVueLoginPage(loginPageHtml);
+    for (const asset of loginAssets) assert.equal((await fetch(url + asset)).status, 200);
+    assert.equal((await fetch(`${url}/login-vue-assets/missing.js`)).status, 404);
+    assert.equal((await fetch(`${url}/login-vue-assets/invalid/missing.js`)).status, 404);
     assert.equal((await fetch(url + "/login.js")).status, 200);
     assert.equal((await fetch(url + "/login.css")).status, 200);
+    assertLegacyLoginAssets();
+    const unauthenticatedAboutPage = await fetch(`${url}/about`, {redirect:"manual"});
+    assert.equal(unauthenticatedAboutPage.status, 302);
+    assert.equal(unauthenticatedAboutPage.headers.get("location"), "/login");
     assert.equal((await fetch(`${url}/api/about`)).status, 401);
     for (let index = 0; index < 4; index += 1) {
       const response = await fetch(`${url}/api/auth/login`, {
@@ -198,6 +254,11 @@ async function main() {
     assert.match(cookie, /Max-Age=5400/);
     const sessionCookie = cookie.split(";")[0];
     assert.equal((await fetch(`${url}/api/about`, { headers:{Cookie:sessionCookie} })).status, 200);
+    const aboutPageResponse = await fetch(`${url}/about`, {headers:{Cookie:sessionCookie}});
+    assert.equal(aboutPageResponse.status, 200);
+    const aboutAssets = assertVueAboutPage(await aboutPageResponse.text());
+    for (const asset of aboutAssets) assert.equal((await fetch(url + asset, {headers:{Cookie:sessionCookie}})).status, 200);
+    assert.equal((await fetch(`${url}/about-vue-assets/missing.js`)).status, 404);
     const authenticatedLoginPage = await fetch(`${url}/login`, {
       headers:{Cookie:sessionCookie},
       redirect:"manual"
@@ -250,6 +311,35 @@ async function main() {
     assert.doesNotMatch(mainCsp, /script-src 'self' 'unsafe-inline'/);
     assert.ok(mainHtml.includes(`<script src="/csp-bootstrap.js?v=${appVersion}"></script>`));
     assert.equal((await fetch(`${url}/csp-bootstrap.js`, {headers:{Cookie:sessionCookie}})).status, 200);
+    const aboutEmbedAssets = assertVueAboutEmbedAssets(mainHtml);
+    assert.ok(aboutEmbedAssets.some(asset => asset.endsWith(".js")));
+    assert.ok(aboutEmbedAssets.some(asset => asset.endsWith(".css")));
+    for (const asset of aboutEmbedAssets) assert.equal((await fetch(url + asset, {headers:{Cookie:sessionCookie}})).status, 200);
+    assert.equal((await fetch(`${url}/about-vue-assets/not-allowlisted.js`, {headers:{Cookie:sessionCookie}})).status, 404);
+    for (const [asset, type] of [
+      ["/assets/terma-icon.png", "image/png"],
+      ["/fonts/NotoSansSC-Regular.ttf", "font/ttf"],
+      ["/fonts/OFL.txt", "text/plain; charset=utf-8"],
+      ["/locales/en-US/settings.json", "application/json; charset=utf-8"],
+      ["/vendor/ace/worker-json.js", "text/javascript; charset=utf-8"],
+      ["/vendor/novnc/core/rfb.js", "text/javascript; charset=utf-8"],
+      ["/vendor/xterm/xterm.mjs", "text/javascript; charset=utf-8"]
+    ]) {
+      const response = await fetch(url + asset, {headers:{Cookie:sessionCookie}});
+      assert.equal(response.status, 200, asset);
+      assert.equal(response.headers.get("content-type"), type, asset);
+      assert.ok((await response.arrayBuffer()).byteLength > 0, asset);
+    }
+    for (const asset of ["/app-theme-glass.css", "/app-missing.js", "/assets/missing.png", "/fonts/missing.ttf", "/locales/en-US/missing.json",
+      "/vendor/ace/worker-terma-missing.js", "/vendor/novnc/core/terma-missing.js", "/vendor/terma-missing.js"]) {
+      const response = await fetch(url + asset, {headers:{Cookie:sessionCookie}});
+      assert.equal(response.status, 404, asset);
+      assert.equal(typeof (await response.json()).error, "string", asset);
+    }
+    const workspaceLink = await fetch(`${url}/workspace/fixture`, {headers:{Cookie:sessionCookie}});
+    assert.equal(workspaceLink.status, 200);
+    assert.match(workspaceLink.headers.get("content-type"), /^text\/html/);
+    assert.match(await workspaceLink.text(), /id="content"/);
     const sessionSettingsResponse = await fetch(`${url}/api/security`, {
       method:"PUT",
       headers:{Cookie:sessionCookie, "Content-Type":"application/json"},

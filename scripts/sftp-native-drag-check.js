@@ -514,6 +514,7 @@ try {
   );
   const finishedTask = jobs.listSftpJobs().find(item => item.id === task.id);
   assert.equal(finishedTask.status, "cancelled");
+  assert.equal(finishedTask.current, "", "Cancelled native tasks discard the system-saving process message");
   assert.equal(finishedTask.progress, 80);
   assert.equal(finishedTask.transferred, 12);
   assert.match(finishedTask.error, /未读取完整/);
@@ -536,6 +537,7 @@ try {
   assert.deepEqual(jobs.finishNativeSftpDragJob(completeTaskTicket.token, "done"), {ok:true, status:"done"});
   const completedTask = jobs.listSftpJobs().find(item => item.id === completeTask.id);
   assert.equal(completedTask.status, "done");
+  assert.equal(completedTask.current, "", "Completed native tasks discard the system-saving process message");
   assert.equal(completedTask.progress, 100);
   assert.equal(completedTask.transferred, Buffer.byteLength("promised report"));
   assert.equal(session.releaseNativeSftpDragTicket(completeTaskTicket.token), true);

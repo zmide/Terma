@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
-const terminalSource = readFrontendDomain(root, "terminal");
+const terminalSource = fs.readFileSync(path.join(root,"frontend/src/features/terminal/terminal-page.ts"),"utf8");
 
 function sourceBetween(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -16,17 +16,16 @@ function sourceBetween(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
-const decisionSource = sourceBetween(
-  terminalSource,
-  "function terminalSessionNeedsAutomaticConnection(",
-  "\nfunction restoreQuickTerminalTab("
-);
-const context = vm.createContext({
-  Boolean,
-  Number,
-  WebSocket:{CONNECTING:0, OPEN:1}
-});
-vm.runInContext(`${decisionSource}\nthis.needsAutomaticConnection = terminalSessionNeedsAutomaticConnection;\nthis.connectionStatus = terminalSessionConnectionStatus;`, context);
+const {loadFrontendService}=require('./frontend-service-test-helper');
+const cache=new Map();
+for(const [file,value] of Object.entries({
+ 'features/terminal/terminal-session-state':{terminalSessions:new Map()},
+ 'features/terminal/terminal-quick-registry':{},
+ 'shared/i18n/runtime':{},
+ 'features/workspace/workspace-dock-runtime':{}
+}))cache.set(path.resolve(root,'frontend/src',file+'.ts'),value);
+const runtime=loadFrontendService('frontend/src/features/terminal/terminal-connection-runtime.ts',{window:{},WebSocket:{CONNECTING:0,OPEN:1}},cache);
+const context={needsAutomaticConnection:runtime.terminalSessionNeedsAutomaticConnection,connectionStatus:runtime.terminalSessionConnectionStatus};
 
 assert.equal(context.needsAutomaticConnection({socket:null, connectionAttempt:0}), true, "a newly created terminal session should connect once");
 assert.equal(context.needsAutomaticConnection({socket:null, connectionAttempt:1, connectionPending:true}), false, "returning to a tab during SSH preflight must not start a second connection");
@@ -38,13 +37,18 @@ assert.equal(context.connectionStatus({connectionPending:false, socket:{readySta
 assert.equal(context.connectionStatus({connectionPending:false, socket:{readyState:1}, connected:false}), "connected", "an open WebSocket should be treated as connected even before the cached flag refreshes");
 assert.equal(context.connectionStatus({connectionPending:false, socket:null, connected:false}), "disconnected", "a settled failed attempt should remain disconnected");
 
-const attachSource = sourceBetween(terminalSource, "async function attachTerminal(", "\nfunction enableTerminalFontWheel(");
-assert.match(attachSource, /terminalSessionNeedsAutomaticConnection\(session\)/, "terminal remounts must use the one-shot automatic connection decision");
-assert.match(attachSource, /terminalSessionConnectionStatus\(session\)/, "terminal remounts must preserve preflight and WebSocket status");
+const attachSource = sourceBetween(terminalSource, "async function attachTerminal(", "\nexport function enableTerminalFontWheel(");
+const surface = fs.readFileSync(path.join(root,"frontend/src/features/terminal/terminal-surface-service.ts"),"utf8");
+assert.match(attachSource, /termaTerminalSurface!\.attach/);
+assert.match(surface, /port\.needsConnection\(session\)/, "terminal remounts must use the one-shot automatic connection decision");
+assert.match(surface, /port\.status\(session\)/, "terminal remounts must preserve preflight and WebSocket status");
 
-const connectSource = sourceBetween(terminalSource, "async function connectTerminal(", "\nfunction reconnectTerminal(");
-assert.match(connectSource, /session\.connectionPending = true;/, "SSH preflight must expose an in-progress state before awaiting the backend");
-assert.match(connectSource, /session\.connectionAttempt === attempt[\s\S]*?session\.connectionPending = false;/, "only the current connection attempt may clear the preflight state");
-assert.match(terminalSource, /session\?\.connected \|\| session\?\.connectionPending \|\| session\?\.socket\?\.readyState === WebSocket\.CONNECTING/, "the connection toggle must be able to cancel an in-progress preflight");
+const connectSource=fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-connection-runtime.ts'),'utf8');
+const core = fs.readFileSync(path.join(root, "frontend/src/features/terminal/terminal-session-core-service.ts"), "utf8");
+assert.match(connectSource, /core\.beginConnection\(session/);
+assert.match(connectSource, /core\.finishConnection\(connection,key,session/);
+assert.match(core, /session\.connectionPending = true;/, "SSH preflight must expose an in-progress state before awaiting the backend");
+assert.match(core, /session\.connectionAttempt !== attempt[\s\S]*?session\.connectionPending = false;/, "only the current connection attempt may clear the preflight state");
+assert.match(connectSource, /session\?\.connected\|\|session\?\.connectionPending\|\|session\?\.socket\?\.readyState===WebSocket\.CONNECTING/, "the connection toggle must be able to cancel an in-progress preflight");
 
 console.log("PASS terminal tabs reuse the original SSH attempt and never reconnect merely because the tab became active");

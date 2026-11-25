@@ -171,7 +171,7 @@ async function main() {
   assert.equal((await writeVncRemoteClipboard(linuxProfile, linuxText, linuxDependencies)).transport, "ssh-linux-x11");
   assert.equal(linuxCommands.some(command => command.includes(linuxText)), false, "Linux 中文剪贴板不得以明文写入命令");
   const linuxScripts = linuxCommands.map(decodeRemotePosixPayload);
-  assert.match(linuxScripts[0], /\[x\]11vnc/);
+  assert.match(linuxScripts[0], /x11vnc\|Xvnc\|Xtigervnc\|X0tigervnc/);
   assert.match(linuxScripts[0], /-rfbport/);
   const linuxReadScript = linuxScripts.find(script => script.includes("xclip -selection clipboard -target TARGETS -o")) || "";
   assert.match(linuxReadScript, /timeout 2/);

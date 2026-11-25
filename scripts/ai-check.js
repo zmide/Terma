@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const {loadFrontendService}=require("./frontend-service-test-helper");
 const { DEFAULT_AI_SETTINGS, normalizeAiSettings } = require("../dist/runtime-settings");
 const { publicAiSettings, redactAiText, requestAiChat, requestAiChatStream, requestAiModels } = require("../dist/services/ai-service");
 const { handleAiRoutes } = require("../dist/routes/ai-routes");
@@ -11,6 +12,17 @@ function streamResponse(text, contentType="text/event-stream") {
   return new Response(text, {status:200, headers:{"content-type":contentType}});
 }
 
+function attachTaskService(context) {
+  const {createTaskService}=loadFrontendService('frontend/src/features/assistant/task-service.ts');
+  const {createTaskWorkflow}=loadFrontendService('frontend/src/features/assistant/task-workflow.ts',{window:{tr:context.tr}});
+  const {createTaskViews}=loadFrontendService('frontend/src/features/assistant/task-views.ts',{window:{tr:context.tr}});
+  const tasks=createTaskService({state:context.terminalAiStateForKey,id:context.createTerminalLogId,now:()=>Date.now(),tr:context.tr,persist:context.terminalAiPersistState,changed:()=>{},strip:context.terminalAiStripControl,command:value=>String(value||''),render:context.renderTerminalAiPanel});
+  const taskWorkflow=createTaskWorkflow({tasks,state:context.terminalAiStateForKey,has:()=>true,scope:()=>()=>true,settings:()=>({}),approve:async()=>false,call:async()=>({called:false}),contexts:()=>[],targets:()=>[],commandBusy:()=>false,submit:async()=>{},persist:context.terminalAiPersistState,render:context.renderTerminalAiPanel,notify:()=>{},tr:context.tr});
+  const taskViews=createTaskViews({tasks,state:context.terminalAiStateForKey,icon:context.icon});
+  context.window={tr:context.tr,termaAssistant:{tasks,taskWorkflow,taskViews}};
+  context.terminalAiTaskPrepareAction=taskWorkflow.prepare;
+  context.terminalAiTaskDockHtml=taskViews.dock;
+}
 function assertAgentTaskTiming(source) {
   let sequence = 0;
   const states = new Map();
@@ -30,19 +42,19 @@ function assertAgentTaskTiming(source) {
     esc:value => String(value || ""),
     escAttr:value => String(value || "")
   };
+  attachTaskService(context);
   vm.createContext(context);
-  vm.runInContext(source, context);
-  const task = context.terminalAiBeginTask("fixture", "检查服务状态", []);
+  const task = context.window.termaAssistant.tasks.begin("fixture", "检查服务状态", []);
   const step = context.terminalAiTaskPrepareAction("fixture", task.id, {kind:"command", command:"echo ok"});
-  context.terminalAiTaskCompleteAction("fixture", task.id, step, "success");
+  context.window.termaAssistant.tasks.completeAction("fixture", task.id, step, "success");
   states.get("fixture").turns.push({taskId:task.id, answer:"已完成检查。服务运行正常。"});
-  context.terminalAiTaskFinish("fixture", task.id);
+  context.window.termaAssistant.tasks.finish("fixture", task.id);
   assert.equal(task.status, "completed");
   assert.equal(task.resultSummary, "服务运行正常。");
   assert.equal(task.steps[0].endedAt >= task.steps[0].startedAt, true);
   const firstDuration = task.durationMs;
-  context.terminalAiBeginTask("fixture", task.prompt, [], task.id);
-  context.terminalAiTaskMarkStopped("fixture");
+  context.window.termaAssistant.tasks.begin("fixture", task.prompt, [], task.id);
+  context.window.termaAssistant.tasks.stop("fixture");
   assert.equal(task.status, "stopped");
   assert.equal(task.durationMs >= firstDuration, true);
 }
@@ -66,17 +78,17 @@ function assertAgentTaskDock(source) {
     escAttr:value => String(value || ""),
     document:{documentElement:{lang:"zh-CN"}}
   };
+  attachTaskService(context);
   vm.createContext(context);
-  vm.runInContext(source, context);
-  const task = context.terminalAiBeginTask("fixture", "检查服务", []);
+  const task = context.window.termaAssistant.tasks.begin("fixture", "检查服务", []);
   for (let index = 0; index < 12; index += 1) {
     const step = context.terminalAiTaskPrepareAction("fixture", task.id, {kind:"command", command:"echo " + (index + 1)});
-    context.terminalAiTaskCompleteAction("fixture", task.id, step, "success");
+    context.window.termaAssistant.tasks.completeAction("fixture", task.id, step, "success");
   }
   const state = states.get("fixture");
   state.turns.push({taskId:task.id, answer:"最终已完成全部检查，服务正常。"});
-  context.terminalAiTaskRecordAnswer("fixture", task.id, state.turns[0].answer);
-  context.terminalAiTaskFinish("fixture", task.id);
+  context.window.termaAssistant.tasks.recordAnswer("fixture", task.id, state.turns[0].answer);
+  context.window.termaAssistant.tasks.finish("fixture", task.id);
   const html = context.terminalAiTaskDockHtml("fixture");
   assert.equal((html.match(/terminal-ai-task-step-number/g) || []).length, 12);
   assert.match(html, /最终已完成全部检查/);
@@ -84,10 +96,6 @@ function assertAgentTaskDock(source) {
 }
 
 function assertTerminalAiInteractionGuards(aiSource, renderSource) {
-  const start = aiSource.indexOf("function finalizeTerminalAiActiveBlock");
-  const end = aiSource.indexOf("function captureTerminalAiBlockCommand", start);
-  const reviewStart = aiSource.indexOf("function terminalAiCommandTokens");
-  const reviewEnd = aiSource.indexOf("function requestTerminalAiApproval", reviewStart);
   const context = {
     tr:(_key, args={}) => args.defaultValue || "",
     terminalAiStripControl:value => String(value || ""),
@@ -100,16 +108,39 @@ function assertTerminalAiInteractionGuards(aiSource, renderSource) {
   };
   context.terminalAiTurnUsage = () => ({available:false, input:0, output:0, total:0});
   vm.createContext(context);
-  vm.runInContext(aiSource.slice(start, end), context);
-  vm.runInContext(renderSource, context);
+  context.window={tr:context.tr};
+  context.window.termaAssistant={protocol:{
+    ...loadFrontendService('frontend/src/features/assistant/response-text.ts',{window:context.window}),
+    ...loadFrontendService('frontend/src/features/assistant/response-commands.ts',{window:context.window}),
+    ...loadFrontendService('frontend/src/features/assistant/command-review.ts',{window:context.window}),
+    ...loadFrontendService('frontend/src/features/assistant/response-context.ts',{window:context.window}),
+    ...loadFrontendService('frontend/src/features/assistant/response-tools.ts',{window:context.window}).createResponseTools(()=>context.window.termaAssistant.mcp?.tools()||[])
+  }};
+  const protocol=context.window.termaAssistant.protocol;
+  Object.assign(context,protocol);
+  const {createMarkupRenderers}=loadFrontendService('frontend/src/features/assistant/markup-renderers.ts');
+  const {createConversationService}=loadFrontendService('frontend/src/features/assistant/conversation-service.ts');
+  const service=createConversationService({tr:context.tr,settings:()=>({terminal_ai_mode:'chat'}),read:()=>null,id:()=> 'fixture',now:()=>1,tasks:()=>[],redact:value=>context.terminalAiRedactAttachment(value),strip:value=>value,selection:key=>context.terminalSessions.get(key)?.term?.getSelection?.()||'',screen:key=>context.terminalAiCurrentBufferText(context.terminalSessions.get(key))});
+  context.__state=service.state('fixture');
+  const {createTerminalAiTracker,terminalAiBlockNeedsInput}=loadFrontendService('frontend/src/features/assistant/terminal-ai-tracker.ts');
+  const tracker=createTerminalAiTracker({state:()=>context.__state,current:()=>true,scope:()=>()=>true,enabled:()=>true,persist:()=>{},render:()=>{},prompt:()=>null,freshPrompt:()=>false,stableCompletion:()=>{},id:()=>'fixture',now:()=>1});
+  context.terminalAiBlockNeedsInput=terminalAiBlockNeedsInput;
+  context.terminalAiMarkWaitingForInput=tracker.waiting;
+  const templateSource=fs.readFileSync(path.join(__dirname,'../frontend/src/features/assistant/markup-renderers.ts'),'utf8');
+  const dependencies=[...templateSource.matchAll(/^(\w+):\(\.\.\.args:any\[\]\)=>any;/gm)].map(match=>match[1]);
+  const displayPort=Object.fromEntries(dependencies.map(name=>[name,(...args)=>context[name](...args)]));displayPort.terminalAiAvailableModels=[];displayPort.tools=protocol;
+  const {createMcpService}=loadFrontendService('frontend/src/features/assistant/mcp-service.ts');
+  const mcp=createMcpService({now:()=>1,request:async()=>({servers:[]})});
+  context.window.termaAssistant={service,mcp,protocol,markup:(name,...args)=>createMarkupRenderers(displayPort)[name](...args)};
   context.icon = () => "";
   context.esc = value => String(value || "");
   context.escAttr = value => String(value || "");
+  Object.assign(context,createMarkupRenderers(displayPort));
   const fixtureLines = ["root@fixture:~# df -h", "/dev/test 10G 2G 8G 20% /"];
   context.terminalSessions.set("fixture", {term:{getSelection:() => "", buffer:{active:{length:fixtureLines.length, getLine:index => ({translateToString:() => fixtureLines[index] || ""})}}}});
-  const automaticContext = context.terminalAiContextForKey("fixture");
+  const automaticContext = service.contexts("fixture");
   assert.equal(automaticContext.some(item => item.source === "terminal-screen" && item.text.includes("df -h")), true);
-  vm.runInContext(aiSource.slice(reviewStart, reviewEnd), context);
+
   const encodedMarkdown = context.terminalAiNormalizeMarkdownEscapes("\\`\\`\\`sh\nprintf&#x20;'%s\\n'&#x20;'===&#x20;identity&#x20;==='\n\\`\\`\\`");
   assert.equal(encodedMarkdown, "```sh\nprintf '%s\\n' '=== identity ==='\n```");
   const encodedHtml = context.renderTerminalAiMarkdown("fixture", encodedMarkdown, {actions:false});
@@ -197,107 +228,122 @@ async function main() {
   assert.equal("api_key" in publicSettings.providers[0], false);
   assert.equal("api_key" in publicSettings.providers[1], false);
   const terminalAiSource = [
-    fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal-ai.js"), "utf8"),
-    fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal-ai-actions.js"), "utf8")
+    fs.readFileSync('frontend/src/features/assistant/approval-markup.ts','utf8'),
+    fs.readFileSync('frontend/src/features/assistant/assistant-interactions.ts','utf8'),
+    fs.readFileSync("frontend/src/features/assistant/assistant-runtime-host.ts","utf8"),
+    fs.readFileSync(path.join(__dirname, "..", "frontend/src/features/assistant", "assistant-action-workspace.ts"), "utf8"),
+    fs.readFileSync(path.join(__dirname, "../frontend/src/features/assistant/markup-renderers.ts"),"utf8"),
+    fs.readFileSync(path.join(__dirname, "../frontend/src/features/assistant/request-workflow.ts"),"utf8"),
+    fs.readFileSync(path.join(__dirname, "../frontend/src/features/assistant/request-action-queue.ts"),"utf8")
   ].join("\n");
-  const terminalAiActionsSource = fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal-ai-actions.js"), "utf8");
-  const commandSnippetsSource = fs.readFileSync(path.join(__dirname, "..", "public", "app-command-snippets.js"), "utf8");
-  const terminalAiRenderSource = fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal-ai-render.js"), "utf8");
-  const terminalAiTasksSource = fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal-ai-tasks.js"), "utf8");
-  const terminalCommandTrackingSource = fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal-command-tracking.js"), "utf8");
-  const terminalAiMcpSource = fs.readFileSync(path.join(__dirname, "..", "public", "app-terminal-ai-mcp.js"), "utf8");
-  const terminalAiSettingsSource = fs.readFileSync(path.join(__dirname, "..", "public", "app-settings-runtime.js"), "utf8");
+  const terminalAiActionsSource = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/assistant/assistant-action-workspace.ts'), 'utf8');
+  const terminalCommandsSource = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/assistant/terminal-command-service.ts'), 'utf8');
+  const commandSnippetsSource = fs.readFileSync(path.join(__dirname, "..", "frontend/src/features/snippets/snippet-runtime.ts"), "utf8");
+  const terminalAiRenderSource = ['response-tools.ts','response-context.ts'].map(file=>fs.readFileSync(path.join(__dirname,'../frontend/src/features/assistant',file),'utf8')).join('\n');
+  const responseCommandSource=fs.readFileSync('frontend/src/features/assistant/response-commands.ts','utf8');
+  const responseTextSource=fs.readFileSync('frontend/src/features/assistant/response-text.ts','utf8');
+  const terminalAiTasksSource = ['task-presentation.ts','task-views.ts','task-workflow.ts'].map(file=>fs.readFileSync(path.join(__dirname,'../frontend/src/features/assistant',file),'utf8')).join('\n');
+  const terminalCommandTrackingSource = fs.readFileSync(path.join(__dirname, "../frontend/src/features/assistant/terminal-ai-tracker.ts"), "utf8");
+  const terminalAiSettingsSource = fs.readFileSync(path.join(__dirname, '../frontend/src/features/settings/ai-mcp-draft.ts'), 'utf8');
+  const mcpSettingsView = fs.readFileSync(path.join(__dirname, '../frontend/src/features/settings/AiMcpSettings.tsx'), 'utf8');
+  const terminalAiSettingsView = fs.readFileSync(path.join(__dirname, "..", "frontend", "src", "features", "settings", "ai-view.ts"), "utf8");
   const terminalAiCssSource = fs.readFileSync(path.join(__dirname, "..", "public", "app.css"), "utf8");
   const mcpServiceSource = fs.readFileSync(path.join(__dirname, "..", "src", "services", "mcp-service.ts"), "utf8");
-  assert.match(terminalAiSource, /event\.key !== "Enter" \|\| event\.shiftKey/);
-  assert.match(terminalAiSource, /event\.preventDefault\(\);\s*return submitTerminalAiPrompt/);
-  assert.match(terminalAiSource, /function terminalAiSetMode/);
+  const conversationRuntime=fs.readFileSync(path.join(__dirname,'../frontend/src/features/assistant/assistant-runtime.ts'),'utf8');
+  assert.match(conversationRuntime, /e.key!==['"]Enter['"]\|\|e.shiftKey\|\|e.isComposing/);
+  assert.match(conversationRuntime,/e.preventDefault\(\);return submit\(key\)/);
+  assert.match(conversationRuntime, /case 'mode':return service\.mode/);
   assert.match(terminalAiSource, /mode === "chat"/);
   assert.match(terminalAiSource, /agentTask:false/);
-  assert.match(terminalAiActionsSource, /chat_execution_disabled/);
+  assert.match(terminalCommandsSource, /chat_execution_disabled/);
   assert.match(terminalAiSource, /terminal:ai\.agent_action_missing/);
   for (const skill of ["network-diagnostics", "performance-analysis", "container-troubleshooting", "git-workflow", "incident-response", "web-research"]) {
-    assert.equal(terminalAiSettingsSource.includes(`data-terminal-ai-skill="${skill}"`), true, `${skill} setting is missing`);
+    assert.equal(terminalAiSettingsView.includes(`"data-terminal-ai-skill": "${skill}"`), true, `${skill} setting is missing`);
   }
   for (const preset of ["web-fetch", "brave-search", "github", "playwright", "memory"]) {
-    assert.equal(terminalAiSettingsSource.includes(`${JSON.stringify(preset)}:`) || terminalAiSettingsSource.includes(`${preset}:`), true, `${preset} MCP preset is missing`);
+    assert.match(terminalAiSettingsSource, new RegExp(`(?:'${preset}'|\\b${preset}):`), `${preset} MCP preset is missing`);
   }
   assert.match(terminalAiSource, /terminalAiResponseMcpCalls/);
-  assert.match(terminalAiMcpSource, /terminalAiExplicitSearchIntent/);
-  assert.match(terminalAiMcpSource, /terminalAiSearchCallForPrompt/);
-  assert.match(terminalAiMcpSource, /terminalAiProjectIdentityContext/);
-  assert.match(terminalAiMcpSource, /https:\/\/github\.com\/zmide\/Terma/);
+  assert.match(terminalAiSource, /port\.mcp\.searchIntent/);
+  assert.match(terminalAiSource, /port\.mcp\.searchCall/);
+  assert.match(terminalAiSource, /port\.mcp\.projectContext/);
+  assert.match(fs.readFileSync('frontend/src/features/assistant/mcp-service.ts','utf8'), /https:\/\/github\.com\/zmide\/Terma/);
   assert.match(terminalAiSource, /searchAttempted = false/);
   assert.match(terminalAiSource, /if \(explicitSearch\)/);
   assert.match(terminalAiSource, /"terminal-selection", "terminal-block"/);
-  assert.match(terminalAiRenderSource, /source:"terminal-screen"/);
+  assert.match(fs.readFileSync(path.join(__dirname,"../frontend/src/features/assistant/conversation-service.ts"),"utf8"), /source:['"]terminal-screen['"]/);
   assert.match(terminalAiRenderSource, /TERMINAL_AI_SCREEN_MAX_LINES/);
   assert.match(terminalAiRenderSource, /callName\.toLowerCase\(\) === "mcp_call"/);
-  assert.match(terminalAiRenderSource, /`\$\{tool\.server_id\}\.\$\{tool\.name\}`\.toLowerCase\(\) === serverRef\.toLowerCase\(\)/);
+  assert.match(terminalAiRenderSource, /`\$\{tool\.serverId\}\.\$\{tool\.name\}`\.toLowerCase\(\) === serverRef\.toLowerCase\(\)/);
   assert.match(terminalAiRenderSource, /delete jsonArguments\.server/);
-  for (const transport of ["stdio", "sse", "streamable-http"]) assert.equal(terminalAiSettingsSource.includes(`value="${transport}"`), true, `${transport} MCP transport is missing`);
-  assert.match(terminalAiSettingsSource, /settings-ai-mcp-edit/);
-  assert.match(terminalAiSettingsSource, /terminalAiMcpHeaders/);
-  assert.match(terminalAiSettingsSource, /terminalAiProvidersDraft/);
-  assert.match(terminalAiSettingsSource, /settings-ai-provider-switch/);
-  assert.match(terminalAiSettingsSource, /settings-ai-provider-add/);
-  assert.match(terminalAiSettingsSource, /settings-ai-provider-remove/);
+  for (const transport of ["stdio", "sse", "streamable-http"]) assert.match(mcpSettingsView, new RegExp(`(?:'${transport}'|\\b${transport}):`));
+  assert.match(mcpSettingsView, /editMcpServer\(item\)/);
+  assert.match(mcpSettingsView, /terminalAiMcpHeaders/);
+  const providerView = fs.readFileSync(path.join(__dirname, '../frontend/src/features/settings/AiProviderSettings.tsx'), 'utf8');
+  assert.match(providerView, /id="terminalAiProviderSelect"[\s\S]*?onChange=\{event => selectAiProvider/);
+  assert.match(providerView, /aiProviderDraft\.add/);
+  assert.match(providerView, /removeAiProvider\(\)/);
+  assert.doesNotMatch(terminalAiSettingsSource, /terminalAiProvidersDraft|settings-ai-provider-(switch|add|remove)/);
   assert.match(terminalAiCssSource, /\.terminal-ai-settings-actions\s*\{[^}]*position:sticky/);
   assert.match(terminalAiCssSource, /\.terminal-ai-composer-popover select,\s*\n\.terminal-ai-settings select[\s\S]*background-image:url\([^)]*\) !important/);
   assert.match(terminalAiCssSource, /html\[data-theme="dark"\] \.terminal-ai-composer-popover select,[\s\S]*background-image:url\([^)]*\) !important/);
-  assert.equal(terminalAiSource.includes("while (!controller.signal.aborted && state.requestId === requestId)"), true);
+  assert.match(terminalAiSource, /while \(current\(\)\)/);
+  assert.match(terminalAiSource, /state\.requestId===requestId/);
+  assert.match(terminalAiSource, /!controller\.signal\.aborted&&scope\(\)/);
   assert.equal(terminalAiSource.includes("terminalAiAgentContinuationPrompt(originalPrompt, results)"), true);
  assert.match(terminalAiTasksSource, /function terminalAiTaskPlanHtml/);
   assert.match(terminalAiTasksSource, /function terminalAiTaskDockHtml/);
-  assert.match(terminalAiTasksSource, /function terminalAiTaskCreateCheckpoint/);
-  assert.match(terminalAiTasksSource, /function terminalAiTaskResume/);
-  assert.match(terminalAiTasksSource, /function terminalAiTaskSummaryFromAnswer/);
+  assert.match(terminalAiTasksSource, /port\.tasks\.checkpoint/);
+  assert.match(terminalAiTasksSource, /function resume/);
+  assert.match(fs.readFileSync('frontend/src/features/assistant/task-service.ts','utf8'), /function summarizeAnswer/);
   assert.match(terminalAiTasksSource, /function terminalAiTaskDurationLabel/);
-  assert.match(terminalAiTasksSource, /function terminalAiTaskAttemptedCommands/);
+  assert.match(fs.readFileSync('frontend/src/features/assistant/task-service.ts','utf8'), /function attemptedForState/);
   assert.match(terminalAiTasksSource, /function terminalAiDuplicateSummaryPrompt/);
-  assert.match(terminalAiTasksSource, /function terminalAiAgentTargetContexts/);
-  assert.match(terminalAiTasksSource, /function terminalAiPlatformContext/);
+  assert.match(terminalAiTasksSource, /function targetContexts/);
+  assert.match(terminalAiSource, /port\.platform\.context/);
   assert.match(terminalAiTasksSource, /function terminalAiTaskDiagnostics/);
   assert.match(terminalAiSource, /terminalAiDuplicateSummaryPrompt/);
   assert.match(terminalAiSource, /taskStep, "skipped"/);
   assert.doesNotMatch(terminalAiSource, /repeatedCommand && turn\) turn\.error/);
-  assert.match(terminalAiActionsSource, /function terminalAiSanitizeWorkflowCommand/);
+  assert.match(terminalAiActionsSource, /function sanitizeWorkflowCommand/);
   assert.match(terminalAiTasksSource, /task.durationMs/);
   assert.match(terminalAiTasksSource, /task_step_records/);
   assert.match(terminalAiTasksSource, /task_result_summary/);
  assert.match(terminalAiTasksSource, /task_recovery_prompt/);
-  assert.match(terminalAiTasksSource, /TERMINAL_AI_MAX_TASK_PLAN/);
+  assert.match(fs.readFileSync('frontend/src/features/assistant/task-service.ts','utf8'), /MAX_PLAN=20/);
   assert.doesNotMatch(terminalAiTasksSource, /steps\.slice\(\)\.reverse\(\)\.slice\(0, 12\)/);
   assert.match(terminalAiTasksSource, /join\("\\n"\)/);
   assert.doesNotMatch(terminalAiTasksSource, /\\\\s\+|\\\\r\?\\\\n/);
   assertAgentTaskTiming(terminalAiTasksSource);
   assertAgentTaskDock(terminalAiTasksSource);
   assertTerminalAiInteractionGuards(terminalAiSource, terminalAiRenderSource);
-  assert.match(terminalAiRenderSource, /terminal-ai-save-snippet/);
+  assert.match(terminalAiSource, /terminal-ai-save-snippet/);
   assert.match(terminalAiSource, /terminal-ai-waiting-input-submit/);
   assert.match(terminalAiSource, /terminalAiWaitingInputCopy/);
-  assert.match(terminalAiSource, /const executedCommands = typeof terminalAiTaskAttemptedCommands/);
+  assert.match(terminalAiSource, /const executedCommands = port\.tasks\.attemptedForState/);
   assert.match(terminalAiSource, /terminal:ai\.agent_repeated/);
   assert.match(terminalAiCssSource, /terminal-ai-waiting-input-form button\.primary > span/);
-  assert.match(terminalAiSource, /function submitTerminalAiWaitingInput/);
-  assert.match(terminalCommandTrackingSource, /terminalAiResumeAfterWaitingInput\(session\.key, waiting, baselineOutput\)/);
-  assert.match(terminalAiRenderSource, /TERMINAL_AI_COMMAND_MAX_LENGTH = 100000/);
-  assert.match(terminalAiRenderSource, /terminal-ai-block-stop/);
-  assert.match(commandSnippetsSource, /function commandSnippetVariables/);
-  assert.match(commandSnippetsSource, /data-snippet-preview/);
-  assert.match(commandSnippetsSource, /workflow_missing_parameter/);
-  assert.match(commandSnippetsSource, /workflow_types/);
-  assert.match(commandSnippetsSource, /expandSnippetSteps/);
-  assert.match(commandSnippetsSource, /workflow_dry_run_notice/);
+  assert.match(terminalCommandsSource, /async function input/);
+  assert.match(fs.readFileSync('frontend/src/features/assistant/assistant-interactions.ts','utf8'), /port\.resume\(key,waiting,baseline\)/);
+  assert.match(terminalCommandTrackingSource, /port\.current\(session\)/);
+  assert.match(responseCommandSource, /TERMINAL_AI_COMMAND_MAX_LENGTH\s*=\s*100000/);
+  assert.match(terminalAiSource, /terminal-ai-block-stop/);
+  assert.match(commandSnippetsSource, /import\s+\*\s+as\s+model/);
+  const migratedSnippets=['SnippetViews.ts','snippet-service.ts','snippet-model.ts'].map(file=>fs.readFileSync(path.join(__dirname,'..','frontend','src','features','snippets',file),'utf8')).join('\n');
+  assert.match(migratedSnippets, /data-snippet-preview/);
+  assert.match(migratedSnippets, /workflow_required_error/);
+  assert.match(migratedSnippets, /workflow_types/);
+  assert.match(commandSnippetsSource, /expand:/);
+  assert.match(migratedSnippets, /workflow_dry_run_notice/);
   assert.match(terminalAiSource, /terminal-ai-task-dock/);
   assert.match(terminalAiSource, /awaitingActionRecovery && terminalAiAnswerNeedsActionRecovery/);
   assert.doesNotMatch(terminalAiSource, /MAX_COMMANDS|MAX_AGENT_COMMANDS|agentCommandCount\s*>=\s*6/);
   assert.doesNotMatch(terminalAiSource, /TERMINAL_AI_COMMAND_WAIT_MS\s*=\s*60000/);
- assert.match(terminalAiRenderSource, /function terminalAiDeduplicateRepeatedText/);
-  assert.match(terminalAiRenderSource, /const normalizedValue = terminalAiDeduplicateRepeatedText/);
-  assert.equal(terminalAiRenderSource.includes("else if (!selected) fragments.push(renderTerminalAiMarkdown"), true);
- assert.match(terminalAiRenderSource, /exact adjacent repeats/);
-  assert.match(terminalAiRenderSource, /terminal-ai-table-wrap/);
+ assert.match(responseTextSource, /function terminalAiDeduplicateRepeatedText/);
+  assert.match(terminalAiSource, /const normalizedValue(?:: any)? = terminalAiDeduplicateRepeatedText/);
+  assert.match(terminalAiSource,/else if \(!selected\)\s*fragments.push\(renderTerminalAiMarkdown/);
+ assert.match(responseTextSource, /exact adjacent repeats/);
+  assert.match(terminalAiSource, /terminal-ai-table-wrap/);
   assert.match(mcpServiceSource, /MCP-Session-Id/);
   assert.match(mcpServiceSource, /text\/event-stream/);
   assert.match(mcpServiceSource, /legacySseRequest/);

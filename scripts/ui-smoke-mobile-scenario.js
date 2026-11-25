@@ -14,24 +14,25 @@ async function runMobileScenario(window) {
         window.dispatchEvent(new Event('resize'));
         return mobileWorkspaceVisible()&&document.activeElement===input&&input.value===value&&activeView===viewBefore&&activeTabKey===tabBefore;
       };
-      const mobileSftpLoad = loadSftpPage;
-      const mobileSftpJobs = refreshSftpJobs;
-      const mobileSftpTimer = startSftpJobsTimer;
-      loadSftpPage = async () => true;
-      refreshSftpJobs = async () => {};
-      startSftpJobsTimer = () => {};
-      localStorage.removeItem(SFTP_MOBILE_TOOLBAR_EXPANDED_KEY);
+      const mobileToolbarPreference = "sftpMobileToolbarExpanded";
+      const mobileSftpLoad = window.termaSftpDirectoryWorkspace.loader.load;
+      const mobileSftpJobs = window.termaSftpTaskWorkspace.runtime.refresh;
+      const mobileSftpTimer = window.termaSftpTransferLifecycle.polling.start;
+      window.termaSftpDirectoryWorkspace.loader.load = async () => true;
+      window.termaSftpTaskWorkspace.runtime.refresh = async () => {};
+      window.termaSftpTransferLifecycle.polling.start = () => {};
+      localStorage.removeItem(mobileToolbarPreference);
       const pendingMobileSftpView=$('view-sftp');
       if(pendingMobileSftpView)pendingMobileSftpView.dataset.sftpTabKey='';
-      await openSftp(connections[0].id, '.', true);
+      await window.termaSftpPage.open(connections[0].id, '.', true);
       syncResponsivePane();
       await new Promise(resolve=>setTimeout(resolve,0));
       const mobileSftpTabKey=activeTabKey;
-      const mobileSftpView=sftpRuntimeRoot(mobileSftpTabKey);
+      const mobileSftpView=window.termaSftpView.root(mobileSftpTabKey);
       let mobileWorkspaceChromeResize={found:false};
       {
         const headerHandle=document.querySelector('#workspaceHeaderResize');
-        const activePane=workspacePaneElement(focusedPaneId);
+        const activePane=window.termaWorkspacePaneScope.workspacePaneElement(focusedPaneId);
         const tabHandle=activePane?.querySelector('.workspace-tab-resizer');
         const topbar=document.querySelector('.topbar');
         const title=document.querySelector('#workspaceTitle');
@@ -44,10 +45,10 @@ async function runMobileScenario(window) {
         const storedTabBefore=localStorage.getItem('workspaceTabHeight');
         const storedActivityBefore=localStorage.getItem('activityBarWidth');
         const storedOperationBefore=localStorage.getItem('operationPaneWidth');
-        const headerValueBefore=workspaceHeaderHeight;
-        const tabValueBefore=workspaceTabHeight;
-        const activityValueBefore=activityBarWidth;
-        const operationValueBefore=operationPaneWidth;
+        const headerValueBefore=window.termaWorkspaceChrome.value('header');
+        const tabValueBefore=window.termaWorkspaceChrome.value('tabs');
+        const activityValueBefore=window.termaWorkspaceChrome.value('activity');
+        const operationValueBefore=window.termaWorkspaceChrome.value('operation');
         const nextFrame=()=>new Promise(resolve=>setTimeout(resolve,0));
         const snapshot=()=>({
           headerHeight:topbar?.getBoundingClientRect().height||0,
@@ -69,10 +70,10 @@ async function runMobileScenario(window) {
             && tabHandle.getBoundingClientRect().height===0
             && activityHandle.getBoundingClientRect().width===0
             && operationHandle.getBoundingClientRect().width===0);
-          applyWorkspaceHeaderHeight(WORKSPACE_HEADER_HEIGHT_MAX,{fit:false});
-          applyWorkspaceTabHeight(WORKSPACE_TAB_HEIGHT_MAX,{fit:false});
-          applyActivityBarWidth(ACTIVITY_BAR_WIDTH_MAX,{fit:false});
-          applyOperationPaneWidth(OPERATION_PANE_WIDTH_MAX,{fit:false});
+          window.termaWorkspaceChrome.apply('header',64,{fit:false});
+          window.termaWorkspaceChrome.apply('tabs',48,{fit:false});
+          window.termaWorkspaceChrome.apply('activity', 64,{fit:false});
+          window.termaWorkspaceChrome.apply('operation', 520,{fit:false});
           await nextFrame();
           const afterProgrammaticApply=snapshot();
           const desktopSizingIgnored=equalMetric(afterProgrammaticApply.headerHeight,baseline.headerHeight)
@@ -81,10 +82,10 @@ async function runMobileScenario(window) {
             && equalMetric(afterProgrammaticApply.tabFont,baseline.tabFont)
             && equalMetric(afterProgrammaticApply.dotSize,baseline.dotSize)
             && equalMetric(afterProgrammaticApply.operationWidth,baseline.operationWidth);
-          applyWorkspaceHeaderHeight(headerValueBefore,{fit:false});
-          applyWorkspaceTabHeight(tabValueBefore,{fit:false});
-          applyActivityBarWidth(activityValueBefore,{fit:false});
-          applyOperationPaneWidth(operationValueBefore,{fit:false});
+          window.termaWorkspaceChrome.apply('header',headerValueBefore,{fit:false});
+          window.termaWorkspaceChrome.apply('tabs',tabValueBefore,{fit:false});
+          window.termaWorkspaceChrome.apply('activity', activityValueBefore,{fit:false});
+          window.termaWorkspaceChrome.apply('operation', operationValueBefore,{fit:false});
           const dispatchHiddenDrag=(handle,pointerId,horizontal=false)=>{
             handle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId,pointerType:'touch',button:0,clientX:0,clientY:0}));
             window.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId,pointerType:'touch',button:0,clientX:horizontal?200:0,clientY:horizontal?0:200}));
@@ -104,13 +105,10 @@ async function runMobileScenario(window) {
           operationHandle?.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,cancelable:true,button:0}));
           await nextFrame();
           const afterInteractions=snapshot();
-          const interactionsIgnored=workspaceHeaderHeight===headerValueBefore
-            && workspaceTabHeight===tabValueBefore
-            && activityBarWidth===activityValueBefore
-            && operationPaneWidth===operationValueBefore
-            && workspaceChromeResize===null
-            && activityBarResize===null
-            && operationPaneResize===null
+          const interactionsIgnored=window.termaWorkspaceChrome.value('header')===headerValueBefore
+            && window.termaWorkspaceChrome.value('tabs')===tabValueBefore
+            && window.termaWorkspaceChrome.value('activity')===activityValueBefore
+            && window.termaWorkspaceChrome.value('operation')===operationValueBefore
             && !document.body.classList.contains('workspace-chrome-resizing')
             && !document.body.classList.contains('activity-bar-resizing')
             && !document.body.classList.contains('operation-pane-resizing')
@@ -135,16 +133,15 @@ async function runMobileScenario(window) {
             afterInteractions
           };
         }finally{
-          if(workspaceChromeResize)endWorkspaceChromeResize(null,true);
-          if(operationPaneResize)finishOperationPaneResize(null,true);
+          window.termaWorkspaceChrome.cancel();
           if(storedHeaderBefore===null)localStorage.removeItem('workspaceHeaderHeight');else localStorage.setItem('workspaceHeaderHeight',storedHeaderBefore);
           if(storedTabBefore===null)localStorage.removeItem('workspaceTabHeight');else localStorage.setItem('workspaceTabHeight',storedTabBefore);
           if(storedActivityBefore===null)localStorage.removeItem('activityBarWidth');else localStorage.setItem('activityBarWidth',storedActivityBefore);
           if(storedOperationBefore===null)localStorage.removeItem('operationPaneWidth');else localStorage.setItem('operationPaneWidth',storedOperationBefore);
-          applyWorkspaceHeaderHeight(headerValueBefore,{fit:false});
-          applyWorkspaceTabHeight(tabValueBefore,{fit:false});
-          applyActivityBarWidth(activityValueBefore,{fit:false});
-          applyOperationPaneWidth(operationValueBefore,{fit:false});
+          window.termaWorkspaceChrome.apply('header',headerValueBefore,{fit:false});
+          window.termaWorkspaceChrome.apply('tabs',tabValueBefore,{fit:false});
+          window.termaWorkspaceChrome.apply('activity', activityValueBefore,{fit:false});
+          window.termaWorkspaceChrome.apply('operation', operationValueBefore,{fit:false});
         }
       }
       document.documentElement.dataset.uiSmokeStage='mobile-import';
@@ -155,6 +152,7 @@ async function runMobileScenario(window) {
       const mobileSftpToolbarToggleVisible = Boolean(mobileSftpToolbarToggle?.getBoundingClientRect().width);
       const mobileSftpBreadcrumbAlwaysVisible = Boolean(mobileSftpBreadcrumb?.getBoundingClientRect().width);
       mobileSftpToolbarToggle?.click();
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const mobileSftpActions = mobileSftpView?.querySelector('.sftp-toolbar');
       const mobileSftpActionNodes = [...(mobileSftpActions?.querySelectorAll('.sftp-toolbar-actions > button, .sftp-toolbar-actions > label') || [])];
       const mobileSftpActionRects = mobileSftpActionNodes.map(node => node.getBoundingClientRect());
@@ -171,11 +169,11 @@ async function runMobileScenario(window) {
         defaultCollapsed:mobileSftpToolbarDefaultCollapsed,
         toggleVisible:mobileSftpToolbarToggleVisible,
         breadcrumbAlwaysVisible:mobileSftpBreadcrumbAlwaysVisible,
-        expandedPersisted:localStorage.getItem(SFTP_MOBILE_TOOLBAR_EXPANDED_KEY) === '1' && !mobileSftpToolbarMount?.hidden,
+        expandedPersisted:localStorage.getItem(mobileToolbarPreference) === '1' && !mobileSftpView?.querySelector('#sftpToolbarMount')?.hidden,
         searchFontSize:parseFloat(mobileSftpView?.querySelector('#sftpSearch') ? getComputedStyle(mobileSftpView.querySelector('#sftpSearch')).fontSize : '0')
       };
-      closeSftpTaskCenter();
-      await toggleSftpTaskCenter();
+      window.termaSftpTaskWorkspace.runtime.close();
+      await window.termaSftpTaskWorkspace.runtime.toggle();
       await new Promise(resolve=>setTimeout(resolve,0));
       const mobileTaskCenterDrawer=document.querySelector('#sftpTaskCenterDrawer');
       const mobileTaskCenterList=document.querySelector('#sftpTaskCenterList');
@@ -195,12 +193,12 @@ async function runMobileScenario(window) {
         resizeHandleHidden:Boolean(mobileTaskCenterResize&&getComputedStyle(mobileTaskCenterResize).display==='none'),
         nativeResizeDisabled:mobileTaskCenterStyle?.resize==='none'
       };
-      closeSftpTaskCenter();
-      toggleSftpSearch(mobileSftpTabKey);
+      window.termaSftpTaskWorkspace.runtime.close();
+      window.termaSftpViews.search(mobileSftpTabKey,'toggle');
       const sftpResizeInput=mobileSftpView?.querySelector('#sftpSearch');
       const sftpResizeViewBefore=activeView;
       const sftpResizeTabBefore=activeTabKey;
-      if(sftpResizeInput){sftpResizeInput.value='mobile-resize-sftp';sftpResizeInput.focus();}
+      if(sftpResizeInput){sftpResizeInput.value='mobile-resize-sftp';sftpResizeInput.dispatchEvent(new Event('input',{bubbles:true}));sftpResizeInput.focus();}
       window.dispatchEvent(new Event('resize'));
       const sftpResizeDiagnostics={
         input:Boolean(sftpResizeInput),
@@ -218,17 +216,17 @@ async function runMobileScenario(window) {
         && sftpResizeDiagnostics.value==='mobile-resize-sftp'
         && sftpResizeDiagnostics.viewAfter===sftpResizeDiagnostics.viewBefore
         && sftpResizeDiagnostics.tabAfter===sftpResizeDiagnostics.tabBefore;
-      closeSftpSearch(mobileSftpTabKey);
-      loadSftpPage = mobileSftpLoad;
-      refreshSftpJobs = mobileSftpJobs;
-      startSftpJobsTimer = mobileSftpTimer;
-      openBatchCommand();
+      window.termaSftpViews.search(mobileSftpTabKey,'close');
+      window.termaSftpDirectoryWorkspace.loader.load = mobileSftpLoad;
+      window.termaSftpTaskWorkspace.runtime.refresh = mobileSftpJobs;
+      window.termaSftpTransferLifecycle.polling.start = mobileSftpTimer;
+      window.termaBatch.open();
       const batchCommandFontSize=parseFloat(document.querySelector('#batchCommandText') ? getComputedStyle(document.querySelector('#batchCommandText')).fontSize : '0');
       const batchWorkspaceAfterKeyboardResize=workspaceStateSurvivesResize(document.querySelector('#batchCommandText'),'printf mobile-resize-batch');
-      newConnection();
+      window.termaConnectionFormWorkspace.create();
       const connectionNameFontSize=parseFloat(document.querySelector('#conn_name') ? getComputedStyle(document.querySelector('#conn_name')).fontSize : '0');
       const connectionWorkspaceAfterKeyboardResize=workspaceStateSurvivesResize(document.querySelector('#conn_name'),'mobile-resize-connection');
-      showPrimary('import');
+      window.termaWorkspaceShell.showPrimary('import');
       window.dispatchEvent(new Event('resize'));
       await new Promise(resolve=>setTimeout(resolve,80));
       const importExplorerFirst=mobileExplorerVisible();
@@ -316,7 +314,7 @@ async function runMobileScenario(window) {
         fits:mobileTabs.scrollWidth<=mobileTabs.clientWidth+0.5&&mobileTabRects.every(rect=>rect.left>=-0.5&&rect.right<=innerWidth+0.5)
       };
       document.documentElement.dataset.uiSmokeStage='mobile-settings';
-      showPrimary('settings');
+      window.termaWorkspaceShell.showPrimary('settings');
       await new Promise(resolve=>setTimeout(resolve,80));
       const settingsButtons=[...document.querySelectorAll('#explorerTools > button[data-explorer-section]')];
       const settingsLabels=settingsButtons.map(button=>button.querySelector('span')?.textContent.trim()||'');
@@ -325,7 +323,7 @@ async function runMobileScenario(window) {
       const settingsExplorerFirst=!leftPane?.classList.contains('mobile-hide')&&!content?.classList.contains('mobile-show');
       document.querySelector('#explorerTools [data-explorer-section="settings-about"]')?.click();
       for (let i=0;i<80&&(activeView!=='settings'||!document.querySelector('#settings-about')||document.querySelector('#settings-about').hidden||!content?.classList.contains('mobile-show'));i+=1) await new Promise(resolve=>setTimeout(resolve,50));
-      const visibleSettingsGroups=[...document.querySelectorAll('#view-settings .settings-group')].filter(group=>!group.hidden).map(group=>group.id);
+      const visibleSettingsGroups=[...document.querySelectorAll('#view-settings .settings-group')].filter(group=>group.checkVisibility()).map(group=>group.id);
       layout.settingsNavigation={
         labels:settingsLabels,
         vertical:settingsVertical,
@@ -335,18 +333,20 @@ async function runMobileScenario(window) {
         noDuplicateMenu:document.querySelectorAll('.settings-nav').length===0
       };
       document.documentElement.dataset.uiSmokeStage='mobile-license';
-      const licenseTrigger=document.querySelector('#openLicenseBtn');
+      const visibleLicenseTrigger=()=>[...document.querySelectorAll('#openLicenseBtn:not(:disabled)')].find(button=>button.checkVisibility());
+      for(let i=0;i<80&&!visibleLicenseTrigger();i+=1) await new Promise(resolve=>setTimeout(resolve,25));
+      const licenseTrigger=visibleLicenseTrigger();
+      const aboutRoot=licenseTrigger?.closest('#settings-about');
       licenseTrigger?.click();
-      for (let i=0;i<20&&document.querySelector('#modal')?.hidden;i+=1) await new Promise(resolve=>setTimeout(resolve,25));
-      const modal=document.querySelector('#modal');
-      const card=modal?.querySelector('.license-modal');
-      const text=modal?.querySelector('#licenseText');
-      const close=document.querySelector('#licenseModalClose');
+      for (let i=0;i<80&&!aboutRoot?.querySelector('.terma-about-modal');i+=1) await new Promise(resolve=>setTimeout(resolve,25));
+      const card=aboutRoot?.querySelector('.terma-about-modal');
+      const text=card?.querySelector('pre');
+      const close=card?.querySelector('.terma-about-close');
       const cardRect=card?.getBoundingClientRect();
       const textRect=text?.getBoundingClientRect();
       const closeRect=close?.getBoundingClientRect();
       layout.about={
-        modalOpen:Boolean(modal&&!modal.hidden&&card),
+        modalOpen:Boolean(card?.checkVisibility()),
         cardWithinViewport:Boolean(cardRect&&cardRect.left>=-0.5&&cardRect.right<=innerWidth+0.5&&cardRect.top>=-0.5&&cardRect.bottom<=innerHeight+0.5),
         textWithinCard:Boolean(cardRect&&textRect&&textRect.left>=cardRect.left-0.5&&textRect.right<=cardRect.right+0.5),
         textScrollable:Boolean(text&&text.scrollHeight>text.clientHeight&&getComputedStyle(text).overflowY==='auto'),
@@ -354,15 +354,21 @@ async function runMobileScenario(window) {
       };
       close?.click();
       await new Promise(resolve=>setTimeout(resolve,25));
-      layout.about.closed=Boolean(modal?.hidden&&!modal.querySelector('.license-modal'));
+      layout.about.closed=!aboutRoot?.querySelector('.terma-about-modal');
       document.documentElement.dataset.uiSmokeStage='mobile-groups';
-      showPrimary('connections');
-      showMobileExplorer();
-      renderExplorerTools();
-      renderConnections();
+      const groupWorkspaceNavigation=[];
+      const previousGroupShowMobileWorkspace=window.termaWorkspaceShell.showMobileWorkspace;
+      window.termaWorkspaceShell.showMobileWorkspace=(...args)=>{
+        groupWorkspaceNavigation.push({view:activeView,tab:activeTabKey,stack:new Error().stack});
+        return previousGroupShowMobileWorkspace(...args);
+      };
+      window.termaWorkspaceShell.showPrimary('connections');
+      window.termaWorkspaceShell.showMobileExplorer();
+      window.termaConnectionViews.renderExplorerTools();
+      window.termaConnectionViews.renderConnections();
       for(let i=0;i<40;i+=1){
-        if(primaryView==='connections'&&document.querySelector('.left-pane')?.classList.contains('mobile-hide'))showMobileExplorer();
-        if(primaryView==='connections'&&document.querySelector('#connectionGroups')?.hidden){renderExplorerTools();renderConnections();}
+        if(primaryView==='connections'&&document.querySelector('.left-pane')?.classList.contains('mobile-hide'))window.termaWorkspaceShell.showMobileExplorer();
+        if(primaryView==='connections'&&document.querySelector('#connectionGroups')?.hidden){window.termaConnectionViews.renderExplorerTools();window.termaConnectionViews.renderConnections();}
         const readyButton=[...document.querySelectorAll('.connection-group-menu-button')].find(button=>button.getBoundingClientRect().width>0);
         if(readyButton&&!document.querySelector('.activity')?.classList.contains('activity-render-pending'))break;
         await new Promise(resolve=>setTimeout(resolve,16));
@@ -377,24 +383,32 @@ async function runMobileScenario(window) {
       const titleRect=groupTitle?.getBoundingClientRect();
       layout.groupControlsInline=Boolean(actionRect&&dragRect&&titleRect&&Math.abs((actionRect.top+actionRect.height/2)-(dragRect.top+dragRect.height/2))<2&&Math.abs((actionRect.top+actionRect.height/2)-(titleRect.top+titleRect.height/2))<2);
       layout.groupDragFirst=Boolean(actionRect&&dragRect&&titleRect&&dragRect.left<titleRect.left&&titleRect.left<actionRect.left);
-      const previousSaveConnectionGroupOrder=saveConnectionGroupOrder;
+      const previousSaveConnectionGroupOrder=window.termaConnectionList.saveGroupOrder;
       let groupOrderSaveCalls=0;
-      saveConnectionGroupOrder=async()=>{groupOrderSaveCalls+=1;};
+      window.termaConnectionList.saveGroupOrder=async()=>{groupOrderSaveCalls+=1;};
       groupDragHandle?.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerId:77,pointerType:'touch',button:0,clientX:dragRect?.left||10,clientY:dragRect?.top||10}));
       for(let attempt=0;attempt<60&&!document.querySelector('.group-dragging');attempt+=1)await new Promise(resolve=>setTimeout(resolve,25));
       const draggingNode=document.querySelector('.group-dragging');
-      renderConnections();
+      window.termaConnectionViews.renderConnections();
       await new Promise(resolve=>setTimeout(resolve,1800));
       layout.groupDragSurvivesRefresh=Boolean(draggingNode&&draggingNode.isConnected&&draggingNode.classList.contains('group-dragging'));
-      if(!layout.groupDragSurvivesRefresh)layout.groupDragDiagnostics={started:Boolean(draggingNode),connected:Boolean(draggingNode?.isConnected),active:Boolean(connectionGroupDrag?.active),pending:Boolean(connectionGroupDrag?.renderPending),search:connectionSearch,primaryView,groupConnected:Boolean(connectionGroupDrag?.group?.isConnected),currentTree:$('connectionGroups')?.innerHTML.slice(0,300)};
+      if(!layout.groupDragSurvivesRefresh)layout.groupDragDiagnostics={started:Boolean(draggingNode),connected:Boolean(draggingNode?.isConnected),search:connectionSearch,primaryView,currentTree:$('connectionGroups')?.innerHTML.slice(0,300)};
       document.dispatchEvent(new PointerEvent('pointercancel',{bubbles:true,pointerId:77,pointerType:'touch'}));
       await new Promise(resolve=>setTimeout(resolve,30));
       layout.groupCancelDoesNotSave=!document.querySelector('.group-dragging')&&groupOrderSaveCalls===0;
-      saveConnectionGroupOrder=previousSaveConnectionGroupOrder;
-      const refreshedGroupActionButton=visibleGroupNode('.connection-group-menu-button');
+      window.termaConnectionList.saveGroupOrder=previousSaveConnectionGroupOrder;
+      let refreshedGroupActionButton;
+      for(let attempt=0;attempt<60;attempt+=1){
+        refreshedGroupActionButton=visibleGroupNode('.connection-group-menu-button');
+        if(refreshedGroupActionButton?.checkVisibility()&&getComputedStyle(refreshedGroupActionButton).opacity==='1')break;
+        await new Promise(resolve=>setTimeout(resolve,16));
+      }
       layout.groupActionVisible=Boolean(refreshedGroupActionButton&&getComputedStyle(refreshedGroupActionButton).opacity==='1'&&refreshedGroupActionButton.getBoundingClientRect().width>0);
       refreshedGroupActionButton?.click();
+      for(let attempt=0;attempt<60&&!document.querySelector('#actionMenu')?.textContent.includes('重命名分组');attempt+=1)await new Promise(resolve=>setTimeout(resolve,16));
       layout.groupActionMenuOpened=Boolean(document.querySelector('#actionMenu')?.textContent.includes('重命名分组')&&document.querySelector('#actionMenuBackdrop'));
+      window.termaWorkspaceShell.showMobileWorkspace=previousGroupShowMobileWorkspace;
+      if(!layout.groupActionVisible||!layout.groupActionMenuOpened)layout.groupActionDiagnostics={primaryView,connectionSearch,leftPaneHidden:leftPane?.classList.contains('mobile-hide'),treeHidden:$('connectionGroups')?.hidden,dragActive:Boolean(document.querySelector('.group-dragging')),buttonCount:document.querySelectorAll('.connection-group-menu-button').length,buttonConnected:refreshedGroupActionButton?.isConnected,buttonOpacity:refreshedGroupActionButton?getComputedStyle(refreshedGroupActionButton).opacity:null,menuText:document.querySelector('#actionMenu')?.textContent||'',workspaceNavigation:groupWorkspaceNavigation};
       document.querySelector('#actionMenuBackdrop')?.click();
       document.querySelector('.conn-actions .icon-button[title="更多操作"]')?.click();
       layout.menuOpened=Boolean(document.querySelector('#actionMenu')&&document.querySelector('#actionMenuBackdrop'));
@@ -403,7 +417,7 @@ async function runMobileScenario(window) {
       document.documentElement.dataset.uiSmokeStage='mobile-terminal-back';
       const terminalBackFixture=document.createElement('div');
       terminalBackFixture.className='terminal-toolbar';
-      terminalBackFixture.innerHTML='<div class="terminal-title-row"><span class="terminal-connection-dot"></span><span class="terminal-status">root@example.invalid:22 · 已连接</span><span class="terminal-latency good">延迟 5 ms</span></div><div class="actions terminal-actions"><button class="terminal-action-sftp">'+icon('folder-open')+'<span>SFTP</span></button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button class="terminal-action-reconnect">'+icon('refresh-cw')+'<span>重连</span></button><button class="terminal-action-forward-list">'+icon('route')+'<span>转发列表</span></button><button class="terminal-action-forward">'+icon('play')+'<span>转发</span></button><button class="terminal-global-settings-button">'+icon('settings')+'</button></div>';
+      terminalBackFixture.innerHTML='<div class="terminal-title-row"><span class="terminal-connection-dot"></span><span class="terminal-status">root@example.invalid:22 · 已连接</span><span class="terminal-session-badge normal" data-terminal-shell-status="normal">'+tr('terminal:toolbar.shell_normal')+'</span></div><div class="actions terminal-actions"><button class="terminal-action-sftp">'+icon('folder-open')+'<span>SFTP</span></button><button class="terminal-action-keys">'+icon('keyboard')+'<span>快捷键</span></button><button class="terminal-action-reconnect">'+icon('refresh-cw')+'<span>重连</span></button><button class="terminal-action-forward-list">'+icon('route')+'<span>转发列表</span></button><button class="terminal-global-settings-button">'+icon('settings')+'</button></div>';
       document.body.appendChild(terminalBackFixture);
       document.querySelector('.left-pane')?.classList.add('mobile-hide');
       document.querySelector('#content')?.classList.add('mobile-show','terminal-content');
@@ -423,7 +437,7 @@ async function runMobileScenario(window) {
       const terminalMobileActionsRect=terminalBackFixture.querySelector('.terminal-actions').getBoundingClientRect();
       const terminalMobileSftpButton=terminalBackFixture.querySelector('.terminal-action-sftp');
       const terminalBackVisible=terminalBackStyle.display!=='none'&&terminalBackRect.width>0&&terminalBackRect.height>0;
-      showTerminalFontMenu(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:180,clientY:100}),'mobile-font-smoke',connections[0].id);
+      window.termaTerminalToolbarService.actions.font(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:180,clientY:100}),'mobile-font-smoke',connections[0].id);
       const mobileFontMenu=document.querySelector('#actionMenu');
       if (!(mobileFontMenu instanceof HTMLElement)) throw new Error('Mobile terminal font menu was not created');
       const mobileFontMenuRect=mobileFontMenu.getBoundingClientRect();
@@ -440,7 +454,7 @@ async function runMobileScenario(window) {
       };
       hideActionMenu();
       const previousGlobalTerminalSettings=terminalGlobalSettings;
-      terminalGlobalSettings=normalizeTerminalGlobalSettings(defaultTerminalGlobalSettings);
+      terminalGlobalSettings=window.termaTerminalSettingsModel.normalize(window.termaTerminalSettingsModel.defaults);
       const mobileGlobalSettingsButton=terminalBackFixture.querySelector('.terminal-global-settings-button');
       layout.terminalGlobalSettings={
         buttonHidden:Boolean(mobileGlobalSettingsButton&&getComputedStyle(mobileGlobalSettingsButton).display==='none')
@@ -478,15 +492,15 @@ async function runMobileScenario(window) {
         buffer:{active:{viewportY:0,length:1,getLine:()=>({translateToString:()=>longPressLine,getCell:index=>({getChars:()=>longPressLine[index]||''})})}}
       };
       longPressTerm._core={_renderService:{dimensions:{css:{cell:{width:10,height:20}}}}};
-      terminalSessions.set(longPressKey,{term:longPressTerm,id:connections[0].id});
-      terminalGlobalSettings=normalizeTerminalGlobalSettings({...defaultTerminalGlobalSettings,right_mouse_action:'paste_clipboard'});
-      bindTerminalGlobalBehavior(terminalSessions.get(longPressKey),longPressKey,connections[0].id,longPressMount);
+      window.termaTerminalState.terminalSessions.set(longPressKey,{term:longPressTerm,id:connections[0].id});
+      terminalGlobalSettings=window.termaTerminalSettingsModel.normalize({...window.termaTerminalSettingsModel.defaults,right_mouse_action:'paste_clipboard'});
+      window.termaTerminalInteraction.bind(window.termaTerminalState.terminalSessions.get(longPressKey),longPressKey,connections[0].id,longPressMount);
       longPressMount.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:15,clientY:10}));
       const longPressMenuLabels=[...document.querySelectorAll('#actionMenu button span')].map(item=>item.textContent.trim());
       const longPressMenuOpened=Boolean(document.querySelector('#actionMenu')&&document.querySelector('#actionMenuBackdrop')&&longPressMenuLabels.includes('光标复制')&&longPressMenuLabels.includes('会话复制')&&longPressMenuLabels.includes('粘贴')&&!longPressMenuLabels.includes('复制选中')&&!longPressMenuLabels.includes('全选终端')&&!longPressMenuLabels.includes('全局终端设置'));
       const longPressOnlyOpensMenu=longPressSelection==='';
       hideActionMenu();
-      showTerminalSessionText(longPressKey);
+      window.termaTerminalTextDialogs.session(longPressKey);
       const sessionTextModal=document.querySelector('#modal .terminal-session-text-modal');
       const sessionTextModalRect=sessionTextModal?.getBoundingClientRect();
       const sessionTextEditor=document.querySelector('#terminalSessionTextEditor');
@@ -511,25 +525,25 @@ async function runMobileScenario(window) {
       let cursorCopied='';
       const originalCopyText=copyText;
       copyText=async text=>{cursorCopied=text;return true;};
-      startTerminalCursorCopy(longPressKey);
+      window.termaTerminalCursorCopy.start(longPressKey);
       const cursorHint=document.querySelector('.terminal-cursor-copy-hint');
-      const cursorHintStarted=Boolean(terminalSessions.get(longPressKey)?.cursorCopyState&&longPressMount.classList.contains('terminal-cursor-copy-active')&&cursorHint?.textContent.includes('光标复制：拖到复制起点后松手')&&cursorHint.querySelector('.terminal-cursor-copy-cancel'));
+      const cursorHintStarted=Boolean(window.termaTerminalState.terminalSessions.get(longPressKey)?.cursorCopyState&&longPressMount.classList.contains('terminal-cursor-copy-active')&&cursorHint?.textContent.includes('光标复制：拖到复制起点后松手')&&cursorHint.querySelector('.terminal-cursor-copy-cancel'));
       longPressMount.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:11,pointerType:'touch',clientX:5,clientY:10}));
       longPressMount.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:11,pointerType:'touch',clientX:5,clientY:10}));
       longPressMount.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:11,pointerType:'touch',clientX:5,clientY:10}));
-      const cursorStartStored=terminalSessions.get(longPressKey)?.cursorCopyState?.phase==='end'&&document.querySelector('.terminal-cursor-copy-message')?.textContent==='已选起点，请拖到复制终点后松手';
+      const cursorStartStored=window.termaTerminalState.terminalSessions.get(longPressKey)?.cursorCopyState?.phase==='end'&&document.querySelector('.terminal-cursor-copy-message')?.textContent==='已选起点，请拖到复制终点后松手';
       longPressMount.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerId:12,pointerType:'touch',clientX:5,clientY:10}));
       longPressMount.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerId:12,pointerType:'touch',clientX:115,clientY:10}));
       const cursorSelectionBlue=longPressTerm.options.theme?.selectionBackground==='#2563eb'&&longPressSelection===longPressLine;
       longPressMount.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerId:12,pointerType:'touch',clientX:115,clientY:10}));
       await new Promise(resolve=>setTimeout(resolve,0));
       copyText=originalCopyText;
-      const cursorCopyCompleted=cursorCopied===longPressLine&&!terminalSessions.get(longPressKey)?.cursorCopyState&&!document.querySelector('.terminal-cursor-copy-hint')&&!document.querySelector('.terminal-cursor-copy-cancel');
+      const cursorCopyCompleted=cursorCopied===longPressLine&&!window.termaTerminalState.terminalSessions.get(longPressKey)?.cursorCopyState&&!document.querySelector('.terminal-cursor-copy-hint')&&!document.querySelector('.terminal-cursor-copy-cancel');
       const clipboardDescriptor=Object.getOwnPropertyDescriptor(navigator,'clipboard');
       let clipboardFallback=false;
       try {
         Object.defineProperty(navigator,'clipboard',{value:undefined,configurable:true});
-        const fallbackPromise=pasteTerminalText(longPressKey);
+        const fallbackPromise=window.termaTerminalPage.pasteTerminalText(longPressKey);
         await new Promise(resolve=>setTimeout(resolve,0));
         const fallbackEditor=document.querySelector('#terminalPasteEditor');
         clipboardFallback=Boolean(fallbackEditor&&document.activeElement===fallbackEditor);
@@ -548,9 +562,9 @@ async function runMobileScenario(window) {
         cursorCopyCompleted,
         clipboardFallback
       };
-      terminalSessions.delete(longPressKey);
+      window.termaTerminalState.terminalSessions.delete(longPressKey);
       longPressMount.remove();
-      const mobilePastePromise=sendTerminalPasteText('mobile-terminal-paste-smoke','first command\\nsecond command');
+      const mobilePastePromise=window.termaTerminalClipboard.send('mobile-terminal-paste-smoke','first command\\nsecond command');
       await new Promise(resolve=>setTimeout(resolve,0));
       const mobilePasteModal=document.querySelector('#modal .terminal-paste-modal');
       const mobilePasteModalRect=mobilePasteModal?.getBoundingClientRect();
@@ -580,7 +594,7 @@ async function runMobileScenario(window) {
         compactToolbar:terminalMobileTitleRect.height<=48&&terminalMobileToolbarRect.height<=96&&terminalMobileActionsRect.top>=terminalMobileTitleRect.bottom-0.5,
         titleHeight:terminalMobileTitleRect.height,
         toolbarHeight:terminalMobileToolbarRect.height,
-        priorityOrder:[...terminalBackFixture.querySelectorAll('.terminal-action-reconnect,.terminal-action-keys,.terminal-action-forward-list,.terminal-action-forward,.terminal-action-sftp')].sort((left,right)=>Number(getComputedStyle(left).order)-Number(getComputedStyle(right).order)).map(button=>button.className.match(/terminal-action-(reconnect|keys|forward-list|forward|sftp)/)?.[1]),
+        priorityOrder:[...terminalBackFixture.querySelectorAll('.terminal-action-reconnect,.terminal-action-keys,.terminal-action-forward-list,.terminal-action-sftp')].sort((left,right)=>Number(getComputedStyle(left).order)-Number(getComputedStyle(right).order)).map(button=>button.className.match(/terminal-action-(reconnect|keys|forward-list|sftp)/)?.[1]),
         sftpTextFits:Boolean(terminalMobileSftpButton && Math.abs(terminalMobileSftpButton.getBoundingClientRect().width-30)<1 && terminalMobileSftpButton.querySelector('svg')?.getBoundingClientRect().width>0 && getComputedStyle(terminalMobileSftpButton.querySelector('span')).display==='none'),
         globalSettingsHidden:getComputedStyle(mobileGlobalSettingsButton).display==='none',
         returned:!document.querySelector('.left-pane')?.classList.contains('mobile-hide')&&!document.querySelector('#content')?.classList.contains('mobile-show')&&!document.body.classList.contains('mobile-terminal-active')

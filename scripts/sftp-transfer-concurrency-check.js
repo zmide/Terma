@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const {EventEmitter} = require("node:events");
 const {PassThrough, Readable} = require("node:stream");
-const {decodeRemotePosixCommand} = require("./remote-posix-test-helper");
+const {receiveRemotePosixCommand} = require("./remote-posix-test-helper");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-transfer-concurrency-"));
 process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
@@ -23,7 +23,6 @@ function writeLimits(download, upload) {
 const downloadablePayloads = new Map();
 
 function fakeRemoteChild(command) {
-  const decodedCommand = decodeRemotePosixCommand(command);
   const child = new EventEmitter();
   child.stdin = new PassThrough();
   child.stdout = new PassThrough();
@@ -37,22 +36,24 @@ function fakeRemoteChild(command) {
     child.emit("close", null, signal);
     return true;
   };
-  const fixture = [...downloadablePayloads.entries()].find(([remotePath]) => decodedCommand.includes(remotePath));
-  if (decodedCommand.includes("wc -c")) {
-    setImmediate(() => {
-      if (child.killed) return;
-      child.stdout.end(String(fixture ? fixture[1].length : 1024));
-      child.stderr.end();
-      child.emit("close", 0, null);
-    });
-  } else if (fixture && (decodedCommand.includes("cat --") || decodedCommand.includes("tail -c"))) {
-    setImmediate(() => {
-      if (child.killed) return;
-      child.stdout.end(fixture[1]);
-      child.stderr.end();
-      child.emit("close", 0, null);
-    });
-  }
+  receiveRemotePosixCommand(command, child.stdin, script => {
+    const fixture = [...downloadablePayloads.entries()].find(([remotePath]) => script.includes(remotePath));
+    if (script.includes("wc -c")) {
+      setImmediate(() => {
+        if (child.killed) return;
+        child.stdout.end(String(fixture ? fixture[1].length : 1024));
+        child.stderr.end();
+        child.emit("close", 0, null);
+      });
+    } else if (fixture && (script.includes("cat --") || script.includes("tail -c"))) {
+      setImmediate(() => {
+        if (child.killed) return;
+        child.stdout.end(fixture[1]);
+        child.stderr.end();
+        child.emit("close", 0, null);
+      });
+    }
+  });
   return child;
 }
 
@@ -70,7 +71,7 @@ async function waitUntil(predicate, message) {
     if (predicate()) return;
     await new Promise(resolve => setTimeout(resolve, 20));
   }
-  throw new Error(message);
+  throw new Error(typeof message === "function" ? message() : message);
 }
 
 async function main() {
@@ -97,6 +98,7 @@ async function main() {
   const jobs = require("../dist/sftp-jobs");
   const ids = [];
   const originalRename = fs.promises.rename;
+  const originalLink = fs.promises.link;
   const originalCreateReadStream = fs.createReadStream;
   try {
     const uploadIds = Array.from({length:4}, (_, index) => {
@@ -137,6 +139,7 @@ async function main() {
 
     writeLimits(1, 3);
     jobs.refreshSftpTransferQueues();
+    await waitUntil(() => jobs.refreshSftpTransferQueues().download.active === 0, "前一组下载任务取消后未释放并发名额");
     const autoSaveRemotePath = "/tmp/auto-save.bin";
     const autoSavePayload = Buffer.alloc(768 * 1024, 0x5a);
     downloadablePayloads.set(autoSaveRemotePath, autoSavePayload);
@@ -155,8 +158,14 @@ async function main() {
       }
       return originalRename(source, target);
     };
+    fs.promises.link = async (_source, target) => {
+      const failure = path.basename(String(target)) === "save-failure.bin";
+      const error = new Error(failure ? "save denied" : "cross-device move");
+      error.code = failure ? "EACCES" : "EXDEV";
+      throw error;
+    };
     fs.createReadStream = (source, options) => {
-      if (String(source).includes("auto-save.bin")) {
+      if (String(source).startsWith(autoSaveDirectory)) {
         const content = fs.readFileSync(source);
         let offset = 0;
         let pending = false;
@@ -187,10 +196,12 @@ async function main() {
     });
     ids.push(saving.id);
     const autoSaveTarget = path.join(autoSaveDirectory, "auto-save.bin");
+    let autoSaveDebug = "";
     await waitUntil(() => {
       const job = jobs.listSftpJobs().find(item => item.id === saving.id);
+      autoSaveDebug = JSON.stringify({job, queues:jobs.refreshSftpTransferQueues()});
       return job?.status === "running" && job.phase === "system-saving" && fs.existsSync(autoSaveTarget) && fs.statSync(autoSaveTarget).size > 0;
-    }, "跨磁盘自动保存未进入可取消的 system-saving 阶段");
+    }, () => `跨磁盘自动保存未进入可取消的 system-saving 阶段：${autoSaveDebug}`);
     const queuedBehindSave = jobs.startDownloadJob(99201, "/tmp/queued-behind-save.bin", {deliveryMode:"browser"});
     ids.push(queuedBehindSave.id);
     assert.equal(jobs.listSftpJobs().find(job => job.id === queuedBehindSave.id)?.status, "pending", "自动保存期间必须继续占用下载并发名额");
@@ -226,6 +237,7 @@ async function main() {
     sessionModule.exports.spawnSftpSessionCommand = originalSpawn;
     sessionModule.exports.deliverSftpPaths = originalDeliver;
     fs.promises.rename = originalRename;
+    fs.promises.link = originalLink;
     fs.createReadStream = originalCreateReadStream;
     try { db.closeDatabase(); } catch {}
     try { fs.rmSync(temporaryRoot, {recursive:true, force:true}); } catch {}

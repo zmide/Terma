@@ -90,10 +90,12 @@ for (const key of requiredTaskPhrases) {
   assert.doesNotMatch(enSftp.task_ui[key], /[\u3400-\u9fff]/, `English SFTP task phrase contains Chinese: ${key}`);
 }
 
-const frontend = read("public/app-sftp-tasks.js");
-assert.match(frontend, /function localizedSftpTaskMessage\(/);
-assert.match(frontend, /function localizedSftpJobIssue\(/);
-assert.match(frontend, /tasks:job_issues\./);
+const frontend = read("frontend/src/features/quick/quick-host.ts");
+const presentation = read("frontend/src/features/files/sftp/task-presentation.ts");
+assert.match(fs.readFileSync(path.join(root, 'frontend/src/entries/about-embed.ts'), 'utf8'), /message: taskWorkspace\.presentation\.message/);
+assert.match(frontend, /filesServices\.termaSftpTaskWorkspace\.presentation\.issue/);
+assert.match(presentation, /tasks:job_issues\./);
+assert.match(presentation, /port\.exists\(key,language\)/, "structured task issue codes must resolve against the current language");
 assert.doesNotMatch(frontend, /String\(job\.(?:error|warning|delivery_error)\)/, "SFTP task cards must not render raw fixed-language issue fields directly");
 
 const compiledHelper = path.join(root, "dist", "sftp-job-issues.js");

@@ -71,13 +71,11 @@ async function check(name, callback) {
 (async () => {
   await check("startup and six-hour schedule force update checks while settings keeps the cached check path", async () => {
     const runtimeSource = fs.readFileSync(path.join(projectRoot, "src", "server-runtime.ts"), "utf8");
-    const settingsSource = fs.readFileSync(path.join(projectRoot, "public", "app-settings-updates.js"), "utf8");
     assert.match(runtimeSource, /createUpdateScheduler\(\{[\s\S]*checker:updateChecker,[\s\S]*onResult\(result, context\)/);
     assert.match(runtimeSource, /silent:true/);
     assert.match(runtimeSource, /key:`update-status:\$\{marker\}`/);
     assert.match(runtimeSource, /updateScheduler\.start\(\)/);
     assert.match(runtimeSource, /updateScheduler\.stop\(\)/);
-    assert.match(settingsSource, /`\/api\/updates\/check\$\{force \? "\?force=1" : ""\}`/);
   });
 
   await check("update scheduler repeats every six hours and stops pending timers", async () => {
@@ -164,33 +162,112 @@ async function check(name, callback) {
   });
 
   await check("settings checks cancel stale requests and render unchanged release notes without blocking", async () => {
-    const settingsSource = fs.readFileSync(path.join(projectRoot, "public", "app-settings-updates.js"), "utf8");
-    const settingsCoreSource = fs.readFileSync(path.join(projectRoot, "public", "app-settings-core.js"), "utf8");
-    assert.match(settingsSource, /updateStatusAbortController\?\.abort\(\)/);
-    assert.match(settingsSource, /requestSequence !== updateStatusRefreshSequence/);
-    assert.match(settingsSource, /yieldBeforeUpdateRender\(\)/);
-    assert.match(settingsSource, /currentNotes\._updateNotesKey === nextNotesKey/);
-    assert.match(settingsSource, /nextNotes\._updateNotesKey = nextNotesKey/);
-    assert.match(settingsSource, /checking:options\.checking \?\? updateStatusChecking/);
-    assert.match(settingsSource, /renderDeferredUpdateReleaseNotes/);
-    assert.match(settingsSource, /await nextUpdateNotesFrame\(\)/);
-    assert.match(settingsSource, /updateStatusChecking = true/);
-    assert.match(settingsSource, /previousDownloadStatus/);
-    assert.match(settingsSource, /download_status:previousDownloadStatus/);
-    assert.match(settingsSource, /previousUpdateStatus\?\.latest_version/);
-    assert.match(settingsSource, /check_error:message/);
-    assert.match(settingsSource, /renderUpdateStatus\(\{deferNotes:true, checking:true\}\)/);
-    assert.match(settingsSource, /updateStatusChecking = false/);
-    assert.match(settingsSource, /renderUpdateStatus\(\{deferNotes:true, checking:false\}\)/);
-    assert.match(settingsCoreSource, /const refreshSequence = updateStatusRefreshSequence/);
-    assert.match(settingsCoreSource, /refreshSequence !== updateStatusRefreshSequence \|\| updateStatusChecking \|\| updateStatusAbortController/);
-    assert.match(settingsCoreSource, /renderUpdateStatus\(\{deferNotes:true\}\)/);
+    const {loadFrontendService} = require("./frontend-service-test-helper");
+    const {createSettingsRequestLifecycle} = loadFrontendService("frontend/src/features/settings/settings-request-lifecycle.ts", {AbortController});
+    const requests = createSettingsRequestLifecycle();
+    const first = requests.begin();
+    const sequence = requests.sequence;
+    const second = requests.begin();
+    assert.equal(first.signal.aborted, true);
+    assert.equal(first.finish(), false);
+    assert.ok(requests.sequence > sequence && requests.pending && second.current());
+    assert.equal(second.finish(), true);
+    assert.equal(requests.pending, false);
+    const dismissed = requests.begin();
+    requests.cancel();
+    assert.equal(dismissed.signal.aborted, true);
+    assert.equal(dismissed.finish(), false);
+
   });
 
-  await check("republished update confirmation interpolates the target version", async () => {
-    const settingsSource = fs.readFileSync(path.join(projectRoot, "public", "app-settings-updates.js"), "utf8");
-    assert.match(settingsSource, /const targetVersion = latestVersion \? `v\$\{latestVersion\}` : tr\("settings:updates\.current_unknown"\)/);
-    assert.match(settingsSource, /"settings:updates\.republished_confirm"[\s\S]{0,160}\{version:targetVersion\}/);
+  await check("frontend updates reject old responses and keep release notes when offline", async () => {
+    const {loadFrontendService} = require("./frontend-service-test-helper");
+    const {createSettingsRequestLifecycle} = loadFrontendService("frontend/src/features/settings/settings-request-lifecycle.ts");
+    const {createUpdateController} = loadFrontendService("frontend/src/features/settings/update-controller.ts");
+    const pending = [];
+    const notices = [];
+    let view;
+    const requests = createSettingsRequestLifecycle();
+    const updates = createUpdateController({
+      requests, language:() => "en-US", distribution:() => "standard", tr:key => key,
+      capturePane:() => action => action(), emit:snapshot => { view = snapshot; },
+      notify:(message,kind) => { notices.push([message,kind]); },
+      request:(path, options) => path.endsWith("/download/status") ? Promise.resolve(null) :
+        new Promise((resolve,reject) => { pending.push({path,options,resolve,reject}); }),
+      downloads:() => ({probeSnapshot:null, actionPending:false, startPolling() {}}),
+      notice:() => ({key:() => "1.2.4", paint() {}, sync() {}, clearCurrentRead() {}})
+    });
+    const cache = updates.loadCached();
+    const automatic = updates.refresh();
+    const manual = updates.refresh(true);
+    const [cached,old,check] = pending;
+    assert.equal(cached.path,"/api/updates/status");
+    assert.equal(old.path,"/api/updates/check");
+    assert.equal(old.options.signal.aborted,true);
+    assert.equal(check.path,"/api/updates/check?force=1");
+    assert.equal(view.checking,true);
+    const release = {latest_version:"1.2.4",update_available:true,notes:"Release notes",release_url:"https://user@github.com/zmide/Terma/releases/tag/v1.2.4"};
+    check.resolve(release);
+    await manual;
+    old.resolve({latest_version:"1.2.3"});
+    cached.resolve({latest_version:"1.2.3"});
+    await Promise.all([automatic,cache]);
+    assert.equal(view.checking,false);
+    assert.equal(view.releaseUrl,"");
+    assert.equal(view.update.latest_version,"1.2.4");
+    assert.deepEqual(notices,[["settings:updates.new_version_found","info"]]);
+    const offline = updates.refresh(true);
+    pending.at(-1).reject(new Error("请求超时"));
+    await offline;
+    assert.equal(view.update.notes,release.notes);
+    assert.equal(view.checkError,"settings:updates.check_timeout");
+    const ignore = updates.setIgnored(true);
+    const saving = pending.at(-1);
+    assert.equal(view.ignoreSaving,true);
+    assert.equal(saving.path,"/api/updates/ignore?enabled=1");
+    assert.equal(saving.options.method,"POST");
+    assert.equal(await updates.setIgnored(true),false);
+    await updates.loadCached();
+    assert.equal(pending.at(-1),saving);
+    saving.resolve({...release,update_ignored:true});
+    assert.equal(await ignore,true);
+    assert.equal(view.update.update_ignored,true);
+    assert.equal(view.ignoreSaving,false);
+  });
+
+  await check("update notice preserves old session read state and distinguishes republished releases", () => {
+    const {loadFrontendService} = require("./frontend-service-test-helper");
+    const cache = new Map([[path.resolve("frontend/src/features/workspace/workspace-shell-controller.ts"), {workspaceShell: {refresh() {}}}]]);
+    const {createUpdateNotice,updateReadKey} = loadFrontendService("frontend/src/features/settings/update-notice.ts", {}, cache);
+    const legacyKey = "tunneldeskUpdateReadVersion";
+    const values = new Map([[legacyKey,"1.2.3"]]);
+    const storage = {getItem:key => values.get(key),setItem:(key,value) => values.set(key,value),removeItem:key => values.delete(key)};
+    let update = {latest_version:"v1.2.3",update_available:true};
+    let reading = false;
+    let painted;
+    const notice = createUpdateNotice({update:() => update,readingAbout:() => reading,storage:() => storage,paint:value => { painted = value; }});
+    assert.equal(values.get(updateReadKey),"1.2.3");
+    assert.equal(notice.visible(),false);
+    update = {...update,republished_available:true,release_revision:2};
+    notice.sync();
+    assert.equal(painted,true);
+    assert.equal(values.get(updateReadKey),"1.2.3");
+    reading = true;
+    notice.sync();
+    assert.equal(values.get(updateReadKey),"1.2.3:r2");
+    assert.equal(painted,false);
+    reading = false;
+    notice.clearCurrentRead();
+    assert.equal(values.has(legacyKey),false);
+    update = {...update,update_ignored:true};
+    assert.equal(notice.visible(),false);
+    update = {...update,update_ignored:false};
+    assert.equal(notice.visible(),true);
+    const blocked = createUpdateNotice({update:() => update,readingAbout:() => false,storage() { throw new Error("Storage denied"); },paint() {}});
+    blocked.markRead();
+    assert.equal(blocked.visible(),false);
+    blocked.clearCurrentRead();
+    assert.equal(blocked.visible(),true);
   });
 
   await check("update cache disk writes stay asynchronous during checks", async () => {

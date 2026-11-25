@@ -5,10 +5,15 @@ const vm = require("node:vm");
 const { readFrontendDomain } = require("./frontend-source");
 
 const root = path.resolve(__dirname, "..");
-const imagePasteSource = fs.readFileSync(path.join(root, "public", "app-terminal-image-paste.js"), "utf8");
-const terminalSettingsSource = fs.readFileSync(path.join(root, "public", "app-terminal-settings.js"), "utf8");
+const imagePasteSource=fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-image-workspace.ts'),'utf8');
+const ts = require("typescript-legacy");
+const imageServiceFilename = path.join(root, "frontend/src/features/terminal/terminal-image-paste-service.ts");
+const imageServiceSource = ts.transpileModule(fs.readFileSync(imageServiceFilename, "utf8"), {
+  compilerOptions:{module:ts.ModuleKind.CommonJS, target:ts.ScriptTarget.ES2022}
+}).outputText;
+const terminalInputSource = fs.readFileSync(path.join(root, "frontend/src/features/terminal/terminal-input-workspace.ts"), "utf8");
 const terminalSource = readFrontendDomain(root, "terminal");
-const apiSource = fs.readFileSync(path.join(root, "public", "app-api.js"), "utf8");
+const apiSource = fs.readFileSync(path.join(root, "frontend/src/shared/api/workspace-request.ts"), "utf8");
 const desktopSource = fs.readFileSync(path.join(root, "desktop", "main.js"), "utf8");
 const preloadSource = fs.readFileSync(path.join(root, "desktop", "preload.js"), "utf8");
 const uploadSource = fs.readFileSync(path.join(root, "src", "sftp-upload-jobs.ts"), "utf8");
@@ -17,7 +22,6 @@ const terminalRouteSource = fs.readFileSync(path.join(root, "src", "routes", "te
 const clipboardServiceSource = fs.readFileSync(path.join(root, "src", "terminal-clipboard.ts"), "utf8");
 const sshSource = fs.readFileSync(path.join(root, "src", "ssh.ts"), "utf8");
 const ssh2Source = fs.readFileSync(path.join(root, "src", "ssh2-client.ts"), "utf8");
-const transferSource = fs.readFileSync(path.join(root, "public", "app-sftp-transfer.js"), "utf8");
 
 assert.match(desktopSource, /ipcMain\.handle\("terma:clipboard-read-image"/);
 assert.match(desktopSource, /assertDesktopClipboardSender\(event\)/);
@@ -25,16 +29,22 @@ assert.match(desktopSource, /DESKTOP_CLIPBOARD_IMAGE_MAX_BYTES = 25 \* 1024 \* 1
 assert.match(desktopSource, /DESKTOP_CLIPBOARD_IMAGE_MAX_PIXELS = 64 \* 1024 \* 1024/);
 assert.match(preloadSource, /readClipboardImage\(\)/);
 assert.match(preloadSource, /ipcRenderer\.invoke\("terma:clipboard-read-image"\)/);
-assert.match(terminalSettingsSource, /terminalClipboardImageFromPasteEvent\(event\)/);
-assert.match(terminalSettingsSource, /handleTerminalClipboardImagePaste\(key, connectionId, imageFile\)/);
-assert.match(terminalSource, /handleTerminalClipboardImagePaste\(key\)/);
-assert.match(terminalSource, /session\.effectiveX11Mode = effectiveX11Mode/);
-assert.match(terminalSource, /interceptTerminalClipboardCtrlVInput\(key, c\.id, preparedData\)/);
+assert.match(terminalInputSource, /image: event => terminalServices\.termaTerminalImagePaste\?\.imageFromPasteEvent\(event\)/);
+assert.match(terminalInputSource, /typeof .*readClipboardImage === 'function'/);
+assert.doesNotMatch(imagePasteSource, /function terminalClipboard(?:ImageFromPasteEvent|PasteMayContainImage)/);
+assert.match(terminalInputSource, /terminalServices\.termaTerminalImagePaste\?\.handleImage\(key, id, file\)/);
+assert.match(fs.readFileSync(path.join(root, "frontend/src/features/terminal/terminal-interaction-service.ts"), "utf8"),
+  /port\.pasteImage\(key, connectionId, file\)/);
+assert.match(terminalInputSource, /terminalServices\.termaTerminalImagePaste\?\.handleImage\(key\)/);
+assert.match(fs.readFileSync(path.join(root, "frontend/src/features/terminal/terminal-connection-service.ts"), "utf8"), /session\.effectiveX11Mode = startup\.x11Mode/);
+assert.match(fs.readFileSync(path.join(root, "frontend/src/features/terminal/terminal-transport-service.ts"), "utf8"), /port\.interceptPaste\(key, connection\.id, prepared\)/);
+assert.ok(fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-transport-workspace.ts'),'utf8').includes('interceptPaste:(key,id,data)=>terminalServices.termaTerminalImagePaste!.interceptCtrlV(key,id,data)'));
 assert.match(apiSource, /terminal-clipboard/);
 assert.match(routeSource, /privateMode:data\.private === true/);
 assert.match(uploadSource, /private_mode:options\.privateMode === true/);
 assert.match(uploadSource, /job\.private_mode \? "umask 077; " : ""/);
-assert.match(transferSource, /private:options\.private === true/);
+const uploadServiceSource = fs.readFileSync(path.join(root, 'frontend/src/features/files/sftp/sftp-upload-service.ts'), 'utf8');
+assert.match(uploadServiceSource, /private: options\.private === true/);
 assert.match(terminalRouteSource, /contentType !== "image\/png"/);
 assert.match(terminalRouteSource, /\["off", "trusted", "untrusted"\]\.includes\(requestedX11Mode\)/);
 assert.match(terminalRouteSource, /isDesktopCapabilityRequest\(request, "xserver"\)/);
@@ -88,6 +98,7 @@ let focusCount = 0;
 let clipboardPayload = {ok:true, mime_type:"image/png", byte_length:pngBytes.byteLength, data:pngBytes};
 const connection = {id:7, name:"Linux", x11_mode:"trusted"};
 const context = vm.createContext({
+  exports:{},
   ArrayBuffer,
   Date,
   File:MockFile,
@@ -105,7 +116,6 @@ const context = vm.createContext({
   joinRemotePath:(base, name) => `${String(base).replace(/\/$/, "")}/${name}`,
   notify:(message, type) => notifications.push({message, type}),
   sendTerminalData:(_key, value) => { terminalData.push(value); return true; },
-  sendTerminalPasteText:async (_key, value) => { pasted.push(value); return true; },
   terminalSessions:new Map([["terminal-7", {
     connected:true,
     connection,
@@ -115,13 +125,31 @@ const context = vm.createContext({
   }]]),
   tr:(_key, options={}) => options.defaultValue || _key,
   uploadSftpFilesToDirectory:async (files, connectionId, directory, options) => uploads.push({files, connectionId, directory, options}),
-  window:{termaDesktop:{readClipboardImage:async () => clipboardPayload}}
+  window:{termaTerminalDirectory:{initialize:(...args)=>context.initializeTerminalDirectory(...args)},termaTerminalClipboard:{send:async (_key, value) => { pasted.push(value); return true; }},termaDesktop:{readClipboardImage:async () => clipboardPayload},termaSftpTransfers:{controller:{submit:(...args)=>context.uploadSftpFilesToDirectory(...args)}},termaSftpDirectoryWorkspace:{path:{joinRemotePath:(...args)=>context.joinRemotePath(...args)}}}
 });
-vm.runInContext(imagePasteSource, context, {filename:"public/app-terminal-image-paste.js"});
+context.require = name => {
+  assert.equal(name, '@/features/terminal/installed-services');
+  return {terminalServices:context.window};
+};
+vm.runInContext(imageServiceSource, context, {filename:imageServiceFilename});
+
+const {loadFrontendService}=require('./frontend-service-test-helper');
+const imageCache=new Map([
+ [path.resolve("frontend/src/features/terminal/terminal-input-actions.ts"),{sendTerminalData:(...args)=>context.sendTerminalData(...args)}],
+ [path.resolve("frontend/src/features/terminal/terminal-page.ts"),{focusTerminalSession:(...args)=>context.focusTerminalSession(...args)}],
+ [path.resolve('frontend/src/features/terminal/terminal-session-state.ts'),{terminalSessions:context.terminalSessions}],
+ [path.resolve('frontend/src/features/terminal/terminal-directory-workspace.ts'),{terminalDirectory:context.window.termaTerminalDirectory}],
+ [path.resolve('frontend/src/features/terminal/terminal-image-paste-service.ts'),context.exports]
+]);
+context.window.tr=context.tr;
+const imageGlobals={...context};delete imageGlobals.exports;delete imageGlobals.require;
+for(const name of ['api','currentConnection','sendTerminalData','notify','focusTerminalSession'])imageGlobals[name]=(...args)=>context[name](...args);
+const {createTerminalImagePastePort}=loadFrontendService('frontend/src/features/terminal/terminal-image-workspace.ts',imageGlobals,imageCache);
+context.exports.installTerminalImagePasteService(createTerminalImagePastePort);
 
 async function checkFrontendPaths() {
   directResults.push({ready:true, available:true, transport:"x11", tool:"xclip"});
-  const intercepted = vm.runInContext('interceptTerminalClipboardCtrlVInput("terminal-7", 7, "\\x16")', context);
+  const intercepted = vm.runInContext('window.termaTerminalImagePaste.interceptCtrlV("terminal-7", 7, "\\x16")', context);
   assert.equal(intercepted, true);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(apiCalls.length, 1);
@@ -135,7 +163,7 @@ async function checkFrontendPaths() {
   assert.match(notifications.at(-1).message, /图形剪贴板/);
 
   directResults.push({ready:false, available:false, reason:"xclip"});
-  const fallbackPaste = await vm.runInContext('handleTerminalClipboardImagePaste("terminal-7", 7)', context);
+  const fallbackPaste = await vm.runInContext('window.termaTerminalImagePaste.handleImage("terminal-7", 7)', context);
   assert.equal(fallbackPaste, true);
   assert.equal(apiCalls.length, 2);
   assert.equal(uploads.length, 1);
@@ -154,24 +182,86 @@ async function checkFrontendPaths() {
       types:["Files", "image/jpeg"]
     }
   };
-  assert.equal(vm.runInContext("terminalClipboardImageFromPasteEvent(pasteEvent).type", context), "image/jpeg");
-  assert.equal(vm.runInContext("terminalClipboardPasteMayContainImage(pasteEvent)", context), true);
+  assert.equal(vm.runInContext("window.termaTerminalImagePaste.imageFromPasteEvent(pasteEvent).type", context), "image/jpeg");
+  assert.equal(vm.runInContext("window.termaTerminalImagePaste.mayContainImage(pasteEvent, null, false)", context), true);
+  assert.equal(vm.runInContext("window.termaTerminalImagePaste.mayContainImage({clipboardData:{types:['text/plain']}}, null, true)", context), true);
+  assert.equal(vm.runInContext("window.termaTerminalImagePaste.mayContainImage({clipboardData:{types:['text/plain']}}, null, false)", context), false);
+  assert.equal(vm.runInContext("window.termaTerminalImagePaste.imageFromPasteEvent({clipboardData:{items:[{kind:'string',type:'image/png',getAsFile:()=>null}]}})", context), null);
 
   context.window.termaDesktop.readClipboardImage = async () => ({ok:false, reason:"empty"});
-  const emptyResult = await vm.runInContext('handleTerminalClipboardImagePaste("terminal-7", 7)', context);
+  const emptyResult = await vm.runInContext('window.termaTerminalImagePaste.handleImage("terminal-7", 7)', context);
   assert.equal(emptyResult, false);
   assert.equal(uploads.length, 1);
   assert.equal(notifications.at(-1).type, "info");
-  assert.equal(vm.runInContext('interceptTerminalClipboardCtrlVInput("terminal-7", 7, "\\x16")', context), true);
+  assert.equal(vm.runInContext('window.termaTerminalImagePaste.interceptCtrlV("terminal-7", 7, "\\x16")', context), true);
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(terminalData, ["\x16", "\x16"]);
 
   context.largeImage = {size:25 * 1024 * 1024 + 1, type:"image/png"};
-  const largeResult = await vm.runInContext('handleTerminalClipboardImagePaste("terminal-7", 7, largeImage)', context);
+  const largeResult = await vm.runInContext('window.termaTerminalImagePaste.handleImage("terminal-7", 7, largeImage)', context);
   assert.equal(largeResult, false);
   assert.equal(uploads.length, 1);
   assert.match(notifications.at(-1).message, /25 MB/);
   assert.equal(focusCount, 4);
+}
+
+async function checkSessionIsolation() {
+  const original = {
+    api:context.api, upload:context.uploadSftpFilesToDirectory,
+    directory:context.initializeTerminalDirectory, reader:context.window.termaDesktop.readClipboardImage
+  };
+  const cases = [
+    {phase:"clipboard", invalidate:session => context.terminalSessions.delete("terminal-7")},
+    {phase:"clipboard", invalidate:session => context.terminalSessions.set("terminal-7", {...session})},
+    {phase:"x11", invalidate:session => { session.connectionAttempt += 1; }},
+    {phase:"directory", invalidate:session => { session.connected = false; }},
+    {phase:"upload", invalidate:session => { session.socket = {}; }},
+    {phase:"ctrl-v", invalidate:session => context.terminalSessions.set("terminal-7", {...session})}
+  ];
+  try {
+    for (const test of cases) {
+      const session = {
+        connected:true, connection, connectionAttempt:1, socket:{},
+        currentDirectoryKnown:test.phase !== "directory", currentDirectory:"/home/demo",
+        effectiveX11Mode:test.phase === "x11" ? "trusted" : "off"
+      };
+      context.terminalSessions.set("terminal-7", session);
+      let resolveWait;
+      let entered = false;
+      const waiting = new Promise(resolve => { resolveWait = resolve; });
+      const waitAtBoundary = async () => { entered = true; return waiting; };
+      context.api = test.phase === "x11" ? waitAtBoundary : original.api;
+      context.uploadSftpFilesToDirectory = test.phase === "upload" ? waitAtBoundary : original.upload;
+      context.initializeTerminalDirectory = test.phase === "directory" ? waitAtBoundary : original.directory;
+      context.window.termaDesktop.readClipboardImage = ["clipboard", "ctrl-v"].includes(test.phase)
+        ? waitAtBoundary : async () => clipboardPayload;
+      const before = {data:terminalData.length, paste:pasted.length, notices:notifications.length, focus:focusCount};
+      const call = test.phase === "ctrl-v" ? "window.termaTerminalImagePaste.handleCtrlV" : "window.termaTerminalImagePaste.handleImage";
+      const pending = vm.runInContext(`${call}("terminal-7", 7)`, context);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(entered, true, `${test.phase}: must reach the asynchronous boundary`);
+      test.invalidate(session);
+      resolveWait(test.phase === "x11" ? {ready:true} : test.phase === "directory" ? "/home/demo" : clipboardPayload);
+      assert.equal(await pending, false, `${test.phase}: stale operation must be cancelled`);
+      assert.deepEqual({data:terminalData.length, paste:pasted.length, notices:notifications.length, focus:focusCount}, before,
+        `${test.phase}: must not send input, change focus or notify a replacement session`);
+    }
+    context.terminalSessions.set("terminal-7", {connected:true, connection, currentDirectoryKnown:true, currentDirectory:"/tmp", effectiveX11Mode:"off"});
+    context.window.termaDesktop.readClipboardImage = async () => clipboardPayload;
+    context.uploadSftpFilesToDirectory = original.upload;
+    const originalPaste = context.window.termaTerminalClipboard.send;
+    try {
+      context.window.termaTerminalClipboard.send = async () => false;
+      const before = notifications.length;
+      assert.equal(await vm.runInContext('window.termaTerminalImagePaste.handleImage("terminal-7", 7)', context), false);
+      assert.equal(notifications.length, before, "a rejected terminal paste must not report success");
+    } finally { context.window.termaTerminalClipboard.send = originalPaste; }
+  } finally {
+    context.api = original.api;
+    context.uploadSftpFilesToDirectory = original.upload;
+    context.initializeTerminalDirectory = original.directory;
+    context.window.termaDesktop.readClipboardImage = original.reader;
+  }
 }
 
 async function checkBackendPaths() {
@@ -271,8 +361,9 @@ async function checkBackendPaths() {
 
 (async () => {
   await checkFrontendPaths();
+  await checkSessionIsolation();
   await checkBackendPaths();
-  console.log("终端剪贴板图片检查通过：X11 直写、Ctrl+V、自动回退、PNG/权限/输入边界和后台清理");
+  console.log("终端剪贴板图片检查通过：TS 服务、X11/Ctrl+V/私有上传回退、六类异步会话隔离、PNG/权限/输入边界和后台清理");
 })().catch(error => {
   console.error(error);
   process.exitCode = 1;

@@ -61,8 +61,23 @@ jobs:
 
   ui-smoke:
     name: Ubuntu / Electron UI smoke
+    if: always()
+    needs: ui-scenarios
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    steps:
+      - name: Require every UI group
+        env:
+          UI_RESULT: ${{ needs.ui-scenarios.result }}
+        run: test "$UI_RESULT" = success
+
+  ui-scenarios:
+    name: UI / ${{ matrix.group }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [base, workspace, terminal, files, operations, remote]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -83,8 +98,10 @@ jobs:
 
       - name: Run Electron UI smoke checks
         env:
+          TERMA_UI_GROUP: ${{ matrix.group }}
           TERMA_UI_NO_SANDBOX: "1"
           TERMA_UI_SCREENSHOT: "1"
+          TERMA_UI_SMOKE_TIMEOUT_MS: "900000"
           TERMA_UI_VISUAL_DIR: data/ui-visual-current
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x1024x24" npm run ui:smoke
 
@@ -92,11 +109,12 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ui-smoke-diagnostics-${{ github.run_attempt }}
+          name: ui-smoke-diagnostics-${{ matrix.group }}-${{ github.run_attempt }}
           if-no-files-found: ignore
+          retention-days: 3
           path: |
-            data/ui-smoke-*.png
-            data/ui-visual-current/*.png
+            data/**/*.png
+            data/**/*report.json
 
   windows-source:
     name: Windows / Node.js 22

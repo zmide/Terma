@@ -3,12 +3,15 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const vm = require("node:vm");
 const { readFrontendDomain } = require("./frontend-source");
+const { loadFrontendService } = require('./frontend-service-test-helper');
 
 const root = path.resolve(__dirname, "..");
-const localUiSource = fs.readFileSync(path.join(root, "public", "app-local-files.js"), "utf8");
-const sftpUiSource = readFrontendDomain(root, "sftp");
+const fileActionsSource=fs.readFileSync(path.join(root,'frontend/src/features/files/file-page-actions.ts'),'utf8');
+const localViewSource=fs.readFileSync(path.join(root,'frontend/src/features/files/LocalFilesView.ts'),'utf8');
+const sftpUiSource = fs.readFileSync(path.join(root,"frontend/src/entries/about-embed.ts"),"utf8");
+const workspaceUiSource = fs.readFileSync(path.join(root, "frontend/src/shared/static-action-registry.ts"), "utf8");
+const sftpVueViewSource = fs.readFileSync(path.join(root, "frontend", "src", "features", "files", "sftp", "SftpView.ts"), "utf8");
 const terminalUiSource = readFrontendDomain(root, "terminal");
 const css = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 
@@ -50,13 +53,14 @@ function createLocalFilesUiModel() {
     scrollTop:0,
     clientHeight:120,
     innerHTML:"",
+    getBoundingClientRect:()=>({top:0}),querySelectorAll:()=>[],
     addEventListener() {}
   };
   const view = {
     dataset:{workspaceTabKey:""},
     innerHTML:"",
     querySelector(selector) {
-      return selector === ".local-files-shell" && this.innerHTML ? {} : null;
+      return selector === ".local-files-shell" && this.innerHTML ? {classList:createClassList(['terma-local-files-root'])} : null;
     }
   };
   const rootElement = {
@@ -91,7 +95,8 @@ function createLocalFilesUiModel() {
     Array,
     URLSearchParams,
     CSS:{escape:value => String(value)},
-    window:{termaDesktop:true},
+    window:{termaDesktop:true,termaRuntimeSettingsModel:{snapshot:{}}},
+    webFilesRuntime:()=>null,
     document:{querySelector:() => null, querySelectorAll:() => [], getElementById:() => null},
     navigator:{platform:"Win32"},
     tabs:[{key:"sftp-main", kind:"sftp", id:7, title:"主机 A"}],
@@ -103,16 +108,18 @@ function createLocalFilesUiModel() {
     closeTabsByKey() {},
     workspaceElementForTab:() => rootElement,
     workspaceTabByKey:key => sandbox.tabs.find(tab => tab.key === key) || null,
+    registerTermaAction() {},
     $:id => id === "view-local-files" ? view : null,
     icon:name => `<i data-icon="${name}"></i>`,
     esc:value => String(value ?? ""),
     escAttr:value => String(value ?? ""),
-    tr:(key, options={}) => options.defaultValue || key,
+    tr:(key, options={}) => options.defaultValue || ({...require('../public/locales/zh-CN/common.json').auto}[key.split(':auto.')[1]]) || (()=>{const [ns,parts]=key.split(':');let value=require('../public/locales/zh-CN/'+ns+'.json');for(const part of parts.split('.'))value=value?.[part];return typeof value==='string'?value.replace(/{{(\w+)}}/g,(_,name)=>String(options[name]??'')):key;})(),
     isMobileLayout:() => false,
     notify(message, type) { notifications.push({message, type}); },
     showActionMenu(_event, actions) { capturedMenu = actions; },
     stateView:() => "",
     sftpIcon:() => "",
+    sftpDragService:()=>({feedbackView:{showPreview(){},movePreview(){},removePreview(){}}, source:{active:()=>null}, browser:{finishPayload(){}}, feedback:{activity(){}}}),
     formatBytes:value => `${value} B`,
     formatSftpTime:value => String(value),
     requestAnimationFrame(callback) { callback(); return 1; },
@@ -122,8 +129,7 @@ function createLocalFilesUiModel() {
     inputModal:async () => "",
     confirmModal:async () => false,
     chooseModal:async () => localReceiveChoice,
-    trackSftpMutationJob(job) { trackedJobs.push(job); },
-    refreshSftpJobs() {},
+    sftpTaskCompletionService:() => ({track(job) { trackedJobs.push(job); }}),
     startSftpJobsTimer() {},
     sftpConflictChoice:async (...args) => {
       conflictCalls.push(args);
@@ -133,38 +139,90 @@ function createLocalFilesUiModel() {
     finishSftpDragPayload() {},
     api:async (url, options = {}) => {
       apiCalls.push({url, options});
+      if(url.startsWith('/api/local-files?')){const params=new URLSearchParams(url.split('?')[1]);return {path:params.get('path')||'C:\\work',kind:'directory',entries:checks.map(input=>({path:input.value,name:input.dataset.name,type:'file',size:Number(input.dataset.size)})),page:Number(params.get('page')||1),page_size:Number(params.get('page_size')||50),total:checks.length,total_pages:1};}
       return {jobs:[{id:`job-${apiCalls.length}`}], count:2};
     }
   };
   sandbox.globalThis = sandbox;
+  sandbox.workspaceTabByKey = key => sandbox.tabs.find(item => item.key === key);
+  sandbox.window.addEventListener=()=>{};
+  sandbox.window.termaSftpMenus={show(_event,actions){capturedMenu=typeof actions==='function'?actions():actions;}};
+  Object.assign(sandbox,{workspaceFindPaneForTab:()=>null,workspaceFindPane:()=>null,workspacePaneElement:()=>null});
+  const transfer = loadFrontendService('frontend/src/features/files/workspace-transfer.ts').createWorkspaceTransfer({
+    mobile: sandbox.isMobileLayout,
+    sourcePane: sandbox.workspaceFindPaneForTab,
+    leaves: () => [],
+    tr: sandbox.tr
+  });
+  sandbox.window.termaWorkspaceTransfer = {current: () => transfer};
+  const fileScroll=loadFrontendService('frontend/src/features/files/file-scroll.ts');
+  sandbox.window.termaLocalFileViews={
+    update(_key,options){const state=options.state;checks.forEach(input=>input.checked=state.selected.has(input.value));rows.forEach(row=>{row.classList.toggle('is-selected',state.selected.has(row.dataset.path));row.classList.toggle('active',state.activePath===row.dataset.path);});const selected=checks.filter(input=>input.checked&&!input.disabled);selectionBar.hidden=selected.length<2;selectionCount.textContent=String(selected.length);singleActionButtons.forEach(button=>button.disabled=selected.length!==1);selectAll.checked=selected.length===checks.length;selectAll.indeterminate=selected.length>0&&selected.length<checks.length;fileScroll.fileScrollCue(list);return true;},
+    mount(){throw new Error('A reused Vue shell must not be mounted again');},pathEditor(){}
+  };
+  const conflictPrompts=loadFrontendService('frontend/src/features/files/file-conflict-prompts.ts');
+  sandbox.fileConflictPromptsService=()=>conflictPrompts.createFileConflictPrompts({text:sandbox.tr,choose:sandbox.chooseModal});
+  sandbox.window.termaSftpDialogs={
+    input:async options=>{const value=await sandbox.inputModal(options.tr(options.titleKey),options.tr(options.labelKey),options.value);if(value)await options.apply?.(value);return value;},
+    confirm:async options=>sandbox.confirmModal(options.content().message)
+  };
 
-  const exposed = `${localUiSource}\n;globalThis.__localFilesUiModel = {
-  localFilesRuntime,
-    openLocalFiles,
-    updateLocalFilesSelection,
-    applyLocalFileRangeSelection,
-    selectLocalFileEntry,
-    createLocalEntryFromPrompt,
-    clearLocalFilesSelection,
-    showLocalFileEntryMenu,
-    showLocalFilesDirectoryMenu,
-    beginLocalFileDrag,
-    finishLocalFileDrag,
-    readLocalFileDragPayload,
-    uploadLocalFilesToSftp,
-    localFilesReceiveConflictChoice,
-    copySftpDraggedItemsToLocalTab,
-    captureLocalFilesScrollPosition,
-    captureLocalFilesScrollAnchor,
-    restoreLocalFilesScrollPosition,
-    setLocalFilesPageSize,
-    renderLocalFiles,
-    syncLocalFilesScrollCue
-  };`;
-  vm.runInNewContext(exposed, sandbox, {filename:"public/app-local-files.js", timeout:5000});
+  const {createFilePageRuntime}=loadFrontendService('frontend/src/features/files/file-page-runtime.ts', {document:sandbox.document});
+  sandbox.window.termaLocalFileRuntime=createFilePageRuntime({
+    workspace: {
+      native: () => Boolean(sandbox.window.termaDesktop), mobile: sandbox.isMobileLayout,
+      active: () => sandbox.activeTabKey, tab: sandbox.workspaceTabByKey, view: () => view,
+      tabs: () => sandbox.tabs, root: sandbox.workspaceElementForTab, persist: () => {},
+      workspace: (key,title,subtitle,update,options) => sandbox.setWorkspace(title,subtitle,'local-files',key,update,true,options)
+    },
+    views: sandbox.window.termaLocalFileViews,
+    list: (_source, query, signal) => sandbox.api('/api/local-files?'+query, {signal}),
+    text: (key, values) => sandbox.tr(key, {...values, defaultValue:key}),
+    bytes: sandbox.formatBytes, time: sandbox.formatSftpTime, fnos: () => false,
+    releaseActions() {}
+  });
+  sandbox.fileScrollCue=fileScroll.fileScrollCue;
+
+  const runtime = sandbox.window.termaLocalFileRuntime;
+  const { files, pages } = runtime;
+  const globals = {document:sandbox.document,window:sandbox.window,Element:class Element{}};
+  const {createFileWorkspaceTransfers}=loadFrontendService('frontend/src/features/files/file-workspace-transfers.ts',globals);
+  const transfers=createFileWorkspaceTransfers(runtime,{
+    tab:sandbox.workspaceTabByKey,drag:sandbox.sftpDragService,track:job=>trackedJobs.push(job),
+    directoryError:error=>{throw error;},dropError:message=>sandbox.notify(message,'error'),
+    transfer:{
+      target(target){return {id:Number(target.id),directory:sandbox.sftpTabRuntimes.get(target.key)?.state.path||target.path||'.',valid:()=>true};},
+      request:(url,body,signal)=>sandbox.api(url,{method:'POST',body:JSON.stringify(body),signal}),
+      conflict:(id,path,entries,title)=>sandbox.sftpConflictChoice(id,path,entries,title?{title}:{}),
+      choose:(items,source)=>sandbox.fileConflictPromptsService().receive(items,source==='native'?'native':'web'),
+      refreshJobs:()=>{},startJobs:sandbox.startSftpJobsTimer,text:sandbox.tr,notify:sandbox.notify
+    }
+  });
+  const {createFileWorkspaceActions}=loadFrontendService('frontend/src/features/files/file-workspace-actions.ts',globals);
+  const actions=createFileWorkspaceActions(runtime,transfers,{
+    request:(...args)=>sandbox.api(...args),text:sandbox.tr,notify:sandbox.notify,desktop:()=>Boolean(sandbox.window.termaDesktop),windows:()=>true,
+    dialogs:sandbox.window.termaSftpDialogs,editPath:()=>{},prompt:(...args)=>sandbox.inputModal(...args),copy:sandbox.copyText,
+    menus:{
+      active:()=>sandbox.workspaceTabByKey(sandbox.activeTabKey),connections:()=>sandbox.connections,
+      peers:(key,entries)=>sandbox.window.termaWorkspaceTransfer.current().localActions(key,{sourceTabKey:key,paths:entries.map(entry=>entry.path),entries}),
+      show:sandbox.window.termaSftpMenus.show
+    }
+  });
+  const selectLocalFileEntry=(event,path,key)=>files.select(key,path,event);
+  const model={
+    localFilesRuntime:key=>files.state(key), openLocalFiles:pages.open,
+    applyLocalFileRangeSelection:selectLocalFileEntry,selectLocalFileEntry,
+    createLocalEntryFromPrompt:actions.mutations.run,clearLocalFilesSelection:key=>files.clear(key),
+    showLocalFileEntryMenu:(event,path,_type,key)=>actions.menus.entry(event,key,path),showLocalFilesDirectoryMenu:actions.menus.directory,
+    beginLocalFileDrag:(event,path,key)=>transfers.drag.begin(event,path,key,event.currentTarget),
+    finishLocalFileDrag:transfers.drag.finish,readLocalFileDragPayload:transfers.drag.read,
+    uploadLocalFilesToSftp:transfers.upload,copySftpDraggedItemsToLocalTab:transfers.receive,
+    setLocalFilesPageSize:(value,key)=>files.pageSize(key,value,runtime.scrollAnchor(key)),
+    renderLocalFiles:runtime.update,syncLocalFilesScrollCue:fileScroll.fileScrollCue
+  };
 
   return {
-    model:sandbox.__localFilesUiModel,
+    model,
     sandbox,
     checks,
     rows,
@@ -196,7 +254,7 @@ function menuEvent({blank = false} = {}) {
 }
 
 async function main() {
-  assert.match(sftpUiSource, /function selectSftpEntry[\s\S]*?if \(!event\?\.preserveSelection\) applySftpRangeSelection/, "SFTP 单击条目必须同步复选框，右键已选项则保留现有多选");
+  assert.match(sftpVueViewSource, /onClick: \(event: MouseEvent\) => selectEntry\(entry, event, selection\)/, "SFTP 行选择由当前标签的 Vue 视图直接处理");
   const state = createLocalFilesUiModel();
   const {model, sandbox, checks, rows, selectionBar, selectionCount, singleActionButtons, selectAll, list, view, workspaceCalls} = state;
   const runtime = model.localFilesRuntime("local-main");
@@ -227,7 +285,7 @@ async function main() {
 
   checks[0].checked = true;
   runtime.anchorPath = checks[0].value;
-  model.updateLocalFilesSelection("local-main");
+  runtime.selected=new Set(checks.filter(input=>input.checked).map(input=>input.value));model.renderLocalFiles("local-main");
   assert.ok(singleActionButtons.every(button => !button.disabled), "点击复选框单选时打开/重命名/权限按钮必须可用");
   model.selectLocalFileEntry({shiftKey:false, ctrlKey:true, metaKey:false, target:{closest:() => null}}, checks[2].value, "local-main");
   assert.deepEqual(checks.map(input => input.checked), [true, false, true], "Ctrl/Cmd 点击文件名必须增量多选");
@@ -249,21 +307,21 @@ async function main() {
   checks[1].checked = false;
   checks[2].checked = true;
   runtime.anchorPath = checks[2].value;
-  model.updateLocalFilesSelection("local-main");
+  runtime.selected=new Set(checks.filter(input=>input.checked).map(input=>input.value));model.renderLocalFiles("local-main");
 
   const selectionBeforeContextMenu = checks.map(input => input.checked);
-  model.showLocalFileEntryMenu(menuEvent(), checks[1].value, checks[1].dataset.name, "file", "local-main");
+  model.showLocalFileEntryMenu(menuEvent(), checks[1].value, "file", "local-main");
   assert.deepEqual(checks.map(input => input.checked), [false, true, false], "右键未选中项目必须切换为单选，和 SFTP 保持一致");
 
   checks.forEach((input, index) => { input.checked = selectionBeforeContextMenu[index]; });
   runtime.anchorPath = checks[2].value;
-  model.updateLocalFilesSelection("local-main");
+  runtime.selected=new Set(checks.filter(input=>input.checked).map(input=>input.value));model.renderLocalFiles("local-main");
 
   model.selectLocalFileEntry({shiftKey:true, ctrlKey:false, metaKey:false, target:{closest:() => null}}, checks[1].value, "local-main");
   assert.deepEqual(checks.map(input => input.checked), [false, true, true], "Shift 点击必须选择锚点到当前项的连续范围");
   assert.equal(selectionCount.textContent, "2");
 
-  model.showLocalFileEntryMenu(menuEvent(), checks[1].value, checks[1].dataset.name, "file", "local-main");
+  model.showLocalFileEntryMenu(menuEvent(), checks[1].value, "file", "local-main");
   const multiFileMenu = state.getMenu();
   const multiFileMenuLabels = multiFileMenu.filter(item => !item.separator).map(item => item.label);
   for (const label of ["打开 / 编辑", "在系统文件管理器中打开", "复制 2 个路径", "删除已选 2 项", "上传到 SFTP"]) {
@@ -273,13 +331,13 @@ async function main() {
   assert.equal(multiFileMenuLabels.includes("设置权限"), false, "多选右键菜单不得提供单项权限编辑");
 
   const uploadSubmenu = multiFileMenu.find(item => item.label === "上传到 SFTP");
-  assert.equal(typeof uploadSubmenu?.children, "function", "上传入口必须使用可展开的二级菜单");
-  const uploadTargets = uploadSubmenu.children();
+  assert.ok(Array.isArray(uploadSubmenu?.children), "Vue 上传入口必须使用可展开的二级菜单");
+  const uploadTargets = uploadSubmenu.children;
   assert.ok(uploadTargets.some(item => item.label.includes("当前 SFTP")), "上传二级菜单必须包含当前 SFTP 目标");
   assert.equal(uploadTargets.length, 1, "当前 SFTP 与连接列表指向同一主机时不得重复显示目标");
 
   model.applyLocalFileRangeSelection({shiftKey:false, ctrlKey:false, metaKey:false}, checks[1].value, "local-main");
-  model.showLocalFileEntryMenu(menuEvent(), checks[1].value, checks[1].dataset.name, "file", "local-main");
+  model.showLocalFileEntryMenu(menuEvent(), checks[1].value, "file", "local-main");
   const fileMenuLabels = state.getMenu().filter(item => !item.separator).map(item => item.label);
   for (const label of ["打开 / 编辑", "在系统文件管理器中打开", "复制路径", "重命名", "删除", "上传到 SFTP", "设置权限"]) {
     assert.ok(fileMenuLabels.includes(label), `本地文件右键菜单缺少“${label}”`);
@@ -297,8 +355,8 @@ async function main() {
   await model.createLocalEntryFromPrompt("local-main", "file");
   const createCalls = state.apiCalls.filter(call => call.url === "/api/local-files/create").map(call => JSON.parse(call.options.body));
   assert.deepEqual(createCalls.map(call => call.type), ["dir", "file"], "工具栏新建文件夹和文件必须复用本地创建接口");
-  assert.ok(localUiSource.includes('local-files-create-directory') && localUiSource.includes('data-entry-kind="dir"') && localUiSource.includes('registerTermaAction("local-files-create"'), "本地文件工具栏必须提供新建文件夹按钮");
-  assert.ok(localUiSource.includes('local-files-create-file') && localUiSource.includes('data-entry-kind="file"') && localUiSource.includes('createLocalEntryFromPrompt(element.dataset.tabKey, element.dataset.entryKind)'), "本地文件工具栏必须提供新建文件按钮");
+  assert.ok(localViewSource.includes('local-files-create-directory') && localViewSource.includes("'data-entry-kind': 'dir'") && fileActionsSource.includes("mutations().run(key,dataset.entryKind)"), "本地文件工具栏必须提供新建文件夹按钮");
+  assert.ok(localViewSource.includes('local-files-create-file') && localViewSource.includes("'data-entry-kind': 'file'") && fileActionsSource.includes("mutations().run(key,dataset.entryKind)"), "本地文件工具栏必须提供新建文件按钮");
 
   const dragData = new Map();
   const dataTransfer = {
@@ -333,7 +391,7 @@ async function main() {
   checks[0].checked = false;
   checks[1].checked = true;
   checks[2].checked = true;
-  model.updateLocalFilesSelection("local-main");
+  runtime.selected=new Set(checks.filter(input=>input.checked).map(input=>input.value));model.renderLocalFiles("local-main");
   runtime.entries = checks.map((input, index) => ({
     path:input.value,
     name:input.dataset.name,
@@ -342,8 +400,8 @@ async function main() {
     mtime:0
   }));
   model.renderLocalFiles("local-main");
-  assert.match(list.innerHTML, /class="local-files-row[^>]*draggable="true"[^>]*data-dragstart-action="local-files-entry-drag-start"/, "本地文件行必须作为唯一的拖拽源");
-  assert.doesNotMatch(list.innerHTML, /class="local-files-name"[^>]*draggable=/, "文件名按钮不能再成为嵌套拖拽源");
+  assert.match(localViewSource, /draggable: !o.mobile && !drive/,'Vue 文件行必须作为拖拽源');
+  assert.match(localViewSource, /entry-drag-start/,'Vue 文件行必须保留拖拽入口');
   model.beginLocalFileDrag({dataTransfer, currentTarget:dragRow, preventDefault() {}}, checks[1].value, "local-main");
 
   const protectedDataTransfer = {
@@ -407,12 +465,11 @@ async function main() {
 
   Object.assign(runtime, {page:1, pageSize:50, total:75, totalPages:2});
   model.renderLocalFiles("local-main");
-  assert.match(list.innerHTML, /class="sftp-pager-dock"/);
-  assert.match(list.innerHTML, /class="pager sftp-pager"/);
-  assert.match(list.innerHTML, /<span class="pager-count">[\s\S]*?<select aria-label="每页数量" data-change-action="local-files-page-limit"/);
-  assert.match(list.innerHTML, /<option value="50" selected>50 项<\/option>/);
-  assert.match(list.innerHTML, /class="sftp-scroll-cue"[^>]*title="下方还有文件"/);
-  assert.doesNotMatch(list.innerHTML, /class="local-files-page-size"/, "本地分页应直接复用 SFTP 的原生 select 结构");
+  assert.match(localViewSource, /class: 'sftp-pager-dock'/);
+  assert.match(localViewSource, /class: 'pager sftp-pager'/);
+  assert.match(localViewSource, /class: 'pager-count'[\s\S]*h\('select',[\s\S]*page_size/);
+  assert.match(localViewSource, /25, 50, 100, 200/);
+  assert.match(localViewSource, /class: 'sftp-scroll-cue'/);
   assert.equal(list.classList.contains("has-scroll-below"), true);
   list.scrollTop = list.scrollHeight - list.clientHeight;
   model.syncLocalFilesScrollCue(list);
@@ -442,29 +499,26 @@ async function main() {
   assert.equal(selectionBar.hidden, true);
   assert.deepEqual(checks.map(input => input.checked), [false, false, false]);
 
-  assert.match(localUiSource, /class="local-files-selection" hidden>[\s\S]*openSelectedLocalFiles[\s\S]*showLocalFilesUploadMenu[\s\S]*copySelectedLocalFilePaths[\s\S]*renameSelectedLocalFile[\s\S]*deleteSelectedLocalFiles[\s\S]*chmodSelectedLocalFile/);
-  assert.match(localUiSource, /class="local-files-row[\s\S]*?data-dragstart-action="local-files-entry-drag-start" data-dragend-action="local-files-entry-drag-end"/);
-  assert.doesNotMatch(localUiSource, /class="local-files-name" draggable=/, "本地文件名按钮不能和整行竞争拖拽事件");
-  assert.match(localUiSource, /registerTermaAction\("local-files-entry-drag-start"[\s\S]*beginLocalFileDrag/);
-  assert.match(localUiSource, /captureLocalFilesScrollAnchor[\s\S]*?anchorPath[\s\S]*?anchorOffset/, "改分页数量时必须使用可视行锚点恢复位置");
-  assert.match(localUiSource, /localFilesWorkspaceTransferActions[\s\S]*?发送到对端/, "本地文件右键菜单必须提供分屏对端发送入口");
-  assert.match(localUiSource, /showSftpDragPreview\(entries, event\.clientX, event\.clientY\)/, "本地多选拖拽必须复用 SFTP 的预览浮层和数量角标");
-  assert.match(localUiSource, /document\.getElementById\?\.\("sftpDragPreview"\)/, "拖拽清理必须兼容轻量 DOM smoke 沙盒");
-  assert.match(sftpUiSource, /async function handleSftpDrop\([\s\S]*?readLocalFileDragPayload\(event\?\.dataTransfer\)[\s\S]*?uploadLocalFilesToSftp\(localPayload, target, tabKey\)/);
-  assert.match(sftpUiSource, /async function dropSftpItemsOnTab\([\s\S]*?readLocalFileDragPayload\(event\?\.dataTransfer\)[\s\S]*?uploadLocalFilesToSftp\(localPayload, target, tabKey\)/);
-  assert.match(sftpUiSource, /function handleSftpTabDragOver\([\s\S]*?workspaceTabByKey\(tabKey\)/, "分屏标签拖入必须通过工作区模型解析目标标签");
-  assert.match(sftpUiSource, /function handleLocalFileDragOverSftp\([\s\S]*?workspaceTabByKey\(tabKey\)/, "分屏 SFTP 内容区拖入必须通过工作区模型解析目标标签");
-  assert.match(terminalUiSource, /mount\.addEventListener\("drop", async event => \{[\s\S]*?readLocalFileDragPayload\(event\.dataTransfer\)/);
-  assert.match(terminalUiSource, /session\.currentDirectoryKnown[\s\S]*?initializeTerminalDirectory\(session, connection, key\)/);
-  assert.match(terminalUiSource, /uploadLocalFilesToSftp\(localPayload, \{kind:"terminal", id:connection\.id, title:tr\("terminal:drop\.target_title", \{directory,[\s\S]*?path:directory\}, key\)/);
-  assert.match(sftpUiSource, /<span class="pager-count">[\s\S]*?<select aria-label="\$\{escAttr\(tr\("sftp:auto\.page_size"\)\)\}" onchange="setSftpPageSize/);
+  for(const action of ['selection-open','selection-upload','selection-copy','selection-rename','selection-delete','selection-chmod'])assert(localViewSource.includes(action));
+  assert.match(localViewSource, /entry-drag-start[\s\S]*entry-drag-end/);
+  assert.match(fileActionsSource, /'entry-drag-start': startDrag/);
+  assert.match(fs.readFileSync(path.join(root,'frontend/src/features/files/file-scroll.ts'),'utf8'),/anchorPath[\s\S]*anchorOffset/,'TS 滚动状态保留可视行锚点');
+  assert.match(fs.readFileSync(path.join(root,'frontend/src/features/files/file-menus.ts'),'utf8'),/port\.peers\(key,entries\)/, "TS 菜单使用已捕获的源标签和文件列表");
+  const destinations=fs.readFileSync(path.join(root,'frontend/src/features/files/sftp/drag-destinations.ts'),'utf8');
+  assert.match(destinations,/port\.localPayload\(event\.dataTransfer\)/);
+  assert.match(destinations,/await port\.localUpload\(local,tab,key\)/,'标签投递保留工作区目标');
+  assert.match(workspaceUiSource,/'workspace-tab-sftp-drag-over':[\s\S]*?termaSftpDragWorkspace\.drag\.destinations\.over/);
+  assert.match(sftpUiSource,/tab\(key\) \{\s*const tab = workspaceTabByKey\(key\)/,'分屏目标从完整工作区模型解析');
+  const terminalDropOwner=fs.readFileSync(path.join(root,"frontend/src/features/terminal/terminal-drop-service.ts"),"utf8");
+  assert.match(terminalDropOwner, /session\.currentDirectoryKnown[\s\S]*?port\.initialize\(/);
+  assert.match(sftpVueViewSource, /h\('span', \{ class: 'pager-count' \}[\s\S]*?h\('select', \{ 'aria-label': t\('auto\.page_size'\)[\s\S]*?run\('pageSize'/, "SFTP 分页器应由 Vue 视图渲染并连接分页大小操作");
 
   assert.match(css, /\.local-files-list > \.sftp-pager-dock \{[^}]*position:sticky;[^}]*bottom:0;/);
   assert.match(css, /\.local-files-column-resize::before \{[^}]*background:var\(--column-divider/, "本地文件列调整竖线必须使用统一分隔线颜色");
-  const localColumnsSource = fs.readFileSync(path.join(root, "public", "app-local-files-columns.js"), "utf8");
-  assert.doesNotMatch(localColumnsSource, /bindLocalFilesColumnControls\(list\)[\s\S]*?isMobileLayout\(\)/, "窄窗口和触摸屏电脑不能禁用本地文件列拖动");
-  assert.match(localColumnsSource, /visibleLocalFilesColumnKeys[\s\S]*?\["name", "size"\]/, "窄窗口必须按可见的名称和大小列计算拖动边界");
-  assert.match(localColumnsSource, /document\.addEventListener\("pointermove", move\)/, "列拖动必须在文档级持续跟踪指针");
+  const localColumnsSource = fs.readFileSync(path.join(root, 'frontend/src/features/files/file-columns.ts'), 'utf8');
+  assert.doesNotMatch(localColumnsSource,/isMobileLayout\(\)/,'窄窗口不能禁用列拖动');
+  assert.match(localColumnsSource,/list.clientWidth <= 760 \? \['name', 'size'\]/,'窄窗口使用实际可见列计算边界');
+  assert.match(localColumnsSource,/window.addEventListener\('pointermove', move\)/,'列拖动持续跟踪指针');
   assert.doesNotMatch(css, /\.local-files-head-cell \{[^}]*border-right:/, "本地文件表头不得与拖动手柄重复绘制分隔线");
   assert.doesNotMatch(css, /\.sftp-head-cell \{[^}]*border-right:/, "SFTP 表头不得与拖动手柄重复绘制分隔线");
   assert.match(css, /\.sftp-pager select \{[^}]*min-height:28px;[^}]*padding:3px 28px 3px 8px;/);

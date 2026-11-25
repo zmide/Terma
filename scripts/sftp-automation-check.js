@@ -148,9 +148,10 @@ async function main() {
   assert.deepEqual(repository.listAutomations().map(item => Number(item.sort_order)), reordered.map((_, index) => index + 1));
   assert.throws(() => repository.reorderAutomations(reordered.slice(1)), /任务列表已变化/);
   assert.throws(() => repository.reorderAutomations([...reordered, 999999]), /任务列表已变化/);
-  const frontend = fs.readFileSync(path.join(__dirname, "..", "public", "app-sftp-automations.js"), "utf8");
-  assert.match(frontend, /installSftpAutomationQuickAction/);
-  assert.match(frontend, /sftpAutomationQuickButton/);
+  const quickHeader = fs.readFileSync(path.join(__dirname, "..", "frontend", "src", "features", "quick", "QuickHeader.ts"), "utf8");
+  assert.match(fs.readFileSync(path.resolve(__dirname,"../frontend/src/features/quick/quick-mount.ts"),"utf8"),
+    /renderQuickHeader:\s*\([^)]*\)\s*=>\s*renderQuickHeader\(host, snapshot, error\)/);
+  assert.match(quickHeader, /control\('sftpAutomationQuickButton',[^\n]+scope\.openSftpAutomationManager/);
   automation.startSftpAutomationScheduler();
   automation.stopSftpAutomationScheduler();
   console.log("SFTP 传输与同步任务检查通过：统一周期、后端类型推断、实时/计划安全同步、路径保护、桌面入口和调度器生命周期均已覆盖");

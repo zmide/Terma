@@ -7,58 +7,72 @@ async function runMobileWorkspaceUiScenario(window) {
   const prepared = await window.webContents.executeJavaScript(`(async () => { try {
     await window.termaI18nReady;
     while (window.workspaceRestorePending) await new Promise(resolve => setTimeout(resolve, 20));
+    window.termaNotificationToasts?.dispose();
     window.restoringTabs = true;
     for (const [key,title] of [['mobile-ui-one','Alpha <file>'],['mobile-ui-two','Beta']]) {
       // Generic fixture tabs exercise real activation without starting an SSH connection.
       setWorkspace(title,'','terminal',key,true,true,{kind:'mobile-ui-fixture'});
     }
     const view = document.createElement('div');
+    // This standalone fixture owns its inline toolbar, as remote terminal views do.
+    view.id = 'view-remote-terminal';
     view.style.cssText='position:fixed;left:6px;right:6px;top:100px';
     document.body.appendChild(view);
-    view.innerHTML = '<div class="terminal-toolbar"><div class="terminal-title-row">Terminal</div><div class="actions terminal-actions">'
-      + '<button class="terminal-action-sftp">'+icon('folder-sync')+'<span>SFTP</span></button>'
-      + '<button aria-label="smoke-x11">'+icon('x11')+'<span>X11</span></button>'
-      + '<button class="terminal-action-font" aria-label="smoke-minus">'+icon('minus')+'</button>'
-      + '<output class="terminal-font-size-readout">16px</output>'
-      + '<button class="terminal-action-font" aria-label="smoke-plus">'+icon('plus')+'</button>'
-      + Array.from({length:12},()=>'<button>'+icon('settings')+'<span>Settings</span></button>').join('')
-      + '</div></div>';
-    bindTerminalToolbarScroll(view.querySelector('.terminal-toolbar'));
+    const key='mobile-toolbar-fixture';
+    const connection={id:-990040,quick_connection:true,ssh_host:'review.example',ssh_user:'review',terminal_font_size:16};
+    window.termaTerminalState.terminalSessions.set(key,{connection,connected:true,socket:{readyState:WebSocket.OPEN},term:{options:{fontSize:16}}});
+    view.innerHTML='<div class="terminal-toolbar" data-workspace-tab-key="'+key+'" data-terminal-tab-key="'+key+'"></div>';
+    window.termaTerminalToolbar.mount(key);
     syncResponsivePane();
-    showMobileWorkspace();
+    window.termaWorkspaceShell.showMobileWorkspace();
     return true;
   } catch(error) { return {error:String(error),stack:error.stack}; } })()`);
   assert.equal(prepared,true,JSON.stringify(prepared));
+  const proofDirectory = process.env.TERMA_UI_MOBILE_PROOF_DIR;
+  if (proofDirectory) fs.mkdirSync(proofDirectory, {recursive:true});
+  async function capture(name) {
+    window.webContents.invalidate();
+    await window.webContents.capturePage();
+    await new Promise(resolve => setTimeout(resolve, 70));
+    const image = await window.webContents.capturePage();
+    fs.writeFileSync(path.join(proofDirectory, `${name}.png`), image.toPNG());
+  }
+
   const results = [];
   for (const language of ["zh-CN", "en-US"]) {
     for (const theme of ["light", "dark"]) {
       await window.webContents.executeJavaScript(`(async () => {
         await setTermaLanguage(${JSON.stringify(language)}, {emit:false});
         applyTheme(${JSON.stringify(theme)});
-        renderMobileWorkspaceTabs();
+        window.termaWorkspaceMobile.render();
       })()`);
       await new Promise(resolve => setTimeout(resolve, 60));
-      const metrics = await window.webContents.executeJavaScript(`(() => {
+      const metrics = await window.webContents.executeJavaScript(`(async () => {
         const list=document.getElementById('mobileWorkspaceTabs');
         const back=document.getElementById('mobileBack').getBoundingClientRect();
         const nav=list.getBoundingClientRect();
         const count=tabs.length;
-        const sessions=terminalSessions.size;
+        const sessions=window.termaTerminalState.terminalSessions.size;
         list.querySelector('[data-tab-key="mobile-ui-one"]').click();
         const switched=activeTabKey==='mobile-ui-one'&&document.querySelector('#content').classList.contains('mobile-show');
         document.getElementById('mobileBack').click();
         const explorer=document.getElementById('mobileExplorerTabs');
-        const explorerVisible=explorer.getBoundingClientRect().width>0&&!document.querySelector('.left-pane').classList.contains('mobile-hide');
+        const explorerBounds=explorer.getBoundingClientRect();
+        const explorerActive=explorer.querySelector('[aria-selected="true"]')?.getBoundingClientRect();
+        const explorerVisible=explorerBounds.width>0&&!document.querySelector('.left-pane').classList.contains('mobile-hide');
+        const explorerGeometry=getComputedStyle(explorer).display==='flex'&&Math.abs(explorerBounds.height-54)<1
+          &&explorerActive?.width>0&&explorerActive.left>=explorerBounds.left&&explorerActive.right<=explorerBounds.right;
         explorer.querySelector('[data-tab-key="mobile-ui-two"]').click();
         const reopened=activeTabKey==='mobile-ui-two'&&document.querySelector('#content').classList.contains('mobile-show');
         const actions=document.querySelector('.terminal-toolbar .terminal-actions');
         actions.scrollLeft=0;
-        terminalToolbarScrollState(actions);
+        window.termaTerminalToolbarScroll.state(actions);
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
         const buttons=[...actions.querySelectorAll('button')].filter(button=>getComputedStyle(button).display!=='none');
         const rects=buttons.map(button=>button.getBoundingClientRect());
-        const minus=actions.querySelector('[aria-label="smoke-minus"]').getBoundingClientRect();
+        const minus=actions.querySelector('.terminal-action-font').getBoundingClientRect();
         const readout=actions.querySelector('output').getBoundingClientRect();
-        const plus=actions.querySelector('[aria-label="smoke-plus"]').getBoundingClientRect();
+        const plus=actions.querySelectorAll('.terminal-action-font')[1].getBoundingClientRect();
         const right=document.querySelector('.terminal-actions-scroll-right');
         const left=document.querySelector('.terminal-actions-scroll-left').getBoundingClientRect();
         const arrow=right.getBoundingClientRect();
@@ -68,19 +82,20 @@ async function runMobileWorkspaceUiScenario(window) {
           target.focus();
           const tab=tabs.find(tab=>tab.key==='mobile-ui-one');
           tab.connectionStatus=tab.connectionStatus==='connected'?'connecting':'connected';
-          renderMobileWorkspaceTabs();
+          window.termaWorkspaceMobile.render();
           return document.activeElement===list.querySelector('.'+className+'[data-tab-key="mobile-ui-one"]');
         });
         const closeTargets=[...list.querySelectorAll('.mobile-workspace-tab-close')];
         const tabFrames=[...list.querySelectorAll('.mobile-workspace-tab')].map(node=>node.getBoundingClientRect());
         const before=actions.scrollLeft;
         right.click();
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
         return {sameRow:Math.abs((back.top+back.height/2)-(nav.top+nav.height/2))<1&&nav.left>=back.right,
           tabHeightMatchesBack:tabFrames.every(rect=>Math.abs(rect.height-back.height)<1&&Math.abs(rect.top-back.top)<1),
-          switched,explorerVisible,reopened,noNewSessions:tabs.length===count&&terminalSessions.size===sessions,
+          switched,explorerVisible,explorerGeometry,reopened,noNewSessions:tabs.length===count&&window.termaTerminalState.terminalSessions.size===sessions,
           escaped:!list.querySelector('file')&&list.textContent.includes('Alpha <file>'),
           compact:rects.every(rect=>Math.abs(rect.width-30)<1&&Math.abs(rect.height-30)<1),
-          aligned:rects.every(rect=>Math.abs(rect.top-left.top)<1&&Math.abs(rect.bottom-arrow.bottom)<1),
+          aligned:rects.every(rect=>Math.abs((rect.top+rect.height/2)-(left.top+left.height/2))<1&&Math.abs((rect.top+rect.height/2)-(arrow.top+arrow.height/2))<1&&rect.top>=left.top&&rect.bottom<=arrow.bottom),
           coordinates:{back:[back.top,back.height],tabs:tabFrames.map(rect=>[rect.top,rect.height]),arrows:[left.top,left.height,arrow.top,arrow.height],buttons:rects.map(rect=>[rect.top,rect.height])},
           x11Visible:[x11,x11.querySelector('svg'),x11.querySelector('b')].every(node=>node.getBoundingClientRect().width>0&&node.getBoundingClientRect().height>0),
           closeVisible:closeTargets.length===2&&closeTargets.every(button=>{const rect=button.getBoundingClientRect();const main=button.parentElement.querySelector('.mobile-workspace-tab-main').getBoundingClientRect();return button.tagName==='BUTTON'&&rect.width>=44&&rect.height>=44&&main.right<=rect.left&&rect.right<=button.parentElement.getBoundingClientRect().right&&!button.parentElement.closest('button');}),
@@ -93,9 +108,23 @@ async function runMobileWorkspaceUiScenario(window) {
       assert.equal(metrics.label, language === "zh-CN" ? "已打开的标签" : "Open tabs");
       const {coordinates,...summary}=metrics;
       results.push({language,theme,...summary});
-      if (process.env.TERMA_UI_MOBILE_PROOF_DIR) {
-        fs.mkdirSync(process.env.TERMA_UI_MOBILE_PROOF_DIR,{recursive:true});
-        fs.writeFileSync(path.join(process.env.TERMA_UI_MOBILE_PROOF_DIR,`mobile-${language}-${theme}.png`),(await window.webContents.capturePage()).toPNG());
+      if (proofDirectory) {
+        await capture(`mobile-${language}-${theme}`);
+        const searchExposed = await window.webContents.executeJavaScript(`(async () => {
+          document.getElementById('mobileBack').click();
+          document.querySelector('[data-terminal-tab-key="mobile-toolbar-fixture"]').parentElement.hidden = true;
+          await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          const search = document.getElementById('connectionSearch');
+          if (!search?.checkVisibility()) return false;
+          const bounds = search.getBoundingClientRect();
+          return document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2) === search;
+        })()`);
+        assert.equal(searchExposed, true, `${language}/${theme} explorer search is unobstructed`);
+        await capture(`explorer-${language}-${theme}`);
+        await window.webContents.executeJavaScript(`(() => {
+          document.querySelector('#mobileExplorerTabs [data-tab-key="mobile-ui-two"]').click();
+          document.querySelector('[data-terminal-tab-key="mobile-toolbar-fixture"]').parentElement.hidden = false;
+        })()`);
       }
     }
   }

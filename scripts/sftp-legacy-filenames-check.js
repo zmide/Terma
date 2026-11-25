@@ -17,7 +17,7 @@ process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
 process.env.TERMA_SSH_DIR = path.join(temporaryRoot, "ssh");
 const { TarFilenameTranscoder, normalizeDownloadedTarFilenames } = require("../dist/infrastructure/tar-filename-transcoder");
 const { bindSftpChannelEncoding } = require("../dist/infrastructure/sftp-channel-encoding");
-const { decodeRemotePosixCommand } = require("./remote-posix-test-helper");
+const { receiveRemotePosixCommand } = require("./remote-posix-test-helper");
 let archivePayload;
 const archiveJobs = [];
 
@@ -52,12 +52,13 @@ const server = new Server({hostKeys:[privateKey.export({type:"pkcs1", format:"pe
     const sshSession = accept();
     sshSession.on("exec", (acceptExec, _reject, info) => {
       const stream = acceptExec();
-      const command = decodeRemotePosixCommand(info.command);
-      const marker = command.match(/(__TERMA_ARCHIVE_[a-f0-9]+__:)/)?.[1];
-      if (marker) stream.write(`${marker}/tmp/legacy-check.tar.gz\n`);
-      else if (command.includes("wc -c")) stream.write(String(archivePayload.length));
-      else if (command.includes("cat --")) stream.write(archivePayload);
-      stream.exit(0);stream.end();
+      receiveRemotePosixCommand(info.command, stream, command => {
+        const marker = command.match(/(__TERMA_ARCHIVE_[a-f0-9]+__:)/)?.[1];
+        if (marker) stream.write(`${marker}/tmp/legacy-check.tar.gz\n`);
+        else if (command.includes("wc -c")) stream.write(String(archivePayload.length));
+        else if (command.includes("cat --")) stream.write(archivePayload);
+        stream.exit(0);stream.end();
+      });
     });
     sshSession.on("sftp", acceptSftp => {
       const sftp = acceptSftp();

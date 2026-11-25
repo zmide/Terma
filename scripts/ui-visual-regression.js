@@ -1,3 +1,4 @@
+const { replayAppearanceBootstrap } = require('./appearance-ui-fixture');
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -5,15 +6,20 @@ function imageStats(image) {
   const {width, height} = image.getSize();
   const bitmap = image.toBitmap();
   const colors = new Set();
+  const minimumColors = 8;
+  const recordColor = offset => colors.add(bitmap.readUInt32LE(offset) & 0xffffff);
   const stepX = Math.max(1, Math.floor(width / 80));
   const stepY = Math.max(1, Math.floor(height / 60));
   for (let y = 0; y < height; y += stepY) {
     for (let x = 0; x < width; x += stepX) {
-      const offset = (y * width + x) * 4;
-      colors.add(`${bitmap[offset + 2]},${bitmap[offset + 1]},${bitmap[offset]}`);
+      recordColor((y * width + x) * 4);
     }
   }
-  return {width, height, sampled_colors:colors.size, nonblank:colors.size >= 8};
+  // Flat layouts can have small text and borders between grid sample points.
+  for (let offset = 0; offset < bitmap.length && colors.size < minimumColors; offset += 4) {
+    recordColor(offset);
+  }
+  return {width, height, sampled_colors:colors.size, nonblank:colors.size >= minimumColors};
 }
 
 async function waitForViewport(window, width) {
@@ -49,8 +55,6 @@ async function rememberVisualTheme(window) {
     window.__termaVisualRegressionTheme = {
       theme:document.documentElement.dataset.theme || preferredTheme(),
       storedTheme:localStorage.getItem('theme'),
-      appearance:normalizeTermaAppearanceSettings(termaAppearanceSettings),
-      storedAppearance:localStorage.getItem('termaAppearanceV1')
     };
   })()`);
 }
@@ -58,10 +62,9 @@ async function rememberVisualTheme(window) {
 async function applyClassicVisualTheme(window, theme) {
   const result = await window.webContents.executeJavaScript(`(async () => {
     applyTheme(${JSON.stringify(theme)});
-    localStorage.setItem(TERMA_APPEARANCE_STORAGE_KEY, JSON.stringify({preset:'luminous',frosted_strength:53,liquid_strength:39}));
-    applyTermaAppearanceSettings(TERMA_APPEARANCE_PRESETS.luminous);
-    showPrimary('connections');
-    syncTermaLiquidNavigation();
+    localStorage.setItem('termaAppearanceV1', JSON.stringify({preset:'luminous',frosted_strength:53,liquid_strength:39}));
+    await (${replayAppearanceBootstrap.toString()})();
+    window.termaWorkspaceShell.showPrimary('connections');
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const rootStyle = getComputedStyle(document.documentElement);
     return {
@@ -70,7 +73,7 @@ async function applyClassicVisualTheme(window, theme) {
       frostedDisabled:document.documentElement.classList.contains('terma-frosted-disabled'),
       liquidDisabled:!document.documentElement.classList.contains('terma-liquid-enabled'),
       frostedBlur:rootStyle.getPropertyValue('--terma-frosted-backdrop-blur').trim(),
-      storageCleared:localStorage.getItem(TERMA_APPEARANCE_STORAGE_KEY) === null,
+      storageCleared:localStorage.getItem('termaAppearanceV1') === null,
       noLiquidNodes:document.querySelectorAll('.terma-liquid-lens,.terma-liquid-track').length === 0
     };
   })()`);
@@ -84,7 +87,7 @@ async function openVisualModal(window) {
   return window.webContents.executeJavaScript(`(async () => {
     const modal = document.getElementById('modal');
     if (!modal?.hidden || modal?.innerHTML.trim()) return {ready:false, reason:'modal-not-clean'};
-    openGroupModal(() => {});
+    window.termaConnectionViews.openGroupModal(() => {});
     modal.dataset.visualRegressionModal = '1';
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const card = modal.querySelector(':scope > .modal-card');
@@ -139,7 +142,7 @@ async function restoreVisualRegressionState(window, previous) {
         try { closeModal(); } catch {}
       }
       try {
-        if (typeof cancelWorkspaceGroupSelection === 'function') cancelWorkspaceGroupSelection();
+        if (typeof cancelWorkspaceGroupSelection === 'function') window.termaWorkspaceGroups.cancelSelection();
       } catch {}
       document.getElementById('visualRegressionSplit')?.remove();
       if (window.__visualRegressionOriginalApi) {
@@ -154,11 +157,8 @@ async function restoreVisualRegressionState(window, previous) {
       const saved = window.__termaVisualRegressionTheme;
       if (saved) {
         try { applyTheme(saved.theme); } catch {}
-        try { applyTermaAppearanceSettings(saved.appearance); } catch {}
         if (saved.storedTheme === null) localStorage.removeItem('theme');
         else localStorage.setItem('theme', saved.storedTheme);
-        if (TERMA_APPEARANCE_EFFECTS_ENABLED && saved.storedAppearance !== null) localStorage.setItem('termaAppearanceV1', saved.storedAppearance);
-        else localStorage.removeItem('termaAppearanceV1');
         delete window.__termaVisualRegressionTheme;
       }
     })()`);
@@ -230,7 +230,7 @@ async function runVisualRegression(window) {
       }
       return window.__visualRegressionOriginalApi(requestPath);
     };
-    const localKey = await openLocalFiles(LOCAL_FILES_COMPUTER_PATH, true, 'visual-local-files');
+    const localKey = await window.termaLocalFileRuntime.pages.open('::computer::', true, 'visual-local-files');
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const root = document.querySelector('[data-local-files-tab-key="visual-local-files"]');
     const view = root?.closest('#view-local-files');
@@ -241,7 +241,12 @@ async function runVisualRegression(window) {
     const listRect = list?.getBoundingClientRect();
     const pagerRect = pager?.getBoundingClientRect();
     const toolbarHost = document.createElement('div');
-    toolbarHost.innerHTML = localFilesToolbarButtonHtml(localKey);
+    const shortcut = document.createElement('button');
+    shortcut.className = 'icon-button local-files-open-button';
+    shortcut.title = tr('navigation:auto.new_local_files_tab');
+    shortcut.dataset.action = 'local-files-new-tab';
+    shortcut.innerHTML = icon('hard-drive');
+    toolbarHost.append(shortcut);
     const toolbarButton = toolbarHost.querySelector('button');
     const localFilesToolbarLabel = tr('navigation:auto.new_local_files_tab', {defaultValue:'新建本地文件标签'});
     const computerLabel = tr('sftp:local_files.this_computer', {defaultValue:'此电脑'});
@@ -255,7 +260,7 @@ async function runVisualRegression(window) {
     const narrowPager = root?.querySelector('.sftp-pager');
     const narrowToolbarGrid = getComputedStyle(narrowToolbar).display === 'grid';
     const narrowPagerRows = getComputedStyle(narrowPager).gridTemplateColumns.split(' ').length === 2;
-    await loadLocalFiles(localKey,{path:'C:/fixture',location:'directory',page:1,refresh:true});
+    await window.termaLocalFileRuntime.files.reload(localKey,{path:'C:/fixture',location:'directory',page:1});
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const directoryRoot = document.querySelector('[data-local-files-tab-key="visual-local-files"]');
     const directoryList = directoryRoot?.querySelector('.local-files-list');
@@ -280,19 +285,17 @@ async function runVisualRegression(window) {
     const fileRows = [...(directoryRoot?.querySelectorAll('.local-files-row') || [])];
     const firstRow = fileRows[0];
     const secondRow = fileRows[1];
-    const firstPath = firstRow?.dataset.path || '';
     const secondPath = secondRow?.dataset.path || '';
-    selectLocalFileEntry({shiftKey:false,ctrlKey:false,metaKey:false,target:{closest:()=>null}},firstPath,localKey);
-    const dragValues = new Map();
-    const dataTransfer = {effectAllowed:'none',setData:(type,value)=>dragValues.set(type,value),getData:type=>dragValues.get(type)||'',types:[]};
-    beginLocalFileDrag({dataTransfer,currentTarget:secondRow,clientX:12,clientY:12,preventDefault(){}},secondPath,localKey,secondRow);
+    firstRow.dispatchEvent(new MouseEvent("click",{bubbles:true}));
+    const dataTransfer = new DataTransfer();
+    secondRow.dispatchEvent(new DragEvent("dragstart",{bubbles:true,cancelable:true,dataTransfer,clientX:12,clientY:12}));
     const firstCheck = firstRow?.querySelector('.local-files-check');
     const secondCheck = secondRow?.querySelector('.local-files-check');
     const unselectedDragSynchronizes = Boolean(firstRow && secondRow && firstCheck && secondCheck
       && !firstCheck.checked && !firstRow.classList.contains('is-selected') && !firstRow.classList.contains('active')
       && secondCheck.checked && secondRow.classList.contains('is-selected') && secondRow.classList.contains('active')
-      && secondRow.classList.contains('is-dragging') && JSON.parse(dragValues.get(LOCAL_FILES_DRAG_MIME)).paths[0] === secondPath);
-    finishLocalFileDrag({immediate:true});
+      && secondRow.classList.contains('is-dragging') && JSON.parse(dataTransfer.getData('application/x-terma-local-files')).paths[0] === secondPath);
+    window.termaFileTransferRuntime.drag.finish({immediate:true});
     if (view) view.setAttribute('style', originalViewStyle);
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     return {
@@ -324,8 +327,8 @@ async function runVisualRegression(window) {
     const localKey = 'visual-local-files';
     const other = workspaceAllTabs().find(tab => tab.key !== localKey && tab.kind);
     if (!other) return {found:false, selected:false, confirmEnabled:false};
-    beginWorkspaceGroupSelection(localKey);
-    toggleWorkspaceTabSelection(other.key);
+    window.termaWorkspaceGroups.beginSelection(localKey);
+    window.termaWorkspaceGroups.toggleSelection(other.key);
     const bar = document.querySelector('.workspace-group-bar');
     const confirm = bar?.querySelector('.workspace-group-actions button.primary');
     return {
@@ -342,7 +345,7 @@ async function runVisualRegression(window) {
   }
   states.workspaceGroupSelection = {...await capture(window, "workspace-group-selection"), ...workspaceGroupFixture};
   await window.webContents.executeJavaScript(`(() => {
-    cancelWorkspaceGroupSelection();
+    window.termaWorkspaceGroups.cancelSelection();
     closeTabsByKey(['visual-local-files'], 'visual-local-files');
     api = window.__visualRegressionOriginalApi;
     if (window.__visualRegressionHadDesktopBridge) window.termaDesktop = window.__visualRegressionDesktopBridge;

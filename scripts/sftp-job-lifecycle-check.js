@@ -5,7 +5,7 @@ const path = require("node:path");
 const { EventEmitter } = require("node:events");
 const { PassThrough } = require("node:stream");
 const iconv = require("iconv-lite");
-const { decodeRemotePosixCommand } = require("./remote-posix-test-helper");
+const { receiveRemotePosixCommand } = require("./remote-posix-test-helper");
 
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sftp-job-lifecycle-check-"));
 process.env.TERMA_DATA_DIR = path.join(temporaryRoot, "data");
@@ -17,7 +17,7 @@ const children = [];
 
 function fakeRemoteChild(command) {
   const child = new EventEmitter();
-  child.command = decodeRemotePosixCommand(command);
+  child.command = "";
   child.stdin = new PassThrough({ highWaterMark:1024 });
   child.stdout = new PassThrough();
   child.stderr = new PassThrough();
@@ -32,15 +32,18 @@ function fakeRemoteChild(command) {
     return true;
   };
   children.push(child);
-  if (child.command.includes("wc -c")) {
-    setTimeout(() => {
-      if (child.killed) return;
-      child.stdout.write(child.command.includes(".terma-upload-") || child.command.includes("zero.bin") ? "0" : "1048576");
-      child.stdout.end();
-      child.stderr.end();
-      child.emit("close", 0, null);
-    }, 40);
-  }
+  receiveRemotePosixCommand(command, child.stdin, script => {
+    child.command = script;
+    if (script.includes("wc -c")) {
+      setTimeout(() => {
+        if (child.killed) return;
+        child.stdout.write(script.includes(".terma-upload-") || script.includes("zero.bin") ? "0" : "1048576");
+        child.stdout.end();
+        child.stderr.end();
+        child.emit("close", 0, null);
+      }, 40);
+    }
+  });
   return child;
 }
 

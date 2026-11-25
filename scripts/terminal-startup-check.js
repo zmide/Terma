@@ -187,10 +187,14 @@ const legacyEncodingArgs = buildTerminalCommand({...connection, ...canonicalDefa
   assert.ok(legacyEncodingArgs.includes("SendEnv=-*"), "GBK/GB18030 终端同样不得发送远端 locale");
 
   const terminalUi = readFrontendDomain(path.join(__dirname, ".."), "terminal");
-  assert.match(terminalUi, /socket\.send\(JSON\.stringify\(\{type:"terminal-encoding", encoding:settings\.terminal_encoding\}\)\)/, "切换终端编码必须在线通知当前会话转码器");
-  assert.doesNotMatch(terminalUi, /previousEncoding !== settings\.terminal_encoding[\s\S]*?reconnectTerminal\(/, "切换终端编码不得断开或重连 SSH 会话");
-  assert.match(terminalUi, /terminalSessions\.get\(key\)\?\.terminalEncoding/, "每个终端标签必须保留自己的运行时编码");
-  assert.match(terminalUi, /encoding=\$\{encodeURIComponent\(session\.terminalEncoding/, "重连必须在握手阶段沿用当前标签的运行时编码");
+  const preferencesSource = fs.readFileSync(path.join(__dirname, "..", "frontend/src/features/terminal/terminal-preferences-service.ts"), "utf8");
+  assert.match(preferencesSource, /socket\.send\(JSON\.stringify\(\{type: 'terminal-encoding', encoding: settings\.terminal_encoding\}\)\)/, "切换终端编码必须在线通知当前会话转码器");
+  assert.doesNotMatch(preferencesSource, /previousEncoding !== settings\.terminal_encoding[\s\S]*?reconnectTerminal\(/, "切换终端编码不得断开或重连 SSH 会话");
+  const metadataSource = fs.readFileSync(path.join(__dirname, "..", "frontend/src/features/terminal/terminal-metadata.ts"), "utf8");
+  assert.match(metadataSource, /terminalSessions\.get\(key\)\?\.terminalEncoding/, "每个终端标签必须保留自己的运行时编码");
+  const connectionSource = fs.readFileSync(path.join(__dirname, "..", "frontend/src/features/terminal/terminal-connection-service.ts"), "utf8");
+  assert.match(connectionSource, /encoding=\$\{encodeURIComponent\(session\.terminalEncoding/, "重连必须在握手阶段沿用当前标签的运行时编码");
+  assert.match(terminalUi, /termaTerminalConnection\.connect/, "原连接入口必须使用实际 TS 启动所有者");
 
   const programArgs = buildTerminalCommand({ ...connection, ...programConfig });
   const expectedStartup = buildRemoteStartupCommand(programConfig);

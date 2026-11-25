@@ -1,8 +1,8 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const vm = require("node:vm");
 const { readFrontendDomain } = require("./frontend-source");
+const { loadFrontendService } = require("./frontend-service-test-helper");
 const root = path.resolve(__dirname, "..");
 const {
   __cacheDirectorySnapshot,
@@ -25,7 +25,6 @@ const {
   __normalizeRemoteDirectoryReadError,
   __shouldFallbackToPagedDirectoryRead,
   __buildReadRemoteBinaryCommand,
-  __buildReadRemoteBinaryExecCommand,
   __buildStreamRemoteOpenCommand,
   buildRemoteDirectorySizeCommand,
   buildRemotePermissionCommand,
@@ -122,28 +121,38 @@ invalidateRemoteDirectoryCache(9002);
 __cacheDirectorySnapshot(9003, ".", {path:"/expired", entries:fixtures, expires_at:Date.now() - 1});
 assert.equal(__cachedDirectorySnapshot(9003, "."), null, "过期快照不能继续返回");
 
-const frontendContext = {};
-vm.createContext(frontendContext);
-const sftpFrontendSource = readFrontendDomain(path.join(__dirname, ".."), "sftp");
-vm.runInContext(sftpFrontendSource, frontendContext);
-assert.equal(frontendContext.joinRemotePath("/", "Users"), "/Users");
-assert.equal(frontendContext.joinRemotePath("/Users", "demo"), "/Users/demo");
-assert.equal(frontendContext.parentRemotePath("/"), "/");
-assert.equal(frontendContext.parentRemotePath("/Users"), "/");
-assert.equal(frontendContext.parentRemotePath("relative"), ".");
-assert.match(sftpFrontendSource, /if \(!loaded && navigation\.index === nextIndex\) \{\s*navigation\.index = previousIndex;/, "目录加载失败时必须恢复 SFTP 历史游标");
-assert.match(sftpFrontendSource, /runtime\.state = \{\.\.\.currentState, loading:false, requestSeq\}/, "目录加载失败时必须恢复原 SFTP 目录状态");
-assert.match(sftpFrontendSource, /if \(sourceState\.loading\) return null;/, "加载中的 SFTP 占位状态不能写入连接级目录缓存");
-assert.match(sftpFrontendSource, /cached\?\.state && !cached\.needsReload/, "标记为需要重载的 SFTP 缓存不能当作已完成目录恢复");
-assert.match(sftpFrontendSource, /const sftpDirectoryPageRequests = new Map\(\)/, "SFTP 前端必须共享相同目录分页请求");
-assert.match(sftpFrontendSource, /const SFTP_DIRECTORY_REQUEST_CONCURRENCY = 3/, "快速连续打开目录时必须限制共享 SSH 上的活跃请求数");
-assert.match(sftpFrontendSource, /request = scheduleSftpDirectoryRequest\(\(\) => api\(requestPath\)\)\.finally/, "共享 SFTP 目录请求必须通过有界队列并在完成后自动释放");
-assert.match(sftpFrontendSource, /if \(sftpJobsRefreshPromise\) \{\s*sftpJobsRefreshTrailing = true;/, "并发任务刷新必须合并为单一请求链");
-assert.match(sftpFrontendSource, /refreshSftpJobsIfStale\(maxAge=2000\)/, "普通 SFTP 激活不得重复刷新新鲜任务状态");
-assert.match(sftpFrontendSource, /await refreshSftp\(\{tabKey:selectedKey\}\)/, "任务完成后的目录刷新必须串行执行");
-assert.match(sftpFrontendSource, /list\._sftpTaskCenterRenderSignature !== renderSignature/, "任务中心内容未变化时不得生成并重建全部任务 DOM");
-assert.match(sftpFrontendSource, /function sftpArchiveEncodingOptionsHtml\(selected="utf8"\)/, "归档文件名编码默认必须使用 UTF-8");
-assert.match(sftpFrontendSource, /sftpArchiveEncodingOptionsHtml\(initialEncoding\)/, "归档编码下拉框必须跟随当前连接编码");
+const frontendRoot=path.join(root,"frontend","src","features","files","sftp");
+const frontendSources=fs.readdirSync(frontendRoot).filter(file=>/\.ts$/.test(file)).map(file=>read(path.join(frontendRoot,file)));
+const sftpFrontendSource=[...frontendSources,readFrontendDomain(root,"sftp")].join("\n");
+const directoryLoaderSource=read(path.join(frontendRoot,"directory-loader.ts"));
+const directoryCacheSource=read(path.join(frontendRoot,"directory-cache.ts"));
+const directoryRequestsSource=read(path.join(frontendRoot,"directory-requests.ts"));
+const directoryNavigationSource=read(path.join(frontendRoot,"directory-navigation.ts"));
+const taskServiceSource=read(path.join(frontendRoot,"sftp-task-service.ts"));
+const editorRuntimeSource=read(path.join(frontendRoot,"editor-runtime.ts"));
+const directoryState=loadFrontendService("frontend/src/features/files/sftp/directory-state.ts");
+const sftpFileOperations=loadFrontendService("frontend/src/features/files/sftp/file-operations.ts");
+assert.equal(directoryState.joinRemotePath("/", "Users"), "/Users");
+assert.equal(directoryState.joinRemotePath("/Users", "demo"), "/Users/demo");
+assert.equal(directoryState.parentRemotePath("/"), "/");
+assert.equal(directoryState.parentRemotePath("/Users"), "/");
+assert.equal(directoryState.parentRemotePath("relative"), ".");
+assert.match(directoryNavigationSource, /histories\.get\(key\)===record&&record\.revision===revision/, "目录历史回退必须忽略旧请求和已释放标签");
+assert.match(directoryNavigationSource, /record\.index=record\.committedIndex/, "目录加载失败时必须恢复最后成功显示的 SFTP 历史游标");
+assert.match(directoryLoaderSource, /runtime\.state=\{\.\.\.previous,loading:false,requestSeq:sequence\}/, "目录加载失败时必须恢复原 SFTP 目录状态");
+assert.match(directoryCacheSource, /if\(!source\?\.connectionId\|\|source\.loading\)return null/, "加载中的 SFTP 占位状态不能写入连接级目录缓存");
+assert.match(read(path.join(frontendRoot,'page-lifecycle.ts')), /cached&&!cached\.needsReload[\s\S]*?port\.restoreCache\(cached,runtime\)/, "标记为需要重载的 SFTP 缓存不能当作已完成目录恢复");
+assert.match(directoryRequestsSource, /const shared=new Map<string,Promise<SftpDirectoryPage>>\(\)/, "SFTP 前端必须共享相同目录分页请求");
+assert.match(directoryRequestsSource, /while\(active<3&&queue\.length\)/, "快速连续打开目录时必须限制共享 SSH 上的活跃请求数");
+assert.match(directoryRequestsSource, /pending=schedule\(\(\)=>port\.read\(url\)\)\.finally/, "共享 SFTP 目录请求必须通过有界队列并在完成后自动释放");
+assert.match(taskServiceSource, /if \(refreshPromise\) \{ refreshAgain = true; return refreshPromise/, "并发任务刷新必须共享请求链并保留尾随刷新");
+assert.match(read(path.join(root,'frontend/src/entries/about-embed.ts')), /refreshJobs: age => taskWorkspace\.runtime\.stale\(age\)/, "普通 SFTP 激活必须调用任务服务的新鲜状态检查");
+assert.match(read(path.join(frontendRoot,"directory-refresh.ts")), /try \{ await port\.refresh\(key\); \}[\s\S]*finally \{ active = ''; flush\(\); \}/, "任务完成后的目录刷新必须等待当前请求结束再处理队列；并发行为另由运行时回归验证");
+const taskCenterVue = fs.readFileSync(path.join(root, "frontend", "src", "features", "quick", "TaskCenter.ts"), "utf8");
+assert.match(taskCenterVue, /visible\.map\(\s*job\s*=>\s*h\(Fragment,\s*\{\s*key:\s*job\.id\s*\}/, "任务轮询必须通过稳定 Vue key 更新任务行");
+assert.match(taskCenterVue, /paintQuickView\(host, content\)/, "任务中心必须由 Vue keyed patch 保留未变化的 DOM 行");
+assert.match(read(path.join(frontendRoot,"entry-actions-workspace.ts")), /options\.encoding \|\| connection\?\.sftp_filename_encoding \|\| 'utf8'/, "归档文件名编码未设置时必须使用 UTF-8");
+assert.match(read(path.join(frontendRoot,"entry-actions-workspace.ts")), /options\.encoding \|\| connection\?\.sftp_filename_encoding/, "归档编码下拉框必须跟随当前连接编码");
 
 const sftpBackendSource = fs.readFileSync(path.join(root, "src", "sftp.ts"), "utf8");
 const sftpSessionSource = fs.readFileSync(path.join(root, "src", "sftp-session.ts"), "utf8");
@@ -182,21 +191,26 @@ assert.match(sftpBackendSource, /await yieldSftpWork\(\)/, "大目录元数据�
 assert.match(sftpBackendSource, /snapshot\.page_orders \|\| \(snapshot\.page_orders = new Map\(\)\)/, "目录分页必须复用排序结果");
 assert.match(sftpBackendSource, /request\.waiters\.add\(waiter\)/, "共享目录快照必须按等待者跟踪取消订阅");
 assert.match(sftpBackendSource, /if \(!request\.waiters\.size && !request\.done\) request\.cancel\?\.\(\)/, "仅当没有等待者时才取消底层目录读取");
-assert.match(sftpFrontendSource, /await requestSftpDirectoryPage\(id, params, controller\?\.signal \|\| null\)/, "SFTP 标签目录读取必须复用共享请求并保留标签级取消");
-assert.match(sftpFrontendSource, /api\(requestPath, \{signal\}\)/, "过期 SFTP 搜索必须把 AbortSignal 传给实际 fetch");
-assert.match(sftpFrontendSource, /api\(`\/api\/connections\/\$\{id\}\/sftp\/session`, \{skipSftpConnect:true\}\)/, "目录查询失败后必须核对持久 SFTP 会话状态");
-assert.match(sftpFrontendSource, /connectionStillActive \? "connected" : "disconnected"/, "查询失败但会话仍在线时不能误报 SFTP 连接断开");
+assert.match(directoryLoaderSource, /port\.request\(id,params,controller\.signal\)/, "SFTP 标签目录读取必须复用共享请求并保留标签级取消");
+assert.match(directoryRequestsSource, /port\.read\(url,signal\)/, "过期 SFTP 搜索必须把 AbortSignal 传给实际 fetch");
+assert.match(read(path.join(root,"frontend/src/entries/about-embed.ts")), /session: id => api\(`\/api\/connections\/\$\{id\}\/sftp\/session`, \{skipSftpConnect:true\}\)/, "目录查询失败后必须核对持久 SFTP 会话状态");
+assert.match(directoryLoaderSource, /port\.connected\(id,connected\?'connected':'disconnected'/, "查询失败但会话仍在线时不能误报 SFTP 连接断开");
 const byteSafeQueryCommand = __buildRemotePagedDirectoryEntriesCommand({query:"艺", sort:"name"});
 assert.match(byteSafeQueryCommand, /LC_ALL=C grep -a -F -i -- "\$TERMA_QUERY"/, "分页搜索必须按字节处理混合编码文件名，不能输出二进制匹配提示");
 const byteSafeMetadataCommand = __buildRemotePagedDirectoryEntriesCommand({query:"艺", sort:"size"});
 assert.match(byteSafeMetadataCommand, /LC_ALL=C awk -F "\$TERMA_TAB"/, "元数据排序搜索必须在字节安全的区域设置下匹配文件名");
-assert.match(sftpFrontendSource, /function jumpSftpPage\(/, "SFTP 分页必须支持直接跳转到指定页");
-assert.match(sftpFrontendSource, /class="sftp-page-jump"/, "SFTP 分页器必须渲染页码跳转控件");
+assert.match(sftpFrontendSource, /jumpPage:\s*\(value: unknown\) => directory\.jump\(key, value\)/, "SFTP 页码跳转由目录导航按标签处理");
+assert.match(sftpFrontendSource, /class:\s*'sftp-page-jump'/, "SFTP 分页器必须渲染页码跳转控件");
 assert.match(sftpFrontendSource, /event\.ctrlKey.*event\.deltaY/s, "图片预览必须支持 Ctrl 加滚轮缩放");
 assert.match(sftpFrontendSource, /event\.key\.toLowerCase\(\) === "f"/, "SVG 预览必须支持 Ctrl+F 搜索");
 assert.match(sftpFrontendSource, /sanitizeSftpSvgDocument/, "SVG 预览必须在渲染前清理不安全内容");
-assert.match(sftpFrontendSource, /sftpSvgHasUnsafeCssResource/, "SVG 清理必须保留内部渐变、滤镜和裁剪引用并阻止外部资源");
-assert.match(sftpFrontendSource, /animateTransform,animateMotion/, "SVG 清理必须移除 SMIL 动画节点");
+const svgEngineSource = read(path.join(root, 'frontend/src/features/files/sftp/svg-engine.ts'));
+assert.match(svgEngineSource, /export function svgHasUnsafeCssResource/, "SVG 清理必须保留内部渐变、滤镜和裁剪引用并阻止外部资源");
+assert.match(svgEngineSource, /'animate', 'set', 'animatetransform', 'animatemotion'/, "SVG 清理必须移除 SMIL 动画节点");
+assert.match(svgEngineSource, /forbidden\.has\(element\.localName\.toLowerCase\(\)\)/, "按规范化节点名检查 SVG 动画");
+for (const file of ["image-preview.ts", "editor-runtime.ts", "svg-export.ts"])
+  assert.match(read(path.join(frontendRoot, file)), /import\s*\{[^}]*\bsanitizeSvgDocument\b[^}]*\}\s*from ['"]\.\/svg-engine['"]/s,
+    file + " 必须复用同一 SVG 清理入口");
 assert.doesNotMatch(sftpFrontendSource, /onclick="downloadSftp\(/, "图片预览下载必须使用事件绑定而不是内联脚本");
 assert.match(sftpFrontendSource, /sftp-svg-match-marker/, "SVG 搜索结果必须显示独立定位标记");
 assert.match(sftpFrontendSource, /downloadSftpSvgAsPdf/, "SVG 预览必须提供矢量 PDF 导出");
@@ -206,8 +220,8 @@ assert.match(sftpFrontendSource, /stripSftpSvgPdfStyles/, "SVG PDF 导出必须�
 assert.match(sftpFrontendSource, /loadExternalStyleSheets: false/, "SVG PDF 导出不得加载外部样式表");
 assert.match(sftpFrontendSource, /pdf\.output\("blob"\)/, "SVG PDF 导出必须下载生成的 Blob");
 assert.match(sftpFrontendSource, /orientation: exportDimensions\.width >= exportDimensions\.height \? "landscape" : "portrait"/, "SVG PDF 页面方向必须跟随画布比例");
-assert.match(sftpFrontendSource, /id=\"sftpImageExportPdf\"/, "SVG 预览必须显示导出 PDF 操作");
-assert.match(sftpFrontendSource, /id=\"sftpImageColorMode\"/, "SVG 预览必须提供带文字的反色模式选择");
+assert.match(sftpFrontendSource, /id: 'sftpImageExportPdf'/, "SVG 预览必须显示导出 PDF 操作");
+assert.match(sftpFrontendSource, /'sftpImageColorMode'/, "SVG 预览必须提供带文字的反色模式选择");
 assert.match(sftpFrontendSource, /\"invert-mono\"[\s\S]*\"invert-bw\"[\s\S]*\"invert-color\"/, "SVG 预览必须同时支持黑白反转、黑白模式和全局反转");
 assert.match(sftpFrontendSource, /options\.blackWhiteTarget === "white" \? 255 : 0/, "SVG 黑白模式必须输出纯黑或纯白，而不是灰阶");
 assert.match(sftpFrontendSource, /function sftpSvgPdfBackgroundElements\(/, "SVG 黑白模式必须识别全画布背景，避免背景与前景同时变成白色");
@@ -220,7 +234,7 @@ assert.match(sftpFrontendSource, /sftp-svg-search-controls/, "SVG 搜索输入�
 assert.match(sftpFrontendSource, /createSftpSvgDownloadBlob/, "反色 SVG 下载必须生成转换后的矢量文件");
 assert.match(sftpFrontendSource, /downloadSftpSvgWithColorMode/, "SVG 下载必须跟随当前反色模式");
 assert.doesNotMatch(sftpFrontendSource, /canvas\.toDataURL|toDataURL\(/, "SVG PDF 导出不得退化为截图或栅格导出");
-assert.match(read(path.join(root, "public", "app-sftp-menus.js")), /convert_svg_pdf|downloadSftpSvgAsPdf/, "SVG 右键菜单必须提供 PDF 导出入口");
+assert.match(read(path.join(root, 'frontend/src/features/files/sftp/entry-actions-workspace.ts')), /case 'pdf': return preview\.pdf\(id, path\)/, "SVG 右键菜单必须通过预览服务提供 PDF 导出入口");
 assert.match(read(path.join(root, "public", "index.html")), /vendor\/jspdf\/jspdf\.umd\.min\.js/);
 assert.match(read(path.join(root, "public", "index.html")), /vendor\/svg2pdf\/svg2pdf\.umd\.min\.js/);
 assert.match(sftpFrontendSource, /loadSftpSvgPdfFontBinary/);
@@ -235,18 +249,21 @@ assert.match(sftpFrontendSource, /sftpImagePreviewFullscreen/, "图片预览必�
 assert.match(sftpFrontendSource, /const sourceViewBoxValid =/, "SVG 预览必须识别源文件提供的有效 viewBox");
 assert.match(sftpFrontendSource, /const shouldMeasureBounds = !sourceViewBoxValid/, "复杂 SVG 不能用不可靠的 getBBox 覆盖源 viewBox");
 assert.match(sftpFrontendSource, /if \(!sourceViewBoxValid && extent/, "SVG 内容边界测量只能作为无 viewBox 文件的兜底");
-assert.match(sftpFrontendSource, /const embeddedStyleTexts = \[\]/, "SVG 内嵌样式必须先脱离 XML 解析，避免触发内联 CSP");
-assert.match(sftpFrontendSource, /const markupWithoutStyles = source/, "SVG 解析前必须移除源 <style> 节点");
+assert.match(svgEngineSource, /const styles: string\[\] = \[\]/, "SVG 内嵌样式必须先脱离 XML 解析，避免触发内联 CSP");
+assert.ok(svgEngineSource.indexOf('styles.push(String(css)); return') < svgEngineSource.indexOf('new DOMParser().parseFromString(source'), "SVG 解析前必须提取并移除源 style 节点");
+assert.match(svgEngineSource, /filter\(css => css && !svgHasUnsafeCssResource\(css\)\)/, "保存的内嵌样式必须经过资源过滤");
 assert.match(sftpFrontendSource, /__termaEmbeddedStyles/, "SVG 内嵌样式必须保存为清理后的 Shadow DOM 样式来源");
 assert.match(sftpFrontendSource, /mode === "original" \? embeddedStyles : sftpSvgPdfInvertCss\(embeddedStyles, mode\)/, "SVG 控件和连接线必须继续使用清理后的源样式，并随颜色模式转换");
 const appCssSource = fs.readFileSync(path.join(root, "public", "app.css"), "utf8");
 assert.match(appCssSource, /\.sftp-image-modal \{[^}]*height:min\(760px,calc\(100dvh - 32px\)\)/, "SVG 预览外层窗口必须使用独立固定高度");
 assert.match(appCssSource, /\.sftp-image-preview \{[^}]*min-height:0[^}]*overflow:auto/, "SVG 内部缩放必须限制在滚动预览区域内");
-assert.match(sftpFrontendSource, /sftpFloatingEditorShelfItem/, "浮动编辑器必须支持最小化暂存栏");
-assert.match(sftpFrontendSource, /mountedRuntime\.detachedView = detachedView/, "SFTP 标签切换必须保留已渲染目录视图");
-assert.match(sftpFrontendSource, /insideFloatingEditor/, "编辑器内 Ctrl+F 不能穿透到 SFTP 全局搜索");
+assert.match(fs.readFileSync(path.join(root,"frontend/src/features/files/sftp/editor-runtime.ts"),"utf8"), /sftpFloatingEditorShelfItem/, "浮动编辑器必须支持最小化暂存栏");
+const pageLifecycleSource=read(path.join(frontendRoot,'page-lifecycle.ts'));
+assert.match(pageLifecycleSource, /previous\.detachedView=detached/, "SFTP 标签切换必须保留已渲染目录视图");
+assert.match(pageLifecycleSource, /view\.appendChild\(runtime\.detachedView\.firstChild\)/, "SFTP 标签返回时必须复用原目录节点");
+assert.match(editorRuntimeSource, /if \(!modal\.contains\(event\.target instanceof Node\?event\.target:null\).*?event\.stopPropagation\(\)/s, "编辑器内 Ctrl+F 由编辑器拦截且不穿透到 SFTP 全局搜索");
 assert.match(sftpFrontendSource, /root\.style\.overflow = "visible"/, "SVG 预览不能用 hidden 溢出裁剪内容");
-const sftpColumnSource = fs.readFileSync(path.join(root, "public", "app-sftp-columns.js"), "utf8");
+const sftpColumnSource = read(path.join(frontendRoot,"column-layout.ts"));
 assert.match(sftpColumnSource, /SFTP_COLUMN_MIN_PIXELS = 3/, "SFTP 列宽下限应为 3px");
 assert.match(sftpColumnSource, /const currentMin = SFTP_COLUMN_MIN_PIXELS/, "SFTP 列宽拖动应使用 3px 下限");
 assert.match(sftpColumnSource, /total < currentMin \+ nextMin/, "SFTP 相邻列拖动必须同时满足两列最小宽度");
@@ -388,13 +405,8 @@ assert.match(readLinkedFileCommand, /stat -L -f "%z"/, "打开前必须读取 BS
 assert.match(readLinkedFileCommand, /符号链接本身为 %s B，目标文件实际为 %s B/, "超限提示必须解释链接大小与目标大小");
 assert.match(readLinkedFileCommand, /head -c 5242881 "\$TERMA_TARGET"/, "通过大小检查后仍要做有界读取");
 
-const readLinkedFileExecCommand = __buildReadRemoteBinaryExecCommand("/vmlinuz", 5 * 1024 * 1024);
-assert.match(readLinkedFileCommand, /\*\[!0-9\]\*/, "读取脚本包含会触发 csh\/tcsh 历史展开的数字校验表达式");
-assert.match(readLinkedFileExecCommand, /^\/bin\/sh -c 'terma_payload=[A-Za-z0-9+/=]+;/, "远端文件读取必须使用登录 Shell 安全的 POSIX 封装");
-assert.doesNotMatch(readLinkedFileExecCommand, /!/, "登录 Shell 可见的读取命令不能暴露历史展开字符");
-const readPayload = /^\/bin\/sh -c 'terma_payload=([A-Za-z0-9+/=]+);/.exec(readLinkedFileExecCommand);
-assert.ok(readPayload, "远端文件读取封装必须包含 Base64 脚本载荷");
-assert.equal(Buffer.from(readPayload[1], "base64").toString("utf8"), readLinkedFileCommand, "POSIX 封装不能改变远端文件读取脚本");
+assert.match(sftpSource, /const FILE_READ_SHELL = "\/bin\/sh -s";/, "读取脚本由标准输入交给固定的 POSIX Shell");
+assert.match(sftpSource, /runRemoteCommand\(connection, FILE_READ_SHELL, fileReadScript\(command\), timeoutMs\)/, "登录 Shell 不解释内含路径的读取脚本");
 
 const streamedOpenCommand = __buildStreamRemoteOpenCommand("/srv/data/report.txt", 50 * 1024 * 1024);
 assert.match(streamedOpenCommand, /TERMA_OPEN_READY:%s:%s:%s/, "stream open must return bounded size metadata first");
@@ -489,13 +501,13 @@ assert.throws(() => normalizeCompressionRequest(["/srv/a", "/tmp/b"], "/srv", "b
 assert.throws(() => normalizeCompressionRequest(["/srv/a"], "/srv", "nested/bundle"), /不能包含路径/);
 assert.throws(() => normalizeCompressionRequest(["/srv/a.tar.gz"], "/srv", "a.tar.gz"), /不能覆盖/);
 
-assert.deepEqual(JSON.parse(JSON.stringify(frontendContext.permissionModeToChecks("755"))), {
+assert.deepEqual(JSON.parse(JSON.stringify(sftpFileOperations.permissionModeToChecks("755"))), {
   ownerRead:true, ownerWrite:true, ownerExecute:true,
   groupRead:true, groupWrite:false, groupExecute:true,
   publicRead:true, publicWrite:false, publicExecute:true
 });
-assert.equal(frontendContext.permissionChecksToMode({ownerRead:true,ownerWrite:true,ownerExecute:false,groupRead:true,groupWrite:false,groupExecute:false,publicRead:false,publicWrite:false,publicExecute:false}), "640");
-assert.equal(frontendContext.normalizePermissionMode("888"), "");
+assert.equal(sftpFileOperations.permissionChecksToMode({ownerRead:true,ownerWrite:true,ownerExecute:false,groupRead:true,groupWrite:false,groupExecute:false,publicRead:false,publicWrite:false,publicExecute:false}), "640");
+assert.equal(sftpFileOperations.normalizePermissionMode("888"), "");
 
 async function runDirectoryCancellationChecks() {
   const wait = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));

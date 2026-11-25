@@ -3,10 +3,9 @@ const fs = require("node:fs");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
-const vm = require("node:vm");
-const { readFrontendDomain } = require("./frontend-source");
+const { connectionViewHtml } = require("./connection-view-test-helper");
+const { loadFrontendService } = require("./frontend-service-test-helper");
 
-const repositoryRoot = path.resolve(__dirname, "..");
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-identity-compatibility-"));
 const dataRoot = path.join(root, "data");
 const sshRoot = path.join(root, ".ssh");
@@ -49,23 +48,20 @@ function loadIdentityUi() {
     healthResults:new Map(),
     connectionBulkMode:false,
     selectedConnectionIds:new Set(),
+    connectionHasRunningForwards:() => false,
     icon:name => `<svg data-icon="${name}"></svg>`,
     tr:(key, options={}) => String(options.defaultValue || key),
     esc:value => String(value ?? "").replace(/[&<>"']/g, character => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[character])),
     escAttr:value => String(value ?? "").replace(/[&<>"']/g, character => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[character])),
     api:async pathname => pathname === "/api/identity-files" ? [] : Promise.reject(new Error(`Unexpected API request: ${pathname}`))
   };
-  sandbox.globalThis = sandbox;
-  const filename = "public/connections-domain";
-  const source = `${readFrontendDomain(repositoryRoot, "connections")}
-    ;globalThis.__identityUi = {
-      connectionLegacyIdentityOption,
-      loadKeys,
-      renderConnectionRow,
-      renderKeyStatus
-    };`;
-  vm.runInNewContext(source, sandbox, {filename, timeout:5000});
-  return sandbox.__identityUi;
+  const {connectionIdentityWarningMessage, connectionFormIdentityWarning} = loadFrontendService(
+    "frontend/src/features/connections/connection-identity-warning.ts", {tr:sandbox.tr}
+  );
+  return {
+    renderConnectionRow: row => connectionViewHtml("renderConnectionRow", {...sandbox, connectionIdentityWarningMessage}, row),
+    connectionFormIdentityWarning
+  };
 }
 
 async function main() {
@@ -118,29 +114,31 @@ async function main() {
     }
 
     const ui = loadIdentityUi();
-    const unsafeRow = ui.renderConnectionRow({...byId(outsideId), forwards:[]});
+    const unsafeRow = await ui.renderConnectionRow({...byId(outsideId), forwards:[]});
     assert.match(unsafeRow, /私钥需重新导入/);
     assert.ok(unsafeRow.includes(expectedWarning));
     const form = {dataset:{identityFileStatus:"unsafe", identityFileMessage:expectedWarning}};
-    assert.match(ui.connectionLegacyIdentityOption(form), /当前私钥已失效，请重新导入/);
-    const statusBox = {textContent:"", className:""};
+    let statusForm;
+    const {loadConnectionKeys} = loadFrontendService('frontend/src/features/connections/connection-key-options.ts', {
+      api: async () => [],
+      tr: key => key,
+      Option: class { constructor(text, value) { this.text = text; this.value = value; this.dataset = {}; } },
+      window: {termaConnectionFormActions: {rememberIdentityOptions() {}, renderKeyStatus(target) { statusForm = target; }}}
+    });
     const select = {
       form,
       isConnected:true,
       value:"",
       selectedOptions:[{dataset:{}}],
-      closest:selector => selector === "#view-edit" ? {querySelector:() => statusBox} : null,
-      set innerHTML(value) {
-        this.renderedHtml = value;
-        this.value = "";
-        this.selectedOptions = [{dataset:value.includes("data-legacy-unsafe") ? {legacyUnsafe:"1"} : {}}];
-      },
-      get innerHTML() { return this.renderedHtml || ""; }
+      replaceChildren(...options) { this.options = options; }
     };
-    await ui.loadKeys(outsideKey, select);
-    assert.match(select.innerHTML, /当前私钥已失效，请重新导入/);
-    assert.equal(statusBox.textContent, expectedWarning);
-    assert.equal(statusBox.className, "key-status warning");
+    await loadConnectionKeys(outsideKey, select);
+    assert.equal(select.selectedIndex, 0);
+    assert.equal(select.options[0].disabled, true);
+    assert.equal(select.options[0].dataset.i18n, 'connections:identity.legacy_invalid');
+    assert.equal(select.options[1].dataset.i18n, 'connections:auto.no_private_key');
+    assert.equal(statusForm, form);
+    assert.equal(ui.connectionFormIdentityWarning(form), expectedWarning);
   } finally {
     try { await started?.shutdown(); } catch {}
     try { db.closeDatabase(); } catch {}

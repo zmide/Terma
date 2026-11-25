@@ -1,12 +1,13 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const assert = require("node:assert/strict");
+const vm = require("node:vm");
 const { readSftpJobSource, readSources } = require("./backend-source");
 const { readFrontendDomain } = require("./frontend-source");
+const { loadFrontendService } = require("./frontend-service-test-helper");
 
 const root = path.resolve(__dirname, "..");
 const terminal = readFrontendDomain(root, "terminal");
-const sftp = readFrontendDomain(root, "sftp");
 const backend = fs.readFileSync(path.join(root, "src", "sftp.ts"), "utf8");
 const jobs = readSftpJobSource(root);
 const server = readSources(root, ["src/server.ts", "src/routes/sftp-transfer-routes.ts"]);
@@ -27,28 +28,18 @@ function frontendFunction(name) {
 
 const trackedDirectoryCommands = [];
 const recordedCommands = [];
-const terminalCommandHarness = new Function(
-  "saveRecentTerminalCommand",
-  "currentConnection",
-  "trackTerminalDirectoryCommand",
-  "activeTabKey",
-  `"use strict";
-${frontendFunction("cleanTerminalCommandText")}
-${frontendFunction("terminalPromptStateAtRow")}
-${frontendFunction("currentTerminalPromptCommand")}
-${frontendFunction("recordTerminalCommand")}
-${frontendFunction("markTerminalCommandScreenSync")}
-${frontendFunction("refreshTerminalCommandBufferFromScreen")}
-${frontendFunction("captureTerminalCommandSubmission")}
-${frontendFunction("finalizePendingTerminalCommand")}
-${frontendFunction("trackTerminalCommand")}
-return {currentTerminalPromptCommand, finalizePendingTerminalCommand, trackTerminalCommand};`
-)(
-  command => recordedCommands.push(command),
-  id => ({id}),
-  (_session, _connection, _key, command) => trackedDirectoryCommands.push(command),
-  "terminal-active"
+const { createTerminalCommandTrackingService } = loadFrontendService(
+  "frontend/src/features/terminal/terminal-command-tracking-service.ts"
 );
+const {terminalPromptStateAtRow,currentTerminalPromptCommand}=loadFrontendService('frontend/src/features/terminal/terminal-prompt.ts');
+const tracking=createTerminalCommandTrackingService({
+ promptStateAtRow:terminalPromptStateAtRow,
+ saveRecentCommand:command=>recordedCommands.push(command),
+ connectionForSession:session=>({id:session.id}),
+ trackDirectoryCommand:(_session,_connection,_key,command)=>trackedDirectoryCommands.push(command),
+ activeTabKey:()=> 'terminal-active'
+});
+const terminalCommandHarness={currentTerminalPromptCommand,finalizePendingTerminalCommand:tracking.finalizePendingCommand,trackTerminalCommand:tracking.trackCommand};
 
 function promptSession(line, cursorX=String(line).length) {
   const session = {
@@ -100,19 +91,16 @@ terminalCommandHarness.trackTerminalCommand(historyEditSession, "\r");
 assert.equal(recordedCommands.at(-1), "tail -F cchmsg45 | grep 45-03-37", "方向键召回并在中间插入文本后应记录完整命令");
 
 const probedDirectories = [];
-const directoryTrackingHarness = new Function(
-  "probeTerminalDirectory",
-  `"use strict";
-${frontendFunction("normalizeTerminalDirectoryPath")}
-${frontendFunction("joinTerminalDirectoryPath")}
-${frontendFunction("cleanTerminalCommandText")}
-${frontendFunction("parseTerminalDirectoryCommand")}
-${frontendFunction("trackTerminalDirectoryCommand")}
-return {trackTerminalDirectoryCommand};`
-)(
-  (_session, _connection, directory) => probedDirectories.push(directory)
-);
-directoryTrackingHarness.trackTerminalDirectoryCommand(
+const {createTerminalDirectoryService} = loadFrontendService("frontend/src/features/terminal/terminal-directory-service.ts");
+const directoryTrackingHarness = createTerminalDirectoryService({
+  current: () => true,
+  resolve: async (_id, directory) => { probedDirectories.push(directory); return {path:directory}; },
+  remember: () => {},
+  startup: () => ({}),
+  clean: command => command.trim(),
+  text: key => key
+});
+directoryTrackingHarness.track(
   {currentDirectory:"/Users/tester", homeDirectory:"/Users/tester"},
   {id:1},
   "terminal-1",
@@ -120,43 +108,57 @@ directoryTrackingHarness.trackTerminalDirectoryCommand(
 );
 assert.deepEqual(probedDirectories, ["/Users/tester/Downloads"]);
 
-assert.match(terminal, /registerOscHandler\(7/);
-assert.match(terminal, /initializeTerminalDirectory/);
-assert.match(terminal, /trackTerminalDirectoryCommand/);
-assert.match(terminal, /const markers = \[[^\]]*"% "/);
-assert.match(terminal, /bindTerminalDropUpload/);
-assert.match(terminal, /collectDroppedFiles/);
-assert.match(terminal, /uploadSftpFilesToDirectory\(files, connection\.id, directory\)/);
-assert.match(terminal, /terminal:drop\.sftp_login_identity_hint/);
-assert.match(terminal, /terminal:drop\.upload_failed_identity_hint/);
-assert.match(terminal, /不会继承终端中通过 su 或 sudo 切换后的用户/);
-assert.match(terminal, /terminalSftpDragPayload/);
-assert.match(terminal, /copySftpDraggedItemsToDirectory\(drag, connection\.id, directory/);
-assert.match(terminal, /setTerminalDropState\(session, true, drag \? "copy" : "upload"\)/);
-assert.match(terminal, /focusSftpDragFeedbackTarget\("terminal", session\?\.key, session\)/);
-assert.match(terminal, /releaseSftpDragFeedbackTarget\("terminal", session\?\.key, session\)/);
-assert.match(terminal, /session\.terminalDropDepth = 1/);
-assert.doesNotMatch(terminal, /已上传 \$\{files\.length\} 项到/);
-assert.match(terminal, /terminal-drop-overlay/);
-assert.match(sftp, /async function uploadSftpFilesToDirectory/);
-assert.match(sftp, /async function copySftpDraggedItemsToDirectory/);
-assert.match(sftp, /target_connection_id:Number\(targetConnectionId\)/);
-assert.match(sftp, /target\.kind === "terminal"/);
-assert.match(sftp, /sourceTabKey:request\.sourceTabKey/);
-assert.match(sftp, /function focusSftpDragFeedbackTarget/);
-assert.match(sftp, /function releaseSftpDragFeedbackTarget/);
-assert.match(sftp, /focusSftpDragFeedbackTarget\("sftp", tabKey\)/);
-assert.match(sftp, /item\.name \|\| item\.filename \|\| tr\("sftp:transfer\.unnamed_item"\)/);
-assert.doesNotMatch(sftp, /item\.name \|\| item\.filename \|\| "未命名项目"/);
-assert.match(sftp, /createRemoteUploadDirectories\(Number\(connectionId\), directory, files, options\.directories \|\| \[\]\)/);
-assert.match(sftp, /conflict:conflict \|\| "error"/);
-const uploadQueueStart = sftp.indexOf("async function uploadSftpFilesToDirectory");
-const uploadQueueEnd = sftp.indexOf("\nasync function uploadSftpFiles(", uploadQueueStart);
-const uploadQueueSource = sftp.slice(uploadQueueStart, uploadQueueEnd);
-assert.match(uploadQueueSource, /const uploads = \[\]/);
-assert.match(uploadQueueSource, /uploads\.push\(\{item, started\}\)/);
-assert.ok(uploadQueueSource.indexOf("/sftp/upload-job") < uploadQueueSource.indexOf("const workers ="), "所有拖入文件应先创建任务，再按并发数上传内容");
-assert.match(uploadQueueSource, /Promise\.allSettled\(uploads\.map\(\(\{started\}\) => api\(`\/api\/sftp\/jobs\/\$\{encodeURIComponent\(started\.id\)\}\/cancel`/);
+assert.match(fs.readFileSync("frontend/src/features/terminal/terminal-directory-service.ts", "utf8"), /registerOscHandler\(7/);
+const directoryWorkspace = fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-directory-workspace.ts'),'utf8');
+const dropWorkspaceSource = fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-drop-workspace.ts'),'utf8');
+const imageWorkspaceSource = fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-image-workspace.ts'),'utf8');
+assert.match(dropWorkspaceSource, /terminalDirectory\.initialize/);
+assert.match(fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-command-tracking-service.ts'),'utf8'), /terminalDirectory\.track/);
+assert.match(imageWorkspaceSource, /terminalDirectory\.initialize/);
+assert.match(fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-prompt.ts'),'utf8'), /const markers = \[[^\]]*"% "/);
+const dropWorkspace=fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-drop-workspace.ts'),'utf8');
+const dropService=fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-drop-service.ts'),'utf8');
+assert.match(fs.readFileSync(path.join(root,'frontend/src/features/terminal/terminal-surface-workspace.ts'),'utf8'),/terminalDrop\.bind\(session,mount\)/);
+assert.match(dropWorkspace,/termaSftpDragWorkspace\.collect/);
+assert.match(dropWorkspace,/controller\.submit\(files,id,path,\{tabKey:key,isCurrent:valid\}/);
+assert.match(dropWorkspace,/terminalSessions\.get\(session\.key\)===session/);
+assert.match(dropWorkspace,/connectionStamp\(connection\)===connectionStamp\(session\.connection\)/);
+assert.match(dropService,/terminal:drop\.sftp_login_identity_hint/);
+assert.match(dropService,/terminal:drop\.upload_failed_identity_hint/);
+assert.match(dropWorkspace,/drag\.source\.active/);
+assert.match(dropWorkspace,/destinations\.directory\(drag,id,path/);
+assert.match(dropWorkspace,/dropFeedback\.focus\('terminal',session\.key,session\)/);
+assert.match(dropWorkspace,/dropFeedback\.release\('terminal',session\.key,session\)/);
+assert.match(dropService,/session\.terminalDropDepth=1/);
+assert.match(dropService,/terminal-drop-overlay/);
+assert.doesNotMatch(dropService,/已上传 \$\{files\.length\} 项到/);
+assert.match(fs.readFileSync(path.join(root,'frontend/src/features/files/sftp/drag-destinations.ts'),'utf8'), /async function directory\(drag:BrowserDrag,id:number,path:string/);
+const copyServiceSource = fs.readFileSync(path.join(root, 'frontend/src/features/files/sftp/sftp-copy-service.ts'), 'utf8');
+assert.match(copyServiceSource, /target_connection_id: port\.connectionId/);
+const dragWorkspace=fs.readFileSync(path.join(root,'frontend/src/features/files/sftp/drag-workspace.ts'),'utf8');
+assert.match(dragWorkspace, /termaSftpFileActions\.copy\.copy/);
+assert.match(fs.readFileSync(path.join(root,'frontend/src/features/files/sftp/drag-destinations.ts'),'utf8'), /tab\.kind\s*===\s*['"]terminal['"]/);
+assert.match(fs.readFileSync(path.join(root,'frontend/src/features/files/sftp/native-drag-runtime.ts'),'utf8'), /port\.adapter\(\)\.start\(mode,id,request\.entries,request\.files,request\.sourceTabKey,requestId\)/);
+const nativeDragSource = fs.readFileSync(path.join(root, 'frontend/src/features/files/sftp/native-drag-adapter.ts'), 'utf8');
+assert.match(nativeDragSource, /bridge\.startSftpDrag\(requested === 'streaming' \? \{ \.\.\.snapshot, sourceTabKey \}/);
+assert.match(dragWorkspace, /createDropFeedback\(\{/);
+assert.match(dragWorkspace, /createBrowserDropRuntime\(\{/);
+assert.match(fs.readFileSync(path.join(root,'frontend/src/features/files/sftp/drop-feedback.ts'),'utf8'),/focus\('sftp',key\)/);
+const conflictPrompts=fs.readFileSync(path.join(root,'frontend/src/features/files/file-conflict-prompts.ts'),'utf8');
+assert.match(fs.readFileSync(path.join(root, 'frontend/src/features/terminal/terminal-zmodem-workspace.ts'), 'utf8'),
+  /termaSftpTransfers\.conflicts\.upload\(items\)/);
+assert.match(conflictPrompts, /item\.name\s*\|\|\s*item\.filename\s*\|\|\s*port\.text\('sftp:transfer\.unnamed_item'\)/);
+assert.doesNotMatch(conflictPrompts, /item\.name\s*\|\|\s*item\.filename\s*\|\|\s*['"]未命名项目['"]/);
+const transferWorkspace=fs.readFileSync(path.join(root,'frontend/src/features/files/sftp/transfer-workspace.ts'),'utf8');
+assert.match(transferWorkspace, /prepareSftpUploadDirectories\(\{/);
+const transferControllerSource=fs.readFileSync(path.join(root,'frontend/src/features/files/sftp/transfer-controller.ts'),'utf8');
+assert.match(transferControllerSource,/port\.directories\(id, directory, items, directories, current\)/);
+assert.match(transferWorkspace, /downloads, uploads,/);
+const uploadQueueSource = fs.readFileSync(path.join(root, 'frontend/src/features/files/sftp/sftp-upload-service.ts'), 'utf8');
+assert.match(uploadQueueSource, /uploads\.push\(\{ item, started \}\)/);
+assert.ok(uploadQueueSource.indexOf('/sftp/upload-job') < uploadQueueSource.indexOf('sending = true'), '所有拖入文件先创建任务再上传内容');
+assert.match(uploadQueueSource, /Promise\.allSettled\(uploads\.map/);
+assert.match(uploadQueueSource, /!sending\) await cancelCreated\(\)/, '创建失败回收尚未发送的任务');
 assert.match(backend, /conflict !== "rename"/);
 assert.match(backend, /return `\$\{base\} \(\$\{index\}\)\$\{extension\}`/);
 assert.match(server, /\["overwrite", "rename"\]/);

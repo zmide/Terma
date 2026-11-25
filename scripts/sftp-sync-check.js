@@ -2,7 +2,6 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { readFrontendDomain } = require("./frontend-source");
 
 async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "terma-sync-check-"));
@@ -47,13 +46,14 @@ async function main() {
     assert.equal(summaryJob.has_plan_result, true, "任务摘要应保留同步清单存在标记");
     assert.equal(JSON.stringify(summaryJob).includes("file-19999"), false, "任务摘要序列化不得携带同步清单内容");
 
-    const frontend = readFrontendDomain(repositoryRoot, "productivity");
-    const tasks = readFrontendDomain(repositoryRoot, "sftp");
-    assert.match(frontend, /生成变更清单/);
-    assert.match(frontend, /上传本地版本/);
+    const frontend = fs.readFileSync(path.join(repositoryRoot,'frontend/src/features/operations/directory-sync-service.ts'),'utf8');
+    const views = fs.readFileSync(path.join(repositoryRoot,'frontend/src/features/operations/OperationsViews.ts'),'utf8');
+    const tasks = fs.readFileSync(path.join(repositoryRoot,'frontend/src/features/files/sftp/TaskCard.ts'),'utf8');
+    assert.match(views, /sftp:sync.generate_plan/);
+    assert.match(views, /conflict_upload/);
     assert.match(frontend, /selected_indexes/);
-    assert.match(tasks, /retrySftpSyncJob/);
-    assert.match(tasks, /exportSftpSyncResult/);
+    assert.match(tasks, /termaTaskActions\.current\.sync\(rawSyncIdArg, 'retry'/);
+    assert.match(tasks, /termaTaskActions\.current\.sync\(rawSyncIdArg, 'export'/);
     console.log("SFTP 目录同步检查通过：异步目录扫描、事件循环让出、取消、排除规则、路径边界、冲突预览、任务重试和结果导出均已覆盖");
   } finally {
     try { require("../dist/db").closeDatabase(); } catch {}
