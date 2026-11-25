@@ -233,10 +233,11 @@ jobs:
         run: |
           rm -rf macos-signed
           mkdir -p macos-signed
+          VERSION="$(node -p 'require("./package.json").version')"
           /Users/bing/terma-actions-runner/sign-terma-release.sh \
             "$GITHUB_WORKSPACE/release" \
             "$GITHUB_WORKSPACE/macos-signed" \
-            "$GITHUB_REF_NAME"
+            "$VERSION"
 
       - name: Verify signed and notarized macOS DMGs
         shell: bash
