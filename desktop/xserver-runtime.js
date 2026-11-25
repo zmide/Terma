@@ -11,6 +11,7 @@ const { pipeline } = require("node:stream/promises");
 const { Readable } = require("node:stream");
 const { startWindowsX11WindowGuard, stopWindowsX11WindowGuard } = require("./windows-x11-window-guard");
 const { createX11ClipboardImageBridge } = require("./x11-clipboard-image-bridge");
+const { createMacXdmcpSession } = require("./mac-xdmcp-session");
 
 const WINDOWS_SERVER_NAMES = ["vcxsrv.exe", "xming.exe", "xwin.exe", "x410.exe"];
 const XQUARTZ_VERSION = "2.8.6";
@@ -523,18 +524,18 @@ function createXServerRuntime(options = {}) {
     ]);
   }
 
-  function macXkbSettings() {
+  function macXkbSettings(sessionEnvironment = environment) {
     const setxkbmap = existingFile([
       "/opt/X11/bin/setxkbmap",
       "/usr/X11/bin/setxkbmap",
       commandPath("setxkbmap", platform)
     ]);
-    if (!setxkbmap || !environment.DISPLAY) return {};
-    const result = spawnSync(setxkbmap, ["-display", environment.DISPLAY, "-query"], {
+    if (!setxkbmap || !sessionEnvironment.DISPLAY) return {};
+    const result = spawnSync(setxkbmap, ["-display", sessionEnvironment.DISPLAY, "-query"], {
       encoding:"utf8",
       windowsHide:true,
       timeout:3000,
-      env:environment
+      env:sessionEnvironment
     });
     return result.status === 0 ? parseXkbQuery(result.stdout) : {};
   }
@@ -593,7 +594,7 @@ function createXServerRuntime(options = {}) {
         can_start:Boolean(application && !running),
         can_stop:Boolean(running),
         can_install:Boolean(!application || !xdmcpClient),
-        xdmcp_available:Boolean(application && running && display && authority && xdmcpClient),
+        xdmcp_available:Boolean(application && xdmcpClient),
         xdmcp_client:xdmcpClient,
         mode:application ? "system" : "missing",
         server:application ? "XQuartz" : "",
@@ -1108,14 +1109,11 @@ function createXServerRuntime(options = {}) {
     };
   }
 
-  async function waitForMacXephyr(displayNumber, processHandle, timeoutMs = 12000) {
-    if (await waitForDisplayPort(displayNumber, timeoutMs, processHandle)) return true;
-    const xwininfo = existingFile(["/opt/X11/bin/xwininfo", "/usr/X11/bin/xwininfo", commandPath("xwininfo", platform)]);
-    const marker = `Xephyr on :${displayNumber}.0`;
+  async function waitForMacXephyr(displayNumber, processHandle, session, timeoutMs = 12000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      if (processHandle && processHandle.exitCode !== null) break;
-      if (xwininfo && output(xwininfo, ["-root", "-tree"], {env:environment}).includes(marker)) return true;
+      if (processHandle && (processHandle.exitCode !== null || processHandle.signalCode || !processHandle.pid)) break;
+      if (session.displayReady(displayNumber)) return true;
       await delay(180);
     }
     return false;
@@ -1127,9 +1125,6 @@ function createXServerRuntime(options = {}) {
       throw new Error(text("macOS XDMCP 需要安装 XQuartz；请在当前页面安装后重试", "macOS XDMCP requires XQuartz. Install it from this page and try again"));
     }
     if (!current.available) current = await startMac();
-    if (!current.authority_file || !fs.existsSync(current.authority_file)) {
-      throw new Error(text("XQuartz 已运行，但没有找到当前授权文件；请重启 XQuartz 后重试", "XQuartz is running, but its current authorization file was not found. Restart XQuartz and try again"));
-    }
     const mode = new Set(["query", "indirect", "broadcast"]).has(String(profile.options?.mode))
       ? String(profile.options.mode)
       : "query";
@@ -1144,13 +1139,29 @@ function createXServerRuntime(options = {}) {
     const localAddress = await resolveXdmcpLocalAddress(host, port, requestedLocalAddress, {mode});
     const displayNumber = await availableDisplayNumber();
     const {windowMode, width, height} = xdmcpWindowSettings(profile.options);
-    const keyboardArgs = xkbLaunchArgs(macXkbSettings());
+    const session = createMacXdmcpSession({
+      display:current.display,
+      authorityFiles:[current.authority_file, environment.XAUTHORITY, path.join(environment.HOME || "", ".Xauthority")],
+      xauth:existingFile(["/opt/X11/bin/xauth", "/usr/X11/bin/xauth", commandPath("xauth", platform)]),
+      xwininfo:existingFile(["/opt/X11/bin/xwininfo", "/usr/X11/bin/xwininfo", commandPath("xwininfo", platform)]),
+      xmodmap:existingFile(["/opt/X11/bin/xmodmap", "/usr/X11/bin/xmodmap", commandPath("xmodmap", platform)]),
+      runtimeDataDir,
+      environment,
+      text
+    });
+    try {
+      session.prepareDisplay(displayNumber);
+    } catch (error) {
+      session.dispose();
+      throw error;
+    }
+    const keyboardArgs = xkbLaunchArgs(macXkbSettings(session.environment));
     const args = [`:${displayNumber}`];
     if (mode === "broadcast") args.push("-broadcast");
     else args.push(mode === "indirect" ? "-indirect" : "-query", host);
     args.push("-port", String(port));
     if (localAddress) args.push("-from", localAddress);
-    args.push("-listen", "tcp");
+    args.push("-listen", "tcp", "-auth", session.nestedAuthority);
     args.push(...keyboardArgs);
     if (windowMode === "fullscreen") args.push("-fullscreen");
     else {
@@ -1158,24 +1169,37 @@ function createXServerRuntime(options = {}) {
       if (windowMode === "resizable") args.push("-resizeable");
     }
     args.push("-terminate");
-    const processHandle = spawn(current.xdmcp_client, args, {
-      detached:false,
-      stdio:["ignore", "pipe", "pipe"],
-      windowsHide:true,
-      env:environment
-    });
+    let processHandle;
+    try {
+      processHandle = spawn(current.xdmcp_client, args, {
+        detached:false,
+        stdio:["ignore", "pipe", "pipe"],
+        windowsHide:true,
+        env:session.environment
+      });
+    } catch (error) {
+      session.dispose();
+      throw error;
+    }
     reservedDisplayNumbers.add(displayNumber);
     xdmcpChildren.set(processHandle, displayNumber);
     let launchError = "";
     processHandle.stderr?.on("data", chunk => { launchError = (launchError + chunk.toString()).slice(-8000); });
     processHandle.once("error", error => { launchError = error.message; });
-    processHandle.once("exit", () => {
+    processHandle.once("close", () => {
       reservedDisplayNumbers.delete(displayNumber);
       xdmcpChildren.delete(processHandle);
+      session.dispose();
     });
-    if (!await waitForMacXephyr(displayNumber, processHandle)) {
+    try {
+      if (!await waitForMacXephyr(displayNumber, processHandle, session)) {
+        throw new Error(xdmcpLaunchFailureMessage(launchError, displayNumber, localAddress, getLanguage()));
+      }
+      session.synchronizeKeyboard(displayNumber);
+    } catch (error) {
       try { processHandle.kill(); } catch {}
-      throw new Error(launchError.trim() || xdmcpLaunchFailureMessage("", displayNumber, localAddress, getLanguage()) || text("macOS XDMCP 图形桌面启动超时，请确认远端已启用 XDMCP/UDP 177", "macOS XDMCP graphical desktop startup timed out. Confirm that the remote host has enabled XDMCP/UDP 177"));
+      session.dispose();
+      throw error;
     }
     return {
       ok:true,
