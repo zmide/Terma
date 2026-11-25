@@ -206,4 +206,3 @@ async function runSftpGlobalSettingsUiScenario(window, options = {}) {
 }
 
 module.exports = { runSftpGlobalSettingsUiScenario };
-

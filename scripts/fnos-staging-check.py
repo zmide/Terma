@@ -1,6 +1,7 @@
 """Regression checks for the archive boundary between native builds and fnpack."""
 
 import importlib.util
+import gzip
 import io
 import os
 from pathlib import Path
@@ -71,10 +72,12 @@ class StagingChecks(unittest.TestCase):
             self.reject([("terma/file", kind, "../../escaped")])
 
     def test_rejects_oversized_member_before_reading_contents(self):
-        with tarfile.open(self.archive, "w:gz") as archive:
-            member = tarfile.TarInfo("terma/large")
-            member.size = 256 * 1024 ** 2 + 1
-            archive.addfile(member)
+        member = tarfile.TarInfo("terma/large")
+        member.size = 256 * 1024 ** 2 + 1
+        # Deliberately omit the payload: the extractor must reject the header
+        # before reading it. Python 3.14 requires a payload in TarFile.addfile.
+        with gzip.open(self.archive, "wb") as archive:
+            archive.write(member.tobuf(format=tarfile.USTAR_FORMAT))
         with self.assertRaisesRegex(ValueError, "size limits"):
             staging.extract_staging(self.archive, self.output)
 

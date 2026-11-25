@@ -65,9 +65,3 @@ async function runM6ExchangeUiScenario(browser,{viewport='desktop'}={}){
  return {scenario:'m6-exchange',viewport,checks:report.length,screenshots};
 }
 module.exports={runM6ExchangeUiScenario};
-
-
-
-
-
-

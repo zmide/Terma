@@ -94,7 +94,7 @@ jobs:
       - name: Install virtual display
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb
+          sudo apt-get install -y xvfb fonts-noto-cjk fonts-liberation
 
       - name: Run Electron UI smoke checks
         env:

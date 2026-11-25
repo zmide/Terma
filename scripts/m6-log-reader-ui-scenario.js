@@ -122,5 +122,3 @@ async function runM6LogReaderUiScenario(browser,{viewport='desktop'}={}){
  }}finally{fs.writeFileSync(path.join(directory,'report.json'),JSON.stringify({checks:report.length,screenshots,report},null,2));await evaluate(`window.termaLogReader.feature().release();window.termaLogMaintenance.close();window.termaNamedWorkspaces.close();const f=window.__logReaderQa;api=f.api;connections=f.connections;await window.termaNamedWorkspacePresets.list().catch(()=>{});window.termaDesktop=f.desktop;remoteProfiles=f.profiles;HTMLInputElement.prototype.click=f.inputClick;HTMLAnchorElement.prototype.click=f.anchorClick;URL.createObjectURL=f.createUrl;closeModal();delete window.__logReaderQa;`);}
  return {scenario:'m6-log-reader',viewport,checks:report.length,screenshots};
 }module.exports={runM6LogReaderUiScenario};
-
-

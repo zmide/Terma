@@ -11,7 +11,7 @@ async function runTerminalTextUiScenario(browser){
  const f=window.__text={key,lines,sent:[],copied:[],focus:0};
  window.termaTerminalSurface.focus=()=>{f.focus++;};
  window.termaNotificationToasts.notify=()=>{};
- 
+
  window.termaClipboard.copy=async value=>{f.copied.push(value);if(f.waitCopy)return new Promise(resolve=>f.copyResolve=resolve);return true;};
  f.reset=()=>{
   closeModal();f.session={key,id:7,connected:true,connection:{id:7,ssh_host:'fixture.invalid'},connectionAttempt:1,socket:{readyState:WebSocket.OPEN,send:value=>f.sent.push({key,value})},
