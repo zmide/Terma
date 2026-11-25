@@ -57,10 +57,14 @@ assert.match(prepareArtifactStep, /mkdir -p data\/actions-node24-smoke/, "artifa
 assert.match(prepareArtifactStep, /TERMA_ACTIONS_SMOKE_SHA=.*sha256sum data\/actions-node24-smoke\/payload\.txt/, "artifact 准备步骤缺少源文件 SHA-256 记录");
 assert.match(uploadArtifactStep, new RegExp(`uses: actions/upload-artifact@${node24Pins.get("actions/upload-artifact")}`), "artifact 上传步骤未使用已审核 action");
 assert.ok(uploadArtifactStep.includes(`name: ${artifactName}`), "artifact 上传步骤名称不一致");
+assert.match(uploadArtifactStep, /id: roundtrip-upload/, "artifact 上传步骤必须提供本次实际上传 ID");
 assert.match(uploadArtifactStep, /if-no-files-found: error/, "artifact 上传步骤必须在文件缺失时失败");
 assert.match(uploadArtifactStep, /path: data\/actions-node24-smoke\/payload\.txt/, "artifact 上传步骤路径不一致");
 assert.match(downloadArtifactStep, new RegExp(`uses: actions/download-artifact@${node24Pins.get("actions/download-artifact")}`), "artifact 下载步骤未使用已审核 action");
-assert.ok(downloadArtifactStep.includes(`name: ${artifactName}`), "artifact 下载步骤名称与上传步骤不一致");
+assert.ok(downloadArtifactStep.includes("artifact-ids: ${{ steps.roundtrip-upload.outputs.artifact-id }}"), "artifact 下载必须使用本次上传返回的 ID");
+assert.ok(downloadArtifactStep.includes("github-token: ${{ github.token }}"), "artifact 下载必须通过当前工作流的只读 API 权限访问");
+assert.doesNotMatch(downloadArtifactStep, /^\s+name: terma-actions-/m, "artifact ID 和名称不能同时指定");
+assert.match(regressionWorkflow, /name: Ubuntu \/ Node\.js 22[\s\S]*?permissions:\s+contents: read\s+actions: read/, "artifact 回读只需要 contents/actions 只读权限");
 assert.match(downloadArtifactStep, /digest-mismatch: error/, "artifact 下载步骤必须在摘要不匹配时失败");
 assert.match(downloadArtifactStep, /path: data\/actions-node24-roundtrip/, "artifact 下载步骤路径不一致");
 assert.match(verifyArtifactStep, /test -f data\/actions-node24-roundtrip\/payload\.txt/, "artifact 校验步骤缺少下载文件检查");

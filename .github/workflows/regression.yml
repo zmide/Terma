@@ -15,6 +15,9 @@ jobs:
   regression:
     name: Ubuntu / Node.js 22
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -39,6 +42,7 @@ jobs:
           echo "TERMA_ACTIONS_SMOKE_SHA=$(sha256sum data/actions-node24-smoke/payload.txt | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
 
       - name: Upload artifact round-trip fixture
+        id: roundtrip-upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: terma-actions-node24-smoke-${{ github.run_id }}-${{ github.run_attempt }}
@@ -50,7 +54,8 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           digest-mismatch: error
-          name: terma-actions-node24-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          artifact-ids: ${{ steps.roundtrip-upload.outputs.artifact-id }}
+          github-token: ${{ github.token }}
           path: data/actions-node24-roundtrip
 
       - name: Verify artifact round-trip digest
