@@ -1168,7 +1168,9 @@ function createXServerRuntime(options = {}) {
       args.push("-screen", `${width}x${height}`);
       if (windowMode === "resizable") args.push("-resizeable");
     }
-    args.push("-terminate");
+    // Readiness and keymap probes disconnect before the remote greeter may attach.
+    // Keep the server alive across those gaps; the window and runtime own its exit.
+    args.push("-noreset");
     let processHandle;
     try {
       processHandle = spawn(current.xdmcp_client, args, {
